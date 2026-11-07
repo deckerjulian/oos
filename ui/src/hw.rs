@@ -904,7 +904,7 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
     // the frame's samples inside the screen window
     let i0 = (ti + t_first / f.dt).floor().max(0.0) as usize;
     let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
-    let raw = (i1 > i0 + 1).then(|| crate::wave::Raw { frame: f.clone(), i0, i1 });
+    let raw = (i1 > i0 + 1).then(|| crate::wave::Raw { frame: f.clone(), i0, i1, t0: (i0 as f64 - ti) * f.dt });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
     let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
     crate::wave::Record { t0: t_first, dt, ch, triggered: found.is_some(), partial: f.partial, raw, la }

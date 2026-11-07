@@ -50,6 +50,8 @@ pub struct Raw {
     pub frame: std::sync::Arc<crate::hw::Frame>,
     pub i0: usize,
     pub i1: usize,
+    /// time of sample i0 relative to the trigger (s)
+    pub t0: f64,
 }
 
 pub enum Source {

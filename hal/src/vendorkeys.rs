@@ -38,9 +38,14 @@ fn segments(b: &[u8], at: usize) -> Option<Vec<Seg>> {
     let (ph, n, size) = (wide(b, at + 32)? as usize, half(b, at + 56)? as usize, half(b, at + 54)? as usize);
     let mut v = Vec::new();
     for i in 0..n {
-        let o = at + ph + i * size;
+        let o = at.checked_add(ph)?.checked_add(i.checked_mul(size)?)?;
         if word(b, o)? == 1 {
-            v.push(Seg { addr: wide(b, o + 16)?, off: at + wide(b, o + 8)? as usize, size: wide(b, o + 32)? as usize });
+            // a part that does not lie inside the bytes at hand is cut to them: anything else is no image of ours
+            let off = at.checked_add(usize::try_from(wide(b, o + 8)?).ok()?)?;
+            let size = usize::try_from(wide(b, o + 32)?).ok()?.min(b.len().saturating_sub(off));
+            if size > 0 {
+                v.push(Seg { addr: wide(b, o + 16)?, off, size });
+            }
         }
     }
     (!v.is_empty()).then_some(v)
@@ -55,10 +60,10 @@ fn key_at(b: &[u8], o: usize) -> Option<[u32; 4]> {
     Some([word(b, o)?, word(b, o + 4)?, word(b, o + 8)?, word(b, o + 12)?])
 }
 
-/// The outer key: 16 bytes of data that open the file. The data at the end of an image comes first, that is where it is.
+/// The outer key: 16 bytes of data that open the file. The last part of an image is searched first, that is where it is.
 fn file_key(b: &[u8], segs: &[Seg], vendor: &[u8]) -> Option<([u32; 4], Vec<u8>)> {
     for s in segs.iter().rev() {
-        for o in (s.off..(s.off + s.size).min(b.len()).saturating_sub(16)).step_by(4) {
+        for o in (s.off..(s.off + s.size).saturating_sub(16)).step_by(4) {
             let k = key_at(b, o)?;
             if k == [0; 4] {
                 continue;
@@ -83,7 +88,7 @@ fn constant(b: &[u8], o: usize) -> Option<(u32, u32)> {
 fn item_keys(b: &[u8], segs: &[Seg]) -> Vec<[u32; 4]> {
     let mut found = Vec::new();
     for s in segs {
-        found.extend((s.off..(s.off + s.size).min(b.len()).saturating_sub(32)).step_by(4).filter_map(|o| {
+        found.extend((s.off..(s.off + s.size).saturating_sub(32)).step_by(4).filter_map(|o| {
             let (page, load) = (word(b, o)?, word(b, o + 4)?);
             // page address to a register, then a 64-bit load through it into a SIMD register
             if page & 0x9f00_0000 != 0x9000_0000 || load & 0xffc0_0000 != 0xfd40_0000 || load >> 5 & 31 != page & 31 {
@@ -91,12 +96,12 @@ fn item_keys(b: &[u8], segs: &[Seg]) -> Vec<[u32; 4]> {
             }
             let (k2, _) = constant(b, o + 8)?;
             let k3 = (1..=3).find_map(|i| constant(b, o + 12 + 4 * i))?.0;
-            let pc = s.addr + (o - s.off) as u64;
+            let pc = s.addr.wrapping_add((o - s.off) as u64);
             let imm = ((page >> 5 & 0x7ffff) << 2 | page >> 29 & 3) as i64;
             let imm = (imm << 43) >> 31; // sign extended, in pages
             let at = (pc & !0xfff).wrapping_add(imm as u64).wrapping_add(((load >> 10 & 0xfff) * 8) as u64);
-            let seg = segs.iter().find(|x| (x.addr..x.addr + x.size as u64).contains(&at))?;
-            let f = seg.off + (at - seg.addr) as usize;
+            let seg = segs.iter().find(|x| (x.addr..x.addr.saturating_add(x.size as u64)).contains(&at))?;
+            let f = seg.off.checked_add(usize::try_from(at - seg.addr).ok()?)?;
             Some([word(b, f)?, word(b, f + 4)?, k2, k3])
         }));
     }
@@ -109,8 +114,13 @@ pub fn find(b: &[u8], vendor: &[u8]) -> Option<Keys> {
     all.sort_by_key(|&o| std::cmp::Reverse(segments(b, o).map_or(0, |s| s.iter().map(|x| x.size).sum::<usize>())));
     all.iter().find_map(|&at| {
         let segs = segments(b, at)?;
+        // the code pattern is cheap to look for, the outer key is not: an image without the pattern is passed over
+        let items = item_keys(b, &segs);
+        if items.is_empty() {
+            return None;
+        }
         let (file, payload) = file_key(b, &segs, vendor)?;
-        item_keys(b, &segs).into_iter().find(|item| model::item_key_fits(&payload, item)).map(|item| Keys { file, item })
+        items.into_iter().find(|item| model::item_key_fits(&payload, item)).map(|item| Keys { file, item })
     })
 }
 
@@ -123,28 +133,46 @@ fn text(k: &Keys) -> String {
     k.file.iter().chain(k.item.iter()).map(|w| format!("{:08x}", w)).collect::<Vec<_>>().join(" ") + "\n"
 }
 
+fn stock_files() -> Vec<String> {
+    std::env::var("OOS_STOCK_FILE").ok().into_iter().chain(STOCK_FILES.iter().map(|s| s.to_string())).collect()
+}
+
+/// What a search depends on: the vendor file and the size and time of each stock file. A search that found nothing is
+/// kept with it, so that it runs again only when one of them changed.
+fn inputs(vendor: &[u8]) -> String {
+    let mut s = format!("{:08x}", crate::calfile::crc32(vendor));
+    for p in stock_files() {
+        if let Ok(m) = std::fs::metadata(&p) {
+            let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            s.push_str(&format!(" {}:{}", m.len(), t));
+        }
+    }
+    s
+}
+
 /// The keys for `vendor`: those kept on this unit, else from its stock software; `None` if neither opens the file.
 pub fn for_file(vendor: &[u8]) -> Option<Keys> {
     let fits = |k: &Keys| model::vendor_payload(vendor, &k.file).is_some_and(|p| model::item_key_fits(&p, &k.item));
-    if let Some(k) = std::fs::read_to_string(KEEP).ok().and_then(|s| parse(&s)).filter(fits) {
+    let kept = std::fs::read_to_string(KEEP).unwrap_or_default();
+    if let Some(k) = parse(&kept).filter(fits) {
         return Some(k);
     }
-    let found = std::env::var("OOS_STOCK_FILE")
-        .ok()
-        .into_iter()
-        .chain(STOCK_FILES.iter().map(|s| s.to_string()))
-        .find_map(|p| std::fs::read(p).ok().and_then(|b| find(&b, vendor)))?;
-    keep(&found);
-    Some(found)
+    let sig = inputs(vendor);
+    if kept.trim() == format!("none {}", sig) {
+        return None;
+    }
+    let found = stock_files().iter().find_map(|p| std::fs::read(p).ok().and_then(|b| find(&b, vendor)));
+    keep(&found.as_ref().map_or_else(|| format!("none {}\n", sig), text));
+    found
 }
 
 /// Best effort: without it the next start searches again.
-fn keep(k: &Keys) {
+fn keep(line: &str) {
     use std::os::unix::fs::OpenOptionsExt;
     use std::io::Write;
     let tmp = format!("{}.new", KEEP);
     let done = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).and_then(|mut f| {
-        f.write_all(text(k).as_bytes())?;
+        f.write_all(line.as_bytes())?;
         f.sync_all()
     });
     if done.is_ok() {
@@ -218,6 +246,23 @@ mod tests {
         let v = encode_vendor_with(&[(5, "DHO924S")], &other);
         assert_eq!(find(&image(), &v), None);
         assert_eq!(find(&[0u8; 100], &v), None);
+    }
+
+    #[test]
+    fn bogus_headers_are_passed_over() {
+        let mut b = image();
+        // a second "image" whose part claims an offset and size far beyond the bytes
+        let at = b.len();
+        b.extend(vec![0u8; 256]);
+        b[at..at + 5].copy_from_slice(b"\x7fELF\x02");
+        b[at + 32..at + 40].copy_from_slice(&64u64.to_le_bytes());
+        b[at + 54..at + 56].copy_from_slice(&56u16.to_le_bytes());
+        b[at + 56..at + 58].copy_from_slice(&1u16.to_le_bytes());
+        b[at + 64..at + 68].copy_from_slice(&1u32.to_le_bytes());
+        b[at + 72..at + 80].copy_from_slice(&u64::MAX.to_le_bytes());
+        b[at + 96..at + 104].copy_from_slice(&u64::MAX.to_le_bytes());
+        let v = encode_vendor_with(&[(5, "DHO924S")], &TEST_KEYS);
+        assert_eq!(find(&b, &v), Some(TEST_KEYS));
     }
 
     #[test]

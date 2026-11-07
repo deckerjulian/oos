@@ -15,7 +15,12 @@ pub(super) fn label(hz: f64) -> String {
 
 /// Replaces limits.conf in one step, the scope is switched off at the mains. No lines left: no file.
 fn store(path: &str, hz: f64) -> std::io::Result<()> {
-    let old = fs::read_to_string(path).unwrap_or_default();
+    // only a missing file is empty: a file that cannot be read stays as it is
+    let old = match fs::read(path) {
+        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
     let new = with_adc_clock(&old, hz);
     if new.trim().is_empty() {
         return match fs::remove_file(path) {
@@ -41,7 +46,8 @@ impl Ui {
     pub(super) fn overclock_step(&mut self, d: i32) {
         let n = CLOCK_STEPS.len() as i32;
         let i = CLOCK_STEPS.iter().position(|&hz| hz == self.clock_next).unwrap_or(0) as i32;
-        let hz = CLOCK_STEPS[(i + d).rem_euclid(n) as usize];
+        // no wrap: one step down from the standard clock must not land on the test clock
+        let hz = CLOCK_STEPS[(i + d).clamp(0, n - 1) as usize];
         if let Err(e) = store(&self.limits_path, hz) {
             return self.toast(&format!("Overclock not saved: {}", e));
         }
@@ -90,6 +96,21 @@ mod tests {
         store(p, CLOCK_STEPS[0]).unwrap();
         assert!(!path.exists());
         store(p, CLOCK_STEPS[0]).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn steps_stop_at_both_ends() {
+        let dir = std::env::temp_dir().join(format!("oos-overclock-ends-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.limits_path = dir.join("limits.conf").to_str().unwrap().into();
+        ui.overclock_step(-1);
+        assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
+        ui.overclock_step(10);
+        assert_eq!(ui.value(Item::Overclock), "2 GHz (test)");
+        ui.overclock_step(1);
+        assert_eq!(ui.value(Item::Overclock), "2 GHz (test)");
         fs::remove_dir_all(&dir).unwrap();
     }
 

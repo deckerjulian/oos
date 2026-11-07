@@ -54,6 +54,8 @@ const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
 /// records kept for history playback
 const HISTORY: usize = 200;
+/// LA words a history entry keeps: above this only the newest record has its LA (200 x 1 M words = 400 MB at most).
+const HISTORY_LA_WORDS: usize = 1_000_000;
 /// Segment counts of the segmented recording (0 = off).
 pub const SEGMENTS: [usize; 7] = [0, 10, 50, 100, 200, 500, 1000];
 pub const SEG_MAX: usize = 1000;
@@ -1053,20 +1055,33 @@ impl Ui {
         Some((r.ch[c].len(), r.dt, r.t0))
     }
 
+    /// A record the protocol trigger can judge: not roll or scan (they have no trigger point), and with the decoder's
+    /// input in it; otherwise it is shown as it comes rather than held back for ever.
+    fn bus_can_match(&self, rec: &Record) -> bool {
+        if crate::hw::slow_mode(&self.m) != crate::hw::Slow::Off {
+            return false;
+        }
+        if self.m.dec_on_la() {
+            rec.la.is_some()
+        } else {
+            rec.ch.get(self.m.dec_src).is_some_and(|v| !v.is_empty())
+        }
+    }
+
     /// RAW read-out: (points, dt, t0) of every sample of the hardware record inside the screen window; `None` when the
-    /// screen record is all there is. t0 is the record's start, within one sample.
+    /// screen record is all there is.
     pub fn raw_info(&self, c: usize) -> Option<(usize, f64, f64)> {
-        let rec = self.last[0].as_ref()?;
-        let r = rec.raw.as_ref()?;
+        let r = self.last[0].as_ref()?.raw.as_ref()?;
         let v = r.frame.ch.get(c)?;
-        (r.i1 <= v.len() && r.i1 > r.i0).then(|| (r.i1 - r.i0, r.frame.dt, rec.t0))
+        // a compressed frame holds min/max pairs, not samples: then the screen record is the answer
+        (r.i1 <= v.len() && r.i1 > r.i0 && !r.frame.envelope).then(|| (r.i1 - r.i0, r.frame.dt, r.t0))
     }
 
     /// The samples of `raw_info`.
     pub fn raw_volts(&self, c: usize) -> Option<Vec<f32>> {
         let r = self.last[0].as_ref()?.raw.as_ref()?;
         let v = r.frame.ch.get(c)?;
-        (r.i1 <= v.len() && r.i1 > r.i0).then(|| v[r.i0..r.i1].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
+        (r.i1 <= v.len() && r.i1 > r.i0 && !r.frame.envelope).then(|| v[r.i0..r.i1].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
     }
 
     pub fn record_volts(&self, c: usize) -> Vec<f32> {
@@ -1200,7 +1215,7 @@ impl Ui {
                     }
                     // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
                     // decides; Single waits on for the record that holds the event
-                    Some(rec) if self.m.trig_type == TrigType::Bus && self.m.trig_mode != TrigMode::Auto && !rec.triggered && !rec.partial => {
+                    Some(rec) if self.m.trig_type == TrigType::Bus && self.m.trig_mode != TrigMode::Auto && !rec.triggered && !rec.partial && self.bus_can_match(&rec) => {
                         self.m.status = TrigStatus::Wait;
                     }
                     Some(mut rec) => {
@@ -1246,7 +1261,9 @@ impl Ui {
                         if self.history.len() >= HISTORY.max(self.m.segments) {
                             self.history.pop_front();
                         }
-                        self.history.push_back(Record { raw: None, ..rec.clone() });
+                        // a deep LA record is tens of MB: the history keeps the LA of short records only
+                        let la = rec.la.clone().filter(|l| l.words.len() <= HISTORY_LA_WORDS);
+                        self.history.push_back(Record { raw: None, la, ..rec.clone() });
                         self.hist_pos = None;
                         self.mask_test(&rec);
                         self.last[0] = Some(rec);
