@@ -15,6 +15,9 @@ Fixes:
 - The search for the vendor.bin keys skips libraries without the code pattern, remembers a search that found nothing,
   and stays within the file on damaged headers.
 
+- Updates: selecting OOS by hand after a cut install no longer picks the half-written image; a trial is confirmed
+  only by the build that runs; images outside the loader's limits are refused.
+
 New:
 
 - SCPI `:WAVeform:MODE RAW` reads every sample of the record in the screen window.
