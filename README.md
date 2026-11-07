@@ -236,8 +236,8 @@ The technical documents in [docs/](docs/README.md) say for each topic whether it
 
 Known limits:
 
-- Generator modulation: the deviation read back differs from the setting, by up to a quarter at PM 90 degrees. The cause is
-  not known yet, the measurement method may share it.
+- Generator modulation: most readings of AM depth, FM and PM deviation are within 5 %, single readings stray by up to a
+  third. Whether the generator or the measurement over only two modulation periods causes it is not known yet.
 - Generator DC level: the amplitude ranges differ by up to 0.1 V in their DC level, measured on CH2. Whether the
   generator's range calibration or the channel causes it is not clear yet.
 - High resolution only gains where the record has more samples than the screen has points.

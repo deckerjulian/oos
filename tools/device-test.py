@@ -1106,9 +1106,10 @@ def sine_amplitude(t, y, f):
     return math.hypot(r[0], r[1])
 
 
+
 @test("a1", need=(1,))
 def generator_modulation(s, o):
-    """AM, FM and PM measured on the raw samples: a dense record comes as min/max pairs, so the depth stays at 1000."""
+    """AM, FM and PM measured on the raw samples; a modulated output is started anew, about a second, before the reading: a dense record comes as min/max pairs, so the depth stays at 1000."""
     if s.sim:
         raise Skip("the demo source has no modulation")
     c = s.loop[0]
@@ -1123,27 +1124,41 @@ def generator_modulation(s, o):
     s.w(":SOUR:MOD:AM:DEPT 50")
     s.w(f":SOUR:MOD:AM:INT:FREQ {fm}")
     s.w(":SOUR:MOD ON")
-    s.settle(extra=0.6)
+    s.settle(extra=1.5)
     _, dt, v = s.wave(c)
     n = max(4, int(1 / fc / dt))
     env = [max(v[k : k + n]) for k in range(0, len(v) - n, n)]
     res["AM %"] = 100 * (max(env) - min(env)) / (max(env) + min(env))
     s.w(":SOUR:MOD:TYP FM")
     s.w(f":SOUR:MOD:FM:INT:FREQ {fm}")
-    for dev in (1e3, 5e3, 2e4):
-        s.w(f":SOUR:MOD:FM:DEV {dev}")
-        s.settle(extra=0.5)
+    # one record can lose or gain a zero crossing in the noise, which spoils its fit: the median of three
+    def three(read):
+        out = []
+        for _ in range(3):
+            out.append(read())
+            s.settle(n=2)
+        return statistics.median(out)
+
+    def fm_dev():
         z = crossings(*s.wave(c))
         f = [(1 / (b - a), (a + b) / 2) for a, b in zip(z, z[1:]) if b > a]
-        res[f"FM {dev:g}"] = sine_amplitude([x[1] for x in f], [x[0] for x in f], fm)
+        return sine_amplitude([x[1] for x in f], [x[0] for x in f], fm)
+
+    def pm_dev():
+        z = crossings(*s.wave(c))
+        slope = (z[-1] - z[0]) / (len(z) - 1)
+        return sine_amplitude(z, [(z[i] - z[0] - i * slope) * fc * 360 for i in range(len(z))], fm)
+
+    for dev in (1e3, 5e3, 2e4):
+        s.w(f":SOUR:MOD:FM:DEV {dev}")
+        s.settle(extra=1.5)
+        res[f"FM {dev:g}"] = three(fm_dev)
     s.w(":SOUR:MOD:TYP PM")
     s.w(f":SOUR:MOD:PM:INT:FREQ {fm}")
     for dev in (20, 90, 180):
         s.w(f":SOUR:MOD:PM:DEV {dev}")
-        s.settle(extra=0.5)
-        z = crossings(*s.wave(c))
-        slope = (z[-1] - z[0]) / (len(z) - 1)
-        res[f"PM {dev}"] = sine_amplitude(z, [(z[i] - z[0] - i * slope) * fc * 360 for i in range(len(z))], fm)
+        s.settle(extra=1.5)
+        res[f"PM {dev}"] = three(pm_dev)
     s.w(":SOUR:MOD OFF")
     s.w(":ACQ:MDEP AUTO")
     txt = ", ".join(f"{k}: {v:.1f}" for k, v in res.items())
