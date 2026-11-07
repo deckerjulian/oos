@@ -7,6 +7,15 @@ written in Rust. It runs from the scope's own SD card, next to the stock system,
 > OOS has only been run on one DHO924S so far, and several functions have never run on real hardware
 > ([status](#status)). Measurements made with OOS are not calibrated to any standard.
 
+<table>
+<tr><td><img src="docs/images/channels.png" alt="Two channels: a 10:1 probe on the calibration signal and the built-in generator"></td>
+<td><img src="docs/images/pane-spectrum.png" alt="A square wave with its spectrum and peak list under it"></td></tr>
+<tr><td><img src="docs/images/eye.png" alt="Eye diagram with TIE charts, bathtub and jitter breakdown"></td>
+<td><img src="docs/images/logic-analyser.png" alt="Analog channel with three logic analyser lines"></td></tr>
+</table>
+
+All pictures are screenshots of a DHO924S running OOS. More in the [gallery](#gallery).
+
 ## Thanks
 
 OOS builds on the work of these projects. Thank you to everyone behind them:
@@ -35,6 +44,7 @@ Sources and licences of the kernel parts are listed in [kernel/README.md](kernel
 - [Disclaimer](#disclaimer)
 - [Supported models](#supported-models)
 - [Features](#features)
+- [Gallery](#gallery)
 - [Status](#status)
 - [Try it without a scope](#try-it-without-a-scope)
 - [Installation](#installation)
@@ -190,6 +200,17 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 - System > Overclock: the sample clock in steps from 1.25 to 2 GHz, experimental, from the next power-on
 - Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits
 - Signed update packages with trial start and automatic rollback
+
+## Gallery
+
+| | |
+|---|---|
+| ![Results pane](docs/images/pane-results.png) | ![Trend pane](docs/images/pane-trend.png) |
+| Results pane: every measurement with statistics, peaks beside it | Trend pane: two measurements over time |
+| ![Labels on the trace](docs/images/labels.png) | ![Spectrum](docs/images/spectrum.png) |
+| Measurements labelled on the trace | Spectrum view with its peak list |
+| ![Main screen](docs/images/main.png) | ![System menu](docs/images/menu-system.png) |
+| The main screen, 200 kHz from the built-in generator | System menu |
 
 ## Status
 

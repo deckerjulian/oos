@@ -470,6 +470,14 @@ impl Ui {
 
     /// Recomputes the active analyser from the last record (every captured sample of the window).
     pub(super) fn analyzer_update(&mut self) {
+        // a source that is off shows nothing: the first channel that is on takes over
+        if let Some(on) = (0..NCH).find(|&c| self.m.ch[c].on) {
+            for src in [&mut self.m.spec_src, &mut self.m.eye_src] {
+                if !self.m.ch[*src].on {
+                    *src = on;
+                }
+            }
+        }
         // the second pane runs the spectrum beside the scope; the peak list of the Results pane needs it less often
         let beside = self.m.view == AView::Scope && self.pane_h() > 0 && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
         if beside && self.m.pane == tables::PANE_RESULTS {
