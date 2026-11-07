@@ -2028,13 +2028,22 @@ def la_protocol_trigger(s, o, p):
             s.set(trig_bus_val=val)
             time.sleep(1.5)
             seen[val] = [s.stat()["status"] for _ in range(8)]
+        # Single stops on a record with the event, and on no other: with a byte that never comes it keeps waiting
+        singles = {}
+        for val in (0x4F, 0x7E):
+            s.set(trig_bus_val=val)
+            s.w(":SING")
+            time.sleep(2.5)
+            singles[val] = s.stat()["run"]
+            s.w(":STOP")
     finally:
         stop.set()
         th.join()
         s.set(trig_type="Edge", dec_on="false", dec_ascii="true", dec_la="0 8 10 - -")
         s.w(":TRIG:SWE AUTO")
     assert set(seen[0x4F]) == {"Triggered"} and set(seen[0x7E]) == {"Wait"}, seen
-    return f"{seen[0x4F][0]} on a byte that comes, {seen[0x7E][0]} on one that does not"
+    assert singles == {0x4F: "Stop", 0x7E: "Run"}, singles
+    return f"{seen[0x4F][0]} on a byte that comes, {seen[0x7E][0]} on one that does not, Single {singles}"
 
 
 def with_rf(f):

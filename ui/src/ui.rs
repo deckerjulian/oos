@@ -1182,8 +1182,9 @@ impl Ui {
                         let _ = &mut rec;
                         self.zone_drops += 1;
                     }
-                    // protocol trigger, Normal: the hardware fires on every edge of the line, only the decoder decides
-                    Some(rec) if self.m.trig_type == TrigType::Bus && self.m.trig_mode == TrigMode::Normal && !rec.triggered && !rec.partial => {
+                    // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
+                    // decides; Single waits on for the record that holds the event
+                    Some(rec) if self.m.trig_type == TrigType::Bus && self.m.trig_mode != TrigMode::Auto && !rec.triggered && !rec.partial => {
                         self.m.status = TrigStatus::Wait;
                     }
                     Some(mut rec) => {
