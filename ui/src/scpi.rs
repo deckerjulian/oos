@@ -5,7 +5,7 @@
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
+//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
@@ -63,6 +63,8 @@ pub struct Scpi {
     clients: Vec<Client>,
     wav_src: usize,
     wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
+    /// :WAVeform:MODE: false = the screen record, true = every sample of the record in the screen window (RAW)
+    wav_raw: bool,
     err: Vec<String>,
 }
 
@@ -135,7 +137,7 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, err: Vec::new() }
+        Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
     }
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
@@ -516,7 +518,11 @@ impl Scpi {
                 return None;
             }
             if kw(n1, "MODE") {
-                return if query { t("NORM") } else { None };
+                if query {
+                    return t(if self.wav_raw { "RAW" } else { "NORM" });
+                }
+                self.wav_raw = arg.to_ascii_uppercase().starts_with("RAW");
+                return None;
             }
             if kw(n1, "FORMat") {
                 if query {
@@ -786,7 +792,8 @@ impl Scpi {
         let c = self.wav_src;
         let ch = &ui.m.ch[c];
         let vpd = ch.volts_per_div() as f64;
-        let (pts, dt, t0) = ui.record_info(c).unwrap_or((0, 0.0, 0.0));
+        let info = if self.wav_raw { ui.raw_info(c) } else { None };
+        let (pts, dt, t0) = info.or_else(|| ui.record_info(c)).unwrap_or((0, 0.0, 0.0));
         let (yinc, yref) = match self.wav_fmt {
             1 => (vpd * VDIV as f64 / 60000.0, 32768.0),
             _ => (vpd * VDIV as f64 / 250.0, 128.0),
@@ -870,7 +877,7 @@ impl Scpi {
 
     fn wave_data(&self, ui: &Ui, p: (f64, f64, f64)) -> Vec<u8> {
         let (yinc, yorg, yref) = p;
-        let v = ui.record_volts(self.wav_src);
+        let v = if self.wav_raw { ui.raw_volts(self.wav_src).unwrap_or_else(|| ui.record_volts(self.wav_src)) } else { ui.record_volts(self.wav_src) };
         match self.wav_fmt {
             2 => {
                 let s: Vec<String> = v.iter().map(|&x| e(x as f64)).collect();

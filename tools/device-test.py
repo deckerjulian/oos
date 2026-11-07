@@ -1109,62 +1109,79 @@ def sine_amplitude(t, y, f):
 
 @test("a1", need=(1,))
 def generator_modulation(s, o):
-    """AM, FM and PM measured on the raw samples; a modulated output is started anew, about a second, before the reading: a dense record comes as min/max pairs, so the depth stays at 1000."""
+    """AM, FM and PM on every sample of the record (:WAVeform:MODE RAW), ten modulation periods: 50 kHz carrier, 1 kHz
+    modulation. Zero crossings with hysteresis, so that noise at the crossing adds none."""
     if s.sim:
         raise Skip("the demo source has no modulation")
     c = s.loop[0]
     fc, fm = 5e4, 1e3
     s.w(f":CHAN{c}:SCAL 0.5")
     s.w(f":TRIG:EDGE:SOUR CHAN{c}")
-    s.w(":TIM:SCAL 0.0002")
-    s.w(":ACQ:MDEP 1000")
+    s.w(":TIM:SCAL 0.001")
+    s.w(":ACQ:MDEP 100000")
+    s.w(":WAV:MODE RAW")
     s.gen("SIN", fc, 2.0)
     res = {}
-    s.w(":SOUR:MOD:TYP AM")
-    s.w(":SOUR:MOD:AM:DEPT 50")
-    s.w(f":SOUR:MOD:AM:INT:FREQ {fm}")
-    s.w(":SOUR:MOD ON")
-    s.settle(extra=1.5)
-    _, dt, v = s.wave(c)
-    n = max(4, int(1 / fc / dt))
-    env = [max(v[k : k + n]) for k in range(0, len(v) - n, n)]
-    res["AM %"] = 100 * (max(env) - min(env)) / (max(env) + min(env))
-    s.w(":SOUR:MOD:TYP FM")
-    s.w(f":SOUR:MOD:FM:INT:FREQ {fm}")
-    # one record can lose or gain a zero crossing in the noise, which spoils its fit: the median of three
+
+    def record():
+        s.settle(n=2, extra=1.5)
+        t0, dt, v = s.wave(c)
+        return [t0 + k * dt for k in range(len(v))], v
+
+    def zeros(t, v, h=0.2):
+        out, armed = [], False
+        for k in range(1, len(v)):
+            if v[k] < -h:
+                armed = True
+            elif armed and v[k - 1] < 0 <= v[k]:
+                out.append(t[k - 1] + (t[k] - t[k - 1]) * -v[k - 1] / (v[k] - v[k - 1]))
+                armed = False
+        return out
+
     def three(read):
-        out = []
-        for _ in range(3):
-            out.append(read())
-            s.settle(n=2)
-        return statistics.median(out)
+        return statistics.median(read() for _ in range(3))
+
+    def am():
+        t, v = record()
+        n = max(4, round(len(v) / ((t[-1] - t[0]) * fc)))
+        env = [max(v[k : k + n]) for k in range(0, len(v) - n, n)]
+        mid = sum(env) / len(env)
+        return 100 * sine_amplitude(t[: len(env) * n : n], env, fm) / mid
 
     def fm_dev():
-        z = crossings(*s.wave(c))
-        f = [(1 / (b - a), (a + b) / 2) for a, b in zip(z, z[1:]) if b > a]
+        z = zeros(*record())
+        f = [(1 / (b - a), (a + b) / 2) for a, b in zip(z, z[1:])]
         return sine_amplitude([x[1] for x in f], [x[0] for x in f], fm)
 
     def pm_dev():
-        z = crossings(*s.wave(c))
+        z = zeros(*record())
         slope = (z[-1] - z[0]) / (len(z) - 1)
         return sine_amplitude(z, [(z[i] - z[0] - i * slope) * fc * 360 for i in range(len(z))], fm)
 
-    for dev in (1e3, 5e3, 2e4):
-        s.w(f":SOUR:MOD:FM:DEV {dev}")
-        s.settle(extra=1.5)
-        res[f"FM {dev:g}"] = three(fm_dev)
-    s.w(":SOUR:MOD:TYP PM")
-    s.w(f":SOUR:MOD:PM:INT:FREQ {fm}")
-    for dev in (20, 90, 180):
-        s.w(f":SOUR:MOD:PM:DEV {dev}")
-        s.settle(extra=1.5)
-        res[f"PM {dev}"] = three(pm_dev)
-    s.w(":SOUR:MOD OFF")
-    s.w(":ACQ:MDEP AUTO")
+    try:
+        s.w(":SOUR:MOD:TYP AM")
+        s.w(":SOUR:MOD:AM:DEPT 50")
+        s.w(f":SOUR:MOD:AM:INT:FREQ {fm}")
+        s.w(":SOUR:MOD ON")
+        res["AM %"] = three(am)
+        s.w(":SOUR:MOD:TYP FM")
+        s.w(f":SOUR:MOD:FM:INT:FREQ {fm}")
+        for dev in (1e3, 5e3, 2e4):
+            s.w(f":SOUR:MOD:FM:DEV {dev}")
+            res[f"FM {dev:g}"] = three(fm_dev)
+        s.w(":SOUR:MOD:TYP PM")
+        s.w(f":SOUR:MOD:PM:INT:FREQ {fm}")
+        for dev in (20, 90, 180):
+            s.w(f":SOUR:MOD:PM:DEV {dev}")
+            res[f"PM {dev}"] = three(pm_dev)
+    finally:
+        s.w(":SOUR:MOD OFF")
+        s.w(":WAV:MODE NORM")
+        s.w(":ACQ:MDEP AUTO")
     txt = ", ".join(f"{k}: {v:.1f}" for k, v in res.items())
     for k, v in res.items():
         want = 50 if k == "AM %" else float(k.split()[1])
-        assert abs(v / want - 1) < 0.1, txt
+        assert abs(v / want - 1) < 0.05, txt
     return txt
 
 

@@ -1053,6 +1053,22 @@ impl Ui {
         Some((r.ch[c].len(), r.dt, r.t0))
     }
 
+    /// RAW read-out: (points, dt, t0) of every sample of the hardware record inside the screen window; `None` when the
+    /// screen record is all there is. t0 is the record's start, within one sample.
+    pub fn raw_info(&self, c: usize) -> Option<(usize, f64, f64)> {
+        let rec = self.last[0].as_ref()?;
+        let r = rec.raw.as_ref()?;
+        let v = r.frame.ch.get(c)?;
+        (r.i1 <= v.len() && r.i1 > r.i0).then(|| (r.i1 - r.i0, r.frame.dt, rec.t0))
+    }
+
+    /// The samples of `raw_info`.
+    pub fn raw_volts(&self, c: usize) -> Option<Vec<f32>> {
+        let r = self.last[0].as_ref()?.raw.as_ref()?;
+        let v = r.frame.ch.get(c)?;
+        (r.i1 <= v.len() && r.i1 > r.i0).then(|| v[r.i0..r.i1].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
+    }
+
     pub fn record_volts(&self, c: usize) -> Vec<f32> {
         self.last[0].as_ref().map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect()).unwrap_or_default()
     }
