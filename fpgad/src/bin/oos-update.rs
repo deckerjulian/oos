@@ -13,7 +13,10 @@
 //!   oos-update rollback [--execute]        write the rollback image back to recovery and arm OOS
 //!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--execute]
 //!                                          first install from the running stock system, rescue set in DIR
-//!   oos-update confirm                     end the trial by hand (the watcher normally does it)
+//!   oos-update confirm                     end the trial by hand (the watcher normally does it); only once the image
+//!                                          on trial runs
+//!   oos-update arm                         select OOS for the next power-on: only a valid image in recovery, never
+//!                                          while an update job runs (oos-boot-oos-again)
 //!   oos-update mode oneshot|persist        oneshot (default): every power-on after an OOS start boots stock;
 //!                                          persist: OOS arms itself again after every confirmed start
 //!   oos-update boot                        rcS, early: count the start of a trial image; a trial image that starts
@@ -202,9 +205,19 @@ fn main() {
         }
         "confirm" => {
             need_data(&a);
-            match update::confirm(&state_path(&a), None) {
+            let running = std::fs::read_to_string("/etc/oos-build").ok();
+            match update::confirm_running(&state_path(&a), None, running.as_deref()) {
                 Ok(true) => println!("trial ended: the image in recovery is confirmed"),
                 Ok(false) => println!("no image on trial"),
+                Err(e) => die(&e),
+            }
+        }
+        "arm" => {
+            need_data(&a);
+            let mut c = open_card(&a, true);
+            match update::arm_by_hand(&mut c, &state_path(&a)) {
+                Ok(true) => println!("next boot: OOS"),
+                Ok(false) => println!("OOS was already selected"),
                 Err(e) => die(&e),
             }
         }

@@ -402,6 +402,17 @@ pub fn arm_checked(card: &mut Card, state_path: &Path) -> Result<bool, String> {
     card.arm_oos()
 }
 
+/// Selects OOS for the next power-on by hand (`oos-boot-oos-again`): only an image in `recovery` the loader takes, and
+/// never while an install or rollback runs. Unlike `arm_checked` it arms a trial image too: its second start is what
+/// rolls it back.
+pub fn arm_by_hand(card: &mut Card, state_path: &Path) -> Result<bool, String> {
+    let _l = lock(state_path)?;
+    let h = card.header(Region::Recovery).map_err(io("reading recovery"))?.ok_or("no image in recovery: not armed")?;
+    let (b, _) = card.read_image(Region::Recovery, h.len).map_err(io("reading recovery"))?;
+    check_image(&b).map_err(|e| format!("recovery: {}: not armed", e))?;
+    card.arm_oos()
+}
+
 /// An install or rollback holds the update lock right now (also one of another process: the start-up watcher).
 pub fn busy(state_path: &Path) -> bool {
     let Ok(f) = std::fs::OpenOptions::new().write(true).open(state_path.with_extension("lock")) else { return false };
@@ -437,7 +448,7 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
     let Some(n) = st.trial else { return Ok(Boot::NoTrial) };
     let cur = st.current.as_ref().map(|c| c.build.clone()).unwrap_or_default();
     if let Some(run) = running {
-        if run != cur {
+        if run.trim() != cur.trim() {
             let msg = format!("running build {} is not the one on trial ({}): trial dropped, recovery treated as hand-installed", short(run), short(&cur));
             st.trial = None;
             st.current = None;
@@ -454,10 +465,22 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
 /// The image passed its trial. Returns true when it was on trial. `expect`: only when the state still names this
 /// image as current.
 pub fn confirm(state_path: &Path, expect: Option<[u8; 32]>) -> Result<bool, String> {
+    confirm_running(state_path, expect, None)
+}
+
+/// `confirm`, and with `running` (the build of the running image) only if that is the build on trial: an image that was
+/// written but never started is not confirmed.
+pub fn confirm_running(state_path: &Path, expect: Option<[u8; 32]>, running: Option<&str>) -> Result<bool, String> {
     let _l = lock(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
     if st.trial.is_none() {
         return Ok(false);
+    }
+    if let Some(run) = running {
+        let cur = st.current.as_ref().map(|c| c.build.trim().to_string()).unwrap_or_default();
+        if run.trim() != cur {
+            return Err(format!("the running build {} is not the one on trial ({}): it has not started yet", run.trim(), cur));
+        }
     }
     if let Some(x) = expect {
         if st.current.as_ref().map(|c| c.sha256) != Some(x) {

@@ -134,6 +134,20 @@ next power-on boots stock: a boot counter with one try, without an own U-Boot.
   the install again.
 - The downgrade check only knows the state's `current`: with no state, an untracked image or after a rollback, any signed
   build can be installed from the LAN without authentication. It still runs on trial.
+- **A new kernel or device tree has no safety net.** The trial and the watcher run in the initramfs: a kernel that panics,
+  hangs or cannot reach the SD card before it starts again with OOS selected on every power-on, and the card has to come
+  out. Test a kernel change on a card you can take out before it goes into a package.
+- Running the USB install again to start OOS replaces what `recovery` holds with the stick's build, also a newer one
+  installed over the network since, and the rollback slot with it.
+- The watcher judges a start by oos-ui staying up and the start-up checklist finishing. A build that runs but measures
+  wrongly is confirmed and becomes the rollback image at the next install.
+- A full `/oos` stops the trial bookkeeping: an update then neither confirms nor rolls back. The next power-on in one-shot
+  mode starts stock.
+
+Selecting OOS by hand (`oos-boot-oos-again`, `oos-update arm`) checks that `recovery` holds an image the loader takes and
+that no install or rollback runs; after a cut job the next start stays stock. `oos-update confirm` ends a trial only when
+the image on trial is the one running. Images whose load addresses or sizes are outside what the loader handles
+(docs/boot.md) are refused at install.
 
 ## Web upload limits (ui/src/http.rs)
 

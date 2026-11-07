@@ -131,6 +131,18 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
     if ks == 0 || &b[k0 + 0x38..k0 + 0x3c] != b"ARM\x64" {
         return Err("kernel is not an arm64 Image".into());
     }
+    // where the loader puts the parts (docs/boot.md): the kernel at 0x280000 below 0x3a00000, ramdisk and second at
+    // 0x4bf0000 together below 0x3000000 bytes
+    let (kaddr, raddr) = (le32(b, 12), le32(b, 20));
+    if kaddr != 0x0028_0000 || raddr != 0x04bf_0000 {
+        return Err(format!("load addresses kernel {:#x}, ramdisk {:#x} (the loader uses 0x280000 and 0x4bf0000)", kaddr, raddr));
+    }
+    if 0x0028_0000 + ks > 0x03a0_0000 {
+        return Err(format!("kernel of {} bytes reaches past 0x3a00000", ks));
+    }
+    if rs + ss >= 0x0300_0000 {
+        return Err(format!("ramdisk and second of {} bytes reach past 0x3000000", rs + ss));
+    }
     Ok(info)
 }
 

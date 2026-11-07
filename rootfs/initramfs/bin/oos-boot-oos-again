@@ -1,9 +1,6 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Select OOS for the next boot: replace "KRNL" at the start of `boot` with "OOSK" (see oos-oneshot).
-dev=/dev/mmcblk0; BOOT_LBA=122880
-[ "$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 2>/dev/null | head -c 4)" = KRNL ] || { echo "boot magic is not KRNL, nothing changed"; exit 1; }
-dd if=$dev bs=512 skip=$BOOT_LBA count=1 of=/tmp/bootsec 2>/dev/null
-{ printf 'OOSK'; tail -c 508 /tmp/bootsec; } > /tmp/bootsec.new
-dd if=/tmp/bootsec.new of=$dev bs=512 seek=$BOOT_LBA count=1 conv=notrunc,fsync 2>/dev/null && sync && echo "next boot: OOS"
+# Select OOS for the next boot. oos-update checks that recovery holds an image the loader takes and that no install or
+# rollback runs; a half-written recovery after a cut job stays unselected, so the next start is stock.
+exec oos-update arm

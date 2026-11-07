@@ -596,3 +596,49 @@ fn only_verified_models_by_default() {
         assert_eq!(first::check_model(Some(&v), false).unwrap(), "DHO924S");
     }
 }
+
+#[test]
+fn arming_by_hand_needs_a_valid_recovery() {
+    let f = Fake::new("arm-hand", Some(1));
+    install(&mut f.card(), &f.state(), &package(2, "20261105-170000"), &[pk()], &RUN).unwrap();
+    // a cut install leaves stock selected and a half-written recovery: arming by hand refuses it
+    let mut c = f.card();
+    c.cut = Some(Region::Recovery);
+    assert!(install(&mut c, &f.state(), &package(3, "20261105-180000"), &[pk()], &RUN).is_err());
+    assert_eq!(&f.magic(), b"KRNL");
+    assert!(arm_by_hand(&mut f.card(), &f.state()).is_err());
+    assert_eq!(&f.magic(), b"KRNL", "the half-written image stays unselected");
+    // after a finished install it arms, a trial image included
+    install(&mut f.card(), &f.state(), &package(3, "20261105-180000"), &[pk()], &RUN).unwrap();
+    f.card().disarm_oos().unwrap();
+    assert!(arm_by_hand(&mut f.card(), &f.state()).unwrap());
+    assert_eq!(&f.magic(), b"OOSK");
+}
+
+#[test]
+fn confirm_needs_the_image_on_trial_to_run() {
+    let f = Fake::new("confirm-run", Some(1));
+    install(&mut f.card(), &f.state(), &package(2, "20261105-170000"), &[pk()], &RUN).unwrap();
+    // written, not started: the old build still runs
+    assert!(confirm_running(&f.state(), None, Some("20261101-000000\n")).is_err());
+    assert_eq!(f.st().trial, Some(0));
+    assert!(confirm_running(&f.state(), None, Some("20261105-170000\n")).unwrap());
+    assert_eq!(f.st().trial, None);
+}
+
+#[test]
+fn build_ids_compare_without_surrounding_space() {
+    let f = Fake::new("trim", Some(1));
+    install(&mut f.card(), &f.state(), &package(2, "20261105-170000 kernel x"), &[pk()], &RUN).unwrap();
+    assert_eq!(boot_started(&f.state(), Some("20261105-170000 kernel x\n")).unwrap(), Boot::Trial(1));
+}
+
+#[test]
+fn images_outside_the_loader_limits_are_refused() {
+    let mut b = bootimg(5);
+    b[12..16].copy_from_slice(&0x0008_0000u32.to_le_bytes());
+    // the id covers the header: a moved load address is refused for the address, not only for the id
+    let e = card::check_image(&b).unwrap_err();
+    assert!(e.contains("load address") || e.contains("id mismatch"), "{}", e);
+    assert!(card::check_image(&bootimg(5)).is_ok());
+}
