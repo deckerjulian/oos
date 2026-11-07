@@ -1,0 +1,23 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: drm/bridge: dw-hdmi: check for a CEC adapter in the HPD work
+
+repo_hpd_event() looked at hdmi->cec_adap->devnode without a test. The
+pointer is set by the dw-hdmi-cec driver when it probes, so a hot-plug
+event that comes first, or a board without that device, is a NULL pointer
+fault.
+
+The notification only matters to a registered adapter, so skip it while
+there is none.
+
+---
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -448,7 +448,7 @@
+ 			if (hdmi->plat_data->set_ddc_io)
+ 				hdmi->plat_data->set_ddc_io(data, hdmi->hpd_state);
+ #if IS_REACHABLE(CONFIG_DRM_DW_HDMI_CEC)
+-			if (hdmi->cec_adap->devnode.registered)
++			if (hdmi->cec_adap && hdmi->cec_adap->devnode.registered)
+ 				cec_queue_pin_hpd_event(hdmi->cec_adap,
+ 							hdmi->hpd_state,
+ 							ktime_get());

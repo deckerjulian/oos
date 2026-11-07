@@ -1,0 +1,620 @@
+# OOS: an open operating system for the Rigol DHO800/DHO900
+
+OOS replaces the software of a Rigol DHO800/DHO900 oscilloscope with a Linux 6.12 kernel and a new scope application
+written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
+
+> **Experimental software. Read the [disclaimer](#disclaimer) before you install it.**
+> OOS has only been run on one DHO924S so far, and several functions have never run on real hardware
+> ([status](#status)). Measurements made with OOS are not calibrated to any standard.
+
+## Thanks
+
+OOS builds on the work of these projects. Thank you to everyone behind them:
+
+- **[NovaOS](https://github.com/Bradyok/novaos-kernel-source)** by Olympian LED, Inc., for publishing the GPL source of
+  its Linux port to this hardware, which showed what a kernel needs here and where OOS started. The patches, device tree
+  and configuration of the OOS kernel are written anew today. Its install notes also helped with the loader's image format.
+- **[Norbert Kiszka](https://github.com/norbertkiszka)**, for the modified firmware for these scopes and the findings
+  shared in public, which showed how much more this hardware can do.
+- **[Linux](https://kernel.org)**, the kernel underneath everything, and **[Rockchip](https://github.com/rockchip-linux/kernel)**
+  for the board support it runs on here.
+- **[Xilinx XDMA driver](https://github.com/Xilinx/dma_ip_drivers)**, which connects the SoC to the FPGA over PCIe.
+- **[BusyBox](https://busybox.net)**, the userland of the image.
+- **[e2fsprogs](https://e2fsprogs.sourceforge.net)** by Theodore Ts'o, which checks the data partition at every start.
+- **[wpa_supplicant](https://w1.fi/wpa_supplicant/)** by Jouni Malinen and contributors, for WLAN.
+- **[linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)** and Realtek, for the
+  firmware of the WLAN stick.
+- **[Rust](https://www.rust-lang.org)** and the **[libc](https://github.com/rust-lang/libc)** crate, the only dependency
+  of the OOS code.
+- **[Roboto](https://github.com/googlefonts/roboto-classic)**, the typeface of the screen.
+
+Sources and licences of the kernel parts are listed in [kernel/README.md](kernel/README.md).
+
+## Contents
+
+- [Disclaimer](#disclaimer)
+- [Supported models](#supported-models)
+- [Features](#features)
+- [Status](#status)
+- [Try it without a scope](#try-it-without-a-scope)
+- [Installation](#installation)
+  - [Without opening the scope](#without-opening-the-scope)
+- [Daily use](#daily-use)
+- [If something goes wrong](#if-something-goes-wrong)
+- [Going back to stock](#going-back-to-stock)
+- [Repository layout](#repository-layout)
+- [Development](#development)
+- [Licences](#licences)
+
+## Disclaimer
+
+**Use OOS entirely at your own risk.** OOS is provided "as is", without warranty of any kind, express or implied,
+including but not limited to merchantability, fitness for a particular purpose and non-infringement. To the maximum
+extent permitted by applicable law, the authors and contributors are not liable for any damage or loss arising from
+its use or from following these instructions. That includes damage to the instrument, to connected equipment or
+devices under test, loss of data or calibration, lost warranty, wrong measurements, injury and any consequential loss.
+
+Installing OOS means that you accept in particular the following risks:
+
+- **Warranty.** The boot card is inside the instrument. **Installing OOS with a second card means opening the scope,
+  and that voids the warranty.** The USB install does not open it, but it changes the card, and nothing here promises
+  that your warranty survives that. If it goes wrong, you may have to open the scope anyway.
+- **Instrument damage.** OOS drives the hardware directly: FPGA, ADC, front ends, sample clock, fan, relays and the
+  generator output. A software fault can leave hardware in a state the stock firmware would never select. A failed fan
+  control or a wrong setting can cause overheating or damage.
+- **Data loss.** A mistake while writing the card can make the scope unbootable or destroy the factory calibration
+  stored on it. Without a good copy of your original card this data **cannot be replaced**.
+- **Licences.** Option licences of the stock system have been seen to stop working after running OOS, and had to be
+  entered again. Keep your licence keys at hand.
+- **Wrong measurements.** OOS is not a calibrated or certified measuring instrument. Readings, trigger behaviour,
+  decoders and analysis results can be wrong without any visible sign. Do not use OOS for safety-relevant, medical,
+  legal, commercial or compliance measurements, and never rely on it to decide whether something is safe to touch.
+- **Electrical safety.** OOS changes nothing about the input ratings of the instrument. Observe the manufacturer's
+  safety instructions and ratings. The open instrument contains a mains power supply with dangerous voltages. Disconnect
+  the mains and all probes before you open it, and close it again before you connect mains. Only open it if you know
+  how to do this safely.
+- **Network security.** OOS has no authentication: a root shell on telnet without a password, SCPI, VXI-11, the web
+  remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
+  network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network only,
+  never directly to the internet.**
+- **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can
+  also lift limits. Values outside the defaults are outside any rating and can make the scope unusable or damage it.
+  Overclocked samples are worse and at 2 GHz wrong: see [docs/models.md](docs/models.md).
+
+OOS is an independent project. It is not affiliated with, endorsed by or supported by RIGOL TECHNOLOGIES CO., LTD.
+Rigol and all other names are trademarks of their respective owners and are used here only to identify the hardware.
+Do not contact Rigol for support with OOS. The repository contains no Rigol code. At run time OOS uses the FPGA image
+already in the scope's flash, the calibration files on its own card and the stock software on that card, which it needs to
+read the scope's identity. It only reads them.
+
+## Supported models
+
+OOS reads the model from `/rigol/data/vendor.bin` at start and adapts channels, logic analyser, generator and EXT
+trigger to it. The stock software has to be on the card for that; without it, set `model = ...` in `/oos/limits.conf`.
+Details and limits: [docs/models.md](docs/models.md).
+
+| Model | Rated bandwidth | Channels | Logic analyser | Generator | EXT trigger |
+|---|---|---|---|---|---|
+| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes |
+| DHO804 / DHO814 | 70 / 100 MHz | 4 | - | - | - |
+| DHO824 | 250 MHz | 4 | - | - | - |
+| DHO914 / DHO914-EDU | 125 MHz | 4 | yes | - | - |
+| DHO914S | 125 MHz | 4 | yes | yes | - |
+| DHO924 / DHO924-EDU | 250 MHz | 4 | yes | - | - |
+| DHO924S | 250 MHz | 4 | yes | yes | - |
+
+**Tested on hardware: DHO924S only.** All other models are prepared from the known model table and have never run OOS.
+The feature columns follow Rigol's model line-up; whether the EDU variants have the LA port is not confirmed. DHO1000,
+HDO1000/2000/4000 and MHO models are different boards and are not supported.
+
+Limits on all models:
+
+| | 1 channel | 2 channels | 3-4 channels |
+|---|---|---|---|
+| Sample rate per channel | 1.25 GSa/s | 625 MSa/s | 312.5 MSa/s |
+| Memory depth per channel | 125 M | 62.5 M | 31.25 M |
+| Memory depth with the LA on | 31.25 M | 12.5 M | 10 M |
+
+OOS does not limit the bandwidth to the rated value: "Full" opens the front-end filter on every model. The real
+bandwidth depends on the hardware, and you can measure it with the [bandwidth test](docs/bandwidth-test.md).
+
+## Features
+
+**Acquisition**
+- Normal, peak detect, average and high-resolution modes (high resolution in software, it needs more samples than screen
+  points); Auto or fixed memory depth up to 125 M points
+- Time base from 1 ns/div; roll mode from 200 ms/div, scan mode at slow time bases
+- Zoom window, pinch and drag on the touch screen
+
+**Trigger**
+- Hardware trigger: edge, pulse, slope, video, pattern, duration, timeout, runt, window, delay, setup/hold, Nth edge
+- Protocol trigger (bus events found by the decoders)
+- Zone trigger: up to two boxes or polygons a waveform must or must not cross
+
+**Display**
+- Dots or vectors, colour grade, waveform histogram, dotted graticule
+- HDMI output as a mirror or as a separate waveform workspace
+
+**Measurement and maths**
+- 35 automatic measurements plus delay and phase between channels, 14 at once, with statistics
+- Time, voltage, tracking and XY cursors; DVM and counter from the record
+- Second pane under the plot, as high as its content: spectrum with a peak list, results table with statistics, cursors
+  and peaks, decoder events, or the trends of two measurements
+- Measurements labelled on the trace: level lines and arrows with their values
+- Data logger: measurements as CSV at an interval from 1 s to 1 h, to the stick or the card
+- 8 math channels, also on each other, with free formulas (`sqrt(CH1^2+CH2^2)`): add, subtract, multiply, divide, integrate, differentiate, abs, sqrt, log, ln, exp, Ax+B,
+  low/high/band-pass and band-stop filters, FFT
+- Reference waveforms with scale, offset, colour, name and CSV export and import, mask test
+
+**Protocol decoders (25)**
+- Four decoders at once, with an event table you can export and that jumps to an event
+- Serial: UART, UART 9-bit, I2C, SPI, Quad-SPI, I3C, 1-Wire, DS2482, SWD, JTAG
+- Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553
+- Audio, lighting, industrial: I2S, S/PDIF, DMX512, Modbus RTU, Modbus ASCII
+- Other: USB low/full speed, USB PD, parallel
+
+**Analysers**
+- Spectrum analyser: resolution from the whole record, span that follows the signal in the pane, fundamental and harmonics
+  found as numbered peaks, RBW, trace modes, waterfall, THD, SNR, SFDR, limit line from a trace
+- Eye diagram with voltage and UI axes, density colours, TIE trend, histogram and spectrum, bathtub curve. Jitter split into TJ, RJ and DJ (dual-Dirac model) and measured DCD, DDJ and PJ, pooled over records
+- Power analysis: quality, harmonics, switching, ripple
+- Bode plot with the built-in generator or an external one (Rigol DG, Siglent SDG, generic SCPI)
+- Identify: names a signal and sets up a trigger and decoder for it
+- Bandwidth test: rise time, overshoot and magnitude response from a fast edge
+
+**Logic analyser** (models with an LA port, PLA2216 probe)
+- D0..D15, hardware trigger on the digital lines, also in roll and scan mode. Thresholds are set as under stock, but on the unit tested so far neither system changes the level the lines switch at
+
+**Generator** (S models)
+- Sine, square, ramp, pulse, noise, DC, arbitrary wave (also captured from a channel), AM, FM, PM
+
+**Remote control**
+
+| Interface | Port | Purpose |
+|---|---|---|
+| SCPI over TCP | 5555 | Rigol-style command subset, see [ui/src/scpi.rs](ui/src/scpi.rs) |
+| VXI-11 | 111, 9009 | VISA `TCPIP::<ip>::INSTR` |
+| Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
+| LXI identification | 8080 | `/lxi/identification` |
+| MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
+| Telnet | 23 | root shell, no password |
+
+All of them run over Ethernet and over WLAN with a USB stick in the front port (RTL8188EU; open, WPA and WPA2 personal
+networks, see [docs/wlan.md](docs/wlan.md)).
+
+**System**
+- Own cold boot of all hardware: the stock system never has to run first
+- Self-calibration into own files (`/oos/cal`); factory files are never changed
+- System > Overclock: the sample clock in steps from 1.25 to 2 GHz, experimental, from the next power-on
+- Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits
+- Signed update packages with trial start and automatic rollback
+
+## Status
+
+| Area | State |
+|---|---|
+| Boot, cold boot, acquisition, trigger, roll and scan, touch, front panel, generator (sine, built-in Bode), self-calibration | run on a DHO924S |
+| Signed updates from the web page, trial start and confirmation, install over ADB | run on a DHO924S |
+| Logic analyser with a PLA2216: lines, pulse widths, edge, pulse, pattern, duration and protocol trigger, UART, SPI and I2C on the lines, roll, scan, whole deep records, CSV | run on a DHO924S, three lines (D0 to D2) driven; thresholds have no effect here, under stock neither |
+| Generator modulation (AM, FM, PM), deep memory, limits, web, MCP, VXI-11 | run on a DHO924S |
+| HDMI output | run on a DHO924S |
+| Automatic rollback of a bad update | tests on the host only |
+| USB install without opening the scope | tested on a card file; never run on a scope |
+| Generator noise, system info, bandwidth test | tests on the host only |
+| USB storage stick, 10:1 probe | run on a DHO924S |
+| WLAN | driver, firmware and scan run on a DHO924S with an RTL8188EU stick; joining a network tested on simulated radios only |
+| Overclocking (System > Overclock) | run on a DHO924S: 1.5 GHz with more noise, 2 GHz with wrong samples; the default stays 1.25 GHz |
+| Spectrum, eye and jitter, results and trend panes, measurement labels, Auto | run on a DHO924S with the generator and an RF source |
+| Protocol decoders | tested with simulated signals; only some with real signals |
+| All models other than the DHO924S | never run |
+| Hardware averaging, 800 ps/div | not implemented |
+
+The technical documents in [docs/](docs/README.md) say for each topic whether it is verified on the unit.
+
+Known limits:
+
+- Generator modulation: the deviation read back differs from the setting, by up to a quarter at PM 90 degrees. The cause is
+  not known yet, the measurement method may share it.
+- Above 2 Vpp the generator's output sometimes sits about 0.1 V low. The cause is not known yet; up to 2 Vpp it is not
+  affected.
+- Protocol trigger with Single: the hardware stops after the first edge, so the record may not hold the event. Normal
+  works: the picture waits for a match.
+- High resolution only gains where the record has more samples than the screen has points.
+- Logic analyser: D3 to D15 were not driven with a signal yet. With two or more channels at 10 to 100 ms/div a short piece
+  of the LA record is sometimes missing, in about one of ten records.
+- WLAN: joining a network has not been tried on the unit.
+
+## Try it without a scope
+
+OOS builds on macOS and Linux and can run scripted without hardware, with its simulated demo signals. It writes a
+screenshot in PPM format next to the script:
+
+```sh
+cat > /tmp/demo.txt <<'EOF'
+frames 30
+shot demo.ppm
+EOF
+cd ui && cargo run -- --script /tmp/demo.txt
+```
+
+The commands are listed at the top of [ui/src/cmd.rs](ui/src/cmd.rs). Add `--model DHO804` to act as another model.
+
+To try the web remote with the same demo signals, run this and open `http://localhost:8080/`:
+
+```sh
+cd ui && cargo test web_demo -- --ignored --nocapture
+```
+
+It runs for 5 minutes.
+
+## Installation
+
+There are three ways:
+
+| Way | Opens the scope | Your original card | State |
+|---|---|---|---|
+| **Second card**, steps 1 to 8 below | yes | stays untouched in a drawer | run on a DHO924S |
+| **[USB stick](#from-a-usb-stick)** | no | OOS goes on it, beside stock | tested on a card file only, never on a scope |
+| **[ADB over the network](#over-adb)** | no | OOS goes on it, beside stock | run on a DHO924S with a modified stock system |
+
+All three need steps 3 to 5 to build the image.
+
+The steps below use macOS, where they were developed. `tools/sdcard-clone.sh` needs macOS; on Linux, use `dd` for the
+clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
+
+**You will need for the second card**
+
+- A DHO800/DHO900. The boot SD card is inside, so **you have to open the scope, which voids the warranty**
+- A **second SD card** of the same size or larger. OOS is only ever installed on this card.
+- A card reader
+- [Rust](https://rustup.rs) with `rustup target add aarch64-unknown-linux-musl`
+- Docker, running, on an arm64 host (Apple silicon). On other hosts the kernel build needs an arm64 Docker environment.
+- Python 3
+
+The whole process takes about an hour, mostly for copying the cards.
+
+### 1. Back up the original card
+
+This step protects your factory calibration. **Do not skip it.**
+
+1. Switch the scope off, unplug the mains cable and all probes, open the instrument and take out the boot SD card.
+2. Put the card in the reader and find its disk number:
+   ```sh
+   tools/sdcard-clone.sh list
+   ```
+3. Read the whole card into an image. The tool also writes a checksum and a layout report:
+   ```sh
+   tools/sdcard-clone.sh read diskN ~/oos-backup/sd-original.img
+   ```
+4. Keep the image in at least two places, then **put the original card away**. From here on you only use the second
+   card.
+
+### 2. Write the clone to the second card
+
+```sh
+tools/sdcard-clone.sh list
+tools/sdcard-clone.sh write ~/oos-backup/sd-original.img diskM    # asks you to type the disk id, then verifies
+```
+
+Put the second card into the scope, close the instrument and start it once. The stock system must work as before, with
+its calibration and licences. Then unplug the scope and take the card out again.
+
+### 3. Build the kernel
+
+Put the kernel source archive into `kernel/src/` ([kernel/README.md](kernel/README.md)), then:
+
+```sh
+kernel/build-base.sh        # in Docker, 5-30 minutes depending on the machine, result in kernel/out/base
+```
+
+You only have to repeat this when the kernel changes.
+
+### 4. Signing key
+
+Update packages must be signed. To let everyone build updates for every OOS scope, the repository includes a **public
+community key**, `keys/community-signing.key`, and all builds trust it. You do not have to do anything: the build uses
+it automatically.
+
+The community key only protects against damaged packages. It says nothing about who built one, so **only install
+packages from people you trust.**
+
+If you want a scope to accept only your own builds, create your own key before you build:
+
+```sh
+cd fpgad && cargo run --release --bin oos-update -- keygen && cd ..
+```
+
+Replace all keys in `keys/update.pub` with the line it prints. The secret key is in
+`~/.config/oos/update-signing.key`. **Back it up and never publish it.** Details:
+[docs/update.md](docs/update.md).
+
+### 5. Build the image
+
+```sh
+boot/build-dev-image.sh
+```
+
+This produces `boot/out/oos-dev.img` for the card, `boot/out/oos-dev.oosupd`, the signed update package, and
+`boot/out/DHO800_DHO900_OOS_Install.GEL` for the USB stick. If the script fails, the previous image stays in place, so
+check the file's time.
+
+### 6. Install OOS on the second card
+
+Put the second card in the reader. Unmount it, then do a dry run, which only checks the card and prints the plan:
+
+```sh
+diskutil unmountDisk /dev/diskM
+sudo python3 boot/card-install.py install /dev/rdiskM --image boot/out/oos-dev.img --fallback-stock
+```
+
+The tool refuses cards that do not have the stock layout. If the plan looks right, write it:
+
+```sh
+sudo python3 boot/card-install.py install /dev/rdiskM --image boot/out/oos-dev.img --fallback-stock --execute
+```
+
+This saves the current `recovery` partition to `backups/`, writes OOS into `recovery`, reads it back, and copies the
+stock boot image into the empty `backup` partition. That copy is the fallback if the loader refuses OOS.
+
+Now select OOS for the next start:
+
+```sh
+sudo python3 boot/switch.py oos /dev/rdiskM --execute
+sudo python3 boot/switch.py show /dev/rdiskM
+```
+
+### 7. First start
+
+1. Eject the card, put it into the scope, close the instrument, connect Ethernet and switch on.
+2. You see the Rigol logo from the stock loader, then the OOS start-up screen with a checklist.
+3. The scope screen appears. Each failed step is named on the screen. A missing calibration file is a warning: the
+   scope then runs on defaults and is less accurate.
+
+The IP address comes from DHCP and is shown in the top bar. Without DHCP the scope uses `192.168.177.64/24`.
+
+### 8. Choose how OOS starts
+
+By default OOS is **one-shot**: every start of OOS restores the stock boot, so the **next power-on starts the stock
+system**. This is the safe mode for a new installation.
+
+To start OOS once more, run this in a telnet session and power-cycle the scope:
+
+```sh
+oos-boot-oos-again
+```
+
+When OOS works for you, make it the normal system: set **System > Boot mode** to **Persist**, or run
+`oos-update mode persist`. It counts from the next power-on. One-shot goes back, and the next power-on starts stock.
+
+Even then, a start that does not complete leaves the stock boot in place, so the next power-on starts the stock system.
+
+### Without opening the scope
+
+Both ways install OOS from the running stock system onto the card that is in the scope. Build steps 3 to 5 first.
+
+**Read this before you start**
+
+- **Neither way has run on a scope yet.** Try it on a card you can take out if you can.
+- **There is no second card to fall back on.** A refused image is harmless, the loader starts the stock copy. But if the
+  kernel hangs before the first script of the image runs, every power-on hangs the same way. The card then has to come
+  out, so **the scope has to be opened after all.**
+- Only the DHO924S is accepted, the only model OOS has run on. See the [disclaimer](#disclaimer).
+
+The install writes `recovery`, the first 32 MiB of `backup` and, as its very last step, the 4 bytes of `boot` that select
+OOS. A failure or power cut before that step leaves a card that starts stock as before, and running the same install
+again finishes the job. No stock update step runs, and the FPGA flash and `/rigol` are not touched. Details:
+[docs/install-usb.md](docs/install-usb.md).
+
+#### From a USB stick
+
+You need a FAT32 USB stick with at least 200 MiB free.
+
+1. Copy `boot/out/DHO800_DHO900_OOS_Install.GEL` to the top folder of the stick. Keep the name: the scope ignores a file
+   whose name does not end in `.GEL` and contain `DHO800_DHO900`.
+2. For a dry run, put an empty file `oos-dry-run.txt` next to it. This runs all checks and saves the rescue set, without
+   writing the card.
+3. Start the stock system, put the stick into the front USB port, open **Storage > Upgrade**, choose the file and start
+   it. This takes about a minute. The screen says at the end whether it worked.
+4. Read `oos-install.log` on the stick on a computer. It should end with `exit code 0`.
+5. Delete `oos-dry-run.txt` and run the update again. The log should end with `OOS selected for the next power-on`
+   and `exit code 0`.
+6. Copy the folder `OOS-rescue` from the stick to a computer and keep it. It holds your calibration (`rigol-data`), the
+   stock `recovery` and the start of the card.
+7. Switch the scope off and on. OOS starts.
+
+The scope does not restart by itself after this update.
+
+#### Over ADB
+
+You need `adb` on your computer and a scope that answers on its network port 55555 with root access. This is known from a
+modified stock system; it has not been checked on an unmodified one.
+
+```sh
+adb connect <scope>:55555
+adb root
+adb connect <scope>:55555        # adb root drops the connection
+
+# your calibration and licences, onto your computer
+adb pull /rigol/data rigol-data
+
+# the tool for the scope, not the one in fpgad/target/release
+adb push fpgad/target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
+adb push boot/out/oos-dev.oosupd /data/local/tmp/
+adb shell chmod 755 /data/local/tmp/oos-update
+
+# dry run: all checks, the rescue set, the card is not written
+adb shell /data/local/tmp/oos-update gel-install /data/local/tmp/oos-dev.oosupd --save /data/local/tmp/OOS-rescue
+
+# the rescue set onto your computer: keep it
+adb pull /data/local/tmp/OOS-rescue
+
+# the install: last line "OOS selected for the next power-on"
+adb shell /data/local/tmp/oos-update gel-install /data/local/tmp/oos-dev.oosupd --save /data/local/tmp/OOS-rescue --execute
+```
+
+Before the last command, check the rescue set on your computer: run `sha256sum -c SHA256SUMS` in `OOS-rescue`
+(`shasum -a 256 -c SHA256SUMS` on macOS). After the install, switch the scope off and on. OOS starts.
+
+The rescue set takes 132 MiB on the scope. Afterwards you can remove it with
+`adb shell rm -rf /data/local/tmp/OOS-rescue /data/local/tmp/oos-update /data/local/tmp/oos-dev.oosupd`.
+
+#### After the install
+
+OOS starts once, then the next power-on starts stock again ([step 8](#8-choose-how-oos-starts)). To start OOS once more,
+run the same install from the stock system: it writes nothing but the selection. To stay on OOS, use
+System > Boot mode > Persist on OOS.
+
+The stock `recovery` is replaced by OOS. Everyday stock use does not need it, but anything that starts into it no longer
+works. Putting it back needs the card in a reader, with `recovery.bin` from the rescue set and `boot/card-install.py restore`.
+
+## Daily use
+
+**Controls.** Front-panel keys and knobs work as labelled. The Menu button at the bottom left reaches every function.
+
+**Auto.** Works on the channels that are on, at full bandwidth, and sets the memory depth back to Auto. With no signal it
+restores the set-up.
+
+**Generator.** Tap the frequency in the generator window for a keypad with units; the limits apply by themselves. The - and
++ buttons step it. Changes inside one amplitude range take effect at once and keep the output running.
+
+**Analysers.** Menu > Analysers holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. They replace the
+waveform; the button with three dots at the top right of the plot leads to Exit, Settings and, for the eye, Clear eye.
+
+**Panes.** Display > Pane puts a second view under the waveform: Spectrum with a peak list, Results with statistics, cursors
+and peaks, decoder Events, or Trend with two charts. Tap the pane's title for its settings, a trend chart to change its
+measurement, the peak list's button to sort it. The x closes the pane.
+
+**Measurements.** A default set-up shows six in the strip above the cards. Measure > Labels on trace draws level lines and
+arrows with their values on the waveform.
+
+**Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz the noise rises, and 2 GHz
+gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
+
+**Web remote.** Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the
+window, so it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer;
+records above 2 million points have to be saved on the scope or read over SCPI. Each picture is 1.8 MB, so over WLAN it runs
+slower: Pause stops the pictures, and a tab in the background stops them too. The Update link leads to the update page.
+
+**Files.** Setups are kept on OOS's own persistent area `/oos` and survive a power cycle. Screenshots and CSV files go to
+a USB stick in the front port (FAT32, exFAT or ext4), into the folder `OOS`, and can be pulled whenever nothing is being
+saved. Without a stick they go to `/tmp/oos`, which is in RAM and lost at power-off, unless you set another directory
+with `--store-dir`. The web remote saves them to your computer too. `/oos` holds 16 MiB for calibration and settings.
+
+**Self-calibration.** System > Self-cal. Let the scope warm up for 30 minutes and disconnect all inputs first. It takes
+about 5 minutes per channel and pass, with 4 passes. Results go to `/oos/cal` and are preferred over the factory files,
+which are never changed.
+
+**Updates.** Build a new package, then install it on the running scope:
+
+```sh
+curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update
+```
+
+or open `http://<scope>:8080/update` in a browser, then power-cycle. The new build runs on trial. If it crashes in a
+loop or never becomes stable, the previous image is written back. System > Update shows the state and
+System > Roll back update returns to the previous image. Details: [docs/update.md](docs/update.md).
+
+**Network.** Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web
+remote. For WLAN, put an RTL8188EU stick into the front USB port, tap Find WLAN networks, tap a network and enter the
+password. It joins by itself from then on. Everything open on Ethernet is then open on that network too. Details:
+[docs/wlan.md](docs/wlan.md).
+
+**Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin`, little endian: `OOSW`, u32 version (1), u32 channels, u64
+samples per channel, f64 dt, f64 t0, then per channel its number (u32) and the samples (f32, volts). Both hold the record
+on the screen.
+
+**Experimental limits.** `/oos/limits.conf` overrides limits for your own tests. Every applied value is shown at start
+and in the System info. See the [disclaimer](#disclaimer) and [docs/models.md](docs/models.md).
+
+## If something goes wrong
+
+Your scope can always be recovered as long as you have the image from step 1: the worst case is writing it to a card
+again. Unless noted, the fixes below need the card in the reader, so you have to open the scope again
+(`diskutil unmountDisk` first).
+
+| What you see | Meaning | What to do |
+|---|---|---|
+| The stock system starts instead of OOS | one-shot mode, or the loader refused the OOS image and used the fallback | `boot/switch.py show`, then select OOS again. If that repeats, rebuild the image. |
+| Rigol logo stays, nothing else, on every start | the kernel hangs before OOS runs | `sudo python3 boot/switch.py stock /dev/rdiskM --execute`, then install a working image |
+| Black screen; a Rockchip USB device (2207:330c) appears | the loader refused `recovery` and has no fallback | `switch.py stock`. If needed, `sudo python3 boot/card-install.py restore /dev/rdiskM --backup backups/recovery-<date>.bin --execute` |
+| Start-up screen stops at a step | a hardware step failed | Read the stage on the screen. Logs are at `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over telnet. |
+| A new build misbehaves | | System > Roll back update, or `oos-update rollback --execute` |
+| Nothing helps | | Write `sd-original.img` to the second card again (step 2) |
+
+Serial console: UART2, 115200 8N1. The stock loader also reports there why it refuses an image.
+
+## Going back to stock
+
+- In one-shot mode: power-cycle. System > Back to stock says the same.
+- In persist mode: System > Boot mode > One-shot, then power-cycle. Or, with the card in the reader:
+  `sudo python3 boot/switch.py stock /dev/rdiskM --execute`
+- For good: put your original card back. After an install without opening the scope, see
+  [After the install](#after-the-install).
+
+OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and `parameter` partitions.
+
+## Repository layout
+
+| Path | Content |
+|---|---|
+| `hal/` | Hardware layer: FPGA register sequences, front ends, ADC, PLL, cold boot, models, updates |
+| `dsp/` | Signal processing: triggers, measurements, maths, decoders, analysers |
+| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, web remote |
+| `fpgad/` | `oos-fpgad` bring-up tool and `oos-update` |
+| `boot/` | Boot image packer, image build, card installer, USB installer, stock/OOS switch |
+| `rootfs/initramfs/` | Init scripts and firmware of the image |
+| `rootfs/build-wlan-tools.sh`, `rootfs/build-fsck.sh` | Build wpa_supplicant and e2fsck in Docker |
+| `keys/` | Public keys trusted for updates, community signing key |
+| `tools/` | Card cloning and analysis, device inventory, Python models ([README](tools/README.md)) |
+| `kernel/` | Kernel source, own patches, device tree, configuration, build in Docker, licences ([README](kernel/README.md)) |
+| `docs/` | Technical documentation: architecture, boot, hardware, register-level protocols ([index](docs/README.md)) |
+
+## Development
+
+Each crate builds on its own. The hardware code is Linux-only, so check it for the target as well:
+
+```sh
+(cd hal && cargo test)
+(cd dsp && cargo test)
+(cd ui && cargo test)
+(cd fpgad && cargo test)
+(cd ui && cargo check --target aarch64-unknown-linux-musl)
+```
+
+Tests that need the calibration files of a real unit are skipped without them. To run them, copy `/rigol/data` of your
+scope to `local/cal-full` and `local/cal` (the folder `local/` stays out of git). `OOS_CAL_DIR` overrides this for most of
+them.
+
+`tools/plan-matrix.sh` prints the register sequences of a fixed set of acquisitions without touching the hardware. Run
+it with two builds and compare the output to prove that a change leaves the analog path alone.
+
+The test `every_menu_fits` walks all menus and fails on text wider than its control or a dialog off the screen.
+`OOS_GALLERY=<dir> cargo test gallery -- --ignored` in `ui/` writes every screen as a picture.
+
+`tools/gel-sim.sh` runs the USB install on a file laid out like a stock card.
+
+`tools/usb-sim.sh` tests the handling of USB sticks in a virtual machine, with disks that get pulled.
+
+`tools/wlan-sim.sh` tests the WLAN path on simulated radios in a virtual machine, without a stick. It needs Docker,
+`qemu-system-aarch64` and one finished image build.
+
+Start with [docs/architecture.md](docs/architecture.md).
+
+## Licences
+
+OOS is free software under the GNU General Public License, version 2 or (at your option) any later version. See
+[LICENSE](LICENSE).
+
+Third-party parts keep their own licences:
+
+| Part | Licence |
+|---|---|
+| Linux kernel and patches | GPL-2.0, device trees GPL-2.0+ OR MIT; see [kernel/README.md](kernel/README.md) |
+| XDMA driver | Dual BSD/GPL |
+| BusyBox | GPL-2.0 |
+| e2fsck (e2fsprogs) | GPL-2.0; the notice is in the image at `/etc/licenses/e2fsck` |
+| Roboto font | Apache-2.0, see [ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt) |
+| wpa_supplicant | BSD-3-Clause; the text is in the image at `/etc/licenses/wpa_supplicant` |
+| RTL8188EU firmware | Realtek's redistribution licence, see [LICENCE.rtlwifi_firmware.txt](rootfs/initramfs/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt) |
+
+If you pass on an OOS image, the GPL requires you to provide the corresponding source, including the kernel source.

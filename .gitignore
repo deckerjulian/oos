@@ -1,0 +1,23 @@
+# local Python environment for the analysis tools
+tools/.venv/
+__pycache__/
+# build output
+kernel/out/
+*.img
+.DS_Store
+# internal notes
+docs-internal/
+PLAN.md
+log/
+tools/log/
+# your own calibration files, device surveys and card backups
+local/
+/backups
+boot/out/
+# built by boot/build-dev-image.sh from tools/hw/oos-hw.c
+tools/hw/oos-hw
+# built by rootfs/build-wlan-tools.sh
+rootfs/out/
+# results of tools/device-test.py
+device-test/
+kernel/src/

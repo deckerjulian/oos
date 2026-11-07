@@ -1,0 +1,36 @@
+# search (mark all trigger events) and history playback
+frames 5
+key tmenu
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi1 -1
+frames 2
+knob multi2 +1
+frames 2
+key tmenu
+knob hscale -1
+frames 2
+knob hscale -1
+frames 2
+frames 20
+shot $S/92-search-runt.ppm
+key navback
+frames 2
+key navback
+frames 2
+key navback
+frames 5
+shot $S/93-history.ppm

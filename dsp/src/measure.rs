@@ -1,0 +1,410 @@
+// Copyright (C) 2026 Julian Decker
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+//! Automatic measurements (conventions of Rigol / IEEE 181: top and base from the histogram, 10/50/90 % reference
+//! levels, edges at the 50 % level with 10 % hysteresis, time values averaged over all complete cycles in the record).
+
+use crate::edges::edges;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Meas {
+    Vmax,
+    Vmin,
+    Vpp,
+    Vtop,
+    Vbase,
+    Vamp,
+    Vupper,
+    Vmid,
+    Vlower,
+    Vavg,
+    Vrms,
+    VavgCyc,
+    VrmsCyc,
+    VrmsAc,
+    StdDev,
+    Overshoot,
+    Preshoot,
+    Area,
+    AreaCyc,
+    Period,
+    Freq,
+    Rise,
+    Fall,
+    PWidth,
+    NWidth,
+    PDuty,
+    NDuty,
+    PPulses,
+    NPulses,
+    PEdges,
+    NEdges,
+    TVmax,
+    TVmin,
+    PSlew,
+    NSlew,
+}
+
+pub const ALL: [Meas; 35] = [
+    Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vtop, Meas::Vbase, Meas::Vamp, Meas::Vupper, Meas::Vmid, Meas::Vlower, Meas::Vavg,
+    Meas::Vrms, Meas::VavgCyc, Meas::VrmsCyc, Meas::VrmsAc, Meas::StdDev, Meas::Overshoot, Meas::Preshoot, Meas::Area,
+    Meas::AreaCyc, Meas::Period, Meas::Freq, Meas::Rise, Meas::Fall, Meas::PWidth, Meas::NWidth, Meas::PDuty, Meas::NDuty,
+    Meas::PPulses, Meas::NPulses, Meas::PEdges, Meas::NEdges, Meas::TVmax, Meas::TVmin, Meas::PSlew, Meas::NSlew,
+];
+
+impl Meas {
+    pub fn name(self) -> &'static str {
+        match self {
+            Meas::Vmax => "Max",
+            Meas::Vmin => "Min",
+            Meas::Vpp => "Pk-pk",
+            Meas::Vtop => "Top",
+            Meas::Vbase => "Base",
+            Meas::Vamp => "Amp",
+            Meas::Vupper => "Upper",
+            Meas::Vmid => "Middle",
+            Meas::Vlower => "Lower",
+            Meas::Vavg => "Mean",
+            Meas::Vrms => "RMS",
+            Meas::VavgCyc => "Cyc mean",
+            Meas::VrmsCyc => "Cyc RMS",
+            Meas::VrmsAc => "AC RMS",
+            Meas::StdDev => "Std dev",
+            Meas::Overshoot => "Overshoot",
+            Meas::Preshoot => "Preshoot",
+            Meas::Area => "Area",
+            Meas::AreaCyc => "Cyc area",
+            Meas::Period => "Period",
+            Meas::Freq => "Freq",
+            Meas::Rise => "Rise",
+            Meas::Fall => "Fall",
+            Meas::PWidth => "+Width",
+            Meas::NWidth => "-Width",
+            Meas::PDuty => "+Duty",
+            Meas::NDuty => "-Duty",
+            Meas::PPulses => "+Pulses",
+            Meas::NPulses => "-Pulses",
+            Meas::PEdges => "+Edges",
+            Meas::NEdges => "-Edges",
+            Meas::TVmax => "t(Max)",
+            Meas::TVmin => "t(Min)",
+            Meas::PSlew => "+Slew",
+            Meas::NSlew => "-Slew",
+        }
+    }
+    pub fn unit(self) -> &'static str {
+        match self {
+            Meas::Overshoot | Meas::Preshoot | Meas::PDuty | Meas::NDuty => "%",
+            Meas::Area | Meas::AreaCyc => "Vs",
+            Meas::Period | Meas::Rise | Meas::Fall | Meas::PWidth | Meas::NWidth | Meas::TVmax | Meas::TVmin => "s",
+            Meas::Freq => "Hz",
+            Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges => "",
+            Meas::PSlew | Meas::NSlew => "V/s",
+            _ => "V",
+        }
+    }
+}
+
+/// Everything measured on one waveform (times in seconds from the first sample).
+#[derive(Clone, Debug, Default)]
+pub struct Analysis {
+    pub valid: bool,
+    pub vmax: f64,
+    pub vmin: f64,
+    pub top: f64,
+    pub base: f64,
+    pub avg: f64,
+    pub rms: f64,
+    pub std: f64,
+    pub area: f64,
+    pub t_vmax: f64,
+    pub t_vmin: f64,
+    /// 50 % crossings
+    pub rises: Vec<f64>,
+    pub falls: Vec<f64>,
+    pub rise_time: f64,
+    pub fall_time: f64,
+    pub cyc_avg: f64,
+    pub cyc_rms: f64,
+    pub cyc_area: f64,
+}
+
+fn mean(v: &[f64]) -> f64 {
+    if v.is_empty() {
+        f64::NAN
+    } else {
+        v.iter().sum::<f64>() / v.len() as f64
+    }
+}
+
+/// Top/base by histogram modes of the upper/lower 40 % (fallback: max/min when there are no flat levels).
+fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
+    let span = (vmax - vmin).max(1e-12);
+    let mut hist = [0u32; 256];
+    for &x in f {
+        hist[(((x - vmin) / span) * 255.0) as usize] += 1;
+    }
+    let mode = |a: usize, b: usize| (a..b).max_by_key(|&i| hist[i]).unwrap_or(a);
+    let (lo, hi) = (mode(0, 102), mode(154, 256));
+    let need = (f.len() / 20) as u32;
+    if hist[lo] < need || hist[hi] < need {
+        return (vmax as f64, vmin as f64);
+    }
+    // centre of the mode bin, refined by the mean of the samples in it
+    let bin_mean = |b: usize| {
+        let (l, h) = (vmin + span * b as f32 / 255.0, vmin + span * (b + 1) as f32 / 255.0);
+        let s: Vec<f64> = f.iter().filter(|&&x| x >= l && x < h).map(|&x| x as f64).collect();
+        if s.is_empty() {
+            l as f64
+        } else {
+            mean(&s)
+        }
+    };
+    (bin_mean(hi), bin_mean(lo))
+}
+
+/// Crossing of `level` searched from index `from` backwards (`back`) or forwards, in the given direction.
+fn cross(v: &[f32], from: usize, level: f32, up: bool, back: bool) -> Option<f64> {
+    let hit = |i: usize| {
+        let (a, b) = (v[i - 1], v[i]);
+        a.is_finite() && b.is_finite() && if up { a < level && b >= level } else { a > level && b <= level }
+    };
+    let at = |i: usize| {
+        let (a, b) = (v[i - 1], v[i]);
+        (i - 1) as f64 + ((level - a) / (b - a)) as f64
+    };
+    if back {
+        (1..=from.min(v.len() - 1)).rev().find(|&i| hit(i)).map(at)
+    } else {
+        (from.max(1)..v.len()).find(|&i| hit(i)).map(at)
+    }
+}
+
+pub fn analyze(v: &[f32], dt: f64) -> Analysis {
+    analyze_min(v, dt, 0.0)
+}
+
+/// Like `analyze`, but edges and time values only when the amplitude (top - base) is at least `min_amp` volts, so
+/// noise on a flat trace does not produce frequencies (the scope passes a fraction of a division).
+pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
+    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    if f.len() < 4 {
+        return Analysis::default();
+    }
+    let (mut imax, mut imin) = (0, 0);
+    for (i, &x) in v.iter().enumerate() {
+        if x.is_finite() {
+            if !v[imax].is_finite() || x > v[imax] {
+                imax = i;
+            }
+            if !v[imin].is_finite() || x < v[imin] {
+                imin = i;
+            }
+        }
+    }
+    let (vmax, vmin) = (v[imax], v[imin]);
+    let n = f.len() as f64;
+    let avg = f.iter().map(|&x| x as f64).sum::<f64>() / n;
+    let rms = (f.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / n).sqrt();
+    let std = (f.iter().map(|&x| (x as f64 - avg).powi(2)).sum::<f64>() / n).sqrt();
+    let (top, base) = top_base(&f, vmin, vmax);
+    let mut a = Analysis {
+        valid: true,
+        vmax: vmax as f64,
+        vmin: vmin as f64,
+        top,
+        base,
+        avg,
+        rms,
+        std,
+        area: avg * n * dt,
+        t_vmax: imax as f64 * dt,
+        t_vmin: imin as f64 * dt,
+        rise_time: f64::NAN,
+        fall_time: f64::NAN,
+        cyc_avg: f64::NAN,
+        cyc_rms: f64::NAN,
+        cyc_area: f64::NAN,
+        ..Default::default()
+    };
+    let amp = top - base;
+    if amp <= 0.0 || amp < min_amp {
+        return a;
+    }
+    let mid = (base + amp * 0.5) as f32;
+    let e = edges(v, mid, (amp * 0.1) as f32);
+    a.rises = e.iter().filter(|x| x.rising).map(|x| x.t * dt).collect();
+    a.falls = e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect();
+    let (l10, l90) = ((base + 0.1 * amp) as f32, (base + 0.9 * amp) as f32);
+    let mut rt = Vec::new();
+    let mut ft = Vec::new();
+    for x in &e {
+        let i = x.t as usize + 1;
+        if x.rising {
+            if let (Some(p), Some(q)) = (cross(v, i, l10, true, true), cross(v, i, l90, true, false)) {
+                rt.push((q - p) * dt);
+            }
+        } else if let (Some(p), Some(q)) = (cross(v, i, l90, false, true), cross(v, i, l10, false, false)) {
+            ft.push((q - p) * dt);
+        }
+    }
+    a.rise_time = mean(&rt);
+    a.fall_time = mean(&ft);
+    // cycle values between the first and last rising edge
+    if a.rises.len() >= 2 {
+        let (s, t) = ((a.rises[0] / dt).ceil() as usize, (a.rises[a.rises.len() - 1] / dt).floor() as usize);
+        let c: Vec<f64> = v[s..=t.min(v.len() - 1)].iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
+        if !c.is_empty() {
+            a.cyc_avg = mean(&c);
+            a.cyc_rms = (c.iter().map(|x| x * x).sum::<f64>() / c.len() as f64).sqrt();
+            a.cyc_area = a.cyc_avg * (a.rises[a.rises.len() - 1] - a.rises[0]) / (a.rises.len() - 1) as f64;
+        }
+    }
+    a
+}
+
+impl Analysis {
+    pub fn period(&self) -> f64 {
+        let p = |e: &[f64]| if e.len() >= 2 { (e[e.len() - 1] - e[0]) / (e.len() - 1) as f64 } else { f64::NAN };
+        let r = p(&self.rises);
+        if r.is_finite() {
+            r
+        } else {
+            p(&self.falls)
+        }
+    }
+    /// Mean width of complete positive (rise -> fall) or negative (fall -> rise) pulses. One pass over the sorted edges:
+    /// a deep record has a hundred thousand of them, and this runs for every frame.
+    fn width(&self, pos: bool) -> f64 {
+        let (a, b) = if pos { (&self.rises, &self.falls) } else { (&self.falls, &self.rises) };
+        let (mut w, mut j) = (Vec::new(), 0);
+        for (i, &s) in a.iter().enumerate() {
+            while j < b.len() && b[j] <= s {
+                j += 1;
+            }
+            let Some(&e) = b.get(j) else { break };
+            // a pulse ends at the next edge of the other kind, but must not span another opening edge
+            if !a[i + 1..].iter().find(|&&x| x > s).is_some_and(|&x| x < e) {
+                w.push(e - s);
+            }
+        }
+        mean(&w)
+    }
+    fn pulses(&self, pos: bool) -> f64 {
+        let (a, b) = if pos { (&self.rises, &self.falls) } else { (&self.falls, &self.rises) };
+        let Some(&last) = b.last() else { return 0.0 };
+        a.partition_point(|&s| s < last) as f64
+    }
+
+    pub fn get(&self, m: Meas) -> f64 {
+        if !self.valid {
+            return f64::NAN;
+        }
+        let amp = self.top - self.base;
+        match m {
+            Meas::Vmax => self.vmax,
+            Meas::Vmin => self.vmin,
+            Meas::Vpp => self.vmax - self.vmin,
+            Meas::Vtop => self.top,
+            Meas::Vbase => self.base,
+            Meas::Vamp => amp,
+            Meas::Vupper => self.base + 0.9 * amp,
+            Meas::Vmid => self.base + 0.5 * amp,
+            Meas::Vlower => self.base + 0.1 * amp,
+            Meas::Vavg => self.avg,
+            Meas::Vrms => self.rms,
+            Meas::VavgCyc => self.cyc_avg,
+            Meas::VrmsCyc => self.cyc_rms,
+            Meas::VrmsAc | Meas::StdDev => self.std,
+            Meas::Overshoot => {
+                if amp > 0.0 {
+                    (self.vmax - self.top) / amp * 100.0
+                } else {
+                    f64::NAN
+                }
+            }
+            Meas::Preshoot => {
+                if amp > 0.0 {
+                    (self.base - self.vmin) / amp * 100.0
+                } else {
+                    f64::NAN
+                }
+            }
+            Meas::Area => self.area,
+            Meas::AreaCyc => self.cyc_area,
+            Meas::Period => self.period(),
+            Meas::Freq => 1.0 / self.period(),
+            Meas::Rise => self.rise_time,
+            Meas::Fall => self.fall_time,
+            Meas::PWidth => self.width(true),
+            Meas::NWidth => self.width(false),
+            Meas::PDuty => self.width(true) / self.period() * 100.0,
+            Meas::NDuty => self.width(false) / self.period() * 100.0,
+            Meas::PPulses => self.pulses(true),
+            Meas::NPulses => self.pulses(false),
+            Meas::PEdges => self.rises.len() as f64,
+            Meas::NEdges => self.falls.len() as f64,
+            Meas::TVmax => self.t_vmax,
+            Meas::TVmin => self.t_vmin,
+            Meas::PSlew => 0.8 * amp / self.rise_time,
+            Meas::NSlew => -0.8 * amp / self.fall_time,
+        }
+    }
+}
+
+/// Edge pair for delay / phase: (edge of A, edge of B), true = rising.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pair(pub bool, pub bool);
+
+/// Delay from the first selected edge of A to the nearest selected edge of B (may be negative), seconds.
+pub fn delay(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
+    let ea = if p.0 { &a.rises } else { &a.falls };
+    let eb = if p.1 { &b.rises } else { &b.falls };
+    let Some(&ta) = ea.first() else { return f64::NAN };
+    eb.iter().map(|&tb| tb - ta).min_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap()).unwrap_or(f64::NAN)
+}
+
+/// Phase of B relative to A in degrees (delay / period of A x 360).
+pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
+    delay(a, b, p) / a.period() * 360.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn width_and_pulses_match_the_definition() {
+        // what they mean, edge by edge
+        fn width(a: &[f64], b: &[f64]) -> f64 {
+            let w: Vec<f64> = a.iter().filter_map(|&s| b.iter().find(|&&e| e > s).map(|&e| e - s)).collect();
+            mean(&a.iter().zip(w.iter()).filter(|(&s, &wd)| !a.iter().any(|&x| x > s && x < s + wd)).map(|(_, &wd)| wd).collect::<Vec<f64>>())
+        }
+        let mut x = 7u32;
+        let mut r = || {
+            x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+            (x >> 16) as f64
+        };
+        for n in [0usize, 1, 2, 3, 10, 200] {
+            let (mut rises, mut falls): (Vec<f64>, Vec<f64>) = ((0..n).map(|_| r()).collect(), (0..n + 1).map(|_| r()).collect());
+            rises.sort_by(f64::total_cmp);
+            falls.sort_by(f64::total_cmp);
+            let an = Analysis { rises: rises.clone(), falls: falls.clone(), ..Default::default() };
+            for (pos, a, b) in [(true, &rises, &falls), (false, &falls, &rises)] {
+                let (got, want) = (an.width(pos), width(a, b));
+                assert!(got.is_nan() && want.is_nan() || (got - want).abs() < 1e-9, "n {} {} {}", n, got, want);
+                assert_eq!(an.pulses(pos), a.iter().filter(|&&s| b.iter().any(|&e| e > s)).count() as f64);
+            }
+        }
+    }
+
+    #[test]
+    fn width_of_a_deep_record_is_quick() {
+        let rises: Vec<f64> = (0..400_000).map(|i| i as f64).collect();
+        let falls: Vec<f64> = rises.iter().map(|t| t + 0.5).collect();
+        let an = Analysis { rises, falls, ..Default::default() };
+        let t = std::time::Instant::now();
+        assert!((an.width(true) - 0.5).abs() < 1e-9 && an.pulses(true) == 400_000.0);
+        assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
+    }
+}

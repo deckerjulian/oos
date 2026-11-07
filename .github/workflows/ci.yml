@@ -1,0 +1,27 @@
+# Tests without hardware. Tests that need the calibration files of a real unit skip themselves.
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal && rustup target add aarch64-unknown-linux-musl
+      - name: Tests
+        run: |
+          for c in hal dsp ui fpgad; do
+            (cd "$c" && cargo test --locked) || exit 1
+          done
+      - name: Target build
+        run: |
+          for c in ui fpgad; do
+            (cd "$c" && cargo check --locked --target aarch64-unknown-linux-musl) || exit 1
+          done
+      - name: Python and shell syntax
+        run: |
+          python3 -m py_compile boot/*.py tools/*.py
+          for f in boot/*.sh boot/gel/*.sh kernel/*.sh rootfs/*.sh tools/*.sh rootfs/initramfs/bin/* rootfs/initramfs/etc/rcS; do
+            sh -n "$f" || exit 1
+          done

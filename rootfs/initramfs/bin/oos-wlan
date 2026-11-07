@@ -1,0 +1,82 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# WLAN through a USB stick in the front port (docs/wlan.md), started by rcS in the background, log in
+# /tmp/oos-wlan.log. Waits for the end of the start-up, so nothing here runs beside the acquisition bring-up; then every
+# 2 s: a WLAN stick there -> load the driver, wlan0 there -> wpa_supplicant, associated -> DHCP. A stick can come and go
+# at any time. The GUI (System > WLAN) talks to wpa_supplicant over its control socket.
+ST=/tmp/oos-boot.status
+DIR=/oos/wlan
+[ -d /oos/setups ] || DIR=/tmp/wlan
+CONF=$DIR/wpa_supplicant.conf
+PID=/run/wpa_supplicant.pid
+DHCP=/run/udhcpc.wlan0.pid
+K=/lib/modules/$(uname -r)/kernel
+
+# keeps wlan0 reachable when eth0 holds an address of the same network without a cable (the stock fallback address)
+echo 1 > /proc/sys/net/ipv4/conf/all/ignore_routes_with_linkdown
+
+n=0
+while [ $n -lt 60 ] && ! grep -qE '^[^	]*	(end|abort)	' $ST 2>/dev/null; do
+	sleep 1
+	n=$((n + 1))
+done
+
+running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+
+dhcp_stop() {
+	running $DHCP && kill "$(cat $DHCP)"
+	rm -f $DHCP
+	ip addr flush dev wlan0 2>/dev/null
+}
+
+load() {
+	[ -e /sys/module/rtl8xxxu ] && return
+	for m in lib/crypto/libarc4 net/wireless/cfg80211 net/mac80211/mac80211 drivers/net/wireless/realtek/rtl8xxxu/rtl8xxxu; do
+		insmod $K/$m.ko 2>&1 | grep -v 'File exists'
+	done
+	echo "oos-wlan: driver loaded"
+}
+
+start() {
+	mkdir -p $DIR
+	if [ ! -s $CONF ]; then
+		(umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > $CONF)
+	fi
+	ip link set wlan0 up
+	wpa_supplicant -B -i wlan0 -c $CONF -P $PID -f /tmp/wpa_supplicant.log && echo "oos-wlan: wpa_supplicant runs ($CONF)"
+}
+
+net=
+while :; do
+	if [ ! -e /sys/class/net/wlan0 ]; then
+		# a vendor-specific USB device: a scope without a WLAN stick never loads the modules, a memory stick does not count
+		cat /sys/bus/usb/devices/[0-9]*-[1-9]*:*/bInterfaceClass 2>/dev/null | grep -qx ff && load
+		if running $PID; then
+			echo "oos-wlan: stick gone"
+			kill "$(cat $PID)"
+			rm -f $PID
+			dhcp_stop
+			net=
+		fi
+	else
+		running $PID || start
+		s=$(wpa_cli -p /run/wpa_supplicant -i wlan0 status 2>/dev/null)
+		# the network, not the access point: moving between two of one network keeps the address
+		now=
+		case "$s" in *wpa_state=COMPLETED*) now=$(echo "$s" | sed -n 's/^ssid=//p') ;; esac
+		if [ "$now" != "$net" ]; then
+			dhcp_stop
+			net=$now
+			if [ -n "$now" ]; then
+				echo "oos-wlan: joined $now"
+				# in the background by hand: without an answer `udhcpc -b -t 0` would stay in front and stop this loop
+				udhcpc -i wlan0 -f -R -t 0 -T 3 -A 5 -s /etc/udhcpc.script >/dev/null 2>&1 &
+				echo $! > $DHCP
+			else
+				echo "oos-wlan: link lost"
+			fi
+		fi
+	fi
+	sleep 2
+done

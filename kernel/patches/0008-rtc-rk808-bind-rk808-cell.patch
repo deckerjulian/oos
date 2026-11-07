@@ -1,0 +1,19 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: rtc: rk808: list the rk808-rtc cell
+
+The RK808 MFD adds a cell named "rk808-rtc", and the probe handles
+RK808_ID, but with an id table the platform bus matches on the table only,
+and the table did not have this name. An RK808 board was left without an
+RTC.
+
+---
+--- a/drivers/rtc/rtc-rk808.c
++++ b/drivers/rtc/rtc-rk808.c
+@@ -485,6 +485,7 @@
+ 
+ static const struct platform_device_id rk8xx_rtc_id_table[] = {
+ 	{ "rk805-rtc", 0 },
++	{ "rk808-rtc", 0 },
+ 	{ "rk809-rtc", 0 },
+ 	{ "rk816-rtc", 0 },
+ 	{ "rk817-rtc", 0 },

@@ -1,0 +1,8 @@
+frames 2
+shot $S/53-main.ppm
+key ch2
+key auto
+tap 769 20
+tap 932 158
+frames 10
+shot $S/54-xy.ppm

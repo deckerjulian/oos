@@ -1,0 +1,5 @@
+key ch2
+knob hscale push
+knob hpos +30
+frames 20
+shot $S/60-zoom.ppm

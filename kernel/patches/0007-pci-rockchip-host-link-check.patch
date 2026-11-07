@@ -1,0 +1,138 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: PCI: rockchip-host: do not scan or access a link that is down
+
+Nothing looked at the link between training and the bus scan. The gen2
+retrain only logs a timeout at debug level and goes on, and an endpoint
+that is still starting can take the link down again. A configuration read
+behind a dead link never completes, and that stops the SoC.
+
+Before going on with the probe, require that the link is up and in L0 for
+100 ms without a break, and give it 500 ms to get there. Otherwise fail with
+-ENOLINK. The test comes before the interrupts are requested, because the
+expected failure, an endpoint that is not ready, should leave nothing
+behind that gets in the way of the next attempt. The PHYs go back through
+the path of the previous patch. The check is made after all of
+rockchip_pcie_host_init_port(), so it also covers the lanes being idled.
+
+That covers the scan. For the time after it, rockchip_pcie_valid_device()
+now answers no for anything below the root port while the data link is
+down, reads and writes alike, so that the core sees an empty slot. The root
+port's own registers are local and stay accessible. The test here is the
+link status alone, not L0: an idle link may be in a low power state or
+retraining and is fine to use. It narrows the window but cannot close it, a
+link can still die after the test and before the request goes out.
+
+Also log speed, width and lanes of the trained link at info level, which
+is the first thing to ask about a link and was only a debug message.
+
+---
+--- a/drivers/pci/controller/pcie-rockchip-host.c
++++ b/drivers/pci/controller/pcie-rockchip-host.c
+@@ -97,6 +97,12 @@
+ 	rockchip_pcie_write(rockchip, val, PCIE_CORE_TXCREDIT_CFG1);
+ }
+ 
++static bool rockchip_pcie_link_up(struct rockchip_pcie *rockchip)
++{
++	return PCIE_LINK_UP(rockchip_pcie_read(rockchip,
++					       PCIE_CLIENT_BASIC_STATUS1));
++}
++
+ static int rockchip_pcie_valid_device(struct rockchip_pcie *rockchip,
+ 				      struct pci_bus *bus, int dev)
+ {
+@@ -105,7 +111,17 @@
+ 	 * Do not read more than one device on the bus directly attached
+ 	 * to RC's downstream side.
+ 	 */
+-	if (pci_is_root_bus(bus) || pci_is_root_bus(bus->parent))
++	if (pci_is_root_bus(bus))
++		return dev == 0;
++
++	/*
++	 * A request behind a dead link never completes and stops the SoC.
++	 * L0 is not asked for here: an idle link may sit in a low power state.
++	 */
++	if (!rockchip_pcie_link_up(rockchip))
++		return 0;
++
++	if (pci_is_root_bus(bus->parent))
+ 		return dev == 0;
+ 
+ 	return 1;
+@@ -332,6 +348,7 @@
+ 	int err, i = MAX_LANE_NUM;
+ 	u32 status;
+ 	int timeouts = 500;
++	const char *speed;
+ 
+ 	gpiod_set_value_cansleep(rockchip->ep_gpio, 0);
+ 
+@@ -408,12 +425,14 @@
+ 
+ 	/* Check the final link width from negotiated lane counter from MGMT */
+ 	status = rockchip_pcie_read(rockchip, PCIE_CORE_CTRL);
++	speed = PCIE_LINK_IS_GEN2(status) ? "5.0" : "2.5";
+ 	status = 0x1 << ((status & PCIE_CORE_PL_CONF_LANE_MASK) >>
+ 			  PCIE_CORE_PL_CONF_LANE_SHIFT);
+-	dev_dbg(dev, "current link width is x%d\n", status);
+ 
+ 	/* Power off unused lane(s) */
+ 	rockchip->lanes_map = rockchip_pcie_lane_map(rockchip);
++	dev_info(dev, "link trained: %s GT/s, width x%u, lane map 0x%x of %u lanes\n",
++		 speed, status, rockchip->lanes_map, rockchip->lanes);
+ 	for (i = 0; i < MAX_LANE_NUM; i++) {
+ 		if (!(rockchip->lanes_map & BIT(i))) {
+ 			dev_dbg(dev, "idling lane %d\n", i);
+@@ -1062,6 +1081,40 @@
+ 	return err;
+ }
+ 
++/* How long the link has to stay in L0, and how long it gets to do so */
++#define PCIE_LINK_STABLE_MS	100
++#define PCIE_LINK_WAIT_MS	500
++
++/*
++ * Training can end with a link that does not last: the gen2 retrain may lose
++ * it, and so may an endpoint that is still starting. No configuration request
++ * may go out on such a link, so it has to prove itself before the scan.
++ */
++static int rockchip_pcie_wait_link_stable(struct rockchip_pcie *rockchip)
++{
++	int stable_ms = 0;
++	u32 ltssm = 0;
++	int i;
++
++	for (i = 0; i < PCIE_LINK_WAIT_MS; i++) {
++		ltssm = rockchip_pcie_read(rockchip, PCIE_CLIENT_DEBUG_OUT_0);
++		if (rockchip_pcie_link_up(rockchip) && PCIE_LINK_IS_L0(ltssm))
++			stable_ms++;
++		else
++			stable_ms = 0;
++
++		if (stable_ms == PCIE_LINK_STABLE_MS)
++			return 0;
++
++		usleep_range(1000, 1100);
++	}
++
++	dev_err(rockchip->dev, "link does not stay in L0, LTSSM is 0x%lx\n",
++		ltssm & PCIE_CLIENT_DEBUG_LTSSM_MASK);
++
++	return -ENOLINK;
++}
++
+ static int rockchip_pcie_really_probe(struct rockchip_pcie *rockchip)
+ {
+ 	int err;
+@@ -1070,6 +1123,10 @@
+ 	if (err)
+ 		return err;
+ 
++	err = rockchip_pcie_wait_link_stable(rockchip);
++	if (err)
++		goto err_deinit_phys;
++
+ 	err = rockchip_pcie_setup_irq(rockchip);
+ 	if (err)
+ 		goto err_deinit_phys;

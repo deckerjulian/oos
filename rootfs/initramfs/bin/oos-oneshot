@@ -1,0 +1,37 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# One-shot return to stock. The stock loader (Rigol U-Boot 2014.10, 2024-08-29) boots `boot`; when the image in `boot`
+# fails its check it tries `recovery` (this OOS image), then `backup`. OOS is selected by replacing the magic "KRNL" at
+# the start of `boot` (LBA 122880) with "OOSK"; this script puts "KRNL" back so the next power-on boots stock Android.
+# It also clears a leftover "boot-recovery" at LBA 32800 (not evaluated by this loader).
+# Checks first that the device is the SD card on fe320000 and that its PARM table has the stock layout.
+dev=${OOS_DEV:-/dev/mmcblk0}
+log=${OOS_LOG:-/dev/kmsg}
+BOOT_LBA=122880
+for i in $(seq 1 50); do { [ -b $dev ] || [ -f $dev ]; } && break; sleep 0.2; done
+{ [ -b $dev ] || [ -f $dev ]; } || { echo "oos-oneshot: no $dev" > $log; exit 1; }
+[ -n "${OOS_TEST:-}" ] || readlink -f /sys/block/mmcblk0/device | grep -q fe320000 || { echo "oos-oneshot: mmcblk0 is not the SD card, skipped" > $log; exit 1; }
+parm=$(dd if=$dev bs=512 skip=8192 count=2 2>/dev/null | tr -d '\000' | tr 'A-F' 'a-f')
+case "$parm" in
+	P[Aa]RM*"0x00002000@0x00006000(misc)"*"0x00010000@0x0001c000(boot)"*) ;;
+	*) echo "oos-oneshot: unexpected partition table, skipped" > $log; exit 1;;
+esac
+magic=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 2>/dev/null | head -c 4)
+case "$magic" in
+	OOSK)
+		dd if=$dev bs=512 skip=$BOOT_LBA count=1 of=/tmp/bootsec 2>/dev/null
+		{ printf 'KRNL'; tail -c 508 /tmp/bootsec; } > /tmp/bootsec.new
+		dd if=/tmp/bootsec.new of=$dev bs=512 seek=$BOOT_LBA count=1 conv=notrunc,fsync 2>/dev/null; sync
+		now=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 2>/dev/null | head -c 4)
+		[ "$now" = KRNL ] && echo "oos-oneshot: boot magic restored, next power-on boots stock" > $log \
+		                  || echo "oos-oneshot: RESTORE FAILED ($now)" > $log;;
+	KRNL) echo "oos-oneshot: boot already valid (stock boots next time)" > $log;;
+	*) echo "oos-oneshot: unexpected boot magic '$magic', left alone" > $log;;
+esac
+cmd=$(dd if=$dev bs=512 skip=32800 count=1 2>/dev/null | head -c 13)
+if [ "$cmd" = "boot-recovery" ]; then
+	dd if=$dev bs=512 skip=32800 count=1 of=/tmp/bcb 2>/dev/null
+	{ head -c 32 /dev/zero; tail -c 480 /tmp/bcb; } > /tmp/bcb.new
+	dd if=/tmp/bcb.new of=$dev bs=512 seek=32800 count=1 conv=notrunc,fsync 2>/dev/null; sync
+fi

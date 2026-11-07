@@ -1,0 +1,25 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Bring up the acquisition FPGA under OOS (Phase 3.1, confirmed 2026-11-02):
+# boot the FPGA image from slot 0x400000 via the SPI1 boot monitor, then load the PCIe host driver (retrying, the
+# RK3399 host cannot retrain without a reload) and the XDMA driver, and check the FPGA version register.
+M=/lib/modules/$(uname -r)
+slot=${1:-0x400000}
+lsmod | grep -q '^xdma ' && { echo "xdma already loaded"; oos-hw rd 0x4000; exit 0; }
+oos-hw fpga-boot $slot || exit 1
+sleep 5
+for try in 1 2 3 4 5 6; do
+	insmod $M/kernel/drivers/pci/controller/pcierockchiphost.ko 2>/dev/null
+	sleep 2
+	[ -e /sys/bus/pci/devices/0000:01:00.0 ] && break
+	echo "oos-fpga-up: no PCIe link (try $try), reloading the host driver"
+	rmmod pcierockchiphost 2>/dev/null; sleep 2
+done
+[ -e /sys/bus/pci/devices/0000:01:00.0 ] || { echo "oos-fpga-up: FPGA did not appear on PCIe"; exit 1; }
+echo "PCIe: $(cat /sys/bus/pci/devices/0000:01:00.0/vendor):$(cat /sys/bus/pci/devices/0000:01:00.0/device) $(cat /sys/bus/pci/devices/0000:01:00.0/current_link_speed) x$(cat /sys/bus/pci/devices/0000:01:00.0/current_link_width)"
+insmod $M/updates/xdma.ko poll_mode=1 || exit 1
+sleep 1
+v=$(oos-hw rd 0x4000 | awk '{print $3}')
+echo "FPGA version $v"
+[ "$v" = 0xe2072115 ] || echo "oos-fpga-up: unexpected version (stock image on this unit is 0xe2072115)"

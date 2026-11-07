@@ -1,0 +1,27 @@
+# pickers: tapping the value of a choice with a long option list opens a grid of all options (Trigger > Type,
+# Math > Operation, Utility > Quick key); picking one sets it and returns to the menu
+frames 5
+key tmenu
+tap 440 360
+frames 2
+shot $S/d0-picker-trigtype.ppm
+# Runt
+tap 931 444
+frames 20
+shot $S/d1-picker-runt-set.ppm
+key math
+tap 562 360
+frames 2
+shot $S/d2-picker-math.ppm
+# FFT
+tap 433 490
+frames 10
+shot $S/d3-picker-fft-set.ppm
+# System > Quick key > Clear (the start menu entry "Quick" follows)
+tap 850 20
+tap 856 114
+frames 2
+shot $S/d4-picker-quick.ppm
+tap 931 160
+frames 2
+shot $S/d5-picker-quick-set.ppm

@@ -1,0 +1,14 @@
+#!/bin/busybox sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# OOS development initramfs (Phase 2). Runs from the `recovery` boot image of the stock loader.
+/bin/busybox --install -s /bin
+export PATH=/bin:/sbin
+mkdir -p /proc /sys /dev /tmp /run /mnt /sbin
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+mount -t tmpfs tmp /tmp
+echo "oos: development initramfs $(cat /etc/oos-build)" > /dev/kmsg
+exec /bin/init

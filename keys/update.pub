@@ -1,0 +1,5 @@
+# Ed25519 public keys OOS trusts for update packages (oos_hal::update, docs/update.md): one 64-digit hex key per line.
+# keys/community-signing.key belongs to the community line and is public on purpose; the other secret keys are not in
+# this tree (see docs/update.md, "Keys").
+127971583bac85183f2c34f88ddf6b73ed99df7cea58b04cd581b4d5db43efd6  # id 4dbd03d9763869dd, maintainer key
+f73d56d8b05852c2fbbb2bcc79ac03420d885df19df3c5405e0958485191ffcf  # id 1d64e92f58d378be, community key, secret part in keys/community-signing.key

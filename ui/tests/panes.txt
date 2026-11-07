@@ -1,0 +1,29 @@
+# second pane: spectrum, sort by touch, results with a cursor, trend; from the Display menu
+key ch2
+key measure
+tap 638 448
+tap 694 316
+key measure
+tap 685 20
+tap 568 114
+tap 987 70
+frames 30
+shot $S/p0-pane-spectrum.ppm
+tap 890 325
+frames 2
+shot $S/p1-pane-spectrum-by-level.ppm
+tap 685 20
+tap 568 114
+tap 987 70
+frames 30
+shot $S/p2-pane-results.ppm
+key cursor
+key cursor
+frames 10
+shot $S/p3-pane-results-cursor.ppm
+tap 685 20
+tap 568 114
+tap 568 114
+tap 987 70
+frames 120
+shot $S/p4-pane-trend.ppm

@@ -1,0 +1,14 @@
+key measure
+tap 638 448
+frames 40
+shot $S/50-stats.ppm
+key ref
+tap 304 404
+knob hpos +40
+frames 5
+shot $S/51-ref.ppm
+key ch2
+tap 769 20
+tap 932 158
+frames 10
+shot $S/52-xy.ppm

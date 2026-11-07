@@ -1,0 +1,7 @@
+frames 5
+pinch 400 280 500 280 300 280 600 280
+frames 5
+shot $S/30-pinch-time.ppm
+pinch 450 230 450 330 450 260 450 300
+frames 5
+shot $S/31-pinch-volt.ppm

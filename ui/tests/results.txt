@@ -1,0 +1,11 @@
+# measurement results with statistics: a translucent card over the plot (no column of its own), folded by a tap on
+# its header
+key ch2
+key measure
+tap 638 448
+tap 694 316
+frames 30
+shot $S/f0-results.ppm
+tap 840 89
+frames 2
+shot $S/f1-results-folded.ppm

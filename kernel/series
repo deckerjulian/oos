@@ -1,0 +1,10 @@
+0001-drm-rockchip-dw-hdmi-optional-phy.patch
+0002-input-edt-ft5x06-ft5422.patch
+0003-mfd-rk808-power-off.patch
+0004-drm-bridge-dw-hdmi-cec-adapter.patch
+0005-regulator-rk808-bind-rk808-cell.patch
+0006-pci-rockchip-host-release-phys-once.patch
+0007-pci-rockchip-host-link-check.patch
+0008-rtc-rk808-bind-rk808-cell.patch
+0009-drm-rockchip-logo-no-clock.patch
+0010-pwm-rockchip-clock-references.patch

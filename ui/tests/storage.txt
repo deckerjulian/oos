@@ -1,0 +1,24 @@
+# Storage menu: save setup (slot 1), save waveform CSV, save screenshot PNG, default set-up, recall the setup
+storedir $S/storage
+key ch2
+knob hscale -2
+knob vscale +1
+tap 619 20
+frames 2
+shot $S/b0-storage-menu.ppm
+tap 619 158
+frames 1
+shot $S/b1-storage-setup-saved.ppm
+tap 619 246
+frames 1
+shot $S/b2-storage-csv-saved.ppm
+tap 619 290
+frames 2
+shot $S/b3-storage-png-saved.ppm
+key default
+frames 5
+shot $S/b4-storage-default.ppm
+tap 619 20
+tap 619 202
+frames 5
+shot $S/b5-storage-recalled.ppm

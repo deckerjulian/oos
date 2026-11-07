@@ -1,0 +1,32 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# OOS's own data partition (own calibration, setups, pictures) at /oos: the last 16 MiB of the stock `backup`
+# partition, LBA 516096 .. 548863 (PARM 0x00038000@0x0004C000(backup) ends at LBA 548864). Android does not use
+# `backup`; U-Boot's fallback only reads the image header at its start, where a stock fallback image may live. The
+# PARM table stays untouched: only the OOS kernel sees the area, as mmcblk0p1 from `blkdevparts=` in the DTB bootargs,
+# so the kernel keeps every write inside these 16 MiB.
+# First use: formatted (ext2, label "oosdata") only when the whole area is still zero; anything else is left alone.
+P=/dev/mmcblk0p1
+S=/sys/class/block/mmcblk0p1
+grep -q ' /oos ' /proc/mounts && exit 0
+[ -b $P ] || { echo "oos-mount-data: no $P (blkdevparts missing from the command line?)"; exit 1; }
+[ "$(cat $S/start)" = 516096 ] && [ "$(cat $S/size)" = 32768 ] || { echo "oos-mount-data: $P is not LBA 516096 + 32768, not touching it"; exit 1; }
+# ext2/3/4 superblock at +1024, magic 0xef53 at +56 of it
+magic=$(dd if=$P bs=512 skip=2 count=1 2>/dev/null | od -An -tx1 -j56 -N2 | tr -d ' ')
+if [ "$magic" != 53ef ]; then
+	# a failed read must not look like an empty area: it adds non-zero bytes to the count
+	nonzero=$( { dd if=$P bs=65536 count=256 2>/dev/null || echo read-error; } | tr -d '\000' | wc -c)
+	[ "$nonzero" = 0 ] || { echo "oos-mount-data: $P is neither ext2 nor empty ($nonzero non-zero bytes, or a read error), not touching it"; exit 1; }
+	echo "oos-mount-data: formatting the empty $P (16 MiB, ext2 'oosdata')"
+	mke2fs -L oosdata $P > /dev/null || exit 1
+fi
+# the scope is switched off at the mains, and ext2 has no journal: repair what the last power cut left, at every start
+# (0.04 s). 1 = repaired, fine; worse is logged and the partition mounted anyway, its data is worth more than a stop
+e2fsck -p $P
+rc=$?
+[ $rc -le 1 ] || echo "oos-mount-data: e2fsck returned $rc"
+mkdir -p /oos
+mount -t ext4 -o noatime $P /oos || { echo "oos-mount-data: mount failed"; exit 1; }
+mkdir -p /oos/cal /oos/setups /oos/shots
+echo "oos-mount-data: $P on /oos ($(df -h /oos | tail -1 | awk '{print $4}') free)"

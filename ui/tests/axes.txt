@@ -1,0 +1,14 @@
+# volt labels with a non-round offset: never over each other, the status line, the time labels or the markers
+key ch2
+key ch2
+knob vpos +7
+frames 10
+shot $S/h0-axes-offset.ppm
+# zoom with the cursor strip: a short zoom view, labels thinned out instead of overlapping
+key cursor
+key cursor
+knob hscale push
+key ch4
+key ch4
+frames 10
+shot $S/h1-axes-zoom.ppm

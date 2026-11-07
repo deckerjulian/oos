@@ -1,0 +1,54 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# USB stick in the front port: mounted at /mnt/usb, every 2 s a look for a new or a pulled one. oos-ui saves screenshots
+# and CSV files to it while it is there (System > Storage) and syncs after each file, so a stick can be pulled when the
+# scope is not saving. Log in /tmp/oos-usb.log.
+MP=/mnt/usb
+mkdir -p $MP
+dev=
+bad=
+seen=
+
+try() {
+	# the codepage has to be named: the kernel's default one is not built in
+	# nodev, nosuid, noexec: what is on a stick is data, an ext4 stick could otherwise bring device nodes of its own
+	mount -t vfat -o noatime,nodev,nosuid,noexec,flush,codepage=437,iocharset=utf8,umask=0 "/dev/$1" $MP 2>/dev/null && return 0
+	mount -t exfat -o noatime,nodev,nosuid,noexec,iocharset=utf8,umask=0 "/dev/$1" $MP 2>/dev/null && return 0
+	mount -t ext4 -o noatime,nodev,nosuid,noexec "/dev/$1" $MP 2>/dev/null
+}
+
+while :; do
+	if [ -n "$dev" ] && [ ! -e "/sys/class/block/$dev" ]; then
+		echo "oos-usb: $dev pulled"
+		umount -l $MP
+		dev=
+	fi
+	if [ -z "$dev" ]; then
+		found=
+		for b in /sys/block/sd?; do
+			[ -e "$b" ] || continue
+			n=${b##*/}
+			found="$found $n"
+			case " $bad " in *" $n "*) continue ;; esac
+			# first sight: the disk is there before its partitions are, look again on the next round
+			case " $seen " in *" $n "*) ;; *) seen="$seen $n"; continue ;; esac
+			# the partitions, or a stick without a table
+			for c in $(ls -d "$b/$n"[0-9]* 2>/dev/null | sed 's|.*/||') $n; do
+				if try "$c"; then
+					dev=$c
+					echo "oos-usb: $c on $MP"
+					break
+				fi
+			done
+			[ -n "$dev" ] && break
+			echo "oos-usb: nothing to mount on $n"
+			bad="$bad $n"
+		done
+		# a stick that came back gets a new try
+		for n in $bad $seen; do
+			case " $found " in *" $n "*) ;; *) bad=$(echo " $bad " | sed "s/ $n / /"); seen=$(echo " $seen " | sed "s/ $n / /") ;; esac
+		done
+	fi
+	sleep 2
+done

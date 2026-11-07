@@ -1,0 +1,98 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# start-up progress for the start-up screen (oos_hal::bootstatus): <uptime> <state> <stage> <detail>
+ST=/tmp/oos-boot.status
+st() { printf '%s\t%s\t%s\t%s\n' "$(cut -d' ' -f1 /proc/uptime)" "$1" "$2" "$3" >> $ST; }
+st ok Linux "$(uname -r)"
+# 0) one-shot first, before any other OOS program runs: put the stock boot magic back, so a start that hangs from
+#    here on (also a new build on trial, docs/update.md) is followed by stock Android at the next power-on
+/bin/oos-oneshot
+# 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log) and the
+#     signed updates (oos-update, docs/update.md): count this start of an image on trial right here, so that a hang
+#     in anything below still counts; one that already started once without being confirmed is rolled back (log
+#     /tmp/oos-update.log)
+/bin/oos-mount-data > /tmp/oos-data.log 2>&1
+[ -x /bin/oos-update ] && /bin/oos-update boot >> /tmp/oos-update.log 2>&1
+# 0c) the stock partition, read only: oos-ui reads the model and the serial number from it when it starts
+/bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1
+# 0d) experimental ADC clock (limits.conf adc.clock_hz): a start that did not reach the end leaves its mark, and the next
+#     one goes back to the stock clock by itself, so a clock that hangs the scope cannot keep it hanging
+if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
+	if [ -e /oos/clock-try ]; then
+		mv /oos/limits.conf /oos/limits.conf.failed
+		rm -f /oos/clock-try
+		echo "oos: the last start with adc.clock_hz did not finish, limits.conf set aside" > /dev/kmsg
+	else
+		: > /oos/clock-try
+	fi
+	sync
+fi
+# 1) acquisition hardware: the BOOT command, so the FPGA loads its image (~3 s) while the rest of rcS runs
+if [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; then
+	/bin/oos-fpgad fpga-boot --progress $ST > /tmp/oos-cold.log 2>&1
+fi
+# 2) network: DHCP, else the address the scope used under stock; in the background (no cable: up to 15 s)
+ip link set lo up
+# a fixed, locally administered MAC from the SD card's CID (the kernel picks a random one per boot, which filled the
+# bench DHCP pool on 2026-11-03)
+cid=$(cat /sys/block/mmcblk0/device/cid 2>/dev/null)
+if [ -n "$cid" ]; then
+	h=$(echo "$cid" | md5sum | cut -c1-10)
+	ip link set eth0 address "02:$(echo "$h" | sed 's/../&:/g; s/:$//')" 2>/dev/null
+fi
+ip link set eth0 up 2>/dev/null
+(
+	if ! udhcpc -i eth0 -n -q -t 5 -s /etc/udhcpc.script >/dev/null 2>&1; then
+		ip addr add 192.168.177.64/24 dev eth0
+		: > /tmp/oos-net.fallback
+		echo "oos: no DHCP answer, eth0 = 192.168.177.64/24" > /dev/kmsg
+		# a cable or a server that comes later still counts
+		until udhcpc -i eth0 -n -q -t 2 -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
+		rm -f /tmp/oos-net.fallback
+	fi
+) < /dev/null > /dev/null 2>&1 &
+# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only)
+telnetd -l /bin/sh
+# 4) banner on the panel and the serial console
+/bin/oos-info | tee /dev/tty1 > /dev/kmsg
+# 4b) what the data partition (0b) keeps for the screen
+[ -e /oos/oos-ui.setup ] && cp /oos/oos-ui.setup /tmp/oos-ui.setup
+[ -e /oos/splash.ppm ] && cp /oos/splash.ppm /tmp/oos-splash.ppm
+# 5) the scope screen oos-ui (touch driver first); log in /tmp/oos-ui.log, control FIFO /tmp/oos-ui.ctl
+insmod /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/edt-ft5x06.ko 2>/dev/null
+# beeper (pwm-gpio on GPIO4_A3, used by `oos-fpgad beep`)
+insmod /lib/modules/$(uname -r)/kernel/drivers/pwm/pwm-gpio.ko 2>/dev/null
+# restarted after a crash; `touch /tmp/oos-ui.off` before stopping it keeps it off; its arguments come from
+# /tmp/oos-ui.args. With the acquisition hardware it starts on it at once: the start-up screen shows the progress
+# from $ST and the hardware source waits for its `end` line (no demo signals, no restart)
+if [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; then
+	echo "--hw --afe --start-up $ST" > /tmp/oos-ui.args
+else
+	: > /tmp/oos-ui.args
+fi
+[ -x /bin/oos-ui ] && (setsid sh -c 'while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done' < /dev/null > /dev/null 2>&1 &)
+# 5b) start-up watcher: confirms an image on trial once oos-ui ran 20 s and the start-up finished (persist mode: arms
+#     OOS again for the next power-on); a crash loop or no end in 180 s writes the previous image back at once
+[ -x /bin/oos-update ] && (setsid sh -c '/bin/oos-update watch --status /tmp/oos-boot.status >> /tmp/oos-update.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+# 5c) WLAN through a USB stick, after the start-up (docs/wlan.md); log in /tmp/oos-wlan.log
+[ -x /bin/oos-wlan ] && (setsid sh -c '/bin/oos-wlan >> /tmp/oos-wlan.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+# 5d) USB stick in the front port at /mnt/usb; log in /tmp/oos-usb.log
+[ -x /bin/oos-usb ] && (setsid sh -c '/bin/oos-usb >> /tmp/oos-usb.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+# 6) acquisition hardware: calibration files read only, rest of the FPGA wait + PCIe + PLL + AFE/ADC init +
+#    calibrations + start-up checks (oos-fpgad cold-boot, log /tmp/oos-cold.log); `end` / `abort` only after it
+#    exited, so its GPIO lines are free when oos-ui opens them
+if [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; then
+	(setsid sh -c '
+		ST=/tmp/oos-boot.status
+		st() { printf "%s\t%s\t%s\t%s\n" "$(cut -d" " -f1 /proc/uptime)" "$1" "$2" "$3" >> $ST; }
+		/bin/oos-mount-rigol >> /tmp/oos-cold.log 2>&1
+		if /bin/oos-fpgad cold-boot --execute --power-on --booted --progress $ST >> /tmp/oos-cold.log 2>&1; then
+			rm -f /oos/clock-try; sync
+			st end "" ""
+			echo "oos: acquisition hardware up" > /dev/kmsg
+		else
+			st abort "" "see /tmp/oos-cold.log; power-cycle the scope (no retry in the same boot)"
+			echo "oos: cold boot FAILED, see /tmp/oos-cold.log" > /dev/kmsg
+		fi' < /dev/null > /dev/null 2>&1 &)
+fi

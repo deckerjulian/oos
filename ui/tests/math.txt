@@ -1,0 +1,55 @@
+# math via knobs: Multi 1 selects the row, Multi 2 changes it
+key ch2
+frames 10
+key math
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+frames 10
+shot $S/40-math-sub.ppm
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+frames 10
+shot $S/42-math-intg.ppm
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+frames 10
+shot $S/43-math-lowpass.ppm
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+frames 10
+shot $S/41-fft.ppm
+knob multi1 +1
+frames 2
+knob multi1 +1
+frames 2
+knob multi1 +1
+frames 2
+knob multi1 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+knob multi2 +1
+frames 2
+frames 10
+shot $S/44-fft-flattop.ppm

@@ -1,0 +1,13 @@
+# Clear: in STOP the screen stays empty until the next acquisition (here SINGLE)
+key ch2
+tap 816 316
+frames 20
+key runstop
+frames 2
+shot $S/e0-clear-before.ppm
+key clear
+frames 5
+shot $S/e1-clear-stop.ppm
+key single
+frames 10
+shot $S/e2-clear-single.ppm

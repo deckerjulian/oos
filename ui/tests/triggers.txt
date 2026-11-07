@@ -1,0 +1,96 @@
+# all trigger types on the demo signals (software trigger engine of oos-dsp)
+frames 10
+key tmenu
+frames 2
+shot $S/80-trig-edge-menu.ppm
+key tmenu
+frames 20
+shot $S/80-trig-edge.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/81-trig-pulse-menu.ppm
+key tmenu
+frames 25
+shot $S/81-trig-pulse.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/82-trig-slope-menu.ppm
+key tmenu
+frames 25
+shot $S/82-trig-slope.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/83-trig-video-menu.ppm
+key tmenu
+frames 25
+shot $S/83-trig-video.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/84-trig-pattern-menu.ppm
+key tmenu
+frames 25
+shot $S/84-trig-pattern.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/85-trig-duration-menu.ppm
+key tmenu
+frames 25
+shot $S/85-trig-duration.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/86-trig-timeout-menu.ppm
+key tmenu
+frames 25
+shot $S/86-trig-timeout.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/87-trig-runt-menu.ppm
+key tmenu
+frames 25
+shot $S/87-trig-runt.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/88-trig-window-menu.ppm
+key tmenu
+frames 25
+shot $S/88-trig-window.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/89-trig-delay-menu.ppm
+key tmenu
+frames 25
+shot $S/89-trig-delay.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/90-trig-setuphold-menu.ppm
+key tmenu
+frames 25
+shot $S/90-trig-setuphold.ppm
+key tmenu
+frames 2
+knob multi2 +1
+frames 3
+shot $S/91-trig-nthedge-menu.ppm
+key tmenu
+frames 25
+shot $S/91-trig-nthedge.ppm

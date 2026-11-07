@@ -1,0 +1,19 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: regulator: rk808: list the rk808-regulator cell
+
+The RK808 MFD adds a cell named "rk808-regulator", and the probe handles
+RK808_ID. The driver has an id table though, and with one the platform bus
+no longer falls back to the driver name, so the table has to list the cell
+or it never binds. It listed all variants but this one.
+
+---
+--- a/drivers/regulator/rk808-regulator.c
++++ b/drivers/regulator/rk808-regulator.c
+@@ -1776,6 +1776,7 @@
+ 
+ static const struct platform_device_id rk8xx_regulator_id_table[] = {
+ 	{ "rk805-regulator", 0 },
++	{ "rk808-regulator", 0 },
+ 	{ "rk809-regulator", 0 },
+ 	{ "rk816-regulator", 0 },
+ 	{ "rk817-regulator", 0 },

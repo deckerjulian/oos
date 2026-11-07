@@ -1,0 +1,48 @@
+# touch: channel cards, Menu button (start menu), top-bar menus and dialog controls
+frames 10
+tap 181 563
+frames 2
+tap 267 492
+tap 396 404
+frames 5
+shot $S/10-ch1menu.ppm
+tap 323 563
+tap 37 563
+tap 192 398
+tap 512 404
+tap 749 306
+tap 433 352
+frames 2
+shot $S/11-measadd.ppm
+tap 737 78
+tap 638 448
+frames 20
+shot $S/12-stats.ppm
+tap 694 316
+key cursor
+frames 10
+shot $S/13-cursor.ppm
+drag 300 200 300 120 hold
+frames 1
+shot $S/14-drag-offset.ppm
+release
+drag 970 280 970 200 hold
+frames 1
+shot $S/15-drag-level.ppm
+release
+key default
+tap 769 20
+tap 568 114
+tap 568 114
+tap 568 114
+tap 568 114
+tap 568 114
+tap 568 114
+key ch2
+key ch4
+frames 60
+shot $S/16-persist.ppm
+tap 850 20
+tap 806 246
+frames 2
+shot $S/17-about.ppm

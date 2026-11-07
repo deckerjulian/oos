@@ -1,0 +1,11 @@
+[package]
+name = "oos-dsp"
+version = "0.1.0"
+edition = "2021"
+description = "OOS signal processing: software triggers, measurements, math, signal generators"
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "oos_dsp"
+
+[dependencies]

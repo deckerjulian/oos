@@ -1,0 +1,12 @@
+#!/bin/sh
+# Not git. This source tree is not a git repository, but some Rockchip BSP driver Makefiles ask `git log` for their
+# revision and compile the answer into the module. build.sh puts this script first on PATH: it answers exactly the
+# `git log` queries the release's own build made, with the answers recorded there (git-log-answers.txt; the work
+# directory is written @W@), so the modules come out identical. Any other git command fails; nothing is fetched.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+[ "$1" = log ] || exit 1
+key=$(printf '%s\n' "$@" | sed "s#${OOS_WORK:?}/#@W@/#g" | base64 -w0)
+line=$(awk -F '\t' -v k="$key" '$1 == k { print; exit }' "$HERE/git-log-answers.txt")
+[ -n "$line" ] || exit 128
+printf '%s' "$(printf '%s' "$line" | cut -f3)" | base64 -d
+exit "$(printf '%s' "$line" | cut -f2)"

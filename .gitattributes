@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.bin binary
+*.ttf binary
+*.GEL binary
+*.img binary
+*.oosupd binary
+kernel/firmware/*.db binary
+kernel/firmware/*.p7s binary

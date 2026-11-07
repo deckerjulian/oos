@@ -1,0 +1,11 @@
+key ch4
+key ch1
+key ch1
+tap 769 20
+tap 568 114
+tap 568 114
+tap 568 114
+tap 568 114
+tap 988 70
+frames 90
+shot $S/20-persist.ppm

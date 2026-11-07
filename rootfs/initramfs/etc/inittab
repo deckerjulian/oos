@@ -1,0 +1,5 @@
+::sysinit:/etc/rcS
+ttyS2::respawn:/bin/cttyhack /bin/sh -l
+tty1::respawn:/bin/cttyhack /bin/sh -l
+::ctrlaltdel:/bin/reboot
+::shutdown:/bin/sync

@@ -1,0 +1,8 @@
+frames 20
+shot $S/01-default.ppm
+key ch2
+key ch3
+key ch4
+key auto
+frames 30
+shot $S/02-auto.ppm

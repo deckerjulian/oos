@@ -1,0 +1,144 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: pwm: rockchip: enable each clock role once in probe
+
+With a single clock in the device tree, as on RK3288 and RK3399, pc->pclk
+and pc->clk are the same clock. devm_clk_get_enabled() took one reference,
+but probe ends with clk_disable(pc->clk) for an idle channel and
+clk_disable(pc->pclk) for all, and remove() has two clk_unprepare() calls.
+So an idle channel gave back a reference it did not have and a running one
+was left without any. On RK3399 that clock is critical, and the clock core
+warns about it. With two clocks the counts were fine during probe, but
+remove() and then the devm release both unprepared them.
+
+Get the clocks with devm_clk_get() and call clk_prepare_enable() once for
+each role, which is what the rest of the driver counts on, and what remove()
+expects to undo. The clocks are enabled after the pinctrl look-ups, which do
+not need them, so those can keep their plain returns. Everything after that
+leaves through two new labels.
+
+---
+--- a/drivers/pwm/pwm-rockchip.c
++++ b/drivers/pwm/pwm-rockchip.c
+@@ -2535,9 +2535,9 @@
+ 		else if (!strcmp(clk_src_name, "rc"))
+ 			clk_src_sel = SRC_CLK_PWM_RC;
+ 	}
+-	pc->clk = devm_clk_get_enabled(&pdev->dev, clk_src_name);
++	pc->clk = devm_clk_get(&pdev->dev, clk_src_name);
+ 	if (IS_ERR(pc->clk)) {
+-		pc->clk = devm_clk_get_enabled(&pdev->dev, NULL);
++		pc->clk = devm_clk_get(&pdev->dev, NULL);
+ 		if (IS_ERR(pc->clk))
+ 			return dev_err_probe(&pdev->dev, PTR_ERR(pc->clk),
+ 					     "Can't get %s clk\n", clk_src_name);
+@@ -2546,7 +2546,7 @@
+ 	count = of_count_phandle_with_args(pdev->dev.of_node,
+ 					   "clocks", "#clock-cells");
+ 	if (count >= 2) {
+-		pc->pclk = devm_clk_get_enabled(&pdev->dev, "pclk");
++		pc->pclk = devm_clk_get(&pdev->dev, "pclk");
+ 		pc->clk_osc = devm_clk_get_optional(&pdev->dev, "osc");
+ 		if (IS_ERR(pc->clk_osc))
+ 			return dev_err_probe(&pdev->dev, PTR_ERR(pc->clk_osc),
+@@ -2570,6 +2570,20 @@
+ 		return PTR_ERR(pc->active_state);
+ 	}
+ 
++	/*
++	 * One reference per role, even when both roles are one clock: the end
++	 * of probe and remove() give back each role on its own.
++	 */
++	ret = clk_prepare_enable(pc->clk);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "Can't enable %s clk\n", clk_src_name);
++
++	ret = clk_prepare_enable(pc->pclk);
++	if (ret) {
++		dev_err_probe(&pdev->dev, ret, "Can't enable APB clk\n");
++		goto err_clk;
++	}
++
+ 	pc->data = device_get_match_data(&pdev->dev);
+ 	pc->clk_rate = clk_get_rate(pc->clk);
+ 	pc->main_version = pc->data->main_version;
+@@ -2597,7 +2611,8 @@
+ 	}
+ 	if (pc->channel_id < 0 || pc->channel_id >= PWM_MAX_CHANNEL_NUM) {
+ 		dev_err(&pdev->dev, "Channel id is out of range: %d\n", pc->channel_id);
+-		return -EINVAL;
++		ret = -EINVAL;
++		goto err_pclk;
+ 	}
+ 
+ 	if (pc->main_version == 4)
+@@ -2627,7 +2642,7 @@
+ 					       irq_flags, "rk_pwm_irq", chip);
+ 			if (ret) {
+ 				dev_err(&pdev->dev, "Claim IRQ failed\n");
+-				return ret;
++				goto err_pclk;
+ 			}
+ 		}
+ 	}
+@@ -2648,7 +2663,7 @@
+ 	ret = devm_pwmchip_add(&pdev->dev, chip);
+ 	if (ret < 0) {
+ 		dev_err_probe(&pdev->dev, ret, "pwmchip_add() failed\n");
+-		return ret;
++		goto err_pclk;
+ 	}
+ 
+ 	platform_set_drvdata(pdev, chip);
+@@ -2656,13 +2671,14 @@
+ 	if (pc->wave_support) {
+ 		if (!pc->clk_osc) {
+ 			dev_err(&pdev->dev, "Can't find OSC clk for wave generator mode\n");
+-			return -EINVAL;
++			ret = -EINVAL;
++			goto err_pclk;
+ 		}
+ 
+ 		ret = clk_prepare(pc->clk_osc);
+ 		if (ret) {
+ 			dev_err(&pdev->dev, "Can't prepare OSC clk for wave generator mode\n");
+-			return ret;
++			goto err_pclk;
+ 		}
+ 	}
+ 
+@@ -2674,8 +2690,10 @@
+ 		init_completion(&pc->ir_trans_completion);
+ 
+ 		rcdev = devm_rc_allocate_device(&pdev->dev, RC_DRIVER_IR_RAW_TX);
+-		if (!rcdev)
+-			return -ENOMEM;
++		if (!rcdev) {
++			ret = -ENOMEM;
++			goto err_pclk;
++		}
+ 
+ 		rcdev->priv = chip;
+ 		rcdev->driver_name = "rockchip-pwm-ir-tx";
+@@ -2683,7 +2701,7 @@
+ 		rcdev->tx_ir = rockchip_pwm_ir_transmit;
+ 		ret = devm_rc_register_device(&pdev->dev, rcdev);
+ 		if (ret < 0)
+-			return ret;
++			goto err_pclk;
+ 	}
+ #endif
+ 
+@@ -2696,6 +2714,13 @@
+ 	clk_disable(pc->pclk);
+ 
+ 	return 0;
++
++err_pclk:
++	clk_disable_unprepare(pc->pclk);
++err_clk:
++	clk_disable_unprepare(pc->clk);
++
++	return ret;
+ }
+ 
+ static void rockchip_pwm_remove(struct platform_device *pdev)

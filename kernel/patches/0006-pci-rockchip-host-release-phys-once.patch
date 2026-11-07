@@ -1,0 +1,93 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: PCI: rockchip-host: give the PHYs back exactly once on failure
+
+rockchip_pcie_host_init_port() releases the PHYs itself when the port
+set-up or gen1 training fails, and rockchip_pcie_probe() released them
+again through its error path. phy_exit() on a PHY that is already down
+leaves init_count below zero, and phy_init() only calls the driver when the
+count is exactly zero, so the next load runs with uninitialised PHYs and
+cannot train until a reset.
+
+The rule is now that whoever took the PHYs gives them back on failure, and
+the caller does nothing:
+
+rockchip_pcie_host_init_port() also does so when the LTSSM does not reach
+L0. It used to return there with the PHYs held, leaving them to the probe,
+whose rockchip_pcie_deinit_phys() skips the power off at that point because
+lanes_map is not set yet.
+
+rockchip_pcie_really_probe() releases them for its failures after a good
+rockchip_pcie_host_init_port(). This keeps them balanced for the sysfs
+trigger of deferred probing as well, which has no error path of its own.
+
+rockchip_pcie_probe() no longer releases them after a failed
+rockchip_pcie_really_probe(). Its remaining use of that label is the DMA
+set-up failing after a good probe. There it releases them only if it has
+them: with deferred probing they have not been taken at that point.
+
+---
+--- a/drivers/pci/controller/pcie-rockchip-host.c
++++ b/drivers/pci/controller/pcie-rockchip-host.c
+@@ -383,7 +383,7 @@
+ 				 timeouts * USEC_PER_MSEC);
+ 	if (err) {
+ 		dev_err(dev, "LTSSM is not L0!\n");
+-		return -ETIMEDOUT;
++		goto err_power_off_phy;
+ 	}
+ 
+ 	if (rockchip->link_gen == 2) {
+@@ -1072,20 +1072,28 @@
+ 
+ 	err = rockchip_pcie_setup_irq(rockchip);
+ 	if (err)
+-		return err;
++		goto err_deinit_phys;
+ 
+ 	rockchip_pcie_enable_interrupts(rockchip);
+ 
+ 	err = rockchip_pcie_cfg_atu(rockchip);
+ 	if (err)
+-		return err;
++		goto err_deinit_phys;
+ 
+ 	rockchip->bridge->sysdata = rockchip;
+ 	rockchip->bridge->ops = &rockchip_pcie_ops;
+ 
+ 	device_init_wakeup(rockchip->dev, true);
+ 
+-	return pci_host_probe(rockchip->bridge);
++	err = pci_host_probe(rockchip->bridge);
++	if (err)
++		goto err_deinit_phys;
++
++	return 0;
++
++err_deinit_phys:
++	rockchip_pcie_deinit_phys(rockchip);
++	return err;
+ }
+ 
+ static ssize_t pcie_deferred_store(struct device *dev,
+@@ -1198,7 +1206,7 @@
+ 		err = rockchip_pcie_really_probe(rockchip);
+ 		if (err) {
+ 			dev_err(&pdev->dev, "deferred probe failed\n");
+-			goto err_deinit_port;
++			goto err_remove_irq_domain;
+ 		}
+ 	}
+ 
+@@ -1220,9 +1228,11 @@
+ 	return 0;
+ 
+ err_deinit_port:
+-	rockchip_pcie_deinit_phys(rockchip);
++	/* The deferred path takes the PHYs only when user space says so. */
+ 	if (rockchip->deferred)
+ 		sysfs_remove_group(&pdev->dev.kobj, &pcie_attr_group);
++	else
++		rockchip_pcie_deinit_phys(rockchip);
+ err_remove_irq_domain:
+ 	irq_domain_remove(rockchip->irq_domain);
+ err_vpcie:

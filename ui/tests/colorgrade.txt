@@ -1,0 +1,29 @@
+# colour-graded persistence (Display > Colour grade): CH2 sine with noise and trigger jitter, CH4 PWM with a sweeping
+# duty cycle; infinite persistence, all enabled channels merged into one density map
+key ch2
+key ch4
+key ch1
+key ch1
+tap 769 20
+tap 568 114
+tap 568 114
+tap 568 114
+tap 568 114
+tap 568 114
+tap 568 114
+tap 516 158
+frames 2
+shot $S/a0-colorgrade-menu.ppm
+tap 988 70
+frames 120
+shot $S/a1-colorgrade.ppm
+# CH4 alone, triggered on CH4 at 20 us/div: the rising edge is stable (red), the falling edge sweeps with the duty
+# cycle and dwells longest at the ends of the sweep (yellow/green there, blue in between)
+key ch2
+key ch2
+tap 921 563
+tap 921 563
+tap 921 563
+knob hscale +3
+frames 150
+shot $S/a2-colorgrade-pwm.ppm

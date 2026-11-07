@@ -1,0 +1,33 @@
+# decoders on the demo bus traffic
+key analyse
+frames 2
+knob multi2 +1
+frames 2
+knob multi1 +1
+frames 2
+knob multi2 +1
+frames 2
+knob hscale +1
+frames 2
+knob hscale +1
+frames 2
+knob hscale +1
+frames 2
+knob hscale +1
+frames 2
+frames 2
+shot $S/72-i2c-menu.ppm
+key analyse
+frames 20
+shot $S/73-i2c.ppm
+key analyse
+frames 2
+knob multi1 +1
+frames 2
+knob multi2 +1
+frames 2
+key analyse
+knob hscale +1
+frames 2
+frames 20
+shot $S/74-spi.ppm

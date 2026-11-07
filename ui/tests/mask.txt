@@ -1,0 +1,27 @@
+# Mask test: create a mask from CH1 (square, passes), then from CH4 with tolerance X 0.04 div (PWM with sweeping duty:
+# the falling edges leave the mask, fails), then stop on fail
+tap 695 20
+frames 2
+shot $S/c0-mask-menu.ppm
+tap 806 158
+tap 988 70
+frames 60
+shot $S/c1-mask-pass.ppm
+key ch4
+frames 5
+tap 695 20
+tap 554 158
+tap 312 202
+tap 312 202
+tap 312 202
+tap 312 202
+tap 806 158
+tap 988 70
+frames 60
+shot $S/c2-mask-fail.ppm
+tap 695 20
+tap 932 114
+tap 806 202
+tap 988 70
+frames 60
+shot $S/c3-mask-stop.ppm

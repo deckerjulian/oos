@@ -1,0 +1,57 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: drm/rockchip: logo: do not read modes for a route without a clock
+
+setup_initial_state() fills the connector's mode list to find the mode the
+boot loader used. A mode only matches when its pixel clock equals the one
+from the boot loader, so when that clock is zero the outcome is known
+before the list exists, but the sink is read all the same. For HDMI that is
+an EDID read, which takes up to a second on some sinks.
+
+Skip get_modes() in that case. rockchip_drm_fill_connector_modes() still
+runs up to that point, so detection, its hot-plug event and the polling set
+up there stay as they were. The connector is then reported as disconnected
+and the route takes the existing way of a route with nothing connected:
+no modes, loader_protect undone, and the CRTC closed from the unset list.
+
+A route with force-output is left alone, as forcing the connector and
+adding the fallback modes happens in the same function.
+
+---
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_logo.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_logo.c
+@@ -595,7 +595,7 @@
+ 
+ static int rockchip_drm_fill_connector_modes(struct drm_connector *connector,
+ 					     uint32_t maxX, uint32_t maxY,
+-					     bool force_output)
++					     bool force_output, bool skip_modes)
+ {
+ 	struct drm_device *dev = connector->dev;
+ 	struct drm_display_mode *mode;
+@@ -669,6 +669,11 @@
+ 		goto prune;
+ 	}
+ 
++	if (skip_modes) {
++		connector->status = connector_status_disconnected;
++		goto prune;
++	}
++
+ 	count = (*connector_funcs->get_modes)(connector);
+ 
+ 	if (count == 0 && connector->status == connector_status_connected)
+@@ -840,7 +845,13 @@
+ 		}
+ 	}
+ 
+-	num_modes = rockchip_drm_fill_connector_modes(connector, 7680, 7680, set->force_output);
++	/*
++	 * Without a pixel clock from the boot loader no mode can match, so
++	 * reading the display's modes (for HDMI, its EDID) would only cost
++	 * time. The route then goes the way of one with nothing connected.
++	 */
++	num_modes = rockchip_drm_fill_connector_modes(connector, 7680, 7680, set->force_output,
++						      !set->clock && !set->force_output);
+ 	if (!num_modes) {
+ 		dev_err(drm_dev->dev, "connector[%s] can't find any modes\n",
+ 			connector->name);

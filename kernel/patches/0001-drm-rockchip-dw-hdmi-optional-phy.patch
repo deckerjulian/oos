@@ -1,0 +1,32 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: drm/rockchip: dw_hdmi: handle a missing PHY in late_register
+
+hdmi->phy comes from devm_phy_optional_get(), so it is NULL on SoCs that
+drive the PHY inside the DesignWare controller, RK3399 among them.
+dw_hdmi_encoder_late_register() read hdmi->phy->debugfs regardless, which
+is a NULL pointer fault while the DRM device registers.
+
+Look at phy->debugfs only when there is a PHY. Without one the directory is
+still created: the controller's status and ctrl files do not depend on a
+PHY, and the "phy" file in it is made for exactly the internal PHY. Nothing
+has to keep the dentry then, the directory lives under the DRM device's own
+debugfs root and is removed with it.
+
+---
+--- a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+@@ -2072,9 +2072,12 @@
+ 	 * The HDMI PHY driver clears the debugfs node registered by the PHY
+ 	 * framework during probe so that the HDMI controller can pass its
+ 	 * HDMI debugfs directory (/sys/kernel/debug/dri/0/hdmiX/) to the
+-	 * PHY driver via phy->debugfs.
++	 * PHY driver via phy->debugfs. Without a separate PHY the directory
++	 * belongs to the DRM device alone and goes away with it.
+ 	 */
+-	if (!hdmi->phy->debugfs)
++	if (!hdmi->phy)
++		dw_hdmi_register_debugfs(hdmi->hdmi);
++	else if (!hdmi->phy->debugfs)
+ 		hdmi->phy->debugfs = dw_hdmi_register_debugfs(hdmi->hdmi);
+ 	dw_hdmi_phy_init(hdmi->hdmi);
+ 

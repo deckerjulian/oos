@@ -1,0 +1,18 @@
+[package]
+name = "oos-ui"
+version = "0.1.0"
+edition = "2021"
+description = "OOS oscilloscope user interface for the Rigol DHO800/DHO900 (software renderer on DRM/KMS, touch, front panel)"
+license = "GPL-2.0-or-later"
+
+[dependencies]
+libc = "0.2"
+oos-hal = { path = "../hal" }
+oos-dsp = { path = "../dsp" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false

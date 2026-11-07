@@ -1,0 +1,11 @@
+key ch3
+key ch1
+key ch1
+knob hscale +2
+key analyse
+tap 430 360
+frames 10
+shot $S/70-uart-menu.ppm
+tap 902 316
+frames 10
+shot $S/71-uart.ppm

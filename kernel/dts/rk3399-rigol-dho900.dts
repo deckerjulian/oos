@@ -1,0 +1,975 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (C) 2026 Julian Decker
+ *
+ * Rigol DHO800/DHO900 oscilloscope main board (RK3399).
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/display/drm_mipi_dsi.h>
+#include "rk3399.dtsi"
+
+/*
+ * Peripherals on GPLL, so CPLL and VPLL stay free for the two VOPs. This is the
+ * clock plan of the stock system.
+ */
+#define RK3399_TWO_PLL_FOR_VOP
+#include "rk3399-vop-clk-set.dtsi"
+
+/* Video and camera blocks: nothing on this board uses them. */
+/delete-node/ &mpp_srv;
+/delete-node/ &vpu;
+/delete-node/ &vepu;
+/delete-node/ &vdpu;
+/delete-node/ &vpu_mmu;
+/delete-node/ &vdec;
+/delete-node/ &rkvdec;
+/delete-node/ &vdec_mmu;
+/delete-node/ &iep;
+/delete-node/ &iep_mmu;
+/delete-node/ &rga;
+/delete-node/ &rkisp1_0;
+/delete-node/ &rkisp1_1;
+/delete-node/ &isp0;
+/delete-node/ &isp1;
+/delete-node/ &isp0_mmu;
+/delete-node/ &isp1_mmu;
+/delete-node/ &mipi_dphy_rx0;
+/delete-node/ &mipi_dphy_tx1rx1;
+
+/ {
+	model = "Rigol DHO800/DHO900";
+	compatible = "rigol,dho900", "rockchip,rk3399";
+
+	aliases {
+		/* The card holds the system and the tools expect it as mmcblk0. */
+		mmc0 = &sdmmc;
+		mmc1 = &sdhci;
+		/* Fixes the bus number, so the FPGA boot port is /dev/spidev1.0. */
+		spi1 = &spi1;
+	};
+
+	chosen {
+		bootargs = "earlycon=uart8250,mmio32,0xff1a0000 console=ttyS2,115200n8 panic=10 rootwait";
+		stdout-path = "serial2:115200n8";
+	};
+
+	/* The gap between the two banks is the trust OS region. */
+	memory {
+		device_type = "memory";
+		reg = <0x0 0x00200000 0x0 0x08200000>,
+		      <0x0 0x0a200000 0x0 0xede00000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		drm_logo: drm-logo@0 {
+			compatible = "rockchip,drm-logo";
+			reg = <0x0 0x0 0x0 0x0>;
+		};
+
+		ramoops@110000 {
+			compatible = "ramoops";
+			reg = <0x0 0x110000 0x0 0xe0000>;
+			record-size = <0x20000>;
+			console-size = <0x80000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x40000>;
+		};
+
+		trust-os@8400000 {
+			reg = <0x0 0x08400000 0x0 0x01e00000>;
+			no-map;
+		};
+	};
+
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pwm0 0 25000 0>;
+		enable-gpios = <&gpio1 RK_PC2 GPIO_ACTIVE_HIGH>;
+		num-interpolated-steps = <255>;
+		brightness-levels = <0 255>;
+		default-brightness-level = <255>;
+	};
+
+	/*
+	 * The hal looks the pwmchip up by the name of its device, so this node
+	 * must keep the name "pwm-gpio".
+	 */
+	beeper_pwm: pwm-gpio {
+		compatible = "pwm-gpio";
+		gpios = <&gpio4 RK_PA3 GPIO_ACTIVE_HIGH>;
+		#pwm-cells = <3>;
+	};
+
+	clkin_gmac: external-gmac-clock {
+		compatible = "fixed-clock";
+		clock-frequency = <50000000>;
+		clock-output-names = "clkin_gmac";
+		#clock-cells = <0>;
+	};
+
+	/*
+	 * On/off only and no tachometer, so the speed is nominal. Disabled
+	 * because fan-power-hog in &gpio4 owns the line, see there.
+	 */
+	fan: gpio-fan {
+		compatible = "gpio-fan";
+		gpios = <&gpio4 RK_PA5 GPIO_ACTIVE_HIGH>;
+		gpio-fan,speed-map = <0 0>, <3000 1>;
+		#cooling-cells = <2>;
+		status = "disabled";
+	};
+
+	vcc3v3_sys: vcc3v3-sys {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_sys";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	vcc5v0_host: vcc5v0-host-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_host";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+	};
+
+	vcc_phy: vcc-phy-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_phy";
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	vcc_sd: vcc-sd {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_sd";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+	};
+};
+
+&cpu_l0 {
+	cpu-supply = <&vdd_cpu_l>;
+};
+
+&cpu_l1 {
+	cpu-supply = <&vdd_cpu_l>;
+};
+
+&cpu_l2 {
+	cpu-supply = <&vdd_cpu_l>;
+};
+
+&cpu_l3 {
+	cpu-supply = <&vdd_cpu_l>;
+};
+
+&cpu_b0 {
+	cpu-supply = <&vdd_cpu_b>;
+};
+
+&cpu_b1 {
+	cpu-supply = <&vdd_cpu_b>;
+};
+
+/*
+ * Extra voltages for the "J" bin of the RK3399. They apply only if the efuse
+ * says bin 2, which the opp tables of the BSP do not handle.
+ */
+&cluster0_opp {
+	rockchip,bin-scaling-sel = <0 30>, <1 34>, <2 46>;
+	rockchip,bin-voltage-sel = <2 20>;
+
+	opp-408000000 {
+		opp-microvolt-L20 = <875000 875000 1250000>;
+	};
+
+	opp-600000000 {
+		opp-microvolt-L20 = <875000 875000 1250000>;
+	};
+
+	opp-816000000 {
+		opp-microvolt-L20 = <900000 900000 1250000>;
+	};
+
+	opp-1008000000 {
+		opp-microvolt-L20 = <975000 975000 1250000>;
+	};
+};
+
+&cluster1_opp {
+	rockchip,bin-scaling-sel = <0 8>, <1 17>, <2 30>;
+	rockchip,bin-voltage-sel = <2 20>;
+
+	opp-408000000 {
+		opp-microvolt-L20 = <875000 875000 1250000>;
+	};
+
+	opp-600000000 {
+		opp-microvolt-L20 = <875000 875000 1250000>;
+	};
+
+	opp-816000000 {
+		opp-microvolt-L20 = <875000 875000 1250000>;
+	};
+
+	opp-1008000000 {
+		opp-microvolt-L20 = <925000 925000 1250000>;
+	};
+
+	opp-1200000000 {
+		opp-microvolt-L20 = <1000000 1000000 1250000>;
+	};
+
+	opp-1416000000 {
+		opp-microvolt-L20 = <1075000 1075000 1250000>;
+	};
+};
+
+&display_subsystem {
+	ports = <&vopb_out>, <&vopl_out>;
+	logo-memory-region = <&drm_logo>;
+
+	route {
+		route-dsi {
+			connect = <&vopl_out_dsi>;
+			logo,uboot = "logo.bmp";
+			logo,kernel = "logo_kernel.bmp";
+			logo,mode = "center";
+			charge_logo,mode = "center";
+		};
+
+		route-hdmi {
+			connect = <&vopb_out_hdmi>;
+			logo,uboot = "logo.bmp";
+			logo,kernel = "logo_kernel.bmp";
+			logo,mode = "center";
+			charge_logo,mode = "center";
+		};
+	};
+};
+
+/* The panel stays on the little VOP and HDMI on the big one. */
+&dsi_in_vopb {
+	status = "disabled";
+};
+
+&hdmi_in_vopl {
+	status = "disabled";
+};
+
+&dsi {
+	status = "okay";
+
+	/* The panel ID 93 65 04 makes this a Jadard JD9365. */
+	panel: panel@0 {
+		compatible = "simple-panel-dsi";
+		reg = <0>;
+		backlight = <&backlight>;
+		reset-gpios = <&gpio1 RK_PC4 GPIO_ACTIVE_LOW>;
+		prepare-delay-ms = <10>;
+		reset-delay-ms = <20>;
+		init-delay-ms = <10>;
+		enable-delay-ms = <120>;
+		unprepare-delay-ms = <120>;
+		dsi,flags = <(MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
+			      MIPI_DSI_MODE_VIDEO_NO_HBP | MIPI_DSI_MODE_NO_EOT_PACKET |
+			      MIPI_DSI_MODE_LPM)>;
+		dsi,format = <MIPI_DSI_FMT_RGB888>;
+		dsi,lanes = <4>;
+
+		/*
+		 * Each entry is: data type, delay in ms, length, payload.
+		 * Register E0 selects a page, so a block starts at each page.
+		 */
+		panel-init-sequence = [
+			15 00 02 e0 00  15 00 02 e1 93  15 00 02 e2 65  15 00 02 e3 f8
+			15 00 02 80 03
+
+			15 00 02 e0 01  15 00 02 00 00  15 00 02 01 25  15 00 02 03 00
+			15 00 02 04 30  15 00 02 0c 74  15 00 02 17 00  15 00 02 18 c7
+			15 00 02 19 01  15 00 02 1a 00  15 00 02 1b c7  15 00 02 1c 01
+			15 00 02 24 fe  15 00 02 37 19  15 00 02 35 28  15 00 02 38 05
+			15 00 02 39 08  15 00 02 3a 12  15 00 02 3c 7e  15 00 02 3d ff
+			15 00 02 3e ff  15 00 02 3f 7f  15 00 02 40 06  15 00 02 41 a0
+			15 00 02 43 1e  15 00 02 44 0b  15 00 02 55 02  15 00 02 57 6a
+			15 00 02 59 0a  15 00 02 5a 2e  15 00 02 5b 1a  15 00 02 5c 15
+			15 00 02 5d 7f  15 00 02 5e 61  15 00 02 5f 50  15 00 02 60 43
+			15 00 02 61 3f  15 00 02 62 32  15 00 02 63 35  15 00 02 64 1f
+			15 00 02 65 38  15 00 02 66 36  15 00 02 67 36  15 00 02 68 54
+			15 00 02 69 42  15 00 02 6a 48  15 00 02 6b 39  15 00 02 6c 34
+			15 00 02 6d 26  15 00 02 6e 14  15 00 02 6f 02  15 00 02 70 7f
+			15 00 02 71 61  15 00 02 72 50  15 00 02 73 43  15 00 02 74 3f
+			15 00 02 75 32  15 00 02 76 35  15 00 02 77 1f  15 00 02 78 38
+			15 00 02 79 36  15 00 02 7a 36  15 00 02 7b 54  15 00 02 7c 42
+			15 00 02 7d 48  15 00 02 7e 39  15 00 02 7f 34  15 00 02 80 26
+			15 00 02 81 14  15 00 02 82 02
+
+			15 00 02 e0 02  15 00 02 00 52  15 00 02 01 5f  15 00 02 02 5f
+			15 00 02 03 50  15 00 02 04 77  15 00 02 05 57  15 00 02 06 5f
+			15 00 02 07 4e  15 00 02 08 4c  15 00 02 09 5f  15 00 02 0a 4a
+			15 00 02 0b 48  15 00 02 0c 5f  15 00 02 0d 46  15 00 02 0e 44
+			15 00 02 0f 40  15 00 02 10 5f  15 00 02 11 5f  15 00 02 12 5f
+			15 00 02 13 5f  15 00 02 14 5f  15 00 02 15 5f  15 00 02 16 53
+			15 00 02 17 5f  15 00 02 18 5f  15 00 02 19 51  15 00 02 1a 77
+			15 00 02 1b 57  15 00 02 1c 5f  15 00 02 1d 4f  15 00 02 1e 4d
+			15 00 02 1f 5f  15 00 02 20 4b  15 00 02 21 49  15 00 02 22 5f
+			15 00 02 23 47  15 00 02 24 45  15 00 02 25 41  15 00 02 26 5f
+			15 00 02 27 5f  15 00 02 28 5f  15 00 02 29 5f  15 00 02 2a 5f
+			15 00 02 2b 5f  15 00 02 2c 13  15 00 02 2d 1f  15 00 02 2e 1f
+			15 00 02 2f 01  15 00 02 30 17  15 00 02 31 17  15 00 02 32 1f
+			15 00 02 33 0d  15 00 02 34 0f  15 00 02 35 1f  15 00 02 36 05
+			15 00 02 37 07  15 00 02 38 1f  15 00 02 39 09  15 00 02 3a 0b
+			15 00 02 3b 11  15 00 02 3c 1f  15 00 02 3d 1f  15 00 02 3e 1f
+			15 00 02 3f 1f  15 00 02 40 1f  15 00 02 41 1f  15 00 02 42 12
+			15 00 02 43 1f  15 00 02 44 1f  15 00 02 45 00  15 00 02 46 17
+			15 00 02 47 17  15 00 02 48 1f  15 00 02 49 0c  15 00 02 4a 0e
+			15 00 02 4b 1f  15 00 02 4c 04  15 00 02 4d 06  15 00 02 4e 1f
+			15 00 02 4f 08  15 00 02 50 0a  15 00 02 51 10  15 00 02 52 1f
+			15 00 02 53 1f  15 00 02 54 1f  15 00 02 55 1f  15 00 02 56 1f
+			15 00 02 57 1f  15 00 02 58 40  15 00 02 5b 10  15 00 02 5c 06
+			15 00 02 5d 40  15 00 02 5e 00  15 00 02 5f 00  15 00 02 60 40
+			15 00 02 61 03  15 00 02 62 04  15 00 02 63 6c  15 00 02 64 6c
+			15 00 02 65 75  15 00 02 66 08  15 00 02 67 b4  15 00 02 68 08
+			15 00 02 69 6c  15 00 02 6a 6c  15 00 02 6b 0c  15 00 02 6d 00
+			15 00 02 6e 00  15 00 02 6f 88  15 00 02 75 bb  15 00 02 76 00
+			15 00 02 77 05  15 00 02 78 2a
+
+			15 00 02 e0 04  15 00 02 00 0e  15 00 02 02 b3  15 00 02 09 61
+			15 00 02 0e 48
+
+			15 00 02 e0 00  15 00 02 35 00  05 96 01 11  05 32 01 29
+		];
+
+		panel-exit-sequence = [
+			05 32 01 28  05 64 01 10
+		];
+
+		display-timings {
+			native-mode = <&panel_timing>;
+
+			panel_timing: timing0 {
+				clock-frequency = <68000000>;
+				hactive = <1024>;
+				vactive = <600>;
+				hback-porch = <20>;
+				hfront-porch = <20>;
+				hsync-len = <20>;
+				vback-porch = <10>;
+				vfront-porch = <30>;
+				vsync-len = <4>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+		};
+
+		port {
+			panel_in_dsi: endpoint {
+				remote-endpoint = <&dsi_out_panel>;
+			};
+		};
+	};
+
+	ports {
+		port@1 {
+			reg = <1>;
+
+			dsi_out_panel: endpoint {
+				remote-endpoint = <&panel_in_dsi>;
+			};
+		};
+	};
+};
+
+&emmc_phy {
+	status = "disabled";
+};
+
+&gmac {
+	assigned-clocks = <&cru SCLK_RMII_SRC>;
+	assigned-clock-parents = <&clkin_gmac>;
+	clock_in_out = "input";
+	phy-mode = "rmii";
+	phy-supply = <&vcc_phy>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&rmii_pins>;
+	snps,reset-gpio = <&gpio3 RK_PB7 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 10000 50000>;
+	phy-handle = <&rmii_phy>;
+	tx_delay = <0x1e>;
+	rx_delay = <0x16>;
+	status = "okay";
+
+	mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rmii_phy: ethernet-phy@0 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0>;
+		};
+	};
+};
+
+/*
+ * The hal opens these lines by name, each row is one port, A to D. No pin in
+ * here may go to a peripheral.
+ */
+&gpio0 {
+	gpio-line-names =
+		"", "", "spi_sdio", "spi_sclk", "hd_code0", "", "spi_le", "",
+		"hd_code1", "", "", "hd_code2", "hd_code3", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "";
+};
+
+/*
+ * The regulator driver ignores the VSEL pins, so the hogs hold both chips on
+ * their first voltage register.
+ */
+&gpio1 {
+	vsel1-hog {
+		gpio-hog;
+		gpios = <RK_PC7 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "vsel";
+	};
+
+	vsel2-hog {
+		gpio-hog;
+		gpios = <RK_PB6 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "vsel";
+	};
+};
+
+&gpio2 {
+	gpio-line-names =
+		"", "", "spi_afe_cs_1", "", "spi_afe_cs_3", "spi_afe_cs_2", "", "",
+		"", "spi_afe_miso", "spi_afe_mosi", "spi_afe_sclk", "spi_afe_cs_0", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "";
+};
+
+&gpio3 {
+	gpio-line-names =
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"LA_PROBE_DETECT", "", "afg_in1", "afg_in2", "afg_in3", "afg_in4", "afg_in5", "";
+};
+
+&gpio4 {
+	gpio-line-names =
+		"", "", "", "PWM_GPIO", "", "fan_power", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "FG_M2C_GPIO", "", "",
+		"", "afe1", "afe2", "", "", "afe3", "afe4", "";
+
+	/*
+	 * The fan must run from the probe of gpio4 on, with no driver or daemon
+	 * behind it: on this board nothing reports the FPGA temperature, so a
+	 * stopped fan would go unnoticed.
+	 */
+	fan-power-hog {
+		gpio-hog;
+		gpios = <RK_PA5 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "fan_power";
+	};
+};
+
+&hdmi {
+	ddc-i2c-scl-high-time-ns = <9625>;
+	ddc-i2c-scl-low-time-ns = <10000>;
+	status = "okay";
+};
+
+&i2c0 {
+	clock-frequency = <400000>;
+	i2c-scl-rising-time-ns = <160>;
+	i2c-scl-falling-time-ns = <30>;
+	status = "okay";
+
+	rk808: pmic@1b {
+		compatible = "rockchip,rk808";
+		reg = <0x1b>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <RK_PC5 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pmic_int_l>;
+		rockchip,system-power-controller;
+		wakeup-source;
+		#clock-cells = <1>;
+		clock-output-names = "xin32k", "rk808-clkout2";
+
+		vcc1-supply = <&vcc3v3_sys>;
+		vcc2-supply = <&vcc3v3_sys>;
+		vcc3-supply = <&vcc3v3_sys>;
+		vcc4-supply = <&vcc3v3_sys>;
+		vcc6-supply = <&vcc3v3_sys>;
+		vcc7-supply = <&vcc3v3_sys>;
+		vcc8-supply = <&vcc3v3_sys>;
+		vcc9-supply = <&vcc3v3_sys>;
+		vcc10-supply = <&vcc3v3_sys>;
+		vcc11-supply = <&vcc3v3_sys>;
+		vcc12-supply = <&vcc3v3_sys>;
+		vddio-supply = <&vcc_3v0>;
+
+		regulators {
+			vdd_center: DCDC_REG1 {
+				regulator-name = "vdd_center";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <750000>;
+				regulator-max-microvolt = <1350000>;
+				regulator-ramp-delay = <6001>;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdd_cpu_l: DCDC_REG2 {
+				regulator-name = "vdd_cpu_l";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <750000>;
+				regulator-max-microvolt = <1350000>;
+				regulator-ramp-delay = <6001>;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcc_ddr: DCDC_REG3 {
+				regulator-name = "vcc_ddr";
+				regulator-always-on;
+				regulator-boot-on;
+
+				regulator-state-mem {
+					regulator-on-in-suspend;
+				};
+			};
+
+			vcc_1v8: DCDC_REG4 {
+				regulator-name = "vcc_1v8";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <1800000>;
+				};
+			};
+
+			vcc1v8_dvp: LDO_REG1 {
+				regulator-name = "vcc1v8_dvp";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcc3v0_tp: LDO_REG2 {
+				regulator-name = "vcc3v0_tp";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <3000000>;
+				regulator-max-microvolt = <3000000>;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcc1v8_pmu: LDO_REG3 {
+				regulator-name = "vcc1v8_pmu";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <1800000>;
+				};
+			};
+
+			vccio_sd: LDO_REG4 {
+				regulator-name = "vccio_sd";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <3300000>;
+
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <3000000>;
+				};
+			};
+
+			vcca3v0_codec: LDO_REG5 {
+				regulator-name = "vcca3v0_codec";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <3000000>;
+				regulator-max-microvolt = <3000000>;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcc_1v5: LDO_REG6 {
+				regulator-name = "vcc_1v5";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1500000>;
+				regulator-max-microvolt = <1500000>;
+
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <1500000>;
+				};
+			};
+
+			vcca1v8_codec: LDO_REG7 {
+				regulator-name = "vcca1v8_codec";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcc_3v0: LDO_REG8 {
+				regulator-name = "vcc_3v0";
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <3000000>;
+				regulator-max-microvolt = <3000000>;
+
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <3000000>;
+				};
+			};
+
+			vcc3v3_s3: SWITCH_REG1 {
+				regulator-name = "vcc3v3_s3";
+				regulator-always-on;
+				regulator-boot-on;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcc3v3_s0: SWITCH_REG2 {
+				regulator-name = "vcc3v3_s0";
+				regulator-always-on;
+				regulator-boot-on;
+
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+		};
+	};
+
+	vdd_cpu_b: regulator@40 {
+		compatible = "silergy,syr827";
+		reg = <0x40>;
+		vin-supply = <&vcc3v3_sys>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vsel1_gpio>;
+		regulator-name = "vdd_cpu_b";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <712500>;
+		regulator-max-microvolt = <1500000>;
+		regulator-ramp-delay = <1000>;
+		fcs,suspend-voltage-selector = <1>;
+
+		regulator-state-mem {
+			regulator-off-in-suspend;
+		};
+	};
+
+	vdd_gpu: regulator@41 {
+		compatible = "silergy,syr828";
+		reg = <0x41>;
+		vin-supply = <&vcc3v3_sys>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vsel2_gpio>;
+		regulator-name = "vdd_gpu";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <712500>;
+		regulator-max-microvolt = <1500000>;
+		regulator-ramp-delay = <1000>;
+		fcs,suspend-voltage-selector = <1>;
+
+		regulator-state-mem {
+			regulator-off-in-suspend;
+		};
+	};
+};
+
+&i2c2 {
+	clock-frequency = <100000>;
+	i2c-scl-rising-time-ns = <160>;
+	i2c-scl-falling-time-ns = <30>;
+	status = "okay";
+
+	touchscreen@38 {
+		compatible = "focaltech,ft5422";
+		reg = <0x38>;
+		interrupt-parent = <&gpio4>;
+		interrupts = <RK_PA6 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&gpio4 RK_PA7 GPIO_ACTIVE_LOW>;
+		vcc-supply = <&vcc3v0_tp>;
+		touchscreen-size-x = <1024>;
+		touchscreen-size-y = <600>;
+	};
+};
+
+&io_domains {
+	audio-supply = <&vcc_3v0>;
+	bt656-supply = <&vcc_3v0>;
+	gpio1830-supply = <&vcc_3v0>;
+	sdmmc-supply = <&vccio_sd>;
+	status = "okay";
+};
+
+/* One phy for the whole link, as under stock: the FPGA trains two of the lanes. */
+&pcie_phy {
+	#phy-cells = <0>;
+	assigned-clocks = <&cru SCLK_PCIEPHY_REF>;
+	assigned-clock-parents = <&cru SCLK_PCIEPHY_REF100M>;
+	assigned-clock-rates = <100000000>;
+	status = "okay";
+};
+
+/*
+ * The FPGA comes up on PCIe only after its boot over spi1, so the host driver
+ * is a module that may be removed and loaded again: the fixed domain keeps
+ * the endpoint at 0000:01:00.0 through that.
+ */
+&pcie0 {
+	ep-gpios = <&gpio2 RK_PC2 GPIO_ACTIVE_HIGH>;
+	linux,pci-domain = <0>;
+	max-link-speed = <2>;
+	num-lanes = <4>;
+	phys = <&pcie_phy>;
+	phy-names = "pcie-phy";
+	status = "okay";
+};
+
+&pinctrl {
+	/* Pin hogs, so these pulls hold before any driver or the hal runs. */
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie_perst_float &afe_spi_pins>;
+
+	afe-spi {
+		afe_spi_pins: afe-spi-pins {
+			rockchip,pins =
+				<2 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>,
+				<2 RK_PB2 RK_FUNC_GPIO &pcfg_pull_up>,
+				<2 RK_PB3 RK_FUNC_GPIO &pcfg_pull_up>,
+				<2 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	pcie {
+		/* PERST# has no pull until the host driver takes the pin. */
+		pcie_perst_float: pcie-perst-float {
+			rockchip,pins = <2 RK_PC2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	pmic {
+		pmic_int_l: pmic-int-l {
+			rockchip,pins = <1 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		vsel1_gpio: vsel1-gpio {
+			rockchip,pins = <1 RK_PC7 RK_FUNC_GPIO &pcfg_pull_down>;
+		};
+
+		vsel2_gpio: vsel2-gpio {
+			rockchip,pins = <1 RK_PB6 RK_FUNC_GPIO &pcfg_pull_down>;
+		};
+	};
+};
+
+&pmu_io_domains {
+	pmu1830-supply = <&vcc_3v0>;
+	status = "okay";
+};
+
+&pwm0 {
+	status = "okay";
+};
+
+/* Its pin GPIO0_A6 is the latch of the sample clock PLL, spi_le. */
+&pwm3 {
+	status = "disabled";
+};
+
+/* The stock loader has no panic flag, see docs/boot.md. */
+&reboot_mode {
+	mode-bootloader = <BOOT_BL_DOWNLOAD>;
+	/delete-property/ mode-panic;
+};
+
+&sdhci {
+	bus-width = <8>;
+	mmc-hs400-1_8v;
+	mmc-hs400-enhanced-strobe;
+	no-sd;
+	no-sdio;
+	non-removable;
+	status = "disabled";
+};
+
+&sdmmc {
+	bus-width = <4>;
+	cap-mmc-highspeed;
+	cap-sd-highspeed;
+	disable-wp;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc_clk &sdmmc_cmd &sdmmc_cd &sdmmc_bus4>;
+	vmmc-supply = <&vcc_sd>;
+	vqmmc-supply = <&vccio_sd>;
+	status = "okay";
+};
+
+/* Boot monitor of the FPGA, driven from user space. */
+&spi1 {
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rockchip,spidev";
+		reg = <0>;
+		spi-max-frequency = <50000000>;
+	};
+};
+
+/* Its pins are the AFE bus, bit-banged as the spi_afe_* GPIO lines. */
+&spi2 {
+	status = "disabled";
+};
+
+&tcphy0 {
+	status = "okay";
+};
+
+&tcphy1 {
+	status = "okay";
+};
+
+&tsadc {
+	rockchip,hw-tshut-mode = <1>;
+	rockchip,hw-tshut-polarity = <1>;
+	rockchip,hw-tshut-temp = <120000>;
+	status = "okay";
+};
+
+&u2phy0 {
+	status = "okay";
+};
+
+&u2phy0_otg {
+	status = "okay";
+};
+
+&u2phy1 {
+	status = "okay";
+};
+
+&u2phy1_host {
+	phy-supply = <&vcc5v0_host>;
+	status = "okay";
+};
+
+&u2phy1_otg {
+	status = "okay";
+};
+
+/*
+ * Front panel link. GPIO2_C2, the CTS pin, is PCIe PERST#, so only the
+ * RX and TX pins of the default pinctrl may be used here.
+ */
+&uart0 {
+	status = "okay";
+};
+
+&uart2 {
+	status = "okay";
+};
+
+&usbdrd3_0 {
+	status = "okay";
+};
+
+&usbdrd_dwc3_0 {
+	dr_mode = "otg";
+	extcon = <&u2phy0>;
+	maximum-speed = "high-speed";
+	status = "okay";
+};
+
+&usbdrd3_1 {
+	status = "okay";
+};
+
+&usbdrd_dwc3_1 {
+	dr_mode = "host";
+	status = "okay";
+};
+
+&vopb {
+	assigned-clocks = <&cru DCLK_VOP0_DIV>;
+	assigned-clock-parents = <&cru PLL_VPLL>;
+	status = "okay";
+};
+
+&vopb_mmu {
+	status = "okay";
+};
+
+&vopl {
+	status = "okay";
+};
+
+&vopl_mmu {
+	status = "okay";
+};

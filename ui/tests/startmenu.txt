@@ -1,0 +1,20 @@
+# start menu (Menu button left of the cards): every front-panel key function and every menu by touch
+key ch2
+tap 860 316
+frames 20
+tap 37 563
+frames 2
+shot $S/g0-startmenu.ppm
+# History (the Navigate key): stored records, Older / Newer appear
+tap 484 444
+tap 630 444
+frames 2
+shot $S/g1-startmenu-history.ppm
+# Live again, then Touch lock: only the Menu button ("Locked") still reacts, a tap on it unlocks
+tap 484 444
+tap 630 490
+frames 2
+shot $S/g2-touch-locked.ppm
+tap 37 563
+frames 2
+shot $S/g3-touch-unlocked.ppm
