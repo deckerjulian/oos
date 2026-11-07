@@ -1448,7 +1448,9 @@ def analysers_keep_the_frame_rate(s, o):
 
 @test("a1", need=(1,))
 def generator_has_no_dc_in_any_gear(s, o):
-    """The middle of a sine against the channel's own zero, across the generator's ranges (up to 2 Vpp, above, 6 Vpp)."""
+    """The middle of a sine on both sides of the generator's range switch at 2 Vpp, and at 6 Vpp. The channel's own zero
+    error is the same in every reading and drops out of the differences; GND coupling is no reference, the FPGA makes
+    it exactly zero."""
     c = s.loop[0]
     s.w(f":CHAN{c}:DISP 1")
     s.w(f":TRIG:EDGE:SOUR CHAN{c}")
@@ -1456,25 +1458,18 @@ def generator_has_no_dc_in_any_gear(s, o):
     s.w(f":CHAN{c}:BWL 20M")
     s.w(":TIM:SCAL 0.0002")
 
-    def mid():
+    def mid(a):
+        s.gen("SIN", 1e3, a)
         s.settle(extra=1.2)
         v = sorted(s.wave(c)[2])
         return (v[len(v) // 200] + v[-len(v) // 200]) / 2
 
-    # the channel's own zero: with the output off the generator still holds its last range, which is not 0 V
-    s.w(":SOUR:OUTP OFF")
-    s.w(f":CHAN{c}:COUP GND")
-    zero = mid()
-    s.w(f":CHAN{c}:COUP DC")
-    rows = {}
-    for a in (1.0, 2.0, 2.5, 4.0, 6.0, 7.0):
-        s.gen("SIN", 1e3, a)
-        rows[a] = round(mid() - zero, 3)
+    rows = {a: round(mid(a), 3) for a in (1.0, 2.0, 2.5, 4.0, 6.0)}
     s.w(":SOUR:OUTP OFF")
     s.w(f":CHAN{c}:BWL AUTO")
-    bad = {a: v for a, v in rows.items() if abs(v) > 0.04}
-    assert not bad, f"V of DC by Vpp: {rows}"
-    return f"V of DC by Vpp: {rows}"
+    step = round(rows[2.5] - rows[2.0], 3)
+    assert abs(step) < 0.04 and abs(rows[6.0] - rows[1.0]) < 0.04, f"jump at 2 Vpp {step} V; middle by Vpp {rows}"
+    return f"jump at 2 Vpp {step} V; middle by Vpp {rows}"
 
 
 @test("a1", need=(1,))

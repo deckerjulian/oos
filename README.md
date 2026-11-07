@@ -236,8 +236,8 @@ The technical documents in [docs/](docs/README.md) say for each topic whether it
 
 Known limits:
 
-- Generator DC level: the amplitude ranges differ by up to 0.1 V in their DC level, measured on CH2. Whether the
-  generator's range calibration or the channel causes it is not clear yet.
+- Generator DC level: the output's middle jumps by about 85 mV where the generator switches its range at 2 Vpp.
+  Whether the stock system shows the same is not known yet.
 - High resolution only gains where the record has more samples than the screen has points.
 - Logic analyser: D3 to D15 were not driven with a signal yet.
 - WLAN: joining a network has not been tried on the unit.

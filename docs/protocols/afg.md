@@ -390,10 +390,10 @@ frequency and the two DAC words when the gear and the wave table stay the same a
 (the relays switch), a square or ramp whose table depends on the frequency, and noise take the full start. Verified on the
 unit with sine offset steps; amplitude steps across a gear still take 0.9 s.
 
-Open observation: above 2 Vpp (gears 0x15, 0x14) and for DC above 2 V (gear 0x1f) the output is sometimes 80 to 120 mV low, on
-two channels on one cable alike, independent of the amplitude before. In the same start it read +3 to -17 mV soon after power-on
-and -79 to -105 mV twelve minutes and a test run later. Up to 2 Vpp the two states do not differ. The cause is not known:
-temperature and an earlier generator operation are both open.
+Open observation: where the gear changes at 2 Vpp (0x10 to 0x15) the middle of the output jumps by about -85 mV, the
+same on two channels on one cable and independent of what ran before. Whether the stock system shows the same jump is
+not known. With the output off the relays stay on the last gear, so the output is not 0 V then. The channel's GND
+coupling is no reference for such readings: the FPGA sets the channel's gain to 0 and the result is exactly zero.
 
 ## 15. Other wave shapes in OOS
 
