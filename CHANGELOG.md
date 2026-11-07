@@ -1,0 +1,30 @@
+# Changes
+
+## Unreleased
+
+Fixes:
+
+- Protocol trigger in Normal: in roll mode the picture stood still with WAIT although data came in. Roll and scan frames
+  are no longer held back, and neither are records without the decoder's input.
+- Protocol trigger with Single: it waits for a record that holds the event instead of stopping at the first edge.
+- System > Overclock no longer wraps from 1.25 GHz to the 2 GHz test clock on one step down, and leaves a limits.conf
+  alone that it cannot read.
+- The record history keeps the logic analyser data of records up to 1 M words only. With deep memory it could fill the
+  scope's RAM.
+- Spectrum and eye take the first channel that is on when their source is off.
+- The search for the vendor.bin keys skips libraries without the code pattern, remembers a search that found nothing,
+  and stays within the file on damaged headers.
+
+New:
+
+- SCPI `:WAVeform:MODE RAW` reads every sample of the record in the screen window.
+
+Measured:
+
+- The generator's AM, FM and PM are accurate within 3 %. The earlier scatter came from the test, which read the screen
+  record.
+- The logic analyser loses no data at slow time bases. The gaps seen before came from the test equipment.
+
+## 0.1.0
+
+First public version.

@@ -586,6 +586,7 @@ OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and `par
 | `keys/` | Public keys trusted for updates, community signing key |
 | `tools/` | Card cloning and analysis, device inventory, Python models ([README](tools/README.md)) |
 | `kernel/` | Kernel source, own patches, device tree, configuration, build in Docker, licences ([README](kernel/README.md)) |
+| `CHANGELOG.md` | What changed between releases |
 | `docs/` | Technical documentation: architecture, boot, hardware, register-level protocols ([index](docs/README.md)) |
 
 ## Development
