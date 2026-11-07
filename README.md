@@ -118,6 +118,8 @@ Limits on all models:
 OOS does not limit the bandwidth to the rated value: "Full" opens the front-end filter on every model. The real
 bandwidth depends on the hardware, and you can measure it with the [bandwidth test](docs/bandwidth-test.md).
 
+For how the hardware works, see the [hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html).
+
 ## Features
 
 **Acquisition**
@@ -301,7 +303,8 @@ its calibration and licences. Then unplug the scope and take the card out again.
 
 ### 3. Build the kernel
 
-Put the kernel source archive into `kernel/src/` ([kernel/README.md](kernel/README.md)), then:
+Download `linux-6.12.115-base.tar.xz` from the [releases](https://github.com/deckerjulian/oos/releases) into `kernel/src/`
+([kernel/README.md](kernel/README.md)), then:
 
 ```sh
 kernel/build-base.sh        # in Docker, 5-30 minutes depending on the machine, result in kernel/out/base
@@ -598,7 +601,7 @@ The test `every_menu_fits` walks all menus and fails on text wider than its cont
 `tools/wlan-sim.sh` tests the WLAN path on simulated radios in a virtual machine, without a stick. It needs Docker,
 `qemu-system-aarch64` and one finished image build.
 
-Start with [docs/architecture.md](docs/architecture.md).
+Start with the [hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html) and [docs/architecture.md](docs/architecture.md).
 
 ## Licences
 

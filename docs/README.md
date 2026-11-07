@@ -15,8 +15,8 @@ How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on t
 
 ## Hardware
 
-- [hardware/overview.html](hardware/overview.html): **start here.** A picture of the whole scope: components, signal paths,
-  how the scope, the logic analyser and the generator work. Open it in a browser.
+- [Hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html): **start here.** A picture of the whole scope: components, signal paths,
+  how the scope, the logic analyser and the generator work.
 - [hardware/README.md](hardware/README.md): buses and on-chip blocks of the RK3399 and what is attached to them.
 - [hardware/gpio-map.md](hardware/gpio-map.md): every GPIO with its pin, label and role.
 

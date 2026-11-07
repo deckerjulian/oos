@@ -16,4 +16,6 @@ Everything the kernel of OOS is built from. `build-base.sh` needs nothing outsid
 
 Licences: kernel and patches GPL-2.0, device tree GPL-2.0+ OR MIT, `xdma` as in its files, `firmware/` as in `firmware/LICENSE.wireless-regdb`.
 
+The archive is too large for the repository: it is a file of each [release](https://github.com/deckerjulian/oos/releases).
+
 Whoever passes on an image must offer this source, the archive in `src/` included.
