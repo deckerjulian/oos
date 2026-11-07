@@ -1431,7 +1431,7 @@ def analysers_keep_the_frame_rate(s, o):
 
 @test("a1", need=(1,))
 def generator_has_no_dc_in_any_gear(s, o):
-    """The middle of a sine against the generator switched off, across the gears (amplitudes above 2 Vpp and 6 Vpp)."""
+    """The middle of a sine against the channel's own zero, across the generator's ranges (up to 2 Vpp, above, 6 Vpp)."""
     c = s.loop[0]
     s.w(f":CHAN{c}:DISP 1")
     s.w(f":TRIG:EDGE:SOUR CHAN{c}")
@@ -1444,8 +1444,11 @@ def generator_has_no_dc_in_any_gear(s, o):
         v = sorted(s.wave(c)[2])
         return (v[len(v) // 200] + v[-len(v) // 200]) / 2
 
+    # the channel's own zero: with the output off the generator still holds its last range, which is not 0 V
     s.w(":SOUR:OUTP OFF")
+    s.w(f":CHAN{c}:COUP GND")
     zero = mid()
+    s.w(f":CHAN{c}:COUP DC")
     rows = {}
     for a in (1.0, 2.0, 2.5, 4.0, 6.0, 7.0):
         s.gen("SIN", 1e3, a)
