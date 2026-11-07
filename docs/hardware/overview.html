@@ -86,17 +86,17 @@ svg text{font-family:inherit}
 
 <h2 id="buses">Who talks to whom</h2>
 <table><tr><th>Link</th><th>Between</th><th>Carries</th><th>More</th></tr>
-<tr><td>PCIe Gen2 x2 (XDMA)</td><td>RK3399, FPGA</td><td>registers and records</td><td><a href="../protocols/fpga-boot.md">fpga-boot.md</a></td></tr>
-<tr><td>SPI1</td><td>RK3399, FPGA boot monitor</td><td>which image to start</td><td><a href="../protocols/fpga-image.md">fpga-image.md</a></td></tr>
-<tr><td>SPI by GPIO, about 100 kHz</td><td>RK3399, 4 x RT1642</td><td>front end settings</td><td><a href="../protocols/afe-spi.md">afe-spi.md</a></td></tr>
-<tr><td>SPI master in the FPGA</td><td>FPGA, ADC</td><td>ADC set-up</td><td><a href="../protocols/adc-spu-init.md">adc-spu-init.md</a></td></tr>
-<tr><td>3-wire by GPIO</td><td>RK3399, LMX2582</td><td>clock table, write only</td><td><a href="../protocols/pll.md">pll.md</a></td></tr>
-<tr><td>GPIO</td><td>RK3399, generator output stage</td><td>relays, supply</td><td><a href="../protocols/afg.md">afg.md</a></td></tr>
-<tr><td>UART0, 1.5 Mbaud</td><td>RK3399, panel MCU</td><td>keys, knobs, LEDs, power</td><td><a href="../protocols/frontpanel.md">frontpanel.md</a></td></tr>
-<tr><td>I2C, GPIO</td><td>RK3399, touch, FRAM, fan, beeper</td><td>the rest of the board</td><td><a href="../protocols/board.md">board.md</a>, <a href="gpio-map.md">gpio-map.md</a></td></tr></table>
+<tr><td>PCIe Gen2 x2 (XDMA)</td><td>RK3399, FPGA</td><td>registers and records</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/fpga-boot.md">fpga-boot.md</a></td></tr>
+<tr><td>SPI1</td><td>RK3399, FPGA boot monitor</td><td>which image to start</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/fpga-image.md">fpga-image.md</a></td></tr>
+<tr><td>SPI by GPIO, about 100 kHz</td><td>RK3399, 4 x RT1642</td><td>front end settings</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/afe-spi.md">afe-spi.md</a></td></tr>
+<tr><td>SPI master in the FPGA</td><td>FPGA, ADC</td><td>ADC set-up</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/adc-spu-init.md">adc-spu-init.md</a></td></tr>
+<tr><td>3-wire by GPIO</td><td>RK3399, LMX2582</td><td>clock table, write only</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/pll.md">pll.md</a></td></tr>
+<tr><td>GPIO</td><td>RK3399, generator output stage</td><td>relays, supply</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/afg.md">afg.md</a></td></tr>
+<tr><td>UART0, 1.5 Mbaud</td><td>RK3399, panel MCU</td><td>keys, knobs, LEDs, power</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/frontpanel.md">frontpanel.md</a></td></tr>
+<tr><td>I2C, GPIO</td><td>RK3399, touch, FRAM, fan, beeper</td><td>the rest of the board</td><td><a href="https://github.com/deckerjulian/oos/blob/main/docs/protocols/board.md">board.md</a>, <a href="https://github.com/deckerjulian/oos/blob/main/docs/hardware/gpio-map.md">gpio-map.md</a></td></tr></table>
 
 <h2 id="models">What differs between models</h2>
-<div class="text"><p>All DHO800 and DHO900 models run the same software. They differ in what is fitted, and <a href="../models.md">models.md</a> has the full table.</p></div>
+<div class="text"><p>All DHO800 and DHO900 models run the same software. They differ in what is fitted, and <a href="https://github.com/deckerjulian/oos/blob/main/docs/models.md">models.md</a> has the full table.</p></div>
 <table><tr><th></th><th>DHO800</th><th>DHO900</th><th>S models (DHO914S, DHO924S)</th></tr>
 <tr><td>Channels</td><td>2 or 4</td><td>4</td><td>4</td></tr>
 <tr><td>Logic analyser port</td><td>no</td><td>yes</td><td>yes</td></tr>
@@ -104,7 +104,7 @@ svg text{font-family:inherit}
 <tr><td>EXT trigger input</td><td>DHO802, DHO812</td><td>no</td><td>no</td></tr></table>
 
 <h2 id="status">How sure is this</h2>
-<div class="text"><p>This page summarises the documents in <a href="../README.md">docs/</a>, which say for each statement how it is known. In short:</p></div>
+<div class="text"><p>This page summarises the documents in <a href="https://github.com/deckerjulian/oos/blob/main/docs/README.md">docs/</a>, which say for each statement how it is known. In short:</p></div>
 <table><tr><th>Part</th><th>State</th></tr>
 <tr><td>Start-up, analog acquisition, trigger, roll and scan, generator sine</td><td><span class="tag ok">seen on a DHO924S</span></td></tr>
 <tr><td>LA word format and rate</td><td><span class="tag ok">seen on a DHO924S</span> under the stock system</td></tr>

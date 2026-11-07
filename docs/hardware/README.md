@@ -1,6 +1,6 @@
 # DHO924S hardware as seen by the RK3399 (stock device tree)
 
-For a picture of the whole scope and how the parts work together, open [overview.html](overview.html) in a browser. See also
+For a picture of the whole scope and how the parts work together, open the [hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html) in a browser. See also
 `gpio-map.md`.
 
 Bootargs: `earlycon=uart8250,mmio32,0xff1a0000 swiotlb=1 coherent_pool=1m cma=514M`.
