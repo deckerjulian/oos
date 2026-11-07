@@ -14,7 +14,7 @@ written in Rust. It runs from the scope's own SD card, next to the stock system,
 <td><img src="docs/images/logic-analyser.png" alt="Analog channel with three logic analyser lines"></td></tr>
 </table>
 
-All pictures are screenshots of a DHO924S running OOS. More in the [gallery](#gallery).
+All pictures are screenshots of a DHO924S running OOS. More in the [gallery](#gallery). Guides are in the [wiki](https://github.com/deckerjulian/oos/wiki).
 
 ## Thanks
 
