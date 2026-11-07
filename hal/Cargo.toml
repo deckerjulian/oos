@@ -1,6 +1,7 @@
 [package]
 name = "oos-hal"
 version = "0.1.0"
+repository = "https://github.com/deckerjulian/oos"
 edition = "2021"
 description = "OOS hardware layer for the Rigol DHO800/DHO900: FPGA register sequences (SCU, SPU, TPU), front panel"
 license = "GPL-2.0-or-later"
