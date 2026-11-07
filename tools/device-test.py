@@ -1906,22 +1906,28 @@ def la_spacing(w, dt, line=0):
 def la_has_no_gaps_at_slow_time_bases(s, o, p):
     """Slow time bases below roll: every chunk of the LA stream arrives, with one, two and four channels."""
     rows, bad = {}, {}
+    # D0 and D2 come from separate PWM units of the Pico: a piece the scope loses is missing on both. They are set once:
+    # setting them again restarts their period, which on both lines looks just like a lost piece.
+    p.pwm(2, 100)
+    p.pwm(4, 100)
     try:
         for chans in ((1,), (1, 2), (3, 4), (1, 3), (1, 2, 3, 4)):
             only_channels(s, chans)
             for tb in (0.01, 0.02, 0.05, 0.1):
-                p.pwm(2, 100)
                 s.w(f":TIM:SCAL {tb}")
                 w, dt, _ = la_rec(s, tb * 13 + 2.5)
-                worst, span = la_spacing(w, dt)
+                (w0, span), (w2, _) = la_spacing(w, dt, 0), la_spacing(w, dt, 2)
                 k = f"{chans} {tb}"
-                rows[k] = (round(worst, 2), round(span / (10 * tb), 2), len(w))
-                if worst > 1.05 or span < 0.95 * 10 * tb:
+                rows[k] = (round(w0, 2), round(w2, 2), round(span / (10 * tb), 2), len(w))
+                if min(w0, w2) > 1.05 or span < 0.95 * 10 * tb:
                     bad[k] = rows[k]
+                elif max(w0, w2) > 1.05:
+                    rows[k] += ("one line only: the source",)
     finally:
         only_channels(s, (1,))
-    assert not bad, f"{len(bad)} of {len(rows)} (longest distance, part of the screen, words): {bad}"
-    return f"{len(rows)} sets, worst distance {max(v[0] for v in rows.values())}"
+    one = {k: v for k, v in rows.items() if len(v) > 4}
+    assert not bad, f"{len(bad)} of {len(rows)} (longest distance D0, D2, part of the screen, words): {bad}"
+    return f"{len(rows)} sets, worst distance {max(max(v[0], v[1]) for v in rows.values())}, on one line only: {one}"
 
 
 @test("la")

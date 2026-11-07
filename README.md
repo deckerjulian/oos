@@ -241,8 +241,7 @@ Known limits:
 - Generator DC level: the amplitude ranges differ by up to 0.1 V in their DC level, measured on CH2. Whether the
   generator's range calibration or the channel causes it is not clear yet.
 - High resolution only gains where the record has more samples than the screen has points.
-- Logic analyser: D3 to D15 were not driven with a signal yet. With two or more channels at 10 to 100 ms/div a short piece
-  of the LA record is sometimes missing, in about one of ten records.
+- Logic analyser: D3 to D15 were not driven with a signal yet.
 - WLAN: joining a network has not been tried on the unit.
 
 ## Try it without a scope
