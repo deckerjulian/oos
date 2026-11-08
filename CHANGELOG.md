@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Fixes:
+
+- A cold start no longer stops at "ADC data lanes" when the sync bit stays the same over the whole sweep while the ADC
+  answers (seen on a DHO924S). It goes on as with any sweep without a falling edge; the checks after the eye scan decide.
+
 Tested:
 
 - The USB stick install ran on a DHO924S: dry run, first install over the stock `recovery`, and the run again.

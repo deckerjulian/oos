@@ -23,7 +23,7 @@
 //! | 8 | poll 0x1008 bit 29 (20 ms, 4 s), failure stops (never 0x1008 bit 31); 0x1210 only logged (0 until step 12 in a cold start) | [N][U] |
 //! | 9 | ADC parameters of mode 0 from cal_adc.hex (`adc::Adc::parameter`) | [N][O] |
 //! | 10 | DDR skip taps from cal_ddr.hex (skipped if absent), then poll 0x1008 bit 29 again | [N], poll [A] |
-//! | 11 | sync-delay sweep 0..7 + SPI/SPU sync; no falling edge stays at 7, a bit that never moves stops | [N][O], stop [A] |
+//! | 11 | sync-delay sweep 0..7 + SPI/SPU sync; no falling edge stays at 7, a register that never changes stops | [N][O], stop [A] |
 //! | 12 | 32-step IDELAY eye scan, window search (`wnd`), load; fallback to the stored list | [N][O], fallback [A] |
 //! | 13 | core alignment 0x1020 / 0x1014 | [N][O] |
 //! | 14 | ADC internal trim, ADC 0 only, done = 0x1038 bit 6, 2 s wall-clock timeout (continues like the stock system) | [N], ADC 1 skipped [A] |
@@ -449,14 +449,15 @@ impl<B: Bus> Ctx<'_, B> {
     }
 
     /// 3.3 Sync delay sweep.
-    fn sync_sweep(&mut self) -> ([bool; 8], Option<u32>) {
-        let mut r = [false; 8];
+    fn sync_sweep(&mut self) -> ([bool; 8], [u32; 8], Option<u32>) {
+        let (mut r, mut raw) = ([false; 8], [0u32; 8]);
         for (d, rd) in r.iter_mut().enumerate() {
             let w = sync_delay(&mut self.sh, d as u32);
             self.adc(&[w]);
             self.sleep(SYNC_SETTLE_US);
             self.sync_seq();
-            *rd = (self.adc_read(7) >> 1) & 1 != 0;
+            raw[d] = self.adc_read(7);
+            *rd = (raw[d] >> 1) & 1 != 0;
         }
         let d = wnd::sync_choice(&r);
         if let Some(d) = d {
@@ -464,7 +465,7 @@ impl<B: Bus> Ctx<'_, B> {
             self.adc(&[w]);
             self.sync_seq();
         }
-        (r, d)
+        (r, raw, d)
     }
 
     /// 3.4 Lane delay scan (ADC test pattern, Gray off, sync, select 1, 32 delays), ADC back to normal data.
@@ -644,13 +645,13 @@ impl<B: Bus> Ctx<'_, B> {
 
         self.clock_probe(opt);
         self.step(11, "ADC sync-delay sweep + SPI/SPU sync", "[N][O]");
-        let (sync_do, d) = self.sync_sweep();
+        let (sync_do, reg7, d) = self.sync_sweep();
         let b: Vec<&str> = sync_do.iter().map(|&x| if x { "1" } else { "0" }).collect();
-        // The pattern differs from start to start. Without a falling edge (0,0,0,1,1,1,1,1, seen on the unit) stock stays
-        // at 7, where the sweep ended, so this start goes on too; the checks after the eye scan decide. Only a line that
-        // never moves is no ADC answering.
-        if d.is_none() && sync_do.iter().all(|&x| x == sync_do[0]) {
-            return Err(format!("ADC0 Sync DO:{}: the sync bit never moves; stopped", b.join(",")));
+        // The pattern differs from start to start. Without a falling edge (0,0,0,1,1,1,1,1 and 0,0,0,0,0,0,0,0 with bit 0
+        // moving, seen on the unit) stock stays at 7, where the sweep ended, so this start goes on too; the checks after the
+        // eye scan decide. Only a register that never changes at all is no ADC answering.
+        if d.is_none() && reg7.iter().all(|&x| x == reg7[0]) {
+            return Err(format!("ADC0 Sync DO:{}: ADC register 7 never changes ({:#06x}); stopped", b.join(","), reg7[0]));
         }
         let sync_delay = d.unwrap_or(7);
         self.note(format!("ADC0 Sync DO:{} -> delay {}{} (unit: 1,0,1,1,1,0,0,1 -> 0)", b.join(","), sync_delay, if d.is_none() { ", no 1 -> 0 edge, stays as swept" } else { "" }));

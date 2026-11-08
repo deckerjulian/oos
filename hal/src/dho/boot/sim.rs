@@ -69,6 +69,8 @@ pub struct Unit {
     pub adc_clk: u32,
     /// bit 1 of ADC reg 7 per sync delay
     pub sync_do: [bool; 8],
+    /// bit 0 of ADC reg 7 per sync delay
+    pub sync_low: [bool; 8],
     /// err[d] of the eye scan (bit k = lane k)
     pub eye: [u32; 32],
     /// 0x1030 (preamble code: Da in bits 7:0, Db in 23:16)
@@ -95,6 +97,7 @@ impl Unit {
             ddr_busy_reads: 0,
             adc_clk: 62500,
             sync_do: UNIT_SYNC_DO,
+            sync_low: [false; 8],
             eye: eye_from_lanes(&UNIT_EYE),
             preamble: 0,
             trim_polls: 1,
@@ -145,7 +148,7 @@ impl Bus for Unit {
             ADC_RDATA if self.last_adc & 0x0080_0000 != 0 => {
                 let reg = (self.last_adc >> 16) & 0x7f;
                 let data = if reg == 7 {
-                    (self.sync_do[self.sync_delay] as u32) << 1
+                    (self.sync_do[self.sync_delay] as u32) << 1 | self.sync_low[self.sync_delay] as u32
                 } else if reg >= 0x16 && (reg - 0x16) % 8 == 0 && reg <= 0x4e {
                     let n = ((reg - 0x16) / 8) as usize;
                     self.adc_trim[n] += 1;

@@ -176,6 +176,18 @@ fn sync_bit_that_never_moves_stops_at_delay_7() {
 
 /// Seen on the unit at a power-on: stock stays at 7 and goes on, so must we.
 #[test]
+fn sync_bit_that_stays_while_the_adc_answers_goes_on() {
+    // seen on the unit: bit 1 is 0 at every delay, bit 0 of the same register moves
+    let mut unit = with(|u| {
+        u.sync_do = [false; 8];
+        u.sync_low = [true, true, true, false, true, true, false, false];
+    });
+    let o = boot(&mut unit, &CalFiles::default()).r.result.unwrap();
+    assert_eq!((o.sync_do, o.sync_delay), ([false; 8], 7));
+    assert!(unit.writes.iter().any(|w| w.0 == 0x1018), "the eye scan runs");
+}
+
+#[test]
 fn sync_with_a_rising_edge_only_goes_on_at_delay_7() {
     let mut unit = with(|u| u.sync_do = [false, false, false, true, true, true, true, true]);
     let o = boot(&mut unit, &CalFiles::default()).r.result.unwrap();

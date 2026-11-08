@@ -187,7 +187,7 @@ for n in 0..7:
     spi_sync(1); spu_adc_sync; spi_sync(0); spu_reset
     r[n] = bit 1 of ADC reg 7
 choose the first n in 0..6 with r[n] = 1 and r[n+1] = 0   (first falling edge 1 -> 0)
-if none: the delay stays at 7 from the sweep, no final sync     <- OOS too; it stops only if all 8 reads are equal
+if none: the delay stays at 7 from the sweep, no final sync     <- OOS too; it stops only if the whole of reg 7 never changes
 sync_delay(n); spi_sync(1); spu_adc_sync; spi_sync(0); spu_reset
 ```
 Example: r = 1,0,1,1,1,0,0,1 -> n = 0, s06 = 0x00c3 (verified on the unit). The sweep takes about 170 ms. The pattern changes from
@@ -331,7 +331,7 @@ Keep shadows for 0x1000, 0x1014, 0x1020, 0x1428, 0x4004, 0x4008 and the ADC regi
 | 8 | checks | poll 0x1008 bit 29 (20 ms, 4 s), on failure stop (no BRAM fallback); log 0x1210 | verified on the unit |
 | 9 | ADC cal mode 0 | 3.7 from `cal_adc.hex` | verified on the unit |
 | 10 | DDR taps | 3.2 from `cal_ddr.hex` (skip if absent); then poll 0x1008 bit 29 | verified on the unit |
-| 11 | sync delay | 3.3 sweep + sync sequence; no falling edge stays at 7, all reads equal stops the boot | verified on the unit |
+| 11 | sync delay | 3.3 sweep + sync sequence; no falling edge stays at 7, a reg 7 that never changes stops the boot | verified on the unit |
 | 12 | lane delays | 3.4 scan, window search, load; fallback to the stored list; then check 0x1210 in 62494..62506 | verified on the unit, fallback not yet |
 | 13 | core align | 3.5 | verified on the unit |
 | 14 | ADC trim | 3.6, ADC 0 only, 2 s timeout | verified on the unit |

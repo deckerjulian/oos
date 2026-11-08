@@ -6,7 +6,7 @@
 //! log of 2026-11-02 [O].
 
 /// Sync delay from the bit-1 values of ADC reg 7 for delays 0..7: the first d in 0..6 with r[d] = 1 and r[d+1] = 0
-/// None = no falling edge (the stock system then leaves the delay at 7 without the final sync) [N].
+/// None = no falling edge (the stock system then leaves the delay at 7 without the final sync) [O].
 pub fn sync_choice(r: &[bool; 8]) -> Option<u32> {
     (0..7).find(|&d| r[d] && !r[d + 1]).map(|d| d as u32)
 }
