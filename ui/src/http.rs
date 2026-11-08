@@ -28,8 +28,9 @@ const MAX_PENDING: usize = 8;
 const IDLE_S: u64 = 10;
 const DEADLINE_S: u64 = 120;
 /// Answers above this size are sent from a thread of their own: over WLAN a picture takes long enough to stall the
-/// frame loop, and with it the scope's own screen and keys.
-const SEND_INLINE: usize = 256 << 10;
+/// frame loop, and with it the scope's own screen and keys. A screen as PNG is 60 to 175 KB (a BMP 1.8 MB), so it
+/// goes the same way; the page and the small answers fit into the socket's buffer and go at once.
+const SEND_INLINE: usize = 48 << 10;
 /// At most this many at once; more are answered 503, and the page tries again.
 const MAX_SENDERS: usize = 2;
 const SEND_TIMEOUT_S: u64 = 30;
@@ -512,7 +513,9 @@ mod tests {
         use std::sync::atomic::Ordering::SeqCst;
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        ui.render(&mut cv);
         let mut scpi = crate::scpi::Scpi::open(0);
         for path in ["/screen.bmp", "/screen.png"] {
             let addr = h.l.as_ref().unwrap().local_addr().unwrap();
