@@ -6,9 +6,9 @@
 //! Pure write lists like the
 //! other modules; the polling loop is in the caller.
 
-use crate::hz;
-use crate::scu::{self, Shadows};
-use crate::Write;
+use crate::dho::hz;
+use crate::dho::scu::{self, Shadows};
+use crate::dho::Write;
 
 /// Bytes of one chunk: 8-word header + 100 data words (all channels interleaved).
 pub const CHUNK_BYTES: usize = 216;
@@ -22,13 +22,13 @@ pub const MAX_RATE: i128 = 156_250_000;
 
 /// `MAX_RATE` at the clock in effect (FPGA clock = ADC / 8; `clock`).
 pub fn max_rate() -> i128 {
-    crate::clock::from_nominal_rate(MAX_RATE)
+    crate::dho::clock::from_nominal_rate(MAX_RATE)
 }
 
 /// Memory depth that keeps roll at or below `MAX_RATE` at `tdiv_fs` (0 = Auto is fine: 50 ms/div and slower).
 pub fn depth_for(tdiv_fs: i128) -> i128 {
     // points per screen at the stream's rate: the same in the nominal domain as in real time
-    let d = MAX_RATE * 10 * crate::clock::to_nominal_fs(tdiv_fs) / 1_000_000_000_000_000;
+    let d = MAX_RATE * 10 * crate::dho::clock::to_nominal_fs(tdiv_fs) / 1_000_000_000_000_000;
     if d >= 78_125_000 {
         0
     } else {
@@ -242,7 +242,7 @@ pub fn la_spacing_fs(rp: &Params) -> u64 {
 /// 0x12c0 = the length of 0x11f0, LA compression 0x1298 / 0x129c, LA interpolation with the analog
 /// fraction (0x1280 bit 2 clear = on; not doubled at ratio 1 in live roll, la.md 13), display delay 0
 /// as in `la::passthrough`. The other bits of 0x1280 / 0x1290 / 0x1294 are assumed 0 [A].
-pub fn la_config(rp: &Params, t: &crate::la::Timing) -> Vec<Write> {
+pub fn la_config(rp: &Params, t: &crate::dho::la::Timing) -> Vec<Write> {
     let r = rp.ratio;
     let lin_on = rp.f_num != rp.f_den;
     vec![
@@ -299,7 +299,7 @@ pub fn split(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
         return out;
     }
     for chunk in bytes.chunks_exact(CHUNK_BYTES) {
-        for (o, c) in out.iter_mut().zip(crate::seq::deinterleave(&chunk[16..], mask)) {
+        for (o, c) in out.iter_mut().zip(crate::dho::seq::deinterleave(&chunk[16..], mask)) {
             o.extend(c);
         }
     }
@@ -435,7 +435,7 @@ mod tests {
 #[cfg(test)]
 mod la_tests {
     use super::*;
-    use crate::la::Timing;
+    use crate::dho::la::Timing;
 
     fn rp(ratio: u32, k: u32) -> Params {
         Params { ratio, k, f_num: 1, f_den: 1, len: 1000, spacing_fs: 0 }

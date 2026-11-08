@@ -7,7 +7,7 @@
 //! waveform area: one two-level trace per line, and a filled band where a pixel column holds two or more transitions
 //! (bus style), so dense clocks stay readable at any time base. The records carry the 16 lines as packed words
 //! (bit n = Dn): the demo source generates them, the hardware source reads them after the analog record (hw.rs,
-//! `oos_hal::la`). Hidden on models without the LA port (`platform().caps.la`).
+//! `oos_hal::dho::la`). Hidden on models without the LA port (`platform().caps.la`).
 
 use super::*;
 use std::sync::Arc;
@@ -624,8 +624,8 @@ mod tests {
     #[test]
     fn presets_and_setup_text() {
         // preset volts -> pod DAC codes (la.md 5.1, the unit's zero codes)
-        let cal = oos_hal::la::Cal::default();
-        let code = |v: f32| oos_hal::la::thresholds(&cal, v as f64, v as f64).1;
+        let cal = oos_hal::dho::la::Cal::default();
+        let code = |v: f32| oos_hal::dho::la::thresholds(&cal, v as f64, v as f64).1;
         assert_eq!(code(PRESETS[0].1), 0x2336_2353);
         assert_eq!(code(PRESETS[2].1) & 0xffff, 9120);
         assert_eq!(code(PRESETS[1].1) >> 16, 9355);
@@ -1016,12 +1016,12 @@ mod pattern_tests {
         m.pat_la[0] = Bit::H;
         m.pat_la[15] = Bit::L;
         let s = crate::hw::settings(&m, false);
-        let oos_hal::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
-        assert_eq!((la[0], la[15], la[1]), (oos_hal::tpu::Pat::H, oos_hal::tpu::Pat::L, oos_hal::tpu::Pat::X));
+        let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
+        assert_eq!((la[0], la[15], la[1]), (oos_hal::dho::tpu::Pat::H, oos_hal::dho::tpu::Pat::L, oos_hal::dho::tpu::Pat::X));
         m.la.on = false;
         let s = crate::hw::settings(&m, false);
-        let oos_hal::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
-        assert!(la.iter().all(|&p| p == oos_hal::tpu::Pat::X));
+        let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
+        assert!(la.iter().all(|&p| p == oos_hal::dho::tpu::Pat::X));
     }
 }
 
@@ -1091,7 +1091,7 @@ mod duration_tests {
         let at = |t: f64| la.words[((t - la.t0) / la.dt) as usize] >> 14 & 1;
         assert_eq!(at(0.0), 1, "the line is high at the trigger point");
         let s = crate::hw::settings(&ui.m, false);
-        assert!(matches!(s.trigger, oos_hal::seq::Trig::Duration { la, .. } if la[14] == oos_hal::tpu::Pat::H));
+        assert!(matches!(s.trigger, oos_hal::dho::seq::Trig::Duration { la, .. } if la[14] == oos_hal::dho::tpu::Pat::H));
     }
 }
 
@@ -1109,10 +1109,10 @@ mod review_tests {
         assert_ne!(crate::hw::slow_mode(&m), crate::hw::Slow::Off);
         let s = crate::hw::settings(&m, false);
         assert!(s.la.is_some_and(|l| l.roll) && s.trig_src == 14, "{:?}", s.trig_src);
-        let mut st = oos_hal::seq::State::handover(1, None);
+        let mut st = oos_hal::dho::seq::State::handover(1, None);
         let (steps, _) = st.configure(&s, None, None).unwrap();
         // the LA stream is on and the record is not doubled
-        let wr: Vec<_> = steps.iter().filter_map(|x| if let oos_hal::seq::Step::Wr(w) = x { Some(*w) } else { None }).collect();
+        let wr: Vec<_> = steps.iter().filter_map(|x| if let oos_hal::dho::seq::Step::Wr(w) = x { Some(*w) } else { None }).collect();
         assert!(wr.iter().rev().find(|w| w.0 == 0x4008).unwrap().1 & (1 << 24 | 1 << 26) == 1 << 24 | 1 << 26);
     }
 

@@ -7,7 +7,7 @@
 //! path of la.md section 8 (0x4008 bit 26, LA rate block, LA doubling, the second raw read-out). la.md says what was
 //! seen on the unit.
 
-use crate::{hz, Write};
+use crate::dho::{hz, Write};
 
 /// FPGA register of both threshold codes: [15:0] D0-D7, [31:16] D8-D15.
 pub const THRESHOLD: u32 = 0x12d4;
@@ -31,14 +31,14 @@ impl Default for Cal {
 
 impl Cal {
     pub fn from_file_bytes(d: &[u8]) -> Option<Cal> {
-        let p = crate::calfile::parse(d).ok()?;
+        let p = crate::dho::calfile::parse(d).ok()?;
         let z = |o: usize| Some(u32::from_le_bytes(p.get(o..o + 4)?.try_into().ok()?));
         Some(Cal { zero: [z(0)?, z(4)?] })
     }
     /// cal_la.hex from `dir`, else `dir/default`.
     pub fn load(dir: &str) -> Option<Cal> {
         let def = format!("{}/default", dir.trim_end_matches('/'));
-        let (b, _) = crate::calfile::load_first("cal_la.hex", &[dir, def.as_str()])?;
+        let (b, _) = crate::dho::calfile::load_first("cal_la.hex", &[dir, def.as_str()])?;
         Cal::from_file_bytes(&b)
     }
 }
@@ -64,7 +64,7 @@ pub fn lines(r: u32) -> [bool; 16] {
 /// Probe plugged in (GPIO `LA_PROBE_DETECT` reads 1).
 #[cfg(target_os = "linux")]
 pub fn probe_present() -> std::io::Result<bool> {
-    Ok(crate::gpio::Line::input("LA_PROBE_DETECT")?.get())
+    Ok(crate::dho::gpio::Line::input("LA_PROBE_DETECT")?.get())
 }
 
 // ---------------------------------------------------------------------------------------------- acquisition
@@ -130,10 +130,10 @@ pub fn timing(p: &hz::Params, mask: u32) -> Timing {
 pub fn prep(mut p: hz::Params, analog_shown: bool) -> hz::Params {
     if analog_shown {
         // the rule is written for the nominal 1.25 GHz rates (`clock`: identity at the stock clock)
-        let nom = crate::clock::to_nominal_rate(p.rate as i128);
+        let nom = crate::dho::clock::to_nominal_rate(p.rate as i128);
         let half = if nom == 156_250_000 { 62_500_000 } else { nom / 2 };
-        p.rate = (crate::clock::from_nominal_rate(half) as u64).max(1);
-        p.dot_fs = crate::clock::from_nominal_fs(hz::FS / half.max(1)) as u64;
+        p.rate = (crate::dho::clock::from_nominal_rate(half) as u64).max(1);
+        p.dot_fs = crate::dho::clock::from_nominal_fs(hz::FS / half.max(1)) as u64;
     }
     p.seg *= 2;
     // `hz::prep`'s frame ring formula on the doubled segment [A: frame count from the doubled size]
@@ -153,7 +153,7 @@ pub fn deskew(m: u32) -> u32 {
 /// LA sample-rate block 0x12a4 / 0x12a8 / 0x12ac (la.md 3.2) for `rate` in Sa/s
 /// (real; the encoding works on the nominal rate).
 pub fn rate_block(rate: u64) -> [Write; 3] {
-    let r = (crate::clock::to_nominal_rate(rate as i128) as u64).max(1);
+    let r = (crate::dho::clock::to_nominal_rate(rate as i128) as u64).max(1);
     let (a4, ac) = if r > 62_500_000 {
         let d = 625_000_000 / r;
         // la.md 3.2: d = 5 (125 MSa/s) writes 0x8000
@@ -180,7 +180,7 @@ pub fn wave_early(la_ratio: Option<u32>) -> Write {
 /// LA enable and the deskew 0x128c before its pre-processing reset) with the parameters from `prep`: 0x4008 bit 23 (analog stream), bit 24
 /// (LA stream: only in roll/scan), 0x131c, the LA rate block, and the "LA doubling" of 0x10e4 (not in roll), 0x4050 / 0x4054 and 0x10e0 (segment, already
 /// doubled by `prep`).
-pub fn config(sh: &mut crate::scu::Shadows, p: &hz::Params, mask: u32, roll: bool) -> Vec<Write> {
+pub fn config(sh: &mut crate::dho::scu::Shadows, p: &hz::Params, mask: u32, roll: bool) -> Vec<Write> {
     let t = timing(p, mask);
     let mut w = Vec::new();
     sh.s4008 |= 1 << 23;
@@ -219,7 +219,7 @@ pub fn passthrough() -> Vec<Write> {
 /// 4 x roundup4(N) / ratio, no frame header, record sequence off, stop sequence, play-last pulse, FSM run. Then ONE
 /// read of `read_bytes(n)`. The unit of `start` is open (test T1); OOS reads from 0 unless the record is longer than
 /// `READ_MAX`. Follow with `restore`.
-pub fn readout(sh: &mut crate::scu::Shadows, n: u32, start: u32, ratio: u32, fsm: u32) -> Vec<Write> {
+pub fn readout(sh: &mut crate::dho::scu::Shadows, n: u32, start: u32, ratio: u32, fsm: u32) -> Vec<Write> {
     let r4 = n.div_ceil(4) * 4;
     let mut w = Vec::new();
     sh.s4008 &= !(1 << 23);
@@ -233,7 +233,7 @@ pub fn readout(sh: &mut crate::scu::Shadows, n: u32, start: u32, ratio: u32, fsm
     w.push((0x1010, sh.s1010));
     sh.s400c &= !(1 << 25);
     w.push((0x400c, sh.s400c));
-    crate::scu::stop_sequence(&mut w, sh);
+    crate::dho::scu::stop_sequence(&mut w, sh);
     sh.s4004 &= !4;
     w.push((0x4004, sh.s4004));
     sh.s4004 |= 4;
@@ -251,7 +251,7 @@ pub fn read_bytes(n: u32) -> usize {
 }
 
 /// After the LA read: analog stream back on, LA stream off.
-pub fn restore(sh: &mut crate::scu::Shadows) -> Vec<Write> {
+pub fn restore(sh: &mut crate::dho::scu::Shadows) -> Vec<Write> {
     sh.s4008 |= 1 << 23;
     let a = (0x4008, sh.s4008);
     sh.s4008 &= !(1 << 24);
@@ -325,10 +325,10 @@ mod tests {
 
     #[test]
     fn config_sets_the_enable_and_doubles_the_record() {
-        let mut sh = crate::scu::Shadows::HANDOVER;
+        let mut sh = crate::dho::scu::Shadows::HANDOVER;
         let p = prep(hz::prep(1, 200_000_000_000, 100_000, 0), true);
         // enable and deskew in the acquisition configuration, before the pre-processing reset (0x1000 bit 5)
-        let a = crate::acq::configure_la(&mut sh, &p, 1, 0, 0, crate::acq::Mode::Normal, Some(424), [0; 4]);
+        let a = crate::dho::acq::configure_la(&mut sh, &p, 1, 0, 0, crate::dho::acq::Mode::Normal, Some(424), [0; 4]);
         let at = |r: u32| a.iter().position(|x| x.0 == r).unwrap();
         let reset = a.iter().position(|x| x.0 == 0x1000 && x.1 & 0x20 != 0).unwrap();
         assert!(a[at(0x4008)].1 & 1 << 26 != 0 && at(0x4008) < reset && at(0x128c) < reset);
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn raw_window_read_like_step_b() {
         // la.md 4.2: N = 1000 -> 0x1100 = 10 000, 0x12c0 = 4000, one read of 2000 bytes; TX engine on the LA stream
-        let mut sh = crate::scu::Shadows::HANDOVER;
+        let mut sh = crate::dho::scu::Shadows::HANDOVER;
         let w = readout(&mut sh, 1000, 0, 1, 1);
         assert_eq!(&w[..2], &[(0x4008, 0x80_0001 & !(1 << 23)), (0x4008, (0x80_0001 & !(1 << 23)) | 1 << 24)]);
         assert!(w.contains(&(0x1100, 10_000)) && w.contains(&(0x1108, 0)) && w.contains(&(0x12c0, 4000)));

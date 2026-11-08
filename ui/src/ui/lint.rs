@@ -404,7 +404,7 @@ fn holdoff_steps_and_setups() {
     assert!(u.m.holdoff <= 10.0);
     let s = crate::hw::settings(&u.m, false);
     assert!(s.holdoff > 1.0);
-    assert!(crate::hw::settings(&Model::default(), false).holdoff == oos_hal::seq::HOLDOFF_MIN);
+    assert!(crate::hw::settings(&Model::default(), false).holdoff == oos_hal::dho::seq::HOLDOFF_MIN);
     for t in TRIG_TYPES {
         u.set_trig_type(t);
         assert!(u.trigger_items().contains(&Item::TrigHoldoff), "{:?}", t);
@@ -680,7 +680,7 @@ fn fine_scale_stands_on_every_row_of_the_table() {
         u.m.fine_v = true;
         u.m.ch[0].probe = probe;
         u.adjust(Item::ChScale(0), -100_000);
-        for &k in &oos_hal::afe::scale_ladder() {
+        for &k in &oos_hal::dho::afe::scale_ladder() {
             // what the hardware path hands the AFE
             let nv = u.m.ch[0].volts_per_div() as f64 / probe as f64 * 1e9;
             assert!((nv / k as f64 - 1.0).abs() < 1e-6, "{} at row {}", nv, k);
@@ -810,7 +810,7 @@ fn what_the_screen_says_reaches_the_settings() {
     m.acq = AcqMode::Peak;
     m.delay = 2e-4;
     let s = hw(&m);
-    assert_eq!((s.ch[0].couple, s.ch[0].invert, s.mode), (oos_hal::seq::Couple::Ac, true, oos_hal::acq::Mode::Peak));
+    assert_eq!((s.ch[0].couple, s.ch[0].invert, s.mode), (oos_hal::dho::seq::Couple::Ac, true, oos_hal::dho::acq::Mode::Peak));
     assert!((s.delay - 2e-4).abs() < 1e-9);
     // a trigger source that is switched off is acquired all the same, and keeps its role
     let mut m = Model::default();
@@ -825,7 +825,7 @@ fn what_the_screen_says_reaches_the_settings() {
     m.pat[0] = Bit::R;
     m.trig_type = TrigType::Duration;
     match hw(&m).trigger {
-        oos_hal::seq::Trig::Duration { pats, .. } => assert_eq!(pats[0], oos_hal::tpu::Pat::X),
+        oos_hal::dho::seq::Trig::Duration { pats, .. } => assert_eq!(pats[0], oos_hal::dho::tpu::Pat::X),
         t => panic!("{:?}", t),
     }
     // roll and scan: no depth below 1 M, the delay stays out of it; a small depth at the slowest time base is no crash
@@ -835,7 +835,7 @@ fn what_the_screen_says_reaches_the_settings() {
     m.delay = 1.0;
     let s = hw(&m);
     assert!(s.depth >= 1_000_000 && s.delay == 0.0, "{}", s.depth);
-    oos_hal::hz::prep(1, oos_hal::seq::tdiv_fs(1000.0), 1000, 0);
+    oos_hal::dho::hz::prep(1, oos_hal::dho::seq::tdiv_fs(1000.0), 1000, 0);
 }
 
 #[test]

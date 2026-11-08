@@ -12,7 +12,7 @@ with bit 26 set when done (seen: 0x050f0201 after init).
 The init list has 104 entries of (address, value). A per-register XOR mask applies to the data:
 word i = `0x1000000 | (addr[i] & 0x7f) << 16 | (mask[addr[i]] ^ value[i]) & 0xffff`.
 The 104 words are written twice (1.1 ms before, 100 us after each), then ADC reg 0x0f once more: `0x010f0201`
-(register value 0x7a01 & ~0xc00, XOR 0x7000). The full word list is in `hal/src/boot/regs.rs` and `tools/hw/oos-hw.c`.
+(register value 0x7a01 & ~0xc00, XOR 0x7000). The full word list is in `hal/src/dho/boot/regs.rs` and `tools/hw/oos-hw.c`.
 
 ## SPU init
 

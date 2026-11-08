@@ -139,7 +139,7 @@ impl Ui {
         a.push(kv("Kernel", if self.info.is_empty() { "-".to_string() } else { self.info.clone() }));
         a.push(match board {
             Some((0, _)) => kvc("FPGA", "not reached", AMBER),
-            Some((v, _)) if v == oos_hal::bus::FPGA_VERSION => kv("FPGA", format!("{:#010x}", v)),
+            Some((v, _)) if v == oos_hal::dho::bus::FPGA_VERSION => kv("FPGA", format!("{:#010x}", v)),
             Some((v, _)) => kvc("FPGA", format!("{:#010x} (unexpected)", v), RED),
             None => kv("FPGA", "-"),
         });
@@ -149,8 +149,8 @@ impl Ui {
 
         // ---- column 2: temperatures, load
         let mut b = vec![Row::Head("Temperatures".into())];
-        let zones = oos_hal::board::thermal_zones(std::path::Path::new("/sys/class/thermal"));
-        let soc = oos_hal::board::SOC_LIMIT;
+        let zones = oos_hal::dho::board::thermal_zones(std::path::Path::new("/sys/class/thermal"));
+        let soc = oos_hal::dho::board::SOC_LIMIT;
         for z in &zones {
             let name = match z.name.as_str() {
                 "cpu-thermal" | "soc-thermal" => "SoC (CPU)".to_string(),
@@ -162,7 +162,7 @@ impl Ui {
         if zones.is_empty() {
             b.push(kvc("SoC", "-", DIM));
         }
-        let fpga = oos_hal::board::FPGA_LIMIT;
+        let fpga = oos_hal::dho::board::FPGA_LIMIT;
         match board.and_then(|b| b.1) {
             Some((t, v)) => {
                 b.push(kvc("FPGA die", format!("{:.1} \u{b0}C", t), temp_col(t, fpga - 10.0, fpga)));

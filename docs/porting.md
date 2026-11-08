@@ -32,7 +32,7 @@ Everything that talks to the acquisition board, which on the DHO800/DHO900 is in
 | front end | four RT1642, `protocols/afe-spi.md` | chips, bus, ranges, 50 Ω path |
 | sample clock | LMX2582, `protocols/pll.md` | clock chips and tables |
 | trigger, record, play | `protocols/acquisition-start.md`, `record-play.md` | the same blocks in another FPGA |
-| calibration | the files in `/rigol/data`, `hal/src/calfile.rs` | file formats |
+| calibration | the files in `/rigol/data`, `hal/src/dho/calfile.rs` | file formats |
 | generator, logic analyser | `protocols/afg.md`, `protocols/la.md` | other boards |
 
 Reported for the MHO900 (forum, not verified here): two ADCs, interleaved to 4 GSa/s; an FPGA said to be a Fudan

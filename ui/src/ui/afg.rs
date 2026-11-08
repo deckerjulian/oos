@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Built-in generator page (S models): output on/off, wave shape (sine, square, ramp, pulse, noise, DC), frequency,
-//! amplitude, offset, duty / symmetry. The acquisition thread applies the settings (`hw.rs`, `oos_hal::afg`) with the
+//! amplitude, offset, duty / symmetry. The acquisition thread applies the settings (`hw.rs`, `oos_hal::dho::afg`) with the
 //! factory calibration; limits as the stock system, frequency caps per shape from the platform limits.
 
 use super::*;
@@ -185,18 +185,18 @@ impl Ui {
         // FM: the deviation stays below the carrier and inside the frequency range
         m.afg_fm_dev = m.afg_fm_dev.min(m.afg_freq).min(m.afg_wave_hal().max_hz() - m.afg_freq).max(0.01);
         // DC has only its level, noise no frequency: the hidden amplitude or frequency must not limit them
-        let f = if matches!(m.afg_wave_hal(), oos_hal::afg::Wave::Noise) { 1e6 } else { m.afg_freq * 1e6 };
-        if matches!(m.afg_wave_hal(), oos_hal::afg::Wave::Dc) {
+        let f = if matches!(m.afg_wave_hal(), oos_hal::dho::afg::Wave::Noise) { 1e6 } else { m.afg_freq * 1e6 };
+        if matches!(m.afg_wave_hal(), oos_hal::dho::afg::Wave::Dc) {
             m.afg_offset = m.afg_offset.clamp(-5.0, 5.0);
             return;
         }
-        let (a, o) = oos_hal::afg::clamp(m.afg_ampl * 1e9, m.afg_offset * 1e9, f);
+        let (a, o) = oos_hal::dho::afg::clamp(m.afg_ampl * 1e9, m.afg_offset * 1e9, f);
         (m.afg_ampl, m.afg_offset) = (a / 1e9, o / 1e9);
     }
 
     /// The arbitrary wave from samples (one period); false without enough samples.
     pub fn afg_arb_load(&mut self, v: &[f32]) -> bool {
-        match oos_hal::afg::arb_set(v) {
+        match oos_hal::dho::afg::arb_set(v) {
             Some(id) => {
                 (self.m.afg_arb, self.m.afg_wave) = (id, 6);
                 self.afg_clamp();
@@ -232,7 +232,7 @@ impl Ui {
             },
             Item::AfgArbFile => {
                 let p = self.store_dir.join("arb.csv");
-                let v = std::fs::read_to_string(&p).map(|t| oos_hal::afg::arb_parse(&t)).unwrap_or_default();
+                let v = std::fs::read_to_string(&p).map(|t| oos_hal::dho::afg::arb_parse(&t)).unwrap_or_default();
                 if self.afg_arb_load(&v) {
                     self.toast(&format!("Arb wave: {} points from arb.csv", v.len()));
                 } else {
@@ -317,7 +317,7 @@ mod arb_tests {
         let n = ui.afg_arb_capture(0).unwrap();
         assert!(n > 100);
         assert_eq!(ui.m.afg_wave, 6);
-        assert!(matches!(ui.m.afg_wave_hal(), oos_hal::afg::Wave::Arb { id } if id == ui.m.afg_arb));
+        assert!(matches!(ui.m.afg_wave_hal(), oos_hal::dho::afg::Wave::Arb { id } if id == ui.m.afg_arb));
         let t = ui.m.afg_wave_hal().table(1e3);
         assert!(t.iter().any(|&v| v > 30000) && t.iter().any(|&v| v < -30000));
         assert!(ui.afg_items().contains(&Item::AfgArbGrab));

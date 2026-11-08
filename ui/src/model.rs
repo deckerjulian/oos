@@ -731,7 +731,7 @@ pub struct Model {
     pub bw_hint: f64,
     pub bw_bins: usize,
     pub afg_on: bool,
-    /// arbitrary wave: id of `oos_hal::afg::arb_set` (0 = none yet), channel it is captured from
+    /// arbitrary wave: id of `oos_hal::dho::afg::arb_set` (0 = none yet), channel it is captured from
     pub afg_arb: u32,
     pub afg_arb_src: usize,
     pub afg_freq: f64,
@@ -790,9 +790,9 @@ pub const BW_FULL: usize = 1;
 /// Memory depths, read for the screen through the FPGA compression above 1 M (hw::batch_plan). 100 M and 125 M record
 /// on the unit but their time axis is ~0.1 % off (acquisition-start.md, "Memory depth beyond 50 M"), so the UI stops
 /// at 62.5 M for now. New entries go to the end: setups store the index.
-/// Wave shapes of the built-in generator (`oos_hal::afg::Wave`).
+/// Wave shapes of the built-in generator (`oos_hal::dho::afg::Wave`).
 pub const AFG_WAVES: [&str; 7] = ["Sine", "Square", "Ramp", "Pulse", "Noise", "DC", "Arb"];
-/// Modulations and modulating shapes of the built-in generator (`oos_hal::afg::Mod`, `ModShape`).
+/// Modulations and modulating shapes of the built-in generator (`oos_hal::dho::afg::Mod`, `ModShape`).
 pub const AFG_MODS: [&str; 4] = ["Off", "AM", "FM", "PM"];
 pub const AFG_MOD_SHAPES: [&str; 6] = ["Sine", "Square", "Triangle", "Up ramp", "Down ramp", "Noise"];
 
@@ -1187,8 +1187,8 @@ impl Model {
     }
 
     /// The generator's modulation for the HAL (sine, square and ramp carriers only).
-    pub fn afg_mod_hal(&self) -> oos_hal::afg::Mod {
-        use oos_hal::afg::{Mod, ModShape};
+    pub fn afg_mod_hal(&self) -> oos_hal::dho::afg::Mod {
+        use oos_hal::dho::afg::{Mod, ModShape};
         let shape = [ModShape::Sine, ModShape::Square, ModShape::Triangle, ModShape::UpRamp, ModShape::DownRamp, ModShape::Noise][self.afg_mod_shape.min(5)];
         let rate = self.afg_mod_rate;
         match self.afg_mod {
@@ -1201,8 +1201,8 @@ impl Model {
     }
 
     /// The generator's wave shape for the HAL.
-    pub fn afg_wave_hal(&self) -> oos_hal::afg::Wave {
-        use oos_hal::afg::Wave;
+    pub fn afg_wave_hal(&self) -> oos_hal::dho::afg::Wave {
+        use oos_hal::dho::afg::Wave;
         let (d, s) = (self.afg_duty / 100.0, self.afg_symmetry / 100.0);
         match self.afg_wave {
             1 => Wave::Square { duty: d },
@@ -1397,7 +1397,7 @@ impl Model {
     }
     pub fn max_mem(&self) -> u64 {
         // limits 125 / 62.5 / 31.25 M (stock: 50 / 25 / 10 M); above 78.6 M only with the larger segment cap
-        // (`hal::hz::MEM_BURSTS`); overridable in limits.conf (`mem.1ch` ...)
+        // (`hal::dho::hz::MEM_BURSTS`); overridable in limits.conf (`mem.1ch` ...)
         // with the LA on: 31.25 / 12.5 / 10 M (`max_mem_la`, la.md 3.2)
         oos_hal::model::platform().limits.mem(self.n_on(), self.la_on())
     }

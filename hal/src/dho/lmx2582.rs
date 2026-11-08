@@ -14,7 +14,7 @@
 //! output B buffer, MASH order / PFD delay and the calibration set-up stay Rigol's: those are the parts that are proven
 //! on the board, and the loop filter on the PCB was designed around them. None of the other tables has run on a unit.
 
-use crate::boot::regs::PLL_TABLE;
+use crate::dho::boot::regs::PLL_TABLE;
 
 /// One LMX2582 table: `[addr, data hi, data lo]`, written in this order (R0 with FCAL_EN last starts the calibration).
 pub type Table = [[u8; 3]; 46];

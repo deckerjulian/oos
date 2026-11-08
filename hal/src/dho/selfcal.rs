@@ -11,7 +11,7 @@
 //! Deviations from the stock system [A]: the DAC search measures both window ends first and bisects on the sign of the error
 //! (stock uses a fixed direction per input-gain path); the input mode is taken from the r07 shadow.
 
-use crate::afe::{Afe, Cal, Op, Rec};
+use crate::dho::afe::{Afe, Cal, Op, Rec};
 
 /// What the calibration needs from the unit.
 pub trait CalHw {
@@ -32,23 +32,23 @@ pub trait CalHw {
         Err("configure not supported".into())
     }
     /// ADC SPI / FPGA writes built on the caller's ADC shadows (`f` returns the writes, `CalHw` applies them).
-    fn adc_op(&mut self, _f: &mut dyn FnMut(&mut crate::adc::Adc) -> Vec<crate::adc::Wr>) {}
+    fn adc_op(&mut self, _f: &mut dyn FnMut(&mut crate::dho::adc::Adc) -> Vec<crate::dho::adc::Wr>) {}
     /// Mean raw code of every measure slot (0x1044 per slot).
     fn adc_slots(&mut self) -> Option<[f64; 8]> {
         None
     }
     /// Use these ADC core trims for every later `configure` (after the ADC core calibration).
-    fn use_cal_adc(&mut self, _c: crate::adc::CalAdc) {}
+    fn use_cal_adc(&mut self, _c: crate::dho::adc::CalAdc) {}
 }
 
 /// Bandwidth codes of the four vertical passes (filters S20M, 155 M, 315 M, (3, 3, 7)) -> block groups 0..3.
-pub const PASS_BW: [u32; 4] = [crate::afe::bw::S20M, crate::afe::bw::M155, crate::afe::bw::M315, crate::afe::bw::M350];
+pub const PASS_BW: [u32; 4] = [crate::dho::afe::bw::S20M, crate::dho::afe::bw::M155, crate::dho::afe::bw::M315, crate::dho::afe::bw::M350];
 
 /// Results of a self-calibration run (kept in memory until saved).
 #[derive(Default)]
 pub struct Results {
     /// new cal_adc payload (ADC core gains and offsets)
-    pub adc: Option<crate::adc::CalAdc>,
+    pub adc: Option<crate::dho::adc::CalAdc>,
     pub zero: Vec<(usize, [i32; 20])>,
     pub blocks: Vec<(usize, usize, Vec<Rec>)>,
     /// largest relative change of a measured scale against the active table
@@ -64,7 +64,7 @@ pub fn run_all(hw: &mut dyn CalHw, cal: &Cal, chans: &[usize], zero: bool, progr
 
 /// `run_all` with the ADC core calibration first when `adc` (the active cal_adc) is given (the vertical
 /// levels depend on the core gains).
-pub fn run_all_with(hw: &mut dyn CalHw, cal: &Cal, adc: Option<&crate::adc::CalAdc>, chans: &[usize], zero: bool, progress: &mut dyn FnMut(usize, usize, &str)) -> Result<Results, String> {
+pub fn run_all_with(hw: &mut dyn CalHw, cal: &Cal, adc: Option<&crate::dho::adc::CalAdc>, chans: &[usize], zero: bool, progress: &mut dyn FnMut(usize, usize, &str)) -> Result<Results, String> {
     let mut adc_new = None;
     if let Some(base) = adc {
         let r = adc_cores(hw, base, chans, progress)?;
@@ -130,7 +130,7 @@ pub fn run_all_with(hw: &mut dyn CalHw, cal: &Cal, adc: Option<&crate::adc::CalA
 /// Writes the results to OOS's own files (the current OOS file, else the factory file, as the base for the rows and
 /// channels not calibrated). Returns the files written.
 pub fn save(r: &Results, rigol_dir: &str) -> Result<Vec<String>, String> {
-    use crate::calfile::{self, OOS_CAL_DIR};
+    use crate::dho::calfile::{self, OOS_CAL_DIR};
     let base = |n: &str| -> Result<Vec<u8>, String> {
         let (b, _) = calfile::load_first(n, &[OOS_CAL_DIR, rigol_dir]).ok_or(format!("no valid {}", n))?;
         Ok(calfile::parse(&b).map_err(|e| format!("{}: {:?}", n, e))?.to_vec())
@@ -243,8 +243,8 @@ fn spans(hw: &mut dyn CalHw, a: &mut Afe, hi: i32, lo: i32) -> Option<([f64; 8],
 /// the 8 core gains in single-channel mode, then the 8 core offsets of every ADC mode of the set. Needs every input
 /// of the set disconnected. The fine gains (0x1058) are set to 0 and their payload fields cleared [A: OOS corrects
 /// with the core gains only]. Returns the new payload.
-pub fn adc_cores(hw: &mut dyn CalHw, base: &crate::adc::CalAdc, chans: &[usize], progress: &mut dyn FnMut(usize, usize, &str)) -> Result<crate::adc::CalAdc, String> {
-    use crate::adc::CalAdc;
+pub fn adc_cores(hw: &mut dyn CalHw, base: &crate::dho::adc::CalAdc, chans: &[usize], progress: &mut dyn FnMut(usize, usize, &str)) -> Result<crate::dho::adc::CalAdc, String> {
+    use crate::dho::adc::CalAdc;
     const TUPLE: [i32; 7] = [0, 1, 1, 1, 0, 3, 0];
     let (gchans, modes) = adc_plan(chans);
     let mut cal = CalAdc::from_payload(base.payload().to_vec()).ok_or("bad cal_adc payload")?;
@@ -254,7 +254,7 @@ pub fn adc_cores(hw: &mut dyn CalHw, base: &crate::adc::CalAdc, chans: &[usize],
     let mut afes: Vec<(usize, Afe)> = Vec::new();
     let mut centre = [32768i32; 4];
     for &c in &gchans {
-        let mut a = hw.configure(c, crate::afe::bw::S20M)?;
+        let mut a = hw.configure(c, crate::dho::afe::bw::S20M)?;
         run(hw, &mut a, |a, o| {
             a.set_tuple(o, TUPLE);
             o.push(Op::Gear { ch: c, gear: 1 });
@@ -280,7 +280,7 @@ pub fn adc_cores(hw: &mut dyn CalHw, base: &crate::adc::CalAdc, chans: &[usize],
             });
             cal.set16(CalAdc::gain_at(c, n), 0);
         }
-        hw.adc_op(&mut |_| vec![crate::adc::Wr { pre_us: 0, reg: 0x1058, val: 0, post_us: 0 }]);
+        hw.adc_op(&mut |_| vec![crate::dho::adc::Wr { pre_us: 0, reg: 0x1058, val: 0, post_us: 0 }]);
         for k in 0..16 {
             cal.set32(CalAdc::fine_at(c, k.min(15)), 0);
         }
@@ -385,27 +385,27 @@ pub fn adc_cores(hw: &mut dyn CalHw, base: &crate::adc::CalAdc, chans: &[usize],
 /// `seq` for `configure`.
 #[cfg(target_os = "linux")]
 pub struct Unit<'a> {
-    pub bar: &'a mut crate::bus::Bar1,
-    pub afe: &'a mut crate::afe::GpioAfe,
+    pub bar: &'a mut crate::dho::bus::Bar1,
+    pub afe: &'a mut crate::dho::afe::GpioAfe,
     pub c2h: &'a mut std::fs::File,
-    pub state: &'a mut crate::seq::State,
+    pub state: &'a mut crate::dho::seq::State,
     pub cal: &'a Cal,
-    pub cal_adc: Option<&'a crate::adc::CalAdc>,
+    pub cal_adc: Option<&'a crate::dho::adc::CalAdc>,
     pub cancel: &'a dyn Fn() -> bool,
     /// ADC trims of this run (after the ADC core calibration), used instead of `cal_adc`
-    pub adc_new: Option<crate::adc::CalAdc>,
+    pub adc_new: Option<crate::dho::adc::CalAdc>,
 }
 
 #[cfg(target_os = "linux")]
 impl CalHw for Unit<'_> {
     fn apply(&mut self, ops: &[Op]) {
-        use crate::afe::AfeBus;
-        use crate::bus::Bus;
+        use crate::dho::afe::AfeBus;
+        use crate::dho::bus::Bus;
         for op in ops {
             match *op {
                 Op::Afe { ch, reg, val } => self.afe.write(ch, reg, val),
                 Op::Gear { ch, gear } => {
-                    let _ = crate::afe::set_gear(ch, gear);
+                    let _ = crate::dho::afe::set_gear(ch, gear);
                 }
                 Op::Adc(w) => {
                     std::thread::sleep(std::time::Duration::from_micros(100));
@@ -416,12 +416,12 @@ impl CalHw for Unit<'_> {
         }
     }
     fn afe_read(&mut self, ch: usize, reg: u8) -> u16 {
-        use crate::afe::AfeBus;
+        use crate::dho::afe::AfeBus;
         self.afe.read(ch, reg)
     }
     fn adc_mean(&mut self, _ch: usize) -> Option<f64> {
         // channel-only ADC mode: all 8 cores sample the channel [A: stock averages cores k and k+4]
-        let m = crate::adc::measure(self.bar, &mut |ms| std::thread::sleep(std::time::Duration::from_millis(ms as u64)))?;
+        let m = crate::dho::adc::measure(self.bar, &mut |ms| std::thread::sleep(std::time::Duration::from_millis(ms as u64)))?;
         Some(m.iter().sum::<f64>() / 8.0)
     }
     fn sleep_ms(&mut self, ms: u32) {
@@ -430,8 +430,8 @@ impl CalHw for Unit<'_> {
     fn cancelled(&mut self) -> bool {
         (self.cancel)()
     }
-    fn adc_op(&mut self, f: &mut dyn FnMut(&mut crate::adc::Adc) -> Vec<crate::adc::Wr>) {
-        use crate::bus::Bus;
+    fn adc_op(&mut self, f: &mut dyn FnMut(&mut crate::dho::adc::Adc) -> Vec<crate::dho::adc::Wr>) {
+        use crate::dho::bus::Bus;
         for w in f(&mut self.state.adc) {
             std::thread::sleep(std::time::Duration::from_micros(w.pre_us as u64));
             self.bar.wr(w.reg, w.val);
@@ -439,17 +439,17 @@ impl CalHw for Unit<'_> {
         }
     }
     fn adc_slots(&mut self) -> Option<[f64; 8]> {
-        crate::adc::measure(self.bar, &mut |ms| std::thread::sleep(std::time::Duration::from_millis(ms as u64)))
+        crate::dho::adc::measure(self.bar, &mut |ms| std::thread::sleep(std::time::Duration::from_millis(ms as u64)))
     }
-    fn use_cal_adc(&mut self, c: crate::adc::CalAdc) {
+    fn use_cal_adc(&mut self, c: crate::dho::adc::CalAdc) {
         self.adc_new = Some(c);
     }
     fn configure(&mut self, ch: usize, bw: u32) -> Result<Afe, String> {
-        let mut st = crate::seq::Settings { mask: 1 << ch, trig_src: ch as u32 + 1, afe: true, ..Default::default() };
+        let mut st = crate::dho::seq::Settings { mask: 1 << ch, trig_src: ch as u32 + 1, afe: true, ..Default::default() };
         st.ch[ch].bw = bw;
         let adc = self.adc_new.as_ref().or(self.cal_adc);
         let (steps, _) = self.state.configure(&st, Some(self.cal), adc)?;
-        crate::seq::execute(&steps, self.bar, Some(&mut *self.afe), self.c2h, |_| {})?;
+        crate::dho::seq::execute(&steps, self.bar, Some(&mut *self.afe), self.c2h, |_| {})?;
         Ok(self.state.afe[ch].clone())
     }
 }
@@ -946,7 +946,7 @@ mod tests {
         off_err: [f64; 8],
         g: [i32; 8],
         o: [i32; 8],
-        adc: crate::adc::Adc,
+        adc: crate::dho::adc::Adc,
     }
 
     impl CalHw for Cores {
@@ -967,7 +967,7 @@ mod tests {
         fn configure(&mut self, ch: usize, _: u32) -> Result<Afe, String> {
             Ok(Afe::new(ch))
         }
-        fn adc_op(&mut self, f: &mut dyn FnMut(&mut crate::adc::Adc) -> Vec<crate::adc::Wr>) {
+        fn adc_op(&mut self, f: &mut dyn FnMut(&mut crate::dho::adc::Adc) -> Vec<crate::dho::adc::Wr>) {
             for w in f(&mut self.adc) {
                 if w.reg != 0x1034 {
                     continue;
@@ -996,7 +996,7 @@ mod tests {
 
     #[test]
     fn adc_cores_converge_on_a_permuted_core_model() {
-        let Some(cal) = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full/cal_adc.hex")).ok().and_then(|d| crate::adc::CalAdc::from_file_bytes(&d)) else { return };
+        let Some(cal) = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full/cal_adc.hex")).ok().and_then(|d| crate::dho::adc::CalAdc::from_file_bytes(&d)) else { return };
         let mut hw = Cores {
             dac: 32768.0,
             order: [0, 2, 1, 3, 4, 6, 5, 7],
@@ -1004,19 +1004,19 @@ mod tests {
             off_err: [9.0, -14.0, 30.0, -3.0, 0.0, 22.0, -40.0, 5.0],
             g: [0; 8],
             o: [0; 8],
-            adc: crate::adc::Adc::default(),
+            adc: crate::dho::adc::Adc::default(),
         };
         assert_eq!(core_order(&mut hw).unwrap(), [0, 2, 1, 3, 4, 6, 5, 7]);
         let out = adc_cores(&mut hw, &cal, &[1], &mut |_, _, _| {}).unwrap();
         // gains: every core's effective gain within 0.1 % of the others; offsets: within 1.5 LSB of mid-scale
-        let eff: Vec<f64> = (0..8).map(|n| hw.gain_err[n] + out.get16(crate::adc::CalAdc::gain_at(1, n)) as f64 / 2048.0).collect();
+        let eff: Vec<f64> = (0..8).map(|n| hw.gain_err[n] + out.get16(crate::dho::adc::CalAdc::gain_at(1, n)) as f64 / 2048.0).collect();
         let (mn, mx) = eff.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
         assert!(mx - mn < 0.002, "gain spread {:?}", eff);
         // offsets centre every core on absolute mid-scale (incl. the channel's rest error) within 1.5 LSB
         let m = hw.adc_slots().unwrap();
         assert!(m.iter().all(|x| (x - 32768.0).abs() <= 24.0), "slots {:?}", m);
         for n in 0..8 {
-            assert_eq!(out.get16(crate::adc::CalAdc::off_at(1, n)), hw.o[n]);
+            assert_eq!(out.get16(crate::dho::adc::CalAdc::off_at(1, n)), hw.o[n]);
         }
         // the plan for one channel: gain record 1, offset mode 1; for all four: 4 gains, all 11 modes
         assert_eq!(adc_plan(&[1]), (vec![1], vec![1]));
@@ -1027,12 +1027,12 @@ mod tests {
     #[test]
     fn payloads_round_trip() {
         let Some((cal, v)) = unit_cal() else { return };
-        let base = crate::calfile::parse(&v).unwrap();
+        let base = crate::dho::calfile::parse(&v).unwrap();
         let b = cal.block(1, 2);
         assert_eq!(vertical_payload(base, &[(1, 2, b)]), base);
         let z = cal.zero_trims(3);
         let zb = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full/cal_afe_zero.hex")).unwrap();
-        let zp = crate::calfile::parse(&zb).unwrap();
+        let zp = crate::dho::calfile::parse(&zb).unwrap();
         assert_eq!(zero_payload(zp, 3, &z), zp);
     }
 }

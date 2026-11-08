@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Reference fixture for hal/src/tpu.rs from tools/tpumodel.py (read by `tpu::tests::matches_tpumodel`).
+"""Reference fixture for hal/src/dho/tpu.rs from tools/tpumodel.py (read by `tpu::tests::matches_tpumodel`).
 
 Runs the model for a fixed list of trigger set-ups and writes the ordered register writes and the end shadows to
 hal/testdata/tpu_expected.txt. One block per case:

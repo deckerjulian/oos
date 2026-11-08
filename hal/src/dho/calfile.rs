@@ -10,17 +10,8 @@
 /// Directory of OOS's own calibration files.
 pub const OOS_CAL_DIR: &str = "/oos/cal";
 
-/// zlib / IEEE 802.3 CRC32.
-pub fn crc32(d: &[u8]) -> u32 {
-    let mut c = !0u32;
-    for &b in d {
-        c ^= b as u32;
-        for _ in 0..8 {
-            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
-        }
-    }
-    !c
-}
+/// zlib / IEEE 802.3 CRC32 (also used by the neutral part of the crate).
+pub use crate::crc32;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {

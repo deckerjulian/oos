@@ -45,15 +45,15 @@ pub fn fpga_boot(addr: u32) -> std::io::Result<()> {
 /// as `oos-hw pll-init` [U].
 #[cfg(target_os = "linux")]
 pub struct GpioPll {
-    le: crate::gpio::Line,
-    sclk: crate::gpio::Line,
-    sdio: crate::gpio::Line,
+    le: crate::dho::gpio::Line,
+    sclk: crate::dho::gpio::Line,
+    sdio: crate::dho::gpio::Line,
 }
 
 #[cfg(target_os = "linux")]
 impl GpioPll {
     pub fn open() -> std::io::Result<GpioPll> {
-        use crate::gpio::Line;
+        use crate::dho::gpio::Line;
         Ok(GpioPll { le: Line::output("spi_le", false)?, sclk: Line::output("spi_sclk", false)?, sdio: Line::output("spi_sdio", false)? })
     }
 }
@@ -95,7 +95,7 @@ pub fn fpga_wait_s() -> f64 {
 pub fn power_on(
     addr: u32,
     booted_at: Option<f64>,
-    pcie_up: impl FnOnce() -> std::io::Result<crate::bus::Bar1>,
+    pcie_up: impl FnOnce() -> std::io::Result<crate::dho::bus::Bar1>,
     cal: &super::CalFiles,
     opt: &super::Options,
     progress: &mut dyn FnMut(u32),
@@ -110,7 +110,7 @@ pub fn power_on(
     };
     // the FPGA loads now; sample clock and AFEs do not need it
     let mut pll = GpioPll::open().map_err(|e| format!("PLL lines: {}", e))?;
-    let mut afe = crate::afe::GpioAfe::open().map_err(|e| format!("AFE lines: {}", e))?;
+    let mut afe = crate::dho::afe::GpioAfe::open().map_err(|e| format!("AFE lines: {}", e))?;
     let mut clk = super::SysClock::default();
     let early = super::early_start(&mut pll, &mut afe, &mut clk, progress)?;
     let wait = fpga_wait_s();

@@ -66,4 +66,4 @@ All three are resolved in the board device tree OOS boots; seen on the unit.
    PLL's `spi_le`, and the fan runs from GPIO4_A5, held on by a GPIO hog (no fan driver).
 2. **GPIO2_C2**: `uart0-cts` vs. PCIe `ep-gpios`. The pin is PERST#; the front-panel UART runs on TX/RX alone. Whether CTS/RTS are
    wired is not verified, and nothing needs them.
-3. **SPI2 pins**: `spidev` vs. the AFE bus. `spi2` is disabled, the pins are the GPIO lines `spi_afe_*`, bit-banged by `hal::afe::GpioAfe`.
+3. **SPI2 pins**: `spidev` vs. the AFE bus. `spi2` is disabled, the pins are the GPIO lines `spi_afe_*`, bit-banged by `hal::dho::afe::GpioAfe`.

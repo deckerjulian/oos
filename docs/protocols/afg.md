@@ -339,7 +339,7 @@ Changing only the amplitude: G1-style relay update + F8 (and F9 if the gear chan
 
 ## 13. OOS shape
 
-`hal::afg`, in the style of `afe.rs`/`scu.rs`: pure functions return `Vec<Op>` with `Op::Bar1 { off, val }`,
+`hal::dho::afg`, in the style of `afe.rs`/`scu.rs`: pure functions return `Vec<Op>` with `Op::Bar1 { off, val }`,
 `Op::Gpio(u8)` (afg_in1..5), `Op::Power(bool)` (FG_M2C), `Op::SleepMs(u32)`. `Cal` is parsed from `cal_afg.hex`
 (section 6); `gear` (4.2/5.1), `codes` (5.2, including the record-0 count), `clamp` (section 7), `set_freq`,
 `set_phase`, `upload`, `output`, `relays`, `start`, `stop`, `idle`. Test vectors: the section 9 values.
@@ -349,7 +349,7 @@ codes, modulation (if any), supply on, 5 ms, output on.
 
 ## 14. First output on the unit
 
-Verified on the unit. Cable GI/GO -> CH1 (1 MOhm, no terminator), factory `cal_afg.hex`, `hal::afg` through
+Verified on the unit. Cable GI/GO -> CH1 (1 MOhm, no terminator), factory `cal_afg.hex`, `hal::dho::afg` through
 `oos-fpgad afg sine` and oos-ui (Analysers > Generator, SCPI `:SOURce`). Scope readings (mean of the screen, Auto BW):
 
 | Set | Gear | Scope | Note |
@@ -399,7 +399,7 @@ coupling is no reference for such readings: the FPGA sets the channel's gain to 
 
 Host-tested, not yet verified on hardware.
 
-`hal::afg::Wave` builds OOS's own tables (section 3: the FPGA only cares about noise): square (duty 1..99 %) and pulse
+`hal::dho::afg::Wave` builds OOS's own tables (section 3: the FPGA only cares about noise): square (duty 1..99 %) and pulse
 (duty, rise/fall times) as trapezoids whose edges span at least one DAC clock (8192 * f / 156.25 MHz table samples,
 so a 10 MHz square has ~524-sample edges instead of a 1-clock jump that would move by one clock from period to
 period), ramp with symmetry, noise from a fixed-seed xorshift (uniform -32767..32767, fixed increment 2^38, no
@@ -430,7 +430,7 @@ SCPI `:MOD:<type>:INTernal:FUNCtion NOISe`.
 
 Host only, not yet verified on hardware.
 
-Nothing in the FPGA depends on the table's content, so OOS uploads its own. `hal::afg::arb_table` resamples any sample
+Nothing in the FPGA depends on the table's content, so OOS uploads its own. `hal::dho::afg::arb_table` resamples any sample
 list linearly to 8192 points and scales it to +-32767, so the Amplitude setting is the peak-to-peak output whatever the
 source's level. `arb_set` keeps the table for the acquisition thread and returns an id; `Wave::Arb { id }` carries it,
 so a new table is a new request and a running output changes at once. Frequency cap 10 MHz (`afg.arb_max_hz` in

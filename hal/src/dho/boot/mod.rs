@@ -51,10 +51,10 @@ pub mod wnd;
 pub use cal::{DdrCal, CalFiles};
 use regs::*;
 
-use crate::adc;
-use crate::afe::{self, AfeBus};
-use crate::bus::Bus;
-use crate::{scu, seq, tpu, Write};
+use crate::dho::adc;
+use crate::dho::afe::{self, AfeBus};
+use crate::dho::bus::Bus;
+use crate::dho::{scu, seq, tpu, Write};
 
 /// Shadows of the write-only registers the boot modifies (all start at 0 except the ADC ones, which `regs::adc_init`
 /// sets to their start values).
@@ -176,7 +176,7 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Options {
-        Options { fpga_version: crate::bus::FPGA_VERSION, adc_init_pre_us: ADC_INIT_PRE_US_STOCK, idelay_fallback: sim::UNIT_IDELAY, ignore_clock: false }
+        Options { fpga_version: crate::dho::bus::FPGA_VERSION, adc_init_pre_us: ADC_INIT_PRE_US_STOCK, idelay_fallback: sim::UNIT_IDELAY, ignore_clock: false }
     }
 }
 
@@ -195,7 +195,7 @@ pub const ADC_CLK_MAX: u32 = 62506;
 /// The 0x1210 window at the ADC clock in effect: exactly `ADC_CLK_MIN..=ADC_CLK_MAX` at 1.25 GHz. The count falls as the
 /// clock rises, it goes as the period: 1.375 GHz read 56816 on the unit, 62500 x 1.25 / 1.375 = 56818.
 pub fn adc_clk_window() -> (u32, u32) {
-    let hz = crate::clock::adc_hz();
+    let hz = crate::dho::clock::adc_hz();
     if hz == 1_250_000_000 {
         return (ADC_CLK_MIN, ADC_CLK_MAX);
     }
@@ -206,10 +206,10 @@ pub fn adc_clk_window() -> (u32, u32) {
 /// LMX2582 words for the ADC clock in effect: Rigol's table at 1.25 GHz, else `lmx2582::table_for` (experimental,
 /// limits.conf `adc.clock_hz`; docs/protocols/pll.md "Other output frequencies").
 pub fn pll_table() -> Result<[[u8; 3]; 46], String> {
-    if !crate::clock::overclocked() {
+    if !crate::dho::clock::overclocked() {
         return Ok(PLL_TABLE);
     }
-    crate::lmx2582::table_for(crate::clock::adc_hz() as f64)
+    crate::dho::lmx2582::table_for(crate::dho::clock::adc_hz() as f64)
 }
 /// Settling time after each sync delay of the sweep [N].
 pub const SYNC_SETTLE_US: u64 = 20_000;
@@ -551,9 +551,9 @@ impl<B: Bus> Ctx<'_, B> {
             e.afes
         } else {
             let table = pll_table()?;
-            if crate::clock::overclocked() {
+            if crate::dho::clock::overclocked() {
                 self.step(2, "sample clock: LMX2582 EXPERIMENTAL table (limits.conf adc.clock_hz) over GPIO", "[A]");
-                self.note(format!("EXPERIMENTAL ADC clock {} Hz (lmx2582::table_for)", crate::clock::adc_hz()));
+                self.note(format!("EXPERIMENTAL ADC clock {} Hz (lmx2582::table_for)", crate::dho::clock::adc_hz()));
             } else {
                 self.step(2, "sample clock: LMX2582 1.25 GHz table over GPIO", "[U]");
             }

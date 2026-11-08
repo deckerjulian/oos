@@ -6,9 +6,9 @@
 //! values: the per-channel sample delays 0x1080/0x1084 and LA delay 0x128c (deskew, they depend on the channel set),
 //! the DVM block, and the ADC input mode / per-mode ADC calibration (only when the channel set changes).
 
-use crate::hz::Params;
-use crate::scu::Shadows;
-use crate::Write;
+use crate::dho::hz::Params;
+use crate::dho::scu::Shadows;
+use crate::dho::Write;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -21,7 +21,7 @@ pub enum Mode {
 pub fn lanes(mask: u32, chans: u32) -> u32 {
     let on: Vec<u32> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
     let f = |c: u32| (chans >> c) & 1;
-    match crate::hz::ratio(mask) {
+    match crate::dho::hz::ratio(mask) {
         1 => {
             if on.is_empty() {
                 0
@@ -52,7 +52,7 @@ pub const SA_DELAY_FS: i64 = 800_000;
 pub fn configure_la(sh: &mut Shadows, p: &Params, mask: u32, invert: u32, bwl: u32, mode: Mode, la_deskew: Option<u32>, skew: [i64; 4]) -> Vec<Write> {
     let mut w = Vec::new();
     // real rates (`hz::prep`), so the real clock: the ratio max_rate / rate is the same at any clock
-    let max_rate = crate::clock::adc_hz() as u64 / p.ratio as u64;
+    let max_rate = crate::dho::clock::adc_hz() as u64 / p.ratio as u64;
     // ADC order
     sh.s1004 |= 1 << 26;
     w.push((0x1004, sh.s1004));
@@ -93,7 +93,7 @@ pub fn configure_la(sh: &mut Shadows, p: &Params, mask: u32, invert: u32, bwl: u
     w.push((0x1004, sh.s1004));
     sh.s1004 = (sh.s1004 & !0x00f0_0000) | lanes(mask, bwl) << 20;
     w.push((0x1004, sh.s1004));
-    w.extend(crate::spu::sample_rate(p.rate, max_rate));
+    w.extend(crate::dho::spu::sample_rate(p.rate, max_rate));
     // acquisition mode: bits 0,1,3,12 cleared; peak = bit1 (forced to normal at the maximum rate)
     let peak = mode == Mode::Peak && p.rate < max_rate;
     sh.s1004 = (sh.s1004 & !0x100b) | if peak { 2 } else { 0 };
@@ -113,7 +113,7 @@ pub fn configure_la(sh: &mut Shadows, p: &Params, mask: u32, invert: u32, bwl: u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hz::prep;
+    use crate::dho::hz::prep;
     const US: i128 = 1_000_000_000;
 
     fn last(w: &[Write], reg: u32) -> u32 {

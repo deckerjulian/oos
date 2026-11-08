@@ -120,7 +120,7 @@ pub fn mem_size(pts: i128) -> i128 {
 /// The sample rate `prep` asks for before the remap (roll mode's interpolation correction uses the
 /// ratio requested / used, roll-mode.md 3.2).
 pub fn requested_rate(mask: u32, tdiv_fs: i128, depth: i128) -> i128 {
-    crate::clock::from_nominal_rate(requested_rate_nominal(mask, crate::clock::to_nominal_fs(tdiv_fs), depth))
+    crate::dho::clock::from_nominal_rate(requested_rate_nominal(mask, crate::dho::clock::to_nominal_fs(tdiv_fs), depth))
 }
 
 fn requested_rate_nominal(mask: u32, tdiv_fs: i128, depth: i128) -> i128 {
@@ -142,10 +142,10 @@ fn requested_rate_nominal(mask: u32, tdiv_fs: i128, depth: i128) -> i128 {
 /// Times in and rates out are real: at an experimental ADC clock (`clock`) they are converted to and from the nominal
 /// 1.25 GHz domain the model works in (points and register values do not change).
 pub fn prep(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Params {
-    let mut p = prep_nominal(mask, crate::clock::to_nominal_fs(tdiv_fs), depth, crate::clock::to_nominal_fs(offset_fs));
-    if crate::clock::overclocked() {
-        p.rate = crate::clock::from_nominal_rate(p.rate as i128) as u64;
-        p.dot_fs = crate::clock::from_nominal_fs(p.dot_fs as i128) as u64;
+    let mut p = prep_nominal(mask, crate::dho::clock::to_nominal_fs(tdiv_fs), depth, crate::dho::clock::to_nominal_fs(offset_fs));
+    if crate::dho::clock::overclocked() {
+        p.rate = crate::dho::clock::from_nominal_rate(p.rate as i128) as u64;
+        p.dot_fs = crate::dho::clock::from_nominal_fs(p.dot_fs as i128) as u64;
     }
     p
 }
@@ -178,7 +178,7 @@ fn prep_nominal(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Param
     }
     // experimental ADC clock: the scaled time base gives rates off the 1-2-5 grid of `modify_rate`, and the SPU only
     // divides by whole numbers. Take the next rate the dividers can make, or the model's dt would not match the data.
-    if crate::clock::overclocked() {
+    if crate::dho::clock::overclocked() {
         let s = legal_rate(rate, mr);
         if s != rate {
             rate = s;

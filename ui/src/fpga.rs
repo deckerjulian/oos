@@ -32,7 +32,7 @@ impl Default for Cfg {
     }
 }
 
-use oos_hal::scu::{Shadows, Window};
+use oos_hal::dho::scu::{Shadows, Window};
 
 impl Cfg {
     pub fn window(&self) -> Window {
@@ -106,7 +106,7 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
             let mut count = 1;
             if cfg.arm {
                 let (stopped, st, _) = wait_bit(0x4034, 13, 30, 500);
-                wr(&oos_hal::scu::arm(cfg.fsm, &mut sh, 0, 1));
+                wr(&oos_hal::dho::scu::arm(cfg.fsm, &mut sh, 0, 1));
                 let (done, v, ms) = wait_bit(0x4080, 30, 1000, 2000);
                 if done {
                     sh.s4080 = v;
@@ -120,11 +120,11 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
                 }
             }
             if cfg.play4 {
-                wr(&oos_hal::scu::readout_play4(&win, &mut sh, 0, 1));
+                wr(&oos_hal::dho::scu::readout_play4(&win, &mut sh, 0, 1));
             } else {
-                wr(&oos_hal::scu::readout(&win, &mut sh));
+                wr(&oos_hal::dho::scu::readout(&win, &mut sh));
             }
-            match oos_hal::bus::read_dma(&mut c2h, buf.len(), |_, _| {}) {
+            match oos_hal::dho::bus::read_dma(&mut c2h, buf.len(), |_, _| {}) {
                 Ok(b) => {
                     buf = b;
                     seq += 1;

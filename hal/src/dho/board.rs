@@ -22,7 +22,7 @@ pub fn xadc(raw: u32) -> (f32, f32) {
 }
 
 /// Reads and converts the XADC register. An unloaded FPGA reads 0xffffffff or 0, both out of range: `None`.
-pub fn read_xadc(bus: &mut dyn crate::bus::Bus) -> Option<(f32, f32)> {
+pub fn read_xadc(bus: &mut dyn crate::dho::bus::Bus) -> Option<(f32, f32)> {
     let raw = bus.rd(XADC_REG);
     let (t, v) = xadc(raw);
     (raw != u32::MAX && (-40.0..=150.0).contains(&t) && (0.5..=1.5).contains(&v)).then_some((t, v))
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn xadc_rejects_unloaded_fpga() {
         struct R(u32);
-        impl crate::bus::Bus for R {
+        impl crate::dho::bus::Bus for R {
             fn wr(&mut self, _: u32, _: u32) {}
             fn rd(&mut self, _: u32) -> u32 {
                 self.0

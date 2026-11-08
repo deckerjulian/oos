@@ -32,7 +32,7 @@ pub struct RefWnd {
 /// time, the lane bit period shrinks with the ADC clock, so at an experimental clock the run is scaled by
 /// 1.25 GHz / clock (2 GHz: 8) [A: only the 1.25 GHz value is known].
 pub fn min_run() -> usize {
-    (14 * crate::clock::NOMINAL_HZ / crate::clock::adc_hz()).max(4) as usize
+    (14 * crate::dho::clock::NOMINAL_HZ / crate::dho::clock::adc_hz()).max(4) as usize
 }
 
 /// Walks d = 1..31 on `lane` and takes the first run (0s or 1s) longer than 14 that is ended by a

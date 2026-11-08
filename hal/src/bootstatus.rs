@@ -60,7 +60,7 @@ pub fn line(t: f64, state: &str, stage: &str, detail: &str) -> String {
 /// Appends a line (errors are ignored: the start-up must not stop because /tmp is full).
 pub fn append(path: &str, state: &str, stage: &str, detail: &str) {
     use std::io::Write;
-    let l = line(crate::boot::io::uptime(), state, stage, detail);
+    let l = line(uptime(), state, stage, detail);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = f.write_all(l.as_bytes());
     }
@@ -152,4 +152,9 @@ mod tests {
         // tabs and newlines in a detail do not break the format
         assert_eq!(parse(&line(1.0, "fail", "X", "a\tb\nc")).stages[0].detail, "a b c");
     }
+}
+
+/// Seconds since the kernel started.
+fn uptime() -> f64 {
+    std::fs::read_to_string("/proc/uptime").ok().and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok())).unwrap_or(0.0)
 }

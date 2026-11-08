@@ -5,7 +5,7 @@ marked "verified on the unit" were seen there. Everything else in this file has 
 
 Conventions: times in femtoseconds (fs), as in `acquisition-start.md`. `tb` = time base in fs/div, `memsel` = points per
 channel, `ratio` = interleave factor, `dot` = sample period in fs, `mask` = channel mask (CH1 bit 0 .. CH4 bit 3).
-`sN` = software copy of write-only register N. `hal::hz` implements sections 1.2 to 1.6.
+`sN` = software copy of write-only register N. `hal::dho::hz` implements sections 1.2 to 1.6.
 
 ## 0. Summary
 
@@ -87,7 +87,7 @@ runs at the wrong rate (verified on the unit). `seq::tdiv_fs` therefore rounds t
 With a fixed depth, memsel is not recomputed after the rate correction, so the memory covers `depth / rate` >= 10
 divisions. Example: 1 M points at 200 us/div -> 1e6/2e-3 = 500 MSa/s -> 312.5 MSa/s, 3.2 ms of memory for a 2 ms screen.
 
-### 1.3 Auto depth, results (`hal::hz`, LA off)
+### 1.3 Auto depth, results (`hal::dho::hz`, LA off)
 
 | time/div | 1 ch: rate / memsel / 0x10e0 | 2 ch: rate / memsel | 4 ch: rate / memsel |
 |---|---|---|---|
@@ -369,13 +369,13 @@ words alternate CH1, CH2; 0x1108 = start point per channel. The window registers
 Precondition: FPGA, clocks, ADC and lane calibration from the cold boot (`cold-boot.md`) or a warm hand-over. OOS keeps
 shadows of 0x1000, 0x1004, 0x1080, 0x1084, 0x4008, 0x1154, 0x1170 (start value of 0x1004 after a warm hand-over: 0x04000000).
 
-1. Compute (pure software, sections 1.2-1.6, `hal::hz`): ratio/max rate from the mask table; rate and memsel from the time
+1. Compute (pure software, sections 1.2-1.6, `hal::dho::hz`): ratio/max rate from the mask table; rate and memsel from the time
    base (Auto with the maximum depth of 1.1, or a fixed depth from the depth list), the rate table of 1.2, segsize,
    pre/post. Use 1000 columns, tb/100 per column. Frame count: 1 is the simplest choice; batches are in
    `acquisition-start.md`.
 2. Channel set changed? -> ADC input mode (2.3, two SPI words with 100 us gaps) and the per-mode ADC calibration. Without
    the calibration the interleaved cores of a new mode are not matched (assumed).
-3. Write the acquisition block of 4.1 (writes 5-28, without 12, 24, 29) with the computed values (`hal::acq`).
+3. Write the acquisition block of 4.1 (writes 5-28, without 12, 24, 29) with the computed values (`hal::dho::acq`).
 4. The OOS read-out path does not need the display-trace block of the horizontal block: OOS writes its own
    0x1100/0x1108/0x11f0 window before every read. For a live display via the FPGA trace path, write 30-31, 37-40, 44,
    compression 0x1170 and 0x11f0/0x11fc as in 4.1, sinc coefficients only if the sinc factor > 1 (`cold-boot.md` 3.8).

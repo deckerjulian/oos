@@ -3,7 +3,7 @@
 
 //! Sample processing unit (0x1000 block): sample rate divider, memory size. docs/protocols/horizontal-config.md.
 
-use crate::Write;
+use crate::dho::Write;
 
 /// Sample rate: above 62.5 MSa/s 0x10d0 = 0x8000 |
 /// (max rate / rate) and 0x10d8 = 1, else 0x10d0 = 0 and 0x10d8 = 62.5 M / rate; 0x10d4 = 0.
@@ -11,7 +11,7 @@ use crate::Write;
 pub fn sample_rate(rate: u64, max_rate: u64) -> Vec<Write> {
     // the dividers count ADC clocks: real rates back to the 1.25 GHz domain (identity there), where the second
     // divider's base is 62.5 MHz (ADC / 20)
-    let (rate, max_rate) = (crate::clock::to_nominal_rate(rate as i128) as u64, crate::clock::to_nominal_rate(max_rate as i128) as u64);
+    let (rate, max_rate) = (crate::dho::clock::to_nominal_rate(rate as i128) as u64, crate::dho::clock::to_nominal_rate(max_rate as i128) as u64);
     let (r10d0, r10d8) = if rate > 62_500_000 { (0x8000 | ((max_rate / rate) as u32 & 0xff), 1) } else { (0, (62_500_000 / rate) as u32) };
     vec![(0x10d0, r10d0), (0x10d8, r10d8), (0x10d4, 0)]
 }

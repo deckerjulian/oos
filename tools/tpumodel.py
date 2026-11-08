@@ -11,7 +11,7 @@ type.
 Units: times in femtoseconds internally (CLI takes seconds), voltages in nV at the BNC (CLI takes volts).
 
 Examples:
-  tpumodel.py edge --ch 1 --slope rising                      # 0x201c = 0x00aa4100, 0x205c = 0 (= hal/src/tpu.rs)
+  tpumodel.py edge --ch 1 --slope rising                      # 0x201c = 0x00aa4100, 0x205c = 0 (= hal/src/dho/tpu.rs)
   tpumodel.py pulse --ch 1 --pol pos --when gt --lower 100e-9
   tpumodel.py slope --ch 2 --slope rising --when lt --upper 20e-9 --hi 1.0 --lo 0.2
   tpumodel.py runt --ch 1 --pol pos --hi 2.0 --lo 0.8
@@ -234,7 +234,7 @@ def refresh_levels(t, chans, lv):
 
 
 def edge(t, ch, slope="rising", level=0.0, lv=None, holdoff_fs=8_000_000):
-    """Edge: configuration (DC coupling), levels, holdoff, = hal/src/tpu.rs `edge` (17 writes)."""
+    """Edge: configuration (DC coupling), levels, holdoff, = hal/src/dho/tpu.rs `edge` (17 writes)."""
     a, b = cmp_a(ch), cmp_b(ch)
     t.set_trigger("A", 0, 0, 0)
     t.set_trigger("B", 0, 0, 0)

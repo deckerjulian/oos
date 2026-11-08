@@ -258,9 +258,9 @@ Items marked "assumed" are design choices or guesses. Nothing here is verified o
 - No analog probe ID on this model.
 
 ### 8.6 Implementation status
-- `hal::panel`: all power frames of section 4 as constants / builders (`UI_LOADED`, `POWER_OFF`, `CANCEL_POWER_DOWN`,
+- `hal::dho::panel`: all power frames of section 4 as constants / builders (`UI_LOADED`, `POWER_OFF`, `CANCEL_POWER_DOWN`,
   `RESTART`, `KEYBOARD_VERSION`, `power_on_mode`, `flash_time`, `KEY_POWER`), CRCs tested against the table.
-- `hal::board`: XADC decoding (`xadc`, `read_xadc` rejects an unloaded FPGA), thermal-zone reader, `Guard` (warn at 3,
+- `hal::dho::board`: XADC decoding (`xadc`, `read_xadc` rejects an unloaded FPGA), thermal-zone reader, `Guard` (warn at 3,
   power off at 11 hot periods, cleared on the first cool period), beeper over the pwm-gpio sysfs class (`Beep::Once` /
   `Long`).
 - `oos-fpgad temp | beep | guard`; `status` also prints the XADC line. pwm-gpio.ko is in the dev image and loaded by rcS.

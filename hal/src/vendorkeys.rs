@@ -140,7 +140,7 @@ fn stock_files() -> Vec<String> {
 /// What a search depends on: the vendor file and the size and time of each stock file. A search that found nothing is
 /// kept with it, so that it runs again only when one of them changed.
 fn inputs(vendor: &[u8]) -> String {
-    let mut s = format!("{:08x}", crate::calfile::crc32(vendor));
+    let mut s = format!("{:08x}", crate::crc32(vendor));
     for p in stock_files() {
         if let Ok(m) = std::fs::metadata(&p) {
             let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());

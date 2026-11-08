@@ -8,8 +8,8 @@
 //! its live data), [A] assumed, or an OOS choice.
 
 use super::Shadows;
-use crate::adc::Wr;
-use crate::Write;
+use crate::dho::adc::Wr;
+use crate::dho::Write;
 
 /// FPGA ADC SPI master: 0x1034 = `0x01000000 | reg << 16 | data` (bit 23 = read, data in 0x1038 after 100 us).
 pub const ADC_SPI: u32 = 0x1034;

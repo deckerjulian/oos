@@ -74,10 +74,10 @@ impl Cal {
     /// `load` and where each file came from.
     pub fn load_from(dir: &str) -> std::io::Result<(Cal, Vec<(String, String)>)> {
         let def = format!("{}/default", dir.trim_end_matches('/'));
-        let dirs = [crate::calfile::OOS_CAL_DIR, dir, def.as_str()];
+        let dirs = [crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()];
         let mut from = Vec::new();
         let mut rd = |n: &str| {
-            let (b, d) = crate::calfile::load_first(n, &dirs).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no valid copy in {:?}", n, dirs)))?;
+            let (b, d) = crate::dho::calfile::load_first(n, &dirs).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no valid copy in {:?}", n, dirs)))?;
             from.push((n.to_string(), d));
             Ok::<_, std::io::Error>(b)
         };
@@ -680,16 +680,16 @@ impl Afe {
 /// chip selects idle high), GPIO lines `spi_afe_sclk/mosi/miso`, `spi_afe_cs_0..3` from the device tree.
 #[cfg(target_os = "linux")]
 pub struct GpioAfe {
-    sclk: crate::gpio::Line,
-    mosi: crate::gpio::Line,
-    miso: crate::gpio::Line,
-    cs: [crate::gpio::Line; 4],
+    sclk: crate::dho::gpio::Line,
+    mosi: crate::dho::gpio::Line,
+    miso: crate::dho::gpio::Line,
+    cs: [crate::dho::gpio::Line; 4],
 }
 
 #[cfg(target_os = "linux")]
 impl GpioAfe {
     pub fn open() -> std::io::Result<GpioAfe> {
-        use crate::gpio::Line;
+        use crate::dho::gpio::Line;
         let cs = |n: usize| Line::output(&format!("spi_afe_cs_{}", n), true);
         Ok(GpioAfe {
             sclk: Line::output("spi_afe_sclk", false)?,
@@ -706,7 +706,7 @@ impl GpioAfe {
             std::hint::spin_loop();
         }
     }
-    fn set(l: &crate::gpio::Line, v: bool) {
+    fn set(l: &crate::dho::gpio::Line, v: bool) {
         l.set(v);
         Self::half();
     }
@@ -759,12 +759,12 @@ pub fn set_gear(ch: usize, gear: u8) -> std::io::Result<()> {
     use std::os::unix::io::AsRawFd;
     if !std::path::Path::new("/dev/dac_gear_change").exists() {
         use std::sync::Mutex;
-        static LINES: Mutex<Vec<(usize, crate::gpio::Line)>> = Mutex::new(Vec::new());
+        static LINES: Mutex<Vec<(usize, crate::dho::gpio::Line)>> = Mutex::new(Vec::new());
         let mut lines = LINES.lock().unwrap();
         if let Some((_, l)) = lines.iter().find(|(c, _)| *c == ch) {
             l.set(gear & 1 != 0);
         } else {
-            lines.push((ch, crate::gpio::Line::output(&format!("afe{}", ch + 1), gear & 1 != 0)?));
+            lines.push((ch, crate::dho::gpio::Line::output(&format!("afe{}", ch + 1), gear & 1 != 0)?));
         }
         return Ok(());
     }
@@ -899,7 +899,7 @@ mod tests {
             eprintln!("calibration files not found, skipped");
             return;
         };
-        let want = include_str!("../testdata/afe_expected.txt");
+        let want = include_str!("../../testdata/afe_expected.txt");
         let bwv = |s: &str| match s {
             "OFF" => bw::OFF,
             "S20M" => bw::S20M,

@@ -1,39 +1,33 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! OOS hardware layer for the Rigol DHO800/DHO900 (RK3399 + Zynq FPGA over PCIe/XDMA).
+//! OOS hardware layer.
 //!
-//! The register sequences are described in `docs/protocols/` (acquisition-start.md, horizontal-config.md,
-//! trigger.md, afe-settings.md). No code of the vendor libraries is used. Functions that build register sequences are pure (they return `(offset, value)`
-//! lists and update software shadows of the write-only registers), so they are unit-tested on the host; `bus` applies
-//! them to the hardware.
+//! The crate root holds what does not depend on one board: the model and its limits (`model`), the vendor file keys
+//! (`vendorkeys`), signed updates (`update`), WLAN (`wlan`) and the start-up status file (`bootstatus`). Everything of
+//! the DHO800/DHO900 board (RK3399 + Zynq FPGA over PCIe/XDMA) is in `dho`; a port to another board family adds a
+//! module next to it (docs/porting.md).
+//!
+//! The register sequences are described in `docs/protocols/`. No code of the vendor libraries is used. Functions that
+//! build register sequences are pure (they return `(offset, value)` lists and update software shadows of the
+//! write-only registers), so they are unit-tested on the host; `dho::bus` applies them to the hardware.
 
-pub mod acq;
-pub mod adc;
-pub mod afg;
-pub mod afe;
-pub mod board;
-pub mod boot;
 pub mod bootstatus;
-pub mod bus;
-pub mod calfile;
-pub mod clock;
-pub mod gpio;
-pub mod hz;
-pub mod la;
-pub mod lmx2582;
 pub mod model;
 pub mod vendorkeys;
-pub mod panel;
-pub mod roll;
-pub mod scu;
-pub mod selfcal;
-pub mod seq;
-pub mod spu;
-pub mod tpu;
 pub mod update;
 pub mod wlan;
-pub mod wpu;
 
-/// One register write: (BAR1 offset, value).
-pub type Write = (u32, u32);
+pub mod dho;
+
+/// zlib / IEEE 802.3 CRC32.
+pub fn crc32(d: &[u8]) -> u32 {
+    let mut c = !0u32;
+    for &b in d {
+        c ^= b as u32;
+        for _ in 0..8 {
+            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+        }
+    }
+    !c
+}

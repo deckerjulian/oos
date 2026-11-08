@@ -225,7 +225,7 @@ Not proposed: TI's "R0 again after 10 ms" (covered by repeated table runs); `\rV
 (0x4000 = 0xe2072115 and DDR pass already make a missed BOOT unlikely, and it is a monitor command outside OOS's BOOT-only
 rule).
 
-## 7. Consequences for `hal::boot`
+## 7. Consequences for `hal::dho::boot`
 
 Step 8 only logs 0x1210. Steps 9..12 run (at least the sync sweep and the eye scan). Then 0x1210 is a hard condition before
 step 13, unless `--ignore-clock` is given, which turns the stop into a warning. The PLL stays step 2, after the FPGA boot.

@@ -304,7 +304,7 @@ impl Platform {
             if !(1.25e9..=2.0e9).contains(&hz) {
                 return Err(format!("{}: {} outside 1.25e9..2.0e9", k, v));
             }
-            crate::lmx2582::table_for(hz).map_err(|e| format!("{}: {}", k, e))?;
+            crate::dho::lmx2582::table_for(hz).map_err(|e| format!("{}: {}", k, e))?;
             l.adc_clock_hz = hz;
             l.afg_clock_hz = hz / 8.0;
             l.max_srate = [hz, hz / 2.0, hz / 4.0];
@@ -524,7 +524,7 @@ pub(crate) fn vendor_payload(file: &[u8], k: &[u32; 4]) -> Option<Vec<u8>> {
     let p = bytes(&w);
     let (crc, len) = (u32_at(&p, 0)?, u32_at(&p, 4)? as usize);
     let payload = p.get(8..8usize.checked_add(len)?)?;
-    (crate::calfile::crc32(payload) == crc).then(|| payload.to_vec())
+    (crate::crc32(payload) == crc).then(|| payload.to_vec())
 }
 
 /// Does the inner key `k` turn the model item of `payload` into a known model?
@@ -563,7 +563,7 @@ fn items(payload: &[u8], key: &[u32; 4]) -> Vendor {
         let (Some(icrc), Some(ilen), Some(slen)) = (u32_at(item, 0), u32_at(item, 4), u32_at(item, 8)) else { continue };
         let (ilen, slen) = (ilen as usize, slen as usize);
         let Some(signed) = item.get(8..12 + ilen) else { continue };
-        if crate::calfile::crc32(signed) != icrc || ilen % 4 != 0 || slen > ilen {
+        if crate::crc32(signed) != icrc || ilen % 4 != 0 || slen > ilen {
             continue;
         }
         let mut iw = words(&item[12..12 + ilen]);
@@ -598,7 +598,7 @@ pub(crate) fn encode_vendor_with(items: &[(u32, &str)], k: &Keys) -> Vec<u8> {
         let enc = bytes(&iw);
         let mut signed = (s.len() as u32).to_le_bytes().to_vec();
         signed.extend_from_slice(&enc);
-        let mut item = crate::calfile::crc32(&signed).to_le_bytes().to_vec();
+        let mut item = crate::crc32(&signed).to_le_bytes().to_vec();
         item.extend_from_slice(&(enc.len() as u32).to_le_bytes());
         item.extend_from_slice(&signed);
         for x in [4u32, id, item.len() as u32] {
@@ -606,7 +606,7 @@ pub(crate) fn encode_vendor_with(items: &[(u32, &str)], k: &Keys) -> Vec<u8> {
         }
         payload.extend_from_slice(&item);
     }
-    let mut f = crate::calfile::crc32(&payload).to_le_bytes().to_vec();
+    let mut f = crate::crc32(&payload).to_le_bytes().to_vec();
     f.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     f.extend_from_slice(&payload);
     f.resize(f.len().div_ceil(4) * 4, 0);
@@ -749,6 +749,6 @@ mod bad_limits_tests {
         }
         let p = Platform::build(None, Some("afg.sine_max_hz = 0"), None);
         assert_eq!(p.limits.afg_max_hz.sine, 0.01);
-        assert!(crate::afg::Wave::Sine.max_hz_in(&p.limits) * 1e6 >= 2000.0);
+        assert!(crate::dho::afg::Wave::Sine.max_hz_in(&p.limits) * 1e6 >= 2000.0);
     }
 }

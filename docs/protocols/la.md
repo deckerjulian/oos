@@ -297,11 +297,11 @@ bit26 itself, 0x128c and the rate block keep their last values, as section 8.3 s
 
 | part | where | status |
 |---|---|---|
-| sample mode m, LA rate, n_la, trigger index | `hal::la::sample_mode`, `timing` | 3.1 table including mask 3; trigger index pre x m / 2 is assumed (T1) |
-| analog parameters with the LA | `hal::la::prep` | rate halved with a channel shown (156.25 M -> 62.5 M), memsel kept, segment x2, frame ring from the doubled segment (assumed) |
-| acquisition additions | `hal::acq::configure_la`, `hal::la::config` | 0x4008 bit26/bit23/bit24 (roll only), 0x128c 424/145, rate block 3.2, 0x131c, 0x10e4 x2 (not roll), 0x4050/0x4054 x2, 0x10e0 doubled |
-| thresholds | `hal::la::thresholds`, with every set-up while the LA is on | 5.1 bit-exact; zero codes from `cal_la.hex` (fallback 0x2180) |
-| raw LA read | `hal::la::passthrough`, `readout`, `restore`; `seq::State::la_read_steps`, `seq::acquire_la` | 4.2 steps 1-6, then 0x4008 bit23 = 1 / bit24 = 0 |
+| sample mode m, LA rate, n_la, trigger index | `hal::dho::la::sample_mode`, `timing` | 3.1 table including mask 3; trigger index pre x m / 2 is assumed (T1) |
+| analog parameters with the LA | `hal::dho::la::prep` | rate halved with a channel shown (156.25 M -> 62.5 M), memsel kept, segment x2, frame ring from the doubled segment (assumed) |
+| acquisition additions | `hal::dho::acq::configure_la`, `hal::dho::la::config` | 0x4008 bit26/bit23/bit24 (roll only), 0x128c 424/145, rate block 3.2, 0x131c, 0x10e4 x2 (not roll), 0x4050/0x4054 x2, 0x10e0 doubled |
+| thresholds | `hal::dho::la::thresholds`, with every set-up while the LA is on | 5.1 bit-exact; zero codes from `cal_la.hex` (fallback 0x2180) |
+| raw LA read | `hal::dho::la::passthrough`, `readout`, `restore`; `seq::State::la_read_steps`, `seq::acquire_la` | 4.2 steps 1-6, then 0x4008 bit23 = 1 / bit24 = 0 |
 | batch | `seq::frames` | one frame per batch while the LA is on (only the last frame of a batch has its LA, 4.1) |
 | depth / rate limits | `oos-ui` `Model::max_mem` (`Limits::mem(n, la)`), `max_srate` halved, `hw::settings` caps the depth | 31.25 / 12.5 / 10 M |
 | probe detect | `hw.rs`, GPIO `LA_PROBE_DETECT` once a second | LA page title; without a probe the LA does not come on from the panel or the screen |

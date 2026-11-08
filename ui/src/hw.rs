@@ -1,13 +1,13 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Hardware source: acquisitions through `oos_hal::seq` (configure on change, arm, wait, read the whole record),
+//! Hardware source: acquisitions through `oos_hal::dho::seq` (configure on change, arm, wait, read the whole record),
 //! decoded into volts per channel. The UI aligns each frame with the software trigger engine (all 12 trigger types on
 //! real data; the hardware itself triggers with an edge on the source at the level, in AUTO or NORMAL).
 
 use crate::model::*;
-use oos_hal::seq::{Chan, Couple, Settings, Trig};
-use oos_hal::{afe, hz, tpu};
+use oos_hal::dho::seq::{Chan, Couple, Settings, Trig};
+use oos_hal::dho::{afe, hz, tpu};
 use std::sync::{Arc, Mutex};
 
 /// One decoded record: volts per enabled channel, sample period, index of the hardware trigger point.
@@ -84,7 +84,7 @@ pub struct Shared {
     pub cal_result: Option<Result<String, String>>,
     pub cal_cancel: bool,
     /// generator wanted: (on, Hz, Vpp, V, wave, modulation); applied by the thread when it changes
-    pub afg: Option<(bool, f64, f64, f64, oos_hal::afg::Wave, oos_hal::afg::Mod)>,
+    pub afg: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)>,
     /// counter set by the UI with the settings; frames acquired after applying them carry it (`Frame::stamp`), so a
     /// sweep can tell frames of the new step from queued ones
     pub stamp: u64,
@@ -127,7 +127,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         // 100 ms/div)
         0 if slow_mode(m) != Slow::Off => 0,
         0 => {
-            let auto = hz::prep(mask, oos_hal::seq::tdiv_fs(tdiv), 0, 0);
+            let auto = hz::prep(mask, oos_hal::dho::seq::tdiv_fs(tdiv), 0, 0);
             if auto.memsel as i128 > LIVE_DEPTH {
                 LIVE_DEPTH
             } else {
@@ -139,18 +139,18 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         d => d as i128,
     };
     // logic analyser: the record holds analog and LA, so the depth stays within the LA limits
-    let la = m.la_on().then(|| oos_hal::la::Set {
+    let la = m.la_on().then(|| oos_hal::dho::la::Set {
         thr: [m.la.thr(0) as f64, m.la.thr(1) as f64],
         analog_shown: m.n_on() > 0,
         // the thread puts in the zero codes of the unit's cal_la.hex
-        cal: oos_hal::la::Cal::default(),
+        cal: oos_hal::dho::la::Cal::default(),
         roll: slow_mode(m) != Slow::Off,
     });
     // the depth of the menu may be from fewer channels: never beyond the limit of the channels on now
     let max_mem = oos_hal::model::platform().limits.mem(mask.count_ones() as usize, m.la_on());
     let depth = if depth > 0 { depth.min(max_mem as i128) } else { depth };
     // roll faster than 50 ms/div: no more than the roll stream's rate
-    let df = oos_hal::roll::depth_for(oos_hal::seq::tdiv_fs(tdiv));
+    let df = oos_hal::dho::roll::depth_for(oos_hal::dho::seq::tdiv_fs(tdiv));
     let depth = if slow_mode(m) == Slow::Roll && df > 0 { if depth == 0 { df } else { depth.min(df) } } else { depth };
     let ch = [0, 1, 2, 3].map(|c| Chan { scale: m.ch[c].volts_per_div() as f64, offset: m.ch[c].offset as f64, bw: bw_code(m.ch[c].bw), probe: m.ch[c].probe as f64, bias: m.ch[c].bias as f64, skew: m.ch[c].skew as f64,
         couple: match m.ch[c].coupling {
@@ -175,8 +175,8 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     Settings {
         // roll and scan have their own way with the position
         delay: if slow_mode(m) == Slow::Off { m.delay as f64 } else { 0.0 },
-        mode: if m.acq == AcqMode::Peak { oos_hal::acq::Mode::Peak } else { oos_hal::acq::Mode::Normal },
-        holdoff: (m.holdoff as f64).max(oos_hal::seq::HOLDOFF_MIN),
+        mode: if m.acq == AcqMode::Peak { oos_hal::dho::acq::Mode::Peak } else { oos_hal::dho::acq::Mode::Normal },
+        holdoff: (m.holdoff as f64).max(oos_hal::dho::seq::HOLDOFF_MIN),
         mask,
         tdiv,
         depth,
@@ -293,8 +293,8 @@ fn hw_trigger(m: &Model) -> Trig {
 
 /// Decodes a read-out of the whole record into a frame.
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
-    let w = oos_hal::seq::deinterleave(bytes, s.mask);
-    let ch = [0, 1, 2, 3].map(|c| if w[c].is_empty() { Vec::new() } else { oos_hal::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset) });
+    let w = oos_hal::dho::seq::deinterleave(bytes, s.mask);
+    let ch = [0, 1, 2, 3].map(|c| if w[c].is_empty() { Vec::new() } else { oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset) });
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = s.compress.max(1) as usize;
     Frame { seq, dt: k as f64 / p.rate as f64, pre: p.pre as usize / k, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None }
@@ -304,8 +304,8 @@ pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
 /// (start + j - trigger index) / LA rate from the hardware trigger point (la.md 3.3; the trigger index is [A] until
 /// test T1).
 pub fn la_record(words: Vec<u16>, s: &Settings, p: &hz::Params) -> crate::ui::la::LaRec {
-    let t = oos_hal::la::timing(p, s.mask);
-    let (_, start) = oos_hal::la::window(&t);
+    let t = oos_hal::dho::la::timing(p, s.mask);
+    let (_, start) = oos_hal::dho::la::window(&t);
     let dt = 1.0 / t.rate.max(1) as f64;
     crate::ui::la::LaRec { words: Arc::new(words), t0: (start as f64 - t.pre as f64) * dt, dt }
 }
@@ -327,7 +327,7 @@ pub fn bw_code(i: usize) -> u32 {
 pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     let mut b = s.clone();
     b.compress = if p.memsel > 1_000_000 { p.memsel.div_ceil(625_000) } else { 1 };
-    let fb = oos_hal::seq::frame_bytes(&b, p).max(1);
+    let fb = oos_hal::dho::seq::frame_bytes(&b, p).max(1);
     b.frames = ((4_000_000 / fb) as u32).min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
     b
 }
@@ -336,8 +336,8 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
 /// AFEs from the UI channel settings, else they keep the stock set-up and the UI V/div must match it).
 #[cfg(target_os = "linux")]
 pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option<String>) -> HwShared {
-    use oos_hal::bus::{Bar1, Bus, FPGA_VERSION};
-    use oos_hal::{adc, seq};
+    use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
+    use oos_hal::dho::{adc, seq};
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
     std::thread::spawn(move || {
@@ -389,18 +389,18 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut cal_adc = adc::CalAdc::load(&cal_dir).ok();
         // LA pod zero codes (cal_la.hex, read only); without the file the middle of the DAC range (la.md 8.1)
         let la_cal = if oos_hal::model::platform().caps.la {
-            oos_hal::la::Cal::load(&cal_dir).unwrap_or_else(|| {
+            oos_hal::dho::la::Cal::load(&cal_dir).unwrap_or_else(|| {
                 status("cal_la.hex not found: LA thresholds with the zero code 0x2180".into());
-                oos_hal::la::Cal { zero: [0x2180; 2] }
+                oos_hal::dho::la::Cal { zero: [0x2180; 2] }
             })
         } else {
-            oos_hal::la::Cal::default()
+            oos_hal::dho::la::Cal::default()
         };
         let mut state = seq::State::handover(app_mask, cal_adc.as_ref());
         let mut current: Option<(Settings, hz::Params)> = None;
         let mut n = 0u64;
         // roll/scan mode: streaming state (parameters, ring of volts per channel, last publish)
-        let mut rolling: Option<oos_hal::roll::Params> = None;
+        let mut rolling: Option<oos_hal::dho::roll::Params> = None;
         let mut ring: [std::collections::VecDeque<f32>; NCH] = Default::default();
         // the same for the LA words: ring, sweep picture (as f32 for `scan_write`; a word is exact in it)
         let mut ring_la: std::collections::VecDeque<u16> = Default::default();
@@ -409,14 +409,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // scan: the sweep picture per channel (one screen), write position, last 0x1204, SINGLE sweep complete
         let mut sweep: [Vec<f32>; NCH] = Default::default();
         let mut cursor = 0usize;
-        let mut last_info = oos_hal::roll::ScanInfo::default();
+        let mut last_info = oos_hal::dho::roll::ScanInfo::default();
         let mut halted = false;
         // 0x40d0 reported done; the last chunks of the sweep are read once more before the stop
         let mut done_seen: Option<std::time::Instant> = None;
         let mut mode = Slow::Off;
-        let afg_cal = oos_hal::afg::Cal::load(&cal_dir);
-        let mut afg_io: Option<oos_hal::afg::Io> = None;
-        let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::afg::Wave, oos_hal::afg::Mod)> = None;
+        let afg_cal = oos_hal::dho::afg::Cal::load(&cal_dir);
+        let mut afg_io: Option<oos_hal::dho::afg::Io> = None;
+        let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)> = None;
         let mut stamp;
         let mut xadc_at: Option<std::time::Instant> = None;
         let mut la_fails = 0u32;
@@ -424,11 +424,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
                 xadc_at = Some(std::time::Instant::now());
-                let x = oos_hal::board::read_xadc(&mut bar);
+                let x = oos_hal::dho::board::read_xadc(&mut bar);
                 out.lock().unwrap().xadc = x;
                 // LA probe detect, also with the LA off: without a probe it cannot be switched on
                 if oos_hal::model::platform().caps.la {
-                    let p = oos_hal::la::probe_present().ok();
+                    let p = oos_hal::dho::la::probe_present().ok();
                     out.lock().unwrap().la_probe = p;
                 }
             }
@@ -438,20 +438,20 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let req = out.lock().unwrap().cal_req.take();
             if let Some((chans, zero, adc_cores)) = req {
                 if rolling.take().is_some() {
-                    bar.apply(&oos_hal::roll::stop(&mut state.sh));
+                    bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
                 }
                 let res = match (afe_bus.as_mut(), cal.as_ref()) {
                     (Some(afe), Some(c)) => {
                         let cancel_out = out.clone();
                         let cancel = move || cancel_out.lock().unwrap().cal_cancel;
-                        let mut unit = oos_hal::selfcal::Unit { bar: &mut bar, afe, c2h: &mut c2h, state: &mut state, cal: c, cal_adc: cal_adc.as_ref(), cancel: &cancel, adc_new: None };
+                        let mut unit = oos_hal::dho::selfcal::Unit { bar: &mut bar, afe, c2h: &mut c2h, state: &mut state, cal: c, cal_adc: cal_adc.as_ref(), cancel: &cancel, adc_new: None };
                         let prog_out = out.clone();
                         let adc_base = if adc_cores { cal_adc.as_ref() } else { None };
-                        let r = oos_hal::selfcal::run_all_with(&mut unit, c, adc_base, &chans, zero, &mut |d, t, s| {
+                        let r = oos_hal::dho::selfcal::run_all_with(&mut unit, c, adc_base, &chans, zero, &mut |d, t, s| {
                             prog_out.lock().unwrap().cal_progress = Some((d, t, s.to_string()));
                         });
                         match r {
-                            Ok(r) => oos_hal::selfcal::save(&r, &cal_dir).map(|files| format!("{} configurations, largest change {:.2} %, saved {}", r.measured, r.worst * 100.0, files.join(", "))),
+                            Ok(r) => oos_hal::dho::selfcal::save(&r, &cal_dir).map(|files| format!("{} configurations, largest change {:.2} %, saved {}", r.measured, r.worst * 100.0, files.join(", "))),
                             Err(e) => Err(e),
                         }
                     }
@@ -478,12 +478,12 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 // models without the generator (non-S): its GPIO lines and FPGA block are never touched
                 if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.afg) {
                     if afg_io.is_none() {
-                        afg_io = oos_hal::afg::Io::open().map_err(|e| status(format!("generator GPIO: {}", e))).ok();
+                        afg_io = oos_hal::dho::afg::Io::open().map_err(|e| status(format!("generator GPIO: {}", e))).ok();
                     }
                     if let Some(io) = afg_io.as_mut() {
                         // a running output keeps running when the change allows it
-                        let quick = afg_done.filter(|d| on && d.0 && d.4 == wave && d.5 == md && md == oos_hal::afg::Mod::None).and_then(|d| oos_hal::afg::retune(afg_cal.as_ref(), wave, d.1 * 1e6, f * 1e6, a * 1e9, o * 1e9, io.relays()));
-                        let ops = if let Some(q) = quick { q } else if on { oos_hal::afg::start_mod(afg_cal.as_ref(), wave, f * 1e6, a * 1e9, o * 1e9, io.relays(), md) } else { oos_hal::afg::idle(a * 1e9, o * 1e9, f * 1e6, io.relays()) };
+                        let quick = afg_done.filter(|d| on && d.0 && d.4 == wave && d.5 == md && md == oos_hal::dho::afg::Mod::None).and_then(|d| oos_hal::dho::afg::retune(afg_cal.as_ref(), wave, d.1 * 1e6, f * 1e6, a * 1e9, o * 1e9, io.relays()));
+                        let ops = if let Some(q) = quick { q } else if on { oos_hal::dho::afg::start_mod(afg_cal.as_ref(), wave, f * 1e6, a * 1e9, o * 1e9, io.relays(), md) } else { oos_hal::dho::afg::idle(a * 1e9, o * 1e9, f * 1e6, io.relays()) };
                         io.apply(&mut bar, &ops);
                         status(format!("generator: {}", if on { format!("{:?} {} Hz {} Vpp {} V {:?}", wave, f, a, o, md) } else { "off".into() }));
                     }
@@ -507,7 +507,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             if current.as_ref().map_or(true, |c| c.0 != want) || mode != want_mode {
                 mode = want_mode;
                 if rolling.take().is_some() {
-                    bar.apply(&oos_hal::roll::stop(&mut state.sh));
+                    bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
                 }
                 match state.configure(&want, cal.as_ref(), cal_adc.as_ref()) {
                     Ok((steps, p)) => {
@@ -537,24 +537,24 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     _ => None,
                 };
                 // LA on: its words come in chunks of their own in the same stream (la.md 4.4)
-                let la_t = s.la.is_some().then(|| oos_hal::la::timing(&p, s.mask));
-                let sweep_start = |state: &mut seq::State, bar: &mut oos_hal::bus::Bar1, rp: &oos_hal::roll::Params| {
+                let la_t = s.la.is_some().then(|| oos_hal::dho::la::timing(&p, s.mask));
+                let sweep_start = |state: &mut seq::State, bar: &mut oos_hal::dho::bus::Bar1, rp: &oos_hal::dho::roll::Params| {
                     match scan {
                         Some((delay_fs, _)) => {
-                            let pos = oos_hal::roll::scan_trig_pos(delay_fs, tdiv_fs, p.dot_fs);
-                            bar.apply(&oos_hal::roll::config_scan(&mut state.sh, rp, p.memsel, pos));
+                            let pos = oos_hal::dho::roll::scan_trig_pos(delay_fs, tdiv_fs, p.dot_fs);
+                            bar.apply(&oos_hal::dho::roll::config_scan(&mut state.sh, rp, p.memsel, pos));
                         }
-                        None => bar.apply(&oos_hal::roll::config(&mut state.sh, rp, p.memsel)),
+                        None => bar.apply(&oos_hal::dho::roll::config(&mut state.sh, rp, p.memsel)),
                     }
                     if let Some(t) = &la_t {
-                        bar.apply(&oos_hal::roll::la_config(rp, t));
+                        bar.apply(&oos_hal::dho::roll::la_config(rp, t));
                     }
-                    bar.apply(&oos_hal::roll::start(&mut state.sh, s.mask));
+                    bar.apply(&oos_hal::dho::roll::start(&mut state.sh, s.mask));
                 };
                 let rp = match rolling {
                     Some(rp) => rp,
                     None => {
-                        let rp = oos_hal::roll::params(s.mask, tdiv_fs, s.depth, &p);
+                        let rp = oos_hal::dho::roll::params(s.mask, tdiv_fs, s.depth, &p);
                         sweep_start(&mut state, &mut bar, &rp);
                         ring.iter_mut().for_each(|r| r.clear());
                         sweep.iter_mut().for_each(|v| v.clear());
@@ -579,15 +579,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
                 let dt = rp.spacing_fs as f64 / 1e15;
                 let keep = ((10.0 * s.tdiv / dt).round() as usize).max(2);
-                let la_dt = if la_t.is_some() { oos_hal::roll::la_spacing_fs(&rp) as f64 / 1e15 } else { dt };
+                let la_dt = if la_t.is_some() { oos_hal::dho::roll::la_spacing_fs(&rp) as f64 / 1e15 } else { dt };
                 let keep_la = ((10.0 * s.tdiv / la_dt).round() as usize).max(2);
-                bar.apply(&oos_hal::roll::fill_pulse(&state.sh));
-                let c = oos_hal::roll::chunks(bar.rd(0x11e8));
-                let c = if la_t.is_some() { oos_hal::roll::la_chunks(c) } else { c };
+                bar.apply(&oos_hal::dho::roll::fill_pulse(&state.sh));
+                let c = oos_hal::dho::roll::chunks(bar.rd(0x11e8));
+                let c = if la_t.is_some() { oos_hal::dho::roll::la_chunks(c) } else { c };
                 if c == 0 {
                     std::thread::sleep(std::time::Duration::from_millis(9));
                 } else {
-                    let buf = match oos_hal::bus::read_dma(&mut c2h, c * oos_hal::roll::CHUNK_BYTES, |_, _| {}) {
+                    let buf = match oos_hal::dho::bus::read_dma(&mut c2h, c * oos_hal::dho::roll::CHUNK_BYTES, |_, _| {}) {
                         Ok(b) => b,
                         Err(e) => {
                             status(format!("{} read of {} chunks: {}", if scan.is_some() { "scan" } else { "roll" }, c, e));
@@ -596,13 +596,13 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             continue;
                         }
                     };
-                    let (w, lw) = if la_t.is_some() { oos_hal::roll::split_la(&buf, s.mask) } else { (oos_hal::roll::split(&buf, s.mask), Vec::new()) };
+                    let (w, lw) = if la_t.is_some() { oos_hal::dho::roll::split_la(&buf, s.mask) } else { (oos_hal::dho::roll::split(&buf, s.mask), Vec::new()) };
                     if scan.is_some() {
                         // the chunk counter restarts with every sweep: its column is the write position of the first
                         // analog chunk
-                        let per = oos_hal::roll::points_per_chunk(s.mask);
-                        let first = buf.chunks_exact(oos_hal::roll::CHUNK_BYTES).find(|c| !oos_hal::roll::is_la_chunk(c)).unwrap_or(&buf[..oos_hal::roll::CHUNK_BYTES]);
-                        let col = oos_hal::roll::scan_column(oos_hal::roll::counter(first), la_t.is_some());
+                        let per = oos_hal::dho::roll::points_per_chunk(s.mask);
+                        let first = buf.chunks_exact(oos_hal::dho::roll::CHUNK_BYTES).find(|c| !oos_hal::dho::roll::is_la_chunk(c)).unwrap_or(&buf[..oos_hal::dho::roll::CHUNK_BYTES]);
+                        let col = oos_hal::dho::roll::scan_column(oos_hal::dho::roll::counter(first), la_t.is_some());
                         cursor = (col * per) % keep;
                         if !lw.is_empty() {
                             let v: Vec<f32> = lw.iter().map(|&x| x as f32).collect();
@@ -638,8 +638,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let mut done = false;
                 if let Some((_, single)) = scan {
                     if done_seen.is_none() {
-                        let r = oos_hal::roll::SCAN_INFO_REGS.map(|a| bar.rd(a));
-                        let info = oos_hal::roll::scan_info(r[0], r[1]);
+                        let r = oos_hal::dho::roll::SCAN_INFO_REGS.map(|a| bar.rd(a));
+                        let info = oos_hal::dho::roll::scan_info(r[0], r[1]);
                         if info.triggered != last_info.triggered || info.done {
                             status(format!("scan: 0x1204 = {:#010x}, 0x40d0 = {:#x}, cursor {} of {}", r[0], r[1], cursor, keep));
                         }
@@ -656,7 +656,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         done = true;
                         // stock state 8 (RUN): stop, clear the average, configure again, next sweep after 500 ms; state 9
                         // (SINGLE): stop
-                        bar.apply(&oos_hal::roll::scan_done(&mut state.sh));
+                        bar.apply(&oos_hal::dho::roll::scan_done(&mut state.sh));
                         halted = single;
                     }
                 }
@@ -701,7 +701,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 continue;
             }
             if rolling.take().is_some() {
-                bar.apply(&oos_hal::roll::stop(&mut state.sh));
+                bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
             }
             let b = batch_plan(&s, &p);
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
@@ -1008,7 +1008,7 @@ mod tests {
         // 100 ns/div, one channel: 1250 points per screen at 1.25 GSa/s -> 1408 at the same rate
         let s = settings(&m, false);
         assert_eq!(s.depth, 1408);
-        let p = hz::prep(s.mask, oos_hal::seq::tdiv_fs(1e-7), s.depth, 0);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-7), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre + p.post), (1_250_000_000, 1408, 1408));
         assert_eq!(p.pre, 704);
         // the smallest records get at least 64 more points
@@ -1017,7 +1017,7 @@ mod tests {
         m.tscale = 0;
         assert_eq!(tscales()[0], 1e-9);
         let s = settings(&m, false);
-        let p = hz::prep(s.mask, oos_hal::seq::tdiv_fs(1e-9), s.depth, 0);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-9), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre), (1_250_000_000, 80, 40), "depth {}", s.depth);
     }
 

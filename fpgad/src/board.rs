@@ -1,17 +1,17 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Board subcommands: temperatures, beeper, over-temperature guard (oos_hal::board, docs/protocols/board.md).
+//! Board subcommands: temperatures, beeper, over-temperature guard (oos_hal::dho::board, docs/protocols/board.md).
 
-use oos_hal::board::{self, Alarm, Beep, Beeper, Guard, Zone};
-use oos_hal::panel;
+use oos_hal::dho::board::{self, Alarm, Beep, Beeper, Guard, Zone};
+use oos_hal::dho::panel;
 use std::path::Path;
 
 /// FPGA die temperature and VCCINT, if BAR1 is there and the FPGA answers.
 fn fpga_xadc() -> Option<(f32, f32)> {
     #[cfg(target_os = "linux")]
     {
-        let mut bar = oos_hal::bus::Bar1::open().ok()?;
+        let mut bar = oos_hal::dho::bus::Bar1::open().ok()?;
         board::read_xadc(&mut bar)
     }
     #[cfg(not(target_os = "linux"))]

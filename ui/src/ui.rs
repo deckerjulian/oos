@@ -4192,7 +4192,7 @@ impl Ui {
                 let old = m.ch[c].volts_per_div();
                 if m.fine_v {
                 // row by row through the calibration table: each scale has its own record
-                let rows = oos_hal::afe::scale_ladder();
+                let rows = oos_hal::dho::afe::scale_ladder();
                 let now = VSCALES[m.ch[c].vscale] as f64 * m.ch[c].vfine as f64 * 1e9 * 0.999999;
                 let at = rows.iter().position(|&k| k as f64 >= now).unwrap_or(rows.len() - 1) as i32;
                 let want = (rows[(at + d).clamp(0, rows.len() as i32 - 1) as usize] as f64 * 1e-9) as f32;
@@ -5428,7 +5428,7 @@ impl Ui {
         if k == key::POWER {
             // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
             // likely cuts power by itself otherwise (board.md section 4)
-            self.panel_tx.push(oos_hal::panel::CANCEL_POWER_DOWN);
+            self.panel_tx.push(oos_hal::dho::panel::CANCEL_POWER_DOWN);
             self.power_dlg = !self.power_dlg;
             if self.power_dlg {
                 self.dialog = None;
@@ -6871,7 +6871,7 @@ mod tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.key(key::POWER);
         assert!(ui.power_dlg);
-        assert_eq!(ui.panel_tx, vec![oos_hal::panel::CANCEL_POWER_DOWN]);
+        assert_eq!(ui.panel_tx, vec![oos_hal::dho::panel::CANCEL_POWER_DOWN]);
         // second press cancels, again with the cancel frame
         ui.key(key::POWER);
         assert!(!ui.power_dlg && ui.power_action.is_none());

@@ -117,7 +117,7 @@ impl DemoGen {
                     2 => 1.0 - 4.0 * (ph - 0.5).abs(),
                     4 => ((t * 1e9) as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(17) as f64 / u64::MAX as f64 * 2.0 - 1.0,
                     5 => 0.0,
-                    _ => oos_hal::afg::arb_at(ph),
+                    _ => oos_hal::dho::afg::arb_at(ph),
                 }
     }
 }

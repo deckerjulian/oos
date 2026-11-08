@@ -49,7 +49,7 @@ impl CalAdc {
     /// The first valid cal_adc.hex: OOS's own (`calfile::OOS_CAL_DIR`), then `dir`, then `dir/default`.
     pub fn load(dir: &str) -> std::io::Result<CalAdc> {
         let def = format!("{}/default", dir.trim_end_matches('/'));
-        let (d, _) = crate::calfile::load_first("cal_adc.hex", &[crate::calfile::OOS_CAL_DIR, dir, def.as_str()])
+        let (d, _) = crate::dho::calfile::load_first("cal_adc.hex", &[crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()])
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "cal_adc.hex: no valid copy"))?;
         CalAdc::from_file_bytes(&d).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "cal_adc.hex: bad container"))
     }
@@ -241,7 +241,7 @@ impl Adc {
 /// Read-path gain per enabled channel (x1 or x2): the 0x105c values written, in
 /// channel order. `sh` = the current 0x105c shadow (0x5555 = all x1).
 pub fn wpu_gain(mask: u32, gains: [u32; 4], mut sh: u32) -> Vec<(usize, u32)> {
-    let r = crate::hz::ratio(mask);
+    let r = crate::dho::hz::ratio(mask);
     let mut out = Vec::new();
     for ch in 0..4 {
         if mask >> ch & 1 == 0 {
@@ -269,7 +269,7 @@ pub fn wpu_gain(mask: u32, gains: [u32; 4], mut sh: u32) -> Vec<(usize, u32)> {
 /// start = bit 31), polls done (bit 30) every 10 ms up to 5 times, then reads the mean code of every core (0x1040[11:8]
 /// = core, 0x1044; 0xeeeeeeee = not ready, read again once). The values are raw ADC codes before the read-path gain
 /// (unit 2026-11-03: ~6970 codes per volt at 1 V/div, x1.077 digital gain = the 7500 codes per division shown).
-pub fn measure(bus: &mut dyn crate::bus::Bus, sleep_ms: &mut dyn FnMut(u32)) -> Option<[f64; 8]> {
+pub fn measure(bus: &mut dyn crate::dho::bus::Bus, sleep_ms: &mut dyn FnMut(u32)) -> Option<[f64; 8]> {
     let cfg = (bus.rd(0x1040) & 0x77ff_f0e0) | 15;
     bus.wr(0x1040, cfg);
     bus.wr(0x1040, cfg | 0x8000_0000);
@@ -313,12 +313,12 @@ mod tests {
         assert_eq!(mode_of_mask(0xc), Some(9));
         assert_eq!(mode_of_mask(7), Some(10));
         assert_eq!(mode_of_mask(0), None);
-        // the input-mode words agree with the table of horizontal-config.md (hal::afe::adc_mode_words)
+        // the input-mode words agree with the table of horizontal-config.md (hal::dho::afe::adc_mode_words)
         for mask in 1..16 {
             let mut a = Adc::default();
             let mut w = Vec::new();
             a.input_mode(&mut w, mode_of_mask(mask).unwrap());
-            assert_eq!([w[0].val, w[1].val], crate::afe::adc_mode_words(mask), "mask {:#x}", mask);
+            assert_eq!([w[0].val, w[1].val], crate::dho::afe::adc_mode_words(mask), "mask {:#x}", mask);
         }
     }
 
@@ -341,7 +341,7 @@ mod tests {
         }
         got.push("== onoff".into());
         got.extend(fmt(&adc.onoff()));
-        let want: Vec<&str> = include_str!("../testdata/adc_expected.txt").lines().collect();
+        let want: Vec<&str> = include_str!("../../testdata/adc_expected.txt").lines().collect();
         assert_eq!(got.len(), want.len());
         for (g, w) in got.iter().zip(want) {
             assert_eq!(g, w);

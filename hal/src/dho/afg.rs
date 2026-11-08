@@ -26,7 +26,7 @@ pub const CLOCK_HZ: f64 = 156.25e6;
 
 /// DDS clock in effect: ADC clock / 8 (`clock`; 156.25 MHz unless an experimental ADC clock is set).
 pub fn clock_hz() -> f64 {
-    crate::clock::fpga_hz()
+    crate::dho::clock::fpga_hz()
 }
 
 fn bank(o: &mut Vec<Op>, sel: u32, w: &[(u32, u32)]) {
@@ -127,12 +127,12 @@ const REC: usize = 0x968;
 
 impl Cal {
     pub fn from_file_bytes(d: &[u8]) -> Option<Cal> {
-        let p = crate::calfile::parse(d).ok()?;
+        let p = crate::dho::calfile::parse(d).ok()?;
         (p.len() >= 0x18 + 40 * REC).then(|| Cal { p: p.to_vec() })
     }
     pub fn load(dir: &str) -> Option<Cal> {
         let def = format!("{}/default", dir.trim_end_matches('/'));
-        let (b, _) = crate::calfile::load_first("cal_afg.hex", &[dir, def.as_str()])?;
+        let (b, _) = crate::dho::calfile::load_first("cal_afg.hex", &[dir, def.as_str()])?;
         Cal::from_file_bytes(&b)
     }
     fn n(&self, r: usize) -> usize {
@@ -572,22 +572,22 @@ pub fn idle(a_nv: f64, o_nv: f64, f_uhz: f64, current: u8) -> Vec<Op> {
 /// The generator's GPIO lines, held while OOS drives the generator, and the executor of the sequences.
 #[cfg(target_os = "linux")]
 pub struct Io {
-    relays: [crate::gpio::Line; 5],
-    power: crate::gpio::Line,
+    relays: [crate::dho::gpio::Line; 5],
+    power: crate::dho::gpio::Line,
 }
 
 #[cfg(target_os = "linux")]
 impl Io {
     /// Opens afg_in1..5 and FG_M2C_GPIO as outputs at the module-init state (all low).
     pub fn open() -> std::io::Result<Io> {
-        let l = |n: &str| crate::gpio::Line::output(n, false);
+        let l = |n: &str| crate::dho::gpio::Line::output(n, false);
         Ok(Io { relays: [l("afg_in1")?, l("afg_in2")?, l("afg_in3")?, l("afg_in4")?, l("afg_in5")?], power: l("FG_M2C_GPIO")? })
     }
     /// The current relay code (bit n = afg_in(n+1)).
     pub fn relays(&self) -> u8 {
         self.relays.iter().enumerate().fold(0, |c, (n, l)| c | (l.get() as u8) << n)
     }
-    pub fn apply(&mut self, bar: &mut dyn crate::bus::Bus, ops: &[Op]) {
+    pub fn apply(&mut self, bar: &mut dyn crate::dho::bus::Bus, ops: &[Op]) {
         for op in ops {
             match *op {
                 Op::Bar1 { off, val } => bar.wr(off, val),

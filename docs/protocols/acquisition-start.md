@@ -369,7 +369,7 @@ L - 78 643 200 points are overwritten by later samples. Prediction: jump at (L -
 period - (78 643 200 mod period) = 106 800 samples at both depths; measured 133 481 / 231 785 and ~106 800. The linear fit over all
 edges spread this jump as "0.1 %".
 
-With a memory size of 0x5000000 bursts (`hal::hz::MEM_BURSTS`) the cap is 41 418 752 bursts: 100 M and 125 M get
+With a memory size of 0x5000000 bursts (`hal::dho::hz::MEM_BURSTS`) the cap is 41 418 752 bursts: 100 M and 125 M get
 0x10e0 = 0x1000000 (2^24 bursts = 167.8 M points). Verified on the unit: 100 M mean edge spacing 3906.253 compressed points
 (expected 3906.25), 125 M 6250.000 (expected 6250), no jump. oos-ui offers 100M / 125M (1 channel). The frame-ring cap of the batch
 path (`max_frames`) keeps the 16 777 216-burst memory size.

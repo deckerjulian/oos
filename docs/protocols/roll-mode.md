@@ -341,7 +341,7 @@ All of them with the probe compensation signal (1 kHz) on CH1. E4 and E6 are don
 
 ## 8. Unit result: roll streaming works
 
-`oos-fpgad roll --afe --scale 1 --offset -1.5 --tdiv 0.1 --secs 3 --execute` (OOS after the cold boot, `hal::roll`:
+`oos-fpgad roll --afe --scale 1 --offset -1.5 --tdiv 0.1 --secs 3 --execute` (OOS after the cold boot, `hal::dho::roll`:
 normal configuration, then A, B, C, D of section 6; parameters from `roll::params`):
 
 - **1001 chunks per second** (1 ms per chunk as computed), 2992 chunks in 3.0 s, 399 reads + 300 empty 9-ms polls;
@@ -363,7 +363,7 @@ normal configuration, then A, B, C, D of section 6; parameters from `roll::param
 
 ## 9. Scan mode in OOS (verified on the unit)
 
-- `hal::roll::config_scan(sh, rp, memsel, pos)` = A of section 6 with the last write (roll bit) replaced by bit22,
+- `hal::dho::roll::config_scan(sh, rp, memsel, pos)` = A of section 6 with the last write (roll bit) replaced by bit22,
   then **0x4058** = `scan_trig_pos(delay, time/div, dot)`: 0 unless the screen start is at least one column (time/div / 10 in the
   code) right of the trigger point, else `(delay - 5 time/div) / dot | 1 << 31` (dot = sample period `hz::Params::dot_fs`, assumed). A
   non-zero 0x4058 is not yet verified on hardware.

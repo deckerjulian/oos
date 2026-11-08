@@ -22,7 +22,7 @@ R8=1084  R7=28b2  R4=1943  R2=0500  R1=0808  R0=221c
 
 `oos-hw pll-init` drives the three lines through the GPIO character device, found by their DT line names (`spi_le` = gpio0
 line 6, `spi_sclk` = line 3, `spi_sdio` = line 2): LE low, MSB first, data on the rising SCLK edge, LE high pulse after each
-24-bit word, 50 ms between words. There is no readback (SDIO is write-only on this board). `hal::boot` does the same
+24-bit word, 50 ms between words. There is no readback (SDIO is write-only on this board). `hal::dho::boot` does the same
 (`PLL_TABLE`).
 
 The write path is verified on the unit: in a warm state, one word R0 = 0x221d (POWERDOWN) drops the counter 0x1210 at once,
@@ -48,7 +48,7 @@ runs after the ADC sync and the eye scan (`cold-clock.md`), so read it after tho
 
 Nothing in this section has been written to a unit. Field names, positions and limits are from TI's LMX2582 datasheet
 **SNAS680E** (rev. E, August 2022; register descriptions Tables 7-5..7-50, input path Table 7-1, MASH order Table 7-2,
-channel divider Table 7-4). Code: `oos_hal::lmx2582` (decode and `table_for`), dry run `oos-fpgad pll --freq <Hz> --dry`.
+channel divider Table 7-4). Code: `oos_hal::dho::lmx2582` (decode and `table_for`), dry run `oos-fpgad pll --freq <Hz> --dry`.
 
 ### Decode of the 1.25 GHz table
 
@@ -204,23 +204,23 @@ R8=1084 R7=28b2 R4=1943 R2=0500 R1=0808 R0=221c
 
 ### Places in OOS that assume the 1.25 GHz ADC clock or the 156.25 MHz derived clock
 
-These are parameterised through `hal::clock` (limits.conf `adc.clock_hz`, `models.md` 4.1), except the display-only UI defaults
+These are parameterised through `hal::dho::clock` (limits.conf `adc.clock_hz`, `models.md` 4.1), except the display-only UI defaults
 (`--pre` preamble, demo simulator, `ui/src/hw.rs` scan dt guess 0.8 ns) and the tests, which stay at 1.25 GHz. The table lists
 the places as they were before that change.
 
 | place | assumption |
 |---|---|
-| `hal/src/boot/regs.rs` `PLL_TABLE` (and `hal/src/boot/mod.rs` step 2, `fpgad pll`) | the only table ever written: 1.25 GHz |
-| `hal/src/boot/mod.rs` `ADC_CLK_MIN/MAX` 62494..62506 (logged in step 8, checked after step 12; `fpgad status`), `hal/src/boot/sim.rs` `adc_clk` 62500 | 0x1210 count at 1.25 GHz; scales with the clock if the gate comes from another clock |
-| `hal/src/boot/sim.rs` `UNIT_IDELAY`, `hal/src/boot/wnd.rs` `reference_window` (run > 14 taps), `hal/src/boot/regs.rs` 32-step scan | lane eye centres and minimum window width in IDELAY taps at 1.25 GHz; the tap delay is fixed, the bit period shrinks with the clock |
-| `hal/src/hz.rs` `CLOCK` = 1_250_000_000 (`prep`, `requested_rate`) and `modify_rate` | maximum rate = CLOCK / ratio; the remap list of rates the 1.25 GHz clock cannot make |
-| `hal/src/acq.rs` `configure`: `max_rate = 1_250_000_000 / ratio` | SPU divider base |
-| `hal/src/spu.rs` `sample_rate`: 62.5 MSa/s threshold and `62_500_000 / rate` | 62.5 MHz = 1.25 GHz / 20, a derived clock (assumed) |
-| `hal/src/roll.rs` `MAX_RATE` = 156_250_000, `depth_for` (78_125_000) | roll stream: one sample per 156.25 MHz FPGA clock |
-| `hal/src/afg.rs` `CLOCK_HZ` = 156.25e6, `increment` and FM deviation (hard-coded `156_250_000_000_000.0`), edge-time clock | generator DDS clock = ADC clock / 8 |
+| `hal/src/dho/boot/regs.rs` `PLL_TABLE` (and `hal/src/dho/boot/mod.rs` step 2, `fpgad pll`) | the only table ever written: 1.25 GHz |
+| `hal/src/dho/boot/mod.rs` `ADC_CLK_MIN/MAX` 62494..62506 (logged in step 8, checked after step 12; `fpgad status`), `hal/src/dho/boot/sim.rs` `adc_clk` 62500 | 0x1210 count at 1.25 GHz; scales with the clock if the gate comes from another clock |
+| `hal/src/dho/boot/sim.rs` `UNIT_IDELAY`, `hal/src/dho/boot/wnd.rs` `reference_window` (run > 14 taps), `hal/src/dho/boot/regs.rs` 32-step scan | lane eye centres and minimum window width in IDELAY taps at 1.25 GHz; the tap delay is fixed, the bit period shrinks with the clock |
+| `hal/src/dho/hz.rs` `CLOCK` = 1_250_000_000 (`prep`, `requested_rate`) and `modify_rate` | maximum rate = CLOCK / ratio; the remap list of rates the 1.25 GHz clock cannot make |
+| `hal/src/dho/acq.rs` `configure`: `max_rate = 1_250_000_000 / ratio` | SPU divider base |
+| `hal/src/dho/spu.rs` `sample_rate`: 62.5 MSa/s threshold and `62_500_000 / rate` | 62.5 MHz = 1.25 GHz / 20, a derived clock (assumed) |
+| `hal/src/dho/roll.rs` `MAX_RATE` = 156_250_000, `depth_for` (78_125_000) | roll stream: one sample per 156.25 MHz FPGA clock |
+| `hal/src/dho/afg.rs` `CLOCK_HZ` = 156.25e6, `increment` and FM deviation (hard-coded `156_250_000_000_000.0`), edge-time clock | generator DDS clock = ADC clock / 8 |
 | `hal/src/model.rs` `Limits::standard`: `max_srate` [1.25e9, 625e6, 312.5e6], `adc_clock_hz`, `afg_clock_hz`; `afg.*_max_hz` clamp to afg_clock / 2 | sample-rate and generator limits (no limits.conf key for the clocks) |
-| `hal/src/afe.rs` `auto_c`: `fs / 19_841_269` (= 1.25e9 / 63) | AFE auto filter code relative to 1.25 GSa/s |
-| `hal/src/tpu.rs` `TICK_FS` 1.6 ns, `TICK64_FS` 6.4 ns (trigger t1/t2, holdoff, R timeout), video `VideoClk::Stock` 6.4 ns | 6.4 ns = one 156.25 MHz clock, 1.6 ns = 2 ADC periods (assumed); `VideoClk::Fast` 4 ns and `scu.rs` auto-trigger 4 ns ticks are probably another (250 MHz) clock (assumed) |
+| `hal/src/dho/afe.rs` `auto_c`: `fs / 19_841_269` (= 1.25e9 / 63) | AFE auto filter code relative to 1.25 GSa/s |
+| `hal/src/dho/tpu.rs` `TICK_FS` 1.6 ns, `TICK64_FS` 6.4 ns (trigger t1/t2, holdoff, R timeout), video `VideoClk::Stock` 6.4 ns | 6.4 ns = one 156.25 MHz clock, 1.6 ns = 2 ADC periods (assumed); `VideoClk::Fast` 4 ns and `scu.rs` auto-trigger 4 ns ticks are probably another (250 MHz) clock (assumed) |
 | `ui/src/model.rs` `max_srate` (via `Limits`), `quantize_srate` | follow `Limits` automatically; decimation steps from the maximum rate |
 | `ui/src/main.rs` default `--pre` preamble (dt 8e-10), `ui/src/wave.rs` simulator jitter `dt.min(8e-10)`, `ui/src/ui/sysinfo.rs` clock display | 0.8 ns sample period in the replay default and the simulator; display only |
-| tests: `hal/src/afe.rs`, `spu.rs`, `hz.rs`, `roll.rs`, `afg.rs`, `model.rs`, `hal/src/boot/tests.rs`, `ui/src/hw.rs`, `ui/src/ui.rs`, `fpgad` `status_interpretation` | expected values at 1.25 GHz / 156.25 MHz |
+| tests: `hal/src/dho/afe.rs`, `spu.rs`, `hz.rs`, `roll.rs`, `afg.rs`, `model.rs`, `hal/src/dho/boot/tests.rs`, `ui/src/hw.rs`, `ui/src/ui.rs`, `fpgad` `status_interpretation` | expected values at 1.25 GHz / 156.25 MHz |

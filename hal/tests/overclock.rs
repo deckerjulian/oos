@@ -1,11 +1,11 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The experimental ADC clock (limits.conf `adc.clock_hz`, `oos_hal::clock`) end to end, in its own process (the
+//! The experimental ADC clock (limits.conf `adc.clock_hz`, `oos_hal::dho::clock`) end to end, in its own process (the
 //! platform is set once per process): at 2 GHz the register values equal those of the nominal 1.25 GHz model for the
 //! correspondingly scaled times, while rates and periods come out in real units.
 
-use oos_hal::{acq, afg, boot, clock, hz, model, roll, scu::Shadows};
+use oos_hal::{model, dho::{acq, afg, boot, clock, hz, roll, scu::Shadows}};
 
 const US: i128 = 1_000_000_000;
 
@@ -40,7 +40,7 @@ fn derived_clocks_follow() {
     assert_eq!(afg::increment(10e12), (10e6 / 250e6 * 4_503_599_627_370_496.0) as u64);
     // the 0x1210 count goes as the period (1.375 GHz on the unit), the PLL table is the generated 2 GHz one
     assert_eq!(boot::adc_clk_window(), (39_056, 39_069));
-    assert_eq!(boot::pll_table().unwrap(), oos_hal::lmx2582::table_for(2e9).unwrap());
+    assert_eq!(boot::pll_table().unwrap(), oos_hal::dho::lmx2582::table_for(2e9).unwrap());
     assert_ne!(boot::pll_table().unwrap(), boot::regs::PLL_TABLE);
     // the eye scan's minimum reference run shrinks with the bit period
     assert_eq!(boot::wnd::min_run(), 8);

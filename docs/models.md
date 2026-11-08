@@ -80,7 +80,7 @@ and bad values only produce warnings.
 | `channels = 2\|4`, `la = yes\|no`, `afg = yes\|no`, `ext_trig = yes\|no` | capability override |
 | `mem.1ch`, `mem.2ch`, `mem.4ch` | max. memory depth per channel (points), LA off |
 | `mem.la_1ch`, `mem.la_2ch`, `mem.la_4ch` | the same with LA on |
-| `adc.clock_hz = 2e9` | **experimental ADC clock** 1.25..2.0 GHz, only what `lmx2582::table_for` can make: the cold boot (and `oos-fpgad pll`) writes the generated LMX2582 table, sample rates, roll rate, trigger ticks and the generator DDS clock follow (`hal::clock`); see `protocols/pll.md` and section 4.1 |
+| `adc.clock_hz = 2e9` | **experimental ADC clock** 1.25..2.0 GHz, only what `lmx2582::table_for` can make: the cold boot (and `oos-fpgad pll`) writes the generated LMX2582 table, sample rates, roll rate, trigger ticks and the generator DDS clock follow (`hal::dho::clock`); see `protocols/pll.md` and section 4.1 |
 | `afg.sine_max_hz`, `afg.square_max_hz`, `afg.ramp_max_hz`, `afg.pulse_max_hz`, `afg.noise_max_hz`, `afg.dc_max_hz`, `afg.arb_max_hz` | generator frequency cap (clamped to DDS clock / 2 = 78.125 MHz) |
 
 Example (test of the generator up to 75 MHz, not yet characterised):
@@ -104,7 +104,7 @@ Measured on a DHO924S, 2 Vpp on an open cable into CH1, 1.25 GSa/s:
 
 ### 4.1 Overclocking test (`adc.clock_hz`)
 
-`hal::clock` keeps every model of the hardware (time base `hz`, trigger `tpu`, generator `afg`, roll) in the nominal
+`hal::dho::clock` keeps every model of the hardware (time base `hz`, trigger `tpu`, generator `afg`, roll) in the nominal
 1.25 GHz domain and converts only at its edges: real times are multiplied by f/1.25 GHz before the model, rates come out
 multiplied by f/1.25 GHz. The register values stay the same as for the scaled times. At 1.25 GHz every conversion is
 the identity, so all host tests are unchanged. `hal/tests/overclock.rs` checks 2 GHz in its own process.
@@ -145,7 +145,7 @@ was not checked this way.
 A start with `adc.clock_hz` that does not reach its end sets the file aside at the next start (`limits.conf.failed`, rcS).
 
 Memory depths above 125 M need more entries in the depth list (`MDEPTHS` in ui/src/model.rs) and a check of the
-segment cap (`hal::hz::MEM_BURSTS`).
+segment cap (`hal::dho::hz::MEM_BURSTS`).
 
 ## 5. Where OOS uses it
 
@@ -171,7 +171,7 @@ segment cap (`hal::hz::MEM_BURSTS`).
 Still open for models other than the DHO924S:
 - EXT trigger input of the 2-channel models: not implemented.
 - DHO800: front panel, LEDs and display are not yet verified on hardware.
-- Logic analyser in the UI: not implemented on any model (`hal::la` exists).
+- Logic analyser in the UI: not implemented on any model (`hal::dho::la` exists).
 
 ## 6. Related findings (other Rigol series)
 

@@ -7,11 +7,11 @@ system in its default configuration.
 Conventions as in `acquisition-start.md`: time values are in **femtoseconds**, `sN` is the software copy of register N.
 Voltages (scale, offset, level) are **int64 nanovolts at the BNC**, probe ratio not applied (see `afe-settings.md`). The TPU
 configuration registers are **write-only** (0x2034 reads 0). Registers that change bit by bit need a software copy
-(`tpu::Shadows` in `hal/src/tpu.rs`), and the read-modify-write happens on that copy. Registers with no copy are always
+(`tpu::Shadows` in `hal/src/dho/tpu.rs`), and the read-modify-write happens on that copy. Registers with no copy are always
 written whole.
 
 The notation `source(...)`, `pattern(...)`, `trigger(...)`, `mode(...)` and so on is defined in 10.1. `tools/tpumodel.py`
-prints the ordered writes for every type below. `hal/src/tpu.rs` is the implementation.
+prints the ordered writes for every type below. `hal/src/dho/tpu.rs` is the implementation.
 
 ## 1. TPU register map
 
@@ -353,7 +353,7 @@ Other choices:
 ## 10. Other trigger types (register level)
 
 Numbered 10 because it continues section 6 for the non-edge types. `tools/tpumodel.py` prints the ordered writes for every type
-below (`tpumodel.py selftest` checks the edge case against `hal/src/tpu.rs`). Times in fs, levels in nV.
+below (`tpumodel.py selftest` checks the edge case against `hal/src/dho/tpu.rs`). Times in fs, levels in nV.
 
 ### 10.1 Common elements
 
@@ -393,7 +393,7 @@ direction flag:
 | all others | 1 | 0 |
 
 "levels" in the tables below means: write the level registers of all four channels, A and B. Levels are written again whenever a
-level moves. `hal/src/tpu.rs` writes the levels of the sources only.
+level moves. `hal/src/dho/tpu.rs` writes the levels of the sources only.
 
 **Bit 12 (SPU bypass):** pulse, slope, timeout, Nth edge: each sequence writes 9 <= src < 28 (D0..D15, AC line, EXT),
 so 0 for CH1..CH4. Delay, setup/hold: 1 if either source is in that range. Pattern: 1, written on the type change, before

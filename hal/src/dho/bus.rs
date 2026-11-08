@@ -3,7 +3,7 @@
 
 //! Access to the FPGA register window (BAR1 of the XDMA endpoint, `/dev/xdma0_bypass`, 32 KiB).
 
-use crate::Write;
+use crate::dho::Write;
 
 /// FPGA version register 0x4000 of the image this layer was written against.
 pub const FPGA_VERSION: u32 = 0xe207_2115;

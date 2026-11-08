@@ -148,7 +148,7 @@ impl Inputs {
         if self.panel < 0 {
             return;
         }
-        for f in oos_hal::panel::led_frames(mask) {
+        for f in oos_hal::dho::panel::led_frames(mask) {
             unsafe { libc::write(self.panel, f.as_ptr() as *const libc::c_void, 5) };
         }
     }
@@ -273,7 +273,7 @@ impl Inputs {
                 b.remove(0);
                 continue;
             }
-            if b[4] != 0xaf || b[3] != oos_hal::panel::crc7(b[1], b[2]) {
+            if b[4] != 0xaf || b[3] != oos_hal::dho::panel::crc7(b[1], b[2]) {
                 b.remove(0);
                 continue;
             }

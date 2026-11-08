@@ -75,13 +75,13 @@ One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layou
 |---|---|
 | main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip |
 | input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
-| hw (`--hw`) | `hal::seq` plan/execute in a loop with the current model settings; hands frames over through `HwShared` |
+| hw (`--hw`) | `hal::dho::seq` plan/execute in a loop with the current model settings; hands frames over through `HwShared` |
 | live (`--fpga-live`) | experimental: repeats the verified read-out (no arming) |
 | scpi, http | SCPI server on 5555, web remote on 8080 |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
-`Live` (read-out loop), `Hw` (real acquisitions through `hal::seq`; the TPU trigger is set to the selected type, the
+`Live` (read-out loop), `Hw` (real acquisitions through `hal::dho::seq`; the TPU trigger is set to the selected type, the
 software trigger finds the point again in the data).
 
 ### oos-fpgad: bring-up and service tool
@@ -90,7 +90,7 @@ A thin CLI over `hal`: prints any plan without hardware (`plan`, dry runs everyw
 checks the FPGA version before writing, refuses 0x1008 and the excluded FPGA slot. Board commands (`temp`, `beep`,
 `guard`). Meant to become the daemon that owns the FPGA once oos-ui and SCPI share one acquisition engine.
 
-## Data path of one acquisition (`hal::seq`)
+## Data path of one acquisition (`hal::dho::seq`)
 
 ```
 Settings (model) ── plan ──> steps: ADC mode words (0x1034) -> AFE (GPIO SPI) -> read-path gain (WPU) ->

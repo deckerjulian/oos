@@ -241,7 +241,7 @@ fn adc_trim_timeout_warns_and_continues() {
 fn cal_files_write_adc_parameters_and_ddr_taps() {
     let mut cal = CalFiles { ddr: DdrCal::from_file_bytes(&ddr_container([0x12, 0x4d6, 0x8a2, 0x924, 0x1ef, 0])), ..Default::default() };
     assert!(cal.ddr.is_some());
-    let unit_cal = crate::adc::CalAdc::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into())).ok();
+    let unit_cal = crate::dho::adc::CalAdc::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into())).ok();
     let have_adc = unit_cal.is_some();
     cal.adc = unit_cal;
     let mut unit = Unit::nominal();

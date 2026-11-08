@@ -6,7 +6,7 @@
 //! 20-byte header, u32 payload length, u32 crc32 (zlib/IEEE) of the payload, payload.
 //! Only `std::fs::read` is used here: nothing under /rigol/data is ever created or modified.
 
-use crate::adc::CalAdc;
+use crate::dho::adc::CalAdc;
 
 /// CRC-32 (IEEE 802.3, reflected, as zlib.crc32).
 pub fn crc32(d: &[u8]) -> u32 {
@@ -22,7 +22,7 @@ pub fn crc32(d: &[u8]) -> u32 {
 
 /// Payload of a cal container if the length and the crc32 are right.
 pub fn payload(d: &[u8]) -> Option<&[u8]> {
-    let p = crate::adc::container(d)?;
+    let p = crate::dho::adc::container(d)?;
     let crc = u32::from_le_bytes(d.get(24..28)?.try_into().ok()?);
     (crc32(p) == crc).then_some(p)
 }
@@ -81,7 +81,7 @@ impl CalFiles {
     /// makes one) from `dir` (on the unit `/rigol/data`), read only.
     pub fn load(dir: &str) -> CalFiles {
         let mut notes = Vec::new();
-        let adc = read_first(Some(crate::calfile::OOS_CAL_DIR), dir, "cal_adc.hex", |d| payload(d).is_some() && CalAdc::from_file_bytes(d).is_some(), &mut notes)
+        let adc = read_first(Some(crate::dho::calfile::OOS_CAL_DIR), dir, "cal_adc.hex", |d| payload(d).is_some() && CalAdc::from_file_bytes(d).is_some(), &mut notes)
             .and_then(|d| CalAdc::from_file_bytes(&d));
         let ddr = read_first(None, dir, "cal_ddr.hex", |d| DdrCal::from_file_bytes(d).is_some(), &mut notes).and_then(|d| DdrCal::from_file_bytes(&d));
         CalFiles { adc, ddr, notes }

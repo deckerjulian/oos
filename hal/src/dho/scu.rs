@@ -5,7 +5,7 @@
 //! docs/protocols/acquisition-start.md (record path) and adc-spu-init.md (play-last
 //! read-out, verified word-exact on the unit 2026-11-02/03).
 
-use crate::Write;
+use crate::dho::Write;
 
 /// Software copies of the write-only registers the sequences modify (the FPGA does not read them back).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn readout_matches_the_verified_run() {
-        let want = include_str!("../testdata/second-frame-writes.txt");
+        let want = include_str!("../../testdata/second-frame-writes.txt");
         assert_eq!(text(&readout(&WIN, &mut Shadows::HANDOVER.clone())), want);
     }
 

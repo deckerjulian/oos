@@ -6,7 +6,7 @@
 //! and the hardware source of `oos-ui`. Order (docs/protocols): [ADC mode] -> [AFE] -> TPU edge trigger -> wait FSM
 //! stopped -> acquisition configuration -> SCU auto/normal trigger -> arm -> wait done -> play-last read-out -> read.
 
-use crate::{acq, adc, afe, hz, la, scu, tpu, Write};
+use crate::dho::{acq, adc, afe, hz, la, scu, tpu, Write};
 
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -214,7 +214,7 @@ impl State {
             // read-path gain/offset from the digital gains of the AFE records (else they keep the stock values)
             st.push(Step::Note("read-path gain/offset".into()));
             let gnd = s.ch.map(|k| (k.couple == Couple::Gnd).then(|| (k.offset / k.scale * 7500.0 + 32768.0) as i32 as u32));
-            st.extend(crate::wpu::analog_gnd(s.mask, self.gain, gnd).into_iter().map(Step::Wr));
+            st.extend(crate::dho::wpu::analog_gnd(s.mask, self.gain, gnd).into_iter().map(Step::Wr));
         }
         if s.blocks & 7 != 7 {
             st.push(Step::Note(format!("configuration blocks {:#x} (bit0 trigger, bit1 acquisition, bit2 auto trigger)", s.blocks)));
@@ -493,8 +493,8 @@ pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Optio
 /// `0x4010 - first + 1`), then play and read exactly those frames.
 /// Returns the bytes (count x `frame_bytes`) and the count.
 #[cfg(target_os = "linux")]
-pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::bus::Bar1, c2h: &mut std::fs::File, wait_ms: u64, mut log: impl FnMut(String)) -> Result<(Vec<u8>, u32), String> {
-    use crate::bus::Bus;
+pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, wait_ms: u64, mut log: impl FnMut(String)) -> Result<(Vec<u8>, u32), String> {
+    use crate::dho::bus::Bus;
     let nf = frames(s, p);
     execute(&st.arm_steps(s, p), bar, None, c2h, &mut log)?;
     let t = std::time::Instant::now();
@@ -511,14 +511,14 @@ pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut cra
 /// The LA read of the acquisition just read out (`la_read_steps`) on the unit: LA words, bit n = Dn, word `start` of
 /// `la::window` first.
 #[cfg(target_os = "linux")]
-pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::bus::Bar1, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<Vec<u16>, String> {
+pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<Vec<u16>, String> {
     let (n, _) = la::window(&la::timing(p, s.mask));
     let steps = st.la_read_steps(s, p);
     match execute(&steps, bar, None, c2h, log) {
         Ok(bytes) => Ok(la::words(&bytes, n as usize)),
         Err(e) => {
             // the read failed before `la::restore` ran: without it the stream stays on the LA and the analog is gone
-            use crate::bus::Bus;
+            use crate::dho::bus::Bus;
             for (off, v) in la::restore(&mut st.sh) {
                 bar.wr(off, v);
             }
@@ -529,8 +529,8 @@ pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate:
 
 /// Runs steps on the unit; returns the bytes of the Read step. `log` gets notes and poll results.
 #[cfg(target_os = "linux")]
-pub fn execute(steps: &[Step], bar: &mut crate::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, mut log: impl FnMut(String)) -> Result<Vec<u8>, String> {
-    use crate::bus::Bus;
+pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, mut log: impl FnMut(String)) -> Result<Vec<u8>, String> {
+    use crate::dho::bus::Bus;
     let mut afe_bus = afe_bus;
     let mut out = Vec::new();
     for s in steps {
@@ -561,7 +561,7 @@ pub fn execute(steps: &[Step], bar: &mut crate::bus::Bar1, afe_bus: Option<&mut 
             }
             Step::Read { frames, frame } => {
                 let bytes = read_len(*frames, *frame);
-                out = crate::bus::read_dma(c2h, bytes, |got, k| log(format!("c2h: short read of {} bytes (at {} of {})", k, got, bytes)))
+                out = crate::dho::bus::read_dma(c2h, bytes, |got, k| log(format!("c2h: short read of {} bytes (at {} of {})", k, got, bytes)))
                     .map_err(|e| format!("c2h read of {} bytes: {} (0x4034 = {:#x})", bytes, e, bar.rd(0x4034)))?;
                 unpad(&mut out, *frame);
             }
@@ -687,7 +687,7 @@ mod tests {
     #[test]
     fn holdoff_is_written_when_it_matters() {
         let mut st = State::handover(1, None);
-        let has = |w: &[crate::Write]| w.iter().any(|x| x.0 == 0x2084);
+        let has = |w: &[crate::dho::Write]| w.iter().any(|x| x.0 == 0x2084);
         let base = Settings { trigger: Trig::Pulse { pol: tpu::Polarity::Pos, when: tpu::When::Gt, lower: 1e-6, upper: 2e-6 }, ..Settings::default() };
         assert!(!has(&st.trigger(&base)));
         let on = Settings { holdoff: 1e-3, ..base.clone() };

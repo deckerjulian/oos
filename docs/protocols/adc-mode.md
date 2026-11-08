@@ -1,6 +1,6 @@
 # ADC channel mode: what changes when the set of enabled channels changes
 
-The code is in `hal::adc` (mode writes, `cal_adc.hex`) and `hal::seq` (when they run).
+The code is in `hal::dho::adc` (mode writes, `cal_adc.hex`) and `hal::dho::seq` (when they run).
 Status: the register values below are consistent with live values on the unit for mode 0 (marked in the text). A
 complete mode switch is not yet verified on hardware against a known signal (5.4).
 
@@ -65,7 +65,7 @@ All ADC accesses go through FPGA 0x1034: `0x01000000 | reg << 16 | data` (bit 24
 
 ### 2.1 Input mode
 
-Two input-select words sel1 and sel2 per mode (`SWONP` in `hal::adc`), then:
+Two input-select words sel1 and sel2 per mode (`SWONP` in `hal::dho::adc`), then:
 sleep 100 us, **0x1034 <- 0x01540000 | (sel1 ^ 0x1041)**, sleep 100 us,
 **0x1034 <- 0x01550000 | (sel2 ^ 0x0004)**, sleep 100 us. (0x1041 and 0x0004 are the XOR masks of regs 0x54 and 0x55.)
 
@@ -90,7 +90,7 @@ These are the same words as in `horizontal-config.md` 2.3.
 **Interaction with the band-limit path**: a band-limit change first writes reg 0x54 <- 0x4210 and reg 0x55 <- 0x0008
 (words 0x01545251, 0x0155000c). At the end the two words of the table are written again from the current sel1 and sel2
 (sleep 100, 0x54 word, sleep 100, 0x55 word, sleep 100). So after a band-limit change the ADC is back in the current
-input mode. `hal::afe::configure` does this.
+input mode. `hal::dho::afe::configure` does this.
 
 ### 2.2 Calibration of the mode
 
@@ -152,7 +152,7 @@ within about -74..52.
 
 Offsets always come from the mode's own record. Exception: in mode 9 (CH3+CH4) cores 3 and 7 take their gain from
 payload offsets 0x1c6/0x1ce (record 4 + 0x26/0x2e, normally 0) instead of CH4's 0x15e/0x166. Stored mode-9 offsets in
-existing files are assumed to be measured with this mapping, so OOS keeps it (`hal::adc`).
+existing files are assumed to be measured with this mapping, so OOS keeps it (`hal::dho::adc`).
 
 So on this chip core n samples: one-channel mode: every core the same input; two channels: even cores the lower
 channel, odd cores the higher; four channels: core n = CH(n mod 4)+1 (assumed, follows from the gain mapping).

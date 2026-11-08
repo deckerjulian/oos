@@ -9,7 +9,7 @@ Register-level settings (V/div, offset, coupling, bandwidth) are in `afe-setting
 - Byte transfer: MSB first, 8 bits. SPI mode 0: clock idles low, data set before the rising edge. Each half period is
   5 us, so the clock is about 100 kHz.
 - Chip selects are outputs, idle high, pulled low around a transfer.
-- OOS drives the GPIO lines `spi_afe_sclk`, `spi_afe_mosi`, `spi_afe_miso`, `spi_afe_cs_0..3` directly (`hal::afe::GpioAfe`).
+- OOS drives the GPIO lines `spi_afe_sclk`, `spi_afe_mosi`, `spi_afe_miso`, `spi_afe_cs_0..3` directly (`hal::dho::afe::GpioAfe`).
 - The stock system exposes the bus as the misc device `/dev/spi_simulate`. It offers four SPI modes (default mode 0).
 
 ## Register level

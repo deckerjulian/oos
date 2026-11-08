@@ -4,7 +4,7 @@
 //! A clock off the 1-2-5 grid (1.375 GHz, the first step of the overclocking test), in its own process: the rate the
 //! time base model reports must be the rate the SPU dividers it writes really make, or the time axis is wrong.
 
-use oos_hal::{clock, hz, model, spu};
+use oos_hal::{model, dho::{clock, hz, spu}};
 
 /// Sample rate the SPU makes from its registers at the clock in effect (nominal registers scaled to real).
 fn rate_of(w: &[(u32, u32)], max: f64) -> f64 {

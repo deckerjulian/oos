@@ -83,7 +83,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--fpga-dry") {
         // print the register writes of the live source (no hardware access)
-        use oos_hal::scu;
+        use oos_hal::dho::scu;
         let c = fpga::Cfg::default();
         let win = c.window();
         let mut sh = c.shadows();
@@ -251,10 +251,10 @@ fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
     unsafe { libc::sync() };
     match a {
         ui::PowerAction::Off => {
-            inp.send(&oos_hal::panel::POWER_OFF);
-            inp.send(&oos_hal::panel::POWER_OFF);
+            inp.send(&oos_hal::dho::panel::POWER_OFF);
+            inp.send(&oos_hal::dho::panel::POWER_OFF);
         }
-        ui::PowerAction::Restart => inp.send(&oos_hal::panel::RESTART),
+        ui::PowerAction::Restart => inp.send(&oos_hal::dho::panel::RESTART),
     }
 }
 
@@ -271,7 +271,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     eprintln!("oos-ui: display {}x{}", disp.width, disp.height);
     let mut inp = input::Inputs::open(args);
     // "app UI loaded", sent once at the end of the start-up (board.md section 4)
-    inp.send(&oos_hal::panel::UI_LOADED);
+    inp.send(&oos_hal::dho::panel::UI_LOADED);
     // start-up screen (ui/startup.rs) while the acquisition hardware starts; the own picture is its background
     let start_up = arg(args, "--start-up");
     if start_up.is_some() {

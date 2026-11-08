@@ -1,6 +1,6 @@
 # AFE per-setting writes (V/div, offset, coupling, bandwidth, invert)
 
-Complements `afe-spi.md` (bus, AFE write, init, efuse). The code is `hal::afe`, the read path `hal::wpu`.
+Complements `afe-spi.md` (bus, AFE write, init, efuse). The code is `hal::dho::afe`, the read path `hal::dho::wpu`.
 
 Status: OOS drives the AFEs as described here, and the self-calibration ran through this path on the unit
 (`self-cal.md` 13). The individual write sequences are not yet verified on hardware word by word.
@@ -53,7 +53,7 @@ All calibration files have a 28-byte header (`self-cal.md` 7.1). Payloads:
 File header (7 x u32): [0] header CRC32, [1] 0x14, [2] 0, [3] time, [4] date (0x7dd01 = January 2013), [5] payload size,
 [6] payload CRC32. Location order: `/oos/cal`, `/rigol/data`, `/rigol/data/default`.
 
-A 12-block `cal_vertical.hex` has no group 3. `hal::afe::Cal` reads the 16-block layout.
+A 12-block `cal_vertical.hex` has no group 3. `hal::dho::afe::Cal` reads the 16-block layout.
 
 In `cal_afe_bandwidth.hex`, ints 4/10/16 of each channel are replaced by 110/97/97 after loading. The stock system also
 saves them back to the file. Under OOS these ints have no effect (5.4).
@@ -115,7 +115,7 @@ lands on the 102 mV row), so OOS accepts a value up to a millionth above a key a
 ## 2. AFE primitives
 
 Notation: `rNN[h:l] = v` modifies the shadow, `W(NN)` writes the shadow word. mode = r07[14:13] (0x4000 = high-impedance
-non-inverting path, 0 = inverting path). Names are those of `hal::afe::Afe` where OOS has the primitive.
+non-inverting path, 0 = inverting path). Names are those of `hal::dho::afe::Afe` where OOS has the primitive.
 
 | function | args | effect |
 |---|---|---|
@@ -146,7 +146,7 @@ implement it.
 Other devices:
 - Gear: one GPIO per channel, GPIO4_D1/D2/D5/D6 (153/154/157/158), line names `afe1`..`afe4`. Under the stock system
   `open("/dev/dac_gear_change")`, `ioctl(fd, 0x7801, &u8)` with u8 = ch | gear << 4 sets line ch = u8 & 0xf (0..3) to
-  (u8 >> 4) & 1. Without that device OOS drives the line directly (`hal::afe::set_gear`). Gear 1 (high) is used by the
+  (u8 >> 4) & 1. Without that device OOS drives the line directly (`hal::dho::afe::set_gear`). Gear 1 (high) is used by the
   scale setting and all vertical/ADC calibrations, gear 0 only inside the AFE zero calibration (`self-cal.md` 3.1). All
   four lines are output high on a running unit (verified on the unit).
 - FPGA (BAR1): see section 4.
@@ -269,7 +269,7 @@ mirrored), re-arm. No other AFE write. The waveform inversion itself is in the F
 SPU register **0x1004 bits 19:16**. With 4 channels bit 16+n = invert of CHn+1. One channel on all ADC cores (mask 1/2/4/8):
 that channel's bit in all four. Two channels: the two active channels as (a, a, b, b).
 
-`Afe::set_offset` takes the invert flag, `hal::afe::configure_ch` passes it on. Verified on the unit 2026-11-07, with the
+`Afe::set_offset` takes the invert flag, `hal::dho::afe::configure_ch` passes it on. Verified on the unit 2026-11-07, with the
 trigger: the TPU sees the samples after the inversion, so a level is meant as it shows on the screen.
 
 ### 3.6 Impedance
@@ -295,7 +295,7 @@ acquisition start, then `hz_enable(ch, 1)` for ch 0..3.
 
 ### 4.1 Digital gain and offset
 
-Per sampled channel during live acquisition (`hal::wpu::analog`):
+Per sampled channel during live acquisition (`hal::dho::wpu::analog`):
 1. dgo = rec.dgain. If dgo >= 2.0: ADC gain x2 for that channel and dg = dgo / 2; else gain 1 and dg = dgo.
    The gain goes to register **0x105c** in the two-bit-field layout of `adc-mode.md` 4.3; all channels at x1 give 0x5555
    in every mode, and it is rewritten in the layout of the new channel mode after a mode switch.
@@ -323,7 +323,7 @@ g = scale_acq / scale_live * dgain_acq and an extra offset 7500 * (off_live - of
 
 ### 5.1 Bandwidth setting
 
-The bandwidth setting is a value v. `hal::afe` uses it unchanged: no clamp to the model bandwidth and no forcing to 20 MHz
+The bandwidth setting is a value v. `hal::dho::afe` uses it unchanged: no clamp to the model bandwidth and no forcing to 20 MHz
 at small scales.
 
 Sequence (registers and order):
@@ -450,7 +450,7 @@ decodes to (0, 0, 0) like GND.
 
 ### 5.2 Bandwidth variant (cal_vertical block group)
 
-The scale and offset steps pick the block group from the band limit v (`hal::afe::block_group`):
+The scale and offset steps pick the block group from the band limit v (`hal::dho::afe::block_group`):
 
 | bandwidth value v | block group |
 |---|---|
@@ -470,7 +470,7 @@ So the four block groups mean: 0 = up to 75 MHz (and 350M, GND), 1 = 80..210 MHz
 ### 5.3 Scale
 
 Register sequence as in 3.1 steps 3-9 with the variant of 5.2 and the trims of 5.4. If scale and variant are both unchanged,
-no write is needed. `hal::seq` runs this only when settings change and then always writes the full sequence.
+no write is needed. `hal::dho::seq` runs this only when settings change and then always writes the full sequence.
 
 ### 5.4 Bandwidth trims
 
@@ -480,8 +480,8 @@ values.
 
 ### 5.5 Auto bandwidth refresh
 
-With Auto the filter code follows the sample rate: every set-up recomputes it from the current rate (`hal::seq` passes
-the rate to `hal::afe::configure`), and the block group follows (5.2). A change of the Auto code needs the filter write, then
+With Auto the filter code follows the sample rate: every set-up recomputes it from the current rate (`hal::dho::seq` passes
+the rate to `hal::dho::afe::configure`), and the block group follows (5.2). A change of the Auto code needs the filter write, then
 scale and offset of every channel. Do not write 0x10dc while anti-aliasing is off; OOS never writes it.
 
 ### 5.6 Self-calibration
@@ -490,7 +490,7 @@ The vertical self-cal runs four passes and fills all four block groups. See `sel
 
 ## 6. OOS implementation
 
-The code is in `hal::afe` (primitives, `set_scale`, `set_offset`, `configure`), `hal::wpu` and `hal::seq`.
+The code is in `hal::dho::afe` (primitives, `set_scale`, `set_offset`, `configure`), `hal::dho::wpu` and `hal::dho::seq`.
 
 1. **Persistent shadows**: one `Afe` per channel with the values of 1.1, kept in `seq::State`. Every setting loads, modifies
    and keeps it. Without it the read-modify-write values differ.
@@ -511,7 +511,7 @@ The code is in `hal::afe` (primitives, `set_scale`, `set_offset`, `configure`), 
    acquired.
 9. **Invert**: flip the offset sign in 3.2 and set the FPGA bit.
 10. **Probe ratio**: software only, divide V/div and offset by the ratio before steps 4 and 5.
-11. **Dry run**: the setters return lists of operations (`hal::afe::Op`), so a set-up can be printed before it touches the hardware.
+11. **Dry run**: the setters return lists of operations (`hal::dho::afe::Op`), so a set-up can be printed before it touches the hardware.
 
 Not known:
 - What the mode bits, r20[15:13], r23[13:11], r2a[15:12] etc. mean physically (attenuator relays, buffers). OOS only reproduces

@@ -7,7 +7,7 @@
 //! 0x1508..0x1514 / 0x14f8..0x1504 [N].
 //! A digital gain >= 2 is split into the ADC x2 of 0x105c and the rest.
 
-use crate::Write;
+use crate::dho::Write;
 
 /// The read-path writes for channel `mask` and the digital gain of each channel (cal_vertical record `gain`, 1.0 for
 /// unknown). Lanes like the invert bits: 1 channel -> all four lanes, 2 -> lanes 0/1 lower and 2/3 higher channel,
@@ -19,14 +19,14 @@ pub fn analog(mask: u32, dgain: [f64; 4]) -> Vec<Write> {
 /// `analog` with GND coupling: a channel with `gnd[c]` set has gain 0 and that offset (afe-settings.md 4.1).
 pub fn analog_gnd(mask: u32, dgain: [f64; 4], gnd: [Option<u32>; 4]) -> Vec<Write> {
     let mut w = Vec::new();
-    // ADC x2 for channels with gain >= 2 (0x105c, layout as hal::adc::wpu_gain), the rest in the Q10 gain
+    // ADC x2 for channels with gain >= 2 (0x105c, layout as hal::dho::adc::wpu_gain), the rest in the Q10 gain
     let x2 = dgain.map(|g| if g >= 2.0 { 2 } else { 1 });
-    for (_, v) in crate::adc::wpu_gain(mask, x2, 0x5555) {
+    for (_, v) in crate::dho::adc::wpu_gain(mask, x2, 0x5555) {
         w.push((0x105c, v));
     }
     let dg = [0, 1, 2, 3].map(|c| if x2[c] == 2 { dgain[c] / 2.0 } else { dgain[c] });
     let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
-    let lane_ch: [usize; 4] = match crate::hz::ratio(mask) {
+    let lane_ch: [usize; 4] = match crate::dho::hz::ratio(mask) {
         1 => [on[0]; 4],
         2 => [on[0], on[0], on[1], on[1]],
         _ => [0, 1, 2, 3],

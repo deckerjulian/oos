@@ -11,7 +11,7 @@
 //! (trigger.md 10.1). Times are in femtoseconds, voltages in nV at the BNC. Sources are numbered:
 //! 1..4 = CH1..CH4, 9..24 = D0..D15, 25 = AC line, 26 = EXT; level registers exist for CH1..CH4 only.
 
-use crate::Write;
+use crate::dho::Write;
 
 /// Software copies of the write-only TPU registers the sequences modify.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,7 +301,7 @@ impl Tpu<'_> {
     /// `trigger(E; when, t1, t2)`: [26:24] = when, then t1 and t2 in 1.6 ns ticks
     /// (truncated toward 0, 48 bit) at base+4, base+8 and their high parts at base+0xc.
     fn trigger(&mut self, ev: Ev, when: u32, t1_fs: i128, t2_fs: i128) {
-        let (t1, t2) = (crate::clock::to_nominal_fs(t1_fs) / TICK_FS, crate::clock::to_nominal_fs(t2_fs) / TICK_FS);
+        let (t1, t2) = (crate::dho::clock::to_nominal_fs(t1_fs) / TICK_FS, crate::dho::clock::to_nominal_fs(t2_fs) / TICK_FS);
         let (r, s) = self.ev(ev);
         *s = (*s & !0x0700_0000) | (when & 7) << 24;
         let v = *s;
@@ -347,7 +347,7 @@ impl Tpu<'_> {
 
     /// Holdoff: type 4 (time), then the time in 6.4 ns ticks.
     fn holdoff(&mut self, t_fs: i128) {
-        let t = crate::clock::to_nominal_fs(t_fs) / TICK64_FS;
+        let t = crate::dho::clock::to_nominal_fs(t_fs) / TICK64_FS;
         self.sh.s2088 = (self.sh.s2088 & !0x70000) | 0x40000;
         self.w.push((0x2088, self.sh.s2088));
         self.w.push((0x2084, t as u32));
@@ -745,7 +745,7 @@ pub fn nth(sh: &mut Shadows, ch: u32, edge: Edge, count: u32, idle: i128, level:
     t.w.push((0x205c, t.sh.s205c));
     // abr_count, r_timeout
     t.w.push((0x2070, count));
-    let idle = crate::clock::to_nominal_fs(idle) / TICK64_FS;
+    let idle = crate::dho::clock::to_nominal_fs(idle) / TICK64_FS;
     t.w.push((0x2068, idle as u32));
     t.w.push((0x206c, (idle >> 32) as u32));
     t.mode(3);
@@ -782,7 +782,7 @@ pub fn video(sh: &mut Shadows, ch: u32, std: VideoStd, pol: bool, sync: VideoSyn
     // (fpga-image.md), independent of the ADC clock [A]
     let (t1, t2, div) = match clk {
         VideoClk::Fast => (t1, t2, 4_000_000),
-        VideoClk::Stock => (crate::clock::to_nominal_fs(t1), crate::clock::to_nominal_fs(t2), 6_400_000),
+        VideoClk::Stock => (crate::dho::clock::to_nominal_fs(t1), crate::dho::clock::to_nominal_fs(t2), 6_400_000),
     };
     // video2, video3, video1
     t.w.push((0x21a8, ((t1 / div) as u32 & 0xffff) | ((t2 / div) as u32 & 0xffff) << 16));
@@ -974,7 +974,7 @@ mod tests {
     /// tools/tpu_fixture.py (testdata/tpu_expected.txt).
     #[test]
     fn matches_tpumodel() {
-        let want = include_str!("../testdata/tpu_expected.txt");
+        let want = include_str!("../../testdata/tpu_expected.txt");
         let mut n = 0;
         for case in want.split("== ").filter(|c| !c.is_empty()) {
             let (head, body) = case.split_once('\n').unwrap();

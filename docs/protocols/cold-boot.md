@@ -1,6 +1,6 @@
 # Cold boot: from start-up to the first acquisition
 
-Status: the OOS cold boot of section 4 is verified on the unit (`hal::boot`, `oos-fpgad cold-boot`): it runs from a power
+Status: the OOS cold boot of section 4 is verified on the unit (`hal::dho::boot`, `oos-fpgad cold-boot`): it runs from a power
 cycle to live frames without the stock OS ever running. Where a detail has not been run, the text says so.
 
 Notation: `sN` = software shadow of register N (last value written; for 0x1008 the last value read). ADC words go through
@@ -90,7 +90,7 @@ length, u32 crc32, payload. Only steps d and g write hardware from file contents
 
 ## 2. Already in OOS / missing (per step)
 
-"OOS" = `hal::boot` plus the per-acquisition sequence of `hal::seq`.
+"OOS" = `hal::dho::boot` plus the per-acquisition sequence of `hal::dho::seq`.
 
 | step | OOS today |
 |---|---|
@@ -111,16 +111,16 @@ length, u32 crc32, payload. Only steps d and g write hardware from file contents
 | 15 normal data | written after the scan (the scan switches to test pattern) |
 | 18 0x1418..0x1424 = 0x8000 | done |
 | 19 bit range | done |
-| 20 AFE CH1 100 mV/div | not needed at start: OOS configures the AFE of every enabled channel (`hal::afe`) |
+| 20 AFE CH1 100 mV/div | not needed at start: OOS configures the AFE of every enabled channel (`hal::dho::afe`) |
 | 21 sinc coefficient RAM | not done: only the FPGA's sinc interpolation of the display trace uses it, the raw read-out does not (assumed) |
 | 24 AFE Hz enable | done, all four AFEs |
 | 25 0x4008 bits 23/24/26 | done |
 | first ADC block (input mode) | the first mode set-up is forced (unknown -> mode): at a cold start the ADC is in mode 0 from the init list |
-| first acquisition block | `hal::acq::configure`, including 0x1080/0x1084 (3.10); without 0x128c unless the LA is on, without DVM |
+| first acquisition block | `hal::dho::acq::configure`, including 0x1080/0x1084 (3.10); without 0x128c unless the LA is on, without DVM |
 | first horizontal block | only the read-out window 0x1100/0x1108/0x11f0, 0x1010 bit 31 and the pass-through writes (`record-play.md`). **Missing:** the rest of 3.9: 0x1118/0x111c, 0x1138, 0x131c, 0x10a0, 0x11fc, delays 0x1120..0x112c |
-| first WPU block | gain/offset 0x14c8.. / 0x14d0.., 0x105c, written with the AFE set-up (`hal::wpu`) |
+| first WPU block | gain/offset 0x14c8.. / 0x14d0.., 0x105c, written with the AFE set-up (`hal::dho::wpu`) |
 | first WAU block | **missing:** the "mask test off" writes (3.9), low priority |
-| SCU auto trigger, TPU edge, arm/read | done (`hal::scu`, `hal::tpu`, `hal::seq`) |
+| SCU auto trigger, TPU edge, arm/read | done (`hal::dho::scu`, `hal::dho::tpu`, `hal::dho::seq`) |
 
 ## 3. Recipes for the start-up steps
 
@@ -268,7 +268,7 @@ eight cores report done (verified on the unit). The result is not stored in any 
 
 ### 3.7 Stored ADC calibration of mode 0 (step d)
 
-The list of `adc-mode.md` 5.3 "CH1 only" without the two input-mode words, from `cal_adc.hex` (`hal::adc::Adc::parameter(cal, 0)`):
+The list of `adc-mode.md` 5.3 "CH1 only" without the two input-mode words, from `cal_adc.hex` (`hal::dho::adc::Adc::parameter(cal, 0)`):
 reference word (ADC reg 0x09), 0x1058, 8 gain words (order c0 c4 c1 c5 c2 c6 c3 c7, 80 us after each), 8 offset words
 (100 us before/after), 4 sample-clock delay words (regs 0x04, 0x04, 0x05, 0x05), clock delay word (reg 0x01). With zero
 delays the delay words are `0x01040080 0x01048080 0x01058080 0x01058080 0x01010000` (the first reg-0x04 word is 0x0080
@@ -342,8 +342,8 @@ Keep shadows for 0x1000, 0x1014, 0x1020, 0x1428, 0x4004, 0x4008 and the ADC regi
 | 19 | (sinc RAM) | 3.8, only if the FPGA trace sinc path is used | not done |
 | 20 | AFE Hz enable | all four channels | runs in every cold boot, effect not checked on its own |
 | 21 | SCU | 0x4008 bit 26 = 0, bit 24 = 0, bit 23 = 1 | runs in every cold boot, effect not checked on its own |
-| 22 | first configuration | ADC input mode + stored calibration for the wanted mask (forced), AFE per channel (`hal::afe`), TPU edge (`hal::tpu`), acquisition block (`hal::acq`) **plus 0x1080/0x1084**, the block list of 3.9, WPU gain/offset, WAU off, SCU auto trigger | runs on the unit with the gaps of section 2 |
-| 23 | acquisition | `hal::seq::acquire` (arm, poll 0x4080 bit 30, read-out window, read) | verified on the unit |
+| 22 | first configuration | ADC input mode + stored calibration for the wanted mask (forced), AFE per channel (`hal::dho::afe`), TPU edge (`hal::dho::tpu`), acquisition block (`hal::dho::acq`) **plus 0x1080/0x1084**, the block list of 3.9, WPU gain/offset, WAU off, SCU auto trigger | runs on the unit with the gaps of section 2 |
+| 23 | acquisition | `hal::dho::seq::acquire` (arm, poll 0x4080 bit 30, read-out window, read) | verified on the unit |
 
 Time budget: ADC init about 45 ms with 100 us / 100 us (270 ms with 1.1 ms), sync sweep about 170 ms, lane scan a few ms
 (no sleeps), ADC trim up to 2 s, DDR self test normally one read.

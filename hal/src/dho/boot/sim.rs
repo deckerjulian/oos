@@ -7,9 +7,9 @@
 
 use super::regs::{PllPin, ADC_RDATA, ADC_SPI};
 use super::Clock;
-use crate::afe::AfeBus;
-use crate::bus::Bus;
-use crate::Write;
+use crate::dho::afe::AfeBus;
+use crate::dho::bus::Bus;
+use crate::dho::Write;
 
 /// "ADC0 Sync DO:1,0,1,1,1,0,0,1" (logcat 2026-11-02) [O].
 pub const UNIT_SYNC_DO: [bool; 8] = [true, false, true, true, true, false, false, true];
@@ -91,7 +91,7 @@ impl Unit {
         Unit {
             writes: Vec::new(),
             reads: Vec::new(),
-            version: crate::bus::FPGA_VERSION,
+            version: crate::dho::bus::FPGA_VERSION,
             ddr_busy_reads: 0,
             adc_clk: 62500,
             sync_do: UNIT_SYNC_DO,

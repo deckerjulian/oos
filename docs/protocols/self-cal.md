@@ -1,6 +1,6 @@
 # Self-calibration
 
-The code is `hal::selfcal`, `hal::calfile`, `hal::adc::measure`, the commands `oos-fpgad selfcal ...` and the page
+The code is `hal::dho::selfcal`, `hal::dho::calfile`, `hal::dho::adc::measure`, the commands `oos-fpgad selfcal ...` and the page
 System > Self-cal of `oos-ui`.
 
 Status: the vertical and AFE zero calibrations ran on the unit (section 13). The ADC core calibration is host-tested
@@ -55,7 +55,7 @@ Run the items in this order. An error stops all later items.
 Channel loops cover 4 channels, 2 on hardware version 4 (2-channel models). On those models the AFE zero item also runs
 for channel index 3.
 
-`hal::selfcal::run_all_with` runs: ADC cores for the channel set (optional), then per channel AFE zero (optional) and the four
+`hal::dho::selfcal::run_all_with` runs: ADC cores for the channel set (optional), then per channel AFE zero (optional) and the four
 vertical passes.
 
 ## 2. Vertical calibration
@@ -120,7 +120,7 @@ Cancel ends the run. An aborted or failed run keeps nothing.
 
 ### 2.4 Measurement primitives
 
-**ADC measure unit** (`hal::adc::measure`, `oos-hw adc-meas`):
+**ADC measure unit** (`hal::dho::adc::measure`, `oos-hw adc-meas`):
 `0x1040 <- (value & 0x77fff0e0) | 15`, then the same `| 0x80000000` (start). 15 is the averaging exponent (assumed: 65536
 samples per core at 156.25 MSa/s, about 0.42 ms). Poll 0x1040 bit 30 every 10 ms, max 5 polls. Per core n = 0..7:
 `0x1040[11:8] = n`, read 0x1044 (read again once if 0xeeeeeeee), also 0x1048 (peak). Output: 8 core means.
@@ -128,12 +128,12 @@ samples per core at 156.25 MSa/s, about 0.42 ms). Poll 0x1040 bit 30 every 10 ms
 Channel value: in the four-channel mode the mean of cores k and k+4, k = per-channel slot of the core order (14.3). In
 channel-only mode all 8 cores sample the channel and OOS averages all 8 (section 13).
 
-**DAC search** (`hal::selfcal::dac_for`, target -> code and mean): measure both ends of the window 20000..40000, then
+**DAC search** (`hal::dho::selfcal::dac_for`, target -> code and mean): measure both ends of the window 20000..40000, then
 bisect on the sign of the error, with each step `set_dac`, settle, read until stable, stop at +-16 codes. This works for
 both path polarities. A fixed-direction bisection needs a coarse stage first: from DAC 32768 step by +-100 n (alternating,
 max 20 steps) until the mean is inside 10000..60000.
 
-### 2.5 Table rebuild (`hal::selfcal::rebuild_scales`)
+### 2.5 Table rebuild (`hal::dho::selfcal::rebuild_scales`)
 
 For every row i with key K (nV/div): choose the configuration with the **smallest measured S > K**; write the 56-byte
 record (`afe-settings.md` 1.3): key K, IG/VGA/ATT/SGA/SGAR/MUX/MUXR of that configuration, digital gain = S / K (always
@@ -204,7 +204,7 @@ the majority of 5 comparator reads per step (section 13).
   The mapping is the other way round: x < 128 sets the second value (r06[14:8]) = 127 - x, x >= 128 the first (r06[6:0]) =
   x - 128 (verified on the unit: the SGA mapping drives every MUX search to the rail). OOS starts both at 0 before each search.
 
-Primitive details (names of `hal::afe::Afe`):
+Primitive details (names of `hal::dho::afe::Afe`):
 
 | primitive | effect |
 |---|---|
@@ -268,12 +268,12 @@ channels at IG 0, VGA 1, ATT 1, SGA 1, SGAR 0, MUX 3, MUXR 0 (about 50 mV/div), 
 | 0x18 | u32 | CRC32 (zlib) of the payload |
 | 0x1c | ... | payload |
 
-Verified on the unit's files (both CRCs). `hal::calfile::build` reproduces them byte for byte.
+Verified on the unit's files (both CRCs). `hal::dho::calfile::build` reproduces them byte for byte.
 
 Stock files are written in place, without a temporary file, so a crash mid-write can leave a broken file. A reader rejects
 a file on open failure, short read, wrong header size, CRC or length mismatch, and takes the next location.
 
-OOS writes atomically (`hal::calfile::save`): `name.new`, fsync, the old file to `name.bak`, rename, directory fsync. It
+OOS writes atomically (`hal::dho::calfile::save`): `name.new`, fsync, the old file to `name.bak`, rename, directory fsync. It
 refuses any path under `/rigol`. OOS stamps UTC time, the unit has no time zone set under OOS.
 
 ### 7.2 What the self-cal writes
@@ -321,10 +321,10 @@ Same file layout, but output only to `/oos/cal`, never `/rigol/data`. OOS reads 
 
 ### 11.1 hal
 
-1. `hal::calfile`: container reader and writer (7.1). `parse` checks both CRCs, `save` writes atomically and refuses any
+1. `hal::dho::calfile`: container reader and writer (7.1). `parse` checks both CRCs, `save` writes atomically and refuses any
    path under `/rigol`, `load_first` returns the first valid copy.
-2. `hal::adc::measure()`: measure unit (2.4), exponent 15, 5 x 10 ms timeout, 0xeeeeeeee retry, returns 8 core means.
-3. `hal::afe` primitives (shadow + whole-word writes): `cz_self_check`, `cz_mode`, `comp_self_check`, `comp_input`,
+2. `hal::dho::adc::measure()`: measure unit (2.4), exponent 15, 5 x 10 ms timeout, 0xeeeeeeee retry, returns 8 core means.
+3. `hal::dho::afe` primitives (shadow + whole-word writes): `cz_self_check`, `cz_mode`, `comp_self_check`, `comp_input`,
    `comp_trim` (r07[6:0]), `vga_output` (r29[3:0]), `cz_buf` (r33), `dac_enable` (r27 bits 15/7), `set_dac` (r28), the gear
    line, and the read-backs (AFE reg 0 bits 1/2/3).
 4. `selfcal::afe_zero(hw, afe, old) -> [i32; 20]`: section 3 (three configurations, searches, slot table). Slots a
@@ -345,8 +345,8 @@ the files saved. The status text is also available over SCPI.
 
 ## 13. OOS implementation and unit results
 
-Code: `hal::calfile` (container, atomic save to `/oos/cal`, refuses /rigol), `hal::selfcal` (algorithms against the
-`CalHw` trait, host model tests, `Unit` on the unit, `run_all`, `save`), `hal::adc::measure`,
+Code: `hal::dho::calfile` (container, atomic save to `/oos/cal`, refuses /rigol), `hal::dho::selfcal` (algorithms against the
+`CalHw` trait, host model tests, `Unit` on the unit, `run_all`, `save`), `hal::dho::adc::measure`,
 `oos-fpgad selfcal entry|probe|zero|vertical|all`, oos-ui System > Self-cal (runs in the acquisition thread). OOS's own
 data partition: the last 16 MiB of `backup` (`oos-mount-data`, `blkdevparts=` in the OOS bootargs).
 `afe::Cal::load` prefers a valid file in `/oos/cal`, then `/rigol/data`, then `/rigol/data/default`.
@@ -542,7 +542,7 @@ The payload is `struct { record[11] (0x68 B each, 0x000..0x477); fine[11] (16 x 
 
 Typical values: gains -16..15 (about +-0.75 %), offsets -74..52 ADC LSB.
 
-**OOS applies every stored value**: cold boot step 9 writes the parameters of mode 0 (`hal::boot`, `adc::Adc::parameter`:
+**OOS applies every stored value**: cold boot step 9 writes the parameters of mode 0 (`hal::dho::boot`, `adc::Adc::parameter`:
 reference, 0x1058, 8 gains, 8 offsets, delays), `seq::State::configure` writes `channel_mode` on every channel-set change
 (including the mode-9 exception), and 0x105c is written per mode. Nothing in the file is unused by OOS.
 `CalAdc::load` (`oos-fpgad`, `oos-ui`) prefers `/oos/cal`. `boot::cal::CalFiles::load` reads `/rigol/data` and `default/` only.
@@ -567,10 +567,10 @@ fields (+0x40). Delay fields are usually 0. OOS: skip, keep 0.
 
 ### 14.13 OOS implementation
 
-1. `hal::adc`: setters on `Adc` that return `Wr` words: `core_gain(n, g)`, `core_offset(n, o)`. `CalAdc`: field access
+1. `hal::dho::adc`: setters on `Adc` that return `Wr` words: `core_gain(n, g)`, `core_offset(n, o)`. `CalAdc`: field access
    (`gain_at`, `off_at`, `fine_at`) and `payload()` for saving. Start from the current file and change only the fields the run
    calibrated; +0x10/+0x30, delays and unused blocks stay byte-identical.
-2. `hal::selfcal::CalHw`: `adc_slots() -> Option<[f64; 8]>` (= `adc::measure`, slots, no averaging) and `adc_op` for ADC and
+2. `hal::dho::selfcal::CalHw`: `adc_slots() -> Option<[f64; 8]>` (= `adc::measure`, slots, no averaging) and `adc_op` for ADC and
    FPGA writes.
 3. `selfcal::adc_cores(hw, base, chans, progress)`: AFE tuple (0, 1, 1, 1, 0, 3, 0) + gear high + DAC 32768 on all
    channels of the set; core order detection (does not hard-code 0,2,1,3,4,6,5,7); gains per channel with `dac_for` (30 ms DAC
@@ -601,7 +601,7 @@ Volatile writes only:
 
 ## 15. OOS ADC core calibration (host-tested only)
 
-`hal::selfcal::adc_cores` follows 14.3/14.5/14.6 with these differences (not yet verified on hardware):
+`hal::dho::selfcal::adc_cores` follows 14.3/14.5/14.6 with these differences (not yet verified on hardware):
 - The core order is detected in the normal acquisition state, in single-channel mode of the first channel. 0x1004 bit 0 is
   never set (read-back on the unit: 0x1004 = 0x04008000, bit 0 = 0).
 - The fine gains (0x1058) are set to 0, their payload fields are cleared, and the correction is by the core gains only.
