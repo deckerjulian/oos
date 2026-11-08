@@ -3,8 +3,8 @@
 Built and tested on the host (unit tests, a real image on a card-shaped file, the start-up watcher in an arm64 Linux
 container: stable start, crash loop, install during the watch, hand-installed image). **Not yet verified on hardware.**
 
-The kexec trial start (below) is checked on the unit only as far as loading and unloading the kernel
-(`oos-update kexec-check`); the start itself has not run on hardware yet.
+The kexec trial start (below) ran once on the unit (2026-11-08): the restart worked in about 7 s, but the package
+arrived damaged and the display stayed dark. Both causes are fixed (step 3), not yet verified on hardware.
 
 Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
 `ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
@@ -34,12 +34,18 @@ OOS has no loader of its own, so nothing counts the starts before rcS. An image 
    build.
 3. Its kernel and initramfs are loaded with `kexec_file_load`. A second, uncompressed archive in the initramfs carries
    the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`: the new build may trust other keys)
-   and the running device tree (`/oos-kexec.dt`); the command line gets `oos.kexec=install`. Under the update lock
-   the start-up watcher and oos-ui are stopped, `/oos` is remounted read only, then the kernel starts.
+   and the running device tree (`/oos-kexec.dt`); the command line gets `oos.kexec=install` and `initramfs_async=0`
+   (the archive is unpacked before any driver probes). Under the update lock the start-up watcher and oos-ui are
+   stopped. Then what writes to memory on its own stops: every network link goes down (the Ethernet controller has
+   no shutdown hook, its receive DMA would write packets into memory of the next kernel) and the display subsystem is
+   unbound (it lets go of the VOPs and their IOMMUs, which the next kernel cannot take over otherwise). `/oos` is
+   remounted read only, then the kernel starts.
 4. The new image's rcS: `oos-oneshot`, `/oos` mounted, then `oos-update boot` finds the word and the package and
-   runs the ordinary install from there: rollback slot, `recovery`, read back, `OOSK`. This start is its first trial
-   start, the watcher confirms it or rolls back as for any trial. If that install fails after it began writing, the
-   previous build is written back at once and this start counts as no trial start.
+   runs the ordinary install from there: rollback slot, `recovery`, read back, `OOSK`. This start is no trial start:
+   its device tree and loader path are the old build's, and the display comes up from another state. The watcher
+   judges nothing in it. The next power-on is the first trial start, confirmed or rolled back as for any trial. If
+   the install fails after it began writing, the previous build is written back at once. A package that fails its
+   check stays at `/oos-kexec.oosupd` (RAM) until the next start, for a look at what damaged it.
 
 If the kernel hangs in step 4, the scope is power-cycled and the previous OOS build starts (stock in one-shot mode,
 as after every OOS start). The next OOS start finds the mark in the state and says that the update did not finish; so
@@ -51,11 +57,11 @@ What it does not cover:
 - The device tree: `kexec_file_load` gives the new kernel the running tree. An image with another tree is refused for
   this path; `--new-dt` writes it directly, without a safety net before rcS. Try such an image on a card you can take
   out first.
-- A kernel that fails only from a cold start (the kexec start runs on warm hardware) passes this trial.
+- A kernel that runs from kexec but hangs before rcS from a cold start (the kexec start runs on warm hardware) starts
+  again at every power-on, as with a direct install.
 - The install from 0.1.0 to a later build: 0.1.0 has no kexec start and writes the package directly.
-- The first start from the loader after a kexec trial is not on trial any more: the same kernel, initramfs and device
-  tree have run once. The command line of that start comes from the device tree's `bootargs`, as the kexec start's
-  did; a different command line in the image header is not used by this loader.
+- The command line of the first power-on comes from the device tree's `bootargs`, as the kexec start's did; a
+  different command line in the image header is not used by this loader.
 - A start whose device tree is unknown (`/tmp/oos-booted.dt` missing: started before a build with this, or
   recovery unreadable at start-up) takes the tree from `recovery` only while the state names the running build
   there; otherwise power-cycle once or use `--new-dt`.
@@ -129,9 +135,10 @@ Install on a running OOS:
   `curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update`
 - shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
 
-The scope restarts into the new build by kexec, which installs itself and runs on trial (about a minute); System >
-Update shows the state. If the screen stays dark, power-cycle: the previous build starts. A package without `trial kexec`, `--no-kexec` and `--new-dt` write the image directly: then
-power-cycle to start it on trial.
+The scope restarts into the new build by kexec, which installs itself (about a minute); System > Update shows the
+result. Then power-cycle: that start is its trial. If the screen stays dark after the restart, power-cycle too: the
+previous build starts if the install did not finish. A package without `trial kexec`, `--no-kexec` and `--new-dt`
+write the image directly: then power-cycle to start it on trial.
 
 | command | |
 |---|---|

@@ -120,7 +120,7 @@ impl Ui {
             return Err(format!("{} could not be started, nothing installed", BIN));
         }
         Ok(if update::kexec::announced(&h.manifest) {
-            format!("signature ok, build {}: the scope restarts into it by kexec and installs it from there, unless a check refuses it (about a minute; System > Update shows the result)", b)
+            format!("signature ok, build {}: the scope restarts into it by kexec and installs it from there, unless a check refuses it (about a minute; System > Update shows the result). Then power-cycle the scope: that start is its trial", b)
         } else {
             format!("signature ok, installing build {} (the result shows on the scope and on this page)", b)
         })

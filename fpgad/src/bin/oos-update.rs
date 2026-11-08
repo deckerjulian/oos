@@ -301,17 +301,75 @@ fn install(a: &Args) {
 #[cfg(target_os = "linux")]
 const UI_LOOP: &str = "while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done";
 
+/// What was stopped for the kexec start, to put back after a failure.
+#[cfg(target_os = "linux")]
+struct Quiet {
+    links: Vec<String>,
+    routes: Vec<String>,
+    display: bool,
+}
+
+#[cfg(target_os = "linux")]
+const DRM: &str = "/sys/bus/platform/drivers/rockchip-drm";
+
+/// Devices that write to memory on their own stop before the kexec start; the kernel does not stop them all. The
+/// Ethernet controller has no shutdown hook: its receive DMA would go on writing packets into buffers of this kernel,
+/// which is memory of the next one by then (seen: the package arrived damaged). The display keeps its IOMMU on, which
+/// the next kernel then cannot take over (seen: a dark screen).
+#[cfg(target_os = "linux")]
+fn quiesce() -> Quiet {
+    let out = |args: &[&str]| {
+        std::process::Command::new(args[0]).args(&args[1..]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    };
+    let routes: Vec<String> = out(&["ip", "-4", "route", "show"]).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    let mut links = Vec::new();
+    if let Ok(d) = std::fs::read_dir("/sys/class/net") {
+        for e in d.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            let up = std::fs::read_to_string(format!("/sys/class/net/{}/flags", n))
+                .ok()
+                .and_then(|f| u32::from_str_radix(f.trim().trim_start_matches("0x"), 16).ok())
+                .is_some_and(|f| f & 1 != 0);
+            if n != "lo" && up && std::process::Command::new("ip").args(["link", "set", "dev", &n, "down"]).status().is_ok_and(|x| x.success()) {
+                links.push(n);
+            }
+        }
+    }
+    // the display subsystem lets go of the VOPs and their IOMMUs while it still owns them
+    let display = Path::new(&format!("{}/display-subsystem", DRM)).exists() && std::fs::write(format!("{}/unbind", DRM), "display-subsystem").is_ok();
+    tell(&format!("stopped for the kexec start: links {:?}, display {}", links, if display { "unbound" } else { "left" }));
+    Quiet { links, routes, display }
+}
+
+#[cfg(target_os = "linux")]
+fn restore(q: &Quiet) {
+    if q.display {
+        let _ = std::fs::write(format!("{}/bind", DRM), "display-subsystem");
+    }
+    for n in &q.links {
+        let _ = std::process::Command::new("ip").args(["link", "set", "dev", n, "up"]).status();
+    }
+    // a link that went down took its routes along
+    for r in &q.routes {
+        let mut a = vec!["route", "replace"];
+        a.extend(r.split_whitespace());
+        let _ = std::process::Command::new("ip").args(&a).status();
+    }
+}
+
 /// Load the staged image and start it. Returns only after a failure, which leaves everything as before the install.
 #[cfg(target_os = "linux")]
 fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     let short = update::short(&s.build).to_string();
-    let undo = |why: &str, stopped: bool| -> ! {
+    // stopped: None before oos-ui and the devices were stopped
+    let undo = |why: &str, stopped: Option<&Quiet>| -> ! {
         let _ = kexec::unload();
-        if stopped {
+        if stopped.is_some() {
             let _ = std::process::Command::new("mount").args(["-o", "remount,rw", "/oos"]).status();
         }
         let _ = update::kexec_clear(sp, &format!("kexec start of build {} failed ({}): nothing installed", short, why));
-        if stopped {
+        if let Some(q) = stopped {
+            restore(q);
             let _ = std::fs::remove_file("/tmp/oos-ui.off");
             let _ = std::process::Command::new("setsid")
                 .args(["sh", "-c", UI_LOOP])
@@ -325,15 +383,16 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     };
     let cmd = kexec::cmdline(&kexec::running_cmdline(), f);
     if let Err(e) = kexec::load(&s.kernel, &s.initrd, &cmd) {
-        undo(&e, false);
+        undo(&e, None);
     }
     drop(s);
-    tell(&format!("build {} loaded; restarting into it by kexec for its trial (it installs itself)", short));
+    tell(&format!("build {} loaded; restarting into it by kexec, where it installs itself", short));
     // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
     // watcher is stopped, so no card write runs into the restart
-    let lock = update::lock(sp).unwrap_or_else(|e| undo(&e, false));
+    let lock = update::lock(sp).unwrap_or_else(|e| undo(&e, None));
     stop_watcher();
     stop_ui();
+    let q = quiesce();
     // the lock file is open for writing: /oos can only go read only without it
     drop(lock);
     unsafe { libc::sync() };
@@ -342,7 +401,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
         println!("warning: /oos stays writable (busy); synced");
     }
     let e = kexec::start();
-    undo(&e, true);
+    undo(&e, Some(&q));
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -427,13 +486,19 @@ fn stop_watcher() {
 }
 
 /// rcS, in the start by kexec: this kernel reached rcS and found the card and /oos. Now the package is installed for
-/// real. False when it was not: then this start is no trial start.
+/// real. The kexec start is no trial start (its device tree and loader path are the old build's, the display comes up
+/// from another state): the next power-on is the first one. False when nothing was installed.
 fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
     let pk = read_file(kexec::PACKAGE);
     let build = update::running_build().unwrap_or_default();
     let short = update::short(&build).to_string();
     let _ = std::fs::write("/dev/tty1", format!("\nUpdate {}: started by kexec, installing it. Do not power off.\n", short));
     tell(&format!("build {} started by kexec: kernel, card and /oos work; installing it", short));
+    // where the previous kernel put the initramfs, for a damaged package
+    let at = |n: &str| std::fs::read(format!("/proc/device-tree/chosen/linux,{}", n)).ok().map(|b| b.iter().fold(0u64, |a, &x| a << 8 | x as u64));
+    if let (Some(a0), Some(a1)) = (at("initrd-start"), at("initrd-end")) {
+        tell(&format!("initramfs at {:#x}..{:#x}", a0, a1));
+    }
     // the running build verified the package; this build may trust other keys (a key change by update)
     let mut keys = update::trusted_keys();
     if let Some(k) = std::fs::read_to_string(kexec::KEY_FILE).ok().and_then(|t| update::hash::unhex(t.trim())).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
@@ -445,7 +510,10 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
         Ok(r) => {
             r.lines.iter().for_each(|l| println!("{}", l));
             if r.written {
-                notice(&format!("Update {} installed after its kexec start; on trial, it confirms itself about 20 s after the start-up", short));
+                notice(&format!(
+                    "Update {} installed after its kexec start. Power-cycle the scope: its first power-on is the trial start, it confirms itself about 20 s after the start-up",
+                    short
+                ));
             } else {
                 let _ = update::kexec_clear(p, &format!("started build {} by kexec: nothing to install", short));
             }
@@ -467,7 +535,9 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
             let m = format!("Update {} ran when started by kexec, but its install failed: {}; {}", short, e, back);
             let _ = update::kexec_clear(p, &m);
             notice(&m);
-            false
+            // kept in RAM until the next start: what damaged it shows in the bytes
+            tell(&format!("the package stays at {} until the next start", kexec::PACKAGE));
+            return false;
         }
     };
     drop(pk);
@@ -575,11 +645,10 @@ fn boot(a: &Args) {
         return; // no update state yet
     }
     match kx {
-        // a failed install: this start is not the trial start of anything
+        // not the trial start of anything: a failed install, or the install, whose trial begins at the next power-on
         Some(f) => {
-            if !finish_kexec(a, &p, f) {
-                return;
-            }
+            finish_kexec(a, &p, f);
+            return;
         }
         None if word.is_some() => {
             let m = "Update started by kexec, but its package did not arrive: not installed";
@@ -641,6 +710,21 @@ fn watch(a: &Args) {
     let autoacq = Path::new("/etc/oos-autoacq").exists();
     // the verdict is about the image that runs now: the state as it was at this start, applied only if unchanged
     let st0 = State::load(&p).unwrap_or_default();
+    // a kexec start says nothing about a power-on (device tree, loader, display state): neither confirm nor roll back.
+    // The next power-on is the trial start (the install armed OOS for it). Without an install, persist mode arms OOS
+    // again (oos-oneshot disarmed it at rcS).
+    if kexec::flags(&kexec::running_cmdline()).is_some() {
+        tell("kexec start: not judged, the next power-on is the trial start");
+        if st0.persist && st0.trial.is_none() {
+            let mut c = open_card(a, true);
+            match update::arm_checked(&mut c, &p) {
+                Ok(true) => tell("persist mode: OOS armed for the next power-on"),
+                Ok(false) => {}
+                Err(e) => tell(&format!("persist mode: {}", e)),
+            }
+        }
+        return;
+    }
     let running = update::running_build();
     let trial_sha = st0
         .current
