@@ -1,5 +1,12 @@
 # Changes
 
+## Unreleased
+
+Fixes:
+
+- With deep memory and many edges that seldom reach the 10 % and 90 % levels, the rise and fall time search held the main
+  thread for half a minute: no picture, no SCPI, no web. It stops at the neighbouring edges now.
+
 ## 0.1.2
 
 From 0.1.1: install the package through the web page or `oos-update install`, the scope restarts by itself (kexec); then
