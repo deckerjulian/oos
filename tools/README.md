@@ -7,6 +7,7 @@
 | `device-test.py --host IP` | over the network, read-only on the card | acceptance test of a running OOS with nobody at the scope; `--sim` runs it against `oos-ui --serve` on this computer |
 | `device-deploy.sh IP [--restore]` | `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS |
 | `device-survey.sh [ip] [--keys]` | read-only over adb | inventory of the running stock system: USB/HID, input, GPIO owners, pinmux, ttyS0, PCIe, partitions |
+| `platform-probe.sh IP` | read-only over adb, removes its files again | description of another Rigol model (MHO900, DHO1000, ...) for a port, ready to share: device tree, buses, display, partition table, `/rigol` by name; serial number and MAC addresses replaced ([docs/porting.md](../docs/porting.md)) |
 
 `device-test.py` also has the tiers `la` (`--pico <port>`: D0-D2 on GP2-GP4 of a Pico with the openSciLab firmware) and `rf`
 (`--rf <port>`: an HT008 on `--rf-ch`, CH2 by default). `--busy 3` names other channels with a cable, which are no open inputs.

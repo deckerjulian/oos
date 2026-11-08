@@ -115,7 +115,8 @@ Details and limits: [docs/models.md](docs/models.md).
 
 **Tested on hardware: DHO924S only.** All other models are prepared from the known model table and have never run OOS.
 The feature columns follow Rigol's model line-up; whether the EDU variants have the LA port is not confirmed. DHO1000,
-HDO1000/2000/4000 and MHO models are different boards and are not supported.
+HDO1000/2000/4000 and MHO models are different boards and are not supported; [docs/porting.md](docs/porting.md) says
+what would carry over and how an owner can describe one.
 
 Limits on all models:
 
