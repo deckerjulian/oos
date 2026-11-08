@@ -4,7 +4,9 @@ The stock system's own update (Storage > Upgrade) installs OOS from a USB stick:
 computer at the scope.
 
 Tested on a file laid out like a stock card, with the stock update script, in a Linux container with the paths of the stock
-system (`tools/gel-sim.sh`), and by unit tests. **Not yet verified on hardware.**
+system (`tools/gel-sim.sh`), and by unit tests. On the unit (DHO924S, 2026-11-08, package 0.1.1): the dry run and the
+run again on a card that already holds OOS ("already holds", OOS selected, OOS started). **Not yet verified on
+hardware: the first install over the stock `recovery`.**
 
 Compared with the card route (`README.md`, Installation):
 
@@ -93,13 +95,22 @@ There is no update file for this yet.
 
 If the scope shows only a black screen: `README.md`, If something goes wrong.
 
+### The stock system does not see the stick
+
+Seen on the unit: the stick does not show up in Storage, the kernel log has it (`sda1`). The stock start then had
+`ro.bootmode` = `unknown` instead of `emmc`: the start had looked for its boot medium before the SD card was ready
+(card at 1.85 s, init at 1.56 s; on a start that works the card comes first). Without the mode the stock system has no
+rules for USB storage. It depends on how fast the card comes up, so it comes and goes: switch off and on again, and
+check Storage before you start the update. Over ADB (`getprop ro.bootmode`) the start can be told apart.
+
 ## 6. To check on the unit
 
 On a card that can be taken out, not on an only card:
 
 1. Dry run: the screen says it worked, `oos-install.log` and `OOS-rescue` are complete, `oos-update status` later shows nothing
-   written. The first real test of: `/dev/block/mmcblk0` as the card, the static tool on the stock kernel, reading `vendor.bin`.
+   written. **Done 2026-11-08.** The first real test of: `/dev/block/mmcblk0` as the card, the static tool on the stock kernel, reading `vendor.bin`.
 2. Install, power-cycle: OOS starts, with `/oos` formatted if it was empty.
 3. Next power-on: stock, with calibration and licences as before.
 4. The same update again: "already holds", OOS selected. After an update over the network: "kept, only selected".
+   **"Already holds" done 2026-11-08.**
 5. Damage test: a refused image in `recovery` (card in a reader) starts the stock copy in `backup`.
