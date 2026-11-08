@@ -25,7 +25,8 @@ This is why only models OOS has run on are accepted (section 4).
 
 ## 1. Steps
 
-1. Build the image (`README.md`, Installation, steps 3 to 5). It leaves `boot/out/DHO800_DHO900_OOS_Install.GEL`.
+1. Download `DHO800_DHO900_OOS_Install.GEL` from the [release](https://github.com/deckerjulian/oos/releases/latest) and check it
+   against `SHA256SUMS`, or build it (`README.md`, Installation, steps 3 to 5): it is in `boot/out/`.
 2. A FAT32 USB stick with at least 200 MiB free. Copy the file to its top folder. The name has to end in `.GEL` and
    contain `DHO800_DHO900`, or the update ignores it. Keep the name.
 3. **Recommended, first a dry run:** an empty file `oos-dry-run.txt` on the stick runs all checks and saves the rescue set, without
@@ -45,7 +46,7 @@ else by the stick's build. If the OOS in `recovery` starts but hangs early every
 start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
 
 The same install also runs over ADB, without a stick: `README.md`, Over ADB. `oos-update gel-install` is the same code,
-only `/rigol/data` has to be saved by hand. That way of starting it has not been tested at all.
+only `/rigol/data` has to be saved by hand. It ran on the same DHO924S (2026-11-07).
 
 ## 2. What it does
 

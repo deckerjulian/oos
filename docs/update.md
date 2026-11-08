@@ -1,7 +1,9 @@
 # Signed updates with rollback
 
 Built and tested on the host (unit tests, a real image on a card-shaped file, the start-up watcher in an arm64 Linux
-container: stable start, crash loop, install during the watch, hand-installed image). **Not yet verified on hardware.**
+container: stable start, crash loop, install during the watch, hand-installed image). Run on the unit (DHO924S,
+2026-11-07/08): installs from the web page and the shell, the kexec trial start, the trial start at the next power-on
+and its confirmation. **Not yet verified on hardware: the automatic rollback of a bad update.**
 
 The kexec trial start (below) ran on the unit (2026-11-08): from `install --execute` to the installed build about 20 s,
 then the power-on as trial start, confirmed. Its first run had shown that the network links and the display must stop

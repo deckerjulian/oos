@@ -218,12 +218,12 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 | Area | State |
 |---|---|
 | Boot, cold boot, acquisition, trigger, roll and scan, touch, front panel, generator (sine, built-in Bode), self-calibration | run on a DHO924S |
-| Signed updates from the web page, trial start and confirmation, install over ADB | run on a DHO924S |
+| Signed updates from the web page and the shell, kexec trial start, trial and confirmation, install over ADB | run on a DHO924S |
 | Logic analyser with a PLA2216: lines, pulse widths, edge, pulse, pattern, duration and protocol trigger, UART, SPI and I2C on the lines, roll, scan, whole deep records, CSV | run on a DHO924S, three lines (D0 to D2) driven; thresholds have no effect here, under stock neither |
 | Generator modulation (AM, FM, PM), deep memory, limits, web, MCP, VXI-11 | run on a DHO924S |
 | HDMI output | run on a DHO924S |
 | Automatic rollback of a bad update | tests on the host only |
-| USB install without opening the scope | tested on a card file; never run on a scope |
+| USB install without opening the scope | run on a DHO924S with a modified stock system: dry run, first install, run again |
 | Generator noise, system info, bandwidth test | tests on the host only |
 | USB storage stick, 10:1 probe | run on a DHO924S |
 | WLAN | driver, firmware and scan run on a DHO924S with an RTL8188EU stick; joining a network tested on simulated radios only |
@@ -276,7 +276,9 @@ There are three ways:
 | **[USB stick](#from-a-usb-stick)** | no | OOS goes on it, beside stock | run on a DHO924S with a modified stock system |
 | **[ADB over the network](#over-adb)** | no | OOS goes on it, beside stock | run on a DHO924S with a modified stock system |
 
-All three need steps 3 to 5 to build the image.
+The second card and the USB stick can take the files of the [latest release](https://github.com/deckerjulian/oos/releases/latest)
+instead of a build: `oos-<version>.img` and `DHO800_DHO900_OOS_Install.GEL`, checked against `SHA256SUMS`. ADB needs
+steps 3 to 5 to build the image.
 
 The steps below use macOS, where they were developed. `tools/sdcard-clone.sh` needs macOS; on Linux, use `dd` for the
 clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
@@ -410,11 +412,13 @@ Even then, a start that does not complete leaves the stock boot in place, so the
 
 ### Without opening the scope
 
-Both ways install OOS from the running stock system onto the card that is in the scope. Build steps 3 to 5 first.
+Both ways install OOS from the running stock system onto the card that is in the scope. The USB stick takes the update
+file of the release or of your build (steps 3 to 5); ADB needs the build.
 
 **Read this before you start**
 
-- **Neither way has run on a scope yet.** Try it on a card you can take out if you can.
+- **Both ways have run on one DHO924S only, whose stock system is a modified one.** Try them on a card you can take out
+  if you can.
 - **There is no second card to fall back on.** A refused image is harmless, the loader starts the stock copy. But if the
   kernel hangs before the first script of the image runs, every power-on hangs the same way. The card then has to come
   out, so **the scope has to be opened after all.**
@@ -429,7 +433,9 @@ again finishes the job. No stock update step runs, and the FPGA flash and `/rigo
 
 You need a FAT32 USB stick with at least 200 MiB free.
 
-1. Copy `boot/out/DHO800_DHO900_OOS_Install.GEL` to the top folder of the stick. Keep the name: the scope ignores a file
+1. Copy `DHO800_DHO900_OOS_Install.GEL` to the top folder of the stick: from the
+   [release](https://github.com/deckerjulian/oos/releases/latest) (check it against `SHA256SUMS`), or
+   `boot/out/` of your build. Keep the name: the scope ignores a file
    whose name does not end in `.GEL` and contain `DHO800_DHO900`.
 2. For a dry run, put an empty file `oos-dry-run.txt` next to it. This runs all checks and saves the rescue set, without
    writing the card.
