@@ -1,6 +1,6 @@
 [package]
 name = "oos-fpgad"
-version = "0.1.1"
+version = "0.1.2"
 repository = "https://github.com/deckerjulian/oos"
 edition = "2021"
 description = "OOS acquisition control for the Rigol DHO800/DHO900 (plan / run one acquisition)"

@@ -1,6 +1,9 @@
 # Changes
 
-## Unreleased
+## 0.1.2
+
+From 0.1.1: install the package through the web page or `oos-update install`, the scope restarts by itself (kexec); then
+switch it off at the mains, wait 30 seconds and switch it on. From 0.1.0: the same, the install is direct.
 
 Fixes:
 
