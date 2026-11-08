@@ -163,8 +163,9 @@ fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
     (bin_mean(hi), bin_mean(lo))
 }
 
-/// Crossing of `level` searched from index `from` backwards (`back`) or forwards, in the given direction.
-fn cross(v: &[f32], from: usize, level: f32, up: bool, back: bool) -> Option<f64> {
+/// Crossing of `level` searched from index `from` backwards (`back`) down to `lim`, or forwards up to `lim`, in the
+/// given direction.
+fn cross(v: &[f32], from: usize, level: f32, up: bool, back: bool, lim: usize) -> Option<f64> {
     let hit = |i: usize| {
         let (a, b) = (v[i - 1], v[i]);
         a.is_finite() && b.is_finite() && if up { a < level && b >= level } else { a > level && b <= level }
@@ -174,9 +175,9 @@ fn cross(v: &[f32], from: usize, level: f32, up: bool, back: bool) -> Option<f64
         (i - 1) as f64 + ((level - a) / (b - a)) as f64
     };
     if back {
-        (1..=from.min(v.len() - 1)).rev().find(|&i| hit(i)).map(at)
+        (lim.max(1)..=from.min(v.len() - 1)).rev().find(|&i| hit(i)).map(at)
     } else {
-        (from.max(1)..v.len()).find(|&i| hit(i)).map(at)
+        (from.max(1)..lim.min(v.len())).find(|&i| hit(i)).map(at)
     }
 }
 
@@ -238,13 +239,16 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     let (l10, l90) = ((base + 0.1 * amp) as f32, (base + 0.9 * amp) as f32);
     let mut rt = Vec::new();
     let mut ft = Vec::new();
-    for x in &e {
+    // an edge's levels lie between its neighbours. Searching further costs a pass over the record per edge: a million
+    // noisy samples that seldom reach the 10 % and 90 % levels held the main thread for half a minute
+    for (k, x) in e.iter().enumerate() {
         let i = x.t as usize + 1;
+        let (before, after) = (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
         if x.rising {
-            if let (Some(p), Some(q)) = (cross(v, i, l10, true, true), cross(v, i, l90, true, false)) {
+            if let (Some(p), Some(q)) = (cross(v, i, l10, true, true, before), cross(v, i, l90, true, false, after)) {
                 rt.push((q - p) * dt);
             }
-        } else if let (Some(p), Some(q)) = (cross(v, i, l90, false, true), cross(v, i, l10, false, false)) {
+        } else if let (Some(p), Some(q)) = (cross(v, i, l90, false, true, before), cross(v, i, l10, false, false, after)) {
             ft.push((q - p) * dt);
         }
     }
@@ -396,6 +400,19 @@ mod tests {
                 assert_eq!(an.pulses(pos), a.iter().filter(|&&s| b.iter().any(|&e| e > s)).count() as f64);
             }
         }
+    }
+
+    /// Seen on the unit: a deep record with many edges that seldom reach the 10 % and 90 % levels.
+    #[test]
+    fn edges_that_miss_the_levels_are_quick() {
+        let n = 400_000;
+        let mut v = vec![0.0f32; n / 10];
+        v.extend(vec![1.0f32; n / 10]);
+        v.extend((0..n * 8 / 10).map(|i| if i % 2 == 0 { 0.4f32 } else { 0.6 }));
+        let t = std::time::Instant::now();
+        let a = analyze_min(&v, 1e-9, 0.1);
+        assert!(a.rises.len() > 1000, "{}", a.rises.len());
+        assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
     }
 
     #[test]
