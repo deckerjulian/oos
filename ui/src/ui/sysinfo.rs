@@ -125,7 +125,7 @@ impl Ui {
         a.push(kv("Rated bandwidth", format!("{} MHz", c.rated_bw_mhz)));
         a.push(kv("Analog channels", c.channels.to_string()));
         a.push(kv("Logic analyser", yes_no(c.la)));
-        a.push(kv("Generator", yes_no(c.afg)));
+        a.push(kv("Generator", yes_no(c.has_gen())));
         a.push(kv("EXT trigger", yes_no(c.ext_trig)));
         a.push(match p.source {
             oos_hal::model::Source::Vendor => kvc("Identified", "vendor.bin", GREEN),
@@ -202,7 +202,7 @@ impl Ui {
             let la = l.max_mem_la.iter().map(|&x| exact(x as f64, "")).collect::<Vec<_>>().join("/");
             d.push(kvc("With LA", format!("{} pts", la.replace(' ', "")), mark(l.max_mem_la == base.max_mem_la)));
         }
-        if c.afg {
+        if c.has_gen() {
             let (g, n) = (l.afg_max_hz, base.afg_max_hz);
             d.push(kvc("Generator sine", exact(g.sine, "Hz"), mark(g.sine == n.sine)));
             d.push(kvc("square / pulse", format!("{} / {}", si_short(g.square, "Hz"), si_short(g.pulse, "Hz")), mark(g.square == n.square && g.pulse == n.pulse)));
@@ -212,7 +212,7 @@ impl Ui {
         if self.clock_next != l.adc_clock_hz {
             d.push(kvc("after power off and on", exact(self.clock_next, "Hz"), AMBER));
         }
-        if c.afg {
+        if c.has_gen() {
             d.push(kv("Generator clock", exact(l.afg_clock_hz, "Hz")));
         }
         d.push(Row::Head("Acquisition now".into()));

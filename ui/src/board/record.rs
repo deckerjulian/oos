@@ -25,8 +25,8 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
         (f.pre.saturating_sub(near + span), (f.pre + near).min(len))
     };
     let e: [f32; 0] = [];
-    let refs: [&[f32]; NCH] = [0, 1, 2, 3].map(|c| if f.ch[c].len() < hi || lo >= hi { &e[..] } else { &f.ch[c][lo..hi] });
-    let hyst = [0, 1, 2, 3].map(|c| 0.1 * m.ch[c].volts_per_div());
+    let refs: [&[f32]; NCH] = std::array::from_fn(|c| if f.ch[c].len() < hi || lo >= hi { &e[..] } else { &f.ch[c][lo..hi] });
+    let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * m.ch[c].volts_per_div());
     let inp = oos_dsp::trigger::Input { ch: refs, dt: f.dt, hyst };
     let usable = m.trig_channels().iter().enumerate().all(|(c, &u)| !u || !refs[c].is_empty());
     let found = if f.roll || f.scan {

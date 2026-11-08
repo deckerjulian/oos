@@ -650,7 +650,7 @@ mod tests {
         assert!(m.max_mem() < mem);
         assert_eq!(m.max_srate(), sr / 2.0);
         // the hardware settings carry the LA, depth capped to the LA memory
-        m.mdepth = MDEPTHS.iter().position(|d| d.1 == 125_000_000).unwrap();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 125_000_000).unwrap();
         let s = crate::board::dho::hw::settings(&m, false);
         let l = s.la.expect("LA in the settings");
         assert!(l.analog_shown && (l.thr[0] - 1.4).abs() < 1e-6);

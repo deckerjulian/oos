@@ -218,7 +218,7 @@ fn main() {
             std::process::exit(3);
         }
     }
-    if cmd == "afg" && !oos_hal::model::platform().caps.afg && !args.iter().any(|x| x == "--force") {
+    if cmd == "afg" && !oos_hal::model::platform().caps.has_gen() && !args.iter().any(|x| x == "--force") {
         eprintln!("oos-fpgad: the {} has no generator (--force to drive the lines anyway)", oos_hal::model::platform().caps.name);
         std::process::exit(1);
     }

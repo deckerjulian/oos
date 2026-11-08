@@ -6,6 +6,7 @@
 //! pulse, the end of a transition, the moment a timeout expires, the edge that completes a pattern, ...
 
 use crate::edges::{edges, Edge};
+use crate::CHANNELS;
 use crate::sim::VideoStd;
 
 /// Time condition (seconds), as in the scope's "When" setting.
@@ -89,9 +90,9 @@ pub enum Trigger {
     /// composite video with negative sync, `level` between sync tip and blanking
     Video { src: usize, std: VideoStd, sync: VideoSync, level: f32 },
     /// trigger when the pattern becomes true (or on its edge bit while the levels match)
-    Pattern { bits: [Bit; 4], levels: [f32; 4] },
+    Pattern { bits: [Bit; CHANNELS], levels: [f32; CHANNELS] },
     /// the pattern (H/L/X) holds for a time satisfying `when`; trigger when it ends
-    Duration { bits: [Bit; 4], levels: [f32; 4], when: When },
+    Duration { bits: [Bit; CHANNELS], levels: [f32; CHANNELS], when: When },
     /// no edge of `slope` for `time` after an edge; trigger when the time has elapsed
     Timeout { src: usize, slope: Slope, level: f32, time: f64 },
     /// pulse that crosses one threshold but not the other before returning; optional width condition
@@ -107,9 +108,9 @@ pub enum Trigger {
 
 /// Trigger input: up to 4 channels (empty slice = off), sample period, comparator hysteresis per channel (volts).
 pub struct Input<'a> {
-    pub ch: [&'a [f32]; 4],
+    pub ch: [&'a [f32]; CHANNELS],
     pub dt: f64,
-    pub hyst: [f32; 4],
+    pub hyst: [f32; CHANNELS],
 }
 
 impl<'a> Input<'a> {
@@ -295,9 +296,9 @@ pub fn find_first(trig: &Trigger, inp: &Input, from: f64) -> Option<f64> {
     find_all(trig, inp).into_iter().find(|&t| t > from)
 }
 
-fn pattern(inp: &Input, bits: [Bit; 4], levels: [f32; 4], duration: Option<When>) -> Vec<f64> {
+fn pattern(inp: &Input, bits: [Bit; CHANNELS], levels: [f32; CHANNELS], duration: Option<When>) -> Vec<f64> {
     let mut ev: Vec<(f64, usize, bool)> = Vec::new();
-    let mut state = [None; 4];
+    let mut state = [None; CHANNELS];
     for c in 0..4 {
         if bits[c] == Bit::X || inp.ch[c].is_empty() {
             continue;
@@ -308,7 +309,7 @@ fn pattern(inp: &Input, bits: [Bit; 4], levels: [f32; 4], duration: Option<When>
         ev.extend(e.iter().map(|x| (x.t, c, x.rising)));
     }
     ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    let level_ok = |s: &[Option<bool>; 4], skip: Option<usize>| {
+    let level_ok = |s: &[Option<bool>; CHANNELS], skip: Option<usize>| {
         (0..4).all(|c| {
             Some(c) == skip
                 || match bits[c] {
@@ -318,7 +319,7 @@ fn pattern(inp: &Input, bits: [Bit; 4], levels: [f32; 4], duration: Option<When>
                 }
         })
     };
-    let edge_bit = (0..4).find(|&c| matches!(bits[c], Bit::R | Bit::F));
+    let edge_bit = (0..CHANNELS).find(|&c| matches!(bits[c], Bit::R | Bit::F));
     let mut out = Vec::new();
     let mut was = level_ok(&state, None);
     let mut since = None;

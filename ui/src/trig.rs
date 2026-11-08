@@ -28,10 +28,10 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
         let clk = la[2].map(wave);
         return Ok(oos_dsp::decode_ext::parallel(&refs, clk.as_deref(), oos_dsp::trigger::Slope::Rising, thr, hy));
     }
-    let slots: [Vec<f32>; NCH] = la.map(|n| n.map_or(Vec::new(), wave));
+    let slots: [Vec<f32>; NCH] = std::array::from_fn(|i| la.get(i).copied().flatten().map_or(Vec::new(), &wave));
     let mut s = m.clone();
     (s.dec_src, s.dec_src2, s.dec_cs, s.dec_src4, s.dec_diff) = (0, 1, la[2].map(|_| 2), la[3].map(|_| 3), None);
-    decode_at(&s, [&slots[0], &slots[1], &slots[2], &slots[3]], dt, thr, hy)
+    decode_at(&s, std::array::from_fn(|c| &slots[c][..]), dt, thr, hy)
 }
 
 /// `decode` with the threshold and hysteresis given.

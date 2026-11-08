@@ -44,14 +44,14 @@ const FUNCS: [(&str, fn(f64) -> f64); 8] = [
 pub struct Expr {
     ops: Vec<Op>,
     /// the channels it reads
-    pub used: [bool; 4],
+    pub used: [bool; crate::CHANNELS],
 }
 
 struct Parser<'a> {
     s: &'a [u8],
     at: usize,
     ops: Vec<Op>,
-    used: [bool; 4],
+    used: [bool; crate::CHANNELS],
 }
 
 impl Parser<'_> {
@@ -206,7 +206,7 @@ impl Expr {
         if text.len() > EXPR_MAX {
             return Err("Formula too long".into());
         }
-        let mut p = Parser { s: text.as_bytes(), at: 0, ops: Vec::new(), used: [false; 4] };
+        let mut p = Parser { s: text.as_bytes(), at: 0, ops: Vec::new(), used: [false; crate::CHANNELS] };
         p.sum(0)?;
         if let Some(c) = p.peek() {
             return Err(format!("Unexpected {}", c as char));
@@ -228,7 +228,7 @@ impl Expr {
     }
 
     /// One value for `ch` at sample `k`.
-    fn at(&self, ch: &[&[f32]; 4], k: usize, t: f64) -> f64 {
+    fn at(&self, ch: &[&[f32]; crate::CHANNELS], k: usize, t: f64) -> f64 {
         let mut st = [0f64; STACK + 1];
         let mut n = 0;
         for op in &self.ops {
@@ -267,8 +267,8 @@ impl Expr {
 
     /// The waveform: as long as the shortest channel it reads, `fallback` samples when it reads none. Empty when a
     /// channel it reads has no data.
-    pub fn eval(&self, ch: [&[f32]; 4], t0: f64, dt: f64, fallback: usize) -> Vec<f32> {
-        let n = (0..4).filter(|&c| self.used[c]).map(|c| ch[c].len()).min().unwrap_or(fallback);
+    pub fn eval(&self, ch: [&[f32]; crate::CHANNELS], t0: f64, dt: f64, fallback: usize) -> Vec<f32> {
+        let n = (0..crate::CHANNELS).filter(|&c| self.used[c]).map(|c| ch[c].len()).min().unwrap_or(fallback);
         (0..n).map(|k| self.at(&ch, k, t0 + k as f64 * dt) as f32).collect()
     }
 }

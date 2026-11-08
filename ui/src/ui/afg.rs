@@ -15,7 +15,8 @@ impl Ui {
     }
 
     pub(super) fn afg_items(&self) -> Vec<Item> {
-        let mut v = vec![Item::AfgOn, Item::AfgWave];
+        // the selector only where there is a choice
+        let mut v = if gen_count() > 1 { vec![Item::AfgSel, Item::AfgOn, Item::AfgWave] } else { vec![Item::AfgOn, Item::AfgWave] };
         match self.m.afg_wave {
             // DC: the level is the offset
             5 => return [v, vec![Item::AfgOffset]].concat(),
@@ -40,7 +41,7 @@ impl Ui {
 
     pub(super) fn afg_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::AfgOn | Item::AfgWave | Item::AfgMod | Item::AfgModShape | Item::AfgArbSrc | Item::AfgFreqEntry => Kind::Choice,
+            Item::AfgSel | Item::AfgOn | Item::AfgWave | Item::AfgMod | Item::AfgModShape | Item::AfgArbSrc | Item::AfgFreqEntry => Kind::Choice,
             Item::AfgArbGrab | Item::AfgArbFile => Kind::Action,
             Item::AfgFreq | Item::AfgAmpl | Item::AfgOffset | Item::AfgDuty | Item::AfgSym | Item::AfgModRate | Item::AfgModDepth => Kind::Value,
             _ => return None,
@@ -50,6 +51,7 @@ impl Ui {
     pub(super) fn afg_label(it: Item) -> Option<&'static str> {
         Some(match it {
             Item::Open(MenuId::Afg) => "Generator",
+            Item::AfgSel => "Generator",
             Item::AfgOn => "Output",
             Item::AfgFreq => "Frequency",
             Item::AfgFreqEntry => "Enter frequency",
@@ -73,6 +75,7 @@ impl Ui {
     pub(super) fn afg_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
+            Item::AfgSel => format!("Gen {}", m.gen_sel + 1),
             Item::AfgOn => if m.afg_on { "On".into() } else { "Off".into() },
             Item::AfgFreq => si_short(m.afg_freq, "Hz"),
             Item::AfgFreqEntry => "Keypad".into(),
@@ -97,6 +100,7 @@ impl Ui {
 
     pub(super) fn afg_options(&self, it: Item) -> Option<Vec<String>> {
         match it {
+            Item::AfgSel => Some((1..=gen_count()).map(|i| format!("Gen {}", i)).collect()),
             Item::AfgOn => Some(vec!["Off".into(), "On".into()]),
             Item::AfgWave => Some(AFG_WAVES.iter().map(|s| s.to_string()).collect()),
             Item::AfgMod => Some(AFG_MODS.iter().map(|s| s.to_string()).collect()),
@@ -118,10 +122,14 @@ impl Ui {
             l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
         };
         match it {
+            Item::AfgSel => {
+                let i = (m.gen_sel as i32 + d).rem_euclid(gen_count().max(1) as i32) as usize;
+                m.gen_select(i);
+            }
             Item::AfgOn => m.afg_on = !m.afg_on,
             Item::AfgArbSrc => m.afg_arb_src = src_step(m.afg_arb_src, NCH, d),
             // sine up to 60 MHz (platform limits, limits.conf `afg.*_max_hz`)
-            Item::AfgFreq => m.afg_freq = ladder(m.afg_freq, d, 0.01, board().gen_max_hz(m)),
+            Item::AfgFreq => m.afg_freq = ladder(m.afg_freq, d, 0.01, m.gen_max_hz()),
             Item::AfgAmpl => m.afg_ampl = ladder(m.afg_ampl, d, 0.002, 10.0),
             Item::AfgOffset => m.afg_offset = ((m.afg_offset + 0.1 * d as f64) * 10.0).round() / 10.0,
             Item::AfgWave => m.afg_wave = (m.afg_wave as i32 + d).rem_euclid(AFG_WAVES.len() as i32) as usize,
@@ -155,7 +163,7 @@ impl Ui {
         };
         if let Some(u) = unit {
             if let Ok(v) = self.keypad.parse::<f64>() {
-                let (want, lo, hi) = (v * u, 0.01, board().gen_max_hz(&self.m));
+                let (want, lo, hi) = (v * u, 0.01, self.m.gen_max_hz());
                 self.m.afg_freq = want;
                 self.afg_clamp();
                 if want > hi {
@@ -182,7 +190,7 @@ impl Ui {
     /// The stock limits: amplitude by frequency, offset within (Vmax - A) / 2.
     fn afg_clamp(&mut self) {
         let m = &mut self.m;
-        let max = board().gen_max_hz(m);
+        let max = m.gen_max_hz();
         m.afg_freq = m.afg_freq.clamp(0.01, max);
         // FM: the deviation stays below the carrier and inside the frequency range
         m.afg_fm_dev = m.afg_fm_dev.min(m.afg_freq).min(max - m.afg_freq).max(0.01);
@@ -288,7 +296,7 @@ mod arb_tests {
         assert_eq!(ui.menu, MenuId::Afg);
         // above the limit of the wave: the limit, with a message
         type_in(&mut ui, &["9", "9", "9", "MHz"]);
-        assert_eq!(ui.m.afg_freq, board().gen_max_hz(&ui.m));
+        assert_eq!(ui.m.afg_freq, ui.m.gen_max_hz());
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("Highest")));
         // a ramp has a lower limit than a sine
         ui.m.afg_wave = 2;
@@ -319,8 +327,8 @@ mod arb_tests {
         let n = ui.afg_arb_capture(0).unwrap();
         assert!(n > 100);
         assert_eq!(ui.m.afg_wave, 6);
-        assert!(matches!(crate::board::dho::wave(&ui.m), oos_hal::dho::afg::Wave::Arb { id } if id == ui.m.afg_arb));
-        let t = crate::board::dho::wave(&ui.m).table(1e3);
+        assert!(matches!(crate::board::dho::wave(&ui.m.gen_read()), oos_hal::dho::afg::Wave::Arb { id } if id == ui.m.afg_arb));
+        let t = crate::board::dho::wave(&ui.m.gen_read()).table(1e3);
         assert!(t.iter().any(|&v| v > 30000) && t.iter().any(|&v| v < -30000));
         assert!(ui.afg_items().contains(&Item::AfgArbGrab));
         let id = ui.m.afg_arb;

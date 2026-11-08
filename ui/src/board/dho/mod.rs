@@ -11,42 +11,52 @@ pub mod hw;
 mod tests;
 
 use super::{Board, PanelCmd, Slow, Zone};
-use crate::model::Model;
+use crate::model::{Coupling, GenCh, Model};
 use oos_hal::dho::{afe, afg, board, bus, panel};
 
 /// The Rigol DHO800/DHO900.
 pub struct Dho;
 
-/// The generator's wave shape for the model.
-pub fn wave(m: &Model) -> afg::Wave {
+/// The generator's wave shape.
+pub fn wave(g: &GenCh) -> afg::Wave {
     use afg::Wave;
-    let (d, s) = (m.afg_duty / 100.0, m.afg_symmetry / 100.0);
-    match m.afg_wave {
+    let (d, s) = (g.duty / 100.0, g.symmetry / 100.0);
+    match g.wave {
         1 => Wave::Square { duty: d },
         2 => Wave::Ramp { symmetry: s },
         3 => Wave::Pulse { duty: d, rise: 0.0, fall: 0.0 },
         4 => Wave::Noise,
         5 => Wave::Dc,
-        6 => Wave::Arb { id: m.afg_arb },
+        6 => Wave::Arb { id: g.arb },
         _ => Wave::Sine,
     }
 }
 
-/// The generator's modulation for the model (sine, square and ramp carriers only).
-pub fn modulation(m: &Model) -> afg::Mod {
+/// The generator's modulation (sine, square and ramp carriers only).
+pub fn modulation(g: &GenCh) -> afg::Mod {
     use afg::{Mod, ModShape};
-    let shape = [ModShape::Sine, ModShape::Square, ModShape::Triangle, ModShape::UpRamp, ModShape::DownRamp, ModShape::Noise][m.afg_mod_shape.min(5)];
-    let rate = m.afg_mod_rate;
-    match m.afg_mod {
-        _ if m.afg_wave > 2 => Mod::None,
-        1 => Mod::Am { rate, depth: m.afg_mod_depth / 100.0, shape },
-        2 => Mod::Fm { rate, dev: m.afg_fm_dev, shape },
-        3 => Mod::Pm { rate, dev: m.afg_pm_dev, shape },
+    let shape = [ModShape::Sine, ModShape::Square, ModShape::Triangle, ModShape::UpRamp, ModShape::DownRamp, ModShape::Noise][g.mod_shape.min(5)];
+    let rate = g.mod_rate;
+    match g.modulation {
+        _ if g.wave > 2 => Mod::None,
+        1 => Mod::Am { rate, depth: g.mod_depth / 100.0, shape },
+        2 => Mod::Fm { rate, dev: g.fm_dev, shape },
+        3 => Mod::Pm { rate, dev: g.pm_dev, shape },
         _ => Mod::None,
     }
 }
 
+/// The depths of the Acquire menu, read for the screen through the FPGA compression above 1 M (`hw::batch_plan`). New
+/// entries go to the end: setups store the position.
+const DEPTHS: [(&str, u64); 11] = [
+    ("Auto", 0), ("1k", 1_000), ("10k", 10_000), ("100k", 100_000), ("1M", 1_000_000), ("10M", 10_000_000),
+    ("25M", 25_000_000), ("50M", 50_000_000), ("62.5M", 62_500_000), ("100M", 100_000_000), ("125M", 125_000_000),
+];
+
 impl Board for Dho {
+    const MAX_CHANNELS: usize = 4;
+    const MAX_GENERATORS: usize = 1;
+
     type Want = oos_hal::dho::seq::Settings;
     /// (on, Hz, Vpp, V, wave, modulation)
     type Gen = (bool, f64, f64, f64, afg::Wave, afg::Mod);
@@ -105,16 +115,24 @@ impl Board for Dho {
         }
     }
 
+    fn depths(&self) -> &'static [(&'static str, u64)] {
+        &DEPTHS
+    }
+
     fn vscale_steps_nv(&self) -> Vec<i64> {
         afe::scale_ladder()
     }
 
-    fn gen(&self, m: &Model) -> Self::Gen {
-        (m.afg_on, m.afg_freq, m.afg_ampl, m.afg_offset, wave(m), modulation(m))
+    fn couplings(&self) -> &'static [Coupling] {
+        &[Coupling::Dc, Coupling::Ac, Coupling::Gnd]
     }
 
-    fn gen_max_hz(&self, m: &Model) -> f64 {
-        wave(m).max_hz()
+    fn gen(&self, g: &GenCh) -> Self::Gen {
+        (g.on, g.freq, g.ampl, g.offset, wave(g), modulation(g))
+    }
+
+    fn gen_max_hz(&self, g: &GenCh) -> f64 {
+        wave(g).max_hz()
     }
 
     fn gen_clamp(&self, ampl_nv: f64, offset_nv: f64, f_uhz: f64) -> (f64, f64) {

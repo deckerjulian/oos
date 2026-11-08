@@ -69,7 +69,7 @@ pub fn write(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 // ---------------------------------------------------------------------------------------------- setup files
 
-const COUPLINGS: [Coupling; 3] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd];
+const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
 const SLOPES: [Slope; 3] = [Slope::Rise, Slope::Fall, Slope::Either];
 const TRIG_MODES: [TrigMode; 3] = [TrigMode::Auto, TrigMode::Normal, TrigMode::Single];
 const ACQ_MODES: [AcqMode; 4] = [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes];
@@ -431,7 +431,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
         "avg_count" => m.avg_count = p_u32(v)?.max(1),
         "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_MAX),
-        "mdepth" => m.mdepth = p_idx(v, MDEPTHS.len())?,
+        "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
         "persist" => m.persist = p_idx(v, PERSIST.len())?,
         "intensity" => m.intensity = p_u32(v)?.clamp(10, 100),
         "grid" => m.grid = p_enum(v, &GRIDS)?,

@@ -55,7 +55,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         mask = if m.la_on() { 1 << m.trig_src.min(NCH - 1) } else { 1 };
     }
     let tdiv = m.hw_time_per_div() as f64;
-    let depth = match MDEPTHS[m.mdepth].1 {
+    let depth = match mdepths()[m.mdepth].1 {
         // roll streams without reading the memory: the stock Auto depth gives the stock point spacing (10 us at
         // 100 ms/div)
         0 if slow_mode(m) != Slow::Off => 0,
@@ -85,9 +85,10 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     // roll faster than 50 ms/div: no more than the roll stream's rate
     let df = oos_hal::dho::roll::depth_for(oos_hal::dho::seq::tdiv_fs(tdiv));
     let depth = if slow_mode(m) == Slow::Roll && df > 0 { if depth == 0 { df } else { depth.min(df) } } else { depth };
-    let ch = [0, 1, 2, 3].map(|c| Chan { scale: m.ch[c].volts_per_div() as f64, offset: m.ch[c].offset as f64, bw: bw_code(m.ch[c].bw), probe: m.ch[c].probe as f64, bias: m.ch[c].bias as f64, skew: m.ch[c].skew as f64,
+    let ch = std::array::from_fn(|c| Chan { scale: m.ch[c].volts_per_div() as f64, offset: m.ch[c].offset as f64, bw: bw_code(m.ch[c].bw), probe: m.ch[c].probe as f64, bias: m.ch[c].bias as f64, skew: m.ch[c].skew as f64,
         couple: match m.ch[c].coupling {
-            Coupling::Dc => Couple::Dc,
+            // a board without it never gets it (`Model::fit_platform`)
+            Coupling::Dc | Coupling::Dc50 => Couple::Dc,
             Coupling::Ac => Couple::Ac,
             Coupling::Gnd => Couple::Gnd,
         },
@@ -227,7 +228,7 @@ fn hw_trigger(m: &Model) -> Trig {
 /// Decodes a read-out of the whole record into a frame.
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
     let w = oos_hal::dho::seq::deinterleave(bytes, s.mask);
-    let ch = [0, 1, 2, 3].map(|c| if w[c].is_empty() { Vec::new() } else { oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset) });
+    let ch = std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset) });
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = s.compress.max(1) as usize;
     Frame { seq, dt: k as f64 / p.rate as f64, pre: p.pre as usize / k, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None }
@@ -405,11 +406,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // which is "off" at start: an output left running (oos-fpgad afg, an earlier oos-ui) goes off as at power-on
             let (afg_want, stamp_now) = {
                 let g = out.lock().unwrap();
-                (g.afg, g.stamp)
+                (g.afg[0], g.stamp)
             };
             if afg_want != afg_done {
                 // models without the generator (non-S): its GPIO lines and FPGA block are never touched
-                if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.afg) {
+                if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.has_gen()) {
                     if afg_io.is_none() {
                         afg_io = oos_hal::dho::afg::Io::open().map_err(|e| status(format!("generator GPIO: {}", e))).ok();
                     }
@@ -792,7 +793,7 @@ mod tests {
     #[test]
     fn depth_stays_within_the_limit_of_the_channels_on() {
         let mut m = Model::default();
-        m.mdepth = MDEPTHS.iter().position(|d| d.1 == 125_000_000).unwrap();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 125_000_000).unwrap();
         m.tscale = tscales().iter().position(|&t| t >= 1e-3).unwrap();
         for c in 0..NCH {
             m.ch[c].on = c == 0;

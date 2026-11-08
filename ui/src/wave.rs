@@ -95,7 +95,7 @@ impl DemoGen {
     fn of(m: &Model) -> Option<DemoGen> {
         static LOOP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         let mask = *LOOP.get_or_init(|| std::env::var("OOS_DEMO_LOOP").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
-        (mask != 0).then_some(DemoGen { mask, on: m.afg_on, wave: m.afg_wave, freq: m.afg_freq, ampl: m.afg_ampl, offset: m.afg_offset, duty: m.afg_duty / 100.0, probe: [0, 1, 2, 3].map(|c| m.ch[c].probe) })
+        (mask != 0).then_some(DemoGen { mask, on: m.afg_on, wave: m.afg_wave, freq: m.afg_freq, ampl: m.afg_ampl, offset: m.afg_offset, duty: m.afg_duty / 100.0, probe: std::array::from_fn(|c| m.ch[c].probe) })
     }
 
     fn v(&self, t: f64) -> f64 {
@@ -389,7 +389,16 @@ fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
     }
 }
 
-const NOISE: [f32; NCH] = [0.012, 0.006, 0.010, 0.015];
+const NOISE: [f32; NCH] = {
+    let base = [0.012, 0.006, 0.010, 0.015];
+    let mut n = [0.0; NCH];
+    let mut i = 0;
+    while i < NCH {
+        n[i] = base[i % 4];
+        i += 1;
+    }
+    n
+};
 
 /// Demo logic lines at time t, bit n = Dn, matching the analog demo: D0-D7 an 8-bit counter at 100 kHz, D8 the UART
 /// of CH3 ("OOS 0.1 ", 115200 baud), D9-D11 SPI (CS, CLK, MOSI; mode 0, 2 MHz), D12/D13 I2C (SCL, SDA; 400 kHz), D14
@@ -426,7 +435,10 @@ impl Source {
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
-            shared.lock().unwrap().afg = Some(board().gen(m));
+            let mut g = shared.lock().unwrap();
+            for i in 0..gen_count() {
+                g.afg[i] = Some(board().gen(&m.gen_ch(i)));
+            }
         }
     }
 
@@ -575,8 +587,8 @@ impl Source {
                         (0..ns).map(|k| (sg * (demo_signal(cfg, c, start + k as f64 * dts - skew) - bias)) as f32).collect()
                     })
                     .collect();
-                let hyst = [0, 1, 2, 3].map(|c| 0.1 * m.ch[c].volts_per_div());
-                let inp = oos_dsp::trigger::Input { ch: [&bufs[0], &bufs[1], &bufs[2], &bufs[3]], dt: dts, hyst };
+                let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * m.ch[c].volts_per_div());
+                let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| &bufs[c][..]), dt: dts, hyst };
                 // a pattern with D lines: 1 where the demo lines and the channels match; the same trigger type on this one
                 // wave then gives the begin of the pattern, or its time condition for a duration trigger
                 let la_pat = m.pat_on_la().then(|| {
@@ -593,8 +605,8 @@ impl Source {
                         })
                         .collect();
                     let e: [f32; 0] = [];
-                    let inp = oos_dsp::trigger::Input { ch: [&hit, &e, &e, &e], dt: dts, hyst: [0.1; NCH] };
-                    let bits = [Bit::H, Bit::X, Bit::X, Bit::X];
+                    let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| if c == 0 { &hit[..] } else { &e[..] }), dt: dts, hyst: [0.1; NCH] };
+                    let bits = std::array::from_fn(|i| if i == 0 { Bit::H } else { Bit::X });
                     let t = match m.when() {
                         Some(when) if m.trig_type == TrigType::Duration => Trigger::Duration { bits, levels: [0.5; NCH], when },
                         _ => Trigger::Pattern { bits, levels: [0.5; NCH] },
@@ -612,7 +624,7 @@ impl Source {
                     Some(n) => {
                         let line: Vec<f32> = (0..ns).map(|k| (demo_la(start + k as f64 * dts) >> n & 1) as f32).collect();
                         let e: [f32; 0] = [];
-                        let inp = oos_dsp::trigger::Input { ch: [&line, &e, &e, &e], dt: dts, hyst: [0.1; NCH] };
+                        let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| if c == 0 { &line[..] } else { &e[..] }), dt: dts, hyst: [0.1; NCH] };
                         let mut s = m.clone();
                         (s.trig_la, s.trig_src, s.trig_level) = (None, 0, 0.5);
                         oos_dsp::trigger::find_first(&s.trigger(), &inp, 0.0)
@@ -663,7 +675,7 @@ impl Source {
                     oos_dsp::trigger::Trigger::Edge { src: 0, slope: oos_dsp::trigger::Slope::Rising, level: level as f32 }
                 };
                 let e: [f32; 0] = [];
-                let inp = oos_dsp::trigger::Input { ch: [&volts, &e, &e, &e], dt: *xinc, hyst: [0.1 * m.ch[0].volts_per_div(); 4] };
+                let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| if c == 0 { &volts[..] } else { &e[..] }), dt: *xinc, hyst: [0.1 * m.ch[0].volts_per_div(); NCH] };
                 let ti = oos_dsp::trigger::find_first(&trig, &inp, 0.0);
                 let triggered = ti.is_some();
                 let ti = ti.unwrap_or(volts.len() as f64 / 2.0);
@@ -701,7 +713,7 @@ pub fn condition(m: &Model, c: usize, v: &mut Vec<f32>, dt: f64) {
                 v.iter_mut().for_each(|x| *x -= mean);
             }
         }
-        Coupling::Dc => {}
+        Coupling::Dc | Coupling::Dc50 => {}
     }
     if ch.bw == BW_20M {
         let a = (1.0 - (-2.0 * std::f64::consts::PI * 20e6 * dt).exp()) as f32;

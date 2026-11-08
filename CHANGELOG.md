@@ -11,6 +11,8 @@ Inside:
 - The board is kept apart, for a port to another one (docs/porting.md): `oos_hal::dho` holds the DHO800/DHO900, the
   GUI reaches the hardware only through `board::Board` (`ui/src/board/`), and a lint test keeps it that way. No change
   in what the scope does: the register sequences are the same as in 0.1.1.
+- A description per board (`hal::target`, `rootfs/board/<name>`): card layout, update target, models and limits, what
+  `rcS` has to start. The GUI takes channels, generators, memory depths and couplings from the board.
 
 ## 0.1.1
 

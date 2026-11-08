@@ -15,6 +15,7 @@
 //! Settings go through the same model as the screen, so the screen follows remote changes.
 
 use crate::gfx::Canvas;
+use crate::board::{board, Board};
 use crate::model::*;
 use crate::ui::Ui;
 use std::io::{ErrorKind, Read, Write};
@@ -314,12 +315,13 @@ impl Scpi {
                     ch.offset = num(arg)?;
                 } else if kw(n1, "COUPling") {
                     if query {
-                        return Some(t(&format!("{:?}", ch.coupling).to_uppercase()));
+                        return Some(t(ch.coupling.name()));
                     }
                     ch.coupling = match arg.to_ascii_uppercase().as_str() {
                         "DC" => Coupling::Dc,
                         "AC" => Coupling::Ac,
                         "GND" => Coupling::Gnd,
+                        "DC50" if board().couplings().contains(&Coupling::Dc50) => Coupling::Dc50,
                         _ => return None,
                     };
                 } else if kw(n1, "BWLimit") {
@@ -442,7 +444,7 @@ impl Scpi {
                 return None;
             }
             if kw(n0, "ACQuire") && nodes.len() == 2 && !query && kw(nodes[1], "MDEPth") {
-                // AUTO or one of the depths of the Acquire menu (MDEPTHS), e.g. 1000000 or 1M
+                // AUTO or one of the depths of the Acquire menu (`mdepths`), e.g. 1000000 or 1M
                 let a = arg.trim().to_ascii_uppercase();
                 let want = if a.starts_with("AUTO") {
                     0
@@ -454,7 +456,7 @@ impl Scpi {
                     };
                     (v.parse::<f64>().ok()? * mul).round() as u64
                 };
-                m.mdepth = MDEPTHS.iter().position(|d| d.1 == want)?;
+                m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
                 return Some(None);
             }
             if kw(n0, "ACQuire") && nodes.len() == 2 && query {
@@ -599,10 +601,19 @@ impl Scpi {
                 return None;
             }
         }
-        if matches!(suffix(n0), (k, None | Some(1)) if kw(k, "SOURce")) && nodes.len() >= 2 {
-            if !oos_hal::model::platform().caps.afg {
+        if suffix(n0).1.is_none_or(|n| (1..=gen_count().max(1)).contains(&n)) && kw(suffix(n0).0, "SOURce") && nodes.len() >= 2 {
+            if !oos_hal::model::platform().caps.has_gen() {
                 self.err.push(format!("-241,\"Hardware missing\" no generator on the {}", oos_hal::model::platform().caps.name));
                 return None;
+            }
+            // :SOURce<n> talks to generator n, whichever one the page shows
+            let g = suffix(n0).1.unwrap_or(1) - 1;
+            if g != ui.m.gen_sel {
+                let shown = ui.m.gen_sel;
+                ui.m.gen_select(g);
+                let r = self.exec_cmd(ui, cv, cmd);
+                ui.m.gen_select(shown);
+                return r;
             }
             let has = |k: &str| nodes[1..].iter().any(|n| kw(suffix(n).0, k));
             let m = &ui.m;

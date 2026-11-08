@@ -64,7 +64,6 @@ fn bus_name(f: &identify::Finding) -> Option<String> {
 const TRACES: [&str; 4] = ["Normal", "Average", "Max hold", "Min hold"];
 const POWER_MODES: [PowerMode; 4] = [PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple];
 const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
-const CHS: [&str; 4] = ["CH1", "CH2", "CH3", "CH4"];
 
 /// 1-2-5 frequency ladder 1 Hz .. 1 GHz (0 = full span / auto RBW in front).
 fn freq_ladder() -> Vec<f64> {
@@ -137,10 +136,10 @@ impl Ui {
             Item::ProtoWatch => onoff(self.azr.watch),
             Item::EyeOn => onoff(m.view == AView::Eye),
             Item::PowOn => onoff(m.view == AView::Power),
-            Item::SpecSrc => CHS[m.spec_src].into(),
-            Item::EyeSrc => CHS[m.eye_src].into(),
-            Item::PowV => CHS[m.pw_v].into(),
-            Item::PowI => CHS[m.pw_i].into(),
+            Item::SpecSrc => format!("CH{}", m.spec_src + 1),
+            Item::EyeSrc => format!("CH{}", m.eye_src + 1),
+            Item::PowV => format!("CH{}", m.pw_v + 1),
+            Item::PowI => format!("CH{}", m.pw_i + 1),
             Item::SpecCenter => si_short(m.spec_center, "Hz"),
             Item::SpecSpan if m.spec_span > 0.0 => si_short(m.spec_span, "Hz"),
             Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => format!("Auto {}", si_short(self.azr.spec_stop, "Hz")),

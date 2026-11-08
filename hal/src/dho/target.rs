@@ -38,7 +38,7 @@ fn caps(name: &str) -> Option<Caps> {
         rated_bw_mhz: bw_code_mhz(code).unwrap_or(0),
         bw_code: code,
         la: series == DHO900,
-        afg: tn.ends_with('S'),
+        generators: tn.ends_with('S') as usize,
         ext_trig: channels == 2,
         edu: tn.ends_with("-EDU"),
     })

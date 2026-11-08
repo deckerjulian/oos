@@ -77,7 +77,7 @@ and bad values only produce warnings.
 | Key | Effect |
 |---|---|
 | `model = DHO804` | act as this model (also `--model` for oos-ui / oos-fpgad; the argument wins) |
-| `channels = 2\|4`, `la = yes\|no`, `afg = yes\|no`, `ext_trig = yes\|no` | capability override |
+| `channels = 2\|4`, `la = yes\|no`, `afg = yes\|no` (generator present), `ext_trig = yes\|no` | capability override |
 | `mem.1ch`, `mem.2ch`, `mem.4ch` | max. memory depth per channel (points), LA off |
 | `mem.la_1ch`, `mem.la_2ch`, `mem.la_4ch` | the same with LA on |
 | `adc.clock_hz = 2e9` | **experimental ADC clock** 1.25..2.0 GHz, only what `lmx2582::table_for` can make: the cold boot (and `oos-fpgad pll`) writes the generated LMX2582 table, sample rates, roll rate, trigger ticks and the generator DDS clock follow (`hal::dho::clock`); see `protocols/pll.md` and section 4.1 |

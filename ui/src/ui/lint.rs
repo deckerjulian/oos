@@ -831,7 +831,7 @@ fn what_the_screen_says_reaches_the_settings() {
     // roll and scan: no depth below 1 M, the delay stays out of it; a small depth at the slowest time base is no crash
     let mut m = Model::default();
     m.tscale = tscales().len() - 1;
-    m.mdepth = MDEPTHS.iter().position(|d| d.1 == 1000).unwrap();
+    m.mdepth = mdepths().iter().position(|d| d.1 == 1000).unwrap();
     m.delay = 1.0;
     let s = hw(&m);
     assert!(s.depth >= 1_000_000 && s.delay == 0.0, "{}", s.depth);

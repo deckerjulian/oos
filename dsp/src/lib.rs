@@ -16,6 +16,9 @@
 //!
 //! Waveforms are `&[f32]` volts sampled every `dt` seconds; times inside a waveform are fractional sample indices.
 
+/// Analog channels the triggers and the expressions take. A board with more needs them extended here.
+pub const CHANNELS: usize = 4;
+
 pub mod bandwidth;
 pub mod bode;
 pub mod decode;

@@ -30,12 +30,19 @@ pub struct Caps {
     pub bw_code: u32,
     /// logic analyser port (PLA2216 probe), DHO900 only
     pub la: bool,
-    /// built-in generator (GI/GO), "S" models only
-    pub afg: bool,
+    /// built-in generators (GI/GO), "S" models only on the DHO900
+    pub generators: usize,
     /// EXT trigger input, 2-channel models only
     pub ext_trig: bool,
     /// EDU variant
     pub edu: bool,
+}
+
+impl Caps {
+    /// The unit has a built-in generator.
+    pub fn has_gen(&self) -> bool {
+        self.generators > 0
+    }
 }
 
 /// Rated bandwidth of a stock bandwidth code (afe-settings.md 3.5; 4 and 9 from the HDO1000 entries of the table).
@@ -292,7 +299,7 @@ impl Platform {
     pub fn caps_line(&self) -> String {
         let c = &self.caps;
         let mut s = format!("{} MHz rated, {} ch", c.rated_bw_mhz, c.channels);
-        for (on, name) in [(c.la, "LA"), (c.afg, "generator"), (c.ext_trig, "EXT trigger")] {
+        for (on, name) in [(c.la, "LA"), (c.has_gen(), "generator"), (c.ext_trig, "EXT trigger")] {
             if on {
                 s += ", ";
                 s += name;
@@ -326,7 +333,7 @@ fn set_cap(c: &mut Caps, k: &str, v: &str) -> Result<bool, String> {
                 _ => return Err(format!("channels: {:?} (2 or 4)", v)),
             }
         }
-        "afg" => c.afg = b()?,
+        "afg" => c.generators = if b()? { c.generators.max(1) } else { 0 },
         "la" => c.la = b()?,
         "ext_trig" => c.ext_trig = b()?,
         _ => return Ok(false),
@@ -576,13 +583,13 @@ mod tests {
     #[test]
     fn model_table() {
         let c = lookup("dho802").unwrap();
-        assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.afg, c.ext_trig, c.series), (2, 70, false, false, true, "DHO800"));
+        assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.has_gen(), c.ext_trig, c.series), (2, 70, false, false, true, "DHO800"));
         let c = lookup("DHO814").unwrap();
         assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.ext_trig), (4, 100, false, false));
         let c = lookup("DHO914S").unwrap();
-        assert_eq!((c.rated_bw_mhz, c.la, c.afg), (125, true, true));
+        assert_eq!((c.rated_bw_mhz, c.la, c.has_gen()), (125, true, true));
         let c = lookup("DHO924-EDU").unwrap();
-        assert_eq!((c.rated_bw_mhz, c.afg, c.edu), (250, false, true));
+        assert_eq!((c.rated_bw_mhz, c.has_gen(), c.edu), (250, false, true));
         assert!(lookup("HDO1104").is_none() && lookup("MHO934").is_none());
     }
 
@@ -606,7 +613,7 @@ mod tests {
 
         // forced model (file or argument), capability overrides stay on top
         let p = Platform::build(Some(&f), Some("model = DHO924S\nafg = no\n"), None);
-        assert_eq!((p.caps.name.as_str(), p.caps.channels, p.caps.afg, p.source.clone()), ("DHO924S", 4, false, Source::Forced));
+        assert_eq!((p.caps.name.as_str(), p.caps.channels, p.caps.has_gen(), p.source.clone()), ("DHO924S", 4, false, Source::Forced));
         let p = Platform::build(None, Some("model = DHO804"), Some("DHO914S"));
         assert_eq!(p.caps.name, "DHO914S");
         let p = Platform::build(None, None, None);

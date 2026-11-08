@@ -3,15 +3,30 @@
 
 //! Scope state (what the user has set), value ladders and number formatting.
 
+use crate::board::{board, Active, Board};
 use crate::gfx::{rgb, Rgb};
 use crate::math::{MathOp, Window};
 
-/// Channel slots of the UI state (the 4-channel models; 2-channel models use the first `n_ch()`).
-pub const NCH: usize = 4;
+/// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`).
+pub const NCH: usize = <Active as Board>::MAX_CHANNELS;
+const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp take oos_dsp::CHANNELS channels");
+
+/// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`).
+pub const NGEN: usize = <Active as Board>::MAX_GENERATORS;
 
 /// Analog inputs of the unit (`oos_hal::model::platform()`), at most NCH.
 pub fn n_ch() -> usize {
     oos_hal::model::platform().caps.channels.min(NCH)
+}
+
+/// Built-in generators of the unit (`oos_hal::model::platform()`), at most NGEN.
+pub fn gen_count() -> usize {
+    oos_hal::model::platform().caps.generators.min(NGEN)
+}
+
+/// The memory depths of the board (Acquire menu).
+pub fn mdepths() -> &'static [(&'static str, u64)] {
+    board().depths()
 }
 
 /// Channel names of the unit, "CH1".."CHn" (option lists of channel sources).
@@ -59,7 +74,25 @@ pub const HDIV: f32 = 10.0;
 pub const VDIV: f32 = 8.0;
 
 /// Channel colours (yellow, sky blue, pink, teal: a colour-blind safe set).
-pub const CH_COLORS: [Rgb; NCH] = [rgb(0xf0, 0xe4, 0x42), rgb(0x56, 0xb4, 0xe9), rgb(0xe0, 0x8c, 0xc0), rgb(0x2e, 0xc4, 0xa0)];
+const PALETTE: [Rgb; 8] = [
+    rgb(0xf0, 0xe4, 0x42),
+    rgb(0x56, 0xb4, 0xe9),
+    rgb(0xe0, 0x8c, 0xc0),
+    rgb(0x2e, 0xc4, 0xa0),
+    rgb(0xf0, 0x90, 0x40),
+    rgb(0xa0, 0x90, 0xf0),
+    rgb(0xc0, 0xd0, 0x60),
+    rgb(0xe0, 0x60, 0x60),
+];
+pub const CH_COLORS: [Rgb; NCH] = {
+    let mut c = [PALETTE[0]; NCH];
+    let mut i = 0;
+    while i < NCH {
+        c[i] = PALETTE[i];
+        i += 1;
+    }
+    c
+};
 
 /// V/div at the probe tip for probe 1x: 500 µV .. 10 V (DHO800/900 range).
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
@@ -88,6 +121,19 @@ pub enum Coupling {
     Dc,
     Ac,
     Gnd,
+    /// DC into 50 ohms, on boards that offer it (`Board::couplings`)
+    Dc50,
+}
+
+impl Coupling {
+    pub fn name(self) -> &'static str {
+        match self {
+            Coupling::Dc => "DC",
+            Coupling::Ac => "AC",
+            Coupling::Gnd => "GND",
+            Coupling::Dc50 => "DC50",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -572,7 +618,7 @@ pub struct Model {
     pub avg_count: u32,
     /// segmented recording: records per RUN/SINGLE (0 = off), browsed with the history afterwards
     pub segments: usize,
-    pub mdepth: usize, // index into MDEPTHS (0 = auto)
+    pub mdepth: usize, // index into `mdepths()` (0 = auto)
     pub persist: usize, // index into PERSIST
     pub intensity: u32, // 10..100 %
     pub grid: Grid,
@@ -730,6 +776,9 @@ pub struct Model {
     pub bw_src: usize,
     pub bw_hint: f64,
     pub bw_bins: usize,
+    /// which generator the `afg_*` fields below are, the settings of the others
+    pub gen_sel: usize,
+    pub gen_bank: [GenCh; NGEN],
     pub afg_on: bool,
     /// arbitrary wave: id of `Board::arb_store` (0 = none yet), channel it is captured from
     pub afg_arb: u32,
@@ -787,9 +836,47 @@ pub const BW_20M: usize = 2;
 /// Index of "Full" in BWS.
 pub const BW_FULL: usize = 1;
 
-/// Memory depths, read for the screen through the FPGA compression above 1 M (`board::dho::hw::batch_plan`). 100 M and 125 M record
-/// on the unit but their time axis is ~0.1 % off (acquisition-start.md, "Memory depth beyond 50 M"), so the UI stops
-/// at 62.5 M for now. New entries go to the end: setups store the index.
+/// The settings of one built-in generator. The selected one is in the `afg_*` fields of the model, the others in
+/// `Model::gen_bank` (`Model::gen_select`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GenCh {
+    pub on: bool,
+    pub arb: u32,
+    pub arb_src: usize,
+    pub freq: f64,
+    pub ampl: f64,
+    pub offset: f64,
+    pub wave: usize,
+    pub duty: f64,
+    pub symmetry: f64,
+    pub modulation: usize,
+    pub mod_rate: f64,
+    pub mod_depth: f64,
+    pub fm_dev: f64,
+    pub pm_dev: f64,
+    pub mod_shape: usize,
+}
+
+impl GenCh {
+    pub const STANDARD: GenCh = GenCh {
+        on: false,
+        arb: 0,
+        arb_src: 0,
+        freq: 1000.0,
+        ampl: 1.0,
+        offset: 0.0,
+        wave: 0,
+        duty: 50.0,
+        symmetry: 50.0,
+        modulation: 0,
+        mod_rate: 100.0,
+        mod_depth: 100.0,
+        fm_dev: 100.0,
+        pm_dev: 90.0,
+        mod_shape: 0,
+    };
+}
+
 /// Wave shapes of the built-in generator (`Board::gen`).
 pub const AFG_WAVES: [&str; 7] = ["Sine", "Square", "Ramp", "Pulse", "Noise", "DC", "Arb"];
 /// Indices into AFG_WAVES the generator page treats apart.
@@ -799,10 +886,6 @@ pub const AFG_DC: usize = 5;
 pub const AFG_MODS: [&str; 4] = ["Off", "AM", "FM", "PM"];
 pub const AFG_MOD_SHAPES: [&str; 6] = ["Sine", "Square", "Triangle", "Up ramp", "Down ramp", "Noise"];
 
-pub const MDEPTHS: [(&str, u64); 11] = [
-    ("Auto", 0), ("1k", 1_000), ("10k", 10_000), ("100k", 100_000), ("1M", 1_000_000), ("10M", 10_000_000),
-    ("25M", 25_000_000), ("50M", 50_000_000), ("62.5M", 62_500_000), ("100M", 100_000_000), ("125M", 125_000_000),
-];
 /// Persistence: name, seconds (0 = minimum, <0 = infinite).
 pub const PERSIST: [(&str, f32); 7] = [("Min", 0.0), ("100 ms", 0.1), ("500 ms", 0.5), ("1 s", 1.0), ("5 s", 5.0), ("10 s", 10.0), ("Infinite", -1.0)];
 
@@ -812,7 +895,7 @@ impl Default for Model {
         let ts = tscales();
         let t200u = ts.iter().position(|&t| (t - 200e-6).abs() < 1e-9).unwrap_or(ts.len() / 2);
         let mut m = Model {
-            ch: [c(true), c(false), c(false), c(false)],
+            ch: std::array::from_fn(|i| c(i == 0)),
             active: 0,
             tscale: t200u,
             delay: 0.0,
@@ -834,8 +917,8 @@ impl Default for Model {
             video_std: VideoStd::Pal,
             video_sync: VSync::AllFields,
             video_line: 10,
-            pat: [Bit::H, Bit::X, Bit::X, Bit::H],
-            pat_levels: [1.25, 0.0, 1.65, 1.65],
+            pat: std::array::from_fn(|i| if i == 0 || i == NCH - 1 { Bit::H } else { Bit::X }),
+            pat_levels: std::array::from_fn(|i| [1.25, 0.0, 1.65, 1.65][i.min(3)]),
             win_mode: WinMode::Enter,
             nth_idle: 50e-6,
             nth_n: 1,
@@ -954,6 +1037,8 @@ impl Default for Model {
             bw_src: 0,
             bw_hint: 0.0,
             bw_bins: 2000,
+            gen_sel: 0,
+            gen_bank: [GenCh::STANDARD; NGEN],
             afg_on: false,
             afg_arb: 0,
             grid_bright: 100,
@@ -987,6 +1072,58 @@ impl Default for Model {
 }
 
 impl Model {
+    /// The settings of the selected generator.
+    pub fn gen_read(&self) -> GenCh {
+        GenCh {
+            on: self.afg_on,
+            arb: self.afg_arb,
+            arb_src: self.afg_arb_src,
+            freq: self.afg_freq,
+            ampl: self.afg_ampl,
+            offset: self.afg_offset,
+            wave: self.afg_wave,
+            duty: self.afg_duty,
+            symmetry: self.afg_symmetry,
+            modulation: self.afg_mod,
+            mod_rate: self.afg_mod_rate,
+            mod_depth: self.afg_mod_depth,
+            fm_dev: self.afg_fm_dev,
+            pm_dev: self.afg_pm_dev,
+            mod_shape: self.afg_mod_shape,
+        }
+    }
+
+    fn gen_write(&mut self, g: GenCh) {
+        (self.afg_on, self.afg_arb, self.afg_arb_src) = (g.on, g.arb, g.arb_src);
+        (self.afg_freq, self.afg_ampl, self.afg_offset) = (g.freq, g.ampl, g.offset);
+        (self.afg_wave, self.afg_duty, self.afg_symmetry) = (g.wave, g.duty, g.symmetry);
+        (self.afg_mod, self.afg_mod_rate, self.afg_mod_depth) = (g.modulation, g.mod_rate, g.mod_depth);
+        (self.afg_fm_dev, self.afg_pm_dev, self.afg_mod_shape) = (g.fm_dev, g.pm_dev, g.mod_shape);
+    }
+
+    /// The settings of generator `i`.
+    pub fn gen_ch(&self, i: usize) -> GenCh {
+        if i == self.gen_sel {
+            self.gen_read()
+        } else {
+            self.gen_bank[i]
+        }
+    }
+
+    /// Makes generator `i` the one the page and the `afg_*` fields work on.
+    pub fn gen_select(&mut self, i: usize) {
+        if i != self.gen_sel && i < NGEN {
+            self.gen_bank[self.gen_sel] = self.gen_read();
+            self.gen_write(self.gen_bank[i]);
+            self.gen_sel = i;
+        }
+    }
+
+    /// Highest frequency (Hz) of the selected generator's wave shape.
+    pub fn gen_max_hz(&self) -> f64 {
+        board().gen_max_hz(&self.gen_read())
+    }
+
     fn dsp_slope(s: Slope) -> oos_dsp::trigger::Slope {
         match s {
             Slope::Rise => oos_dsp::trigger::Slope::Rising,
@@ -1291,6 +1428,17 @@ impl Model {
     pub fn fit_platform(&mut self) -> bool {
         let n = n_ch();
         let mut changed = false;
+        // what this board does not have: a coupling from a setup of another board, a generator it lacks
+        for ch in &mut self.ch {
+            if !board().couplings().contains(&ch.coupling) {
+                ch.coupling = Coupling::Dc;
+                changed = true;
+            }
+        }
+        if self.gen_sel >= gen_count().max(1) {
+            self.gen_select(0);
+            changed = true;
+        }
         for c in n..NCH {
             changed |= std::mem::replace(&mut self.ch[c].on, false);
         }
@@ -1379,7 +1527,7 @@ impl Model {
     /// (sample rate, memory depth) as the acquisition would use them.
     pub fn srate_depth(&self) -> (f64, u64) {
         let window = self.hw_time_per_div() as f64 * HDIV as f64;
-        let want = MDEPTHS[self.mdepth].1;
+        let want = mdepths()[self.mdepth].1;
         let maxsr = self.max_srate();
         if want == 0 {
             let depth_cap = 1_000_000u64.min(self.max_mem());
@@ -1474,5 +1622,46 @@ mod platform_tests {
         assert!(!m.fit_platform());
         assert!(m.ch[3].on && m.dec_src == 3);
         assert_eq!(ch_names().len(), 4);
+    }
+
+    #[test]
+    fn every_generator_keeps_its_settings() {
+        let mut m = Model::default();
+        assert_eq!(m.gen_read(), GenCh::STANDARD);
+        m.afg_freq = 5e3;
+        m.afg_on = true;
+        if NGEN < 2 {
+            m.gen_select(1);
+            assert_eq!((m.gen_sel, m.afg_freq), (0, 5e3), "no second generator on this board");
+            return;
+        }
+        m.gen_select(1);
+        assert_eq!(m.gen_read(), GenCh::STANDARD);
+        m.afg_freq = 7e3;
+        assert_eq!(m.gen_ch(0).freq, 5e3);
+        m.gen_select(0);
+        assert!(m.afg_freq == 5e3 && m.afg_on);
+        assert_eq!(m.gen_ch(1).freq, 7e3);
+    }
+
+    #[test]
+    fn a_setup_of_another_board_fits_this_one() {
+        let mut m = Model::default();
+        assert!(!m.fit_platform());
+        if !board().couplings().contains(&Coupling::Dc50) {
+            m.ch[1].coupling = Coupling::Dc50;
+            assert!(m.fit_platform());
+            assert_eq!(m.ch[1].coupling, Coupling::Dc);
+        }
+    }
+
+    #[test]
+    fn the_boards_lists_are_usable() {
+        let d = mdepths();
+        assert_eq!(d[0].1, 0, "Auto first");
+        assert!(d.windows(2).all(|w| w[0].1 < w[1].1), "ascending");
+        assert_eq!(d[d.len() - 1].1, oos_hal::model::Limits::standard().max_mem[0], "the list ends at the largest depth");
+        assert!(board().couplings().contains(&Coupling::Dc), "the fallback of fit_platform");
+        assert!(n_ch() <= NCH && gen_count() <= NGEN);
     }
 }

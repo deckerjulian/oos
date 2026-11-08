@@ -209,7 +209,7 @@ impl Ui {
     }
 
     pub(super) fn bode_begin(&mut self) {
-        if self.bode_gen() == BUILTIN && !oos_hal::model::platform().caps.afg {
+        if self.bode_gen() == BUILTIN && !oos_hal::model::platform().caps.has_gen() {
             let name = &oos_hal::model::platform().caps.name;
             return self.toast(&format!("No built-in generator on the {}: choose an external one", name));
         }

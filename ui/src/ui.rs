@@ -435,6 +435,7 @@ enum Item {
     IdentifyAct,
     ProtoWatch,
     IdFind(usize),
+    AfgSel,
     AfgOn,
     AfgArbSrc,
     AfgArbGrab,
@@ -1372,7 +1373,7 @@ impl Ui {
             }
         }
         if self.m.color_grade {
-            let on = [0, 1, 2, 3].map(|c| self.m.ch[c].on);
+            let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
             self.vmax_cg = follow(self.vmax_cg, self.ph.merged_max(on));
             if self.m.zoom {
                 self.vmaxz_cg = follow(self.vmaxz_cg, self.phz.merged_max(on));
@@ -1431,7 +1432,7 @@ impl Ui {
             && m.z_src.is_none()
             && !m.zones.iter().any(|z| z.usable())
             && board().slow_mode(m) == crate::board::Slow::Off
-            && (0..NCH).all(|c| !m.ch[c].on || (m.ch[c].coupling == Coupling::Dc && m.ch[c].bw != BW_20M))
+            && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
     }
 
     /// One frame of the fast path into the main phosphor map; false if its trigger edge was not found near the
@@ -1979,7 +1980,7 @@ impl Ui {
         if c.op == MathOp::Expr {
             let Ok(e) = oos_dsp::expr::Expr::parse(&self.m.math_expr[k]) else { return Vec::new() };
             let n = rec.ch.iter().map(|c| c.len()).max().unwrap_or(0);
-            return e.eval([&rec.ch[0], &rec.ch[1], &rec.ch[2], &rec.ch[3]], rec.t0, rec.dt, n);
+            return e.eval(std::array::from_fn(|c| &rec.ch[c][..]), rec.t0, rec.dt, n);
         }
         let a = self.math_source(c.a, k);
         let b = if c.op.two_sources() { self.math_source(c.b, k) } else { Vec::new() };
@@ -2140,7 +2141,7 @@ impl Ui {
         if let Some(e) = self.dec_cache.borrow().iter().find(|e| e.0 == key) {
             return Ok(e.1.clone());
         }
-        let mut p = crate::trig::decode(m, [0, 1, 2, 3].map(|c| &rec.ch[c][..]), rec.dt)?;
+        let mut p = crate::trig::decode(m, std::array::from_fn(|c| &rec.ch[c][..]), rec.dt)?;
         for x in p.iter_mut() {
             x.t0 = rec.t0 + x.t0 * rec.dt;
             x.t1 = rec.t0 + x.t1 * rec.dt;
@@ -2869,7 +2870,7 @@ impl Ui {
         let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
         let n_off = n as i32 - n_on;
         let caps = &oos_hal::model::platform().caps;
-        let aux = [(caps.la, self.m.la.on), (caps.afg, self.m.afg_on)];
+        let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
         let start = Self::MENU_BTN.x + Self::MENU_BTN.w + 7;
         let room = |wide: bool| {
             let a: i32 = aux.iter().filter(|a| a.0).map(|a| if a.1 && wide { AUX_WIDE } else { AUX_NARROW } + 7).sum();
@@ -2975,11 +2976,7 @@ impl Ui {
                 cv.circle(r.x + r.w - 16, r.y + 14, 5, col);
                 let scale = format!("{}/div", si_short(ch.volts_per_div() as f64, ch.unit.name()));
                 cv.text(Self::card_font(f, &scale, r.w - 24), r.x + 16, r.y + 42, &scale, TEXT);
-                let cpl = match ch.coupling {
-                    Coupling::Dc => "DC",
-                    Coupling::Ac => "AC",
-                    Coupling::Gnd => "GND",
-                };
+                let cpl = ch.coupling.name();
                 let mut sub = vec![cpl.to_string(), format!("{}\u{d7}", ch.probe)];
                 if ch.bw != 0 && ch.bw != BW_FULL {
                     sub.push(format!("BW {}", BWS[ch.bw].0));
@@ -3224,7 +3221,7 @@ impl Ui {
         let ana = vec![Open(MenuId::Spectrum), Open(MenuId::Eye), Open(MenuId::Power), Open(MenuId::Bode), Open(MenuId::BwTest), IdentifyAct];
         // the generator page only on models with one (S models), the LA only with the port
         let mut ins = Vec::new();
-        if oos_hal::model::platform().caps.afg {
+        if oos_hal::model::platform().caps.has_gen() {
             ins.push(Open(MenuId::Afg));
         }
         if la::available() {
@@ -3293,8 +3290,8 @@ impl Ui {
         if !self.m.trig_channels().iter().enumerate().all(|(c, &u)| !u || !rec.ch[c].is_empty()) {
             return Vec::new();
         }
-        let refs: [&[f32]; NCH] = [0, 1, 2, 3].map(|c| &rec.ch[c][..]);
-        let hyst = [0, 1, 2, 3].map(|c| 0.1 * self.m.ch[c].volts_per_div());
+        let refs: [&[f32]; NCH] = std::array::from_fn(|c| &rec.ch[c][..]);
+        let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * self.m.ch[c].volts_per_div());
         let inp = oos_dsp::trigger::Input { ch: refs, dt: rec.dt, hyst };
         crate::trig::find_all(&self.m, &inp).into_iter().map(|i| rec.t0 + i * rec.dt).collect()
     }
@@ -3427,9 +3424,9 @@ impl Ui {
             }
             _ => m.dec_src = 2,
         }
-        m.ch[2].on = true;
+        m.ch[2.min(NCH - 1)].on = true;
         if matches!(p, Proto::I2c | Proto::Spi) {
-            m.ch[3].on = true;
+            m.ch[3.min(NCH - 1)].on = true;
         }
         // every source the protocol uses
         let r = p.roles();
@@ -3637,11 +3634,11 @@ impl Ui {
             }
             TrigType::Pattern => {
                 on(3, m);
-                m.pat = [Bit::H, Bit::X, Bit::X, Bit::R];
+                m.pat = std::array::from_fn(|i| if i == 0 { Bit::H } else if i == NCH - 1 { Bit::R } else { Bit::X });
                 m.trig_src = 0;
             }
             TrigType::Duration => {
-                m.pat = [Bit::H, Bit::X, Bit::X, Bit::X];
+                m.pat = std::array::from_fn(|i| if i == 0 { Bit::H } else { Bit::X });
                 (m.trig_src, m.trig_when, m.trig_t1) = (0, WhenKind::Gt, 200e-6);
             }
             TrigType::Timeout => {
@@ -3715,7 +3712,7 @@ impl Ui {
             MenuId::Decode => "Decode".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
-                Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(board().gen_max_hz(&self.m), "Hz")),
+                Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
@@ -3986,7 +3983,7 @@ impl Ui {
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         match it {
             Item::ChOn(c) => onoff(m.ch[c].on),
-            Item::ChCoupling(c) => format!("{:?}", m.ch[c].coupling).to_uppercase(),
+            Item::ChCoupling(c) => m.ch[c].coupling.name().into(),
             Item::ChBw(c) => BWS[m.ch[c].bw].0.into(),
             Item::ChProbe(c) => format!("{}x", m.ch[c].probe),
             Item::ChInvert(c) => onoff(m.ch[c].invert),
@@ -4062,7 +4059,7 @@ impl Ui {
             },
             Item::AcqAvg => format!("{}", m.avg_count),
             Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
-            Item::AcqDepth => MDEPTHS[m.mdepth].0.into(),
+            Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => format!("CH{}", self.meas_src + 1),
             Item::MeasSrcB => format!("CH{}", self.meas_src_b + 1),
             Item::ChFine => onoff(m.fine_v),
@@ -4178,9 +4175,9 @@ impl Ui {
         match it {
             Item::ChOn(c) => m.ch[c].on = !m.ch[c].on && c < n_ch(),
             Item::ChCoupling(c) => {
-                let all = [Coupling::Dc, Coupling::Ac, Coupling::Gnd];
-                let i = all.iter().position(|&x| x == m.ch[c].coupling).unwrap();
-                m.ch[c].coupling = all[cyc(i, 3, d)];
+                let all = board().couplings();
+                let i = all.iter().position(|&x| x == m.ch[c].coupling).unwrap_or(0);
+                m.ch[c].coupling = all[cyc(i, all.len(), d)];
             }
             Item::ChBw(c) => m.ch[c].bw = cyc(m.ch[c].bw, BWS.len(), d),
             Item::ChProbe(c) => {
@@ -4333,7 +4330,7 @@ impl Ui {
                 let i = AVERAGES.iter().position(|&x| x == m.avg_count).unwrap_or(3);
                 m.avg_count = AVERAGES[step(i, AVERAGES.len(), d)];
             }
-            Item::AcqDepth => m.mdepth = cyc(m.mdepth, MDEPTHS.len(), d),
+            Item::AcqDepth => m.mdepth = cyc(m.mdepth, mdepths().len(), d),
             Item::MeasSrc => self.meas_src = src_step(self.meas_src, NCH, d),
             Item::MeasSrcB => self.meas_src_b = src_step(self.meas_src_b, NCH, d),
             Item::DvmOn => m.dvm_on = !m.dvm_on,
@@ -4937,7 +4934,7 @@ impl Ui {
             Item::ChOn(_) | Item::ChInvert(_) | Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn | Item::ColorGrade | Item::MaskOn => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
             Item::MaskAction => &["None", "Stop"],
-            Item::ChCoupling(_) => &["DC", "AC", "GND"],
+            Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
             Item::ChProbe(_) => &["1x", "10x", "100x"],
             Item::TrigSrc | Item::MeasSrc | Item::DecSrc | Item::RefSrc => return ch_names(),
@@ -4974,7 +4971,7 @@ impl Ui {
             Item::DecSrc4 | Item::DecDiff => return opt_ch_names("None"),
             Item::DecCanH => &["RX/TX", "CAN_H"],
             Item::TrigBusWhat => &["Frame", "ID/Addr", "Data", "Error"],
-            Item::DecSrc2 => &["CH1", "CH2", "CH3", "CH4"],
+            Item::DecSrc2 => return ch_names(),
             Item::DecCs => return opt_ch_names("None"),
             Item::DecMode => &["0", "1", "2", "3"],
             Item::DecParity => &["None", "Even", "Odd"],
@@ -5007,7 +5004,7 @@ impl Ui {
             // long lists: shown as a picker (see `ctl`)
             Item::MathOpI => return MATH_OPS.iter().map(|o| o.name().to_string()).collect(),
             Item::TrigType => return TRIG_TYPES.iter().map(|t| t.name().to_string()).collect(),
-            Item::AcqDepth => return MDEPTHS.iter().map(|d| d.0.to_string()).collect(),
+            Item::AcqDepth => return mdepths().iter().map(|d| d.0.to_string()).collect(),
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
             Item::Persist => return PERSIST.iter().map(|p| p.0.to_string()).collect(),
             Item::AcqAvg => return AVERAGES.iter().map(|n| n.to_string()).collect(),
@@ -5548,7 +5545,7 @@ impl Ui {
             }
             key::LA | key::GI => {
                 let p = oos_hal::model::platform();
-                let (name, has) = if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.afg) };
+                let (name, has) = if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.has_gen()) };
                 if !has {
                     self.toast(&format!("The {} has no {}", p.caps.name, name));
                 } else if k == key::GI {

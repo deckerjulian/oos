@@ -17,7 +17,7 @@ mod record;
 
 pub use record::to_record;
 
-use crate::model::{Model, NCH};
+use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
 
 /// The board this build drives.
@@ -73,6 +73,11 @@ pub trait Board: Sync + 'static {
     /// the generator settings for a model
     type Gen: Send + Clone + PartialEq + 'static;
 
+    /// analog channels of the largest model of the board (the unit's own: `model::n_ch`)
+    const MAX_CHANNELS: usize;
+    /// built-in generators of the largest model of the board (the unit's own: `model::gen_count`)
+    const MAX_GENERATORS: usize;
+
     /// board family, for logs
     fn name(&self) -> &'static str;
 
@@ -91,14 +96,19 @@ pub trait Board: Sync + 'static {
     /// prints what the debug source would write (`--fpga-dry`), no hardware access
     fn dry(&self);
 
+    /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
+    fn depths(&self) -> &'static [(&'static str, u64)];
+
     // ---- front end
     /// the fine volts-per-division steps of the front end, in nV
     fn vscale_steps_nv(&self) -> Vec<i64>;
+    /// the input couplings of the channels, in menu order
+    fn couplings(&self) -> &'static [Coupling];
 
-    // ---- generator (models with one: `platform().caps.afg`)
-    fn gen(&self, m: &Model) -> Self::Gen;
-    /// highest frequency (Hz) of the model's wave shape
-    fn gen_max_hz(&self, m: &Model) -> f64;
+    // ---- generators (models with one: `platform().caps.generators`)
+    fn gen(&self, g: &GenCh) -> Self::Gen;
+    /// highest frequency (Hz) of this wave shape
+    fn gen_max_hz(&self, g: &GenCh) -> f64;
     /// amplitude and offset (nV) the output can make at `f_uhz` (µHz)
     fn gen_clamp(&self, ampl_nv: f64, offset_nv: f64, f_uhz: f64) -> (f64, f64);
     /// keeps one period of samples as the arbitrary wave; its id for the model, None without enough samples
@@ -181,8 +191,8 @@ pub struct Shared {
     pub cal_progress: Option<(usize, usize, String)>,
     pub cal_result: Option<Result<String, String>>,
     pub cal_cancel: bool,
-    /// generator wanted (`Board::gen`); applied by the thread when it changes
-    pub afg: Option<Gen>,
+    /// generators wanted (`Board::gen`); applied by the thread when they change
+    pub afg: [Option<Gen>; NGEN],
     /// counter set by the UI with the settings; frames acquired after applying them carry it (`Frame::stamp`), so a
     /// sweep can tell frames of the new step from queued ones
     pub stamp: u64,
