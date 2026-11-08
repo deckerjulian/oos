@@ -1,6 +1,9 @@
 # Changes
 
-## Unreleased
+## 0.1.1
+
+From 0.1.0: install the package as before, then power-cycle the scope. From 0.1.1 on, updates start the new build by
+kexec first.
 
 Fixes:
 
