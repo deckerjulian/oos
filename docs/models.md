@@ -21,6 +21,9 @@ Format (the decoder is in `hal/src/model.rs`):
 
 The format is verified on the unit: its file decodes with valid checksums. OOS only reads the file and never writes it.
 
+A file that names a model outside the DHO800/DHO900 family (an MHO900, a DHO1000, ...) marks another board: then OOS
+drives no hardware ([porting.md](porting.md)). A DHO8xx/DHO9xx name missing from the table counts as a DHO924S.
+
 The keys are not part of OOS. At the first start OOS looks for them in the stock software of the unit itself
 (`hal/src/vendorkeys.rs`), accepts them only if the unit's own file decodes with them, and keeps them in `/oos/vendor.keys`.
 Without the stock software OOS cannot read the file: set `model = ...` in `/oos/limits.conf` then.

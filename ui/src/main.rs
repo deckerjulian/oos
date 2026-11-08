@@ -116,8 +116,17 @@ fn main() {
         eprintln!("oos-ui: {}", w);
     }
     let experimental = p.experimental();
+    let foreign = p.foreign.clone();
     oos_hal::model::init(p);
+    // another board (docs/porting.md): no hardware source, the demo signal instead
+    let args: Vec<String> = match &foreign {
+        Some(_) => args.iter().filter(|a| !matches!(a.as_str(), "--hw" | "--fpga-live" | "--afe")).cloned().collect(),
+        None => args,
+    };
     let mut ui = Ui::new(source(&args));
+    if let Some(m) = &foreign {
+        ui.toast(&format!("This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)", m));
+    }
     ui.limits_path = limits;
     if experimental {
         ui.toast("Experimental limits active (limits.conf), see System > System info");

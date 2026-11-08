@@ -175,6 +175,9 @@ pub struct Platform {
     pub overrides: Vec<String>,
     /// problems found while detecting (unreadable vendor.bin, unknown model, bad lines in the limits file)
     pub warnings: Vec<String>,
+    /// the vendor file names a model outside the DHO800/DHO900 family (an MHO900, a DHO1000, ...): another board,
+    /// whose hardware OOS does not drive (`drives_hardware`, docs/porting.md). `--model` does not change it.
+    pub foreign: Option<String>,
 }
 
 impl Default for Platform {
@@ -187,8 +190,17 @@ impl Default for Platform {
             source: Source::Assumed,
             overrides: Vec::new(),
             warnings: Vec::new(),
+            foreign: None,
         }
     }
+}
+
+/// A model name of the DHO800/DHO900 family (DHO8xx, DHO9xx), also one missing from the table (a new variant). The
+/// DHO1000 (DHO10xx) and DHO4000 (DHO40xx) are other boards.
+pub fn family(name: &str) -> bool {
+    let n = name.trim().to_ascii_uppercase();
+    let b = n.as_bytes();
+    n.starts_with("DHO") && b.len() >= 6 && matches!(b[3], b'8' | b'9') && b[4].is_ascii_digit() && b[5].is_ascii_digit()
 }
 
 impl Platform {
@@ -205,7 +217,18 @@ impl Platform {
                         p.caps = c;
                         p.source = Source::Vendor;
                     }
-                    None => p.warnings.push(format!("vendor.bin: model {:?} is not a DHO800/DHO900", v.model.unwrap_or_default())),
+                    None => {
+                        let m = v.model.unwrap_or_default();
+                        if family(&m) {
+                            p.warnings.push(format!("vendor.bin: model {:?} is not in the model table: DHO924S assumed", m));
+                        } else {
+                            p.warnings.push(format!(
+                                "vendor.bin: model {:?} is not a DHO800/DHO900, another board: OOS does not drive its hardware (docs/porting.md)",
+                                m
+                            ));
+                            p.foreign = Some(m);
+                        }
+                    }
                 }
             }
             Some(Err(e)) => p.warnings.push(format!("vendor.bin: {}", e)),
@@ -323,6 +346,9 @@ impl Platform {
             Source::Forced => "  (forced)",
             Source::Assumed => "  (assumed)",
         };
+        if let Some(m) = &self.foreign {
+            return format!("{}  SN {}  (another board: hardware not driven)", m, self.serial.as_deref().unwrap_or("-"));
+        }
         format!("{}  SN {}{}", self.caps.name, self.serial.as_deref().unwrap_or("-"), src)
     }
 
@@ -341,6 +367,11 @@ impl Platform {
 
     pub fn experimental(&self) -> bool {
         !self.overrides.is_empty()
+    }
+
+    /// False on another board (`foreign`): then nothing may touch the acquisition hardware, the generator or the LA.
+    pub fn drives_hardware(&self) -> bool {
+        self.foreign.is_none()
     }
 }
 
@@ -650,6 +681,30 @@ mod tests {
         let p = Platform::build(Some(&[1, 2, 3, 4, 5, 6, 7, 8]), None, None);
         assert_eq!(p.source, Source::Assumed);
         assert_eq!(p.warnings.len(), 2, "{:?}", p.warnings);
+    }
+
+    #[test]
+    fn another_board_is_not_driven() {
+        for m in ["MHO934", "MHO98", "DHO1074", "DHO4204", "HDO1104"] {
+            let f = encode_vendor(&[(5, m), (7, "X1234567")]);
+            let p = Platform::build(Some(&f), None, None);
+            assert_eq!(p.foreign.as_deref(), Some(m));
+            assert!(!p.drives_hardware());
+            assert!(p.ident().starts_with(m), "{}", p.ident());
+            // neither the limits file nor the argument makes it a DHO
+            let p = Platform::build(Some(&f), Some("model = DHO924S\n"), Some("DHO924S"));
+            assert!(!p.drives_hardware(), "{}", m);
+        }
+        // the family, also a variant missing from the table
+        for m in ["DHO924S", "DHO804", "dho914-edu", "DHO934"] {
+            assert!(family(m), "{}", m);
+            let p = Platform::build(Some(&encode_vendor(&[(5, m)])), None, None);
+            assert!(p.drives_hardware(), "{}", m);
+        }
+        assert!(!family("DHO1074") && !family("DHO4204") && !family("DHO9") && !family("MHO934"));
+        // no or an unreadable vendor file: as before, DHO924S assumed
+        assert!(Platform::build(None, None, None).drives_hardware());
+        assert!(Platform::build(Some(&[1, 2, 3, 4, 5, 6, 7, 8]), None, None).drives_hardware());
     }
 
     #[test]

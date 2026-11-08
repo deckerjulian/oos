@@ -28,6 +28,9 @@ New:
   over the network stays. `oos-reinstall.txt` on the stick writes the stick's build; a damaged `recovery` gets the
   rollback image back.
 - SCPI `:WAVeform:MODE RAW` reads every sample of the record in the screen window.
+- OOS drives no hardware on another board: when `vendor.bin` names a model outside the DHO800/DHO900 family,
+  `oos-fpgad` refuses and `oos-ui` shows the demo signal.
+- `tools/platform-probe.sh` describes another Rigol model for a port, read only ([docs/porting.md](docs/porting.md)).
 
 Measured:
 

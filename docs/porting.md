@@ -3,6 +3,11 @@
 OOS runs on the DHO800 and DHO900 only. **Do not install it on another model**: its acquisition part is another
 board, and the USB install and the card layout are verified on the DHO800/DHO900 only.
 
+If OOS starts on another board anyway, it sees it in `/rigol/data/vendor.bin`: a model outside the DHO800/DHO900
+family (not DHO8xx or DHO9xx) makes `oos-fpgad` refuse every hardware command and `oos-ui` show the demo signal
+(`hal::model::Platform::drives_hardware`). `--model` and `model =` in limits.conf do not change that. Without a
+readable vendor file OOS still assumes a DHO924S.
+
 This page says what would carry over to another model, what would not, and how an owner can describe one without risk.
 
 ## What carries over
