@@ -13,8 +13,14 @@
 //!
 //! Only `boot` (its magic), `recovery` and the start of `backup` are written. A failure or a power cut before step 4
 //! leaves a card that starts stock as before.
+//!
+//! Run again on a card that already has OOS (to start it once more in one-shot mode), it keeps what `recovery` holds
+//! when that is an image the loader takes: a newer build installed over the network since stays. Only `reinstall`
+//! (`oos-reinstall.txt` on the stick) writes the stick's build over it. A damaged OOS image in `recovery` (an update
+//! cut by a power loss) is replaced by the rollback image when that one is whole, else by the stick's build.
 
 use super::card::{check_image, Card, Region, BOOT_LBA, RECOVERY_LBA, SECTOR};
+use std::borrow::Cow;
 use super::hash::{hex, Sha256};
 use super::pkg;
 use std::io::{Read, Write};
@@ -37,6 +43,8 @@ pub struct FirstOpt {
     pub execute: bool,
     /// a model that OOS never ran on
     pub any_model: bool,
+    /// write the stick's build to `recovery` also over a valid OOS image there
+    pub reinstall: bool,
 }
 
 /// The model of `/rigol/data/vendor.bin`, if it may be installed on.
@@ -174,10 +182,40 @@ pub fn first_install(
 
     let current = card.read(RECOVERY_LBA, 4096).map_err(io)?;
     let what = kind(&current).ok_or("`recovery` holds something unknown: nothing written")?;
-    let (on_card, _) = card.read_image(Region::Recovery, img.len()).map_err(io)?;
-    let same = on_card == img;
-    log(if same { "recovery already holds this image" } else { "recovery: the image goes here" });
     log(&format!("recovery holds {}", what));
+    let (on_card, _) = card.read_image(Region::Recovery, img.len()).map_err(io)?;
+    // what goes to recovery: None keeps what is there
+    let put: Option<(Cow<[u8]>, &str)> = if on_card == img {
+        log("recovery already holds this image");
+        None
+    } else if what == "an OOS image" {
+        let valid = card.header(Region::Recovery).map_err(io)?.map(|h| card.read_image(Region::Recovery, h.len)).transpose().map_err(io)?;
+        match valid.as_ref().map(|(b, _)| check_image(b)) {
+            Some(Ok(i)) if !opt.reinstall => {
+                log(&format!(
+                    "recovery holds a valid OOS image ('{}', {} bytes), maybe a newer build installed over the network: kept, only selected (oos-reinstall.txt on the stick writes the stick's build)",
+                    i.name, i.len
+                ));
+                None
+            }
+            Some(Ok(_)) => Some((Cow::Borrowed(img), "recovery: the stick's build goes here (oos-reinstall.txt)")),
+            _ => match card.header(Region::Slot).map_err(io)? {
+                Some(h) => {
+                    let (b, _) = card.read_image(Region::Slot, h.len).map_err(io)?;
+                    match check_image(&b) {
+                        Ok(_) if !opt.reinstall => Some((Cow::Owned(b), "recovery holds a damaged OOS image: the rollback image goes back there")),
+                        _ => Some((Cow::Borrowed(img), "recovery holds a damaged OOS image: the stick's build goes here")),
+                    }
+                }
+                None => Some((Cow::Borrowed(img), "recovery holds a damaged OOS image: the stick's build goes here")),
+            },
+        }
+    } else {
+        Some((Cow::Borrowed(img), "recovery: the image goes here"))
+    };
+    if let Some((_, why)) = &put {
+        log(why);
+    }
 
     let serial = vendor.and_then(|v| crate::model::decode_vendor(v).ok()).and_then(|v| v.serial);
     save_set(card, save, serial.as_deref(), log)?;
@@ -187,15 +225,15 @@ pub fn first_install(
         return Ok(());
     }
     // a power cut in the write must start stock, not the half-written image
-    if !same {
+    if put.is_some() {
         card.disarm_oos()?;
     }
     if need_copy {
         card.write_image(Region::Fallback, &copy)?;
         log("backup: stock copy written and read back");
     }
-    if !same {
-        card.write_image(Region::Recovery, img)?;
+    if let Some((b, _)) = &put {
+        card.write_image(Region::Recovery, b)?;
         log("recovery: image written and read back");
     }
     card.arm_oos()?;

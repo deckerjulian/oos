@@ -76,9 +76,20 @@ pub fn key_id(pk: &[u8; 32]) -> [u8; 8] {
 
 /// Header + image, signed with `seed`.
 pub fn build(seed: &[u8; 32], build: &str, kernel: &str, image: &[u8]) -> Result<Vec<u8>, String> {
+    build_with(seed, build, kernel, image, &[])
+}
+
+/// `build` with further signed `name value` lines (e.g. `trial kexec`, `kexec::LINE`).
+pub fn build_with(seed: &[u8; 32], build: &str, kernel: &str, image: &[u8], extra: &[(&str, &str)]) -> Result<Vec<u8>, String> {
     for (n, v) in [("build", build), ("kernel", kernel)] {
         if v.is_empty() || v.contains('\n') {
             return Err(format!("{} must be one non-empty line", n));
+        }
+    }
+    let fixed = ["target", "build", "kernel", "size", "sha256", "key", "sig"];
+    for (k, v) in extra {
+        if k.is_empty() || k.contains([' ', '\n']) || v.contains('\n') || fixed.contains(k) {
+            return Err(format!("bad extra header line '{} {}'", k, v));
         }
     }
     let pk = ed25519::public_key(seed);
@@ -89,7 +100,7 @@ pub fn build(seed: &[u8; 32], build: &str, kernel: &str, image: &[u8]) -> Result
         size: image.len() as u64,
         sha256: sha256(image),
         key: key_id(&pk),
-        extra: Vec::new(),
+        extra: extra.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
     };
     let text = m.signed_text();
     let sig = ed25519::sign(seed, text.as_bytes());
@@ -255,6 +266,19 @@ mod tests {
         assert!(verify(&p4, &[pk]).is_err());
         // not a package at all
         assert!(verify(b"ANDROID!....", &[pk]).is_err());
+    }
+
+    #[test]
+    fn extra_lines_are_signed_and_kept() {
+        let pk = ed25519::public_key(&SEED);
+        let pkg = build_with(&SEED, "20261108-080000", "6.12.115+", b"image", &[("trial", "kexec")]).unwrap();
+        let (h, _) = verify(&pkg, &[pk]).unwrap();
+        assert_eq!(h.manifest.extra, vec![("trial".to_string(), "kexec".to_string())]);
+        let mut p2 = pkg.clone();
+        let at = p2.windows(5).position(|w| w == b"kexec").unwrap();
+        p2[at] = b'K';
+        assert!(verify(&p2, &[pk]).unwrap_err().contains("SIGNATURE INVALID"));
+        assert!(build_with(&SEED, "b", "k", b"i", &[("size", "1")]).is_err());
     }
 
     #[test]

@@ -6,13 +6,19 @@
 //! On the unit:
 //!   oos-update status [--quick]            what recovery and the rollback slot hold, trial state, boot mode
 //!                                          (--quick: headers only, no SHA-256 over the images)
-//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force]
-//!                                          check the signature and the image, keep the running image in the rollback
-//!                                          slot, write the new one to recovery, read it back, arm OOS (dry run without
-//!                                          --execute); the new image starts on trial at the next power-on
+//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--no-kexec | --new-dt]
+//!                                          check the signature and the image (dry run without --execute), then start
+//!                                          the new image by kexec with nothing written; that start
+//!                                          installs it (rollback slot, recovery, read back, OOS armed) and is its
+//!                                          first trial start. --no-kexec (also: a package without 'trial kexec') and
+//!                                          --new-dt (another device tree, which kexec cannot try) write it directly;
+//!                                          it starts on trial at the next power-on
+//!   oos-update kexec-check FILE.oosupd     load the package's kernel and initramfs for a kexec start and unload them
+//!                                          again: nothing written, no restart
 //!   oos-update rollback [--execute]        write the rollback image back to recovery and arm OOS
-//!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--execute]
-//!                                          first install from the running stock system, rescue set in DIR
+//!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]
+//!                                          first install from the running stock system, rescue set in DIR; again on
+//!                                          a card with a valid OOS image it only selects OOS (--reinstall: writes it)
 //!   oos-update confirm                     end the trial by hand (the watcher normally does it); only once the image
 //!                                          on trial runs
 //!   oos-update arm                         select OOS for the next power-on: only a valid image in recovery, never
@@ -33,7 +39,7 @@
 //! Common options: --card /dev/mmcblk0, --state /oos/update/state, --keys FILE (extra trusted keys: verify, and
 //! install on a card file for tests; refused for the unit's card).
 
-use oos_hal::update::{self, card, hash::hex, pkg, Card, InstallOpt, State};
+use oos_hal::update::{self, card, hash::hex, kexec, pkg, Card, InstallOpt, State};
 use std::path::{Path, PathBuf};
 
 const NOTICE: &str = "/tmp/oos-update.notice";
@@ -50,7 +56,7 @@ impl Args {
         let mut it = std::env::args().skip(1);
         while let Some(s) = it.next() {
             match s.as_str() {
-                "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" => a.flags.push(s),
+                "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec" | "--new-dt" => a.flags.push(s),
                 _ if s.starts_with("--") => {
                     let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
                     a.vals.push((s, v));
@@ -76,11 +82,13 @@ fn die(msg: &str) -> ! {
 /// Lines also to the kernel log (and the panel console, which shows when oos-ui is down).
 fn tell(msg: &str) {
     println!("{}", msg);
+    // one write per line: every write to /dev/kmsg is a record of its own
+    let line = format!("oos-update: {}\n", msg);
     for dev in ["/dev/kmsg", "/dev/tty1"] {
         if Path::new(dev).exists() {
             let _ = std::fs::OpenOptions::new().append(true).open(dev).and_then(|mut f| {
                 use std::io::Write;
-                writeln!(f, "oos-update: {}", msg)
+                f.write_all(line.as_bytes())
             });
         }
     }
@@ -113,10 +121,10 @@ fn stock_card() -> Option<String> {
 
 /// First install from the stock system (docs/install-usb.md); `shell/do_extract.sh` of the update file runs this.
 fn gel_install(a: &Args) {
-    let f = a.rest.get(1).unwrap_or_else(|| die("gel-install FILE.oosupd --save DIR [--any-model] [--execute]"));
+    let f = a.rest.get(1).unwrap_or_else(|| die("gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]"));
     let save = a.val("--save").unwrap_or_else(|| die("gel-install needs --save DIR on the USB stick"));
     let p = read_file(f);
-    let opt = update::first::FirstOpt { execute: a.flag("--execute"), any_model: a.flag("--any-model") };
+    let opt = update::first::FirstOpt { execute: a.flag("--execute"), any_model: a.flag("--any-model"), reinstall: a.flag("--reinstall") };
     let path = a.val("--card").map(str::to_string).or_else(stock_card).unwrap_or_else(|| die("no SD card on fe320000"));
     println!("card {}", path);
     let vendor = std::fs::read(a.val("--vendor").unwrap_or("/rigol/data/vendor.bin")).ok();
@@ -181,19 +189,9 @@ fn main() {
                 Err(e) => die(&e),
             }
         }
-        "install" => {
-            let f = a.rest.get(1).unwrap_or_else(|| die("install FILE.oosupd [--execute]"));
-            need_data(&a);
-            let p = read_file(f);
-            let opt = InstallOpt { execute: a.flag("--execute"), downgrade: a.flag("--downgrade"), force: a.flag("--force") };
-            let mut c = open_card(&a, opt.execute);
-            let test_card = a.val("--card").is_some_and(|c| c != "/dev/mmcblk0");
-            match update::install(&mut c, &state_path(&a), &p, &keys(&a, test_card), &opt) {
-                Ok(r) => r.lines.iter().for_each(|l| println!("{}", l)),
-                Err(e) => die(&e),
-            }
-        }
+        "install" => install(&a),
         "gel-install" => gel_install(&a),
+        "kexec-check" => kexec_check(&a),
         "rollback" => {
             need_data(&a);
             let ex = a.flag("--execute");
@@ -254,6 +252,250 @@ fn main() {
         "keygen" => keygen(&a),
         "pack" => pack(&a),
         _ => die(&format!("unknown command '{}' (see the head of fpgad/src/bin/oos-update.rs)", cmd)),
+    }
+}
+
+fn install(a: &Args) {
+    let f = a.rest.get(1).unwrap_or_else(|| die("install FILE.oosupd [--execute] [--no-kexec | --new-dt]"));
+    need_data(a);
+    let p = read_file(f);
+    let opt = InstallOpt { execute: a.flag("--execute"), downgrade: a.flag("--downgrade"), force: a.flag("--force") };
+    let mut c = open_card(a, opt.execute);
+    let test_card = a.val("--card").is_some_and(|c| c != "/dev/mmcblk0");
+    let keys = keys(a, test_card);
+    let sp = state_path(a);
+    let announced = pkg::verify_header(&p, &keys).is_ok_and(|h| kexec::announced(&h.manifest));
+    // a card file on the build machine cannot be started
+    let by_kexec = !test_card && !a.flag("--no-kexec") && !a.flag("--new-dt") && announced;
+    if !by_kexec {
+        if !test_card && !a.flag("--no-kexec") && !a.flag("--new-dt") {
+            println!("the package has no 'trial kexec' line (an older build): written directly, without the kexec trial start");
+        }
+        if a.flag("--new-dt") {
+            println!("--new-dt: written directly; a kernel or device tree that hangs before rcS starts again at every power-on");
+        }
+        match update::install(&mut c, &sp, &p, &keys, &opt) {
+            Ok(r) => r.lines.iter().for_each(|l| println!("{}", l)),
+            Err(e) => die(&e),
+        }
+        return;
+    }
+    let booted = std::fs::read(kexec::BOOTED_DT).ok();
+    let running = update::running_build();
+    match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, booted.as_deref(), running.as_deref()) {
+        Err(e) if e.contains("device tree") => die(&format!(
+            "{}. Try the image on a card you can take out; then --new-dt writes it directly, without the kexec trial start",
+            e
+        )),
+        Err(e) => die(&e),
+        Ok((r, None)) => r.lines.iter().for_each(|l| println!("{}", l)),
+        Ok((r, Some(s))) => {
+            r.lines.iter().for_each(|l| println!("{}", l));
+            drop(p);
+            start_kexec(&sp, s, kexec::Flags { downgrade: opt.downgrade, force: opt.force });
+        }
+    }
+}
+
+/// The oos-ui loop of rcS, started again after a kexec start that failed.
+#[cfg(target_os = "linux")]
+const UI_LOOP: &str = "while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done";
+
+/// Load the staged image and start it. Returns only after a failure, which leaves everything as before the install.
+#[cfg(target_os = "linux")]
+fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
+    let short = update::short(&s.build).to_string();
+    let undo = |why: &str, stopped: bool| -> ! {
+        let _ = kexec::unload();
+        if stopped {
+            let _ = std::process::Command::new("mount").args(["-o", "remount,rw", "/oos"]).status();
+        }
+        let _ = update::kexec_clear(sp, &format!("kexec start of build {} failed ({}): nothing installed", short, why));
+        if stopped {
+            let _ = std::fs::remove_file("/tmp/oos-ui.off");
+            let _ = std::process::Command::new("setsid")
+                .args(["sh", "-c", UI_LOOP])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+        notice(&format!("Update {}: the kexec start failed ({}); nothing installed, this build keeps running", short, why));
+        std::process::exit(1)
+    };
+    let cmd = kexec::cmdline(&kexec::running_cmdline(), f);
+    if let Err(e) = kexec::load(&s.kernel, &s.initrd, &cmd) {
+        undo(&e, false);
+    }
+    drop(s);
+    tell(&format!("build {} loaded; restarting into it by kexec for its trial (it installs itself)", short));
+    // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
+    // watcher is stopped, so no card write runs into the restart
+    let lock = update::lock(sp).unwrap_or_else(|e| undo(&e, false));
+    stop_watcher();
+    stop_ui();
+    // the lock file is open for writing: /oos can only go read only without it
+    drop(lock);
+    unsafe { libc::sync() };
+    // the kernel does not sync or unmount on kexec
+    if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
+        println!("warning: /oos stays writable (busy); synced");
+    }
+    let e = kexec::start();
+    undo(&e, true);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_kexec(sp: &Path, s: update::Staged, _: kexec::Flags) {
+    let _ = update::kexec_clear(sp, "kexec runs on the unit only");
+    die(&format!("kexec start of build {}: on the unit only", s.build));
+}
+
+/// The kernel takes the image for a kexec start (CPUs can go offline, the Image header is accepted).
+#[cfg(target_os = "linux")]
+fn kexec_check(a: &Args) {
+    let f = a.rest.get(1).unwrap_or_else(|| die("kexec-check FILE.oosupd"));
+    let p = read_file(f);
+    let keys = update::trusted_keys();
+    let (h, img) = pkg::verify(&p, &keys).unwrap_or_else(|e| die(&e));
+    let (k, rd, dt) = kexec::parts(img).unwrap_or_else(|e| die(&e));
+    let key = keys.iter().find(|k| pkg::key_id(k) == h.manifest.key).unwrap_or_else(|| die("no key"));
+    let initrd = kexec::initrd(rd, &p, key, dt);
+    let cmd = kexec::cmdline(&kexec::running_cmdline(), kexec::Flags::default());
+    if kexec::loaded() {
+        die("a kexec kernel is loaded already: left alone");
+    }
+    let t = std::time::Instant::now();
+    kexec::load(k, &initrd, &cmd).unwrap_or_else(|e| die(&e));
+    let ok = kexec::loaded();
+    let ms = t.elapsed().as_millis();
+    kexec::unload().unwrap_or_else(|e| die(&e));
+    let tree = match std::fs::read(kexec::BOOTED_DT) {
+        Ok(b) if b == dt => "the same as the running one",
+        Ok(_) => "DIFFERS from the running one (install needs --new-dt)",
+        Err(_) => "running one unknown",
+    };
+    println!(
+        "build {}: kernel {} bytes, initramfs {} bytes loaded in {} ms ({}), unloaded again; announced 'trial kexec': {}; device tree {}",
+        update::short(&h.manifest.build),
+        k.len(),
+        initrd.len(),
+        ms,
+        if ok { "kexec_loaded 1" } else { "kexec_loaded NOT 1" },
+        kexec::announced(&h.manifest),
+        tree
+    );
+    println!("command line: {}", cmd);
+    if !ok || kexec::loaded() {
+        die("unexpected kexec_loaded state");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kexec_check(_: &Args) {
+    die("kexec-check runs on the unit only");
+}
+
+/// oos-ui off for the kexec start: no restart, no transfer of the acquisition hardware in flight.
+#[cfg(target_os = "linux")]
+fn stop_ui() {
+    let _ = std::fs::write("/tmp/oos-ui.off", "");
+    for i in 0..50 {
+        let Some(pid) = ui_pid(None) else { return };
+        unsafe { libc::kill(pid as i32, if i < 30 { libc::SIGTERM } else { libc::SIGKILL }) };
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// The start-up watcher (`oos-update watch`) of this start: stopped before a kexec start (called with the lock held).
+#[cfg(target_os = "linux")]
+fn stop_watcher() {
+    let me = std::process::id();
+    let Ok(d) = std::fs::read_dir("/proc") else { return };
+    for e in d.flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else { continue };
+        if pid == me {
+            continue;
+        }
+        let cmd = std::fs::read(format!("/proc/{}/cmdline", pid)).unwrap_or_default();
+        let args: Vec<&[u8]> = cmd.split(|&b| b == 0).collect();
+        let is_update = args.first().is_some_and(|a0| a0.ends_with(b"oos-update"));
+        if is_update && args.get(1) == Some(&&b"watch"[..]) {
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+        }
+    }
+}
+
+/// rcS, in the start by kexec: this kernel reached rcS and found the card and /oos. Now the package is installed for
+/// real. False when it was not: then this start is no trial start.
+fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
+    let pk = read_file(kexec::PACKAGE);
+    let build = update::running_build().unwrap_or_default();
+    let short = update::short(&build).to_string();
+    let _ = std::fs::write("/dev/tty1", format!("\nUpdate {}: started by kexec, installing it. Do not power off.\n", short));
+    tell(&format!("build {} started by kexec: kernel, card and /oos work; installing it", short));
+    // the running build verified the package; this build may trust other keys (a key change by update)
+    let mut keys = update::trusted_keys();
+    if let Some(k) = std::fs::read_to_string(kexec::KEY_FILE).ok().and_then(|t| update::hash::unhex(t.trim())).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
+        keys.push(k);
+    }
+    let opt = InstallOpt { execute: true, downgrade: f.downgrade, force: f.force };
+    let mut c = open_card(a, true);
+    let done = match update::install(&mut c, p, &pk, &keys, &opt) {
+        Ok(r) => {
+            r.lines.iter().for_each(|l| println!("{}", l));
+            if r.written {
+                notice(&format!("Update {} installed after its kexec start; on trial, it confirms itself about 20 s after the start-up", short));
+            } else {
+                let _ = update::kexec_clear(p, &format!("started build {} by kexec: nothing to install", short));
+            }
+            r.written
+        }
+        Err(e) => {
+            // a write that began names this build on trial: the previous image goes back, so the watcher of this start
+            // cannot confirm a damaged recovery
+            let st = State::load(p).unwrap_or_default();
+            let began = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
+            let back = if began && st.previous.is_some() {
+                match update::rollback(&mut c, p, "its install after the kexec start failed", true, None) {
+                    Ok(_) => "the previous build was written back, it starts at the next power-on".to_string(),
+                    Err(r) => format!("writing the previous build back FAILED too ({}): the next power-on starts stock", r),
+                }
+            } else {
+                "the next power-on starts the previous build (or stock in one-shot mode)".to_string()
+            };
+            let m = format!("Update {} ran when started by kexec, but its install failed: {}; {}", short, e, back);
+            let _ = update::kexec_clear(p, &m);
+            notice(&m);
+            false
+        }
+    };
+    drop(pk);
+    let _ = std::fs::remove_file(kexec::PACKAGE);
+    done
+}
+
+/// The device tree section of the image the loader started, for a later kexec start (`kexec::BOOTED_DT`): in an
+/// ordinary start `recovery` (nothing has written it yet), in a kexec start the tree the previous start passed on.
+fn keep_booted_tree(a: &Args, kexec_start: bool) {
+    let dt = if kexec_start {
+        std::fs::read(kexec::DT_FILE).ok()
+    } else {
+        // the header page and the tree only: no hashing of the whole image at every start
+        let mut c = open_card(a, false);
+        let lba = card::Region::Recovery.lba();
+        c.read(lba, 2048).ok().and_then(|h| kexec::tree_at(&h)).and_then(|(off, len)| {
+            let first = off / card::SECTOR as usize;
+            let skip = off % card::SECTOR as usize;
+            let b = c.read(lba + first as u64, (skip + len).div_ceil(card::SECTOR as usize) * card::SECTOR as usize).ok()?;
+            Some(b[skip..skip + len].to_vec())
+        })
+    };
+    match dt {
+        Some(d) => {
+            let _ = std::fs::write(kexec::BOOTED_DT, d);
+        }
+        None => tell("the device tree of this start is unknown: an update needs a power-cycle first or --new-dt"),
     }
 }
 
@@ -323,8 +565,33 @@ fn status(a: &Args) {
 
 fn boot(a: &Args) {
     let p = state_path(a);
+    let word = kexec::flags(&kexec::running_cmdline());
+    let kx = word.filter(|_| Path::new(kexec::PACKAGE).exists());
+    keep_booted_tree(a, word.is_some());
     if !p.parent().is_some_and(|d| d.exists()) {
+        if kx.is_some() {
+            notice("Update started by kexec, but /oos is not there: not installed. The next power-on starts the previous build");
+        }
         return; // no update state yet
+    }
+    match kx {
+        // a failed install: this start is not the trial start of anything
+        Some(f) => {
+            if !finish_kexec(a, &p, f) {
+                return;
+            }
+        }
+        None if word.is_some() => {
+            let m = "Update started by kexec, but its package did not arrive: not installed";
+            let _ = update::kexec_clear(&p, m);
+            notice(m);
+            return;
+        }
+        None => match update::kexec_missed(&p, false) {
+            Ok(Some(m)) => notice(&m),
+            Ok(None) => {}
+            Err(e) => tell(&e),
+        },
     }
     let running = update::running_build();
     match update::boot_started(&p, running.as_deref()) {
@@ -522,7 +789,8 @@ fn pack(a: &Args) {
     if !update::trusted_keys().contains(&pk) {
         eprintln!("oos-update: WARNING: key {} is not in oos/keys/update.pub: units will refuse this package", hex(&pkg::key_id(&pk)));
     }
-    let p = pkg::build(&seed, build, &kernel, &img).unwrap_or_else(|e| die(&e));
+    // this tree's oos-update finishes a kexec start (update::kexec): the image says so in its package
+    let p = pkg::build_with(&seed, build, &kernel, &img, &[kexec::LINE]).unwrap_or_else(|e| die(&e));
     pkg::verify(&p, &[pk]).unwrap_or_else(|e| die(&format!("self-check: {}", e)));
     std::fs::write(out, &p).unwrap_or_else(|e| die(&format!("{}: {}", out, e)));
     println!("{}: build {}, {} bytes, key {}", out, build, p.len(), hex(&pkg::key_id(&pk)));

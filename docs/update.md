@@ -3,7 +3,10 @@
 Built and tested on the host (unit tests, a real image on a card-shaped file, the start-up watcher in an arm64 Linux
 container: stable start, crash loop, install during the watch, hand-installed image). **Not yet verified on hardware.**
 
-Code: `hal/src/update/` (hashes, Ed25519, package, card, state), `fpgad/src/bin/oos-update.rs` (command line),
+The kexec trial start (below) is checked on the unit only as far as loading and unloading the kernel
+(`oos-update kexec-check`); the start itself has not run on hardware yet.
+
+Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
 `ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
 
 ## What it protects against
@@ -13,10 +16,52 @@ Code: `hal/src/update/` (hashes, Ed25519, package, card, state), `fpgad/src/bin/
 | package damaged in transfer, or not signed by a trusted key (the community key is public, so this stops mistakes, not an attacker: see "Keys") | refused before anything is written |
 | image the stock loader would refuse (wrong SHA-1 id, section length not a multiple of 4) | refused before anything is written |
 | power lost while `recovery` is written | the boot magic is set to `KRNL` before the write and back to `OOSK` only after the read-back, so the next power-on starts the intact stock image in `boot`; the previous OOS image is still in the rollback slot. The stock copy in `backup` is not needed for this |
+| new kernel or initramfs hangs **before** rcS (panics, cannot find the card) | the new image is first started by kexec, with `recovery` untouched (below): power-cycle, and the previous OOS build starts again (stock in one-shot mode). The next OOS start reports it. Not covered for a new device tree (`--new-dt`), packages without `trial kexec` (older builds) and `--no-kexec` |
 | new build hangs in rcS after `oos-oneshot` and the start count (the first three commands of rcS) | `KRNL` is back, so the next power-on boots stock; when OOS is started again, the trial image's second start rolls back |
-| new kernel hangs **before** rcS | **not covered**: `OOSK` stays set and every power-on starts the new image again; put the card into a host computer (`card-install.py restore` or `switch.py`), which means opening the scope. Needs a loader-side counter (own U-Boot) |
 | new oos-ui crashes in a loop (3 restarts) or never runs 20 s stable within 180 s | the watcher writes the previous image back right away; the notice is shown on the panel; power-cycle starts the previous build |
 | cold boot ends in `abort` or hangs while oos-ui runs stable (hardware trouble) | counts as a good start (no automatic rollback); the screen names the stage, System > Roll back update is available |
+
+## Trial start by kexec
+
+OOS has no loader of its own, so nothing counts the starts before rcS. An image written to `recovery` and selected with
+`OOSK` that hangs in the kernel would start again at every power-on. So `install --execute` does not write it:
+
+1. All checks of the install, nothing written. The package must say `trial kexec` (a signed header line that
+   `oos-update pack` writes: its image knows how to finish such a start), and the image must bring the same device
+   tree (`second`) as the one the scope started with. Every start saves that tree to `/tmp/oos-booted.dt`
+   (`oos-update boot`, before anything writes `recovery`).
+2. The state names the build (`kexec <build>`). The boot selection stays as it is: `recovery` still holds the running
+   build.
+3. Its kernel and initramfs are loaded with `kexec_file_load`. A second, uncompressed archive in the initramfs carries
+   the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`: the new build may trust other keys)
+   and the running device tree (`/oos-kexec.dt`); the command line gets `oos.kexec=install`. Under the update lock
+   the start-up watcher and oos-ui are stopped, `/oos` is remounted read only, then the kernel starts.
+4. The new image's rcS: `oos-oneshot`, `/oos` mounted, then `oos-update boot` finds the word and the package and
+   runs the ordinary install from there: rollback slot, `recovery`, read back, `OOSK`. This start is its first trial
+   start, the watcher confirms it or rolls back as for any trial. If that install fails after it began writing, the
+   previous build is written back at once and this start counts as no trial start.
+
+If the kernel hangs in step 4, the scope is power-cycled and the previous OOS build starts (stock in one-shot mode,
+as after every OOS start). The next OOS start finds the mark in the state and says that the update did not finish; so
+does a power cut during the install in step 4 (then stock starts, `KRNL` was set before the write). A failed load or
+start (step 3) puts everything back and starts oos-ui again.
+
+What it does not cover:
+
+- The device tree: `kexec_file_load` gives the new kernel the running tree. An image with another tree is refused for
+  this path; `--new-dt` writes it directly, without a safety net before rcS. Try such an image on a card you can take
+  out first.
+- A kernel that fails only from a cold start (the kexec start runs on warm hardware) passes this trial.
+- The install from 0.1.0 to a later build: 0.1.0 has no kexec start and writes the package directly.
+- The first start from the loader after a kexec trial is not on trial any more: the same kernel, initramfs and device
+  tree have run once. The command line of that start comes from the device tree's `bootargs`, as the kexec start's
+  did; a different command line in the image header is not used by this loader.
+- A start whose device tree is unknown (`/tmp/oos-booted.dt` missing: started before a build with this, or
+  recovery unreadable at start-up) takes the tree from `recovery` only while the state names the running build
+  there; otherwise power-cycle once or use `--new-dt`.
+
+`oos-update kexec-check FILE` loads a package's kernel and initramfs and unloads them again, nothing written, no
+restart: it shows that the running kernel takes the image for a kexec start.
 
 ## Card layout used
 
@@ -84,11 +129,15 @@ Install on a running OOS:
   `curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update`
 - shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
 
-Then power-cycle. The new build runs on trial; System > Update shows the state.
+The scope restarts into the new build by kexec, which installs itself and runs on trial (about a minute); System >
+Update shows the state. If the screen stays dark, power-cycle: the previous build starts. A package without `trial kexec`, `--no-kexec` and `--new-dt` write the image directly: then
+power-cycle to start it on trial.
 
 | command | |
 |---|---|
 | `oos-update status` | boot magic, recovery and slot (build, SHA-256, loader id), trial, mode, last event |
+| `oos-update install FILE [--execute] [--downgrade] [--force] [--no-kexec \| --new-dt]` | see above |
+| `oos-update kexec-check FILE` | load and unload the package's kernel for a kexec start; nothing written |
 | `oos-update rollback [--execute]` | slot -> recovery (checked against its SHA-256 first), arm OOS |
 | `oos-update confirm` | end a trial by hand (after stopping oos-ui for development, `/tmp/oos-ui.off`) |
 | `oos-update mode persist` / `oneshot` | persist: OOS arms itself again after each confirmed start, and is selected for the next power-on at once; oneshot: stock is selected at once. The GUI has this as System > Boot mode |
@@ -134,11 +183,9 @@ next power-on boots stock: a boot counter with one try, without an own U-Boot.
   the install again.
 - The downgrade check only knows the state's `current`: with no state, an untracked image or after a rollback, any signed
   build can be installed from the LAN without authentication. It still runs on trial.
-- **A new kernel or device tree has no safety net.** The trial and the watcher run in the initramfs: a kernel that panics,
-  hangs or cannot reach the SD card before it starts again with OOS selected on every power-on, and the card has to come
-  out. Test a kernel change on a card you can take out before it goes into a package.
-- Running the USB install again to start OOS replaces what `recovery` holds with the stick's build, also a newer one
-  installed over the network since, and the rollback slot with it.
+- **A new device tree has no safety net** (`--new-dt`), and neither has a direct install (`--no-kexec`, packages without
+  `trial kexec`): a kernel that panics, hangs or cannot reach the SD card before rcS starts again with OOS selected on
+  every power-on, and the card has to come out. Test such a change on a card you can take out first.
 - The watcher judges a start by oos-ui staying up and the start-up checklist finishing. A build that runs but measures
   wrongly is confirmed and becomes the rollback image at the next install.
 - A full `/oos` stops the trial bookkeeping: an update then neither confirms nor rolls back. The next power-on in one-shot

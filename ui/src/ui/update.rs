@@ -119,7 +119,11 @@ impl Ui {
         if !self.update_spawn(&["install", UPLOAD, "--execute"], "Install") {
             return Err(format!("{} could not be started, nothing installed", BIN));
         }
-        Ok(format!("signature ok, installing build {} (the result shows on the scope and on this page)", b))
+        Ok(if update::kexec::announced(&h.manifest) {
+            format!("signature ok, build {}: the scope restarts into it by kexec and installs it from there, unless a check refuses it (about a minute; System > Update shows the result)", b)
+        } else {
+            format!("signature ok, installing build {} (the result shows on the scope and on this page)", b)
+        })
     }
 
     /// A job of ours is running, or another process (the start-up watcher) holds the update lock: the card is being

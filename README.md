@@ -529,8 +529,10 @@ which are never changed.
 curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update
 ```
 
-or open `http://<scope>:8080/update` in a browser, then power-cycle. The new build runs on trial. If it crashes in a
-loop or never becomes stable, the previous image is written back. System > Update shows the state and
+or open `http://<scope>:8080/update` in a browser. The scope restarts into the new build by kexec before anything is
+written, and the new build installs itself from there; if its kernel hangs, a power-cycle starts the previous build
+again. Coming from 0.1.0, which has no kexec start, power-cycle after the install. The new build runs on
+trial. If it crashes in a loop or never becomes stable, the previous image is written back. System > Update shows the state and
 System > Roll back update returns to the previous image. Details: [docs/update.md](docs/update.md).
 
 **Network.** Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web

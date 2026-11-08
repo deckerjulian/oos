@@ -13,11 +13,16 @@ fn pk() -> [u8; 32] {
 
 /// A boot image as boot/oos-bootimg.py builds it (tiny sections, distinct content per `tag`).
 fn bootimg(tag: u8) -> Vec<u8> {
+    bootimg_dt(tag, tag ^ 0xaa)
+}
+
+/// `bootimg` with the device tree section (`second`) filled with `dt`.
+fn bootimg_dt(tag: u8, dt: u8) -> Vec<u8> {
     let page = 2048usize;
     let mut kernel = vec![tag; 4096 + 512];
     kernel[0x38..0x3c].copy_from_slice(b"ARM\x64");
     let ramdisk = vec![tag ^ 0x55; 1000];
-    let second = vec![tag ^ 0xaa; 300];
+    let second = vec![dt; 300];
     let mut h = vec![0u8; page];
     h[..8].copy_from_slice(b"ANDROID!");
     let put = |h: &mut Vec<u8>, at: usize, v: u32| h[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -257,6 +262,7 @@ fn state_text_round_trip() {
         previous: Some(Entry { build: "untracked-0123456789ab".into(), sha256: [2; 32], len: 1000 }),
         trial: Some(1),
         persist: true,
+        kexec: Some("20261108-090000".into()),
         event: "installed 20261105-170000".into(),
     };
     assert_eq!(State::parse(&s.text()), s);
@@ -428,7 +434,11 @@ fn busy_follows_the_lock() {
 
 /// The model check has its own test, `only_verified_models_by_default`.
 fn opt(execute: bool) -> first::FirstOpt {
-    first::FirstOpt { execute, any_model: true }
+    first::FirstOpt { execute, any_model: true, reinstall: false }
+}
+
+fn reinstall() -> first::FirstOpt {
+    first::FirstOpt { reinstall: true, ..opt(true) }
 }
 
 /// A stock card: a stock image in `boot` and `recovery`, `backup` empty.
@@ -501,12 +511,54 @@ fn first_install_again_keeps_the_rescue_set() {
     let l = run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
     assert!(l.iter().any(|x| x.contains("already holds this image")) && l.iter().any(|x| x.contains("already holds the stock copy")), "{:?}", l);
     assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
-    // a newer build, with OOS selected: same fallback, stock recovery still on the stick
-    run(&fk, &package(2, "20260102-000000 kernel x"), &opt(true)).unwrap();
+    // a newer build, with OOS selected, and oos-reinstall.txt: same fallback, stock recovery still on the stick
+    run(&fk, &package(2, "20260102-000000 kernel x"), &reinstall()).unwrap();
     let mut c = fk.card();
     assert_eq!(&c.boot_magic().unwrap(), b"OOSK");
     assert_eq!(c.read(RECOVERY_LBA, bootimg(2).len()).unwrap(), bootimg(2));
     assert_eq!(std::fs::read(fk.dir.join("save/recovery.bin")).unwrap(), rec0);
+}
+
+#[test]
+fn the_stick_again_keeps_a_newer_build_and_only_selects_it() {
+    let fk = stock_card("first-keep");
+    run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
+    // a newer build came over the network since; OOS started once, stock is selected
+    fk.poke(RECOVERY_LBA, &bootimg(3));
+    fk.card().disarm_oos().unwrap();
+    let before = card_bytes(&fk);
+    let l = run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
+    assert!(l.iter().any(|x| x.contains("kept, only selected")), "{:?}", l);
+    assert_eq!(fk.card().read(RECOVERY_LBA, bootimg(3).len()).unwrap(), bootimg(3), "the newer build stays");
+    let after = card_bytes(&fk);
+    let s = SECTOR as usize;
+    let changed: Vec<usize> = before.iter().zip(&after).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect();
+    assert!(changed.iter().all(|&i| (BOOT_LBA as usize * s..BOOT_LBA as usize * s + 4).contains(&i)), "only the magic changes");
+    assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
+}
+
+#[test]
+fn the_stick_again_repairs_a_damaged_recovery_from_the_slot() {
+    let fk = stock_card("first-repair");
+    run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
+    // an update was cut: the slot holds the last good build, recovery a half-written one, stock selected
+    fk.poke(SLOT_LBA, &bootimg(3));
+    let mut half = bootimg(4);
+    let n = half.len();
+    half[n / 2..].iter_mut().for_each(|b| *b = 0);
+    fk.poke(RECOVERY_LBA, &half);
+    fk.card().disarm_oos().unwrap();
+    let l = run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
+    assert!(l.iter().any(|x| x.contains("rollback image goes back")), "{:?}", l);
+    assert_eq!(fk.card().read(RECOVERY_LBA, bootimg(3).len()).unwrap(), bootimg(3));
+    assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
+    // with an empty slot the stick's build goes there
+    let fk = stock_card("first-repair-empty");
+    run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
+    fk.poke(RECOVERY_LBA, &half);
+    fk.card().disarm_oos().unwrap();
+    run(&fk, &package(2, "20260102-000000 kernel x"), &opt(true)).unwrap();
+    assert_eq!(fk.card().read(RECOVERY_LBA, bootimg(2).len()).unwrap(), bootimg(2));
 }
 
 #[test]
@@ -565,7 +617,7 @@ fn first_install_reinstall_with_oos_selected_goes_through_stock() {
     c.cut = Some(Region::Recovery);
     let mut l = |_: &str| {};
     let p = package(2, "20260102-000000 kernel x");
-    assert!(first::first_install(&mut c, &p, &[pk()], &fk.dir.join("save"), None, &opt(true), &mut l).is_err());
+    assert!(first::first_install(&mut c, &p, &[pk()], &fk.dir.join("save"), None, &reinstall(), &mut l).is_err());
     assert_eq!(&c.boot_magic().unwrap(), b"KRNL", "a half-written recovery must not be selected");
 }
 
@@ -641,4 +693,114 @@ fn images_outside_the_loader_limits_are_refused() {
     let e = card::check_image(&b).unwrap_err();
     assert!(e.contains("load address") || e.contains("id mismatch"), "{}", e);
     assert!(card::check_image(&bootimg(5)).is_ok());
+}
+
+// ---- trial start by kexec
+
+/// A package whose image finishes a kexec start, with device tree `dt`.
+fn kexec_package(tag: u8, dt: u8) -> Vec<u8> {
+    pkg::build_with(&SEED, KX_BUILD, "6.12.115+", &bootimg_dt(tag, dt), &[kexec::LINE]).unwrap()
+}
+
+const KX_BUILD: &str = "20261108-090000";
+
+/// The device tree section `bootimg_dt(_, dt)` has.
+fn tree(dt: u8) -> Vec<u8> {
+    vec![dt; 300]
+}
+
+fn stage(f: &Fake, p: &[u8], booted: Option<&[u8]>, running: Option<&str>) -> Result<(Report, Option<Staged>), String> {
+    kexec_stage(&mut f.card(), &f.state(), p, &[pk()], &RUN, booted, running)
+}
+
+#[test]
+fn kexec_stage_writes_nothing_to_the_card() {
+    let f = Fake::new("kexec-stage", None);
+    f.poke(RECOVERY_LBA, &bootimg_dt(1, 7));
+    f.card().arm_oos().unwrap();
+    let before = std::fs::read(f.dir.join("card")).unwrap();
+    let p = kexec_package(2, 7);
+    let (r, staged) = stage(&f, &p, Some(&tree(7)), None).unwrap();
+    let staged = staged.expect("a kexec start");
+    assert!(r.lines.iter().any(|l| l.contains("device tree: the same")), "{:?}", r.lines);
+    let img = bootimg_dt(2, 7);
+    let (k, rd, _) = kexec::parts(&img).unwrap();
+    assert_eq!(staged.kernel, k);
+    assert_eq!(&staged.initrd[..rd.len()], rd);
+    assert!(staged.initrd.windows(64).any(|w| w == &p[..64]), "the package rides along");
+    assert!(staged.initrd.windows(64).any(|w| w == hex(&pk()).as_bytes()), "and its key");
+    // the card as it was, OOS still selected: a hang of the new kernel ends in the running build again
+    assert!(std::fs::read(f.dir.join("card")).unwrap() == before);
+    assert_eq!(&f.magic(), b"OOSK");
+    assert_eq!(f.st().kexec.as_deref(), Some(KX_BUILD));
+    assert_eq!(f.st().trial, None);
+
+    // the started image installs itself: on trial, this start counted, the mark gone
+    let r = install(&mut f.card(), &f.state(), &p, &[pk()], &RUN).unwrap();
+    assert!(r.written);
+    assert_eq!(f.st().kexec, None);
+    assert_eq!(boot_started(&f.state(), Some(KX_BUILD)).unwrap(), Boot::Trial(1));
+    assert_eq!(&f.magic(), b"OOSK");
+    assert_eq!(f.region(Region::Recovery), img);
+    assert_eq!(f.region(Region::Slot), bootimg_dt(1, 7), "the previous build is the rollback image");
+}
+
+#[test]
+fn kexec_stage_refuses_what_it_cannot_try() {
+    let f = Fake::new("kexec-refuse", None);
+    f.poke(RECOVERY_LBA, &bootimg_dt(1, 7));
+    let before = std::fs::read(f.dir.join("card")).unwrap();
+    // another device tree than the running one
+    let e = stage(&f, &kexec_package(2, 8), Some(&tree(7)), None).unwrap_err();
+    assert!(e.contains("device tree"), "{}", e);
+    // the running tree differs from recovery's (an image written without a power-cycle since): the running one counts
+    let e = stage(&f, &kexec_package(2, 7), Some(&tree(8)), None).unwrap_err();
+    assert!(e.contains("device tree"), "{}", e);
+    // a package of a build that does not finish a kexec start
+    let e = stage(&f, &package(2, KX_BUILD), Some(&tree(7)), None).unwrap_err();
+    assert!(e.contains("--no-kexec"), "{}", e);
+    // the running tree unknown, and recovery not known to hold the running build
+    let e = stage(&f, &kexec_package(2, 7), None, Some("20261101-000000")).unwrap_err();
+    assert!(e.contains("not known"), "{}", e);
+    assert!(std::fs::read(f.dir.join("card")).unwrap() == before, "nothing written");
+    assert_eq!(f.st().kexec, None);
+    // the same image: nothing to do, no kexec start
+    let (r, staged) = stage(&f, &kexec_package(1, 7), Some(&tree(7)), None).unwrap();
+    assert!(staged.is_none() && r.unchanged);
+    assert!(r.lines.last().unwrap().contains("already holds"), "{:?}", r.lines);
+}
+
+#[test]
+fn kexec_stage_takes_the_tree_from_recovery_when_it_runs() {
+    let f = Fake::new("kexec-rec", Some(1));
+    install(&mut f.card(), &f.state(), &package(3, "20261101-000000"), &[pk()], &RUN).unwrap();
+    confirm(&f.state(), None).unwrap();
+    let dt3 = kexec::parts(&bootimg(3)).unwrap().2.to_vec();
+    let p = pkg::build_with(&SEED, KX_BUILD, "k", &bootimg_dt(4, dt3[0]), &[kexec::LINE]).unwrap();
+    assert!(stage(&f, &p, None, Some("20261101-000000")).unwrap().1.is_some());
+}
+
+#[test]
+fn a_kexec_start_that_did_not_finish_is_reported_once() {
+    let f = Fake::new("kexec-missed", None);
+    f.poke(RECOVERY_LBA, &bootimg_dt(1, 7));
+    stage(&f, &kexec_package(2, 7), Some(&tree(7)), None).unwrap();
+    // the kexec start itself does not report
+    assert_eq!(kexec_missed(&f.state(), true).unwrap(), None);
+    // power-cycled after a hang: the previous OOS build again
+    let m = kexec_missed(&f.state(), false).unwrap().expect("a message");
+    assert!(m.contains(KX_BUILD) && m.contains("not installed"), "{}", m);
+    assert_eq!(kexec_missed(&f.state(), false).unwrap(), None);
+    assert_eq!(f.region(Region::Recovery), bootimg_dt(1, 7));
+    // a failed load is forgotten the same way
+    stage(&f, &kexec_package(2, 7), Some(&tree(7)), None).unwrap();
+    kexec_clear(&f.state(), "kexec load failed").unwrap();
+    assert_eq!(f.st().kexec, None);
+    assert_eq!(f.st().event, "kexec load failed");
+    // an install in the kexec start cut by a power loss keeps the mark for the next start
+    stage(&f, &kexec_package(2, 7), Some(&tree(7)), None).unwrap();
+    let mut c = f.card();
+    c.cut = Some(Region::Recovery);
+    assert!(install(&mut c, &f.state(), &kexec_package(2, 7), &[pk()], &RUN).is_err());
+    assert_eq!(f.st().kexec.as_deref(), Some(KX_BUILD));
 }

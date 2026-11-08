@@ -9,6 +9,8 @@
 # Files on the stick that change what happens:
 #   oos-dry-run.txt    all checks and the rescue set, the card is not written
 #   oos-any-model.txt  also on a model OOS never ran on
+#   oos-reinstall.txt  write the stick's build also when the card holds a valid OOS image (else that one is kept and only
+#                      selected: a newer build installed over the network stays)
 SRC=/mnt/tmp/oos
 
 # the stick holds the update file, in its top folder
@@ -33,6 +35,7 @@ fi
 args=--execute
 [ -f "$STICK/oos-dry-run.txt" ] && args=
 [ -f "$STICK/oos-any-model.txt" ] && args="$args --any-model"
+[ -f "$STICK/oos-reinstall.txt" ] && args="$args --reinstall"
 "$SRC/oos-update" gel-install "$SRC/oos.oosupd" --save "$SAVE" $args ${OOS_GEL_CARD:+--card "$OOS_GEL_CARD"} ${OOS_GEL_VENDOR:+--vendor "$OOS_GEL_VENDOR"}
 rc=$?
 sync

@@ -34,8 +34,12 @@ This is why only models OOS has run on are accepted (section 4).
 7. **Keep the stick's folder `OOS-rescue`, ideally copy it to a computer.** It holds your calibration and the stock `recovery`.
 8. Switch the scope off and on. OOS starts.
 
-OOS starts once, in one-shot mode: the following power-on starts stock again. To start OOS again run the same update: it
-writes nothing but the selection. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
+OOS starts once, in one-shot mode: the following power-on starts stock again. To start OOS again run the same update: when
+`recovery` holds an OOS image the loader takes, it writes nothing but the selection, also when that image is a newer build
+installed over the network since. An empty file `oos-reinstall.txt` on the stick writes the stick's build instead. A
+damaged OOS image in `recovery` (an update cut by a power loss) is replaced by the rollback image when that one is whole,
+else by the stick's build. If the OOS in `recovery` starts but hangs early every time (no rollback happens because the
+start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
 
 The same install also runs over ADB, without a stick: `README.md`, Over ADB. `oos-update gel-install` is the same code,
 only `/rigol/data` has to be saved by hand. That way of starting it has not been tested at all.
@@ -54,7 +58,7 @@ change under `/rigol`.
 2. Rescue set on the stick, each file read back. A complete set is kept: after the first install `recovery` holds OOS.
 3. If OOS is selected and `recovery` changes: stock selected first.
 4. Stock copy of `boot` to the start of `backup`, read back. The loader's fallback when it refuses `recovery`.
-5. Image to `recovery`, read back.
+5. Image to `recovery`, read back: only when `recovery` does not hold a valid OOS image yet, or with `oos-reinstall.txt`.
 6. Last, one sector: `boot` selects OOS.
 
 A failure or power cut before step 6 leaves a card that starts stock as before. The same file finishes the job.
@@ -97,5 +101,5 @@ On a card that can be taken out, not on an only card:
    written. The first real test of: `/dev/block/mmcblk0` as the card, the static tool on the stock kernel, reading `vendor.bin`.
 2. Install, power-cycle: OOS starts, with `/oos` formatted if it was empty.
 3. Next power-on: stock, with calibration and licences as before.
-4. The same update again: "already holds", OOS selected.
+4. The same update again: "already holds", OOS selected. After an update over the network: "kept, only selected".
 5. Damage test: a refused image in `recovery` (card in a reader) starts the stock copy in `backup`.

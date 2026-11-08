@@ -6,14 +6,16 @@
 //! - `pkg`: the signed package `.oosupd` (Ed25519 over a text header that names the image's SHA-256).
 //! - `card`: the card layout, the image regions (`recovery` and the rollback slot in `backup`) and the boot magic.
 //! - `first`: the first install from the running stock system, without opening the scope.
+//! - `kexec`: the trial start of a new image by kexec, before anything is written.
 //! - here: the state file (/oos/update/state) and the operations `install`, `rollback`, `boot_started`, `judge`,
 //!   `confirm`.
 //!
 //! Safety net, from the bottom up:
 //! 1. The stock loader checks every image's id; a damaged `recovery` falls back to the stock copy in `backup`.
 //! 2. `oos-oneshot` (first line of rcS) puts `KRNL` back at every OOS start, so a start that hangs after it is
-//!    followed by stock Android at the next power-on. A hang in the kernel before rcS is not covered (that needs a
-//!    loader-side counter): the card has to go into a host computer then.
+//!    followed by stock Android at the next power-on. Before it, the loader alone decides: a kernel or initramfs that
+//!    hangs before rcS would start again at every power-on. That is why a new image is first started by kexec
+//!    (`kexec_stage`), with `recovery` untouched, and installs itself only from that start.
 //! 3. A new image runs on trial: the watcher (`oos-update watch`) confirms it once oos-ui ran 20 s and the
 //!    start-up finished; a crash loop or a start-up that does not finish in 180 s writes the previous image back at
 //!    once. A trial image that comes up a second time without having been confirmed rolls back at that start.
@@ -24,6 +26,7 @@ pub mod card;
 pub mod ed25519;
 pub mod first;
 pub mod hash;
+pub mod kexec;
 pub mod pkg;
 
 pub use card::Card;
@@ -64,6 +67,8 @@ pub struct State {
     pub trial: Option<u32>,
     /// Arm OOS again after every confirmed start.
     pub persist: bool,
+    /// The build whose kexec start is under way (`kexec_stage`): nothing of it is on the card yet.
+    pub kexec: Option<String>,
     /// Last thing that happened, one line.
     pub event: String,
 }
@@ -85,6 +90,7 @@ impl State {
                 "previous.len" => prev.2 = v.parse().unwrap_or(0),
                 "trial" => s.trial = v.parse().ok(),
                 "mode" => s.persist = v == "persist",
+                "kexec" if !v.is_empty() => s.kexec = Some(v.into()),
                 "event" => s.event = v.into(),
                 _ => {}
             }
@@ -108,6 +114,9 @@ impl State {
             t.push_str(&format!("trial {}\n", n));
         }
         t.push_str(if self.persist { "mode persist\n" } else { "mode oneshot\n" });
+        if let Some(b) = &self.kexec {
+            t.push_str(&format!("kexec {}\n", b.replace('\n', " ")));
+        }
         if !self.event.is_empty() {
             t.push_str(&format!("event {}\n", self.event.replace('\n', " ")));
         }
@@ -149,6 +158,7 @@ pub fn short(build: &str) -> &str {
     build.split_whitespace().next().unwrap_or(build)
 }
 
+#[derive(Clone, Copy, Debug, Default)]
 pub struct InstallOpt {
     pub execute: bool,
     /// Allow an older build than the current one.
@@ -163,6 +173,8 @@ pub struct Report {
     pub lines: Vec<String>,
     /// The image was written (OOS armed for the next power-on).
     pub written: bool,
+    /// `recovery` already holds the package's image: nothing to do.
+    pub unchanged: bool,
 }
 
 impl Report {
@@ -237,6 +249,7 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
         if sha == new.sha256 {
             if !opt.force {
                 r.say(format!("recovery already holds build {}: nothing to do (--force writes it again)", short(&new.build)));
+                r.unchanged = true;
                 return Ok(r);
             }
             // the same image again: never copied into the slot (that would replace the last good one)
@@ -316,6 +329,9 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
     st.save(state_path).map_err(io("writing the update state"))?;
     card.write_image(Region::Recovery, img)?;
     r.written = true;
+    // this was the install a kexec start was for (or one that replaces it); a cut one keeps the mark, which the next
+    // ordinary start reports
+    st.kexec = None;
     st.event = format!(
         "installed {} over {}",
         short(&new.build),
@@ -328,6 +344,103 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
         Err(e) => r.say(format!("WARNING: {}; start OOS with oos-boot-oos-again", e)),
     }
     Ok(r)
+}
+
+/// What a kexec start needs: kernel, initramfs (with the package, the key that verified it and the running device
+/// tree), the build.
+#[derive(Debug)]
+pub struct Staged {
+    pub kernel: Vec<u8>,
+    pub initrd: Vec<u8>,
+    pub build: String,
+}
+
+/// The first half of an install by kexec start (module `kexec`): every check of `install` (nothing written), the device
+/// tree, then the state names the build. The boot selection stays: `recovery` still holds the running build, so a
+/// power-cycle after a hang starts that one (or stock in one-shot mode). The caller loads and starts the kernel; the
+/// second half is `install` run by the started image itself (`oos-update boot`). None: nothing to do.
+///
+/// `booted_dt`: the device tree section of the image the loader started (`kexec::BOOTED_DT`, saved by `oos-update
+/// boot`); without it only an image in `recovery` that is the running build (`running`) tells.
+pub fn kexec_stage(
+    card: &mut Card,
+    state_path: &Path,
+    package: &[u8],
+    keys: &[[u8; 32]],
+    opt: &InstallOpt,
+    booted_dt: Option<&[u8]>,
+    running: Option<&str>,
+) -> Result<(Report, Option<Staged>), String> {
+    let mut r = install(card, state_path, package, keys, &InstallOpt { execute: false, ..*opt })?;
+    if r.unchanged {
+        return Ok((r, None));
+    }
+    // (the dry run's own last line says nothing was written: true, but the kexec start follows)
+    r.lines.pop();
+    let (h, img) = pkg::verify(package, keys)?;
+    let m = &h.manifest;
+    if !kexec::announced(m) {
+        return Err(format!("build {} does not finish a kexec start (its package has no 'trial kexec' line): install it with --no-kexec", short(&m.build)));
+    }
+    let (kernel, ramdisk, dt) = kexec::parts(img)?;
+    // the tree the running kernel got from the loader, which the kexec start keeps
+    let booted: Vec<u8> = match booted_dt {
+        Some(b) => b.to_vec(),
+        None => {
+            let st = State::load(state_path).map_err(io("reading the update state"))?;
+            let cur_is_running = st.current.as_ref().zip(running).is_some_and(|(c, run)| c.build.trim() == run.trim());
+            if !cur_is_running {
+                return Err(format!("the device tree this scope started with is not known ({} missing, recovery may hold another build): power-cycle once, or install with --new-dt", kexec::BOOTED_DT));
+            }
+            let cur = card.header(Region::Recovery).map_err(io("reading recovery"))?.ok_or("recovery holds no OOS image: no device tree to compare with")?;
+            let (cur_img, _) = card.read_image(Region::Recovery, cur.len).map_err(io("reading recovery"))?;
+            kexec::parts(&cur_img).map_err(|e| format!("recovery: {}: no device tree to compare with", e))?.2.to_vec()
+        }
+    };
+    if booted != dt {
+        return Err("the image brings another device tree than the one this scope started with: a kexec start keeps the running tree and cannot try it".into());
+    }
+    r.say("device tree: the same as the running one");
+    let key = keys.iter().find(|k| pkg::key_id(k) == m.key).ok_or("no key for the package")?;
+    let staged = Staged { kernel: kernel.to_vec(), initrd: kexec::initrd(ramdisk, package, key, &booted), build: m.build.clone() };
+    if !opt.execute {
+        r.say(format!("start build {} by kexec; it installs itself once it runs (dry run: --execute)", short(&staged.build)));
+        return Ok((r, None));
+    }
+    let _l = lock(state_path)?;
+    let mut st = State::load(state_path).map_err(io("reading the update state"))?;
+    st.kexec = Some(staged.build.clone());
+    st.event = format!("starting build {} by kexec for its trial", short(&staged.build));
+    st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
+    r.say(format!("starting build {} by kexec: it installs itself once it runs", short(&staged.build)));
+    Ok((r, Some(staged)))
+}
+
+/// The kexec start is over without the install it was for (the load or the start failed, or the started image could
+/// not install itself): forget it, with `event` as the last event.
+pub fn kexec_clear(state_path: &Path, event: &str) -> Result<(), String> {
+    let _l = lock(state_path)?;
+    let mut st = State::load(state_path).map_err(io("reading the update state"))?;
+    if st.kexec.take().is_none() {
+        return Ok(());
+    }
+    st.event = event.into();
+    st.save(state_path).map_err(io("writing the update state"))
+}
+
+/// Early in rcS of an ordinary start: a kexec start that was under way did not finish its install (the new kernel or its
+/// start-up hung, or the power went off). Returns the message, once.
+pub fn kexec_missed(state_path: &Path, kexec_start: bool) -> Result<Option<String>, String> {
+    if kexec_start {
+        return Ok(None);
+    }
+    let _l = lock(state_path)?;
+    let mut st = State::load(state_path).map_err(io("reading the update state"))?;
+    let Some(b) = st.kexec.take() else { return Ok(None) };
+    let msg = format!("Update {} did not finish when started by kexec (its kernel or start-up hung, or the power went off): not installed", short(&b));
+    st.event = msg.clone();
+    st.save(state_path).map_err(io("writing the update state"))?;
+    Ok(Some(msg))
 }
 
 fn slot_holds(card: &mut Card, e: &Entry) -> Result<bool, String> {

@@ -20,6 +20,13 @@ Fixes:
 
 New:
 
+- Updates start the new build by kexec before anything is written. Only that start, once its kernel found the card,
+  installs the package. A kernel that hangs before the start-up no longer needs the card taken out: power-cycle, and
+  the previous build starts again. Not for a new device tree
+  (`--new-dt`). `oos-update kexec-check` loads and unloads a package's kernel without a restart.
+- The USB stick install, run again, keeps a valid OOS image in `recovery` and only selects OOS: a newer build installed
+  over the network stays. `oos-reinstall.txt` on the stick writes the stick's build; a damaged `recovery` gets the
+  rollback image back.
 - SCPI `:WAVeform:MODE RAW` reads every sample of the record in the screen window.
 
 Measured:
