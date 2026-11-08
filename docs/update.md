@@ -3,8 +3,11 @@
 Built and tested on the host (unit tests, a real image on a card-shaped file, the start-up watcher in an arm64 Linux
 container: stable start, crash loop, install during the watch, hand-installed image). **Not yet verified on hardware.**
 
-The kexec trial start (below) ran once on the unit (2026-11-08): the restart worked in about 7 s, but the package
-arrived damaged and the display stayed dark. Both causes are fixed (step 3), not yet verified on hardware.
+The kexec trial start (below) ran on the unit (2026-11-08): from `install --execute` to the installed build about 20 s,
+then the power-on as trial start, confirmed. Its first run had shown that the network links and the display must stop
+first (step 3): the package arrived damaged and the display stayed dark. In the kexec start the kernel warns twice
+while the PCIe driver loads (`its_build_mapti_cmd`, `its_build_inv_cmd`: the interrupt translation tables of the
+previous kernel are still there); the display and the acquisition work, and the power-on after it has no warning.
 
 Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
 `ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
