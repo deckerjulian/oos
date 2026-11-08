@@ -376,7 +376,8 @@ def every_time_base_runs(s, o):
             s.w(f":TIM:SCAL {t}")
             time.sleep(0.2 + min(2.0, t * 3))
             a = s.stat()["frames"]
-            time.sleep(0.4 + min(3.0, t * 12))
+            # a record takes about 25 time-base units here (1.25 s at 50 ms/div)
+            time.sleep(0.4 + min(3.0, t * 30))
             got = s.num(":TIM:SCAL?")
             if abs(got / t - 1) > 1e-3:
                 bad.append((t, "scale", got))
