@@ -6,6 +6,14 @@ Tested:
 
 - The USB stick install ran on a DHO924S: dry run, first install over the stock `recovery`, and the run again.
 
+Fixes:
+
+- A cold start no longer stops at "FPGA image" when the BOOT command comes before the FPGA's boot monitor can hear it
+  (the factory image needs about 11 s after power-on; seven cold starts in a row on a DHO924S). When register 0x4000 shows the
+  wrong image, OOS unloads the PCIe drivers, sends BOOT again and checks again, up to twice, and shows a warning on the
+  start-up screen. Run on a DHO924S in four cold starts where the first BOOT was lost: the first repeat loaded the main image each time
+  and the start finished (the second repeat is tested on the host only). See docs/protocols/fpga-boot.md.
+
 Inside:
 
 - The board is kept apart, for a port to another one (docs/porting.md): `oos_hal::dho` holds the DHO800/DHO900, the

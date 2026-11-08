@@ -321,7 +321,7 @@ Keep shadows for 0x1000, 0x1014, 0x1020, 0x1428, 0x4004, 0x4008 and the ADC regi
 
 | # | step | details | status |
 |---|---|---|---|
-| 1 | FPGA boot | `\rBOOT\r` + 00 40 00 00 on spidev1.0; wait; `pcie-rockchip` host (retry by reload), `xdma poll_mode=1`; check 0x4000 = 0xe2072115 | verified on the unit |
+| 1 | FPGA boot | `\rBOOT\r` + 00 40 00 00 on spidev1.0; wait; `pcie-rockchip` host (retry by reload), `xdma poll_mode=1`; check 0x4000 = 0xe2072115; if it shows another value, BOOT was lost (`fpga-boot.md`): unload both modules, BOOT, wait, load, check again, at most twice | verified on the unit; the repeat of BOOT verified once (first repeat of two) |
 | 2 | sample clock | LMX2582 table (`pll.md`) | verified on the unit |
 | 3 | AFE x4 | AFE init | verified on the unit |
 | 4 | ADC init | 2 x 104 words + `0x010f0201` | verified on the unit (1.1 ms / 100 us) |
