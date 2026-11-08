@@ -72,13 +72,25 @@ pub struct Bar1 {
 #[cfg(target_os = "linux")]
 impl Bar1 {
     pub fn open() -> std::io::Result<Bar1> {
+        Bar1::from_file(std::fs::OpenOptions::new().read(true).write(true).open("/dev/xdma0_bypass")?)
+    }
+
+    /// Maps the 32 KiB of BAR1 of an open `/dev/xdma0_bypass` (a plain file of that size in the tests).
+    fn from_file(f: std::fs::File) -> std::io::Result<Bar1> {
         use std::os::unix::io::AsRawFd;
-        let f = std::fs::OpenOptions::new().read(true).write(true).open("/dev/xdma0_bypass")?;
         let p = unsafe { libc::mmap(std::ptr::null_mut(), 0x8000, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0) };
         if p == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error());
         }
         Ok(Bar1 { regs: p as *mut u32, _file: f, gap_us: 10 })
+    }
+}
+
+/// Unmaps BAR1. The file closes by itself, but a mapping keeps the device in use: `rmmod xdma` fails while one is left.
+#[cfg(target_os = "linux")]
+impl Drop for Bar1 {
+    fn drop(&mut self) {
+        unsafe { libc::munmap(self.regs as *mut libc::c_void, 0x8000) };
     }
 }
 
@@ -102,6 +114,25 @@ unsafe impl Send for Bar1 {}
 
 #[cfg(test)]
 mod tests {
+    // Break it catches: a `Bar1` that leaves its mapping behind when dropped. The mapping keeps /dev/xdma0_bypass in
+    // use, so `rmmod xdma` fails until the process exits (seen on the unit, 2026-11-08: the repeat of the BOOT command
+    // stopped there).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dropping_a_bar1_unmaps_it() {
+        let path = std::env::temp_dir().join(format!("oos-bar1-unmap-test-{}", std::process::id()));
+        let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&path).unwrap();
+        f.set_len(0x8000).unwrap();
+        let name = path.to_str().unwrap().to_string();
+        let mapped = || std::fs::read_to_string("/proc/self/maps").unwrap().lines().any(|l| l.contains(&name));
+        let bar = super::Bar1::from_file(f).unwrap();
+        assert!(mapped(), "the test must see the mapping while the Bar1 lives");
+        drop(bar);
+        let still = mapped();
+        std::fs::remove_file(&path).unwrap();
+        assert!(!still, "the mapping of the device file is still there after the Bar1 was dropped");
+    }
+
     #[test]
     fn read_dma_short_reads() {
         // a stream that hands out at most 1000 bytes a read
