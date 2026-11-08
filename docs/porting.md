@@ -21,9 +21,26 @@ over after a check:
 - network, WLAN, web remote, SCPI, the file and setup handling;
 - most of the GUI (`ui/`) and all of `dsp/` (decoders, maths, measurements).
 
-## What does not
+## Where the board ends
 
-Everything that talks to the acquisition board, which on the DHO800/DHO900 is in `hal/`:
+The code keeps the board apart:
+
+- `hal/src/dho/` (`oos_hal::dho`): everything of the DHO800/DHO900 board. The crate root holds only what does not
+  depend on it (`model`, `update`, `wlan`, `bootstatus`, `vendorkeys`).
+- `ui/src/board/mod.rs`: the trait `Board`, the only way the GUI reaches the hardware: what the acquisition thread
+  is to apply (`want`), its start (`spawn`), roll and scan (`slow_mode`), the generator (`gen`, `gen_clamp`, the
+  arbitrary wave), the front-end steps, the front panel (port, commands, LEDs, keys) and the board readings. Frames come
+  back in volts (`Frame`, made into screen records by the neutral `to_record`).
+- `ui/src/board/dho/`: the DHO800/DHO900 behind it, the acquisition thread included. A lint test
+  (`board::boundary`) fails when other code of the GUI uses `oos_hal::dho` or `board::dho`.
+
+A port adds `hal/src/<board>/` next to `dho`, implements `Board` in `ui/src/board/<board>/` and points
+`board::Active` at it; the compiler then names every part of the interface still missing. The image is built per board
+anyway (kernel, device tree). `oos-fpgad` is a DHO800/DHO900 tool and stays one.
+
+## What does not carry over
+
+Everything that talks to the acquisition board, which on the DHO800/DHO900 is in `hal/src/dho/`:
 
 | Part | DHO800/DHO900 | to find out per model |
 |---|---|---|

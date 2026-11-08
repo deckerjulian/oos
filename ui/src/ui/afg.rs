@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Built-in generator page (S models): output on/off, wave shape (sine, square, ramp, pulse, noise, DC), frequency,
-//! amplitude, offset, duty / symmetry. The acquisition thread applies the settings (`hw.rs`, `oos_hal::dho::afg`) with the
+//! amplitude, offset, duty / symmetry. The acquisition thread applies the settings (`Board::gen`) with the
 //! factory calibration; limits as the stock system, frequency caps per shape from the platform limits.
 
 use super::*;
+use crate::board::{board, Board};
 
 impl Ui {
     /// Values of the generator card: frequency, and wave with amplitude.
@@ -120,7 +121,7 @@ impl Ui {
             Item::AfgOn => m.afg_on = !m.afg_on,
             Item::AfgArbSrc => m.afg_arb_src = src_step(m.afg_arb_src, NCH, d),
             // sine up to 60 MHz (platform limits, limits.conf `afg.*_max_hz`)
-            Item::AfgFreq => m.afg_freq = ladder(m.afg_freq, d, 0.01, m.afg_wave_hal().max_hz()),
+            Item::AfgFreq => m.afg_freq = ladder(m.afg_freq, d, 0.01, board().gen_max_hz(m)),
             Item::AfgAmpl => m.afg_ampl = ladder(m.afg_ampl, d, 0.002, 10.0),
             Item::AfgOffset => m.afg_offset = ((m.afg_offset + 0.1 * d as f64) * 10.0).round() / 10.0,
             Item::AfgWave => m.afg_wave = (m.afg_wave as i32 + d).rem_euclid(AFG_WAVES.len() as i32) as usize,
@@ -154,7 +155,7 @@ impl Ui {
         };
         if let Some(u) = unit {
             if let Ok(v) = self.keypad.parse::<f64>() {
-                let (want, lo, hi) = (v * u, 0.01, self.m.afg_wave_hal().max_hz());
+                let (want, lo, hi) = (v * u, 0.01, board().gen_max_hz(&self.m));
                 self.m.afg_freq = want;
                 self.afg_clamp();
                 if want > hi {
@@ -181,22 +182,23 @@ impl Ui {
     /// The stock limits: amplitude by frequency, offset within (Vmax - A) / 2.
     fn afg_clamp(&mut self) {
         let m = &mut self.m;
-        m.afg_freq = m.afg_freq.clamp(0.01, m.afg_wave_hal().max_hz());
+        let max = board().gen_max_hz(m);
+        m.afg_freq = m.afg_freq.clamp(0.01, max);
         // FM: the deviation stays below the carrier and inside the frequency range
-        m.afg_fm_dev = m.afg_fm_dev.min(m.afg_freq).min(m.afg_wave_hal().max_hz() - m.afg_freq).max(0.01);
+        m.afg_fm_dev = m.afg_fm_dev.min(m.afg_freq).min(max - m.afg_freq).max(0.01);
         // DC has only its level, noise no frequency: the hidden amplitude or frequency must not limit them
-        let f = if matches!(m.afg_wave_hal(), oos_hal::dho::afg::Wave::Noise) { 1e6 } else { m.afg_freq * 1e6 };
-        if matches!(m.afg_wave_hal(), oos_hal::dho::afg::Wave::Dc) {
+        let f = if m.afg_wave == AFG_NOISE { 1e6 } else { m.afg_freq * 1e6 };
+        if m.afg_wave == AFG_DC {
             m.afg_offset = m.afg_offset.clamp(-5.0, 5.0);
             return;
         }
-        let (a, o) = oos_hal::dho::afg::clamp(m.afg_ampl * 1e9, m.afg_offset * 1e9, f);
+        let (a, o) = board().gen_clamp(m.afg_ampl * 1e9, m.afg_offset * 1e9, f);
         (m.afg_ampl, m.afg_offset) = (a / 1e9, o / 1e9);
     }
 
     /// The arbitrary wave from samples (one period); false without enough samples.
     pub fn afg_arb_load(&mut self, v: &[f32]) -> bool {
-        match oos_hal::dho::afg::arb_set(v) {
+        match board().arb_store(v) {
             Some(id) => {
                 (self.m.afg_arb, self.m.afg_wave) = (id, 6);
                 self.afg_clamp();
@@ -232,7 +234,7 @@ impl Ui {
             },
             Item::AfgArbFile => {
                 let p = self.store_dir.join("arb.csv");
-                let v = std::fs::read_to_string(&p).map(|t| oos_hal::dho::afg::arb_parse(&t)).unwrap_or_default();
+                let v = std::fs::read_to_string(&p).map(|t| board().arb_parse(&t)).unwrap_or_default();
                 if self.afg_arb_load(&v) {
                     self.toast(&format!("Arb wave: {} points from arb.csv", v.len()));
                 } else {
@@ -286,7 +288,7 @@ mod arb_tests {
         assert_eq!(ui.menu, MenuId::Afg);
         // above the limit of the wave: the limit, with a message
         type_in(&mut ui, &["9", "9", "9", "MHz"]);
-        assert_eq!(ui.m.afg_freq, ui.m.afg_wave_hal().max_hz());
+        assert_eq!(ui.m.afg_freq, board().gen_max_hz(&ui.m));
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("Highest")));
         // a ramp has a lower limit than a sine
         ui.m.afg_wave = 2;
@@ -317,8 +319,8 @@ mod arb_tests {
         let n = ui.afg_arb_capture(0).unwrap();
         assert!(n > 100);
         assert_eq!(ui.m.afg_wave, 6);
-        assert!(matches!(ui.m.afg_wave_hal(), oos_hal::dho::afg::Wave::Arb { id } if id == ui.m.afg_arb));
-        let t = ui.m.afg_wave_hal().table(1e3);
+        assert!(matches!(crate::board::dho::wave(&ui.m), oos_hal::dho::afg::Wave::Arb { id } if id == ui.m.afg_arb));
+        let t = crate::board::dho::wave(&ui.m).table(1e3);
         assert!(t.iter().any(|&v| v > 30000) && t.iter().any(|&v| v < -30000));
         assert!(ui.afg_items().contains(&Item::AfgArbGrab));
         let id = ui.m.afg_arb;

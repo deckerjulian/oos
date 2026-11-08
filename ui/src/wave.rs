@@ -5,6 +5,7 @@
 //! The live FPGA source (oos-fpgad, Phase 4) will plug in as another `Source`.
 
 use crate::model::*;
+use crate::board::{board, Board};
 
 pub struct Rng(u64);
 impl Rng {
@@ -47,7 +48,7 @@ pub struct Record {
 
 #[derive(Clone)]
 pub struct Raw {
-    pub frame: std::sync::Arc<crate::hw::Frame>,
+    pub frame: std::sync::Arc<crate::board::Frame>,
     pub i0: usize,
     pub i1: usize,
     /// time of sample i0 relative to the trigger (s)
@@ -57,11 +58,11 @@ pub struct Raw {
 pub enum Source {
     Demo { t: f64 },
     Replay { words: Vec<u16>, xinc: f64, yinc: f64, yorg: f64, yref: f64 },
-    /// frames from the FPGA read-out thread (fpga.rs)
-    Live { shared: crate::fpga::Shared, seen: u64, words: Vec<u16>, xinc: f64, yinc: f64, yorg: f64, yref: f64 },
-    /// acquisitions through oos-hal (hw.rs)
+    /// frames from the read-out-only debug source of the board (`Board::live`)
+    Live { shared: crate::board::LiveShared, seen: u64, words: Vec<u16>, xinc: f64, yinc: f64, yorg: f64, yref: f64 },
+    /// acquisitions of the board (`Board::spawn`)
     #[allow(dead_code)]
-    Hw { shared: crate::hw::HwShared, seen: u64 },
+    Hw { shared: crate::board::HwShared, seen: u64 },
 }
 
 /// What the demo signals show: plain, or with features for the selected trigger type (runts / missing pulses on CH1,
@@ -117,7 +118,7 @@ impl DemoGen {
                     2 => 1.0 - 4.0 * (ph - 0.5).abs(),
                     4 => ((t * 1e9) as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(17) as f64 / u64::MAX as f64 * 2.0 - 1.0,
                     5 => 0.0,
-                    _ => oos_hal::dho::afg::arb_at(ph),
+                    _ => board().arb_at(ph),
                 }
     }
 }
@@ -425,7 +426,7 @@ impl Source {
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
-            shared.lock().unwrap().afg = Some((m.afg_on, m.afg_freq, m.afg_ampl, m.afg_offset, m.afg_wave_hal(), m.afg_mod_hal()));
+            shared.lock().unwrap().afg = Some(board().gen(m));
         }
     }
 
@@ -492,7 +493,7 @@ impl Source {
 
     /// Hardware source: takes every queued frame but the newest (the fast display path draws them; the newest stays
     /// for `acquire`, which makes the full record for measurements, decoding and history).
-    pub fn drain_but_last(&mut self) -> Vec<crate::hw::Frame> {
+    pub fn drain_but_last(&mut self) -> Vec<crate::board::Frame> {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
             let n = g.queue.len().saturating_sub(1);
@@ -511,8 +512,8 @@ impl Source {
         let level = m.trig_level as f64;
         if let Source::Hw { shared, seen } = self {
             let mut g = shared.lock().unwrap();
-            g.want = Some(crate::hw::settings(m, false));
-            g.slow = crate::hw::slow_mode(m);
+            g.want = Some(board().want(m));
+            g.slow = board().slow_mode(m);
             g.stamp = m.hw_stamp;
             // SINGLE takes nothing from before the key press
             let fresh = loop {
@@ -531,7 +532,7 @@ impl Source {
             };
             *seen = f.seq;
             drop(g);
-            return Some(crate::hw::to_record(&std::sync::Arc::new(f), m, n, window, t_first));
+            return Some(crate::board::to_record(&std::sync::Arc::new(f), m, n, window, t_first));
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
             let g = shared.lock().unwrap();

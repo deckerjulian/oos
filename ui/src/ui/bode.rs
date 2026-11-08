@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Bode plot with the built-in generator (S models, `hw.rs` / `oos_hal::dho::afg`) or an external generator on the LAN:
+//! Bode plot with the built-in generator (S models, `Board::gen`) or an external generator on the LAN:
 //! OOS sends SCPI to the generator (presets for Rigol DG, Siglent SDG and plain SCPI), steps a logarithmic sweep, sets the time base to about 5 periods per screen,
 //! measures gain and phase of the output channel against the input channel by a sine fit on every captured sample
 //! (`oos_dsp::bode`) and draws both curves. The generator connection runs in its own thread. With the built-in

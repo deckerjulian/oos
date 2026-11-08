@@ -402,9 +402,9 @@ fn holdoff_steps_and_setups() {
     assert_eq!(u.m.holdoff, 0.0);
     u.adjust(Item::TrigHoldoff, 100);
     assert!(u.m.holdoff <= 10.0);
-    let s = crate::hw::settings(&u.m, false);
+    let s = crate::board::dho::hw::settings(&u.m, false);
     assert!(s.holdoff > 1.0);
-    assert!(crate::hw::settings(&Model::default(), false).holdoff == oos_hal::dho::seq::HOLDOFF_MIN);
+    assert!(crate::board::dho::hw::settings(&Model::default(), false).holdoff == oos_hal::dho::seq::HOLDOFF_MIN);
     for t in TRIG_TYPES {
         u.set_trig_type(t);
         assert!(u.trigger_items().contains(&Item::TrigHoldoff), "{:?}", t);
@@ -703,7 +703,7 @@ fn the_fine_time_base_leaves_the_acquisition_on_its_step() {
     loop {
         let (now, hw) = (u.m.time_per_div(), u.m.hw_time_per_div());
         assert!(hw >= now * 0.9999, "{} {}", now, hw);
-        assert!(hw as f64 * 1.0001 < crate::hw::ROLL_TDIV || u.m.tfine == 1.0, "{} {}", now, hw);
+        assert!(hw as f64 * 1.0001 < crate::board::board().roll_tdiv() || u.m.tfine == 1.0, "{} {}", now, hw);
         u.adjust(Item::HScale, 1);
         n += 1;
         if u.m.time_per_div() == now {
@@ -772,7 +772,7 @@ fn a_channel_can_measure_something_else() {
     u.adjust(Item::ChBias(0), 3);
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!((b.ch[0].unit, b.ch[0].bias, b.ch[0].skew), (AmpUnit::A, u.m.ch[0].bias, SKEW_MAX));
-    assert_eq!(crate::hw::settings(&u.m, false).ch[0].skew, SKEW_MAX as f64);
+    assert_eq!(crate::board::dho::hw::settings(&u.m, false).ch[0].skew, SKEW_MAX as f64);
     // the mean of the input goes into the correction
     for _ in 0..24 {
         u.step(0.04);
@@ -797,7 +797,7 @@ fn old_setups_at_20_volts_land_on_the_top_step() {
 
 #[test]
 fn what_the_screen_says_reaches_the_settings() {
-    let hw = |m: &Model| crate::hw::settings(m, false);
+    let hw = |m: &Model| crate::board::dho::hw::settings(m, false);
     let mut m = Model::default();
     // SINGLE and NORMAL wait for a trigger, only AUTO fires by itself
     for (t, auto) in [(TrigMode::Auto, true), (TrigMode::Normal, false), (TrigMode::Single, false)] {

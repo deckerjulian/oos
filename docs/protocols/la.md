@@ -303,8 +303,8 @@ bit26 itself, 0x128c and the rate block keep their last values, as section 8.3 s
 | thresholds | `hal::dho::la::thresholds`, with every set-up while the LA is on | 5.1 bit-exact; zero codes from `cal_la.hex` (fallback 0x2180) |
 | raw LA read | `hal::dho::la::passthrough`, `readout`, `restore`; `seq::State::la_read_steps`, `seq::acquire_la` | 4.2 steps 1-6, then 0x4008 bit23 = 1 / bit24 = 0 |
 | batch | `seq::frames` | one frame per batch while the LA is on (only the last frame of a batch has its LA, 4.1) |
-| depth / rate limits | `oos-ui` `Model::max_mem` (`Limits::mem(n, la)`), `max_srate` halved, `hw::settings` caps the depth | 31.25 / 12.5 / 10 M |
-| probe detect | `hw.rs`, GPIO `LA_PROBE_DETECT` once a second | LA page title; without a probe the LA does not come on from the panel or the screen |
+| depth / rate limits | `oos-ui` `Model::max_mem` (`Limits::mem(n, la)`), `max_srate` halved, `board::dho::hw::settings` caps the depth | 31.25 / 12.5 / 10 M |
+| probe detect | `board/dho/hw.rs`, GPIO `LA_PROBE_DETECT` once a second | LA page title; without a probe the LA does not come on from the panel or the screen |
 | UI | `ui/src/ui/la.rs` (LA key, Analysers > Logic analyser) | lanes, thresholds per pod, line selection, lane height, setups (`la = ...`), demo lines |
 | roll / scan with the LA | section 13 | chunk split by header w1 bit1 |
 | LA lines as decoder / trigger sources | section 11 | |
@@ -384,7 +384,7 @@ interpolation on, 0x0c off; 0x12b0 = 0, 0x12b4 = the step; 0x12b8 = 0, 0x12bc = 
   an analog chunk; a host test checks that for all three ratios. At mask 3 (m != ratio) the spans differ.
 - Read: an even number of chunks; `roll::split_la` separates them by header word 1 bit 1.
 - Display: roll keeps a ring of 10 divisions of words, the newest word beside the newest analog point at the right edge
-  (`hw::roll_la_t0`); scan writes a sweep picture like the analog one, word 0 at the left edge, the part not yet written
+  (`board::dho::hw::roll_la_t0`); scan writes a sweep picture like the analog one, word 0 at the left edge, the part not yet written
   is left out.
 
 Seen on the unit in scan: the chunks alternate LA, analog, and the chunk counter (header word 4) counts both, so analog chunk n

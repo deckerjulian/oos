@@ -391,7 +391,7 @@ path (`max_frames`) keeps the 16 777 216-burst memory size.
 3. Remaining at <= 100 ns/div: the record is exactly one screen (memsel = 10 divisions), so after the software trigger
    moves the record by a few samples the last few points of the screen have no data (amplitude of the last eighth 4 %
    low at 100 ns/div). Fix (host-tested, not yet verified on hardware): at Auto depth below the live depth oos-ui
-   asks for an eighth more memory (at least 64 points, a multiple of 8) at the same full rate (`hw::screen_margin`),
+   asks for an eighth more memory (at least 64 points, a multiple of 8) at the same full rate (`board::dho::hw::screen_margin`),
    e.g. 1408 instead of 1250 points at 100 ns/div; `hz::prep` centres it on the trigger (pre 704). 1408 points are
    2816 bytes, so a one-channel frame needs no stream padding either. Rare single frames
    with a small wiggle on a peak are still visible with persistence; not explained yet.

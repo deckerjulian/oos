@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Self-calibration page (System > Self-cal): channels, AFE zero on/off, start (pressed twice: disconnect all inputs
-//! first), cancel, progress and result. The work runs in the acquisition thread (`hw.rs`, `oos_hal::dho::selfcal`); the
+//! first), cancel, progress and result. The work runs in the acquisition thread of the board (`board/dho/hw.rs`); the
 //! results go to OOS's own files in /oos/cal, never to /rigol/data.
 
 use super::*;
@@ -24,7 +24,7 @@ pub struct State {
 }
 
 impl Ui {
-    fn cal_shared(&self) -> Option<crate::hw::HwShared> {
+    fn cal_shared(&self) -> Option<crate::board::HwShared> {
         match &self.src {
             Source::Hw { shared, .. } => Some(shared.clone()),
             _ => None,

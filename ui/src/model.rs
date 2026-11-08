@@ -73,7 +73,7 @@ pub fn tscales() -> Vec<f32> {
         for m in [1.0, 2.0, 5.0] {
             let x = d * m;
             // from 1 ns/div (stock 5 ns): below 5 ns/div the screen holds 12..62 samples, drawn with the
-            // windowed sinc of sparse views; the record keeps the margin of `hw::screen_margin`
+            // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
             if x >= 0.99e-9 && x <= 1000.1 {
                 v.push(x as f32);
             }
@@ -723,7 +723,7 @@ pub struct Model {
     pub bode_out: usize,
     pub bode_gen: usize,
     pub bode_addr: String,
-    /// hardware source: bumped with settings a measurement must wait for (`hw::Shared::stamp`); not stored
+    /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
     /// bandwidth test (Analysers > Bandwidth): source, signal frequency hint (0 = Auto), bins per period
@@ -731,7 +731,7 @@ pub struct Model {
     pub bw_hint: f64,
     pub bw_bins: usize,
     pub afg_on: bool,
-    /// arbitrary wave: id of `oos_hal::dho::afg::arb_set` (0 = none yet), channel it is captured from
+    /// arbitrary wave: id of `Board::arb_store` (0 = none yet), channel it is captured from
     pub afg_arb: u32,
     pub afg_arb_src: usize,
     pub afg_freq: f64,
@@ -773,7 +773,7 @@ pub const FFT_DB: [f32; 5] = [1.0, 2.0, 5.0, 10.0, 20.0];
 
 /// Bandwidth limits of a channel (AFE low-pass): Auto = filter ~ fs / 4 as the
 /// default, Full = widest filter (stock "OFF", 3150 MHz in the AFE), GND = no signal through the AFE; then the AFE
-/// filter frequency in MHz (`hw::bw_code`).
+/// filter frequency in MHz (`board::dho::hw::bw_code`).
 pub const BWS: [(&str, u32); 31] = [
     ("Auto", 0), ("Full", 0), ("20 MHz", 20), ("GND", 0),
     ("5 MHz", 5), ("10 MHz", 10), ("15 MHz", 15), ("25 MHz", 25), ("30 MHz", 30), ("35 MHz", 35), ("40 MHz", 40),
@@ -787,12 +787,15 @@ pub const BW_20M: usize = 2;
 /// Index of "Full" in BWS.
 pub const BW_FULL: usize = 1;
 
-/// Memory depths, read for the screen through the FPGA compression above 1 M (hw::batch_plan). 100 M and 125 M record
+/// Memory depths, read for the screen through the FPGA compression above 1 M (`board::dho::hw::batch_plan`). 100 M and 125 M record
 /// on the unit but their time axis is ~0.1 % off (acquisition-start.md, "Memory depth beyond 50 M"), so the UI stops
 /// at 62.5 M for now. New entries go to the end: setups store the index.
-/// Wave shapes of the built-in generator (`oos_hal::dho::afg::Wave`).
+/// Wave shapes of the built-in generator (`Board::gen`).
 pub const AFG_WAVES: [&str; 7] = ["Sine", "Square", "Ramp", "Pulse", "Noise", "DC", "Arb"];
-/// Modulations and modulating shapes of the built-in generator (`oos_hal::dho::afg::Mod`, `ModShape`).
+/// Indices into AFG_WAVES the generator page treats apart.
+pub const AFG_NOISE: usize = 4;
+pub const AFG_DC: usize = 5;
+/// Modulations and modulating shapes of the built-in generator (`Board::gen`).
 pub const AFG_MODS: [&str; 4] = ["Off", "AM", "FM", "PM"];
 pub const AFG_MOD_SHAPES: [&str; 6] = ["Sine", "Square", "Triangle", "Up ramp", "Down ramp", "Noise"];
 
@@ -1186,34 +1189,6 @@ impl Model {
         self.ch[c.min(NCH - 1)].unit.name()
     }
 
-    /// The generator's modulation for the HAL (sine, square and ramp carriers only).
-    pub fn afg_mod_hal(&self) -> oos_hal::dho::afg::Mod {
-        use oos_hal::dho::afg::{Mod, ModShape};
-        let shape = [ModShape::Sine, ModShape::Square, ModShape::Triangle, ModShape::UpRamp, ModShape::DownRamp, ModShape::Noise][self.afg_mod_shape.min(5)];
-        let rate = self.afg_mod_rate;
-        match self.afg_mod {
-            _ if self.afg_wave > 2 => Mod::None,
-            1 => Mod::Am { rate, depth: self.afg_mod_depth / 100.0, shape },
-            2 => Mod::Fm { rate, dev: self.afg_fm_dev, shape },
-            3 => Mod::Pm { rate, dev: self.afg_pm_dev, shape },
-            _ => Mod::None,
-        }
-    }
-
-    /// The generator's wave shape for the HAL.
-    pub fn afg_wave_hal(&self) -> oos_hal::dho::afg::Wave {
-        use oos_hal::dho::afg::Wave;
-        let (d, s) = (self.afg_duty / 100.0, self.afg_symmetry / 100.0);
-        match self.afg_wave {
-            1 => Wave::Square { duty: d },
-            2 => Wave::Ramp { symmetry: s },
-            3 => Wave::Pulse { duty: d, rise: 0.0, fall: 0.0 },
-            4 => Wave::Noise,
-            5 => Wave::Dc,
-            6 => Wave::Arb { id: self.afg_arb },
-            _ => Wave::Sine,
-        }
-    }
     /// Settings of math channel `k` (the selected one from the edit fields).
     pub fn math_ch(&self, k: usize) -> crate::math::MathCh {
         if k == self.math_sel {

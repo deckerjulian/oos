@@ -1,5 +1,13 @@
 # Changes
 
+## Unreleased
+
+Inside:
+
+- The board is kept apart, for a port to another one (docs/porting.md): `oos_hal::dho` holds the DHO800/DHO900, the
+  GUI reaches the hardware only through `board::Board` (`ui/src/board/`), and a lint test keeps it that way. No change
+  in what the scope does: the register sequences are the same as in 0.1.1.
+
 ## 0.1.1
 
 From 0.1.0: install the package as before, then power-cycle the scope. From 0.1.1 on, updates start the new build by

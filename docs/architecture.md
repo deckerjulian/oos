@@ -46,9 +46,13 @@ Rule for all crates: no vendor code is in the tree. Only dependency: `libc`.
 
 Pure functions build lists of `(offset, value)` writes and update software shadows of write-only registers, so the
 host tests check them against fixtures from the Python models (`tools/*model.py`) and the device logs. Applying a list
-is a separate step through `bus::Bus` (`Bar1` on the unit, `Recorder` in tests).
+is a separate step through `dho::bus::Bus` (`Bar1` on the unit, `Recorder` in tests).
 
-| Module | Role |
+The crate root holds what does not depend on the board: `model`, `update`, `wlan`, `bootstatus`, `vendorkeys`. Everything
+of the DHO800/DHO900 board is in `oos_hal::dho` (`hal/src/dho/`); a port to another board family adds a module next to
+it ([porting.md](porting.md)).
+
+| Module (in `dho` unless noted) | Role |
 |---|---|
 | `bus`, `gpio` | BAR1 access (mmap of /dev/xdma0_bypass), GPIO character device by DT line name |
 | `scu`, `spu`, `hz`, `acq`, `tpu`, `wpu` | FPGA blocks: run/stop/arm/read-out, sample rate, time base, acquisition configuration, trigger unit (12 types), read-path gain |
@@ -58,9 +62,10 @@ is a separate step through `bus::Bus` (`Bar1` on the unit, `Recorder` in tests).
 | `panel` | front-panel MCU frames: LEDs, power commands |
 | `board` | XADC (FPGA temperature, VCCINT), thermal zones, over-temperature guard, beeper |
 | `afg` | built-in generator (`protocols/afg.md`) |
-| `model`, `clock` | model identity, capabilities and limits, ADC clock domain (`models.md`) |
-| `update` | signed updates with rollback (`update.md`) |
-| `wlan` | control socket of wpa_supplicant, its answers, key derivation (`wlan.md`) |
+| `clock` | ADC clock domain (`models.md`) |
+| `model` (root) | model identity, capabilities and limits (`models.md`) |
+| `update` (root) | signed updates with rollback (`update.md`) |
+| `wlan` (root) | control socket of wpa_supplicant, its answers, key derivation (`wlan.md`) |
 
 ### oos-dsp: signal processing
 
@@ -69,20 +74,28 @@ decoders, mask test, signal generators for tests and the demo source. Waveforms 
 
 ### oos-ui: the scope screen
 
-One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layout in `ui`, state in `model`. Threads:
+One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layout in `ui`, state in `model`.
+
+Everything the UI asks of the hardware goes through the trait `board::Board` (`ui/src/board/mod.rs`): what the
+acquisition thread is to apply, the generator, the front-end steps, the front panel, the board readings. The UI speaks
+in the model's terms and gets frames in volts back (`board::Frame`, `board::to_record`). `board::dho` implements it
+for the DHO800/DHO900 and is the only part of the UI that uses `oos_hal::dho`; a lint test
+(`board::boundary`) keeps it that way. The board is chosen when OOS is built (`board::Active`).
+
+Threads:
 
 | Thread | Job |
 |---|---|
 | main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip |
 | input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
-| hw (`--hw`) | `hal::dho::seq` plan/execute in a loop with the current model settings; hands frames over through `HwShared` |
-| live (`--fpga-live`) | experimental: repeats the verified read-out (no arming) |
+| hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
+| live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
 | scpi, http | SCPI server on 5555, web remote on 8080 |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
-`Live` (read-out loop), `Hw` (real acquisitions through `hal::dho::seq`; the TPU trigger is set to the selected type, the
-software trigger finds the point again in the data).
+`Live` (read-out loop), `Hw` (real acquisitions of the board; on the DHO800/DHO900 the TPU trigger is set to the
+selected type, the software trigger finds the point again in the data).
 
 ### oos-fpgad: bring-up and service tool
 

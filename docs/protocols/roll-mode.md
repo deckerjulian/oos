@@ -49,7 +49,7 @@ This runs only while running, and also on RUN. Thresholds: 5e13 fs = **50 ms/div
 | SCAN | on | >= 50 ms | ROLL |
 
 Scan allowed = acquire mode is not average. It is not checked on the Auto Roll path. A further condition (assumed: mask or math on)
-is not known exactly. `hw::slow_mode` in oos-ui follows this table with `hw::ROLL_TDIV` and `hw::SCAN_TDIV`.
+is not known exactly. `board::dho::hw::slow_mode` in oos-ui follows this table with `board::dho::hw::ROLL_TDIV` and `board::dho::hw::SCAN_TDIV`.
 
 ### 1.3 Side effects of entering ROLL/SCAN
 
@@ -353,7 +353,7 @@ normal configuration, then A, B, C, D of section 6; parameters from `roll::param
 - After `roll::stop` 0x1208 = 0x832ebd54 (bit 31 = memory full, as expected after > 1 s at 62.5 MSa/s).
 - **Stream rate limit:** the stream carries at most one sample per 156.25 MHz clock. At 1.25 GSa/s the point spacing came out 8x, at
   625 MSa/s 4x the computed value. `roll::MAX_RATE` = 156.25 MSa/s. Auto depth reaches exactly this rate at 50 ms/div.
-- **oos-ui:** the hardware thread streams in roll mode from 200 ms/div (`hw::ROLL_TDIV`). Between 5 and 100 ms/div the stream ran too
+- **oos-ui:** the hardware thread streams in roll mode from 200 ms/div (`board::dho::hw::ROLL_TDIV`). Between 5 and 100 ms/div the stream ran too
   fast for its time axis with two or four channels, with one channel at 50 ms/div too, LA on or off (a 100 Hz sine read 170 to 280 Hz);
   the cause is not known, a normal acquisition is right on all of them. Roll uses Auto depth (no live-depth cap, the memory is not read): 100 ms/div = 10 us per point / 1 ms chunks, 500 ms/div = 50 us / 5 ms, 1 s/div = 100 us /
   10 ms. Ring of 10 divisions, ~30 pictures per second, newest point at the right edge, no software trigger (status AUTO). Roll is
@@ -370,7 +370,7 @@ normal configuration, then A, B, C, D of section 6; parameters from `roll::param
 - After every read (also an empty poll): `SCAN_INFO_REGS` = 0x1204, 0x40d0 -> `scan_info` (triggered, position, done).
 - Done in RUN: `scan_done` (stop sequence, average clear), 500 ms, `config_scan` + `start` again. Done in SINGLE: stop until the next
   SINGLE press. Leaving scan: `stop` (clears bit17 and bit22, 0x11fc = 1000).
-- oos-ui (`hw::Slow`, `hw::slow_mode`): Horizontal > Auto Roll on -> roll; off -> scan from 200 ms/div
+- oos-ui (`board::Slow`, `board::dho::hw::slow_mode`): Horizontal > Auto Roll on -> roll; off -> scan from 200 ms/div
   unless averaging (table 1.2). The sweep picture is one screen per channel, written from the left with
   a wrap at the right edge and a 2 % gap ahead of the write position; the picture is "partial" until done (SINGLE
   stops only on a complete sweep).

@@ -17,10 +17,9 @@ mod cmd;
 mod decode;
 mod fastdraw;
 mod font;
-mod fpga;
 mod gfx;
 mod http;
-mod hw;
+mod board;
 mod math;
 mod model;
 mod scpi;
@@ -47,25 +46,20 @@ fn arg(args: &[String], name: &str) -> Option<String> {
 fn source(args: &[String]) -> Source {
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--fpga-live") {
-        let mut cfg = fpga::Cfg::default();
-        if let Some(n) = arg(args, "--n").and_then(|v| v.parse().ok()) {
-            cfg.n = n;
-        }
-        if let Some(s) = arg(args, "--start").and_then(|v| v.parse().ok()) {
-            cfg.start = s;
-        }
-        cfg.arm = args.iter().any(|a| a == "--fpga-arm");
-        cfg.play4 = args.iter().any(|a| a == "--fpga-play4");
+        use board::Board;
         let pre = arg(args, "--pre").unwrap_or_else(|| "1,2,4000,1,8e-10,0,0,1.3333e-4,-11250,32768".into());
         let p: Vec<f64> = pre.trim().split(',').map(|s| s.trim().parse().unwrap_or(0.0)).collect();
-        let shared = fpga::spawn(cfg, arg(args, "--period-ms").and_then(|v| v.parse().ok()).unwrap_or(30));
-        return Source::Live { shared, seen: 0, words: Vec::new(), xinc: p[4], yinc: p[7], yorg: p[8], yref: p[9] };
+        if let Some(shared) = board::board().live(args) {
+            return Source::Live { shared, seen: 0, words: Vec::new(), xinc: p[4], yinc: p[7], yorg: p[8], yref: p[9] };
+        }
     }
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--hw") {
-        let app_mask = arg(args, "--app-mask").and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(1);
-        let cal = arg(args, "--cal").unwrap_or_else(|| "/rigol/data".into());
-        let shared = hw::spawn(app_mask, args.iter().any(|a| a == "--afe"), cal, arg(args, "--start-up"));
+        use board::Board;
+        let mask = arg(args, "--app-mask").and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(1);
+        let cal_dir = arg(args, "--cal").unwrap_or_else(|| "/rigol/data".into());
+        eprintln!("oos-ui: board {}", board::board().name());
+        let shared = board::board().spawn(board::Spawn { mask, program_afe: args.iter().any(|a| a == "--afe"), cal_dir, start_up: arg(args, "--start-up") });
         return Source::Hw { shared, seen: 0 };
     }
     if let Some(path) = arg(args, "--replay") {
@@ -83,21 +77,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--fpga-dry") {
         // print the register writes of the live source (no hardware access)
-        use oos_hal::dho::scu;
-        let c = fpga::Cfg::default();
-        let win = c.window();
-        let mut sh = c.shadows();
-        for (title, seq) in [
-            ("read-out (play last), from the stock values", scu::readout(&win, &mut c.shadows())),
-            ("arm (first 0, n 1)", scu::arm(c.fsm, &mut sh, 0, 1)),
-            ("then: read-out (play last)", scu::readout(&win, &mut sh.clone())),
-            ("or: read-out with type-4 play", scu::readout_play4(&win, &mut sh, 0, 1)),
-        ] {
-            println!("# {} ({} writes)", title, seq.len());
-            for (off, v) in seq {
-                println!("{:#x} {:#x}", off, v);
-            }
-        }
+        use board::Board;
+        board::board().dry();
         return;
     }
     // the unit: model from /rigol/data/vendor.bin, standard limits plus /oos/limits.conf (docs/models.md);
@@ -246,20 +227,22 @@ const SPLASH: [&str; 2] = ["/tmp/oos-splash.ppm", "/etc/oos/splash.ppm"];
 /// refuses the power-off), so a hard cut is harmless.
 #[cfg(target_os = "linux")]
 fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
+    use board::Board;
     eprintln!("oos-ui: power {:?}", a);
     inp.set_leds(0);
     unsafe { libc::sync() };
     match a {
         ui::PowerAction::Off => {
-            inp.send(&oos_hal::dho::panel::POWER_OFF);
-            inp.send(&oos_hal::dho::panel::POWER_OFF);
+            inp.send(&board::board().panel_cmd(board::PanelCmd::PowerOff));
+            inp.send(&board::board().panel_cmd(board::PanelCmd::PowerOff));
         }
-        ui::PowerAction::Restart => inp.send(&oos_hal::dho::panel::RESTART),
+        ui::PowerAction::Restart => inp.send(&board::board().panel_cmd(board::PanelCmd::Restart)),
     }
 }
 
 #[cfg(target_os = "linux")]
 fn device_main(mut ui: Ui, args: &[String]) {
+    use board::Board;
     use std::time::Instant;
     let mut disp = match drm::Display::open("/dev/dri/card0") {
         Ok(d) => d,
@@ -271,7 +254,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     eprintln!("oos-ui: display {}x{}", disp.width, disp.height);
     let mut inp = input::Inputs::open(args);
     // "app UI loaded", sent once at the end of the start-up (board.md section 4)
-    inp.send(&oos_hal::dho::panel::UI_LOADED);
+    inp.send(&board::board().panel_cmd(board::PanelCmd::UiLoaded));
     // start-up screen (ui/startup.rs) while the acquisition hardware starts; the own picture is its background
     let start_up = arg(args, "--start-up");
     if start_up.is_some() {
@@ -412,8 +395,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
         if let Some(p) = ui.shot_request.take() {
             save_shot(&mut ui, &cv, p, &mut shot_n);
         }
-        for f in ui.panel_tx.drain(..) {
-            inp.send(&f);
+        for c in ui.panel_tx.drain(..) {
+            inp.send(&board::board().panel_cmd(c));
         }
         if let Some(a) = ui.power_action.take() {
             power(&mut inp, a);

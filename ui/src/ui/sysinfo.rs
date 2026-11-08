@@ -7,6 +7,7 @@
 //! while open; a tap or a key closes it like a dialog.
 
 use super::*;
+use crate::board::{board, Board};
 
 pub(super) enum Row {
     /// section heading
@@ -113,7 +114,7 @@ impl Ui {
     pub(super) fn sysinfo_rows(&self) -> [Vec<Row>; 3] {
         let p = oos_hal::model::platform();
         let (c, l, base) = (&p.caps, &p.limits, oos_hal::model::Limits::standard());
-        let board = self.src.hw_board();
+        let readings = self.src.hw_board();
 
         // ---- column 1: unit and software
         let mut a = vec![Row::Head("Unit".into())];
@@ -137,9 +138,9 @@ impl Ui {
         a.push(Row::Head("Software".into()));
         a.push(kv("OOS", format!("oos-ui {}", env!("CARGO_PKG_VERSION"))));
         a.push(kv("Kernel", if self.info.is_empty() { "-".to_string() } else { self.info.clone() }));
-        a.push(match board {
+        a.push(match readings {
             Some((0, _)) => kvc("FPGA", "not reached", AMBER),
-            Some((v, _)) if v == oos_hal::dho::bus::FPGA_VERSION => kv("FPGA", format!("{:#010x}", v)),
+            Some((v, _)) if v == board().fpga_version() => kv("FPGA", format!("{:#010x}", v)),
             Some((v, _)) => kvc("FPGA", format!("{:#010x} (unexpected)", v), RED),
             None => kv("FPGA", "-"),
         });
@@ -149,8 +150,8 @@ impl Ui {
 
         // ---- column 2: temperatures, load
         let mut b = vec![Row::Head("Temperatures".into())];
-        let zones = oos_hal::dho::board::thermal_zones(std::path::Path::new("/sys/class/thermal"));
-        let soc = oos_hal::dho::board::SOC_LIMIT;
+        let zones = board().thermal_zones();
+        let (soc, fpga) = board().temp_limits();
         for z in &zones {
             let name = match z.name.as_str() {
                 "cpu-thermal" | "soc-thermal" => "SoC (CPU)".to_string(),
@@ -162,8 +163,7 @@ impl Ui {
         if zones.is_empty() {
             b.push(kvc("SoC", "-", DIM));
         }
-        let fpga = oos_hal::dho::board::FPGA_LIMIT;
-        match board.and_then(|b| b.1) {
+        match readings.and_then(|b| b.1) {
             Some((t, v)) => {
                 b.push(kvc("FPGA die", format!("{:.1} \u{b0}C", t), temp_col(t, fpga - 10.0, fpga)));
                 b.push(kvc("FPGA VCCINT", format!("{:.3} V", v), if (0.95..=1.05).contains(&v) { TEXT } else { AMBER }));

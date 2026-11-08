@@ -86,8 +86,15 @@ fn find_touch() -> Option<String> {
     None
 }
 
-fn open_panel(path: &str) -> i32 {
+fn open_panel(path: &str, baud: u32) -> i32 {
     let fd = open_nb(path, libc::O_RDWR | libc::O_NOCTTY);
+    let speed = match baud {
+        1_500_000 => libc::B1500000,
+        921_600 => libc::B921600,
+        460_800 => libc::B460800,
+        230_400 => libc::B230400,
+        _ => libc::B115200,
+    };
     if fd < 0 {
         return fd;
     }
@@ -97,8 +104,8 @@ fn open_panel(path: &str) -> i32 {
         libc::cfmakeraw(&mut t);
         t.c_cflag &= !(libc::PARENB | libc::CSTOPB | libc::CSIZE | libc::CRTSCTS);
         t.c_cflag |= libc::CS8 | libc::CREAD | libc::CLOCAL;
-        libc::cfsetispeed(&mut t, libc::B1500000);
-        libc::cfsetospeed(&mut t, libc::B1500000);
+        libc::cfsetispeed(&mut t, speed);
+        libc::cfsetospeed(&mut t, speed);
         libc::tcsetattr(fd, libc::TCSANOW, &t);
         libc::tcflush(fd, libc::TCIFLUSH);
     }
@@ -129,7 +136,12 @@ impl Inputs {
             let idle = Slot { id: -1, ..Default::default() };
             Some(Touch { fd, slot: 0, s: [idle, idle], swap: has("--touch-swap"), inv_x: has("--touch-invx"), inv_y: has("--touch-invy"), max_x, max_y })
         });
-        let panel = if has("--no-panel") { -1 } else { open_panel(&arg("--panel").unwrap_or_else(|| "/dev/ttyS0".into())) };
+        // the board's panel port (frontpanel.md on the DHO800/DHO900); --panel overrides the device
+        let (port, baud) = {
+            use crate::board::Board;
+            crate::board::board().panel_port()
+        };
+        let panel = if has("--no-panel") { -1 } else { open_panel(&arg("--panel").unwrap_or_else(|| port.into()), baud) };
         if panel < 0 {
             eprintln!("oos-ui: no front panel");
         }
@@ -148,15 +160,16 @@ impl Inputs {
         if self.panel < 0 {
             return;
         }
-        for f in oos_hal::dho::panel::led_frames(mask) {
-            unsafe { libc::write(self.panel, f.as_ptr() as *const libc::c_void, 5) };
+        use crate::board::Board;
+        for f in crate::board::board().panel_leds(mask) {
+            unsafe { libc::write(self.panel, f.as_ptr() as *const libc::c_void, f.len()) };
         }
     }
 
     /// Sends one MCU frame (`FA cmd data crc AF`).
-    pub fn send(&mut self, f: &[u8; 5]) {
+    pub fn send(&mut self, f: &[u8]) {
         if self.panel >= 0 {
-            unsafe { libc::write(self.panel, f.as_ptr() as *const libc::c_void, 5) };
+            unsafe { libc::write(self.panel, f.as_ptr() as *const libc::c_void, f.len()) };
         }
     }
 
@@ -267,19 +280,9 @@ impl Inputs {
             }
             self.panel_buf.extend_from_slice(&buf[..n as usize]);
         }
-        let b = &mut self.panel_buf;
-        while b.len() >= 5 {
-            if b[0] != 0xfa {
-                b.remove(0);
-                continue;
-            }
-            if b[4] != 0xaf || b[3] != oos_hal::dho::panel::crc7(b[1], b[2]) {
-                b.remove(0);
-                continue;
-            }
-            let data = b[2];
-            b.drain(..5);
-            out.push(In::Ev(Ev::Key(data)));
+        use crate::board::Board;
+        for k in crate::board::board().panel_keys(&mut self.panel_buf) {
+            out.push(In::Ev(Ev::Key(k)));
         }
     }
 

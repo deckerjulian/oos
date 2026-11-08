@@ -205,7 +205,7 @@ R8=1084 R7=28b2 R4=1943 R2=0500 R1=0808 R0=221c
 ### Places in OOS that assume the 1.25 GHz ADC clock or the 156.25 MHz derived clock
 
 These are parameterised through `hal::dho::clock` (limits.conf `adc.clock_hz`, `models.md` 4.1), except the display-only UI defaults
-(`--pre` preamble, demo simulator, `ui/src/hw.rs` scan dt guess 0.8 ns) and the tests, which stay at 1.25 GHz. The table lists
+(`--pre` preamble, demo simulator, `ui/src/board/dho/hw.rs` scan dt guess 0.8 ns) and the tests, which stay at 1.25 GHz. The table lists
 the places as they were before that change.
 
 | place | assumption |
@@ -223,4 +223,4 @@ the places as they were before that change.
 | `hal/src/dho/tpu.rs` `TICK_FS` 1.6 ns, `TICK64_FS` 6.4 ns (trigger t1/t2, holdoff, R timeout), video `VideoClk::Stock` 6.4 ns | 6.4 ns = one 156.25 MHz clock, 1.6 ns = 2 ADC periods (assumed); `VideoClk::Fast` 4 ns and `scu.rs` auto-trigger 4 ns ticks are probably another (250 MHz) clock (assumed) |
 | `ui/src/model.rs` `max_srate` (via `Limits`), `quantize_srate` | follow `Limits` automatically; decimation steps from the maximum rate |
 | `ui/src/main.rs` default `--pre` preamble (dt 8e-10), `ui/src/wave.rs` simulator jitter `dt.min(8e-10)`, `ui/src/ui/sysinfo.rs` clock display | 0.8 ns sample period in the replay default and the simulator; display only |
-| tests: `hal/src/dho/afe.rs`, `spu.rs`, `hz.rs`, `roll.rs`, `afg.rs`, `model.rs`, `hal/src/dho/boot/tests.rs`, `ui/src/hw.rs`, `ui/src/ui.rs`, `fpgad` `status_interpretation` | expected values at 1.25 GHz / 156.25 MHz |
+| tests: `hal/src/dho/afe.rs`, `spu.rs`, `hz.rs`, `roll.rs`, `afg.rs`, `model.rs`, `hal/src/dho/boot/tests.rs`, `ui/src/board/dho/hw.rs`, `ui/src/ui.rs`, `fpgad` `status_interpretation` | expected values at 1.25 GHz / 156.25 MHz |

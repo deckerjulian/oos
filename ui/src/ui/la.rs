@@ -6,8 +6,8 @@
 //! hardware has one comparator DAC per pod of 8 lines), the lane height. The lanes sit in a band at the bottom of the
 //! waveform area: one two-level trace per line, and a filled band where a pixel column holds two or more transitions
 //! (bus style), so dense clocks stay readable at any time base. The records carry the 16 lines as packed words
-//! (bit n = Dn): the demo source generates them, the hardware source reads them after the analog record (hw.rs,
-//! `oos_hal::dho::la`). Hidden on models without the LA port (`platform().caps.la`).
+//! (bit n = Dn): the demo source generates them, the hardware source reads them after the analog record
+//! (`board/dho/hw.rs`). Hidden on models without the LA port (`platform().caps.la`).
 
 use super::*;
 use std::sync::Arc;
@@ -651,13 +651,13 @@ mod tests {
         assert_eq!(m.max_srate(), sr / 2.0);
         // the hardware settings carry the LA, depth capped to the LA memory
         m.mdepth = MDEPTHS.iter().position(|d| d.1 == 125_000_000).unwrap();
-        let s = crate::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false);
         let l = s.la.expect("LA in the settings");
         assert!(l.analog_shown && (l.thr[0] - 1.4).abs() < 1e-6);
         assert_eq!(s.depth, m.max_mem() as i128);
         m.la.on = false;
-        assert!(crate::hw::settings(&m, false).la.is_none());
-        assert_eq!(crate::hw::settings(&m, false).depth, 125_000_000);
+        assert!(crate::board::dho::hw::settings(&m, false).la.is_none());
+        assert_eq!(crate::board::dho::hw::settings(&m, false).depth, 125_000_000);
     }
 
     #[test]
@@ -953,9 +953,9 @@ mod trigger_tests {
         let mut m = Model::default();
         m.la.on = true;
         m.trig_la = Some(5);
-        assert_eq!(crate::hw::settings(&m, false).trig_src, 14);
+        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 14);
         m.trig_la = None;
-        assert_eq!(crate::hw::settings(&m, false).trig_src, 1);
+        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 1);
     }
 
     #[test]
@@ -1015,11 +1015,11 @@ mod pattern_tests {
         m.trig_type = TrigType::Pattern;
         m.pat_la[0] = Bit::H;
         m.pat_la[15] = Bit::L;
-        let s = crate::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false);
         let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
         assert_eq!((la[0], la[15], la[1]), (oos_hal::dho::tpu::Pat::H, oos_hal::dho::tpu::Pat::L, oos_hal::dho::tpu::Pat::X));
         m.la.on = false;
-        let s = crate::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false);
         let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
         assert!(la.iter().all(|&p| p == oos_hal::dho::tpu::Pat::X));
     }
@@ -1060,11 +1060,11 @@ mod bus_tests {
         m.dec_la_in = true;
         m.trig_type = TrigType::Bus;
         (m.dec_proto, m.dec_la) = (Proto::Spi, [Some(11), Some(10), Some(9), None]);
-        assert_eq!(crate::hw::settings(&m, false).trig_src, 9 + 9);
+        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 9 + 9);
         (m.dec_proto, m.dec_la) = (Proto::Uart, [Some(8), None, None, None]);
-        assert_eq!(crate::hw::settings(&m, false).trig_src, 9 + 8);
+        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 9 + 8);
         m.dec_la_in = false;
-        assert!(crate::hw::settings(&m, false).trig_src <= 4);
+        assert!(crate::board::dho::hw::settings(&m, false).trig_src <= 4);
     }
 }
 
@@ -1090,7 +1090,7 @@ mod duration_tests {
         let la = ui.la_record().unwrap().clone();
         let at = |t: f64| la.words[((t - la.t0) / la.dt) as usize] >> 14 & 1;
         assert_eq!(at(0.0), 1, "the line is high at the trigger point");
-        let s = crate::hw::settings(&ui.m, false);
+        let s = crate::board::dho::hw::settings(&ui.m, false);
         assert!(matches!(s.trigger, oos_hal::dho::seq::Trig::Duration { la, .. } if la[14] == oos_hal::dho::tpu::Pat::H));
     }
 }
@@ -1106,8 +1106,8 @@ mod review_tests {
         m.la.on = true;
         m.trig_la = Some(5);
         m.tscale = tscales().iter().position(|&t| t >= 0.2).unwrap();
-        assert_ne!(crate::hw::slow_mode(&m), crate::hw::Slow::Off);
-        let s = crate::hw::settings(&m, false);
+        assert_ne!(crate::board::dho::hw::slow_mode(&m), crate::board::Slow::Off);
+        let s = crate::board::dho::hw::settings(&m, false);
         assert!(s.la.is_some_and(|l| l.roll) && s.trig_src == 14, "{:?}", s.trig_src);
         let mut st = oos_hal::dho::seq::State::handover(1, None);
         let (steps, _) = st.configure(&s, None, None).unwrap();
@@ -1119,7 +1119,7 @@ mod review_tests {
     #[test]
     fn newest_la_word_at_the_newest_analog_point() {
         // 1000 analog points of 1 ms, pre at 400: the newest is 599 ms after pre; 2000 LA words of 0.5 ms
-        let t0 = crate::hw::roll_la_t0(1000, 400, 1e-3, 2000, 0.5e-3);
+        let t0 = crate::board::dho::hw::roll_la_t0(1000, 400, 1e-3, 2000, 0.5e-3);
         assert!((t0 + 1999.0 * 0.5e-3 - 0.599).abs() < 1e-9);
     }
 
@@ -1130,9 +1130,9 @@ mod review_tests {
         m.la.on = true;
         m.ch[0].on = false;
         m.trig_src = 1;
-        let s = crate::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false);
         assert_eq!((s.mask, s.trig_src), (2, 2));
         m.la.on = false;
-        assert_eq!(crate::hw::settings(&m, false).mask, 2);
+        assert_eq!(crate::board::dho::hw::settings(&m, false).mask, 2);
     }
 }

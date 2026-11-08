@@ -8,6 +8,7 @@ use crate::math::*;
 use crate::gfx::*;
 use crate::model::*;
 use crate::wave::*;
+use crate::board::{board, Board};
 
 mod analysis;
 mod eyepage;
@@ -741,8 +742,8 @@ pub struct Ui {
     mask_fail: u64,
     pub shot_request: Option<String>,
     pub quit: bool,
-    /// frames for the front-panel MCU, sent by the main loop (power handshake)
-    pub panel_tx: Vec<[u8; 5]>,
+    /// commands for the front panel, sent by the main loop (power handshake)
+    pub panel_tx: Vec<crate::board::PanelCmd>,
     /// power dialog open (power key)
     pub power_dlg: bool,
     pub power_action: Option<PowerAction>,
@@ -1058,7 +1059,7 @@ impl Ui {
     /// A record the protocol trigger can judge: not roll or scan (they have no trigger point), and with the decoder's
     /// input in it; otherwise it is shown as it comes rather than held back for ever.
     fn bus_can_match(&self, rec: &Record) -> bool {
-        if crate::hw::slow_mode(&self.m) != crate::hw::Slow::Off {
+        if board().slow_mode(&self.m) != crate::board::Slow::Off {
             return false;
         }
         if self.m.dec_on_la() {
@@ -1429,13 +1430,13 @@ impl Ui {
             && !self.xy
             && m.z_src.is_none()
             && !m.zones.iter().any(|z| z.usable())
-            && crate::hw::slow_mode(m) == crate::hw::Slow::Off
+            && board().slow_mode(m) == crate::board::Slow::Off
             && (0..NCH).all(|c| !m.ch[c].on || (m.ch[c].coupling == Coupling::Dc && m.ch[c].bw != BW_20M))
     }
 
     /// One frame of the fast path into the main phosphor map; false if its trigger edge was not found near the
     /// hardware trigger point. Sparse frames (fewer than 2 samples per column) take the record path instead.
-    fn fast_draw(&mut self, f: &crate::hw::Frame) -> bool {
+    fn fast_draw(&mut self, f: &crate::board::Frame) -> bool {
         let m = &self.m;
         let (w, h) = (self.ph.w, self.ph.h);
         let tdiv = m.time_per_div() as f64;
@@ -1443,7 +1444,7 @@ impl Ui {
         if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
             let fr = std::sync::Arc::new(f.clone());
             let window = tdiv * HDIV as f64;
-            let rec = crate::hw::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
+            let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
             for c in 0..NCH {
                 if self.m.ch[c].on && !rec.ch[c].is_empty() {
                     self.ph.draw_ex(c, &self.m, (self.m.time_per_div(), self.m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None);
@@ -3714,7 +3715,7 @@ impl Ui {
             MenuId::Decode => "Decode".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
-                Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.afg_wave_hal().max_hz(), "Hz")),
+                Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(board().gen_max_hz(&self.m), "Hz")),
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
@@ -4192,7 +4193,7 @@ impl Ui {
                 let old = m.ch[c].volts_per_div();
                 if m.fine_v {
                 // row by row through the calibration table: each scale has its own record
-                let rows = oos_hal::dho::afe::scale_ladder();
+                let rows = board().vscale_steps_nv();
                 let now = VSCALES[m.ch[c].vscale] as f64 * m.ch[c].vfine as f64 * 1e9 * 0.999999;
                 let at = rows.iter().position(|&k| k as f64 >= now).unwrap_or(rows.len() - 1) as i32;
                 let want = (rows[(at + d).clamp(0, rows.len() as i32 - 1) as usize] as f64 * 1e-9) as f32;
@@ -5428,7 +5429,7 @@ impl Ui {
         if k == key::POWER {
             // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
             // likely cuts power by itself otherwise (board.md section 4)
-            self.panel_tx.push(oos_hal::dho::panel::CANCEL_POWER_DOWN);
+            self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
             self.power_dlg = !self.power_dlg;
             if self.power_dlg {
                 self.dialog = None;
@@ -6143,7 +6144,7 @@ fn fine_time(now: f32, d: i32) -> (usize, f32) {
     let q = 10f64.powf(raw.max(1e-12).log10().floor() - 2.0);
     let want = (((raw / q).round() * q) as f32).clamp(ts[0], ts[ts.len() - 1]);
     let i = ts.iter().position(|&t| t >= want * 0.99999).unwrap_or(ts.len() - 1);
-    if ts[i] as f64 >= crate::hw::ROLL_TDIV * 0.999 {
+    if ts[i] as f64 >= board().roll_tdiv() * 0.999 {
         let at = ts.iter().position(|&t| t >= now * 0.99999).unwrap_or(ts.len() - 1) as i32;
         return ((at + d.signum()).clamp(0, ts.len() as i32 - 1) as usize, 1.0);
     }
@@ -6871,7 +6872,7 @@ mod tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.key(key::POWER);
         assert!(ui.power_dlg);
-        assert_eq!(ui.panel_tx, vec![oos_hal::dho::panel::CANCEL_POWER_DOWN]);
+        assert_eq!(ui.panel_tx, vec![crate::board::PanelCmd::CancelPowerDown]);
         // second press cancels, again with the cancel frame
         ui.key(key::POWER);
         assert!(!ui.power_dlg && ui.power_action.is_none());
@@ -7017,12 +7018,12 @@ mod tests {
     #[test]
     fn fast_path_draws_every_queued_frame() {
         use super::*;
-        let shared: crate::hw::HwShared = Default::default();
+        let shared: crate::board::HwShared = Default::default();
         // 1 us/div, 12.5 k points at 0.8 ns, a 200 kHz sine through 0 V rising at the trigger point
         let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
         let frame = |seq: u64| {
             let v: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32).collect();
-            crate::hw::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None }
+            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
