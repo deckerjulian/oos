@@ -273,7 +273,7 @@ There are three ways:
 | Way | Opens the scope | Your original card | State |
 |---|---|---|---|
 | **Second card**, steps 1 to 8 below | yes | stays untouched in a drawer | run on a DHO924S |
-| **[USB stick](#from-a-usb-stick)** | no | OOS goes on it, beside stock | tested on a card file only, never on a scope |
+| **[USB stick](#from-a-usb-stick)** | no | OOS goes on it, beside stock | run on a DHO924S with a modified stock system |
 | **[ADB over the network](#over-adb)** | no | OOS goes on it, beside stock | run on a DHO924S with a modified stock system |
 
 All three need steps 3 to 5 to build the image.
@@ -434,7 +434,8 @@ You need a FAT32 USB stick with at least 200 MiB free.
 2. For a dry run, put an empty file `oos-dry-run.txt` next to it. This runs all checks and saves the rescue set, without
    writing the card.
 3. Start the stock system, put the stick into the front USB port, open **Storage > Upgrade**, choose the file and start
-   it. This takes about a minute. The screen says at the end whether it worked.
+   it. This takes about a minute. The screen says at the end whether it worked. If Storage does not show the stick,
+   switch the scope off and on and look again ([docs/install-usb.md](docs/install-usb.md), section 5).
 4. Read `oos-install.log` on the stick on a computer. It should end with `exit code 0`.
 5. Delete `oos-dry-run.txt` and run the update again. The log should end with `OOS selected for the next power-on`
    and `exit code 0`.

@@ -4,9 +4,10 @@ The stock system's own update (Storage > Upgrade) installs OOS from a USB stick:
 computer at the scope.
 
 Tested on a file laid out like a stock card, with the stock update script, in a Linux container with the paths of the stock
-system (`tools/gel-sim.sh`), and by unit tests. On the unit (DHO924S, 2026-11-08, package 0.1.1): the dry run and the
-run again on a card that already holds OOS ("already holds", OOS selected, OOS started). **Not yet verified on
-hardware: the first install over the stock `recovery`.**
+system (`tools/gel-sim.sh`), and by unit tests. Run on a DHO924S (2026-11-08, package 0.1.1) through Storage > Upgrade:
+the dry run, the first install over the stock `recovery` (rescue set with the stock `recovery`, image written and
+read back, OOS selected, OOS started) and the run again on a card that already holds OOS ("already holds", OOS
+selected). The stock system of that unit is a modified one; an unmodified stock system has not run it yet.
 
 Compared with the card route (`README.md`, Installation):
 
@@ -109,7 +110,8 @@ On a card that can be taken out, not on an only card:
 
 1. Dry run: the screen says it worked, `oos-install.log` and `OOS-rescue` are complete, `oos-update status` later shows nothing
    written. **Done 2026-11-08.** The first real test of: `/dev/block/mmcblk0` as the card, the static tool on the stock kernel, reading `vendor.bin`.
-2. Install, power-cycle: OOS starts, with `/oos` formatted if it was empty.
+2. Install, power-cycle: OOS starts, with `/oos` formatted if it was empty. **Done 2026-11-08** (with `/oos` already
+   there).
 3. Next power-on: stock, with calibration and licences as before.
 4. The same update again: "already holds", OOS selected. After an update over the network: "kept, only selected".
    **"Already holds" done 2026-11-08.**

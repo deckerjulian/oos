@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Tested:
+
+- The USB stick install ran on a DHO924S: dry run, first install over the stock `recovery`, and the run again.
+
 Inside:
 
 - The board is kept apart, for a port to another one (docs/porting.md): `oos_hal::dho` holds the DHO800/DHO900, the
