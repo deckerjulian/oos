@@ -146,7 +146,7 @@ impl Board for Dho {
     }
 
     fn clock_steps(&self) -> &'static [f64] {
-        &oos_hal::model::CLOCK_STEPS
+        oos_hal::target::ACTIVE.clock_steps
     }
 
     fn panel_port(&self) -> (&'static str, u32) {

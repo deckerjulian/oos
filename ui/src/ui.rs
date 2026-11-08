@@ -5020,7 +5020,7 @@ impl Ui {
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
             Item::QuickAct => return QUICKS.iter().map(|q| q.name().to_string()).collect(),
-            Item::Overclock => return oos_hal::model::CLOCK_STEPS.iter().map(|&hz| overclock::label(hz)).collect(),
+            Item::Overclock => return board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
             _ => &[],
         };
         v.iter().map(|s| s.to_string()).collect()

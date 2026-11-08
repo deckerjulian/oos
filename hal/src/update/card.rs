@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The boot card as the update sees it: the stock PARM layout, the two image regions and the boot magic.
+//! The boot card as the update sees it: the stock PARM layout, the two image regions and the boot magic. The numbers come
+//! from the board description (`crate::target`); on the DHO800/DHO900:
 //!
 //! | LBA | sectors | region |
 //! |---:|---:|---|
@@ -15,18 +16,19 @@
 //! sectors, syncs, drops the cached pages and reads the region back from the card before it reports success.
 
 use super::hash::{hex, sha1, Sha256};
+use crate::target::ACTIVE;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 pub const SECTOR: u64 = 512;
-pub const PARM_LBA: u64 = 8192;
-pub const BOOT_LBA: u64 = 122880;
-pub const RECOVERY_LBA: u64 = 188416;
-pub const BACKUP_LBA: u64 = 319488;
-pub const SLOT_LBA: u64 = BACKUP_LBA + 0x10000;
-pub const IMAGE_SECTORS: u64 = 0x20000;
-pub const OOSDATA_LBA: u64 = 516096;
+pub const PARM_LBA: u64 = ACTIVE.layout.parm_lba;
+pub const BOOT_LBA: u64 = ACTIVE.layout.boot_lba;
+pub const RECOVERY_LBA: u64 = ACTIVE.layout.recovery_lba;
+pub const BACKUP_LBA: u64 = ACTIVE.layout.backup_lba;
+pub const SLOT_LBA: u64 = ACTIVE.layout.slot_lba;
+pub const IMAGE_SECTORS: u64 = ACTIVE.layout.image_sectors;
+pub const OOSDATA_LBA: u64 = ACTIVE.layout.oosdata_lba;
 pub const IMAGE_MAX: usize = (IMAGE_SECTORS * SECTOR) as usize;
 
 const _: () = assert!(SLOT_LBA + IMAGE_SECTORS == OOSDATA_LBA);
@@ -177,16 +179,9 @@ impl Card {
     pub fn check_layout(&mut self) -> Result<(), String> {
         let raw = self.read(PARM_LBA, 1024).map_err(|e| format!("cannot read the PARM block: {}", e))?;
         let text: String = raw.iter().filter(|&&c| c != 0).map(|&c| (c as char).to_ascii_lowercase()).collect();
-        let want = [
-            "parm",
-            "0x00002000@0x00006000(misc)",
-            "0x00010000@0x0001c000(boot)",
-            "0x00020000@0x0002c000(recovery)",
-            "0x00038000@0x0004c000(backup)",
-        ];
-        for w in want {
+        for w in ACTIVE.parm_marks {
             if !text.contains(w) {
-                return Err(format!("unexpected partition table (no '{}'): not the stock DHO800/900 layout, nothing written", w));
+                return Err(format!("unexpected partition table (no '{}'): not the stock {} layout, nothing written", w, ACTIVE.family_name));
             }
         }
         Ok(())

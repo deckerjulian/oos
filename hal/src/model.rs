@@ -1,31 +1,27 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Model identity, hardware capabilities and limits of the DHO800/DHO900 family (docs/models.md).
+//! Model identity, hardware capabilities and limits of the units of this build's board (docs/models.md); the data of
+//! a board is in its `crate::target::Target`.
 //!
 //! - Identity: `/rigol/data/vendor.bin` (read only): XXTEA, CRC32, then items, each XXTEA again. Item 5 = model
 //!   ("DHO924S"), 7 = serial, 9 = LAN MAC. The keys are found at run time (`vendorkeys`).
-//! - Capabilities: the model table (name, bandwidth code, channels, series) plus what the name implies (S = generator, DHO900 = logic analyser port, 2 channels = EXT).
-//! - Limits: the same for every model (`Limits::standard`). Each one can be
+//! - Capabilities: the model table of the board (`Target::caps`).
+//! - Limits: the same for every model of a board (`Limits::standard`). Each one can be
 //!   overridden in `/oos/limits.conf` for our own tests; overridden values are marked experimental.
 //!
-//! The process-wide `Platform` is set once at start (`init`); before that `platform()` is the DHO924S with the
-//! standard limits, which is also what the host tests see.
+//! The process-wide `Platform` is set once at start (`init`); before that `platform()` is the board's assumed model with
+//! the standard limits, which is also what the host tests see.
 
+use crate::target::ACTIVE;
 use std::sync::OnceLock;
-
-/// Product series.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Series {
-    Dho800,
-    Dho900,
-}
 
 /// What a model has (from the model table and the model name).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Caps {
     pub name: String,
-    pub series: Series,
+    /// product series, as a person calls it
+    pub series: &'static str,
     /// analog inputs (2 or 4)
     pub channels: usize,
     /// rated bandwidth in MHz (the stock licence bandwidth; OOS does not limit to it)
@@ -56,38 +52,9 @@ pub fn bw_code_mhz(code: u32) -> Option<u32> {
     })
 }
 
-/// The DHO800/DHO900 models: (name, bandwidth code, channels, series). DHO914S is taken as DHO914 + generator.
-pub const MODEL_TABLE: [(&str, u32, usize, Series); 12] = [
-    ("DHO802", 5, 2, Series::Dho800),
-    ("DHO804", 5, 4, Series::Dho800),
-    ("DHO812", 6, 2, Series::Dho800),
-    ("DHO814", 6, 4, Series::Dho800),
-    ("DHO824", 10, 4, Series::Dho800),
-    ("DHO914", 7, 4, Series::Dho900),
-    ("DHO914S", 7, 4, Series::Dho900),
-    ("DHO914-EDU", 7, 4, Series::Dho900),
-    ("DHO924", 10, 4, Series::Dho900),
-    ("DHO924S", 10, 4, Series::Dho900),
-    ("DHO924-EDU", 10, 4, Series::Dho900),
-    // not a model: the family name alone (vendor.bin unreadable but the user forces the series)
-    ("DHO900", 10, 4, Series::Dho900),
-];
-
-/// Capabilities of a model name (case-insensitive), `None` if it is not a DHO800/DHO900.
+/// Capabilities of a model name (case-insensitive), `None` if it is not a model of this build's board.
 pub fn lookup(name: &str) -> Option<Caps> {
-    let n = name.trim().to_ascii_uppercase();
-    let &(tn, code, channels, series) = MODEL_TABLE.iter().find(|e| e.0 == n)?;
-    Some(Caps {
-        name: tn.to_string(),
-        series,
-        channels,
-        rated_bw_mhz: bw_code_mhz(code).unwrap_or(0),
-        bw_code: code,
-        la: series == Series::Dho900,
-        afg: tn.ends_with('S'),
-        ext_trig: channels == 2,
-        edu: tn.ends_with("-EDU"),
-    })
+    (ACTIVE.caps)(name)
 }
 
 /// Generator frequency caps per wave shape in Hz (afg.md 3).
@@ -119,18 +86,9 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// The standard limits (the same for every DHO800/DHO900).
+    /// The standard limits of this build's board.
     pub fn standard() -> Limits {
-        Limits {
-            max_srate: [1.25e9, 625e6, 312.5e6],
-            max_mem: [125_000_000, 62_500_000, 31_250_000],
-            max_mem_la: [31_250_000, 12_500_000, 10_000_000],
-            // measured on a DHO924S: a ramp is clean to 5 MHz, a pulse with its 11 ns edges too. Above 60 MHz the image at
-            // 156.25 MHz - f comes within 10 dB of a sine, and a square above 15 MHz is a sine
-            afg_max_hz: AfgMax { sine: 60e6, square: 15e6, ramp: 5e6, pulse: 5e6, noise: 60e6, dc: 60e6, arb: 10e6 },
-            adc_clock_hz: 1.25e9,
-            afg_clock_hz: 156.25e6,
-        }
+        (ACTIVE.limits)()
     }
 
     fn idx(n_on: usize) -> usize {
@@ -183,7 +141,7 @@ pub struct Platform {
 impl Default for Platform {
     fn default() -> Platform {
         Platform {
-            caps: lookup("DHO924S").expect("table"),
+            caps: lookup(ACTIVE.assumed_model).expect("table"),
             limits: Limits::standard(),
             serial: None,
             mac: None,
@@ -193,14 +151,6 @@ impl Default for Platform {
             foreign: None,
         }
     }
-}
-
-/// A model name of the DHO800/DHO900 family (DHO8xx, DHO9xx), also one missing from the table (a new variant). The
-/// DHO1000 (DHO10xx) and DHO4000 (DHO40xx) are other boards.
-pub fn family(name: &str) -> bool {
-    let n = name.trim().to_ascii_uppercase();
-    let b = n.as_bytes();
-    n.starts_with("DHO") && b.len() >= 6 && matches!(b[3], b'8' | b'9') && b[4].is_ascii_digit() && b[5].is_ascii_digit()
 }
 
 impl Platform {
@@ -219,12 +169,12 @@ impl Platform {
                     }
                     None => {
                         let m = v.model.unwrap_or_default();
-                        if family(&m) {
-                            p.warnings.push(format!("vendor.bin: model {:?} is not in the model table: DHO924S assumed", m));
+                        if (ACTIVE.family)(&m) {
+                            p.warnings.push(format!("vendor.bin: model {:?} is not in the model table: {} assumed", m, ACTIVE.assumed_model));
                         } else {
                             p.warnings.push(format!(
-                                "vendor.bin: model {:?} is not a DHO800/DHO900, another board: OOS does not drive its hardware (docs/porting.md)",
-                                m
+                                "vendor.bin: model {:?} is not a {}, another board: OOS does not drive its hardware (docs/porting.md)",
+                                m, ACTIVE.family_name
                             ));
                             p.foreign = Some(m);
                         }
@@ -268,11 +218,11 @@ impl Platform {
                     p.caps = c;
                     p.source = Source::Forced;
                 }
-                None => p.warnings.push(format!("model {:?}: not a DHO800/DHO900 name, ignored", name)),
+                None => p.warnings.push(format!("model {:?}: not a {} name, ignored", name, ACTIVE.family_name)),
             }
         }
         if p.source == Source::Assumed {
-            p.warnings.push("model unknown: DHO924S assumed".into());
+            p.warnings.push(format!("model unknown: {} assumed", ACTIVE.assumed_model));
         }
         p
     }
@@ -298,21 +248,7 @@ impl Platform {
             _ => None,
         };
         if k == "adc.clock_hz" {
-            // overclocking test (docs/protocols/pll.md): only clocks the LMX2582 generator can make, 1.25..2.0 GHz.
-            // Sample rates and the generator clock follow; the cold boot writes the matching PLL table.
-            let hz = f()?;
-            if !(1.25e9..=2.0e9).contains(&hz) {
-                return Err(format!("{}: {} outside 1.25e9..2.0e9", k, v));
-            }
-            crate::dho::lmx2582::table_for(hz).map_err(|e| format!("{}: {}", k, e))?;
-            l.adc_clock_hz = hz;
-            l.afg_clock_hz = hz / 8.0;
-            l.max_srate = [hz, hz / 2.0, hz / 4.0];
-            let nyq = l.afg_clock_hz / 2.0;
-            let a = &mut l.afg_max_hz;
-            for x in [&mut a.sine, &mut a.square, &mut a.ramp, &mut a.pulse, &mut a.noise, &mut a.dc, &mut a.arb] {
-                *x = x.min(nyq);
-            }
+            (ACTIVE.set_adc_clock)(l, f()?).map_err(|e| format!("{}: {}", k, e))?;
         } else if let Some(rest) = k.strip_prefix("mem.la_") {
             let ix = i(rest).ok_or(format!("unknown key {}", k))?;
             l.max_mem_la[ix] = f()?.max(1000.0) as u64;
@@ -413,14 +349,11 @@ pub fn platform() -> &'static Platform {
 /// Default location of the limits file (the OOS data partition).
 pub const LIMITS_CONF: &str = "/oos/limits.conf";
 
-/// The ADC clocks of System > Overclock, the standard clock first (measurements: docs/models.md 4.1).
-pub const CLOCK_STEPS: [f64; 5] = [1.25e9, 1.375e9, 1.5e9, 1.75e9, 2e9];
-
 /// `text` of limits.conf with `adc.clock_hz` set to `hz`: the line goes first (the `afg.*_max_hz` lines clamp to the clock
 /// read before them), at the standard clock there is none. All other lines stay as they are.
 pub fn with_adc_clock(text: &str, hz: f64) -> String {
     let mut out = String::new();
-    if hz != CLOCK_STEPS[0] {
+    if hz != ACTIVE.clock_steps[0] {
         out.push_str(&format!("adc.clock_hz = {:e}\n", hz));
     }
     for line in text.lines() {
@@ -643,7 +576,7 @@ mod tests {
     #[test]
     fn model_table() {
         let c = lookup("dho802").unwrap();
-        assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.afg, c.ext_trig, c.series), (2, 70, false, false, true, Series::Dho800));
+        assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.afg, c.ext_trig, c.series), (2, 70, false, false, true, "DHO800"));
         let c = lookup("DHO814").unwrap();
         assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.ext_trig), (4, 100, false, false));
         let c = lookup("DHO914S").unwrap();
@@ -697,10 +630,11 @@ mod tests {
         }
         // the family, also a variant missing from the table
         for m in ["DHO924S", "DHO804", "dho914-edu", "DHO934"] {
-            assert!(family(m), "{}", m);
+            assert!((ACTIVE.family)(m), "{}", m);
             let p = Platform::build(Some(&encode_vendor(&[(5, m)])), None, None);
             assert!(p.drives_hardware(), "{}", m);
         }
+        let family = ACTIVE.family;
         assert!(!family("DHO1074") && !family("DHO4204") && !family("DHO9") && !family("MHO934"));
         // no or an unreadable vendor file: as before, DHO924S assumed
         assert!(Platform::build(None, None, None).drives_hardware());

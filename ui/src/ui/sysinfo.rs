@@ -121,10 +121,7 @@ impl Ui {
         a.push(kv("Model", format!("Rigol {}", c.name)));
         a.push(kv("Serial", p.serial.clone().unwrap_or("-".into())));
         a.push(kv("MAC", p.mac.clone().unwrap_or("-".into())));
-        a.push(kv("Series", match c.series {
-            oos_hal::model::Series::Dho800 => "DHO800",
-            oos_hal::model::Series::Dho900 => "DHO900",
-        }));
+        a.push(kv("Series", c.series));
         a.push(kv("Rated bandwidth", format!("{} MHz", c.rated_bw_mhz)));
         a.push(kv("Analog channels", c.channels.to_string()));
         a.push(kv("Logic analyser", yes_no(c.la)));

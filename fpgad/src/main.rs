@@ -196,7 +196,7 @@ fn main() {
         let p = oos_hal::model::platform();
         println!("model     {}", p.ident());
         println!("caps      {}", p.caps_line());
-        println!("series    {:?}, bandwidth code {}, EDU {}", p.caps.series, p.caps.bw_code, p.caps.edu);
+        println!("series    {}, bandwidth code {}, EDU {}", p.caps.series, p.caps.bw_code, p.caps.edu);
         println!("mac       {}", p.mac.as_deref().unwrap_or("-"));
         let l = &p.limits;
         println!("srate     {:?} Sa/s (1 / 2 / 3-4 channels)", l.max_srate);

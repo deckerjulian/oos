@@ -14,6 +14,7 @@
 
 pub mod bootstatus;
 pub mod model;
+pub mod target;
 pub mod vendorkeys;
 pub mod update;
 pub mod wlan;

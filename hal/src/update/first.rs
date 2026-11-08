@@ -28,11 +28,11 @@ use std::path::Path;
 
 /// Models this has run on. Only a card in a host computer helps if the kernel hangs on another one, and that means
 /// opening the scope: docs/install-usb.md.
-pub const VERIFIED_MODELS: &[&str] = &["DHO924S"];
+pub const VERIFIED_MODELS: &[&str] = crate::target::ACTIVE.verified_models;
 /// `boot`, and the part of `backup` that holds its stock copy.
-pub const BOOT_BYTES: usize = 32 << 20;
+pub const BOOT_BYTES: usize = crate::target::ACTIVE.layout.boot_bytes;
 /// Everything in front of the `kernel` partition: loader, vendor storage, `parameter`, `uboot`, `trust`, `misc`, `resource`.
-const HEAD_SECTORS: u64 = 73728;
+const HEAD_SECTORS: u64 = crate::target::ACTIVE.layout.head_sectors;
 /// The rescue set is complete when this file exists.
 pub const SUMS: &str = "SHA256SUMS";
 /// The serial of the unit a rescue set is from.

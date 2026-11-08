@@ -24,6 +24,7 @@ pub mod scu;
 pub mod selfcal;
 pub mod seq;
 pub mod spu;
+pub mod target;
 pub mod tpu;
 pub mod wpu;
 

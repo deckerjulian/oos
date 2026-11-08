@@ -102,10 +102,11 @@ fn notice(msg: &str) {
 fn open_card(a: &Args, write: bool) -> Card {
     let path = a.val("--card").unwrap_or("/dev/mmcblk0");
     if path == "/dev/mmcblk0" {
-        // the SD card on fe320000, as oos-oneshot checks
+        // the boot card of this board, as oos-oneshot checks
+        let ctl = oos_hal::target::ACTIVE.card_controller;
         let dev = std::fs::canonicalize("/sys/block/mmcblk0/device").ok();
-        if !dev.is_some_and(|d| d.to_string_lossy().contains("fe320000")) {
-            die("mmcblk0 is not the SD card on fe320000: not touching it");
+        if !dev.is_some_and(|d| d.to_string_lossy().contains(ctl)) {
+            die(&format!("mmcblk0 is not the SD card on {}: not touching it", ctl));
         }
     }
     Card::open(Path::new(path), write).unwrap_or_else(|e| die(&format!("{}: {}", path, e)))
@@ -115,7 +116,7 @@ fn open_card(a: &Args, write: bool) -> Card {
 fn stock_card() -> Option<String> {
     ["mmcblk0", "mmcblk1"].iter().find_map(|n| {
         let dev = std::fs::canonicalize(format!("/sys/block/{}/device", n)).ok()?;
-        dev.to_string_lossy().contains("fe320000").then(|| format!("/dev/block/{}", n))
+        dev.to_string_lossy().contains(oos_hal::target::ACTIVE.card_controller).then(|| format!("/dev/block/{}", n))
     })
 }
 
@@ -125,7 +126,7 @@ fn gel_install(a: &Args) {
     let save = a.val("--save").unwrap_or_else(|| die("gel-install needs --save DIR on the USB stick"));
     let p = read_file(f);
     let opt = update::first::FirstOpt { execute: a.flag("--execute"), any_model: a.flag("--any-model"), reinstall: a.flag("--reinstall") };
-    let path = a.val("--card").map(str::to_string).or_else(stock_card).unwrap_or_else(|| die("no SD card on fe320000"));
+    let path = a.val("--card").map(str::to_string).or_else(stock_card).unwrap_or_else(|| die(&format!("no SD card on {}", oos_hal::target::ACTIVE.card_controller)));
     println!("card {}", path);
     let vendor = std::fs::read(a.val("--vendor").unwrap_or("/rigol/data/vendor.bin")).ok();
     let mut c = Card::open(Path::new(&path), opt.execute).unwrap_or_else(|e| die(&format!("{}: {}", path, e)));

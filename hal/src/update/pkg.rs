@@ -24,7 +24,7 @@ use super::ed25519;
 use super::hash::{hex, sha256, unhex, Sha256};
 
 pub const MAGIC: &str = "OOS-UPDATE 1";
-pub const TARGET: &str = "dho900-recovery";
+pub const TARGET: &str = crate::target::ACTIVE.update_target;
 /// Longest header accepted.
 pub const MAX_HEADER: usize = 4096;
 
