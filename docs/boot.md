@@ -112,7 +112,9 @@ The loader's messages go to UART2 (115200 8N1).
 Not yet verified on hardware in this order.
 
 Order in `rootfs/initramfs/etc/rcS`, each step logged to `/tmp/oos-boot.status` (`oos_hal::bootstatus`: uptime,
-state, stage, detail; the boot-time profile of every start):
+state, stage, detail; the boot-time profile of every start). What needs the hardware rcS asks of the board
+(`rootfs/board/dho/bin/oos-board`); the commands named below are what that script runs on the DHO800/DHO900. Addresses come
+from `/etc/oos-board` ([porting.md](porting.md)):
 
 1. `Linux` (uptime at the start of rcS).
 2. `oos-oneshot` (boot magic back to `KRNL`), as the very first program, so a hanging new build on trial is followed

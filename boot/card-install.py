@@ -18,12 +18,16 @@ Checks before anything is written:
 """
 import argparse, datetime, hashlib, importlib.util, os, subprocess, sys
 
-SECTOR = 512
-PARM_LBA = 8192
-RECOVERY_LBA, RECOVERY_SECTORS = 0x2C000 + 0x2000, 0x20000
-BOOT_LBA, BOOT_SECTORS = 0x1C000 + 0x2000, 0x10000
-BACKUP_LBA = 0x4C000 + 0x2000
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import boardconf
+
+SECTOR = 512
+BOARD = boardconf.load()
+PARM_LBA = int(BOARD["OOS_PARM_LBA"])
+RECOVERY_LBA, RECOVERY_SECTORS = int(BOARD["OOS_RECOVERY_LBA"]), int(BOARD["OOS_IMAGE_SECTORS"])
+BOOT_LBA, BOOT_SECTORS = int(BOARD["OOS_BOOT_LBA"]), int(BOARD["OOS_BOOT_SECTORS"])
+BACKUP_LBA = int(BOARD["OOS_BACKUP_LBA"])
 
 
 def read(f, lba, n):
@@ -40,7 +44,7 @@ def read(f, lba, n):
 def check_parm(f):
     raw = read(f, PARM_LBA, 4)
     if raw[:4] != b"PARM":
-        sys.exit("no PARM block at LBA 8192: not a DHO800/900 boot card")
+        sys.exit(f"no PARM block at LBA {PARM_LBA}: not a boot card of this board")
     txt = raw.decode("latin1")
     for need in ("0x00020000@0x0002C000(recovery)", "0x00002000@0x00006000(misc)"):
         if need.lower() not in txt.lower():

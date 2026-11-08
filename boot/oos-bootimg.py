@@ -16,12 +16,17 @@ Format (see docs/boot.md):
            section length must be a multiple of 4 (the ramdisk is padded here; kernel and RSCE already are).
   The loader builds the kernel command line from the DTB's /chosen/bootargs (not from the header field).
 
-  oos-bootimg.py build  --kernel Image --dtb board.dtb [--ramdisk initrd.cpio.gz] [--name oos-dho900] --out oos.img
+  oos-bootimg.py build  --kernel Image --dtb board.dtb [--ramdisk initrd.cpio.gz] [--name NAME] --out oos.img
   oos-bootimg.py info   oos.img                 sections, addresses, id check, RSCE entries
   oos-bootimg.py unpack oos.img DIR             kernel, ramdisk, rk-kernel.dtb, cmdline.txt
   oos-bootimg.py mini-ramdisk OUT               a ramdisk with only /dev, /dev/console, /root (kernel mounts root=)
 """
 import argparse, gzip, hashlib, os, struct, sys
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import boardconf
+
+DEFAULT_NAME = boardconf.load()["OOS_IMAGE_NAME"]
 
 PAGE = 2048
 KERNEL_ADDR = 0x00280000
@@ -161,7 +166,8 @@ def dtb_bootargs(dtb):
             return ""
 
 
-def build(kernel, dtb, ramdisk, name="oos-dho900", cmdline=None):
+def build(kernel, dtb, ramdisk, name=None, cmdline=None):
+    name = name or DEFAULT_NAME
     check_kernel(kernel)
     # The loader hashes with the RK3399 crypto engine, which works on 32-bit words: a ramdisk whose length is not a
     # multiple of 4 gives a wrong hash and the image is refused (tested 2026-11-02). Zeros after a gzip initramfs are
@@ -221,7 +227,7 @@ def main():
     b.add_argument("--kernel", required=True)
     b.add_argument("--dtb", required=True)
     b.add_argument("--ramdisk")
-    b.add_argument("--name", default="oos-dho900")
+    b.add_argument("--name", default=None)
     b.add_argument("--cmdline")
     b.add_argument("--out", required=True)
     sp.add_parser("info").add_argument("image")

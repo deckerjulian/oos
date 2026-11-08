@@ -66,3 +66,74 @@ pub struct Target {
 
 /// The board this build is for.
 pub const ACTIVE: Target = crate::dho::target::DHO;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    fn rootfs() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../rootfs")
+    }
+
+    fn board_file() -> HashMap<String, String> {
+        let t = std::fs::read_to_string(rootfs().join("board").join(ACTIVE.name).join("etc/oos-board")).unwrap();
+        t.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.trim_matches('"').to_string()))
+            .collect()
+    }
+
+    /// The scripts of the image and the code must agree on where things are on the card.
+    #[test]
+    fn the_scripts_see_the_same_board() {
+        let f = board_file();
+        let n = |k: &str| f[k].parse::<u64>().unwrap_or_else(|_| panic!("{} = {}", k, f[k]));
+        let l = ACTIVE.layout;
+        assert_eq!(f["OOS_BOARD"], ACTIVE.name);
+        for (k, v) in [
+            ("OOS_PARM_LBA", l.parm_lba),
+            ("OOS_BCB_LBA", l.bcb_lba),
+            ("OOS_BOOT_LBA", l.boot_lba),
+            ("OOS_RECOVERY_LBA", l.recovery_lba),
+            ("OOS_BACKUP_LBA", l.backup_lba),
+            ("OOS_SLOT_LBA", l.slot_lba),
+            ("OOS_IMAGE_SECTORS", l.image_sectors),
+            ("OOS_OOSDATA_LBA", l.oosdata_lba),
+            ("OOS_OOSDATA_SECTORS", l.oosdata_sectors),
+            ("OOS_BOOT_SECTORS", l.boot_bytes as u64 / 512),
+        ] {
+            assert_eq!(n(k), v, "{}", k);
+        }
+        assert_eq!(f["OOS_CARD_CONTROLLER"], ACTIVE.card_controller);
+        for m in f["OOS_PARM_MARKS"].split_whitespace() {
+            assert!(ACTIVE.parm_marks.contains(&m), "{}", m);
+        }
+        // the kernel gets the data partition from the command line
+        let part = format!("blkdevparts=mmcblk0:{}M@{}M(oosdata)", l.oosdata_sectors / 2048, l.oosdata_lba / 2048);
+        assert!(f["OOS_BOOTARGS"].contains(&part), "{}", f["OOS_BOOTARGS"]);
+    }
+
+    /// The start-up and the common scripts ask the board (`oos-board`, `/etc/oos-board`) and know no address of it.
+    #[test]
+    fn the_common_scripts_know_no_board() {
+        let f = board_file();
+        let mut bad = Vec::new();
+        let dir = rootfs().join("initramfs");
+        let mut files = vec![dir.join("etc/rcS")];
+        files.extend(std::fs::read_dir(dir.join("bin")).unwrap().flatten().map(|e| e.path()));
+        let mut words: Vec<String> = ["oos-fpgad".to_string(), ACTIVE.card_controller.to_string()].to_vec();
+        words.extend(f.iter().filter(|(k, _)| k.ends_with("_LBA")).map(|(_, v)| v.clone()));
+        for p in files {
+            for line in std::fs::read_to_string(&p).unwrap().lines().filter(|l| !l.trim_start().starts_with('#')) {
+                if words.iter().any(|w| line.contains(w.as_str())) {
+                    bad.push(format!("{}: {}", p.display(), line.trim()));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+}

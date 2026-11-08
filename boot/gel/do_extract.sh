@@ -16,7 +16,7 @@ SRC=/mnt/tmp/oos
 # the stick holds the update file, in its top folder
 STICK=
 for d in /mnt/media_rw/*; do
-	for f in "$d"/DHO800_DHO900_OOS*.GEL; do
+	for f in "$d"/@OOS_GEL_STEM@*.GEL; do
 		[ -f "$f" ] && STICK=$d
 	done
 done

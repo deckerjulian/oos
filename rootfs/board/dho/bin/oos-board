@@ -1,0 +1,24 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What rcS asks of the board, the DHO800/DHO900 here (docs/porting.md). rcS knows the order of a start and nothing about
+# the hardware.
+#
+#   oos-board has-hardware       exit 0 when this image starts the acquisition hardware
+#   oos-board early STATUS       starts what takes long, while the rest of rcS runs: the BOOT command, the FPGA loads its image (~3 s)
+#   oos-board drivers            kernel modules of the board: touch panel, beeper (pwm-gpio on GPIO4_A3, used by `oos-fpgad beep`)
+#   oos-board ui-args STATUS     prints the arguments of oos-ui
+#   oos-board bring-up STATUS    in the background: FPGA wait, PCIe, PLL, AFE and ADC init, calibrations, start-up checks.
+#                                Exit 0 when the acquisition hardware is up
+hw() { [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; }
+case "$1" in
+has-hardware) hw;;
+early) hw || exit 0; exec /bin/oos-fpgad fpga-boot --progress "$2";;
+drivers)
+	insmod /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/edt-ft5x06.ko 2>/dev/null
+	insmod /lib/modules/$(uname -r)/kernel/drivers/pwm/pwm-gpio.ko 2>/dev/null
+	exit 0;;
+ui-args) hw && echo "--hw --afe --start-up $2"; exit 0;;
+bring-up) exec /bin/oos-fpgad cold-boot --execute --power-on --booted --progress "$2";;
+*) echo "usage: oos-board has-hardware | early STATUS | drivers | ui-args STATUS | bring-up STATUS" >&2; exit 2;;
+esac

@@ -1,0 +1,28 @@
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The DHO800/DHO900 for the scripts of the image and the build: plain KEY=value lines, read by sh and by
+# boot/boardconf.py. The numbers are those of hal/src/dho/target.rs; a hal test keeps the two equal.
+OOS_BOARD=dho
+OOS_IMAGE_NAME=oos-dho900
+OOS_KERNEL_DTB=rk3399-rigol-dho900.dtb
+OOS_BOOTARGS="earlycon=uart8250,mmio32,0xff1a0000 console=tty0 console=ttyS2,115200n8 loglevel=7 rdinit=/init blkdevparts=mmcblk0:16M@252M(oosdata)"
+# kernel modules in the image: by path, and by name where the build decides the suffix
+OOS_MODULES="kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko kernel/lib/crypto/libarc4.ko kernel/net/wireless/cfg80211.ko kernel/net/mac80211/mac80211.ko kernel/drivers/net/wireless/realtek/rtl8xxxu/rtl8xxxu.ko"
+OOS_MODULE_NAMES="edt-ft5x06 pwm-gpio"
+# the update file of the stock system: its name has to hold this
+OOS_GEL_STEM=DHO800_DHO900_OOS
+# the boot card, and what its stock partition table has to say before the boot selection is touched
+OOS_CARD_CONTROLLER=fe320000
+OOS_PARM_MARKS="0x00002000@0x00006000(misc) 0x00010000@0x0001c000(boot)"
+# sectors of 512 bytes from the start of the card
+OOS_PARM_LBA=8192
+OOS_BCB_LBA=32800
+OOS_BOOT_LBA=122880
+OOS_BOOT_SECTORS=65536
+OOS_RECOVERY_LBA=188416
+OOS_BACKUP_LBA=319488
+OOS_SLOT_LBA=385024
+OOS_IMAGE_SECTORS=131072
+OOS_OOSDATA_LBA=516096
+OOS_OOSDATA_SECTORS=32768
+OOS_RIGOL_LBA=5047360

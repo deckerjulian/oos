@@ -2,16 +2,17 @@
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
 # OOS's own data partition (own calibration, setups, pictures) at /oos: the last 16 MiB of the stock `backup`
-# partition, LBA 516096 .. 548863 (PARM 0x00038000@0x0004C000(backup) ends at LBA 548864). Android does not use
+# partition (where exactly: /etc/oos-board). Android does not use
 # `backup`; U-Boot's fallback only reads the image header at its start, where a stock fallback image may live. The
 # PARM table stays untouched: only the OOS kernel sees the area, as mmcblk0p1 from `blkdevparts=` in the DTB bootargs,
 # so the kernel keeps every write inside these 16 MiB.
 # First use: formatted (ext2, label "oosdata") only when the whole area is still zero; anything else is left alone.
+. "${OOS_BOARD_FILE:-/etc/oos-board}"
 P=/dev/mmcblk0p1
 S=/sys/class/block/mmcblk0p1
 grep -q ' /oos ' /proc/mounts && exit 0
 [ -b $P ] || { echo "oos-mount-data: no $P (blkdevparts missing from the command line?)"; exit 1; }
-[ "$(cat $S/start)" = 516096 ] && [ "$(cat $S/size)" = 32768 ] || { echo "oos-mount-data: $P is not LBA 516096 + 32768, not touching it"; exit 1; }
+[ "$(cat $S/start)" = "$OOS_OOSDATA_LBA" ] && [ "$(cat $S/size)" = "$OOS_OOSDATA_SECTORS" ] || { echo "oos-mount-data: $P is not LBA $OOS_OOSDATA_LBA + $OOS_OOSDATA_SECTORS, not touching it"; exit 1; }
 # ext2/3/4 superblock at +1024, magic 0xef53 at +56 of it
 magic=$(dd if=$P bs=512 skip=2 count=1 2>/dev/null | od -An -tx1 -j56 -N2 | tr -d ' ')
 if [ "$magic" != 53ef ]; then

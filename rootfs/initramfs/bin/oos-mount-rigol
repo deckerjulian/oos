@@ -3,9 +3,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Mount the stock `rigol` partition (calibration files in /rigol/data) READ ONLY at /rigol, so oos-fpgad / oos-ui find
 # cal_*.hex at their default OOS_CAL_DIR. The OOS kernel does not parse the Rockchip PARM table, so the partition is
-# reached through a read-only loop device: PARM entry 0x000FA000@0x004CE440(rigol), offsets relative to LBA 0x2000
-# -> LBA 0x4D0440 = 5047360, 500 MiB (checked on the card clone of 2026-11-02: ext4, label "rigol"). `noload` skips the journal replay, so nothing is ever written to the card.
-LBA=5047360
+# reached through a read-only loop device at the board's OOS_RIGOL_LBA (/etc/oos-board; DHO800/DHO900 checked on the card
+# clone of 2026-11-02: ext4, label "rigol"). `noload` skips the journal replay, so nothing is ever written to the card.
+. "${OOS_BOARD_FILE:-/etc/oos-board}"
+LBA=$OOS_RIGOL_LBA
 DEV=${1:-/dev/mmcblk0}
 grep -q ' /rigol ' /proc/mounts && { echo "/rigol already mounted"; exit 0; }
 # ext4 superblock at +1024, magic 0xef53 at +56 of it

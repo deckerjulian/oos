@@ -34,9 +34,17 @@ The code keeps the board apart:
 - `ui/src/board/dho/`: the DHO800/DHO900 behind it, the acquisition thread included. A lint test
   (`board::boundary`) fails when other code of the GUI uses `oos_hal::dho` or `board::dho`.
 
-A port adds `hal/src/<board>/` next to `dho`, implements `Board` in `ui/src/board/<board>/` and points
-`board::Active` at it; the compiler then names every part of the interface still missing. The image is built per board
-anyway (kernel, device tree). `oos-fpgad` is a DHO800/DHO900 tool and stays one.
+- `hal/src/target.rs`: the description of a board family (`Target`): card layout, update target, partition table
+  marks, boot card controller, verified models, model table, standard limits, overclock steps. `hal/src/dho/target.rs`
+  fills it in, and the neutral code reads `target::ACTIVE`.
+- `rootfs/board/<name>/`: what the image takes from the board. `etc/oos-board` holds the same values for the scripts and
+  the build (kernel tree, command line, modules, name of the update file); a hal test keeps it equal to `Target`.
+  `bin/oos-board` is what `rcS` asks: `has-hardware`, `early`, `drivers`, `ui-args`, `bring-up`. `rcS` and the common
+  scripts know no address and no tool of a board (hal test `the_common_scripts_know_no_board`).
+
+A port adds `hal/src/<board>/` with its `Target`, `ui/src/board/<board>/` with its `Board` and `rootfs/board/<board>/`,
+and points `target::ACTIVE` and `board::Active` at them; the image is built with `OOS_BOARD=<board>`. The compiler names
+every part of the interface still missing. `oos-fpgad` is a DHO800/DHO900 tool and stays one; only that board's `oos-board` calls it.
 
 ## What does not carry over
 

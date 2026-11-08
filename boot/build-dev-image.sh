@@ -15,6 +15,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 k="$root/kernel/out/base"
 out="$here/out"
+# the board this image is for: rootfs/board/<OOS_BOARD>, the values come from its etc/oos-board
+board="$root/rootfs/board/${OOS_BOARD:-dho}"
+[ -f "$board/etc/oos-board" ] || { echo "no board $board" >&2; exit 1; }
+. "$board/etc/oos-board"
 [ -f "$k/Image" ] || { echo "run kernel/build-base.sh first" >&2; exit 1; }
 # the initramfs is built in Docker: fail now, not after the Rust builds (a failed late step kept the OLD image)
 docker info >/dev/null 2>&1 || { echo "Docker is not running (macOS: open -a Docker)" >&2; exit 1; }
@@ -38,9 +42,12 @@ EOF
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
 
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
-docker run --rm -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
+docker run --rm -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
+	. /board/etc/oos-board
 	cp -a /src/. $r/
+	# what belongs to the board: etc/oos-board and bin/oos-board, which rcS asks
+	cp -a /board/. $r/
 	mkdir -p $r/bin $r/sbin $r/etc $r/proc $r/sys $r/dev $r/tmp $r/run $r/mnt $r/root $r/lib/modules
 	cp /bin/busybox $r/bin/busybox
 	cp /hw/oos-hw $r/bin/oos-hw
@@ -56,10 +63,8 @@ docker run --rm -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initram
 	mkdir -p /tmp/m && tar -C /tmp/m -xzf /k/modules.tar.gz
 	rel=$(cat /k/kernel.release); M=/tmp/m/lib/modules/$rel
 	mkdir -p $r/lib/modules/$rel
-	for f in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko \
-	         kernel/lib/crypto/libarc4.ko kernel/net/wireless/cfg80211.ko kernel/net/mac80211/mac80211.ko \
-	         kernel/drivers/net/wireless/realtek/rtl8xxxu/rtl8xxxu.ko \
-	         $(cd $M && find . -name "edt-ft5x06.ko*" -o -name "pwm-gpio.ko*" | sed "s|^\./||"); do
+	named=$(for n in $OOS_MODULE_NAMES; do (cd $M && find . -name "$n.ko*" | sed "s|^\./||"); done)
+	for f in $OOS_MODULES $named; do
 		mkdir -p $r/lib/modules/$rel/$(dirname $f); cp $M/$f $r/lib/modules/$rel/$f
 	done
 	cp $M/modules.dep $M/modules.alias $M/modules.order $M/modules.builtin* $r/lib/modules/$rel/ 2>/dev/null || true
@@ -67,14 +72,13 @@ docker run --rm -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initram
 	mknod -m 600 $r/dev/console c 5 1
 	(cd $r && find . | sort | cpio -o -H newc -R 0:0 --quiet) > /tmp/root.cpio
 	gzip -9n < /tmp/root.cpio > /out/initramfs.cpio.gz
-	cp /k/rk3399-rigol-dho900.dtb /out/oos-dho900.dtb
-	fdtput -t s /out/oos-dho900.dtb /chosen bootargs \
-		"earlycon=uart8250,mmio32,0xff1a0000 console=tty0 console=ttyS2,115200n8 loglevel=7 rdinit=/init blkdevparts=mmcblk0:16M@252M(oosdata)"
-	fdtget /out/oos-dho900.dtb /chosen bootargs
+	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
+	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
+	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
 	ls -la /out
 '
-python3 -I "$here/oos-bootimg.py" build --kernel "$k/Image" --dtb "$out/oos-dho900.dtb" \
-	--ramdisk "$out/initramfs.cpio.gz" --name oos-dho900 --out "$out/oos-dev.img"
+python3 -I "$here/oos-bootimg.py" build --kernel "$k/Image" --dtb "$out/$OOS_IMAGE_NAME.dtb" \
+	--ramdisk "$out/initramfs.cpio.gz" --name "$OOS_IMAGE_NAME" --out "$out/oos-dev.img"
 (cd "$out" && shasum -a 256 oos-dev.img > oos-dev.img.sha256 && cat oos-dev.img.sha256)
 # signed update package (docs/update.md): install on a running OOS through http://<scope>:8080/update
 # your own key if you have one, else the community key every OOS build trusts

@@ -28,10 +28,8 @@ if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
 	fi
 	sync
 fi
-# 1) acquisition hardware: the BOOT command, so the FPGA loads its image (~3 s) while the rest of rcS runs
-if [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; then
-	/bin/oos-fpgad fpga-boot --progress $ST > /tmp/oos-cold.log 2>&1
-fi
+# 1) the board starts what takes long while the rest of rcS runs (oos-board, one per board: rootfs/board/)
+/bin/oos-board early $ST > /tmp/oos-cold.log 2>&1
 # 2) network: DHCP, else the address the scope used under stock; in the background (no cable: up to 15 s)
 ip link set lo up
 # a fixed, locally administered MAC from the SD card's CID (the kernel picks a random one per boot, which filled the
@@ -59,18 +57,12 @@ telnetd -l /bin/sh
 # 4b) what the data partition (0b) keeps for the screen
 [ -e /oos/oos-ui.setup ] && cp /oos/oos-ui.setup /tmp/oos-ui.setup
 [ -e /oos/splash.ppm ] && cp /oos/splash.ppm /tmp/oos-splash.ppm
-# 5) the scope screen oos-ui (touch driver first); log in /tmp/oos-ui.log, control FIFO /tmp/oos-ui.ctl
-insmod /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/edt-ft5x06.ko 2>/dev/null
-# beeper (pwm-gpio on GPIO4_A3, used by `oos-fpgad beep`)
-insmod /lib/modules/$(uname -r)/kernel/drivers/pwm/pwm-gpio.ko 2>/dev/null
+# 5) the scope screen oos-ui (the board's drivers first); log in /tmp/oos-ui.log, control FIFO /tmp/oos-ui.ctl
+/bin/oos-board drivers
 # restarted after a crash; `touch /tmp/oos-ui.off` before stopping it keeps it off; its arguments come from
 # /tmp/oos-ui.args. With the acquisition hardware it starts on it at once: the start-up screen shows the progress
 # from $ST and the hardware source waits for its `end` line (no demo signals, no restart)
-if [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; then
-	echo "--hw --afe --start-up $ST" > /tmp/oos-ui.args
-else
-	: > /tmp/oos-ui.args
-fi
+/bin/oos-board ui-args $ST > /tmp/oos-ui.args
 [ -x /bin/oos-ui ] && (setsid sh -c 'while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done' < /dev/null > /dev/null 2>&1 &)
 # 5b) start-up watcher: confirms an image on trial once oos-ui ran 20 s and the start-up finished (persist mode: arms
 #     OOS again for the next power-on); a crash loop or no end in 180 s writes the previous image back at once
@@ -79,15 +71,14 @@ fi
 [ -x /bin/oos-wlan ] && (setsid sh -c '/bin/oos-wlan >> /tmp/oos-wlan.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 5d) USB stick in the front port at /mnt/usb; log in /tmp/oos-usb.log
 [ -x /bin/oos-usb ] && (setsid sh -c '/bin/oos-usb >> /tmp/oos-usb.log 2>&1' < /dev/null > /dev/null 2>&1 &)
-# 6) acquisition hardware: calibration files read only, rest of the FPGA wait + PCIe + PLL + AFE/ADC init +
-#    calibrations + start-up checks (oos-fpgad cold-boot, log /tmp/oos-cold.log); `end` / `abort` only after it
-#    exited, so its GPIO lines are free when oos-ui opens them
-if [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; then
+# 6) acquisition hardware: calibration files read only, then the board brings it up (oos-board bring-up, log
+#    /tmp/oos-cold.log); `end` / `abort` only after it exited, so its GPIO lines are free when oos-ui opens them
+if /bin/oos-board has-hardware; then
 	(setsid sh -c '
 		ST=/tmp/oos-boot.status
 		st() { printf "%s\t%s\t%s\t%s\n" "$(cut -d" " -f1 /proc/uptime)" "$1" "$2" "$3" >> $ST; }
 		/bin/oos-mount-rigol >> /tmp/oos-cold.log 2>&1
-		if /bin/oos-fpgad cold-boot --execute --power-on --booted --progress $ST >> /tmp/oos-cold.log 2>&1; then
+		if /bin/oos-board bring-up $ST >> /tmp/oos-cold.log 2>&1; then
 			rm -f /oos/clock-try; sync
 			st end "" ""
 			echo "oos: acquisition hardware up" > /dev/kmsg

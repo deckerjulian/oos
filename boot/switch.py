@@ -13,8 +13,12 @@ It does NOT read the boot command in `misc` on a normal power-on (tested 2026-11
 `oos` refuses unless `recovery` holds an ANDROID! image and `backup` starts with a KRNL image (the stock fallback).
 """
 import argparse, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import boardconf
+
 SECTOR = 512
-BOOT_LBA, RECOVERY_LBA, BACKUP_LBA = 122880, 188416, 319488
+BOARD = boardconf.load()
+PARM_LBA, BOOT_LBA, RECOVERY_LBA, BACKUP_LBA = (int(BOARD[k]) for k in ("OOS_PARM_LBA", "OOS_BOOT_LBA", "OOS_RECOVERY_LBA", "OOS_BACKUP_LBA"))
 
 
 def rd(f, lba, n=1):
@@ -29,7 +33,7 @@ def main():
     ap.add_argument("--execute", action="store_true")
     a = ap.parse_args()
     with open(a.target, "rb", buffering=0) as f:
-        parm, boot, rec, bak = rd(f, 8192, 2), rd(f, BOOT_LBA), rd(f, RECOVERY_LBA), rd(f, BACKUP_LBA)
+        parm, boot, rec, bak = rd(f, PARM_LBA, 2), rd(f, BOOT_LBA), rd(f, RECOVERY_LBA), rd(f, BACKUP_LBA)
     if parm[:4] != b"PARM" or b"0x00010000@0x0001C000(boot)".lower() not in parm.lower():
         sys.exit("not a stock-layout DHO card")
     state = {b"KRNL": "stock (boot valid)", b"OOSK": "OOS (boot disabled -> recovery)"}.get(boot[:4], f"unknown boot magic {boot[:4]!r}")

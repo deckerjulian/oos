@@ -18,10 +18,12 @@ Card layout: `misc` starts at LBA 32768 (PARM 0x2000@0x6000 + 0x2000), so the co
     add --execute to write; the sector is read back and compared. --misc-lba overrides 32768.
 """
 import argparse, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import boardconf
 
 SECTOR = 512
-MISC_LBA = 32768
 CMD_OFFSET_SECTORS = 0x20
+MISC_LBA = int(boardconf.load()["OOS_BCB_LBA"]) - CMD_OFFSET_SECTORS
 COMMANDS = {"recovery": b"boot-recovery", "factory": b"boot-factory", "loader": b"bootloader"}
 
 

@@ -12,14 +12,20 @@ whose name ends in .GEL and holds DHO800_DHO900, unpacks it and runs its shell/d
 import gzip, io, os, sys, tarfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import boardconf
+
 ROOT = os.path.dirname(HERE)
+BOARD = boardconf.load()
 PKG = os.path.join(HERE, "out", "oos-dev.oosupd")
 TOOL = os.path.join(ROOT, "fpgad", "target", "aarch64-unknown-linux-musl", "release", "oos-update")
-OUT = os.path.join(HERE, "out", "DHO800_DHO900_OOS_Install.GEL")
+OUT = os.path.join(HERE, "out", BOARD["OOS_GEL_STEM"] + "_Install.GEL")
 
 
-def add(t, name, path, mode):
+def add(t, name, path, mode, stem=False):
     data = open(path, "rb").read()
+    if stem:
+        data = data.replace(b"@OOS_GEL_STEM@", BOARD["OOS_GEL_STEM"].encode())
     i = tarfile.TarInfo(name)
     i.size, i.mode, i.mtime = len(data), mode, int(os.path.getmtime(PKG))
     t.addfile(i, io.BytesIO(data))
@@ -41,7 +47,7 @@ def main():
     with gzip.GzipFile(fileobj=b, mode="wb", mtime=0) as z:
         with tarfile.open(fileobj=z, mode="w", format=tarfile.GNU_FORMAT) as t:
             folder(t, "shell")
-            add(t, "shell/do_extract.sh", os.path.join(HERE, "gel", "do_extract.sh"), 0o755)
+            add(t, "shell/do_extract.sh", os.path.join(HERE, "gel", "do_extract.sh"), 0o755, stem=True)
             folder(t, "oos")
             add(t, "oos/oos-update", TOOL, 0o755)
             add(t, "oos/oos.oosupd", PKG, 0o644)
