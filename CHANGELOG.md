@@ -1,5 +1,19 @@
 # Changes
 
+## Unreleased
+
+Changes:
+
+- Web remote: the live picture is the compressed PNG (about 90 KB) instead of the 1.8 MB BMP, which made it slow on a
+  10 Mbit/s link. A "Live picture format" choice (PNG, BMP) on the page switches back; the browser remembers it.
+
+Inside:
+
+- PNG screenshots are compressed (one fixed-Huffman deflate block, matches against the pixel to the left and the one
+  above, no new crate). On the 62 stable screens of the UI gallery a picture goes from 1.84 MB to 63 to 173 KB (median
+  89 KB), pixel for pixel the same; encoding takes about 3 ms on a PC (not measured on the unit yet). `/screen.png`
+  answers go out from the sender thread like `/screen.bmp` (`SEND_INLINE` is 48 KB now).
+
 ## 0.1.2
 
 From 0.1.1: install the package through the web page or `oos-update install`, the scope restarts by itself (kexec); then
@@ -16,10 +30,6 @@ Tested:
 
 Inside:
 
-- PNG screenshots are compressed (one fixed-Huffman deflate block, matches against the pixel to the left and the one
-  above, no new crate). On the 62 stable screens of the UI gallery a picture goes from 1.84 MB to 63 to 173 KB (median
-  89 KB), pixel for pixel the same; encoding takes about 3 ms on a PC (not measured on the unit yet). `/screen.png`
-  answers go out from the sender thread like `/screen.bmp` (`SEND_INLINE` is 48 KB now).
 - The board is kept apart, for a port to another one (docs/porting.md): `oos_hal::dho` holds the DHO800/DHO900, the
   GUI reaches the hardware only through `board::Board` (`ui/src/board/`), and a lint test keeps it that way. No change
   in what the scope does: the register sequences are the same as in 0.1.1.
