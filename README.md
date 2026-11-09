@@ -276,9 +276,29 @@ There are three ways:
 | **[USB stick](#from-a-usb-stick)** | no | OOS goes on it, beside stock | run on a DHO924S with a modified stock system |
 | **[ADB over the network](#over-adb)** | no | OOS goes on it, beside stock | run on a DHO924S with a modified stock system |
 
-The second card and the USB stick can take the files of the [latest release](https://github.com/deckerjulian/oos/releases/latest)
-instead of a build: `oos-<version>.img` and `DHO800_DHO900_OOS_Install.GEL`, checked against `SHA256SUMS`. ADB needs
-steps 3 to 5 to build the image.
+### From a GitHub release, without building
+
+The [latest release](https://github.com/deckerjulian/oos/releases/latest) has ready-made files. You need no Rust and no
+Docker for them:
+
+| File | What it is for |
+|---|---|
+| `DHO800_DHO900_OOS_Install.GEL` | install from a USB stick through the stock system, without opening the scope: go on at [From a USB stick](#from-a-usb-stick) |
+| `oos-<version>.img` | install on a second card: steps 1, 2 and 6 to 8 below, with `--image oos-<version>.img` in step 6. Steps 3 to 5 are the build, skip them |
+| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on |
+| `SHA256SUMS` | the checksums of all of them |
+
+Check what you downloaded. The number has to be the same as in the file's line of `SHA256SUMS`:
+
+```sh
+shasum -a 256 DHO800_DHO900_OOS_Install.GEL      # macOS
+sha256sum DHO800_DHO900_OOS_Install.GEL          # Linux
+certutil -hashfile DHO800_DHO900_OOS_Install.GEL SHA256      # Windows
+```
+
+ADB needs steps 3 to 5 to build the image.
+
+### On a second card
 
 The steps below use macOS, where they were developed. `tools/sdcard-clone.sh` needs macOS; on Linux, use `dd` for the
 clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
@@ -288,9 +308,10 @@ clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
 - A DHO800/DHO900. The boot SD card is inside, so **you have to open the scope, which voids the warranty**
 - A **second SD card** of the same size or larger. OOS is only ever installed on this card.
 - A card reader
-- [Rust](https://rustup.rs) with `rustup target add aarch64-unknown-linux-musl`
-- Docker, running, on an arm64 host (Apple silicon). On other hosts the kernel build needs an arm64 Docker environment.
-- Python 3
+- Python 3 and this repository (`git clone https://github.com/deckerjulian/oos.git`)
+- To build the image yourself, not with a file from a release: [Rust](https://rustup.rs) with
+  `rustup target add aarch64-unknown-linux-musl`, and Docker, running, on an arm64 host (Apple silicon). On other hosts the
+  kernel build needs an arm64 Docker environment.
 
 The whole process takes about an hour, mostly for copying the cards.
 
@@ -362,7 +383,8 @@ check the file's time.
 
 ### 6. Install OOS on the second card
 
-Put the second card in the reader. Unmount it, then do a dry run, which only checks the card and prints the plan:
+Put the second card in the reader. Unmount it, then do a dry run, which only checks the card and prints the plan. With a
+file from a release, write `--image oos-<version>.img` instead:
 
 ```sh
 diskutil unmountDisk /dev/diskM
@@ -431,25 +453,27 @@ again finishes the job. No stock update step runs, and the FPGA flash and `/rigo
 
 #### From a USB stick
 
-You need a FAT32 USB stick with at least 200 MiB free.
+You need a FAT32 USB stick with at least 200 MiB free, and `DHO800_DHO900_OOS_Install.GEL`: download it from the
+[latest release](https://github.com/deckerjulian/oos/releases/latest) and check it against `SHA256SUMS`, or take it from
+`boot/out/` of your own build.
 
-1. Copy `DHO800_DHO900_OOS_Install.GEL` to the top folder of the stick: from the
-   [release](https://github.com/deckerjulian/oos/releases/latest) (check it against `SHA256SUMS`), or
-   `boot/out/` of your build. Keep the name: the scope ignores a file
+1. Copy the file to the top folder of the stick. Keep the name: the scope ignores a file
    whose name does not end in `.GEL` and contain `DHO800_DHO900`.
 2. For a dry run, put an empty file `oos-dry-run.txt` next to it. This runs all checks and saves the rescue set, without
    writing the card.
 3. Start the stock system, put the stick into the front USB port, open **Storage > Upgrade**, choose the file and start
    it. This takes about a minute. The screen says at the end whether it worked. If Storage does not show the stick,
-   switch the scope off and on and look again ([docs/install-usb.md](docs/install-usb.md), section 5).
+   switch the scope off and on and look again ([docs/install-usb.md](docs/install-usb.md), section 5). If the list also
+   has a small file starting with `._`, that one comes from macOS: choose the real file of about 16 MB.
 4. Read `oos-install.log` on the stick on a computer. It should end with `exit code 0`.
 5. Delete `oos-dry-run.txt` and run the update again. The log should end with `OOS selected for the next power-on`
    and `exit code 0`.
 6. Copy the folder `OOS-rescue` from the stick to a computer and keep it. It holds your calibration (`rigol-data`), the
    stock `recovery` and the start of the card.
-7. Switch the scope off and on. OOS starts.
+7. Switch the scope off at the mains, wait 30 seconds and switch it on. OOS starts.
 
-The scope does not restart by itself after this update.
+The scope does not restart by itself after this update. OOS starts once: the power-on after it starts stock again. To stay on
+OOS, set **System > Boot mode** to **Persist**. Later versions go in through the `.oosupd` file of a release.
 
 #### Over ADB
 
@@ -531,10 +555,11 @@ with `--store-dir`. The web remote saves them to your computer too. `/oos` holds
 about 5 minutes per channel and pass, with 4 passes. Results go to `/oos/cal` and are preferred over the factory files,
 which are never changed.
 
-**Updates.** Build a new package, then install it on the running scope:
+**Updates.** Take `oos-<version>.oosupd` from the [latest release](https://github.com/deckerjulian/oos/releases/latest), or
+build a package yourself (`boot/out/oos-dev.oosupd`), then install it on the running scope:
 
 ```sh
-curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update
+curl --data-binary @oos-<version>.oosupd http://<scope>:8080/update
 ```
 
 or open `http://<scope>:8080/update` in a browser. The scope restarts into the new build by kexec before anything is
