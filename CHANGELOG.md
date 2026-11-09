@@ -1,6 +1,9 @@
 # Changes
 
-## Unreleased
+## 0.1.3
+
+From 0.1.1 or 0.1.2: install the package through the web page or `oos-update install`, the scope restarts by itself (kexec);
+then switch it off at the mains, wait 30 seconds and switch it on.
 
 Fixes:
 
