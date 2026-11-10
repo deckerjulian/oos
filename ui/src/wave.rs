@@ -231,11 +231,40 @@ fn ext_demo(p: Proto) -> Option<&'static ExtDemo> {
         ];
         let (dp, dm) = g3::usb(&items, false, 0.0, 0.0, 3.3);
         v.push((Proto::Usb, mk(dp, Some(dm), 5e-6)));
-        // NMRA DCC: baseline speed packet to loco 3, then a two-byte consist-style packet
-        let dcc = [
-            g3::DccFrame { address: 0x03, data: vec![0x3F], xor: None, preamble: 14 },
-            g3::DccFrame { address: 0x28, data: vec![0x00, 0x28], xor: None, preamble: 12 },
-        ];
+        // NMRA DCC demo yard: 5 trains running, 5 turnouts, 5 signals (+ idle = track active)
+        let dcc_fr = |addr: u8, data: Vec<u8>, pre: u32| g3::DccFrame { address: addr, data, xor: None, preamble: pre };
+        // 128-step speed byte: bit7=dir, bits6-0 = speed+1 (0/1 = stop/e-stop)
+        let spb = |fwd: bool, speed: u8| if fwd { 0x80 | (speed + 1) } else { speed + 1 };
+        // basic accessory: board 1 → addr1=0x81, board 2 → 0x82; C=1 activate, R=0 left / 1 right
+        let turnout = |n: u16, left: bool| {
+            let board = ((n - 1) / 4) as u8 + 1;
+            let pair = ((n - 1) % 4) as u8;
+            let addr1 = 0x80 | board;
+            let addr2 = 0xF0 | (1 << 3) | (pair << 1) | u8::from(!left);
+            dcc_fr(addr1, vec![addr2], 12)
+        };
+        // extended accessory signal: same address map, second byte 0AAA0AA1, aspect
+        let signal = |n: u16, aspect: u8| {
+            let board = ((n - 1) / 4) as u8 + 1;
+            let pair = ((n - 1) % 4) as u8;
+            let addr1 = 0x80 | board;
+            let addr2 = 0x70 | (pair << 1) | 1;
+            dcc_fr(addr1, vec![addr2, aspect], 12)
+        };
+        let mut dcc = Vec::new();
+        // five locomotives with speed (+ light/horn on #3); idle packets keep the bus “alive”
+        for (addr, fwd, speed) in [(1u8, true, 20u8), (2, true, 35), (3, true, 40), (4, false, 25), (5, true, 50)] {
+            dcc.push(dcc_fr(0xFF, vec![0x00], 12));
+            dcc.push(dcc_fr(addr, vec![0x3F, spb(fwd, speed)], 12));
+        }
+        dcc.push(dcc_fr(3, vec![0b100_10010], 12)); // Light + Horn on loco 3
+        for n in 1u16..=5 {
+            dcc.push(turnout(n, n % 2 == 1)); // odd = left, even = right
+        }
+        for (n, aspect) in [(1u16, 0x24u8), (2, 0x12), (3, 0x08), (4, 0x30), (5, 0x04)] {
+            dcc.push(signal(n, aspect));
+        }
+        dcc.push(dcc_fr(0xFF, vec![0x00], 12));
         v.push((Proto::Dcc, mk(g3::dcc(&dcc, 0.0, 3.3), None, 200e-6)));
         v
     });

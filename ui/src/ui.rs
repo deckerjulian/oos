@@ -44,6 +44,8 @@ pub const TOP: Rect = Rect::new(0, 0, W, 40);
 const PLOT_X: i32 = 0;
 const PLOT_W: i32 = W;
 const PLOT_Y: i32 = TOP.h;
+/// Right-hand DCC devices panel when the DCC pane is selected (scope stays on the left).
+const DCC_SIDE_W: i32 = 360;
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
 pub const BOTTOM: Rect = Rect::new(0, 526, W, 74);
@@ -271,6 +273,7 @@ enum Item {
     DecSel,
     DecTable,
     DecExport,
+    DecClearLog,
     SearchTable,
     SearchSave,
     StoreBin,
@@ -788,6 +791,12 @@ pub struct Ui {
     /// table window over the plot, first row shown
     table: Option<tables::TableKind>,
     table_top: usize,
+    /// accumulated decoder events across acquisitions (scrollable Event table / Events pane)
+    event_log: std::collections::VecDeque<tables::EventRow>,
+    /// when true, the event table sticks to the newest rows
+    event_follow: bool,
+    /// NMRA DCC locomotive / turnout state derived from decoded packets (DCC pane)
+    dcc_yard: oos_dsp::dcc_yard::Yard,
 }
 
 impl Ui {
@@ -843,6 +852,9 @@ impl Ui {
             dec_cache: Default::default(),
             table: None,
             table_top: 0,
+            event_log: std::collections::VecDeque::new(),
+            event_follow: true,
+            dcc_yard: oos_dsp::dcc_yard::Yard::default(),
             zone_sel: 0,
             zone_arm: None,
             zone_path: Vec::new(),
@@ -954,12 +966,18 @@ impl Ui {
         meas + (self.m.cursor != CursorMode::Off) as i32 + dvm
     }
 
+    /// True when the DCC devices view uses a right-hand side panel (scope on the left).
+    fn dcc_side_on(&self) -> bool {
+        self.m.pane == tables::PANE_DCC && self.m.view == AView::Scope && !self.xy && !self.full_on()
+    }
+
     /// The plot: 10 x 8 divisions between the top bar and the cards; it gets shorter for strip rows (the results
-    /// panel is an overlay and takes no room).
+    /// panel is an overlay and takes no room). With the DCC pane open the plot is the left half.
     fn plot_rect(&self) -> Rect {
         // the logic analyser lanes have their own strip under the graticule: the analog picture shrinks with it
         let avail = self.plot_base() - self.la_strip_h() - self.pane_h();
-        Rect::new(PLOT_X, self.plot_top(), PLOT_W, (avail / 8 * 8).max(160))
+        let w = if self.dcc_side_on() { PLOT_W - DCC_SIDE_W } else { PLOT_W };
+        Rect::new(PLOT_X, self.plot_top(), w, (avail / 8 * 8).max(160))
     }
 
     /// Height for the graticule and the LA strip together (above the measurement rows).
@@ -1290,7 +1308,51 @@ impl Ui {
         self.mstat.clear();
         self.mask_pass = 0;
         self.mask_fail = 0;
+        self.event_log.clear();
+        self.event_follow = true;
+        self.table_top = 0;
+        self.dcc_yard = oos_dsp::dcc_yard::Yard::default();
         self.toast("Display cleared");
+    }
+
+    const EVENT_LOG_MAX: usize = 2000;
+
+    /// Appends the current record's decoder packets to the persistent event log.
+    fn append_event_log(&mut self) {
+        let rows = self.decode_events();
+        if rows.is_empty() {
+            return;
+        }
+        self.event_log.extend(rows);
+        while self.event_log.len() > Self::EVENT_LOG_MAX {
+            self.event_log.pop_front();
+        }
+        if self.event_follow {
+            self.table_top = usize::MAX;
+        }
+        self.apply_dcc_from_decoders();
+    }
+
+    /// Updates locomotive / turnout state from every on DCC decoder's packets in the current record.
+    fn apply_dcc_from_decoders(&mut self) {
+        for k in 0..DECODERS {
+            if !self.m.dec_is_on(k) {
+                continue;
+            }
+            let m = self.m.dec_view(k);
+            if m.dec_proto != Proto::Dcc {
+                continue;
+            }
+            let Ok(p) = self.decode_packets_of(&m) else { continue };
+            self.dcc_yard = apply_dcc_packets(&self.dcc_yard, &p);
+        }
+    }
+
+    /// Seeds the log from the current record when it is still empty (first open of the table).
+    fn ensure_event_log(&mut self) {
+        if self.event_log.is_empty() {
+            self.append_event_log();
+        }
     }
 
     /// QUICK key and the Quick button of the top bar: the action chosen in System > Quick key.
@@ -1447,8 +1509,12 @@ impl Ui {
                         self.history.push_back(Record { raw: None, la, ..rec.clone() });
                         self.hist_pos = None;
                         self.mask_test(&rec);
+                        let partial = rec.partial;
                         self.last[0] = Some(rec);
                         self.cleared = false;
+                        if !partial {
+                            self.append_event_log();
+                        }
                         got += 1;
                         self.records += 1;
                         if self.m.segments > 0 {
@@ -1759,7 +1825,7 @@ impl Ui {
         self.draw_full_btn(cv);
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
-        if self.pane_h() > 0 {
+        if self.pane_h() > 0 || self.dcc_side_on() {
             self.draw_pane(cv);
             self.draw_pane_close(cv);
         }
@@ -3586,13 +3652,14 @@ impl Ui {
         if !on_la {
             v.push(DecThr);
         }
-        // what it decoded, as a table, and as a file
-        v.extend([DecTable, DecExport]);
+        // what it decoded, as a table, and as a file; the log keeps packets across acquisitions
+        v.extend([DecTable, DecExport, DecClearLog]);
         v
     }
 
     /// Switches the decoder protocol with sources that match the demo bus traffic.
     fn set_dec_proto(&mut self, p: Proto) {
+        let prev = self.m.dec_proto;
         let m = &mut self.m;
         m.dec_proto = p;
         // LA input: the lines of the demo traffic (D8 UART, D9 CS, D10 clock, D11 MOSI, D12 SCL, D13 SDA)
@@ -3706,6 +3773,13 @@ impl Ui {
                 (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
             }
             _ => {}
+        }
+        // open the DCC devices pane once when selecting DCC with no pane; clear yard when leaving
+        if p == Proto::Dcc && prev != Proto::Dcc && m.pane == 0 {
+            m.pane = tables::PANE_DCC;
+        }
+        if prev == Proto::Dcc && p != Proto::Dcc {
+            self.dcc_yard = oos_dsp::dcc_yard::Yard::default();
         }
         self.dirty_map = true;
     }
@@ -3983,7 +4057,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::MaskCreate | Item::MaskReset => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::DecClearLog | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -4035,6 +4109,7 @@ impl Ui {
             Item::DecOn => "Decoder",
             Item::DecSel => "Decoder no.",
             Item::DecTable => "Event table",
+            Item::DecClearLog => "Clear event log",
             Item::DecExport => "Export events",
             Item::SearchTable => "Event list",
             Item::SearchSave => "Save events",
@@ -4922,8 +4997,23 @@ impl Ui {
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
                 Item::CntClear => self.counter_clear(),
-                Item::DecTable => self.table_toggle(tables::TableKind::Decode),
-                Item::DecExport => self.events_export(tables::TableKind::Decode),
+                Item::DecTable => {
+                    self.ensure_event_log();
+                    self.table_toggle(tables::TableKind::Decode);
+                }
+                Item::DecExport => {
+                    self.ensure_event_log();
+                    self.events_export(tables::TableKind::Decode);
+                }
+                Item::DecClearLog => {
+                    self.event_log.clear();
+                    self.dcc_yard = oos_dsp::dcc_yard::Yard::default();
+                    self.event_follow = true;
+                    self.table_top = 0;
+                    self.pn.events.clear();
+                    self.pn.event_top = 0;
+                    self.toast("Event log cleared");
+                }
                 Item::SearchTable => self.table_toggle(tables::TableKind::Search),
                 Item::SearchSave => self.events_export(tables::TableKind::Search),
                 Item::StoreBin => match &self.last[0] {
@@ -6472,6 +6562,39 @@ fn fmt_count(v: f64) -> String {
     }
 }
 
+/// Applies complete NMRA DCC packets (Id + Data… + ok Crc) onto a yard snapshot.
+fn apply_dcc_packets(yard: &oos_dsp::dcc_yard::Yard, packets: &[oos_dsp::decode::Packet]) -> oos_dsp::dcc_yard::Yard {
+    use oos_dsp::decode::Kind;
+    let mut y = yard.clone();
+    let mut i = 0;
+    while i < packets.len() {
+        if !matches!(packets[i].kind, Kind::Id { .. }) {
+            i += 1;
+            continue;
+        }
+        let addr = packets[i].value as u8;
+        i += 1;
+        let mut data = Vec::new();
+        while i < packets.len() {
+            match packets[i].kind {
+                Kind::Data => {
+                    data.push(packets[i].value as u8);
+                    i += 1;
+                }
+                Kind::Crc => {
+                    if packets[i].ok {
+                        y = y.apply(addr, &data);
+                    }
+                    i += 1;
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+    y
+}
+
 /// Text of one decoded field.
 fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
     use oos_dsp::decode::Kind;
@@ -6840,6 +6963,119 @@ mod tests {
         assert!(ui.last[0].is_some());
     }
 
+    /// Host screenshot of the DCC demo decode band (open target/test-shots/dcc-demo.png).
+    #[test]
+    fn dcc_demo_screenshot() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.set_dec_proto(Proto::Dcc);
+        ui.m.dec_on = true;
+        let tdiv = 5e-3f32;
+        ui.m.tscale = tscales().iter().position(|&x| (x - tdiv).abs() < tdiv * 1e-3).unwrap();
+        ui.m.trig_type = TrigType::Edge;
+        ui.m.trig_mode = TrigMode::Auto;
+        let mut found = String::new();
+        let mut ready = false;
+        for _ in 0..80 {
+            ui.step(0.05);
+            let pk = ui.decode_packets().unwrap_or_default();
+            found = format!("{:?}", pk);
+            let y = &ui.dcc_yard;
+            if found.contains("PRE")
+                && y.status == oos_dsp::dcc_yard::TrackStatus::Active
+                && y.locos.len() >= 5
+                && y.turnouts.len() >= 5
+                && y.signals.len() >= 5
+                && y.locos.iter().filter(|l| l.speed > 0).count() >= 5
+            {
+                ready = true;
+                break;
+            }
+        }
+        assert!(found.contains("PRE"), "Dcc: no PRE in {}", &found[..found.len().min(400)]);
+        assert!(ready, "DCC yard incomplete: {:?}", ui.dcc_yard);
+        assert!(ui.dcc_side_on(), "DCC pane should use the right-hand side panel");
+        assert_eq!(ui.m.pane, tables::PANE_DCC);
+        assert_eq!(ui.dcc_yard.status, oos_dsp::dcc_yard::TrackStatus::Active);
+        let l3 = ui.dcc_yard.locos.iter().find(|l| l.addr == 3).expect("loco 3");
+        assert!(oos_dsp::dcc_yard::functions_text(l3.functions).contains("Horn"));
+        assert_eq!(ui.dcc_yard.locos.len(), 5);
+        assert_eq!(ui.dcc_yard.turnouts.len(), 5);
+        assert_eq!(ui.dcc_yard.signals.len(), 5);
+        let mut cv = Canvas::new(W, H);
+        ui.render(&mut cv);
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("dcc-demo.png");
+        crate::store::write(&path, &crate::store::png_of(&cv)).unwrap();
+        eprintln!("wrote {}", path.display());
+    }
+
+    /// Three PR screenshots: start of acquire, running yard, emergency stop.
+    #[test]
+    fn dcc_demo_pr_shots() {
+        use super::*;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
+        let _ = std::fs::create_dir_all(&dir);
+        let mut cv = Canvas::new(W, H);
+        let shot = |ui: &mut Ui, cv: &mut Canvas, name: &str| {
+            ui.render(cv);
+            let path = dir.join(name);
+            crate::store::write(&path, &crate::store::png_of(cv)).unwrap();
+            eprintln!("wrote {}", path.display());
+        };
+        let setup = |ui: &mut Ui| {
+            ui.set_dec_proto(Proto::Dcc);
+            ui.m.dec_on = true;
+            let tdiv = 5e-3f32;
+            ui.m.tscale = tscales().iter().position(|&x| (x - tdiv).abs() < tdiv * 1e-3).unwrap();
+            ui.m.trig_type = TrigType::Edge;
+            ui.m.trig_mode = TrigMode::Auto;
+        };
+
+        // 1) start measuring: DCC selected, side panel open, no devices yet
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        setup(&mut ui);
+        ui.step(0.05); // one record so the scope shows a trace
+        ui.dcc_yard = oos_dsp::dcc_yard::Yard::default(); // still “waiting” for decoded devices
+        assert!(ui.dcc_side_on());
+        assert_eq!(ui.dcc_yard.status, oos_dsp::dcc_yard::TrackStatus::Off);
+        shot(&mut ui, &mut cv, "dcc-01-start.png");
+
+        // 2) running: five trains / turnouts / signals, green Track active
+        for _ in 0..80 {
+            ui.step(0.05);
+            let y = &ui.dcc_yard;
+            if y.status == oos_dsp::dcc_yard::TrackStatus::Active
+                && y.locos.len() >= 5
+                && y.turnouts.len() >= 5
+                && y.signals.len() >= 5
+                && y.locos.iter().filter(|l| l.speed > 0).count() >= 5
+            {
+                break;
+            }
+        }
+        assert_eq!(ui.dcc_yard.status, oos_dsp::dcc_yard::TrackStatus::Active);
+        assert_eq!(ui.dcc_yard.locos.len(), 5);
+        shot(&mut ui, &mut cv, "dcc-02-running.png");
+
+        // 3) emergency stop: broadcast e-stop → red banner (no further step: that would decode running traffic again)
+        ui.dcc_yard = ui.dcc_yard.clone().apply(0, &[0b011_10000]);
+        assert_eq!(ui.dcc_yard.status, oos_dsp::dcc_yard::TrackStatus::Estop);
+        ui.render(&mut cv);
+        assert_eq!(ui.dcc_yard.status, oos_dsp::dcc_yard::TrackStatus::Estop, "render must not clear e-stop");
+        // banner sits in the side panel (~x=680..980, y=48..85); expect RED not GREEN
+        let (r, g, b) = {
+            let i = ((60 * W + 800) as usize).min(cv.px.len() - 1);
+            let p = cv.px[i];
+            ((p >> 16) & 0xff, (p >> 8) & 0xff, p & 0xff)
+        };
+        assert!(r > g && r > b, "e-stop banner should be red, got rgb({r},{g},{b})");
+        let path = dir.join("dcc-03-estop.png");
+        crate::store::write(&path, &crate::store::png_of(&cv)).unwrap();
+        eprintln!("wrote {}", path.display());
+    }
+
     #[test]
     fn extended_decoders_decode_their_demo() {
         use super::*;
@@ -6857,7 +7093,7 @@ mod tests {
             (Proto::Arinc429, 100e-6, "SSM"),
             (Proto::Sent, 200e-6, "STAT"),
             (Proto::Usb, 5e-6, "ENDP"),
-            (Proto::Dcc, 1e-3, "PRE"),
+            (Proto::Dcc, 5e-3, "PRE"),
         ];
         for (p, tdiv, want) in cases {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });

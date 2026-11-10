@@ -14,11 +14,12 @@ pub(super) enum TableKind {
 }
 
 /// Second pane under the plot.
-pub const PANES: [&str; 5] = ["Off", "Spectrum", "Results", "Events", "Trend"];
+pub const PANES: [&str; 6] = ["Off", "Spectrum", "Results", "Events", "Trend", "DCC"];
 pub(super) const PANE_SPECTRUM: usize = 1;
 pub(super) const PANE_RESULTS: usize = 2;
 pub(super) const PANE_EVENTS: usize = 3;
 pub(super) const PANE_TREND: usize = 4;
+pub(super) const PANE_DCC: usize = 5;
 
 const ROW_H: i32 = 26;
 const HEAD_H: i32 = 40;
@@ -62,6 +63,7 @@ impl Ui {
 
     pub(super) fn table_rows(&self, k: TableKind) -> Vec<EventRow> {
         match k {
+            TableKind::Decode if !self.event_log.is_empty() => self.event_log.iter().cloned().collect(),
             TableKind::Decode => self.decode_events(),
             TableKind::Search => self.search_rows(),
         }
@@ -77,7 +79,12 @@ impl Ui {
 
     pub(super) fn table_toggle(&mut self, k: TableKind) {
         self.table = if self.table == Some(k) { None } else { Some(k) };
-        self.table_top = 0;
+        if k == TableKind::Decode && self.table.is_some() {
+            self.event_follow = true;
+            self.table_top = usize::MAX;
+        } else {
+            self.table_top = 0;
+        }
         self.close_menu();
     }
 
@@ -95,7 +102,7 @@ impl Ui {
         cv.round(r, 6, CARD_BORDER, 255);
         cv.round(r.inset(1), 5, BAR, 240);
         let title = match k {
-            TableKind::Decode => format!("Decoder events \u{b7} {}", rows.len()),
+            TableKind::Decode => format!("Decoder events \u{b7} {}{}", rows.len(), if self.event_follow { " \u{b7} live" } else { "" }),
             TableKind::Search => format!("Search events \u{b7} {}", rows.len()),
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
@@ -103,9 +110,10 @@ impl Ui {
             btn(cv, *b, BTN, BTN_BORDER);
             cv.text_in(&f.mb, *b, 1, t, TEXT);
         }
-        let top = self.table_top.min(rows.len().saturating_sub(fit));
+        let last = rows.len().saturating_sub(fit);
+        let top = if k == TableKind::Decode && self.event_follow { last } else { self.table_top.min(last) };
         if rows.is_empty() {
-            cv.text(&f.s, r.x + 12, r.y + HEAD_H + 18, "nothing found in this record", DIM);
+            cv.text(&f.s, r.x + 12, r.y + HEAD_H + 18, "nothing found yet", DIM);
         }
         for (i, e) in rows.iter().skip(top).take(fit).enumerate() {
             let y = r.y + HEAD_H + i as i32 * ROW_H;
@@ -126,18 +134,28 @@ impl Ui {
         }
         let [up, down, close] = Self::table_buttons(r);
         let last = rows.len().saturating_sub(fit);
-        self.table_top = self.table_top.min(last);
+        if k == TableKind::Decode && self.event_follow {
+            self.table_top = last;
+        } else {
+            self.table_top = self.table_top.min(last);
+        }
         if close.contains(x, y) {
             self.table = None;
         } else if up.contains(x, y) {
+            self.event_follow = false;
             self.table_top = self.table_top.saturating_sub(fit);
         } else if down.contains(x, y) {
             self.table_top = (self.table_top + fit).min(last);
+            self.event_follow = self.table_top >= last;
         } else if y >= r.y + HEAD_H {
             let i = self.table_top + ((y - r.y - HEAD_H) / ROW_H) as usize;
             if let Some(e) = rows.get(i) {
-                let t = e.t;
-                self.go_to_time(t);
+                // jump only when this text is still in the current record
+                if let Some(cur) = self.decode_events().into_iter().find(|c| c.who == e.who && c.text == e.text) {
+                    self.go_to_time(cur.t);
+                } else {
+                    self.toast("Older log event — waveform is the current record");
+                }
             }
         }
         true
@@ -180,8 +198,12 @@ impl Ui {
     }
 
     /// Height the second pane takes from the plot: what its content needs, the plot gets the rest.
+    /// DCC uses a right-hand side panel (`dcc_side_on`) and takes no bottom height.
     pub(super) fn pane_h(&self) -> i32 {
         if self.m.pane == 0 || self.m.view != AView::Scope || self.xy {
+            return 0;
+        }
+        if self.m.pane == PANE_DCC {
             return 0;
         }
         // the plot keeps its height; with many LA lanes there may be no room left
@@ -190,8 +212,13 @@ impl Ui {
         if h < 100 { 0 } else { h.min(self.pane_want() + 4) }
     }
 
-    /// The second pane: under the plot and the lanes.
+    /// The second pane: under the plot and the lanes, or the right-hand DCC side panel.
     pub(super) fn pane_rect(&self) -> Rect {
+        if self.dcc_side_on() {
+            let top = self.plot_top();
+            let bot = self.plot_bottom();
+            return Rect::new(W - DCC_SIDE_W, top, DCC_SIDE_W, bot - top);
+        }
         let g = self.grid;
         Rect::new(g.x, g.y + g.h + 2 + self.la_strip_h(), g.w, self.pane_h() - 4)
     }
@@ -205,13 +232,16 @@ impl Ui {
         let f = &self.fonts;
         let rows = &self.pn.events;
         if rows.is_empty() {
-            cv.text(&f.sb, r.x + 12, r.y + r.h / 2 + 5, "No decoder events in this record", DIM);
+            cv.text(&f.sb, r.x + 12, r.y + r.h / 2 + 5, "No decoder events yet", DIM);
             return;
         }
         let (cols, fit) = panes::event_grid(rows.len(), r.h);
+        let page = fit * cols;
+        let last = rows.len().saturating_sub(page);
+        let top = if self.event_follow { last } else { self.pn.event_top.min(last) };
         let pitch = r.h / fit as i32;
         let col_w = (r.w - 54) / cols as i32;
-        for (i, e) in rows.iter().take(fit * cols).enumerate() {
+        for (i, e) in rows.iter().skip(top).take(page).enumerate() {
             let (cx, y) = (r.x + (i / fit) as i32 * col_w, r.y + (i % fit) as i32 * pitch);
             if i % fit % 2 == 1 {
                 cv.fill(Rect::new(cx, y, col_w - 4, pitch), ROW_ALT);
@@ -223,6 +253,112 @@ impl Ui {
         }
     }
 
+    /// NMRA DCC devices (right side panel): status, then stacked trains / turnouts / signals.
+    pub(super) fn draw_pane_dcc(&self, cv: &mut Canvas, r: Rect) {
+        use oos_dsp::dcc_yard::TrackStatus;
+        let f = &self.fonts;
+        let y = &self.dcc_yard;
+        let banner_h = 32;
+        let banner = Rect::new(r.x + 8, r.y + 6, r.w - 58, banner_h);
+        let (bg, fg, label) = match y.status {
+            TrackStatus::Active => (GREEN, DARK_TEXT, "Track active"),
+            TrackStatus::Estop => (RED, TEXT, "Emergency stop"),
+            TrackStatus::Off => (BTN, DIM, "No DCC signal"),
+        };
+        cv.round(banner, 5, bg, 255);
+        cv.text_in(&f.mb, banner, 1, label, fg);
+
+        let foot_h = 36;
+        let body_top = r.y + banner_h + 14;
+        let body_h = (r.y + r.h - foot_h - body_top).max(60);
+        // three equal sections stacked: Trains, Turnouts, Signals
+        let sec_h = body_h / 3;
+        let sections: [(&str, Vec<(String, String, String)>); 3] = [
+            (
+                "Trains",
+                y.locos
+                    .iter()
+                    .map(|l| {
+                        (
+                            format!("#{}", l.addr),
+                            format!("{} {}", l.dir_text(), l.speed_text()),
+                            oos_dsp::dcc_yard::functions_text(l.functions),
+                        )
+                    })
+                    .collect(),
+            ),
+            (
+                "Turnouts",
+                y.turnouts
+                    .iter()
+                    .map(|t| (format!("#{}", t.addr), t.side_text().to_string(), if t.active { "Active".into() } else { "—".into() }))
+                    .collect(),
+            ),
+            (
+                "Signals",
+                y.signals.iter().map(|s| (format!("#{}", s.addr), s.aspect_text(), String::new())).collect(),
+            ),
+        ];
+        for (s, (title, lines)) in sections.iter().enumerate() {
+            let sy = body_top + s as i32 * sec_h;
+            cv.text(&f.mb, r.x + 12, sy + 14, title, LABEL);
+            if lines.is_empty() {
+                cv.text(&f.s, r.x + 12, sy + 34, "—", DIM);
+                continue;
+            }
+            let pitch = ((sec_h - 22) / lines.len().max(1) as i32).clamp(18, 26);
+            for (i, (a, b, c)) in lines.iter().enumerate() {
+                let yy = sy + 20 + i as i32 * pitch;
+                if i % 2 == 1 {
+                    cv.fill(Rect::new(r.x + 6, yy, r.w - 14, pitch), ROW_ALT);
+                }
+                let ty = yy + (pitch + 9) / 2;
+                cv.text(&f.sb, r.x + 12, ty, a, TEXT);
+                cv.text(&f.s, r.x + 56, ty, b, LABEL);
+                if !c.is_empty() {
+                    cv.text(&f.s, r.x + 168, ty, &truncate_fit(&f.s, c, r.w - 180), TEXT);
+                }
+            }
+        }
+
+        let foot_y = r.y + r.h - 28;
+        cv.hline(r.x + 8, r.x + r.w - 8, foot_y - 8, LINE);
+        let idle = if y.idle_count > 0 { format!("Idle {}", y.idle_count) } else { "Idle —".into() };
+        let bcast = if y.broadcast_count > 0 { format!("Broadcast {}", y.broadcast_count) } else { "Broadcast —".into() };
+        let adv = if y.advanced.is_empty() {
+            "Advanced —".into()
+        } else {
+            y.advanced
+                .iter()
+                .map(|a| {
+                    let bytes: String = a.data.iter().take(3).map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ");
+                    format!("{} [{bytes}]", a.kind)
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        cv.text(&f.s, r.x + 12, foot_y, &idle, DIM);
+        cv.text(&f.s, r.x + 12, foot_y + 14, &format!("{bcast}  ·  {adv}"), DIM);
+    }
+}
+
+fn truncate_fit(font: &Font, s: &str, max_w: i32) -> String {
+    if font.width(s) <= max_w || max_w < 8 {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for ch in s.chars() {
+        let next = format!("{out}{ch}…");
+        if font.width(&next) > max_w {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+impl Ui {
     pub(super) fn draw_pane_close(&self, cv: &mut Canvas) {
         let b = Self::pane_close(self.pane_rect());
         btn(cv, b, BTN, BTN_BORDER);

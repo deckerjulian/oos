@@ -50,9 +50,11 @@ pub(super) fn event_grid(n: usize, h: i32) -> (usize, usize) {
 pub struct PaneState {
     /// first row of the results table
     pub top: usize,
-    /// decoder events, refreshed a few times a second
+    /// decoder events (copy of the persistent log), refreshed a few times a second
     pub events: Vec<tables::EventRow>,
     events_t: f64,
+    /// first event shown in the Events pane (scroll)
+    pub event_top: usize,
     /// rows the Events pane is high enough for, and when the list last needed them
     event_rows: usize,
     event_seen: f64,
@@ -320,6 +322,8 @@ impl Ui {
             }
             tables::PANE_EVENTS if self.pn.event_rows > 0 => self.pn.event_rows as i32 * 24,
             tables::PANE_EVENTS => HINT_H,
+            // DCC uses a right-hand side panel; it does not take height under the plot
+            tables::PANE_DCC => 0,
             tables::PANE_TREND if n == 0 => HINT_H,
             tables::PANE_SPECTRUM if !self.m.ch[self.m.spec_src].on => HINT_H,
             _ => i32::MAX / 2,
@@ -328,17 +332,46 @@ impl Ui {
 
     /// Per frame: the slow content of the pane, a few times a second.
     pub(super) fn pane_tick(&mut self) {
+        if self.m.pane == tables::PANE_DCC {
+            if (self.now - self.pn.events_t).abs() < 0.25 {
+                return;
+            }
+            self.pn.events_t = self.now;
+            if self.dcc_yard.status == oos_dsp::dcc_yard::TrackStatus::Off {
+                self.apply_dcc_from_decoders();
+            }
+            return;
+        }
         if self.m.pane != tables::PANE_EVENTS || (self.now - self.pn.events_t).abs() < 0.25 {
             return;
         }
         self.pn.events_t = self.now;
-        self.pn.events = self.decode_events();
+        self.ensure_event_log();
+        self.pn.events = if self.event_log.is_empty() { self.decode_events() } else { self.event_log.iter().cloned().collect() };
         let n = self.pn.events.len();
-        let want = n.div_ceil(if n <= 4 { 1 } else { 2 });
+        let want = n.div_ceil(if n <= 4 { 1 } else { 2 }).min(12);
         if want >= self.pn.event_rows {
             (self.pn.event_rows, self.pn.event_seen) = (want, self.now);
         } else if self.now - self.pn.event_seen > SHRINK_AFTER {
             self.pn.event_rows = want;
+        }
+        if self.event_follow {
+            let (cols, fit) = event_grid(n, self.pane_rect().h.max(1));
+            let page = fit * cols;
+            self.pn.event_top = n.saturating_sub(page);
+        }
+    }
+
+    fn events_scroll(&mut self, d: i32) {
+        let n = self.pn.events.len();
+        let r = self.pane_rect();
+        let (cols, fit) = event_grid(n, r.h.max(1));
+        let page = fit * cols;
+        let last = n.saturating_sub(page);
+        self.event_follow = false;
+        self.pn.event_top = (self.pn.event_top.min(last) as i32 + d).clamp(0, last as i32) as usize;
+        if self.pn.event_top >= last {
+            self.event_follow = true;
         }
     }
 
@@ -790,7 +823,11 @@ impl Ui {
     pub(super) fn draw_pane(&self, cv: &mut Canvas) {
         let r = self.pane_rect();
         cv.fill(r, BG);
-        cv.hline(r.x, r.x + r.w - 1, r.y, LINE);
+        if self.dcc_side_on() {
+            cv.vline(r.x, r.y, r.y + r.h - 1, LINE);
+        } else {
+            cv.hline(r.x, r.x + r.w - 1, r.y, LINE);
+        }
         match self.m.pane {
             tables::PANE_SPECTRUM => self.draw_spectrum(cv, r, true),
             _ => {
@@ -799,6 +836,7 @@ impl Ui {
                     tables::PANE_RESULTS => self.draw_results_pane(cv, r),
                     tables::PANE_EVENTS => self.draw_pane_events(cv, r),
                     tables::PANE_TREND => self.draw_trends(cv, r),
+                    tables::PANE_DCC => self.draw_pane_dcc(cv, r),
                     _ => {}
                 }
                 cv.no_clip();
@@ -807,6 +845,16 @@ impl Ui {
         if self.m.pane == tables::PANE_RESULTS {
             let (fit, _) = Self::results_fit(r, self.meas_rows().len());
             if self.meas_rows().len() > fit {
+                for (b, t) in Self::results_scroll_btns(r).iter().zip(["Up", "Dn"]) {
+                    btn(cv, *b, BTN, BTN_BORDER);
+                    cv.text_in(&self.fonts.mb, *b, 1, t, TEXT);
+                }
+            }
+        }
+        if self.m.pane == tables::PANE_EVENTS {
+            let n = self.pn.events.len();
+            let (cols, fit) = event_grid(n, r.h.max(1));
+            if n > fit * cols {
                 for (b, t) in Self::results_scroll_btns(r).iter().zip(["Up", "Dn"]) {
                     btn(cv, *b, BTN, BTN_BORDER);
                     cv.text_in(&self.fonts.mb, *b, 1, t, TEXT);
@@ -824,7 +872,7 @@ impl Ui {
                 return true;
             }
         }
-        if self.pane_h() == 0 {
+        if self.pane_h() == 0 && !self.dcc_side_on() {
             return false;
         }
         let r = self.pane_rect();
@@ -853,17 +901,35 @@ impl Ui {
                     self.results_scroll(fit as i32);
                 }
             }
+            tables::PANE_EVENTS => {
+                let n = self.pn.events.len();
+                let (cols, fit) = event_grid(n, r.h.max(1));
+                let page = (fit * cols) as i32;
+                let [up, down] = Self::results_scroll_btns(r);
+                if n > fit * cols && up.contains(x, y) {
+                    self.events_scroll(-page);
+                } else if n > fit * cols && down.contains(x, y) {
+                    self.events_scroll(page);
+                }
+            }
             tables::PANE_TREND => self.trend_tap(x, y),
             _ => {}
         }
         true
     }
 
-    /// A finger drawn over the results table moves it by the rows it passed.
+    /// A finger drawn over the results or events table moves it by the rows it passed.
     pub(super) fn pane_swipe(&mut self, x0: i32, y0: i32, y1: i32) {
-        if self.pane_h() > 0 && self.m.pane == tables::PANE_RESULTS && self.pane_rect().contains(x0, y0) {
-            let (_, pitch) = Self::results_fit(self.pane_rect(), self.meas_rows().len());
-            self.results_scroll((y0 - y1) / pitch.max(1));
+        if self.pane_h() == 0 || !self.pane_rect().contains(x0, y0) {
+            return;
+        }
+        match self.m.pane {
+            tables::PANE_RESULTS => {
+                let (_, pitch) = Self::results_fit(self.pane_rect(), self.meas_rows().len());
+                self.results_scroll((y0 - y1) / pitch.max(1));
+            }
+            tables::PANE_EVENTS => self.events_scroll((y0 - y1) / 24),
+            _ => {}
         }
     }
 }
