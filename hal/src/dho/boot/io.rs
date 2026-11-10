@@ -346,7 +346,7 @@ mod tests {
     }
 
     // Break it catches: BOOT going out while xdma is still loaded (the FPGA reconfigures behind a bound endpoint:
-    // the lockup NovaOS saw) because the unload failed and nobody looked.
+    // the CPU can lock up) because the unload failed and nobody looked.
     #[test]
     fn a_failed_unload_stops_before_boot() {
         let log: Log = Default::default();
