@@ -316,7 +316,7 @@ clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
   as yourself, not with `sudo`: put yourself in the `docker` group (`sudo usermod -aG docker $USER`, then log in again).
   On x86-64 the kernel is cross-compiled; the image's busybox, wpa_supplicant and e2fsck come from arm64 containers,
   which need QEMU once: `docker run --privileged --rm tonistiigi/binfmt --install arm64`. The workflow
-  `.github/workflows/image.yml` builds it all on both Linux hosts.
+  `.github/workflows/image.yml` builds it all on both Linux hosts. Step by step: [Building on Linux](#building-on-linux).
 
 The whole process takes about an hour, mostly for copying the cards.
 
@@ -398,6 +398,32 @@ boot/build-dev-image.sh
 This produces `boot/out/oos-dev.img` for the card, `boot/out/oos-dev.oosupd`, the signed update package, and
 `boot/out/DHO800_DHO900_OOS_Install.GEL` for the USB stick. If the script fails, the previous image stays in place, so
 check the file's time.
+
+#### Building on Linux
+
+Steps 3 to 5 on Linux, arm64 or x86-64, here with Debian or Ubuntu. On x86-64 the kernel and `oos-hw` are
+cross-compiled with Ubuntu's `gcc-aarch64-linux-gnu` inside the build container; you install no cross compiler
+yourself. Run everything as yourself, not with `sudo`.
+
+```sh
+sudo apt install docker.io git python3 curl
+sudo usermod -aG docker $USER      # then log out and in again, so that docker runs without sudo
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh      # Rust from rustup, not from apt
+rustup target add aarch64-unknown-linux-musl
+# x86-64 only: arm64 containers through QEMU, for busybox, wpa_supplicant and e2fsck (again after a reboot)
+docker run --privileged --rm tonistiigi/binfmt --install arm64
+
+git clone https://github.com/deckerjulian/oos.git && cd oos
+mkdir -p kernel/src
+curl -fL -o kernel/src/linux-6.12.115-base.tar.xz \
+  https://github.com/deckerjulian/oos/releases/latest/download/linux-6.12.115-base.tar.xz
+kernel/build-base.sh
+boot/build-dev-image.sh
+```
+
+The scripts say what is missing before they start: Docker not reachable, no rustup or no target, no arm64 containers.
+A finished build leaves the same files as on macOS. To install them on a second card from Linux, see steps 1, 2 and 6,
+with `/dev/sdX` for the card.
 
 ### 6. Install OOS on the second card
 
