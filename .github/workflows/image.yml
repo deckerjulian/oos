@@ -1,8 +1,8 @@
 # The whole image on Linux, as a release is built: kernel, initramfs, boot image, update package, USB install file.
 # Twice: on an arm64 runner (natively, the same compiler as on a Mac with Apple silicon) and on an x86-64 runner (cross
 # compiler for the kernel and oos-hw, QEMU for the arm64 containers). The last job compares what the two put into the
-# image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ. The packages
-# themselves hold the build time and differ always.
+# image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from
+# the programs built from the OOS source (see the job). The packages themselves hold the build time and differ always.
 # The package is signed with the community key of the repository (keys/), as every build without a key of its own.
 name: Image
 on:
@@ -72,12 +72,25 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: manifest-*
+      # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,
+      # wpa_supplicant, e2fsck, scripts. The programs built from the OOS source only get a notice: Cargo mixes the host
+      # into its crate hashes (rustc -vV says "host: ..."), which ends up in the symbol names and the code layout, and
+      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
       - name: arm64 and x86-64 builds the same
         run: |
-          if diff -u manifest-ARM64/manifest.txt manifest-X64/manifest.txt > diff.txt; then
-            echo "arm64 and x86-64: the same kernel, DTB and initramfs files ($(wc -l < manifest-ARM64/manifest.txt) entries)" >> "$GITHUB_STEP_SUMMARY"
+          own='  initramfs/bin/oos-(hw|ui|fpgad|update)$'
+          for a in ARM64 X64; do
+            grep -Ev "$own" manifest-$a/manifest.txt > strict-$a.txt
+            grep -E "$own" manifest-$a/manifest.txt > own-$a.txt || true
+          done
+          if ! diff -u own-ARM64.txt own-X64.txt > own.txt; then
+            { echo "### Own programs differ between the hosts (expected, not checked)"; echo '```diff'; cat own.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::the programs built from the OOS source differ between arm64 and x86-64 (host in the crate hashes, different gcc builds)"
+          fi
+          if diff -u strict-ARM64.txt strict-X64.txt > strict.txt; then
+            echo "arm64 and x86-64: kernel, DTB and all other files of the initramfs the same ($(wc -l < strict-ARM64.txt) entries)" >> "$GITHUB_STEP_SUMMARY"
           else
-            { echo "### arm64 (-) and x86-64 (+) differ"; echo '```diff'; cat diff.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-            cat diff.txt
+            { echo "### arm64 (-) and x86-64 (+) differ"; echo '```diff'; cat strict.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            cat strict.txt
             exit 1
           fi
