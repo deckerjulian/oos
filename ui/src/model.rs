@@ -235,12 +235,14 @@ pub enum Proto {
     Sent,
     /// USB 1.x / 2.0 low / full speed
     Usb,
+    /// NMRA DCC (model-railway track)
+    Dcc,
 }
 
-pub const PROTOS: [Proto; 25] = [
+pub const PROTOS: [Proto; 26] = [
     Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
     Proto::FlexRay, Proto::Dmx512, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
-    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Spdif, Proto::UsbPd, Proto::Arinc429, Proto::Sent, Proto::Usb,
+    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Spdif, Proto::UsbPd, Proto::Arinc429, Proto::Sent, Proto::Usb, Proto::Dcc,
 ];
 
 impl Proto {
@@ -271,6 +273,7 @@ impl Proto {
             Proto::Arinc429 => "ARINC 429",
             Proto::Sent => "SENT",
             Proto::Usb => "USB",
+            Proto::Dcc => "DCC",
         }
     }
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
@@ -291,7 +294,7 @@ impl Proto {
     }
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok(self) -> bool {
-        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Dmx512 | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429)
+        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Dmx512 | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429 | Proto::Dcc)
     }
 }
 
@@ -1346,6 +1349,7 @@ impl Model {
                 let t = crate::decode::SENT_TICKS[self.dec_tick];
                 4.0 * if t > 0.0 { t } else { crate::decode::SENT_TICKS[0] }
             }
+            Proto::Dcc => 2.0 * oos_dsp::decode_ext3::DCC_ONE_HALF,
             // auto: full speed
             Proto::Usb => {
                 use oos_dsp::decode_ext3::{UsbSpeed, USB_FULL, USB_LOW};

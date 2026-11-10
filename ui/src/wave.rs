@@ -231,6 +231,12 @@ fn ext_demo(p: Proto) -> Option<&'static ExtDemo> {
         ];
         let (dp, dm) = g3::usb(&items, false, 0.0, 0.0, 3.3);
         v.push((Proto::Usb, mk(dp, Some(dm), 5e-6)));
+        // NMRA DCC: baseline speed packet to loco 3, then a two-byte consist-style packet
+        let dcc = [
+            g3::DccFrame { address: 0x03, data: vec![0x3F], xor: None, preamble: 14 },
+            g3::DccFrame { address: 0x28, data: vec![0x00, 0x28], xor: None, preamble: 12 },
+        ];
+        v.push((Proto::Dcc, mk(g3::dcc(&dcc, 0.0, 3.3), None, 200e-6)));
         v
     });
     all.iter().find(|(q, _)| *q == p).map(|(_, d)| d)

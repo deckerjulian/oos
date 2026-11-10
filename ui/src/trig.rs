@@ -102,6 +102,8 @@ fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result
         }
         // D- optional (D+ alone: no SE0)
         Proto::Usb => x3::usb(get(m.dec_src)?, opt(m.dec_cs)?, dt, crate::decode::USB_SPEEDS[m.dec_uspeed], thr, hy),
+        // NMRA DCC track: half-bit timing on one channel (or A-B via diff)
+        Proto::Dcc => x3::dcc(get(m.dec_src)?, dt, thr, hy),
     })
 }
 

@@ -3662,6 +3662,10 @@ impl Ui {
             Proto::Usb => {
                 (m.dec_src, m.dec_cs, m.dec_thr) = (2, Some(3), 1.65);
             }
+            // NMRA DCC rail demo on CH3 (3.3 V logic)
+            Proto::Dcc => {
+                (m.dec_src, m.dec_thr) = (2, 1.65);
+            }
             _ => m.dec_src = 2,
         }
         m.ch[2.min(NCH - 1)].on = true;
@@ -3849,6 +3853,8 @@ impl Ui {
                 Proto::Sent => (BusWhat::Data, 0x7f480b),
                 // the demo device's address
                 Proto::Usb => (BusWhat::Id, 5),
+                // demo loco address 0x03
+                Proto::Dcc => (BusWhat::Id, 0x03),
                 _ => (BusWhat::Frame, 0x40),
             };
             self.dirty_map = true;
@@ -6481,6 +6487,7 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
                 Kind::Field("PID") if m.dec_proto == Proto::Usb && p.ok => oos_dsp::decode_ext3::usb_pid_name(p.value as u8).to_string(),
                 Kind::Field("PID") if m.dec_proto == Proto::Usb => format!("PID {:02X} !", p.value),
                 Kind::Data if m.dec_proto == Proto::Usb => format!("{:02X}", p.value),
+                Kind::Field("PRE") if m.dec_proto == Proto::Dcc => format!("PRE {}{}", p.value, if p.ok { "" } else { " !" }),
                 Kind::Id { ext, rtr } => format!("ID {}{}{}", if ext { format!("{:08X}", p.value) } else if m.dec_proto == Proto::Lin { format!("{:02X}", p.value) } else { format!("{:03X}", p.value) }, if rtr { " RTR" } else { "" }, if p.ok { "" } else { " !P" }),
                 Kind::Sample { right } => format!("{} {:0w$X}", if right { "R" } else { "L" }, p.value, w = (m.dec_bits as usize).div_ceil(4)),
                 Kind::Word { cmd } => format!("{} {:04X}{}", if cmd { "C/S" } else { "D" }, p.value, if p.ok { "" } else { " !P" }),
@@ -6837,7 +6844,7 @@ mod tests {
     fn extended_decoders_decode_their_demo() {
         use super::*;
         // (protocol, time/div that shows a whole frame, a label or kind that must appear)
-        let cases: [(Proto, f32, &str); 12] = [
+        let cases: [(Proto, f32, &str); 13] = [
             (Proto::CanFd, 50e-6, "BRS"),
             (Proto::Dmx512, 100e-6, "SC"),
             (Proto::ModbusRtu, 1e-3, "FUNC"),
@@ -6850,6 +6857,7 @@ mod tests {
             (Proto::Arinc429, 100e-6, "SSM"),
             (Proto::Sent, 200e-6, "STAT"),
             (Proto::Usb, 5e-6, "ENDP"),
+            (Proto::Dcc, 1e-3, "PRE"),
         ];
         for (p, tdiv, want) in cases {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
