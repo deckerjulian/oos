@@ -13,6 +13,8 @@ Everything the kernel of OOS is built from. `build-base.sh` needs nothing outsid
 | `tools/` | answers the `git log` queries of the Rockchip drivers, so the build needs no git tree |
 
 `build-base.sh` always gives the same bits for the same input: fixed time stamp, build names and paths. Compiler: gcc 15.2.0.
+On an arm64 host it is Ubuntu's native gcc, on x86-64 Ubuntu's `gcc-aarch64-linux-gnu` of the same version; whether
+the two give the same bits is not checked yet (the summaries of `.github/workflows/image.yml` show both checksums).
 
 Licences: kernel and patches GPL-2.0, device tree GPL-2.0+ OR MIT, `xdma` as in its files, `firmware/` as in `firmware/LICENSE.wireless-regdb`.
 

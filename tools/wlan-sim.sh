@@ -23,7 +23,7 @@ cp "$(cat "$w/test-binary")" "$w/oos-ui-test"
 
 # the busybox of the image
 docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-docker run --rm oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/init" <<'INIT'

@@ -12,8 +12,9 @@ sum=912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a
 mkdir -p "$out"
 tarball="$out/wpa_supplicant-$ver.tar.gz"
 [ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://w1.fi/releases/wpa_supplicant-$ver.tar.gz"
-echo "$sum  $tarball" | shasum -a 256 -c - >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
-docker run --rm --platform linux/arm64 -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
+echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
+# arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
+docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
 	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static >/dev/null
 	cd /tmp && tar -xzf /out/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant
 	cat > .config <<CFG
@@ -35,5 +36,6 @@ CFG
 	cp wpa_supplicant wpa_cli /out/
 	# the licence text itself stands in the README, up to the end of its disclaimer
 	sed "/SUCH DAMAGE/q" ../README > /out/wpa_supplicant.COPYING
+	chown "$OUT_OWNER" /out/*
 '
 ls -la "$out/wpa_supplicant" "$out/wpa_cli"
