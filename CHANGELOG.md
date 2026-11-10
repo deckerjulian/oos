@@ -1,5 +1,50 @@
 # Changes
 
+## 0.1.5
+
+From 0.1.1 to 0.1.4: install the package through the web page or `oos-update install`, the scope restarts by itself
+(kexec); then switch it off at the mains, wait 30 seconds and switch it on.
+
+New:
+
+- Waveform windows: Display > Windows splits the plot into two windows side by side, two stacked, or four. Each
+  channel and math channel stands in one window (chosen on the same page; a new split spreads the channels that are
+  on), all on the same time base. The LA gets a window too: its lanes stand at the bottom of it (all of it when no
+  channel shares it), with that window's time axis. A decoder band goes with its source channel, references stay with
+  the first window. Auto set-up shares the height of each window among its channels. Zoom, XY and the analysis views
+  use one window. A drag in a window moves a channel of that window. Saved in setups.
+- Full screen: the button at the top right of the plot (or Display > Windows > Full screen) gives the plot the whole
+  screen without the top bar and the cards; the same button goes back. Not while the touch lock is on.
+- After an auto set-up a bar at the top of the waveform window, above the signal, offers four views of the trigger
+  channel: about three periods, about ten periods, the rising edge, the falling edge (the edge's 10-90 % time across
+  about two divisions, slope set to match). Its cross or a tap elsewhere closes it, otherwise it goes after 30 s.
+- Trigger > Noise reject: 0.7 instead of 0.3 div comparator hysteresis, for all trigger types with an analog level;
+  in setups and as `:TRIGger:NREJect`.
+- The on-screen keyboard has arrow keys either side of Space, and a tap into the entry puts the insertion point
+  there: a typo in the middle of a long Wi-Fi password is fixed without deleting everything after it. Typing and
+  Delete work at the insertion point.
+- The start-up screen shows the OOS version and the build at the bottom.
+
+Changed:
+
+- Channel bandwidth defaults to Auto (as on the stock system): the filter follows the sample rate, so the noise of slow
+  time bases stays off the trigger comparator. Full stays selectable; a signal well above the Auto limit then reads
+  smaller (10 MHz at 200 us/div about half). Setups saved before keep their bandwidth. Auto set-up searches at full
+  bandwidth and then gives each channel its own bandwidth back (it used to leave Full).
+
+Fixes:
+
+- A slow signal is no longer drawn twice, once on each edge (seen after Auto with a 1 kHz sine at 500 us/div, also in
+  0.1.4). With full bandwidth the noise of the signal can be larger than the trigger hysteresis, and the comparator
+  then also fires on the other edge (docs/protocols/trigger.md 7); the stock system does the same with full
+  bandwidth. The display and the waveform data now take the edge of the set direction nearest the hardware trigger
+  point, found on the signal smoothed to one screen column with the hysteresis of the hardware.
+
+Diagnostics:
+
+- `:SYSTem:STATe?` ends with counts of where the fast display path found the trigger edge; `OOS_FRAME_HEADER=1` makes
+  oos-ui read and log the 16-byte frame header (trigger.md 7).
+
 ## 0.1.4
 
 From 0.1.1, 0.1.2 or 0.1.3: install the package through the web page or `oos-update install`, the scope restarts by
