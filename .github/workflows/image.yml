@@ -1,0 +1,80 @@
+# The whole image on Linux, as a release is built: kernel, initramfs, boot image, update package, USB install file.
+# Twice: on an arm64 runner (natively, the same compiler as on a Mac with Apple silicon) and on an x86-64 runner (cross
+# compiler for the kernel and oos-hw, QEMU for the arm64 containers). The last job compares what the two put into the
+# image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ. The packages
+# themselves hold the build time and differ always.
+# The package is signed with the community key of the repository (keys/), as every build without a key of its own.
+name: Image
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04-arm, ubuntu-24.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: QEMU for the arm64 containers
+        if: runner.arch != 'ARM64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Rust
+        run: |
+          command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup toolchain install stable --profile minimal && rustup target add aarch64-unknown-linux-musl
+      - name: Kernel source (from the latest release, kernel/base.sha256 checks it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download --repo "$GITHUB_REPOSITORY" --pattern 'linux-6.12.115-base.tar.xz' --dir kernel/src
+      - name: Kernel
+        run: kernel/build-base.sh
+      - name: Image
+        run: boot/build-dev-image.sh
+      - name: Manifest
+        run: |
+          python3 -I tools/image-manifest.py kernel/out/base/Image boot/out/oos-dho900.dtb boot/out/initramfs.cpio.gz > manifest.txt
+          {
+            echo '```'
+            cat kernel/out/base/kernel.release boot/out/busybox.version boot/out/oos-dev.img.sha256
+            grep '  kernel/' manifest.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifest-${{ runner.arch }}
+          path: manifest.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oos-image-${{ runner.arch }}
+          path: |
+            boot/out/oos-dev.img
+            boot/out/oos-dev.img.sha256
+            boot/out/oos-dev.oosupd
+            boot/out/*.GEL
+            boot/out/busybox.version
+            kernel/out/base/SHA256SUMS
+            kernel/out/base/config
+          if-no-files-found: error
+  compare:
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: manifest-*
+      - name: arm64 and x86-64 builds the same
+        run: |
+          if diff -u manifest-ARM64/manifest.txt manifest-X64/manifest.txt > diff.txt; then
+            echo "arm64 and x86-64: the same kernel, DTB and initramfs files ($(wc -l < manifest-ARM64/manifest.txt) entries)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            { echo "### arm64 (-) and x86-64 (+) differ"; echo '```diff'; cat diff.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            cat diff.txt
+            exit 1
+          fi
