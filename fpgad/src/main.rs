@@ -513,6 +513,24 @@ fn pcie_up() -> std::io::Result<oos_hal::dho::bus::Bar1> {
     oos_hal::dho::bus::Bar1::open()
 }
 
+/// Unloads xdma and the PCIe host driver, the step before the BOOT command is sent again (`io::power_on`): the FPGA
+/// must not reconfigure behind a bound endpoint. An error, with what `rmmod` said, if either module is still loaded
+/// afterwards.
+#[cfg(target_os = "linux")]
+fn pcie_down() -> std::io::Result<()> {
+    let run = |c: &str| std::process::Command::new("sh").arg("-c").arg(c).output().ok();
+    let said: Vec<String> = ["rmmod xdma 2>&1", "rmmod pcierockchiphost 2>&1"]
+        .iter()
+        .filter_map(|c| run(c))
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if run("lsmod | grep -qE '^(xdma|pcierockchiphost) '").map(|o| o.status.success()).unwrap_or(false) {
+        return Err(std::io::Error::other(format!("xdma or the PCIe host driver is still loaded after rmmod ({})", said.join("; "))));
+    }
+    Ok(())
+}
+
 /// Uptime of the BOOT command sent by `oos-fpgad fpga-boot`.
 #[cfg(target_os = "linux")]
 const BOOTED_FILE: &str = "/tmp/oos-fpga-booted";
@@ -735,9 +753,17 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                     if booted.is_none() {
                         say("run", "FPGA image", "loading the image from flash");
                     }
+                    // after a repeated BOOT command the stage keeps the warning's text, not "PCIe link"
+                    let repeats = std::cell::Cell::new(0u32);
                     let up = || {
-                        say("run", "FPGA image", "PCIe link");
+                        if repeats.get() == 0 {
+                            say("run", "FPGA image", "PCIe link");
+                        }
                         pcie_up()
+                    };
+                    let noted = |n: u32| {
+                        repeats.set(n);
+                        say("warn", "FPGA image", &format!("the BOOT command got no answer, sent again ({} of {})", n, oos_hal::dho::boot::io::FPGA_BOOT_RETRIES));
                     };
                     let mut step = |n: u32| {
                         let g = oos_hal::dho::boot::stage(n);
@@ -749,7 +775,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                             cur = Some(g);
                         }
                     };
-                    let r = oos_hal::dho::boot::io::power_on(slot, booted, up, &cal, &opt, &mut step);
+                    let r = oos_hal::dho::boot::io::power_on(slot, booted, up, pcie_down, noted, &cal, &opt, &mut step);
                     if let Err(e) = &r {
                         // before the first step: the BOOT command / PCIe, or the PLL / AFE lines (e.g. EBUSY)
                         let stage = if e.starts_with("PLL lines") || e.starts_with("AFE lines") { "GPIO lines" } else { "FPGA image" };

@@ -48,6 +48,39 @@ Verified on the unit with Linux 6.12.115+, from the OOS development initramfs:
 (the stock FPGA version), 0x4034 = 0x2020 (stopped), 0x4044/0x4048 = FPGA DNA. Scripted as `oos-fpga-up`, register access as
 `oos-hw rd/wr` (`tools/hw/oos-hw.c`).
 
+## A BOOT sent too early is lost
+
+After a true power-on the Zynq runs its factory image (slot 0x000000) first, and only that image's boot monitor hears the
+BOOT command. The command is not queued: one sent before the monitor listens is lost, the factory image stays, and the
+main image never loads.
+
+- **Verified on the unit** (serial consoles of the RK3399 and the Zynq; each of the seven cold starts on 2026-11-08 lost
+  its first BOOT, the first two logged in detail): the factory image
+  needs about 11.2 s from the FSBL banner to its hand-over (11.2 s in the boots of both days that were logged). In the first
+  two starts OOS sent BOOT at about 8.4 s after power-on; in the second one it went out roughly 1.8 s before the
+  hand-over. The Zynq console never printed `Recv Command Boot!!!` and never ran the second FSBL pass (`Multiboot Register:
+  0x0000C080`) that loads the main image. PCIe then came up on the factory image's endpoint (the same 10ee:7022) and
+  register 0x4000 read `0xe1060816` instead of 0xe2072115, so the cold boot stopped at "FPGA image" with nothing
+  written. Starts where BOOT arrived after the hand-over (0.03 s and 7.3 s after it) loaded the main image.
+- **Assumed:** that `0xe1060816` is the version of the factory image (it is what 0x4000 reads when no BOOT was heard).
+- **OOS repeats BOOT** when the version register shows another value after the PCIe bring-up
+  (`hal::dho::boot::io::up_with_boot_retries`, `oos-fpgad cold-boot --power-on`): it unloads xdma and the PCIe host
+  driver (the BAR is unmapped first, and BOOT is not sent while a module stays loaded: reconfiguring the FPGA behind a
+  bound endpoint can lock the CPU up), sends BOOT again, waits as after the first one, loads the drivers and checks
+  again. At most twice, because a factory image that loads more slowly than this unit's would swallow the first repeat as
+  well; then the cold boot reports the version it reads, as before. A repeat shows as a warning on the start-up screen
+  and in `/tmp/oos-cold.log`. The start that works the first time is unchanged.
+- **Verified on the unit** (four cold starts with the fixed code, 2026-11-08, each the same): the first BOOT was lost
+  again; at 0x4000 = 0xe1060816 OOS unloaded both modules, sent BOOT again, the Zynq console printed `Recv Command
+  Boot!!!` 3.6 s (3.57 to 3.61 s) after the factory image's hand-over and ran the second FSBL pass, PCIe came up a
+  second time with 0x4000 = 0xe2072115, and the start-up finished, about 4 s later than a start where the first BOOT
+  is heard. **Also verified on the unit:** a warm restart (`reboot` from the shell, the Zynq keeps running): the Zynq
+  console printed `Recv Command Boot!!!` at once, the version read 0xe2072115 at the first try, no repeat, and the
+  start-up finished as before (all stages ok 7.9 s after the kernel clock started). **Not yet exercised on hardware:**
+  the second repeat, and a cold start in which the first BOOT is heard (the host tests cover both). A first version of
+  this code left the BAR1 mapping behind after the unload, which kept `rmmod xdma` from working; `Bar1` now unmaps
+  when dropped.
+
 ## OOS plan for this step (`oos-fpgad` start-up)
 
 1. open `/dev/spidev1.0`, send `\rBOOT\r` + 00 40 00 00 (slot from a config file, default 0x400000)
