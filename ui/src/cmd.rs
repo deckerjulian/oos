@@ -102,7 +102,11 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
 
 /// The running state in one line: the `stat` command and `:SYSTem:STATe?`.
 pub fn stat_text(ui: &Ui) -> String {
-    format!("fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms\n", ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present)
+    let e = ui.fast_edges;
+    format!(
+        "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}\n",
+        ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1
+    )
 }
 
 pub fn write_ppm(cv: &Canvas, path: &str) -> std::io::Result<()> {

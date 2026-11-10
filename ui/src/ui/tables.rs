@@ -69,7 +69,7 @@ impl Ui {
 
     /// The table window over the plot: rectangle and the rows that fit.
     fn table_rect(&self, n: usize) -> (Rect, usize) {
-        let a = self.area;
+        let a = self.over_area();
         let fit = ((a.h - 16 - HEAD_H) / ROW_H).max(1) as usize;
         let rows = n.clamp(1, fit);
         (Rect::new(a.x + 30, a.y + 8, 420, HEAD_H + rows as i32 * ROW_H + 4), rows)

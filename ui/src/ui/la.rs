@@ -29,6 +29,8 @@ pub const USER: usize = PRESETS.len() - 1;
 const LA_HEAD: i32 = 14;
 /// Row of the decoder under the lanes, when it reads LA lines.
 const LA_DEC: i32 = 26;
+/// Height of the time labels at the bottom of a window: the lanes in a window end above them.
+const AXIS_ROW: i32 = 22;
 /// Lane pitch in px (small, medium, large).
 pub const HEIGHTS: [(&str, i32); 3] = [("Small", 12), ("Medium", 16), ("Large", 22)];
 /// Line groups of the Lines row; "Custom" = any other set (Lines sub menu).
@@ -441,7 +443,7 @@ impl Ui {
     }
 
     /// Decoders on LA lines with the lanes on the screen: their rows are in the strip, under what they decode.
-    fn la_dec_count(&self) -> i32 {
+    pub(super) fn la_dec_count(&self) -> i32 {
         if self.m.la.lines().is_empty() || self.m.view != AView::Scope || self.xy || !self.m.la_on() {
             return 0;
         }
@@ -468,17 +470,31 @@ impl Ui {
         self.la_dec_row_n(0)
     }
 
-    /// The lane strip under the graticule: (rectangle, lane pitch) for `n` lanes.
+    /// The lane strip under the graticule: (rectangle, lane pitch) for `n` lanes. In a split plot the lanes stand at
+    /// the bottom of their window: over its lower half while a channel shares the window, all of it when not.
     pub(super) fn la_band(&self, n: usize) -> (Rect, i32) {
+        if self.wins.len() > 1 {
+            let w = self.lane_area();
+            let shared = self.win_has_analog(self.la_win_of());
+            // the time labels of the window stay readable under the lanes
+            let room = if shared { w.h / 2 } else { w.h - AXIS_ROW } - LA_HEAD - self.la_dec_h() - 4;
+            let want = HEIGHTS[self.m.la.height.min(HEIGHTS.len() - 1)].1;
+            // alone in the window the lanes take its height (up to twice the chosen pitch); shared, at most the pitch
+            let fill = (room / n.max(1) as i32).max(9);
+            let pitch = if shared { want.min(fill) } else { fill.min(2 * want) };
+            let h = n as i32 * pitch + LA_HEAD + self.la_dec_h() + 4;
+            return (Rect::new(w.x, w.y + w.h - AXIS_ROW - h, w.w, h), pitch);
+        }
         let (h, pitch) = self.la_fit(n);
         let g = self.grid;
         (Rect::new(g.x, g.y + g.h + 2, g.w, h - 2), pitch)
     }
 
-    /// Height the lane strip takes from the plot (0 when no lanes are drawn: analysers, XY, LA off).
+    /// Height the lane strip takes from the plot (0 when no lanes are drawn: analysers, XY, LA off; and in a split plot,
+    /// where the lanes are in a window).
     pub(super) fn la_strip_h(&self) -> i32 {
         let n = self.m.la.lines().len();
-        if self.m.la_on() && n > 0 && self.m.view == AView::Scope && !self.xy {
+        if self.m.la_on() && n > 0 && self.m.view == AView::Scope && !self.xy && self.n_wins() == 1 {
             self.la_fit(n).0
         } else {
             0
@@ -534,7 +550,7 @@ impl Ui {
             return;
         }
         let f = &self.fonts;
-        let a = self.area;
+        let a = self.lane_area();
         let (band, pitch) = self.la_band(lines.len());
         cv.set_clip(band);
         cv.fill(band, BG);

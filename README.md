@@ -138,14 +138,20 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
   points); Auto or fixed memory depth up to 125 M points
 - Time base from 1 ns/div; roll mode from 200 ms/div, scan mode at slow time bases
 - Zoom window, pinch and drag on the touch screen
+- Auto set-up, then a bar with four views of the signal: a few periods, many periods, the rising or the falling edge
+- Channel bandwidth Auto (follows the sample rate, the default), Full, 20 MHz or a limit in 5 MHz steps
 
 **Trigger**
 - Hardware trigger: edge, pulse, slope, video, pattern, duration, timeout, runt, window, delay, setup/hold, Nth edge
 - Protocol trigger (bus events found by the decoders)
 - Zone trigger: up to two boxes or polygons a waveform must or must not cross
+- Noise reject (wider comparator hysteresis); a slow, noisy edge is drawn on the edge you set, not on the other one
 
 **Display**
 - Dots or vectors, colour grade, waveform histogram, dotted graticule
+- Waveform windows: the plot split into two windows side by side, two stacked, or four, each channel, math channel and
+  the LA in a window of your choice, all on one time base
+- Full screen: one tap at the top right of the plot hides the top bar and the cards, one more brings them back
 - HDMI output as a mirror or as a separate waveform workspace
 
 **Measurement and maths**
@@ -200,6 +206,8 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 - Self-calibration into own files (`/oos/cal`); factory files are never changed
 - System > Overclock: the sample clock in steps from 1.25 to 2 GHz, experimental, from the next power-on
 - Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits
+- On-screen keyboard for names, formulas and WLAN passwords, with arrow keys to correct inside a long entry
+- The start-up screen shows the version and the build
 - Signed update packages with trial start and automatic rollback
 
 ## Gallery
@@ -212,6 +220,8 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 | Measurements labelled on the trace | Spectrum view with its peak list |
 | ![Main screen](docs/images/main.png) | ![System menu](docs/images/menu-system.png) |
 | The main screen, 200 kHz from the built-in generator | System menu |
+| ![Auto set-up views](docs/images/auto-bar.png) | ![Full screen](docs/images/full-screen.png) |
+| After Auto: a few periods, many periods, rising or falling edge | Full screen, the same button goes back |
 
 ## Status
 
@@ -574,8 +584,22 @@ works. Putting it back needs the card in a reader, with `recovery.bin` from the 
 
 **Controls.** Front-panel keys and knobs work as labelled. The Menu button at the bottom left reaches every function.
 
-**Auto.** Works on the channels that are on, at full bandwidth, and sets the memory depth back to Auto. With no signal it
-restores the set-up.
+**Auto.** Works on the channels that are on, at full bandwidth, and sets the memory depth back to Auto; each channel then
+gets its own bandwidth back. With no signal it restores the set-up. Afterwards a bar at the top of the plot offers a few
+periods, many periods, the rising edge or the falling edge of the trigger channel; its x or a tap elsewhere closes it.
+
+**Windows and full screen.** Display > Windows splits the plot into two windows side by side, two stacked, or four. The
+same page puts each channel, math channel and the LA into a window; a new split spreads the channels that are on. All
+windows share the time base, and a drag in a window moves a channel of that window. Zoom, XY and the analysers use one
+window. The button with four corners at the top right of the plot gives the plot the whole screen; it shows inward
+corners then and brings the top bar and the cards back.
+
+**Bandwidth and noisy signals.** A channel's bandwidth is Auto by default: the limit follows the sample rate, as on the
+stock system. With Full, the noise of a slow signal can be larger than the trigger hysteresis and the hardware triggers
+on the other edge too; the display still shows the edge you set, and Trigger > Noise reject widens the hysteresis.
+
+**Keyboard.** Names, formulas and WLAN passwords are typed on the on-screen keyboard. The arrows either side of Space
+move the insertion point, a tap into the entry puts it there; typing and Delete work at that point.
 
 **Generator.** Tap the frequency in the generator window for a keypad with units; the limits apply by themselves. The - and
 + buttons step it. Changes inside one amplitude range take effect at once and keep the output running.

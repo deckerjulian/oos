@@ -9,19 +9,38 @@
 //! (sub-sample, by linear interpolation) near it.
 
 /// The level crossing of the edge nearest to `pre` within +-`span` samples, as a fractional sample index (rising:
-/// below -> at or above `level`; falling the other way). `either`: both directions.
-pub fn edge_near(v: &[f32], pre: usize, level: f32, rising: bool, either: bool, span: usize) -> Option<f64> {
+/// below -> at or above `level`; falling the other way). `either`: both directions. `hyst` > 0: like the hardware
+/// comparators, only the first crossing after the signal was `hyst` on the other side of the level counts, so noise on
+/// an edge of the other direction is no edge.
+pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize) -> Option<f64> {
     if v.len() < 2 {
         return None;
     }
     let lo = pre.saturating_sub(span).max(1);
     let hi = (pre + span).min(v.len() - 1);
+    // back from the crossing at k: armed when the signal went past the band before it came back over the level
+    let look = span.max(4096);
+    let armed = |k: usize, up: bool| {
+        if hyst <= 0.0 {
+            return true;
+        }
+        for j in (k.saturating_sub(look)..k).rev() {
+            let x = v[j];
+            if up && x < level - hyst || !up && x > level + hyst {
+                return true;
+            }
+            if up && x >= level || !up && x <= level {
+                return false;
+            }
+        }
+        false
+    };
     let mut best: Option<f64> = None;
     for k in lo..=hi {
         let (a, b) = (v[k - 1], v[k]);
-        let up = a < level && b >= level;
-        let down = a > level && b <= level;
-        if (rising || either) && up || (!rising || either) && down {
+        let up = a < level && b >= level && (rising || either) && armed(k, true);
+        let down = a > level && b <= level && (!rising || either) && armed(k, false);
+        if up || down {
             let t = (k - 1) as f64 + ((level - a) / (b - a)) as f64;
             if best.is_none_or(|x| (t - pre as f64).abs() < (x - pre as f64).abs()) {
                 best = Some(t);
@@ -29,6 +48,47 @@ pub fn edge_near(v: &[f32], pre: usize, level: f32, rising: bool, either: bool, 
         }
     }
     best
+}
+
+/// Where the edge of the set direction is, seen at the resolution of the screen: `v` around `pre` (+-`span` samples)
+/// smoothed by a centred moving average of `l` samples (one screen column), then a comparator with a hysteresis band of
+/// `hyst` (total width, as the hardware's), the edge of the set direction nearest to `pre`. Noise larger than the band
+/// (a slow sine at a high rate) cannot make an edge of the other direction look right, which a test on single samples
+/// cannot rule out. Only edges at times `fits` accepts count. Returns the edge and the nearest edge of either direction
+/// (for the statistics).
+#[allow(clippy::too_many_arguments)]
+pub fn edge_smooth(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize, fits: impl Fn(f64) -> bool) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
+    let l = l.max(1);
+    let a = pre.saturating_sub(span + l);
+    let b = (pre + span + l).min(v.len());
+    if b <= a + 2 * l {
+        return (None, None);
+    }
+    // running sum over the window; NaN samples count as the level (none in hardware frames)
+    let x = |i: usize| if v[i].is_finite() { v[i] as f64 } else { level as f64 };
+    let mut s = Vec::with_capacity(b - a);
+    let mut sum = 0.0;
+    let half = l / 2;
+    for i in a..(a + l).min(b) {
+        sum += x(i);
+    }
+    // s[j] = mean of v[a + j - half .. a + j - half + l], defined from j = half
+    for j in 0..(b - a) {
+        let lo = a + j;
+        if j >= half && lo + l - half <= b {
+            s.push((sum / l as f64) as f32);
+            if lo + l - half < b {
+                sum += x(lo + l - half) - x(lo - half);
+            }
+        } else {
+            s.push(f32::NAN);
+        }
+    }
+    let edges = oos_dsp::edges::edges(&s, level, hyst);
+    let d = |e: &oos_dsp::edges::Edge| (a as f64 + e.t - pre as f64).abs();
+    let near = |ok: &dyn Fn(&oos_dsp::edges::Edge) -> bool| edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied();
+    let want = near(&|e| either || e.rising == rising).map(|e| a as f64 + e.t);
+    (want, near(&|_| true).map(|e| oos_dsp::edges::Edge { t: a as f64 + e.t, ..e }))
 }
 
 /// Screen mapping of one channel: x = (k - ti) * x_per_sample + x0 (columns), y = val * y_per_volt + y0 (rows).
@@ -121,11 +181,51 @@ mod tests {
         let mut v: Vec<f32> = (0..40).map(|k| (k as f32 - 9.0) * 0.4 - 0.4).collect();
         v[30] = -1.0;
         v[31] = 1.0;
-        let t = edge_near(&v, 11, 0.5, true, false, 4).unwrap();
+        let t = edge_near(&v, 11, 0.5, 0.0, true, false, 4).unwrap();
         assert!((t - 11.25).abs() < 1e-4, "{}", t);
-        assert!(edge_near(&v, 11, 0.5, false, false, 4).is_none());
+        assert!(edge_near(&v, 11, 0.5, 0.0, false, false, 4).is_none());
         // the nearest of two crossings wins
-        assert!((edge_near(&v, 29, 0.0, true, false, 40).unwrap() - 30.5).abs() < 1e-4);
+        assert!((edge_near(&v, 29, 0.0, 0.0, true, false, 40).unwrap() - 30.5).abs() < 1e-4);
+    }
+
+    /// A slow sine with noise larger than the band, the hardware point on the falling edge: the smoothed search finds
+    /// the rising edge half a period away, never the noise on the falling one.
+    #[test]
+    fn smoothed_search_takes_the_trend_not_the_noise() {
+        // 12500 samples a period, amplitude 0.55, noise +-0.075 (pseudo random), level 0, band 0.06
+        let mut r = 12345u32;
+        let v: Vec<f32> = (0..50_000)
+            .map(|k| {
+                r = r.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                0.55 * (k as f32 / 12500.0 * std::f32::consts::TAU).sin() + ((r >> 16) as f32 / 65536.0 - 0.5) * 0.15
+            })
+            .collect();
+        for pre in [6250 + 130, 6250 - 40, 6250, 18750 + 200] {
+            let (e, any) = edge_smooth(&v, pre, 0.0, 0.06, true, false, 31_250, 62, |_| true);
+            let t = e.unwrap();
+            assert!((t - 12500.0).abs() < 60.0 || (t - 25000.0).abs() < 60.0, "pre {}: {}", pre, t);
+            assert!(!any.unwrap().rising, "pre {}: the nearest edge is the falling one", pre);
+        }
+        // at the rising edge itself
+        assert!((edge_smooth(&v, 12_480, 0.0, 0.06, true, false, 31_250, 62, |_| true).0.unwrap() - 12500.0).abs() < 60.0);
+        // falling
+        assert!((edge_smooth(&v, 12_480, 0.0, 0.06, false, false, 31_250, 62, |_| true).0.unwrap() - 6250.0).abs() < 60.0);
+    }
+
+    /// A falling edge with noise crosses the level upwards too: with hysteresis that is no rising edge, and the rising
+    /// edge half a period away is found.
+    #[test]
+    fn hysteresis_keeps_noise_on_the_other_edge_out() {
+        // a sine, 1000 samples a period, with a +-0.02 wiggle; it falls through 0 at 500
+        let v: Vec<f32> = (0..3000).map(|k| (k as f32 / 1000.0 * std::f32::consts::TAU).sin() + if k % 2 == 0 { 0.02 } else { -0.02 }).collect();
+        // without hysteresis the wiggle at the falling crossing looks like a rising edge
+        assert!((edge_near(&v, 500, 0.0, 0.0, true, false, 16).unwrap() - 500.0).abs() < 3.0);
+        // with it, nothing rising near 500 ...
+        assert!(edge_near(&v, 500, 0.0, 0.1, true, false, 16).is_none());
+        // ... and the rising crossing at 1000 within half a period
+        assert!((edge_near(&v, 500, 0.0, 0.1, true, false, 600).unwrap() - 1000.0).abs() < 3.0);
+        // the falling one is where the hardware said
+        assert!((edge_near(&v, 500, 0.0, 0.1, false, false, 16).unwrap() - 500.0).abs() < 6.0);
     }
 
     #[test]
@@ -152,3 +252,4 @@ mod tests {
         assert_eq!((col3(5), map3[5 * w + 5], col3(4)), (vec![5], 4, vec![15]));
     }
 }
+

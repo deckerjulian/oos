@@ -24,12 +24,24 @@ pub struct Screen {
     dismissed: bool,
     /// the own power-on picture as the background (W x H pixels)
     pub splash: Option<Vec<u32>>,
+    /// "OOS 0.1.4 · Build ...", read once: which software is starting
+    version: String,
+}
+
+/// The version of the software and, in an image, its build.
+fn version_line(build: Option<&str>) -> String {
+    let v = format!("OOS {}", env!("CARGO_PKG_VERSION"));
+    match build.map(str::trim).filter(|b| !b.is_empty()) {
+        Some(b) => format!("{}  \u{b7}  Build {}", v, oos_hal::update::short(b)),
+        None => v,
+    }
 }
 
 impl Ui {
     /// Shows the start-up screen until the file says the start-up is complete.
     pub fn start_up_begin(&mut self, splash: Option<Vec<u32>>) {
-        self.start_up = Some(Screen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash });
+        let version = version_line(std::fs::read_to_string("/etc/oos-build").ok().as_deref());
+        self.start_up = Some(Screen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash, version });
     }
 
     /// The start-up file's text and the current uptime. A file that is complete at the first update (oos-ui restarted
@@ -171,6 +183,8 @@ impl Ui {
             Some(Err(_)) => (format!("Start-up stopped: {}", v.failed().map_or("", |s| s.label.as_str())), RED),
         };
         cv.text_in(&f.mb, Rect::new(card.x, y, card.w, 24), 1, &line, col);
+        // the version along the bottom edge, under the messages that ask for a tap; also over an own picture
+        cv.text_in(&f.s, Rect::new(0, H - 20, W, 16), 1, &s.version, DIM);
         if let Some(Err(d)) = &v.finished {
             cv.text_in(&f.s, Rect::new(card.x, y + 24, card.w, 20), 1, &fit_text(&f.s, d, card.w - 40), DIM);
             cv.text_in(&f.s, Rect::new(0, H - 40, W, 20), 1, "Tap to continue without acquisition", DIM);
@@ -419,6 +433,14 @@ mod tests {
         u.now += 1.5;
         assert!(!u.start_up_active());
         assert!(!u.start_up_input(&Ev::Touch { id: 0, phase: Phase::Up, x: 10, y: 10 }));
+    }
+
+    #[test]
+    fn version_line_names_the_release_and_the_build() {
+        let v = env!("CARGO_PKG_VERSION");
+        assert_eq!(version_line(None), format!("OOS {}", v));
+        assert_eq!(version_line(Some(" \n")), format!("OOS {}", v));
+        assert_eq!(version_line(Some("20261110-121314 abc\n")), format!("OOS {}  \u{b7}  Build 20261110-121314", v));
     }
 
     #[test]

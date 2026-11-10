@@ -66,6 +66,7 @@ impl Ui {
             return self.toast("Auto set-up: no channel on");
         };
         let back = Box::new(self.m.clone());
+        self.auto_bar = None;
         let m = &mut self.m;
         for c in (0..n_ch()).filter(|&c| back.ch[c].on) {
             let ch = &mut m.ch[c];
@@ -198,17 +199,229 @@ impl Ui {
                 self.m.ch[c] = a.back.ch[c].clone();
             }
             self.m.acq = a.back.acq;
+            // the search ran at full bandwidth (a fast signal must not look small); the channel's own choice comes back,
+            // Auto by default, which keeps the noise of slow time bases off the trigger (trigger.md 7)
+            for &(c, _, _) in &found {
+                self.m.ch[c].bw = a.back.ch[c].bw;
+            }
             place(&mut self.m, &found);
             self.toast("Auto set-up");
+            // the views of the signal on a bar in the waveform window
+            self.auto_bar = Some(self.now);
         }
         self.dirty_map = true;
         self.mark_changed();
     }
 }
 
+/// What the bar after an auto set-up offers (drawn in the waveform window, `AUTO_BAR_S` s or until a tap elsewhere).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum AutoView {
+    /// about three periods
+    Few,
+    /// about ten periods
+    Many,
+    /// the rising edge across about two divisions
+    Rise,
+    Fall,
+}
+
+const AUTO_VIEWS: [AutoView; 4] = [AutoView::Few, AutoView::Many, AutoView::Rise, AutoView::Fall];
+/// The bar goes after this long without a tap on it.
+const AUTO_BAR_S: f64 = 30.0;
+const AB_W: i32 = 88;
+/// Low enough for the free band above a signal the auto set-up placed (80 % of the height: 0.8 div at the top).
+const AB_H: i32 = 34;
+/// Wide enough that the trigger position mark at the top centre stays clear.
+const AB_GAP: i32 = 16;
+const AB_TOP: i32 = 6;
+
+impl Ui {
+    /// The buttons of the bar at the very top of the waveform window, the views centred, the close button (None) right of
+    /// them.
+    pub(super) fn auto_bar_rects(&self) -> Vec<(Rect, Option<AutoView>)> {
+        let g = self.grid;
+        let n = AUTO_VIEWS.len() as i32;
+        let w = n * AB_W + (n - 1) * AB_GAP;
+        let x0 = g.x + (g.w - w) / 2;
+        let y = g.y + AB_TOP;
+        let mut v: Vec<(Rect, Option<AutoView>)> = AUTO_VIEWS.iter().enumerate().map(|(i, &v)| (Rect::new(x0 + i as i32 * (AB_W + AB_GAP), y, AB_W, AB_H), Some(v))).collect();
+        v.push((Rect::new(x0 + w + AB_GAP, y, AB_H, AB_H), None));
+        v
+    }
+
+    pub(super) fn auto_bar_on(&self) -> bool {
+        self.auto_bar.is_some_and(|t| self.now - t < AUTO_BAR_S) && !self.view_on()
+    }
+
+    /// A tap while the bar shows: a button sets its view and keeps the bar; anywhere else closes it (and the tap goes on
+    /// to what is under it).
+    pub(super) fn auto_bar_tap(&mut self, x: i32, y: i32) -> bool {
+        if !self.auto_bar_on() {
+            return false;
+        }
+        if let Some((_, v)) = self.auto_bar_rects().into_iter().find(|(r, _)| r.contains(x, y)) {
+            match v {
+                Some(v) => {
+                    self.auto_view(v);
+                    self.auto_bar = Some(self.now);
+                }
+                None => self.auto_bar = None,
+            }
+            return true;
+        }
+        self.auto_bar = None;
+        false
+    }
+
+    /// The time base (and slope) for view `v` of the trigger channel, from its measurements now.
+    pub(super) fn auto_view(&mut self, v: AutoView) {
+        let c = self.m.trig_src;
+        let ok = |x: f64| x.is_finite() && x > 0.0;
+        let period = Some(self.meas(c, Meas::Period)).filter(|&p| ok(p));
+        let Some(p) = period else { return self.toast("No period on the trigger channel") };
+        let (t, slope) = match v {
+            AutoView::Few => (p * 3.0 / HDIV as f64, None),
+            AutoView::Many => (p * 10.0 / HDIV as f64, None),
+            // the 10-90 % time over about two divisions; a period / 20 when there is no edge time
+            AutoView::Rise => (Some(self.meas(c, Meas::Rise)).filter(|&x| ok(x)).unwrap_or(p / 10.0) / 2.0, Some(Slope::Rise)),
+            AutoView::Fall => (Some(self.meas(c, Meas::Fall)).filter(|&x| ok(x)).unwrap_or(p / 10.0) / 2.0, Some(Slope::Fall)),
+        };
+        self.m.tscale = tscale_for(t as f32);
+        self.m.tfine = 1.0;
+        self.m.delay = 0.0;
+        if let Some(s) = slope {
+            self.m.slope = s;
+        }
+        self.dirty_map = true;
+        self.settings_changed();
+        self.mark_changed();
+    }
+
+    pub(super) fn draw_auto_bar(&self, cv: &mut Canvas) {
+        if !self.auto_bar_on() {
+            return;
+        }
+        for (r, v) in self.auto_bar_rects() {
+            cv.round(r, 6, PANEL_BG, 225);
+            cv.round_outline(r, 6, BTN_BORDER);
+            match v {
+                Some(v) => auto_icon(cv, r, v),
+                None => {
+                    // a cross, 2 px
+                    let (cx, cy, d) = (r.x + r.w / 2, r.y + r.h / 2, 6);
+                    for k in 0..2 {
+                        cv.line(cx - d + k, cy - d, cx + d + k, cy + d, TEXT);
+                        cv.line(cx + d + k, cy - d, cx - d + k, cy + d, TEXT);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The symbol of a view, drawn in lines 2 px wide: square waves for the periods, a ramp between two levels for an edge.
+fn auto_icon(cv: &mut Canvas, r: Rect, v: AutoView) {
+    let (x0, x1) = (r.x + 16, r.x + r.w - 16);
+    let (hi, lo) = (r.y + 9, r.y + r.h - 9);
+    let seg = |cv: &mut Canvas, a: (i32, i32), b: (i32, i32)| {
+        cv.line(a.0, a.1, b.0, b.1, TEXT);
+        if a.0 == b.0 {
+            cv.line(a.0 + 1, a.1, b.0 + 1, b.1, TEXT);
+        } else {
+            cv.line(a.0, a.1 + 1, b.0, b.1 + 1, TEXT);
+        }
+    };
+    match v {
+        AutoView::Few | AutoView::Many => {
+            // half periods across the width, starting low
+            let halves = if v == AutoView::Few { 5 } else { 10 };
+            let w = (x1 - x0) as f32 / halves as f32;
+            let mut y = lo;
+            let mut x = x0;
+            for k in 1..=halves {
+                let nx = x0 + (k as f32 * w).round() as i32;
+                seg(cv, (x, y), (nx, y));
+                if k < halves {
+                    let ny = if y == lo { hi } else { lo };
+                    seg(cv, (nx, y), (nx, ny));
+                    y = ny;
+                }
+                x = nx;
+            }
+        }
+        AutoView::Rise | AutoView::Fall => {
+            let (a, b) = if v == AutoView::Rise { (lo, hi) } else { (hi, lo) };
+            let (m0, m1) = (x0 + (x1 - x0) * 3 / 10, x0 + (x1 - x0) * 7 / 10);
+            seg(cv, (x0, a), (m0, a));
+            seg(cv, (m0, a), (m1, b));
+            seg(cv, (m1, b), (x1, b));
+            // the trigger level through the middle of the edge, dashed
+            let my = (hi + lo) / 2;
+            let mut x = x0;
+            while x < x1 {
+                cv.hline(x, (x + 2).min(x1), my, DIM);
+                x += 6;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bar after an auto set-up: periods and edges of the trigger channel, gone after a tap elsewhere.
+    #[test]
+    fn view_bar_sets_periods_and_edges() {
+        let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        u.m.trig_src = 0;
+        for _ in 0..20 {
+            u.step(0.05);
+        }
+        let p = u.meas(0, Meas::Period);
+        assert!((p - 1e-3).abs() < 1e-5, "demo CH1 period {}", p);
+        u.auto_bar = Some(u.now);
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
+            let _ = std::fs::write(format!("{}/auto-bar.png", d), crate::store::png_of(&cv));
+        }
+        let tap = |u: &mut Ui, v: AutoView| {
+            let r = u.auto_bar_rects().into_iter().find(|b| b.1 == Some(v)).unwrap().0;
+            u.tap(r.x + r.w / 2, r.y + r.h / 2);
+        };
+        // about three and about ten periods on the screen
+        tap(&mut u, AutoView::Few);
+        let span = |u: &Ui| u.m.time_per_div() as f64 * HDIV as f64 / p;
+        assert!((3.0..6.0).contains(&span(&u)), "{}", span(&u));
+        tap(&mut u, AutoView::Many);
+        assert!((9.9..20.0).contains(&span(&u)), "{}", span(&u));
+        // the edges: the slope follows, the time base is near the edge time
+        for _ in 0..10 {
+            u.step(0.05);
+        }
+        tap(&mut u, AutoView::Fall);
+        assert_eq!(u.m.slope, Slope::Fall);
+        assert!(span(&u) < 0.2, "{}", span(&u));
+        tap(&mut u, AutoView::Rise);
+        assert_eq!(u.m.slope, Slope::Rise);
+        assert!(u.auto_bar_on());
+        // the cross closes it
+        let x = u.auto_bar_rects().into_iter().find(|b| b.1.is_none()).unwrap().0;
+        u.tap(x.x + x.w / 2, x.y + x.h / 2);
+        assert!(!u.auto_bar_on());
+        // so does a tap elsewhere
+        u.auto_bar = Some(u.now);
+        u.tap(u.grid.x + 20, u.grid.y + u.grid.h - 30);
+        assert!(!u.auto_bar_on());
+        // inside the plot, above the band an auto set-up leaves free at the top (0.8 div), clear of the trigger mark
+        let g = u.grid;
+        let b = u.auto_bar_rects();
+        assert!(b.iter().all(|(r, _)| r.y > g.y && r.y + r.h < g.y + (0.8 * g.h as f32 / 8.0) as i32 && r.x > g.x && r.x + r.w < g.x + g.w));
+        let mid = g.x + g.w / 2;
+        assert!(b.iter().all(|(r, _)| r.x > mid + 6 || r.x + r.w < mid - 6));
+    }
 
     fn run(ui: &mut Ui) {
         ui.auto_start();
@@ -231,8 +444,31 @@ mod tests {
         run(&mut ui);
         assert_eq!((0..NCH).filter(|&c| ui.m.ch[c].on).collect::<Vec<_>>(), [0]);
         assert_eq!(ui.m.trig_src, 0);
-        assert_eq!(ui.m.ch[0].bw, BW_FULL);
+        // the search runs at full bandwidth, the channel keeps its own choice: Auto by default, Full when chosen
+        assert_eq!(ui.m.ch[0].bw, BW_AUTO);
         assert_eq!(ui.m.run, RunState::Run);
+        ui.m.ch[0].bw = BW_FULL;
+        run(&mut ui);
+        assert_eq!(ui.m.ch[0].bw, BW_FULL);
+    }
+
+    #[test]
+    fn noise_reject_menu_setup_scpi_and_hardware() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        // a new set-up: Auto bandwidth, noise reject off
+        assert!(ui.m.ch.iter().all(|c| c.bw == BW_AUTO) && !ui.m.trig_nrej);
+        assert!(ui.trigger_items().contains(&Item::TrigNoise));
+        ui.select_option(Item::TrigNoise, "On");
+        assert!(ui.m.trig_nrej && ui.m.trig_hyst_div() == 0.7);
+        let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert!(back.trig_nrej);
+        assert!(crate::board::dho::hw::settings(&ui.m, false).noise_reject);
+        ui.m.trig_nrej = false;
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let cv = Canvas::new(W, H);
+        scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ ON");
+        assert_eq!(scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ?"), b"1");
+        assert!(ui.m.trig_nrej);
     }
 
     #[test]

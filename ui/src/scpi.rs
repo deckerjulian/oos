@@ -392,6 +392,18 @@ impl Scpi {
                     };
                     return Some(t(s));
                 }
+                if nodes.len() == 2 && kw(last, "NREJect") {
+                    if query {
+                        return Some(t(if m.trig_nrej { "1" } else { "0" }));
+                    }
+                    let a = arg.trim().to_ascii_uppercase();
+                    m.trig_nrej = match a.as_str() {
+                        "1" | "ON" => true,
+                        "0" | "OFF" => false,
+                        _ => return None,
+                    };
+                    return Some(None);
+                }
                 if nodes.len() == 2 && kw(last, "HOLDoff") {
                     if query {
                         return Some(t(&e(m.holdoff as f64)));

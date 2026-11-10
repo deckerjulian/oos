@@ -418,6 +418,9 @@ enum Key {
     Shift,
     Symbols,
     Del,
+    /// the insertion point one character back or on
+    Left,
+    Right,
     Show,
     Cancel,
     Ok,
@@ -439,6 +442,8 @@ pub(super) struct Osk {
     show: bool,
     /// key chosen with a knob
     focus: usize,
+    /// insertion point, in characters from the start (clamped where it is used: tests set `text` directly)
+    cursor: usize,
 }
 
 /// Longest channel name: it has to fit a narrow card.
@@ -448,6 +453,9 @@ const KEY_H: i32 = 76;
 const KEY_GAP: i32 = 6;
 const KEYS_Y: i32 = 188;
 const KEYS_W: i32 = W - 24;
+/// The entry field, and the part of it the text stands in.
+const FIELD: Rect = Rect::new(12, 70, W - 24, 60);
+const FIELD_PAD: i32 = 12;
 
 /// Evenly wide keys of one row, with the row centred.
 fn row(out: &mut Vec<(Rect, Key)>, y: i32, keys: &[(Key, i32)]) {
@@ -469,6 +477,7 @@ impl Osk {
     pub(super) fn for_label(c: usize, now: &str) -> Osk {
         let mut o = Osk::new(OskFor::Label(c));
         o.text = now.to_string();
+        o.cursor = o.text.chars().count();
         o
     }
 
@@ -476,6 +485,7 @@ impl Osk {
     pub(super) fn for_expr(k: usize, now: &str) -> Osk {
         let mut o = Osk::new(OskFor::MathExpr(k));
         o.text = now.to_string();
+        o.cursor = o.text.chars().count();
         o
     }
 
@@ -483,12 +493,13 @@ impl Osk {
     pub(super) fn for_ref(i: usize, now: &str) -> Osk {
         let mut o = Osk::new(OskFor::RefLabel(i));
         o.text = now.to_string();
+        o.cursor = o.text.chars().count();
         o
     }
 
     pub(super) fn new(what: OskFor) -> Osk {
         let show = !matches!(what, OskFor::Pass(_));
-        Osk { what, text: String::new(), layer: Layer::Lower, show, focus: 0 }
+        Osk { what, text: String::new(), layer: Layer::Lower, show, focus: 0, cursor: 0 }
     }
 
     fn max_len(&self) -> usize {
@@ -515,13 +526,43 @@ impl Osk {
         r3.extend(chars(rows[3]));
         r3.push((Key::Del, 2));
         row(&mut v, y(3), &r3);
-        row(&mut v, y(4), &[(Key::Symbols, 1), (Key::Ch(' '), 4), (Key::Show, 2), (Key::Cancel, 1), (Key::Ok, 2)]);
+        row(&mut v, y(4), &[(Key::Symbols, 1), (Key::Left, 1), (Key::Ch(' '), 3), (Key::Right, 1), (Key::Show, 1), (Key::Cancel, 1), (Key::Ok, 2)]);
         v
     }
 
     /// Password, or the name of the network, as it stands on the screen.
     fn shown(&self) -> String {
         if self.show { self.text.clone() } else { "*".repeat(self.text.chars().count()) }
+    }
+
+    fn cur(&self) -> usize {
+        self.cursor.min(self.text.chars().count())
+    }
+
+    /// Byte offset of character `i`.
+    fn byte_at(&self, i: usize) -> usize {
+        self.text.char_indices().nth(i).map_or(self.text.len(), |(b, _)| b)
+    }
+
+    /// The characters of the entry that fit the field, as (first, past the last): the end stays in view, and the
+    /// insertion point too when it goes back further, with a few characters before it.
+    fn window(&self, f: &Font) -> (usize, usize) {
+        let s: Vec<char> = self.shown().chars().collect();
+        let fits = |a: usize, b: usize| f.width(&s[a..b].iter().collect::<String>()) <= FIELD.w - 2 * FIELD_PAD - 16;
+        let cur = self.cur();
+        let mut a = 0;
+        while !fits(a, s.len()) {
+            a += 1;
+        }
+        if cur >= a {
+            return (a, s.len());
+        }
+        a = cur.saturating_sub(4);
+        let mut b = a;
+        while b < s.len() && fits(a, b + 1) {
+            b += 1;
+        }
+        (a, b)
     }
 
     fn label(&self, k: Key) -> String {
@@ -531,6 +572,8 @@ impl Osk {
             Key::Shift => if self.layer == Layer::Upper { "abc".into() } else { "Shift".into() },
             Key::Symbols => if self.layer == Layer::Symbols { "abc".into() } else { "#+=".into() },
             Key::Del => "Delete".into(),
+            // drawn as arrows: the font has none
+            Key::Left | Key::Right => String::new(),
             Key::Show => if self.show { "Hide".into() } else { "Show".into() },
             Key::Cancel => "Back".into(),
             Key::Ok => "OK".into(),
@@ -545,7 +588,9 @@ impl Ui {
         match k {
             Key::Ch(c) => {
                 if o.text.chars().count() < o.max_len() {
-                    o.text.push(c);
+                    let (i, b) = (o.cur(), o.byte_at(o.cur()));
+                    o.text.insert(b, c);
+                    o.cursor = i + 1;
                 }
                 if o.layer == Layer::Upper {
                     o.layer = Layer::Lower;
@@ -554,8 +599,15 @@ impl Ui {
             Key::Shift => o.layer = if o.layer == Layer::Lower { Layer::Upper } else { Layer::Lower },
             Key::Symbols => o.layer = if o.layer == Layer::Symbols { Layer::Lower } else { Layer::Symbols },
             Key::Del => {
-                o.text.pop();
+                let i = o.cur();
+                if i > 0 {
+                    let b = o.byte_at(i - 1);
+                    o.text.remove(b);
+                    o.cursor = i - 1;
+                }
             }
+            Key::Left => o.cursor = o.cur().saturating_sub(1),
+            Key::Right => o.cursor = (o.cur() + 1).min(o.text.chars().count()),
             Key::Show => o.show = !o.show,
             Key::Cancel => self.wlan.osk = None,
             Key::Ok => self.osk_done(),
@@ -624,6 +676,26 @@ impl Ui {
     /// Touch while the keyboard is open.
     pub(super) fn osk_tap(&mut self, x: i32, y: i32) {
         let Some(o) = &self.wlan.osk else { return };
+        // a tap into the entry puts the insertion point at the nearest gap between two characters
+        if FIELD.contains(x, y) {
+            let f = &self.fonts.lb;
+            let (a, b) = o.window(f);
+            let s: Vec<char> = o.shown().chars().collect();
+            let mut gx = FIELD.x + FIELD_PAD;
+            let mut at = a;
+            for (i, c) in s[a..b].iter().enumerate() {
+                let w = f.width(&c.to_string());
+                if x < gx + w / 2 {
+                    break;
+                }
+                gx += w;
+                at = a + i + 1;
+            }
+            if let Some(o) = self.wlan.osk.as_mut() {
+                o.cursor = at;
+            }
+            return;
+        }
         if let Some((_, k)) = o.keys().into_iter().find(|(r, _)| r.contains(x, y)) {
             self.osk_press(k);
         }
@@ -661,21 +733,27 @@ impl Ui {
             OskFor::Pass(s) => format!("Password for {} (empty: open network)", wlan::name(s)),
         };
         cv.text_in(&f.lb, Rect::new(12, 18, W - 24, 34), 1, &title, ACCENT);
-        let r = Rect::new(12, 70, W - 24, 60);
+        let r = FIELD;
         cv.round(r, 6, BTN_BORDER, 255);
         cv.round(r.inset(1), 5, BG, 255);
-        // the end of a long entry stays in view
-        let mut t = o.shown();
-        while f.lb.width(&t) > r.w - 40 {
-            t.remove(0);
-        }
-        t.push('_');
-        cv.text_in(&f.lb, r.inset(12), 0, &t, TEXT);
+        let (a, b) = o.window(&f.lb);
+        let s: Vec<char> = o.shown().chars().collect();
+        let t: String = s[a..b].iter().collect();
+        let tr = r.inset(FIELD_PAD);
+        cv.text_in(&f.lb, tr, 0, &t, TEXT);
+        // the insertion point: a bar between two characters
+        let cx = tr.x + f.lb.width(&s[a..o.cur().clamp(a, b)].iter().collect::<String>());
+        let hh = f.lb.size * 60 / 100;
+        cv.fill(Rect::new(cx, tr.y + tr.h / 2 - hh, 2, 2 * hh), ACCENT);
         cv.text_in(&f.s, Rect::new(12, 138, W - 24, 24), 2, &format!("{} / {}", o.text.chars().count(), o.max_len()), DIM);
         for (i, (r, k)) in o.keys().into_iter().enumerate() {
             let c = if k == Key::Ok { ACCENT } else { TEXT };
             btn(cv, r, if i == o.focus { mix(DLG_BG, ACCENT, 60) } else { mix(DLG_BG, c, 24) }, if i == o.focus { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.lb, r, 1, &o.label(k), c);
+            if matches!(k, Key::Left | Key::Right) {
+                let (mx, my, d) = (r.x + r.w / 2, r.y + r.h / 2, if k == Key::Left { -1 } else { 1 });
+                cv.triangle([(mx + d * 10, my), (mx - d * 8, my - 12), (mx - d * 8, my + 12)], c);
+            }
         }
     }
 }
@@ -718,7 +796,7 @@ mod tests {
 
     #[test]
     fn every_password_character_has_a_key() {
-        let o = |l| Osk { what: OskFor::Name, text: String::new(), layer: l, show: true, focus: 0 };
+        let o = |l| Osk { what: OskFor::Name, text: String::new(), layer: l, show: true, focus: 0, cursor: 0 };
         let mut seen = std::collections::BTreeSet::new();
         for l in [Layer::Lower, Layer::Upper, Layer::Symbols] {
             for (r, k) in o(l).keys() {
@@ -765,6 +843,71 @@ mod tests {
             ui.osk_press(Key::Ch('z'));
         }
         assert_eq!(ui.wlan.osk.as_ref().unwrap().text.len(), wlan::SSID_MAX);
+    }
+
+    #[test]
+    fn arrows_fix_a_typo_without_deleting_the_rest() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.wlan.osk = Some(Osk::new(OskFor::Pass(b"Labor".to_vec())));
+        type_text(&mut ui, "abxdef");
+        // back to the x, out with it, the c in its place
+        for _ in 0..3 {
+            tap_key(&mut ui, Key::Left);
+        }
+        tap_key(&mut ui, Key::Del);
+        type_text(&mut ui, "c");
+        assert_eq!(ui.wlan.osk.as_ref().unwrap().text, "abcdef");
+        // the ends hold
+        for _ in 0..10 {
+            tap_key(&mut ui, Key::Left);
+        }
+        tap_key(&mut ui, Key::Del);
+        type_text(&mut ui, "0");
+        for _ in 0..10 {
+            tap_key(&mut ui, Key::Right);
+        }
+        type_text(&mut ui, "9");
+        assert_eq!(ui.wlan.osk.as_ref().unwrap().text, "0abcdef9");
+        // a full entry takes nothing in the middle either
+        let o = ui.wlan.osk.as_mut().unwrap();
+        o.text = "z".repeat(o.max_len());
+        o.cursor = 3;
+        tap_key(&mut ui, Key::Ch('a'));
+        assert!(!ui.wlan.osk.as_ref().unwrap().text.contains('a'));
+    }
+
+    #[test]
+    fn a_tap_into_the_entry_moves_the_insertion_point() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.wlan.osk = Some(Osk::for_label(0, "abcd"));
+        assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 4);
+        let f = &ui.fonts.lb;
+        let x = FIELD.x + FIELD_PAD + f.width("ab") + 1;
+        ui.tap(x, FIELD.y + FIELD.h / 2);
+        assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 2);
+        ui.tap(FIELD.x + 2, FIELD.y + FIELD.h / 2);
+        assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 0);
+        ui.tap(FIELD.x + FIELD.w - 3, FIELD.y + FIELD.h / 2);
+        assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 4);
+    }
+
+    #[test]
+    fn a_long_entry_keeps_the_insertion_point_in_view() {
+        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let f = &ui.fonts.lb;
+        let mut o = Osk::new(OskFor::Pass(b"Labor".to_vec()));
+        o.show = true;
+        o.text = (0..63).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+        for cur in [63, 40, 5, 0] {
+            o.cursor = cur;
+            let (a, b) = o.window(f);
+            assert!(a <= cur && cur <= b, "{} not in {}..{}", cur, a, b);
+            let t: String = o.text.chars().skip(a).take(b - a).collect();
+            assert!(f.width(&t) <= FIELD.w - 2 * FIELD_PAD, "{}", cur);
+        }
+        // at the end: the end of the entry is what shows, as before
+        o.cursor = 63;
+        assert_eq!(o.window(f).1, 63);
     }
 
     #[test]

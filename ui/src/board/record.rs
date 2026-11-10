@@ -26,11 +26,27 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
     };
     let e: [f32; 0] = [];
     let refs: [&[f32]; NCH] = std::array::from_fn(|c| if f.ch[c].len() < hi || lo >= hi { &e[..] } else { &f.ch[c][lo..hi] });
-    let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * m.ch[c].volts_per_div());
+    // the hysteresis of the hardware comparators (0.3 div, trigger.md 2.3): with less, noise on an edge of the other
+    // direction counts as an edge, and a slow noisy sine is drawn now on one, now on the other edge
+    let hyst: [f32; NCH] = std::array::from_fn(|c| m.trig_hyst_div() * m.ch[c].volts_per_div());
     let inp = oos_dsp::trigger::Input { ch: refs, dt: f.dt, hyst };
     let usable = m.trig_channels().iter().enumerate().all(|(c, &u)| !u || !refs[c].is_empty());
+    // plain edge trigger on a channel: the edge of the set direction nearest the hardware point, on the signal smoothed to
+    // one screen point (fastdraw::edge_smooth; the hardware point is not always on the right edge, trigger.md 8)
+    let smooth = (m.trig_type == TrigType::Edge && m.trig_line().is_none() && !f.roll && !f.scan && f.ch[m.trig_src].len() > 1)
+        .then(|| {
+            let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
+            let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
+            // the screen window stays inside the frame where it can
+            let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
+            let fits = |t: f64| first > last || (first..=last).contains(&t);
+            crate::fastdraw::edge_smooth(&f.ch[m.trig_src], f.pre, m.trig_level, hyst[m.trig_src], rising, either, screen / 2, col, fits).0
+        })
+        .flatten();
     let found = if f.roll || f.scan {
         None
+    } else if smooth.is_some() {
+        smooth
     } else if let Some(n) = m.trig_line() {
         // the hardware trigger on an LA line: the analog samples cannot refine it. Without any edge on the line the
         // frame came from the auto trigger.
@@ -52,7 +68,18 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
         let fits = |t: &f64| first > last || (first..=last).contains(t);
         let nearest = |a: &f64, b: &f64| (a - f.pre as f64).abs().total_cmp(&(b - f.pre as f64).abs());
         let all: Vec<f64> = crate::trig::find_all(m, &inp).into_iter().map(|t| t + lo as f64).collect();
-        all.iter().copied().filter(fits).min_by(nearest).or_else(|| all.first().map(|_| f.pre as f64))
+        all.iter().copied().filter(fits).min_by(nearest).or_else(|| {
+            // nothing of the set kind near `pre`: the hardware can fire on the other edge of a clean signal, so look
+            // up to half a screen around it (edge trigger only, the others have their own time conditions)
+            if m.trig_type != TrigType::Edge || near >= screen / 2 {
+                return all.first().map(|_| f.pre as f64);
+            }
+            let (lo2, hi2) = (f.pre.saturating_sub(screen / 2), (f.pre + screen / 2).min(len));
+            let refs2: [&[f32]; NCH] = std::array::from_fn(|c| if f.ch[c].len() < hi2 || lo2 >= hi2 { &e[..] } else { &f.ch[c][lo2..hi2] });
+            let inp2 = oos_dsp::trigger::Input { ch: refs2, dt: f.dt, hyst };
+            let wide: Vec<f64> = crate::trig::find_all(m, &inp2).into_iter().map(|t| t + lo2 as f64).collect();
+            wide.iter().copied().filter(fits).min_by(nearest).or_else(|| (!all.is_empty() || !wide.is_empty()).then_some(f.pre as f64))
+        })
     } else {
         None
     };
@@ -184,7 +211,8 @@ mod peak_detect {
     use super::*;
     #[test]
     fn peak_detect_keeps_a_spike_and_is_cheap() {
-        let m = Model::default();
+        // the hardware trigger point is the falling edge at 50 k
+        let m = Model { slope: Slope::Fall, ..Model::default() };
         let mut v: Vec<f32> = (0..100_000).map(|k| if (k / 25_000) % 2 == 0 { 0.0 } else { 3.0 }).collect();
         v[12_345] = 2.0; // one-sample glitch on the low level
         let f = Arc::new(Frame { seq: 1, dt: 20e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None });
@@ -241,7 +269,7 @@ mod bench {
             let mut map = vec![0u16; 970 * 448];
             for _ in 0..n {
                 let t0 = std::time::Instant::now();
-                let ti = crate::fastdraw::edge_near(&fr.ch[0], fr.pre, 0.0, true, false, 16).unwrap_or(fr.pre as f64);
+                let ti = crate::fastdraw::edge_near(&fr.ch[0], fr.pre, 0.0, 0.0, true, false, 16).unwrap_or(fr.pre as f64);
                 let xm = crate::fastdraw::Map { ti, x_per_sample: dt / window * 970.0, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
                 crate::fastdraw::deposit(&mut map, 970, 448, &fr.ch[0], &xm, 24);
                 t_fast += t0.elapsed().as_secs_f64();

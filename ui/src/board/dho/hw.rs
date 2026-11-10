@@ -136,7 +136,8 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         auto: m.trig_mode == TrigMode::Auto,
         play4: true,
         blocks: 7,
-        header: false,
+        header: header_probe(),
+        noise_reject: m.trig_nrej,
         frames: 1,
         compress: 1,
         trigger: hw_trigger(m),
@@ -225,12 +226,44 @@ fn hw_trigger(m: &Model) -> Trig {
     }
 }
 
+/// Trigger investigation (trigger.md 8): with OOS_FRAME_HEADER set, frames are read with the 16-byte header of the stock
+/// live loop and every frame's header is logged to /tmp/oos-hdr.log next to where the edge actually is.
+fn header_probe() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("OOS_FRAME_HEADER").is_some())
+}
+
+/// One line of the header log: the 8 header words, `pre`, and the offsets (samples) of the nearest rising and falling
+/// crossing of the trigger level from `pre` on the trigger channel.
+fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
+    use std::io::Write;
+    static LINES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 20_000 {
+        return;
+    }
+    let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
+    let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
+    let hyst = (0.3 * s.ch[tc].scale) as f32;
+    let span = v.len();
+    let off = |rising: bool| crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, span).map_or("-".to_string(), |t| format!("{:.1}", t - pre as f64));
+    let line = format!("{} pre {} k {} n {} rise {} fall {} scale {} tdiv {:e}\n", words.join(" "), pre, k, v.len(), off(true), off(false), s.ch[tc].scale, s.tdiv);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 /// Decodes a read-out of the whole record into a frame.
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
+    let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
     let w = oos_hal::dho::seq::deinterleave(bytes, s.mask);
     let ch = std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset) });
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = s.compress.max(1) as usize;
+    if !hdr.is_empty() {
+        let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
+        let v: &Vec<f32> = &ch[tc];
+        log_header(hdr, v, s, p.pre as usize / k, k);
+    }
     Frame { seq, dt: k as f64 / p.rate as f64, pre: p.pre as usize / k, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None }
 }
 

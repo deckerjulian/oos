@@ -340,6 +340,63 @@ Other choices:
 - The level registers cannot be read back. A first test: write the computed level with a known DC input and check
   trigger/no trigger in NORMAL.
 
+## 7. Where the trigger lands in the read-out (measured on a DHO924S, 2026-11-10)
+
+OOS takes the trigger point of a frame as sample `pre` = 0x4050 / compression of the read-out window (`hw::decode`).
+Measured with the generator on CH1 (1 kHz sine, 1 Vpp, about 150 mVpp noise at full bandwidth), edge trigger rising, level
+0, 0.3 div hysteresis, NORMAL sweep, live batches. For every frame, the edges of the read-out near `pre` were found on the
+signal smoothed to one screen column with a 0.3 div comparator (`fastdraw::edge_smooth`):
+
+| time base | sample rate | rising edge at `pre` | nearest edge to `pre` is falling | rising edge further away |
+|---|---|---|---|---|
+| 500 us/div | 12.5 MSa/s | 15 % | 42 % | 42 % (mean 210 samples) |
+
+Seen with single-sample tests (less reliable with this noise), the share of frames whose `pre` is not on the rising edge grows
+with the decimation: about 0 % at 5 us/div (1.25 GSa/s), 30 % at 50 us/div, 90 % at 500 us/div, 97 % at 1 ms/div.
+
+On the frames whose `pre` is off, `pre` sits next to a level crossing of either direction, below the level, at a distance that
+grows with the hysteresis (0.3 div of the scale):
+
+| scale | hysteresis | rising crossing after `pre` (mean) | falling crossing before `pre` (mean) |
+|---|---|---|---|
+| 100 mV/div | 30 mV | 54 samples | 18 samples |
+| 200 mV/div | 60 mV | 103 samples | 107 samples |
+| 500 mV/div | 150 mV | 197 samples | 340 samples |
+
+**Cause: noise above the hysteresis.** The generator signal on CH1 carried about 150 mVpp of wide-band noise, more
+than the 60 mV band at 200 mV/div. The comparator arms on a noise dip and fires on the next noise peak, also on the
+falling edge, and near the level on the rising one. That is why the offsets grow with the hysteresis band and why
+`pre` sits next to a crossing of either direction. The read-out itself is right.
+
+The stock system does the same with the same signal (DHO924S, 2026-11-10, 500 us/div, 10 kpts, 1.25 MSa/s, rising
+edge at 0 V, NORMAL sweep, same 0x4050/0x4054/0x404c/decimation set-up as OOS):
+
+| CH1 bandwidth | single acquisitions with the rising edge at the trigger point (raw memory) | live screens with the falling edge at t = 0 |
+|---|---|---|
+| Auto (20 MHz at this time base, the stock default) | 20 of 20 | 0 of 15 |
+| Full | 11 of 20 | 8 of 20 |
+
+So the stock system shows the second trace too, unless the bandwidth limit (its default) or noise reject (0.7 div)
+removes the noise from the comparator. OOS now defaults to Auto bandwidth too, and has noise reject. Measured with OOS
+(same signal, 500 us/div, 100 kpts), share of frames by what lies at the hardware trigger point:
+
+| bandwidth | noise reject | rising edge at the point | falling edge nearest | rising edge further away |
+|---|---|---|---|---|
+| Full | off | 13 % | 45 % | 42 % (mean 185 samples) |
+| Full | on | 0 % | 3 % | 97 % (mean 200 samples) |
+| Auto | off | 100 % | 0 % | 0 % |
+| Auto | on | 100 % | 0 % | 0 % |
+
+Frame header as read with 0x1010 bit31 = 0 (8 little-endian u16 words, `fa05 0000 007b xxxx n tttt tttt tttt`): word 0 =
+frame header code, dword 0 holds source [31:28], object [3:0], plot type [19:18], mode [23:20], zoom bit 16, LA bit 17;
+word 3 [13:0] = TX time count; word 4 = frame number in the batch; words 5..7 a time stamp (1.6 ns ticks assumed). No
+trigger position.
+
+The UI does not trust `pre` for the edge trigger: the fast path and `to_record` take the edge of the set
+direction nearest `pre` (up to half a screen) on the smoothed signal. `OOS_FRAME_HEADER=1` makes oos-ui read the header and
+log it per frame with the edge offsets to `/tmp/oos-hdr.log`; `:SYSTem:STATe?` ends with the fast-path counts
+`edges <at pre> <other direction nearest> <further away> <none> off <sum> <max>`.
+
 ## 8. Not yet verified on hardware
 
 1. Meaning of p0/p2 and of the edge bits [7:6]/[15:14] beyond the observed combinations (10.13).
@@ -349,6 +406,8 @@ Other choices:
 5. The ground code of `afe-settings.md` is computed without the digital gain, the trigger level divides by it. Which one matches
    the ADC data is not settled.
 6. The units of 0x4050/0x4054 (samples at the ADC rate or after decimation), see `horizontal-config.md`.
+7. With noise reject and full bandwidth the rising edge lies about 200 samples (16 us at 12.5 MSa/s) from the hardware
+   point in nearly every frame (section 7): a fixed delay of the wider comparator band or the noise, not settled.
 
 ## 10. Other trigger types (register level)
 

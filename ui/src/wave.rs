@@ -1051,10 +1051,15 @@ pub fn periodic(v: &[f32], dt: f64) -> Option<f64> {
 
 /// The end of an auto set-up: `found` = channel, levels, period; the rest of the set-up stays.
 pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
-    // one horizontal band per channel (8 div / n), signal fills 80 % of its band
-    let n = found.len().max(1) as f32;
-    let band = VDIV / n;
-    for (k, (c, s, _)) in found.iter().enumerate() {
+    // one horizontal band per channel (8 div / n), signal fills 80 % of its band; in a split plot per window: n and the
+    // band count the channels of the window
+    let nw = if m.zoom || m.view != AView::Scope { 1 } else { m.win_layout.count() };
+    let win_of = |c: usize| m.ch_win[c].min(nw - 1);
+    let wins: Vec<usize> = found.iter().map(|f| win_of(f.0)).collect();
+    for (i, (c, s, _)) in found.iter().enumerate() {
+        let n = wins.iter().filter(|&&w| w == wins[i]).count().max(1) as f32;
+        let k = wins[..i].iter().filter(|&&w| w == wins[i]).count();
+        let band = VDIV / n;
         let ch = &mut m.ch[*c];
         ch.on = true;
         ch.coupling = Coupling::Dc;

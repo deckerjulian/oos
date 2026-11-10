@@ -27,6 +27,7 @@ mod tools;
 mod update;
 mod viewmore;
 mod wlan;
+mod windows;
 #[cfg(test)]
 mod lint;
 mod bwtest;
@@ -220,6 +221,8 @@ pub enum MenuId {
     La,
     LaLines,
     LaPat,
+    /// waveform windows and full screen (ui/windows.rs)
+    Windows,
     /// list of all options of a choice (`Ui::pick` names the item); picking returns to the menu of the item
     Pick,
 }
@@ -404,6 +407,12 @@ enum Item {
     Persist,
     Intensity,
     GridStyle,
+    /// waveform windows (ui/windows.rs)
+    WinLayout,
+    FullScreen,
+    WinCh(usize),
+    WinMath(usize),
+    WinLa,
     ClearDisp,
     Dots,
     Hdmi,
@@ -442,6 +451,8 @@ enum Item {
     AfgArbFile,
     GridBright,
     GridFrame,
+    /// noise reject of the trigger comparators
+    TrigNoise,
     LaOn,
     DecIn,
     LaShow,
@@ -594,6 +605,8 @@ struct TouchState {
     start_delay: f32,
     start_level: f32,
     start_cur: f32,
+    /// the waveform window the finger went down in
+    win: usize,
 }
 
 /// What the power dialog asked for; the main loop carries it out (panel MCU frames, docs/protocols/board.md 4/8.3).
@@ -613,6 +626,12 @@ pub struct Ui {
     /// plot rectangle (10 x 8 div) of the current layout
     grid: Rect,
     layout_zoom: bool,
+    /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
+    wins: Vec<Rect>,
+    /// the window being drawn
+    cur_win: usize,
+    /// the plot over the whole screen, without the top bar and the cards
+    full: bool,
     vmaxz: [u32; NCH],
     rng: Rng,
     menu: MenuId,
@@ -646,6 +665,12 @@ pub struct Ui {
     zone_path: Vec<(i32, i32)>,
     /// records dropped by the zone condition
     zone_drops: u64,
+    /// fast path frames by where the edge of the set direction was: at the hardware trigger point; further away with
+    /// an edge of the other direction at the point (the hardware fired on the wrong edge); further away with no edge at
+    /// the point (the point is off); none found. And the offsets of the last kind in samples: sum, largest
+    /// (`stat`, trigger.md 8)
+    pub fast_edges: [u64; 4],
+    pub fast_off: (f64, f64),
     /// segmented recording: records since the acquisition started, and whether it ran in the last frame
     seg_n: usize,
     was_running: bool,
@@ -695,6 +720,8 @@ pub struct Ui {
     pub records: u64,
     /// auto set-up under way on the hardware (autoset.rs)
     auto: Option<autoset::AutoRun>,
+    /// when the bar of views after an auto set-up came up (ui/autoset.rs)
+    auto_bar: Option<f64>,
     pub fps: f32,
     /// acquisitions per second (smoothed)
     pub wfm_rate: f32,
@@ -783,6 +810,9 @@ impl Ui {
             area: Rect::new(0, 0, 0, 0),
             grid: Rect::new(0, 0, 0, 0),
             layout_zoom: false,
+            wins: Vec::new(),
+            cur_win: 0,
+            full: false,
             vmaxz: [1; NCH],
             rng: Rng::new(0x9e3779b97f4a7c15),
             menu: MenuId::Main,
@@ -817,6 +847,8 @@ impl Ui {
             zone_arm: None,
             zone_path: Vec::new(),
             zone_drops: 0,
+            fast_edges: [0; 4],
+            fast_off: (0.0, 0.0),
             seg_n: 0,
             was_running: false,
             azr: Default::default(),
@@ -826,7 +858,7 @@ impl Ui {
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
-            touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0 },
+            touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
             trend: Vec::new(),
             pn: Default::default(),
@@ -848,6 +880,7 @@ impl Ui {
             frames: 0,
             records: 0,
             auto: None,
+            auto_bar: None,
             fps: 0.0,
             wfm_rate: 0.0,
             wfm_total: 0,
@@ -926,13 +959,154 @@ impl Ui {
     fn plot_rect(&self) -> Rect {
         // the logic analyser lanes have their own strip under the graticule: the analog picture shrinks with it
         let avail = self.plot_base() - self.la_strip_h() - self.pane_h();
-        Rect::new(PLOT_X, PLOT_Y, PLOT_W, (avail / 8 * 8).max(160))
+        Rect::new(PLOT_X, self.plot_top(), PLOT_W, (avail / 8 * 8).max(160))
     }
 
     /// Height for the graticule and the LA strip together (above the measurement rows).
     fn plot_base(&self) -> i32 {
         let rows = self.strip_rows();
-        BOTTOM.y - 2 - PLOT_Y - rows * STRIP_ROW - if rows > 0 { 4 } else { 0 }
+        self.plot_bottom() - 2 - self.plot_top() - rows * STRIP_ROW - if rows > 0 { 4 } else { 0 }
+    }
+
+    /// Full screen: the plot takes the top bar and the cards too. Not with the touch lock, whose way out is the Menu
+    /// button.
+    fn full_on(&self) -> bool {
+        self.full && !self.m.touch_lock
+    }
+
+    fn plot_top(&self) -> i32 {
+        if self.full_on() { 0 } else { PLOT_Y }
+    }
+
+    /// Where the measurement rows end: the cards, or the bottom of the screen.
+    fn plot_bottom(&self) -> i32 {
+        if self.full_on() { H } else { BOTTOM.y }
+    }
+
+    /// Waveform windows in use: one while zoom, XY or an analysis view has the plot.
+    fn n_wins(&self) -> usize {
+        if self.m.zoom || self.view_on() { 1 } else { self.m.win_layout.count() }
+    }
+
+    /// The windows in the plot `g`, all of the same size (they share the phosphor size), in reading order.
+    fn split_wins(&self, g: Rect) -> Vec<Rect> {
+        const GAP: i32 = 6;
+        let (cols, rows) = match (self.n_wins(), self.m.win_layout) {
+            (1, _) => return vec![g],
+            (_, WinLayout::Cols) => (2, 1),
+            (_, WinLayout::Rows) => (1, 2),
+            _ => (2, 2),
+        };
+        let w = (g.w - (cols - 1) * GAP) / cols;
+        // a whole number of pixels per division keeps the graticule even
+        let h = ((g.h - (rows - 1) * GAP) / rows / 8 * 8).max(64);
+        let mut v = Vec::new();
+        for r in 0..rows {
+            for c in 0..cols {
+                v.push(Rect::new(g.x + c * (w + GAP), g.y + r * (h + GAP), w, h));
+            }
+        }
+        v
+    }
+
+    /// Window of channel `c` (a window number beyond the layout goes to the last).
+    fn win_of(&self, c: usize) -> usize {
+        self.m.ch_win[c].min(self.wins.len().max(1) - 1)
+    }
+
+    fn math_win_of(&self, k: usize) -> usize {
+        self.m.math_win[k].min(self.wins.len().max(1) - 1)
+    }
+
+    /// Whether channel `c` belongs to the window being drawn.
+    fn shows(&self, c: usize) -> bool {
+        self.win_of(c) == self.cur_win
+    }
+
+    /// The rectangle channel `c` is drawn in: its window, or the main waveform area (zoom).
+    fn ch_area(&self, c: usize) -> Rect {
+        if self.wins.len() > 1 { self.wins[self.win_of(c)] } else { self.area }
+    }
+
+    /// Window of the LA lanes.
+    fn la_win_of(&self) -> usize {
+        self.m.la_win.min(self.wins.len().max(1) - 1)
+    }
+
+    /// Area whose time axis the LA lanes and the decoders on them use: the window of the LA, or the main area.
+    fn lane_area(&self) -> Rect {
+        if self.wins.len() > 1 { self.wins[self.la_win_of()] } else { self.area }
+    }
+
+    /// Whether window `w` has an analog channel or a math channel in it.
+    fn win_has_analog(&self, w: usize) -> bool {
+        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w) || (0..NMATH).any(|k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == w)
+    }
+
+    /// Window of decoder `k`'s band in the plot, or None when it has a row under the LA lanes.
+    fn dec_band_win(&self, k: usize) -> Option<usize> {
+        let m = self.m.dec_view(k);
+        if m.dec_on_la() {
+            return if self.la_dec_count() > 0 { None } else { Some(0) };
+        }
+        Some(if self.wins.len() > 1 { self.win_of(m.dec_src) } else { 0 })
+    }
+
+    /// Area for cards over the plot (tables, results): the whole plot when it is split.
+    fn over_area(&self) -> Rect {
+        if self.wins.len() > 1 { self.grid } else { self.area }
+    }
+
+    /// Spreads the channels that are on over the windows of a new layout, in channel order (math channels after
+    /// them), so that a split shows something in every window at once.
+    fn spread_wins(&mut self) {
+        let n = self.m.win_layout.count();
+        let mut i = 0;
+        for c in 0..NCH {
+            self.m.ch_win[c] = if self.m.ch[c].on {
+                i += 1;
+                (i - 1) % n
+            } else {
+                0
+            };
+        }
+        for k in 0..NMATH {
+            self.m.math_win[k] = if self.m.math_ch(k).op != MathOp::Off {
+                i += 1;
+                (i - 1) % n
+            } else {
+                0
+            };
+        }
+        // the LA after them: in a window of its own while there is one
+        self.m.la_win = if self.m.la_on() { i % n } else { 0 };
+    }
+
+    /// The full-screen button at the top right of the plot: (drawn, touch area).
+    fn full_btn(&self) -> (Rect, Rect) {
+        let g = self.grid;
+        // left of the view button while an analysis view has the plot
+        let right = if self.view_on() { self.view_btn().x - 6 } else { g.x + g.w - 4 };
+        let r = Rect::new(right - 30, g.y + 3, 30, 24);
+        (r, Rect::new(r.x - 10, g.y, r.w + 14, 40))
+    }
+
+    fn draw_full_btn(&self, cv: &mut Canvas) {
+        let (r, _) = self.full_btn();
+        cv.round(r, 5, PANEL_BG, 220);
+        cv.round_outline(r, 5, BTN_BORDER);
+        // four corner brackets: at the corners pointing in to enlarge, near the middle pointing out to go back
+        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+        let l = 6;
+        for (sx, sy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+            // corner of the bracket, and the way its arms go (x, y)
+            let (px, py, ax, ay) = if self.full_on() { (cx + sx * 3, cy + sy * 2, sx, sy) } else { (cx + sx * 10, cy + sy * 8, -sx, -sy) };
+            let (hx0, hx1) = (px.min(px + ax * (l - 1)), px.max(px + ax * (l - 1)));
+            let (vy0, vy1) = (py.min(py + ay * (l - 1)), py.max(py + ay * (l - 1)));
+            // 2 px thick, the second pixel on the side of the arms
+            cv.fill(Rect::new(hx0, py.min(py + ay), hx1 - hx0 + 1, 2), TEXT);
+            cv.fill(Rect::new(px.min(px + ax), vy0, 2, vy1 - vy0 + 1), TEXT);
+        }
     }
 
     /// Zoom: overview on top, label row, zoomed view below.
@@ -940,19 +1114,21 @@ impl Ui {
         (Rect::new(g.x, g.y, g.w, 104), Rect::new(g.x, g.y + 128, g.w, (g.h - 128) / 8 * 8))
     }
 
-    /// The main waveform area (the zoomed view when zoom is on).
+    /// The main waveform area (the zoomed view when zoom is on, the first window when the plot is split).
     fn wave_area(&self) -> Rect {
         if self.m.zoom {
             Self::split_zoom(self.grid).1
         } else {
-            self.grid
+            self.wins.first().copied().unwrap_or(self.grid)
         }
     }
 
     /// Recomputes the layout and reallocates the phosphor maps when the plot size changed.
     fn relayout(&mut self) {
         let g = self.plot_rect();
-        if g != self.grid || self.layout_zoom != self.m.zoom {
+        let wins = self.split_wins(g);
+        let w0 = wins[0];
+        if g != self.grid || self.layout_zoom != self.m.zoom || self.wins.first() != Some(&w0) {
             self.grid = g;
             self.layout_zoom = self.m.zoom;
             if self.m.zoom {
@@ -960,11 +1136,14 @@ impl Ui {
                 self.ph = Phosphor::new(o.w as usize, o.h as usize);
                 self.phz = Phosphor::new(z.w as usize, z.h as usize);
             } else {
-                self.ph = Phosphor::new(g.w as usize, g.h as usize);
+                // one map per channel at the size of a window: each channel is drawn into its own window
+                self.ph = Phosphor::new(w0.w as usize, w0.h as usize);
                 self.phz = Phosphor::new(1, 1);
             }
             self.dirty_map = true;
         }
+        self.wins = wins;
+        self.cur_win = 0;
         self.area = self.wave_area();
     }
 
@@ -1456,7 +1635,30 @@ impl Ui {
         let src = &f.ch[m.trig_src];
         // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
         let on_la = m.trig_on_la();
-        let edge = if on_la { None } else { crate::fastdraw::edge_near(src, f.pre, m.trig_level, m.slope != Slope::Fall, m.slope == Slope::Either, 16) };
+        // the edge of the set direction nearest the hardware trigger point, up to half a screen away, on the signal smoothed
+        // to one screen column: at decimated rates the hardware point lands near the level on either edge (trigger.md 8)
+        let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
+        let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
+        let half = (tdiv * HDIV as f64 / 2.0 / f.dt) as usize;
+        let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
+        let edge = if on_la {
+            None
+        } else {
+            let (e, any) = crate::fastdraw::edge_smooth(src, f.pre, m.trig_level, hyst, rising, either, half, col, |_| true);
+            let k = match (e, any) {
+                (None, _) => 3,
+                (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => 0,
+                (Some(_), Some(n)) if !either && n.rising != rising => 1,
+                (Some(t), _) => {
+                    let d = (t - f.pre as f64).abs();
+                    self.fast_off = (self.fast_off.0 + d, self.fast_off.1.max(d));
+                    2
+                }
+            };
+            self.fast_edges[k] += 1;
+            e
+        };
+        let m = &self.m;
         let ti = edge.unwrap_or(f.pre as f64);
         let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
         let ppd_y = h as f32 / VDIV;
@@ -1511,7 +1713,9 @@ impl Ui {
             self.draw_grid(cv, z);
             self.draw_traces(cv, z, &self.phz, &self.vmaxz, self.vmaxz_cg);
         } else {
-            self.draw_grid(cv, g);
+            for &w in &self.wins {
+                self.draw_grid(cv, w);
+            }
         }
         if self.view_on() {
             if self.xy {
@@ -1521,25 +1725,39 @@ impl Ui {
             }
             self.draw_view_btn(cv);
         } else {
-            if !self.m.zoom {
-                self.draw_mask(cv);
-                self.draw_traces(cv, g, &self.ph, &self.vmax, self.vmax_cg);
+            // window by window: each draws its own channels; what has no window of its own (references, decoders,
+            // LA) goes with the first. Zoom has one window, its traces are drawn above.
+            for i in 0..self.wins.len() {
+                self.cur_win = i;
+                if !self.m.zoom {
+                    self.area = self.wins[i];
+                    self.draw_mask(cv);
+                    self.draw_traces(cv, self.area, &self.ph, &self.vmax, self.vmax_cg);
+                }
+                self.draw_hist(cv);
+                self.draw_zones(cv);
+                if i == 0 {
+                    self.draw_refs(cv);
+                }
+                self.draw_math(cv);
+                if i == self.la_win_of() {
+                    self.draw_la(cv);
+                }
+                self.draw_decode(cv);
+                self.draw_meas_labels(cv);
+                self.draw_cursors(cv);
+                self.draw_search(cv);
+                self.draw_markers(cv);
+                self.draw_axes(cv);
+                self.draw_mask_pill(cv);
             }
-            self.draw_hist(cv);
-            self.draw_zones(cv);
-            self.draw_refs(cv);
-            self.draw_math(cv);
-            self.draw_la(cv);
-            self.draw_decode(cv);
-            self.draw_meas_labels(cv);
-            self.draw_cursors(cv);
-            self.draw_search(cv);
-            self.draw_markers(cv);
-            self.draw_axes(cv);
-            self.draw_mask_pill(cv);
+            self.cur_win = 0;
+            self.area = self.wave_area();
         }
         self.draw_cal_banner(cv);
         self.draw_info(cv);
+        self.draw_full_btn(cv);
+        self.draw_auto_bar(cv);
         self.draw_strip(cv);
         if self.pane_h() > 0 {
             self.draw_pane(cv);
@@ -1553,8 +1771,10 @@ impl Ui {
             self.hdmi_snap.clear();
             self.hdmi_snap.extend_from_slice(&cv.px[(y0 * W) as usize..(y1 * W) as usize]);
         }
-        self.draw_top(cv);
-        self.draw_bottom(cv);
+        if !self.full_on() {
+            self.draw_top(cv);
+            self.draw_bottom(cv);
+        }
         self.draw_menu(cv);
         self.draw_toast(cv);
         self.draw_overlay(cv);
@@ -1629,23 +1849,23 @@ impl Ui {
     fn draw_axes(&self, cv: &mut Canvas) {
         let f = &self.fonts;
         let a = self.area;
-        let c = if self.m.ch[self.m.active].on { Some(self.m.active) } else { (0..NCH).find(|&i| self.m.ch[i].on) };
+        let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) { Some(self.m.active) } else { (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i)) };
         if let Some(c) = c {
             let ch = &self.m.ch[c];
             let vpd = ch.volts_per_div();
             let span = (VDIV / 2.0 * vpd).abs() + ch.offset.abs();
             let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
-            if self.m.mask_on && self.mask.is_some() {
+            if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
-            let bands = (0..DECODERS).filter(|&k| self.m.dec_is_on(k) && !self.m.dec_view(k).dec_on_la()).count() as i32;
+            let bands = (0..DECODERS).filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.cur_win)).count() as i32;
             if bands > 0 {
                 taken.push(Rect::new(a.x, a.y + a.h - 50 - (bands - 1) * DEC_BAND, a.w, bands * DEC_BAND));
             }
             // the channel ground markers at the left edge: a label on their line is left out (as on the stock
             // screen, where the marker takes the place of the "0" label)
             for k in 0..NCH {
-                if self.m.ch[k].on {
+                if self.m.ch[k].on && self.shows(k) {
                     let y = self.y_of_volts(k, 0.0).clamp(a.y + 9, a.y + a.h - 9);
                     taken.push(Rect::new(a.x, y - 9, MARK_W + 2, 18));
                 }
@@ -1666,7 +1886,12 @@ impl Ui {
         }
         let (tdiv, delay) = self.view();
         let span = (HDIV / 2.0 * tdiv).abs() + delay.abs();
+        // a narrow window (side by side) labels every second division, the centre always
+        let every = if a.w < 700 { 2 } else { 1 };
         for i in 0..=HDIV as i32 {
+            if (i - HDIV as i32 / 2).rem_euclid(every) != 0 {
+                continue;
+            }
             let x = a.x + (i as f32 * a.w as f32 / HDIV).round() as i32;
             let t = delay + (i as f32 - HDIV / 2.0) * tdiv;
             let zero = t.abs() < tdiv * 1e-3;
@@ -1687,7 +1912,7 @@ impl Ui {
         let gain = 0.35 + 1.3 * inten;
         let (w, h) = (ph.w, ph.h);
         for c in (0..NCH).rev() {
-            if !self.m.ch[c].on {
+            if !self.m.ch[c].on || !self.shows(c) {
                 continue;
             }
             let col = CH_COLORS[c];
@@ -1728,7 +1953,7 @@ impl Ui {
     /// density relative to the densest pixel (blue = rare .. red = frequent). Per frame only a 1024-entry LUT is
     /// built; per pixel it is an add per channel and one table look-up.
     fn draw_graded(&self, cv: &mut Canvas, area: Rect, ph: &Phosphor, vmax: u32) {
-        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| self.m.ch[c].on).map(|c| ph.map[c].as_slice()).collect();
+        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| self.m.ch[c].on && self.shows(c)).map(|c| ph.map[c].as_slice()).collect();
         if maps.is_empty() {
             return;
         }
@@ -1805,6 +2030,9 @@ impl Ui {
     /// Forbidden region of the mask (outside the envelope) tinted red, the envelope edges a little stronger.
     fn draw_mask(&self, cv: &mut Canvas) {
         let (Some(mask), true, false) = (&self.mask, self.m.mask_on, self.xy) else { return };
+        if !self.shows(self.m.mask_src) {
+            return;
+        }
         let a = self.area;
         let ch = &self.m.ch[self.m.mask_src];
         let ppd = a.h as f32 / VDIV;
@@ -1829,7 +2057,7 @@ impl Ui {
 
     /// "Mask CH1 · Passed n · Failed m" pill at the top left of the plot, under the status line.
     fn draw_mask_pill(&self, cv: &mut Canvas) {
-        if !self.m.mask_on || self.mask.is_none() {
+        if !self.m.mask_on || self.mask.is_none() || !self.shows(self.m.mask_src) {
             return;
         }
         let f = &self.fonts;
@@ -1904,7 +2132,7 @@ impl Ui {
     /// Histogram overlay: bars along the left edge (vertical) or the bottom (horizontal), mean and sigma in units.
     fn draw_hist(&self, cv: &mut Canvas) {
         let Some((bins, mean, sd)) = self.hist_bins() else { return };
-        let Some(c) = self.hist_src() else { return };
+        let Some(c) = self.hist_src().filter(|&c| self.shows(c)) else { return };
         let a = self.area;
         let col = CH_COLORS[c];
         let peak = bins.iter().copied().max().unwrap_or(0).max(1) as f64;
@@ -2020,7 +2248,7 @@ impl Ui {
 
     fn draw_math(&self, cv: &mut Canvas) {
         // all traces first, then the labels on top of them
-        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).collect();
+        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win).collect();
         let labels: Vec<Option<String>> = on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
         let f = &self.fonts;
         for (row, (label, &k)) in labels.iter().zip(&on).enumerate() {
@@ -2105,7 +2333,7 @@ impl Ui {
     }
 
     fn y_of_volts(&self, c: usize, v: f32) -> i32 {
-        let a = self.area;
+        let a = self.ch_area(c);
         let ch = &self.m.ch[c];
         let ppd = a.h as f32 / VDIV;
         (a.y as f32 + a.h as f32 / 2.0 - (v + ch.offset) / ch.volts_per_div() * ppd).round() as i32
@@ -2171,12 +2399,17 @@ impl Ui {
                 continue;
             }
             let m = self.m.dec_view(k);
-            let row = if m.dec_on_la() { self.la_dec_row_n(lane) } else { None };
+            // rows under the lanes go with the LA's window, bands with their source's
+            let win = self.dec_band_win(k);
+            let row = if win.is_none() { self.la_dec_row_n(lane) } else { None };
+            if row.is_some() {
+                lane += 1;
+            }
+            if win.unwrap_or(self.la_win_of()) != self.cur_win {
+                continue;
+            }
             let y = match row {
-                Some(r) => {
-                    lane += 1;
-                    r.y + 3
-                }
+                Some(r) => r.y + 3,
                 None => {
                     band += 1;
                     bottom - (band - 1) * DEC_BAND
@@ -2192,6 +2425,8 @@ impl Ui {
         let f = &self.fonts;
         let a = self.area;
         let col = if m.dec_on_la() { la::line_color(m.dec_la[0].unwrap_or(0)) } else { CH_COLORS[m.dec_src] };
+        // rows under the lanes span all windows, like the lanes
+        let a = if row.is_some() { self.lane_area() } else { a };
         let h = 20;
         cv.set_clip(row.unwrap_or(a));
         if row.is_none() {
@@ -2342,7 +2577,7 @@ impl Ui {
         let a = self.area;
         // channel ground markers at the left edge of the grid
         for c in 0..NCH {
-            if !self.m.ch[c].on {
+            if !self.m.ch[c].on || !self.shows(c) {
                 continue;
             }
             let y = self.y_of_volts(c, 0.0).clamp(a.y + 9, a.y + a.h - 9);
@@ -2355,7 +2590,7 @@ impl Ui {
         // trigger level marker at the right edge of the grid, its value next to it
         let ts = self.m.trig_src;
         let lvl = self.trig_level_shown();
-        if self.m.ch[ts].on && self.m.trig_line().is_none() {
+        if self.m.ch[ts].on && self.shows(ts) && self.m.trig_line().is_none() {
             let y = self.y_of_volts(ts, lvl).clamp(a.y + 9, a.y + a.h - 9);
             let x1 = a.x + a.w - MARK_W;
             let r = Rect::new(x1 + 8, y - 8, 16, 16);
@@ -2377,7 +2612,7 @@ impl Ui {
             _ => None,
         };
         if let Some((c, tag)) = c2 {
-            if self.m.ch[c].on {
+            if self.m.ch[c].on && self.shows(c) {
                 let y = self.y_of_volts(c, self.m.trig_level2).clamp(a.y + 9, a.y + a.h - 9);
                 let x1 = a.x + a.w - MARK_W;
                 let r = Rect::new(x1 + 8, y - 8, 16, 16);
@@ -2407,13 +2642,13 @@ impl Ui {
             cv.text_in(&f.sb, r, 1, s, col);
         };
         match self.touch.drag {
-            Drag::Offset(c) => {
+            Drag::Offset(c) if self.shows(c) => {
                 let y = self.y_of_volts(c, 0.0);
                 cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, CH_COLORS[c]);
                 tag(cv, a.x + 8, y - 30, &format!("Offset {}", si(self.m.ch[c].offset as f64, self.m.unit(c))), CH_COLORS[c]);
             }
-            Drag::Delay => tag(cv, a.x + a.w / 2 - 60, a.y + 12, &format!("Delay {}", si(self.view().1 as f64, "s")), ACCENT),
-            Drag::Level => {
+            Drag::Delay if self.cur_win == self.touch.win.min(self.wins.len().max(1) - 1) => tag(cv, a.x + a.w / 2 - 60, a.y + 12, &format!("Delay {}", si(self.view().1 as f64, "s")), ACCENT),
+            Drag::Level if self.shows(ts) => {
                 let y = self.y_of_volts(ts, self.m.trig_level);
                 tag(cv, a.x + a.w - 130, y - 30, &format!("Level {}", si(self.m.trig_level as f64, self.m.unit(ts))), ACCENT);
             }
@@ -2422,6 +2657,10 @@ impl Ui {
     }
 
     fn draw_cursors(&self, cv: &mut Canvas) {
+        // in the window of the channel they read
+        if !self.shows(self.m.active) {
+            return;
+        }
         let f = &self.fonts;
         let a = self.area;
         let tagbox = |cv: &mut Canvas, x: i32, y: i32, s: &str| {
@@ -2529,7 +2768,7 @@ impl Ui {
             _ => "",
         };
         if !src.is_empty() {
-            backed_text(cv, &f.s, g.x + g.w - 8 - f.s.width(src), y, src, DIM);
+            backed_text(cv, &f.s, self.full_btn().0.x - 8 - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
         if self.m.touch_lock {
@@ -2564,7 +2803,7 @@ impl Ui {
         let f = &self.fonts;
         let g = self.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
-        let mut y = (BOTTOM.y + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
+        let mut y = (self.plot_bottom() + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
         let pill = |cv: &mut Canvas, y: i32, c: usize| {
             let r = Rect::new(8, y + 1, 42, 14);
             cv.round(r, 3, CH_COLORS[c], 255);
@@ -2624,7 +2863,7 @@ impl Ui {
         if !self.results_panel() {
             return None;
         }
-        let a = self.area;
+        let a = self.over_area();
         let y = a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32;
         let x = a.x + a.w - 56 - RESULTS_W;
         let n = (self.m.meas.len() + self.m.meas2.len()) as i32;
@@ -3154,7 +3393,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -3174,6 +3413,7 @@ impl Ui {
             MenuId::La => self.la_items(),
             MenuId::LaLines => self.la_line_items(),
             MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
+            MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
             MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
@@ -3544,6 +3784,10 @@ impl Ui {
             TT::SetupHold => v.extend([TrigSrc, TrigSrc2, TrigSlope2, Setup, Hold, TrigLevel, TrigLevel2]),
             TT::NthEdge => v.extend([TrigSrc, TrigSlope, NthIdle, NthN, TrigLevel]),
         }
+        // the analog comparators: not for a protocol or an LA line
+        if m.trig_type != TT::Bus && m.trig_line().is_none() {
+            v.push(TrigNoise);
+        }
         v.push(TrigMode);
         v.push(SearchOn);
         if self.search_on {
@@ -3706,6 +3950,7 @@ impl Ui {
             MenuId::Logger => "Data logger".into(),
             MenuId::Cursor => "Cursor".into(),
             MenuId::Display => "Display".into(),
+            MenuId::Windows => "Windows".into(),
             MenuId::Utility => "System".into(),
             MenuId::Math => "Math".into(),
             MenuId::Ref => "Reference".into(),
@@ -3720,7 +3965,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
             return k;
         }
         match it {
@@ -3741,7 +3986,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
             return l;
         }
         match it {
@@ -3920,6 +4165,7 @@ impl Ui {
             Item::GridStyle => "Grid",
             Item::GridBright => "Grid bright.",
             Item::GridFrame => "Grid frame",
+            Item::TrigNoise => "Noise reject",
             Item::ClearDisp => "Clear",
             Item::Dots => "Dots",
             Item::Hdmi => "HDMI",
@@ -3976,7 +4222,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4091,6 +4337,7 @@ impl Ui {
             Item::GridStyle => format!("{:?}", m.grid),
             Item::GridBright => format!("{} %", m.grid_bright),
             Item::GridFrame => onoff(m.grid_frame),
+            Item::TrigNoise => onoff(m.trig_nrej),
             Item::Dots => onoff(m.dots),
             Item::Hdmi => if m.hdmi_wave { "Waveform".into() } else { "Mirror".into() },
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
@@ -4166,7 +4413,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -4405,6 +4652,7 @@ impl Ui {
             }
             Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(10, 100) as u32,
             Item::GridFrame => m.grid_frame = !m.grid_frame,
+            Item::TrigNoise => m.trig_nrej = !m.trig_nrej,
             Item::GridStyle => {
                 let all = [Grid::Full, Grid::Light, Grid::None];
                 let i = all.iter().position(|&x| x == m.grid).unwrap();
@@ -4927,7 +5175,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)) {
+        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -4978,7 +5226,7 @@ impl Ui {
             Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
             Item::GridStyle => &["Full", "Light", "None"],
-            Item::GridFrame => &["Off", "On"],
+            Item::GridFrame | Item::TrigNoise => &["Off", "On"],
             Item::Dots | Item::ZoneOn => &["Off", "On"],
             Item::Hdmi => &["Mirror", "Waveform"],
             Item::ZoneSel => &["Z1", "Z2"],
@@ -5726,13 +5974,25 @@ impl Ui {
         }
     }
 
+    /// A finger in a split plot works in the window it went down in: its channels, its rectangle.
     fn touch_ev(&mut self, ph: Phase, x: i32, y: i32) {
+        if self.wins.len() < 2 {
+            return self.touch_in(ph, x, y);
+        }
+        let keep = (self.area, self.cur_win);
+        let w = if ph == Phase::Down { self.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0) } else { self.touch.win.min(self.wins.len() - 1) };
+        (self.area, self.cur_win) = (self.wins[w], w);
+        self.touch_in(ph, x, y);
+        (self.area, self.cur_win) = keep;
+    }
+
+    fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
         let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
         let t = &mut self.touch;
         match ph {
             Phase::Down => {
                 let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
-                *t = TouchState { down: true, x0: x, y0: y, x, y, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0 };
+                *t = TouchState { down: true, x0: x, y0: y, x, y, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0, win: self.cur_win };
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
                     return;
                 }
@@ -5764,6 +6024,8 @@ impl Ui {
                         }
                     };
                     let m = &self.m;
+                    // the cursors stand in the window of the active channel
+                    let cur_hit = |frac: f32, vertical: bool| self.shows(m.active) && cur_hit(frac, vertical);
                     let drag = if m.cursor == CursorMode::Time && cur_hit(m.cur_a, true) {
                         Drag::CursorA
                     } else if m.cursor == CursorMode::Time && cur_hit(m.cur_b, true) {
@@ -5772,15 +6034,16 @@ impl Ui {
                         Drag::CursorA
                     } else if m.cursor == CursorMode::Volt && cur_hit(m.cur_b, false) {
                         Drag::CursorB
-                    } else if near_right && dy.abs() >= dx.abs() {
+                    } else if near_right && dy.abs() >= dx.abs() && self.shows(m.trig_src) {
                         Drag::Level
                     } else if dy.abs() > dx.abs() {
-                        // nearest enabled channel marker when starting at the left edge, else the active channel
-                        let mut c = m.active;
+                        // nearest enabled channel marker when starting at the left edge, else the active channel (in a
+                        // split plot: of this window)
+                        let mut c = if self.shows(m.active) { m.active } else { (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active) };
                         if near_left {
                             let mut best = i32::MAX;
                             for i in 0..NCH {
-                                if m.ch[i].on {
+                                if m.ch[i].on && self.shows(i) {
                                     let d = (self.y_of_volts(i, 0.0) - ty0).abs();
                                     if d < best {
                                         best = d;
@@ -5927,7 +6190,7 @@ impl Ui {
         let (ppx, ppy) = (a.w as f64 / HDIV as f64, a.h as f64 / VDIV as f64);
         cv.set_clip(a);
         for (k, z) in self.m.zones.iter().enumerate() {
-            if z.pts.len() < 2 {
+            if z.pts.len() < 2 || !self.shows(z.src) {
                 continue;
             }
             let ch = &self.m.ch[z.src];
@@ -5946,6 +6209,12 @@ impl Ui {
             let (lx, ly) = poly.iter().fold((i32::MAX, i32::MAX), |(x, y), p| (x.min(p.0), y.min(p.1)));
             cv.text(&self.fonts.s, lx + 4, ly + 14, &format!("Z{}", k + 1), col);
         }
+        // the path being drawn is in screen coordinates: once, over the whole plot
+        if self.cur_win != 0 {
+            cv.no_clip();
+            return;
+        }
+        cv.set_clip(self.grid);
         if self.zone_arm.map_or(false, |a| a.1) {
             for w in self.zone_path.windows(2) {
                 cv.line(w[0].0, w[0].1, w[1].0, w[1].1, ACCENT);
@@ -5985,10 +6254,30 @@ impl Ui {
         if self.tap_menu(x, y) {
             return;
         }
+        if self.auto_bar_tap(x, y) {
+            return;
+        }
+        if self.full_btn().1.contains(x, y) {
+            self.full = !self.full;
+            return;
+        }
         if self.view_on() && self.view_btn().contains(x, y) {
             return self.toggle_menu(MenuId::ViewMore);
         }
         if self.table_tap(x, y) || self.pane_tap(x, y) {
+            return;
+        }
+        if self.full_on() {
+            // no top bar and no cards: only what is over the plot
+            if let Some((h, _)) = self.results_rects() {
+                if Rect::new(h.x, h.y - 5, h.w, h.h + 10).contains(x, y) {
+                    self.results_min = !self.results_min;
+                    return;
+                }
+            }
+            if self.menu_open && self.grid.contains(x, y) {
+                self.close_menu();
+            }
             return;
         }
         if Self::top_hit(Self::RUN_PILL).contains(x, y) {

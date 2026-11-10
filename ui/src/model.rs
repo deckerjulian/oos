@@ -463,6 +463,40 @@ pub enum CursorMode {
     Xy,
 }
 
+/// How the plot is split into waveform windows; every channel and math channel stands in one of them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum WinLayout {
+    #[default]
+    One,
+    /// two side by side
+    Cols,
+    /// two one above the other
+    Rows,
+    /// two by two
+    Quad,
+}
+
+impl WinLayout {
+    pub const ALL: [WinLayout; 4] = [WinLayout::One, WinLayout::Cols, WinLayout::Rows, WinLayout::Quad];
+
+    pub fn count(self) -> usize {
+        match self {
+            WinLayout::One => 1,
+            WinLayout::Cols | WinLayout::Rows => 2,
+            WinLayout::Quad => 4,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WinLayout::One => "One",
+            WinLayout::Cols => "Side by side",
+            WinLayout::Rows => "Stacked",
+            WinLayout::Quad => "Four",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Grid {
     Full,
@@ -595,6 +629,8 @@ pub struct Model {
     pub trig_type: TrigType,
     /// second level: low threshold (slope, runt, window), level of B (delay), clock level (setup/hold)
     pub trig_level2: f32,
+    /// noise reject: wider comparator hysteresis (0.7 instead of 0.3 div)
+    pub trig_nrej: bool,
     /// second source: B (delay), clock (setup/hold)
     pub trig_src2: usize,
     pub trig_slope2: Slope,
@@ -625,6 +661,12 @@ pub struct Model {
     /// graticule brightness in % (10..100), and whether the frame with its ticks is drawn
     pub grid_bright: u32,
     pub grid_frame: bool,
+    /// waveform windows, and the window (0-based) of each channel and math channel
+    pub win_layout: WinLayout,
+    pub ch_win: [usize; NCH],
+    pub math_win: [usize; crate::math::NMATH],
+    /// window of the LA lanes while the plot is split (one window: their strip under the plot)
+    pub la_win: usize,
     pub meas: Vec<(Meas, usize)>,
     /// delay and phase: entry of `ui::tools::PAIRS`, channel A, channel B
     pub meas2: Vec<(usize, usize, usize)>,
@@ -835,6 +877,9 @@ pub const BWS: [(&str, u32); 31] = [
 pub const BW_20M: usize = 2;
 /// Index of "Full" in BWS.
 pub const BW_FULL: usize = 1;
+/// Index of "Auto" in BWS: the filter follows the sample rate (the default, as on the stock system; with Full the
+/// noise at slow time bases can exceed the trigger hysteresis, trigger.md 7).
+pub const BW_AUTO: usize = 0;
 
 /// The settings of one built-in generator. The selected one is in the `afg_*` fields of the model, the others in
 /// `Model::gen_bank` (`Model::gen_select`).
@@ -891,7 +936,7 @@ pub const PERSIST: [(&str, f32); 7] = [("Min", 0.0), ("100 ms", 0.1), ("500 ms",
 
 impl Default for Model {
     fn default() -> Model {
-        let c = |on| Channel { on, vscale: 12, vfine: 1.0, unit: AmpUnit::V, bias: 0.0, skew: 0.0, offset: 0.0, coupling: Coupling::Dc, bw: BW_FULL, probe: 1.0, invert: false };
+        let c = |on| Channel { on, vscale: 12, vfine: 1.0, unit: AmpUnit::V, bias: 0.0, skew: 0.0, offset: 0.0, coupling: Coupling::Dc, bw: BW_AUTO, probe: 1.0, invert: false };
         let ts = tscales();
         let t200u = ts.iter().position(|&t| (t - 200e-6).abs() < 1e-9).unwrap_or(ts.len() / 2);
         let mut m = Model {
@@ -908,6 +953,7 @@ impl Default for Model {
             holdoff: 0.0,
             trig_type: TrigType::Edge,
             trig_level2: 0.5,
+            trig_nrej: false,
             trig_src2: 3,
             trig_slope2: Slope::Rise,
             trig_pol: Pol::Pos,
@@ -1043,6 +1089,10 @@ impl Default for Model {
             afg_arb: 0,
             grid_bright: 100,
             grid_frame: true,
+            win_layout: WinLayout::One,
+            ch_win: [0; NCH],
+            math_win: [0; crate::math::NMATH],
+            la_win: 0,
             afg_arb_src: 0,
             afg_freq: 1000.0,
             afg_ampl: 1.0,
@@ -1491,6 +1541,11 @@ impl Model {
         }
     }
     /// The logic analyser is on (and the model has it).
+    /// Comparator hysteresis of the trigger in divisions (trigger.md 2.3): 0.3, 0.7 with noise reject.
+    pub fn trig_hyst_div(&self) -> f32 {
+        if self.trig_nrej { 0.7 } else { 0.3 }
+    }
+
     pub fn la_on(&self) -> bool {
         self.la.on && crate::ui::la::available()
     }

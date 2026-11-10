@@ -104,6 +104,8 @@ pub struct Settings {
     pub blocks: u8,
     /// read with the 16-byte frame header like the stock live loop (0x1010 bit31 = 0) instead of the export mode
     pub header: bool,
+    /// noise reject: 0.7 instead of 0.3 div comparator hysteresis (trigger.md 2.3, 2.7)
+    pub noise_reject: bool,
     /// frames per batch: one arm records this many triggered frames, one type-4 play and one read return them all
     /// (limited to `Params::max_frames`; needs `play4`)
     pub frames: u32,
@@ -121,7 +123,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, frames: 1, compress: 1, la: None }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, frames: 1, compress: 1, la: None }
     }
 }
 
@@ -257,7 +259,7 @@ impl State {
         // LA lines have no level: any entry will do
         let tc = if src <= 4 { (src - 1) as usize } else { 0 };
         // the hysteresis comes from the scale of the source at the BNC, and multiplies the scale of each channel
-        let noise = tpu::noise_hysteresis(nv(s.ch[tc].scale / s.ch[tc].probe), false);
+        let noise = tpu::noise_hysteresis(nv(s.ch[tc].scale / s.ch[tc].probe), s.noise_reject);
         let vt: [tpu::Vert; 4] = [0, 1, 2, 3].map(|c| tpu::Vert { scale: nv(s.ch[c].scale), offset: nv(s.ch[c].offset), g: self.gain[c], noise });
         let edge = if s.slope == tpu::Slope::Falling { tpu::Edge::Falling } else { tpu::Edge::Rising };
         let mut w = match &s.trigger {

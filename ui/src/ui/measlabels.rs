@@ -83,7 +83,7 @@ impl Ui {
         for &(k, c) in self.m.meas.iter().take(MAX_LABELS) {
             let ana = &self.ana[c];
             let v = self.meas(c, k);
-            if !self.m.ch[c].on || !ana.valid || !v.is_finite() {
+            if !self.m.ch[c].on || !self.shows(c) || !ana.valid || !v.is_finite() {
                 continue;
             }
             let col = CH_COLORS[c];

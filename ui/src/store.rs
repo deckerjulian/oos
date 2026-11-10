@@ -162,6 +162,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("holdoff", m.holdoff.to_string());
     kv("trig_type", name(m.trig_type));
     kv("trig_level2", m.trig_level2.to_string());
+    kv("trig_nrej", m.trig_nrej.to_string());
     kv("trig_src2", m.trig_src2.to_string());
     kv("trig_slope2", name(m.trig_slope2));
     kv("trig_pol", name(m.trig_pol));
@@ -187,6 +188,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("grid", name(m.grid));
     kv("grid_bright", m.grid_bright.to_string());
     kv("grid_frame", m.grid_frame.to_string());
+    kv("windows", name(m.win_layout));
+    kv("ch_window", m.ch_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
+    kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
+    kv("la_window", (m.la_win + 1).to_string());
     kv("meas", m.meas.iter().map(|&(k, c)| format!("{:?}:{}", k, c + 1)).collect::<Vec<_>>().join(" "));
     kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a + 1, b + 1)).collect::<Vec<_>>().join(" "));
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
@@ -405,6 +410,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "trig_mode" => m.trig_mode = p_enum(v, &TRIG_MODES)?,
         "holdoff" => m.holdoff = p_f32(v)?,
         "trig_type" => m.trig_type = p_enum(v, &TRIG_TYPES)?,
+        "trig_nrej" => m.trig_nrej = p_bool(v)?,
         "trig_level2" => m.trig_level2 = p_f32(v)?,
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
         "trig_slope2" => m.trig_slope2 = p_enum(v, &SLOPES)?,
@@ -437,6 +443,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "grid" => m.grid = p_enum(v, &GRIDS)?,
         "grid_bright" => m.grid_bright = p_u32(v)?.clamp(10, 100),
         "grid_frame" => m.grid_frame = p_bool(v)?,
+        "windows" => m.win_layout = p_enum(v, &WinLayout::ALL)?,
+        "ch_window" => {
+            let w = p_list(v, NCH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
+            m.ch_win.copy_from_slice(&w);
+        }
+        "la_window" => m.la_win = p_idx(v, 5)?.checked_sub(1).ok_or("window 0")?,
+        "math_window" => {
+            let w = p_list(v, crate::math::NMATH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
+            m.math_win.copy_from_slice(&w);
+        }
         "meas" => {
             let mut out = Vec::new();
             for e in v.split_whitespace() {
