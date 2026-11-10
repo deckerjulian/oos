@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Storage: setup files (`key = value` text of the Model), waveform CSV, PNG screenshots (own encoder: zlib stored
-//! blocks, CRC32, Adler32), file names in the storage directory.
+//! Storage: setup files (`key = value` text of the Model), waveform CSV, PNG screenshots (own encoder: one fixed-Huffman
+//! deflate block with matches against the pixel to the left and above, CRC32, Adler32), file names in the storage directory.
 
 use crate::gfx::Canvas;
 use crate::math::{MATH_OPS, WINDOWS};
@@ -768,28 +768,108 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&crc.to_be_bytes());
 }
 
-/// PNG (8-bit RGB) of XRGB8888 pixels: filter 0 per row, zlib stream of stored (uncompressed) deflate blocks.
+/// Deflate length codes 257..285 (RFC 1951 3.2.5): base length and extra bits.
+const LEN_BASE: [(u16, u8); 29] = [
+    (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), (10, 0), (11, 1), (13, 1), (15, 1), (17, 1), (19, 2), (23, 2), (27, 2),
+    (31, 2), (35, 3), (43, 3), (51, 3), (59, 3), (67, 4), (83, 4), (99, 4), (115, 4), (131, 5), (163, 5), (195, 5), (227, 5), (258, 0),
+];
+/// Deflate distance codes 0..29: base distance and extra bits.
+const DIST_BASE: [(u16, u8); 30] = [
+    (1, 0), (2, 0), (3, 0), (4, 0), (5, 1), (7, 1), (9, 2), (13, 2), (17, 3), (25, 3), (33, 4), (49, 4), (65, 5), (97, 5), (129, 6),
+    (193, 6), (257, 7), (385, 7), (513, 8), (769, 8), (1025, 9), (1537, 9), (2049, 10), (3073, 10), (4097, 11), (6145, 11),
+    (8193, 12), (12289, 12), (16385, 13), (24577, 13),
+];
+
+/// Bit writer of a deflate stream: values LSB first, Huffman codes MSB first.
+struct BitOut {
+    out: Vec<u8>,
+    acc: u32,
+    n: u32,
+}
+
+impl BitOut {
+    fn bits(&mut self, v: u32, n: u32) {
+        self.acc |= v << self.n;
+        self.n += n;
+        while self.n >= 8 {
+            self.out.push(self.acc as u8);
+            self.acc >>= 8;
+            self.n -= 8;
+        }
+    }
+    /// A Huffman code of `n` bits, first bit = most significant.
+    fn code(&mut self, c: u32, n: u32) {
+        self.bits(c.reverse_bits() >> (32 - n), n);
+    }
+    /// Literal/length symbol of the fixed code (RFC 1951 3.2.6).
+    fn symbol(&mut self, s: u32) {
+        match s {
+            0..=143 => self.code(0x30 + s, 8),
+            144..=255 => self.code(0x190 + s - 144, 9),
+            256..=279 => self.code(s - 256, 7),
+            _ => self.code(0xc0 + s - 280, 8),
+        }
+    }
+    fn matched(&mut self, len: usize, dist_code: usize, dist_extra: u32) {
+        let i = LEN_BASE.iter().rposition(|&(b, _)| b as usize <= len).unwrap();
+        self.symbol(257 + i as u32);
+        self.bits((len - LEN_BASE[i].0 as usize) as u32, LEN_BASE[i].1 as u32);
+        self.code(dist_code as u32, 5);
+        self.bits(dist_extra, DIST_BASE[dist_code].1 as u32);
+    }
+    fn finish(mut self) -> Vec<u8> {
+        if self.n > 0 {
+            self.out.push(self.acc as u8);
+        }
+        self.out
+    }
+}
+
+/// Deflate (one block, fixed Huffman codes) of picture rows: besides literals only matches against the pixel to the left
+/// (distance 3) and the pixel above (distance `stride`). A scope screen is flat areas, grid lines and a few traces, so
+/// that is most of what a full LZ77 finds, in one pass, with no hash table and little time on the scope's CPU.
+fn deflate_rows(raw: &[u8], stride: usize) -> Vec<u8> {
+    let (stride_code, stride_extra) = {
+        let c = DIST_BASE.iter().rposition(|&(b, _)| b as usize <= stride).unwrap_or(0);
+        (c, stride.saturating_sub(DIST_BASE[c].0 as usize) as u32)
+    };
+    let stride_ok = stride > 3 && stride <= 32768;
+    let run = |i: usize, d: usize| raw[i..].iter().zip(&raw[i - d..]).take(258).take_while(|(a, b)| a == b).count();
+    let mut o = BitOut { out: Vec::with_capacity(raw.len() / 8 + 64), acc: 0, n: 0 };
+    o.bits(1, 1); // BFINAL
+    o.bits(1, 2); // BTYPE 01 = fixed Huffman
+    let mut i = 0;
+    while i < raw.len() {
+        let left = if i >= 3 { run(i, 3) } else { 0 };
+        let above = if stride_ok && i >= stride { run(i, stride) } else { 0 };
+        if above > left && above >= 3 {
+            o.matched(above, stride_code, stride_extra);
+            i += above;
+        } else if left >= 3 {
+            o.matched(left, 2, 0);
+            i += left;
+        } else {
+            o.symbol(raw[i] as u32);
+            i += 1;
+        }
+    }
+    o.symbol(256);
+    o.finish()
+}
+
+/// PNG (8-bit RGB) of XRGB8888 pixels: filter 0 per row, zlib stream of one fixed-Huffman deflate block
+/// (`deflate_rows`), so a screen of flat colour and thin lines takes a few percent of its bitmap.
 pub fn png(w: u32, h: u32, px: &[u32]) -> Vec<u8> {
-    let mut raw = Vec::with_capacity((w as usize * 3 + 1) * h as usize);
+    let stride = w as usize * 3 + 1;
+    let mut raw = Vec::with_capacity(stride * h as usize);
     for row in px.chunks(w as usize).take(h as usize) {
         raw.push(0);
         for &p in row {
             raw.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
         }
     }
-    let mut z = Vec::with_capacity(raw.len() + raw.len() / 65535 * 5 + 16);
-    z.extend_from_slice(&[0x78, 0x01]); // deflate, 32 K window, no dictionary, (0x7801 % 31 == 0)
-    let mut blocks = raw.chunks(65535).peekable();
-    if blocks.peek().is_none() {
-        z.extend_from_slice(&[1, 0, 0, 0xff, 0xff]);
-    }
-    while let Some(b) = blocks.next() {
-        z.push(if blocks.peek().is_none() { 1 } else { 0 }); // BFINAL, BTYPE 00 = stored
-        let n = b.len() as u16;
-        z.extend_from_slice(&n.to_le_bytes());
-        z.extend_from_slice(&(!n).to_le_bytes());
-        z.extend_from_slice(b);
-    }
+    let mut z = vec![0x78, 0x01]; // deflate, 32 K window, no dictionary, (0x7801 % 31 == 0)
+    z.extend_from_slice(&deflate_rows(&raw, stride));
     z.extend_from_slice(&adler32(&raw).to_be_bytes());
     let mut out = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
     let mut ihdr = Vec::with_capacity(13);
@@ -1064,8 +1144,101 @@ mod tests {
         assert_eq!(adler32(&[]), 1);
     }
 
-    /// Parses the PNG structure: signature, chunk lengths and CRCs, IHDR, the zlib stream (stored blocks, Adler32) and
-    /// the pixels.
+    /// Reads a deflate stream bit by bit (RFC 1951 3.1.1): values LSB first, Huffman codes MSB first.
+    struct Bits<'a> {
+        d: &'a [u8],
+        p: usize,
+    }
+    impl Bits<'_> {
+        fn bit(&mut self) -> u32 {
+            let b = (self.d[self.p >> 3] >> (self.p & 7)) & 1;
+            self.p += 1;
+            b as u32
+        }
+        fn bits(&mut self, n: u32) -> u32 {
+            (0..n).fold(0, |v, i| v | self.bit() << i)
+        }
+    }
+
+    /// One symbol of the fixed Huffman code (RFC 1951 3.2.6): 7 bits 256..279, 8 bits 0..143 and 280..287, 9 bits 144..255.
+    fn fixed_symbol(b: &mut Bits) -> u32 {
+        let mut c = (0..7).fold(0, |c, _| c << 1 | b.bit());
+        if c <= 0b001_0111 {
+            return 256 + c;
+        }
+        c = c << 1 | b.bit();
+        if (0b0011_0000..=0b1011_1111).contains(&c) {
+            return c - 0b0011_0000;
+        }
+        if (0b1100_0000..=0b1100_0111).contains(&c) {
+            return 280 + c - 0b1100_0000;
+        }
+        c = c << 1 | b.bit();
+        144 + c - 0b1_1001_0000
+    }
+
+    /// Independent inflate for what the encoder may write (stored and fixed Huffman blocks, not dynamic ones); returns the
+    /// data and the number of bytes the stream took.
+    fn inflate(z: &[u8]) -> (Vec<u8>, usize) {
+        const LBASE: [u32; 29] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+        const LEXTRA: [u32; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+        const DBASE: [u32; 30] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+        const DEXTRA: [u32; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+        let mut b = Bits { d: z, p: 0 };
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            let last = b.bit();
+            match b.bits(2) {
+                0 => {
+                    b.p = (b.p + 7) & !7;
+                    let (n, nn) = (b.bits(16), b.bits(16));
+                    assert_eq!(n, !nn & 0xffff, "stored block length check");
+                    for _ in 0..n {
+                        out.push(b.bits(8) as u8);
+                    }
+                }
+                1 => loop {
+                    let s = fixed_symbol(&mut b);
+                    if s < 256 {
+                        out.push(s as u8);
+                    } else if s == 256 {
+                        break;
+                    } else {
+                        assert!(s <= 285, "length symbol {}", s);
+                        let i = (s - 257) as usize;
+                        let len = LBASE[i] + b.bits(LEXTRA[i]);
+                        let dc = (0..5).fold(0, |c, _| c << 1 | b.bit()) as usize;
+                        assert!(dc < 30, "distance code {}", dc);
+                        let dist = (DBASE[dc] + b.bits(DEXTRA[dc])) as usize;
+                        assert!(dist <= out.len(), "distance {} reaches before the start ({} bytes so far)", dist, out.len());
+                        for _ in 0..len {
+                            out.push(out[out.len() - dist]);
+                        }
+                    }
+                },
+                t => panic!("block type {} is not written by the encoder", t),
+            }
+            if last == 1 {
+                break;
+            }
+        }
+        (out, (b.p + 7) / 8)
+    }
+
+    #[test]
+    fn inflate_reference_streams() {
+        // Python zlib, Z_FIXED, raw deflate of b"hello hello hello hello": "hello " as literals, then one match (distance 6)
+        let z = [0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0xc8, 0x40, 0x27, 0x01];
+        let (out, used) = inflate(&z);
+        assert_eq!(out, b"hello hello hello hello");
+        assert_eq!(used, z.len());
+        // a stored block
+        let (out, used) = inflate(&[1, 3, 0, 0xfc, 0xff, b'a', b'b', b'c']);
+        assert_eq!((out.as_slice(), used), (&b"abc"[..], 8));
+    }
+
+    /// Parses the PNG structure: signature, chunk lengths and CRCs, IHDR, the zlib stream (inflated, Adler32) and the
+    /// pixels.
     fn decode(png: &[u8]) -> (u32, u32, Vec<u8>) {
         assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
         let mut i = 8;
@@ -1091,22 +1264,12 @@ mod tests {
         }
         assert_eq!(kinds, ["IHDR", "IDAT", "IEND"]);
         assert_eq!(i, png.len());
-        // zlib header, stored blocks, Adler32
+        // zlib header, deflate data, Adler32
         assert_eq!(((z[0] as u32) << 8 | z[1] as u32) % 31, 0);
         assert_eq!(z[0] & 0x0f, 8);
-        let mut raw = Vec::new();
-        let mut p = 2;
-        loop {
-            let hdr = z[p];
-            assert_eq!(hdr & 6, 0, "stored block");
-            let n = u16::from_le_bytes([z[p + 1], z[p + 2]]);
-            assert_eq!(!n, u16::from_le_bytes([z[p + 3], z[p + 4]]));
-            raw.extend_from_slice(&z[p + 5..p + 5 + n as usize]);
-            p += 5 + n as usize;
-            if hdr & 1 == 1 {
-                break;
-            }
-        }
+        assert_eq!(z[1] & 0x20, 0, "no preset dictionary");
+        let (raw, used) = inflate(&z[2..]);
+        let p = 2 + used;
         assert_eq!(u32::from_be_bytes(z[p..p + 4].try_into().unwrap()), adler32(&raw));
         assert_eq!(p + 4, z.len());
         // rows: filter 0 + RGB
@@ -1142,6 +1305,60 @@ mod tests {
         }
     }
 
+    /// A picture like the scope screen: black, a grid, filled boxes, a trace, some speckle.
+    fn screen_like(w: u32, h: u32) -> Vec<u32> {
+        let mut px = vec![0u32; (w * h) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let mut c = 0;
+                if x % 100 == 0 || y % 75 == 0 {
+                    c = rgb(60, 60, 60);
+                }
+                if (40..200).contains(&x) && (30..70).contains(&y) {
+                    c = rgb(20, 90, 160);
+                }
+                let trace = (h as f32 / 2.0 + (x as f32 / 20.0).sin() * h as f32 / 4.0) as u32;
+                if y == trace || y == trace + 1 {
+                    c = rgb(255, 220, 0);
+                }
+                if (x * 7 + y * 13) % 997 == 0 {
+                    c = rgb(200, 200, 200);
+                }
+                px[(y * w + x) as usize] = c;
+            }
+        }
+        px
+    }
+
+    fn assert_decodes_to(data: &[u8], w: u32, h: u32, px: &[u32]) {
+        let (dw, dh, pix) = decode(data);
+        assert_eq!((dw, dh), (w, h));
+        for (k, &p) in px.iter().enumerate() {
+            assert_eq!(&pix[k * 3..k * 3 + 3], &[(p >> 16) as u8, (p >> 8) as u8, p as u8], "pixel {}", k);
+        }
+    }
+
+    #[test]
+    fn png_of_a_screen_round_trips() {
+        // runs longer than the 258 a match can take, rows equal to the row above, matches across the end of a row
+        for (w, h) in [(1024u32, 600u32), (301, 97), (1, 1), (1, 300), (2, 3), (700, 1)] {
+            let px = screen_like(w, h);
+            assert_decodes_to(&png(w, h, &px), w, h, &px);
+        }
+        let flat = vec![rgb(1, 2, 3); 50 * 40];
+        assert_decodes_to(&png(50, 40, &flat), 50, 40, &flat);
+    }
+
+    #[test]
+    fn png_is_much_smaller_than_the_bitmap() {
+        let (w, h) = (1024u32, 600u32);
+        let raw = (w * 3 + 1) * h;
+        let black = png(w, h, &vec![0u32; (w * h) as usize]);
+        assert!(black.len() < raw as usize / 100, "black screen: {} bytes", black.len());
+        let screen = png(w, h, &screen_like(w, h));
+        assert!(screen.len() < raw as usize / 20, "screen-like picture: {} bytes of {}", screen.len(), raw);
+    }
+
     /// Cross-check with an independent decoder when the host has Python with Pillow (skipped otherwise).
     #[test]
     fn png_opens_in_pillow() {
@@ -1154,12 +1371,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("oos-ui-png-{}", std::process::id()));
         let path = dir.join("t.png");
         write(&path, &png(w, h, &px)).unwrap();
-        let script = "import sys\nfrom PIL import Image\nim = Image.open(sys.argv[1]); im.load()\nprint(im.size[0], im.size[1], im.mode, *im.getpixel((5, 7)))";
-        let out = std::process::Command::new("python3").arg("-c").arg(script).arg(&path).output().unwrap();
+        // a full screen with long runs and repeated rows, compared byte for byte with what Pillow decodes
+        let (sw, sh) = (1024u32, 600u32);
+        let screen = screen_like(sw, sh);
+        let big = dir.join("big.png");
+        write(&big, &png(sw, sh, &screen)).unwrap();
+        let rgb_bytes: Vec<u8> = screen.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8]).collect();
+        write(&dir.join("big.rgb"), &rgb_bytes).unwrap();
+        let script = "import sys\nfrom PIL import Image\nim = Image.open(sys.argv[1]); im.load()\nprint(im.size[0], im.size[1], im.mode, *im.getpixel((5, 7)))\nbig = Image.open(sys.argv[2]); big.load()\nprint(big.tobytes() == open(sys.argv[3], 'rb').read())";
+        let out = std::process::Command::new("python3").arg("-c").arg(script).arg(&path).arg(&big).arg(dir.join("big.rgb")).output().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(out.status.success(), "Pillow: {}", String::from_utf8_lossy(&out.stderr));
         let s = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(s.trim(), format!("64 40 RGB {} {} 128", 5 * 4, 7 * 6));
+        assert_eq!(s.trim(), format!("64 40 RGB {} {} 128\nTrue", 5 * 4, 7 * 6));
     }
 
     #[test]

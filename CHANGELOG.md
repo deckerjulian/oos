@@ -8,6 +8,11 @@ Fixes:
   warning "Calibration data" stood there on every start, also after a self-calibration, which never writes that file.
 - A self-calibration with `/oos` not mounted fails with that reason. It said "saved" and wrote into the RAM of the
   initramfs, and the result was gone at the next start.
+- A cold start no longer stops at "FPGA image" when the BOOT command comes before the FPGA's boot monitor can hear it
+  (the factory image needs about 11 s after power-on; seven cold starts in a row on a DHO924S). When register 0x4000 shows the
+  wrong image, OOS unloads the PCIe drivers, sends BOOT again and checks again, up to twice, and shows a warning on the
+  start-up screen. Run on a DHO924S in four cold starts where the first BOOT was lost: the first repeat loaded the main image each time
+  and the start finished (the second repeat is tested on the host only). See docs/protocols/fpga-boot.md.
 
 Build:
 
@@ -22,6 +27,20 @@ Install:
 
 - `tools/sdcard-clone.sh fit` makes a copy of a card image for a smaller second card: the ext4 of `userdata`, the last
   partition, checked and shrunk in Docker. `write` points to it when the card is too small.
+
+Changes:
+
+- Web remote: the live picture is the compressed PNG (about 90 KB) instead of the 1.8 MB BMP, which made it slow on a
+  10 Mbit/s link. A "Live picture format" choice (PNG, BMP) on the page switches back; the browser remembers it.
+
+Inside:
+
+- PNG screenshots are compressed (one fixed-Huffman deflate block, matches against the pixel to the left and the one
+  above, no new crate). On the 62 stable screens of the UI gallery a picture goes from 1.84 MB to 63 to 173 KB (median
+  89 KB), pixel for pixel the same; encoding takes about 3 ms on a PC (not measured on the unit yet). `/screen.png`
+  answers go out from the sender thread like `/screen.bmp` (`SEND_INLINE` is 48 KB now).
+- `Bar1` unmaps BAR1 when it is dropped. The mapping kept `/dev/xdma0_bypass` in use, and `rmmod xdma` failed while one
+  was left.
 
 ## 0.1.3
 
@@ -46,14 +65,6 @@ Fixes:
 Tested:
 
 - The USB stick install ran on a DHO924S: dry run, first install over the stock `recovery`, and the run again.
-
-Fixes:
-
-- A cold start no longer stops at "FPGA image" when the BOOT command comes before the FPGA's boot monitor can hear it
-  (the factory image needs about 11 s after power-on; seven cold starts in a row on a DHO924S). When register 0x4000 shows the
-  wrong image, OOS unloads the PCIe drivers, sends BOOT again and checks again, up to twice, and shows a warning on the
-  start-up screen. Run on a DHO924S in four cold starts where the first BOOT was lost: the first repeat loaded the main image each time
-  and the start finished (the second repeat is tested on the host only). See docs/protocols/fpga-boot.md.
 
 Inside:
 

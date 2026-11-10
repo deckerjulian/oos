@@ -595,8 +595,9 @@ gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
 
 **Web remote.** Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the
 window, so it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer;
-records above 2 million points have to be saved on the scope or read over SCPI. Each picture is 1.8 MB, so over WLAN it runs
-slower: Pause stops the pictures, and a tab in the background stops them too. The Update link leads to the update page.
+records above 2 million points have to be saved on the scope or read over SCPI. The live picture is a PNG of about 90 KB; "Live picture
+format" can switch it to the uncompressed 1.8 MB BMP (the choice is kept in the browser). Pause stops the pictures, and a
+tab in the background stops them too. The Update link leads to the update page.
 
 **Files.** Setups are kept on OOS's own persistent area `/oos` and survive a power cycle. Screenshots and CSV files go to
 a USB stick in the front port (FAT32, exFAT or ext4), into the folder `OOS`, and can be pulled whenever nothing is being

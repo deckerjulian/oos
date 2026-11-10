@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Web remote (HTTP, port 8080): live screen in the browser, clicks act as touch taps, buttons for keys and knobs.
-//!   GET /             page            GET /screen.bmp   current screen (24-bit BMP)
-//!   GET /screen.png   the screen, for saving     GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
+//!   GET /             page            GET /screen.png   current screen (PNG, 60 to 175 KB; the page's live view and saving)
+//!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
+//!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
 //!   GET /cmd?c=...    one key, knob or touch command (cmd.rs syntax: "key runstop", "knob vscale +1", "tap 100 200");
 //!                     other commands are refused (`cmd::remote_ok`)
 //!   GET /lxi/identification   LXI identification XML (LXI Device Specification 2011, 10.2)
@@ -28,8 +29,9 @@ const MAX_PENDING: usize = 8;
 const IDLE_S: u64 = 10;
 const DEADLINE_S: u64 = 120;
 /// Answers above this size are sent from a thread of their own: over WLAN a picture takes long enough to stall the
-/// frame loop, and with it the scope's own screen and keys.
-const SEND_INLINE: usize = 256 << 10;
+/// frame loop, and with it the scope's own screen and keys. A screen as PNG is 60 to 175 KB (a BMP 1.8 MB), so it
+/// goes the same way; the page and the small answers fit into the socket's buffer and go at once.
+const SEND_INLINE: usize = 48 << 10;
 /// At most this many at once; more are answered 503, and the page tries again.
 const MAX_SENDERS: usize = 2;
 const SEND_TIMEOUT_S: u64 = 30;
@@ -78,7 +80,7 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 <style>img{display:block;width:100%;height:auto;border:1px solid #3a424d;border-radius:6px;cursor:crosshair;touch-action:none;user-select:none;-webkit-user-select:none}
 .g{display:flex;flex-wrap:wrap;gap:12px 22px;margin-top:12px}.k span{display:block;font-size:12px;color:#9aa4af;margin-bottom:3px}.k div{display:flex;flex-wrap:wrap;gap:4px}</style></head>
 <body><header><b>OOS remote</b><span id="st">connecting ...</span><nav><a href="/update">Update</a></nav></header>
-<img id="s" width="1024" height="600" alt="scope screen" src="/screen.bmp">
+<img id="s" width="1024" height="600" alt="scope screen" src="/screen.png">
 <div class="g"><div class="k"><span>Acquisition</span><div>
 <button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Auto</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
 <div class="k"><span>Channels</span><div>
@@ -95,10 +97,14 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 <div class="k"><span>Multi 2</span><div><button onclick="c('knob multi2 -1')">-</button><button onclick="c('knob multi2 +1')">+</button></div></div></div>
 <div class="g"><div class="k"><span>Save to this computer</span><div>
 <button onclick="dl('/screen.png','png')">Screenshot (PNG)</button><button onclick="dl('/wave.csv','csv')">Waveform (CSV)</button><button onclick="dl('/wave.bin','bin')">Waveform (binary)</button><button onclick="dl('/la.csv','la.csv')">LA lines (CSV)</button></div></div>
-<div class="k"><span>Picture</span><div><button id="p" onclick="pause()">Pause</button></div></div></div>
+<div class="k"><span>Picture</span><div><button id="p" onclick="pause()">Pause</button></div></div>
+<div class="k"><span>Live picture format</span><div><button id="fp" onclick="setfmt('png')" title="compressed, about 90 KB per picture">PNG</button><button id="fb" onclick="setfmt('bmp')" title="uncompressed, 1.8 MB per picture">BMP</button></div></div></div>
 <script>
-const s=document.getElementById('s'),st=document.getElementById('st'),pb=document.getElementById('p');
-let paused=false,running=false,n=0,msg='',until=0;
+const s=document.getElementById('s'),st=document.getElementById('st'),pb=document.getElementById('p'),fp=document.getElementById('fp'),fb=document.getElementById('fb');
+let paused=false,running=false,n=0,msg='',until=0,fmt='png';
+try{if(localStorage.getItem('fmt')=='bmp')fmt='bmp';}catch(e){}
+function setfmt(f){fmt=f;try{localStorage.setItem('fmt',f);}catch(e){}fp.className=f=='png'?'on':'';fb.className=f=='bmp'?'on':'';}
+setfmt(fmt);
 function say(t){msg=t;until=Date.now()+5000;show();}
 function show(bad){st.textContent=Date.now()<until?msg:(paused?'picture paused':bad?'no connection':'connected, '+n+' pictures/s');st.className=bad?'bad':'';}
 function c(x){fetch('/cmd?c='+encodeURIComponent(x)).catch(()=>say('command not sent'));}
@@ -114,10 +120,10 @@ function up(e){if(!d0)return;e.preventDefault();const p=pt(e);if(Math.abs(p[0]-d
 s.addEventListener('mousedown',down);s.addEventListener('mouseup',up);s.addEventListener('touchstart',down,{passive:false});s.addEventListener('touchend',up,{passive:false});
 s.ondragstart=()=>false;
 let count=0;setInterval(()=>{n=count;count=0;if(!paused&&!document.hidden)show(st.className=='bad');},1000);
-// no pictures while paused or in a background tab: each one is 1.8 MB, which the scope has to send
+// no pictures while paused or in a background tab: each one is 90 KB as PNG, 1.8 MB as BMP, which the scope has to send
 function go(){if(running||paused||document.hidden)return;running=true;const i=new Image();
 i.onload=()=>{s.src=i.src;count++;running=false;show();setTimeout(go,150);};
-i.onerror=()=>{running=false;show(true);setTimeout(go,1000);};i.src='/screen.bmp?t='+Date.now();}
+i.onerror=()=>{running=false;show(true);setTimeout(go,1000);};i.src='/screen.'+fmt+'?t='+Date.now();}
 document.addEventListener('visibilitychange',go);go();
 </script></body></html>"#;
 
@@ -485,6 +491,82 @@ mod tests {
         request(h, ui, cv, scpi, format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).into_bytes())
     }
 
+    /// Runs the page's script under Node with a small stand-in for the browser (skipped without `node`) and returns the
+    /// picture addresses it asked for: first before and then after `setfmt('bmp')`, and what it kept in localStorage.
+    fn run_page_script(script: &str, preset: &str, storage_throws: bool) -> Option<String> {
+        if !std::process::Command::new("node").arg("--version").output().map_or(false, |o| o.status.success()) {
+            eprintln!("node not found: page script check skipped");
+            return None;
+        }
+        const HARNESS: &str = r#"
+const fs = require('fs'), vm = require('vm');
+const log = [], store = {};
+if (process.env.PRESET) store.fmt = process.env.PRESET;
+const els = {};
+const el = id => els[id] || (els[id] = { id, textContent: '', className: '', addEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1024, height: 600 }) });
+global.localStorage = process.env.THROWS
+  ? { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } }
+  : { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; } };
+global.document = { getElementById: el, hidden: false, addEventListener() {}, createElement: () => ({}), body: { appendChild() {} } };
+global.Image = class { set src(v) { this._s = v; log.push(v); setTimeout(() => this.onload && this.onload(), 0); } get src() { return this._s; } };
+global.fetch = () => Promise.resolve({ ok: true });
+global.setInterval = () => 0;
+vm.runInThisContext(fs.readFileSync(process.argv[2], 'utf8'));
+setTimeout(() => {
+  const first = log.slice(), cls0 = [el('fp').className, el('fb').className];
+  let err = '';
+  try { setfmt('bmp'); } catch (e) { err = String(e); }
+  const mark = log.length;
+  setTimeout(() => {
+    console.log(JSON.stringify({ first, cls0, cls1: [el('fp').className, el('fb').className], after: log.slice(mark), store, err }));
+    process.exit(0);
+  }, 500);
+}, 100);
+"#;
+        let dir = std::env::temp_dir().join(format!("oos-ui-page-{}-{}", std::process::id(), preset.len() + storage_throws as usize));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("page.js"), script).unwrap();
+        std::fs::write(dir.join("run.js"), HARNESS).unwrap();
+        let mut cmd = std::process::Command::new("node");
+        cmd.arg(dir.join("run.js")).arg(dir.join("page.js")).env("PRESET", preset);
+        if storage_throws {
+            cmd.env("THROWS", "1");
+        }
+        let out = cmd.output().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(out.status.success(), "node: {}", String::from_utf8_lossy(&out.stderr));
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    #[test]
+    fn page_lets_the_viewer_pick_png_or_bmp() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let page = get(&mut h, &mut ui, &cv, &mut scpi, "/");
+        let script = page.split("<script>").nth(1).and_then(|s| s.split("</script>").next()).expect("script in the page");
+        // the picture the browser loads before the script runs is the small one, too
+        assert!(page.contains(r#"id="s" width="1024" height="600" alt="scope screen" src="/screen.png""#), "first picture");
+        assert!(page.contains("setfmt('png')") && page.contains("setfmt('bmp')"), "buttons for both formats");
+        let Some(r) = run_page_script(script, "", false) else { return };
+        // default: PNG, then BMP after the switch, and the choice is kept
+        assert!(r.contains(r#""first":["/screen.png?t="#), "{}", r);
+        assert!(!r.contains(r#""first":["/screen.bmp"#), "{}", r);
+        let after: Vec<&str> = r.split(r#""after":["#).nth(1).unwrap().split(']').next().unwrap().split(',').collect();
+        assert!(!after.is_empty() && after.iter().all(|a| a.contains("/screen.bmp?t=")), "{}", r);
+        assert!(r.contains(r#""store":{"fmt":"bmp"}"#), "{}", r);
+        // the button of the format in use is lit
+        assert!(r.contains(r#""cls0":["on",""],"cls1":["","on"]"#), "{}", r);
+        // a kept choice comes back at the next visit
+        let r = run_page_script(script, "bmp", false).unwrap();
+        assert!(r.contains(r#""first":["/screen.bmp?t="#), "{}", r);
+        // storage blocked (private window): still PNG, and switching does not fail
+        let r = run_page_script(script, "", true).unwrap();
+        assert!(r.contains(r#""first":["/screen.png?t="#) && r.contains(r#""err":"""#), "{}", r);
+        assert!(r.split(r#""after":["#).nth(1).unwrap().contains("/screen.bmp?t="), "{}", r);
+    }
+
     #[test]
     fn pages_and_downloads() {
         let mut h = Http::open(0);
@@ -512,7 +594,9 @@ mod tests {
         use std::sync::atomic::Ordering::SeqCst;
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        ui.render(&mut cv);
         let mut scpi = crate::scpi::Scpi::open(0);
         for path in ["/screen.bmp", "/screen.png"] {
             let addr = h.l.as_ref().unwrap().local_addr().unwrap();
