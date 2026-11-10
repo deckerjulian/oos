@@ -401,9 +401,15 @@ check the file's time.
 
 #### Building on Linux
 
-Steps 3 to 5 on Linux, arm64 or x86-64, here with Debian or Ubuntu. On x86-64 the kernel and `oos-hw` are
-cross-compiled with Ubuntu's `gcc-aarch64-linux-gnu` inside the build container; you install no cross compiler
-yourself. Run everything as yourself, not with `sudo`.
+Steps 3 to 5 on Linux, here with Debian or Ubuntu, on an ordinary x86-64 PC as well as on arm64. On x86-64:
+
+- the kernel and `oos-hw` are cross-compiled with Ubuntu's `gcc-aarch64-linux-gnu` inside the build container; you
+  install no cross compiler yourself,
+- the Rust programs are cross-compiled by rustup's `aarch64-unknown-linux-musl` target and `rust-lld`,
+- busybox, wpa_supplicant and e2fsck come from arm64 containers, which run through QEMU (the `binfmt` line below).
+  `docker run --rm --platform linux/arm64 alpine:3.22 uname -m` prints `aarch64` when that works.
+
+Run everything as yourself, not with `sudo`.
 
 ```sh
 sudo apt install docker.io git python3 curl
@@ -422,7 +428,9 @@ boot/build-dev-image.sh
 ```
 
 The scripts say what is missing before they start: Docker not reachable, no rustup or no target, no arm64 containers.
-A finished build leaves the same files as on macOS. To install them on a second card from Linux, see steps 1, 2 and 6,
+On x86-64 the first build takes longer than on arm64, mostly for wpa_supplicant and e2fsck under QEMU; they are built
+once. A finished build leaves the same files as on macOS. The workflow `.github/workflows/image.yml` builds on arm64
+and on x86-64 for every release and compares the kernel, the DTB and the files inside the image of the two. To install them on a second card from Linux, see steps 1, 2 and 6,
 with `/dev/sdX` for the card.
 
 ### 6. Install OOS on the second card
