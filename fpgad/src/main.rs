@@ -533,7 +533,8 @@ fn check_cal(cal: &oos_hal::dho::boot::CalFiles, dir: &str, say: &dyn Fn(&str, &
     if afe::Cal::load_from(dir).is_err() {
         missing.push("vertical");
     }
-    if oos_hal::dho::afg::Cal::load(dir).is_none() {
+    // only units with a generator have cal_afg.hex (the DHO800 and the DHO900 without "S" never had one)
+    if oos_hal::model::platform().caps.has_gen() && oos_hal::dho::afg::Cal::load(dir).is_none() {
         missing.push("cal_afg.hex");
     }
     if missing.is_empty() {

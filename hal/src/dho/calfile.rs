@@ -91,6 +91,10 @@ pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<
     if canon.starts_with("/rigol") || dir.contains("..") || name.contains('/') {
         return Err(refuse("calibration files are never written under /rigol"));
     }
+    // without the data partition, /oos is a directory of the initramfs: the file would be gone at the next start
+    if cfg!(target_os = "linux") && canon.starts_with("/oos") && !std::fs::read_to_string("/proc/mounts").is_ok_and(|m| oos_mounted(&m)) {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "/oos is not mounted (see /tmp/oos-data.log): the result would be lost at the next start"));
+    }
     std::fs::create_dir_all(dir)?;
     let path = format!("{}/{}", dir.trim_end_matches('/'), name);
     let tmp = format!("{}.new", path);
@@ -108,6 +112,11 @@ pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<
     Ok(())
 }
 
+/// The data partition is mounted at /oos, by the text of /proc/mounts.
+pub fn oos_mounted(mounts: &str) -> bool {
+    mounts.lines().any(|l| l.split_whitespace().nth(1) == Some("/oos"))
+}
+
 /// The file `name`: OOS's own copy if it is valid, else /rigol/data, else /rigol/data/default (stock order with the
 /// OOS directory in front). Returns the bytes and the directory used.
 pub fn load_first(name: &str, dirs: &[&str]) -> Option<(Vec<u8>, String)> {
@@ -121,6 +130,12 @@ pub fn load_first(name: &str, dirs: &[&str]) -> Option<(Vec<u8>, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_partition_mounted() {
+        assert!(oos_mounted("rootfs / rootfs rw 0 0\n/dev/mmcblk0p1 /oos ext4 rw,noatime 0 0\n"));
+        assert!(!oos_mounted("rootfs / rootfs rw 0 0\n/dev/sda1 /oos/usb vfat rw 0 0\n/dev/mmcblk0p9 /rigol ext4 ro 0 0\n"));
+    }
 
     fn unit_dir() -> String {
         std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full").into())
