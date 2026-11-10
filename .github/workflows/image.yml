@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
+    # by hand only works from the default branch: on any branch it runs when this file changes (tags ignore paths)
+    branches: ['**']
+    paths: ['.github/workflows/image.yml']
 jobs:
   image:
     strategy:
