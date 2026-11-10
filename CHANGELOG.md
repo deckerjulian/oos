@@ -1,5 +1,28 @@
 # Changes
 
+## Unreleased
+
+Fixes:
+
+- The start-up check no longer asks for `cal_afg.hex` on models without a generator (DHO800, DHO900 without "S"). The
+  warning "Calibration data" stood there on every start, also after a self-calibration, which never writes that file.
+- A self-calibration with `/oos` not mounted fails with that reason. It said "saved" and wrote into the RAM of the
+  initramfs, and the result was gone at the next start.
+
+Build:
+
+- The image builds on Linux, arm64 and x86-64, not only on macOS: the kernel container brings the cross compiler on
+  x86-64, `oos-hw` is built with it (it was built by the host's gcc, under a Docker image name that no longer existed),
+  the initramfs container is always arm64, and the scripts no longer need `shasum`. `boot/build-dev-image.sh` refuses
+  `sudo` (rustup's cargo is not on root's PATH) and says what is missing: rustup, the Rust target, arm64 containers.
+- `.github/workflows/image.yml` builds the whole image on an arm64 and an x86-64 Linux runner and compares what the two
+  put into it (`tools/image-manifest.py`: kernel, DTB, every file of the initramfs).
+
+Install:
+
+- `tools/sdcard-clone.sh fit` makes a copy of a card image for a smaller second card: the ext4 of `userdata`, the last
+  partition, checked and shrunk in Docker. `write` points to it when the card is too small.
+
 ## 0.1.3
 
 From 0.1.1 or 0.1.2: install the package through the web page or `oos-update install`, the scope restarts by itself (kexec);
