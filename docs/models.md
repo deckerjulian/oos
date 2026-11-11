@@ -57,6 +57,26 @@ OOS takes "DHO914S" as DHO914 plus generator.
 The bandwidth code is the rated (licence) bandwidth. OOS does not limit to it. "Full" opens the AFE filter on every
 model. Whether the DHO800 front end gets as far as the DHO900's is not yet measured.
 
+### 2.1 Hardware variants
+
+The first install from the stock system (`install-usb.md` 4) takes a model without being told only when OOS has run on
+a model of the same hardware. Models count as the same hardware when they differ in nothing but the bandwidth code:
+the same series, channel count, generator and edition. The bandwidth code is what the stock software makes of the same
+front end (it sets the AFE filter from it), and the bandwidth is sold as a licence: a DHO804 has been seen that names
+itself a DHO824 in `vendor.bin`. Kept apart, because the hardware is not known to be the same: 2 and 4 channels (two
+front ends fewer, an EXT input instead), a DHO900 with and without generator (the output stage), the EDU editions (LA
+port not confirmed), DHO800 and DHO900 (LA port, front panel). The table is `VARIANTS` in `hal/src/dho/target.rs`.
+
+| Hardware variant | Models | OOS has run on |
+|---|---|---|
+| DHO800, 4 channels | DHO804, DHO814, DHO824 | DHO804 (user report, several releases) |
+| DHO800, 2 channels | DHO802, DHO812 | - |
+| DHO900 with generator | DHO914S, DHO924S | DHO924S (the developer's unit) |
+| DHO900 without generator | DHO914, DHO924 | - |
+| DHO900 EDU | DHO914-EDU, DHO924-EDU | - |
+
+A report of OOS starting on a model of a variant marked "-" makes the whole variant verified.
+
 ## 3. Limits (the same for every model)
 
 | Limit | Value | Reference |
@@ -170,7 +190,7 @@ segment cap (`hal::dho::hz::MEM_BURSTS`).
 
 Still open for models other than the DHO924S:
 - EXT trigger input of the 2-channel models: not implemented.
-- DHO800: front panel, LEDs and display are not yet verified on hardware.
+- DHO800: a DHO804 runs OOS (user report); front panel, LEDs and display have not been checked in detail.
 - Logic analyser in the UI: not implemented on any model (`hal::dho::la` exists).
 
 ## 6. Related findings (other Rigol series)

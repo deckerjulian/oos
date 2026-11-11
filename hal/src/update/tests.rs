@@ -649,6 +649,59 @@ fn only_verified_models_by_default() {
     }
 }
 
+/// Verified per hardware variant: a model OOS ran on, and the others of its variant (a DHO804 with the identity of
+/// a DHO824, as seen in a user report). The refusal names the model, the verified models, the risk and the way on.
+#[test]
+fn models_are_verified_per_hardware_variant() {
+    let check = |m: &str, any: bool| first::check_model(Some(&crate::model::encode_vendor(&[(5, m), (7, "DHO8A000000001")])), any);
+    assert_eq!(check("DHO924S", false).unwrap(), "DHO924S");
+    assert_eq!(check("DHO804", false).unwrap(), "DHO804");
+    for (m, ran) in [("DHO824", "DHO804"), ("DHO814", "DHO804"), ("DHO914S", "DHO924S")] {
+        let ok = check(m, false).unwrap();
+        assert!(ok.starts_with(m) && ok.contains(ran) && ok.contains("same hardware"), "{}", ok);
+    }
+    assert_eq!(first::verified_models(), ["DHO804", "DHO814", "DHO824", "DHO914S", "DHO924S"]);
+    for m in ["DHO802", "DHO812", "DHO914", "DHO924", "DHO914-EDU", "DHO924-EDU"] {
+        let e = check(m, false).unwrap_err();
+        assert!(e.contains(&format!("OOS has not run on a {} yet", m)), "{}", e);
+        assert!(e.contains("Nothing written") && e.contains("DHO804, DHO814, DHO824, DHO914S, DHO924S"), "{}", e);
+        assert!(e.contains(first::ANY_MODEL_FILE) && e.contains(first::ANY_MODEL_FLAG) && e.contains("open the scope"), "{}", e);
+        let ok = check(m, true).unwrap();
+        assert!(ok.starts_with(m) && ok.contains("accepted by request"), "{}", ok);
+    }
+    // unreadable: the same help; another family is refused also with the file
+    let e = first::check_model(Some(b"not a vendor file"), false).unwrap_err();
+    assert!(e.contains("vendor.bin") && e.contains(first::ANY_MODEL_FILE), "{}", e);
+    assert!(check("MHO984", true).unwrap_err().contains("unknown model MHO984"));
+}
+
+/// The variants of the board family: every model of the table in one at most, and the models of one variant differ
+/// in nothing but the bandwidth code (docs/models.md 2.1).
+#[test]
+fn hardware_variants_differ_only_in_bandwidth() {
+    let t = &crate::target::ACTIVE;
+    let mut seen = Vec::new();
+    for v in t.variants {
+        assert!(!v.models.is_empty(), "{}", v.name);
+        for (r, src) in v.ran_on {
+            assert!(v.models.contains(r) && !src.is_empty(), "{}: {}", v.name, r);
+        }
+        let c0 = crate::model::lookup(v.models[0]).unwrap_or_else(|| panic!("{} not in the table", v.models[0]));
+        for m in v.models.iter() {
+            assert!(!seen.contains(m), "{} in two variants", m);
+            seen.push(*m);
+            let c = crate::model::lookup(m).unwrap();
+            assert_eq!((c.series, c.channels, c.la, c.generators, c.ext_trig, c.edu), (c0.series, c0.channels, c0.la, c0.generators, c0.ext_trig, c0.edu), "{} vs {}", m, v.models[0]);
+            assert_eq!(t.variant(&m.to_ascii_lowercase()).map(|x| x.name), Some(v.name));
+        }
+    }
+    // every real model has a variant, verified or not
+    for m in ["DHO802", "DHO804", "DHO812", "DHO814", "DHO824", "DHO914", "DHO914S", "DHO914-EDU", "DHO924", "DHO924S", "DHO924-EDU"] {
+        assert!(t.variant(m).is_some(), "{}", m);
+    }
+    assert!(t.variant("DHO900").is_none());
+}
+
 #[test]
 fn arming_by_hand_needs_a_valid_recovery() {
     let f = Fake::new("arm-hand", Some(1));

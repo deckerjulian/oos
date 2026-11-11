@@ -19,6 +19,8 @@
 //!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]
 //!                                          first install from the running stock system, rescue set in DIR; again on
 //!                                          a card with a valid OOS image it only selects OOS (--reinstall: writes it)
+//!                                          --any-model: also on a model whose hardware variant OOS has not run on
+//!                                          yet (hal target `variants`; docs/install-usb.md 4)
 //!   oos-update confirm                     end the trial by hand (the watcher normally does it); only once the image
 //!                                          on trial runs
 //!   oos-update arm                         select OOS for the next power-on: only a valid image in recovery, never

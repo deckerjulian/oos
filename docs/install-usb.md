@@ -21,7 +21,7 @@ Compared with the card route (`README.md`, Installation):
 That last row is the price. The stock loader has no start counter: when `boot` selects OOS, every power-on starts the OOS
 kernel until the first program of the image has run and put the stock selection back. A corrupt image is no problem, the
 loader refuses it and starts the stock copy. A kernel that accepts the image and hangs on the way to the first script is.
-This is why only models OOS has run on are accepted (section 4).
+This is why only models with the hardware of a model OOS has run on are accepted (section 4).
 
 ## 1. Steps
 
@@ -85,8 +85,34 @@ The stock `recovery` is replaced. Whatever starts into it no longer works; every
 
 ## 4. Models
 
-Only models OOS has run on: `first::VERIFIED_MODELS`, today the DHO924S. On another model the update stops with a message in the
-log. An empty file `oos-any-model.txt` on the stick overrides this. Do that only if you are ready to open the scope.
+The install goes ahead on its own only on a model whose hardware OOS has run on: the models of a hardware variant
+with a report ([models.md](models.md) 2.1, `VARIANTS` in `hal/src/dho/target.rs`). Models of one variant differ only
+in their licensed bandwidth.
+
+| Verified | Not verified yet |
+|---|---|
+| DHO804, DHO814, DHO824 (a DHO804 runs OOS) | DHO802, DHO812 |
+| DHO914S, DHO924S (a DHO924S runs OOS) | DHO914, DHO924, DHO914-EDU, DHO924-EDU |
+
+On another model the update stops before it writes anything; the screen reports a failure, and `oos-install.log` on
+the stick says:
+
+```
+oos-update: OOS has not run on a DHO802 yet (hardware variant "DHO800, 2 channels": no unit of it has run OOS so far). Nothing written.
+Verified (OOS has run on a model with the same hardware): DHO804, DHO814, DHO824, DHO914S, DHO924S.
+...
+exit code 1
+```
+
+**To install anyway**, put an empty file named `oos-any-model.txt` into the top folder of the stick, next to the
+`.GEL` file, and run the update again (over ADB: `oos-update gel-install ... --any-model`). A dry run first
+(`oos-dry-run.txt`) is wise. The risk: if the OOS kernel hangs on that model before its first program runs, every
+power-on starts it again, and the only way back is to open the scope and put the card into a computer (the table at
+the top). Everything else is the same as on a verified model: a corrupt image is refused by the loader, and a start
+of OOS that gets as far as its first program puts the stock selection back. Only do it if you are ready to open the
+scope. Please report how it went (an issue or the forum thread), so the model can be listed as verified.
+
+A model the model table does not know (another board family) is refused also with the file.
 
 ## 5. Going back
 
