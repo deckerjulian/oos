@@ -21,6 +21,7 @@ pub const CHANNELS: usize = 4;
 
 pub mod bandwidth;
 pub mod bode;
+pub mod dcc_yard;
 pub mod decode;
 pub mod decode_ext;
 pub mod decode_ext2;
