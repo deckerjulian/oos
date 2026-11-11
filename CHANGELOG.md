@@ -1,6 +1,10 @@
 # Changes
 
-## Unreleased
+## 0.1.6
+
+From 0.1.1 to 0.1.5: install the package through the web page or `oos-update install`, the scope restarts by itself
+(kexec); then switch it off at the mains, wait 30 seconds and switch it on. The kernel changes too (a patch for the
+Ethernet PHY).
 
 New:
 
