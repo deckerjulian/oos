@@ -1,0 +1,34 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: net: phy: motorcomm: negotiate again after the YT8512 set-up
+
+yt8512_config_init() switches the PHY's auto sleep off, but with the
+RMII reference clock coming from the PHY (clock_in_out = "input") the
+soft reset at the end of yt8512_clk_init() is skipped. Nothing starts a
+new negotiation then: the link the PHY made with its power-on settings,
+after the MAC driver's reset pulse at probe, stays. A unit was reported
+to come up at 10 Mbit/s after every cold start and at 100 Mbit/s after
+every replug.
+
+Restart the autonegotiation at the end of the set-up, as a replug does.
+A soft reset is left out on purpose: the MAC runs on the PHY's clock.
+
+---
+--- a/drivers/net/phy/motorcomm.c
++++ b/drivers/net/phy/motorcomm.c
+@@ -1719,6 +1719,16 @@
+ 	ret = ytphy_write_ext(phydev, YT8512_EXTREG_SLEEP_CONTROL1, val);
+ 	if (ret < 0)
+ 		return ret;
++
++	/* With the reference clock coming from the PHY (clock_in_out =
++	 * "input") yt8512_clk_init() leaves out the soft reset, so the link
++	 * the PHY negotiated with its power-on settings, auto sleep still on,
++	 * stays. A partner may have settled on 10 Mbit/s by then. Negotiate
++	 * again with the settings above, as unplugging the cable would. No
++	 * soft reset here: the MAC runs on the PHY's clock.
++	 */
++	if (phydev->autoneg == AUTONEG_ENABLE)
++		ret = genphy_restart_aneg(phydev);
+ 
+ 	return ret;
+ }
