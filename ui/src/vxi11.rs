@@ -8,9 +8,7 @@
 //! The commands go through the SCPI interpreter (`Scpi::exec`); everything runs non-blocking from the main loop.
 //! Unauthenticated like SCPI and the web remote: bench LAN only.
 
-use std::io::{ErrorKind, Read};
 use std::net::{TcpListener, TcpStream, UdpSocket};
-use std::time::Duration;
 
 pub const PMAP_PROG: u32 = 100_000;
 pub const CORE_PROG: u32 = 0x0607AF;
@@ -260,7 +258,6 @@ impl Server {
             if let Some(l) = l {
                 while let Ok((s, _)) = l.accept() {
                     let _ = s.set_nonblocking(false);
-                    let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                     let _ = s.set_nodelay(true);
                     if self.conns.len() < MAX_CONNS {
                         self.conns.push(Conn { s, buf: Vec::new(), core });
@@ -273,13 +270,13 @@ impl Server {
             let mut closed = false;
             let mut tmp = [0u8; 8192];
             loop {
-                match self.conns[i].s.read(&mut tmp) {
+                match crate::net::read_now(&self.conns[i].s, &mut tmp) {
                     Ok(0) => {
                         closed = true;
                         break;
                     }
                     Ok(n) => self.conns[i].buf.extend_from_slice(&tmp[..n]),
-                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => break,
+                    Err(e) if crate::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
                         break;

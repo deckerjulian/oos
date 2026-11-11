@@ -13,8 +13,10 @@
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+mod clock;
 mod cmd;
 mod decode;
+mod ethlink;
 mod fastdraw;
 mod font;
 mod gfx;
@@ -22,8 +24,12 @@ mod http;
 mod board;
 mod math;
 mod model;
+mod net;
+mod protocols;
 mod scpi;
+mod sntp;
 mod store;
+mod sysconf;
 mod trig;
 mod ui;
 mod vxi11;
@@ -284,6 +290,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
             Err(e) => eprintln!("oos-ui: {}: {}", SETUP_FILE, e),
         }
     }
+    // settings of the scope itself: NTP, time zone, Ethernet (/oos/system.conf)
+    ui.load_system(sysconf::default_path());
     let mut setup_last = store::setup_text(&ui.m);
     let mut setup_t = Instant::now();
     ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease").map(|s| format!("Linux {}", s.trim())).unwrap_or_default();
@@ -295,6 +303,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut led_mask = u32::MAX;
     let mut led_t = Instant::now();
     let mut net_t: Option<Instant> = None;
+    let eth_t0 = Instant::now();
+    let mut eth_t: Option<Instant> = None;
     input::install_signal_handlers();
     let mut web = http::Http::open(arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080));
     let mut scpi = scpi::Scpi::open(arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555));
@@ -344,6 +354,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         let t1 = Instant::now();
         let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
         ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi_wave;
+        web.before_render(&mut cv, !ui.start_up_active());
         ui.render(&mut cv);
         let t2 = Instant::now();
         disp.present(&cv);
@@ -423,6 +434,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
             ui.eth_link = std::fs::read_to_string("/sys/class/net/eth0/carrier").is_ok_and(|c| c.trim() == "1");
             net_t = Some(Instant::now());
         }
+        if eth_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
+            eth_t = Some(Instant::now());
+            eth_watch(&mut ui, eth_t0.elapsed().as_secs_f64());
+        }
         fps_n += 1;
         if fps_t.elapsed().as_secs_f64() >= 1.0 {
             ui.fps = fps_n as f32 / fps_t.elapsed().as_secs_f32();
@@ -435,6 +450,32 @@ fn device_main(mut ui: Ui, args: &[String]) {
         h.close();
     }
     disp.restore();
+}
+
+/// Once a second: a link at 10 Mbit/s gets one more autonegotiation (System > Network > 10 Mbit retry, ethlink.rs).
+#[cfg(target_os = "linux")]
+fn eth_watch(ui: &mut Ui, now: f64) {
+    let speed = ethlink::speed();
+    match ui.eth.step(now, ethlink::carrier(), speed, ui.sys.eth_retry_10m) {
+        Some(ethlink::Act::Restart) => {
+            eprintln!(
+                "oos-ui: {} up at 10 Mbit/s {}, restarting the autonegotiation ({} of {}; {})",
+                ethlink::IFACE,
+                ethlink::duplex(),
+                ui.eth.tries,
+                ethlink::MAX_TRIES,
+                ethlink::mii_regs()
+            );
+            if let Err(e) = ethlink::restart() {
+                eprintln!("oos-ui: {}: autonegotiation restart failed: {}", ethlink::IFACE, e);
+            }
+        }
+        Some(ethlink::Act::Result(s)) => {
+            let s = s.map_or("no speed".to_string(), |s| format!("{} Mbit/s", s));
+            eprintln!("oos-ui: {} after the restart: {} {} ({})", ethlink::IFACE, s, ethlink::duplex(), ethlink::mii_regs());
+        }
+        None => {}
+    }
 }
 
 /// The HDMI workspace: a settings line on top, below it the waveform area of the panel (plot and measurement rows,
@@ -450,7 +491,8 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     let head = 48.max((hc.h - hc.w * sh / sw) / 2);
     let fit = gfx::Fit::new(sw, sh, hc.w, hc.h - head);
     let stride = hc.w as usize;
-    let f = &ui.fonts;
+    // the monitor is large: its header keeps the normal text size
+    let f = font::Fonts::get(0);
     hc.text_in(&f.xl, gfx::Rect::new(0, 0, hc.w, head), 1, &ui.hdmi_header(), gfx::rgb(0xe6, 0xed, 0xf3));
     // `fit` centres in the rest: start at the band so the plot sits right under the settings line
     let top = (head as usize).saturating_sub(fit.y0) * stride;

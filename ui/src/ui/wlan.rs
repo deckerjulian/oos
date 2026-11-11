@@ -329,8 +329,9 @@ impl Ui {
         match it {
             Item::NetEth => {
                 let link = file("/sys/class/net/eth0/carrier") == "1";
+                let speed = self.eth.speed.map_or("link up".to_string(), |s| format!("{} Mbit/s", s));
                 match (addr("eth0"), link) {
-                    (Some(a), true) => format!("{} \u{b7} link up", a),
+                    (Some(a), true) => format!("{} \u{b7} {}", a, speed),
                     (Some(a), false) => format!("{} \u{b7} no cable", a),
                     (None, true) => "link up, no address yet".into(),
                     (None, false) => "no cable".into(),
@@ -410,6 +411,10 @@ pub(super) enum OskFor {
     RefLabel(usize),
     /// the formula of a math channel
     MathExpr(usize),
+    /// System > Date and time (time.rs): another NTP server, a POSIX time zone, the clock by hand
+    NtpServer,
+    Tz,
+    DateTime,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -497,6 +502,14 @@ impl Osk {
         o
     }
 
+    /// The keyboard for `what`, with the text so far.
+    pub(super) fn with_text(what: OskFor, now: &str) -> Osk {
+        let mut o = Osk::new(what);
+        o.text = now.chars().take(o.max_len()).collect();
+        o.cursor = o.text.chars().count();
+        o
+    }
+
     pub(super) fn new(what: OskFor) -> Osk {
         let show = !matches!(what, OskFor::Pass(_));
         Osk { what, text: String::new(), layer: Layer::Lower, show, focus: 0, cursor: 0 }
@@ -508,6 +521,9 @@ impl Osk {
             OskFor::Pass(_) => wlan::PASS_LEN.1,
             OskFor::Label(_) | OskFor::RefLabel(_) => LABEL_MAX,
             OskFor::MathExpr(_) => oos_dsp::expr::EXPR_MAX,
+            OskFor::NtpServer => crate::sysconf::SERVER_MAX,
+            OskFor::Tz => crate::clock::TZ_MAX,
+            OskFor::DateTime => 19,
         }
     }
 
@@ -621,6 +637,12 @@ impl Ui {
     pub(super) fn osk_done(&mut self) {
         let Some(o) = self.wlan.osk.as_ref() else { return };
         match o.what.clone() {
+            w @ (OskFor::NtpServer | OskFor::Tz | OskFor::DateTime) => {
+                let t = o.text.clone();
+                if self.time_osk_done(&w, &t) {
+                    self.wlan.osk = None;
+                }
+            }
             OskFor::Label(c) => {
                 self.m.ch_label[c] = o.text.trim().to_string();
                 self.wlan.osk = None;
@@ -678,7 +700,7 @@ impl Ui {
         let Some(o) = &self.wlan.osk else { return };
         // a tap into the entry puts the insertion point at the nearest gap between two characters
         if FIELD.contains(x, y) {
-            let f = &self.fonts.lb;
+            let f = &self.fonts().lb;
             let (a, b) = o.window(f);
             let s: Vec<char> = o.shown().chars().collect();
             let mut gx = FIELD.x + FIELD_PAD;
@@ -722,13 +744,16 @@ impl Ui {
 
     pub(super) fn draw_osk(&self, cv: &mut Canvas) {
         let Some(o) = &self.wlan.osk else { return };
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.fill(Rect::new(0, 0, W, H), DLG_BG);
         let title = match &o.what {
             OskFor::Name => "Name of the network".to_string(),
             OskFor::Label(c) => format!("Name of CH{} (empty: CH{})", c + 1, c + 1),
             OskFor::RefLabel(i) => format!("Name of R{} (empty: R{})", i + 1, i + 1),
             OskFor::MathExpr(k) => format!("Formula of M{}: CH1-4, t, pi, sin cos tan sqrt abs ln log exp min max", k + 1),
+            OskFor::NtpServer => "NTP server: a name or an address".to_string(),
+            OskFor::Tz => "Time zone, POSIX: CET-1CEST,M3.5.0,M10.5.0/3 or <+04>-4 (4 hours east)".to_string(),
+            OskFor::DateTime => "Local date and time: 2026-11-11 14:30".to_string(),
             OskFor::Pass(s) if self.wlan.nets.iter().any(|n| n.ssid == *s) => format!("Password for {}", wlan::name(s)),
             OskFor::Pass(s) => format!("Password for {} (empty: open network)", wlan::name(s)),
         };
@@ -881,7 +906,7 @@ mod tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.wlan.osk = Some(Osk::for_label(0, "abcd"));
         assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 4);
-        let f = &ui.fonts.lb;
+        let f = &ui.fonts().lb;
         let x = FIELD.x + FIELD_PAD + f.width("ab") + 1;
         ui.tap(x, FIELD.y + FIELD.h / 2);
         assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 2);
@@ -894,7 +919,7 @@ mod tests {
     #[test]
     fn a_long_entry_keeps_the_insertion_point_in_view() {
         let ui = Ui::new(Source::Demo { t: 0.0 });
-        let f = &ui.fonts.lb;
+        let f = &ui.fonts().lb;
         let mut o = Osk::new(OskFor::Pass(b"Labor".to_vec()));
         o.show = true;
         o.text = (0..63).map(|i| (b'a' + (i % 26) as u8) as char).collect();
@@ -997,7 +1022,7 @@ mod tests {
         // the longest line fits its row
         let d = ui.dlg_layout().unwrap();
         let row = d.rows.iter().find(|r| r.it == Item::NetWlan).unwrap();
-        assert!(ui.fonts.m.width(&ui.net_value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.net_value(Item::NetWlan));
+        assert!(ui.fonts().m.width(&ui.net_value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.net_value(Item::NetWlan));
         ui.tap(950, 20);
         assert!(!ui.menu_open);
     }

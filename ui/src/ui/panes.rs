@@ -56,6 +56,10 @@ pub struct PaneState {
     /// rows the Events pane is high enough for, and when the list last needed them
     event_rows: usize,
     event_seen: f64,
+    /// the Bus view: the views of the protocol modules, refreshed like the events
+    pub views: Vec<(String, crate::protocols::View)>,
+    /// per decoder: what its module keeps between records, and the view of the record last looked at
+    pub view_slots: [super::busview::ViewSlot; DECODERS],
 }
 
 /// Where the spectrum's parts go.
@@ -129,7 +133,7 @@ impl Ui {
 
     /// Title, grid and axis labels.
     pub(super) fn draw_spec_frame(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let g = b.plot;
         let src = self.m.spec_src;
         let x = cv.text(&f.sb, b.title.x, b.title.y + 14, &self.ch_name(src), CH_COLORS[src]);
@@ -140,7 +144,7 @@ impl Ui {
         cv.text(&f.s, x + 10, b.title.y + 14, &t, LABEL);
         chart_grid(cv, g, HDIV as i32, VDIV as i32);
         // every division while the labels have room
-        let every = if g.h as f32 / VDIV < 14.0 { 2 } else { 1 };
+        let every = if g.h as f32 / VDIV < (f.s.size + 2) as f32 { 2 } else { 1 };
         for j in (0..=VDIV as i32).step_by(every) {
             let s = format!("{:.0}", self.m.spec_ref - j as f32 * DB_PER_DIV);
             let y = (g.y + j * (g.h - 1) / VDIV as i32 + 4).clamp(g.y + 9, g.y + g.h);
@@ -162,7 +166,7 @@ impl Ui {
 
     /// Numbered tags on the trace, the same numbers as in the list. Tags that would collide move up.
     pub(super) fn draw_spec_marks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, top: f32) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let g = b.plot;
         let span = sp.df * (sp.dbv.len().max(2) - 1) as f64;
         if !(span > 0.0) {
@@ -215,9 +219,9 @@ impl Ui {
     /// The list: sort button, one row per line with a bar for its height over the noise, facts in what is left. The rows
     /// share the whole height, so a short list is a large one, not a gap.
     pub(super) fn draw_peaks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, pane: bool) {
-        let f = &self.fonts;
+        let f = self.fonts();
         btn(cv, b.sort, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, b.sort, 1, self.sort_name(), TEXT);
+        cv.text_in(super::fit_font(&[&f.mb, &f.sb, &crate::font::Fonts::get(0).mb], b.sort.w - 8, self.sort_name()), b.sort, 1, self.sort_name(), TEXT);
         let r = b.list;
         let n = self.peaks_shown(b) as i32;
         let facts = self.spec_facts(sp);
@@ -320,6 +324,8 @@ impl Ui {
             }
             tables::PANE_EVENTS if self.pn.event_rows > 0 => self.pn.event_rows as i32 * 24,
             tables::PANE_EVENTS => HINT_H,
+            tables::PANE_BUS if self.pn.views.is_empty() => HINT_H,
+            tables::PANE_BUS => self.bus_view_h(),
             tables::PANE_TREND if n == 0 => HINT_H,
             tables::PANE_SPECTRUM if !self.m.ch[self.m.spec_src].on => HINT_H,
             _ => i32::MAX / 2,
@@ -328,10 +334,14 @@ impl Ui {
 
     /// Per frame: the slow content of the pane, a few times a second.
     pub(super) fn pane_tick(&mut self) {
-        if self.m.pane != tables::PANE_EVENTS || (self.now - self.pn.events_t).abs() < 0.25 {
+        if !matches!(self.m.pane, tables::PANE_EVENTS | tables::PANE_BUS) || (self.now - self.pn.events_t).abs() < 0.25 {
             return;
         }
         self.pn.events_t = self.now;
+        if self.m.pane == tables::PANE_BUS {
+            self.pn.views = self.bus_views();
+            return;
+        }
         self.pn.events = self.decode_events();
         let n = self.pn.events.len();
         let want = n.div_ceil(if n <= 4 { 1 } else { 2 });
@@ -387,7 +397,7 @@ impl Ui {
     }
 
     fn draw_results_pane(&self, cv: &mut Canvas, r: Rect) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let rows = self.result_rows();
         let (t, side) = self.results_box(r);
         if rows.is_empty() {
@@ -402,14 +412,14 @@ impl Ui {
     }
 
     fn draw_result_table(&self, cv: &mut Canvas, r: Rect, t: Rect, rows: &[ResultRow]) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let (fit, pitch) = Self::results_fit(r, rows.len());
         let top = self.pn.top.min(rows.len() - fit);
         let band = format!("Measurements  \u{b7}  {}", rows.len());
-        cv.text(&f.sb, t.x + 12, t.y + 16, &band, TEXT);
+        let bx = cv.text(&f.sb, t.x + 12, t.y + 16, &band, TEXT);
         if rows.len() > fit {
             let s = format!("rows {} to {}", top + 1, top + fit);
-            cv.text(&f.s, t.x + 150, t.y + 16, &s, DIM);
+            cv.text(&f.s, (t.x + 150).max(bx + 14), t.y + 16, &s, DIM);
         }
         let x = result_cols(t.w - 16);
         let x0 = t.x + 12;
@@ -423,9 +433,11 @@ impl Ui {
         // the largest font every cell of a column fits in
         let col_w = (2..7).map(|k| x[k + 1] - x[k] - 6).min().unwrap_or(40);
         let shown = &rows[top..top + fit];
-        let fonts: &[&Font] = if pitch >= 40 { &[&f.lb, &f.mb, &f.sb] } else if pitch >= 24 { &[&f.mb, &f.sb] } else { &[&f.sb] };
+        // the normal size last: the larger text sizes fall back to it where a column is too narrow
+        let n = crate::font::Fonts::get(0);
+        let fonts: &[&Font] = if pitch >= 40 { &[&f.lb, &f.mb, &f.sb, &n.sb] } else if pitch >= 24 { &[&f.mb, &f.sb, &n.sb] } else { &[&f.sb, &n.sb] };
         let vf = fit_font(fonts, col_w, shown.iter().map(|w| w.cells[2].as_str()));
-        let stats: &[&Font] = if pitch >= 24 { &[&f.m, &f.s] } else { &[&f.s] };
+        let stats: &[&Font] = if pitch >= 24 { &[&f.m, &f.s, &n.s] } else { &[&f.s, &n.s] };
         let plain = fit_font(stats, col_w, shown.iter().flat_map(|w| w.cells[3..7].iter().map(|s| s.as_str())));
         for (i, w) in shown.iter().enumerate() {
             let y = t.y + BAND_H + i as i32 * pitch;
@@ -437,12 +449,14 @@ impl Ui {
             cv.fill(Rect::new(t.x + 2, y + 1, 3, pitch - 2), col);
             let ty = y + (pitch + vf.size * 3 / 4) / 2;
             cv.text(&f.sb, x0 + x[0], ty, &w.cells[0], col);
-            let name_font = if plain.width(&w.cells[1]) <= x[2] - x[1] - 6 { plain } else { &f.s };
+            // the name in the figures' font, or the smallest of the text size it fits in
+            let room = x[2] - x[1] - 6;
+            let name_font = if plain.width(&w.cells[1]) <= room && plain.size >= f.s.size { plain } else { fit_font(&[&f.s, &n.s], room, std::iter::once(w.cells[1].as_str())) };
             cv.text(name_font, x0 + x[1], ty, &w.cells[1], LABEL);
             for k in 2..8 {
                 let (font, c) = match k {
                     2 => (vf, col),
-                    7 => (&f.s, DIM),
+                    7 => (fit_font(&[&f.s, &n.s], x[8] - x[7] - 8, std::iter::once(w.cells[7].as_str())), DIM),
                     _ => (plain, LABEL),
                 };
                 cv.text(font, x0 + x[k + 1] - 8 - font.width(&w.cells[k]), ty, &w.cells[k], c);
@@ -466,7 +480,7 @@ impl Ui {
 
     /// Cursor read-out and peak list beside the table; their rows share the height.
     fn draw_results_side(&self, cv: &mut Canvas, s: Rect) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let cur = self.cursor_values();
         let peaks = self.azr.spec.as_ref().map(|_| &self.azr.peaks);
         let cur_rows = if cur.is_empty() { 0 } else { 1 + cur.len().div_ceil(2) as i32 };
@@ -683,7 +697,7 @@ impl Ui {
     }
 
     fn draw_trends(&self, cv: &mut Canvas, r: Rect) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let rows = self.meas_rows();
         let charts = self.trend_charts();
         if rows.is_empty() || charts.is_empty() {
@@ -698,7 +712,7 @@ impl Ui {
 
     /// One chart: title and plot on the left, a card with the value on the right.
     fn draw_chart(&self, cv: &mut Canvas, c: Rect, row: &tools::MeasRow, t: Option<&Trend>) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let col = CH_COLORS[row.ch];
         let x = cv.text(&f.sb, c.x + 8, c.y + 15, &format!("CH{}", row.ch + 1), col);
         cv.text(&f.sb, x + 8, c.y + 15, &row.name, TEXT);
@@ -752,7 +766,7 @@ impl Ui {
 
     /// The value large, under it largest and smallest of the history; the rows share the card.
     fn draw_trend_card(&self, cv: &mut Canvas, r: Rect, row: &tools::MeasRow, t: Option<&Trend>) {
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.round(r, 5, BAR, 255);
         // the close button may be over the top right corner of the card
         cv.text(&f.s, r.x + 8, r.y + 18, "Now", DIM);
@@ -799,6 +813,7 @@ impl Ui {
                     tables::PANE_RESULTS => self.draw_results_pane(cv, r),
                     tables::PANE_EVENTS => self.draw_pane_events(cv, r),
                     tables::PANE_TREND => self.draw_trends(cv, r),
+                    tables::PANE_BUS => self.draw_pane_bus(cv, r),
                     _ => {}
                 }
                 cv.no_clip();
@@ -809,7 +824,7 @@ impl Ui {
             if self.meas_rows().len() > fit {
                 for (b, t) in Self::results_scroll_btns(r).iter().zip(["Up", "Dn"]) {
                     btn(cv, *b, BTN, BTN_BORDER);
-                    cv.text_in(&self.fonts.mb, *b, 1, t, TEXT);
+                    cv.text_in(&self.fonts().mb, *b, 1, t, TEXT);
                 }
             }
         }

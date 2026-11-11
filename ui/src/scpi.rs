@@ -18,7 +18,7 @@ use crate::gfx::Canvas;
 use crate::board::{board, Board};
 use crate::model::*;
 use crate::ui::Ui;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
@@ -145,9 +145,8 @@ impl Scpi {
         if let Some(l) = &self.l {
             while let Ok((s, _)) = l.accept() {
                 let _ = s.set_nonblocking(false);
-                let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                 let _ = s.set_nodelay(true);
-                // each connection costs a read per frame
+                // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_now`)
                 if self.clients.len() < MAX_CLIENTS {
                     self.clients.push(Client { s, buf: Vec::new() });
                 }
@@ -158,13 +157,13 @@ impl Scpi {
             let mut tmp = [0u8; 4096];
             let mut closed = false;
             loop {
-                match self.clients[i].s.read(&mut tmp) {
+                match crate::net::read_now(&self.clients[i].s, &mut tmp) {
                     Ok(0) => {
                         closed = true;
                         break;
                     }
                     Ok(n) => self.clients[i].buf.extend_from_slice(&tmp[..n]),
-                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => break,
+                    Err(e) if crate::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
                         break;

@@ -30,7 +30,8 @@ if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
 fi
 # 1) the board starts what takes long while the rest of rcS runs (oos-board, one per board: rootfs/board/)
 /bin/oos-board early $ST > /tmp/oos-cold.log 2>&1
-# 2) network: DHCP, else the address the scope used under stock; in the background (no cable: up to 15 s)
+# 2) network: DHCP, else the address the scope used under stock; in the background (no cable: up to 15 s). oos-ui
+#    gives a link at 10 Mbit/s one more autonegotiation and sets the clock by NTP if asked to (docs/network.md)
 ip link set lo up
 # a fixed, locally administered MAC from the SD card's CID (the kernel picks a random one per boot, which filled the
 # bench DHCP pool on 2026-11-03)

@@ -219,7 +219,6 @@ pub enum Proto {
     Parallel,
     CanFd,
     FlexRay,
-    Dmx512,
     ModbusRtu,
     ModbusAscii,
     OneWire,
@@ -229,23 +228,49 @@ pub enum Proto {
     Jtag,
     Qspi,
     I3c,
-    Spdif,
-    UsbPd,
     Arinc429,
     Sent,
     /// USB 1.x / 2.0 low / full speed
     Usb,
+    /// a protocol module (`protocols::MODULES[i]`)
+    Module(u8),
 }
 
-pub const PROTOS: [Proto; 25] = [
+/// The protocols wired by hand; the modules come after them in [`PROTOS`].
+pub const BUILTIN_PROTOS: [Proto; 22] = [
     Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
-    Proto::FlexRay, Proto::Dmx512, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
-    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Spdif, Proto::UsbPd, Proto::Arinc429, Proto::Sent, Proto::Usb,
+    Proto::FlexRay, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
+    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Arinc429, Proto::Sent, Proto::Usb,
 ];
 
+/// Every protocol of the Decode menu: the built-in ones, then the modules.
+pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
+    std::sync::LazyLock::new(|| BUILTIN_PROTOS.iter().copied().chain((0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8))).collect());
+
 impl Proto {
+    /// The module behind a module protocol.
+    pub fn module(self) -> Option<&'static dyn crate::protocols::Protocol> {
+        match self {
+            Proto::Module(i) => Some(crate::protocols::get(i)),
+            _ => None,
+        }
+    }
+
+    /// Name in saved setups: the variant name, or the module's key.
+    pub fn key(self) -> String {
+        match self.module() {
+            Some(p) => p.key().to_string(),
+            None => format!("{:?}", self),
+        }
+    }
+
+    pub fn from_key(k: &str) -> Option<Proto> {
+        PROTOS.iter().copied().find(|p| p.key() == k)
+    }
+
     pub fn name(self) -> &'static str {
         match self {
+            Proto::Module(i) => crate::protocols::get(i).name(),
             Proto::Uart => "UART",
             Proto::I2c => "I2C",
             Proto::Spi => "SPI",
@@ -256,7 +281,6 @@ impl Proto {
             Proto::Parallel => "Parallel",
             Proto::CanFd => "CAN-FD",
             Proto::FlexRay => "FlexRay",
-            Proto::Dmx512 => "DMX512",
             Proto::ModbusRtu => "Modbus RTU",
             Proto::ModbusAscii => "Modbus ASCII",
             Proto::OneWire => "1-Wire",
@@ -266,8 +290,6 @@ impl Proto {
             Proto::Jtag => "JTAG",
             Proto::Qspi => "Quad-SPI",
             Proto::I3c => "I3C",
-            Proto::Spdif => "S/PDIF",
-            Proto::UsbPd => "USB PD",
             Proto::Arinc429 => "ARINC 429",
             Proto::Sent => "SENT",
             Proto::Usb => "USB",
@@ -276,6 +298,7 @@ impl Proto {
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
         match self {
+            Proto::Module(i) => crate::protocols::get(i).roles(),
             Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some("SDA"), Some("SCL"), None, None],
             Proto::Spi => [Some("MOSI"), Some("Clock"), Some("CS"), None],
             Proto::I2s => [Some("SD"), Some("SCK"), Some("WS"), None],
@@ -283,7 +306,6 @@ impl Proto {
             Proto::Swd => [Some("SWDIO"), Some("SWCLK"), None, None],
             Proto::Jtag => [Some("TMS"), Some("TCK"), Some("TDI"), Some("TDO")],
             Proto::Qspi => [Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")],
-            Proto::UsbPd => [Some("CC"), None, None, None],
             // D- optional: D+ alone decodes without SE0
             Proto::Usb => [Some("D+"), None, Some("D-"), None],
             _ =>[Some("Source"), None, None, None],
@@ -291,7 +313,10 @@ impl Proto {
     }
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok(self) -> bool {
-        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Dmx512 | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429)
+        if let Some(p) = self.module() {
+            return p.diff_ok();
+        }
+        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429)
     }
 }
 
@@ -452,6 +477,33 @@ impl Quick {
     }
 }
 
+/// Size of the text on the screen (Display > Text size): Normal is the original look, Large and Larger use fonts 2 and
+/// 4 px bigger with the rows, cards and dialogs grown to match. A preference: Default keeps it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TextSize {
+    #[default]
+    Normal,
+    Large,
+    Larger,
+}
+
+pub const TEXT_SIZES: [TextSize; 3] = [TextSize::Normal, TextSize::Large, TextSize::Larger];
+
+impl TextSize {
+    pub fn name(self) -> &'static str {
+        match self {
+            TextSize::Normal => "Normal",
+            TextSize::Large => "Large",
+            TextSize::Larger => "Larger",
+        }
+    }
+
+    /// 0, 1, 2: the font set and the layout metrics.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CursorMode {
     Off,
@@ -529,6 +581,7 @@ pub struct DecCfg {
     pub mode: u8,
     pub bits: u32,
     pub parity: oos_dsp::decode::Parity,
+    pub opt: [u8; crate::protocols::OPTS],
 }
 
 /// Decoders at once.
@@ -763,6 +816,8 @@ pub struct Model {
     /// data bits: UART 5..9, SPI 4..32
     pub dec_bits: u32,
     pub dec_parity: oos_dsp::decode::Parity,
+    /// option settings of a protocol module (`protocols::Opt`), indices into its choices
+    pub dec_opt: [u8; crate::protocols::OPTS],
     pub zoom: bool,
     /// slow time bases on the hardware: roll from 50 ms/div (on), scan from 200 ms/div (off), like stock "Auto Roll"
     pub auto_roll: bool,
@@ -850,6 +905,8 @@ pub struct Model {
     pub mask_stop: bool,
     /// action of the QUICK key
     pub quick: Quick,
+    /// size of the text on the screen
+    pub text_size: TextSize,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
     pub la: crate::ui::la::LaSet,
 }
@@ -1043,6 +1100,7 @@ impl Default for Model {
             dec_mode: 0,
             dec_bits: 8,
             dec_parity: oos_dsp::decode::Parity::None,
+            dec_opt: [0; crate::protocols::OPTS],
             zoom: false,
             auto_roll: true,
             zscale: 0,
@@ -1113,6 +1171,7 @@ impl Default for Model {
             mask_y: 0.4,
             mask_stop: false,
             quick: Quick::Screenshot,
+            text_size: TextSize::Normal,
             la: Default::default(),
         };
         m.ch[0].offset = -1.5;
@@ -1315,9 +1374,17 @@ impl Model {
             // USB auto: low-speed packets)
             TrigType::Bus if self.dec_proto == Proto::Arinc429 && self.dec_arate == 0 => 200.0 / crate::decode::ARINC_RATES[1],
             TrigType::Bus if self.dec_proto == Proto::Usb && self.dec_uspeed == 0 => 200.0 / oos_dsp::decode_ext3::USB_LOW,
-            TrigType::Bus => 200.0 * self.bus_bit(),
+            TrigType::Bus => self.dec_proto.module().and_then(|p| p.frame_span(&self.dec_opts())).unwrap_or(200.0 * self.bus_bit()),
             TrigType::Edge | TrigType::Pattern => 0.0,
             _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
+        }
+    }
+
+    /// The option settings of the decoder's protocol module, in range (zeros for a built-in protocol).
+    pub fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
+        match self.dec_proto {
+            Proto::Module(i) => crate::protocols::opt_fit(i, self.dec_opt),
+            _ => [0; crate::protocols::OPTS],
         }
     }
 
@@ -1332,10 +1399,8 @@ impl Model {
             Proto::I2s => 0.6e-6,
             Proto::Mil1553 => 1e-6,
             Proto::FlexRay => 0.1e-6,
-            Proto::Dmx512 => 4e-6,
             Proto::OneWire => 15e-6,
-            Proto::Spdif => 0.15e-6,
-            Proto::UsbPd => 3.33e-6,
+            Proto::Module(i) => crate::protocols::get(i).bit_time(&self.dec_opts()),
             // auto: high speed (the finer sampling)
             Proto::Arinc429 => {
                 let r = crate::decode::ARINC_RATES[self.dec_arate];
@@ -1387,7 +1452,7 @@ impl Model {
 
     /// The settings of the decoder the menu edits.
     pub fn dec_cfg(&self) -> DecCfg {
-        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone() }
+        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone(), opt: self.dec_opt }
     }
 
     fn dec_load(&mut self, c: &DecCfg) {
@@ -1413,6 +1478,7 @@ impl Model {
         self.dec_mode = c.mode.clone();
         self.dec_bits = c.bits.clone();
         self.dec_parity = c.parity.clone();
+        self.dec_opt = c.opt;
     }
 
     /// Settings of decoder `k`.

@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
     let Some(d) = ui.dlg_layout() else { return };
-    let f = &ui.fonts;
+    let f = ui.fonts();
     let mut bad = |what: String| {
         out.insert(format!("{}: {}", ctx, what));
     };
@@ -55,7 +55,8 @@ fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
                 }
             }
             Ctl::Text => {
-                if f.m.width(&ui.value(row.it)) > c.w {
+                let v = ui.value(row.it);
+                if ui.text_row_font(c.w, &v).width(&v) > c.w {
                     bad(format!("{} text too long", name));
                 }
             }
@@ -68,9 +69,9 @@ fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
                 if t.is_empty() {
                     bad(format!("{} has no text", name));
                 }
-                let room = c.w - if matches!(row.it, Item::Open(_)) { 40 } else { 8 };
-                if f.mb.width(&t) > room {
-                    bad(format!("{} text '{}' {} > {}", name, t, f.mb.width(&t), room));
+                let (font, r, fits) = ui.btn_text(c, matches!(row.it, Item::Open(_)), &t);
+                if !fits {
+                    bad(format!("{} text '{}' {} > {}", name, t, font.width(&t), r.w - 8));
                 }
             }
         }
@@ -99,18 +100,32 @@ fn walk(make: &dyn Fn() -> Ui, ctx: &str, out: &mut BTreeSet<String>) {
     }
 }
 
+/// Every menu at every text size.
 #[test]
 fn every_menu_fits() {
     let mut out = BTreeSet::new();
+    for ts in TEXT_SIZES {
+        menus_fit_at(ts, &mut out);
+    }
+    let list: Vec<&String> = out.iter().collect();
+    for l in &list {
+        println!("{}", l);
+    }
+    assert!(list.is_empty(), "{} layout problems", list.len());
+}
+
+fn menus_fit_at(ts: TextSize, all: &mut BTreeSet<String>) {
+    let mut out = BTreeSet::new();
     let open = |m: MenuId, set: &dyn Fn(&mut Ui)| {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.text_size = ts;
         set(&mut u);
         u.relayout();
         u.open_menu(m);
         u
     };
     use MenuId::*;
-    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network] {
+    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Time] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }
@@ -120,12 +135,23 @@ fn every_menu_fits() {
         u.m.meas2 = vec![(0, 0, 1)];
     };
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
+    // the clock page in its longest states: a failure after a sync, a zone of its own, a long server name
+    let ntp_failed = |u: &mut Ui| {
+        u.sys.ntp = true;
+        u.sys.ntp_server = "a-rather-long-ntp-server-name.example.org".into();
+        u.sys.tz = "<+0545>-5:45<+0645>,M3.5.0/2:30:30,M10.5.0/3".into();
+        u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: 0.5, stratum: 1 }));
+        u.ntp_report(Err("Address family not supported (os error 97)".into()));
+    };
+    walk(&|| open(Time, &ntp_failed), "Time failed", &mut out);
+    walk(&|| open(Time, &|u| { u.sys.ntp = true; u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: -12.25, stratum: 1 })) }), "Time synced", &mut out);
+    walk(&|| open(Network, &|u| { u.eth_link = true; u.eth.speed = Some(100); u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())] }), "Network 100M", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
     for t in TRIG_TYPES {
         walk(&|| open(Trigger, &|u| u.set_trig_type(t)), &format!("Trigger {}", t.name()), &mut out);
         walk(&|| open(Trigger, &|u| { u.m.la.on = true; u.set_trig_type(t) }), &format!("Trigger {} LA", t.name()), &mut out);
     }
-    for p in PROTOS {
+    for p in PROTOS.iter().copied() {
         walk(&|| open(Decode, &|u| u.set_dec_proto(p)), &format!("Decode {}", p.name()), &mut out);
         walk(&|| open(Decode, &|u| { u.m.la.on = true; u.m.dec_la_in = true; u.set_dec_proto(p) }), &format!("Decode {} LA", p.name()), &mut out);
     }
@@ -134,11 +160,7 @@ fn every_menu_fits() {
             walk(&|| open(Trigger, &|u| { u.set_dec_proto(p); u.set_trig_type(t) }), &format!("Trigger {} {}", t.name(), p.name()), &mut out);
         }
     }
-    let list: Vec<&String> = out.iter().collect();
-    for l in &list {
-        println!("{}", l);
-    }
-    assert!(list.is_empty(), "{} layout problems", list.len());
+    all.extend(out.into_iter().map(|l| format!("{}: {}", ts.name(), l)));
 }
 
 #[test]
@@ -223,6 +245,96 @@ fn bottom_row_fits_in_every_mix() {
         // a channel that is on keeps room for its text
         for k in 0..NCH {
             assert!(!u.m.ch[k].on || c.ch[k].w >= 90, "mix {:b}: CH{} {}", bits, k + 1, c.ch[k].w);
+        }
+    }
+}
+
+/// The main screen at every text size: the top bar keeps its boxes and buttons apart, the text stands inside the bars,
+/// boxes and rows, the measurement rows fit between the plot and the cards, a card text fits wherever it fits at the
+/// normal size, and the menus stay between the top bar and the cards.
+#[test]
+fn every_text_size_keeps_the_screen_in_order() {
+    let cap = |f: &Font| f.size * 72 / 100;
+    let normal = crate::font::Fonts::get(0);
+    for ts in TEXT_SIZES {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.text_size = ts;
+        let f = u.fonts();
+        // top bar, with and without the stick boxes
+        for (usb, wlan) in [(false, false), (true, false), (false, true), (true, true)] {
+            (u.usb, u.wlan_stick) = (usb, wlan);
+            let pill = u.run_pill();
+            assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
+            let boxes: Vec<Rect> = [Some(u.net_box()), wlan.then(|| u.wlan_box()), usb.then(|| u.usb_box())].into_iter().flatten().collect();
+            for (i, b) in boxes.iter().enumerate() {
+                assert!(b.y >= 0 && b.y + b.h <= TOP.h && b.x + b.w <= W - 6, "{:?}: {:?}", ts, b);
+                assert!(!boxes[i + 1..].iter().any(|o| overlaps(*o, *b)), "{:?}: {:?}", ts, b);
+            }
+            for (_, l, r) in u.top_buttons() {
+                assert!(r.x > pill.x + pill.w && r.x + r.w <= u.top_right(), "{:?}: {} {:?}", ts, l, r);
+                assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
+            }
+        }
+        (u.usb, u.wlan_stick) = (false, false);
+        // the two lines of the network box: room for an address, the first line's descent above the second's capitals
+        let n = u.net_box();
+        assert!(20 + f.sb.width("255.255.255.255") <= n.w && 20 + f.sb.width("not connected") <= n.w, "{:?}", ts);
+        assert!(n.y + 5 + cap(&f.s) + f.s.descent <= n.y + n.h - 4 - cap(&f.sb), "{:?}: {:?}", ts, n);
+        // a strip row holds its text
+        let bh = u.lay().strip_row - 2;
+        let base = (bh + cap(&f.s)) / 2;
+        assert!(base - cap(&f.sb) >= 0 && base + f.s.descent <= bh, "{:?}: strip row", ts);
+        // everything on: four channels with six measurements each, cursors, DVM
+        for c in 0..NCH {
+            u.m.ch[c].on = true;
+        }
+        u.m.meas = (0..NCH).flat_map(|c| ALL_MEAS.iter().take(6).map(move |&k| (k, c))).collect();
+        u.m.cursor = CursorMode::Time;
+        u.m.dvm_on = true;
+        for _ in 0..3 {
+            u.step(0.04);
+        }
+        u.relayout();
+        assert!(u.grid.h >= 160, "{:?}: {:?}", ts, u.grid);
+        assert!(u.grid.y + u.grid.h + u.strip_rows() * u.lay().strip_row <= BOTTOM.y, "{:?}: {:?}", ts, u.grid);
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        // the statistics card stays in the plot (with as many items as the strip shows on one row each)
+        let all = std::mem::replace(&mut u.m.meas, ALL_MEAS.iter().take(12).map(|&k| (k, 0)).collect());
+        u.stats_on = true;
+        u.relayout();
+        let (head, body) = u.results_rects().unwrap();
+        assert!(head.x >= 0 && body.y + body.h <= u.grid.y + u.grid.h && f.sb.width("Measurements") + 24 + f.s.width("n 999k") + 20 <= head.w, "{:?}", ts);
+        u.render(&mut cv);
+        (u.stats_on, u.m.meas) = (false, all);
+        // the cards in every mix of channels, LA and generator, with long texts
+        for c in 0..NCH {
+            (u.m.ch[c].offset, u.m.ch[c].probe, u.m.ch[c].invert) = (-12.5, 100.0, true);
+        }
+        for bits in 0..64 {
+            for c in 0..NCH {
+                u.m.ch[c].on = bits >> c & 1 == 1;
+            }
+            (u.m.la.on, u.m.afg_on) = (bits & 16 != 0, bits & 32 != 0);
+            let chs = u.cards().0;
+            let sub = u.card_sub_font();
+            for c in (0..NCH).filter(|&c| u.m.ch[c].on) {
+                let (r, t) = (chs[c], u.card_sub(c));
+                assert!(sub.width(&t) <= r.w - 22 || normal.s.width(&t) > r.w - 22, "{:?} mix {:b}: CH{} '{}'", ts, bits, c + 1, t);
+                let scale = format!("{}/div", si_short(u.m.ch[c].volts_per_div() as f64, "V"));
+                assert!(Ui::card_font(f, &scale, r.w - 24).width(&scale) <= r.w - 24 || normal.m.width(&scale) > r.w - 24, "{:?} mix {:b}: CH{}", ts, bits, c + 1);
+            }
+            u.render(&mut cv);
+        }
+        // menus under the top bar, on the screen, as high as at the normal size (the rows keep their 44 px)
+        use MenuId::*;
+        for m in [Main, Channel(0), Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Decode, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network] {
+            u.open_menu(m);
+            let d = u.dlg_layout().unwrap();
+            assert!(d.r.y >= TOP.h && d.r.y + d.r.h <= H && d.r.x >= 0 && d.r.x + d.r.w <= W, "{:?}: {:?} {:?}", ts, m, d.r);
+            assert!(d.rows.iter().all(|r| r.ctrl.h >= 40), "{:?}: {:?}", ts, m);
+            u.render(&mut cv);
+            u.close_menu();
         }
     }
 }
@@ -545,9 +657,10 @@ fn binary_waveform_can_be_read_back() {
 
 #[test]
 fn second_pane_fits_with_everything_else() {
-    for pane in 1..tables::PANES.len() {
-        for la in [false, true] {
+    for (pane, la, ts) in (1..tables::PANES.len()).flat_map(|p| [false, true].into_iter().flat_map(move |l| TEXT_SIZES.map(|t| (p, l, t)))) {
+        {
             let mut u = with_two_channels();
+            u.m.text_size = ts;
             u.m.pane = pane;
             u.m.la.on = la;
             u.m.cursor = CursorMode::Time;
@@ -559,7 +672,7 @@ fn second_pane_fits_with_everything_else() {
             assert!(u.grid.h >= 160, "pane {} la {}: {:?}", pane, la, u.grid);
             if u.pane_h() > 0 {
                 let r = u.pane_rect();
-                assert!(r.y > u.grid.y + u.grid.h && r.y + r.h + u.strip_rows() * STRIP_ROW <= BOTTOM.y, "pane {} la {}: {:?}", pane, la, r);
+                assert!(r.y > u.grid.y + u.grid.h && r.y + r.h + u.strip_rows() * u.lay().strip_row <= BOTTOM.y, "pane {} la {}: {:?}", pane, la, r);
             }
             let mut cv = Canvas::new(W, H);
             u.render(&mut cv);
@@ -1104,7 +1217,7 @@ fn the_sort_button_works_by_touch_in_pane_and_view() {
 /// Everything the panes write stays inside its pane, and in the width it was given.
 #[test]
 fn pane_text_fits() {
-    let f = crate::font::Fonts::load();
+    let f = crate::font::Fonts::get(0);
     // the widest cell against the narrowest column, with the side column open
     let x = panes::tests_result_cols(1024 - 308 - 16);
     let w = |k: usize| x[k + 1] - x[k] - 8;
@@ -1327,6 +1440,14 @@ fn pane_pictures() {
         u.m.meas2 = vec![(0, 0, 1), (4, 0, 1)];
     }, 2);
     shot(&mut u, "results-many");
+    // a protocol module's own view (the example module, compiled in the tests)
+    let mut u = live(tables::PANE_BUS, &|u| { u.set_dec_proto(Proto::from_key("Example").unwrap()); u.m.dec_on = true; u.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap(); }, 1);
+    shot(&mut u, "bus-view");
+    let mut u = live(tables::PANE_BUS, &|_| {}, 1);
+    shot(&mut u, "bus-view-empty");
+    // DCC: the demo layout, collected over two seconds of records
+    let mut u = live(0, &|u| { u.set_dec_proto(Proto::from_key("Dcc").unwrap()); u.m.dec_on = true; u.m.tscale = tscales().iter().position(|&x| (x - 2e-3).abs() < 1e-6).unwrap(); }, 3);
+    shot(&mut u, "bus-view-dcc");
     let mut u = live(2, &|u| u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 1), (Meas::Vrms, 1)], 2);
     shot(&mut u, "results-three");
     let mut u = live(2, &|u| { u.m.meas = vec![(Meas::Vpp, 0)]; u.m.ch[0].on = true; u.m.spec_src = 3; }, 2);
@@ -1424,18 +1545,32 @@ fn a_reference_travels_through_a_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`.
+/// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`, one directory per
+/// text size (`OOS_TEXT_SIZE=Large` for one of them).
 #[test]
 #[ignore]
 fn gallery() {
+    let Ok(base) = std::env::var("OOS_GALLERY") else { return };
+    let only = std::env::var("OOS_TEXT_SIZE").ok();
+    for ts in TEXT_SIZES.into_iter().filter(|t| only.as_deref().map_or(true, |o| o == t.name())) {
+        gallery_at(&std::path::PathBuf::from(&base).join(ts.name().to_lowercase()), ts);
+    }
+}
+
+fn gallery_at(dir: &std::path::Path, ts: TextSize) {
     use MenuId as M;
-    let Ok(dir) = std::env::var("OOS_GALLERY") else { return };
-    let dir = std::path::PathBuf::from(dir);
+    let _ = std::fs::create_dir_all(dir);
+    let new = || {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.text_size = ts;
+        u.relayout();
+        u
+    };
     let k = |u: &mut Ui, s: &str| {
         crate::cmd::run(u, &format!("key {}", s));
     };
     type S = (&'static str, fn(&mut Ui));
-    let menus: Vec<(&str, M)> = vec![("menu-main", M::Main), ("menu-ch", M::Channel(0)), ("menu-hor", M::Horizontal), ("menu-trig", M::Trigger), ("menu-acq", M::Acquire), ("menu-measure", M::Measure), ("menu-measadd", M::MeasAdd), ("menu-cursor", M::Cursor), ("menu-display", M::Display), ("menu-system", M::Utility), ("menu-math", M::Math), ("menu-ref", M::Ref), ("menu-decode", M::Decode), ("menu-storage", M::Storage), ("menu-mask", M::Mask), ("menu-zone", M::Zone), ("menu-spectrum", M::Spectrum), ("menu-eye", M::Eye), ("menu-power", M::Power), ("menu-identify", M::Identify), ("menu-selfcal", M::SelfCal), ("menu-bode", M::Bode), ("menu-afg", M::Afg), ("menu-bw", M::BwTest), ("menu-la", M::La), ("menu-lalines", M::LaLines), ("menu-lapat", M::LaPat), ("menu-network", M::Network)];
+    let menus: Vec<(&str, M)> = vec![("menu-main", M::Main), ("menu-ch", M::Channel(0)), ("menu-hor", M::Horizontal), ("menu-trig", M::Trigger), ("menu-acq", M::Acquire), ("menu-measure", M::Measure), ("menu-measadd", M::MeasAdd), ("menu-cursor", M::Cursor), ("menu-display", M::Display), ("menu-system", M::Utility), ("menu-math", M::Math), ("menu-ref", M::Ref), ("menu-decode", M::Decode), ("menu-storage", M::Storage), ("menu-mask", M::Mask), ("menu-zone", M::Zone), ("menu-spectrum", M::Spectrum), ("menu-eye", M::Eye), ("menu-power", M::Power), ("menu-identify", M::Identify), ("menu-selfcal", M::SelfCal), ("menu-bode", M::Bode), ("menu-afg", M::Afg), ("menu-bw", M::BwTest), ("menu-la", M::La), ("menu-lalines", M::LaLines), ("menu-lapat", M::LaPat), ("menu-network", M::Network), ("menu-time", M::Time)];
     let shot = |u: &mut Ui, n: &str| {
         for _ in 0..24 {
             u.step(0.04);
@@ -1445,7 +1580,7 @@ fn gallery() {
         let _ = crate::store::write(&dir.join(format!("{}.png", n)), &crate::store::png_of(&cv));
     };
     for (n, m) in menus {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = new();
         u.open_menu(m);
         shot(&mut u, n);
     }
@@ -1527,19 +1662,35 @@ fn gallery() {
             u.open_menu(MenuId::Network);
         }),
         ("s-decode", |u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; }),
+        ("s-4ch-meas", |u| {
+            for c in 0..4 {
+                u.m.ch[c].on = true;
+            }
+            u.m.meas.extend([(Meas::Vpp, 1), (Meas::Freq, 1), (Meas::Vrms, 1), (Meas::Vpp, 2), (Meas::Period, 2), (Meas::Vmax, 3), (Meas::Vmin, 3)]);
+            u.m.cursor = CursorMode::Time;
+        }),
+        ("s-events", |u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; u.m.pane = tables::PANE_EVENTS; }),
+        ("s-stats", |u| { u.m.ch[1].on = true; u.m.meas.push((Meas::Freq, 1)); u.stats_on = true; }),
+        ("s-osk", |u| u.activate(Item::ChLabel(0))),
+        ("s-startup", |u| {
+            use oos_hal::bootstatus::line;
+            u.start_up_begin(None);
+            let t = line(3.9, "ok", "Linux", "6.12.115") + &line(4.0, "ok", "FPGA image", "") + &line(14.3, "warn", "Calibration data", "missing: cal_afg.hex") + &line(14.4, "run", "Sample clock (PLL lock)", "waiting for the lock");
+            u.start_up_update(&t, 16.0);
+        }),
     ];
     for (n, f) in scenes {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = new();
         f(&mut u);
         shot(&mut u, n);
     }
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = new();
     k(&mut u, "measure");
     shot(&mut u, "k-measure");
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = new();
     u.activate(Item::About);
     shot(&mut u, "s-about");
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = new();
     u.activate(Item::Update);
     shot(&mut u, "s-update");
 }

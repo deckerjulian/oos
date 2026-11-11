@@ -4,7 +4,7 @@ OOS replaces the software of a Rigol DHO800/DHO900 oscilloscope with a Linux 6.1
 written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
 
 > **Experimental software. Read the [disclaimer](#disclaimer) before you install it.**
-> OOS has only been run on one DHO924S so far, and several functions have never run on real hardware
+> OOS has run on a DHO924S and, by a user report, on a DHO804; several functions have never run on real hardware
 > ([status](#status)). Measurements made with OOS are not calibrated to any standard.
 
 <table>
@@ -103,18 +103,19 @@ OOS reads the model from `/rigol/data/vendor.bin` at start and adapts channels, 
 trigger to it. The stock software has to be on the card for that; without it, set `model = ...` in `/oos/limits.conf`.
 Details and limits: [docs/models.md](docs/models.md).
 
-| Model | Rated bandwidth | Channels | Logic analyser | Generator | EXT trigger |
-|---|---|---|---|---|---|
-| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes |
-| DHO804 / DHO814 | 70 / 100 MHz | 4 | - | - | - |
-| DHO824 | 250 MHz | 4 | - | - | - |
-| DHO914 / DHO914-EDU | 125 MHz | 4 | yes | - | - |
-| DHO914S | 125 MHz | 4 | yes | yes | - |
-| DHO924 / DHO924-EDU | 250 MHz | 4 | yes | - | - |
-| DHO924S | 250 MHz | 4 | yes | yes | - |
+| Model | Rated bandwidth | Channels | Logic analyser | Generator | EXT trigger | Runs OOS |
+|---|---|---|---|---|---|---|
+| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes | not yet |
+| DHO804 / DHO814 / DHO824 | 70 / 100 / 250 MHz | 4 | - | - | - | a DHO804 runs it (user report) |
+| DHO914 / DHO924 | 125 / 250 MHz | 4 | yes | - | - | not yet |
+| DHO914-EDU / DHO924-EDU | 125 / 250 MHz | 4 | yes | - | - | not yet |
+| DHO914S / DHO924S | 125 / 250 MHz | 4 | yes | yes | - | a DHO924S runs it (developer's unit) |
 
-**Tested on hardware: DHO924S only.** All other models are prepared from the known model table and have never run OOS.
-The feature columns follow Rigol's model line-up; whether the EDU variants have the LA port is not confirmed. DHO1000,
+Each row is one hardware variant: its models differ only in the licensed bandwidth ([docs/models.md](docs/models.md)
+2.1), so a model whose row runs OOS counts as verified, and the USB install takes it without being told
+([docs/install-usb.md](docs/install-usb.md) 4). The other models are prepared from the known model table and have
+never run OOS. The feature columns follow Rigol's model line-up; whether the EDU variants have the LA port is not
+confirmed. DHO1000,
 HDO1000/2000/4000 and MHO models are different boards and are not supported; [docs/porting.md](docs/porting.md) says
 what would carry over and how an owner can describe one.
 
@@ -152,6 +153,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Waveform windows: the plot split into two windows side by side, two stacked, or four, each channel, math channel and
   the LA in a window of your choice, all on one time base
 - Full screen: one tap at the top right of the plot hides the top bar and the cards, one more brings them back
+- Text size Normal, Large or Larger for the bars, cards, measurement rows, menus and dialogs
 - HDMI output as a mirror or as a separate waveform workspace
 
 **Measurement and maths**
@@ -165,12 +167,16 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
   low/high/band-pass and band-stop filters, FFT
 - Reference waveforms with scale, offset, colour, name and CSV export and import, mask test
 
-**Protocol decoders (25)**
-- Four decoders at once, with an event table you can export and that jumps to an event
+**Protocol decoders (26)**
+- Four decoders at once, with an event table you can export and that jumps to an event; DCC lists one command per row
+  ("Loco 5  Fwd 50/128")
 - Serial: UART, UART 9-bit, I2C, SPI, Quad-SPI, I3C, 1-Wire, DS2482, SWD, JTAG
 - Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553
 - Audio, lighting, industrial: I2S, S/PDIF, DMX512, Modbus RTU, Modbus ASCII
 - Other: USB low/full speed, USB PD, parallel
+- Model railways: NMRA DCC (contributed by Arjen Halma), with a view of the layout in Display > Second pane > Bus view:
+  locomotives, turnouts, signals, and the track status, green while live and red after an emergency stop
+- New decoders come as protocol modules: one file, one registration ([docs/protocol-modules.md](docs/protocol-modules.md))
 
 **Analysers**
 - Spectrum analyser: resolution from the whole record, span that follows the signal in the pane, fundamental and harmonics
@@ -198,7 +204,9 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | Telnet | 23 | root shell, no password |
 
-All of them run over Ethernet and over WLAN with a USB stick in the front port (RTL8188EU; open, WPA and WPA2 personal
+None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
+the slow cores with spare time only (on a DHO924S the screen stays at 30 frames a second with two web viewers). All of
+them run over Ethernet and over WLAN with a USB stick in the front port (RTL8188EU; open, WPA and WPA2 personal
 networks, see [docs/wlan.md](docs/wlan.md)).
 
 **System**
@@ -206,6 +214,9 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 - Self-calibration into own files (`/oos/cal`); factory files are never changed
 - System > Overclock: the sample clock in steps from 1.25 to 2 GHz, experimental, from the next power-on
 - Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits
+- System > Date and time: the clock from an NTP server (off by default), time zones with daylight saving time, or set
+  by hand; once the clock is set, file names carry the local date and time
+- System > Network > 10 Mbit retry: an Ethernet link that comes up at 10 Mbit/s gets one more autonegotiation
 - On-screen keyboard for names, formulas and WLAN passwords, with arrow keys to correct inside a long entry
 - The start-up screen shows the version and the build
 - Signed update packages with trial start and automatic rollback
@@ -311,7 +322,8 @@ ADB needs steps 3 to 5 to build the image.
 ### On a second card
 
 The steps below use macOS, where they were developed. `tools/sdcard-clone.sh` needs macOS; on Linux, use `dd` for the
-clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
+clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested. Steps 1 and 2 on Windows and Linux, with the
+tools to use and what to watch out for: [docs/sdcard-backup.md](docs/sdcard-backup.md).
 
 **You will need for the second card**
 
@@ -344,7 +356,8 @@ This step protects your factory calibration. **Do not skip it.**
    tools/sdcard-clone.sh read diskN ~/oos-backup/sd-original.img
    ```
 4. Keep the image in at least two places, then **put the original card away**. From here on you only use the second
-   card.
+   card. On Windows or Linux: [docs/sdcard-backup.md](docs/sdcard-backup.md). Always the whole card, never a
+   partition, and never let the computer format or initialise it.
 
 ### 2. Write the clone to the second card
 
@@ -594,6 +607,13 @@ windows share the time base, and a drag in a window moves a channel of that wind
 window. The button with four corners at the top right of the plot gives the plot the whole screen; it shows inward
 corners then and brings the top bar and the cards back.
 
+**Text size.** Display > Text size makes the text larger: Normal is the original look, Large and Larger use fonts 2 and 4
+pixels bigger in the top bar, the cards, the measurement and cursor rows, the menus, the keyboard and the dialogs. The rows
+under the plot grow with them, so the plot gets a little shorter. Where a long text would not fit (a narrow channel card
+with four channels on, a long button label in the start menu, a narrow table column) it stays at the next smaller size, and
+the dense figure tables of the eye / jitter view keep the normal size. The setting is kept with the other preferences and
+across restarts; Default set-up and Recall keep it.
+
 **Bandwidth and noisy signals.** A channel's bandwidth is Auto by default: the limit follows the sample rate, as on the
 stock system. With Full, the noise of a slow signal can be larger than the trigger hysteresis and the hardware triggers
 on the other edge too; the display still shows the edge you set, and Trigger > Noise reject widens the hysteresis.
@@ -611,7 +631,8 @@ waveform; the button with three dots at the top right of the plot leads to Exit,
 and peaks, decoder Events, or Trend with two charts. Tap the pane's title for its settings, a trend chart to change its
 measurement, the peak list's button to sort it. The x closes the pane.
 
-**Measurements.** A default set-up shows six in the strip above the cards. Measure > Labels on trace draws level lines and
+**Measurements.** A default set-up shows six in the strip above the cards. In Measure > Add item a tap adds a
+measurement of the source channel and a second tap removes it. Measure > Labels on trace draws level lines and
 arrows with their values on the waveform.
 
 **Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz the noise rises, and 2 GHz
@@ -620,8 +641,10 @@ gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
 **Web remote.** Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the
 window, so it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer;
 records above 2 million points have to be saved on the scope or read over SCPI. The live picture is a PNG of about 90 KB; "Live picture
-format" can switch it to the uncompressed 1.8 MB BMP (the choice is kept in the browser). Pause stops the pictures, and a
-tab in the background stops them too. The Update link leads to the update page.
+format" can switch it to the uncompressed 1.8 MB BMP (the choice is kept in the browser). The PNG is made off the
+scope's frame loop, only of a changed screen, up to 20 a second (about 13 reach a browser over Ethernet); the page gets
+each new picture as soon as it is made, and while the screen stands still it gets "not modified" instead. The scope's
+own screen does not slow down for it. Pause stops the pictures, and a tab in the background stops them too. The Update link leads to the update page.
 
 **Files.** Setups are kept on OOS's own persistent area `/oos` and survive a power cycle. Screenshots and CSV files go to
 a USB stick in the front port (FAT32, exFAT or ext4), into the folder `OOS`, and can be pulled whenever nothing is being
@@ -648,9 +671,17 @@ System > Roll back update returns to the previous image. Details: [docs/update.m
 **Network.** Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web
 remote. For WLAN, put an RTL8188EU stick into the front USB port, tap Find WLAN networks, tap a network and enter the
 password. It joins by itself from then on. Everything open on Ethernet is then open on that network too. Details:
-[docs/wlan.md](docs/wlan.md).
+[docs/wlan.md](docs/wlan.md). The page also shows the speed of the Ethernet link; a link at 10 Mbit/s gets one more
+autonegotiation (10 Mbit retry, on by default, [docs/network.md](docs/network.md)).
 
-**Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin`, little endian: `OOSW`, u32 version (1), u32 channels, u64
+**Date and time.** The scope has no clock battery and starts in 2013. System > Date and time > Time from NTP (off by
+default) sets the clock from `pool.ntp.org` or another server whenever a network link comes up, and every hour; Time
+zone picks the zone with its daylight saving rules (or takes a POSIX `TZ` string), Set the clock takes it by hand. From
+then on file names carry the local date and time (`shot-20261111-143005.png`) instead of a number. The settings are in
+`/oos/system.conf`, see [docs/network.md](docs/network.md).
+
+**Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin` (`wave-<date>-<time>.bin` once the clock
+is set), little endian: `OOSW`, u32 version (1), u32 channels, u64
 samples per channel, f64 dt, f64 t0, then per channel its number (u32) and the samples (f32, volts). Both hold the record
 on the screen.
 

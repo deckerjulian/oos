@@ -549,7 +549,7 @@ impl Ui {
         if lines.is_empty() {
             return;
         }
-        let f = &self.fonts;
+        let f = self.fonts();
         let a = self.lane_area();
         let (band, pitch) = self.la_band(lines.len());
         cv.set_clip(band);
@@ -569,11 +569,13 @@ impl Ui {
             let x0 = a.w as f64 / 2.0 + (la.t0 - delay as f64) / tdiv as f64 * ppd - MARK_W as f64;
             self.la_columns(la, x0, la.dt / tdiv as f64 * ppd, w as usize)
         });
+        // the lane names: the normal size where the text size would not fit a lane or the marker strip
+        let nf = if f.s.size <= pitch && f.s.width("D15") <= MARK_W - 3 { &f.s } else { &crate::font::Fonts::get(0).s };
         for (i, &n) in lines.iter().enumerate() {
             let top = band.y + LA_HEAD + i as i32 * pitch;
             let (yh, yl) = (top + 2, top + pitch - 3);
             let col = POD_COLORS[n / 8];
-            cv.text(&f.s, a.x + 3, yl + 1, NAMES[n], col);
+            cv.text(nf, a.x + 3, yl + 1, NAMES[n], col);
             let Some(cols) = &cols else { continue };
             let bit = 1u16 << n;
             let dim = scale(col, 90);

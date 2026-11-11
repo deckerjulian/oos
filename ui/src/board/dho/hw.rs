@@ -122,6 +122,11 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
             // frames start with a falling edge (start bit, SOF, break, I2C start, CS); 1553, I2S and ARINC 429:
             // either edge
             (TrigType::Bus, _) if matches!(m.dec_proto, Proto::Mil1553 | Proto::I2s | Proto::Arinc429) => tpu::Slope::Either,
+            (TrigType::Bus, _) if m.dec_proto.module().is_some() => match m.dec_proto.module().map(|p| p.start_edge()) {
+                Some(Slope::Rise) => tpu::Slope::Rising,
+                Some(Slope::Either) => tpu::Slope::Either,
+                _ => tpu::Slope::Falling,
+            },
             (TrigType::Bus, _) => tpu::Slope::Falling,
             (_, Slope::Rise) => tpu::Slope::Rising,
             (_, Slope::Fall) => tpu::Slope::Falling,

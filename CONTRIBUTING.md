@@ -1,7 +1,8 @@
 # Contributing to OOS
 
 Reports, measurements and code are all welcome. The most useful thing right now is a test on hardware: OOS has run on
-one DHO924S so far.
+a DHO924S and a DHO804 so far. A report from a DHO802/DHO812, a DHO914/DHO924 without generator or an EDU model makes
+that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
 
 ## Ground rules
 
@@ -14,6 +15,11 @@ one DHO924S so far.
 - **Keep the analog path unchanged unless that is the point.** `tools/plan-matrix.sh` prints the register sequences of a
   fixed set of acquisitions. Run it before and after a change and compare the output. Say in your pull request whether they differ.
 - **No personal data in issues or commits:** no serial numbers, MAC addresses or licence keys.
+
+## A new protocol decoder
+
+A decoder comes as a protocol module: one file in `ui/src/protocols`, one line to register it, the decoder itself
+usually in `oos-dsp`. [docs/protocol-modules.md](docs/protocol-modules.md) walks through it.
 
 ## Before a pull request
 

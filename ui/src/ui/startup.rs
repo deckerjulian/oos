@@ -115,7 +115,7 @@ impl Ui {
 
     pub(super) fn draw_start_up(&self, cv: &mut Canvas) {
         let Some(s) = &self.start_up else { return };
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.no_clip();
         match &s.splash {
             Some(px) if px.len() == cv.px.len() => cv.px.copy_from_slice(px),
@@ -383,7 +383,7 @@ fn logo() -> &'static [u32] {
 }
 
 /// `s` cut with "..." to `room` pixels.
-fn fit_text(f: &crate::font::Font, s: &str, room: i32) -> String {
+pub(super) fn fit_text(f: &crate::font::Font, s: &str, room: i32) -> String {
     if f.width(s) <= room {
         return s.to_string();
     }

@@ -14,11 +14,13 @@ pub(super) enum TableKind {
 }
 
 /// Second pane under the plot.
-pub const PANES: [&str; 5] = ["Off", "Spectrum", "Results", "Events", "Trend"];
+pub const PANES: [&str; 6] = ["Off", "Spectrum", "Results", "Events", "Trend", "Bus view"];
 pub(super) const PANE_SPECTRUM: usize = 1;
 pub(super) const PANE_RESULTS: usize = 2;
 pub(super) const PANE_EVENTS: usize = 3;
 pub(super) const PANE_TREND: usize = 4;
+/// what a protocol module makes of its packets (`busview.rs`)
+pub(super) const PANE_BUS: usize = 5;
 
 const ROW_H: i32 = 26;
 const HEAD_H: i32 = 40;
@@ -42,6 +44,11 @@ impl Ui {
             }
             let m = self.m.dec_view(k);
             let Ok(p) = self.decode_packets_of(&m) else { continue };
+            // a module may give a row per command
+            if let Some(rows) = m.dec_proto.module().and_then(|x| x.events(&p, &m.dec_opts())) {
+                v.extend(rows.into_iter().map(|(t, text, ok)| EventRow { t, who: format!("D{} {}", k + 1, m.dec_proto.name()), text, ok }));
+                continue;
+            }
             for x in &p {
                 let text = packet_tag(&m, x).map_or_else(|| packet_text(&m, x), |t| t.to_string());
                 v.push(EventRow { t: x.t0, who: format!("D{} {}", k + 1, m.dec_proto.name()), text, ok: x.ok });
@@ -89,7 +96,7 @@ impl Ui {
 
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
         let Some(k) = self.table else { return };
-        let f = &self.fonts;
+        let f = self.fonts();
         let rows = self.table_rows(k);
         let (r, fit) = self.table_rect(rows.len());
         cv.round(r, 6, CARD_BORDER, 255);
@@ -168,7 +175,7 @@ impl Ui {
         for e in &rows {
             t.push_str(&format!("{:.9e},{},{},{}\n", e.t, e.who, e.text.replace(',', ";"), if e.ok { 1 } else { 0 }));
         }
-        let p = crate::store::next_name(&self.save_dir(), "events", "csv");
+        let p = self.new_file(&self.save_dir(), "events", "csv");
         let r = crate::store::write(&p, t.as_bytes());
         self.toast_saved(&p, r);
     }
@@ -202,7 +209,7 @@ impl Ui {
     }
 
     pub(super) fn draw_pane_events(&self, cv: &mut Canvas, r: Rect) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let rows = &self.pn.events;
         if rows.is_empty() {
             cv.text(&f.sb, r.x + 12, r.y + r.h / 2 + 5, "No decoder events in this record", DIM);
@@ -216,16 +223,18 @@ impl Ui {
             if i % fit % 2 == 1 {
                 cv.fill(Rect::new(cx, y, col_w - 4, pitch), ROW_ALT);
             }
-            let ty = y + (pitch + 9) / 2;
+            // columns at 12, 102 and 212 px with the normal text size, wider with the larger ones
+            let ty = y + (pitch + f.s.size * 3 / 4) / 2;
+            let (x1, x2) = (12 + 90 * f.s.size / 12, 12 + 200 * f.s.size / 12);
             cv.text(&f.s, cx + 12, ty, &si(e.t, "s"), LABEL);
-            cv.text(&f.s, cx + 102, ty, &e.who, DIM);
-            cv.text(&f.sb, cx + 212, ty, &e.text, if e.ok { TEXT } else { RED });
+            cv.text(&f.s, cx + x1, ty, &e.who, DIM);
+            cv.text(&f.sb, cx + x2, ty, &e.text, if e.ok { TEXT } else { RED });
         }
     }
 
     pub(super) fn draw_pane_close(&self, cv: &mut Canvas) {
         let b = Self::pane_close(self.pane_rect());
         btn(cv, b, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts.mb, b, 1, "\u{d7}", TEXT);
+        cv.text_in(&self.fonts().mb, b, 1, "\u{d7}", TEXT);
     }
 }

@@ -10,7 +10,7 @@ Bootargs: `earlycon=uart8250,mmio32,0xff1a0000 swiotlb=1 coherent_pool=1m cma=51
 | SD (`dwmmc`) | fe320000 | card, 4 bit | system storage, boot |
 | SDIO (`dwmmc`) | fe310000 | non-removable, 4 bit | probably unused WiFi slot |
 | eMMC (`sdhci`) | fe330000 | enabled, 8 bit | not used for the system |
-| GMAC | fe300000 | Motorcomm YT8512 (RMII, 100 Mbit) | Ethernet |
+| GMAC | fe300000 | Motorcomm YT8512 (RMII, 100 Mbit) | Ethernet (`../network.md`) |
 | PCIe | f8000000 | Zynq XDMA endpoint, `num-lanes = 4` (trains x2), `ep-gpios` GPIO2_C2 | acquisition data + registers |
 | I2C0 | ff3c0000 | SYR827 @0x40 (vdd_cpu_b), SYR828 @0x41 (vdd_gpu), RK808 PMIC | power |
 | I2C1 | ff110000 | ADC128D818 @0x37 | board voltage monitor (in the DT, chip absent on the DHO924S: `../protocols/board.md` 2.1) |

@@ -36,6 +36,18 @@ pub fn next_name(dir: &Path, prefix: &str, ext: &str) -> PathBuf {
     p
 }
 
+/// `<prefix>-<stamp>.<ext>` (`<prefix>-<stamp>-2.<ext>` and on when taken) with a time stamp, else `next_name`.
+pub fn next_name_at(dir: &Path, prefix: &str, ext: &str, stamp: Option<&str>) -> PathBuf {
+    let Some(st) = stamp else { return next_name(dir, prefix, ext) };
+    for i in 1..100 {
+        let n = if i == 1 { format!("{}-{}.{}", prefix, st, ext) } else { format!("{}-{}-{}.{}", prefix, st, i, ext) };
+        if dir.join(&n).symlink_metadata().is_err() {
+            return dir.join(n);
+        }
+    }
+    next_name(dir, prefix, ext)
+}
+
 /// File name of a path for toasts ("shot-001.png").
 pub fn file_name(p: &Path) -> String {
     p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
@@ -112,7 +124,8 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("trig_bus_val", m.trig_bus_val.to_string());
     kv("dec_thr", m.dec_thr.to_string());
     kv("dec_ascii", m.dec_ascii.to_string());
-    kv("dec_proto", name(m.dec_proto));
+    kv("dec_proto", m.dec_proto.key());
+    kv("dec_opt", list(&m.dec_opt));
     kv("dec_src2", m.dec_src2.to_string());
     kv("dec_cs", m.dec_cs.map_or("none".into(), |c| c.to_string()));
     kv("dec_mode", m.dec_mode.to_string());
@@ -276,6 +289,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("mask_y", m.mask_y.to_string());
     kv("mask_stop", m.mask_stop.to_string());
     kv("quick", name(m.quick));
+    kv("text_size", name(m.text_size));
     kv("la", m.la.to_text());
     kv("dec_la", format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")));
     s
@@ -544,7 +558,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
-        "dec_proto" => m.dec_proto = p_enum(v, &PROTOS)?,
+        "dec_proto" => m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?,
+        // a module's option indices; brought into range where they are used (`protocols::opt_fit`)
+        "dec_opt" => m.dec_opt = p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?.try_into().unwrap(),
         "dec_src2" => m.dec_src2 = p_idx(v, NCH)?,
         "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_idx(v, NCH)?) },
         "dec_mode" => m.dec_mode = p_idx(v, 4)? as u8,
@@ -625,6 +641,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "mask_y" => m.mask_y = p_f32(v)?,
         "mask_stop" => m.mask_stop = p_bool(v)?,
         "quick" => m.quick = p_enum(v, &QUICKS)?,
+        "text_size" => m.text_size = p_enum(v, &TEXT_SIZES)?,
         "la" => m.la = crate::ui::la::LaSet::parse(v)?,
         "dec_la" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -740,39 +757,81 @@ pub fn wave_bin(rec: &Record, m: &Model) -> Vec<u8> {
 
 // ---------------------------------------------------------------------------------------------- PNG
 
-fn crc_table() -> &'static [u32; 256] {
-    static T: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
-    T.get_or_init(|| {
-        let mut t = [0u32; 256];
-        for (n, e) in t.iter_mut().enumerate() {
-            let mut c = n as u32;
-            for _ in 0..8 {
-                c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
-            }
-            *e = c;
+/// CRC-32 tables for eight bytes per step ("slicing by 8"): `T[0]` is the usual byte table, `T[k][n]` the CRC of byte
+/// `n` followed by `k` zero bytes.
+const CRC_T: [[u32; 256]; 8] = {
+    let mut t = [[0u32; 256]; 8];
+    let mut n = 0;
+    while n < 256 {
+        let mut c = n as u32;
+        let mut k = 0;
+        while k < 8 {
+            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+            k += 1;
         }
-        t
-    })
-}
+        t[0][n] = c;
+        n += 1;
+    }
+    let mut k = 1;
+    while k < 8 {
+        let mut n = 0;
+        while n < 256 {
+            let c = t[k - 1][n];
+            t[k][n] = t[0][(c & 0xff) as usize] ^ (c >> 8);
+            n += 1;
+        }
+        k += 1;
+    }
+    t
+};
 
 /// CRC-32 (ISO 3309 / PNG / zip).
 pub fn crc32(data: &[u8]) -> u32 {
-    let t = crc_table();
-    !data.iter().fold(!0u32, |c, &b| t[((c ^ b as u32) & 0xff) as usize] ^ (c >> 8))
+    let t = &CRC_T;
+    let mut c = !0u32;
+    let mut it = data.chunks_exact(8);
+    for b in &mut it {
+        let lo = c ^ u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+        c = t[7][(lo & 0xff) as usize]
+            ^ t[6][(lo >> 8 & 0xff) as usize]
+            ^ t[5][(lo >> 16 & 0xff) as usize]
+            ^ t[4][(lo >> 24) as usize]
+            ^ t[3][b[4] as usize]
+            ^ t[2][b[5] as usize]
+            ^ t[1][b[6] as usize]
+            ^ t[0][b[7] as usize];
+    }
+    !it.remainder().iter().fold(c, |c, &b| t[0][((c ^ b as u32) & 0xff) as usize] ^ (c >> 8))
 }
 
-/// Adler-32 (zlib).
+/// Adler-32 (zlib). Sixteen lanes side by side (the compiler makes vector code of the lane loop): lane `k` sums the
+/// bytes at `16 j + k` (`sa`) and those sums again (`sb`), and per chunk of 5552 bytes `b` grows by `len * a`,
+/// `16 * sum(sb)` less `sum(k * sa[k])` (each byte counted `len - position` times), the same as byte by byte.
 pub fn adler32(data: &[u8]) -> u32 {
-    let (mut a, mut b) = (1u32, 0u32);
+    let (mut a, mut b) = (1u64, 0u64);
     for chunk in data.chunks(5552) {
-        for &x in chunk {
-            a += x as u32;
+        let (mut sa, mut sb) = ([0u32; 16], [0u32; 16]);
+        let mut blocks = chunk.chunks_exact(16);
+        for blk in &mut blocks {
+            for k in 0..16 {
+                sa[k] += blk[k] as u32;
+                sb[k] += sa[k];
+            }
+        }
+        let n = (chunk.len() - blocks.remainder().len()) as u64;
+        let sum_a: u64 = sa.iter().map(|&x| x as u64).sum();
+        let sum_b: u64 = sb.iter().map(|&x| x as u64).sum();
+        let weighted: u64 = sa.iter().enumerate().map(|(k, &x)| k as u64 * x as u64).sum();
+        b += n * a + 16 * sum_b - weighted;
+        a += sum_a;
+        for &x in blocks.remainder() {
+            a += x as u64;
             b += a;
         }
         a %= 65521;
         b %= 65521;
     }
-    (b << 16) | a
+    ((b << 16) | a) as u32
 }
 
 fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -799,18 +858,19 @@ const DIST_BASE: [(u16, u8); 30] = [
 /// Bit writer of a deflate stream: values LSB first, Huffman codes MSB first.
 struct BitOut {
     out: Vec<u8>,
-    acc: u32,
+    acc: u64,
     n: u32,
 }
 
 impl BitOut {
+    /// At most 32 bits at a time; whole bytes go out once 32 have gathered.
     fn bits(&mut self, v: u32, n: u32) {
-        self.acc |= v << self.n;
+        self.acc |= (v as u64) << self.n;
         self.n += n;
-        while self.n >= 8 {
-            self.out.push(self.acc as u8);
-            self.acc >>= 8;
-            self.n -= 8;
+        if self.n >= 32 {
+            self.out.extend_from_slice(&(self.acc as u32).to_le_bytes());
+            self.acc >>= 32;
+            self.n -= 32;
         }
     }
     /// A Huffman code of `n` bits, first bit = most significant.
@@ -826,38 +886,76 @@ impl BitOut {
             _ => self.code(0xc0 + s - 280, 8),
         }
     }
+    /// Length symbol and extra bits of a match of 3..=258 bytes, then the 5-bit distance code and its extra bits.
     fn matched(&mut self, len: usize, dist_code: usize, dist_extra: u32) {
-        let i = LEN_BASE.iter().rposition(|&(b, _)| b as usize <= len).unwrap();
+        let i = LEN_CODE[len] as usize;
         self.symbol(257 + i as u32);
         self.bits((len - LEN_BASE[i].0 as usize) as u32, LEN_BASE[i].1 as u32);
         self.code(dist_code as u32, 5);
         self.bits(dist_extra, DIST_BASE[dist_code].1 as u32);
     }
     fn finish(mut self) -> Vec<u8> {
-        if self.n > 0 {
+        while self.n > 0 {
             self.out.push(self.acc as u8);
+            self.acc >>= 8;
+            self.n = self.n.saturating_sub(8);
         }
         self.out
     }
 }
 
+/// Index into `LEN_BASE` for each match length 0..=258 (0..2 unused).
+const LEN_CODE: [u8; 259] = {
+    let mut t = [0u8; 259];
+    let mut len = 3;
+    while len <= 258 {
+        let mut i = 28;
+        while LEN_BASE[i].0 as usize > len {
+            i -= 1;
+        }
+        t[len] = i as u8;
+        len += 1;
+    }
+    t
+};
+
+/// Number of equal bytes at `i` and `i - d`, at most 258 (the longest deflate match); eight bytes per step.
+#[inline]
+fn match_len(raw: &[u8], i: usize, d: usize) -> usize {
+    let max = (raw.len() - i).min(258);
+    let (a, b) = (&raw[i..i + max], &raw[i - d..i - d + max]);
+    let mut n = 0;
+    while n + 8 <= max {
+        let x = u64::from_le_bytes(a[n..n + 8].try_into().unwrap()) ^ u64::from_le_bytes(b[n..n + 8].try_into().unwrap());
+        if x != 0 {
+            return n + (x.trailing_zeros() / 8) as usize;
+        }
+        n += 8;
+    }
+    while n < max && a[n] == b[n] {
+        n += 1;
+    }
+    n
+}
+
 /// Deflate (one block, fixed Huffman codes) of picture rows: besides literals only matches against the pixel to the left
 /// (distance 3) and the pixel above (distance `stride`). A scope screen is flat areas, grid lines and a few traces, so
-/// that is most of what a full LZ77 finds, in one pass, with no hash table and little time on the scope's CPU.
+/// that is most of what a full LZ77 finds, in one pass, with no hash table and little time on the scope's CPU. The
+/// left match costs 10 bits less than the one above (no extra distance bits), so it is looked for first and the one
+/// above only when the left one is not the longest possible.
 fn deflate_rows(raw: &[u8], stride: usize) -> Vec<u8> {
     let (stride_code, stride_extra) = {
         let c = DIST_BASE.iter().rposition(|&(b, _)| b as usize <= stride).unwrap_or(0);
         (c, stride.saturating_sub(DIST_BASE[c].0 as usize) as u32)
     };
     let stride_ok = stride > 3 && stride <= 32768;
-    let run = |i: usize, d: usize| raw[i..].iter().zip(&raw[i - d..]).take(258).take_while(|(a, b)| a == b).count();
     let mut o = BitOut { out: Vec::with_capacity(raw.len() / 8 + 64), acc: 0, n: 0 };
     o.bits(1, 1); // BFINAL
     o.bits(1, 2); // BTYPE 01 = fixed Huffman
     let mut i = 0;
     while i < raw.len() {
-        let left = if i >= 3 { run(i, 3) } else { 0 };
-        let above = if stride_ok && i >= stride { run(i, stride) } else { 0 };
+        let left = if i >= 3 { match_len(raw, i, 3) } else { 0 };
+        let above = if left < 258 && stride_ok && i >= stride { match_len(raw, i, stride) } else { 0 };
         if above > left && above >= 3 {
             o.matched(above, stride_code, stride_extra);
             i += above;
@@ -877,11 +975,11 @@ fn deflate_rows(raw: &[u8], stride: usize) -> Vec<u8> {
 /// (`deflate_rows`), so a screen of flat colour and thin lines takes a few percent of its bitmap.
 pub fn png(w: u32, h: u32, px: &[u32]) -> Vec<u8> {
     let stride = w as usize * 3 + 1;
-    let mut raw = Vec::with_capacity(stride * h as usize);
-    for row in px.chunks(w as usize).take(h as usize) {
-        raw.push(0);
-        for &p in row {
-            raw.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
+    let mut raw = vec![0u8; stride * h as usize];
+    for (out, row) in raw.chunks_exact_mut(stride).zip(px.chunks(w as usize)) {
+        // out[0] = 0: filter type None
+        for (o, &p) in out[1..].chunks_exact_mut(3).zip(row) {
+            o.copy_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
         }
     }
     let mut z = vec![0x78, 0x01]; // deflate, 32 K window, no dictionary, (0x7801 % 31 == 0)
@@ -1126,9 +1224,21 @@ mod tests {
             let mut m = Model::default();
             m.dec_proto = p;
             let text = setup_text(&m);
-            assert!(text.contains(&format!("dec_proto = {:?}\n", p)));
+            assert!(text.contains(&format!("dec_proto = {}\n", p.key())));
             assert_eq!(parse_setup(&text).unwrap().dec_proto, p);
         }
+        // the protocols that became modules keep the names of setups saved before
+        for (old, name) in [("Dmx512", "DMX512"), ("Spdif", "S/PDIF"), ("UsbPd", "USB PD")] {
+            assert_eq!(parse_setup(&format!("dec_proto = {}\n", old)).unwrap().dec_proto.name(), name);
+        }
+        // a module's options go with it
+        let mut m = Model::default();
+        m.dec_proto = Proto::from_key("Example").unwrap();
+        m.dec_opt = [2, 1, 0, 0];
+        let text = setup_text(&m);
+        assert!(text.contains("dec_proto = Example\n") && text.contains("dec_opt = 2 1 0 0\n"));
+        assert_eq!(parse_setup(&text).unwrap(), m);
+        assert!(parse_setup("dec_proto = NoSuchBus").is_err());
         let mut m = Model::default();
         (m.dec_proto, m.dec_src, m.dec_cs, m.dec_uspeed) = (Proto::Usb, 2, Some(3), 1);
         let text = setup_text(&m);
@@ -1155,6 +1265,25 @@ mod tests {
     #[test]
     fn checksums() {
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+        // the eight-byte steps against the plain bitwise definitions, all lengths around the step sizes
+        let data: Vec<u8> = (0..20000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        for n in (0..70).chain([5551, 5552, 5553, 11104, 20000]) {
+            let d = &data[..n];
+            let crc = !d.iter().fold(!0u32, |mut c, &x| {
+                c ^= x as u32;
+                for _ in 0..8 {
+                    c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+                }
+                c
+            });
+            assert_eq!(crc32(d), crc, "CRC of {} bytes", n);
+            let (a, b) = d.iter().fold((1u32, 0u32), |(a, b), &x| ((a + x as u32) % 65521, (b + (a + x as u32) % 65521) % 65521));
+            assert_eq!(adler32(d), b << 16 | a, "Adler of {} bytes", n);
+        }
+        assert_eq!(adler32(&[0xff; 100_000]), {
+            let (a, b) = (0..100_000).fold((1u64, 0u64), |(a, b), _| ((a + 255) % 65521, (b + (a + 255) % 65521) % 65521));
+            (b << 16 | a) as u32
+        });
         assert_eq!(crc32(b"IEND"), 0xae42_6082);
         assert_eq!(adler32(b"Wikipedia"), 0x11e6_0398);
         assert_eq!(adler32(&[]), 1);
@@ -1400,6 +1529,67 @@ mod tests {
         assert!(out.status.success(), "Pillow: {}", String::from_utf8_lossy(&out.stderr));
         let s = String::from_utf8_lossy(&out.stdout);
         assert_eq!(s.trim(), format!("64 40 RGB {} {} 128\nTrue", 5 * 4, 7 * 6));
+    }
+
+    /// A real screen (the demo, four channels and the menus of the UI) decodes back to its pixels.
+    #[test]
+    fn png_of_the_demo_screen_round_trips() {
+        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        for c in ["key ch2", "key ch3", "key ch4", "key measure"] {
+            crate::cmd::run(&mut ui, c);
+        }
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        for _ in 0..3 {
+            ui.step(0.04);
+            ui.render(&mut cv);
+        }
+        assert_decodes_to(&png_of(&cv), cv.w as u32, cv.h as u32, &cv.px);
+    }
+
+    /// Time of one PNG of a real screen (the demo source, 4 channels on, as the web remote sends it) and of the
+    /// screen-like test picture: `cargo test --release png_encode_time -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn png_encode_time() {
+        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        for c in ["key ch2", "key ch3", "key ch4"] {
+            crate::cmd::run(&mut ui, c);
+        }
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        for _ in 0..10 {
+            ui.step(0.04);
+            ui.render(&mut cv);
+        }
+        let synthetic = screen_like(cv.w as u32, cv.h as u32);
+        for (name, px) in [("demo screen", &cv.px), ("screen-like", &synthetic)] {
+            let n = 40;
+            let mut size = 0;
+            let t = std::time::Instant::now();
+            for _ in 0..n {
+                size = std::hint::black_box(png(cv.w as u32, cv.h as u32, px)).len();
+            }
+            let per = t.elapsed().as_secs_f64() / n as f64;
+            println!("{}: {} x {}, {} bytes, {:.2} ms per PNG", name, cv.w, cv.h, size, per * 1e3);
+            assert_decodes_to(&png(cv.w as u32, cv.h as u32, px), cv.w as u32, cv.h as u32, px);
+        }
+        // what the frame loop does per picture of the web remote now (http.rs `Shots`): one copy of the screen; and
+        // what the encoder thread does before it encodes: compare it with the last copy
+        let n = 200;
+        let mut copy: Vec<u32> = Vec::with_capacity(cv.px.len());
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            copy.clear();
+            copy.extend_from_slice(std::hint::black_box(&cv.px));
+        }
+        let per_copy = t.elapsed().as_secs_f64() / n as f64;
+        let t = std::time::Instant::now();
+        let mut same = false;
+        for _ in 0..n {
+            same = crate::http::same_pixels(std::hint::black_box(&copy), std::hint::black_box(&cv.px));
+        }
+        let per_cmp = t.elapsed().as_secs_f64() / n as f64;
+        assert!(same);
+        println!("frame loop: copy of the screen {:.3} ms; encoder thread: comparison {:.3} ms", per_copy * 1e3, per_cmp * 1e3);
     }
 
     #[test]

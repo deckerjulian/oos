@@ -550,7 +550,7 @@ impl Ui {
     }
 
     fn panel(&self, cv: &mut Canvas, x: i32, y: i32, lines: &[String], col: Rgb) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let w = lines.iter().map(|l| f.s.width(l)).max().unwrap_or(0) + 16;
         let r = Rect::new(x, y, w, lines.len() as i32 * 18 + 8);
         cv.round(r, 4, PANEL_BG, 230);
@@ -561,7 +561,7 @@ impl Ui {
 
     /// The spectrum in `a`: the plot area, or the second pane (`pane`).
     pub(super) fn draw_spectrum(&self, cv: &mut Canvas, a: Rect, pane: bool) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let col = CH_COLORS[self.m.spec_src];
         let Some(sp) = &self.azr.spec else {
             let t = if self.m.ch[self.m.spec_src].on { "Spectrum: waiting for a record".to_string() } else { format!("Spectrum: {} is off", self.ch_name(self.m.spec_src)) };

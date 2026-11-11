@@ -123,7 +123,7 @@ impl Ui {
 
     pub(super) fn draw_bw(&self, cv: &mut Canvas) {
         let a = self.area;
-        let f = &self.fonts;
+        let f = self.fonts();
         let col = CH_COLORS[self.m.bw_src.min(NCH - 1)];
         let Some(r) = &self.azr.bw else {
             let msg = if self.azr.bw_info.is_empty() { "waiting for a record".to_string() } else { self.azr.bw_info.clone() };

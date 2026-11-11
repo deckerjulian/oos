@@ -552,7 +552,7 @@ impl Ui {
     }
 
     fn eye_head(&self, cv: &mut Canvas, l: &Layout) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let p = &self.azr.page;
         cv.text(&f.sb, l.head.x + 2, l.head.y + 15, &p.status[0], TEXT);
         cv.text(&f.s, l.head.x + 2, l.head.y + 33, &p.status[1], MODELLED);
@@ -560,7 +560,7 @@ impl Ui {
 
     /// The eye: frame, axes in volts and UI, the coloured hits and the two levels.
     fn eye_plot(&self, cv: &mut Canvas, l: &Layout) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let p = &self.azr.page;
         let r = l.plot;
         cv.text(&f.sb, l.eye.x + 6, l.eye.y + 14, if p.title.is_empty() { "Eye" } else { &p.title }, TEXT);
@@ -622,7 +622,7 @@ impl Ui {
 
     /// Box, title, axis ends of a chart, or the reason it is empty.
     fn chart_frame(&self, cv: &mut Canvas, c: Rect, r: Rect, ch: &Chart) {
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.round(c, 4, BAR, 255);
         cv.round_outline(c, 4, CARD_BORDER);
         cv.text(&f.sb, c.x + 6, c.y + 13, &ch.title, TEXT);
@@ -683,7 +683,7 @@ impl Ui {
         cv.dashed_hline(r.x + 1, r.x + r.w - 2, y(-12.0), 4, 4, GRID_FRAME);
         let n = (b.ui.len() as i32 - 1).max(1);
         let x = |k: usize| r.x + 1 + k as i32 * (r.w - 3) / n;
-        let f = &self.fonts;
+        let f = self.fonts();
         let x0 = r.x + r.w / 2 - 44;
         let x1 = cv.text(&f.s, x0, r.y + r.h + 12, "counted", MEASURED);
         cv.text(&f.s, x1 + 8, r.y + r.h + 12, "model", MODELLED);
@@ -706,7 +706,8 @@ impl Ui {
     /// A text box: a title, then columns of figures under their heads. Rows that do not fit stay out, the first are
     /// the ones that matter most.
     fn eye_box(&self, cv: &mut Canvas, r: Rect, title: &str, rows: i32, cols: &[(&str, &[Cell])]) {
-        let f = &self.fonts;
+        // dense tables of figures: the normal text size at every setting, their rows and columns are made for it
+        let f = crate::font::Fonts::get(0);
         cv.round(r, 4, BAR, 255);
         cv.round_outline(r, 4, CARD_BORDER);
         let cw = (r.w - 12) / cols.len() as i32;
@@ -942,7 +943,7 @@ mod tests {
     fn the_text_fits_its_boxes() {
         for s in [CLEAN, NOISY, Sig { uis: 6, ..CLEAN }] {
             let ui = page(s, 8);
-            let (f, p) = (&ui.fonts, &ui.azr.page);
+            let (f, p) = (ui.fonts(), &ui.azr.page);
             let l = layout(ui.area);
             for (k, c) in p.charts.iter().enumerate() {
                 assert!(f.sb.width(&c.title) + 12 <= l.charts[k].w, "'{}'", c.title);

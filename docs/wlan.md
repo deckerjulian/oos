@@ -29,7 +29,8 @@ The network box at the top right, or System > Network:
 - **Forget WLAN network:** lists the saved networks, a tap removes one.
 - **WLAN details:** connection, signal, address, MAC of the stick.
 
-The page also shows the state of Ethernet, its MAC, the address of the web remote and the other ways in.
+The page also shows the state and speed of Ethernet, its MAC, the address of the web remote and the other ways in, and
+the 10 Mbit retry ([network.md](network.md)).
 
 The keyboard takes every password character: Shift for one capital, `#+=` for the symbols, Show for the plain text. Touch
 or any knob work (turn to choose, push to press).

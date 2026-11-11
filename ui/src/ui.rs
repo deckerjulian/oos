@@ -11,6 +11,7 @@ use crate::wave::*;
 use crate::board::{board, Board};
 
 mod analysis;
+mod busview;
 mod eyepage;
 mod panes;
 mod autoset;
@@ -28,6 +29,7 @@ mod update;
 mod viewmore;
 mod wlan;
 mod windows;
+mod time;
 #[cfg(test)]
 mod lint;
 mod bwtest;
@@ -47,9 +49,29 @@ const PLOT_Y: i32 = TOP.h;
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
 pub const BOTTOM: Rect = Rect::new(0, 526, W, 74);
-/// Width of the measurement results overlay (statistics on) at the top right of the plot.
-const RESULTS_W: i32 = 196;
-const STRIP_ROW: i32 = 18;
+/// Layout sizes that grow with the text (Display > Text size). Everything else keeps its place: touch targets are
+/// 40 px high at every size, and the larger fonts are set into them.
+pub struct Lay {
+    /// pitch of the measurement and cursor rows under the plot (the bar is 2 px lower)
+    pub strip_row: i32,
+    /// menu dialogs: label column and column width of the list rows, column width of the button grids
+    pub dlg_label: i32,
+    pub dlg_col: i32,
+    pub grid_col: i32,
+    /// width of the measurement results overlay (statistics on) at the top right of the plot
+    pub results_w: i32,
+    /// baselines in the bottom cards: name, big value, line under it
+    pub card: (i32, i32, i32),
+    /// row pitch of the results overlay: one line, two lines
+    pub res_pitch: (i32, i32),
+}
+
+/// The layouts of Normal, Large and Larger.
+pub const LAYS: [Lay; 3] = [
+    Lay { strip_row: 18, dlg_label: 96, dlg_col: 400, grid_col: 150, results_w: 196, card: (18, 42, 58), res_pitch: (22, 42) },
+    Lay { strip_row: 21, dlg_label: 104, dlg_col: 420, grid_col: 168, results_w: 224, card: (19, 43, 59), res_pitch: (24, 46) },
+    Lay { strip_row: 24, dlg_label: 116, dlg_col: 440, grid_col: 190, results_w: 250, card: (20, 43, 59), res_pitch: (26, 50) },
+];
 /// Menu dialogs: header height, row pitch and control height of the list rows (touch targets of 40 px).
 const DLG_HEAD: i32 = 50;
 const DLG_ROW: i32 = 44;
@@ -212,6 +234,8 @@ pub enum MenuId {
     SelfCal,
     /// network overview and WLAN through a USB stick (ui/wlan.rs)
     Network,
+    /// clock, NTP and time zone (ui/time.rs)
+    Time,
     Bode,
     Afg,
     BwTest,
@@ -285,6 +309,8 @@ enum Item {
     DecTick,
     DecNibbles,
     DecUsbSpeed,
+    /// option row `k` of a protocol module
+    DecOpt(usize),
     DecSrc4,
     DecDiff,
     TrigBusWhat,
@@ -416,6 +442,7 @@ enum Item {
     ClearDisp,
     Dots,
     Hdmi,
+    TextSize,
     ZInput,
     Histogram,
     SpecOn,
@@ -523,6 +550,16 @@ enum Item {
     WlanForget,
     WlanNet,
     WlanForgetNet,
+    /// one more autonegotiation for a link at 10 Mbit/s (ethlink.rs)
+    NetRetry10,
+    /// System > Date and time (ui/time.rs)
+    TimeNow,
+    NtpOn,
+    NtpServer,
+    NtpStatus,
+    NtpSync,
+    TimeZone,
+    TimeSet,
     ColorGrade,
     StoreSlot,
     StoreSaveSetup,
@@ -619,7 +656,6 @@ pub enum PowerAction {
 pub struct Ui {
     pub m: Model,
     pub src: Source,
-    pub fonts: Fonts,
     pub ph: Phosphor,
     pub phz: Phosphor,
     area: Rect,
@@ -742,6 +778,15 @@ pub struct Ui {
     clock_next: f64,
     /// a cable in the LAN port with a link
     pub eth_link: bool,
+    /// one more autonegotiation for a link at 10 Mbit/s; the main loop drives it (ethlink.rs)
+    pub eth: crate::ethlink::Retry,
+    /// settings of the scope itself (sysconf.rs); written to `sys_path` (none in tests: nothing written)
+    pub sys: crate::sysconf::SysConf,
+    pub sys_path: Option<std::path::PathBuf>,
+    /// NTP worker and schedule (ui/time.rs)
+    ntp: time::NtpUi,
+    /// the system clock was set in this boot (NTP or by hand): file names carry the date
+    pub clock_known: bool,
     pub t_step: f32,
     /// parts of `t_step` (ms, smoothed): taking records from the source, drawing them into the phosphor maps
     pub t_acq: f32,
@@ -791,6 +836,16 @@ pub struct Ui {
 }
 
 impl Ui {
+    /// The fonts of the text size.
+    pub fn fonts(&self) -> &'static Fonts {
+        Fonts::get(self.m.text_size.index())
+    }
+
+    /// The layout sizes of the text size.
+    pub fn lay(&self) -> &'static Lay {
+        &LAYS[self.m.text_size.index()]
+    }
+
     pub fn new(src: Source) -> Ui {
         let mut m = Model::default();
         m.meas = Self::default_meas();
@@ -804,7 +859,6 @@ impl Ui {
         let mut ui = Ui {
             m,
             src,
-            fonts: Fonts::load(),
             ph: Phosphor::new(1, 1),
             phz: Phosphor::new(1, 1),
             area: Rect::new(0, 0, 0, 0),
@@ -892,6 +946,11 @@ impl Ui {
             limits_path: oos_hal::model::LIMITS_CONF.into(),
             clock_next: oos_hal::model::platform().limits.adc_clock_hz,
             eth_link: false,
+            eth: Default::default(),
+            sys: Default::default(),
+            sys_path: None,
+            ntp: Default::default(),
+            clock_known: false,
             t_step: 0.0,
             t_acq: 0.0,
             t_draw: 0.0,
@@ -965,7 +1024,7 @@ impl Ui {
     /// Height for the graticule and the LA strip together (above the measurement rows).
     fn plot_base(&self) -> i32 {
         let rows = self.strip_rows();
-        self.plot_bottom() - 2 - self.plot_top() - rows * STRIP_ROW - if rows > 0 { 4 } else { 0 }
+        self.plot_bottom() - 2 - self.plot_top() - rows * self.lay().strip_row - if rows > 0 { 4 } else { 0 }
     }
 
     /// Full screen: the plot takes the top bar and the cards too. Not with the touch lock, whose way out is the Menu
@@ -1278,6 +1337,7 @@ impl Ui {
     /// search marks start over; in STOP the screen stays empty until the next acquisition (RUN draws again at once).
     fn clear_display(&mut self) {
         self.wfm_total = 0;
+        self.bus_views_clear();
         self.ph.clear();
         self.phz.clear();
         (self.vmax, self.vmaxz, self.vmax_cg, self.vmaxz_cg) = ([1; NCH], [1; NCH], 1, 1);
@@ -1314,6 +1374,7 @@ impl Ui {
         self.now += dt_wall;
         self.update_poll();
         self.wlan_poll();
+        self.ntp_poll();
         self.usb_poll();
         self.la_probe_poll();
         self.log_tick();
@@ -1707,7 +1768,7 @@ impl Ui {
             cv.blend(Rect::new(xb, o.y, (o.x + o.w - xb).max(0), o.h), BG, 170);
             cv.rect(Rect::new(xa, o.y, (xb - xa).max(2), o.h), ACCENT);
             cv.no_clip();
-            let f = &self.fonts;
+            let f = self.fonts();
             let lbl = format!("Zoom \u{b7} {}/div \u{b7} delay {}", si_short(tz as f64, "s"), si(dz as f64, "s"));
             cv.text(&f.sb, o.x, o.y + o.h + 17, &lbl, ACCENT);
             self.draw_grid(cv, z);
@@ -1847,7 +1908,7 @@ impl Ui {
     /// rather than drawn over another label, the status line, the time labels, the mask pill or the decode band; it
     /// keeps clear of the channel markers at the left edge.
     fn draw_axes(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let a = self.area;
         let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) { Some(self.m.active) } else { (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i)) };
         if let Some(c) = c {
@@ -2060,7 +2121,7 @@ impl Ui {
         if !self.m.mask_on || self.mask.is_none() || !self.shows(self.m.mask_src) {
             return;
         }
-        let f = &self.fonts;
+        let f = self.fonts();
         let c = self.m.mask_src;
         let parts: [(String, Rgb); 6] = [
             ("Mask ".into(), TEXT),
@@ -2166,7 +2227,7 @@ impl Ui {
             }
         };
         cv.no_clip();
-        let f = &self.fonts;
+        let f = self.fonts();
         // above the decoder band and the time labels
         let r = Rect::new(a.x + 8, a.y + a.h - 76, f.s.width(&txt) + 16, 20);
         cv.round(r, 4, PANEL_BG, 230);
@@ -2250,7 +2311,7 @@ impl Ui {
         // all traces first, then the labels on top of them
         let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win).collect();
         let labels: Vec<Option<String>> = on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
-        let f = &self.fonts;
+        let f = self.fonts();
         for (row, (label, &k)) in labels.iter().zip(&on).enumerate() {
             if let Some(label) = label {
                 // top right, under the status line, one row per math channel (the results panel goes below them)
@@ -2266,7 +2327,7 @@ impl Ui {
         let c = self.m.math_ch(k);
         let Some(rec) = &self.last[0] else { return None };
         let col = MATH_COLORS[k % MATH_COLORS.len()];
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.set_clip(self.area);
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
@@ -2422,7 +2483,7 @@ impl Ui {
     /// One decoder's band at height y; row = its place under the lanes.
     fn draw_decoder(&self, cv: &mut Canvas, m: &Model, k: usize, y: i32, row: Option<Rect>) {
         use oos_dsp::decode::Kind;
-        let f = &self.fonts;
+        let f = self.fonts();
         let a = self.area;
         let col = if m.dec_on_la() { la::line_color(m.dec_la[0].unwrap_or(0)) } else { CH_COLORS[m.dec_src] };
         // rows under the lanes span all windows, like the lanes
@@ -2495,7 +2556,7 @@ impl Ui {
     }
 
     fn draw_refs(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.set_clip(self.area);
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
@@ -2543,7 +2604,7 @@ impl Ui {
         // CH1 = X, CH2 = Y in a square of 8 x 8 div in the middle of the grid
         let Some(rec) = &self.last[0] else { return };
         let (a, b) = (&rec.ch[0], &rec.ch[1]);
-        let f = &self.fonts;
+        let f = self.fonts();
         let side = self.area.h;
         let sq = Rect::new(self.area.x + (self.area.w - side) / 2, self.area.y, side, side);
         cv.fill(sq, rgb(0x04, 0x04, 0x08));
@@ -2573,7 +2634,7 @@ impl Ui {
     }
 
     fn draw_markers(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let a = self.area;
         // channel ground markers at the left edge of the grid
         for c in 0..NCH {
@@ -2661,7 +2722,7 @@ impl Ui {
         if !self.shows(self.m.active) {
             return;
         }
-        let f = &self.fonts;
+        let f = self.fonts();
         let a = self.area;
         let tagbox = |cv: &mut Canvas, x: i32, y: i32, s: &str| {
             let r = Rect::new(x, y, f.s.width(s) + 8, 14);
@@ -2758,7 +2819,7 @@ impl Ui {
     /// Status line inside the top of the plot: touch lock, history position and search count on the left; a source that
     /// is not the live hardware on the right.
     fn draw_info(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let g = self.grid;
         let y = g.y + 14;
         // only what makes the picture something else than a live measurement; the rates are on System info
@@ -2800,12 +2861,17 @@ impl Ui {
 
     /// Measurement rows (one per channel) and the cursor row under the plot.
     fn draw_strip(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let g = self.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
-        let mut y = (self.plot_bottom() + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
+        let mut y = (self.plot_bottom() + 2 - self.strip_rows() * self.lay().strip_row).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
+        // bar height and text baseline of a row; the channel pill and the values right of it
+        let bh = self.lay().strip_row - 2;
+        let base = (bh + f.s.size * 72 / 100) / 2;
+        let pw = 42.max(f.sb.width("CH4") + 18);
+        let vx = 8 + pw + 8;
         let pill = |cv: &mut Canvas, y: i32, c: usize| {
-            let r = Rect::new(8, y + 1, 42, 14);
+            let r = Rect::new(8, y + 1, pw, bh - 2);
             cv.round(r, 3, CH_COLORS[c], 255);
             cv.text_in(&f.sb, r, 1, &format!("CH{}", c + 1), DARK_TEXT);
         };
@@ -2815,30 +2881,30 @@ impl Ui {
             for c in self.meas_groups() {
                 let mine: Vec<&tools::MeasRow> = rows.iter().filter(|r| r.ch == c).collect();
                 for part in mine.chunks(tools::STRIP_PER_ROW) {
-                    cv.fill(Rect::new(6, y, W - 12, 16), BAR);
+                    cv.fill(Rect::new(6, y, W - 12, bh), BAR);
                     pill(cv, y, c);
                     // the row's width shared out, whatever the number of values
-                    let pitch = (W - 66) / part.len() as i32;
+                    let pitch = (W - 8 - vx) / part.len() as i32;
                     for (i, r) in part.iter().enumerate() {
-                        let x = 58 + i as i32 * pitch;
-                        let x2 = cv.text(&f.s, x, y + 12, &r.name, DIM) + 8;
-                        cv.text(&f.sb, x2, y + 12, &r.text(), CH_COLORS[c]);
+                        let x = vx + i as i32 * pitch;
+                        let x2 = cv.text(&f.s, x, y + base, &r.name, DIM) + 8;
+                        cv.text(&f.sb, x2, y + base, &r.text(), CH_COLORS[c]);
                     }
-                    y += STRIP_ROW;
+                    y += self.lay().strip_row;
                 }
             }
         }
         if self.m.dvm_on || self.m.cnt_on {
-            cv.fill(Rect::new(6, y, W - 12, 16), BAR);
+            cv.fill(Rect::new(6, y, W - 12, bh), BAR);
             let mut x = 12;
             for (l, v) in self.dvm_row() {
-                x = cv.text(&f.s, x, y + 12, &l, DIM) + 8;
-                x = cv.text(&f.sb, x, y + 12, &v, TEXT) + 24;
+                x = cv.text(&f.s, x, y + base, &l, DIM) + 8;
+                x = cv.text(&f.sb, x, y + base, &v, TEXT) + 24;
             }
-            y += STRIP_ROW;
+            y += self.lay().strip_row;
         }
         if self.m.cursor != CursorMode::Off && !in_pane {
-            cv.fill(Rect::new(6, y, W - 12, 16), BAR);
+            cv.fill(Rect::new(6, y, W - 12, bh), BAR);
             pill(cv, y, self.m.active);
             let mode = match self.m.cursor {
                 CursorMode::Volt => "Volt",
@@ -2846,13 +2912,17 @@ impl Ui {
                 CursorMode::Xy => "XY",
                 _ => "Time",
             };
-            let r = Rect::new(56, y + 2, 38, 12);
+            let r = Rect::new(vx - 2, y + 2, 38.max(f.s.width("Track") + 8), bh - 4);
             cv.round_outline(r, 3, DIM);
             cv.text_in(&f.s, r, 1, mode, LABEL);
-            for (i, (l, v)) in self.cursor_values().iter().enumerate() {
-                let x = 104 + i as i32 * if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 };
-                let x2 = cv.text(&f.s, x, y + 12, l, DIM) + 8;
-                cv.text(&f.sb, x2, y + 12, v, TEXT);
+            let vals = self.cursor_values();
+            let x0 = r.x + r.w + 10;
+            // the pitch of the values, closer where a large text size would push the last one off the row
+            let pitch = if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 }.min((W - 12 - x0) / vals.len().max(1) as i32);
+            for (i, (l, v)) in vals.iter().enumerate() {
+                let x = x0 + i as i32 * pitch;
+                let x2 = cv.text(&f.s, x, y + base, l, DIM) + 8;
+                cv.text(&f.sb, x2, y + base, v, TEXT);
             }
         }
     }
@@ -2865,22 +2935,24 @@ impl Ui {
         }
         let a = self.over_area();
         let y = a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32;
-        let x = a.x + a.w - 56 - RESULTS_W;
+        let rw = self.lay().results_w;
+        let x = a.x + a.w - 56 - rw;
         let n = (self.m.meas.len() + self.m.meas2.len()) as i32;
-        let head = Rect::new(x, y, RESULTS_W, 30);
-        Some((head, Rect::new(x, y + 30, RESULTS_W, if self.results_min { 0 } else { n * Self::results_pitch(n) + 4 })))
+        let head = Rect::new(x, y, rw, 30);
+        Some((head, Rect::new(x, y + 30, rw, if self.results_min { 0 } else { n * self.results_pitch(n) + 4 })))
     }
 
     /// Height of a row of the results card: two lines, or one when there are many.
-    fn results_pitch(n: i32) -> i32 {
-        if n > 6 { 22 } else { 42 }
+    fn results_pitch(&self, n: i32) -> i32 {
+        let (one, two) = self.lay().res_pitch;
+        if n > 6 { one } else { two }
     }
 
     /// Measurement results with statistics as a translucent card over the plot: value, mean, ±σ, acquisitions;
     /// tapping the header folds it.
     fn draw_results(&self, cv: &mut Canvas) {
         let Some((head, body)) = self.results_rects() else { return };
-        let f = &self.fonts;
+        let f = self.fonts();
         let all = Rect::new(head.x, head.y, head.w, head.h + body.h);
         cv.round(all, 6, CARD_BORDER, 255);
         cv.round(all.inset(1), 5, BAR, 215);
@@ -2897,42 +2969,60 @@ impl Ui {
             return;
         }
         let rows = self.meas_rows();
-        let pitch = Self::results_pitch(rows.len() as i32);
+        let pitch = self.results_pitch(rows.len() as i32);
+        let (one, two) = self.lay().res_pitch;
         for (i, r) in rows.iter().enumerate() {
             let by = body.y + i as i32 * pitch;
             cv.hline(body.x + 8, body.x + body.w - 9, by, LINE);
             let st = self.mstat.get(i).copied().unwrap_or_default();
             let mean = st.sum / st.n.max(1) as f64;
-            if pitch < 42 {
+            // baselines: 16 and 35 px into a row at the normal text size
+            let (y1, y2) = (one - 6, two - 7);
+            if pitch < two {
                 // one line: name, value, mean
-                cv.text(&f.s, body.x + 10, by + 16, &r.name, LABEL);
+                cv.text(&f.s, body.x + 10, by + y1, &r.name, LABEL);
                 let s = r.text();
-                cv.text(&f.sb, body.x + body.w - 10 - f.sb.width(&s), by + 16, &s, CH_COLORS[r.ch]);
+                cv.text(&f.sb, body.x + body.w - 10 - f.sb.width(&s), by + y1, &s, CH_COLORS[r.ch]);
                 continue;
             }
-            cv.text(&f.s, body.x + 10, by + 16, &format!("{} CH{}", r.name, r.ch + 1), LABEL);
+            cv.text(&f.s, body.x + 10, by + y1, &format!("{} CH{}", r.name, r.ch + 1), LABEL);
             if st.n > 1 {
                 let sd = (st.sumsq / st.n as f64 - mean * mean).max(0.0).sqrt();
                 let s = format!("\u{b1}{} \u{3c3}", si(sd, r.unit));
-                cv.text(&f.s, body.x + body.w - 10 - f.s.width(&s), by + 16, &s, DIM);
+                cv.text(&f.s, body.x + body.w - 10 - f.s.width(&s), by + y1, &s, DIM);
                 let s = format!("mean {}", r.fmt(mean));
-                cv.text(&f.s, body.x + body.w - 10 - f.s.width(&s), by + 35, &s, DIM);
+                cv.text(&f.s, body.x + body.w - 10 - f.s.width(&s), by + y2, &s, DIM);
             }
-            cv.text(&f.mb, body.x + 10, by + 35, &r.text(), CH_COLORS[r.ch]);
+            cv.text(&f.mb, body.x + 10, by + y2, &r.text(), CH_COLORS[r.ch]);
         }
     }
 
-    const RUN_PILL: Rect = Rect::new(8, 6, 92, 28);
-    const NET_BOX: Rect = Rect::new(896, 5, 122, 30);
+    /// Run state pill at the left of the top bar (wider for the larger text sizes).
+    fn run_pill(&self) -> Rect {
+        Rect::new(8, 6, 92.max(30 + self.fonts().mb.width("TRIG'D") + 12), 28)
+    }
+
+    /// Network box at the right of the top bar: room for an address, two lines of text (taller at the larger text
+    /// sizes).
+    fn net_box(&self) -> Rect {
+        let k = self.m.text_size.index() as i32;
+        let w = 122.max(28 + self.fonts().sb.width("255.255.255.255"));
+        Rect::new(W - 6 - w, 5 - 2 * k, w, 30 + 4 * k)
+    }
+
     /// Left of the network box while a WLAN stick is plugged in.
-    const WLAN_BOX: Rect = Rect::new(786, 5, 104, 30);
+    fn wlan_box(&self) -> Rect {
+        let n = self.net_box();
+        let w = if self.m.text_size == TextSize::Normal { 104 } else { n.w };
+        Rect::new(n.x - 6 - w, n.y, w, n.h)
+    }
     /// Start menu button left of the channel cards (all menus and key functions by touch).
     const MENU_BTN: Rect = Rect::new(6, 530, 62, 66);
 
     /// Top-bar buttons, right-aligned before the network box: what is used most, and the menus without a front-panel key
     /// (Display, Storage, System). Everything else is in the start menu.
     fn top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
-        let f = &self.fonts;
+        let f = self.fonts();
         let all: [(TopBtn, &'static str); 5] = [
             (TopBtn::Menu(MenuId::Measure), "Measure"),
             (TopBtn::Menu(MenuId::Cursor), "Cursor"),
@@ -2954,7 +3044,7 @@ impl Ui {
 
     /// While a USB stick is mounted: left of the network and WLAN boxes; the top-bar buttons move over for it.
     fn usb_box(&self) -> Rect {
-        let next = if self.wlan_stick { Self::WLAN_BOX.x } else { Self::NET_BOX.x };
+        let next = if self.wlan_stick { self.wlan_box().x } else { self.net_box().x };
         Rect::new(next - 52, 5, 46, 30)
     }
 
@@ -2962,19 +3052,21 @@ impl Ui {
     fn top_right(&self) -> i32 {
         match (self.usb, self.wlan_stick) {
             (true, _) => self.usb_box().x,
-            (false, true) => Self::WLAN_BOX.x,
-            _ => Self::NET_BOX.x,
+            (false, true) => self.wlan_box().x,
+            _ => self.net_box().x,
         }
     }
 
     /// A box of the top bar with a state dot and two lines.
     fn draw_link(&self, cv: &mut Canvas, r: Rect, l1: &str, addr: Option<&str>) {
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.round(r, 5, if self.menu_open && self.menu_root() == MenuId::Network { ACCENT } else { BTN_BORDER }, 255);
         cv.round(r.inset(1), 4, BG, 255);
-        cv.circle(r.x + 11, r.y + 10, 3, if addr.is_some() { GREEN } else { DIM });
-        cv.text(&f.s, r.x + 20, r.y + 13, l1, DIM);
-        cv.text(&f.sb, r.x + 20, r.y + 26, addr.unwrap_or("not connected"), TEXT);
+        // first line under the top edge, the second on the bottom edge
+        let (cap, y1) = (f.s.size * 72 / 100, r.y + 5 + f.s.size * 72 / 100);
+        cv.circle(r.x + 11, y1 - cap / 2 + 1, 3, if addr.is_some() { GREEN } else { DIM });
+        cv.text(&f.s, r.x + 20, y1, l1, DIM);
+        cv.text(&f.sb, r.x + 20, r.y + r.h - 4, addr.unwrap_or("not connected"), TEXT);
     }
 
     /// The address of an interface, if it has one.
@@ -2988,7 +3080,7 @@ impl Ui {
     }
 
     fn draw_top(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.fill(TOP, BAR);
         cv.hline(0, W - 1, TOP.h - 1, LINE);
         // run / trigger state
@@ -2999,18 +3091,18 @@ impl Ui {
             (_, TrigStatus::Auto) => ("AUTO", GREEN),
             (_, TrigStatus::Wait) => ("WAIT", AMBER),
         };
-        let r = Self::RUN_PILL;
+        let r = self.run_pill();
         cv.round(r, 6, mix(BAR, col, 80), 255);
         cv.round(r.inset(1), 5, mix(BAR, col, 36), 255);
         cv.circle(r.x + 16, r.y + 14, 4, col);
-        cv.text(&f.mb, r.x + 30, r.y + 19, txt, col);
+        cv.text_in(&f.mb, Rect::new(r.x + 30, r.y, r.w - 30, r.h), 0, txt, col);
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
         let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
         let tcol = if acq_open { ACCENT } else { TEXT };
-        let x = cv.text(&f.mb, 114, 25, &format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), tcol);
+        let x = cv.text(&f.mb, r.x + r.w + 14, 25, &format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), tcol);
         let acq = match self.m.acq {
             AcqMode::Normal => "Normal".to_string(),
             AcqMode::Peak => "Peak".to_string(),
@@ -3034,10 +3126,10 @@ impl Ui {
         }
         // LAN: an address without a cable is only the fallback waiting for one
         let lan = self.addr_of("eth0").filter(|_| self.eth_link);
-        self.draw_link(cv, Self::NET_BOX, if lan.is_none() { "LAN" } else if self.net_fixed { "LAN \u{b7} fixed" } else { "LAN \u{b7} DHCP" }, lan);
+        self.draw_link(cv, self.net_box(), if lan.is_none() { "LAN" } else if self.net_fixed { "LAN \u{b7} fixed" } else { "LAN \u{b7} DHCP" }, lan);
         // WLAN and USB sticks, while they are there
         if self.wlan_stick {
-            self.draw_link(cv, Self::WLAN_BOX, "WLAN", self.addr_of(oos_hal::wlan::IFACE));
+            self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
         }
         if self.usb {
             let r = self.usb_box();
@@ -3052,7 +3144,7 @@ impl Ui {
     /// cover it (it never hides dialog controls).
     fn draw_toast(&self, cv: &mut Canvas) {
         let Some((s, _)) = &self.toast else { return };
-        let f = &self.fonts;
+        let f = self.fonts();
         let tw = f.mb.width(s) + 44;
         let mut r = Rect::new(W / 2 - tw / 2, PLOT_Y + 4, tw, 28);
         let dlg = self.dlg_layout().map(|d| d.r).filter(|d| overlaps(*d, r));
@@ -3145,8 +3237,30 @@ impl Ui {
     }
 
     /// The big digits of a card while `s` fits `room`, else the next size: nothing is cut off with every card on.
-    fn card_font<'a>(f: &'a Fonts, s: &str, room: i32) -> &'a Font {
-        if f.l.width(s) <= room { &f.l } else { &f.m }
+    fn card_font(f: &'static Fonts, s: &str, room: i32) -> &'static Font {
+        fit_font(&[&f.l, &f.m, &Fonts::get(0).m], room, s)
+    }
+
+    /// The line under V/div of a channel card: coupling, probe, bandwidth, invert, offset.
+    fn card_sub(&self, c: usize) -> String {
+        let ch = &self.m.ch[c];
+        let mut sub = vec![ch.coupling.name().to_string(), format!("{}\u{d7}", ch.probe)];
+        if ch.bw != 0 && ch.bw != BW_FULL {
+            sub.push(format!("BW {}", BWS[ch.bw].0));
+        }
+        if ch.invert {
+            sub.push("Inv".into());
+        }
+        sub.push(si_short(ch.offset as f64, ch.unit.name()));
+        sub.join(" \u{b7} ")
+    }
+
+    /// Font of that line, one for all channel cards: the normal size when a line would run out of its card at the
+    /// text size.
+    fn card_sub_font(&self) -> &'static Font {
+        let (f, chs) = (self.fonts(), self.cards().0);
+        let all_fit = (0..NCH).filter(|&c| chs[c].w > 0 && self.m.ch[c].on).all(|c| f.s.width(&self.card_sub(c)) <= chs[c].w - 22);
+        if all_fit { &f.s } else { &Fonts::get(0).s }
     }
 
     /// Trigger card buttons, one over the other at the right edge (touch): source, sweep; the rest of the card, and with
@@ -3160,16 +3274,17 @@ impl Ui {
     /// A card like the channels': on, wide with its values; on, narrow with a full dot; off, with a ring.
     #[allow(clippy::too_many_arguments)]
     fn draw_aux_card(&self, cv: &mut Canvas, r: Rect, name: &str, col: Rgb, on: bool, sel: bool, big: &str, sub: &str) {
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.round(r, 7, if sel || on { col } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
         cv.set_clip(r.inset(3));
         if on && r.w > AUX_NARROW {
             cv.fill(Rect::new(r.x + 6, r.y + 10, 3, r.h - 20), col);
-            cv.text(&f.sb, r.x + 16, r.y + 18, name, col);
+            let (yn, yb, ys) = self.lay().card;
+            cv.text(&f.sb, r.x + 16, r.y + yn, name, col);
             cv.circle(r.x + r.w - 16, r.y + 14, 5, col);
-            cv.text(&f.mb, r.x + 16, r.y + 42, big, TEXT);
-            cv.text(&f.s, r.x + 16, r.y + 58, sub, DIM);
+            cv.text(fit_font(&[&f.mb, &Fonts::get(0).mb], r.w - 22, big), r.x + 16, r.y + yb, big, TEXT);
+            cv.text(fit_font(&[&f.s, &Fonts::get(0).s], r.w - 22, sub), r.x + 16, r.y + ys, sub, DIM);
         } else {
             cv.text_in(&f.sb, Rect::new(r.x, r.y + 8, r.w, 18), 1, name, if on { col } else { LABEL });
             let (cx, cy) = (r.x + r.w / 2, r.y + 45);
@@ -3182,7 +3297,10 @@ impl Ui {
     }
 
     fn draw_bottom(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
+        let (yn, yb, ys) = self.lay().card;
+        // a line that would run out of a narrow card takes the normal size
+        let small = |s: &str, room: i32| fit_font(&[&f.s, &Fonts::get(0).s], room, s);
         cv.fill(BOTTOM, BG);
         let root = if self.menu_open { Some(self.menu_root()) } else { None };
         // start menu button: three bars and "Menu"; amber "Locked" while touch is locked (a tap unlocks)
@@ -3196,6 +3314,7 @@ impl Ui {
         }
         cv.text_in(&f.sb, Rect::new(r.x, r.y + 42, r.w, 16), 1, if lock { "Locked" } else { "Menu" }, col);
         let (chs, tr, trg) = self.cards();
+        let sub_font = self.card_sub_font();
         for (c, &r) in chs.iter().enumerate() {
             if r.w == 0 {
                 continue;
@@ -3211,20 +3330,11 @@ impl Ui {
             let name = self.ch_name(c);
             if ch.on {
                 cv.fill(Rect::new(r.x + 6, r.y + 10, 3, r.h - 20), col);
-                cv.text(&f.sb, r.x + 16, r.y + 18, &name, col);
+                cv.text(&f.sb, r.x + 16, r.y + yn, &name, col);
                 cv.circle(r.x + r.w - 16, r.y + 14, 5, col);
                 let scale = format!("{}/div", si_short(ch.volts_per_div() as f64, ch.unit.name()));
-                cv.text(Self::card_font(f, &scale, r.w - 24), r.x + 16, r.y + 42, &scale, TEXT);
-                let cpl = ch.coupling.name();
-                let mut sub = vec![cpl.to_string(), format!("{}\u{d7}", ch.probe)];
-                if ch.bw != 0 && ch.bw != BW_FULL {
-                    sub.push(format!("BW {}", BWS[ch.bw].0));
-                }
-                if ch.invert {
-                    sub.push("Inv".into());
-                }
-                sub.push(si_short(ch.offset as f64, ch.unit.name()));
-                cv.text(&f.s, r.x + 16, r.y + 58, &sub.join(" \u{b7} "), DIM);
+                cv.text(Self::card_font(f, &scale, r.w - 24), r.x + 16, r.y + yb, &scale, TEXT);
+                cv.text(sub_font, r.x + 16, r.y + ys, &self.card_sub(c), DIM);
             } else {
                 cv.text_in(&f.sb, Rect::new(r.x, r.y + 8, r.w, 18), 1, &name, LABEL);
                 let (cx, cy) = (r.x + r.w / 2, r.y + 45);
@@ -3252,13 +3362,14 @@ impl Ui {
         let sel = root == Some(MenuId::Horizontal);
         cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
-        cv.text(&f.sb, r.x + 12, r.y + 18, "TIME", LABEL);
+        cv.text(&f.sb, r.x + 12, r.y + yn, "TIME", LABEL);
         let tdiv = format!("{}/div", si_short(self.m.time_per_div() as f64, "s"));
-        cv.text(Self::card_font(f, &tdiv, r.w - 20), r.x + 12, r.y + 42, &tdiv, TEXT);
+        cv.text(Self::card_font(f, &tdiv, r.w - 20), r.x + 12, r.y + yb, &tdiv, TEXT);
         if self.m.zoom {
-            cv.text(&f.sb, r.x + 12, r.y + 58, &format!("zoom {}/div", si_short(tscales()[self.m.zscale] as f64, "s")), ACCENT);
+            cv.text(&f.sb, r.x + 12, r.y + ys, &format!("zoom {}/div", si_short(tscales()[self.m.zscale] as f64, "s")), ACCENT);
         } else {
-            cv.text(&f.s, r.x + 12, r.y + 58, &format!("delay {}", si_short(self.m.delay as f64, "s")), DIM);
+            let t = format!("delay {}", si_short(self.m.delay as f64, "s"));
+            cv.text(small(&t, r.w - 18), r.x + 12, r.y + ys, &t, DIM);
         }
         // trigger: type, slope / polarity / standard and level; source and sweep buttons
         let r = trg;
@@ -3266,7 +3377,7 @@ impl Ui {
         cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
         // type and slope on the first line, the level under them: it has the width up to the buttons
-        let tx = cv.text(&f.sb, r.x + 12, r.y + 18, &self.m.trig_type.name().to_uppercase(), LABEL) + 8;
+        let tx = cv.text(&f.sb, r.x + 12, r.y + yn, &self.m.trig_type.name().to_uppercase(), LABEL) + 8;
         if matches!(self.m.trig_type, TrigType::Edge | TrigType::Slope | TrigType::Timeout | TrigType::NthEdge | TrigType::Delay) {
             draw_slope(cv, tx, r.y + 6, self.m.slope, ACCENT);
         } else {
@@ -3275,7 +3386,7 @@ impl Ui {
                 TrigType::Video => if self.m.video_std == VideoStd::Pal { "P" } else { "N" },
                 _ => "",
             };
-            cv.text(&f.sb, tx, r.y + 18, tag, ACCENT);
+            cv.text(&f.sb, tx, r.y + yn, tag, ACCENT);
         }
         // an LA line has the pod's threshold, not a level of its own
         let lv = match self.m.trig_line() {
@@ -3393,7 +3504,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::TextSize, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -3405,7 +3516,8 @@ impl Ui {
             MenuId::Power => vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode],
             MenuId::Identify => self.identify_items(),
             MenuId::SelfCal => self.cal_items(),
-            MenuId::Network => vec![Item::NetEth, Item::NetMac, Item::NetWeb, Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
+            MenuId::Network => vec![Item::NetEth, Item::NetRetry10, Item::NetMac, Item::NetWeb, Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
+            MenuId::Time => self.time_items(),
             MenuId::Bode => self.bode_items(),
             MenuId::Afg => self.afg_items(),
             MenuId::BwTest => self.bw_items(),
@@ -3416,7 +3528,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -3580,6 +3692,7 @@ impl Ui {
             Proto::Arinc429 => v.push(DecArate),
             Proto::Sent => v.extend([DecTick, DecNibbles]),
             Proto::Usb => v.push(DecUsbSpeed),
+            Proto::Module(_) => v.extend((0..p.module().map_or(0, |x| x.options().len())).map(DecOpt)),
             _ => {}
         }
         // LA lines: the probe's comparators set the levels (LA page)
@@ -3594,12 +3707,14 @@ impl Ui {
     /// Switches the decoder protocol with sources that match the demo bus traffic.
     fn set_dec_proto(&mut self, p: Proto) {
         let m = &mut self.m;
+        let changed = m.dec_proto != p;
         m.dec_proto = p;
         // LA input: the lines of the demo traffic (D8 UART, D9 CS, D10 clock, D11 MOSI, D12 SCL, D13 SDA)
         m.dec_la = match p {
             Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some(13), Some(12), None, None],
             Proto::Spi => [Some(11), Some(10), Some(9), None],
             Proto::Parallel => [Some(0), None, None, None],
+            Proto::Module(i) => crate::protocols::get(i).setup().la,
             _ => [Some(8), Some(10), None, None],
         };
         match p {
@@ -3637,10 +3752,6 @@ impl Ui {
             Proto::Uart9 => {
                 (m.dec_src, m.dec_baud) = (2, 3);
             }
-            // CC line ~1.1 V
-            Proto::UsbPd => {
-                (m.dec_src, m.dec_thr) = (2, 0.55);
-            }
             Proto::Parallel => {
                 (m.dec_src, m.dec_bits, m.dec_cs) = (0, 3, Some(3));
             }
@@ -3661,6 +3772,21 @@ impl Ui {
             // demo: D+ on CH3, D- on CH4, 3.3 V
             Proto::Usb => {
                 (m.dec_src, m.dec_cs, m.dec_thr) = (2, Some(3), 1.65);
+            }
+            // a module: its demo channels and threshold; its options from their defaults when it is newly chosen
+            Proto::Module(i) => {
+                let s = crate::protocols::get(i).setup();
+                (m.dec_src, m.dec_cs, m.dec_src4, m.dec_thr) = (s.src[0].unwrap_or(2), s.src[2], s.src[3], s.thr);
+                if let Some(c) = s.src[1] {
+                    m.dec_src2 = c;
+                }
+                if changed {
+                    m.dec_opt = crate::protocols::opt_default(i);
+                    // a module with a view of its own: open it, when no other pane is open
+                    if m.pane == 0 && crate::protocols::get(i).view(&[], &crate::protocols::opt_fit(i, m.dec_opt), &mut None).is_some() {
+                        m.pane = tables::PANE_BUS;
+                    }
+                }
             }
             _ => m.dec_src = 2,
         }
@@ -3818,6 +3944,7 @@ impl Ui {
             Item::TrigSlope if t == TrigType::Delay => "Slope A",
             Item::TrigSlope2 if t == TrigType::SetupHold => "Clock edge",
             Item::TrigT1 if t == TrigType::Timeout => "Timeout",
+            Item::DecOpt(k) => self.m.dec_proto.module().and_then(|p| p.options().get(k)).map_or("Option", |o| o.name),
             Item::DecSrc if self.m.dec_proto.roles()[0] != Some("Source") => self.m.dec_proto.roles()[0].unwrap_or("Source"),
             Item::DecSrc2 if self.m.dec_proto.roles()[1].is_some() => self.m.dec_proto.roles()[1].unwrap_or("Clock"),
             Item::DecCs if self.m.dec_proto.roles()[2].is_some() => self.m.dec_proto.roles()[2].unwrap_or("CS"),
@@ -3849,6 +3976,7 @@ impl Ui {
                 Proto::Sent => (BusWhat::Data, 0x7f480b),
                 // the demo device's address
                 Proto::Usb => (BusWhat::Id, 5),
+                Proto::Module(i) => crate::protocols::get(i).trigger_default(),
                 _ => (BusWhat::Frame, 0x40),
             };
             self.dirty_map = true;
@@ -3930,6 +4058,7 @@ impl Ui {
             MenuId::Identify => "Identify: tap to apply".into(),
             MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Network => "Network".into(),
+            MenuId::Time => "Date and time".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Afg => "Generator (GI/GO)".into(),
             MenuId::BwTest => "Bandwidth test (step response)".into(),
@@ -3965,7 +4094,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)) {
             return k;
         }
         match it {
@@ -3986,7 +4115,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)) {
             return l;
         }
         match it {
@@ -4047,6 +4176,7 @@ impl Ui {
             Item::DecTick => "Clock tick",
             Item::DecNibbles => "Data nibbles",
             Item::DecUsbSpeed => "Speed",
+            Item::DecOpt(_) => "Option",
             Item::DecSrc4 => "Source 4",
             Item::DecDiff => "B line (A-B)",
             Item::DecThr => "Threshold",
@@ -4169,6 +4299,7 @@ impl Ui {
             Item::ClearDisp => "Clear",
             Item::Dots => "Dots",
             Item::Hdmi => "HDMI",
+            Item::TextSize => "Text size",
             Item::ZoneSel => "Zone",
             Item::ZoneOn => "Enable",
             Item::ZoneSrc => "Source",
@@ -4222,7 +4353,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4340,6 +4471,7 @@ impl Ui {
             Item::TrigNoise => onoff(m.trig_nrej),
             Item::Dots => onoff(m.dots),
             Item::Hdmi => if m.hdmi_wave { "Waveform".into() } else { "Mirror".into() },
+            Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
             Item::ZoneOn => onoff(m.zones[self.zone_sel].on),
             Item::ZoneSrc => format!("CH{}", m.zones[self.zone_sel].src + 1),
@@ -4372,6 +4504,7 @@ impl Ui {
             Item::DecThr => si(m.dec_thr as f64, "V"),
             Item::DecFmt => if m.dec_ascii { "ASCII".into() } else { "Hex".into() },
             Item::DecProto => m.dec_proto.name().into(),
+            Item::DecOpt(k) => m.dec_proto.module().and_then(|p| p.options().get(k)).map_or(String::new(), |o| o.choices[m.dec_opts()[k]].into()),
             Item::DecSrc2 => format!("CH{}", m.dec_src2 + 1),
             Item::DecCs => m.dec_cs.map_or("None".into(), |c| format!("CH{}", c + 1)),
             Item::DecMode => format!("{}", m.dec_mode),
@@ -4413,7 +4546,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -4639,6 +4772,10 @@ impl Ui {
                 self.dirty_map = true;
             }
             Item::Hdmi => m.hdmi_wave = !m.hdmi_wave,
+            Item::TextSize => {
+                let i = m.text_size.index();
+                m.text_size = TEXT_SIZES[(i as i32 + d).clamp(0, TEXT_SIZES.len() as i32 - 1) as usize];
+            }
             Item::ZInput => {
                 let i = m.z_src.map_or(0, |c| c + 1);
                 let i = opt_src_step(i, d);
@@ -4734,6 +4871,11 @@ impl Ui {
             Item::DecTick => self.m.dec_tick = step(self.m.dec_tick, crate::decode::SENT_TICKS.len(), d),
             Item::DecNibbles => self.m.dec_nibbles = (self.m.dec_nibbles as i32 + d).clamp(1, 6) as u32,
             Item::DecUsbSpeed => self.m.dec_uspeed = cyc(self.m.dec_uspeed, crate::decode::USB_SPEEDS.len(), d),
+            Item::DecOpt(k) => {
+                if let Some(o) = self.m.dec_proto.module().and_then(|p| p.options().get(k)) {
+                    self.m.dec_opt[k] = cyc(self.m.dec_opts()[k], o.choices.len(), d) as u8;
+                }
+            }
             Item::DecSrc4 => {
                 let i = self.m.dec_src4.map_or(0, |c| c + 1);
                 let k = opt_src_step(i, d);
@@ -4820,7 +4962,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
-        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it)) {
+        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it) || self.time_activate(it)) {
             return;
         }
         match Self::kind(it) {
@@ -4893,6 +5035,11 @@ impl Ui {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
+                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone)) => {
+                    let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
+                    self.close_picker();
+                    self.time_pick(it, k);
+                }
                 Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::WlanForgetNet) => {
                     self.close_picker();
                     self.wlan_forget_pick(k);
@@ -4906,13 +5053,19 @@ impl Ui {
                         }
                     }
                 }
+                // on when it was off, off when it was on (like Delay / Phase)
                 Item::MeasAdd(k) => {
                     let e = (k, self.meas_src);
-                    if !self.m.meas.contains(&e) {
+                    let what = if let Some(i) = self.m.meas.iter().position(|x| *x == e) {
+                        self.m.meas.remove(i);
+                        self.mstat.clear();
+                        "removed"
+                    } else {
                         self.meas_make_room();
                         self.m.meas.push(e);
-                    }
-                    self.toast(&format!("{} CH{} added", k.name(), self.meas_src + 1));
+                        "added"
+                    };
+                    self.toast(&format!("{} CH{} {}", k.name(), self.meas_src + 1, what));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
                 Item::CntClear => self.counter_clear(),
@@ -4922,7 +5075,7 @@ impl Ui {
                 Item::SearchSave => self.events_export(tables::TableKind::Search),
                 Item::StoreBin => match &self.last[0] {
                     Some(rec) => {
-                        let p = crate::store::next_name(&self.save_dir(), "wave", "bin");
+                        let p = self.new_file(&self.save_dir(), "wave", "bin");
                         let r = crate::store::write(&p, &crate::store::wave_bin(rec, &self.m));
                         self.toast_saved(&p, r);
                     }
@@ -5024,11 +5177,11 @@ impl Ui {
                 Item::StoreRecall => self.recall_setup(),
                 Item::StoreCsv => match &self.last[0] {
                     Some(rec) => {
-                        let p = crate::store::next_name(&self.save_dir(), "wave", "csv");
+                        let p = self.new_file(&self.save_dir(), "wave", "csv");
                         let mut r = crate::store::write(&p, crate::store::wave_csv(rec, &self.m).as_bytes());
                         // the LA lines go to their own file: another sample rate, and only the changes
                         if let (Ok(()), Some(la), true) = (&r, &rec.la, self.m.la_on()) {
-                            let q = crate::store::next_name(&self.save_dir(), "la", "csv");
+                            let q = self.new_file(&self.save_dir(), "la", "csv");
                             r = crate::store::write(&q, crate::store::la_csv(la, &self.m.la.lines()).as_bytes());
                         }
                         self.toast_saved(&p, r);
@@ -5037,7 +5190,7 @@ impl Ui {
                 },
                 Item::StorePng => {
                     // without the dialog: the screen is saved after the next frame (main loop / script runner)
-                    let p = crate::store::next_name(&self.save_dir(), "shot", "png");
+                    let p = self.new_file(&self.save_dir(), "shot", "png");
                     self.close_menu();
                     self.shot_request = Some(p.to_string_lossy().into_owned());
                 }
@@ -5130,6 +5283,8 @@ impl Ui {
         match parsed {
             Ok(mut m) => {
                 (m.run, m.status) = (self.m.run, self.m.status);
+                // the text size is a preference of this screen, not part of a set-up
+                m.text_size = self.m.text_size;
                 if m.mask_src != self.m.mask_src {
                     self.mask = None;
                     self.mask_ref = None;
@@ -5175,7 +5330,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -5216,6 +5371,7 @@ impl Ui {
             Item::DecTick => return crate::decode::SENT_TICKS.iter().map(|&t| tick_name(t)).collect(),
             Item::DecNibbles => &["1", "2", "3", "4", "5", "6"],
             Item::DecUsbSpeed => &USPEED_NAMES,
+            Item::DecOpt(k) => return self.m.dec_proto.module().and_then(|p| p.options().get(k)).map_or(Vec::new(), |o| o.choices.iter().map(|c| c.to_string()).collect()),
             Item::DecSrc4 | Item::DecDiff => return opt_ch_names("None"),
             Item::DecCanH => &["RX/TX", "CAN_H"],
             Item::TrigBusWhat => &["Frame", "ID/Addr", "Data", "Error"],
@@ -5229,6 +5385,7 @@ impl Ui {
             Item::GridFrame | Item::TrigNoise => &["Off", "On"],
             Item::Dots | Item::ZoneOn => &["Off", "On"],
             Item::Hdmi => &["Mirror", "Waveform"],
+            Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
             Item::ZoneSel => &["Z1", "Z2"],
             Item::ZoneSrc => return ch_names(),
             Item::ZoneMode => &["Intersect", "Not intersect"],
@@ -5281,7 +5438,7 @@ impl Ui {
         if let Item::RefShow(_) = it {
             return Ctl::Button;
         }
-        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetWeb | Item::NetPorts | Item::NetWlan) {
+        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetWeb | Item::NetPorts | Item::NetWlan) || Self::time_text(it) {
             return Ctl::Text;
         }
         match Self::kind(it) {
@@ -5289,7 +5446,7 @@ impl Ui {
             k => {
                 let opts = self.options(it);
                 let n = opts.len() as i32;
-                let f = &self.fonts;
+                let f = self.fonts();
                 if n == 0 {
                     Ctl::Value
                 } else if k == Kind::Choice && opts.iter().all(|o| f.mb.width(o) + 12 <= (w - (n - 1) * 4) / n) {
@@ -5355,7 +5512,7 @@ impl Ui {
             MenuId::Horizontal => (tr.x + tr.w / 2, false),
             MenuId::Trigger => (trg.x + trg.w / 2, false),
             MenuId::Main => (Self::MENU_BTN.x, false),
-            MenuId::Network => (Self::NET_BOX.x + Self::NET_BOX.w / 2, true),
+            MenuId::Network => (self.net_box().x + self.net_box().w / 2, true),
             MenuId::ViewMore => (W, true),
             MenuId::La | MenuId::LaLines | MenuId::LaPat => self.aux_cards().0.map_or((W / 2, false), |r| (r.x + r.w / 2, false)),
             MenuId::Afg => self.aux_cards().1.map_or((W / 2, false), |r| (r.x + r.w / 2, false)),
@@ -5376,7 +5533,8 @@ impl Ui {
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
         let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet));
-        let (cols, cw, rh, gap) = if wide { (2, 400, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, 190, DLG_ROW + 2, 8) } else if grid { (4, 150, DLG_ROW + 2, 8) } else if n > 5 { (2, 400, DLG_ROW, 16) } else { (1, 400, DLG_ROW, 16) };
+        let l = self.lay();
+        let (cols, cw, rh, gap) = if wide { (2, l.dlg_col, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, l.grid_col + 40, DLG_ROW + 2, 8) } else if grid { (4, l.grid_col, DLG_ROW + 2, 8) } else if n > 5 { (2, l.dlg_col, DLG_ROW, 16) } else { (1, l.dlg_col, DLG_ROW, 16) };
         let nrows = (n + cols - 1) / cols;
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
@@ -5398,8 +5556,9 @@ impl Ui {
             let (col, row) = (i / nrows, i % nrows);
             let cx = r.x + 12 + col * (cw + gap);
             let ry = r.y + DLG_HEAD + row * rh;
-            let label = Rect::new(cx, ry, 96, DLG_CTRL);
-            let ctrl = if Self::kind(it) == Kind::Action { Rect::new(cx, ry, cw, DLG_CTRL) } else { Rect::new(cx + 100, ry, cw - 100, DLG_CTRL) };
+            let label = Rect::new(cx, ry, l.dlg_label, DLG_CTRL);
+            let lw = l.dlg_label + 4;
+            let ctrl = if Self::kind(it) == Kind::Action { Rect::new(cx, ry, cw, DLG_CTRL) } else { Rect::new(cx + lw, ry, cw - lw, DLG_CTRL) };
             rows.push(Row { it, label, ctl: self.ctl(it, ctrl.w), ctrl });
         }
         Some(Dlg { r, close, back, rows, heads: Vec::new() })
@@ -5432,6 +5591,19 @@ impl Ui {
         Dlg { r, close, back: None, rows, heads }
     }
 
+    /// Font and box of the text of a menu button, and whether it fits: centred in the button while it fits, else
+    /// centred left of the chevron of a button that opens a menu, else one size smaller (long labels at the large text
+    /// sizes).
+    fn btn_text(&self, c: Rect, open: bool, t: &str) -> (&'static Font, Rect, bool) {
+        let f = self.fonts();
+        if f.mb.width(t) + if open { 40 } else { 8 } <= c.w {
+            return (&f.mb, c, true);
+        }
+        let r = if open { Rect::new(c.x, c.y, c.w - 18, c.h) } else { c };
+        let font = if f.mb.width(t) + 8 <= r.w { &f.mb } else { &f.sb };
+        (font, r, font.width(t) + 8 <= r.w)
+    }
+
     /// Value control parts: minus, value, plus.
     fn value_parts(c: Rect) -> (Rect, Rect, Rect) {
         (Rect::new(c.x, c.y, 44, c.h), Rect::new(c.x + 48, c.y, c.w - 96, c.h), Rect::new(c.x + c.w - 44, c.y, 44, c.h))
@@ -5439,7 +5611,7 @@ impl Ui {
 
     fn draw_menu(&self, cv: &mut Canvas) {
         let Some(d) = self.dlg_layout() else { return };
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.round(d.r, 8, ACCENT, 255);
         cv.round(d.r.inset(2), 7, DLG_BG, 255);
         let tcol = match self.menu_root() {
@@ -5487,7 +5659,10 @@ impl Ui {
                         }
                     }
                 }
-                Ctl::Text => cv.text_in(&f.m, c, 1, &self.value(row.it), TEXT),
+                Ctl::Text => {
+                    let v = self.value(row.it);
+                    cv.text_in(self.text_row_font(c.w, &v), c, 1, &v, TEXT)
+                }
                 Ctl::Value | Ctl::Pick => {
                     let (mi, mid, pl) = Self::value_parts(c);
                     btn(cv, mi, BTN, BTN_BORDER);
@@ -5522,12 +5697,13 @@ impl Ui {
                         None if kind == Kind::Action => self.item_label(row.it).to_string(),
                         None => self.value(row.it),
                     };
+                    let (tf, tr, _) = self.btn_text(c, matches!(row.it, Item::Open(_)), &txt);
                     if added {
                         cv.round(c, 5, ACCENT, 255);
-                        cv.text_in(&f.mb, c, 1, &txt, DARK_TEXT);
+                        cv.text_in(tf, tr, 1, &txt, DARK_TEXT);
                     } else {
                         btn(cv, c, BTN, if focus { ACCENT } else { BTN_BORDER });
-                        cv.text_in(&f.mb, c, 1, &txt, TEXT);
+                        cv.text_in(tf, tr, 1, &txt, TEXT);
                     }
                     if let Item::Open(_) = row.it {
                         chevron(cv, c.x + c.w - 14, c.y + c.h / 2, 1, DIM);
@@ -5612,7 +5788,7 @@ impl Ui {
     const PWR_CANCEL: Rect = Rect::new(W / 2 + 90, H / 2 - 10, 140, 64);
 
     fn draw_overlay(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+        let f = self.fonts();
         self.draw_osk(cv);
         if self.power_dlg {
             cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 160);
@@ -5632,7 +5808,9 @@ impl Ui {
             cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 140);
             // taller for long texts (About with experimental limits)
             let h = (40 + lines.len() as i32 * 30).clamp(260, H - 20);
-            let r = Rect::new(W / 2 - 240, H / 2 - h / 2, 480, h);
+            // wider for long lines at the larger text sizes
+            let w = lines.iter().map(|l| f.m.width(l) + 40).max().unwrap_or(0).clamp(480, W - 20);
+            let r = Rect::new(W / 2 - w / 2, H / 2 - h / 2, w, h);
             cv.round(r, 8, ACCENT, 255);
             cv.round(r.inset(2), 7, DLG_BG, 255);
             for (i, l) in lines.iter().enumerate() {
@@ -5741,10 +5919,10 @@ impl Ui {
             key::DEFAULT => {
                 let meas = Self::default_meas();
                 // the Quick key action is a preference, not part of the set-up that Default resets
-                let quick = m.quick;
+                let (quick, text_size) = (m.quick, m.text_size);
                 self.m = Model::default();
                 self.m.meas = meas;
-                self.m.quick = quick;
+                (self.m.quick, self.m.text_size) = (quick, text_size);
                 self.stats_on = false;
                 self.xy = false;
                 self.mask = None;
@@ -6207,7 +6385,7 @@ impl Ui {
                 cv.line(p.0 + 1, p.1, q.0 + 1, q.1, col);
             }
             let (lx, ly) = poly.iter().fold((i32::MAX, i32::MAX), |(x, y), p| (x.min(p.0), y.min(p.1)));
-            cv.text(&self.fonts.s, lx + 4, ly + 14, &format!("Z{}", k + 1), col);
+            cv.text(&self.fonts().s, lx + 4, ly + 14, &format!("Z{}", k + 1), col);
         }
         // the path being drawn is in screen coordinates: once, over the whole plot
         if self.cur_win != 0 {
@@ -6280,13 +6458,14 @@ impl Ui {
             }
             return;
         }
-        if Self::top_hit(Self::RUN_PILL).contains(x, y) {
+        let pill = self.run_pill();
+        if Self::top_hit(pill).contains(x, y) {
             return self.key(key::RUNSTOP);
         }
-        if Self::top_hit(Self::NET_BOX).contains(x, y) {
+        if Self::top_hit(self.net_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Network);
         }
-        if self.wlan_stick && Self::top_hit(Self::WLAN_BOX).contains(x, y) {
+        if self.wlan_stick && Self::top_hit(self.wlan_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Network);
         }
         if self.usb && Self::top_hit(self.usb_box()).contains(x, y) {
@@ -6294,7 +6473,7 @@ impl Ui {
         }
         // sample rate, depth and mode in the top bar: the page that sets them
         let end = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x) - 4;
-        if Self::top_hit(Rect::new(Self::RUN_PILL.x + Self::RUN_PILL.w, Self::RUN_PILL.y, end - Self::RUN_PILL.x - Self::RUN_PILL.w, Self::RUN_PILL.h)).contains(x, y) {
+        if Self::top_hit(Rect::new(pill.x + pill.w, pill.y, end - pill.x - pill.w, pill.h)).contains(x, y) {
             return self.toggle_menu(MenuId::Acquire);
         }
         for (b, _, r) in self.top_buttons() {
@@ -6438,6 +6617,20 @@ fn fine_time(now: f32, d: i32) -> (usize, f32) {
     (i, if (f - 1.0).abs() < 1e-5 { 1.0 } else { f })
 }
 
+/// The first of `fonts` in which `s` is at most `room` wide, else the last.
+impl Ui {
+    /// Font of a menu row that is only text (a long status line): the menu font, else smaller ones down to the small
+    /// font of the normal text size.
+    fn text_row_font(&self, room: i32, s: &str) -> &'static Font {
+        let (f, n) = (self.fonts(), Fonts::get(0));
+        fit_font(&[&f.m, &f.s, &n.m, &n.s], room, s)
+    }
+}
+
+fn fit_font(fonts: &[&'static Font], room: i32, s: &str) -> &'static Font {
+    fonts.iter().copied().find(|f| f.width(s) <= room).unwrap_or(fonts[fonts.len() - 1])
+}
+
 fn backed_text(cv: &mut Canvas, f: &Font, x: i32, y: i32, s: &str, col: Rgb) -> i32 {
     cv.blend(Rect::new(x - 3, y - f.size + 2, f.width(s) + 6, f.size + 2), BG, 180);
     cv.text(f, x, y, s, col)
@@ -6469,6 +6662,9 @@ fn fmt_count(v: f64) -> String {
 /// Text of one decoded field.
 fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
     use oos_dsp::decode::Kind;
+    if let Some(t) = m.dec_proto.module().and_then(|x| x.text(p, &m.dec_opts())) {
+        return t;
+    }
     let hex = |v: u32| if m.dec_bits > 8 { format!("{:04X}", v) } else { format!("{:02X}", v) };
             match p.kind {
                 Kind::Addr { read } => format!("{} {}{}", hex(p.value), if read { "R" } else { "W" }, if p.ok { "" } else { " N" }),
@@ -6594,6 +6790,28 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    /// Measure > Add item: a second tap on a measurement removes it again, the others stay.
+    #[test]
+    fn add_item_toggles_a_measurement() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas.clear();
+        ui.meas_src = 0;
+        let (a, b) = (ALL_MEAS[0], ALL_MEAS[1]);
+        ui.activate(Item::MeasAdd(a));
+        ui.activate(Item::MeasAdd(b));
+        assert_eq!(ui.m.meas, vec![(a, 0), (b, 0)]);
+        ui.activate(Item::MeasAdd(a));
+        assert_eq!(ui.m.meas, vec![(b, 0)]);
+        // the same measurement of another channel is its own entry
+        ui.meas_src = 1;
+        ui.activate(Item::MeasAdd(b));
+        assert_eq!(ui.m.meas, vec![(b, 0), (b, 1)]);
+        ui.meas_src = 0;
+        ui.activate(Item::MeasAdd(b));
+        assert_eq!(ui.m.meas, vec![(b, 1)]);
+    }
 
     /// CAN and LIN decode the demo bus traffic: IDs, data and CRC / checksum.
     #[test]
@@ -6837,15 +7055,19 @@ mod tests {
     fn extended_decoders_decode_their_demo() {
         use super::*;
         // (protocol, time/div that shows a whole frame, a label or kind that must appear)
-        let cases: [(Proto, f32, &str); 12] = [
+        // (the modules DMX512, S/PDIF and USB PD run through the same path as every protocol)
+        let m = |k: &str| Proto::from_key(k).unwrap();
+        let cases: [(Proto, f32, &str); 14] = [
+            (m("Dcc"), 10e-3, "PRE"),
             (Proto::CanFd, 50e-6, "BRS"),
-            (Proto::Dmx512, 100e-6, "SC"),
+            (m("Dmx512"), 100e-6, "SC"),
             (Proto::ModbusRtu, 1e-3, "FUNC"),
             (Proto::Uart9, 1e-3, "Addr"),
             (Proto::OneWire, 200e-6, "ROM"),
-            (Proto::UsbPd, 100e-6, "HDR"),
+            (m("UsbPd"), 100e-6, "HDR"),
             (Proto::Swd, 20e-6, "REQ"),
-            (Proto::Spdif, 20e-6, "Sample"),
+            (m("Spdif"), 20e-6, "Sample"),
+            (m("Example"), 1e-3, "Data"),
             (Proto::FlexRay, 5e-6, "HCRC"),
             (Proto::Arinc429, 100e-6, "SSM"),
             (Proto::Sent, 200e-6, "STAT"),
@@ -7352,21 +7574,21 @@ mod tests {
         ui.relayout();
         assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
         for (_, _, r) in ui.top_buttons() {
-            assert!(Ui::top_hit(r).h >= 40 && r.x + r.w <= Ui::NET_BOX.x, "{:?}", r);
+            assert!(Ui::top_hit(r).h >= 40 && r.x + r.w <= ui.net_box().x, "{:?}", r);
         }
         // sticks: their boxes beside the network box, the buttons move over and stay on the bar
         (ui.usb, ui.wlan_stick) = (true, true);
         for (_, _, r) in ui.top_buttons() {
-            assert!(r.x > Ui::RUN_PILL.x + Ui::RUN_PILL.w && r.x + r.w <= ui.usb_box().x, "{:?}", r);
+            assert!(r.x > ui.run_pill().x + ui.run_pill().w && r.x + r.w <= ui.usb_box().x, "{:?}", r);
         }
         let u = ui.usb_box();
-        assert!(u.x + u.w < Ui::WLAN_BOX.x && Ui::WLAN_BOX.x + Ui::WLAN_BOX.w < Ui::NET_BOX.x);
+        assert!(u.x + u.w < ui.wlan_box().x && ui.wlan_box().x + ui.wlan_box().w < ui.net_box().x);
         ui.tap(u.x + 5, 10);
         assert!(ui.menu_open && ui.menu_root() == MenuId::Storage);
         ui.tap(u.x + 5, 10);
-        ui.tap(Ui::WLAN_BOX.x + 5, 10);
+        ui.tap(ui.wlan_box().x + 5, 10);
         assert!(ui.menu_open && ui.menu_root() == MenuId::Network);
-        ui.tap(Ui::WLAN_BOX.x + 5, 10);
+        ui.tap(ui.wlan_box().x + 5, 10);
         (ui.usb, ui.wlan_stick) = (false, false);
         for n in 0..=NCH {
             for c in 0..NCH {

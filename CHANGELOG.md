@@ -1,5 +1,77 @@
 # Changes
 
+## Unreleased
+
+New:
+
+- Protocol modules: a new decoder is one file in `ui/src/protocols` with a type that implements `Protocol`, and one
+  line that registers it. The Decode menu (source rows named after the roles, option rows), saved setups, the protocol
+  trigger, the labels on the trace and in the event table, the demo traffic of the host build and a view of its own
+  all come from it. `docs/protocol-modules.md` walks through it; `ui/src/protocols/example.rs` uses every hook.
+  DMX512, S/PDIF and USB PD moved into modules; their saved setups load as before.
+- Display > Second pane > Bus view: a protocol module's own picture of what it decoded (a status line and columns of
+  rows, for example the devices on a bus and their last state). A module may collect over the records until Clear;
+  the pane opens by itself when such a protocol is chosen and no other pane is open.
+- NMRA DCC decoder for model railways (contributed by Arjen Halma, pull request #3): preamble, address, data and XOR
+  check on one line or on the two rails as a pair (B line, threshold 0 V); the Bus view shows the layout it controls:
+  locomotives with direction, speed (14/28/128 steps) and functions, turnouts, signal aspects, and the track status,
+  green while it is live, red after an emergency stop. Tested with generated packets only, not yet on a track.
+- Display > Text size: Normal, Large or Larger. Large and Larger use fonts 2 and 4 pixels bigger in the top bar, the
+  cards, the measurement and cursor rows, the statistics card, the menus, the keyboard, the system information and the
+  other dialogs; the rows under the plot grow with them and the plot gets a little shorter. Touch targets keep their
+  size, menus get wider columns. A text that would not fit (a narrow channel card with four channels on, a long label in
+  the start menu, a narrow column of the results table) stays one size smaller; the figure tables of the eye / jitter
+  view and the LA lane names keep the normal size. Normal looks exactly as before. Kept across restarts like the other
+  preferences, and by Default set-up and Recall.
+- System > Date and time: the clock from an NTP server, for a scope without a clock battery that starts in 2013. Off by
+  default (then OOS sends nothing to the outside); on, it asks the server (default `pool.ntp.org`, others in the
+  picker or typed in) a few seconds after a network link comes up, over Ethernet or WLAN, and then every hour; a
+  failure is tried again after 15 s, 30 s, 1 min and so on up to every 15 min. The page shows the local time and the
+  last sync or failure; Sync now asks at once. Own SNTP client in oos-ui, the image's busybox has no ntpd.
+- Time zone: 22 common zones with their daylight saving rules, or any POSIX `TZ` string
+  (`CET-1CEST,M3.5.0,M10.5.0/3`). It applies to the screen and to file names; FAT sticks get their file times in local
+  time. Set the clock takes the date and time by hand.
+- Once the clock is set (NTP or by hand), new screenshots, CSV, binary waveforms, logs and event tables are named by
+  the local date and time (`shot-20261111-143005.png`) instead of a number.
+- System > Network shows the speed of the Ethernet link. 10 Mbit retry (on by default): a link that comes up at
+  10 Mbit/s gets one more autonegotiation, once per link-up and at most three times, for a report of 10 Mbit/s after
+  every cold start and 100 Mbit/s after a replug. The log names the PHY registers before and the speed after. Not yet
+  verified on hardware; possible causes in the kernel are in docs/network.md.
+- These settings are kept in `/oos/system.conf`, apart from the setups.
+
+Changed:
+
+- Measure > Add item: a second tap on a measurement removes it again (before, only Clear all did).
+- Choosing DMX512 or S/PDIF sets the threshold to 1.65 V; before, the threshold of the previous protocol stayed.
+- Web remote and remote control no longer slow the scope's screen down. Measured on a DHO924S over Ethernet, with
+  one viewer of the web remote: the screen at 30 frames a second instead of 16, and the web page at about 13 new pictures
+  a second instead of 4 to 5 (two viewers: 13 each, the screen still at 30).
+  - The cause of most of it: the web, SCPI and VXI-11 servers read their connections in the frame loop with a 1 ms
+    timeout, which the kernel rounds up to whole timer ticks (4 to 8 ms). Every web request, and every pass of the loop
+    with an SCPI connection open, stopped the screen for that long. They now read without waiting. An SCPI script
+    that keeps its connection open no longer costs frames either.
+  - The live picture is made in its own thread, only of a changed screen, on the slow cores of the SoC and only with
+    time nothing else wants (SCHED_IDLE), at most 20 a second and at most half a core. The frame loop hands the shown
+    screen over without copying it.
+  - The page asks with the ETag of the picture it has, and the scope answers as soon as there is a new one (long
+    poll, 304 after 2 s of a still screen): no pause between pictures, no request in vain.
+  - The PNG encoder is 3.5 times faster (matches eight bytes at a time, Adler-32 in 16 lanes, CRC-32 eight bytes per
+    step; the PNG is the same byte for byte), and the comparison of two screens 4 times (musl's memcmp goes byte by
+    byte).
+- The USB install checks the hardware, not the model name: a model counts as verified when OOS has run on a model with
+  the same hardware (models that differ only in licensed bandwidth; docs/models.md 2.1). Verified now: DHO804, DHO814,
+  DHO824 (a DHO804 runs OOS, user report) and DHO914S, DHO924S. A DHO804 that names itself a DHO824 in vendor.bin was
+  refused before.
+- A refused install says in `oos-install.log` which models are verified, what the risk is, and how to go on anyway: an
+  empty file `oos-any-model.txt` on the stick next to the `.GEL` file (`--any-model` for `oos-update gel-install`).
+  It used to say only that OOS had never run on the model.
+
+Docs:
+
+- docs/sdcard-backup.md: backing up and cloning the SD card on Windows (Win32 Disk Imager, HDD Raw Copy Tool, WinHex,
+  USBImager), macOS and Linux, with what to watch out for: the whole card, never format it, verify the image, keep the
+  original card.
+
 ## 0.1.5
 
 From 0.1.1 to 0.1.4: install the package through the web page or `oos-update install`, the scope restarts by itself
