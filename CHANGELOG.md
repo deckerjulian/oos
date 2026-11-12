@@ -1,5 +1,40 @@
 # Changes
 
+## 0.1.9
+
+Install from 0.1.7 or 0.1.8 as always: the web page, System > Update, or the USB stick; then switch the scope off at
+the mains, wait 30 seconds and switch it on. From 0.1.6 or older: install 0.1.7 first (the device tree changes from
+0.1.8 on, which only 0.1.7 and later can try before they install it), or use the USB stick. Most of this version comes
+from the reports and wishes in the forum thread.
+
+New:
+
+- The frequency counter (Measure > DVM / counter, also in Menu > Instruments) counts in the FPGA on the unit: a
+  reciprocal counter, so a 1 s gate gives 6 digits and more at any frequency (12345.600 Hz from the built-in generator,
+  where the counter from the record wandered by 0.2 Hz). The gate follows the digits (0.25 s for 3, 0.5 s for 4, 1 s
+  above). Frequency, period and totalize, as in the menu; signals below about 625 Hz from one whole period. SCPI:
+  `:COUNter:ENABle|SOURce|MODE|NDIGits`, `:COUNter:CURRent?`, `:COUNter:TOTalize:CLEar`. docs/protocols/counter.md.
+- Display > Backlight: the brightness of the panel, 10 to 100 % in steps of 5, even to the eye (the PWM goes with the
+  square of the percent). A setting of the scope, `backlight` in `/oos/system.conf`.
+- A channel key held for more than half a second, or a finger held as long on the channel's card, switches the channel
+  between AC and DC coupling. Channel keys now act when they are let go.
+- LAN without DHCP: a link-local address (169.254.x.y, from the MAC, checked on the cable) instead of the fixed
+  192.168.177.64, and no address at all without a cable. A computer connected straight to the scope reaches it without
+  any set-up. The top bar says `LAN · local`.
+- **Experimental, please test:** Analysers > Bode, Generator = Free-running sweep. A Bode plot with a generator that
+  sweeps on its own (start and stop frequency, sweep time, linear or logarithmic) and marks the start of each sweep on
+  a sync output, wired to a channel (CH4 by default). OOS sets the time base and memory for one sweep, triggers once on
+  the sync edge, and reads the gain over frequency from that record: a short window per frequency (about 4 periods), a
+  fit of a sine that follows the sweep (`oos_dsp::bode::sweep_response`). Phase with an input channel, gain against a
+  level in dBV without one. Sweeps above about 0.9 s run in scan mode (min/max data, gain only). Tested on the host
+  with synthetic log and linear sweeps through a first-order low-pass (within 0.1 dB), not yet with a real generator:
+  reports with a sweep generator that has a sync output are very welcome (forum thread or GitHub issue).
+
+Fixed:
+
+- Text size Larger: the sample rate and memory depth in the top bar ran under the Measure button with long values (625
+  MSa/s · 62.5 Mpts); it now takes the smaller font or a shorter form, and the acquisition mode only shows when it fits.
+
 ## 0.1.8
 
 Install from 0.1.7 as always: the web page, System > Update, or the USB stick. This update brings a new device tree;

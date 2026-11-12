@@ -1,6 +1,6 @@
 [package]
 name = "oos-ui"
-version = "0.1.8"
+version = "0.1.9"
 repository = "https://github.com/deckerjulian/oos"
 edition = "2021"
 description = "OOS oscilloscope user interface for the Rigol DHO800/DHO900 (software renderer on DRM/KMS, touch, front panel)"
