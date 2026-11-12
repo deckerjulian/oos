@@ -1,5 +1,25 @@
 # Changes
 
+## Not released yet
+
+Fixed:
+
+- Measurements froze in Run (since 0.1.7): the measurements are made beside the frame loop, and a result was only
+  taken while its record was still the one shown. In Run a new record comes nearly every frame, so every result was
+  dropped; values, statistics, the trend and the counter from the record only changed after STOP. On a DHO924S the
+  device test went from 10 failures to none in the tests that read measurements.
+- NORMAL without a trigger: a changed trigger took up to 2 s to act (the wait for a trigger ran to its end before the
+  new settings were read). The wait now ends as soon as the settings change.
+- Web remote: a PNG screenshot asked for while the live view ran as JPEG could come back as JPEG bytes (11 of 20 on a
+  DHO924S); each request now gets its own format. One error of the video encoder no longer switches JPEG off until a
+  restart; it is tried again after a minute.
+- Display: a late page flip event no longer switches the panel to SETCRTC for the rest of the session. With
+  Graphics = GPU and a monitor whose buffers the GPU could not take, the monitor's picture is fresh every frame instead
+  of twice a second.
+
+Tests: the script commands `menu`, `set` and `do` reach menus and items by name; the mask script tests the mask again
+(it tapped a top-bar button that no longer exists).
+
 ## 0.1.10
 
 Install from 0.1.7, 0.1.8 or 0.1.9 as always: the web page, System > Update, or the USB stick; then switch the scope
