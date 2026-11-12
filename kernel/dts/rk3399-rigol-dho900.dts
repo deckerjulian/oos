@@ -17,12 +17,13 @@
 #define RK3399_TWO_PLL_FOR_VOP
 #include "rk3399-vop-clk-set.dtsi"
 
-/* Video and camera blocks: nothing on this board uses them. */
+/*
+ * Video and camera blocks: nothing on this board uses them, except the VPU's JPEG encoder (Hantro, V4L2) for the live
+ * picture of the web remote. Its registers are shared with the BSP's vepu/vdpu nodes, which stay deleted.
+ */
 /delete-node/ &mpp_srv;
-/delete-node/ &vpu;
 /delete-node/ &vepu;
 /delete-node/ &vdpu;
-/delete-node/ &vpu_mmu;
 /delete-node/ &vdec;
 /delete-node/ &rkvdec;
 /delete-node/ &vdec_mmu;
@@ -493,6 +494,29 @@
 		output-high;
 		line-name = "fan_power";
 	};
+};
+
+/*
+ * GPU (Mali-T860) for the upstream Panfrost driver: the Rockchip node names only the vendor's Mali driver. Its
+ * frequency steps are those of rk3399-opp.dtsi, up to 600 MHz.
+ */
+&gpu {
+	compatible = "rockchip,rk3399-mali", "arm,mali-t860";
+	mali-supply = <&vdd_gpu>;
+	status = "okay";
+};
+
+&gpu_opp_table {
+	/delete-node/ opp-800000000;
+};
+
+/* VPU (Hantro, upstream driver): its JPEG encoder makes the live picture of the web remote. */
+&vpu {
+	status = "okay";
+};
+
+&vpu_mmu {
+	status = "okay";
 };
 
 &hdmi {
