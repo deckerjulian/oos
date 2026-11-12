@@ -137,7 +137,10 @@ impl Ui {
             Item::EyeOn => onoff(m.view == AView::Eye),
             Item::PowOn => onoff(m.view == AView::Power),
             Item::SpecSrc => format!("CH{}", m.spec_src + 1),
-            Item::EyeSrc => format!("CH{}", m.eye_src + 1),
+            Item::EyeSrc => match self.eye_ref {
+                Some(i) => format!("R{}", i + 1),
+                None => format!("CH{}", m.eye_src + 1),
+            },
             Item::PowV => format!("CH{}", m.pw_v + 1),
             Item::PowI => format!("CH{}", m.pw_i + 1),
             Item::SpecCenter => si_short(m.spec_center, "Hz"),
@@ -175,7 +178,8 @@ impl Ui {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
             Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::ProtoWatch => v(&["Off", "On"]),
-            Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => ch_names(),
+            Item::SpecSrc | Item::PowV | Item::PowI => ch_names(),
+            Item::EyeSrc => self.eye_source_names(),
             Item::SpecHarm => panes::harm_names(),
             Item::SpecWin => crate::math::WINDOWS.iter().map(|w| w.name().to_string()).collect(),
             Item::SpecTrace => v(&TRACES),
@@ -201,6 +205,10 @@ impl Ui {
             self.azr.watch_t = 0.0;
             return true;
         }
+        if it == Item::EyeSrc {
+            self.step_eye_source(d);
+            return true;
+        }
         let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         let view = |m: &mut Model, v: AView| m.view = if m.view == v { AView::Scope } else { v };
         let m = &mut self.m;
@@ -209,7 +217,6 @@ impl Ui {
             Item::EyeOn => view(m, AView::Eye),
             Item::PowOn => view(m, AView::Power),
             Item::SpecSrc => m.spec_src = src_step(m.spec_src, NCH, d),
-            Item::EyeSrc => m.eye_src = src_step(m.eye_src, NCH, d),
             Item::PowV => m.pw_v = src_step(m.pw_v, NCH, d),
             Item::PowI => m.pw_i = src_step(m.pw_i, NCH, d),
             Item::SpecCenter => m.spec_center = step_ladder(m.spec_center, d),
@@ -470,11 +477,12 @@ impl Ui {
     /// Recomputes the active analyser from the last record (every captured sample of the window).
     pub(super) fn analyzer_update(&mut self) {
         // a source that is off shows nothing: the first channel that is on takes over
-        if let Some(on) = (0..NCH).find(|&c| self.m.ch[c].on) {
-            for src in [&mut self.m.spec_src, &mut self.m.eye_src] {
-                if !self.m.ch[*src].on {
-                    *src = on;
-                }
+            if let Some(on) = (0..NCH).find(|&c| self.m.ch[c].on) {
+            if !self.m.ch[self.m.spec_src].on {
+                self.m.spec_src = on;
+            }
+            if self.eye_ref.is_none() && !self.m.ch[self.m.eye_src].on {
+                self.m.eye_src = on;
             }
         }
         // the second pane runs the spectrum beside the scope; the peak list of the Results pane needs it less often

@@ -451,6 +451,10 @@ impl Page {
 impl Ui {
     /// Eye page, per record.
     pub(super) fn eye_update(&mut self, rec: &Record) {
+        if let Some(slot) = self.eye_ref {
+            self.eye_update_ref(slot);
+            return;
+        }
         let c = self.m.eye_src;
         if rec.ch[c].is_empty() {
             self.azr.page.status = [format!("CH{} is off", c + 1), "Switch the source on".into()];
@@ -498,6 +502,54 @@ impl Ui {
         }
     }
 
+    /// Fold a generated reference once. A later call with the same record does not count it again.
+    pub(super) fn eye_update_ref(&mut self, slot: usize) {
+        let Some(w) = self.refs.get(slot).and_then(|r| r.as_ref()) else {
+            self.azr.page.status = [format!("R{} is empty", slot + 1), "Play a preset into the slot".into()];
+            return;
+        };
+        if w.v.is_empty() {
+            self.azr.page.status = [format!("R{} is empty", slot + 1), "Play a preset into the slot".into()];
+            return;
+        }
+        let key = (slot, w.sim_gen, w.v.len());
+        if self.eye_fold == Some(key) {
+            return;
+        }
+        let v = w.v.clone();
+        let dt = w.dt;
+        let vpd = w.vpd;
+        let label = format!("R{}", slot + 1);
+        let lay = layout(self.area);
+        let (pw, ph) = (lay.plot.w.max(64), lay.plot.h.max(64));
+        let (lo, hi) = v.iter().copied().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)));
+        if !(hi > lo) {
+            self.azr.page.status = [label, "No samples".into()];
+            self.eye_fold = Some(key);
+            return;
+        }
+        let thr = 0.5 * (lo + hi);
+        let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
+        let Some(clk) = eye::recover_clock(&v, dt, thr, 0.1 * vpd, rate) else {
+            self.azr.page.status = [format!("Under 3 edges on {label}"), "The slot has no edges".into()];
+            self.eye_fold = Some(key);
+            return;
+        };
+        let (lo, hi, step) = eye_range(lo as f64, hi as f64);
+        self.azr.eye = Some(eye::Eye::new(pw as usize, ph as usize, 2, lo as f32, hi as f32));
+        self.azr.eye_key = (NCH, vpd.to_bits(), 0, self.m.eye_rate.to_bits(), pw, ph);
+        self.azr.eye_res = None;
+        self.azr.page = Page { vstep: step, ..Page::default() };
+        self.azr.eye.as_mut().unwrap().accumulate(&v, dt, &clk);
+        let tie = eye::tie(&clk.edges, &clk);
+        self.azr.page.add(&tie, &clk);
+        self.azr.page.t = self.now;
+        self.eye_refresh(&clk, &tie, dt, &lay);
+        let clock = if self.m.eye_rate > 0.0 { "clock fitted near the set rate" } else { "clock fitted to the edges" };
+        self.azr.page.title = format!("{label} \u{b7} {} \u{b7} {clock}", si(1.0 / clk.period, "b/s"));
+        self.eye_fold = Some(key);
+    }
+
     /// The heavy part of the page, from the pool and the last record.
     fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, lay: &Layout) {
         let Some(e) = self.azr.eye.as_ref() else { return };
@@ -531,7 +583,10 @@ impl Ui {
         cv.fill(a, BG);
         self.eye_plot(cv, &l);
         self.eye_head(cv, &l);
-        let col = CH_COLORS[self.m.eye_src];
+        let col = match self.eye_ref {
+            Some(slot) => self.refs[slot].as_ref().map(|r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1).unwrap_or(CH_COLORS[self.m.eye_src.min(NCH - 1)]),
+            None => CH_COLORS[self.m.eye_src.min(NCH - 1)],
+        };
         for k in 0..4 {
             self.chart_frame(cv, l.charts[k], l.plots[k], &p.charts[k]);
             if p.charts[k].empty.is_empty() {

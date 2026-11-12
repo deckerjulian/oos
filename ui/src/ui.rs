@@ -18,6 +18,7 @@ mod selfcal;
 pub mod bode;
 pub mod startup;
 mod afg;
+mod sim;
 mod sysinfo;
 mod tables;
 mod logger;
@@ -201,6 +202,8 @@ pub enum MenuId {
     Utility,
     Math,
     Ref,
+    /// nominal high-speed serial record in a reference slot
+    Sim,
     Decode,
     Storage,
     Mask,
@@ -264,6 +267,10 @@ struct RefWave {
     vpd: f32,
     offset: f32,
     on: bool,
+    /// non-zero when SIM wrote this slot
+    sim_gen: u64,
+    /// trigger level, midpoint of the preset swing, volts
+    sim_level: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -308,6 +315,10 @@ enum Item {
     RefSave,
     RefShow(usize),
     RefClear,
+    SimPreset,
+    SimSlot,
+    SimPlay,
+    SimShow,
     MathOpI,
     MathA,
     MathB,
@@ -704,6 +715,26 @@ pub struct Ui {
     /// Clear pressed: the screen stays empty (also in STOP) until the next record
     cleared: bool,
     refs: [Option<RefWave>; NREF],
+    /// SIM page: preset index, destination slot, play, and the window cursor
+    sim_preset: usize,
+    sim_slot: usize,
+    sim_play: bool,
+    sim_cursor: f64,
+    sim_gen: u64,
+    sim_meas_gen: u64,
+    sim_map: Vec<u16>,
+    sim_map_z: Vec<u16>,
+    sim_vmax: u32,
+    sim_vmaxz: u32,
+    /// Eye source, when it is a reference. None keeps `m.eye_src` as the channel.
+    eye_ref: Option<usize>,
+    /// (slot, generation, length) already folded into the eye
+    eye_fold: Option<(usize, u64, usize)>,
+    /// Measure source A or B, when it is a reference.
+    meas_ref: Option<usize>,
+    meas_ref_b: Option<usize>,
+    meas_on_ref: Vec<(oos_dsp::measure::Meas, usize)>,
+    ana_ref: [oos_dsp::measure::Analysis; NREF],
     /// counter: edges so far, frequency statistics
     cnt_total: u64,
     cnt_stat: MStat,
@@ -868,6 +899,22 @@ impl Ui {
             results_min: false,
             cleared: false,
             refs: std::array::from_fn(|_| None),
+            sim_preset: oos_dsp::hss::PCIE3_INDEX,
+            sim_slot: 0,
+            sim_play: false,
+            sim_cursor: 0.0,
+            sim_gen: 0,
+            sim_meas_gen: 0,
+            sim_map: Vec::new(),
+            sim_map_z: Vec::new(),
+            sim_vmax: 1,
+            sim_vmaxz: 1,
+            eye_ref: None,
+            eye_fold: None,
+            meas_ref: None,
+            meas_ref_b: None,
+            meas_on_ref: Vec::new(),
+            ana_ref: std::array::from_fn(|_| Default::default()),
             cnt_total: 0,
             cnt_stat: MStat::default(),
             meas_src_b: 1,
@@ -920,7 +967,7 @@ impl Ui {
 
     /// Measurement results in a panel on the right instead of the strip under the grid.
     fn results_panel(&self) -> bool {
-        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty())
+        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty() && self.meas_on_ref.is_empty())
     }
 
     /// Channels with measurements, in the order of their first measurement (one strip row each).
@@ -1141,6 +1188,8 @@ impl Ui {
                 self.phz = Phosphor::new(1, 1);
             }
             self.dirty_map = true;
+            self.sim_map = vec![0; self.ph.w * self.ph.h];
+            self.sim_map_z = vec![0; self.phz.w * self.phz.h];
         }
         self.wins = wins;
         self.cur_win = 0;
@@ -1569,6 +1618,7 @@ impl Ui {
             self.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
             self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
         }
+        self.sim_frame(dt_wall, persist);
         if let Some((_, t)) = &self.toast {
             if self.now > *t {
                 self.toast = None;
@@ -1696,6 +1746,7 @@ impl Ui {
             let (o, z) = Self::split_zoom(g);
             self.draw_grid(cv, o);
             self.draw_traces(cv, o, &self.ph, &self.vmax, self.vmax_cg);
+            self.draw_sim_map(cv, o, &self.sim_map, self.sim_vmax);
             // zoom window in the overview: dim the rest, frame the window
             let (tz, dz) = self.view();
             let ppx = o.w as f32 / HDIV;
@@ -1712,6 +1763,7 @@ impl Ui {
             cv.text(&f.sb, o.x, o.y + o.h + 17, &lbl, ACCENT);
             self.draw_grid(cv, z);
             self.draw_traces(cv, z, &self.phz, &self.vmaxz, self.vmaxz_cg);
+            self.draw_sim_map(cv, z, &self.sim_map_z, self.sim_vmaxz);
         } else {
             for &w in &self.wins {
                 self.draw_grid(cv, w);
@@ -1733,11 +1785,12 @@ impl Ui {
                     self.area = self.wins[i];
                     self.draw_mask(cv);
                     self.draw_traces(cv, self.area, &self.ph, &self.vmax, self.vmax_cg);
+                    self.draw_sim_map(cv, self.area, &self.sim_map, self.sim_vmax);
                 }
                 self.draw_hist(cv);
                 self.draw_zones(cv);
                 if i == 0 {
-                    self.draw_refs(cv);
+                    self.draw_refs_span(cv);
                 }
                 self.draw_math(cv);
                 if i == self.la_win_of() {
@@ -2489,51 +2542,6 @@ impl Ui {
                 // the LO level
                 let ty = self.y_of_volts(c, -m.dec_thr);
                 cv.dashed_hline(a.x + 26, a.x + a.w - 26, ty, 2, 6, scale(col, 160));
-            }
-        }
-        cv.no_clip();
-    }
-
-    fn draw_refs(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
-        cv.set_clip(self.area);
-        let ppy = self.area.h as f32 / VDIV;
-        let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
-        let tdiv = self.view().0 as f64;
-        let ppx = self.area.w as f64 / HDIV as f64;
-        for (i, r) in self.refs.iter().enumerate() {
-            let Some(r) = r else { continue };
-            if !r.on {
-                continue;
-            }
-            let col = REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1;
-            let step = (r.v.len() / (self.area.w as usize * 2)).max(1);
-            let mut prev: Option<(i32, i32)> = None;
-            let mut first = None;
-            for k in (0..r.v.len()).step_by(step) {
-                let v = r.v[k];
-                if !v.is_finite() {
-                    prev = None;
-                    continue;
-                }
-                let t = r.t0 + k as f64 * r.dt - self.view().1 as f64;
-                let x = (self.area.x as f64 + self.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
-                let y = (cy - (v + r.offset) / r.vpd * ppy).round() as i32;
-                if let Some((x0, y0)) = prev {
-                    cv.line(x0, y0, x, y, col);
-                }
-                if first.is_none() && x >= self.area.x {
-                    first = Some(y);
-                }
-                prev = Some((x, y));
-            }
-            if let Some(y) = first {
-                let yy = y.clamp(self.area.y + 10, self.area.y + self.area.h - 10);
-                // right of the volt labels
-                let name = if r.label.is_empty() { format!("R{}", i + 1) } else { r.label.clone() };
-                let b = Rect::new(self.area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
-                cv.round(b, 3, col, 255);
-                cv.text_in(&f.s, b, 1, &name, rgb(0, 0, 0));
             }
         }
         cv.no_clip();
@@ -3347,7 +3355,13 @@ impl Ui {
             MenuId::Power if m.pw_mode == PowerMode::Ripple => vec![m.pw_v],
             MenuId::Power => vec![m.pw_v, m.pw_i],
             MenuId::Spectrum => vec![m.spec_src],
-            MenuId::Eye => vec![m.eye_src],
+            MenuId::Eye => {
+                if self.eye_ref.is_some() {
+                    Vec::new()
+                } else {
+                    vec![m.eye_src]
+                }
+            }
             MenuId::Bode => vec![m.bode_in, m.bode_out],
             MenuId::BwTest => vec![m.bw_src],
             MenuId::Mask => vec![m.mask_src],
@@ -3388,6 +3402,7 @@ impl Ui {
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
+            MenuId::Sim => self.sim_items(),
             MenuId::MeasAdd => ALL_MEAS.iter().map(|&k| Item::MeasAdd(k)).collect(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
@@ -3472,7 +3487,7 @@ impl Ui {
         let mut g = vec![
             ("Acquisition", vec![RunStop, SingleAct, AutosetAct, ClearDisp, DefaultAct, Open(MenuId::Acquire)]),
             ("Trigger", vec![Open(MenuId::Trigger), SlopeAct, ForceAct, Open(MenuId::Zone)]),
-            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Decode), Open(MenuId::Mask)]),
+            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Sim), Open(MenuId::Decode), Open(MenuId::Mask)]),
             ("Analysers", ana),
             ("Instruments", ins),
             ("Display", disp),
@@ -3954,6 +3969,7 @@ impl Ui {
             MenuId::Utility => "System".into(),
             MenuId::Math => "Math".into(),
             MenuId::Ref => "Reference".into(),
+            MenuId::Sim => "SIM".into(),
             MenuId::Decode => "Decode".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
@@ -3986,7 +4002,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::sim_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
             return l;
         }
         match it {
@@ -4222,7 +4238,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.sim_value(it).or_else(|| self.ana_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4306,8 +4322,8 @@ impl Ui {
             Item::AcqAvg => format!("{}", m.avg_count),
             Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
-            Item::MeasSrc => format!("CH{}", self.meas_src + 1),
-            Item::MeasSrcB => format!("CH{}", self.meas_src_b + 1),
+            Item::MeasSrc => self.meas_source_label(false),
+            Item::MeasSrcB => self.meas_source_label(true),
             Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
             Item::LogOn => onoff(self.log.file.is_some()),
@@ -4390,6 +4406,7 @@ impl Ui {
             Item::RefSrc => format!("CH{}", self.ref_src + 1),
             Item::RefShow(i) => match &self.refs[i] {
                 None => "empty".into(),
+                Some(r) if !r.label.is_empty() => format!("{} {}", r.label, if r.on { "on" } else { "off" }),
                 Some(r) => format!("CH{} {}", r.src + 1, if r.on { "on" } else { "off" }),
             },
             Item::MathA => src_name(m.math_a),
@@ -4413,7 +4430,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.sim_adjust(it, d) || self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -4907,12 +4924,26 @@ impl Ui {
                     }
                 }
                 Item::MeasAdd(k) => {
-                    let e = (k, self.meas_src);
-                    if !self.m.meas.contains(&e) {
-                        self.meas_make_room();
-                        self.m.meas.push(e);
+                    if let Some(slot) = self.meas_ref {
+                        if self.refs[slot].as_ref().is_some_and(|r| !r.v.is_empty()) {
+                            let e = (k, slot);
+                            if !self.meas_on_ref.contains(&e) {
+                                self.meas_make_room();
+                                self.meas_on_ref.push(e);
+                            }
+                            self.measure_slot(slot);
+                            self.toast(&format!("{} R{} added", k.name(), slot + 1));
+                        } else {
+                            self.toast("That reference is empty");
+                        }
+                    } else {
+                        let e = (k, self.meas_src);
+                        if !self.m.meas.contains(&e) {
+                            self.meas_make_room();
+                            self.m.meas.push(e);
+                        }
+                        self.toast(&format!("{} CH{} added", k.name(), self.meas_src + 1));
                     }
-                    self.toast(&format!("{} CH{} added", k.name(), self.meas_src + 1));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
                 Item::CntClear => self.counter_clear(),
@@ -4942,6 +4973,7 @@ impl Ui {
                 Item::MeasClear => {
                     self.m.meas.clear();
                     self.m.meas2.clear();
+                    self.meas_on_ref.clear();
                     self.mstat.clear();
                 }
                 Item::RefSave => {
@@ -4956,6 +4988,8 @@ impl Ui {
                         vpd: self.m.ch[c].volts_per_div(),
                         offset: self.m.ch[c].offset,
                         on: true,
+                        sim_gen: 0,
+                        sim_level: 0.0,
                     });
                     match saved {
                         Some(w) => {
@@ -5175,7 +5209,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.sim_options(it).or_else(|| self.ana_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -5185,7 +5219,7 @@ impl Ui {
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
             Item::ChProbe(_) => &["1x", "10x", "100x"],
-            Item::TrigSrc | Item::MeasSrc | Item::DecSrc | Item::RefSrc => return ch_names(),
+            Item::TrigSrc | Item::DecSrc | Item::RefSrc => return ch_names(),
             Item::MathA | Item::MathB => return (0..NCH + self.m.math_sel).filter(|&s| src_ok(s)).map(src_name).collect(),
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
             Item::TrigSlope => &["Rising", "Falling", "Either"],

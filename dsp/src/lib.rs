@@ -28,6 +28,7 @@ pub mod decode_ext3;
 pub mod edges;
 pub mod expr;
 pub mod eye;
+pub mod hss;
 pub mod identify;
 pub mod interp;
 pub mod mask;

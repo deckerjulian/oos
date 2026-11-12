@@ -72,6 +72,10 @@ impl Ui {
             .iter()
             .map(|&(k, c)| MeasRow { name: k.name().to_string(), ch: c, v: if self.m.ch[c].on { self.ana[c].get(k) } else { f64::NAN }, unit: self.m.ch[c].unit.of(k.unit()) })
             .collect();
+        for &(k, slot) in &self.meas_on_ref {
+            let val = if self.refs[slot].as_ref().is_some_and(|r| !r.v.is_empty()) { self.ana_ref[slot].get(k) } else { f64::NAN };
+            v.push(MeasRow { name: format!("{} R{}", k.name(), slot + 1), ch: 0, v: val, unit: k.unit() });
+        }
         for &(k, a, b) in &self.m.meas2 {
             let (name, is_phase, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
             let on = self.m.ch[a].on && self.m.ch[b].on;
@@ -88,11 +92,13 @@ impl Ui {
 
     /// Room for one more: the oldest one goes when all are taken.
     pub(super) fn meas_make_room(&mut self) {
-        if self.m.meas.len() + self.m.meas2.len() >= MEAS_MAX {
-            if self.m.meas.is_empty() {
-                self.m.meas2.remove(0);
-            } else {
+        if self.m.meas.len() + self.m.meas2.len() + self.meas_on_ref.len() >= MEAS_MAX {
+            if !self.m.meas.is_empty() {
                 self.m.meas.remove(0);
+            } else if !self.m.meas2.is_empty() {
+                self.m.meas2.remove(0);
+            } else if !self.meas_on_ref.is_empty() {
+                self.meas_on_ref.remove(0);
             }
             self.mstat.clear();
         }
@@ -287,6 +293,8 @@ impl Ui {
             vpd: self.m.ch[c].volts_per_div(),
             offset: self.m.ch[c].offset,
             on: true,
+            sim_gen: 0,
+            sim_level: 0.0,
         });
         self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(&p)));
     }
