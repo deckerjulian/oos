@@ -121,7 +121,8 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	(cd $r && find . | sort | cpio -o -H newc -R 0:0 --quiet) > /tmp/root.cpio
 	gzip -9n < /tmp/root.cpio > /out/initramfs.cpio.gz
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
-	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
+	# extra kernel arguments of the unit (build.env), e.g. pci=pcie_bus_perf for MaxPayload 256 (docs/fork/unit-dho804.md)
+	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS${OOS_BOOTARGS_EXTRA:+ $OOS_BOOTARGS_EXTRA}"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
 	# the busybox package in the image: its source goes with a release
 	dpkg-query -W -f "\${Package} \${Version}\n" busybox-static > /out/busybox.version
