@@ -45,8 +45,8 @@ impl Ui {
         let geom = |x: f64, unit: &str| if x > 0.0 { si(x, unit) } else { "off".into() };
         Some(match it {
             Item::MagOn => onoff(m.view == AView::Magnetic),
-            Item::MagV => format!("CH{}", m.mag_v + 1),
-            Item::MagI => format!("CH{}", m.mag_i + 1),
+            Item::MagV => self.wave_name(m.mag_v),
+            Item::MagI => self.wave_name(m.mag_i),
             Item::MagN => format!("{:.0}", m.mag_n),
             Item::MagAe => geom(m.mag_ae, "m\u{b2}"),
             Item::MagLe => geom(m.mag_le, "m"),
@@ -67,7 +67,7 @@ impl Ui {
         let v = |o: &[&str]| Some(o.iter().map(|s| s.to_string()).collect());
         match it {
             Item::MagOn => v(&["Off", "On"]),
-            Item::MagV | Item::MagI => Some(ch_names()),
+            Item::MagV | Item::MagI => Some(self.wave_names()),
             Item::MagPlot if self.m.mag_ae > 0.0 && self.m.mag_le > 0.0 => v(&["I-\u{3c8}", "B-H"]),
             Item::MagPlot => v(&["I-\u{3c8}"]),
             _ => None,
@@ -75,11 +75,16 @@ impl Ui {
     }
 
     pub(super) fn magnetic_adjust(&mut self, it: Item, d: i32) -> bool {
+        if matches!(it, Item::MagV | Item::MagI) {
+            let cur = if it == Item::MagV { self.m.mag_v } else { self.m.mag_i };
+            let next = self.step_wave(cur, d);
+            if it == Item::MagV { self.m.mag_v = next; } else { self.m.mag_i = next; }
+            self.analyzer_update();
+            return true;
+        }
         let m = &mut self.m;
         match it {
             Item::MagOn => m.view = if m.view == AView::Magnetic { AView::Scope } else { AView::Magnetic },
-            Item::MagV => m.mag_v = src_step(m.mag_v, NCH, d),
-            Item::MagI => m.mag_i = src_step(m.mag_i, NCH, d),
             Item::MagN => m.mag_n = (m.mag_n + d as f64).clamp(1.0, 10_000.0),
             Item::MagAe => m.mag_ae = eng_ladder(m.mag_ae, d, 1e-6, 0.1, true),
             Item::MagLe => m.mag_le = eng_ladder(m.mag_le, d, 1e-3, 10.0, true),
@@ -106,17 +111,17 @@ impl Ui {
         self.azr.mag_note.clear();
         let (cv, ci) = (self.m.mag_v, self.m.mag_i);
         if cv == ci {
-            self.azr.mag_note = format!("CH{} is both voltage and current", cv + 1);
+            self.azr.mag_note = format!("{} is both voltage and current", self.wave_name(cv));
             return;
         }
-        let Some((v, _, dt)) = ana_samples(self, rec, cv) else {
-            self.azr.mag_note = format!("CH{} is off", cv + 1);
-            return;
+        let taken = match self.take_waves(rec, &[cv, ci], &[]) {
+            Ok(t) => t,
+            Err(id) => {
+                self.azr.mag_note = missing_wave(id);
+                return;
+            }
         };
-        let Some((i, _, _)) = ana_samples(self, rec, ci) else {
-            self.azr.mag_note = format!("CH{} is off", ci + 1);
-            return;
-        };
+        let (v, i, dt) = (&taken.v[0], &taken.v[1], taken.dt);
         let geom = Geom {
             turns: self.m.mag_n.max(1.0),
             area: (self.m.mag_ae > 0.0).then_some(self.m.mag_ae),
@@ -124,10 +129,20 @@ impl Ui {
             rcu: self.m.mag_rcu.max(0.0),
         };
         let mut note = String::new();
-        if geom.area.is_some() && geom.length.is_some() && self.m.ch[ci].coupling == Coupling::Ac {
-            note = format!("CH{} is AC coupled", ci + 1);
+        if geom.area.is_some() && geom.length.is_some() {
+            if let WaveId::Ch(c) = ci {
+                if self.m.ch[c].coupling == Coupling::Ac {
+                    note = format!("CH{} is AC coupled", c + 1);
+                }
+            }
         }
-        let got = magnetic::measure(&v, &i, dt, geom);
+        if taken.moved {
+            if !note.is_empty() {
+                note.push_str(". ");
+            }
+            note.push_str("on the finest ref interval");
+        }
+        let got = magnetic::measure(v, i, dt, geom);
         if !got.note.is_empty() {
             if !note.is_empty() {
                 note.push_str(". ");
@@ -167,7 +182,7 @@ impl Ui {
             let (y0, y1) = pad(ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max));
             let px = |x: f64| a.x + ((x - x0) / (x1 - x0) * (a.w - 16) as f64) as i32 + 8;
             let py = |y: f64| a.y + a.h - 16 - ((y - y0) / (y1 - y0) * (a.h - 28) as f64) as i32;
-            let z = CH_COLORS[m.mag_i.min(NCH - 1)];
+            let z = self.wave_color(m.mag_i);
             for (k, lp) in loops.iter().enumerate() {
                 let col = if k + 1 == loops.len() { z } else { DIM };
                 let pts: Vec<(i32, i32)> = lp.iter().filter_map(|&(psi, i)| {
@@ -205,9 +220,7 @@ impl Ui {
         }
         cv.no_clip();
         let mut lines = Vec::new();
-        let vu = self.m.ch[m.mag_v].unit.name();
-        let iu = self.m.ch[m.mag_i].unit.name();
-        lines.push(format!("CH{} ({})   CH{} ({})", m.mag_v + 1, vu, m.mag_i + 1, iu));
+        lines.push(format!("{}   {}", self.wave_caption(m.mag_v), self.wave_caption(m.mag_i)));
         if let Some(g) = g {
             lines.push(format!("L {}{}", num(g.l, "H"), if g.saturated { "  saturated" } else { "" }));
             if g.l.is_some() {
@@ -235,29 +248,218 @@ impl Ui {
     }
 }
 
-/// Voltage or current of one channel, with the time of the first sample and the step.
-pub(super) fn ana_samples(ui: &Ui, rec: &Record, c: usize) -> Option<(Vec<f32>, f64, f64)> {
-    if c >= n_ch() || rec.ch[c].is_empty() {
-        return None;
-    }
-    if let Some(r) = rec.raw.as_ref().filter(|_| ui.m.acq != AcqMode::HiRes) {
-        let v = &r.frame.ch[c];
-        if r.i1 <= v.len() && r.i1 > r.i0 && r.i1 - r.i0 > rec.ch[c].len() {
-            return Some((v[r.i0..r.i1].to_vec(), r.t0, r.frame.dt));
-        }
-    }
-    Some((rec.ch[c].clone(), rec.t0, rec.dt))
+/// Samples one named wave. A channel is `meas_wave` (the hardware frame when it is longer than the screen).
+/// A ref is the stored volts at the slot's own `dt`: no coupling, no bandwidth limit, no licence clip.
+/// An empty slot, and a channel with no samples, return nothing. Hiding the trace does not.
+pub(super) struct WaveSamp {
+    pub v: Vec<f32>,
+    pub t0: f64,
+    pub dt: f64,
 }
 
-pub(super) fn ana_clash(chs: &[usize]) -> Option<usize> {
-    let mut seen = [false; NCH];
-    for &c in chs {
-        if c >= NCH || seen[c] {
-            return Some(c.min(NCH - 1));
+/// Waves placed on one sample grid. `moved` means a coarser wave was interpolated onto a finer ref.
+pub(super) struct Taken {
+    pub t0: f64,
+    pub dt: f64,
+    pub v: Vec<Vec<f32>>,
+    pub opt: Vec<Option<Vec<f32>>>,
+    pub moved: bool,
+}
+
+impl Ui {
+    /// Channels, then each loaded ref. An empty slot is not offered.
+    pub(super) fn wave_ids(&self) -> Vec<WaveId> {
+        let mut v: Vec<WaveId> = (0..n_ch()).map(WaveId::Ch).collect();
+        for i in 0..NREF {
+            if self.refs[i].as_ref().is_some_and(|r| r.v.len() >= 2 && r.dt > 0.0) {
+                v.push(WaveId::Ref(i));
+            }
         }
-        seen[c] = true;
+        v
+    }
+
+    pub(super) fn wave_names(&self) -> Vec<String> {
+        self.wave_ids().iter().map(|&id| self.wave_name(id)).collect()
+    }
+
+    /// "Off" and then `wave_names`, for a source that may be unused.
+    pub(super) fn wave_names_opt(&self) -> Vec<String> {
+        let mut v = vec!["Off".into()];
+        v.extend(self.wave_names());
+        v
+    }
+
+    pub(super) fn wave_name(&self, id: WaveId) -> String {
+        match id {
+            WaveId::Ch(c) => format!("CH{}", c + 1),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        }
+    }
+
+    /// Channel unit in parentheses. A ref is the stored numbers, with no front-end unit.
+    pub(super) fn wave_caption(&self, id: WaveId) -> String {
+        match id {
+            WaveId::Ch(c) => format!("CH{} ({})", c + 1, self.m.ch[c.min(NCH - 1)].unit.name()),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        }
+    }
+
+    pub(super) fn wave_color(&self, id: WaveId) -> Rgb {
+        match id {
+            WaveId::Ch(c) => CH_COLORS[c.min(NCH - 1)],
+            WaveId::Ref(i) => {
+                let k = self.refs.get(i).and_then(|r| r.as_ref()).map(|r| r.color).unwrap_or(0);
+                REF_COLORS[k % REF_COLORS.len()].1
+            }
+        }
+    }
+
+    pub(super) fn step_wave(&self, cur: WaveId, d: i32) -> WaveId {
+        let v = self.wave_ids();
+        if v.is_empty() {
+            return cur;
+        }
+        let i = v.iter().position(|&x| x == cur).unwrap_or(0) as i32;
+        v[(i + d).rem_euclid(v.len() as i32) as usize]
+    }
+
+    /// Steps Off, then the channels, then the loaded refs.
+    pub(super) fn step_wave_opt(&self, cur: Option<WaveId>, d: i32) -> Option<WaveId> {
+        let v = self.wave_ids();
+        let n = v.len() as i32 + 1;
+        let i = match cur {
+            None => 0,
+            Some(id) => v.iter().position(|&x| x == id).map(|k| k as i32 + 1).unwrap_or(0),
+        };
+        let j = (i + d).rem_euclid(n);
+        if j == 0 { None } else { Some(v[(j - 1) as usize]) }
+    }
+
+    pub(super) fn wave_samples(&self, rec: &Record, id: WaveId) -> Option<WaveSamp> {
+        match id {
+            WaveId::Ch(c) => {
+                if c >= n_ch() || rec.ch[c].is_empty() {
+                    return None;
+                }
+                let (v, dt) = self.meas_wave(rec, c);
+                let t0 = if v.len() > rec.ch[c].len() { rec.raw.as_ref().map(|r| r.t0).unwrap_or(rec.t0) } else { rec.t0 };
+                (v.len() >= 2 && dt > 0.0).then_some(WaveSamp { v, t0, dt })
+            }
+            WaveId::Ref(i) => {
+                let r = self.refs.get(i)?.as_ref()?;
+                (r.v.len() >= 2 && r.dt > 0.0).then_some(WaveSamp { v: r.v.clone(), t0: r.t0, dt: r.dt })
+            }
+        }
+    }
+
+    /// `required` must all be present. Each `optional` entry is `None` when that source is off or empty.
+    /// The grid is the finest loaded ref among the waves that were read, and that ref is not resampled.
+    /// With no ref, the first required wave's own interval is the grid. Channels stay on the hardware path
+    /// until they are placed on a finer ref.
+    pub(super) fn take_waves(&self, rec: &Record, required: &[WaveId], optional: &[Option<WaveId>]) -> Result<Taken, WaveId> {
+        let mut req = Vec::with_capacity(required.len());
+        for &id in required {
+            req.push((id, self.wave_samples(rec, id).ok_or(id)?));
+        }
+        let mut opt_s = Vec::with_capacity(optional.len());
+        for id in optional {
+            opt_s.push(id.and_then(|id| self.wave_samples(rec, id).map(|s| (id, s))));
+        }
+        if req.is_empty() && opt_s.iter().all(|s| s.is_none()) {
+            return Ok(Taken { t0: 0.0, dt: 0.0, v: Vec::new(), opt: vec![None; optional.len()], moved: false });
+        }
+        let pool: Vec<(WaveId, &WaveSamp)> = req.iter().map(|(id, s)| (*id, s)).chain(opt_s.iter().flatten().map(|(id, s)| (*id, s))).collect();
+        let refs: Vec<(WaveId, &WaveSamp)> = pool.iter().copied().filter(|(id, _)| matches!(id, WaveId::Ref(_))).collect();
+        let grid = if refs.is_empty() {
+            pool[0]
+        } else {
+            let best = refs.iter().map(|(_, s)| s.dt).min_by(|a, b| a.total_cmp(b)).unwrap_or(0.0);
+            *refs.iter().filter(|(_, s)| (s.dt - best).abs() <= best.abs() * 1e-9).max_by_key(|(_, s)| s.v.len()).unwrap()
+        };
+        let (t0, dt, n) = (grid.1.t0, grid.1.dt, grid.1.v.len());
+        let mut moved = false;
+        let mut v = Vec::with_capacity(req.len());
+        for (_, s) in &req {
+            let (col, m) = on_grid(s, t0, dt, n);
+            moved |= m;
+            v.push(col);
+        }
+        let mut opt = Vec::with_capacity(opt_s.len());
+        for s in &opt_s {
+            match s {
+                Some((_, w)) => {
+                    let (col, m) = on_grid(w, t0, dt, n);
+                    moved |= m;
+                    opt.push(Some(col));
+                }
+                None => opt.push(None),
+            }
+        }
+        Ok(Taken { t0, dt, v, opt, moved })
+    }
+}
+
+fn on_grid(src: &WaveSamp, t0: f64, dt: f64, n: usize) -> (Vec<f32>, bool) {
+    let same = (src.dt - dt).abs() <= dt.abs() * 1e-9 && (src.t0 - t0).abs() <= dt.abs() * 1e-6;
+    if same {
+        let mut v = src.v.clone();
+        v.truncate(n);
+        if v.len() < n {
+            v.resize(n, f32::NAN);
+        }
+        return (v, false);
+    }
+    let m = src.v.len();
+    let mut out = Vec::with_capacity(n);
+    for k in 0..n {
+        let x = (t0 + k as f64 * dt - src.t0) / src.dt;
+        if m == 0 || !(src.dt > 0.0) || x < 0.0 || x > (m - 1) as f64 {
+            out.push(f32::NAN);
+            continue;
+        }
+        let i = x as usize;
+        let f = (x - i as f64) as f32;
+        let a = src.v[i];
+        let b = src.v[(i + 1).min(m - 1)];
+        if a.is_finite() && b.is_finite() {
+            out.push(a * (1.0 - f) + b * f);
+        } else if a.is_finite() {
+            out.push(a);
+        } else {
+            out.push(b);
+        }
+    }
+    (out, true)
+}
+
+pub(super) fn missing_wave(id: WaveId) -> String {
+    match id {
+        WaveId::Ch(c) => format!("CH{} is off", c + 1),
+        WaveId::Ref(i) => format!("R{} is empty", i + 1),
+    }
+}
+
+pub(super) fn clash_wave(id: WaveId) -> String {
+    match id {
+        WaveId::Ch(c) => format!("CH{} is used twice", c + 1),
+        WaveId::Ref(i) => format!("R{} is used twice", i + 1),
+    }
+}
+
+pub(super) fn wave_clash(ids: &[WaveId]) -> Option<WaveId> {
+    let mut seen = Vec::new();
+    for &id in ids {
+        if seen.contains(&id) {
+            return Some(id);
+        }
+        seen.push(id);
     }
     None
+}
+
+/// Three live channels on a model that does not have them. A ref is not one of those channels.
+pub(super) fn needs_more_channels(ids: &[WaveId]) -> bool {
+    ids.len() > n_ch() && ids.iter().all(|id| id.ch().is_some())
 }
 
 pub(super) fn num(x: Option<f64>, unit: &str) -> String {

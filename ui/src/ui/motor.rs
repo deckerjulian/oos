@@ -3,7 +3,7 @@
 
 //! Inverter pages: DQ0 and the mechanical shaft (`oos_dsp::motor`). Quadrature and Hall are logic lines.
 
-use super::magnetic::{ana_clash, ana_samples, num};
+use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, wave_clash};
 use super::*;
 use oos_dsp::motor::{self, Theta};
 
@@ -89,18 +89,17 @@ impl Ui {
     pub(super) fn inverter_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         let onoff = |b: bool| if b { "On".into() } else { "Off".into() };
-        let ch = |c: usize| format!("CH{}", c + 1);
-        let opt = |c: Option<usize>| c.map(ch).unwrap_or_else(|| "Off".into());
+        let opt = |c: Option<WaveId>| c.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into());
         let line = |n: u8| format!("D{}", n.min(15));
         Some(match it {
             Item::InvOn => onoff(m.view == AView::Inverter),
             Item::InvPage => if m.inv_page == InvPage::Dq0 { "DQ0".into() } else { "Mechanical".into() },
-            Item::InvA => ch(m.inv_a),
-            Item::InvB => ch(m.inv_b),
-            Item::InvC => ch(m.inv_c),
+            Item::InvA => self.wave_name(m.inv_a),
+            Item::InvB => self.wave_name(m.inv_b),
+            Item::InvC => self.wave_name(m.inv_c),
             Item::InvAng => self.ang_name(),
             Item::InvPoles => format!("{}", m.inv_poles.max(1)),
-            Item::InvAn => ch(m.inv_an),
+            Item::InvAn => self.wave_name(m.inv_an),
             Item::InvQty => if m.inv_volt { "Voltage".into() } else { "Current".into() },
             Item::InvTq => opt(m.inv_tq),
             Item::InvEv => opt(m.inv_ev),
@@ -126,10 +125,10 @@ impl Ui {
         match it {
             Item::InvOn | Item::InvSwap => v(&["Off", "On"]),
             Item::InvPage => v(&["DQ0", "Mechanical"]),
-            Item::InvA | Item::InvB | Item::InvC | Item::InvAn => Some(ch_names()),
+            Item::InvA | Item::InvB | Item::InvC | Item::InvAn => Some(self.wave_names()),
             Item::InvAng => Some(if self.m.inv_page == InvPage::Dq0 { vec!["Off".into(), "Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()] } else { vec!["Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()] }),
             Item::InvQty => v(&["Voltage", "Current"]),
-            Item::InvTq | Item::InvEv | Item::InvEi => Some(opt_ch_names("Off")),
+            Item::InvTq | Item::InvEv | Item::InvEi => Some(self.wave_names_opt()),
             Item::InvElec => v(&["Mech", "Elec"]),
             _ => None,
         }
@@ -171,10 +170,22 @@ impl Ui {
                     self.m.inv_ang = InvAngle::Phase;
                 }
             }
-            Item::InvA => self.m.inv_a = src_step(self.m.inv_a, NCH, d),
-            Item::InvB => self.m.inv_b = src_step(self.m.inv_b, NCH, d),
-            Item::InvC => self.m.inv_c = src_step(self.m.inv_c, NCH, d),
-            Item::InvAn => self.m.inv_an = src_step(self.m.inv_an, NCH, d),
+            Item::InvA => {
+                let cur = self.m.inv_a;
+                self.m.inv_a = self.step_wave(cur, d);
+            }
+            Item::InvB => {
+                let cur = self.m.inv_b;
+                self.m.inv_b = self.step_wave(cur, d);
+            }
+            Item::InvC => {
+                let cur = self.m.inv_c;
+                self.m.inv_c = self.step_wave(cur, d);
+            }
+            Item::InvAn => {
+                let cur = self.m.inv_an;
+                self.m.inv_an = self.step_wave(cur, d);
+            }
             Item::InvAng => {
                 let cur = self.ang_name();
                 let name = pick(&cur, opts.as_deref().unwrap_or(&[]));
@@ -182,9 +193,18 @@ impl Ui {
             }
             Item::InvPoles => self.m.inv_poles = (self.m.inv_poles as i32 + d).clamp(1, 32) as u32,
             Item::InvQty => self.m.inv_volt = !self.m.inv_volt,
-            Item::InvTq => self.m.inv_tq = step_opt(self.m.inv_tq, d),
-            Item::InvEv => self.m.inv_ev = step_opt(self.m.inv_ev, d),
-            Item::InvEi => self.m.inv_ei = step_opt(self.m.inv_ei, d),
+            Item::InvTq => {
+                let cur = self.m.inv_tq;
+                self.m.inv_tq = self.step_wave_opt(cur, d);
+            }
+            Item::InvEv => {
+                let cur = self.m.inv_ev;
+                self.m.inv_ev = self.step_wave_opt(cur, d);
+            }
+            Item::InvEi => {
+                let cur = self.m.inv_ei;
+                self.m.inv_ei = self.step_wave_opt(cur, d);
+            }
             Item::InvScale => self.m.inv_scale = eng_ladder(self.m.inv_scale, d, 1e-3, 1e3, false),
             Item::InvDeg => self.m.inv_degv = eng_ladder(self.m.inv_degv, d, 1e-3, 1e4, false),
             Item::InvOff => self.m.inv_off = (self.m.inv_off + d as f64).clamp(-3600.0, 3600.0),
@@ -218,49 +238,59 @@ impl Ui {
     }
 
     fn dq_update(&mut self, rec: &Record) {
-        if n_ch() < 3 {
-            self.azr.inv_note = "DQ0 needs three analog channels".into();
-            return;
-        }
         let m = &self.m;
         let mut used = vec![m.inv_a, m.inv_b, m.inv_c];
         if m.inv_ang == InvAngle::Analog {
             used.push(m.inv_an);
         }
-        if let Some(c) = ana_clash(&used) {
-            self.azr.inv_note = format!("CH{} is used twice", c + 1);
+        if needs_more_channels(&used[..3]) {
+            self.azr.inv_note = "DQ0 needs three analog channels".into();
             return;
         }
-        for &c in &used {
-            if ana_samples(self, rec, c).is_none() {
-                self.azr.inv_note = format!("CH{} is off", c + 1);
+        if let Some(id) = wave_clash(&used) {
+            self.azr.inv_note = clash_wave(id);
+            return;
+        }
+        let analog = (m.inv_ang == InvAngle::Analog).then_some(m.inv_an);
+        let (degv, off, elec, poles) = (m.inv_degv, m.inv_off, m.inv_elec, m.inv_poles.max(1));
+        let ang = m.inv_ang;
+        let taken = match self.take_waves(rec, &used[..3], &[analog]) {
+            Ok(t) => t,
+            Err(id) => {
+                self.azr.inv_note = missing_wave(id);
                 return;
             }
+        };
+        if analog.is_some() && taken.opt[0].is_none() {
+            self.azr.inv_note = missing_wave(m.inv_an);
+            return;
         }
-        let (a, t0, dt) = ana_samples(self, rec, m.inv_a).unwrap();
-        let b = ana_samples(self, rec, m.inv_b).unwrap().0;
-        let c = ana_samples(self, rec, m.inv_c).unwrap().0;
-        let _ = t0;
-        let poles = m.inv_poles.max(1);
+        let (a, b, c, dt, t0) = (&taken.v[0], &taken.v[1], &taken.v[2], taken.dt, taken.t0);
         let owned;
-        let theta = match m.inv_ang {
+        let theta = match ang {
             InvAngle::Off | InvAngle::Phase => Theta::Vector,
             InvAngle::Analog => {
-                let v = ana_samples(self, rec, m.inv_an).unwrap().0;
-                owned = motor::analog_elec(&v, m.inv_degv, m.inv_off, m.inv_elec, poles);
+                let v = taken.opt[0].as_deref().unwrap();
+                owned = motor::analog_elec(v, degv, off, elec, poles);
                 Theta::Elec(&owned)
             }
             InvAngle::Quad | InvAngle::Hall => {
-                let Some(rad) = self.shaft_rad(rec, a.len(), dt) else { return };
+                let Some(rad) = self.shaft_rad(rec, a.len(), dt, t0) else { return };
                 owned = rad.iter().map(|r| if r.is_finite() { r * poles as f64 } else { f64::NAN }).collect();
                 Theta::Elec(&owned)
             }
         };
-        match motor::dq0(&a, &b, &c, dt, theta) {
+        match motor::dq0(a, b, c, dt, theta) {
             Some(q) => {
                 let mut note = String::new();
                 if q.short {
                     note = "cycle window is short".into();
+                }
+                if taken.moved {
+                    if !note.is_empty() {
+                        note.push_str(". ");
+                    }
+                    note.push_str("on the finest ref interval");
                 }
                 self.azr.inv_note = note;
                 self.azr.dq = Some(q);
@@ -277,44 +307,43 @@ impl Ui {
             InvAngle::Analog => used.push(m.inv_an),
             InvAngle::Quad | InvAngle::Hall => {}
         }
-        if let Some(c) = m.inv_tq {
+        let roles = [m.inv_tq, m.inv_ev, m.inv_ei];
+        for c in roles.into_iter().flatten() {
             used.push(c);
         }
-        if let Some(c) = m.inv_ev {
-            used.push(c);
-        }
-        if let Some(c) = m.inv_ei {
-            used.push(c);
-        }
-        if let Some(c) = ana_clash(&used) {
-            self.azr.inv_note = format!("CH{} is used twice", c + 1);
-            return;
-        }
-        if matches!(m.inv_ang, InvAngle::Phase | InvAngle::Off) && n_ch() < 3 {
+        if needs_more_channels(&used[..used.len().min(3)]) && matches!(m.inv_ang, InvAngle::Phase | InvAngle::Off) {
             self.azr.inv_note = "a phase angle needs three analog channels".into();
             return;
         }
-        for &c in &used {
-            if ana_samples(self, rec, c).is_none() {
-                self.azr.inv_note = format!("CH{} is off", c + 1);
+        if let Some(id) = wave_clash(&used) {
+            self.azr.inv_note = clash_wave(id);
+            return;
+        }
+        if matches!(m.inv_ang, InvAngle::Quad | InvAngle::Hall) {
+            return self.mech_digital(rec);
+        }
+        let (poles, degv, off, elec, ang) = (m.inv_poles.max(1), m.inv_degv, m.inv_off, m.inv_elec, m.inv_ang);
+        let nreq = if ang == InvAngle::Analog { 1 } else { 3 };
+        let taken = match self.take_waves(rec, &used[..nreq], &roles) {
+            Ok(t) => t,
+            Err(id) => {
+                self.azr.inv_note = missing_wave(id);
+                return;
+            }
+        };
+        for (slot, id) in roles.into_iter().enumerate() {
+            if id.is_some() && taken.opt[slot].is_none() {
+                self.azr.inv_note = missing_wave(id.unwrap());
                 return;
             }
         }
-        let poles = m.inv_poles.max(1);
-        let shaft = match m.inv_ang {
-            InvAngle::Phase | InvAngle::Off => {
-                let (a, t0, dt) = ana_samples(self, rec, m.inv_a).unwrap();
-                let b = ana_samples(self, rec, m.inv_b).unwrap().0;
-                let c = ana_samples(self, rec, m.inv_c).unwrap().0;
-                motor::shaft_phase(&a, &b, &c, dt, t0, poles)
-            }
-            InvAngle::Analog => {
-                let (v, t0, dt) = ana_samples(self, rec, m.inv_an).unwrap();
-                motor::shaft_analog(&v, dt, t0, m.inv_degv, m.inv_off, m.inv_elec, poles)
-            }
-            InvAngle::Quad | InvAngle::Hall => return self.mech_digital(rec),
+        let shaft = match ang {
+            InvAngle::Phase | InvAngle::Off => motor::shaft_phase(&taken.v[0], &taken.v[1], &taken.v[2], taken.dt, taken.t0, poles),
+            InvAngle::Analog => motor::shaft_analog(&taken.v[0], taken.dt, taken.t0, degv, off, elec, poles),
+            InvAngle::Quad | InvAngle::Hall => return,
         };
-        self.finish_mech(rec, shaft);
+        let moved = taken.moved;
+        self.finish_mech(shaft, taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref(), moved);
     }
 
     fn mech_digital(&mut self, rec: &Record) {
@@ -338,22 +367,38 @@ impl Ui {
             let ix = m.inv_qi.map(|q| bit(q));
             motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)
         };
-        self.finish_mech(rec, shaft);
+        let roles = [self.m.inv_tq, self.m.inv_ev, self.m.inv_ei];
+        let taken = match self.take_waves(rec, &[], &roles) {
+            Ok(t) => t,
+            Err(id) => {
+                self.azr.inv_note = missing_wave(id);
+                return;
+            }
+        };
+        for (slot, id) in roles.into_iter().enumerate() {
+            if id.is_some() && taken.opt[slot].is_none() {
+                self.azr.inv_note = missing_wave(id.unwrap());
+                return;
+            }
+        }
+        self.finish_mech(shaft, taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref(), taken.moved);
     }
 
-    fn finish_mech(&mut self, rec: &Record, shaft: oos_dsp::motor::Shaft) {
-        let m = &self.m;
-        let tq = m.inv_tq.and_then(|c| ana_samples(self, rec, c)).map(|s| s.0);
-        let ev = m.inv_ev.and_then(|c| ana_samples(self, rec, c)).map(|s| s.0);
-        let ei = m.inv_ei.and_then(|c| ana_samples(self, rec, c)).map(|s| s.0);
-        let note = shaft.note.to_string();
-        let mech = motor::mechanical(shaft, tq.as_deref(), m.inv_scale, ev.as_deref(), ei.as_deref());
+    fn finish_mech(&mut self, shaft: oos_dsp::motor::Shaft, tq: Option<&[f32]>, ev: Option<&[f32]>, ei: Option<&[f32]>, moved: bool) {
+        let mut note = shaft.note.to_string();
+        if moved {
+            if !note.is_empty() {
+                note.push_str(". ");
+            }
+            note.push_str("on the finest ref interval");
+        }
+        let mech = motor::mechanical(shaft, tq, self.m.inv_scale, ev, ei);
         self.azr.inv_note = note;
         self.azr.mech = Some(mech);
     }
 
     /// Mechanical radians of the quadrature or Hall source, one per phase sample.
-    fn shaft_rad(&mut self, rec: &Record, n: usize, dt: f64) -> Option<Vec<f64>> {
+    fn shaft_rad(&mut self, rec: &Record, n: usize, dt: f64, t0: f64) -> Option<Vec<f64>> {
         if !crate::ui::la::available() {
             self.azr.inv_note = "this model has no logic port".into();
             return None;
@@ -367,7 +412,6 @@ impl Ui {
             return None;
         }
         let m = &self.m;
-        let t0 = rec.t0;
         let at = |line: u8, i: usize| -> bool {
             let t = t0 + i as f64 * dt;
             let k = ((t - la.t0) / la.dt).round();
@@ -542,13 +586,6 @@ fn short_num(x: f64) -> String {
     } else {
         format!("{:.3}", x)
     }
-}
-
-fn step_opt(c: Option<usize>, d: i32) -> Option<usize> {
-    let n = n_ch() + 1;
-    let i = c.map(|x| x + 1).unwrap_or(0).min(n.saturating_sub(1));
-    let j = (i as i32 + d).rem_euclid(n as i32) as usize;
-    if j == 0 { None } else { Some(j - 1) }
 }
 
 fn step_line(n: u8, d: i32) -> u8 {

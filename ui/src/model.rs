@@ -9,6 +9,8 @@ use crate::math::{MathOp, Window};
 
 /// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`).
 pub const NCH: usize = <Active as Board>::MAX_CHANNELS;
+/// Reference waveform slots, R1..R10. A slot is waveform memory, not a channel index.
+pub const NREF: usize = 10;
 const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp take oos_dsp::CHANNELS channels");
 
 /// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`).
@@ -42,6 +44,52 @@ pub fn opt_ch_names(none: &str) -> Vec<String> {
 /// Whether source index `s` exists on this unit: channels 0..n_ch(), and every index from NCH on (math channels).
 pub fn src_ok(s: usize) -> bool {
     s < n_ch() || s >= NCH
+}
+
+/// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
+/// that record's sample interval. Refs are not packed into the channel/math index.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WaveId {
+    Ch(usize),
+    Ref(usize),
+}
+
+impl WaveId {
+    pub fn ch(self) -> Option<usize> {
+        match self {
+            WaveId::Ch(c) => Some(c),
+            WaveId::Ref(_) => None,
+        }
+    }
+
+    /// Setup text: `1`..`4` are channels, `R1`..`R10` are refs. Old files only have channel numbers.
+    pub fn token(self) -> String {
+        match self {
+            WaveId::Ch(c) => (c + 1).to_string(),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        }
+    }
+
+    /// Inverse of `token`. `0` is CH1, the same clamp the old channel parser used.
+    pub fn parse(v: &str) -> Result<WaveId, String> {
+        if let Some(rest) = v.strip_prefix('R').or_else(|| v.strip_prefix('r')) {
+            let n = rest.parse::<usize>().map_err(|_| format!("not a source: {}", v))?;
+            if (1..=NREF).contains(&n) {
+                Ok(WaveId::Ref(n - 1))
+            } else {
+                Err(format!("R{} out of range", n))
+            }
+        } else {
+            let i = v.parse::<usize>().map_err(|_| format!("not a source: {}", v))?;
+            if i == 0 {
+                Ok(WaveId::Ch(0))
+            } else if i <= NCH {
+                Ok(WaveId::Ch(i - 1))
+            } else {
+                Err(format!("{} out of range", i))
+            }
+        }
+    }
 }
 
 /// `d` steps from source index `i` among `0..n`, cycling and skipping the channels the unit lacks (2-channel models:
@@ -876,27 +924,27 @@ pub struct Model {
     pub bode_out: usize,
     pub bode_gen: usize,
     pub bode_addr: String,
-    /// magnetic analysis: voltage, current, turns, area m² (0 = unset), path m (0 = unset), copper Ω, plot, cursor
-    pub mag_v: usize,
-    pub mag_i: usize,
+    /// magnetic analysis: voltage, current (a channel or a loaded ref), turns, area m² (0 = unset), path m (0 = unset), copper Ω, plot, cursor
+    pub mag_v: WaveId,
+    pub mag_i: WaveId,
     pub mag_n: f64,
     pub mag_ae: f64,
     pub mag_le: f64,
     pub mag_rcu: f64,
     pub mag_plot: MagPlot,
     pub mag_cur: usize,
-    /// inverter: page, phases, angle source, pole pairs, analog angle channel, voltage trio (else current)
+    /// inverter: page, phases, angle source, pole pairs, analog angle (channel or ref), voltage trio (else current)
     pub inv_page: InvPage,
-    pub inv_a: usize,
-    pub inv_b: usize,
-    pub inv_c: usize,
+    pub inv_a: WaveId,
+    pub inv_b: WaveId,
+    pub inv_c: WaveId,
     pub inv_ang: InvAngle,
     pub inv_poles: u32,
-    pub inv_an: usize,
+    pub inv_an: WaveId,
     pub inv_volt: bool,
-    pub inv_tq: Option<usize>,
-    pub inv_ev: Option<usize>,
-    pub inv_ei: Option<usize>,
+    pub inv_tq: Option<WaveId>,
+    pub inv_ev: Option<WaveId>,
+    pub inv_ei: Option<WaveId>,
     pub inv_scale: f64,
     pub inv_degv: f64,
     pub inv_off: f64,
@@ -910,12 +958,12 @@ pub struct Model {
     pub inv_ha: u8,
     pub inv_hb: u8,
     pub inv_hc: u8,
-    /// double pulse: Vds, Id, Vgs, optional fourth probe and its channel, gate percent, zoom
-    pub dpt_v: usize,
-    pub dpt_i: usize,
-    pub dpt_g: usize,
+    /// double pulse: Vds, Id, Vgs, optional fourth probe and its source, gate percent, zoom
+    pub dpt_v: WaveId,
+    pub dpt_i: WaveId,
+    pub dpt_g: WaveId,
     pub dpt_4th: DptFourth,
-    pub dpt_4ch: usize,
+    pub dpt_4ch: WaveId,
     pub dpt_pct: f64,
     pub dpt_zoom: DptZoom,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
@@ -1187,8 +1235,8 @@ impl Default for Model {
             bode_gen: 0,
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
-            mag_v: 0,
-            mag_i: 1,
+            mag_v: WaveId::Ch(0),
+            mag_i: WaveId::Ch(1),
             mag_n: 1.0,
             mag_ae: 0.0,
             mag_le: 0.0,
@@ -1196,12 +1244,12 @@ impl Default for Model {
             mag_plot: MagPlot::IPsi,
             mag_cur: 0,
             inv_page: InvPage::Dq0,
-            inv_a: 0,
-            inv_b: 1,
-            inv_c: 2,
+            inv_a: WaveId::Ch(0),
+            inv_b: WaveId::Ch(1),
+            inv_c: WaveId::Ch(2),
             inv_ang: InvAngle::Off,
             inv_poles: 1,
-            inv_an: 3,
+            inv_an: WaveId::Ch(3),
             inv_volt: true,
             inv_tq: None,
             inv_ev: None,
@@ -1218,11 +1266,11 @@ impl Default for Model {
             inv_ha: 0,
             inv_hb: 1,
             inv_hc: 2,
-            dpt_v: 0,
-            dpt_i: 1,
-            dpt_g: 2,
+            dpt_v: WaveId::Ch(0),
+            dpt_i: WaveId::Ch(1),
+            dpt_g: WaveId::Ch(2),
             dpt_4th: DptFourth::Off,
-            dpt_4ch: 3,
+            dpt_4ch: WaveId::Ch(3),
             dpt_pct: 10.0,
             dpt_zoom: DptZoom::Both,
             bw_src: 0,
@@ -1650,7 +1698,7 @@ impl Model {
             return changed;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
-        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src, &mut self.mag_v, &mut self.mag_i, &mut self.inv_a, &mut self.inv_b, &mut self.inv_c, &mut self.inv_an, &mut self.dpt_v, &mut self.dpt_i, &mut self.dpt_g, &mut self.dpt_4ch]
+        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src]
             .into_iter()
             .chain(self.zones.iter_mut().map(|z| &mut z.src))
         {
@@ -1659,10 +1707,26 @@ impl Model {
                 changed = true;
             }
         }
-        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs, &mut self.z_src, &mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei] {
+        for s in [&mut self.mag_v, &mut self.mag_i, &mut self.inv_a, &mut self.inv_b, &mut self.inv_c, &mut self.inv_an, &mut self.dpt_v, &mut self.dpt_i, &mut self.dpt_g, &mut self.dpt_4ch] {
+            if let WaveId::Ch(c) = *s {
+                if c >= n {
+                    *s = WaveId::Ch(0);
+                    changed = true;
+                }
+            }
+        }
+        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs, &mut self.z_src] {
             if s.is_some_and(|c| c >= n) {
                 *s = None;
                 changed = true;
+            }
+        }
+        for s in [&mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei] {
+            if let Some(WaveId::Ch(c)) = *s {
+                if c >= n {
+                    *s = None;
+                    changed = true;
+                }
             }
         }
         // math sources: channels 0..NCH, then math channels (always there)

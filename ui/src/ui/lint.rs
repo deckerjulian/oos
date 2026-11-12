@@ -1431,6 +1431,204 @@ fn a_reference_travels_through_a_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A CSV in a ref slot is measured at the file's sample interval. The 20 MHz front-end limit
+/// does not touch it. CH1 still reads the hardware frame, and the live source is left alone.
+#[test]
+fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
+    let dir = std::env::temp_dir().join(format!("oos-refmeas-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.store_dir = dir.clone();
+    assert!(matches!(u.src, Source::Demo { .. }));
+
+    let dt = 5e-9;
+    let n = 400;
+    let sine: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin() as f32).collect();
+    write_wave(&dir, 1, 0.0, dt, &sine);
+    u.ref_sel = 0;
+    u.activate(Item::RefImport);
+    let loaded = u.refs[0].as_ref().unwrap();
+    assert!((loaded.dt - dt).abs() < 1e-18, "{}", loaded.dt);
+    assert_eq!(loaded.v, sine);
+
+    let mut screen: [Vec<f32>; NCH] = Default::default();
+    screen[0] = vec![0.25, 0.5, 0.75, 1.0];
+    let mut frame = crate::board::Frame::default();
+    frame.dt = 2e-9;
+    frame.ch[0] = vec![0.0; 200];
+    frame.ch[0][10] = 9.0;
+    u.last[0] = Some(Record {
+        t0: 0.0,
+        dt: 1e-6,
+        ch: screen.clone(),
+        triggered: true,
+        partial: false,
+        raw: Some(crate::wave::Raw { frame: std::sync::Arc::new(frame), i0: 0, i1: 200, t0: -2e-7 }),
+        la: None,
+    });
+    let rec = u.last[0].as_ref().unwrap();
+    let samp = u.wave_samples(rec, WaveId::Ref(0)).unwrap();
+    assert_eq!(samp.v, sine);
+    assert!((samp.dt - dt).abs() < 1e-18);
+    let pp = |w: &[f32], step: f64| oos_dsp::measure::analyze_min(w, step, 0.1).get(oos_dsp::measure::Meas::Vpp);
+    assert!((pp(&samp.v, samp.dt) - pp(&sine, dt)).abs() < 1e-5);
+
+    u.m.ch[0].bw = BW_20M;
+    u.m.ch[0].coupling = Coupling::Ac;
+    let again = u.wave_samples(u.last[0].as_ref().unwrap(), WaveId::Ref(0)).unwrap();
+    assert_eq!(again.v, sine);
+    assert!((again.dt - dt).abs() < 1e-18);
+    let mut filtered = sine.clone();
+    crate::wave::condition(&u.m, 0, &mut filtered, dt);
+    assert!((pp(&filtered, dt) - pp(&sine, dt)).abs() > 0.2, "filtered {} file {}", pp(&filtered, dt), pp(&sine, dt));
+
+    let hw = u.wave_samples(u.last[0].as_ref().unwrap(), WaveId::Ch(0)).unwrap();
+    assert_eq!(hw.v.len(), 200);
+    assert!((hw.dt - 2e-9).abs() < 1e-18);
+    assert_eq!(hw.v[10], 9.0);
+    assert_eq!(u.last[0].as_ref().unwrap().ch[0], screen[0]);
+    assert!(matches!(u.src, Source::Demo { .. }));
+    assert!(u.wave_samples(u.last[0].as_ref().unwrap(), WaveId::Ref(9)).is_none());
+    u.refs[0].as_mut().unwrap().on = false;
+    assert_eq!(u.wave_samples(u.last[0].as_ref().unwrap(), WaveId::Ref(0)).unwrap().v, sine);
+    assert!(u.magnetic_options(Item::MagV).unwrap().iter().any(|s| s == "R1"));
+    u.m.mag_v = WaveId::Ch(n_ch() - 1);
+    assert!(u.magnetic_adjust(Item::MagV, 1));
+    assert_eq!(u.m.mag_v, WaveId::Ref(0));
+    assert_eq!(u.value(Item::MagV), "R1");
+
+    // two windings from files, including one the screen cannot show at this rate
+    let (mdt, mn) = (2e-6, 4000usize);
+    let (mv, mi) = inductor_pair(1e-3, mdt, mn);
+    write_wave(&dir, 1, 0.0, mdt, &mv);
+    write_wave(&dir, 2, 0.0, mdt, &mi);
+    u.ref_sel = 0;
+    u.activate(Item::RefImport);
+    u.ref_sel = 1;
+    u.activate(Item::RefImport);
+    u.m.view = AView::Magnetic;
+    u.m.mag_v = WaveId::Ref(0);
+    u.m.mag_i = WaveId::Ref(1);
+    u.last[0] = None;
+    u.analyzer_update();
+    let expect = oos_dsp::magnetic::measure(&mv, &mi, mdt, oos_dsp::magnetic::Geom::default());
+    let got = u.azr.mag.as_ref().unwrap();
+    assert!(got.l.is_some() && expect.l.is_some(), "{} / {}", got.note, expect.note);
+    assert!((got.l.unwrap() - expect.l.unwrap()).abs() < 1e-9, "{} vs {}", got.l.unwrap(), expect.l.unwrap());
+    assert!((got.loss.unwrap() - expect.loss.unwrap()).abs() < 1e-9);
+    u.m.ch[0].bw = BW_20M;
+    u.analyzer_update();
+    assert!((u.azr.mag.as_ref().unwrap().l.unwrap() - expect.l.unwrap()).abs() < 1e-9);
+    assert!(u.last[0].is_none());
+    assert!(matches!(u.src, Source::Demo { .. }));
+
+    // three phase refs, no live record
+    let (f, a, pn, pdt) = (50.0, 10.0, 2000usize, 1e-4);
+    let w = 2.0 * std::f64::consts::PI * f;
+    let phase = |shift: f64| -> Vec<f32> { (0..pn).map(|k| (a * (w * k as f64 * pdt - shift).cos()) as f32).collect() };
+    let (pa, pb, pc) = (phase(0.0), phase(2.0 * std::f64::consts::PI / 3.0), phase(-2.0 * std::f64::consts::PI / 3.0));
+    put_ref(&mut u, 0, 0.0, pdt, pa.clone());
+    put_ref(&mut u, 1, 0.0, pdt, pb.clone());
+    put_ref(&mut u, 2, 0.0, pdt, pc.clone());
+    u.m.view = AView::Inverter;
+    u.m.inv_page = InvPage::Dq0;
+    u.m.inv_ang = InvAngle::Off;
+    u.m.inv_a = WaveId::Ref(0);
+    u.m.inv_b = WaveId::Ref(1);
+    u.m.inv_c = WaveId::Ref(2);
+    u.analyzer_update();
+    let dq = u.azr.dq.as_ref().expect(&u.azr.inv_note);
+    let direct = oos_dsp::motor::dq0(&pa, &pb, &pc, pdt, oos_dsp::motor::Theta::Vector).unwrap();
+    assert!((dq.d - direct.d).abs() < 1e-6 && (dq.q - direct.q).abs() < 1e-6, "{:?} {:?}", (dq.d, dq.q), (direct.d, direct.q));
+    assert!((dq.d - a).abs() < 0.15, "D {}", dq.d);
+
+    // double pulse at 1 ns, far above a 250 MHz front end
+    let (vds, id, gate) = double_pulse(1e-9);
+    put_ref(&mut u, 0, 0.0, 1e-9, vds.clone());
+    put_ref(&mut u, 1, 0.0, 1e-9, id.clone());
+    put_ref(&mut u, 2, 0.0, 1e-9, gate.clone());
+    u.m.view = AView::Dpt;
+    u.m.dpt_v = WaveId::Ref(0);
+    u.m.dpt_i = WaveId::Ref(1);
+    u.m.dpt_g = WaveId::Ref(2);
+    u.m.dpt_4th = DptFourth::Off;
+    u.analyzer_update();
+    let pulse = u.azr.dpt.as_ref().expect(&u.azr.dpt_note);
+    let direct = oos_dsp::dpt::measure(&vds, &id, Some(&gate), oos_dsp::dpt::Fourth::Off, 1e-9, 10.0);
+    assert!((pulse.vpeak.unwrap() - 480.0).abs() < 1e-3, "{}", pulse.vpeak.unwrap());
+    assert!((pulse.vpeak.unwrap() - direct.vpeak.unwrap()).abs() < 1e-6);
+    assert!((pulse.td_on.unwrap() - direct.td_on.unwrap()).abs() < 1e-12);
+    u.m.ch[0].bw = BW_20M;
+    u.analyzer_update();
+    assert!((u.azr.dpt.as_ref().unwrap().vpeak.unwrap() - 480.0).abs() < 1e-3);
+
+    // the finer ref keeps its samples; the coarser one is placed on that interval
+    let mut coarse = vec![0.0f32; 20];
+    coarse[0] = 1.0;
+    let mut fine = vec![0.0f32; 40];
+    fine[7] = 4.0;
+    put_ref(&mut u, 0, 0.0, 2e-6, coarse);
+    put_ref(&mut u, 1, 0.0, 1e-6, fine.clone());
+    let taken = u.take_waves(u.last[0].as_ref().unwrap_or(&Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None }), &[WaveId::Ref(0), WaveId::Ref(1)], &[]).unwrap();
+    assert!((taken.dt - 1e-6).abs() < 1e-18);
+    assert_eq!(taken.v[1], fine);
+    assert_eq!(taken.v[0].len(), fine.len());
+    assert!(taken.moved);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn write_wave(dir: &std::path::Path, slot: usize, t0: f64, dt: f64, v: &[f32]) {
+    let mut t = String::from("Time (s),Volts\n");
+    for (k, x) in v.iter().enumerate() {
+        t.push_str(&format!("{:.12e},{}\n", t0 + k as f64 * dt, x));
+    }
+    std::fs::write(dir.join(format!("ref{}.csv", slot)), t).unwrap();
+}
+
+fn put_ref(u: &mut Ui, slot: usize, t0: f64, dt: f64, v: Vec<f32>) {
+    u.refs[slot] = Some(RefWave { src: 0, color: 0, label: String::new(), t0, dt, v, vpd: 0.2, offset: 0.0, on: true });
+}
+
+/// Voltage of a 1 kHz triangle current in an ideal inductor.
+fn inductor_pair(l: f64, dt: f64, n: usize) -> (Vec<f32>, Vec<f32>) {
+    let f = 1000.0;
+    let i = |t: f64| {
+        let x = (t * f).fract();
+        if x < 0.5 { -1.0 + 4.0 * x } else { 3.0 - 4.0 * x }
+    };
+    let v: Vec<f32> = (0..n).map(|k| {
+        let t = k as f64 * dt;
+        let x = (t * f).fract();
+        let di = if x < 0.5 { 4.0 * f } else { -4.0 * f };
+        (l * di) as f32
+    }).collect();
+    let cur: Vec<f32> = (0..n).map(|k| i(k as f64 * dt) as f32).collect();
+    (v, cur)
+}
+
+fn pwl(p: &[(f64, f64)], t: f64) -> f64 {
+    if t <= p[0].0 {
+        return p[0].1;
+    }
+    for w in p.windows(2) {
+        if t <= w[1].0 {
+            return w[0].1 + (w[1].1 - w[0].1) * (t - w[0].0) / (w[1].0 - w[0].0);
+        }
+    }
+    p[p.len() - 1].1
+}
+
+fn double_pulse(dt: f64) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let n = (13e-6 / dt) as usize;
+    let gate = [(0.0, 0.0), (1e-6, 0.0), (1.02e-6, 10.0), (6e-6, 10.0), (6.02e-6, 0.0), (10e-6, 0.0), (10.02e-6, 10.0), (12e-6, 10.0), (12.02e-6, 0.0)];
+    let id = [(0.0, 0.0), (1.1e-6, 0.0), (1.2e-6, 10.0), (6.05e-6, 10.0), (6.15e-6, 0.0), (10.05e-6, 0.0), (10.15e-6, 10.0), (10.25e-6, 14.0), (10.35e-6, 10.0), (12e-6, 10.0)];
+    let vds = [(0.0, 400.0), (1.05e-6, 400.0), (1.15e-6, 1.0), (6.1e-6, 1.0), (6.2e-6, 400.0), (6.25e-6, 480.0), (6.4e-6, 400.0), (10.05e-6, 400.0), (10.15e-6, 1.0), (12e-6, 1.0)];
+    let sample = |p: &[(f64, f64)]| (0..n).map(|k| pwl(p, k as f64 * dt) as f32).collect();
+    (sample(&vds), sample(&id), sample(&gate))
+}
+
 /// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`.
 #[test]
 #[ignore]

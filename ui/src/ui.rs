@@ -156,11 +156,8 @@ const WEB_CSV_MAX: usize = 2_000_000;
 /// Height of a decoder band in the plot.
 const DEC_BAND: i32 = 28;
 
-/// Reference slots.
 /// Colours of the references.
 const REF_COLORS: [(&str, Rgb); 5] = [("White", rgb(0xd8, 0xd8, 0xd8)), ("Red", rgb(0xf0, 0x60, 0x60)), ("Green", rgb(0x60, 0xe0, 0x90)), ("Blue", rgb(0x70, 0xa8, 0xf8)), ("Violet", rgb(0xc8, 0x88, 0xf0))];
-
-const NREF: usize = 10;
 /// Kinds of delay and phase measurement and of second panes, for the setups.
 pub const PAIRS_N: usize = tools::PAIRS.len();
 pub const PANES_N: usize = tables::PANES.len();
@@ -3388,14 +3385,16 @@ impl Ui {
     }
 
     /// Channels a page reads that are switched off: the page has nothing to work with, and says so with a button.
+    /// A ref is stored memory, so a switched-off channel does not blank it.
     fn off_sources(&self, menu: MenuId) -> Vec<usize> {
         let m = &self.m;
-        let want: Vec<usize> = match menu {
-            MenuId::Power if m.pw_mode == PowerMode::Ripple => vec![m.pw_v],
-            MenuId::Power => vec![m.pw_v, m.pw_i],
-            MenuId::Spectrum => vec![m.spec_src],
-            MenuId::Eye => vec![m.eye_src],
-            MenuId::Bode => vec![m.bode_in, m.bode_out],
+        let ch = WaveId::Ch;
+        let want: Vec<WaveId> = match menu {
+            MenuId::Power if m.pw_mode == PowerMode::Ripple => vec![ch(m.pw_v)],
+            MenuId::Power => vec![ch(m.pw_v), ch(m.pw_i)],
+            MenuId::Spectrum => vec![ch(m.spec_src)],
+            MenuId::Eye => vec![ch(m.eye_src)],
+            MenuId::Bode => vec![ch(m.bode_in), ch(m.bode_out)],
             MenuId::Magnetic => vec![m.mag_v, m.mag_i],
             MenuId::Inverter if m.inv_page == InvPage::Dq0 => {
                 let mut v = vec![m.inv_a, m.inv_b, m.inv_c];
@@ -3422,13 +3421,16 @@ impl Ui {
                 }
                 v
             }
-            MenuId::BwTest => vec![m.bw_src],
-            MenuId::Mask => vec![m.mask_src],
-            MenuId::Dvm => [m.dvm_on.then_some(m.dvm_src), m.cnt_on.then_some(m.cnt_src)].into_iter().flatten().collect(),
-            MenuId::Decode if !m.dec_on_la() => vec![m.dec_src],
+            MenuId::BwTest => vec![ch(m.bw_src)],
+            MenuId::Mask => vec![ch(m.mask_src)],
+            MenuId::Dvm => [m.dvm_on.then_some(ch(m.dvm_src)), m.cnt_on.then_some(ch(m.cnt_src))].into_iter().flatten().collect(),
+            MenuId::Decode if !m.dec_on_la() => vec![ch(m.dec_src)],
             _ => Vec::new(),
         };
-        let mut v: Vec<usize> = want.into_iter().filter(|&c| c < n_ch() && !m.ch[c].on).collect();
+        let mut v: Vec<usize> = want.into_iter().filter_map(|id| match id {
+            WaveId::Ch(c) if c < n_ch() && !m.ch[c].on => Some(c),
+            _ => None,
+        }).collect();
         v.dedup();
         v
     }
@@ -5011,7 +5013,10 @@ impl Ui {
                     None => self.toast("No waveform to save"),
                 },
                 Item::RefExport => self.ref_export(),
-                Item::RefImport => self.ref_import(),
+                Item::RefImport => {
+                    self.ref_import();
+                    self.analyzer_update();
+                },
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
                 Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
@@ -5028,27 +5033,26 @@ impl Ui {
                 }
                 Item::RefSave => {
                     let c = self.ref_src;
-                    let saved = self.last[0].as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| RefWave {
-                        src: c,
-                        color: 0,
-                        label: String::new(),
-                        t0: r.t0,
-                        dt: r.dt,
-                        v: r.ch[c].clone(),
-                        vpd: self.m.ch[c].volts_per_div(),
-                        offset: self.m.ch[c].offset,
-                        on: true,
+                    let rec = self.last[0].clone();
+                    let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
+                        let (v, dt) = self.meas_wave(r, c);
+                        let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
+                        RefWave { src: c, color: 0, label: String::new(), t0, dt, v, vpd: self.m.ch[c].volts_per_div(), offset: self.m.ch[c].offset, on: true }
                     });
                     match saved {
                         Some(w) => {
                             let slot = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
                             self.refs[slot] = Some(w);
                             self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));
+                            self.analyzer_update();
                         }
                         None => self.toast("Source channel has no data"),
                     }
                 }
-                Item::RefClear => self.refs = std::array::from_fn(|_| None),
+                Item::RefClear => {
+                    self.refs = std::array::from_fn(|_| None);
+                    self.analyzer_update();
+                },
                 Item::ClearDisp => {
                     if self.menu == MenuId::Main {
                         self.close_menu();

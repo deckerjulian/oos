@@ -263,11 +263,11 @@ pub fn setup_text(m: &Model) -> String {
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
     kv("eye", format!("{} {}", m.eye_src + 1, m.eye_rate));
     kv("power", format!("{} {} {}", m.pw_v + 1, m.pw_i + 1, name(m.pw_mode)));
-    kv("magnetic", format!("{} {} {} {} {} {} {:?} {}", m.mag_v + 1, m.mag_i + 1, m.mag_n, m.mag_ae, m.mag_le, m.mag_rcu, m.mag_plot, m.mag_cur));
-    let opt = |c: Option<usize>| c.map_or("off".into(), |c| (c + 1).to_string());
+    kv("magnetic", format!("{} {} {} {} {} {} {:?} {}", m.mag_v.token(), m.mag_i.token(), m.mag_n, m.mag_ae, m.mag_le, m.mag_rcu, m.mag_plot, m.mag_cur));
+    let opt = |c: Option<WaveId>| c.map_or("off".into(), |c| c.token());
     let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
-    kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a + 1, m.inv_b + 1, m.inv_c + 1, m.inv_ang, m.inv_poles, m.inv_an + 1, m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
-    kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v + 1, m.dpt_i + 1, m.dpt_g + 1, m.dpt_4th, m.dpt_4ch + 1, m.dpt_pct, m.dpt_zoom));
+    kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a.token(), m.inv_b.token(), m.inv_c.token(), m.inv_ang, m.inv_poles, m.inv_an.token(), m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
+    kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v.token(), m.dpt_i.token(), m.dpt_g.token(), m.dpt_4th, m.dpt_4ch.token(), m.dpt_pct, m.dpt_zoom));
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
@@ -611,8 +611,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 return Err("magnetic: want 8 values".into());
             }
             let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
-            m.mag_v = p_idx(w[0], NCH + 1)?.max(1) - 1;
-            m.mag_i = p_idx(w[1], NCH + 1)?.max(1) - 1;
+            m.mag_v = WaveId::parse(w[0])?;
+            m.mag_i = WaveId::parse(w[1])?;
             m.mag_n = f(w[2])?.clamp(1.0, 10_000.0);
             m.mag_ae = f(w[3])?.max(0.0);
             m.mag_le = f(w[4])?.max(0.0);
@@ -626,8 +626,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 return Err("inverter: want 23 values".into());
             }
             let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
-            let ch = |s: &str| -> Result<usize, String> { Ok(p_idx(s, NCH + 1)?.max(1) - 1) };
-            let opt = |s: &str| -> Result<Option<usize>, String> { if s == "off" { Ok(None) } else { Ok(Some(ch(s)?)) } };
+            let ch = |s: &str| WaveId::parse(s);
+            let opt = |s: &str| -> Result<Option<WaveId>, String> { if s == "off" { Ok(None) } else { Ok(Some(ch(s)?)) } };
             let bit = |s: &str| -> Result<u8, String> {
                 let n = s.parse::<u8>().map_err(|e| e.to_string())?;
                 if n < 16 { Ok(n) } else { Err(format!("logic line {} out of range", n)) }
@@ -652,11 +652,11 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             if w.len() != 7 {
                 return Err("dpt: want 7 values".into());
             }
-            m.dpt_v = p_idx(w[0], NCH + 1)?.max(1) - 1;
-            m.dpt_i = p_idx(w[1], NCH + 1)?.max(1) - 1;
-            m.dpt_g = p_idx(w[2], NCH + 1)?.max(1) - 1;
+            m.dpt_v = WaveId::parse(w[0])?;
+            m.dpt_i = WaveId::parse(w[1])?;
+            m.dpt_g = WaveId::parse(w[2])?;
             m.dpt_4th = p_enum(w[3], &[DptFourth::Off, DptFourth::Gate, DptFourth::DiodeV, DptFourth::DiodeI])?;
-            m.dpt_4ch = p_idx(w[4], NCH + 1)?.max(1) - 1;
+            m.dpt_4ch = WaveId::parse(w[4])?;
             m.dpt_pct = w[5].parse::<f64>().map_err(|e| e.to_string())?.clamp(1.0, 49.0);
             m.dpt_zoom = p_enum(w[6], &[DptZoom::Both, DptZoom::TurnOn, DptZoom::TurnOff])?;
         }
@@ -1140,6 +1140,28 @@ mod tests {
         m.quick = Quick::SaveCsv;
         m.la = crate::ui::la::LaSet { on: true, show: 0x0f0f, preset: [2, crate::ui::la::USER], user: [0.5, -0.25], height: 2 };
         m
+    }
+
+    #[test]
+    fn a_ref_in_a_setup_stays_a_ref_and_a_channel_number_stays_a_channel() {
+        let mut m = Model::default();
+        m.mag_v = WaveId::Ref(1);
+        m.mag_i = WaveId::Ch(0);
+        m.dpt_v = WaveId::Ref(0);
+        m.inv_a = WaveId::Ref(4);
+        m.inv_tq = Some(WaveId::Ref(9));
+        let text = setup_text(&m);
+        assert!(text.contains("magnetic = R2 1 "));
+        assert!(text.contains("dpt = R1 "));
+        let back = parse_setup(&text).unwrap();
+        assert_eq!((back.mag_v, back.mag_i, back.dpt_v, back.inv_a, back.inv_tq), (m.mag_v, m.mag_i, m.dpt_v, m.inv_a, m.inv_tq));
+        // a setup written before refs were sources
+        let old = parse_setup("magnetic = 1 2 1 0 0 0 IPsi 0\ninverter = Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2\ndpt = 1 2 3 Off 4 10 Both\n").unwrap();
+        assert_eq!(old.mag_v, WaveId::Ch(0));
+        assert_eq!(old.mag_i, WaveId::Ch(1));
+        assert_eq!(old.inv_a, WaveId::Ch(0));
+        assert_eq!(old.dpt_g, WaveId::Ch(2));
+        assert_eq!(old.inv_tq, None);
     }
 
     #[test]

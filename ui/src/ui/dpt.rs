@@ -3,7 +3,7 @@
 
 //! Wide-bandgap double pulse page. E on and E off are the existing switching-loss pair, not recomputed here.
 
-use super::magnetic::{ana_clash, ana_samples, num};
+use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, wave_clash};
 use super::*;
 use oos_dsp::dpt::{self, Fourth};
 use oos_dsp::power;
@@ -43,12 +43,11 @@ impl Ui {
 
     pub(super) fn dpt_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let ch = |c: usize| format!("CH{}", c + 1);
         Some(match it {
             Item::DptOn => if m.view == AView::Dpt { "On".into() } else { "Off".into() },
-            Item::DptV => ch(m.dpt_v),
-            Item::DptI => ch(m.dpt_i),
-            Item::DptG => ch(m.dpt_g),
+            Item::DptV => self.wave_name(m.dpt_v),
+            Item::DptI => self.wave_name(m.dpt_i),
+            Item::DptG => self.wave_name(m.dpt_g),
             Item::DptFourth => match m.dpt_4th {
                 DptFourth::Off => "Off",
                 DptFourth::Gate => "Gate",
@@ -56,7 +55,7 @@ impl Ui {
                 DptFourth::DiodeI => "Diode I",
             }
             .into(),
-            Item::Dpt4 => ch(m.dpt_4ch),
+            Item::Dpt4 => self.wave_name(m.dpt_4ch),
             Item::DptPct => format!("{:.0} %", m.dpt_pct),
             Item::DptZoom => match m.dpt_zoom {
                 DptZoom::Both => "Both",
@@ -72,7 +71,7 @@ impl Ui {
         let v = |o: &[&str]| Some(o.iter().map(|s| s.to_string()).collect());
         match it {
             Item::DptOn => v(&["Off", "On"]),
-            Item::DptV | Item::DptI | Item::DptG | Item::Dpt4 => Some(ch_names()),
+            Item::DptV | Item::DptI | Item::DptG | Item::Dpt4 => Some(self.wave_names()),
             Item::DptFourth => v(&["Off", "Gate", "Diode V", "Diode I"]),
             Item::DptZoom => v(&["Both", "Turn-on", "Turn-off"]),
             _ => None,
@@ -80,13 +79,26 @@ impl Ui {
     }
 
     pub(super) fn dpt_adjust(&mut self, it: Item, d: i32) -> bool {
+        if matches!(it, Item::DptV | Item::DptI | Item::DptG | Item::Dpt4) {
+            let cur = match it {
+                Item::DptV => self.m.dpt_v,
+                Item::DptI => self.m.dpt_i,
+                Item::DptG => self.m.dpt_g,
+                _ => self.m.dpt_4ch,
+            };
+            let next = self.step_wave(cur, d);
+            match it {
+                Item::DptV => self.m.dpt_v = next,
+                Item::DptI => self.m.dpt_i = next,
+                Item::DptG => self.m.dpt_g = next,
+                _ => self.m.dpt_4ch = next,
+            }
+            self.analyzer_update();
+            return true;
+        }
         let m = &mut self.m;
         match it {
             Item::DptOn => m.view = if m.view == AView::Dpt { AView::Scope } else { AView::Dpt },
-            Item::DptV => m.dpt_v = src_step(m.dpt_v, NCH, d),
-            Item::DptI => m.dpt_i = src_step(m.dpt_i, NCH, d),
-            Item::DptG => m.dpt_g = src_step(m.dpt_g, NCH, d),
-            Item::Dpt4 => m.dpt_4ch = src_step(m.dpt_4ch, NCH, d),
             Item::DptFourth => {
                 let order = [DptFourth::Off, DptFourth::Gate, DptFourth::DiodeV, DptFourth::DiodeI];
                 let i = order.iter().position(|x| *x == m.dpt_4th).unwrap_or(0);
@@ -115,50 +127,57 @@ impl Ui {
         self.azr.dpt_i.clear();
         self.azr.dpt_g.clear();
         self.azr.dpt_t = (0.0, 0.0);
-        if n_ch() < 3 {
-            self.azr.dpt_note = "double pulse needs Vds, Id and Vgs".into();
-            return;
-        }
         let m = &self.m;
         let mut used = vec![m.dpt_v, m.dpt_i, m.dpt_g];
         if m.dpt_4th != DptFourth::Off {
             used.push(m.dpt_4ch);
         }
-        if let Some(c) = ana_clash(&used) {
-            self.azr.dpt_note = format!("CH{} is used twice", c + 1);
+        if needs_more_channels(&used) {
+            self.azr.dpt_note = "double pulse needs Vds, Id and Vgs".into();
             return;
         }
-        let Some((vds, _, dt)) = ana_samples(self, rec, m.dpt_v) else {
-            self.azr.dpt_note = format!("CH{} is off", m.dpt_v + 1);
+        if let Some(id) = wave_clash(&used) {
+            self.azr.dpt_note = clash_wave(id);
             return;
+        }
+        let fourth_id = (m.dpt_4th != DptFourth::Off).then_some(m.dpt_4ch);
+        let taken = match self.take_waves(rec, &[m.dpt_v, m.dpt_i], &[Some(m.dpt_g), fourth_id]) {
+            Ok(t) => t,
+            Err(id) => {
+                self.azr.dpt_note = missing_wave(id);
+                return;
+            }
         };
-        let Some((id, _, _)) = ana_samples(self, rec, m.dpt_i) else {
-            self.azr.dpt_note = format!("CH{} is off", m.dpt_i + 1);
-            return;
-        };
-        let gate = ana_samples(self, rec, m.dpt_g);
-        let mut note = if gate.is_none() { format!("CH{} is off", m.dpt_g + 1) } else { String::new() };
-        let fourth_s = if m.dpt_4th == DptFourth::Off { None } else { ana_samples(self, rec, m.dpt_4ch) };
+        let (vds, id, dt) = (&taken.v[0], &taken.v[1], taken.dt);
+        let gate = taken.opt[0].as_ref();
+        let mut note = if gate.is_none() { missing_wave(m.dpt_g) } else { String::new() };
+        let fourth_s = taken.opt[1].as_ref();
         if m.dpt_4th != DptFourth::Off && fourth_s.is_none() {
             if !note.is_empty() {
                 note.push_str(". ");
             }
-            note.push_str(&format!("CH{} is off", m.dpt_4ch + 1));
+            note.push_str(&missing_wave(m.dpt_4ch));
         }
-        let fourth = match (m.dpt_4th, fourth_s.as_ref()) {
-            (DptFourth::Gate, Some((v, _, _))) => Fourth::Gate(v),
-            (DptFourth::DiodeV, Some((v, _, _))) => Fourth::DiodeV(v),
-            (DptFourth::DiodeI, Some((v, _, _))) => Fourth::DiodeI(v),
+        if taken.moved {
+            if !note.is_empty() {
+                note.push_str(". ");
+            }
+            note.push_str("on the finest ref interval");
+        }
+        let fourth = match (m.dpt_4th, fourth_s) {
+            (DptFourth::Gate, Some(v)) => Fourth::Gate(v),
+            (DptFourth::DiodeV, Some(v)) => Fourth::DiodeV(v),
+            (DptFourth::DiodeI, Some(v)) => Fourth::DiodeI(v),
             _ => Fourth::Off,
         };
-        let pulse = dpt::measure(&vds, &id, gate.as_ref().map(|g| g.0.as_slice()), fourth, dt, m.dpt_pct);
+        let pulse = dpt::measure(vds, id, gate.map(|g| g.as_slice()), fourth, dt, m.dpt_pct);
         if !pulse.note.is_empty() {
             if !note.is_empty() {
                 note.push_str(". ");
             }
             note.push_str(pulse.note);
         }
-        let sw = power::switching(&vds, &id, dt, 10.0);
+        let sw = power::switching(vds, id, dt, 10.0);
         self.azr.dpt_loss = if sw.transitions.is_empty() { None } else { Some((sw.e_on, sw.e_off)) };
         let end = (vds.len().saturating_sub(1)) as f64 * dt;
         let (mut t0, mut t1) = match m.dpt_zoom {
@@ -171,9 +190,9 @@ impl Ui {
             t1 = end.max(dt);
         }
         self.azr.dpt_t = (t0, t1);
-        self.azr.dpt_v = columns(&vds, dt, t0, t1);
-        self.azr.dpt_i = columns(&id, dt, t0, t1);
-        self.azr.dpt_g = gate.as_ref().map(|g| columns(&g.0, dt, t0, t1)).unwrap_or_default();
+        self.azr.dpt_v = columns(vds, dt, t0, t1);
+        self.azr.dpt_i = columns(id, dt, t0, t1);
+        self.azr.dpt_g = gate.map(|g| columns(g, dt, t0, t1)).unwrap_or_default();
         self.azr.dpt_note = note;
         self.azr.dpt = Some(pulse);
     }
@@ -185,9 +204,9 @@ impl Ui {
         let (t0, t1) = self.azr.dpt_t;
         cv.set_clip(plot);
         let bands = [
-            (&self.azr.dpt_v, "Vds", CH_COLORS[self.m.dpt_v.min(NCH - 1)]),
-            (&self.azr.dpt_i, "Id", CH_COLORS[self.m.dpt_i.min(NCH - 1)]),
-            (&self.azr.dpt_g, "Vgs", CH_COLORS[self.m.dpt_g.min(NCH - 1)]),
+            (&self.azr.dpt_v, "Vds", self.wave_color(self.m.dpt_v)),
+            (&self.azr.dpt_i, "Id", self.wave_color(self.m.dpt_i)),
+            (&self.azr.dpt_g, "Vgs", self.wave_color(self.m.dpt_g)),
         ];
         let h = plot.h / 3;
         for (k, (cols, name, col)) in bands.iter().enumerate() {

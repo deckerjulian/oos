@@ -503,7 +503,12 @@ impl Ui {
         if view == AView::Scope {
             return;
         }
-        let Some(rec) = self.last[0].clone() else { return };
+        // A loaded ref is measured with the scope stopped or still waiting. Live channels still need a record.
+        let rec = match self.last[0].clone() {
+            Some(r) => r,
+            None if matches!(view, AView::Magnetic | AView::Inverter | AView::Dpt) => Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None },
+            None => return,
+        };
         match view {
             AView::Spectrum => self.spectrum_update(&rec, beside),
             AView::Eye => self.eye_update(&rec),
