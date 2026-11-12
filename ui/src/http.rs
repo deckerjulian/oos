@@ -167,6 +167,8 @@ const LONG_POLL: Duration = if cfg!(test) { Duration::from_millis(1000) } else {
 const SHOT_FRESH: Duration = Duration::from_millis(300);
 /// Connections waiting for a picture at most (more are answered 503).
 const SHOT_WAITING: usize = 8;
+/// After the VPU failed, JPEG is tried again this much later (PNG meanwhile).
+const VPU_RETRY: Duration = Duration::from_secs(60);
 
 /// The live picture of the web remote.
 ///
@@ -191,8 +193,9 @@ struct ShotState {
     next: Option<(u32, u32, Vec<u32>)>,
     /// the encoder works on a copy
     busy: bool,
-    /// connections waiting for a picture newer than the ETag they have, and since when
-    waiting: Vec<(TcpStream, Option<String>, Instant)>,
+    /// connections waiting for a picture newer than the ETag they have, since when, and in which format (JPEG; PNG
+    /// once the VPU failed)
+    waiting: Vec<(TcpStream, Option<String>, Instant, bool)>,
     /// the last picture: its pixels (taken out by the encoder while it compares), size, PNG, ETag
     px: Vec<u32>,
     size: (u32, u32),
@@ -208,10 +211,12 @@ struct ShotState {
     /// PNGs made so far
     encodes: u64,
     /// the live picture as JPEG from the VPU (`/screen.jpg`, `vpu.rs`) rather than PNG: as the last request asked;
-    /// the format of `png`; the VPU failed (PNG from then on)
+    /// the format of `png`; the VPU failed (PNG until `no_jpeg_at` + `VPU_RETRY`)
     jpeg: bool,
     pic_jpeg: bool,
     no_jpeg: bool,
+    /// when the VPU failed: it is tried again after `VPU_RETRY` (one timeout must not end JPEG for the session)
+    no_jpeg_at: Option<Instant>,
     /// the frame loop hands its screens over (`hand_over`) instead of `tick` copying them
     frames: bool,
     thread: bool,
@@ -231,6 +236,9 @@ impl Shots {
     fn request(self: &Arc<Self>, s: &TcpStream, have: Option<String>, cv: &Canvas, jpeg: bool) {
         let mut st = self.lock();
         st.asked = Some(Instant::now());
+        if st.no_jpeg && st.no_jpeg_at.is_some_and(|t| t.elapsed() >= VPU_RETRY) {
+            st.no_jpeg = false;
+        }
         st.jpeg = jpeg && !st.no_jpeg;
         // an older picture or none: the newest at once, when it is fresh (a screenshot must not be an old one) and in
         // the format asked for
@@ -254,7 +262,8 @@ impl Shots {
             st.thread = true;
         }
         let Ok(c) = s.try_clone() else { return };
-        st.waiting.push((c, have, Instant::now()));
+        let want = st.jpeg;
+        st.waiting.push((c, have, Instant::now(), want));
         drop(st);
         self.tick(cv);
     }
@@ -272,9 +281,16 @@ impl Shots {
         st.waiting = keep;
         if !old.is_empty() {
             let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
+            let fit = |w: bool| Self::fits(w, st.pic_jpeg, st.no_jpeg);
+            let fits: Vec<bool> = old.iter().map(|w| fit(w.3)).collect();
             drop(st);
-            for (c, have, _) in old {
-                answer_shot(&c, have.as_deref(), png.clone(), &tag);
+            for ((c, have, _, _), ok) in old.into_iter().zip(fits) {
+                // the last picture in the format asked for, else "busy" (the page asks again)
+                if ok {
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
+                } else {
+                    busy_answer(&c);
+                }
             }
             st = self.lock();
         }
@@ -291,6 +307,12 @@ impl Shots {
         px.extend_from_slice(&cv.px);
         st.next = Some((cv.w as u32, cv.h as u32, px));
         st.at = Some(now);
+    }
+
+    /// A picture in JPEG (`pic_jpeg`) or PNG answers a request for `want_jpeg`: the same format, or PNG for JPEG once
+    /// the VPU failed. A screenshot asked for as PNG must never get JPEG bytes (it is saved as .png).
+    fn fits(want_jpeg: bool, pic_jpeg: bool, no_jpeg: bool) -> bool {
+        want_jpeg == pic_jpeg || (want_jpeg && no_jpeg && !pic_jpeg)
     }
 
     /// Whether the encoder should get the screen now.
@@ -334,7 +356,8 @@ impl Shots {
             let Some((w, h, px)) = st.next.take() else { continue };
             st.busy = true;
             let last = std::mem::take(&mut st.px);
-            let jpeg = st.jpeg;
+            // the format of the oldest request waiting (one viewer may ask for JPEG, another for a PNG screenshot)
+            let jpeg = st.waiting.first().map_or(st.jpeg, |w| w.3) && !st.no_jpeg;
             let known = st.png.is_some() && st.size == (w, h) && st.pic_jpeg == jpeg;
             drop(st);
             // the comparison and the encoding without the lock: the frame loop may ask meanwhile
@@ -367,7 +390,7 @@ impl Shots {
             let mut st = self.lock();
             st.busy = false;
             if vpu_failed {
-                (st.no_jpeg, st.jpeg) = (true, false);
+                (st.no_jpeg, st.jpeg, st.no_jpeg_at) = (true, false, Some(Instant::now()));
             }
             let Some(png) = png else {
                 // the same screen: who has an older picture gets this one, who has it waits on; the next look later
@@ -375,11 +398,12 @@ impl Shots {
                 st.px = last;
                 st.spare = px;
                 let tag = st.tag.clone();
-                let (lack, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| w.1.as_deref() != Some(tag.as_str()));
+                let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
+                let (lack, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| w.1.as_deref() != Some(tag.as_str()) && Self::fits(w.3, pj, nj));
                 st.waiting = keep;
                 let png = st.png.clone().unwrap_or_else(|| Arc::from(&[][..]));
                 drop(st);
-                for (c, have, _) in lack {
+                for (c, have, _, _) in lack {
                     answer_shot(&c, have.as_deref(), png.clone(), &tag);
                 }
                 continue;
@@ -392,10 +416,13 @@ impl Shots {
             st.size = (w, h);
             st.px = px;
             st.spare = last;
-            let waiting = std::mem::take(&mut st.waiting);
+            // who asked for the other format waits for the next picture, made in that format
+            let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
+            let (waiting, other): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| Self::fits(w.3, pj, nj));
+            st.waiting = other;
             let tag = st.tag.clone();
             drop(st);
-            for (c, have, _) in waiting {
+            for (c, have, _, _) in waiting {
                 answer_shot(&c, have.as_deref(), png.clone(), &tag);
             }
         }
@@ -1145,6 +1172,15 @@ setTimeout(() => {
         assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
         let shown = shown.expect("a screen was handed over");
         assert!(out[e..] == crate::store::png(cv.w as u32, cv.h as u32, &shown), "the PNG of the screen that was shown");
+    }
+
+    /// A screenshot asked for as PNG never gets JPEG bytes, a JPEG viewer gets PNG only once the VPU failed.
+    #[test]
+    fn a_picture_answers_only_its_own_format() {
+        assert!(Shots::fits(false, false, false) && Shots::fits(true, true, false));
+        assert!(!Shots::fits(false, true, false) && !Shots::fits(false, true, true), "PNG asked, JPEG made");
+        assert!(!Shots::fits(true, false, false), "JPEG asked, PNG made while the VPU works: wait for the JPEG");
+        assert!(Shots::fits(true, false, true), "the VPU failed: PNG for everyone");
     }
 
     /// Display > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
