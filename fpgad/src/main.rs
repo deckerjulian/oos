@@ -24,7 +24,8 @@
 //!                                          --reset: R0 RESET=1/0 first, as the TI datasheet asks), then reads 0x1210
 //!   oos-fpgad pll --freq <Hz> --dry        table for another ADC clock (oos_hal::dho::lmx2582, pll.md) and its decode,
 //!                                          no hardware access; without --dry only 1.25 GHz (others are untested)
-//!   oos-fpgad gpio <line> <0|1> [--hold 60]  drive a GPIO line (by DT name) and keep it for --hold seconds
+//!   oos-fpgad gpio <line> <0|1> [--hold 60] [--force]  drive a GPIO line (by DT name) and keep it for --hold seconds;
+//!                                          generator lines (afg_in1..5, FG_M2C_GPIO) only with a generator or --force
 //!   oos-fpgad roll [run options] [--secs 3] [--scan] --execute
 //!                                          roll mode (roll-mode.md): normal set-up, roll display chain, stream for
 //!                                          --secs seconds, chunks (216 bytes: header + 100 words) to --out;
@@ -203,6 +204,9 @@ fn main() {
         println!("mem       {:?} pts, LA on {:?}", l.max_mem, l.max_mem_la);
         println!("afg max   sine {} square {} ramp {} pulse {} noise {} Hz", l.afg_max_hz.sine, l.afg_max_hz.square, l.afg_max_hz.ramp, l.afg_max_hz.pulse, l.afg_max_hz.noise);
         println!("clocks    ADC {} Hz, generator {} Hz", l.adc_clock_hz, l.afg_clock_hz);
+        for u in &p.unit {
+            println!("unit      {} ({})", u, oos_hal::model::UNIT_CONF);
+        }
         for o in &p.overrides {
             println!("EXPERIMENTAL  {}", o);
         }
@@ -645,6 +649,8 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 let name = a.first().ok_or("gpio <line> <0|1> [--hold s]")?;
                 let v = a.get(1).ok_or("gpio <line> <0|1> [--hold s]")? == "1";
                 let hold = a.iter().position(|x| x == "--hold").and_then(|i| a.get(i + 1)).map(|x| x.parse::<u64>().map_err(|e| e.to_string())).transpose()?.unwrap_or(0);
+                // generator relays and supply only on a unit with a generator (docs/models.md 4.2)
+                oos_hal::dho::afg::line_allowed(&oos_hal::model::platform().caps, name, a.iter().any(|x| x == "--force"))?;
                 let _l = oos_hal::dho::gpio::Line::output(name, v).map_err(|e| format!("{}: {}", name, e))?;
                 println!("{} = {} (held {} s)", name, v as u8, hold);
                 std::thread::sleep(std::time::Duration::from_secs(hold));
@@ -1125,7 +1131,8 @@ fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
                 if bar.rd(0x4000) != FPGA_VERSION {
                     return Err("unexpected FPGA version, not touching it".into());
                 }
-                let mut io = afg::Io::open().map_err(|e| format!("AFG GPIO: {}", e))?;
+                let open = if a.iter().any(|x| x == "--force") { afg::Io::open_forced } else { afg::Io::open };
+                let mut io = open().map_err(|e| format!("AFG GPIO: {}", e))?;
                 io.apply(&mut bar, &ops);
                 println!("done; relays now {:#04x}. The lines stay as set while this process runs: Ctrl-C ends it (output keeps its state).", io.relays());
                 if a[0] != "off" {

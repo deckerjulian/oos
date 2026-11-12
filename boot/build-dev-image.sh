@@ -4,6 +4,8 @@
 # build-dev-image.sh - the first OOS development boot image for `recovery` (Phase 2).
 #
 #   boot/build-dev-image.sh            -> boot/out/oos-dev.img (+ .sha256)
+#   OOS_UNIT=dho804 boot/build-dev-image.sh   the same with the defaults of one unit in /etc/oos
+#                                      (rootfs/unit/<name>/: limits.conf; docs/models.md 4.2)
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
@@ -19,6 +21,13 @@ out="$here/out"
 board="$root/rootfs/board/${OOS_BOARD:-dho}"
 [ -f "$board/etc/oos-board" ] || { echo "no board $board" >&2; exit 1; }
 . "$board/etc/oos-board"
+# defaults of one unit (docs/models.md 4.2): rootfs/unit/<OOS_UNIT>/ becomes /etc/oos/ in the image
+unit="$root/rootfs/unit/${OOS_UNIT:-none}"
+if [ -n "${OOS_UNIT:-}" ]; then
+	[ -d "$unit" ] || { echo "no unit $unit" >&2; exit 1; }
+else
+	unit="$out/no-unit"; mkdir -p "$unit"
+fi
 [ -f "$k/Image" ] || { echo "run kernel/build-base.sh first" >&2; exit 1; }
 # Docker on Linux: be in the docker group, not root (under sudo, HOME and PATH are root's, rustup's cargo is gone, and
 # the results would belong to root)
@@ -72,7 +81,7 @@ EOF
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
 
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
+docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$unit:/unit:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
 	. /board/etc/oos-board
 	cp -a /src/. $r/
@@ -86,6 +95,8 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /fpgad/oos-update $r/bin/oos-update
 	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck $r/bin/
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck
+	# the unit defaults: /etc/oos/limits.conf (capabilities); none without OOS_UNIT
+	if [ -n "$(ls -A /unit)" ]; then mkdir -p $r/etc/oos; cp /unit/*.conf $r/etc/oos/; ls -l $r/etc/oos; fi
 	ln -sf busybox $r/bin/sh
 	echo "$BUILD_ID" > $r/etc/oos-build
 	# rcS brings the acquisition hardware up at boot (cold boot + oos-ui --hw --afe); OOS_NO_AUTOACQ=1 leaves it out

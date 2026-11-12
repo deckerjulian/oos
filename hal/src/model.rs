@@ -9,6 +9,9 @@
 //! - Capabilities: the model table of the board (`Target::caps`).
 //! - Limits: the same for every model of a board (`Limits::standard`). Each one can be
 //!   overridden in `/oos/limits.conf` for our own tests; overridden values are marked experimental.
+//! - Unit defaults: an image built for one unit can carry `/etc/oos/limits.conf` (`UNIT_CONF`) with capability keys
+//!   only. They apply from the first start, before `/oos/limits.conf` exists, and are not experimental: a unit
+//!   whose vendor.bin names hardware it lacks boots without generator and LA, and still reports the model vendor.bin names.
 //!
 //! The process-wide `Platform` is set once at start (`init`); before that `platform()` is the board's assumed model with
 //! the standard limits, which is also what the host tests see.
@@ -138,6 +141,8 @@ pub struct Platform {
     pub source: Source,
     /// "key = value" of every override applied (experimental values)
     pub overrides: Vec<String>,
+    /// "key = value" of every capability default of the image (`UNIT_CONF`): facts of this unit, not experimental
+    pub unit: Vec<String>,
     /// problems found while detecting (unreadable vendor.bin, unknown model, bad lines in the limits file)
     pub warnings: Vec<String>,
     /// the vendor file names a model outside the DHO800/DHO900 family (an MHO900, a DHO1000, ...): another board,
@@ -154,6 +159,7 @@ impl Default for Platform {
             mac: None,
             source: Source::Assumed,
             overrides: Vec::new(),
+            unit: Vec::new(),
             warnings: Vec::new(),
             foreign: None,
         }
@@ -164,6 +170,13 @@ impl Platform {
     /// Detection from the vendor file bytes (if any), the limits file text (if any) and a forced model name (if
     /// any, e.g. `--model`; it wins over the file's `model =`).
     pub fn build(vendor: Option<&[u8]>, limits_conf: Option<&str>, force: Option<&str>) -> Platform {
+        Platform::build_unit(vendor, None, limits_conf, force)
+    }
+
+    /// `build` with the capability defaults of the image (`UNIT_CONF`) applied between the vendor file and the limits
+    /// file: vendor.bin < unit defaults < limits.conf < forced model. A forced model keeps the unit defaults and the
+    /// capability overrides on top. Only capability keys count in the unit file; others are warnings.
+    pub fn build_unit(vendor: Option<&[u8]>, unit_conf: Option<&str>, limits_conf: Option<&str>, force: Option<&str>) -> Platform {
         let mut p = Platform::default();
         match vendor.map(decode_vendor) {
             Some(Ok(v)) => {
@@ -191,6 +204,15 @@ impl Platform {
             Some(Err(e)) => p.warnings.push(format!("vendor.bin: {}", e)),
             None => p.warnings.push("no vendor.bin".into()),
         }
+        if let Some(text) = unit_conf {
+            for (n, k, v) in conf_lines(text, &mut p.warnings, UNIT_CONF) {
+                match set_cap(&mut p.caps, k, v) {
+                    Ok(true) => p.unit.push(format!("{} = {}", k, v)),
+                    Ok(false) => p.warnings.push(format!("{}:{}: {} is not a capability key (channels, la, afg, ext_trig)", UNIT_CONF, n, k)),
+                    Err(e) => p.warnings.push(format!("{}:{}: {}", UNIT_CONF, n, e)),
+                }
+            }
+        }
         let mut forced = force.map(str::to_string);
         if let Some(text) = limits_conf {
             for (n, line) in text.lines().enumerate() {
@@ -216,8 +238,8 @@ impl Platform {
         if let Some(name) = forced {
             match lookup(&name) {
                 Some(mut c) => {
-                    // capability overrides of the file stay applied on top of the forced model
-                    for o in &p.overrides {
+                    // the unit defaults and the capability overrides of the file stay applied on top of the forced model
+                    for o in p.unit.iter().chain(&p.overrides) {
                         if let Some((k, v)) = o.split_once(" = ") {
                             let _ = set_cap(&mut c, k, v);
                         }
@@ -234,11 +256,12 @@ impl Platform {
         p
     }
 
-    /// Reads `<cal_dir>/vendor.bin` and the limits file (both optional).
+    /// Reads `<cal_dir>/vendor.bin`, the unit defaults of the image (`UNIT_CONF`) and the limits file (all optional).
     pub fn detect(cal_dir: &str, limits_path: &str, force: Option<&str>) -> Platform {
         let vendor = std::fs::read(format!("{}/vendor.bin", cal_dir)).ok();
+        let unit = std::fs::read_to_string(UNIT_CONF).ok();
         let conf = std::fs::read_to_string(limits_path).ok();
-        Platform::build(vendor.as_deref(), conf.as_deref(), force)
+        Platform::build_unit(vendor.as_deref(), unit.as_deref(), conf.as_deref(), force)
     }
 
     /// One override `key = value`.
@@ -318,6 +341,22 @@ impl Platform {
     }
 }
 
+/// The `key = value` lines of a file in the limits format: (line number, key, value); a line without `=` is a warning.
+fn conf_lines<'a>(text: &'a str, warnings: &mut Vec<String>, file: &str) -> Vec<(usize, &'a str, &'a str)> {
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        match line.split_once('=') {
+            Some((k, v)) => out.push((n + 1, k.trim(), v.trim())),
+            None => warnings.push(format!("{}:{}: no '=' in {:?}", file, n + 1, line)),
+        }
+    }
+    out
+}
+
 /// Capability keys of the limits file (`channels`, `afg`, `la`, `ext_trig`); Ok(false) = not a capability key.
 fn set_cap(c: &mut Caps, k: &str, v: &str) -> Result<bool, String> {
     let b = || match v.to_ascii_lowercase().as_str() {
@@ -355,6 +394,10 @@ pub fn platform() -> &'static Platform {
 
 /// Default location of the limits file (the OOS data partition).
 pub const LIMITS_CONF: &str = "/oos/limits.conf";
+
+/// Capability defaults of an image built for one unit (boot/build-dev-image.sh `OOS_UNIT`, docs/models.md 4.2): in the
+/// image, so they apply from the first start.
+pub const UNIT_CONF: &str = "/etc/oos/limits.conf";
 
 /// `text` of limits.conf with `adc.clock_hz` set to `hz`: the line goes first (the `afg.*_max_hz` lines clamp to the clock
 /// read before them), at the standard clock there is none. All other lines stay as they are.
@@ -691,5 +734,55 @@ mod bad_limits_tests {
         let p = Platform::build(None, Some("afg.sine_max_hz = 0"), None);
         assert_eq!(p.limits.afg_max_hz.sine, 0.01);
         assert!(crate::dho::afg::Wave::Sine.max_hz_in(&p.limits) * 1e6 >= 2000.0);
+    }
+}
+
+#[cfg(test)]
+mod unit_defaults_tests {
+    use super::*;
+
+    const DHO804_UNIT: &str = "# physically a DHO804: no generator board, no LA connector\nafg = no\nla = no\n";
+
+    #[test]
+    fn unit_defaults_change_capabilities_not_identity() {
+        let f = encode_vendor(&[(5, "DHO924S"), (7, "DHO9A000000001")]);
+        let p = Platform::build_unit(Some(&f), Some(DHO804_UNIT), None, None);
+        assert_eq!((p.caps.name.as_str(), p.caps.rated_bw_mhz, p.caps.channels), ("DHO924S", 250, 4));
+        assert_eq!((p.caps.has_gen(), p.caps.la, p.source.clone()), (false, false, Source::Vendor));
+        assert_eq!(p.unit, vec!["afg = no", "la = no"]);
+        // facts of the unit: not experimental, no warnings, the identity line is unchanged
+        assert!(!p.experimental() && p.warnings.is_empty(), "{:?}", p.warnings);
+        assert_eq!(p.ident(), "DHO924S  SN DHO9A000000001");
+        assert_eq!(p.caps_line(), "250 MHz rated, 4 ch");
+        // without the unit file, as before
+        let p = Platform::build(Some(&f), None, None);
+        assert!(p.caps.has_gen() && p.caps.la && p.unit.is_empty());
+    }
+
+    #[test]
+    fn limits_conf_and_forced_model_on_top() {
+        let f = encode_vendor(&[(5, "DHO924S")]);
+        // the generator board fitted later: limits.conf switches it on again (experimental)
+        let p = Platform::build_unit(Some(&f), Some(DHO804_UNIT), Some("afg = yes\n"), None);
+        assert!(p.caps.has_gen() && !p.caps.la && p.experimental());
+        // a forced model keeps the unit defaults
+        let p = Platform::build_unit(Some(&f), Some(DHO804_UNIT), None, Some("DHO914S"));
+        assert_eq!((p.caps.name.as_str(), p.caps.has_gen(), p.caps.la), ("DHO914S", false, false));
+        let p = Platform::build_unit(Some(&f), Some(DHO804_UNIT), Some("model = DHO924S\nla = yes\n"), None);
+        assert_eq!((p.caps.has_gen(), p.caps.la, p.source.clone()), (false, true, Source::Forced));
+        // first start: no vendor keys yet, no limits.conf: the unit defaults hold all the same
+        let p = Platform::build_unit(None, Some(DHO804_UNIT), None, None);
+        assert!(!p.caps.has_gen() && !p.caps.la && p.drives_hardware());
+    }
+
+    #[test]
+    fn unit_file_takes_capability_keys_only() {
+        let p = Platform::build_unit(None, Some("afg = no\nadc.clock_hz = 2e9\nmem.1ch = 1e9\nmodel = DHO804\nla = maybe\nnonsense\n"), None, None);
+        assert_eq!(p.unit, vec!["afg = no"]);
+        assert_eq!(p.limits, Limits::standard());
+        assert_eq!(p.caps.name, "DHO924S");
+        // adc.clock_hz, mem.1ch, model, la = maybe, nonsense; plus "no vendor.bin" and "model unknown"
+        assert_eq!(p.warnings.iter().filter(|w| w.starts_with(UNIT_CONF)).count(), 5, "{:?}", p.warnings);
+        assert_eq!(p.warnings.len(), 7, "{:?}", p.warnings);
     }
 }

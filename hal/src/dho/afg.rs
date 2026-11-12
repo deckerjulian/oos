@@ -18,6 +18,20 @@ pub enum Op {
     SleepMs(u32),
 }
 
+/// The generator's GPIO lines by device tree name: the attenuator relays afg_in1..5 and the supply FG_M2C.
+pub const LINES: [&str; 6] = ["afg_in1", "afg_in2", "afg_in3", "afg_in4", "afg_in5", "FG_M2C_GPIO"];
+
+/// May a process drive the GPIO line `name`? A generator line only on a unit with a generator (model table, or `afg`
+/// in /etc/oos/limits.conf or /oos/limits.conf, docs/models.md): on a unit without the output stage nobody knows what
+/// the relay and supply lines are wired to. `force` is the explicit `--force` of a bring-up command.
+pub fn line_allowed(caps: &crate::model::Caps, name: &str, force: bool) -> Result<(), String> {
+    if force || caps.has_gen() || !LINES.iter().any(|l| l.eq_ignore_ascii_case(name)) {
+        Ok(())
+    } else {
+        Err(format!("{} is a generator line and this {} has no generator (afg = no): not driven", name, caps.name))
+    }
+}
+
 const B: u32 = 0x3ff0;
 const M: u32 = 0x3ff4;
 const A: u32 = 0x3ff8;
@@ -578,10 +592,22 @@ pub struct Io {
 
 #[cfg(target_os = "linux")]
 impl Io {
-    /// Opens afg_in1..5 and FG_M2C_GPIO as outputs at the module-init state (all low).
+    /// Opens afg_in1..5 and FG_M2C_GPIO as outputs at the module-init state (all low). Refused on a unit without a
+    /// generator (`line_allowed`): opening them as outputs already drives them.
     pub fn open() -> std::io::Result<Io> {
+        Io::open_checked(false)
+    }
+    /// `open` also on a unit without a generator (`oos-fpgad afg --force`).
+    pub fn open_forced() -> std::io::Result<Io> {
+        Io::open_checked(true)
+    }
+    fn open_checked(force: bool) -> std::io::Result<Io> {
+        let caps = &crate::model::platform().caps;
+        for n in LINES {
+            line_allowed(caps, n, force).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
+        }
         let l = |n: &str| crate::dho::gpio::Line::output(n, false);
-        Ok(Io { relays: [l("afg_in1")?, l("afg_in2")?, l("afg_in3")?, l("afg_in4")?, l("afg_in5")?], power: l("FG_M2C_GPIO")? })
+        Ok(Io { relays: [l(LINES[0])?, l(LINES[1])?, l(LINES[2])?, l(LINES[3])?, l(LINES[4])?], power: l(LINES[5])? })
     }
     /// The current relay code (bit n = afg_in(n+1)).
     pub fn relays(&self) -> u8 {
@@ -845,5 +871,29 @@ mod noise_mod_tests {
         let mean = t.iter().map(|&v| v as f64).sum::<f64>() / n;
         let sd = (t.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n).sqrt();
         assert!((mean - 32768.0).abs() < 800.0 && (sd - 9900.0).abs() < 900.0, "{} {}", mean, sd);
+    }
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+    use crate::model::{lookup, Platform};
+
+    #[test]
+    fn generator_lines_only_with_a_generator() {
+        let with = lookup("DHO924S").unwrap();
+        let without = lookup("DHO804").unwrap();
+        for n in LINES {
+            assert!(line_allowed(&with, n, false).is_ok(), "{}", n);
+            assert!(line_allowed(&without, n, false).is_err(), "{}", n);
+            assert!(line_allowed(&without, n, true).is_ok(), "{}", n);
+        }
+        assert!(line_allowed(&without, "fg_m2c_gpio", false).is_err());
+        // other lines are not this check's business
+        assert!(line_allowed(&without, "LA_PROBE_DETECT", false).is_ok());
+        // a DHO924S in vendor.bin with afg = no from the image: the lines stay alone
+        let p = Platform::build_unit(None, Some("afg = no\nla = no\n"), None, None);
+        assert_eq!(p.caps.name, "DHO924S");
+        assert!(LINES.iter().all(|n| line_allowed(&p.caps, n, false).is_err()));
     }
 }

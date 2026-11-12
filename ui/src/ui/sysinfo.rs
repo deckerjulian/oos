@@ -132,6 +132,10 @@ impl Ui {
             oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),
             oos_hal::model::Source::Assumed => kvc("Identified", "assumed (no vendor.bin)", AMBER),
         });
+        if !p.unit.is_empty() {
+            // capabilities of this unit from the image (/etc/oos/limits.conf), not experimental
+            a.push(kv("Unit defaults", p.unit.join(", ")));
+        }
         a.push(Row::Head("Software".into()));
         a.push(kv("OOS", format!("oos-ui {}", env!("CARGO_PKG_VERSION"))));
         a.push(kv("Kernel", if self.info.is_empty() { "-".to_string() } else { self.info.clone() }));
