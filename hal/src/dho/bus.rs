@@ -19,30 +19,87 @@ pub trait Bus {
     }
 }
 
-/// Reads `bytes` from the XDMA C2H stream (`/dev/xdma0_c2h_0`) into a new buffer. The transfer lands in a
-/// 4 KiB aligned region of its own, padded to whole pages, and is then moved to the front: the RK3399's PCIe is not
-/// cache coherent and the driver maps the user pages for the DMA, so a buffer that shares a cache line or page with
-/// other heap data lets the transfer's cache maintenance corrupt that data (oos-ui died in `free()` at 100 ns/div
-/// with 2500-byte reads, 2026-11-04). `short(got, k)` is called for every read shorter than what was left.
-pub fn read_dma(c2h: &mut impl std::io::Read, bytes: usize, mut short: impl FnMut(usize, usize)) -> std::io::Result<Vec<u8>> {
-    const PAGE: usize = 4096;
-    let mut v = vec![0u8; bytes + 2 * PAGE];
-    let off = (PAGE - v.as_ptr() as usize % PAGE) % PAGE;
-    let mut got = 0;
-    while got < bytes {
-        match c2h.read(&mut v[off + got..off + bytes])? {
-            0 => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("end of stream after {} of {} bytes", got, bytes))),
-            k => {
-                if k < bytes - got {
-                    short(got, k);
+/// Reads `bytes` from the XDMA C2H stream (`/dev/xdma0_c2h_0`) into a new buffer (a `DmaBuf` used once). For reads in
+/// a loop keep a `DmaBuf` instead: no allocation, no zero fill and no move per read.
+pub fn read_dma(c2h: &mut impl std::io::Read, bytes: usize, short: impl FnMut(usize, usize)) -> std::io::Result<Vec<u8>> {
+    let mut b = DmaBuf::new();
+    b.read(c2h, bytes, short)?;
+    Ok(b.into_vec())
+}
+
+const PAGE: usize = 4096;
+
+/// A C2H read buffer kept across reads. The transfer lands at the start of a 4 KiB aligned region of whole pages that
+/// nothing else uses: the RK3399's PCIe is not cache coherent and the driver maps the user pages for the DMA, so a
+/// buffer that shares a cache line or page with other heap data lets the transfer's cache maintenance corrupt that data
+/// (oos-ui died in `free()` at 100 ns/div with 2500-byte reads, 2026-11-04). The region grows to the largest read and
+/// is never zero-filled again: a read either fills `bytes` completely or fails.
+#[derive(Default)]
+pub struct DmaBuf {
+    raw: Vec<u8>,
+    /// start of the aligned region in `raw`
+    off: usize,
+    /// bytes of the aligned region, whole pages
+    cap: usize,
+    /// valid bytes from `off`
+    len: usize,
+}
+
+impl DmaBuf {
+    pub fn new() -> DmaBuf {
+        DmaBuf::default()
+    }
+
+    /// Room for `bytes`: a new allocation only when the region is too small.
+    fn reserve(&mut self, bytes: usize) {
+        if bytes <= self.cap {
+            return;
+        }
+        let cap = bytes.div_ceil(PAGE) * PAGE;
+        // up to a page before the aligned start, and a page behind its end, so no other allocation shares its pages
+        self.raw = vec![0u8; cap + 2 * PAGE];
+        self.off = (PAGE - self.raw.as_ptr() as usize % PAGE) % PAGE;
+        self.cap = cap;
+    }
+
+    /// Reads `bytes` from `c2h` to the start of the region. `short(got, k)` is called for every read shorter than
+    /// what was left.
+    pub fn read(&mut self, c2h: &mut impl std::io::Read, bytes: usize, mut short: impl FnMut(usize, usize)) -> std::io::Result<&mut [u8]> {
+        self.reserve(bytes);
+        self.len = 0;
+        let off = self.off;
+        let mut got = 0;
+        while got < bytes {
+            match c2h.read(&mut self.raw[off + got..off + bytes])? {
+                0 => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("end of stream after {} of {} bytes", got, bytes))),
+                k => {
+                    if k < bytes - got {
+                        short(got, k);
+                    }
+                    got += k;
                 }
-                got += k;
             }
         }
+        self.len = bytes;
+        Ok(&mut self.raw[off..off + bytes])
     }
-    v.copy_within(off..off + bytes, 0);
-    v.truncate(bytes);
-    Ok(v)
+
+    /// The bytes of the last read (after `truncate`).
+    pub fn data(&self) -> &[u8] {
+        &self.raw[self.off..self.off + self.len]
+    }
+
+    /// Keeps the first `n` bytes of the last read.
+    pub fn truncate(&mut self, n: usize) {
+        self.len = self.len.min(n);
+    }
+
+    /// The data as a plain vector, moved to the front of the allocation (no copy into a new one).
+    pub fn into_vec(mut self) -> Vec<u8> {
+        self.raw.copy_within(self.off..self.off + self.len, 0);
+        self.raw.truncate(self.len);
+        self.raw
+    }
 }
 
 /// Test bus: records writes, answers reads from a table (0 if unset).
@@ -150,5 +207,59 @@ mod tests {
         let v = super::read_dma(&mut Chunky(data.clone(), 0), 2500, |_, _| shorts += 1).unwrap();
         assert_eq!((v, shorts), (data.clone(), 2));
         assert!(super::read_dma(&mut Chunky(data, 0), 3000, |_, _| {}).is_err());
+    }
+
+    /// A stream that hands out reads of pseudo-random sizes (1..=max bytes).
+    struct Ragged {
+        data: Vec<u8>,
+        at: usize,
+        seed: u32,
+        max: usize,
+    }
+
+    impl std::io::Read for Ragged {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.seed = self.seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let k = (1 + (self.seed >> 8) as usize % self.max).min(b.len()).min(self.data.len() - self.at);
+            b[..k].copy_from_slice(&self.data[self.at..self.at + k]);
+            self.at += k;
+            Ok(k)
+        }
+    }
+
+    // Break it catches: a reused buffer that mixes data of an earlier, longer read into a shorter one, loses its 4 KiB
+    // alignment or its page of its own (heap corruption on the unit, 2026-11-04), or allocates again for every read.
+    #[test]
+    fn dma_buf_is_reused_aligned_and_exact_with_short_reads() {
+        let mut b = super::DmaBuf::new();
+        let mut ptr = None;
+        for (i, &n) in [9000usize, 2500, 9000, 8192, 1, 4096].iter().enumerate() {
+            let data: Vec<u8> = (0..n as u32).map(|x| (x.wrapping_mul(31) ^ i as u32 * 77) as u8).collect();
+            let mut shorts = 0;
+            let mut r = Ragged { data: data.clone(), at: 0, seed: i as u32, max: 1500 };
+            let got = b.read(&mut r, n, |_, _| shorts += 1).unwrap().to_vec();
+            assert_eq!(got, data, "read {} of {} bytes", i, n);
+            assert_eq!(b.data(), &data[..]);
+            assert!(shorts > 0 || n <= 1500);
+            let p = b.data().as_ptr() as usize;
+            assert_eq!(p % 4096, 0, "aligned start");
+            // whole pages from the aligned start, all inside the one allocation
+            assert!(b.cap % 4096 == 0 && b.cap >= n && b.off + b.cap <= b.raw.len());
+            if i > 0 {
+                assert_eq!(Some(p), ptr, "no new allocation for a read that fits");
+            }
+            ptr = Some(p);
+        }
+        // a larger read grows the region once
+        let big: Vec<u8> = (0..20_000u32).map(|x| x as u8).collect();
+        b.read(&mut Ragged { data: big.clone(), at: 0, seed: 9, max: 7000 }, 20_000, |_, _| {}).unwrap();
+        assert_eq!((b.data(), b.data().as_ptr() as usize % 4096), (&big[..], 0));
+        // an early end of the stream is an error, not a short buffer
+        assert!(b.read(&mut Ragged { data: big[..100].to_vec(), at: 0, seed: 1, max: 40 }, 200, |_, _| {}).is_err());
+        // truncate keeps the front
+        b.read(&mut Ragged { data: big.clone(), at: 0, seed: 3, max: 9000 }, 20_000, |_, _| {}).unwrap();
+        b.truncate(10);
+        assert_eq!(b.data(), &big[..10]);
+        assert_eq!(b.into_vec(), big[..10].to_vec());
     }
 }

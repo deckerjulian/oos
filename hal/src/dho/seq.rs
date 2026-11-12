@@ -317,13 +317,28 @@ impl State {
     /// Arm a batch of `frames(s, p)` frames and wait for the done flag (= the first frame is complete; the FPGA goes
     /// on recording into the ring until the last frame or a stop, unit 2026-11-03).
     pub fn arm_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        let mut st = self.arm_only_steps(s, p);
+        st.extend(wait_steps(p));
+        st
+    }
+
+    /// The arm of `arm_steps` without the wait for done: what `prearm` issues ahead, before the host decodes the batch
+    /// just read.
+    pub fn arm_only_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
         let nf = frames(s, p);
         let mut st = vec![Step::Note(format!("arm (frame 0, {} frame{})", nf, if nf == 1 { "" } else { "s" }))];
         st.extend(scu::arm(s.mask, &mut self.sh, 0, nf).into_iter().map(Step::Wr));
-        // at least the record itself, twice over: slow time bases with the rate halved by the LA take seconds
-        let record_ms = p.memsel as u64 * 1000 / p.rate.max(1);
-        st.push(Step::Poll { reg: 0x4080, bit: scu::PLAYINFO_DONE, ms: 2000.max(2 * record_ms + 500), what: "acquisition done" });
-        st.push(Step::Peek(&[0x4034, 0x4010, 0x4014]));
+        st
+    }
+
+    /// Stops an acquisition armed ahead (`prearm`) that will not be read, before anything else writes the FPGA: the
+    /// stock StopScope (wait up to 10 ms for 0x4034 bit13, then the stop sequence; the same 17 writes every arm starts
+    /// with).
+    pub fn disarm_steps(&mut self) -> Vec<Step> {
+        let mut w = Vec::new();
+        scu::stop_sequence(&mut w, &mut self.sh);
+        let mut st = vec![Step::Note("disarm".into()), Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 10, what: "FSM stopped before the disarm" }];
+        st.extend(w.into_iter().map(Step::Wr));
         st
     }
 
@@ -369,6 +384,13 @@ impl State {
     }
 }
 
+/// The wait of a batch after its arm: done (= the first frame is complete), then the ring registers for the log.
+pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
+    // at least the record itself, twice over: slow time bases with the rate halved by the LA take seconds
+    let record_ms = p.memsel as u64 * 1000 / p.rate.max(1);
+    vec![Step::Poll { reg: 0x4080, bit: scu::PLAYINFO_DONE, ms: 2000.max(2 * record_ms + 500), what: "acquisition done" }, Step::Peek(&[0x4034, 0x4010, 0x4014])]
+}
+
 /// Frames of one batch: `Settings::frames`, at least 1, at most the frame ring (`max_frames`); 1 for play-last.
 pub fn frames(s: &Settings, p: &hz::Params) -> u32 {
     if !s.play4 || s.la.is_some() {
@@ -406,15 +428,22 @@ pub fn compressed_len(s: &Settings, p: &hz::Params) -> u32 {
 
 /// Drops the stream padding behind every frame (`frame_stride`) in place: the frames end up back to back.
 pub fn unpad(buf: &mut Vec<u8>, frame: usize) {
+    let n = unpad_in(buf, frame);
+    buf.truncate(n);
+}
+
+/// `unpad` on a slice: returns the bytes left at the front. Frames without padding (all live set-ups of oos-ui) cost
+/// nothing.
+pub fn unpad_in(buf: &mut [u8], frame: usize) -> usize {
     let stride = frame_stride(frame);
     if frame == 0 || stride == frame {
-        return;
+        return buf.len();
     }
     let n = buf.len() / stride;
     for k in 1..n {
         buf.copy_within(k * stride..k * stride + frame, k * frame);
     }
-    buf.truncate(n * frame);
+    n * frame
 }
 
 /// (points per channel, first memory point) of the read-out window.
@@ -450,6 +479,43 @@ pub fn deinterleave(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
     out
 }
 
+/// `deinterleave` and `volts` in one pass, straight from the read-out bytes: `cal[c]` = (scale, offset) of CH c+1.
+/// The same numbers as the two passes (the same f64 expression per sample), without the per-channel `u16` vectors.
+pub fn decode_volts(bytes: &[u8], mask: u32, cal: [(f64, f64); 4]) -> [Vec<f32>; 4] {
+    let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
+    let ratio = hz::ratio(mask) as usize;
+    // slot k of a group of `ratio` words goes to channel slot[k] (deinterleave's mapping)
+    let slot: [Option<usize>; 4] = match ratio {
+        1 => [on.first().copied(), None, None, None],
+        2 => [Some(on[0]), Some(on[1]), None, None],
+        _ => [0, 1, 2, 3].map(|c| on.contains(&c).then_some(c)),
+    };
+    let group = 2 * ratio;
+    let tail = &bytes[bytes.len() / group * group..];
+    let mut out: [Vec<f32>; 4] = Default::default();
+    for (k, c) in slot.iter().enumerate().take(ratio) {
+        let Some(c) = *c else { continue };
+        // one exact-size pass per channel over its word of every group; the group size as a constant keeps it a
+        // vectorised loop
+        let mut o = match ratio {
+            1 => lane::<2>(bytes, 0, cal[c]),
+            2 => lane::<4>(bytes, k, cal[c]),
+            _ => lane::<8>(bytes, k, cal[c]),
+        };
+        // the word of an incomplete last group, as deinterleave hands it out
+        if let Some(b) = tail.get(2 * k..2 * k + 2) {
+            o.push(volt(u16::from_le_bytes([b[0], b[1]]), cal[c].0, cal[c].1));
+        }
+        out[c] = o;
+    }
+    out
+}
+
+/// Volts of word `k` of every whole group of `G` bytes (`decode_volts`).
+fn lane<const G: usize>(bytes: &[u8], k: usize, (scale, offset): (f64, f64)) -> Vec<f32> {
+    bytes.chunks_exact(G).map(|g| volt(u16::from_le_bytes([g[2 * k], g[2 * k + 1]]), scale, offset)).collect()
+}
+
 /// Volts of read-out words: 7500 codes per division around 32768 (preamble yinc = V/div / 7500), minus the offset.
 /// A time in femtoseconds, rounded to 6 significant digits: the UI keeps times as f32, and 1 us as 999.999997 ns is one
 /// trigger tick short (the same as `tdiv_fs` for time bases).
@@ -468,7 +534,13 @@ pub fn time_fs(t: f64) -> i128 {
 }
 
 pub fn volts(w: &[u16], scale: f64, offset: f64) -> Vec<f32> {
-    w.iter().map(|&x| ((x as f64 - 32768.0) / 7500.0 * scale - offset) as f32).collect()
+    w.iter().map(|&x| volt(x, scale, offset)).collect()
+}
+
+/// Volts of one read-out word (`volts`).
+#[inline]
+fn volt(x: u16, scale: f64, offset: f64) -> f32 {
+    ((x as f64 - 32768.0) / 7500.0 * scale - offset) as f32
 }
 
 /// Time per division in femtoseconds, rounded to 4 significant digits: the UI keeps time/div as f32 (200 us ->
@@ -492,13 +564,16 @@ pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Optio
 
 /// One batch on the unit: arm `frames(s, p)` frames, wait for the first, then let the ring fill until all frames are
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
-/// `0x4010 - first + 1`), then play and read exactly those frames.
-/// Returns the bytes (count x `frame_bytes`) and the count.
+/// `0x4010 - first + 1`), then play and read exactly those frames into `dma`.
+/// `armed`: `prearm` already armed this batch with the same `s` and `p`; only the wait is left.
+/// Returns the count; the bytes (count x `frame_bytes`) are `dma.data()`.
 #[cfg(target_os = "linux")]
-pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, wait_ms: u64, mut log: impl FnMut(String)) -> Result<(Vec<u8>, u32), String> {
+#[allow(clippy::too_many_arguments)]
+pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, mut log: impl FnMut(String)) -> Result<u32, String> {
     use crate::dho::bus::Bus;
     let nf = frames(s, p);
-    execute(&st.arm_steps(s, p), bar, None, c2h, &mut log)?;
+    let arm = if armed { wait_steps(p) } else { st.arm_steps(s, p) };
+    execute_into(&arm, bar, None, c2h, dma, &mut log)?;
     let t = std::time::Instant::now();
     let mut count = bar.rd(0x4010).wrapping_add(1).min(nf);
     while count < nf && t.elapsed().as_millis() < wait_ms as u128 {
@@ -506,8 +581,22 @@ pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut cra
         count = bar.rd(0x4010).wrapping_add(1).clamp(1, nf);
     }
     log(format!("{} of {} frames after {:.1} ms", count, nf, t.elapsed().as_secs_f64() * 1e3));
-    let bytes = execute(&st.read_steps(s, p, count), bar, None, c2h, &mut log)?;
-    Ok((bytes, count))
+    execute_into(&st.read_steps(s, p, count), bar, None, c2h, dma, &mut log)?;
+    Ok(count)
+}
+
+/// Arms the next batch right after a read (and the LA read of the same record), so the FPGA records while the host
+/// decodes: the same writes as the arm `acquire_batch` would issue next, earlier. Read it with `acquire_batch(..,
+/// armed = true, ..)` and the same `s` and `p`; anything else that writes the FPGA first needs `disarm`.
+#[cfg(target_os = "linux")]
+pub fn prearm(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<(), String> {
+    execute(&st.arm_only_steps(s, p), bar, None, c2h, log).map(|_| ())
+}
+
+/// Stops an acquisition armed by `prearm` that will not be read (`State::disarm_steps`).
+#[cfg(target_os = "linux")]
+pub fn disarm(st: &mut State, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<(), String> {
+    execute(&st.disarm_steps(), bar, None, c2h, log).map(|_| ())
 }
 
 /// The LA read of the acquisition just read out (`la_read_steps`) on the unit: LA words, bit n = Dn, word `start` of
@@ -531,10 +620,17 @@ pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate:
 
 /// Runs steps on the unit; returns the bytes of the Read step. `log` gets notes and poll results.
 #[cfg(target_os = "linux")]
-pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, mut log: impl FnMut(String)) -> Result<Vec<u8>, String> {
+pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<Vec<u8>, String> {
+    let mut dma = crate::dho::bus::DmaBuf::new();
+    execute_into(steps, bar, afe_bus, c2h, &mut dma, log)?;
+    Ok(dma.into_vec())
+}
+
+/// `execute` with the Read step into `dma` (kept across batches): the bytes are `dma.data()`, without padding.
+#[cfg(target_os = "linux")]
+pub fn execute_into(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, dma: &mut crate::dho::bus::DmaBuf, mut log: impl FnMut(String)) -> Result<(), String> {
     use crate::dho::bus::Bus;
     let mut afe_bus = afe_bus;
-    let mut out = Vec::new();
     for s in steps {
         match s {
             Step::Wr((off, v)) => bar.wr(*off, *v),
@@ -563,16 +659,18 @@ pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<
             }
             Step::Read { frames, frame } => {
                 let bytes = read_len(*frames, *frame);
-                out = crate::dho::bus::read_dma(c2h, bytes, |got, k| log(format!("c2h: short read of {} bytes (at {} of {})", k, got, bytes)))
+                let buf = dma
+                    .read(c2h, bytes, |got, k| log(format!("c2h: short read of {} bytes (at {} of {})", k, got, bytes)))
                     .map_err(|e| format!("c2h read of {} bytes: {} (0x4034 = {:#x})", bytes, e, bar.rd(0x4034)))?;
-                unpad(&mut out, *frame);
+                let n = unpad_in(buf, *frame);
+                dma.truncate(n);
             }
             Step::Peek(regs) => log(regs.iter().map(|r| format!("{:#06x} = {:#010x}", r, bar.rd(*r))).collect::<Vec<_>>().join(", ")),
             Step::Sleep { us } => std::thread::sleep(std::time::Duration::from_micros(*us as u64)),
             Step::Note(n) => log(n.clone()),
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -866,5 +964,159 @@ mod tests {
         // the replayed frame: 21518 = yref + yorg at 1 V/div, offset -1.5 V -> 0 V
         assert!((volts(&[21518], 1.0, -1.5)[0]).abs() < 1e-6);
         assert!((volts(&[32768 + 7500], 2.0, 0.0)[0] - 2.0).abs() < 1e-6);
+    }
+
+    /// Pseudo-random read-out bytes (a fixed LCG, so failures repeat).
+    fn noise(n: usize, seed: u32) -> Vec<u8> {
+        let mut x = seed;
+        (0..n)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    // Break it catches: a fused decode that maps a word to the wrong channel, drops the words of an incomplete last
+    // group, or rounds differently from `deinterleave` + `volts` (the display and the measurements would move).
+    #[test]
+    fn fused_decode_equals_deinterleave_and_volts() {
+        let cal = [(1.0, -1.5), (0.02, 0.013), (5.0, 2.5), (0.5, 0.0)];
+        for mask in 1..16u32 {
+            for len in [0usize, 2, 6, 8, 14, 16, 2816, 8000, 12_502] {
+                let b = noise(len, mask * 7919 + len as u32);
+                let want: [Vec<f32>; 4] = {
+                    let w = deinterleave(&b, mask);
+                    std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { volts(&w[c], cal[c].0, cal[c].1) })
+                };
+                let got = decode_volts(&b, mask, cal);
+                for c in 0..4 {
+                    // bit for bit, NaN-free by construction
+                    let (g, w): (Vec<u32>, Vec<u32>) = (got[c].iter().map(|x| x.to_bits()).collect(), want[c].iter().map(|x| x.to_bits()).collect());
+                    assert_eq!(g, w, "mask {:#x}, {} bytes, CH{}", mask, len, c + 1);
+                }
+            }
+        }
+    }
+
+    // Break it catches: an unpad on the reused DMA buffer that differs from the vector one.
+    #[test]
+    fn unpad_in_place_equals_unpad() {
+        for frame in [5usize, 2500, 2504, 1250, 16] {
+            let b = noise(7 * frame_stride(frame) + 3, frame as u32);
+            let mut v = b.clone();
+            unpad(&mut v, frame);
+            let mut s = b.clone();
+            let n = unpad_in(&mut s, frame);
+            assert_eq!(&s[..n], &v[..], "frame {}", frame);
+        }
+    }
+
+    // Break it catches: an arm ahead of the decode that writes anything else, or in another order, than the batch loop
+    // without it (stop sequence, record, play and their shadows must stay exactly as verified on the unit). Two batches
+    // of 100 frames; the pre-armed loop issues arm 2 right after read 1 and only waits before read 2.
+    #[test]
+    fn prearm_writes_the_same_sequence_as_the_plain_batch_loop() {
+        let s = Settings { tdiv: 1e-6, frames: 100, window: None, ..Settings::default() };
+        let p = State::handover(1, None).configure(&s, None, None).unwrap().1;
+        let batch = |st: &mut State, pre: bool, armed: bool| -> Vec<Step> {
+            let mut v = if armed { wait_steps(&p) } else { st.arm_steps(&s, &p) };
+            v.extend(st.read_steps(&s, &p, 100));
+            if pre {
+                v.extend(st.arm_only_steps(&s, &p));
+            }
+            v
+        };
+        let mut a = State::handover(1, None);
+        a.configure(&s, None, None).unwrap();
+        let plain: Vec<Step> = (0..3).flat_map(|_| batch(&mut a, false, false)).collect();
+        let mut b = State::handover(1, None);
+        b.configure(&s, None, None).unwrap();
+        let mut pre = batch(&mut b, true, false);
+        pre.extend(batch(&mut b, true, true));
+        pre.extend(batch(&mut b, false, true));
+        assert_eq!(writes(&pre), writes(&plain));
+        assert_eq!(writes(&pre).len(), 3 * (29 + 10 + 7 + 17 + 12));
+        // the waits and reads are the same steps too, only the arm moved before the decode
+        let polls = |v: &[Step]| v.iter().filter(|x| matches!(x, Step::Poll { .. } | Step::Read { .. })).count();
+        assert_eq!(polls(&pre), polls(&plain));
+        assert_eq!((a.sh.s4004, a.sh.s4008, a.sh.s400c, a.sh.s4080), (b.sh.s4004, b.sh.s4008, b.sh.s400c, b.sh.s4080));
+        // arm_steps is still arm + wait
+        let mut c = State::handover(1, None);
+        let mut d = State::handover(1, None);
+        let mut split = c.arm_only_steps(&s, &p);
+        split.extend(wait_steps(&p));
+        assert_eq!(format!("{:?}", d.arm_steps(&s, &p)), format!("{:?}", split));
+    }
+
+    // Break it catches: a disarm that is not the plain stop sequence every arm starts with.
+    #[test]
+    fn disarm_is_the_stop_sequence_of_an_arm() {
+        let s = Settings::default();
+        let p = hz::prep(1, tdiv_fs(s.tdiv), 0, 0);
+        let mut a = State::handover(1, None);
+        let d = writes(&a.disarm_steps());
+        assert_eq!(d.len(), 17);
+        let arm = writes(&State::handover(1, None).arm_only_steps(&s, &p));
+        assert_eq!(&arm[..17], &d[..]);
+        assert!(matches!(a.disarm_steps()[1], Step::Poll { reg: 0x4034, ms: 10, .. }));
+    }
+
+    /// Host benchmark of one 4 MB batch: the read and decode path before (new zero-filled vector per read, unpad,
+    /// deinterleave to u16, volts) and after (reused DMA buffer, fused decode). `cargo test --release -- --ignored
+    /// --nocapture bench_batch`.
+    #[test]
+    #[ignore]
+    fn bench_batch_decode() {
+        struct Mem<'a>(&'a [u8], usize);
+        impl std::io::Read for Mem<'_> {
+            fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+                let k = b.len().min(self.0.len() - self.1);
+                b[..k].copy_from_slice(&self.0[self.1..self.1 + k]);
+                self.1 += k;
+                Ok(k)
+            }
+        }
+        let cal = [(1.0, 0.0), (0.5, 0.1), (2.0, -0.3), (1.0, 0.0)];
+        for (mask, frame, frames) in [(1u32, 2816usize, 1420usize), (1, 2500, 1600), (1, 200_000, 20), (3, 4000, 1000), (0xf, 8000, 500)] {
+            let data = noise(frames * frame, 1);
+            let runs = 20;
+            let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1e3 / runs as f64;
+            // read: a new vector per read (zero fill, move to the front) vs the reused buffer
+            let t = std::time::Instant::now();
+            for _ in 0..runs {
+                let mut v = crate::dho::bus::read_dma(&mut Mem(&data, 0), data.len(), |_, _| {}).unwrap();
+                unpad(&mut v, frame);
+                std::hint::black_box(v);
+            }
+            let read_old = ms(t);
+            let mut dma = crate::dho::bus::DmaBuf::new();
+            let t = std::time::Instant::now();
+            for _ in 0..runs {
+                let b = dma.read(&mut Mem(&data, 0), data.len(), |_, _| {}).unwrap();
+                let n = unpad_in(b, frame);
+                dma.truncate(n);
+                std::hint::black_box(dma.data());
+            }
+            let read_new = ms(t);
+            // decode: deinterleave to u16 + volts vs the fused decode
+            let t = std::time::Instant::now();
+            for _ in 0..runs {
+                for f in dma.data().chunks_exact(frame) {
+                    let w = deinterleave(f, mask);
+                    let ch: [Vec<f32>; 4] = std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { volts(&w[c], cal[c].0, cal[c].1) });
+                    std::hint::black_box(ch);
+                }
+            }
+            let dec_old = ms(t);
+            let t = std::time::Instant::now();
+            for _ in 0..runs {
+                for f in dma.data().chunks_exact(frame) {
+                    std::hint::black_box(decode_volts(f, mask, cal));
+                }
+            }
+            let dec_new = ms(t);
+            eprintln!("mask {:#x}, {} frames of {} bytes: read {:.2} -> {:.2} ms, decode {:.2} -> {:.2} ms per batch", mask, frames, frame, read_old, read_new, dec_old, dec_new);
+        }
     }
 }

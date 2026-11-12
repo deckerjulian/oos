@@ -238,6 +238,24 @@ fn header_probe() -> bool {
     *ON.get_or_init(|| std::env::var_os("OOS_FRAME_HEADER").is_some())
 }
 
+/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
+/// Off unless OOS_PREARM is set: the stop of an acquisition armed ahead that is then not read (a settings change, the
+/// generator, self-cal, roll) is not verified on the unit yet (docs/fork/specs/10-transfer-efficiency.md).
+fn prearm_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("OOS_PREARM").is_some())
+}
+
+/// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
+#[cfg(target_os = "linux")]
+fn disarm(armed: &mut Option<(Settings, u64)>, state: &mut oos_hal::dho::seq::State, bar: &mut oos_hal::dho::bus::Bar1, c2h: &mut std::fs::File) {
+    if armed.take().is_some() {
+        if let Err(e) = oos_hal::dho::seq::disarm(state, bar, c2h, |_| {}) {
+            eprintln!("oos-ui hw: disarm: {}", e);
+        }
+    }
+}
+
 /// One line of the header log: the 8 header words, `pre`, and the offsets (samples) of the nearest rising and falling
 /// crossing of the trigger level from `pre` on the trigger channel.
 fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
@@ -260,8 +278,7 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
 /// Decodes a read-out of the whole record into a frame.
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
     let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
-    let w = oos_hal::dho::seq::deinterleave(bytes, s.mask);
-    let ch = std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset) });
+    let ch = oos_hal::dho::seq::decode_volts(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)));
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = s.compress.max(1) as usize;
     if !hdr.is_empty() {
@@ -392,6 +409,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut stamp;
         let mut xadc_at: Option<std::time::Instant> = None;
         let mut la_fails = 0u32;
+        // the read buffer of the batches, kept (bus::DmaBuf)
+        let mut dma = oos_hal::dho::bus::DmaBuf::new();
+        // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
+        let mut armed: Option<(Settings, u64)> = None;
         loop {
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
@@ -409,6 +430,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // run, and the cancel check and the UI would wait on it forever)
             let req = out.lock().unwrap().cal_req.take();
             if let Some((chans, zero, adc_cores)) = req {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 if rolling.take().is_some() {
                     bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
                 }
@@ -447,6 +469,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 (g.afg[0], g.stamp)
             };
             if afg_want != afg_done {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 // models without the generator (non-S): its GPIO lines and FPGA block are never touched
                 if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.has_gen()) {
                     if afg_io.is_none() {
@@ -469,6 +492,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 (g.want.clone(), g.slow)
             };
             let Some(mut want) = want else {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             };
@@ -477,6 +501,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 l.cal = la_cal;
             }
             if current.as_ref().map_or(true, |c| c.0 != want) || mode != want_mode {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 mode = want_mode;
                 if rolling.take().is_some() {
                     bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
@@ -501,6 +526,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             let (s, p) = current.clone().unwrap();
             if mode != Slow::Off {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 // roll and scan (roll-mode.md): stream chunks; roll keeps 10 divisions and puts the newest point at the
                 // right edge, scan writes the screen from left to right; publish ~30 pictures per second
                 let tdiv_fs = seq::tdiv_fs(s.tdiv);
@@ -677,8 +703,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             let b = batch_plan(&s, &p);
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
-            match seq::acquire_batch(&mut state, &b, &p, &mut bar, &mut c2h, 25, |_| {}) {
-                Ok((bytes, count)) => {
+            // armed ahead with these settings and since the last SINGLE press: only the wait is left
+            let ahead = armed.as_ref().is_some_and(|(a, st)| *a == b && *st == stamp);
+            if !ahead {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+            }
+            armed = None;
+            match seq::acquire_batch(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}) {
+                Ok(count) => {
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
                     // its time-out, and the analog frames must not wait with it
@@ -696,9 +728,17 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         },
                         _ => None,
                     };
+                    // the next batch records while this one is decoded (after the LA read, which needs this record)
+                    if prearm_on() {
+                        match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
+                            Ok(()) => armed = Some((b.clone(), stamp)),
+                            Err(e) => status(format!("prearm: {}", e)),
+                        }
+                    }
                     let fb = seq::frame_bytes(&b, &p);
                     // decode before taking the lock: the UI must not wait for 100 k-point conversions
-                    let mut frames: Vec<Frame> = bytes
+                    let mut frames: Vec<Frame> = dma
+                        .data()
                         .chunks_exact(fb)
                         .take(count as usize)
                         .map(|chunk| {
@@ -862,6 +902,43 @@ mod tests {
         let s = settings(&m, false);
         assert_eq!(s.level, 1.8f32 as f64);
         assert!(matches!(s.trigger, Trig::Runt { lo, .. } if (lo - 0.2).abs() < 1e-6));
+    }
+
+    // Break it catches: a live batch whose frames the FPGA pads in the stream (frame bytes not a multiple of 8), so
+    // every read moves the whole batch once more in `seq::unpad`. All time bases, depths and channel sets of the UI
+    // that read through the batch path (not roll or scan); with and without the LA.
+    #[test]
+    fn live_batches_need_no_stream_padding() {
+        let mut m = Model::default();
+        let (mut bad, mut checked, mut la_seen) = (Vec::new(), 0, false);
+        for la in [false, true] {
+            m.la.on = la;
+            for chans in 1u32..16 {
+                for c in 0..NCH {
+                    m.ch[c].on = chans & (1 << c) != 0;
+                }
+                for t in 0..tscales().len() {
+                    m.tscale = t;
+                    if slow_mode(&m) != Slow::Off {
+                        continue;
+                    }
+                    for d in 0..mdepths().len() {
+                        m.mdepth = d;
+                        let s = settings(&m, false);
+                        let Ok((_, p)) = oos_hal::dho::seq::State::handover(s.mask, None).configure(&s, None, None) else { continue };
+                        let b = batch_plan(&s, &p);
+                        let fb = oos_hal::dho::seq::frame_bytes(&b, &p);
+                        checked += 1;
+                        la_seen |= s.la.is_some();
+                        if fb % 8 != 0 {
+                            bad.push((la, chans, tscales()[t], mdepths()[d].0, fb));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 1000 && la_seen, "{} set-ups checked, LA among them: {}", checked, la_seen);
+        assert!(bad.is_empty(), "{} padded set-ups, e.g. {:?}", bad.len(), &bad[..bad.len().min(8)]);
     }
 
     #[test]

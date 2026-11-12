@@ -315,9 +315,10 @@ fn main() {
                 let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
                 let (cfg, p) = state.configure(&o.s, cal.as_ref(), cal_adc.as_ref())?;
                 seq::execute(&cfg, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
-                let (b, n) = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, 30, log)?;
+                let mut dma = oos_hal::dho::bus::DmaBuf::new();
+                let n = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut dma, false, 30, log)?;
                 eprintln!("{:8.1} ms  {} frames of {} bytes", t0.elapsed().as_secs_f64() * 1e3, n, seq::frame_bytes(&o.s, &p));
-                b
+                dma.into_vec()
             } else {
                 seq::execute(&st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?
             };
