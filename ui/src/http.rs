@@ -279,13 +279,18 @@ impl Shots {
             st = self.lock();
         }
         if !st.frames && Self::wanted(&st, now, watched) {
-            let mut px = std::mem::take(&mut st.spare);
-            px.clear();
-            px.extend_from_slice(&cv.px);
-            st.next = Some((cv.w as u32, cv.h as u32, px));
-            st.at = Some(now);
+            Self::give_copy(&mut st, cv, now);
             self.wake.notify_one();
         }
+    }
+
+    /// A copy of the screen for the encoder (the caller wakes it).
+    fn give_copy(st: &mut ShotState, cv: &Canvas, now: Instant) {
+        let mut px = std::mem::take(&mut st.spare);
+        px.clear();
+        px.extend_from_slice(&cv.px);
+        st.next = Some((cv.w as u32, cv.h as u32, px));
+        st.at = Some(now);
     }
 
     /// Whether the encoder should get the screen now.
@@ -568,6 +573,24 @@ impl Http {
     /// `whole`: the render draws every pixel.
     pub fn before_render(&mut self, cv: &mut Canvas, whole: bool) {
         self.shots.hand_over(cv, whole);
+    }
+
+    /// Display > Graphics = GPU: the frame loop hands over the pictures that come back from the GPU
+    /// (`picture_read_back`), `tick` copies none and nothing is swapped. `cv` holds the last picture read back, not
+    /// one drawn every frame: a buffer swapped out of it would stay in it, an older picture, until the next read.
+    pub fn before_gpu_frame(&mut self) {
+        self.shots.lock().frames = true;
+    }
+
+    /// Display > Graphics = GPU: `cv` was just read back whole; a copy goes to the encoder when it wants one.
+    pub fn picture_read_back(&self, cv: &Canvas) {
+        let mut st = self.shots.lock();
+        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
+        let now = Instant::now();
+        if Shots::wanted(&st, now, watched) {
+            Shots::give_copy(&mut st, cv, now);
+            self.shots.wake.notify_one();
+        }
     }
 
     /// The live picture would take the next screen (Display > Graphics = GPU: read it back for it).
@@ -1122,6 +1145,45 @@ setTimeout(() => {
         assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
         let shown = shown.expect("a screen was handed over");
         assert!(out[e..] == crate::store::png(cv.w as u32, cv.h as u32, &shown), "the PNG of the screen that was shown");
+    }
+
+    /// Display > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
+    /// frame). Nothing is swapped out of it (a swapped-in buffer stayed until the next read: the web page went back
+    /// and forth between the new and an older screen), and the picture is one that came back.
+    #[test]
+    fn live_picture_with_the_gpu_is_a_picture_read_back() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let t = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
+            let mut out = Vec::new();
+            let _ = c.read_to_end(&mut out);
+            out
+        });
+        let mut read_back = Vec::new();
+        let mut frame = 0u32;
+        while !t.is_finished() {
+            h.poll(&mut ui, &cv, &mut scpi);
+            let before = cv.px.clone();
+            h.before_gpu_frame();
+            assert!(cv.px == before, "the canvas keeps the last picture read back");
+            frame += 1;
+            if frame % 3 == 0 {
+                cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+                read_back.push(cv.px.clone());
+                h.picture_read_back(&cv);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let out = t.join().unwrap();
+        let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
+        assert!(read_back.iter().any(|p| out[e..] == crate::store::png(cv.w as u32, cv.h as u32, p)), "the PNG of a picture read back");
     }
 
     /// The live picture: one encode per screen; a viewer with the newest picture waits (long poll) and gets 304 when

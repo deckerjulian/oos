@@ -562,7 +562,6 @@ fn device_main(mut ui: Ui, args: &[String]) {
         let t1 = Instant::now();
         let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
         ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi == model::HdmiMode::Waveform;
-        web.before_render(&mut cv, !ui.start_up_active());
         // Display > Graphics: the helper follows the setting
         if ui.sys.gpu != gpu_want {
             gpu_changed = frame_n > 0;
@@ -591,6 +590,13 @@ fn device_main(mut ui: Ui, args: &[String]) {
             }
             hdmi_gpu = None;
         }
+        // the web page's picture: the screen the CPU draws next swaps out the shown one; with the GPU, `cv` changes only
+        // when a picture comes back, and each one goes to the web page from there
+        if gpu.is_some() {
+            web.before_gpu_frame();
+        } else {
+            web.before_render(&mut cv, !ui.start_up_active());
+        }
         let mut drawn = false;
         let mut hdmi_done = false;
         if let Some(g) = gpu.as_mut() {
@@ -606,7 +612,11 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 // 2. the last frame: shown once it is done (its picture into `cv` when it was asked for)
                 let mut wait = 0.0;
                 if let Some((tp, bp, th)) = gpu_pending.take() {
+                    let back = tp.reads();
                     g.collect(tp, Some(&mut cv))?;
+                    if back {
+                        web.picture_read_back(&cv);
+                    }
                     wait += g.times.wait;
                     disp.flip(bp);
                     if let Some((t2, b2)) = th {
@@ -642,6 +652,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 hdmi_done = th.is_some() || (hdmi_gpu == Some(true) && hdmi_frame);
                 if shot {
                     g.collect(tp, Some(&mut cv))?;
+                    web.picture_read_back(&cv);
                     disp.flip(b);
                     if let Some((t2, b2)) = th {
                         g.collect(t2, None)?;

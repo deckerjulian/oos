@@ -192,6 +192,13 @@ pub struct Ticket {
     sent: std::time::Instant,
 }
 
+impl Ticket {
+    /// The picture of this frame comes back (`collect` puts it into its canvas).
+    pub fn reads(&self) -> bool {
+        self.readback.is_some()
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub use imp::Gpu;
 
