@@ -42,6 +42,23 @@ pub struct Window {
     pub fsm: u32,
     /// LA on: the record holds twice the words, so the play length doubles; the start and the TX length stay
     pub la: bool,
+    /// average mode: the window also gets the average offset word 0x1110 (`avg_offset`)
+    pub avg: bool,
+}
+
+/// Main window average offset (docs/fork/specs/01-hw-averaging.md 1.2); 0x1114 is the zoom window's, which OOS does
+/// not use.
+pub const AVG_OFFSET: u32 = 0x1110;
+
+/// The average offset word for a window from memory point `s` (per channel) at interleave factor `m`: the average
+/// buffer is addressed in half bursts of 5 words. Bits 31:8 = the half-burst address of the start, rounded down to a
+/// multiple of 4; bits 7:0 = what is left of the start, in words (points x m).
+pub fn avg_offset(s: u32, m: u32) -> u32 {
+    let m = m.max(1) as u64;
+    let s = s as u64;
+    let qa = (m * s / 5) & !3;
+    let rest = (s - qa * 5 / m) * m;
+    (((qa & 0xff_fffc) << 8) | (rest & 0xff)) as u32
 }
 
 /// Status bits of 0x4034 (read only).
@@ -101,6 +118,9 @@ fn readout_window(w: &mut Vec<Write>, win: &Window, sh: &mut Shadows) {
     w.push((0x4008, sh.s4008));
     w.push((0x1100, (win.n << win.la as u32) / win.ratio + (0x48 | (win.ratio << 9))));
     w.push((0x1108, win.start / win.ratio));
+    if win.avg {
+        w.push((AVG_OFFSET, avg_offset(win.start / win.ratio, win.ratio)));
+    }
     let size = if r4 / win.ratio == 8 { 128 } else { r4 / win.ratio };
     w.push((0x11f0, size));
     sh.s1010 |= 1 << 31;
@@ -276,7 +296,7 @@ mod tests {
         assert_eq!(auto_trigger(&mut sh, false, 1_000_000_000, 0)[0], (0x4020, 0x2000));
     }
 
-    const WIN: Window = Window { n: 4000, start: 1_248_000, ratio: 1, fsm: 1, la: false };
+    const WIN: Window = Window { n: 4000, start: 1_248_000, ratio: 1, fsm: 1, la: false, avg: false };
 
     fn text(w: &[Write]) -> String {
         w.iter().map(|(o, v)| format!("{:#x} {:#x}\n", o, v)).collect()
@@ -336,6 +356,31 @@ mod tests {
         assert_eq!(sh.s40b8 & 0x5, 0);
     }
 
+    // Break it catches: the start in words instead of points per channel, no rounding to 4 half bursts, the remainder
+    // in points instead of words. Expected values by hand from spec 01, 1.2: q = m s / 5, qa = q & !3,
+    // word = qa << 8 | (s - qa 5 / m) m.
+    #[test]
+    fn average_offset_word() {
+        // s = 0: 0 for every m
+        assert_eq!([1, 2, 4].map(|m| avg_offset(0, m)), [0, 0, 0]);
+        // s = 3: q = 0, 1, 2 -> qa = 0; rest 3, 6, 12
+        assert_eq!([1, 2, 4].map(|m| avg_offset(3, m)), [3, 6, 12]);
+        // s = 7: q = 1, 2, 5 -> qa = 0, 0, 4; rest 7, 14, (7 - 5) x 4 = 8 -> 4 << 8 | 8
+        assert_eq!([1, 2, 4].map(|m| avg_offset(7, m)), [7, 14, 0x408]);
+        // s = 1,248,000: q = 249,600 / 499,200 / 998,400, all multiples of 4, rest 0
+        assert_eq!([1, 2, 4].map(|m| avg_offset(1_248_000, m)), [249_600 << 8, 499_200 << 8, 998_400 << 8]);
+        // s = 1,248,013, m = 2: q = 499,205 -> qa = 499,204; 499,204 x 5 / 2 = 1,248,010; rest 3 x 2 = 6
+        assert_eq!(avg_offset(1_248_013, 2), 499_204 << 8 | 6);
+        // the window writes it right after the start, only in average mode
+        let mut sh = Shadows::HANDOVER;
+        let w = readout_play4(&Window { avg: true, ..WIN }, &mut sh, 0, 1);
+        let i = w.iter().position(|x| x.0 == 0x1108).unwrap();
+        assert_eq!(w[i + 1], (AVG_OFFSET, 249_600 << 8));
+        let n = readout_play4(&WIN, &mut Shadows::HANDOVER.clone(), 0, 1);
+        assert_eq!(w.len(), n.len() + 1);
+        assert!(!n.iter().any(|x| x.0 == AVG_OFFSET));
+    }
+
     #[test]
     fn play4_ends_in_play_mode() {
         let mut sh = Shadows::HANDOVER;
@@ -353,7 +398,7 @@ mod la_window_tests {
     /// Only the play length doubles with the LA on, start and TX length stay.
     #[test]
     fn play_length_doubles() {
-        let off = Window { n: 4000, start: 2000, ratio: 2, fsm: 3, la: false };
+        let off = Window { n: 4000, start: 2000, ratio: 2, fsm: 3, la: false, avg: false };
         let on = Window { la: true, ..off };
         let w = |win: &Window| readout(win, &mut Shadows::HANDOVER.clone());
         let at = |v: &[Write], r: u32| v.iter().find(|x| x.0 == r).unwrap().1;

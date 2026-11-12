@@ -166,6 +166,11 @@ pub fn read<B: Bus, R: std::io::Read>(st: &mut seq::State, s: &seq::Settings, p:
 /// open questions are answered one way here and are not facts about the unit: the latch holds the stamp of the last
 /// frame of the last play (6.1), header words 5..7 hold the trigger time in 1.6 ns ticks (6.2), the latch counts 250
 /// ps (6.3).
+///
+/// Average mode (0x1004 bit3, docs/fork/specs/01-hw-averaging.md): the played words are the average of `Engine::raw`
+/// over the triggers since the last 0x10b4 pulse, of the last 0x10b0 + 1 of them (`avg_hold` false: running) or of the
+/// first 0x10b0 + 1 (`avg_hold` true: cumulative, then held), as `avg::mean_words` computes it. Trigger numbers count on
+/// across arms; a clear pulse starts from the next one.
 pub mod sim {
     use super::*;
     use std::cell::RefCell;
@@ -189,11 +194,61 @@ pub mod sim {
         stream: Vec<u8>,
         prev_40b8: u32,
         prev_4004: u32,
+        /// average mode: hold after the count instead of a running average
+        pub avg_hold: bool,
+        /// triggers recorded by all stopped recordings; the number of frame 0 of the current or last one
+        pub triggers: u64,
+        trig_base: u64,
+        /// first trigger of the average (the trigger count at the last 0x10b4 pulse)
+        avg_from: u64,
+        prev_10b4: u32,
     }
 
     impl Engine {
         pub fn new(t0_fs: i128, period_fs: i128, per_poll: u32, ratio: u32) -> Engine {
-            Engine { regs: Default::default(), t0_fs, period_fs, per_poll, ratio, rec: None, recorded: 0, first_valid: false, latched: 0, last_played: None, stream: Vec::new(), prev_40b8: 0, prev_4004: 0 }
+            Engine {
+                regs: Default::default(),
+                t0_fs,
+                period_fs,
+                per_poll,
+                ratio,
+                rec: None,
+                recorded: 0,
+                first_valid: false,
+                latched: 0,
+                last_played: None,
+                stream: Vec::new(),
+                prev_40b8: 0,
+                prev_4004: 0,
+                avg_hold: false,
+                triggers: 0,
+                trig_base: 0,
+                avg_from: 0,
+                prev_10b4: 0,
+            }
+        }
+
+        /// Raw sample word `i` of trigger `g` (average mode): a ramp over 64 points plus a trigger-dependent step of 0..60
+        /// codes, so averages of 16 consecutive triggers are exact (+30).
+        pub fn raw(g: u64, i: usize) -> u16 {
+            (32768 + (i % 64) * 16 + (g % 16) as usize * 4) as u16
+        }
+
+        /// The triggers the average of trigger `g` covers (`raw` numbers, inclusive).
+        pub fn avg_span(&self, g: u64) -> (u64, u64) {
+            let n = self.reg(crate::dho::acq::AVG_COUNT) as u64 + 1;
+            if self.avg_hold {
+                (self.avg_from, g.min(self.avg_from + n - 1))
+            } else {
+                (self.avg_from.max((g + 1).saturating_sub(n)), g)
+            }
+        }
+
+        /// The averaged words of frame `k` of the last recording.
+        pub fn avg_words(&self, k: u32, words: usize) -> Vec<u16> {
+            let (lo, hi) = self.avg_span(self.trig_base + k as u64);
+            let frames: Vec<Vec<u16>> = (lo..=hi).map(|g| (0..words).map(|i| Engine::raw(g, i)).collect()).collect();
+            crate::dho::avg::mean_words(&frames.iter().map(|f| &f[..]).collect::<Vec<_>>())
         }
 
         /// Trigger time of frame `k`, fs.
@@ -223,13 +278,20 @@ pub mod sim {
                             self.stream.extend(u16::to_le_bytes(w));
                         }
                     }
-                    for i in 0..words {
-                        self.stream.extend(Engine::word(k, i).to_le_bytes());
+                    if self.reg(0x1004) & 8 != 0 {
+                        for w in self.avg_words(k, words) {
+                            self.stream.extend(w.to_le_bytes());
+                        }
+                    } else {
+                        for i in 0..words {
+                            self.stream.extend(Engine::word(k, i).to_le_bytes());
+                        }
                     }
                 }
                 self.last_played = Some(last);
             } else if c & 0x2200_0000 == 0x2200_0000 {
                 self.rec = Some((first, last, 0));
+                self.trig_base = self.triggers;
             }
         }
     }
@@ -243,12 +305,19 @@ pub mod sim {
                         // stop: the recording ends where it is
                         if let Some((_, _, n)) = self.rec.take() {
                             self.recorded = n;
+                            self.triggers += n as u64;
                         }
                     }
                     if v & 1 != 0 && self.prev_4004 & 1 == 0 {
                         self.run();
                     }
                     self.prev_4004 = v;
+                }
+                crate::dho::acq::AVG_CLEAR => {
+                    if v & 1 != 0 && self.prev_10b4 & 1 == 0 {
+                        self.avg_from = self.triggers;
+                    }
+                    self.prev_10b4 = v;
                 }
                 0x40b8 => {
                     if v & scu::stamp::FIRST_CLEAR != 0 {

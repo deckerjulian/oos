@@ -36,7 +36,7 @@ use oos_hal::dho::scu::{Shadows, Window};
 
 impl Cfg {
     pub fn window(&self) -> Window {
-        Window { n: self.n, start: self.start, ratio: self.ratio, fsm: self.fsm, la: false }
+        Window { n: self.n, start: self.start, ratio: self.ratio, fsm: self.fsm, la: false, avg: false }
     }
     pub fn shadows(&self) -> Shadows {
         Shadows { s4004: self.sh[0], s4008: self.sh[1], s400c: self.sh[2], s1000: self.sh[3], s1010: self.sh[4], s4080: self.sh[5], ..Shadows::HANDOVER }

@@ -62,6 +62,7 @@
 //!   --keep-config      skip trigger, acquisition configuration and auto trigger (arm with what the stock system left behind)
 //!   --compress 1       FPGA compression factor k of the whole record (0x1170, stock live display path; use with --all)
 //!   --frames 1         frames per batch (one arm, one play, one read of all frames; capped at the frame ring)
+//!   --average N        hardware average of N triggers (0x1004 bit3; reads the newest frame of the batch; not verified)
 //!   --blocks 7         configuration blocks before the arm: bit0 trigger, bit1 acquisition, bit2 auto trigger
 //!   --afe              program the AFEs of the enabled channels (scale/offset, bandwidth --bw OFF|S20M|AUTO|<MHz>)
 //!   --la               logic analyser on (la.md, UNTESTED): LA set-up and a second, raw LA read after the analog one
@@ -116,6 +117,8 @@ fn parse(args: &[String]) -> Result<Opt, String> {
             "--blocks" => s.blocks = int(v)? as u8,
             "--frames" => s.frames = int(v)?,
             "--compress" => s.compress = int(v)?,
+            // hardware averaging (docs/fork/specs/01-hw-averaging.md), not verified on the unit
+            "--average" => s.mode = oos_hal::dho::acq::Mode::Average { count: int(v)? },
             "--la-thr" => {
                 let t = num(v)?;
                 s.la = Some(oos_hal::dho::la::Set { thr: [t, t], ..s.la.unwrap_or_default() });

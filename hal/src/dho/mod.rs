@@ -7,6 +7,7 @@
 
 pub mod acq;
 pub mod adc;
+pub mod avg;
 pub mod afe;
 pub mod afg;
 pub mod board;

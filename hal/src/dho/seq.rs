@@ -185,6 +185,17 @@ impl State {
         if let Some(l) = &s.la {
             p = la::prep(p, l.analog_shown);
         }
+        if let acq::Mode::Average { count } = s.mode {
+            // spec 01, 6.5: the library does not prevent these combinations, OOS refuses them
+            if s.la.is_some() || s.segments.is_some() {
+                return Err("hardware average with the LA or hardware segments".into());
+            }
+            p = hz::avg_params(p);
+            if p.max_frames == 0 {
+                return Err(format!("hardware average: {} points do not fit the average layout", p.memsel));
+            }
+            st.push(Step::Note(format!("hardware average of {} (0x10b0 = {})", count, acq::avg_count_reg(count))));
+        }
         st.push(Step::Note(format!("mask {:#x}: ratio {}, {} Sa/s, {} points/channel, segment {:#x}, pre {} post {}", s.mask, p.ratio, p.rate, p.memsel, p.seg, p.pre, p.post)));
         let mode = adc::mode_of_mask(s.mask).unwrap();
         if mode != self.mode {
@@ -238,6 +249,11 @@ impl State {
         }
         if s.blocks & 2 != 0 {
             st.push(Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 30, what: "FSM stopped (stop poll)" });
+            if matches!(s.mode, acq::Mode::Average { .. }) {
+                // stock RunConfig: stop, average clear, then the configuration (spec 01, 1.5)
+                st.push(Step::Note("average clear".into()));
+                st.extend(acq::avg_clear().into_iter().map(Step::Wr));
+            }
             st.push(Step::Note("acquisition configuration".into()));
             let deskew = s.la.as_ref().map(|_| la::deskew(la::timing(&p, s.mask).m));
             let skew = s.ch.map(|k| (k.skew * 1e15).round() as i64);
@@ -354,9 +370,19 @@ impl State {
         st
     }
 
-    /// Read-out of the first `count` frames of the batch: pass-through, window, stop sequence, type-4 play, one read.
+    /// Restarts a hardware average (CLEAR, RUN after STOP, SINGLE, a complete hold average): wait for the FSM to stop,
+    /// then the clear pulse (stock StopScope + setAvgClr). Between batches the read-out has already stopped the FSM.
+    pub fn avg_clear_steps(&mut self) -> Vec<Step> {
+        let mut st = vec![Step::Note("average clear".into()), Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 10, what: "FSM stopped before the average clear" }];
+        st.extend(acq::avg_clear().into_iter().map(Step::Wr));
+        st
+    }
+
+    /// Read-out of the frames a batch of `count` recorded frames delivers (`batch_read`): pass-through, window, stop
+    /// sequence, type-4 play, one read.
     pub fn read_steps(&mut self, s: &Settings, p: &hz::Params, count: u32) -> Vec<Step> {
-        self.read_steps_at(s, p, 0, count)
+        let (first, n) = batch_read(s, count);
+        self.read_steps_at(s, p, first, n)
     }
 
     /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record).
@@ -365,7 +391,7 @@ impl State {
         let mut st = Vec::new();
         let (n, start) = window(s, p);
         // the window counts words of all interleaved channels: n x ratio from point x ratio (Phase 0.5 step D)
-        let win = scu::Window { n: n * p.ratio, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: s.la.is_some() };
+        let win = scu::Window { n: n * p.ratio, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: s.la.is_some(), avg: matches!(s.mode, acq::Mode::Average { .. }) };
         st.push(Step::Note(format!("read-out: {} points from memory point {} (trigger at {})", n, start, p.pre)));
         let mut ro = if s.play4 {
             let mut v = scu::passthrough();
@@ -418,7 +444,7 @@ impl State {
     /// pulse. Read the stamp from 0x40b0/0x40b4 after it (`seg::read_latched`).
     pub fn segment_stamp_steps(&mut self, s: &Settings, p: &hz::Params, k: u32) -> Vec<Step> {
         let (_, start) = window(s, p);
-        let win = scu::Window { n: STAMP_WORDS, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: false };
+        let win = scu::Window { n: STAMP_WORDS, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: false, avg: false };
         let mut w = scu::passthrough();
         w.extend(scu::readout_play4(&win, &mut self.sh, k, 1));
         for x in w.iter_mut().filter(|x| x.0 == 0x1010) {
@@ -450,6 +476,15 @@ pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
     // at least the record itself, twice over: slow time bases with the rate halved by the LA take seconds
     let record_ms = p.memsel as u64 * 1000 / p.rate.max(1);
     vec![Step::Poll { reg: 0x4080, bit: scu::PLAYINFO_DONE, ms: 2000.max(2 * record_ms + 500), what: "acquisition done" }, Step::Peek(&[0x4034, 0x4010, 0x4014])]
+}
+
+/// (first frame, frames) a batch of `count` recorded frames reads: all of them; in hardware average mode only the
+/// newest, which holds the average of every trigger since the last clear (spec 01, 3.2 option A).
+pub fn batch_read(s: &Settings, count: u32) -> (u32, u32) {
+    match s.mode {
+        acq::Mode::Average { .. } => (count.max(1) - 1, 1),
+        _ => (0, count),
+    }
 }
 
 /// Frames of one batch: `Settings::frames`, at least 1, at most the frame ring (`max_frames`); 1 for play-last.
@@ -627,14 +662,13 @@ pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Optio
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
 /// `0x4010 - first + 1`), then play and read exactly those frames into `dma`.
 /// `armed`: `prearm` already armed this batch with the same `s` and `p`; only the wait is left.
-/// Returns the count; the bytes (count x `frame_bytes`) are `dma.data()`.
-#[cfg(target_os = "linux")]
+/// Returns the count; the bytes (`batch_read(s, count).1` x `frame_bytes`: in average mode one frame) are `dma.data()`.
+/// Generic over the bus, so the host model (`seg::sim::Engine`) runs it too.
 #[allow(clippy::too_many_arguments)]
-pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, mut log: impl FnMut(String)) -> Result<u32, String> {
-    use crate::dho::bus::Bus;
+pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, mut log: impl FnMut(String)) -> Result<u32, String> {
     let nf = frames(s, p);
     let arm = if armed { wait_steps(p) } else { st.arm_steps(s, p) };
-    execute_into(&arm, bar, None, c2h, dma, &mut log)?;
+    execute_bus(&arm, bar, c2h, dma, &mut log)?;
     let t = std::time::Instant::now();
     let mut count = bar.rd(0x4010).wrapping_add(1).min(nf);
     while count < nf && t.elapsed().as_millis() < wait_ms as u128 {
@@ -642,7 +676,7 @@ pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut cra
         count = bar.rd(0x4010).wrapping_add(1).clamp(1, nf);
     }
     log(format!("{} of {} frames after {:.1} ms", count, nf, t.elapsed().as_secs_f64() * 1e3));
-    execute_into(&st.read_steps(s, p, count), bar, None, c2h, dma, &mut log)?;
+    execute_bus(&st.read_steps(s, p, count), bar, c2h, dma, &mut log)?;
     Ok(count)
 }
 
