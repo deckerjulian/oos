@@ -1,6 +1,6 @@
 [package]
 name = "oos-dsp"
-version = "0.1.6"
+version = "0.1.7"
 repository = "https://github.com/deckerjulian/oos"
 edition = "2021"
 description = "OOS signal processing: software triggers, measurements, math, signal generators"

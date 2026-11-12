@@ -1,5 +1,54 @@
 # Changes
 
+## 0.1.7
+
+Install from 0.1.6 as always: the web page, System > Update, or the USB stick; then switch the scope off at the
+mains, wait 30 seconds and switch it on. The kernel changes, the device tree does not. The GPU drawing and the JPEG
+live picture below are in this build, but the GPU and the video encoder are switched on by the device tree of 0.1.8:
+until then the CPU draws (also with Display > Graphics = GPU) and the live picture stays a PNG.
+
+New:
+
+- Updates that bring another device tree get the trial start by kexec too: `oos-update` starts the new kernel with
+  the new tree through kexec-tools (`kexec_load`, which takes a tree; `kexec_file_load` keeps the running one), with
+  the changes the stock loader makes to the tree at every power-on (reserved memory, command line, the boot logo's
+  display mode) carried over from the running tree (`hal/src/update/fdt.rs`). Before, such an update was refused
+  through the web page and System > Update and needed `--new-dt` without a safety net. 0.1.8 is the first to use it.
+- USB stick (Storage > Upgrade) on a card that holds OOS: a newer build on the stick is written (the builds are read
+  from the images); before, the card's build was kept unless `oos-reinstall.txt` was on the stick. The same or an
+  older build is kept and only selected, as before.
+
+- The screen is laid out from its size instead of fixed positions on the 1024 x 600 panel (`ui/src/layout.rs`): top
+  bar, plot, measurement rows, bottom bar, menus, dialogs, the start-up screen and the on-screen keyboard. On the panel
+  everything stays where it was, pixel for pixel (`ui/tools/layout-check.sh`). On a larger screen the TIME and trigger
+  cards keep their largest useful width and stand at the right edge.
+- Display > HDMI > Layout: the monitor gets the whole screen laid out again at its own size (up to 1920 x 1080, a
+  larger monitor scales that up), sharp, with the traces stretched from the panel's maps. It draws a second picture
+  every monitor frame, about 5 to 10 ms on the unit, so the panel may get fewer frames while it is on. Mirror and
+  Waveform are as before.
+- System > Network > Remote services: a switch for the web remote, SCPI, VXI-11 and telnet, each next to its address
+  or port (they moved there from the Network page). All on by default; a service switched off closes its port at
+  once. `remote.*` in `/oos/system.conf`; rcS reads `remote.telnet` at power-on (docs/network.md, section 4).
+- Display > Graphics: GPU (the new default) or CPU (as before). With GPU the Mali-T860 draws the whole picture: the CPU
+  only records what is to be drawn (rectangles, text, lines, corners, images) and leaves the traces as phosphor maps;
+  the GPU draws both into the display's buffer and scales the picture for a monitor (filtered, without CPU work for
+  Mirror and Waveform). The frame loop takes about a third less of its core than with CPU (35 % against 53 %, four
+  channels running; gpu/README.md). The image has the Panfrost driver and Mesa for it (about 8 MB more, compressed).
+- Web page, Live picture format JPEG: made by the scope's video encoder (the VPU, `ui/src/vpu.rs`), about 75 KB a
+  picture against 115 KB as PNG. The encoder takes the screen as it is and converts the colours itself (a kernel
+  patch, `kernel/patches/0012-…`): the web thread takes 8.6 % of a slow core at 9.4 pictures a second, against 30 %
+  for PNG. PNG stays the default and the format of screenshots.
+- The measurements are made beside the frame loop, each channel on its own core (`Ui::measure_in_background`): four
+  channels of 100 kpts took 27 ms of every frame with a new record, and the screen ran at 27 instead of 30 frames a
+  second. The frame loop and the acquisition keep the two fast cores.
+- Host test runs: `--size WIDTHxHEIGHT`, the script command `textsize`, and `OOS_FIXED_TIME` to stop the clock.
+
+Fixed:
+
+- Downloads of the web page are named by the scope's clock in its time zone (`oos-20261111-143005.png`, as files on
+  the scope), not by the computer's; while the scope's clock is not set, the computer's time stays.
+- Touch on the web page's picture follows the size of the picture instead of a fixed 1024 x 600.
+
 ## 0.1.6
 
 From 0.1.1 to 0.1.5: install the package through the web page or `oos-update install`, the scope restarts by itself
