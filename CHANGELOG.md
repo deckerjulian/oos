@@ -1,5 +1,18 @@
 # Changes
 
+## 0.1.8
+
+Install from 0.1.7 as always: the web page, System > Update, or the USB stick. This update brings a new device tree;
+0.1.7 starts it by kexec with that tree first (a trial start, as for every update), and installs it only when it
+runs. From 0.1.6 or older: install 0.1.7 first, or use the USB stick (Storage > Upgrade in the stock system), which
+writes it directly, without a trial start. Then switch the scope off at the mains, wait 30 seconds and switch it on.
+
+New:
+
+- The GPU (Mali-T860) and the video encoder are switched on in the device tree: Display > Graphics = GPU, the default,
+  now draws on the GPU, and the web page's live picture can be a JPEG from the video encoder (see 0.1.7). Installed
+  on a DHO924S and started cold.
+
 ## 0.1.7
 
 Install from 0.1.6 as always: the web page, System > Update, or the USB stick; then switch the scope off at the
