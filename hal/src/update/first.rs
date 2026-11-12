@@ -14,9 +14,10 @@
 //! Only `boot` (its magic), `recovery` and the start of `backup` are written. A failure or a power cut before step 4
 //! leaves a card that starts stock as before.
 //!
-//! Run again on a card that already has OOS (to start it once more in one-shot mode), it keeps what `recovery` holds
-//! when that is an image the loader takes: a newer build installed over the network since stays. Only `reinstall`
-//! (`oos-reinstall.txt` on the stick) writes the stick's build over it. A damaged OOS image in `recovery` (an update
+//! Run again on a card that already has OOS (to start it once more in one-shot mode, or to update it), it keeps what
+//! `recovery` holds when that is an image the loader takes and not older than the stick's build (the builds are read
+//! from the images' initramfs, `inflate::image_build`): a newer build installed over the network since stays, an older
+//! one is updated. `reinstall` (`oos-reinstall.txt` on the stick) writes the stick's build in any case. A damaged OOS image in `recovery` (an update
 //! cut by a power loss) is replaced by the rollback image when that one is whole, else by the stick's build.
 
 use super::card::{check_image, Card, Region, BOOT_LBA, RECOVERY_LBA, SECTOR};
@@ -223,11 +224,22 @@ pub fn first_install(
         None
     } else if what == "an OOS image" {
         let valid = card.header(Region::Recovery).map_err(io)?.map(|h| card.read_image(Region::Recovery, h.len)).transpose().map_err(io)?;
+        // the builds' time stamps (`YYYYMMDD-HHMMSS kernel ...`) sort as text
+        let stamp = |b: &str| b.split_whitespace().next().unwrap_or("").to_string();
+        let card_build = valid.as_ref().and_then(|(b, _)| super::inflate::image_build(b));
+        let stick_build = super::inflate::image_build(img).unwrap_or_else(|| h.manifest.build.clone());
+        let older = card_build.as_deref().map(stamp).filter(|c| *c < stamp(&stick_build));
+        if let (Some(c), false) = (&older, opt.reinstall) {
+            log(&format!("recovery holds build {}, the stick has the newer {}", c, stamp(&stick_build)));
+        }
         match valid.as_ref().map(|(b, _)| check_image(b)) {
+            Some(Ok(_)) if older.is_some() && !opt.reinstall => Some((Cow::Borrowed(img), "recovery: the stick's newer build goes here")),
             Some(Ok(i)) if !opt.reinstall => {
                 log(&format!(
-                    "recovery holds a valid OOS image ('{}', {} bytes), maybe a newer build installed over the network: kept, only selected (oos-reinstall.txt on the stick writes the stick's build)",
-                    i.name, i.len
+                    "recovery holds a valid OOS image ('{}', {} bytes, build {}), not older than the stick's: kept, only selected (oos-reinstall.txt on the stick writes the stick's build)",
+                    i.name,
+                    i.len,
+                    card_build.as_deref().map(stamp).unwrap_or_else(|| "unknown".into())
                 ));
                 None
             }

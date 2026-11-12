@@ -781,6 +781,7 @@ Third-party parts keep their own licences:
 | XDMA driver | Dual BSD/GPL |
 | BusyBox | GPL-2.0 |
 | e2fsck (e2fsprogs) | GPL-2.0; the notice is in the image at `/etc/licenses/e2fsck` |
+| kexec (kexec-tools) | GPL-2.0; the text is in the image at `/etc/licenses/kexec-tools` |
 | Mesa, libdrm, glibc, libstdc++, zlib (the GPU helper, [gpu/README.md](gpu/README.md)) | MIT, MIT, LGPL-2.1, GPL-3.0 with the runtime exception, zlib; the texts are in the image under `/etc/licenses` |
 | Roboto font | Apache-2.0, see [ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt) |
 | wpa_supplicant | BSD-3-Clause; the text is in the image at `/etc/licenses/wpa_supplicant` |

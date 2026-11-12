@@ -285,7 +285,9 @@ fn install(a: &Args) {
     }
     let booted = std::fs::read(kexec::BOOTED_DT).ok();
     let running = update::running_build();
-    match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, booted.as_deref(), running.as_deref()) {
+    // another device tree can be tried with kexec-tools, from the tree the running kernel got
+    let running_tree = Path::new(kexec::TOOL).exists().then(|| std::fs::read(kexec::RUNNING_TREE).ok()).flatten();
+    match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, booted.as_deref(), running.as_deref(), running_tree.as_deref()) {
         Err(e) if e.contains("device tree") => die(&format!(
             "{}. Try the image on a card you can take out; then --new-dt writes it directly, without the kexec trial start",
             e
@@ -385,7 +387,11 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
         std::process::exit(1)
     };
     let cmd = kexec::cmdline(&kexec::running_cmdline(), f);
-    if let Err(e) = kexec::load(&s.kernel, &s.initrd, &cmd) {
+    let loaded = match &s.tree {
+        Some(t) => kexec::load_with_tree(&s.kernel, &s.initrd, t, &cmd),
+        None => kexec::load(&s.kernel, &s.initrd, &cmd),
+    };
+    if let Err(e) = loaded {
         undo(&e, None);
     }
     drop(s);
@@ -434,6 +440,7 @@ fn kexec_check(a: &Args) {
     kexec::unload().unwrap_or_else(|e| die(&e));
     let tree = match std::fs::read(kexec::BOOTED_DT) {
         Ok(b) if b == dt => "the same as the running one",
+        Ok(_) if Path::new(kexec::TOOL).exists() => "DIFFERS from the running one (the kexec start tries the new one, with kexec-tools)",
         Ok(_) => "DIFFERS from the running one (install needs --new-dt)",
         Err(_) => "running one unknown",
     };

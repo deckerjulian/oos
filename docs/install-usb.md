@@ -40,7 +40,9 @@ This is why only models with the hardware of a model OOS has run on are accepted
 
 OOS starts once, in one-shot mode: the following power-on starts stock again. To start OOS again run the same update: when
 `recovery` holds an OOS image the loader takes, it writes nothing but the selection, also when that image is a newer build
-installed over the network since. An empty file `oos-reinstall.txt` on the stick writes the stick's build instead. A
+installed over the network since. When the stick's build is newer than the card's (0.1.7 on: the builds are read from
+the images), it is written: the stick updates OOS. An empty file `oos-reinstall.txt` on the stick writes the stick's
+build in any case. A
 damaged OOS image in `recovery` (an update cut by a power loss) is replaced by the rollback image when that one is whole,
 else by the stick's build. If the OOS in `recovery` starts but hangs early every time (no rollback happens because the
 start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
@@ -62,7 +64,8 @@ change under `/rigol`.
 2. Rescue set on the stick, each file read back. A complete set is kept: after the first install `recovery` holds OOS.
 3. If OOS is selected and `recovery` changes: stock selected first.
 4. Stock copy of `boot` to the start of `backup`, read back. The loader's fallback when it refuses `recovery`.
-5. Image to `recovery`, read back: only when `recovery` does not hold a valid OOS image yet, or with `oos-reinstall.txt`.
+5. Image to `recovery`, read back: only when `recovery` does not hold a valid OOS image yet or an older build than the
+   stick's, or with `oos-reinstall.txt`.
 6. Last, one sector: `boot` selects OOS.
 
 A failure or power cut before step 6 leaves a card that starts stock as before. The same file finishes the job.
@@ -140,6 +143,7 @@ On a card that can be taken out, not on an only card:
 2. Install, power-cycle: OOS starts, with `/oos` formatted if it was empty. **Done 2026-11-08** (with `/oos` already
    there).
 3. Next power-on: stock, with calibration and licences as before.
-4. The same update again: "already holds", OOS selected. After an update over the network: "kept, only selected".
+4. The same update again: "already holds", OOS selected. After an update over the network to a newer build: "kept,
+   only selected". A newer build on the stick than on the card (0.1.7 on): written ("the stick's newer build").
    **"Already holds" done 2026-11-08.**
 5. Damage test: a refused image in `recovery` (card in a reader) starts the stock copy in `backup`.

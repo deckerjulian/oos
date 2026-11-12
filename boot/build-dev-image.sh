@@ -70,6 +70,8 @@ EOF
 [ -x "$root/rootfs/out/wpa_supplicant" ] && [ -x "$root/rootfs/out/wpa_cli" ] || "$root/rootfs/build-wlan-tools.sh"
 # /oos is checked before it is mounted
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
+# an update with another device tree is tried by kexec_load with that tree (docs/update.md)
+[ -x "$root/rootfs/out/kexec" ] || "$root/rootfs/build-kexec.sh"
 # Display > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md)
 [ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] || "$root/gpu/build.sh"
 
@@ -86,8 +88,8 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /ui/oos-ui $r/bin/oos-ui
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
-	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck $r/bin/
-	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck
+	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec $r/bin/
+	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools
 	# the GPU helper with Mesa and glibc (their own loader; oos-ui and the rest stay static)
 	cp -a /wlan/gpu/. $r/
 	ln -sf busybox $r/bin/sh
