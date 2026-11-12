@@ -16,6 +16,9 @@ def memsize(pts,mode=0):
     n=max(n,32) if n>32 else 32
     n=pow2(n)
     return min(n,(16777216-0x100000)//2)
+def max_record_frames(seg):
+    # segmented record (fork spec 03, 1.5): the whole stock frame memory less the reserved 1 M bursts
+    return (16777216-0x100000)//max(seg,1)
 def maxauto(cnt,la=False):
     if la: return 12500000 if cnt==2 else (10000000 if cnt>2 else 31250000)
     return 62500000 if cnt==2 else (31250000 if cnt>2 else 125000000)
@@ -44,7 +47,7 @@ def prep(mask,tb,depth=0,offset=0,stock=False):
     post=-(-(memsel*dot+memstart)//dot); pre=max(0,memsel-post)
     if rate>=62500001: r10d0=0x8000|((mr//rate)&0xff); r10d8=1
     else: r10d0=0; r10d8=62500000//rate
-    return dict(ratio=ratio,rate=rate,memsel=memsel,dot_fs=dot,seg_10e0=hex(seg),max_frames=max_frames,pre_4050=pre,post_4054=post,r10d0=hex(r10d0),r10d8=r10d8,r10e4=hex(memsel),r1148=640//ratio+32)
+    return dict(ratio=ratio,rate=rate,memsel=memsel,dot_fs=dot,seg_10e0=hex(seg),max_frames=max_frames,max_record_frames=max_record_frames(seg),pre_4050=pre,post_4054=post,r10d0=hex(r10d0),r10d8=r10d8,r10e4=hex(memsel),r1148=640//ratio+32)
 if __name__=='__main__':
     print(prep(1,2*10**11)); print(prep(3,10**9))
     for tb in [10**6*x for x in (1,2,5,10,20,50,100,200,500)]+[10**9*x for x in (1,2,5,10,20,50,100,200,500)]+[10**12*x for x in (1,2,5,10,20)]:

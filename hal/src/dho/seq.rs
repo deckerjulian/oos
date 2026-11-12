@@ -116,6 +116,18 @@ pub struct Settings {
     /// shown, LA doubling, rate block, thresholds), and after the analog read a second, raw LA read (`la_read_steps`).
     /// None = the analog path exactly as without the LA.
     pub la: Option<la::Set>,
+    /// hardware segmented recording (docs/fork/specs/03-segmented-timestamps.md): one arm records this many frames
+    /// with FPGA re-arm and per-frame trigger timestamps (`seg`). None = the live batches.
+    pub segments: Option<Segments>,
+}
+
+/// A hardware segmented recording.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Segments {
+    /// frames to record (limited to `hz::max_record_frames`)
+    pub n: u32,
+    /// wait after each frame before the next arm, seconds (0x4068; 0 = back to back)
+    pub interval: f64,
 }
 
 impl Default for Settings {
@@ -123,7 +135,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, frames: 1, compress: 1, la: None }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, frames: 1, compress: 1, la: None, segments: None }
     }
 }
 
@@ -344,6 +356,11 @@ impl State {
 
     /// Read-out of the first `count` frames of the batch: pass-through, window, stop sequence, type-4 play, one read.
     pub fn read_steps(&mut self, s: &Settings, p: &hz::Params, count: u32) -> Vec<Step> {
+        self.read_steps_at(s, p, 0, count)
+    }
+
+    /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record).
+    pub fn read_steps_at(&mut self, s: &Settings, p: &hz::Params, first: u32, count: u32) -> Vec<Step> {
         let nf = if s.play4 { count.max(1) } else { 1 };
         let mut st = Vec::new();
         let (n, start) = window(s, p);
@@ -358,7 +375,7 @@ impl State {
                     w.1 = 0xc000_0000 | (s.compress & 0x0fff_ffff);
                 }
             }
-            let mut r = scu::readout_play4(&win, &mut self.sh, 0, nf);
+            let mut r = scu::readout_play4(&win, &mut self.sh, if s.play4 { first } else { 0 }, nf);
             if s.compress > 1 {
                 let len = compressed_len(s, p);
                 for w in r.iter_mut().filter(|w| w.0 == 0x11f0) {
@@ -382,6 +399,50 @@ impl State {
         st.push(Step::Read { frames: nf as usize, frame: frame_bytes(s, p) });
         st
     }
+}
+
+impl State {
+    /// Start of a hardware segmented recording (spec 03, 1.2): clear the first-trigger stamp, then the record arm of
+    /// `record_frames(s, p)` frames with the interval of `s.segments`. Poll the progress with `seg::status`.
+    pub fn record_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        let n = record_frames(s, p);
+        let iv = s.segments.map_or(0, |g| scu::interval_ticks(time_fs(g.interval)));
+        let mut st = vec![Step::Note(format!("segmented record: {} frames, interval {} x 6.4 ns", n, iv))];
+        st.extend(scu::ts_first_clear(&mut self.sh).into_iter().map(Step::Wr));
+        st.extend(scu::record_arm(s.mask, &mut self.sh, n, iv).into_iter().map(Step::Wr));
+        st
+    }
+
+    /// The stamp play of segment `k` (spec 03, 1.4): a type-4 play of frame `k` alone with the smallest read-out window
+    /// (`STAMP_WORDS` words of all channels, from the start of the record window, header on), its read, then the latch
+    /// pulse. Read the stamp from 0x40b0/0x40b4 after it (`seg::read_latched`).
+    pub fn segment_stamp_steps(&mut self, s: &Settings, p: &hz::Params, k: u32) -> Vec<Step> {
+        let (_, start) = window(s, p);
+        let win = scu::Window { n: STAMP_WORDS, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: false };
+        let mut w = scu::passthrough();
+        w.extend(scu::readout_play4(&win, &mut self.sh, k, 1));
+        for x in w.iter_mut().filter(|x| x.0 == 0x1010) {
+            x.1 &= !(1 << 31);
+        }
+        self.sh.s1010 &= !(1 << 31);
+        let mut st = vec![Step::Note(format!("stamp play of segment {}", k))];
+        st.extend(w.into_iter().map(Step::Wr));
+        st.push(Step::Read { frames: 1, frame: STAMP_BYTES });
+        st.extend(scu::ts_latch(&mut self.sh).into_iter().map(Step::Wr));
+        st
+    }
+}
+
+/// Words (all channels) of the stamp play: 128, the smallest window of the stock raw export (record-play.md 7.1: a
+/// TX length of 8 points becomes 128 / ratio).
+pub const STAMP_WORDS: u32 = 128;
+/// Bytes of the stamp play's read: the 16-byte frame header and `STAMP_WORDS` words.
+pub const STAMP_BYTES: usize = 16 + 2 * STAMP_WORDS as usize;
+
+/// Frames of a hardware segmented recording: `Segments::n`, at least 1, at most `hz::max_record_frames`; 0 without
+/// segments.
+pub fn record_frames(s: &Settings, p: &hz::Params) -> u32 {
+    s.segments.map_or(0, |g| g.n.clamp(1, hz::max_record_frames(p.seg)))
 }
 
 /// The wait of a batch after its arm: done (= the first frame is complete), then the ring registers for the log.
@@ -618,6 +679,48 @@ pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate:
     }
 }
 
+/// Runs steps that need only the register window and the C2H stream (no AFE step) on any `Bus`: the unit, or a model
+/// of it in the tests. The Read step goes into `dma` like `execute_into`.
+pub fn execute_bus<B: crate::dho::bus::Bus, R: std::io::Read>(steps: &[Step], bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, mut log: impl FnMut(String)) -> Result<(), String> {
+    for s in steps {
+        plain_step(s, bar, c2h, dma, &mut log)?;
+    }
+    Ok(())
+}
+
+/// One step of `execute_bus` / `execute_into` other than the AFE steps.
+fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(s: &Step, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, log: &mut impl FnMut(String)) -> Result<(), String> {
+    match s {
+        Step::Wr((off, v)) => bar.wr(*off, *v),
+        Step::Afe(_) => return Err("AFE step without AFE bus".into()),
+        Step::Poll { reg, bit, ms, what } => {
+            let t = std::time::Instant::now();
+            let mut last = bar.rd(*reg);
+            while last & bit == 0 && t.elapsed().as_millis() < *ms as u128 {
+                std::thread::sleep(std::time::Duration::from_micros(500));
+                last = bar.rd(*reg);
+            }
+            let ok = last & bit != 0;
+            log(format!("{} {} ({:#x} = {:#010x}, {:.1} ms)", what, if ok { "ok" } else { "TIMEOUT" }, reg, last, t.elapsed().as_secs_f64() * 1e3));
+            if !ok && *reg == 0x4080 {
+                return Err("no acquisition (0x4080 bit30 not set)".into());
+            }
+        }
+        Step::Read { frames, frame } => {
+            let bytes = read_len(*frames, *frame);
+            let buf = dma
+                .read(c2h, bytes, |got, k| log(format!("c2h: short read of {} bytes (at {} of {})", k, got, bytes)))
+                .map_err(|e| format!("c2h read of {} bytes: {} (0x4034 = {:#x})", bytes, e, bar.rd(0x4034)))?;
+            let n = unpad_in(buf, *frame);
+            dma.truncate(n);
+        }
+        Step::Peek(regs) => log(regs.iter().map(|r| format!("{:#06x} = {:#010x}", r, bar.rd(*r))).collect::<Vec<_>>().join(", ")),
+        Step::Sleep { us } => std::thread::sleep(std::time::Duration::from_micros(*us as u64)),
+        Step::Note(n) => log(n.clone()),
+    }
+    Ok(())
+}
+
 /// Runs steps on the unit; returns the bytes of the Read step. `log` gets notes and poll results.
 #[cfg(target_os = "linux")]
 pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<Vec<u8>, String> {
@@ -633,7 +736,6 @@ pub fn execute_into(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Op
     let mut afe_bus = afe_bus;
     for s in steps {
         match s {
-            Step::Wr((off, v)) => bar.wr(*off, *v),
             Step::Afe(afe::Op::Afe { ch, reg, val }) => {
                 use afe::AfeBus;
                 afe_bus.as_deref_mut().ok_or("AFE step without AFE bus")?.write(*ch, *reg, *val)
@@ -644,30 +746,7 @@ pub fn execute_into(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Op
                 bar.wr(0x1034, *w);
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
-            Step::Poll { reg, bit, ms, what } => {
-                let t = std::time::Instant::now();
-                let mut last = bar.rd(*reg);
-                while last & bit == 0 && t.elapsed().as_millis() < *ms as u128 {
-                    std::thread::sleep(std::time::Duration::from_micros(500));
-                    last = bar.rd(*reg);
-                }
-                let ok = last & bit != 0;
-                log(format!("{} {} ({:#x} = {:#010x}, {:.1} ms)", what, if ok { "ok" } else { "TIMEOUT" }, reg, last, t.elapsed().as_secs_f64() * 1e3));
-                if !ok && *reg == 0x4080 {
-                    return Err("no acquisition (0x4080 bit30 not set)".into());
-                }
-            }
-            Step::Read { frames, frame } => {
-                let bytes = read_len(*frames, *frame);
-                let buf = dma
-                    .read(c2h, bytes, |got, k| log(format!("c2h: short read of {} bytes (at {} of {})", k, got, bytes)))
-                    .map_err(|e| format!("c2h read of {} bytes: {} (0x4034 = {:#x})", bytes, e, bar.rd(0x4034)))?;
-                let n = unpad_in(buf, *frame);
-                dma.truncate(n);
-            }
-            Step::Peek(regs) => log(regs.iter().map(|r| format!("{:#06x} = {:#010x}", r, bar.rd(*r))).collect::<Vec<_>>().join(", ")),
-            Step::Sleep { us } => std::thread::sleep(std::time::Duration::from_micros(*us as u64)),
-            Step::Note(n) => log(n.clone()),
+            _ => plain_step(s, bar, c2h, dma, &mut log)?,
         }
     }
     Ok(())
@@ -1047,6 +1126,50 @@ mod tests {
         let mut split = c.arm_only_steps(&s, &p);
         split.extend(wait_steps(&p));
         assert_eq!(format!("{:?}", d.arm_steps(&s, &p)), format!("{:?}", split));
+    }
+
+    // Break it catches: a segmented record that is not stamp clear + the batch arm with N and the interval, a count
+    // beyond the whole-memory limit, segments that leak into the live batch path.
+    #[test]
+    fn record_steps_clear_the_stamp_and_arm_n_frames() {
+        let seg = |n: u32, interval: f64| Settings { tdiv: 1e-6, depth: 1000, window: None, segments: Some(Segments { n, interval }), ..Settings::default() };
+        let mut st = State::handover(1, None);
+        let p = st.configure(&seg(100, 1e-3), None, None).unwrap().1;
+        let w = writes(&st.record_steps(&seg(100, 1e-3), &p));
+        assert_eq!(&w[..2], &[(0x40b8, 4), (0x40b8, 0)]);
+        assert_eq!(w.len(), 2 + 29);
+        assert!(w.contains(&(0x4068, 156_250)) && w.contains(&(0x4018, 99)));
+        // the stock limit for 1,000 points: 61,440 frames
+        assert_eq!(record_frames(&seg(1_000_000, 0.0), &p), 61_440);
+        assert_eq!(record_frames(&seg(0, 0.0), &p), 1);
+        assert_eq!(record_frames(&Settings::default(), &p), 0);
+        // the live plan does not change with segments set
+        let live = |s: &Settings| writes(&plan(&mut State::handover(1, None), s, None, None).unwrap().0);
+        assert_eq!(live(&seg(100, 1e-3)), live(&Settings { segments: None, ..seg(100, 1e-3) }));
+    }
+
+    // Break it catches: a segment read that plays from frame 0, a stamp play with the 8-point TX length the stock
+    // export never uses, a stamp play without the header.
+    #[test]
+    fn segment_reads_play_from_their_frame() {
+        let s = Settings { mask: 3, tdiv: 1e-6, depth: 1000, window: None, segments: Some(Segments { n: 500, interval: 0.0 }), header: true, ..Settings::default() };
+        let mut a = State::handover(3, None);
+        let p = a.configure(&s, None, None).unwrap().1;
+        let mut b = State::handover(3, None);
+        b.configure(&s, None, None).unwrap();
+        let at = writes(&a.read_steps_at(&s, &p, 200, 40));
+        let zero = writes(&b.read_steps(&s, &p, 40));
+        let diff: Vec<(Write, Write)> = at.iter().zip(&zero).filter(|(x, y)| x != y).map(|(x, y)| (*x, *y)).collect();
+        assert_eq!(diff, [((0x4010, 200), (0x4010, 0)), ((0x4014, 200), (0x4014, 0)), ((0x4018, 239), (0x4018, 39))]);
+        assert!(at.contains(&(0x1010, a.sh.s1010)) && a.sh.s1010 & 1 << 31 == 0, "header on");
+        let st = a.segment_stamp_steps(&s, &p, 7);
+        let w = writes(&st);
+        // 128 words of two channels: TX length 64 per channel, one 16 + 256 byte read, then the latch pulse
+        assert!(w.contains(&(0x11f0, 64)) && w.contains(&(0x4010, 7)) && w.contains(&(0x4018, 7)));
+        assert!(w.iter().any(|x| x.0 == 0x1010 && x.1 & 1 << 31 == 0));
+        assert_eq!(&w[w.len() - 3..], &[(0x40b8, 0), (0x40b8, 1), (0x40b8, 0)]);
+        assert!(st.iter().any(|x| matches!(x, Step::Read { frames: 1, frame: 272 })));
+        assert!(w.iter().position(|x| x.0 == 0x40b8).unwrap() > w.iter().position(|x| *x == (0x4004, a.sh.s4004)).unwrap());
     }
 
     // Break it catches: a disarm that is not the plain stop sequence every arm starts with.

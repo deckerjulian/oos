@@ -22,6 +22,7 @@ pub mod panel;
 pub mod roll;
 pub mod scu;
 pub mod selfcal;
+pub mod seg;
 pub mod seq;
 pub mod spu;
 pub mod target;

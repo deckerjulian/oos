@@ -111,6 +111,16 @@ fn pow2(n: i128) -> i128 {
 /// bursts 125 M fits.
 pub const MEM_BURSTS: i128 = 0x500_0000;
 
+/// Frame memory in bursts of the segmented record (stock series parameter, `DevAcquireSpu_getMaxFrm` mode 1): the whole
+/// frame memory less the reserved top 1 M bursts. Kept at the stock size until the real size is measured (spec 03, 6.5).
+pub const RECORD_BURSTS: u32 = 16_777_216 - 0x10_0000;
+
+/// Most frames a segmented record of segments of `seg` bursts holds (spec 03, 1.5): the whole frame memory, unlike the
+/// live batch ring (`Params::max_frames`, half of it).
+pub fn max_record_frames(seg: u32) -> u32 {
+    RECORD_BURSTS / seg.max(1)
+}
+
 /// Segment size in 10-point bursts for `pts` raw points (normal mode).
 pub fn mem_size(pts: i128) -> i128 {
     let n = ((pts + 0x180) / 10).max(32);
@@ -203,6 +213,29 @@ fn prep_nominal(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Param
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: a segment limit from the half ring of the live batches, or from the deep-record memory size.
+    #[test]
+    fn record_frames_use_the_whole_stock_memory() {
+        // spec 03, 1.5: 1,000 points -> 256 bursts -> 61,440 frames; 12,500 -> 2,048 -> 7,680
+        let at = |pts: i128, mask: u32| {
+            let p = prep(mask, 1_000_000_000_000_000, pts, 0);
+            (p.seg, max_record_frames(p.seg))
+        };
+        assert_eq!(at(1_000, 1), (256, 61_440));
+        assert_eq!(at(12_500, 1), (2_048, 7_680));
+        assert_eq!(at(100_000, 1), (16_384, 960));
+        assert_eq!(at(1_000, 3), (256, 61_440));
+        assert_eq!(at(12_500, 3), (4_096, 3_840));
+        assert_eq!(at(100_000, 3), (32_768, 480));
+        assert_eq!(at(1_000, 0xf), (512, 30_720));
+        assert_eq!(at(12_500, 0xf), (8_192, 1_920));
+        assert_eq!(at(100_000, 0xf), (65_536, 240));
+        // twice the live ring plus the reserved region
+        let p = prep(1, 1_000_000_000_000_000, 12_500, 0);
+        assert!(max_record_frames(p.seg) > 2 * p.max_frames);
+        assert_eq!(max_record_frames(0), RECORD_BURSTS);
+    }
 
     #[test]
     fn deep_records_fit_one_segment() {

@@ -23,12 +23,14 @@ pub struct Shadows {
     /// per-channel sample delays 0x1080 / 0x1084
     pub s1080: u32,
     pub s1084: u32,
+    /// timestamp control 0x40b8 (bit0 latch, bit2 clear the first-trigger stamp)
+    pub s40b8: u32,
 }
 
 impl Shadows {
     /// The stock register values at STOP after the hand-over of 2026-11-02 21:12 (CH1, 2.5 Mpts).
     pub const HANDOVER: Shadows =
-        Shadows { s4004: 0x1, s4008: 0x80_0001, s400c: 0x6000_0000, s1000: 0, s1010: 0x2000_0000, s4080: 0x4000_0010, s1004: 0x0400_0000, s4020: 0x2001, s1080: 0x01e0_0000, s1084: 0 };
+        Shadows { s4004: 0x1, s4008: 0x80_0001, s400c: 0x6000_0000, s1000: 0, s1010: 0x2000_0000, s4080: 0x4000_0010, s1004: 0x0400_0000, s4020: 0x2001, s1080: 0x01e0_0000, s1084: 0, s40b8: 0 };
 }
 
 /// Read-out window: `n` points from memory point `start`, interleave factor `ratio`, FSM channel mask `fsm`.
@@ -178,11 +180,22 @@ pub fn readout_play4(win: &Window, sh: &mut Shadows, first: u32, count: u32) -> 
 
 /// Arm `n` frames from frame `first` (stop sequence, type-2 run, record sequence with position 0, FSM run); 29 writes. Then poll 0x4080 for `PLAYINFO_DONE`.
 pub fn arm(fsm: u32, sh: &mut Shadows, first: u32, n: u32) -> Vec<Write> {
+    record_run(fsm, sh, first, n, 0)
+}
+
+/// Hardware segmented recording (stock record state 0xb, docs/fork/specs/03-segmented-timestamps.md 1.2 steps 2..7):
+/// `n` frames from frame 0, the FPGA re-arms itself between them and waits `interval_ticks` x 6.4 ns (0x4068) after
+/// each. The same 29 writes as `arm`; with interval 0 they are identical.
+pub fn record_arm(fsm: u32, sh: &mut Shadows, n: u32, interval_ticks: u32) -> Vec<Write> {
+    record_run(fsm, sh, 0, n, interval_ticks)
+}
+
+fn record_run(fsm: u32, sh: &mut Shadows, first: u32, n: u32, interval_ticks: u32) -> Vec<Write> {
     let mut w = Vec::new();
     stop_sequence(&mut w, sh);
     set_run_prologue(&mut w, sh);
     w.push((0x406c, 0));
-    w.push((0x4068, 0));
+    w.push((0x4068, interval_ticks));
     sh.s400c = (sh.s400c & 0x89ff_ffff) | 0x3000_0000;
     w.push((0x400c, sh.s400c));
     w.push((0x4010, first));
@@ -197,6 +210,46 @@ pub fn arm(fsm: u32, sh: &mut Shadows, first: u32, n: u32) -> Vec<Write> {
     sh.s4004 |= 1;
     w.push((0x4004, sh.s4004));
     w
+}
+
+/// One tick of the FSM delay 0x4068 and the acquisition timeout 0x406c: 6.4 ns.
+pub const FSM_TICK_FS: i128 = 6_400_000;
+
+/// 0x4068 value for a record interval of `fs` femtoseconds (truncated like the stock value_fs / 6,400,000), saturated
+/// at the register width.
+pub fn interval_ticks(fs: i128) -> u32 {
+    (fs.max(0) / FSM_TICK_FS).min(u32::MAX as i128) as u32
+}
+
+/// Timestamp registers (spec 03, 1.1): latched stamp, control, first-trigger stamp. Low word first, high word at +4.
+pub mod stamp {
+    pub const LATCHED: u32 = 0x40b0;
+    pub const CTRL: u32 = 0x40b8;
+    pub const FIRST: u32 = 0x40c0;
+    /// 0x40b8 bit0 (write): copy the current stamp into 0x40b0/0x40b4
+    pub const LATCH: u32 = 1 << 0;
+    /// 0x40b8 bit1 (read): the first-trigger stamp 0x40c0/0x40c4 is valid
+    pub const FIRST_VALID: u32 = 1 << 1;
+    /// 0x40b8 bit2 (write): clear the first-trigger stamp
+    pub const FIRST_CLEAR: u32 = 1 << 2;
+}
+
+/// Clears the first-trigger stamp: 0x40b8 bit2 set, then cleared (stock `setTimeStampFirstClr`).
+pub fn ts_first_clear(sh: &mut Shadows) -> Vec<Write> {
+    sh.s40b8 |= stamp::FIRST_CLEAR;
+    let a = (stamp::CTRL, sh.s40b8);
+    sh.s40b8 &= !stamp::FIRST_CLEAR;
+    vec![a, (stamp::CTRL, sh.s40b8)]
+}
+
+/// Latches the stamp into 0x40b0/0x40b4: 0x40b8 bit0 cleared, set, cleared (stock `getTimeStamp`). Read the pair after.
+pub fn ts_latch(sh: &mut Shadows) -> Vec<Write> {
+    sh.s40b8 &= !stamp::LATCH;
+    let a = (stamp::CTRL, sh.s40b8);
+    sh.s40b8 |= stamp::LATCH;
+    let b = (stamp::CTRL, sh.s40b8);
+    sh.s40b8 &= !stamp::LATCH;
+    vec![a, b, (stamp::CTRL, sh.s40b8)]
 }
 
 /// Auto trigger (`auto`, `t1`, `t2`):
@@ -246,6 +299,41 @@ mod tests {
         // the read-out after an arm clears bit25 again
         let r = readout(&WIN, &mut sh);
         assert_eq!(r[6], (0x400c, 0x2000_0000));
+    }
+
+    // Break it catches: a record arm that differs from the verified batch arm in anything but the 0x4068 interval, an
+    // interval in 4 ns instead of 6.4 ns ticks, a stamp pulse that leaves bit 0 or bit 2 set.
+    #[test]
+    fn record_arm_is_the_batch_arm_with_an_interval() {
+        let (mut a, mut b) = (Shadows::HANDOVER, Shadows::HANDOVER);
+        assert_eq!(record_arm(1, &mut a, 100, 0), arm(1, &mut b, 0, 100));
+        assert_eq!(a, b);
+        // 1 ms = 156,250 ticks of 6.4 ns (spec 03, 4)
+        assert_eq!(interval_ticks(1_000_000_000_000), 156_250);
+        assert_eq!((interval_ticks(-5), interval_ticks(6_399_999), interval_ticks(i128::MAX)), (0, 0, u32::MAX));
+        let mut c = Shadows::HANDOVER;
+        let w = record_arm(1, &mut c, 100, 156_250);
+        let d = arm(1, &mut Shadows::HANDOVER, 0, 100);
+        let diff: Vec<usize> = (0..w.len()).filter(|&i| w[i] != d[i]).collect();
+        assert_eq!(diff.len(), 1);
+        assert_eq!(w[diff[0]], (0x4068, 156_250));
+        // the full sequence of `seq::State::record_steps` (stamp clear, record arm) against the fixture from spec 03 1.2
+        let mut sh = Shadows::HANDOVER;
+        let mut v = ts_first_clear(&mut sh);
+        v.extend(record_arm(1, &mut sh, 100, 156_250));
+        assert_eq!(text(&v), include_str!("../../testdata/record-arm-writes.txt"));
+    }
+
+    #[test]
+    fn stamp_pulses_leave_the_control_clear() {
+        let mut sh = Shadows { s40b8: 0x10, ..Shadows::HANDOVER };
+        assert_eq!(ts_first_clear(&mut sh), [(0x40b8, 0x14), (0x40b8, 0x10)]);
+        assert_eq!(ts_latch(&mut sh), [(0x40b8, 0x10), (0x40b8, 0x11), (0x40b8, 0x10)]);
+        assert_eq!(sh.s40b8, 0x10);
+        let mut sh = Shadows { s40b8: 0x5, ..Shadows::HANDOVER };
+        ts_latch(&mut sh);
+        ts_first_clear(&mut sh);
+        assert_eq!(sh.s40b8 & 0x5, 0);
     }
 
     #[test]
