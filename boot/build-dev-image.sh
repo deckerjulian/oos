@@ -73,7 +73,8 @@ EOF
 # an update with another device tree is tried by kexec_load with that tree (docs/update.md)
 [ -x "$root/rootfs/out/kexec" ] || "$root/rootfs/build-kexec.sh"
 # Display > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md)
-[ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] || "$root/gpu/build.sh"
+# (again when the helper's source is newer than the built one: Mesa itself is kept in rootfs/out/mesa)
+{ [ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] && [ ! "$root/gpu/oos-gpu.c" -nt "$root/rootfs/out/gpu/bin/oos-gpu" ]; } || "$root/gpu/build.sh"
 
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
