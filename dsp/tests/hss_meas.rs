@@ -90,6 +90,116 @@ fn hss_complement_is_zero_common_mode() {
     assert!(ac.abs() < 1e-3, "ac {}", ac);
 }
 
+/// Both legs come from `generate`. The negative leg is the same clock with the rails swapped.
+#[test]
+fn hss_differential_pair_carries_a_planted_common_mode() {
+    let dt = 1.0 / 3.2e9;
+    let p = load("diff_p.f32");
+    let n = load("diff_n.f32");
+    let err = p.iter().zip(&n).map(|(a, b)| (a + b).abs()).fold(0.0f32, f32::max);
+    assert!(err < 1e-6, "rails-swapped leg is not the complement: {err}");
+    assert!(eye::dc_common(&p, &n).abs() < 1e-4, "{}", eye::dc_common(&p, &n));
+    assert!(eye::diff_crossover(&p, &n).abs() < 0.02, "{}", eye::diff_crossover(&p, &n));
+    assert!(eye::ac_common_pp(&p, Some(&n), dt, false) < 1e-3);
+
+    // 50 mV of DC and a 20 mV peak sine, added to both legs the way supply noise rides a pair
+    let (vcm, amp, f) = (0.05, 0.02, 1e6);
+    let mut a = p.clone();
+    let mut b = n.clone();
+    for (k, (x, y)) in a.iter_mut().zip(b.iter_mut()).enumerate() {
+        let cm = (vcm + amp * (2.0 * std::f64::consts::PI * f * k as f64 * dt).sin()) as f32;
+        *x += cm;
+        *y += cm;
+    }
+    assert!(close(eye::dc_common(&a, &b), vcm, 0.02), "dc {}", eye::dc_common(&a, &b));
+    assert!(close(eye::ac_common_pp(&a, Some(&b), dt, false), 2.0 * amp, 0.02), "ac {}", eye::ac_common_pp(&a, Some(&b), dt, false));
+    assert!(close(eye::diff_crossover(&a, &b), vcm, 0.05), "x {}", eye::diff_crossover(&a, &b));
+}
+
+#[test]
+fn hss_rz_ones_is_a_half_height_pulse() {
+    // All-ones RZ at 100 Mb/s, sampled at 32 GS/s. Each bit is 400 mV for half a UI, then the midpoint.
+    // The 20–80 % edge is 500 ps, and nothing else is on.
+    let dt = 1.0 / 32e9;
+    let v = load("rz_ones.f32");
+    let a = analyze(&v, dt);
+    assert!(close(a.get(Meas::Vmax), 0.4, 0.01), "max {}", a.get(Meas::Vmax));
+    assert!(a.get(Meas::Vmin).abs() < 1e-3, "min {}", a.get(Meas::Vmin));
+    assert!(close(a.get(Meas::Freq), 100e6, 0.01), "freq {}", a.get(Meas::Freq));
+    assert!(close(a.get(Meas::PDuty), 50.0, 0.05), "duty {}", a.get(Meas::PDuty));
+    let want = rise_10_90(500e-12);
+    assert!(close(a.get(Meas::Rise), want, 0.05), "rise {} want {}", a.get(Meas::Rise), want);
+    assert!(close(a.get(Meas::Fall), want, 0.05), "fall {}", a.get(Meas::Fall));
+}
+
+#[test]
+fn hss_manchester_ones_is_a_full_rate_square() {
+    // All-ones Manchester at 100 Mb/s: high for half a UI, low for half a UI.
+    let dt = 1.0 / 32e9;
+    let v = load("manchester_ones.f32");
+    let a = analyze(&v, dt);
+    assert!(close(a.get(Meas::Vmax), 0.4, 0.01), "max {}", a.get(Meas::Vmax));
+    assert!(close(a.get(Meas::Vmin), -0.4, 0.01), "min {}", a.get(Meas::Vmin));
+    assert!(close(a.get(Meas::Freq), 100e6, 0.01), "freq {}", a.get(Meas::Freq));
+    assert!(close(a.get(Meas::PDuty), 50.0, 0.05), "duty {}", a.get(Meas::PDuty));
+    let want = rise_10_90(500e-12);
+    assert!(close(a.get(Meas::Rise), want, 0.05), "rise {} want {}", a.get(Meas::Rise), want);
+    assert!(close(a.get(Meas::Fall), want, 0.05), "fall {}", a.get(Meas::Fall));
+}
+
+#[test]
+fn hss_pcie4_nominal_opens_an_eye() {
+    // PCIe 4.0 Nominal preset: 16 Gb/s PRBS-31, ±500 mV, 20 ps edge, 12 GHz
+    // Butterworth (order 3), 4.5 dB de-emphasis, 0.5 % down-spread SSC at 33 kHz,
+    // 1.2 ps RJ, 4 ps peak PJ at 8 MHz, 5 mV RMS noise.
+    // 65 536 samples at 256 GS/s is 4 096 UI. That window is 256 ns, so the 33 kHz
+    // triangle is a single slice and the unit interval sits about 0.25 % off 62.5 ps.
+    let dt = 1.0 / 256e9;
+    let v = load("pcie4_nominal.f32");
+    let a = analyze(&v, dt);
+    let c = clock_of(&v, dt, 16e9);
+    let (lo, hi) = v.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |s, &x| (s.0.min(x), s.1.max(x)));
+    let mut eye = eye::Eye::new(160, 160, 2, lo, hi);
+    eye.accumulate(&v, dt, &c);
+    let m = eye.measure(c.period);
+    let tie = eye::tie(&c.edges, &c);
+    let j = eye::jitter(&tie);
+    eprintln!(
+        "pcie4 ui={:.3} ps vmax={:.3} vmin={:.3} top={:.3} base={:.3} rise={:.2} ps fall={:.2} ps eye_amp={:.3} height={:.3} width={:.3} UI cross={:.1}% q={:.1} tj12={:.2} ps rj={:.2} ps dj={:.2} ps edges={}",
+        c.period * 1e12,
+        a.get(Meas::Vmax),
+        a.get(Meas::Vmin),
+        a.get(Meas::Vtop),
+        a.get(Meas::Vbase),
+        a.get(Meas::Rise) * 1e12,
+        a.get(Meas::Fall) * 1e12,
+        m.amplitude,
+        m.height,
+        m.width / c.period,
+        m.crossing_pct,
+        m.q_factor,
+        j.tj_pp * 1e12,
+        j.rj_rms * 1e12,
+        j.dj_pp * 1e12,
+        c.edges.len(),
+    );
+    // the record starts where the down-spread triangle is +0.25 %, so the UI is 62.34 ps
+    assert!(close(c.period, 62.5e-12 / 1.0025, 0.005), "ui {}", c.period);
+    // settled levels are the rails after 4.5 dB of de-emphasis: 500 mV / 10^(4.5/20)
+    let settled = 0.5 / 10f64.powf(4.5 / 20.0);
+    assert!(close(a.get(Meas::Vtop), settled, 0.03), "top {}", a.get(Meas::Vtop));
+    assert!(close(a.get(Meas::Vbase), -settled, 0.03), "base {}", a.get(Meas::Vbase));
+    // transition bits still reach the rails; the 12 GHz filter leaves an edge near 30 ps
+    assert!(a.get(Meas::Vmax) > 0.45 && a.get(Meas::Vmin) < -0.45, "levels {} {}", a.get(Meas::Vmax), a.get(Meas::Vmin));
+    assert!(a.get(Meas::Rise) > 20e-12 && a.get(Meas::Rise) < 45e-12, "rise {}", a.get(Meas::Rise));
+    assert!(a.get(Meas::Fall) > 20e-12 && a.get(Meas::Fall) < 45e-12, "fall {}", a.get(Meas::Fall));
+    assert!(m.amplitude > 0.55, "amp {}", m.amplitude);
+    assert!(m.height > 0.15, "height {}", m.height);
+    assert!(m.width > 0.6 * c.period, "width {}", m.width);
+    assert!((m.crossing_pct - 50.0).abs() < 5.0, "cross {}", m.crossing_pct);
+    assert!(j.rj_rms > 0.8e-12 && j.rj_rms < 2.5e-12, "rj {}", j.rj_rms);
+}
+
 #[test]
 fn flat_conduction_is_fifty_milliohms() {
     // 0.5 V and 10 A for the whole on plateau. The ramps are only the edges.
