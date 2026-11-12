@@ -96,6 +96,10 @@ pub trait Board: Sync + 'static {
     /// prints what the debug source would write (`--fpga-dry`), no hardware access
     fn dry(&self);
 
+    /// hardware segmented recording for the model's set-up: the most segments it holds, None where the board records
+    /// no hardware segments (roll, scan, logic analyser); the UI then records the segments in software
+    fn seg_max(&self, m: &Model) -> Option<usize>;
+
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
 
@@ -202,6 +206,43 @@ pub struct Shared {
     pub xadc: Option<(f32, f32)>,
     /// LA probe detect (GPIO 120, 1 = present), read about once a second; None = not read
     pub la_probe: Option<bool>,
+    /// hardware segmented recording
+    pub seg: HwSeg,
+}
+
+/// Where a hardware segmented recording is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SegPhase {
+    #[default]
+    Idle,
+    /// the FPGA records; nothing is transferred
+    Recording,
+    /// the segments are read back: their stamps, and the frames into the queue
+    Reading,
+    /// all recorded segments are read; single segments can be shown (`HwSeg::want`)
+    Done,
+}
+
+/// A hardware segmented recording, shared by the UI and the acquisition thread.
+#[derive(Default)]
+pub struct HwSeg {
+    /// UI: a new number starts a recording (RUN or SINGLE pressed with hardware segments)
+    pub run: u64,
+    /// UI: the acquisition runs; false ends a recording early
+    pub running: bool,
+    /// UI: show this segment (the thread plays it and puts it in `shown`)
+    pub want: Option<u32>,
+    /// thread: the recording `run` the state below belongs to
+    pub done_run: u64,
+    pub phase: SegPhase,
+    /// thread: segments asked for, recorded, read back
+    pub total: u32,
+    pub recorded: u32,
+    pub read: u32,
+    /// thread: trigger time of each segment read back, seconds since the first trigger (None: no stamp)
+    pub times: Vec<Option<f64>>,
+    /// thread: the segment asked for with `want`
+    pub shown: Option<(u32, Frame)>,
 }
 
 /// Frames kept for the UI; older ones are dropped when the screen cannot keep up.

@@ -313,7 +313,7 @@ mod tests {
         assert_eq!((interval_ticks(-5), interval_ticks(6_399_999), interval_ticks(i128::MAX)), (0, 0, u32::MAX));
         let mut c = Shadows::HANDOVER;
         let w = record_arm(1, &mut c, 100, 156_250);
-        let d = arm(1, &mut Shadows::HANDOVER, 0, 100);
+        let d = arm(1, &mut Shadows::HANDOVER.clone(), 0, 100);
         let diff: Vec<usize> = (0..w.len()).filter(|&i| w[i] != d[i]).collect();
         assert_eq!(diff.len(), 1);
         assert_eq!(w[diff[0]], (0x4068, 156_250));

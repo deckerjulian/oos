@@ -55,6 +55,17 @@ pub struct Raw {
     pub t0: f64,
 }
 
+/// State of a hardware segmented recording as the UI sees it (`Source::seg_sync`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SegView {
+    pub phase: crate::board::SegPhase,
+    pub total: u32,
+    pub recorded: u32,
+    pub read: u32,
+    /// frames of the read-back still in the queue
+    pub queued: bool,
+}
+
 pub enum Source {
     Demo { t: f64 },
     Replay { words: Vec<u16>, xinc: f64, yinc: f64, yorg: f64, yref: f64 },
@@ -501,6 +512,41 @@ impl Source {
             }
         }
         None
+    }
+
+    /// Hardware segments: tells the thread the recording number and whether the acquisition runs; returns phase,
+    /// segments asked for, recorded and read back, and whether frames are still queued. None without the hardware
+    /// source.
+    pub fn seg_sync(&self, run: u64, running: bool) -> Option<SegView> {
+        let Source::Hw { shared, .. } = self else { return None };
+        let mut g = shared.lock().unwrap();
+        (g.seg.run, g.seg.running) = (run, running);
+        let current = g.seg.done_run == run;
+        Some(SegView { phase: if current { g.seg.phase } else { crate::board::SegPhase::Idle }, total: g.seg.total, recorded: g.seg.recorded, read: g.seg.read, queued: !g.queue.is_empty() })
+    }
+
+    /// Hardware segments: the trigger times read back so far (seconds since the first trigger).
+    pub fn seg_times(&self) -> Vec<Option<f64>> {
+        match self {
+            Source::Hw { shared, .. } => shared.lock().unwrap().seg.times.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Hardware segments: asks the thread to play segment `k`; `seg_shown` delivers it.
+    pub fn seg_request(&self, k: u32) {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            (g.seg.want, g.seg.shown) = (Some(k), None);
+        }
+    }
+
+    /// Hardware segments: the segment asked for with `seg_request`, as a record for the screen.
+    pub fn seg_shown(&self, m: &Model) -> Option<(u32, Record)> {
+        let Source::Hw { shared, .. } = self else { return None };
+        let (k, f) = shared.lock().unwrap().seg.shown.take()?;
+        let window = m.time_per_div() as f64 * HDIV as f64;
+        Some((k, crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)))
     }
 
     /// Hardware source: takes every queued frame but the newest (the fast display path draws them; the newest stays

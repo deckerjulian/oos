@@ -707,6 +707,11 @@ pub struct Model {
     pub avg_count: u32,
     /// segmented recording: records per RUN/SINGLE (0 = off), browsed with the history afterwards
     pub segments: usize,
+    /// segments recorded by the FPGA (one arm, hardware re-arm and trigger stamps) instead of the software history;
+    /// experimental, not verified on the unit
+    pub seg_hw: bool,
+    /// hardware segments: wait after each segment before the next arm, seconds (0 = back to back)
+    pub seg_ivl: f32,
     pub mdepth: usize, // index into `mdepths()` (0 = auto)
     pub persist: usize, // index into PERSIST
     pub intensity: u32, // 10..100 %
@@ -1032,6 +1037,8 @@ impl Default for Model {
             acq: AcqMode::Normal,
             avg_count: 16,
             segments: 0,
+            seg_hw: false,
+            seg_ivl: 0.0,
             mdepth: 0,
             persist: 0,
             intensity: 60,

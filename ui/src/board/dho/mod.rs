@@ -115,6 +115,10 @@ impl Board for Dho {
         }
     }
 
+    fn seg_max(&self, m: &Model) -> Option<usize> {
+        hw::seg_max(m)
+    }
+
     fn depths(&self) -> &'static [(&'static str, u64)] {
         &DEPTHS
     }

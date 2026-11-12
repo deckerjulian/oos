@@ -9,7 +9,7 @@ use crate::board::{Frame, Slow};
 #[cfg(target_os = "linux")]
 use crate::board::{HwShared, Shared, QUEUE_MAX};
 use crate::model::*;
-use oos_hal::dho::seq::{Chan, Couple, Settings, Trig};
+use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
 use oos_hal::dho::{afe, hz, tpu};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
@@ -148,7 +148,33 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         trigger: hw_trigger(m),
         window: None,
         la,
+        segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m)).then(|| Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
     }
+}
+
+/// Hardware segments record ordinary triggered frames: not in roll or scan, not with the LA (its record layout and
+/// read are not worked out for them, spec 03 5.9).
+fn hw_segments_ok(m: &Model) -> bool {
+    slow_mode(m) == Slow::Off && !m.la_on()
+}
+
+/// Most hardware segments for the model's set-up (`Board::seg_max`): the whole-memory limit of its segment size.
+pub fn seg_max(m: &Model) -> Option<usize> {
+    if !hw_segments_ok(m) {
+        return None;
+    }
+    let s = settings(m, false);
+    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+    Some(hz::max_record_frames(p.seg) as usize)
+}
+
+/// Settings for reading hardware segments back: the live batch plan (compression above 1 M points) with the header
+/// on, at most ~4 MB and half the UI queue per read.
+pub fn seg_read_plan(s: &Settings, p: &hz::Params) -> Settings {
+    let b = batch_plan(s, p);
+    let fb = oos_hal::dho::seq::frame_bytes(&oos_hal::dho::seg::read_settings(&b, 1), p).max(1);
+    let k = ((4_000_000 / fb) as u32).clamp(1, (crate::board::QUEUE_MAX / 2) as u32);
+    oos_hal::dho::seg::read_settings(&b, k)
 }
 
 /// Time of the first LA word of a roll frame relative to frame point `pre`, so that the newest word (index `n_la` - 1,
@@ -281,7 +307,7 @@ pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
     let ch = oos_hal::dho::seq::decode_volts(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)));
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = s.compress.max(1) as usize;
-    if !hdr.is_empty() {
+    if !hdr.is_empty() && header_probe() {
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
         let v: &Vec<f32> = &ch[tc];
         log_header(hdr, v, s, p.pre as usize / k, k);
@@ -413,6 +439,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut dma = oos_hal::dho::bus::DmaBuf::new();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
+        // the hardware segmented recording in progress or read back
+        let mut segrun: Option<SegRun> = None;
         loop {
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
@@ -431,6 +459,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let req = out.lock().unwrap().cal_req.take();
             if let Some((chans, zero, adc_cores)) = req {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 if rolling.take().is_some() {
                     bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
                 }
@@ -470,6 +499,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             };
             if afg_want != afg_done {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 // models without the generator (non-S): its GPIO lines and FPGA block are never touched
                 if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.has_gen()) {
                     if afg_io.is_none() {
@@ -502,6 +532,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             if current.as_ref().map_or(true, |c| c.0 != want) || mode != want_mode {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 mode = want_mode;
                 if rolling.take().is_some() {
                     bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
@@ -701,6 +732,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             if rolling.take().is_some() {
                 bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
             }
+            if s.segments.is_some() {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                if let Err(e) = seg_step(&mut segrun, &s, &p, &mut state, &mut bar, &mut c2h, &mut dma, &out, &mut n, stamp) {
+                    status(format!("segments: {}", e));
+                    seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                continue;
+            }
             let b = batch_plan(&s, &p);
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
             // armed ahead with these settings and since the last SINGLE press: only the wait is left
@@ -767,6 +807,136 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         }
     });
     shared
+}
+
+/// A hardware segmented recording (docs/fork/specs/03-segmented-timestamps.md 3.2).
+#[cfg(target_os = "linux")]
+struct SegRun {
+    /// `HwSeg::run` it belongs to
+    run: u64,
+    n: u32,
+    recording: bool,
+    /// segments recorded; the next one to read back
+    count: u32,
+    next: u32,
+    /// read the frames into the queue too (the recording ended by itself, not by STOP)
+    deliver: bool,
+    tl: oos_hal::dho::seg::Timeline,
+}
+
+/// Ends a recording that is still in the FPGA before anything else writes it, and forgets the segments (their settings
+/// are no longer the configured ones).
+#[cfg(target_os = "linux")]
+fn seg_abort(run: &mut Option<SegRun>, state: &mut oos_hal::dho::seq::State, bar: &mut oos_hal::dho::bus::Bar1, c2h: &mut std::fs::File, out: &HwShared) {
+    let Some(r) = run.take() else { return };
+    if r.recording {
+        if let Err(e) = oos_hal::dho::seg::stop(state, bar, c2h) {
+            eprintln!("oos-ui hw: segments stop: {}", e);
+        }
+    }
+    let mut g = out.lock().unwrap();
+    (g.seg.phase, g.seg.shown) = (crate::board::SegPhase::Idle, None);
+    g.seg.times.clear();
+}
+
+/// One step of the hardware segmented recording: start on a new `HwSeg::run`, poll the progress every 10 ms (no
+/// transfer), then stop and read back one batch per step (stamps by single-frame plays, frames into the queue), then
+/// play single segments on request.
+#[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments)]
+fn seg_step(run: &mut Option<SegRun>, s: &Settings, p: &hz::Params, state: &mut oos_hal::dho::seq::State, bar: &mut oos_hal::dho::bus::Bar1, c2h: &mut std::fs::File, dma: &mut oos_hal::dho::bus::DmaBuf, out: &HwShared, n: &mut u64, stamp: u64) -> Result<(), String> {
+    use crate::board::SegPhase;
+    use oos_hal::dho::seg;
+    let (cmd, running, want) = {
+        let g = out.lock().unwrap();
+        (g.seg.run, g.seg.running, g.seg.want)
+    };
+    if running && run.as_ref().map_or(0, |r| r.run) != cmd {
+        if run.as_ref().is_some_and(|r| r.recording) {
+            seg::stop(state, bar, c2h)?;
+        }
+        let total = seg::start(state, s, p, bar, c2h)?;
+        *run = Some(SegRun { run: cmd, n: total, recording: true, count: 0, next: 0, deliver: true, tl: seg::Timeline::new(None) });
+        let mut g = out.lock().unwrap();
+        g.seg = crate::board::HwSeg { run: g.seg.run, running: g.seg.running, done_run: cmd, phase: SegPhase::Recording, total, ..Default::default() };
+        return Ok(());
+    }
+    let Some(r) = run.as_mut() else {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        return Ok(());
+    };
+    if r.recording {
+        let x = seg::status(bar, r.n);
+        out.lock().unwrap().seg.recorded = x.recorded;
+        if !x.complete(r.n) && running {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            return Ok(());
+        }
+        let tag = seg::first_trigger(bar);
+        seg::stop(state, bar, c2h)?;
+        (r.recording, r.count, r.next, r.deliver, r.tl) = (false, x.recorded, 0, running, seg::Timeline::new(tag));
+        eprintln!("oos-ui hw: segments: {} of {} recorded, first-trigger stamp {:?}", x.recorded, r.n, tag);
+        out.lock().unwrap().seg.phase = if r.count == 0 { SegPhase::Done } else { SegPhase::Reading };
+        return Ok(());
+    }
+    let rs = seg_read_plan(s, p);
+    let fb = oos_hal::dho::seq::frame_bytes(&rs, p);
+    if r.next < r.count {
+        r.deliver &= running;
+        let cnt = rs.frames.min(r.count - r.next);
+        if r.deliver && out.lock().unwrap().queue.len() + cnt as usize > crate::board::QUEUE_MAX {
+            // the screen has not taken the last batch yet
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            return Ok(());
+        }
+        let st = seg::stamps(state, &rs, p, bar, c2h, r.next, cnt)?;
+        if r.next == 0 {
+            // hardware check 5.3: header words 5..7 against the latch, frame by frame
+            for (k, x) in st.iter().take(8).enumerate() {
+                eprintln!("oos-ui hw: segment {} latch {:?} header {:?}", k, x.latch, x.header);
+            }
+        }
+        let times: Vec<Option<f64>> = st.iter().map(|x| r.tl.push(*x)).collect();
+        let mut frames = Vec::new();
+        if r.deliver {
+            seg::read(state, &rs, p, bar, c2h, dma, r.next, cnt)?;
+            frames = dma
+                .data()
+                .chunks_exact(fb)
+                .take(cnt as usize)
+                .map(|chunk| {
+                    *n += 1;
+                    Frame { stamp, ..decode(chunk, &rs, p, *n) }
+                })
+                .collect();
+        }
+        r.next += cnt;
+        let mut g = out.lock().unwrap();
+        g.seg.times.extend(times);
+        g.seg.read = r.next;
+        if let Some(f) = frames.last() {
+            g.frame = f.clone();
+        }
+        g.queue.extend(frames);
+        if r.next >= r.count {
+            g.seg.phase = SegPhase::Done;
+        }
+        return Ok(());
+    }
+    // done: single segments on request
+    match want {
+        Some(k) if k < r.count => {
+            out.lock().unwrap().seg.want = None;
+            let one = oos_hal::dho::seg::read_settings(&rs, 1);
+            seg::read(state, &one, p, bar, c2h, dma, k, 1)?;
+            *n += 1;
+            let f = Frame { stamp, ..decode(&dma.data()[..fb.min(dma.data().len())], &one, p, *n) };
+            out.lock().unwrap().seg.shown = Some((k, f));
+        }
+        Some(_) => out.lock().unwrap().seg.want = None,
+        None => std::thread::sleep(std::time::Duration::from_millis(10)),
+    }
+    Ok(())
 }
 
 /// Writes the scan points `v` into the sweep picture (`width` points) from `at`, wrapping at the right edge.
@@ -882,6 +1052,36 @@ mod tests {
         }
         assert_eq!(settings(&m, false).depth, m.max_mem() as i128);
         assert_eq!(m.max_mem(), 31_250_000);
+    }
+
+    // Break it catches: hardware segments requested in roll or with the LA, a read-back batch larger than the UI queue
+    // or without the header that carries the stamp.
+    #[test]
+    fn hardware_segments_only_where_they_record() {
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
+        (m.segments, m.seg_hw, m.seg_ivl) = (500, true, 0.0);
+        let s = settings(&m, false);
+        assert_eq!(s.segments, Some(Segments { n: 500, interval: 0.0 }));
+        assert_eq!(seg_max(&m), Some(61_440));
+        m.seg_hw = false;
+        assert_eq!(settings(&m, false).segments, None);
+        m.seg_hw = true;
+        m.la.on = true;
+        assert_eq!((settings(&m, false).segments, seg_max(&m)), (None, None));
+        m.la.on = false;
+        m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+        assert_eq!(settings(&m, false).segments, None);
+        // read-back: header on, at most half the queue, ~4 MB
+        for t in [1e-7, 1e-5, 1e-3] {
+            m.tscale = tscales().iter().position(|&x| (x as f64 - t).abs() < t * 1e-3).unwrap();
+            let s = settings(&m, false);
+            let p = oos_hal::dho::seq::State::handover(s.mask, None).configure(&s, None, None).unwrap().1;
+            let r = seg_read_plan(&s, &p);
+            let fb = oos_hal::dho::seq::frame_bytes(&r, &p);
+            assert!(r.header && r.frames >= 1 && r.frames as usize <= crate::board::QUEUE_MAX / 2);
+            assert!(r.frames == 1 || r.frames as usize * fb <= 4_000_000, "{} x {}", r.frames, fb);
+        }
     }
 
     #[test]

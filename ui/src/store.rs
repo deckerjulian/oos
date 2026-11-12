@@ -195,6 +195,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("acq", name(m.acq));
     kv("avg_count", m.avg_count.to_string());
     kv("segments", m.segments.to_string());
+    kv("seg_hw", m.seg_hw.to_string());
+    kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
     kv("persist", m.persist.to_string());
     kv("intensity", m.intensity.to_string());
@@ -450,7 +452,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "hold" => m.hold = p_f32(v)?,
         "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
         "avg_count" => m.avg_count = p_u32(v)?.max(1),
-        "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_MAX),
+        "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_HW_MAX),
+        "seg_hw" => m.seg_hw = p_bool(v)?,
+        "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
         "persist" => m.persist = p_idx(v, PERSIST.len())?,
         "intensity" => m.intensity = p_u32(v)?.clamp(10, 100),
@@ -1068,6 +1072,19 @@ mod tests {
         write(&d.join("ok.txt"), b"2").unwrap();
         assert_eq!(std::fs::read(d.join("ok.txt")).unwrap(), b"2");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // Break it catches: hardware segment settings lost in a setup, a count clamped to the software limit, a negative
+    // or absurd interval reaching 0x4068.
+    #[test]
+    fn segment_settings_round_trip() {
+        let mut m = Model::default();
+        (m.segments, m.seg_hw, m.seg_ivl) = (20_000, true, 1e-3);
+        let back = parse_setup(&setup_text(&m)).unwrap();
+        assert_eq!((back.segments, back.seg_hw, back.seg_ivl), (20_000, true, 1e-3));
+        let d = parse_setup("segments = 900000\nseg_interval = -1\n").unwrap();
+        assert_eq!((d.segments, d.seg_hw, d.seg_ivl), (crate::ui::SEG_HW_MAX, false, 0.0));
+        assert_eq!(parse_setup("seg_interval = 1e9\n").unwrap().seg_ivl, crate::ui::SEG_IVL_MAX);
     }
 
     #[test]

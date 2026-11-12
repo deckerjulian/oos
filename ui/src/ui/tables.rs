@@ -11,6 +11,8 @@ use super::*;
 pub(super) enum TableKind {
     Decode,
     Search,
+    /// hardware segments: trigger time since the first trigger, step from the previous one
+    Segments,
 }
 
 /// Second pane under the plot.
@@ -62,6 +64,21 @@ impl Ui {
         self.search_events().into_iter().enumerate().map(|(i, t)| EventRow { t, who: format!("{}", i + 1), text: self.m.trig_type.name().to_string(), ok: true }).collect()
     }
 
+    /// One row per hardware segment read back: time since the first trigger (NaN without a stamp), number, step.
+    fn segment_rows(&self) -> Vec<EventRow> {
+        let t = &self.seg_times;
+        (0..t.len())
+            .map(|k| {
+                let d = match (t[k], k.checked_sub(1).and_then(|j| t[j])) {
+                    (Some(a), Some(b)) => format!("\u{394}t {}", si(a - b, "s")),
+                    (Some(_), None) => String::new(),
+                    (None, _) => "no stamp".into(),
+                };
+                EventRow { t: t[k].unwrap_or(f64::NAN), who: format!("{}", k + 1), text: d, ok: t[k].is_some() }
+            })
+            .collect()
+    }
+
     /// The decoder events as text, one per line: time, decoder, content (SCPI).
     pub fn events_text(&self) -> String {
         self.decode_events().iter().map(|r| format!("{:e},{},{},{}", r.t, r.who, r.text, if r.ok { "ok" } else { "error" })).collect::<Vec<_>>().join("\n")
@@ -71,6 +88,7 @@ impl Ui {
         match k {
             TableKind::Decode => self.decode_events(),
             TableKind::Search => self.search_rows(),
+            TableKind::Segments => self.segment_rows(),
         }
     }
 
@@ -104,6 +122,7 @@ impl Ui {
         let title = match k {
             TableKind::Decode => format!("Decoder events \u{b7} {}", rows.len()),
             TableKind::Search => format!("Search events \u{b7} {}", rows.len()),
+            TableKind::Segments => format!("Segments \u{b7} {}", rows.len()),
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
         for (b, t) in Self::table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]) {
@@ -142,7 +161,9 @@ impl Ui {
             self.table_top = (self.table_top + fit).min(last);
         } else if y >= r.y + HEAD_H {
             let i = self.table_top + ((y - r.y - HEAD_H) / ROW_H) as usize;
-            if let Some(e) = rows.get(i) {
+            if k == TableKind::Segments && i < rows.len() {
+                self.seg_show(i);
+            } else if let Some(e) = rows.get(i) {
                 let t = e.t;
                 self.go_to_time(t);
             }

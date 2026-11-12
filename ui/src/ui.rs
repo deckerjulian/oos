@@ -80,9 +80,16 @@ const DLG_CTRL: i32 = 40;
 const HISTORY: usize = 200;
 /// LA words a history entry keeps: above this only the newest record has its LA (200 x 1 M words = 400 MB at most).
 const HISTORY_LA_WORDS: usize = 1_000_000;
-/// Segment counts of the segmented recording (0 = off).
-pub const SEGMENTS: [usize; 7] = [0, 10, 50, 100, 200, 500, 1000];
+/// Segment counts of the segmented recording (0 = off); the menu offers those within the limit of the set-up
+/// (`Ui::seg_limit`).
+pub const SEGMENTS: [usize; 12] = [0, 10, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 20_000, 50_000];
+/// Most segments of the software recording (history RAM).
 pub const SEG_MAX: usize = 1000;
+/// Most hardware segments (the stock UI limit; the frame memory holds up to 491,520 of the smallest).
+pub const SEG_HW_MAX: usize = 100_000;
+/// Hardware segments: intervals after each segment (0x4068, at most 2^32 x 6.4 ns = 27 s).
+pub const SEG_IVLS: [f32; 8] = [0.0, 1e-6, 10e-6, 100e-6, 1e-3, 10e-3, 100e-3, 1.0];
+pub const SEG_IVL_MAX: f32 = 10.0;
 
 // dark theme
 const BG: Rgb = rgb(0x0a, 0x0a, 0x0b);
@@ -383,6 +390,11 @@ enum Item {
     AcqAvg,
     AcqDepth,
     AcqSeg,
+    /// segments recorded by the FPGA (`Model::seg_hw`)
+    AcqSegHw,
+    AcqSegIvl,
+    /// the trigger times of the hardware segments
+    AcqSegTable,
     MeasSrc,
     MeasAdd(Meas),
     MeasPair(usize),
@@ -709,6 +721,12 @@ pub struct Ui {
     pub fast_off: (f64, f64),
     /// segmented recording: records since the acquisition started, and whether it ran in the last frame
     seg_n: usize,
+    /// hardware segments: recording number told to the thread, its state, the segment shown (browsing), the trigger
+    /// times read back
+    seg_run: u64,
+    seg_view: Option<crate::wave::SegView>,
+    seg_pos: Option<usize>,
+    seg_times: Vec<Option<f64>>,
     was_running: bool,
     /// analysers (analysis.rs)
     azr: analysis::State,
@@ -904,6 +922,10 @@ impl Ui {
             fast_edges: [0; 4],
             fast_off: (0.0, 0.0),
             seg_n: 0,
+            seg_run: 0,
+            seg_view: None,
+            seg_pos: None,
+            seg_times: Vec::new(),
             was_running: false,
             azr: Default::default(),
             cal: Default::default(),
@@ -1398,12 +1420,21 @@ impl Ui {
         self.cal_poll();
         // segmented recording: a new RUN/SINGLE starts a new set of segments
         let running = self.m.run == RunState::Run;
+        let hw_seg = self.seg_hw_on();
         if running && !self.was_running && self.m.segments > 0 {
             self.seg_n = 0;
             self.history.clear();
             self.hist_pos = None;
+            if hw_seg {
+                self.seg_run += 1;
+                (self.seg_pos, self.seg_view) = (None, None);
+                self.seg_times.clear();
+            }
         }
         self.was_running = running;
+        if hw_seg {
+            self.seg_poll(running);
+        }
         let persist = PERSIST[self.m.persist].1;
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
         if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
@@ -1500,7 +1531,7 @@ impl Ui {
                             }
                         }
                         td += t1.elapsed().as_secs_f32() * 1000.0;
-                        if self.history.len() >= HISTORY.max(self.m.segments) {
+                        if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
                             self.history.pop_front();
                         }
                         // a deep LA record is tens of MB: the history keeps the LA of short records only
@@ -1514,7 +1545,8 @@ impl Ui {
                         self.records += 1;
                         if self.m.segments > 0 {
                             self.seg_n += 1;
-                            if self.seg_n >= self.m.segments {
+                            // hardware segments end when the thread has read them all back (`seg_poll`)
+                            if !hw_seg && self.seg_n >= self.seg_count() {
                                 self.m.run = RunState::Stop;
                                 self.toast(&format!("{} segments recorded", self.seg_n));
                                 break;
@@ -2835,7 +2867,15 @@ impl Ui {
         if self.m.touch_lock {
             x = backed_text(cv, &f.sb, x, y, "Touch locked \u{b7} tap Menu to unlock", AMBER) + 16;
         }
-        if let Some(i) = self.hist_pos {
+        let seg = self.seg_view.filter(|_| self.seg_hw_on()).and_then(|v| match (v.phase, self.seg_pos) {
+            (crate::board::SegPhase::Recording, _) => Some(format!("Recording {}/{}", v.recorded, v.total)),
+            (crate::board::SegPhase::Reading, _) => Some(format!("Reading {}/{}", v.read, v.recorded)),
+            (crate::board::SegPhase::Done, Some(i)) => Some(self.seg_label(i)),
+            _ => None,
+        });
+        if let Some(t) = seg {
+            x = backed_text(cv, &f.sb, x, y, &t, BLUE) + 16;
+        } else if let Some(i) = self.hist_pos {
             x = backed_text(cv, &f.sb, x, y, &format!("History {}/{}", i + 1, self.history.len()), BLUE) + 16;
         }
         if self.search_on {
@@ -3490,7 +3530,14 @@ impl Ui {
                 if self.m.acq == AcqMode::Average {
                     v.push(Item::AcqAvg);
                 }
-                v.extend([Item::AcqDepth, Item::AcqSeg, Item::Open(MenuId::Horizontal)]);
+                v.extend([Item::AcqDepth, Item::AcqSeg]);
+                if self.m.segments > 0 {
+                    v.push(Item::AcqSegHw);
+                }
+                if self.seg_hw_on() {
+                    v.extend([Item::AcqSegIvl, Item::AcqSegTable]);
+                }
+                v.push(Item::Open(MenuId::Horizontal));
                 v
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
@@ -3594,8 +3641,94 @@ impl Ui {
         g
     }
 
+    /// Hardware segments are recorded for the current set-up (else the software history records them).
+    fn seg_hw_on(&self) -> bool {
+        self.src.is_hw() && self.m.seg_hw && self.m.segments > 0 && board().seg_max(&self.m).is_some()
+    }
+
+    /// Most segments for the current set-up: the hardware limit with hardware segments, else the history limit.
+    fn seg_limit(&self) -> usize {
+        match board().seg_max(&self.m) {
+            Some(x) if self.m.seg_hw && self.src.is_hw() => x.min(SEG_HW_MAX),
+            _ => SEG_MAX,
+        }
+    }
+
+    /// Segments one recording takes.
+    fn seg_count(&self) -> usize {
+        self.m.segments.min(self.seg_limit())
+    }
+
+    /// The segment counts of the menu: the steps within the limit, and the limit itself.
+    fn seg_options(&self) -> Vec<usize> {
+        let lim = self.seg_limit();
+        let mut v: Vec<usize> = SEGMENTS.iter().copied().filter(|&n| n <= lim).collect();
+        if v.last() != Some(&lim) {
+            v.push(lim);
+        }
+        v
+    }
+
+    /// Hardware segments: tells the thread about RUN/STOP, takes the times when the read-back is done, stops when every
+    /// segment is on the screen, shows a segment asked for.
+    fn seg_poll(&mut self, running: bool) {
+        let Some(v) = self.src.seg_sync(self.seg_run, running) else { return };
+        let was = self.seg_view.map(|x| x.phase);
+        self.seg_view = Some(v);
+        if v.phase == crate::board::SegPhase::Done && was != Some(crate::board::SegPhase::Done) {
+            self.seg_times = self.src.seg_times();
+            if running && !v.queued {
+                self.m.run = RunState::Stop;
+                self.toast(&format!("{} segments recorded", v.recorded));
+            }
+        } else if running && v.phase == crate::board::SegPhase::Done && !v.queued {
+            self.m.run = RunState::Stop;
+            self.toast(&format!("{} segments recorded", v.recorded));
+        }
+        if let Some((k, rec)) = self.src.seg_shown(&self.m) {
+            self.seg_pos = Some(k as usize);
+            self.last[0] = Some(rec);
+            self.cleared = false;
+            self.measure_last();
+        }
+    }
+
+    /// "Segment k/N", the trigger time since the first trigger and the step from the previous segment.
+    fn seg_label(&self, i: usize) -> String {
+        let n = self.seg_view.map_or(0, |v| v.recorded);
+        let t = |k: usize| self.seg_times.get(k).copied().flatten();
+        let mut s = format!("Segment {}/{}", i + 1, n);
+        if let Some(x) = t(i) {
+            s += &format!(" \u{b7} {}", si(x, "s"));
+            if let Some(p) = i.checked_sub(1).and_then(t) {
+                s += &format!(" \u{b7} \u{394}t {}", si(x - p, "s"));
+            }
+        }
+        s
+    }
+
+    /// Hardware segments: the trigger times since the first trigger, comma separated, in seconds (9.9E37: no stamp).
+    pub fn seg_times_text(&self) -> String {
+        self.seg_times.iter().map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x))).collect::<Vec<_>>().join(",")
+    }
+
+    /// Hardware segments: shows segment `i` (played from the FPGA memory), stopping the acquisition.
+    pub(super) fn seg_show(&mut self, i: usize) {
+        self.m.run = RunState::Stop;
+        self.seg_pos = Some(i);
+        self.src.seg_request(i as u32);
+        self.toast(&self.seg_label(i));
+    }
+
     /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
     fn history_step(&mut self, d: i32) {
+        // hardware segments: any of them, played on demand
+        if let Some(v) = self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0) {
+            let n = v.recorded as i32;
+            let cur = self.seg_pos.unwrap_or(n as usize - 1) as i32;
+            let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
+            return self.seg_show(i as usize);
+        }
         let n = self.history.len();
         if n == 0 {
             return self.toast("History empty");
@@ -4106,7 +4239,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::MaskCreate | Item::MaskReset => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::AcqSegTable | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -4245,6 +4378,9 @@ impl Ui {
             Item::AcqMode => "Mode",
             Item::AcqAvg => "Averages",
             Item::AcqSeg => "Segments",
+            Item::AcqSegHw => "HW segments",
+            Item::AcqSegIvl => "Seg. interval",
+            Item::AcqSegTable => "Segment times",
             Item::AcqDepth => "Memory",
             Item::MeasSrc => "Source A",
             Item::MeasSrcB => "Source B",
@@ -4435,7 +4571,9 @@ impl Ui {
                 AcqMode::HiRes => "High res".into(),
             },
             Item::AcqAvg => format!("{}", m.avg_count),
-            Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
+            Item::AcqSeg => if m.segments == 0 { "Off".into() } else { self.seg_count().to_string() },
+            Item::AcqSegHw => onoff(m.seg_hw),
+            Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => format!("CH{}", self.meas_src + 1),
             Item::MeasSrcB => format!("CH{}", self.meas_src_b + 1),
@@ -4545,8 +4683,35 @@ impl Ui {
         }
     }
 
+    /// The segment items of the Acquire menu; false for any other item.
+    fn seg_adjust(&mut self, it: Item, d: i32) -> bool {
+        let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
+        match it {
+            Item::AcqSeg => {
+                let o = self.seg_options();
+                let cur = if self.m.segments == 0 { 0 } else { self.seg_count() };
+                let i = o.iter().position(|&n| n >= cur).unwrap_or(0);
+                self.m.segments = o[cyc(i, o.len(), d)];
+            }
+            Item::AcqSegHw => {
+                self.m.seg_hw = !self.m.seg_hw;
+                // the other limit applies from now on
+                self.m.segments = self.seg_count();
+            }
+            Item::AcqSegIvl => {
+                let i = SEG_IVLS.iter().position(|&x| x >= self.m.seg_ivl).unwrap_or(0);
+                self.m.seg_ivl = SEG_IVLS[cyc(i, SEG_IVLS.len(), d)];
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn adjust(&mut self, it: Item, d: i32) {
         if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) {
+            return;
+        }
+        if self.seg_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -4701,10 +4866,6 @@ impl Ui {
                 let all = [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes];
                 let i = all.iter().position(|&x| x == m.acq).unwrap();
                 m.acq = all[cyc(i, 4, d)];
-            }
-            Item::AcqSeg => {
-                let i = SEGMENTS.iter().position(|&n| n >= m.segments).unwrap_or(0);
-                m.segments = SEGMENTS[cyc(i, SEGMENTS.len(), d)];
             }
             Item::AcqAvg => {
                 let i = AVERAGES.iter().position(|&x| x == m.avg_count).unwrap_or(3);
@@ -5201,6 +5362,7 @@ impl Ui {
                 }
                 Item::Stock => self.stock_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
+                Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
                 Item::SrcOn => {
                     let v = self.off_sources(self.menu);
                     for &c in &v {
@@ -5398,7 +5560,7 @@ impl Ui {
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
             Item::MeasSrcB | Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
+            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw => &["Off", "On"],
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
@@ -5413,7 +5575,8 @@ impl Ui {
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
             Item::Persist => return PERSIST.iter().map(|p| p.0.to_string()).collect(),
             Item::AcqAvg => return AVERAGES.iter().map(|n| n.to_string()).collect(),
-            Item::AcqSeg => return SEGMENTS.iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect(),
+            Item::AcqSeg => return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect(),
+            Item::AcqSegIvl => return SEG_IVLS.iter().map(|&x| seg_ivl_name(x)).collect(),
             Item::DecBaud => return crate::decode::BAUDS.iter().map(|b| b.to_string()).collect(),
             Item::DecCanRate => return crate::decode::CAN_RATES.iter().map(|&b| si(b, "bit/s")).collect(),
             // the value picker is a hex keypad
@@ -7517,6 +7680,124 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // Break it catches: a hardware recording that starts without a new number for the thread, stops on the count of
+    // records that reached the screen instead of the thread's read-back, browses the RAM history instead of playing
+    // the segment from the FPGA, or loses the stamps in the status line and the table. The thread is played by hand.
+    #[test]
+    fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
+        use super::*;
+        use crate::board::SegPhase;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
+        (ui.m.segments, ui.m.seg_hw, ui.m.seg_ivl) = (100, true, 1e-3);
+        ui.m.run = RunState::Run;
+        ui.step(0.02);
+        {
+            let g = shared.lock().unwrap();
+            assert_eq!((g.seg.run, g.seg.running), (1, true));
+            let w = g.want.as_ref().unwrap();
+            assert_eq!(w.segments, Some(oos_hal::dho::seq::Segments { n: 100, interval: 1e-3f32 as f64 }));
+        }
+        // the thread records: no frame, the scope keeps running and shows the progress
+        {
+            let mut g = shared.lock().unwrap();
+            (g.seg.done_run, g.seg.phase, g.seg.total, g.seg.recorded) = (1, SegPhase::Recording, 100, 40);
+        }
+        for _ in 0..30 {
+            ui.step(0.02);
+        }
+        assert_eq!(ui.m.run, RunState::Run);
+        assert_eq!(ui.seg_view.unwrap().recorded, 40);
+        // read back: 100 stamps 10 us apart, the frames went through the queue; done once the queue is empty
+        {
+            let mut g = shared.lock().unwrap();
+            (g.seg.phase, g.seg.recorded, g.seg.read) = (SegPhase::Done, 100, 100);
+            g.seg.times = (0..100).map(|k| Some(k as f64 * 10e-6)).collect();
+        }
+        ui.step(0.02);
+        assert_eq!(ui.m.run, RunState::Stop);
+        assert_eq!(ui.toast.as_ref().unwrap().0, "100 segments recorded");
+        // browse: back from the newest asks the thread for segment 99, then 98
+        ui.history_step(-1);
+        assert_eq!(shared.lock().unwrap().seg.want, Some(98));
+        assert_eq!(ui.seg_label(98), "Segment 99/100 \u{b7} 980 \u{b5}s \u{b7} \u{394}t 10.0 \u{b5}s");
+        let v: Vec<f32> = (0..1000).map(|k| ((k as f32) * 0.1).sin()).collect();
+        let f = crate::board::Frame { seq: 1, dt: 1e-9, pre: 500, ch: [v, Vec::new(), Vec::new(), Vec::new()], acq: (1e9, 1000), ..Default::default() };
+        shared.lock().unwrap().seg.shown = Some((98, f));
+        ui.step(0.02);
+        assert_eq!(ui.seg_pos, Some(98));
+        assert!(ui.last[0].is_some());
+        assert!(shared.lock().unwrap().seg.shown.is_none());
+        // the table and SCPI have every stamp
+        let rows = ui.table_rows(tables::TableKind::Segments);
+        assert_eq!(rows.len(), 100);
+        assert_eq!((rows[0].text.as_str(), rows[3].ok), ("", true));
+        assert!(rows[3].text.starts_with("\u{394}t 10"));
+        assert!(ui.seg_times_text().starts_with("0e0,1e-5,2e-5"));
+        // RUN again: a new recording number
+        ui.m.run = RunState::Run;
+        ui.step(0.02);
+        assert_eq!(shared.lock().unwrap().seg.run, 2);
+        assert!(ui.seg_times.is_empty());
+    }
+
+    // Break it catches: the software limit applied to hardware segments, or the hardware limit to the software history.
+    #[test]
+    fn segment_counts_follow_the_limit_of_the_set_up() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared, seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
+        ui.m.segments = 10;
+        assert_eq!(*ui.seg_options().last().unwrap(), SEG_MAX);
+        ui.adjust(Item::AcqSegHw, 1);
+        // 100 ns/div, 1 channel: 1408 points -> 256 bursts -> 61,440 segments
+        let lim = board().seg_max(&ui.m).unwrap();
+        assert_eq!(lim, 61_440);
+        let o = ui.seg_options();
+        assert_eq!(&o[o.len() - 2..], &[50_000, 61_440]);
+        for want in ["61440", "Off", "20000", "10"] {
+            ui.select_option(Item::AcqSeg, want);
+            assert_eq!(ui.value(Item::AcqSeg), want);
+        }
+        ui.select_option(Item::AcqSeg, "61440");
+        // back to software: the history limit
+        ui.adjust(Item::AcqSegHw, 1);
+        assert_eq!((ui.m.segments, ui.value(Item::AcqSeg)), (SEG_MAX, "1000".to_string()));
+        let o = ui.options(Item::AcqSegIvl);
+        assert_eq!(o.len(), SEG_IVLS.len());
+        for want in o.iter().rev().chain(o.iter()) {
+            ui.select_option(Item::AcqSegIvl, want);
+            assert_eq!(&ui.value(Item::AcqSegIvl), want);
+        }
+        assert_eq!(ui.m.seg_ivl, 1.0);
+        // roll: no hardware segments
+        ui.m.seg_hw = true;
+        ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+        assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
+    }
+
+    #[test]
+    fn segment_scpi() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(W, H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        q(&mut ui, ":ACQ:SEGM 5000");
+        q(&mut ui, ":ACQ:SEGM:HARD ON");
+        q(&mut ui, ":ACQuire:SEGMents:INTerval 1e-4");
+        assert_eq!((ui.m.segments, ui.m.seg_hw, ui.m.seg_ivl), (5000, true, 1e-4));
+        assert_eq!((q(&mut ui, ":ACQ:SEGM?"), q(&mut ui, ":ACQ:SEGM:HARD?")), ("5000".into(), "1".into()));
+        assert!(q(&mut ui, ":ACQ:SEGM:INT?").starts_with("1.000000E-04"));
+        q(&mut ui, ":ACQ:SEGM:INT -3");
+        q(&mut ui, ":ACQ:SEGM OFF");
+        assert_eq!((ui.m.segments, ui.m.seg_ivl), (0, 0.0));
+        ui.seg_times = vec![Some(0.0), None, Some(2e-3)];
+        assert_eq!(q(&mut ui, ":ACQ:SEGM:TIM?"), "0e0,9.9E37,2e-3");
+    }
+
     /// Centre of a rectangle (for taps).
     fn mid(r: super::Rect) -> (i32, i32) {
         (r.x + r.w / 2, r.y + r.h / 2)
@@ -7859,4 +8140,13 @@ fn ladder_step(x: f32, d: i32) -> f32 {
     let l = time_ladder();
     let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
     l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+}
+
+/// Menu text of a hardware segment interval.
+fn seg_ivl_name(x: f32) -> String {
+    if x <= 0.0 {
+        "None".into()
+    } else {
+        si(x as f64, "s")
+    }
 }
