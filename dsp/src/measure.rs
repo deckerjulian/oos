@@ -43,13 +43,32 @@ pub enum Meas {
     TVmin,
     PSlew,
     NSlew,
+    /// Time a cycle stays above the high reference (90 %).
+    HighTime,
+    /// Time a cycle stays below the low reference (10 %).
+    LowTime,
+    /// Mean width of bursts separated by an idle gap. The idle is a menu number; `get` uses the period.
+    Burst,
+    /// Mean time above the high reference, below the low reference, or either. `get` uses both.
+    Outside,
+    /// Mean time across N mid crossings. `get` uses N = 2 on rising edges.
+    NPeriods,
+    /// Mean of the per-cycle histogram amplitude.
+    CycAmp,
+    CycTop,
+    CycBase,
+    CycPp,
+    CycMax,
+    CycMin,
 }
 
-pub const ALL: [Meas; 35] = [
+pub const ALL: [Meas; 46] = [
     Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vtop, Meas::Vbase, Meas::Vamp, Meas::Vupper, Meas::Vmid, Meas::Vlower, Meas::Vavg,
     Meas::Vrms, Meas::VavgCyc, Meas::VrmsCyc, Meas::VrmsAc, Meas::StdDev, Meas::Overshoot, Meas::Preshoot, Meas::Area,
     Meas::AreaCyc, Meas::Period, Meas::Freq, Meas::Rise, Meas::Fall, Meas::PWidth, Meas::NWidth, Meas::PDuty, Meas::NDuty,
     Meas::PPulses, Meas::NPulses, Meas::PEdges, Meas::NEdges, Meas::TVmax, Meas::TVmin, Meas::PSlew, Meas::NSlew,
+    Meas::HighTime, Meas::LowTime, Meas::Burst, Meas::Outside, Meas::NPeriods, Meas::CycAmp, Meas::CycTop, Meas::CycBase,
+    Meas::CycPp, Meas::CycMax, Meas::CycMin,
 ];
 
 impl Meas {
@@ -90,19 +109,39 @@ impl Meas {
             Meas::TVmin => "t(Min)",
             Meas::PSlew => "+Slew",
             Meas::NSlew => "-Slew",
+            Meas::HighTime => "High time",
+            Meas::LowTime => "Low time",
+            Meas::Burst => "Burst",
+            Meas::Outside => "Outside",
+            Meas::NPeriods => "N periods",
+            Meas::CycAmp => "Cyc amp",
+            Meas::CycTop => "Cyc top",
+            Meas::CycBase => "Cyc base",
+            Meas::CycPp => "Cyc pk-pk",
+            Meas::CycMax => "Cyc max",
+            Meas::CycMin => "Cyc min",
         }
     }
     pub fn unit(self) -> &'static str {
         match self {
             Meas::Overshoot | Meas::Preshoot | Meas::PDuty | Meas::NDuty => "%",
             Meas::Area | Meas::AreaCyc => "Vs",
-            Meas::Period | Meas::Rise | Meas::Fall | Meas::PWidth | Meas::NWidth | Meas::TVmax | Meas::TVmin => "s",
+            Meas::Period | Meas::Rise | Meas::Fall | Meas::PWidth | Meas::NWidth | Meas::TVmax | Meas::TVmin | Meas::HighTime
+            | Meas::LowTime | Meas::Burst | Meas::Outside | Meas::NPeriods => "s",
             Meas::Freq => "Hz",
             Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges => "",
             Meas::PSlew | Meas::NSlew => "V/s",
             _ => "V",
         }
     }
+}
+
+/// Which side of the reference levels `Outside` counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outside {
+    Above,
+    Below,
+    Both,
 }
 
 /// Everything measured on one waveform (times in seconds from the first sample).
@@ -127,6 +166,21 @@ pub struct Analysis {
     pub cyc_avg: f64,
     pub cyc_rms: f64,
     pub cyc_area: f64,
+    /// Mean time above the high reference, and below the low reference.
+    pub high_time: f64,
+    pub low_time: f64,
+    /// High-reference (90 %) and low-reference (10 %) crossings, seconds from the first sample.
+    pub hi_rises: Vec<f64>,
+    pub hi_falls: Vec<f64>,
+    pub lo_rises: Vec<f64>,
+    pub lo_falls: Vec<f64>,
+    /// Mean, over rising-mid cycles, of that cycle's histogram top, base, amplitude, peak-to-peak, maximum, minimum.
+    pub cyc_top: f64,
+    pub cyc_base: f64,
+    pub cyc_amp: f64,
+    pub cyc_pp: f64,
+    pub cyc_max: f64,
+    pub cyc_min: f64,
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -226,6 +280,14 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
         cyc_avg: f64::NAN,
         cyc_rms: f64::NAN,
         cyc_area: f64::NAN,
+        high_time: f64::NAN,
+        low_time: f64::NAN,
+        cyc_top: f64::NAN,
+        cyc_base: f64::NAN,
+        cyc_amp: f64::NAN,
+        cyc_pp: f64::NAN,
+        cyc_max: f64::NAN,
+        cyc_min: f64::NAN,
         ..Default::default()
     };
     let amp = top - base;
@@ -254,6 +316,18 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     }
     a.rise_time = mean(&rt);
     a.fall_time = mean(&ft);
+    // keep the 10 % and 90 % crossings: high time, low time and time outside are measured there
+    let (hr, hf) = level_times(v, l90, dt);
+    let (lr, lf) = level_times(v, l10, dt);
+    let hi = pair_widths(&hr, &hf);
+    let lo = pair_widths(&lf, &lr);
+    a.high_time = mean(&hi);
+    a.low_time = mean(&lo);
+    (a.hi_rises, a.hi_falls, a.lo_rises, a.lo_falls) = (hr, hf, lr, lf);
+    if a.rises.len() >= 2 {
+        let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, &a.rises);
+        (a.cyc_top, a.cyc_base, a.cyc_amp, a.cyc_pp, a.cyc_max, a.cyc_min) = (top, base, amp, pp, mx, mn);
+    }
     // cycle values between the first and last rising edge
     if a.rises.len() >= 2 {
         let (s, t) = ((a.rises[0] / dt).ceil() as usize, (a.rises[a.rises.len() - 1] / dt).floor() as usize);
@@ -352,8 +426,147 @@ impl Analysis {
             Meas::TVmin => self.t_vmin,
             Meas::PSlew => 0.8 * amp / self.rise_time,
             Meas::NSlew => -0.8 * amp / self.fall_time,
+            Meas::HighTime => self.high_time,
+            Meas::LowTime => self.low_time,
+            Meas::Burst => burst_width(self, 0.0),
+            Meas::Outside => time_outside(self, Outside::Both),
+            Meas::NPeriods => duration_n(self, 2, false),
+            Meas::CycAmp => self.cyc_amp,
+            Meas::CycTop => self.cyc_top,
+            Meas::CycBase => self.cyc_base,
+            Meas::CycPp => self.cyc_pp,
+            Meas::CycMax => self.cyc_max,
+            Meas::CycMin => self.cyc_min,
         }
     }
+}
+
+/// Rising and falling crossings of `level`, seconds from the first sample.
+fn level_times(v: &[f32], level: f32, dt: f64) -> (Vec<f64>, Vec<f64>) {
+    let (mut rises, mut falls) = (Vec::new(), Vec::new());
+    for i in 1..v.len() {
+        let (a, b) = (v[i - 1], v[i]);
+        if !(a.is_finite() && b.is_finite()) || a == b {
+            continue;
+        }
+        let hit_up = a < level && b >= level;
+        let hit_dn = a > level && b <= level;
+        if hit_up || hit_dn {
+            let t = ((i - 1) as f64 + ((level - a) / (b - a)) as f64) * dt;
+            if hit_up {
+                rises.push(t);
+            } else {
+                falls.push(t);
+            }
+        }
+    }
+    (rises, falls)
+}
+
+/// Durations of complete pulses: each opening edge to the next closing edge that does not contain another opening.
+fn pair_widths(open: &[f64], close: &[f64]) -> Vec<f64> {
+    let (mut w, mut j) = (Vec::new(), 0);
+    for (i, &s) in open.iter().enumerate() {
+        while j < close.len() && close[j] <= s {
+            j += 1;
+        }
+        let Some(&e) = close.get(j) else { break };
+        if !open[i + 1..].iter().any(|&x| x > s && x < e) {
+            w.push(e - s);
+        }
+    }
+    w
+}
+
+/// Mean of the per-cycle histogram top and base, their difference, and the sample max, min and peak-to-peak.
+/// Cycles run from one rising mid crossing to the next. A record with fewer than two rising edges has no result.
+fn cycle_levels(v: &[f32], dt: f64, rises: &[f64]) -> (f64, f64, f64, f64, f64, f64) {
+    let (mut top, mut base, mut amp, mut pp, mut mx, mut mn) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for w in rises.windows(2) {
+        let s = (w[0] / dt).ceil() as usize;
+        let e = ((w[1] / dt).floor() as usize).min(v.len().saturating_sub(1));
+        if e <= s {
+            continue;
+        }
+        let samp: Vec<f32> = v[s..=e].iter().copied().filter(|x| x.is_finite()).collect();
+        if samp.len() < 2 {
+            continue;
+        }
+        let (hi, lo) = samp.iter().fold((f32::NEG_INFINITY, f32::INFINITY), |(h, l), &x| (h.max(x), l.min(x)));
+        if !(hi > lo) {
+            continue;
+        }
+        let (t, b) = top_base(&samp, lo, hi);
+        top.push(t);
+        base.push(b);
+        amp.push(t - b);
+        pp.push(hi as f64 - lo as f64);
+        mx.push(hi as f64);
+        mn.push(lo as f64);
+    }
+    (mean(&top), mean(&base), mean(&amp), mean(&pp), mean(&mx), mean(&mn))
+}
+
+/// Mid crossings, either direction, in time order.
+fn mids(a: &Analysis) -> Vec<f64> {
+    let mut t = a.rises.clone();
+    t.extend_from_slice(&a.falls);
+    t.sort_by(f64::total_cmp);
+    t
+}
+
+/// Mean burst width. A burst is a run of adjacent mid crossings whose gaps are all at most `idle` seconds.
+/// `idle` <= 0 uses the period of `a`. One continuous clock is one burst.
+pub fn burst_width(a: &Analysis, idle: f64) -> f64 {
+    let idle = if idle > 0.0 { idle } else { a.period() };
+    if !(idle > 0.0) || !idle.is_finite() {
+        return f64::NAN;
+    }
+    let t = mids(a);
+    if t.len() < 2 {
+        return f64::NAN;
+    }
+    let (mut widths, mut start) = (Vec::new(), 0usize);
+    for i in 1..t.len() {
+        if t[i] - t[i - 1] > idle {
+            if i - start >= 2 {
+                widths.push(t[i - 1] - t[start]);
+            }
+            start = i;
+        }
+    }
+    if t.len() - start >= 2 {
+        widths.push(t[t.len() - 1] - t[start]);
+    }
+    mean(&widths)
+}
+
+/// Mean duration of the intervals above the high reference, below the low reference, or either.
+pub fn time_outside(a: &Analysis, mode: Outside) -> f64 {
+    let hi = pair_widths(&a.hi_rises, &a.hi_falls);
+    let lo = pair_widths(&a.lo_falls, &a.lo_rises);
+    match mode {
+        Outside::Above => mean(&hi),
+        Outside::Below => mean(&lo),
+        Outside::Both => {
+            let mut both = hi;
+            both.extend(lo);
+            mean(&both)
+        }
+    }
+}
+
+/// Mean time from a mid crossing to the one N crossings later. `data` uses either direction; a clock uses rising edges.
+/// N is a count of edge intervals.
+pub fn duration_n(a: &Analysis, n: usize, data: bool) -> f64 {
+    if n == 0 {
+        return f64::NAN;
+    }
+    let edges = if data { mids(a) } else { a.rises.clone() };
+    if edges.len() <= n {
+        return f64::NAN;
+    }
+    mean(&edges.windows(n + 1).map(|w| w[n] - w[0]).collect::<Vec<_>>())
 }
 
 /// Edge pair for delay / phase: (edge of A, edge of B), true = rising.
@@ -371,6 +584,59 @@ pub fn delay(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
 /// Phase of B relative to A in degrees (delay / period of A x 360).
 pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
     delay(a, b, p) / a.period() * 360.0
+}
+
+fn edge_list<'a>(a: &'a Analysis, rising: bool) -> &'a [f64] {
+    if rising { &a.rises } else { &a.falls }
+}
+
+/// Mean, over every selected edge of A, of the closest selected edge of B minus that edge. May be negative.
+pub fn skew(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
+    let (ea, eb) = (edge_list(a, p.0), edge_list(b, p.1));
+    if ea.is_empty() || eb.is_empty() {
+        return f64::NAN;
+    }
+    let mut j = 0usize;
+    let mut d = Vec::with_capacity(ea.len());
+    for &ta in ea {
+        while j + 1 < eb.len() && (eb[j + 1] - ta).abs() <= (eb[j] - ta).abs() {
+            j += 1;
+        }
+        d.push(eb[j] - ta);
+    }
+    mean(&d)
+}
+
+/// Setup: clock mid time minus the closest earlier data mid time. Positive when the data edge leads the clock.
+pub fn setup_time(clock: &Analysis, data: &Analysis) -> f64 {
+    let (c, d) = (mids(clock), mids(data));
+    let mut j = 0usize;
+    let mut s = Vec::new();
+    for &tc in &c {
+        while j < d.len() && d[j] < tc {
+            j += 1;
+        }
+        if j > 0 {
+            s.push(tc - d[j - 1]);
+        }
+    }
+    mean(&s)
+}
+
+/// Hold: the next data mid time minus the clock mid time.
+pub fn hold_time(clock: &Analysis, data: &Analysis) -> f64 {
+    let (c, d) = (mids(clock), mids(data));
+    let mut j = 0usize;
+    let mut s = Vec::new();
+    for &tc in &c {
+        while j < d.len() && d[j] <= tc {
+            j += 1;
+        }
+        if j < d.len() {
+            s.push(d[j] - tc);
+        }
+    }
+    mean(&s)
 }
 
 #[cfg(test)]

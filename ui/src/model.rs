@@ -240,6 +240,10 @@ pub enum PowerMode {
     Harmonics,
     Switching,
     Ripple,
+    /// C = q / v over the turn-on record
+    Capacitance,
+    /// rail overshoot, undershoot, DC and turn-on maximum
+    Rail,
 }
 
 /// Magnetic plot: current against flux linkage, or B against H when the core is set.
@@ -910,10 +914,32 @@ pub struct Model {
     /// eye diagram: source, bit rate (0 = recovered from the edges)
     pub eye_src: WaveId,
     pub eye_rate: f64,
-    /// power analysis: voltage and current source, page, line frequency (0 = from the voltage)
+    /// BER for TJ, eye width and eye height. J2 and J9 ignore it.
+    pub eye_ber: f64,
+    /// phase-noise integration offsets, Hz
+    pub eye_pn_lo: f64,
+    pub eye_pn_hi: f64,
+    /// NPJ stays off until this is set
+    pub eye_npj: bool,
+    /// optional second source for common mode, and the rail for PSIJ
+    pub eye_b: Option<WaveId>,
+    pub eye_rail: Option<WaveId>,
+    /// Hz removed from the TIE as a sine; 0 = none
+    pub eye_notch: f64,
+    /// 30 kHz high-pass on the common mode
+    pub eye_hp: bool,
+    /// power analysis: voltage and current source, page
     pub pw_v: WaveId,
     pub pw_i: WaveId,
     pub pw_mode: PowerMode,
+    /// line and switching frequency for the ripple tones; 0 = measured
+    pub pw_fline: f64,
+    pub pw_fsw: f64,
+    /// input voltage for turn on/off, clock and reference for the rail (NaN = histogram top)
+    pub pw_vin: Option<WaveId>,
+    pub pw_clk: Option<WaveId>,
+    /// None = the histogram top of the rail
+    pub pw_ref: Option<f64>,
     /// Bode plot: sweep start/stop (Hz), points, generator amplitude (Vpp), input/output channel, generator preset
     /// and LAN address
     pub bode_start: f64,
@@ -924,6 +950,17 @@ pub struct Model {
     pub bode_out: WaveId,
     pub bode_gen: usize,
     pub bode_addr: String,
+    /// loop gain, PSRR, or the linear Vout/Vin ratio
+    pub bode_mode: oos_dsp::bode::Mode,
+    /// burst idle (0 = one period), which side Time Outside counts, and Duration N
+    pub meas_idle: f64,
+    pub meas_out: oos_dsp::measure::Outside,
+    pub meas_n: u32,
+    /// false = clock edges, true = data edges
+    pub meas_data: bool,
+    /// ACPR channel width and spacing, Hz
+    pub spec_acpr_w: f64,
+    pub spec_acpr_s: f64,
     /// magnetic analysis: voltage, current (a channel or a loaded ref), turns, area m² (0 = unset), path m (0 = unset), copper Ω, plot, cursor
     pub mag_v: WaveId,
     pub mag_i: WaveId,
@@ -1223,9 +1260,22 @@ impl Default for Model {
             spec_dist: false,
             eye_src: WaveId::Ch(0),
             eye_rate: 0.0,
+            eye_ber: 1e-12,
+            eye_pn_lo: 1e3,
+            eye_pn_hi: 1e6,
+            eye_npj: false,
+            eye_b: None,
+            eye_rail: None,
+            eye_notch: 0.0,
+            eye_hp: true,
             pw_v: WaveId::Ch(0),
             pw_i: WaveId::Ch(1),
             pw_mode: PowerMode::Quality,
+            pw_fline: 0.0,
+            pw_fsw: 0.0,
+            pw_vin: None,
+            pw_clk: None,
+            pw_ref: None,
             bode_start: 100.0,
             bode_stop: 1e6,
             bode_points: 40,
@@ -1235,6 +1285,13 @@ impl Default for Model {
             bode_gen: 0,
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
+            bode_mode: oos_dsp::bode::Mode::Loop,
+            meas_idle: 0.0,
+            meas_out: oos_dsp::measure::Outside::Both,
+            meas_n: 2,
+            meas_data: false,
+            spec_acpr_w: 1e6,
+            spec_acpr_s: 2e6,
             mag_v: WaveId::Ch(0),
             mag_i: WaveId::Ch(1),
             mag_n: 1.0,
@@ -1739,7 +1796,7 @@ impl Model {
                 }
             }
         }
-        for s in [&mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei] {
+        for s in [&mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei, &mut self.eye_b, &mut self.eye_rail, &mut self.pw_vin, &mut self.pw_clk] {
             if let Some(WaveId::Ch(c)) = *s {
                 if c >= n {
                     *s = None;

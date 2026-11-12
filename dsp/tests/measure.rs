@@ -79,6 +79,53 @@ fn pulse_counts_with_missing_pulse() {
 }
 
 #[test]
+fn high_low_burst_outside_and_n_periods() {
+    let dt = 10e-9;
+    let p = PulseTrain { width: 3e-6, ..PulseTrain::square(100e3, 0.0, 2.0, 100e-9) };
+    let v = sample(|t| p.v(t), 0.0, dt, 100_000);
+    let a = analyze(&v, dt);
+    // 0-100 % edges are 100 ns; the 90 % and 10 % points sit 40 ns off the 50 % width
+    assert!(close(a.get(Meas::HighTime), 2.92e-6, 0.02), "{}", a.get(Meas::HighTime));
+    assert!(close(a.get(Meas::LowTime), 6.92e-6, 0.02), "{}", a.get(Meas::LowTime));
+    assert!(close(time_outside(&a, Outside::Above), a.high_time, 1e-9));
+    assert!(close(time_outside(&a, Outside::Below), a.low_time, 1e-9));
+    let both = time_outside(&a, Outside::Both);
+    assert!(both > a.high_time && both < a.low_time, "{}", both);
+    // gaps are 3 us and 7 us: an idle of one period is a single burst, 4 us splits on the low gap
+    assert!(burst_width(&a, a.period()) > 0.5e-3, "{}", burst_width(&a, a.period()));
+    assert!(close(burst_width(&a, 4e-6), 3e-6, 0.02), "{}", burst_width(&a, 4e-6));
+    assert!(close(a.get(Meas::NPeriods), 20e-6, 1e-4), "{}", a.get(Meas::NPeriods));
+    assert!(close(duration_n(&a, 2, true), 10e-6, 0.02), "{}", duration_n(&a, 2, true));
+}
+
+#[test]
+fn cycle_levels_of_a_sine() {
+    let dt = 1e-6;
+    let v = sample(|t| 1.5 * (2.0 * std::f64::consts::PI * 1e3 * t).sin() + 0.5, 0.0, dt, 20_000);
+    let a = analyze(&v, dt);
+    assert!(close(a.get(Meas::CycMax), 2.0, 0.01), "{}", a.get(Meas::CycMax));
+    assert!(close(a.get(Meas::CycMin), -1.0, 0.01), "{}", a.get(Meas::CycMin));
+    assert!(close(a.get(Meas::CycPp), 3.0, 0.01));
+    // no flat levels: top and base fall back to the cycle max and min
+    assert!(close(a.get(Meas::CycAmp), 3.0, 0.02), "{}", a.get(Meas::CycAmp));
+    assert!(close(a.get(Meas::CycTop), 2.0, 0.02) && close(a.get(Meas::CycBase), -1.0, 0.02));
+}
+
+#[test]
+fn skew_setup_and_hold() {
+    let dt = 1e-6;
+    let fa = PulseTrain::square(1e3, 0.0, 1.0, 1e-6);
+    let fb = PulseTrain { offset: 125e-6, ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6) };
+    let a = analyze(&sample(|t| fa.v(t), 0.0, dt, 5000), dt);
+    let b = analyze(&sample(|t| fb.v(t), 0.0, dt, 5000), dt);
+    assert!(close(skew(&a, &b, Pair(true, true)), 125e-6, 1e-3), "{}", skew(&a, &b, Pair(true, true)));
+    // data lags the clock by 125 us: setup is the rest of the period to the previous data edge, hold is the lag
+    assert!(close(setup_time(&a, &b), 375e-6, 0.02), "{}", setup_time(&a, &b));
+    assert!(close(hold_time(&a, &b), 125e-6, 0.02), "{}", hold_time(&a, &b));
+    assert!(close(skew(&b, &a, Pair(true, true)), -125e-6, 1e-3));
+}
+
+#[test]
 fn delay_and_phase() {
     let dt = 1e-6;
     let fa = PulseTrain::square(1e3, 0.0, 1.0, 1e-6);

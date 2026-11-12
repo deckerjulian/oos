@@ -67,9 +67,19 @@ fn gen_thread(addr: String, err: std::sync::Arc<std::sync::Mutex<Option<String>>
     tx
 }
 
+const BODE_MODES: [oos_dsp::bode::Mode; 3] = [oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z];
+
+fn bode_mode_name(m: oos_dsp::bode::Mode) -> &'static str {
+    match m {
+        oos_dsp::bode::Mode::Loop => "Loop",
+        oos_dsp::bode::Mode::Psrr => "PSRR",
+        oos_dsp::bode::Mode::Z => "Z",
+    }
+}
+
 impl Ui {
     pub(super) fn bode_items(&self) -> Vec<Item> {
-        let mut v = vec![Item::BodeOn, Item::BodeRun, Item::BodeStart, Item::BodeStop, Item::BodePoints, Item::BodeAmp, Item::BodeIn, Item::BodeOut, Item::BodeGen];
+        let mut v = vec![Item::BodeOn, Item::BodeMode, Item::BodeRun, Item::BodeStart, Item::BodeStop, Item::BodePoints, Item::BodeAmp, Item::BodeIn, Item::BodeOut, Item::BodeGen];
         // a cursor once there is something to read
         if !self.bode.points.is_empty() {
             v.push(Item::BodeCur);
@@ -85,7 +95,7 @@ impl Ui {
         Some(match it {
             Item::BodeStart | Item::BodeStop | Item::BodePoints | Item::BodeAmp | Item::BodeAddr | Item::BodeCur => Kind::Value,
             Item::BodeRun => Kind::Action,
-            Item::BodeOn | Item::BodeIn | Item::BodeOut | Item::BodeGen => Kind::Choice,
+            Item::BodeOn | Item::BodeIn | Item::BodeOut | Item::BodeGen | Item::BodeMode => Kind::Choice,
             _ => return None,
         })
     }
@@ -94,6 +104,7 @@ impl Ui {
         Some(match it {
             Item::Open(MenuId::Bode) => "Bode",
             Item::BodeOn => "View",
+            Item::BodeMode => "Mode",
             Item::BodeRun => "Start / stop sweep",
             Item::BodeStart => "Start freq",
             Item::BodeStop => "Stop freq",
@@ -112,6 +123,7 @@ impl Ui {
         let m = &self.m;
         Some(match it {
             Item::BodeOn => if m.view == AView::Bode { "On".into() } else { "Off".into() },
+            Item::BodeMode => bode_mode_name(m.bode_mode).into(),
             Item::BodeRun => String::new(),
             Item::BodeStart => si_short(m.bode_start, "Hz"),
             Item::BodeStop => si_short(m.bode_stop, "Hz"),
@@ -130,6 +142,7 @@ impl Ui {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
             Item::BodeOn => v(&["Off", "On"]),
+            Item::BodeMode => BODE_MODES.iter().map(|m| bode_mode_name(*m).to_string()).collect(),
             Item::BodeIn | Item::BodeOut => self.wave_names(),
             Item::BodeGen => GENERATORS.iter().map(|g| g.0.to_string()).collect(),
             _ => return None,
@@ -151,6 +164,15 @@ impl Ui {
         };
         match it {
             Item::BodeOn => m.view = if m.view == AView::Bode { AView::Scope } else { AView::Bode },
+            Item::BodeMode => {
+                let i = BODE_MODES.iter().position(|&x| x == m.bode_mode).unwrap_or(0);
+                let next = BODE_MODES[(i as i32 + d).rem_euclid(BODE_MODES.len() as i32) as usize];
+                if next != m.bode_mode {
+                    m.bode_mode = next;
+                    self.bode.points.clear();
+                    self.bode.cursor = 0;
+                }
+            }
             Item::BodeStart => m.bode_start = ladder(m.bode_start, d).min(m.bode_stop / 2.0),
             Item::BodeStop => m.bode_stop = ladder(m.bode_stop, d).max(m.bode_start * 2.0),
             Item::BodePoints => m.bode_points = (m.bode_points as i32 + 5 * d).clamp(5, 200) as usize,
@@ -294,15 +316,22 @@ impl Ui {
     /// with no coupling and no bandwidth limit.
     fn bode_point(&mut self, rec: &Record, f: f64) -> bool {
         let (inp, out) = (self.m.bode_in, self.m.bode_out);
+        let mode = self.m.bode_mode;
         if inp == out && self.bode_gen() == BUILTIN {
             let Some(s) = self.wave_samples(rec, out) else { return false };
             if let Some((a, _, _)) = bode::sine_fit(&s.v, s.dt, f).filter(|_| self.m.afg_ampl > 0.0) {
-                self.bode.points.push((f, 20.0 * (2.0 * a / self.m.afg_ampl).log10(), f64::NAN));
+                let ratio = 2.0 * a / self.m.afg_ampl;
+                let mid = match mode {
+                    oos_dsp::bode::Mode::Psrr => -20.0 * ratio.log10(),
+                    oos_dsp::bode::Mode::Z => ratio,
+                    oos_dsp::bode::Mode::Loop => 20.0 * ratio.log10(),
+                };
+                self.bode.points.push((f, mid, f64::NAN));
             }
             return true;
         }
         let Ok(t) = self.take_waves(rec, &[inp, out], &[]) else { return false };
-        if let Some((g, ph)) = bode::gain_phase(&t.v[0], &t.v[1], t.dt, f) {
+        if let Some((g, ph)) = bode::response(mode, &t.v[0], &t.v[1], t.dt, f) {
             self.bode.points.push((f, g, ph));
         }
         true
@@ -338,7 +367,8 @@ impl Ui {
         }
     }
 
-    /// SCPI: start/stop the sweep and the result as "f,gain_db,phase_deg;..." (empty while none).
+    /// SCPI: start/stop the sweep and the result as "f,middle,phase_deg;...".
+    /// The middle field is dB for the control loop and for PSRR. In impedance mode it is the linear Vout/Vin ratio.
     pub fn bode_run(&mut self, on: bool) {
         if on != self.bode.running {
             self.bode_activate(Item::BodeRun);
@@ -351,7 +381,10 @@ impl Ui {
     /// Gain (top) and phase (bottom) over log frequency.
     /// The point under the cursor: frequency, gain, phase.
     fn bode_cursor_text(&self) -> String {
+        let z = self.m.bode_mode == oos_dsp::bode::Mode::Z;
         match self.bode.points.get(self.bode.cursor) {
+            Some(&(hz, g, p)) if z && p.is_nan() => format!("{} {:.3}", si_short(hz, "Hz"), g),
+            Some(&(hz, g, p)) if z => format!("{} {:.3} {:.0}\u{b0}", si_short(hz, "Hz"), g, p),
             Some(&(hz, g, p)) if p.is_nan() => format!("{} {:.1} dB", si_short(hz, "Hz"), g),
             Some(&(hz, g, p)) => format!("{} {:.1} dB {:.0}\u{b0}", si_short(hz, "Hz"), g, p),
             None => "-".into(),
@@ -365,9 +398,19 @@ impl Ui {
         let x_of = |hz: f64| a.x + ((hz.ln() - f0) / (f1 - f0) * a.w as f64).round() as i32;
         let (gt, gb) = (a.y + 8, a.y + a.h / 2 - 8);
         let (pt, pb) = (a.y + a.h / 2 + 8, a.y + a.h - 24);
-        // gain axis: the measured range rounded to 10 dB, phase -180..180
+        // loop and PSRR: the measured range rounded to 10 dB. Impedance is a linear ratio, padded by about 10 %.
+        let z = self.m.bode_mode == oos_dsp::bode::Mode::Z;
         let (gmin, gmax) = self.bode.points.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
-        let (gmin, gmax) = if gmin > gmax { (-40.0, 10.0) } else { ((gmin / 10.0).floor() * 10.0 - 10.0, (gmax / 10.0).ceil() * 10.0) };
+        let (gmin, gmax) = if z {
+            if gmin > gmax { (0.0, 2.0) } else {
+                let pad = (gmax - gmin).abs().max(gmax.abs()).max(1e-3) * 0.1;
+                (gmin - pad, gmax + pad)
+            }
+        } else if gmin > gmax {
+            (-40.0, 10.0)
+        } else {
+            ((gmin / 10.0).floor() * 10.0 - 10.0, (gmax / 10.0).ceil() * 10.0)
+        };
         let gy = |g: f64| gb - ((g - gmin) / (gmax - gmin) * (gb - gt) as f64).round() as i32;
         let py = |p: f64| pb - ((p + 180.0) / 360.0 * (pb - pt) as f64).round() as i32;
         // decade lines
@@ -406,21 +449,34 @@ impl Ui {
             cv.text(&f.s, a.x + 6, a.y + a.h / 2 + 2, &self.bode_cursor_text(), CURSOR);
         }
         let refn = if self.m.bode_in == self.m.bode_out && self.bode_gen() == BUILTIN { "generator".to_string() } else { self.wave_name(self.m.bode_in) };
-        cv.text(&f.s, a.x + 6, gt + 14, &format!("Gain {} / {}  {:.0} .. {:.0} dB", self.wave_name(self.m.bode_out), refn, gmin, gmax), col_g);
+        let (what, span) = match self.m.bode_mode {
+            oos_dsp::bode::Mode::Psrr => ("PSRR", format!("{:.0} .. {:.0} dB", gmin, gmax)),
+            oos_dsp::bode::Mode::Z => ("Vout/Vin", format!("{:.3} .. {:.3}", gmin, gmax)),
+            oos_dsp::bode::Mode::Loop => ("Gain", format!("{:.0} .. {:.0} dB", gmin, gmax)),
+        };
+        cv.text(&f.s, a.x + 6, gt + 14, &format!("{} {} / {}  {}", what, self.wave_name(self.m.bode_out), refn, span), col_g);
         cv.text(&f.s, a.x + 6, pt + 14, "Phase -180 .. 180\u{b0}", ACCENT);
         let status = if self.bode.running {
             format!("sweeping {} of {}: {}", self.bode.idx + 1, self.bode.freqs.len(), si_short(self.bode.freqs[self.bode.idx], "Hz"))
-        } else if let Some(&(hz, g, p)) = self.bode.points.iter().min_by(|a, b| ((a.1 + 3.0).abs()).partial_cmp(&(b.1 + 3.0).abs()).unwrap()) {
-            let ph = if p.is_nan() { String::new() } else { format!(", {:.0}\u{b0}", p) };
-            format!("{} points; nearest -3 dB: {} ({:.1} dB{})", self.bode.points.len(), si_short(hz, "Hz"), g, ph)
-        } else if self.bode_gen() == BUILTIN {
+        } else if self.m.bode_mode == oos_dsp::bode::Mode::Loop {
+            if let Some(&(hz, g, p)) = self.bode.points.iter().min_by(|a, b| ((a.1 + 3.0).abs()).partial_cmp(&(b.1 + 3.0).abs()).unwrap()) {
+                let ph = if p.is_nan() { String::new() } else { format!(", {:.0}\u{b0}", p) };
+                format!("{} points; nearest -3 dB: {} ({:.1} dB{})", self.bode.points.len(), si_short(hz, "Hz"), g, ph)
+            } else if self.bode_gen() == BUILTIN {
+                "built-in generator (Bode > Start)".to_string()
+            } else {
+                format!("generator {} at {} (Bode > Start)", GENERATORS[self.bode_gen()].0, self.m.bode_addr)
+            }
+        } else if self.bode.points.is_empty() && self.bode_gen() == BUILTIN {
             "built-in generator (Bode > Start)".to_string()
-        } else {
+        } else if self.bode.points.is_empty() {
             format!("generator {} at {} (Bode > Start)", GENERATORS[self.bode_gen()].0, self.m.bode_addr)
+        } else {
+            format!("{} points", self.bode.points.len())
         };
         // an open loop passes one of these two; a filter sweep neither
         let mg = oos_dsp::bode::margins(&self.bode.points);
-        if !self.bode.running && (mg.gain.is_some() || mg.phase.is_some()) {
+        if self.m.bode_mode == oos_dsp::bode::Mode::Loop && !self.bode.running && (mg.gain.is_some() || mg.phase.is_some()) {
             let gm = mg.gain.map_or("Gain margin -".to_string(), |(v, hz)| format!("Gain margin {:.1} dB at {}", v, si_short(hz, "Hz")));
             let pm = mg.phase.map_or("phase margin -".to_string(), |(v, hz)| format!("phase margin {:.0}\u{b0} at {}", v, si_short(hz, "Hz")));
             cv.text(&f.s, a.x + 6, pt + 30, &format!("{}, {}", gm, pm), TEXT);

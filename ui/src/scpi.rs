@@ -512,6 +512,17 @@ impl Scpi {
                 "VBAS" | "VBASE" => Meas::Vbase,
                 "OVER" | "OVERSHOOT" => Meas::Overshoot,
                 "PRES" | "PRESHOOT" => Meas::Preshoot,
+                "HTIM" | "HTIME" => Meas::HighTime,
+                "LTIM" | "LTIME" => Meas::LowTime,
+                "BWID" | "BWIDTH" => Meas::Burst,
+                "TOUT" | "TOUTSIDE" => Meas::Outside,
+                "NPER" | "NPERIODS" => Meas::NPeriods,
+                "CAMP" | "CYCAMP" => Meas::CycAmp,
+                "CTOP" => Meas::CycTop,
+                "CBAS" | "CBASE" => Meas::CycBase,
+                "CPP" | "CYCPP" => Meas::CycPp,
+                "CMAX" => Meas::CycMax,
+                "CMIN" => Meas::CycMin,
                 _ => {
                     self.err.push("-224,\"Illegal parameter value\"".into());
                     return t("9.9E37");

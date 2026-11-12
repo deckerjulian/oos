@@ -208,6 +208,11 @@ impl Ui {
             v.push(("SFDR".to_string(), db(d.sfdr_dbc, "dBc")));
             v.push(("ENOB".to_string(), format!("{:.2} bit", d.enob)));
         }
+        let ac = spectrum::acpr(sp, self.m.spec_acpr_w, self.m.spec_acpr_s);
+        let dbn = |x: f64| if x.is_finite() { format!("{:.1} dB", x) } else { "-".into() };
+        v.push(("ACPR".to_string(), if ac.ratio.is_finite() { format!("{:.3}", ac.ratio) } else { "-".into() }));
+        v.push(("ACPR lo".to_string(), dbn(ac.lower_db)));
+        v.push(("ACPR hi".to_string(), dbn(ac.upper_db)));
         v.push(("Noise floor".to_string(), db(sp.floor_dbv, "dBV")));
         let stop = sp.freq(sp.dbv.len().saturating_sub(1));
         v.push(("Band".to_string(), format!("{} to {}", si_short(sp.f0, "Hz"), si_short(stop, "Hz"))));

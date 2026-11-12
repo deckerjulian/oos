@@ -5,7 +5,7 @@
 //! labels. All of them work on the records the screen shows.
 
 use super::*;
-use oos_dsp::measure::{delay, phase, Analysis, Pair};
+use oos_dsp::measure::{burst_width, delay, duration_n, hold_time, phase, setup_time, skew, time_outside, Analysis, Pair};
 
 /// Edge times are seconds from the first sample. Add the record's t0 so a pair of different records lines up.
 fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
@@ -29,16 +29,32 @@ pub(super) const MEAS_MAX: usize = 14;
 /// Rows per channel in the strip under the plot.
 pub(super) const STRIP_PER_ROW: usize = 6;
 
-/// Delay and phase between two channels: name, phase (else delay), edge of A and B rising.
-pub const PAIRS: [(&str, bool, bool, bool); 8] = [
-    ("Delay rise-rise", false, true, true),
-    ("Delay fall-fall", false, false, false),
-    ("Delay rise-fall", false, true, false),
-    ("Delay fall-rise", false, false, true),
-    ("Phase rise-rise", true, true, true),
-    ("Phase fall-fall", true, false, false),
-    ("Phase rise-fall", true, true, false),
-    ("Phase fall-rise", true, false, true),
+/// What a channel-pair row measures. The edge flags choose the edges of delay, phase and skew.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PairKind {
+    Delay,
+    Phase,
+    Skew,
+    Setup,
+    Hold,
+}
+
+/// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still means the same row.
+pub const PAIRS: [(&str, PairKind, bool, bool); 14] = [
+    ("Delay rise-rise", PairKind::Delay, true, true),
+    ("Delay fall-fall", PairKind::Delay, false, false),
+    ("Delay rise-fall", PairKind::Delay, true, false),
+    ("Delay fall-rise", PairKind::Delay, false, true),
+    ("Phase rise-rise", PairKind::Phase, true, true),
+    ("Phase fall-fall", PairKind::Phase, false, false),
+    ("Phase rise-fall", PairKind::Phase, true, false),
+    ("Phase fall-rise", PairKind::Phase, false, true),
+    ("Skew rise-rise", PairKind::Skew, true, true),
+    ("Skew fall-fall", PairKind::Skew, false, false),
+    ("Skew rise-fall", PairKind::Skew, true, false),
+    ("Skew fall-rise", PairKind::Skew, false, true),
+    ("Setup time", PairKind::Setup, true, true),
+    ("Hold time", PairKind::Hold, true, true),
 ];
 
 /// DVM modes and counter modes.
@@ -89,19 +105,25 @@ impl Ui {
             .iter()
             .map(|&(k, id)| {
                 let (val, unit) = match self.meas_analysis(id) {
-                    Some((a, _)) => (a.get(k), self.meas_unit(id, k)),
+                    Some((a, _)) => (self.meas_of(&a, k), self.meas_unit(id, k)),
                     None => (f64::NAN, self.meas_unit(id, k)),
                 };
                 MeasRow { name: k.name().to_string(), src: id, v: val, unit }
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
-            let (name, is_phase, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
+            let (name, kind, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
             let p = Pair(ea, eb);
             let val = match (self.meas_analysis(a), self.meas_analysis(b)) {
                 (Some((aa, ta)), Some((bb, tb))) => {
                     let (aa, bb) = (shift_edges(&aa, ta), shift_edges(&bb, tb));
-                    if is_phase { phase(&aa, &bb, p) } else { delay(&aa, &bb, p) }
+                    match kind {
+                        PairKind::Phase => phase(&aa, &bb, p),
+                        PairKind::Delay => delay(&aa, &bb, p),
+                        PairKind::Skew => skew(&aa, &bb, p),
+                        PairKind::Setup => setup_time(&aa, &bb),
+                        PairKind::Hold => hold_time(&aa, &bb),
+                    }
                 }
                 _ => f64::NAN,
             };
@@ -109,7 +131,7 @@ impl Ui {
                 WaveId::Ch(c) => (c + 1).to_string(),
                 WaveId::Ref(i) => format!("R{}", i + 1),
             };
-            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit: if is_phase { "\u{b0}" } else { "s" } });
+            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit: if kind == PairKind::Phase { "\u{b0}" } else { "s" } });
         }
         v
     }
@@ -124,7 +146,7 @@ impl Ui {
 
     /// Analysis of one source, and the time of its first sample. A channel must be on. A ref is the stored
     /// record, hidden or not. None when that wave is missing.
-    fn meas_analysis(&self, id: WaveId) -> Option<(oos_dsp::measure::Analysis, f64)> {
+    pub(super) fn meas_analysis(&self, id: WaveId) -> Option<(oos_dsp::measure::Analysis, f64)> {
         match id {
             WaveId::Ch(c) => {
                 if c >= n_ch() || !self.m.ch[c].on {
@@ -142,6 +164,74 @@ impl Ui {
                 Some((self.ref_ana[i].clone(), r.t0))
             }
         }
+    }
+
+    /// A measurement with the Measure menu's idle, outside and N settings. The other items are `Analysis::get`.
+    pub(super) fn meas_of(&self, a: &Analysis, k: Meas) -> f64 {
+        match k {
+            Meas::Burst => burst_width(a, self.m.meas_idle),
+            Meas::Outside => time_outside(a, self.m.meas_out),
+            Meas::NPeriods => duration_n(a, self.m.meas_n.max(1) as usize, self.m.meas_data),
+            _ => a.get(k),
+        }
+    }
+
+    pub(super) fn meas_kind(it: Item) -> Option<Kind> {
+        Some(match it {
+            Item::MeasIdle | Item::MeasN => Kind::Value,
+            Item::MeasOutside | Item::MeasEdges => Kind::Choice,
+            _ => return None,
+        })
+    }
+
+    pub(super) fn meas_cfg_label(it: Item) -> Option<&'static str> {
+        Some(match it {
+            Item::MeasIdle => "Idle",
+            Item::MeasOutside => "Outside",
+            Item::MeasN => "N periods",
+            Item::MeasEdges => "Edges",
+            _ => return None,
+        })
+    }
+
+    pub(super) fn meas_value(&self, it: Item) -> Option<String> {
+        let m = &self.m;
+        Some(match it {
+            Item::MeasIdle => if m.meas_idle > 0.0 { si_short(m.meas_idle, "s") } else { "period".into() },
+            Item::MeasOutside => format!("{:?}", m.meas_out),
+            Item::MeasN => m.meas_n.to_string(),
+            Item::MeasEdges => if m.meas_data { "Data".into() } else { "Clock".into() },
+            _ => return None,
+        })
+    }
+
+    pub(super) fn meas_options(&self, it: Item) -> Option<Vec<String>> {
+        Some(match it {
+            Item::MeasOutside => ["Above", "Below", "Both"].iter().map(|s| s.to_string()).collect(),
+            Item::MeasEdges => vec!["Clock".into(), "Data".into()],
+            _ => return None,
+        })
+    }
+
+    pub(super) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
+        let m = &mut self.m;
+        match it {
+            Item::MeasIdle => {
+                let cur = if m.meas_idle > 0.0 { m.meas_idle } else { 0.0 };
+                let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
+                let i = l.iter().position(|&v| v >= cur * 0.999).unwrap_or(0);
+                m.meas_idle = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+            }
+            Item::MeasOutside => {
+                let all = [oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both];
+                let i = all.iter().position(|&x| x == m.meas_out).unwrap_or(2);
+                m.meas_out = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
+            }
+            Item::MeasN => m.meas_n = (m.meas_n as i32 + d).clamp(1, 32) as u32,
+            Item::MeasEdges => m.meas_data = !m.meas_data,
+            _ => return false,
+        }
+        true
     }
 
     /// Room for one more: the oldest one goes when all are taken.

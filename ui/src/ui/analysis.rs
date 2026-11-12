@@ -79,7 +79,18 @@ fn bus_name(f: &identify::Finding) -> Option<String> {
 }
 
 const TRACES: [&str; 4] = ["Normal", "Average", "Max hold", "Min hold"];
-const POWER_MODES: [PowerMode; 4] = [PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple];
+const POWER_MODES: [PowerMode; 6] = [PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple, PowerMode::Capacitance, PowerMode::Rail];
+
+fn power_page(p: PowerMode) -> &'static str {
+    match p {
+        PowerMode::Quality => "Quality",
+        PowerMode::Harmonics => "Harmonics",
+        PowerMode::Switching => "Switching",
+        PowerMode::Ripple => "Ripple",
+        PowerMode::Capacitance => "Cin",
+        PowerMode::Rail => "Rail",
+    }
+}
 const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 /// 1-2-5 frequency ladder 1 Hz .. 1 GHz (0 = full span / auto RBW in front).
@@ -102,13 +113,13 @@ fn step_ladder(v: f64, d: i32) -> f64 {
 impl Ui {
     pub(super) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::EyeRate => Kind::Value,
+            Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::SpecAcprW | Item::SpecAcprS | Item::EyeRate | Item::EyeBer | Item::EyePnLo | Item::EyePnHi | Item::EyeNotch | Item::PowFline | Item::PowFsw | Item::PowRef => Kind::Value,
             Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::IdentifyAct => Kind::Action,
             Item::SpecMargin => Kind::Value,
             Item::ProtoWatch => Kind::Choice,
             // a finding is a row with its summary as the only option: tapping it applies it
             Item::IdFind(_) => Kind::Choice,
-            Item::SpecOn | Item::SpecSrc | Item::SpecHarm | Item::SpecWin | Item::SpecTrace | Item::SpecWf | Item::SpecDist | Item::EyeOn | Item::EyeSrc | Item::PowOn | Item::PowV | Item::PowI | Item::PowMode => Kind::Choice,
+            Item::SpecOn | Item::SpecSrc | Item::SpecHarm | Item::SpecWin | Item::SpecTrace | Item::SpecWf | Item::SpecDist | Item::EyeOn | Item::EyeSrc | Item::EyeB | Item::EyeHp | Item::EyeNpj | Item::EyeRail | Item::PowOn | Item::PowV | Item::PowI | Item::PowMode | Item::PowVin | Item::PowClk => Kind::Choice,
             _ => return None,
         })
     }
@@ -136,10 +147,25 @@ impl Ui {
             Item::SpecLimitClear => "Clear limit",
             Item::SpecMargin => "Limit margin",
             Item::EyeRate => "Bit rate",
+            Item::EyeBer => "BER",
+            Item::EyeB => "Source B",
+            Item::EyeHp => "Highpass",
+            Item::EyePnLo => "Pn low",
+            Item::EyePnHi => "Pn high",
+            Item::EyeNpj => "NPJ",
+            Item::EyeRail => "Rail",
+            Item::EyeNotch => "Notch",
             Item::EyeClear => "Clear eye",
             Item::PowV => "Voltage",
             Item::PowI => "Current",
             Item::PowMode => "Page",
+            Item::PowFline => "Line f",
+            Item::PowFsw => "Switch f",
+            Item::PowVin => "Input",
+            Item::PowRef => "Reference",
+            Item::PowClk => "Clock",
+            Item::SpecAcprW => "Ch width",
+            Item::SpecAcprS => "Ch space",
             Item::IdFind(k) => FIND_LABELS[k.min(7)],
             _ => return None,
         })
@@ -173,7 +199,22 @@ impl Ui {
             Item::SpecWf => onoff(m.spec_wf),
             Item::SpecDist => onoff(m.spec_dist),
             Item::EyeRate => if m.eye_rate == 0.0 { "Auto".into() } else { si_short(m.eye_rate, "b/s") },
-            Item::PowMode => format!("{:?}", m.pw_mode),
+            Item::EyeBer => format!("{:.0e}", m.eye_ber),
+            Item::EyeB => m.eye_b.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
+            Item::EyeHp => onoff(m.eye_hp),
+            Item::EyePnLo => si_short(m.eye_pn_lo, "Hz"),
+            Item::EyePnHi => si_short(m.eye_pn_hi, "Hz"),
+            Item::EyeNpj => onoff(m.eye_npj),
+            Item::EyeRail => m.eye_rail.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
+            Item::EyeNotch => if m.eye_notch > 0.0 { si_short(m.eye_notch, "Hz") } else { "off".into() },
+            Item::PowMode => power_page(m.pw_mode).into(),
+            Item::PowFline => if m.pw_fline > 0.0 { si_short(m.pw_fline, "Hz") } else { "auto".into() },
+            Item::PowFsw => if m.pw_fsw > 0.0 { si_short(m.pw_fsw, "Hz") } else { "auto".into() },
+            Item::PowVin => m.pw_vin.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
+            Item::PowRef => m.pw_ref.map(|v| si_short(v, "V")).unwrap_or_else(|| "Top".into()),
+            Item::PowClk => m.pw_clk.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
+            Item::SpecAcprW => si_short(m.spec_acpr_w, "Hz"),
+            Item::SpecAcprS => si_short(m.spec_acpr_s, "Hz"),
             Item::IdFind(k) => self.azr.findings.get(k).map_or(String::new(), |f| {
                 // short enough for the row's button (longer text would turn it into a - value + picker)
                 let mut s = format!("CH{} {}", f.channels.first().map_or(0, |c| c + 1), f.summary);
@@ -191,12 +232,13 @@ impl Ui {
     pub(super) fn ana_options(&self, it: Item) -> Option<Vec<String>> {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::ProtoWatch => v(&["Off", "On"]),
+            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::EyeHp | Item::EyeNpj | Item::ProtoWatch => v(&["Off", "On"]),
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
+            Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
             Item::SpecHarm => panes::harm_names(),
             Item::SpecWin => crate::math::WINDOWS.iter().map(|w| w.name().to_string()).collect(),
             Item::SpecTrace => v(&TRACES),
-            Item::PowMode => POWER_MODES.iter().map(|p| format!("{:?}", p)).collect(),
+            Item::PowMode => POWER_MODES.iter().map(|p| power_page(*p).to_string()).collect(),
             Item::IdFind(_) => vec![self.ana_value(it).unwrap_or_default()],
             _ => return None,
         })
@@ -239,6 +281,23 @@ impl Ui {
             self.analyzer_update();
             return true;
         }
+        if matches!(it, Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk) {
+            let cur = match it {
+                Item::EyeB => self.m.eye_b,
+                Item::EyeRail => self.m.eye_rail,
+                Item::PowVin => self.m.pw_vin,
+                _ => self.m.pw_clk,
+            };
+            let next = self.step_wave_opt(cur, d);
+            match it {
+                Item::EyeB => self.m.eye_b = next,
+                Item::EyeRail => self.m.eye_rail = next,
+                Item::PowVin => self.m.pw_vin = next,
+                _ => self.m.pw_clk = next,
+            }
+            self.analyzer_update();
+            return true;
+        }
         let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         let view = |m: &mut Model, v: AView| m.view = if m.view == v { AView::Scope } else { v };
         let m = &mut self.m;
@@ -263,7 +322,26 @@ impl Ui {
             Item::SpecWf => m.spec_wf = !m.spec_wf,
             Item::SpecDist => m.spec_dist = !m.spec_dist,
             Item::EyeRate => m.eye_rate = step_ladder(m.eye_rate, d),
-            Item::PowMode => m.pw_mode = POWER_MODES[cyc(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), 4)],
+            Item::EyeBer => {
+                const BERS: [f64; 5] = [1e-3, 1e-6, 1e-9, 1e-12, 1e-15];
+                let i = BERS.iter().position(|&x| (x - m.eye_ber).abs() < x * 0.01).unwrap_or(3);
+                m.eye_ber = BERS[(i as i32 + d).clamp(0, BERS.len() as i32 - 1) as usize];
+            }
+            Item::EyeHp => m.eye_hp = !m.eye_hp,
+            Item::EyePnLo => m.eye_pn_lo = step_ladder(m.eye_pn_lo, d).max(1.0),
+            Item::EyePnHi => m.eye_pn_hi = step_ladder(m.eye_pn_hi, d).max(1.0),
+            Item::EyeNpj => m.eye_npj = !m.eye_npj,
+            Item::EyeNotch => m.eye_notch = step_ladder(m.eye_notch, d),
+            Item::SpecAcprW => m.spec_acpr_w = step_ladder(m.spec_acpr_w.max(1.0), d).max(1.0),
+            Item::SpecAcprS => m.spec_acpr_s = step_ladder(m.spec_acpr_s.max(1.0), d).max(1.0),
+            Item::PowFline => m.pw_fline = step_ladder(m.pw_fline, d),
+            Item::PowFsw => m.pw_fsw = step_ladder(m.pw_fsw, d),
+            Item::PowRef => {
+                let cur = m.pw_ref.unwrap_or(0.0);
+                let next = step_ladder(cur, d);
+                m.pw_ref = if next == 0.0 { None } else { Some(next) };
+            }
+            Item::PowMode => m.pw_mode = POWER_MODES[cyc(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), POWER_MODES.len())],
             _ => return false,
         }
         // the averaging/waterfall/eye restart on any analyser change
@@ -339,8 +417,8 @@ impl Ui {
         let is_ref = |id: WaveId| matches!(id, WaveId::Ref(_));
         match view {
             AView::Spectrum => is_ref(self.m.spec_src),
-            AView::Eye => is_ref(self.m.eye_src),
-            AView::Power => is_ref(self.m.pw_v) || is_ref(self.m.pw_i),
+            AView::Eye => is_ref(self.m.eye_src) || self.m.eye_b.is_some_and(is_ref) || self.m.eye_rail.is_some_and(is_ref),
+            AView::Power => is_ref(self.m.pw_v) || is_ref(self.m.pw_i) || self.m.pw_vin.is_some_and(is_ref) || self.m.pw_clk.is_some_and(is_ref),
             _ => false,
         }
     }
@@ -572,12 +650,13 @@ impl Ui {
             AView::Spectrum => self.spectrum_update(&rec, beside),
             AView::Eye => self.eye_update(&rec),
             AView::Power => {
-                let (cv, ci) = (self.m.pw_v, self.m.pw_i);
-                let ripple = self.m.pw_mode == PowerMode::Ripple;
-                let taken = if ripple {
-                    self.take_waves(&rec, &[cv], &[Some(ci)])
-                } else {
-                    self.take_waves(&rec, &[cv, ci], &[])
+                let mode = self.m.pw_mode;
+                let (v_id, i_id) = (self.m.pw_v, self.m.pw_i);
+                let (fline, fsw, reference) = (self.m.pw_fline, self.m.pw_fsw, self.m.pw_ref);
+                let taken = match mode {
+                    PowerMode::Ripple => self.take_waves(&rec, &[v_id], &[Some(i_id), self.m.pw_vin]),
+                    PowerMode::Rail => self.take_waves(&rec, &[v_id], &[self.m.pw_vin, self.m.pw_clk]),
+                    _ => self.take_waves(&rec, &[v_id, i_id], &[]),
                 };
                 let taken = match taken {
                     Ok(t) => t,
@@ -587,9 +666,10 @@ impl Ui {
                     }
                 };
                 let v = taken.v[0].clone();
-                let i = if ripple { taken.opt.first().and_then(|s| s.clone()).unwrap_or_default() } else { taken.v[1].clone() };
                 let dt = taken.dt;
-                self.azr.power = match self.m.pw_mode {
+                let opt = |k: usize| taken.opt.get(k).and_then(|s| s.clone()).unwrap_or_default();
+                let i = if matches!(mode, PowerMode::Ripple) { opt(0) } else if matches!(mode, PowerMode::Rail) { Vec::new() } else { taken.v[1].clone() };
+                self.azr.power = match mode {
                     PowerMode::Quality => {
                         let q = power::quality(&v, &i, dt, None);
                         vec![
@@ -610,13 +690,47 @@ impl Ui {
                         vec![
                             format!("E on {}   E off {}", si(s.e_on, "J"), si(s.e_off, "J")),
                             format!("E cond {}   P avg {}", si(s.e_cond, "J"), si(s.p_avg, "W")),
+                            format!("dv/dt {} / {}", si(s.dvdt_rise, "V/s"), si(s.dvdt_fall, "V/s")),
+                            format!("di/dt {} / {}", si(s.didt_rise, "A/s"), si(s.didt_fall, "A/s")),
+                            format!("RDS(on) {}", si(s.rds_on, "\u{3a9}")),
                             format!("{} transitions", s.transitions.len()),
                         ]
                     }
                     PowerMode::Ripple => {
                         let (pp, ac) = power::ripple(&v);
                         let (pk, tpk, i2t) = if i.is_empty() { (f64::NAN, f64::NAN, f64::NAN) } else { power::inrush(&i, dt) };
-                        vec![format!("Ripple {} pp   {} rms AC", si(pp, "V"), si(ac, "V")), format!("Inrush peak {} at {}   I\u{b2}t {}", si(pk, "A"), si(tpk, "s"), si(i2t, "A\u{b2}s"))]
+                        let fl = if fline > 0.0 { fline } else { power::line_hz(&v, dt) };
+                        let fs = if fsw > 0.0 { fsw } else { power::switch_hz(&v, dt) };
+                        let line = power::tone_ripple(&v, dt, fl);
+                        let sw = power::switching_ripple(&v, dt, fs);
+                        let mut rows = vec![
+                            format!("Ripple {} pp   {} rms AC", si(pp, "V"), si(ac, "V")),
+                            format!("Line {}  {} pp  {} rms", si(fl, "Hz"), si(line.pp, "V"), si(line.rms, "V")),
+                            format!("Switch {}  {} pp  {} rms", si(fs, "Hz"), si(sw.pp, "V"), si(sw.rms, "V")),
+                            format!("Inrush peak {} at {}   I\u{b2}t {}", si(pk, "A"), si(tpk, "s"), si(i2t, "A\u{b2}s")),
+                        ];
+                        let vin = opt(1);
+                        if !vin.is_empty() {
+                            rows.push(format!("Turn on {}   turn off {}", si(power::turn_on_time(&vin, &v, dt), "s"), si(power::turn_off_time(&vin, &v, dt), "s")));
+                        }
+                        rows
+                    }
+                    PowerMode::Capacitance => {
+                        vec![
+                            format!("C {}", si(power::input_capacitance(&v, &i, dt), "F")),
+                            "The record is the turn-on event".into(),
+                        ]
+                    }
+                    PowerMode::Rail => {
+                        let vin = opt(0);
+                        let clk = opt(1);
+                        let r = power::rail(&v, dt, reference, (!vin.is_empty()).then_some(vin.as_slice()), (!clk.is_empty()).then_some(clk.as_slice()));
+                        let refn = reference.map(|v| si(v, "V")).unwrap_or_else(|| "top".into());
+                        vec![
+                            format!("Overshoot {}   undershoot {}", si(r.overshoot, "V"), si(r.undershoot, "V")),
+                            format!("DC {}   turn-on max {}", si(r.dc, "V"), si(r.turn_on, "V")),
+                            format!("Reference {}", refn),
+                        ]
                     }
                 };
             }

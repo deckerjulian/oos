@@ -287,7 +287,7 @@ pub struct Jitter {
 }
 
 /// Inverse of the standard normal CDF (Acklam's rational approximation, relative error < 1.2e-9).
-fn norm_inv(p: f64) -> f64 {
+pub fn norm_inv(p: f64) -> f64 {
     const A: [f64; 6] = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.383577518672690e2, -3.066479806614716e1, 2.506628277459239];
     const B: [f64; 5] = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
     const C: [f64; 6] = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
@@ -478,6 +478,17 @@ impl EdgeMeans {
             _ => f64::NAN,
         }
     }
+    /// Deterministic TIE of one edge: the run-length mean when that class has `RUN_MIN` edges, else the polarity mean.
+    /// `run_ui` is the spacing in unit intervals before the edge.
+    pub fn edge_offset(&self, rising: bool, run_ui: usize) -> Option<f64> {
+        let p = rising as usize;
+        let run = run_ui.clamp(1, RUNS) - 1;
+        if self.n[p][run] >= RUN_MIN {
+            Some(self.sum[p][run] / self.n[p][run] as f64)
+        } else {
+            self.polarity_mean(p)
+        }
+    }
     /// Data-dependent jitter: peak-to-peak of the mean TIE over the run lengths before an edge, polarity taken out
     /// (s). NaN with fewer than two run lengths, as on a clock.
     pub fn ddj(&self) -> f64 {
@@ -602,6 +613,9 @@ pub struct EyeMeas {
     pub amplitude: f64,
     /// (one - 3 σ1) - (zero + 3 σ0)
     pub height: f64,
+    /// Q-scale eye height at a bit-error rate: (one − Q σ1) − (zero + Q σ0), clamped at 0.
+    /// Q is `norm_inv(1 − BER)`. Empty until `height_at` fills it. The 3σ `height` stays as it is.
+    pub height_ber: f64,
     /// 1 UI - 6 σ of the crossing time, s
     pub width: f64,
     /// crossing level relative to zero..one, %
@@ -820,6 +834,7 @@ impl Eye {
             sigma_zero: s0,
             amplitude: one - zero,
             height: self.eye_height(),
+            height_ber: f64::NAN,
             width: self.eye_width(period),
             crossing_pct: self.crossing_pct(),
             q_factor: self.q_factor(),
@@ -827,4 +842,419 @@ impl Eye {
             fall,
         }
     }
+}
+
+impl EyeMeas {
+    /// Vertical opening extrapolated to `ber`: replace the 3 of the 3σ height with `norm_inv(1 − ber)`, and clamp at 0.
+    pub fn height_at(&self, ber: f64) -> f64 {
+        if !(ber > 0.0 && ber < 1.0) {
+            return f64::NAN;
+        }
+        let q = norm_inv(1.0 - ber);
+        let h = (self.one - q * self.sigma_one) - (self.zero + q * self.sigma_zero);
+        if h.is_finite() { h.max(0.0) } else { f64::NAN }
+    }
+}
+
+/// Total jitter at a bit-error rate: DJ + 2 Q RJ, with Q = `norm_inv(1 − ber)`.
+pub fn tj_at(j: &Jitter, ber: f64) -> f64 {
+    if !(ber > 0.0 && ber < 1.0) || !j.dj_pp.is_finite() || !j.rj_rms.is_finite() {
+        return f64::NAN;
+    }
+    j.dj_pp + 2.0 * norm_inv(1.0 - ber) * j.rj_rms
+}
+
+/// J2: total jitter at BER 2.5e-3. J9: total jitter at BER 2.5e-10.
+pub const BER_J2: f64 = 2.5e-3;
+pub const BER_J9: f64 = 2.5e-10;
+
+/// Bathtub opening at `ber`, in unit intervals: 1 − TJ(ber) / UI, clamped at 0.
+pub fn eye_width_at(j: &Jitter, period: f64, ber: f64) -> f64 {
+    let tj = tj_at(j, ber);
+    if !tj.is_finite() || !(period > 0.0) {
+        return f64::NAN;
+    }
+    (1.0 - tj / period).max(0.0)
+}
+
+/// Cosine and sine amplitudes of one tone on a TIE trend, and the tone itself (seconds).
+fn tone_fit(trend: &[f32], period: f64, f: f64) -> (f64, f64, Vec<f64>) {
+    if trend.is_empty() || !(period > 0.0) || !(f > 0.0) {
+        return (0.0, 0.0, Vec::new());
+    }
+    let (mut re, mut im) = crate::power::dft(trend, period, 0, trend.len(), f);
+    // the 2/N scale counts DC and Nyquist twice; F/2 is the Nyquist line of a one-sample-per-UI trend
+    if (f * period - 0.5).abs() < 1e-6 {
+        re *= 0.5;
+        im *= 0.5;
+    }
+    let s = (0..trend.len())
+        .map(|k| {
+            let th = 2.0 * std::f64::consts::PI * f * k as f64 * period;
+            re * th.cos() - im * th.sin()
+        })
+        .collect();
+    (re, im, s)
+}
+
+/// Peak-to-peak of one tone at `rate / n` fitted to the TIE trend. `2√2` times the RMS of that phasor.
+pub fn subrate_pp(trend: &[f32], period: f64, n: u32) -> f64 {
+    if n == 0 || !(period > 0.0) || trend.len() < 8 {
+        return f64::NAN;
+    }
+    let (re, im, _) = tone_fit(trend, period, 1.0 / (period * n as f64));
+    let rms = (re * re + im * im).sqrt() / std::f64::consts::SQRT_2;
+    2.0 * std::f64::consts::SQRT_2 * rms
+}
+
+/// Peak-to-peak of the sum of the F/2, F/4 and F/8 tones, phases kept.
+pub fn srj_pp(trend: &[f32], period: f64) -> f64 {
+    if !(period > 0.0) || trend.len() < 8 {
+        return f64::NAN;
+    }
+    let rate = 1.0 / period;
+    let tones = [2.0, 4.0, 8.0].map(|n| tone_fit(trend, period, rate / n).2);
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for k in 0..trend.len() {
+        let s = tones[0][k] + tones[1][k] + tones[2][k];
+        lo = lo.min(s);
+        hi = hi.max(s);
+    }
+    if lo.is_finite() { hi - lo } else { f64::NAN }
+}
+
+/// RMS of the TIE-spectrum bins between two offsets, after a moving average one tenth of a decade wide,
+/// with the periodic lines `pj_lines` marks left out. Seconds. A data record still returns the number.
+pub fn phase_noise(trend: &[f32], period: f64, f_lo: f64, f_hi: f64) -> f64 {
+    if trend.len() < 64 || !(period > 0.0) || !(f_hi > f_lo) {
+        return f64::NAN;
+    }
+    let (df, spec) = tie_spectrum(trend, period);
+    if !(df > 0.0) || spec.len() < 8 {
+        return f64::NAN;
+    }
+    let marked: Vec<usize> = pj_lines(df, &spec, spec.len()).into_iter().map(|(f, _)| (f / df).round() as usize).collect();
+    let (lo, hi) = (f_lo.min(f_hi), f_lo.max(f_hi));
+    let mut acc = 0.0;
+    let mut any = false;
+    for k in 1..spec.len() {
+        let f = k as f64 * df;
+        if f < lo || f > hi || marked.contains(&k) {
+            continue;
+        }
+        let lf = f.log10();
+        let (mut s, mut c) = (0.0, 0usize);
+        let (k0, k1) = (((k as f64) / 10f64.powf(0.05)).floor() as usize, ((k as f64) * 10f64.powf(0.05)).ceil() as usize);
+        for j in k0.max(1)..=k1.min(spec.len() - 1) {
+            if ((j as f64 * df).log10() - lf).abs() <= 0.05 {
+                s += spec[j];
+                c += 1;
+            }
+        }
+        let v = if c == 0 { spec[k] } else { s / c as f64 };
+        acc += v * v;
+        any = true;
+    }
+    if any { acc.sqrt() } else { f64::NAN }
+}
+
+/// A record whose edges are one unit apart is a clock. Phase noise of anything else is still a number, and the page says so.
+pub fn is_clock(c: &Clock) -> bool {
+    if c.edges.len() < 8 || !(c.period > 0.0) {
+        return false;
+    }
+    let n = c.edges.windows(2).filter(|w| ((w[1] - w[0]) / c.period - 1.0).abs() < 0.25).count();
+    n * 5 >= 4 * (c.edges.len() - 1)
+}
+
+/// Dual-Dirac DJ left after the periodic lines and the DCD / DDJ means are subtracted. Empty below `TAIL_EDGES`.
+pub fn npj(tie: &[f64], c: &Clock, trend: &[f32], means: &EdgeMeans) -> f64 {
+    if tie.len() < TAIL_EDGES || !(c.period > 0.0) || c.edges.len() < 2 {
+        return f64::NAN;
+    }
+    let (df, spec) = tie_spectrum(trend, c.period);
+    let lines = pj_lines(df, &spec, 16);
+    let mut rest = tie.to_vec();
+    let u0 = c.ui_at(c.edges[0] - tie.first().copied().unwrap_or(0.0)).round();
+    for (f, _) in &lines {
+        let series = tone_fit(trend, c.period, *f).2;
+        for i in 0..rest.len().min(c.edges.len()) {
+            let u = c.ui_at(c.edges[i] - tie[i]).round() - u0;
+            if u >= 0.0 {
+                if let Some(&s) = series.get(u as usize) {
+                    rest[i] -= s;
+                }
+            }
+        }
+    }
+    for i in 1..rest.len().min(c.edges.len()) {
+        let rising = ((i - 1) % 2 == 0) != c.first_rising;
+        let run = ((c.edges[i] - c.edges[i - 1]) / c.period).round().max(1.0) as usize;
+        if let Some(d) = means.edge_offset(rising, run) {
+            rest[i] -= d;
+        }
+    }
+    jitter(&rest).dj_pp
+}
+
+/// Before and after a PSIJ notch: TIE peak-to-peak, periodic-jitter RMS, eye height, eye width.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PsijSide {
+    pub tie_pp: f64,
+    pub pj: f64,
+    pub height: f64,
+    pub width: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Psij {
+    pub before: PsijSide,
+    pub after: PsijSide,
+}
+
+fn tie_pp(t: &[f64]) -> f64 {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for &x in t.iter().filter(|x| x.is_finite()) {
+        lo = lo.min(x);
+        hi = hi.max(x);
+    }
+    if lo.is_finite() { hi - lo } else { f64::NAN }
+}
+
+fn pj_rss(trend: &[f32], period: f64) -> f64 {
+    if trend.len() < 8 || !(period > 0.0) {
+        return f64::NAN;
+    }
+    let (df, spec) = tie_spectrum(trend, period);
+    let lines = pj_lines(df, &spec, 8);
+    if lines.is_empty() { 0.0 } else { lines.iter().map(|l| l.1 * l.1).sum::<f64>().sqrt() }
+}
+
+/// Correlated rail lines and the notch frequency are subtracted as fitted sines from the TIE trend.
+/// `rail` is (samples, dt) with its mean removed here. `wave` is the victim record, used to remeasure the eye
+/// when a line was removed. `height` and `width` are the eye figures before the correction.
+pub fn psij(trend: &[f32], c: &Clock, tie: &[f64], rail: Option<(&[f32], f64)>, notch: f64, height: f64, width: f64, wave: Option<(&[f32], f64)>) -> Psij {
+    let before = PsijSide { tie_pp: tie_pp(tie), pj: pj_rss(trend, c.period), height, width };
+    let mut after = before;
+    if trend.len() < 8 || !(c.period > 0.0) {
+        return Psij { before, after };
+    }
+    let (df, spec) = tie_spectrum(trend, c.period);
+    let victim = pj_lines(df, &spec, 32);
+    let mut kill = Vec::new();
+    if notch > 0.0 {
+        kill.push(notch);
+    }
+    if let Some((rail, rdt)) = rail {
+        if rail.len() >= 16 && rdt > 0.0 {
+            let fin: Vec<f64> = rail.iter().copied().filter(|x| x.is_finite()).map(|x| x as f64).collect();
+            if !fin.is_empty() {
+                let m = fin.iter().sum::<f64>() / fin.len() as f64;
+                let ac: Vec<f32> = rail.iter().map(|&x| if x.is_finite() { x - m as f32 } else { 0.0 }).collect();
+                let (rdf, rspec) = crate::math::spectrum(&ac, rdt, crate::math::Window::Hann);
+                let rlines = pj_lines(rdf, &rspec, 32);
+                for (f, _) in &victim {
+                    if rlines.iter().any(|(rf, _)| (rf - f).abs() <= df.max(1e-15)) {
+                        kill.push(*f);
+                    }
+                }
+            }
+        }
+    }
+    kill.sort_by(f64::total_cmp);
+    kill.dedup_by(|a, b| (*a - *b).abs() <= df.max(1e-15));
+    if kill.is_empty() {
+        return Psij { before, after };
+    }
+    let mut removed = vec![0.0; trend.len()];
+    for f in &kill {
+        for (k, s) in tone_fit(trend, c.period, *f).2.iter().enumerate() {
+            if k < removed.len() {
+                removed[k] += s;
+            }
+        }
+    }
+    let corrected: Vec<f32> = trend.iter().zip(&removed).map(|(t, r)| *t - *r as f32).collect();
+    let u0 = c.edges.first().zip(tie.first()).map(|(&e, &ti)| c.ui_at(e - ti).round()).unwrap_or(0.0);
+    let mut tie2 = tie.to_vec();
+    let mut edges = c.edges.clone();
+    for i in 0..tie2.len().min(edges.len()) {
+        let u = c.ui_at(edges[i] - tie[i]).round() - u0;
+        if u >= 0.0 {
+            if let Some(&s) = removed.get(u as usize) {
+                tie2[i] -= s;
+                edges[i] -= s;
+            }
+        }
+    }
+    after.tie_pp = tie_pp(&tie2);
+    after.pj = pj_rss(&corrected, c.period);
+    if let Some((v, dt)) = wave {
+        let fin: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).map(|x| x as f64).collect();
+        if fin.len() >= 2 && dt > 0.0 {
+            let (lo, hi) = fin.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+            let measure = |edges: &[f64]| {
+                let clk = Clock { edges: edges.to_vec(), ..c.clone() };
+                let mut e = Eye::new(96, 96, 2, lo as f32, hi as f32);
+                e.accumulate(v, dt, &clk);
+                let m = e.measure(c.period);
+                (m.height, m.width)
+            };
+            let (hb, wb) = measure(&c.edges);
+            let (ha, wa) = measure(&edges);
+            // keep the page's eye as the before figure; move it by what this record's eye did
+            if hb.is_finite() && ha.is_finite() {
+                after.height = height + (ha - hb);
+            }
+            if wb.is_finite() && wa.is_finite() {
+                after.width = width + (wa - wb);
+            }
+        }
+    }
+    Psij { before, after }
+}
+
+/// Mean of (a + b) / 2 over the finite pairs. The two records already share a sample grid.
+pub fn dc_common(a: &[f32], b: &[f32]) -> f64 {
+    let n = a.len().min(b.len());
+    let mut s = 0.0;
+    let mut c = 0usize;
+    for k in 0..n {
+        if a[k].is_finite() && b[k].is_finite() {
+            s += 0.5 * (a[k] as f64 + b[k] as f64);
+            c += 1;
+        }
+    }
+    if c == 0 { f64::NAN } else { s / c as f64 }
+}
+
+/// Peak-to-peak of the common mode. `b` none uses `a` alone. `hipass` applies the 1-pole 30 kHz high-pass.
+pub fn ac_common_pp(a: &[f32], b: Option<&[f32]>, dt: f64, hipass: bool) -> f64 {
+    let cm: Vec<f32> = match b {
+        Some(b) => {
+            let n = a.len().min(b.len());
+            (0..n).map(|k| if a[k].is_finite() && b[k].is_finite() { 0.5 * (a[k] + b[k]) } else { f32::NAN }).collect()
+        }
+        None => a.to_vec(),
+    };
+    let w = if hipass && dt > 0.0 { crate::math::unary(crate::math::Op1::Highpass(30e3), &cm, dt) } else { cm };
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for &x in &w {
+        if x.is_finite() {
+            lo = lo.min(x as f64);
+            hi = hi.max(x as f64);
+        }
+    }
+    if lo.is_finite() { hi - lo } else { f64::NAN }
+}
+
+/// Mean voltage where the two traces cross.
+pub fn diff_crossover(a: &[f32], b: &[f32]) -> f64 {
+    let n = a.len().min(b.len());
+    let mut s = Vec::new();
+    for k in 1..n {
+        let (p, q) = (a[k - 1] as f64, a[k] as f64);
+        let (bp, bq) = (b[k - 1] as f64, b[k] as f64);
+        let (d0, d1) = (p - bp, q - bq);
+        if !(d0.is_finite() && d1.is_finite()) {
+            continue;
+        }
+        if d0 == 0.0 {
+            s.push(p);
+        } else if d0 * d1 < 0.0 && d1 != d0 {
+            let u = d0 / (d0 - d1);
+            s.push(p + u * (q - p));
+        }
+    }
+    if s.is_empty() { f64::NAN } else { s.iter().sum::<f64>() / s.len() as f64 }
+}
+
+/// Mean 20 log10 of |midpoint of a non-transition bit| / |midpoint of the nearest preceding transition bit|.
+pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
+    if !(c.period > 0.0) || !(dt > 0.0) || v.len() < 2 || c.edges.is_empty() {
+        return f64::NAN;
+    }
+    let at = |t: f64| -> f64 {
+        let x = t / dt;
+        if x < 0.0 || x > (v.len() - 1) as f64 {
+            return f64::NAN;
+        }
+        let i = x.floor() as usize;
+        let f = x - i as f64;
+        let (a, b) = (v[i] as f64, v[(i + 1).min(v.len() - 1)] as f64);
+        if a.is_finite() && b.is_finite() { a + f * (b - a) } else { f64::NAN }
+    };
+    let t_of = |u: i64| -> f64 {
+        if c.ticks.len() >= 2 {
+            let i = u.clamp(0, c.ticks.len() as i64 - 2) as usize;
+            0.5 * (c.ticks[i] + c.ticks[(i + 1).min(c.ticks.len() - 1)])
+        } else {
+            c.phase + (u as f64 + 0.5) * c.period
+        }
+    };
+    let mut occupied = Vec::new();
+    for &e in &c.edges {
+        occupied.push(c.ui_at(e).floor() as i64);
+    }
+    occupied.sort_unstable();
+    occupied.dedup();
+    let (u0, u1) = (*occupied.first().unwrap(), *occupied.last().unwrap());
+    let mut last = f64::NAN;
+    let mut ratios = Vec::new();
+    for u in u0..=u1 {
+        let volt = at(t_of(u));
+        let trans = occupied.binary_search(&u).is_ok();
+        if trans {
+            if volt.is_finite() {
+                last = volt;
+            }
+        } else if last.is_finite() && last != 0.0 && volt.is_finite() {
+            ratios.push(20.0 * (volt.abs() / last.abs()).log10());
+        }
+    }
+    if ratios.is_empty() { f64::NAN } else { ratios.iter().sum::<f64>() / ratios.len() as f64 }
+}
+
+fn same_edge_hz(c: &Clock) -> Vec<f64> {
+    let mut f = Vec::new();
+    let mut i = 0;
+    while i + 2 < c.edges.len() {
+        let dt = c.edges[i + 2] - c.edges[i];
+        if dt > 0.0 {
+            f.push(1.0 / dt);
+        }
+        i += 2;
+    }
+    f
+}
+
+/// Peak-to-peak of the per-cycle frequency deviation, parts per million of the constant-mean rate,
+/// and the per-cycle series in ppm.
+pub fn ssc_deviation(c: &Clock) -> (f64, Vec<f64>) {
+    let f0 = c.rate();
+    let f = same_edge_hz(c);
+    if !(f0 > 0.0) || f.len() < 2 {
+        return (f64::NAN, Vec::new());
+    }
+    let ppm: Vec<f64> = f.iter().map(|x| (x - f0) / f0 * 1e6).collect();
+    let (lo, hi) = ppm.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+    ((hi - lo), ppm)
+}
+
+/// Strongest non-DC line of the per-cycle frequency series, hertz. The sample interval is the mean period.
+pub fn ssc_rate(c: &Clock) -> f64 {
+    let f = same_edge_hz(c);
+    if f.len() < 16 {
+        return f64::NAN;
+    }
+    let mean_p = f.iter().map(|x| 1.0 / x).sum::<f64>() / f.len() as f64;
+    if !(mean_p > 0.0) {
+        return f64::NAN;
+    }
+    let v: Vec<f32> = f.iter().map(|x| *x as f32).collect();
+    let (df, spec) = crate::math::spectrum(&v, mean_p, crate::math::Window::Hann);
+    crate::math::peaks(&spec, 1).first().map(|(k, _)| *k as f64 * df).filter(|x| *x > 0.0).unwrap_or(f64::NAN)
 }

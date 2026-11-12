@@ -404,6 +404,10 @@ enum Item {
     MathLinA,
     MathLinB,
     MeasClear,
+    MeasIdle,
+    MeasOutside,
+    MeasN,
+    MeasEdges,
     CurMode,
     CurA,
     CurB,
@@ -431,6 +435,8 @@ enum Item {
     SpecRef,
     SpecWf,
     SpecDist,
+    SpecAcprW,
+    SpecAcprS,
     SpecPeak,
     /// harmonics the pane's span follows
     SpecHarm,
@@ -440,10 +446,23 @@ enum Item {
     EyeSrc,
     EyeRate,
     EyeClear,
+    EyeBer,
+    EyeB,
+    EyeHp,
+    EyePnLo,
+    EyePnHi,
+    EyeNpj,
+    EyeRail,
+    EyeNotch,
     PowOn,
     PowV,
     PowI,
     PowMode,
+    PowFline,
+    PowFsw,
+    PowVin,
+    PowRef,
+    PowClk,
     IdentifyAct,
     ProtoWatch,
     IdFind(usize),
@@ -491,6 +510,7 @@ enum Item {
     BodeGen,
     BodeAddr,
     BodeCur,
+    BodeMode,
     CalCh,
     CalZero,
     CalAdc,
@@ -1258,8 +1278,8 @@ impl Ui {
 
     /// Measurement `k` of channel `c` (NaN when off or not measurable).
     pub fn meas(&self, c: usize, k: Meas) -> f64 {
-        if self.m.ch[c].on {
-            self.ana[c].get(k)
+        if c < self.m.ch.len() && self.m.ch[c].on {
+            self.meas_of(&self.ana[c], k)
         } else {
             f64::NAN
         }
@@ -3406,7 +3426,7 @@ impl Ui {
         let m = &self.m;
         let ch = WaveId::Ch;
         let want: Vec<WaveId> = match menu {
-            MenuId::Power if m.pw_mode == PowerMode::Ripple => vec![m.pw_v],
+            MenuId::Power if matches!(m.pw_mode, PowerMode::Ripple | PowerMode::Rail) => vec![m.pw_v],
             MenuId::Power => vec![m.pw_v, m.pw_i],
             MenuId::Spectrum => vec![m.spec_src],
             MenuId::Eye => vec![m.eye_src],
@@ -3475,7 +3495,7 @@ impl Ui {
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasStats, Item::MeasLabels, Item::MeasClear],
+            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasIdle, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::MeasClear],
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
@@ -3491,9 +3511,17 @@ impl Ui {
                 v
             }
             MenuId::Storage => vec![Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StorePng],
-            MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
-            MenuId::Eye => vec![Item::EyeOn, Item::EyeSrc, Item::EyeRate, Item::EyeClear],
-            MenuId::Power => vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode],
+            MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecAcprW, Item::SpecAcprS, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
+            MenuId::Eye => vec![Item::EyeOn, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyeClear],
+            MenuId::Power => {
+                let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
+                match self.m.pw_mode {
+                    PowerMode::Ripple => v.extend([Item::PowFline, Item::PowFsw, Item::PowVin]),
+                    PowerMode::Rail => v.extend([Item::PowRef, Item::PowVin, Item::PowClk]),
+                    _ => {}
+                }
+                v
+            }
             MenuId::Identify => self.identify_items(),
             MenuId::SelfCal => self.cal_items(),
             MenuId::Network => vec![Item::NetEth, Item::NetMac, Item::NetWeb, Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
@@ -4078,7 +4106,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
+        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
             return k;
         }
         match it {
@@ -4099,7 +4127,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
             return l;
         }
         match it {
@@ -4112,7 +4140,7 @@ impl Ui {
             Item::Open(MenuId::Cursor) => "Cursor",
             Item::Open(MenuId::Display) => "Display",
             Item::Open(MenuId::Utility) => "System",
-            Item::Open(MenuId::MeasPair) => "Delay / phase",
+            Item::Open(MenuId::MeasPair) => "Channel pair",
             Item::Open(MenuId::Dvm) => "DVM / counter",
             Item::Open(MenuId::Logger) => "Data logger",
             Item::Open(MenuId::Network) => "Network",
@@ -4338,7 +4366,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4529,7 +4557,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -5035,6 +5063,14 @@ impl Ui {
                         self.meas_make_room();
                         self.m.meas.push(e);
                     }
+                    if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
+                        if let Some((a, _)) = self.meas_analysis(self.meas_src) {
+                            let p = a.period();
+                            if p.is_finite() && p > 0.0 {
+                                self.m.meas_idle = p;
+                            }
+                        }
+                    }
                     self.toast(&format!("{} {} added", k.name(), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
@@ -5303,7 +5339,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -5505,7 +5541,7 @@ impl Ui {
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
         let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet));
-        let (cols, cw, rh, gap) = if wide { (2, 400, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, 190, DLG_ROW + 2, 8) } else if grid { (4, 150, DLG_ROW + 2, 8) } else if n > 5 { (2, 400, DLG_ROW, 16) } else { (1, 400, DLG_ROW, 16) };
+        let (cols, cw, rh, gap) = if wide { (2, 400, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, 190, DLG_ROW + 2, 8) } else if grid && self.menu == MenuId::MeasAdd { (6, 150, DLG_ROW + 2, 8) } else if grid { (4, 150, DLG_ROW + 2, 8) } else if n > 5 { (2, 400, DLG_ROW, 16) } else { (1, 400, DLG_ROW, 16) };
         let nrows = (n + cols - 1) / cols;
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
