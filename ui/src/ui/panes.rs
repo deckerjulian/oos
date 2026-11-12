@@ -132,7 +132,11 @@ impl Ui {
         let f = &self.fonts;
         let g = b.plot;
         let src = self.m.spec_src;
-        let x = cv.text(&f.sb, b.title.x, b.title.y + 14, &self.ch_name(src), CH_COLORS[src]);
+        let name = match src {
+            WaveId::Ch(c) => self.ch_name(c),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        };
+        let x = cv.text(&f.sb, b.title.x, b.title.y + 14, &name, self.wave_color(src));
         let mut t = format!("{:.0} dB/div  \u{b7}  Ref {:.0} dBV  \u{b7}  RBW {}", DB_PER_DIV, self.m.spec_ref, si_short(sp.rbw, "Hz"));
         if self.azr.limit.is_some() {
             t.push_str(&format!("  \u{b7}  Limit: {} of {} over", self.azr.limit_over, self.azr.limit_n));
@@ -289,7 +293,7 @@ pub(super) fn tests_result_cols(w: i32) -> Vec<i32> {
 
 /// The cells of a results row.
 struct ResultRow {
-    ch: usize,
+    ch: WaveId,
     cells: [String; 8],
     now: f64,
     lo: f64,
@@ -304,7 +308,7 @@ impl Ui {
             CursorMode::Time | CursorMode::Volt => 3,
             _ => 4,
         };
-        cur + if self.m.ch[self.m.spec_src].on { 5 } else { 0 }
+        cur + if self.wave_ready(self.m.spec_src) { 5 } else { 0 }
     }
 
     /// Height the current pane wants.
@@ -321,7 +325,7 @@ impl Ui {
             tables::PANE_EVENTS if self.pn.event_rows > 0 => self.pn.event_rows as i32 * 24,
             tables::PANE_EVENTS => HINT_H,
             tables::PANE_TREND if n == 0 => HINT_H,
-            tables::PANE_SPECTRUM if !self.m.ch[self.m.spec_src].on => HINT_H,
+            tables::PANE_SPECTRUM if !self.wave_ready(self.m.spec_src) => HINT_H,
             _ => i32::MAX / 2,
         }
     }
@@ -353,8 +357,8 @@ impl Ui {
                 let sd = (st.sumsq / n - mean * mean).max(0.0).sqrt();
                 let val = |v: f64| if st.n == 0 { "----".to_string() } else { r.fmt4(v) };
                 // a pair names both channels
-                let src = self.m.meas2.get(i.wrapping_sub(self.m.meas.len())).map_or(format!("CH{}", r.ch + 1), |p| format!("CH{}-{}", p.1 + 1, p.2 + 1));
-                ResultRow { ch: r.ch, cells: [src, r.name.clone(), r.fmt4(r.v), val(mean), val(st.min), val(st.max), val(sd), fmt_count(st.n as f64)], now: r.v, lo: st.min, hi: st.max }
+                let src = self.m.meas2.get(i.wrapping_sub(self.m.meas.len())).map_or(self.wave_name(r.src), |p| format!("{}-{}", self.wave_name(p.1), self.wave_name(p.2)));
+                ResultRow { ch: r.src, cells: [src, r.name.clone(), r.fmt4(r.v), val(mean), val(st.min), val(st.max), val(sd), fmt_count(st.n as f64)], now: r.v, lo: st.min, hi: st.max }
             })
             .collect()
     }
@@ -433,7 +437,7 @@ impl Ui {
             if i % 2 == 1 {
                 cv.fill(row, ROW_ALT);
             }
-            let col = CH_COLORS[w.ch];
+            let col = self.wave_color(w.ch);
             cv.fill(Rect::new(t.x + 2, y + 1, 3, pitch - 2), col);
             let ty = y + (pitch + vf.size * 3 / 4) / 2;
             cv.text(&f.sb, x0 + x[0], ty, &w.cells[0], col);
@@ -494,7 +498,11 @@ impl Ui {
         }
         let Some(p) = peaks else { return };
         let y0 = cur_rows;
-        cv.text(&f.sb, s.x, line(y0), &format!("Peaks  \u{b7}  {}  \u{b7}  dBV", self.ch_name(self.m.spec_src)), TEXT);
+        let spec = match self.m.spec_src {
+            WaveId::Ch(c) => self.ch_name(c),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        };
+        cv.text(&f.sb, s.x, line(y0), &format!("Peaks  \u{b7}  {}  \u{b7}  dBV", spec), TEXT);
         if p.is_empty() {
             cv.text(&f.s, s.x, line(y0 + 1), "No lines above the noise", DIM);
         }
@@ -660,7 +668,7 @@ impl Ui {
         let mut v = vec!["Auto".to_string(), "Off".to_string()];
         // a pair says its channels in its name
         let single = self.m.meas.len();
-        v.extend(self.meas_rows().iter().enumerate().map(|(i, r)| if i < single { format!("CH{} {}", r.ch + 1, r.name) } else { r.name.clone() }));
+        v.extend(self.meas_rows().iter().enumerate().map(|(i, r)| if i < single { format!("{} {}", self.wave_name(r.src), r.name) } else { r.name.clone() }));
         v
     }
 
@@ -699,8 +707,8 @@ impl Ui {
     /// One chart: title and plot on the left, a card with the value on the right.
     fn draw_chart(&self, cv: &mut Canvas, c: Rect, row: &tools::MeasRow, t: Option<&Trend>) {
         let f = &self.fonts;
-        let col = CH_COLORS[row.ch];
-        let x = cv.text(&f.sb, c.x + 8, c.y + 15, &format!("CH{}", row.ch + 1), col);
+        let col = self.wave_color(row.src);
+        let x = cv.text(&f.sb, c.x + 8, c.y + 15, &self.wave_name(row.src), col);
         cv.text(&f.sb, x + 8, c.y + 15, &row.name, TEXT);
         let g = Rect::new(c.x + YLABEL_W, c.y + TITLE_H, c.w - YLABEL_W - CARD_W - 8, c.h - TITLE_H - XLABEL_H);
         let card = Rect::new(c.x + c.w - CARD_W - 2, c.y + 2, CARD_W, c.h - 4);
@@ -759,7 +767,7 @@ impl Ui {
         let now = row.fmt4(row.v);
         let font = fit_font(&[&f.xl, &f.lb, &f.mb], r.w - 12, std::iter::once(now.as_str()));
         let body = r.h - 40;
-        let col = CH_COLORS[row.ch];
+        let col = self.wave_color(row.src);
         cv.text(font, r.x + r.w - 6 - font.width(&now), r.y + 40 + body / 3 - 4, &now, col);
         let (lo, hi) = t.and_then(|t| t.range).map_or(("----".to_string(), "----".to_string()), |(a, b)| (row.fmt4(a), row.fmt4(b)));
         for (k, (l, v)) in [("Max", hi), ("Min", lo)].iter().enumerate() {

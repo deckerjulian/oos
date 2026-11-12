@@ -5,7 +5,24 @@
 //! labels. All of them work on the records the screen shows.
 
 use super::*;
-use oos_dsp::measure::{delay, phase, Pair};
+use oos_dsp::measure::{delay, phase, Analysis, Pair};
+
+/// Edge times are seconds from the first sample. Add the record's t0 so a pair of different records lines up.
+fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
+    if t0 == 0.0 {
+        return a.clone();
+    }
+    let mut b = a.clone();
+    for t in &mut b.rises {
+        *t += t0;
+    }
+    for t in &mut b.falls {
+        *t += t0;
+    }
+    b.t_vmax += t0;
+    b.t_vmin += t0;
+    b
+}
 
 /// Measurements at once.
 pub(super) const MEAS_MAX: usize = 14;
@@ -31,8 +48,8 @@ pub const CNT_MODES: [&str; 3] = ["Frequency", "Period", "Totalize"];
 /// One measurement as the screen shows it.
 pub(super) struct MeasRow {
     pub name: String,
-    /// colour and strip row: the channel, or channel A of a pair
-    pub ch: usize,
+    /// colour and strip row: the source, or source A of a pair
+    pub src: WaveId,
     pub v: f64,
     pub unit: &'static str,
 }
@@ -70,20 +87,61 @@ impl Ui {
             .m
             .meas
             .iter()
-            .map(|&(k, c)| MeasRow { name: k.name().to_string(), ch: c, v: if self.m.ch[c].on { self.ana[c].get(k) } else { f64::NAN }, unit: self.m.ch[c].unit.of(k.unit()) })
+            .map(|&(k, id)| {
+                let (val, unit) = match self.meas_analysis(id) {
+                    Some((a, _)) => (a.get(k), self.meas_unit(id, k)),
+                    None => (f64::NAN, self.meas_unit(id, k)),
+                };
+                MeasRow { name: k.name().to_string(), src: id, v: val, unit }
+            })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
             let (name, is_phase, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
-            let on = self.m.ch[a].on && self.m.ch[b].on;
             let p = Pair(ea, eb);
-            let val = match (on, is_phase) {
-                (false, _) => f64::NAN,
-                (true, true) => phase(&self.ana[a], &self.ana[b], p),
-                (true, false) => delay(&self.ana[a], &self.ana[b], p),
+            let val = match (self.meas_analysis(a), self.meas_analysis(b)) {
+                (Some((aa, ta)), Some((bb, tb))) => {
+                    let (aa, bb) = (shift_edges(&aa, ta), shift_edges(&bb, tb));
+                    if is_phase { phase(&aa, &bb, p) } else { delay(&aa, &bb, p) }
+                }
+                _ => f64::NAN,
             };
-            v.push(MeasRow { name: format!("{} {}-{}", name, a + 1, b + 1), ch: a, v: val, unit: if is_phase { "\u{b0}" } else { "s" } });
+            let tag = |id: WaveId| match id {
+                WaveId::Ch(c) => (c + 1).to_string(),
+                WaveId::Ref(i) => format!("R{}", i + 1),
+            };
+            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit: if is_phase { "\u{b0}" } else { "s" } });
         }
         v
+    }
+
+    /// Unit of a measurement: the channel's unit, or volts for a ref (the slot stores volts).
+    fn meas_unit(&self, id: WaveId, k: Meas) -> &'static str {
+        match id {
+            WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].unit.of(k.unit()),
+            WaveId::Ref(_) => k.unit(),
+        }
+    }
+
+    /// Analysis of one source, and the time of its first sample. A channel must be on. A ref is the stored
+    /// record, hidden or not. None when that wave is missing.
+    fn meas_analysis(&self, id: WaveId) -> Option<(oos_dsp::measure::Analysis, f64)> {
+        match id {
+            WaveId::Ch(c) => {
+                if c >= n_ch() || !self.m.ch[c].on {
+                    return None;
+                }
+                let rec = self.last[0].as_ref()?;
+                let s = self.wave_samples(rec, id)?;
+                Some((self.ana[c].clone(), s.t0))
+            }
+            WaveId::Ref(i) => {
+                let r = self.refs.get(i)?.as_ref()?;
+                if r.v.len() < 2 || !(r.dt > 0.0) {
+                    return None;
+                }
+                Some((self.ref_ana[i].clone(), r.t0))
+            }
+        }
     }
 
     /// Room for one more: the oldest one goes when all are taken.
@@ -102,7 +160,7 @@ impl Ui {
     pub(super) fn meas_pair_toggle(&mut self, k: usize) {
         let e = (k, self.meas_src, self.meas_src_b);
         if e.1 == e.2 {
-            return self.toast("Source A and B are the same channel");
+            return self.toast("Source A and B are the same source");
         }
         if let Some(i) = self.m.meas2.iter().position(|x| *x == e) {
             self.m.meas2.remove(i);

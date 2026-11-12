@@ -3,6 +3,7 @@
 //! Measure > Labels on trace: what a measurement measures, on the trace: level lines for levels, arrows for spans.
 
 use super::{si, Canvas, Rect, Ui, CH_COLORS};
+use crate::model::WaveId;
 use crate::gfx::Rgb;
 use oos_dsp::measure::{Analysis, Meas};
 
@@ -80,7 +81,8 @@ impl Ui {
         let a = self.area;
         // spans in rows between the levels, vertical arrows from the left, level labels spread over the width
         let (mut rows, mut verts, mut levels) = (0, 0, 0);
-        for &(k, c) in self.m.meas.iter().take(MAX_LABELS) {
+        for &(k, id) in self.m.meas.iter().take(MAX_LABELS) {
+            let WaveId::Ch(c) = id else { continue };
             let ana = &self.ana[c];
             let v = self.meas(c, k);
             if !self.m.ch[c].on || !self.shows(c) || !ana.valid || !v.is_finite() {

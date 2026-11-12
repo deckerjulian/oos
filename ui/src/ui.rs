@@ -685,7 +685,7 @@ pub struct Ui {
     /// the open picker (menu == MenuId::Pick)
     pick: Option<Pick>,
     focus: usize,
-    meas_src: usize,
+    meas_src: WaveId,
     last: [Option<Record>; 1],
     stats: [Stats; NCH],
     /// the last acquired records (newest last) for history playback
@@ -696,6 +696,8 @@ pub struct Ui {
     search_on: bool,
     /// measurements per channel (oos-dsp) of the last record
     ana: [oos_dsp::measure::Analysis; NCH],
+    /// measurements of each ref slot, from the stored samples (no front-end bandwidth)
+    ref_ana: [oos_dsp::measure::Analysis; NREF],
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -751,8 +753,8 @@ pub struct Ui {
     /// counter: edges so far, frequency statistics
     cnt_total: u64,
     cnt_stat: MStat,
-    /// channel B of delay and phase
-    meas_src_b: usize,
+    /// source B of delay and phase
+    meas_src_b: WaveId,
     /// the reference the Slot rows work on
     ref_sel: usize,
     ref_src: usize,
@@ -864,10 +866,11 @@ impl Ui {
             parent: None,
             pick: None,
             focus: 0,
-            meas_src: 0,
+            meas_src: WaveId::Ch(0),
             last: [None],
             stats: [Stats::default(); NCH],
             ana: Default::default(),
+            ref_ana: std::array::from_fn(|_| Default::default()),
             history: std::collections::VecDeque::new(),
             hist_pos: None,
             search_on: false,
@@ -914,7 +917,7 @@ impl Ui {
             refs: std::array::from_fn(|_| None),
             cnt_total: 0,
             cnt_stat: MStat::default(),
-            meas_src_b: 1,
+            meas_src_b: WaveId::Ch(1),
             ref_sel: 0,
             ref_src: 0,
             xy: false,
@@ -968,24 +971,24 @@ impl Ui {
     }
 
     /// Channels with measurements, in the order of their first measurement (one strip row each).
-    fn meas_groups(&self) -> Vec<usize> {
+    fn meas_groups(&self) -> Vec<WaveId> {
         let mut v = Vec::new();
-        for c in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)) {
-            if !v.contains(&c) {
-                v.push(c);
+        for id in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)) {
+            if !v.contains(&id) {
+                v.push(id);
             }
         }
         v
     }
 
     /// The measurements of a default set-up: one full strip row.
-    fn default_meas() -> Vec<(Meas, usize)> {
-        [Meas::Vpp, Meas::Freq, Meas::Vavg, Meas::Vrms, Meas::Rise, Meas::PDuty].map(|k| (k, 0)).to_vec()
+    fn default_meas() -> Vec<(Meas, WaveId)> {
+        [Meas::Vpp, Meas::Freq, Meas::Vavg, Meas::Vrms, Meas::Rise, Meas::PDuty].map(|k| (k, WaveId::Ch(0))).to_vec()
     }
 
     /// Strip rows of the measurements of channel `c`: six to a row.
-    fn meas_strip_rows(&self, c: usize) -> i32 {
-        let n = self.m.meas.iter().filter(|e| e.1 == c).count() + self.m.meas2.iter().filter(|e| e.1 == c).count();
+    fn meas_strip_rows(&self, id: WaveId) -> i32 {
+        let n = self.m.meas.iter().filter(|e| e.1 == id).count() + self.m.meas2.iter().filter(|e| e.1 == id).count();
         n.div_ceil(tools::STRIP_PER_ROW) as i32
     }
 
@@ -1373,8 +1376,18 @@ impl Ui {
         if self.m.fit_platform() {
             self.mark_changed();
         }
-        if self.meas_src >= n_ch() || self.ref_src >= n_ch() {
-            (self.meas_src, self.ref_src) = (self.meas_src.min(n_ch() - 1), self.ref_src.min(n_ch() - 1));
+        if let WaveId::Ch(c) = self.meas_src {
+            if c >= n_ch() {
+                self.meas_src = WaveId::Ch(0);
+            }
+        }
+        if let WaveId::Ch(c) = self.meas_src_b {
+            if c >= n_ch() {
+                self.meas_src_b = WaveId::Ch(0);
+            }
+        }
+        if self.ref_src >= n_ch() {
+            self.ref_src = n_ch() - 1;
         }
         self.auto_step();
         self.sysinfo_poll();
@@ -2140,11 +2153,12 @@ impl Ui {
 
     /// Histogram source: the measurement source if it is on, else the first channel on.
     fn hist_src(&self) -> Option<usize> {
-        if self.m.ch[self.meas_src].on {
-            Some(self.meas_src)
-        } else {
-            (0..NCH).find(|&c| self.m.ch[c].on)
+        if let WaveId::Ch(c) = self.meas_src {
+            if c < n_ch() && self.m.ch[c].on {
+                return Some(c);
+            }
         }
+        (0..NCH).find(|&c| self.m.ch[c].on)
     }
 
     /// Histogram bins from the phosphor map: rows (vertical) or columns within +-0.5 div of the trigger level
@@ -2848,25 +2862,24 @@ impl Ui {
         let g = self.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
         let mut y = (self.plot_bottom() + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
-        let pill = |cv: &mut Canvas, y: i32, c: usize| {
-            let r = Rect::new(8, y + 1, 42, 14);
-            cv.round(r, 3, CH_COLORS[c], 255);
-            cv.text_in(&f.sb, r, 1, &format!("CH{}", c + 1), DARK_TEXT);
-        };
         let in_pane = self.results_pane_on();
         if !self.results_panel() && !in_pane {
             let rows = self.meas_rows();
-            for c in self.meas_groups() {
-                let mine: Vec<&tools::MeasRow> = rows.iter().filter(|r| r.ch == c).collect();
+            for id in self.meas_groups() {
+                let mine: Vec<&tools::MeasRow> = rows.iter().filter(|r| r.src == id).collect();
+                let col = self.wave_color(id);
+                let label = self.wave_name(id);
                 for part in mine.chunks(tools::STRIP_PER_ROW) {
                     cv.fill(Rect::new(6, y, W - 12, 16), BAR);
-                    pill(cv, y, c);
+                    let r = Rect::new(8, y + 1, 42, 14);
+                    cv.round(r, 3, col, 255);
+                    cv.text_in(&f.sb, r, 1, &label, DARK_TEXT);
                     // the row's width shared out, whatever the number of values
                     let pitch = (W - 66) / part.len() as i32;
-                    for (i, r) in part.iter().enumerate() {
+                    for (i, row) in part.iter().enumerate() {
                         let x = 58 + i as i32 * pitch;
-                        let x2 = cv.text(&f.s, x, y + 12, &r.name, DIM) + 8;
-                        cv.text(&f.sb, x2, y + 12, &r.text(), CH_COLORS[c]);
+                        let x2 = cv.text(&f.s, x, y + 12, &row.name, DIM) + 8;
+                        cv.text(&f.sb, x2, y + 12, &row.text(), col);
                     }
                     y += STRIP_ROW;
                 }
@@ -2883,7 +2896,10 @@ impl Ui {
         }
         if self.m.cursor != CursorMode::Off && !in_pane {
             cv.fill(Rect::new(6, y, W - 12, 16), BAR);
-            pill(cv, y, self.m.active);
+            let c = self.m.active;
+            let pill = Rect::new(8, y + 1, 42, 14);
+            cv.round(pill, 3, CH_COLORS[c], 255);
+            cv.text_in(&f.sb, pill, 1, &format!("CH{}", c + 1), DARK_TEXT);
             let mode = match self.m.cursor {
                 CursorMode::Volt => "Volt",
                 CursorMode::Track => "Track",
@@ -2951,10 +2967,10 @@ impl Ui {
                 // one line: name, value, mean
                 cv.text(&f.s, body.x + 10, by + 16, &r.name, LABEL);
                 let s = r.text();
-                cv.text(&f.sb, body.x + body.w - 10 - f.sb.width(&s), by + 16, &s, CH_COLORS[r.ch]);
+                cv.text(&f.sb, body.x + body.w - 10 - f.sb.width(&s), by + 16, &s, self.wave_color(r.src));
                 continue;
             }
-            cv.text(&f.s, body.x + 10, by + 16, &format!("{} CH{}", r.name, r.ch + 1), LABEL);
+            cv.text(&f.s, body.x + 10, by + 16, &format!("{} {}", r.name, self.wave_name(r.src)), LABEL);
             if st.n > 1 {
                 let sd = (st.sumsq / st.n as f64 - mean * mean).max(0.0).sqrt();
                 let s = format!("\u{b1}{} \u{3c3}", si(sd, r.unit));
@@ -2962,7 +2978,7 @@ impl Ui {
                 let s = format!("mean {}", r.fmt(mean));
                 cv.text(&f.s, body.x + body.w - 10 - f.s.width(&s), by + 35, &s, DIM);
             }
-            cv.text(&f.mb, body.x + 10, by + 35, &r.text(), CH_COLORS[r.ch]);
+            cv.text(&f.mb, body.x + 10, by + 35, &r.text(), self.wave_color(r.src));
         }
     }
 
@@ -3390,11 +3406,11 @@ impl Ui {
         let m = &self.m;
         let ch = WaveId::Ch;
         let want: Vec<WaveId> = match menu {
-            MenuId::Power if m.pw_mode == PowerMode::Ripple => vec![ch(m.pw_v)],
-            MenuId::Power => vec![ch(m.pw_v), ch(m.pw_i)],
-            MenuId::Spectrum => vec![ch(m.spec_src)],
-            MenuId::Eye => vec![ch(m.eye_src)],
-            MenuId::Bode => vec![ch(m.bode_in), ch(m.bode_out)],
+            MenuId::Power if m.pw_mode == PowerMode::Ripple => vec![m.pw_v],
+            MenuId::Power => vec![m.pw_v, m.pw_i],
+            MenuId::Spectrum => vec![m.spec_src],
+            MenuId::Eye => vec![m.eye_src],
+            MenuId::Bode => vec![m.bode_in, m.bode_out],
             MenuId::Magnetic => vec![m.mag_v, m.mag_i],
             MenuId::Inverter if m.inv_page == InvPage::Dq0 => {
                 let mut v = vec![m.inv_a, m.inv_b, m.inv_c];
@@ -3587,6 +3603,22 @@ impl Ui {
             self.stats[c] = stats(&v, dt);
             self.ana[c] = oos_dsp::measure::analyze_min(&v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64);
         }
+        self.measure_refs();
+    }
+
+    /// Each loaded ref, at the slot's own sample interval. Coupling and the bandwidth limit are not applied.
+    fn measure_refs(&mut self) {
+        for i in 0..NREF {
+            self.ref_ana[i] = match &self.refs[i] {
+                Some(r) if r.v.len() >= 2 && r.dt > 0.0 => oos_dsp::measure::analyze_min(&r.v, r.dt, 0.4 * r.vpd as f64),
+                _ => Default::default(),
+            };
+        }
+    }
+
+    /// A record with no samples, for an analyser whose sources are all stored refs.
+    pub(super) fn blank_record() -> Record {
+        Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None }
     }
 
     /// Samples to measure channel `c` on: every captured sample of the screen window when the hardware frame has more
@@ -4390,8 +4422,8 @@ impl Ui {
             Item::AcqAvg => format!("{}", m.avg_count),
             Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
-            Item::MeasSrc => format!("CH{}", self.meas_src + 1),
-            Item::MeasSrcB => format!("CH{}", self.meas_src_b + 1),
+            Item::MeasSrc => self.wave_name(self.meas_src),
+            Item::MeasSrcB => self.wave_name(self.meas_src_b),
             Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
             Item::LogOn => onoff(self.log.file.is_some()),
@@ -4662,8 +4694,14 @@ impl Ui {
                 m.avg_count = AVERAGES[step(i, AVERAGES.len(), d)];
             }
             Item::AcqDepth => m.mdepth = cyc(m.mdepth, mdepths().len(), d),
-            Item::MeasSrc => self.meas_src = src_step(self.meas_src, NCH, d),
-            Item::MeasSrcB => self.meas_src_b = src_step(self.meas_src_b, NCH, d),
+            Item::MeasSrc => {
+                let cur = self.meas_src;
+                self.meas_src = self.step_wave(cur, d);
+            }
+            Item::MeasSrcB => {
+                let cur = self.meas_src_b;
+                self.meas_src_b = self.step_wave(cur, d);
+            }
             Item::DvmOn => m.dvm_on = !m.dvm_on,
             Item::DvmSrc => m.dvm_src = src_step(m.dvm_src, NCH, d),
             Item::DvmMode => m.dvm_mode = (m.dvm_mode as i32 + d).rem_euclid(3) as usize,
@@ -4694,6 +4732,7 @@ impl Ui {
                     let i = VSCALES.iter().position(|&s| s >= r.vpd * 0.999).unwrap_or(VSCALES.len() - 1);
                     r.vpd = VSCALES[(i as i32 + d).clamp(0, VSCALES.len() as i32 - 1) as usize];
                 }
+                self.measure_refs();
             }
             Item::RefOffset => {
                 if let Some(r) = &mut self.refs[self.ref_sel] {
@@ -4996,7 +5035,7 @@ impl Ui {
                         self.meas_make_room();
                         self.m.meas.push(e);
                     }
-                    self.toast(&format!("{} CH{} added", k.name(), self.meas_src + 1));
+                    self.toast(&format!("{} {} added", k.name(), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
                 Item::CntClear => self.counter_clear(),
@@ -5015,6 +5054,7 @@ impl Ui {
                 Item::RefExport => self.ref_export(),
                 Item::RefImport => {
                     self.ref_import();
+                    self.measure_refs();
                     self.analyzer_update();
                 },
                 Item::MaskSave => self.mask_save(),
@@ -5044,6 +5084,7 @@ impl Ui {
                             let slot = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
                             self.refs[slot] = Some(w);
                             self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));
+                            self.measure_refs();
                             self.analyzer_update();
                         }
                         None => self.toast("Source channel has no data"),
@@ -5051,6 +5092,7 @@ impl Ui {
                 }
                 Item::RefClear => {
                     self.refs = std::array::from_fn(|_| None);
+                    self.measure_refs();
                     self.analyzer_update();
                 },
                 Item::ClearDisp => {
@@ -5271,7 +5313,8 @@ impl Ui {
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
             Item::ChProbe(_) => &["1x", "10x", "100x"],
-            Item::TrigSrc | Item::MeasSrc | Item::DecSrc | Item::RefSrc => return ch_names(),
+            Item::TrigSrc | Item::DecSrc | Item::RefSrc => return ch_names(),
+            Item::MeasSrc | Item::MeasSrcB => return self.wave_names(),
             Item::MathA | Item::MathB => return (0..NCH + self.m.math_sel).filter(|&s| src_ok(s)).map(src_name).collect(),
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
             Item::TrigSlope => &["Rising", "Falling", "Either"],
@@ -5326,7 +5369,7 @@ impl Ui {
             Item::DecSel => &["D1", "D2", "D3", "D4"],
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
-            Item::MeasSrcB | Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
+            Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
             Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
@@ -7141,7 +7184,7 @@ mod tests {
     fn bode_sweep_with_the_builtin_generator() {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) = (bode::BUILTIN, 1e3, 1e5, 3, 0, 0);
+        (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) = (bode::BUILTIN, 1e3, 1e5, 3, WaveId::Ch(0), WaveId::Ch(0));
         (ui.m.afg_on, ui.m.afg_freq) = (false, 1234.0);
         ui.activate(Item::BodeRun);
         assert!(ui.m.afg_on && ui.m.afg_freq == 1e3 && ui.m.afg_offset == 0.0);
@@ -7433,7 +7476,7 @@ mod tests {
         ui.relayout();
         assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
         // statistics: the results panel takes no room
-        ui.m.meas = vec![(Meas::Freq, 0)];
+        ui.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
         ui.stats_on = true;
         ui.relayout();
         assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));

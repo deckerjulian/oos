@@ -780,9 +780,9 @@ pub struct Model {
     pub math_win: [usize; crate::math::NMATH],
     /// window of the LA lanes while the plot is split (one window: their strip under the plot)
     pub la_win: usize,
-    pub meas: Vec<(Meas, usize)>,
-    /// delay and phase: entry of `ui::tools::PAIRS`, channel A, channel B
-    pub meas2: Vec<(usize, usize, usize)>,
+    pub meas: Vec<(Meas, WaveId)>,
+    /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
+    pub meas2: Vec<(usize, WaveId, WaveId)>,
     pub dvm_on: bool,
     pub dvm_src: usize,
     pub dvm_mode: usize,
@@ -894,7 +894,7 @@ pub struct Model {
     pub view: AView,
     /// spectrum analyser: source, centre/span (Hz, span 0 = 0 .. fs/2), RBW (0 = auto), window, trace mode
     /// (0 normal, 1 average, 2 max hold, 3 min hold), reference level (dBV, top of the grid), waterfall, distortion
-    pub spec_src: usize,
+    pub spec_src: WaveId,
     pub spec_center: f64,
     pub spec_span: f64,
     pub spec_rbw: f64,
@@ -908,11 +908,11 @@ pub struct Model {
     pub spec_wf: bool,
     pub spec_dist: bool,
     /// eye diagram: source, bit rate (0 = recovered from the edges)
-    pub eye_src: usize,
+    pub eye_src: WaveId,
     pub eye_rate: f64,
     /// power analysis: voltage and current source, page, line frequency (0 = from the voltage)
-    pub pw_v: usize,
-    pub pw_i: usize,
+    pub pw_v: WaveId,
+    pub pw_i: WaveId,
     pub pw_mode: PowerMode,
     /// Bode plot: sweep start/stop (Hz), points, generator amplitude (Vpp), input/output channel, generator preset
     /// and LAN address
@@ -920,8 +920,8 @@ pub struct Model {
     pub bode_stop: f64,
     pub bode_points: usize,
     pub bode_amp: f64,
-    pub bode_in: usize,
-    pub bode_out: usize,
+    pub bode_in: WaveId,
+    pub bode_out: WaveId,
     pub bode_gen: usize,
     pub bode_addr: String,
     /// magnetic analysis: voltage, current (a channel or a loaded ref), turns, area m² (0 = unset), path m (0 = unset), copper Ω, plot, cursor
@@ -1209,7 +1209,7 @@ impl Default for Model {
             z_src: None,
             hist: Hist::Off,
             view: AView::Scope,
-            spec_src: 0,
+            spec_src: WaveId::Ch(0),
             spec_center: 0.0,
             spec_span: 0.0,
             spec_rbw: 0.0,
@@ -1221,17 +1221,17 @@ impl Default for Model {
             spec_ref: 10.0,
             spec_wf: false,
             spec_dist: false,
-            eye_src: 0,
+            eye_src: WaveId::Ch(0),
             eye_rate: 0.0,
-            pw_v: 0,
-            pw_i: 1,
+            pw_v: WaveId::Ch(0),
+            pw_i: WaveId::Ch(1),
             pw_mode: PowerMode::Quality,
             bode_start: 100.0,
             bode_stop: 1e6,
             bode_points: 40,
             bode_amp: 1.0,
-            bode_in: 0,
-            bode_out: 1,
+            bode_in: WaveId::Ch(0),
+            bode_out: WaveId::Ch(1),
             bode_gen: 0,
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
@@ -1698,7 +1698,7 @@ impl Model {
             return changed;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
-        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src]
+        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.bw_src, &mut self.afg_arb_src]
             .into_iter()
             .chain(self.zones.iter_mut().map(|z| &mut z.src))
         {
@@ -1707,7 +1707,7 @@ impl Model {
                 changed = true;
             }
         }
-        for s in [&mut self.mag_v, &mut self.mag_i, &mut self.inv_a, &mut self.inv_b, &mut self.inv_c, &mut self.inv_an, &mut self.dpt_v, &mut self.dpt_i, &mut self.dpt_g, &mut self.dpt_4ch] {
+        for s in [&mut self.mag_v, &mut self.mag_i, &mut self.inv_a, &mut self.inv_b, &mut self.inv_c, &mut self.inv_an, &mut self.dpt_v, &mut self.dpt_i, &mut self.dpt_g, &mut self.dpt_4ch, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out] {
             if let WaveId::Ch(c) = *s {
                 if c >= n {
                     *s = WaveId::Ch(0);
@@ -1719,6 +1719,24 @@ impl Model {
             if s.is_some_and(|c| c >= n) {
                 *s = None;
                 changed = true;
+            }
+        }
+        for e in &mut self.meas {
+            if let WaveId::Ch(c) = e.1 {
+                if c >= n {
+                    e.1 = WaveId::Ch(0);
+                    changed = true;
+                }
+            }
+        }
+        for e in &mut self.meas2 {
+            for id in [&mut e.1, &mut e.2] {
+                if let WaveId::Ch(c) = *id {
+                    if c >= n {
+                        *id = WaveId::Ch(0);
+                        changed = true;
+                    }
+                }
             }
         }
         for s in [&mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei] {

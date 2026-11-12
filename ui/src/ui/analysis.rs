@@ -6,6 +6,7 @@
 //! trigger and decoder). The maths is in oos-dsp (`spectrum`, `eye`, `power`, `identify`); this file holds the menus,
 //! the per-record update on every captured sample (`Ui::meas_wave`) and the drawing.
 
+use super::magnetic::missing_wave;
 use super::*;
 use oos_dsp::{eye, identify, power, spectrum};
 
@@ -27,8 +28,10 @@ pub struct State {
     pub limit_over: u64,
     pub limit_worst: Option<(f64, f32)>,
     pub eye: Option<eye::Eye>,
-    /// what the eye was built for (source, scale, offset, rate, raster size), to restart it on a change
-    pub eye_key: (usize, u32, u32, u64, i32, i32),
+    /// what the eye was built for (source tag, source index, scale, offset, rate, raster size)
+    pub eye_key: (u8, usize, u32, u32, u64, i32, i32),
+    /// the ref record already folded in, so a second pass does not count it again
+    pub eye_ref: Option<(usize, u64)>,
     pub eye_res: Option<(eye::EyeMeas, eye::Jitter, f64)>,
     pub page: super::eyepage::Page,
     pub power: Vec<String>,
@@ -150,10 +153,10 @@ impl Ui {
             Item::ProtoWatch => onoff(self.azr.watch),
             Item::EyeOn => onoff(m.view == AView::Eye),
             Item::PowOn => onoff(m.view == AView::Power),
-            Item::SpecSrc => format!("CH{}", m.spec_src + 1),
-            Item::EyeSrc => format!("CH{}", m.eye_src + 1),
-            Item::PowV => format!("CH{}", m.pw_v + 1),
-            Item::PowI => format!("CH{}", m.pw_i + 1),
+            Item::SpecSrc => self.wave_name(m.spec_src),
+            Item::EyeSrc => self.wave_name(m.eye_src),
+            Item::PowV => self.wave_name(m.pw_v),
+            Item::PowI => self.wave_name(m.pw_i),
             Item::SpecCenter => si_short(m.spec_center, "Hz"),
             Item::SpecSpan if m.spec_span > 0.0 => si_short(m.spec_span, "Hz"),
             Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => format!("Auto {}", si_short(self.azr.spec_stop, "Hz")),
@@ -189,7 +192,7 @@ impl Ui {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
             Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::ProtoWatch => v(&["Off", "On"]),
-            Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => ch_names(),
+            Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::SpecHarm => panes::harm_names(),
             Item::SpecWin => crate::math::WINDOWS.iter().map(|w| w.name().to_string()).collect(),
             Item::SpecTrace => v(&TRACES),
@@ -215,6 +218,27 @@ impl Ui {
             self.azr.watch_t = 0.0;
             return true;
         }
+        if matches!(it, Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI) {
+            let cur = match it {
+                Item::SpecSrc => self.m.spec_src,
+                Item::EyeSrc => self.m.eye_src,
+                Item::PowV => self.m.pw_v,
+                _ => self.m.pw_i,
+            };
+            let next = self.step_wave(cur, d);
+            match it {
+                Item::SpecSrc => self.m.spec_src = next,
+                Item::EyeSrc => self.m.eye_src = next,
+                Item::PowV => self.m.pw_v = next,
+                _ => self.m.pw_i = next,
+            }
+            self.azr.spec_avg = None;
+            if let Some(w) = &mut self.azr.wf {
+                w.clear();
+            }
+            self.analyzer_update();
+            return true;
+        }
         let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         let view = |m: &mut Model, v: AView| m.view = if m.view == v { AView::Scope } else { v };
         let m = &mut self.m;
@@ -222,10 +246,6 @@ impl Ui {
             Item::SpecOn => view(m, AView::Spectrum),
             Item::EyeOn => view(m, AView::Eye),
             Item::PowOn => view(m, AView::Power),
-            Item::SpecSrc => m.spec_src = src_step(m.spec_src, NCH, d),
-            Item::EyeSrc => m.eye_src = src_step(m.eye_src, NCH, d),
-            Item::PowV => m.pw_v = src_step(m.pw_v, NCH, d),
-            Item::PowI => m.pw_i = src_step(m.pw_i, NCH, d),
             Item::SpecCenter => m.spec_center = step_ladder(m.spec_center, d),
             Item::SpecSpan => m.spec_span = step_ladder(m.spec_span, d),
             Item::SpecRbw => m.spec_rbw = step_ladder(m.spec_rbw, d),
@@ -314,16 +334,53 @@ impl Ui {
         }
     }
 
+    /// A stopped scope can still measure a loaded ref. A live channel needs a record.
+    fn view_reads_ref(&self, view: AView) -> bool {
+        let is_ref = |id: WaveId| matches!(id, WaveId::Ref(_));
+        match view {
+            AView::Spectrum => is_ref(self.m.spec_src),
+            AView::Eye => is_ref(self.m.eye_src),
+            AView::Power => is_ref(self.m.pw_v) || is_ref(self.m.pw_i),
+            _ => false,
+        }
+    }
+
+    /// The source exists: a channel that is on, or a ref that holds samples.
+    pub(super) fn wave_ready(&self, id: WaveId) -> bool {
+        match id {
+            WaveId::Ch(c) => c < NCH && self.m.ch[c].on,
+            WaveId::Ref(i) => self.refs.get(i).and_then(|r| r.as_ref()).is_some_and(|r| r.v.len() >= 2 && r.dt > 0.0),
+        }
+    }
+
+    fn wave_vpd(&self, id: WaveId) -> f64 {
+        match id {
+            WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].volts_per_div() as f64,
+            WaveId::Ref(i) => self.refs.get(i).and_then(|r| r.as_ref()).map(|r| r.vpd as f64).unwrap_or(1.0),
+        }
+    }
+
+    /// Frequency of the wave, for the spectrum's auto span. A ref is measured here, not from `ana`.
+    fn wave_freq(&self, rec: &Record, id: WaveId) -> f64 {
+        if let WaveId::Ch(c) = id {
+            if c < NCH && self.m.ch[c].on {
+                return self.ana[c].get(Meas::Freq);
+            }
+        }
+        let Some(s) = self.wave_samples(rec, id) else { return f64::NAN };
+        oos_dsp::measure::analyze_min(&s.v, s.dt, 0.4 * self.wave_vpd(id)).get(Meas::Freq)
+    }
+
     /// The spectrum of the source from the record: the view, or `pane` beside the waveform.
     fn spectrum_update(&mut self, rec: &Record, pane: bool) {
-        let c = self.m.spec_src;
-        if rec.ch[c].is_empty() {
+        let id = self.m.spec_src;
+        let Some(s) = self.wave_samples(rec, id) else {
             self.azr.spec = None;
             self.azr.peaks.clear();
             return;
-        }
-        let (v, dt) = self.meas_wave(rec, c);
-        let f1 = self.ana[c].get(Meas::Freq);
+        };
+        let (v, dt) = (s.v, s.dt);
+        let f1 = self.wave_freq(rec, id);
         let (mut center, mut span) = (self.m.spec_center, self.m.spec_span);
         if self.spec_follows() {
             // no frequency this record: the span stays
@@ -486,8 +543,10 @@ impl Ui {
         // a source that is off shows nothing: the first channel that is on takes over
         if let Some(on) = (0..NCH).find(|&c| self.m.ch[c].on) {
             for src in [&mut self.m.spec_src, &mut self.m.eye_src] {
-                if !self.m.ch[*src].on {
-                    *src = on;
+                if let WaveId::Ch(c) = *src {
+                    if !self.m.ch[c].on {
+                        *src = WaveId::Ch(on);
+                    }
                 }
             }
         }
@@ -506,7 +565,7 @@ impl Ui {
         // A loaded ref is measured with the scope stopped or still waiting. Live channels still need a record.
         let rec = match self.last[0].clone() {
             Some(r) => r,
-            None if matches!(view, AView::Magnetic | AView::Inverter | AView::Dpt) => Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None },
+            None if matches!(view, AView::Magnetic | AView::Inverter | AView::Dpt) || self.view_reads_ref(view) => Self::blank_record(),
             None => return,
         };
         match view {
@@ -514,12 +573,22 @@ impl Ui {
             AView::Eye => self.eye_update(&rec),
             AView::Power => {
                 let (cv, ci) = (self.m.pw_v, self.m.pw_i);
-                if rec.ch[cv].is_empty() || (rec.ch[ci].is_empty() && self.m.pw_mode != PowerMode::Ripple) {
-                    self.azr.power = vec!["Voltage / current channel off: Switch on source in the menu".into()];
-                    return;
-                }
-                let (v, dt) = self.meas_wave(&rec, cv);
-                let i = if rec.ch[ci].is_empty() { Vec::new() } else { self.meas_wave(&rec, ci).0 };
+                let ripple = self.m.pw_mode == PowerMode::Ripple;
+                let taken = if ripple {
+                    self.take_waves(&rec, &[cv], &[Some(ci)])
+                } else {
+                    self.take_waves(&rec, &[cv, ci], &[])
+                };
+                let taken = match taken {
+                    Ok(t) => t,
+                    Err(id) => {
+                        self.azr.power = vec![format!("{}: Switch on source in the menu", missing_wave(id))];
+                        return;
+                    }
+                };
+                let v = taken.v[0].clone();
+                let i = if ripple { taken.opt.first().and_then(|s| s.clone()).unwrap_or_default() } else { taken.v[1].clone() };
+                let dt = taken.dt;
                 self.azr.power = match self.m.pw_mode {
                     PowerMode::Quality => {
                         let q = power::quality(&v, &i, dt, None);
@@ -587,9 +656,9 @@ impl Ui {
     /// The spectrum in `a`: the plot area, or the second pane (`pane`).
     pub(super) fn draw_spectrum(&self, cv: &mut Canvas, a: Rect, pane: bool) {
         let f = &self.fonts;
-        let col = CH_COLORS[self.m.spec_src];
+        let col = self.wave_color(self.m.spec_src);
         let Some(sp) = &self.azr.spec else {
-            let t = if self.m.ch[self.m.spec_src].on { "Spectrum: waiting for a record".to_string() } else { format!("Spectrum: {} is off", self.ch_name(self.m.spec_src)) };
+            let t = if self.wave_ready(self.m.spec_src) { "Spectrum: waiting for a record".to_string() } else { format!("Spectrum: {}", missing_wave(self.m.spec_src)) };
             cv.text(&f.sb, a.x + 20, a.y + a.h / 2 + 5, &t, DIM);
             return;
         };
@@ -651,7 +720,7 @@ impl Ui {
 
     fn draw_power(&self, cv: &mut Canvas) {
         let a = self.area;
-        let mut l = vec![format!("Power  V = CH{}  I = CH{}  ({:?})", self.m.pw_v + 1, self.m.pw_i + 1, self.m.pw_mode)];
+        let mut l = vec![format!("Power  V = {}  I = {}  ({:?})", self.wave_name(self.m.pw_v), self.wave_name(self.m.pw_i), self.m.pw_mode)];
         l.extend(self.azr.power.iter().cloned());
         self.panel(cv, a.x + 20, a.y + 30, &l, TEXT);
     }

@@ -123,8 +123,8 @@ fn every_menu_fits() {
     walk(&|| open(Magnetic, &|u| { u.m.mag_ae = 1e-4; u.m.mag_le = 0.05; u.m.mag_plot = MagPlot::BH; }), "Magnetic B-H", &mut out);
     let trend = |u: &mut Ui| {
         u.m.pane = tables::PANE_TREND;
-        u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 3)];
-        u.m.meas2 = vec![(0, 0, 1)];
+        u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(3))];
+        u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1))];
     };
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
@@ -267,9 +267,9 @@ fn fourteen_measurements_with_delay_and_phase() {
     let mut u = with_two_channels();
     u.m.meas.clear();
     for k in ALL_MEAS.iter().take(10) {
-        u.m.meas.push((*k, 0));
+        u.m.meas.push((*k, WaveId::Ch(0)));
     }
-    u.meas_src_b = 1;
+    u.meas_src_b = WaveId::Ch(1);
     for k in 0..6 {
         u.meas_pair_toggle(k);
     }
@@ -279,7 +279,7 @@ fn fourteen_measurements_with_delay_and_phase() {
     assert_eq!(rows.len(), tools::MEAS_MAX);
     assert!(rows.iter().any(|r| r.name.starts_with("Delay rise-rise 1-2")));
     // the same channel twice makes no sense
-    u.meas_src_b = 0;
+    u.meas_src_b = WaveId::Ch(0);
     let n = u.m.meas2.len();
     u.meas_pair_toggle(7);
     assert_eq!(u.m.meas2.len(), n);
@@ -296,7 +296,7 @@ fn fourteen_measurements_with_delay_and_phase() {
 #[test]
 fn delay_between_two_edges() {
     let mut u = with_two_channels();
-    u.m.meas2 = vec![(0, 0, 1), (4, 0, 1)];
+    u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))];
     let r = u.meas_rows();
     assert_eq!(r[r.len() - 2].unit, "s");
     assert_eq!(r[r.len() - 1].unit, "\u{b0}");
@@ -421,13 +421,13 @@ fn holdoff_steps_and_setups() {
 #[test]
 fn setups_keep_what_is_new() {
     let mut u = with_two_channels();
-    u.m.meas2 = vec![(5, 1, 2)];
+    u.m.meas2 = vec![(5, WaveId::Ch(1), WaveId::Ch(2))];
     (u.m.dvm_on, u.m.dvm_src, u.m.dvm_mode) = (true, 2, 1);
     (u.m.cnt_on, u.m.cnt_src, u.m.cnt_mode, u.m.cnt_digits) = (true, 3, 2, 6);
     u.m.math_lin = (3.0, -1.5);
     u.m.cursor = CursorMode::Track;
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
-    assert_eq!((b.meas2.clone(), b.dvm_src, b.dvm_mode, b.cnt_src, b.cnt_mode, b.cnt_digits), (vec![(5, 1, 2)], 2, 1, 3, 2, 6));
+    assert_eq!((b.meas2.clone(), b.dvm_src, b.dvm_mode, b.cnt_src, b.cnt_mode, b.cnt_digits), (vec![(5, WaveId::Ch(1), WaveId::Ch(2))], 2, 1, 3, 2, 6));
     assert_eq!((b.math_lin, b.cursor), ((3.0, -1.5), CursorMode::Track));
 }
 
@@ -769,7 +769,7 @@ fn a_channel_can_measure_something_else() {
     assert!(u.value(Item::ChScale(0)).ends_with('A'), "{}", u.value(Item::ChScale(0)));
     assert_eq!(AmpUnit::W.of("V/s"), "W/s");
     assert_eq!(AmpUnit::A.of("Hz"), "Hz");
-    u.m.meas = vec![(Meas::Vpp, 0), (Meas::Vpp, 1)];
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(1))];
     let r = u.meas_rows();
     assert_eq!((r[0].unit, r[1].unit), ("A", "V"));
     u.adjust(Item::ChSkew(0), 5);
@@ -947,7 +947,7 @@ fn the_logger_writes_rows_at_its_interval() {
     u.m.meas2 = vec![];
     u.adjust(Item::LogOn, 1);
     assert_eq!(u.value(Item::LogOn), "Off", "nothing to log");
-    u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 1)];
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(1))];
     for _ in 0..3 {
         u.step(0.04);
     }
@@ -978,7 +978,7 @@ fn the_logger_writes_rows_at_its_interval() {
 #[test]
 fn the_trend_pane_follows_a_measurement() {
     let mut u = with_two_channels();
-    u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 0)];
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0))];
     u.m.pane = 4;
     for _ in 0..40 {
         u.step(0.04);
@@ -1017,7 +1017,7 @@ fn square_on_ch1(u: &mut Ui) {
     };
     let v: Vec<f32> = (0..n).map(|i| if (i as f64 * dt * 200e3).rem_euclid(1.0) < 0.5 { 2.0 } else { 0.0 } + 4e-3 * noise()).collect();
     u.m.tscale = tscales().iter().position(|&x| (x - 5e-6).abs() < 1e-9).unwrap();
-    u.m.meas = vec![(Meas::Freq, 0), (Meas::Vpp, 0)];
+    u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(0))];
     u.m.run = RunState::Stop;
     u.step(0.04);
     let mut r = u.last[0].clone().expect("a record");
@@ -1137,7 +1137,7 @@ fn pane_text_fits() {
 fn panes_leave_no_empty_rows() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_RESULTS;
-    u.m.meas = vec![(Meas::Vpp, 0)];
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
     u.m.ch[0].on = false;
     u.step(0.04);
     u.relayout();
@@ -1147,7 +1147,7 @@ fn panes_leave_no_empty_rows() {
     assert_eq!(fit, 1);
     assert!(u.pane_rect().h - 40 - pitch < 4);
     for &k in ALL_MEAS.iter().take(12) {
-        u.m.meas.push((k, 0));
+        u.m.meas.push((k, WaveId::Ch(0)));
     }
     u.relayout();
     assert!(u.pane_h() > few && u.grid.h < plot);
@@ -1169,7 +1169,7 @@ fn panes_leave_no_empty_rows() {
 fn a_long_results_list_scrolls_by_touch() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_RESULTS;
-    u.m.meas = ALL_MEAS.iter().take(14).map(|&k| (k, 0)).collect();
+    u.m.meas = ALL_MEAS.iter().take(14).map(|&k| (k, WaveId::Ch(0))).collect();
     for _ in 0..3 {
         u.step(0.04);
     }
@@ -1265,7 +1265,7 @@ fn a_trend_keeps_its_length_and_reaches_back() {
 #[test]
 fn trend_charts_are_chosen_in_the_display_menu() {
     let mut u = with_two_channels();
-    u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 0), (Meas::Vavg, 1)];
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0)), (Meas::Vavg, WaveId::Ch(1))];
     assert!(!u.items(MenuId::Display).contains(&Item::TrendSel(0)));
     u.m.pane = tables::PANE_TREND;
     assert!(u.items(MenuId::Display).contains(&Item::TrendSel(1)));
@@ -1316,7 +1316,7 @@ fn pane_pictures() {
     shot(&mut u, "spectrum-view-waterfall");
     let mut u = square(2, &|_| {});
     shot(&mut u, "results-two-rows");
-    let mut u = square(2, &|u| { u.m.spec_src = 1; });
+    let mut u = square(2, &|u| { u.m.spec_src = WaveId::Ch(1); });
     shot(&mut u, "results-table-only");
     let live = |pane: usize, f: &dyn Fn(&mut Ui), secs: usize| {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
@@ -1330,17 +1330,17 @@ fn pane_pictures() {
     };
     let mut u = live(2, &|u| {
         u.m.cursor = CursorMode::Track;
-        u.m.meas = ALL_MEAS.iter().take(12).map(|&k| (k, 0)).collect();
-        u.m.meas2 = vec![(0, 0, 1), (4, 0, 1)];
+        u.m.meas = ALL_MEAS.iter().take(12).map(|&k| (k, WaveId::Ch(0))).collect();
+        u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))];
     }, 2);
     shot(&mut u, "results-many");
-    let mut u = live(2, &|u| u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 1), (Meas::Vrms, 1)], 2);
+    let mut u = live(2, &|u| u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1))], 2);
     shot(&mut u, "results-three");
-    let mut u = live(2, &|u| { u.m.meas = vec![(Meas::Vpp, 0)]; u.m.ch[0].on = true; u.m.spec_src = 3; }, 2);
+    let mut u = live(2, &|u| { u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))]; u.m.ch[0].on = true; u.m.spec_src = WaveId::Ch(3); }, 2);
     shot(&mut u, "results-one-no-side");
-    let mut u = live(4, &|u| u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 1)], 40);
+    let mut u = live(4, &|u| u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(1))], 40);
     shot(&mut u, "trend-two");
-    let mut u = live(4, &|u| u.m.meas = vec![(Meas::Vrms, 1)], 15);
+    let mut u = live(4, &|u| u.m.meas = vec![(Meas::Vrms, WaveId::Ch(1))], 15);
     shot(&mut u, "trend-one");
     let mut u = live(3, &|u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; }, 2);
     shot(&mut u, "events");
@@ -1629,6 +1629,105 @@ fn double_pulse(dt: f64) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     (sample(&vds), sample(&id), sample(&gate))
 }
 
+/// Measure, power, Bode, spectrum and the eye read a loaded ref at its own interval.
+#[test]
+fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let (dt, n, f) = (5e-9, 800usize, 40e6);
+    let sine: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * f * k as f64 * dt).sin() as f32).collect();
+    put_ref(&mut u, 0, 0.0, dt, sine.clone());
+    u.measure_refs();
+    u.m.ch[0].bw = BW_20M;
+    u.m.ch[0].coupling = Coupling::Ac;
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
+    let row = u.meas_rows().into_iter().find(|r| r.name == "Pk-pk").expect("pk-pk");
+    let direct = oos_dsp::measure::analyze_min(&sine, dt, 0.4 * 0.2);
+    assert!((row.v - direct.get(Meas::Vpp)).abs() < 1e-6, "{} vs {}", row.v, direct.get(Meas::Vpp));
+    let mut filtered = sine.clone();
+    crate::wave::condition(&u.m, 0, &mut filtered, dt);
+    let filtered_pp = oos_dsp::measure::analyze_min(&filtered, dt, 0.4).get(Meas::Vpp);
+    assert!((filtered_pp - row.v).abs() > 0.2, "filtered {} ref {}", filtered_pp, row.v);
+    assert!(u.options(Item::MeasSrc).iter().any(|s| s == "R1"));
+    u.meas_src = WaveId::Ch(n_ch() - 1);
+    u.adjust(Item::MeasSrc, 1);
+    assert_eq!(u.meas_src, WaveId::Ref(0));
+
+    // a later copy of the same sine: delay is the difference of the two t0 values
+    put_ref(&mut u, 1, 25e-9, dt, sine.clone());
+    u.measure_refs();
+    u.m.meas2 = vec![(0, WaveId::Ref(0), WaveId::Ref(1))];
+    let delay = u.meas_rows().into_iter().find(|r| r.name.starts_with("Delay")).unwrap().v;
+    assert!((delay - 25e-9).abs() < 2e-9, "delay {}", delay);
+
+    u.last[0] = None;
+    u.m.view = AView::Spectrum;
+    u.m.spec_src = WaveId::Ref(0);
+    u.m.spec_span = 0.0;
+    u.m.spec_center = 0.0;
+    u.analyzer_update();
+    let peak = u.azr.peaks.iter().copied().max_by(|a, b| a.dbv.total_cmp(&b.dbv)).expect("a line");
+    assert!((peak.f - f).abs() < 1e6, "peak {}", peak.f);
+    let f_kept = peak.f;
+    u.analyzer_update();
+    let again = u.azr.peaks.iter().copied().max_by(|a, b| a.dbv.total_cmp(&b.dbv)).unwrap();
+    assert!((again.f - f_kept).abs() < 1.0);
+
+    // one record, however many times the stopped scope asks
+    let sq: Vec<f32> = (0..8000).map(|k| if (k / 20) % 2 == 0 { 0.5 } else { -0.5 }).collect();
+    put_ref(&mut u, 0, 0.0, 1e-9, sq.clone());
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    u.analyzer_update();
+    let clk = oos_dsp::eye::recover_clock(&sq, 1e-9, 0.0, 0.02, None).unwrap();
+    let short = oos_dsp::eye::recover_clock(&sq[..3600], 1e-9, 0.0, 0.02, None).unwrap();
+    assert!(clk.edges.len() > short.edges.len(), "{} vs {}", clk.edges.len(), short.edges.len());
+    let n = oos_dsp::eye::tie(&clk.edges, &clk).len();
+    assert_eq!(u.azr.page.status[0], format!("Jitter of {} edges, 1 records", n));
+
+    let (pdt, pn) = (1e-5, 2000usize);
+    let tone = |amp: f64, shift: f64| -> Vec<f32> {
+        (0..pn).map(|k| (amp * (2.0 * std::f64::consts::PI * 1000.0 * k as f64 * pdt + shift).sin()) as f32).collect()
+    };
+    let (vv, ii) = (tone(2.0, 0.0), tone(1.0, 0.0));
+    put_ref(&mut u, 0, 0.0, pdt, vv.clone());
+    put_ref(&mut u, 1, 0.0, pdt, ii.clone());
+    u.m.view = AView::Power;
+    u.m.pw_mode = PowerMode::Quality;
+    u.m.pw_v = WaveId::Ref(0);
+    u.m.pw_i = WaveId::Ref(1);
+    u.analyzer_update();
+    let q = oos_dsp::power::quality(&vv, &ii, pdt, None);
+    assert_eq!(u.azr.power[0], format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")));
+    u.analyzer_update();
+    assert_eq!(u.azr.power[0], format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")));
+
+    let bf = 1e6;
+    let bdt = 1e-8;
+    let bn = 4000usize;
+    let bin: Vec<f32> = (0..bn).map(|k| (2.0 * std::f64::consts::PI * bf * k as f64 * bdt).sin() as f32).collect();
+    let bout: Vec<f32> = bin.iter().map(|x| x * 0.5).collect();
+    put_ref(&mut u, 0, 0.0, bdt, bin);
+    put_ref(&mut u, 1, 0.0, bdt, bout);
+    u.m.bode_in = WaveId::Ref(0);
+    u.m.bode_out = WaveId::Ref(1);
+    u.m.bode_start = bf;
+    u.m.bode_stop = bf * 4.0;
+    u.m.bode_points = 3;
+    u.m.bode_gen = bode::BUILTIN;
+    let run = u.m.run;
+    u.bode_activate(Item::BodeRun);
+    assert!(!u.bode.running);
+    assert_eq!(u.m.run, run);
+    let (hz, g, _) = u.bode.points[0];
+    assert!((hz - bf).abs() / bf < 1e-6, "{}", hz);
+    assert!((g - 20.0 * 0.5f64.log10()).abs() < 0.05, "gain {}", g);
+    assert!(matches!(u.src, Source::Demo { .. }));
+}
+
 /// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`.
 #[test]
 #[ignore]
@@ -1657,7 +1756,7 @@ fn gallery() {
     let scenes: Vec<S> = vec![
         ("s-default", |_| {}),
         ("s-all-ch", |u| for c in 0..4 { u.m.ch[c].on = true; }),
-        ("s-meas6", |u| { u.m.meas.clear(); for i in 0..6 { u.m.meas.push((ALL_MEAS[i], 0)); } }),
+        ("s-meas6", |u| { u.m.meas.clear(); for i in 0..6 { u.m.meas.push((ALL_MEAS[i], WaveId::Ch(0))); } }),
         ("s-cursor", |u| u.m.cursor = CursorMode::Time),
         ("s-more", |u| {
             u.m.ch[0].unit = AmpUnit::A;
@@ -1718,7 +1817,7 @@ fn gallery() {
         ("s-cards-1", |u| { u.m.la.on = true; u.m.afg_on = true; }),
         ("s-cards-4", |u| { u.m.la.on = true; u.m.afg_on = true; for c in 0..4 { u.m.ch[c].on = true; } }),
         ("s-pane-spec", |u| { u.m.ch[1].on = true; u.m.pane = 1; }),
-        ("s-pane-res", |u| { u.m.ch[1].on = true; u.m.pane = 2; u.m.meas2 = vec![(0, 0, 1), (4, 0, 1)]; u.m.dvm_on = true; u.m.cnt_on = true; }),
+        ("s-pane-res", |u| { u.m.ch[1].on = true; u.m.pane = 2; u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))]; u.m.dvm_on = true; u.m.cnt_on = true; }),
         ("s-decoders", |u| {
             u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2;
             u.m.dec_select(1); u.m.dec_on = true; u.m.dec_src = 2; u.set_dec_proto(Proto::Spi); u.m.dec_select(0);

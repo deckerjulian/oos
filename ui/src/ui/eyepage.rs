@@ -7,6 +7,7 @@
 //! TIE is pooled over records: each record is timed against its own clock, so its TIE stands alone, and a window with
 //! few edges still adds up to a usable distribution. What drifts slower than one record is taken out by the fit.
 
+use super::magnetic::missing_wave;
 use super::*;
 use oos_dsp::eye::{self, Bathtub, EdgeMeans, Jitter, JitterFit};
 
@@ -451,23 +452,45 @@ impl Page {
 impl Ui {
     /// Eye page, per record.
     pub(super) fn eye_update(&mut self, rec: &Record) {
-        let c = self.m.eye_src;
-        if rec.ch[c].is_empty() {
-            self.azr.page.status = [format!("CH{} is off", c + 1), "Switch the source on".into()];
+        let id = self.m.eye_src;
+        let Some(s) = self.wave_samples(rec, id) else {
+            self.azr.page.status = [missing_wave(id), "Switch the source on".into()];
             return;
-        }
-        let (v, dt) = self.meas_wave(rec, c);
-        let ch = &self.m.ch[c];
-        let vpd = ch.volts_per_div();
+        };
+        let (v, dt) = (s.v, s.dt);
+        let (vpd, offset) = match id {
+            WaveId::Ch(c) => {
+                let ch = &self.m.ch[c.min(NCH - 1)];
+                (ch.volts_per_div(), ch.offset)
+            }
+            WaveId::Ref(i) => {
+                let r = self.refs[i].as_ref().unwrap();
+                (r.vpd, r.offset)
+            }
+        };
         let lay = layout(self.area);
         let (pw, ph) = (lay.plot.w.max(64), lay.plot.h.max(64));
-        let key = (c, vpd.to_bits(), ch.offset.to_bits(), self.m.eye_rate.to_bits(), pw, ph);
-        let st = self.stats[c];
+        let tag = match id {
+            WaveId::Ch(c) => (0u8, c),
+            WaveId::Ref(i) => (1, i),
+        };
+        let key = (tag.0, tag.1, vpd.to_bits(), offset.to_bits(), self.m.eye_rate.to_bits(), pw, ph);
+        let st = match id {
+            WaveId::Ch(c) => self.stats[c],
+            WaveId::Ref(_) => stats(&v, dt),
+        };
         let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
         let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
+        let fp = match id {
+            WaveId::Ref(i) => Some((i, ref_fp(&v, dt, s.t0))),
+            WaveId::Ch(_) => None,
+        };
+        if fp.is_some() && fp == self.azr.eye_ref && self.azr.eye.is_some() && self.azr.eye_key == key {
+            return;
+        }
         // a record without edges changes nothing: an idle bus must not cost the eye its range or its hits
         let Some(clk) = eye::recover_clock(&v, dt, thr, 0.1 * vpd, rate) else {
-            self.azr.page.status[1] = format!("Under 3 edges on CH{} in the last record", c + 1);
+            self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(id));
             return;
         };
         let left = self.azr.eye.as_ref().is_some_and(|e| {
@@ -490,6 +513,7 @@ impl Ui {
             self.azr.page = Page { vstep: self.azr.page.vstep, ..Page::default() };
         }
         self.azr.eye.as_mut().unwrap().accumulate(&v, dt, &clk);
+        self.azr.eye_ref = fp;
         let tie = eye::tie(&clk.edges, &clk);
         self.azr.page.add(&tie, &clk);
         if self.now - self.azr.page.t >= REFRESH {
@@ -500,6 +524,8 @@ impl Ui {
 
     /// The heavy part of the page, from the pool and the last record.
     fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, lay: &Layout) {
+        let clock = if self.m.eye_rate > 0.0 { "clock fitted near the set rate" } else { "clock fitted to the edges" };
+        let title = format!("{} \u{b7} {} \u{b7} {}", self.wave_name(self.m.eye_src), si(1.0 / clk.period, "b/s"), clock);
         let Some(e) = self.azr.eye.as_ref() else { return };
         let meas = e.measure(clk.period);
         let p = &mut self.azr.page;
@@ -519,8 +545,7 @@ impl Ui {
         p.text_jitter(&j, pj, &why);
         p.text_eye(e, &meas, clk.period, dt);
         p.text_status(&j);
-        let clock = if self.m.eye_rate > 0.0 { "clock fitted near the set rate" } else { "clock fitted to the edges" };
-        p.title = format!("CH{} \u{b7} {} \u{b7} {}", self.m.eye_src + 1, si(1.0 / clk.period, "b/s"), clock);
+        p.title = title;
         self.azr.eye_res = Some((meas, j, clk.period));
     }
 
@@ -531,7 +556,7 @@ impl Ui {
         cv.fill(a, BG);
         self.eye_plot(cv, &l);
         self.eye_head(cv, &l);
-        let col = CH_COLORS[self.m.eye_src];
+        let col = self.wave_color(self.m.eye_src);
         for k in 0..4 {
             self.chart_frame(cv, l.charts[k], l.plots[k], &p.charts[k]);
             if p.charts[k].empty.is_empty() {
@@ -734,6 +759,19 @@ impl Ui {
 
 /// Room for the label of a figure.
 pub(super) const LABEL_W: i32 = 64;
+
+/// Identity of one stored record: length, interval, start, and three samples.
+fn ref_fp(v: &[f32], dt: f64, t0: f64) -> u64 {
+    let mut h = v.len() as u64;
+    h = h.wrapping_mul(0x9E37_79B1_85EB_CA87).wrapping_add(dt.to_bits());
+    h = h.wrapping_mul(0x9E37_79B1_85EB_CA87).wrapping_add(t0.to_bits());
+    if !v.is_empty() {
+        for x in [v[0], v[v.len() / 2], v[v.len() - 1]] {
+            h = h.wrapping_mul(0x9E37_79B1_85EB_CA87).wrapping_add(x.to_bits() as u64);
+        }
+    }
+    h
+}
 
 #[cfg(test)]
 mod tests {

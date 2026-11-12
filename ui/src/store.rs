@@ -192,8 +192,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("ch_window", m.ch_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("la_window", (m.la_win + 1).to_string());
-    kv("meas", m.meas.iter().map(|&(k, c)| format!("{:?}:{}", k, c + 1)).collect::<Vec<_>>().join(" "));
-    kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a + 1, b + 1)).collect::<Vec<_>>().join(" "));
+    kv("meas", m.meas.iter().map(|&(k, id)| format!("{:?}:{}", k, id.token())).collect::<Vec<_>>().join(" "));
+    kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a.token(), b.token())).collect::<Vec<_>>().join(" "));
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
     kv("counter", format!("{} {} {} {}", m.cnt_on, m.cnt_src, m.cnt_mode, m.cnt_digits));
     for c in 0..NCH {
@@ -258,11 +258,11 @@ pub fn setup_text(m: &Model) -> String {
     kv("dots", m.dots.to_string());
     kv("hdmi_wave", m.hdmi_wave.to_string());
     kv("view", name(m.view));
-    kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in + 1, m.bode_out + 1, m.bode_gen, m.bode_addr));
-    kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src + 1, m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
+    kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in.token(), m.bode_out.token(), m.bode_gen, m.bode_addr));
+    kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src.token(), m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
-    kv("eye", format!("{} {}", m.eye_src + 1, m.eye_rate));
-    kv("power", format!("{} {} {}", m.pw_v + 1, m.pw_i + 1, name(m.pw_mode)));
+    kv("eye", format!("{} {}", m.eye_src.token(), m.eye_rate));
+    kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     kv("magnetic", format!("{} {} {} {} {} {} {:?} {}", m.mag_v.token(), m.mag_i.token(), m.mag_n, m.mag_ae, m.mag_le, m.mag_rcu, m.mag_plot, m.mag_cur));
     let opt = |c: Option<WaveId>| c.map_or("off".into(), |c| c.token());
     let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
@@ -462,8 +462,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let mut out = Vec::new();
             for e in v.split_whitespace() {
                 let (k, c) = e.split_once(':').ok_or_else(|| format!("not item:channel: {}", e))?;
-                let c = p_idx(c, NCH + 1)?.checked_sub(1).ok_or("channel 0")?;
-                out.push((p_enum(k, &ALL_MEAS)?, c));
+                out.push((p_enum(k, &ALL_MEAS)?, WaveId::parse(c)?));
             }
             m.meas = out;
         }
@@ -472,8 +471,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             for e in v.split_whitespace() {
                 let f: Vec<&str> = e.split(':').collect();
                 let [k, a, b] = f[..] else { return Err(format!("not item:a:b: {}", e)) };
-                let ch = |x: &str| p_idx(x, NCH + 1)?.checked_sub(1).ok_or("channel 0".to_string());
-                out.push((p_idx(k, crate::ui::PAIRS_N)?, ch(a)?, ch(b)?));
+                out.push((p_idx(k, crate::ui::PAIRS_N)?, WaveId::parse(a)?, WaveId::parse(b)?));
             }
             m.meas2 = out;
         }
@@ -573,8 +571,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
             (m.bode_start, m.bode_stop, m.bode_amp) = (f(w[0])?, f(w[1])?, f(w[3])?);
             m.bode_points = p_u32(w[2])?.clamp(2, 1000) as usize;
-            m.bode_in = p_idx(w[4], NCH + 1)?.max(1) - 1;
-            m.bode_out = p_idx(w[5], NCH + 1)?.max(1) - 1;
+            m.bode_in = WaveId::parse(w[4])?;
+            m.bode_out = WaveId::parse(w[5])?;
             m.bode_gen = p_idx(w[6], crate::ui::bode::GENERATORS.len())?;
             m.bode_addr = w.get(7).map_or("", |a| a.trim()).to_string();
         }
@@ -584,7 +582,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 return Err("spec: want 9 values".into());
             }
             let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
-            m.spec_src = p_idx(w[0], NCH + 1)?.max(1) - 1;
+            m.spec_src = WaveId::parse(w[0])?;
             (m.spec_center, m.spec_span, m.spec_rbw) = (f(w[1])?, f(w[2])?, f(w[3])?);
             m.spec_win = p_enum(w[4], &WINDOWS)?;
             m.spec_trace = p_idx(w[5], 4)?;
@@ -593,7 +591,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         "eye" => {
             let w: Vec<&str> = v.split_whitespace().collect();
-            m.eye_src = p_idx(w.first().ok_or("eye: source")?, NCH + 1)?.max(1) - 1;
+            m.eye_src = WaveId::parse(w.first().ok_or("eye: source")?)?;
             m.eye_rate = w.get(1).ok_or("eye: rate")?.parse::<f64>().map_err(|e| e.to_string())?;
         }
         "power" => {
@@ -601,8 +599,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             if w.len() != 3 {
                 return Err("power: want 3 values".into());
             }
-            m.pw_v = p_idx(w[0], NCH + 1)?.max(1) - 1;
-            m.pw_i = p_idx(w[1], NCH + 1)?.max(1) - 1;
+            m.pw_v = WaveId::parse(w[0])?;
+            m.pw_i = WaveId::parse(w[1])?;
             m.pw_mode = p_enum(w[2], &[PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple])?;
         }
         "magnetic" => {
@@ -1095,7 +1093,7 @@ mod tests {
         m.persist = 6;
         m.intensity = 85;
         m.grid = Grid::Light;
-        m.meas = vec![(Meas::Rise, 3), (Meas::Vrms, 0), (Meas::PDuty, 1)];
+        m.meas = vec![(Meas::Rise, WaveId::Ch(3)), (Meas::Vrms, WaveId::Ch(0)), (Meas::PDuty, WaveId::Ch(1))];
         m.cursor = CursorMode::Volt;
         m.cur_a = 0.125;
         m.cur_b = 0.875;
@@ -1106,9 +1104,9 @@ mod tests {
         m.dots = true;
         m.z_src = Some(3);
         m.hist = Hist::Horizontal;
-        (m.view, m.spec_src, m.spec_center, m.spec_span, m.spec_rbw, m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist) = (AView::Spectrum, 2, 1.5e6, 2e5, 1e3, 2, -12.5, true, true);
+        (m.view, m.spec_src, m.spec_center, m.spec_span, m.spec_rbw, m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist) = (AView::Spectrum, WaveId::Ch(2), 1.5e6, 2e5, 1e3, 2, -12.5, true, true);
         (m.spec_sort, m.spec_harm, m.trend_sel) = (1, 4, [3, 1]);
-        (m.eye_src, m.eye_rate, m.pw_v, m.pw_i, m.pw_mode) = (3, 1.25e9, 2, 0, PowerMode::Switching);
+        (m.eye_src, m.eye_rate, m.pw_v, m.pw_i, m.pw_mode) = (WaveId::Ch(3), 1.25e9, WaveId::Ch(2), WaveId::Ch(0), PowerMode::Switching);
         m.math = MathOp::Fft;
         m.math_a = 2;
         m.math_b = 3;
@@ -1150,11 +1148,28 @@ mod tests {
         m.dpt_v = WaveId::Ref(0);
         m.inv_a = WaveId::Ref(4);
         m.inv_tq = Some(WaveId::Ref(9));
+        m.spec_src = WaveId::Ref(0);
+        m.eye_src = WaveId::Ref(2);
+        m.pw_v = WaveId::Ref(1);
+        m.pw_i = WaveId::Ch(0);
+        m.bode_in = WaveId::Ref(3);
+        m.bode_out = WaveId::Ch(1);
+        m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
+        m.meas2 = vec![(0, WaveId::Ref(0), WaveId::Ch(1))];
         let text = setup_text(&m);
         assert!(text.contains("magnetic = R2 1 "));
         assert!(text.contains("dpt = R1 "));
+        assert!(text.contains("spec = R1 "));
+        assert!(text.contains("eye = R3 "));
+        assert!(text.contains("power = R2 1 "));
+        assert!(text.contains("bode = "));
+        assert!(text.contains(" R4 2 "));
+        assert!(text.contains("meas = Vpp:R1"));
+        assert!(text.contains("meas2 = 0:R1:2"));
         let back = parse_setup(&text).unwrap();
         assert_eq!((back.mag_v, back.mag_i, back.dpt_v, back.inv_a, back.inv_tq), (m.mag_v, m.mag_i, m.dpt_v, m.inv_a, m.inv_tq));
+        assert_eq!((back.spec_src, back.eye_src, back.pw_v, back.pw_i, back.bode_in, back.bode_out), (m.spec_src, m.eye_src, m.pw_v, m.pw_i, m.bode_in, m.bode_out));
+        assert_eq!((back.meas, back.meas2), (m.meas, m.meas2));
         // a setup written before refs were sources
         let old = parse_setup("magnetic = 1 2 1 0 0 0 IPsi 0\ninverter = Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2\ndpt = 1 2 3 Off 4 10 Both\n").unwrap();
         assert_eq!(old.mag_v, WaveId::Ch(0));

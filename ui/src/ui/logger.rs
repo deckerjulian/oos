@@ -24,7 +24,7 @@ pub struct Logger {
 
 impl Ui {
     fn log_head(&self) -> String {
-        let cols: Vec<String> = self.meas_rows().iter().map(|r| format!("{} CH{} ({})", r.name.replace(',', " "), r.ch + 1, r.unit)).collect();
+        let cols: Vec<String> = self.meas_rows().iter().map(|r| format!("{} {} ({})", r.name.replace(',', " "), self.wave_name(r.src), r.unit)).collect();
         format!("Elapsed (s),Unix time (s),{}", cols.join(","))
     }
 

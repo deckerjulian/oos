@@ -117,8 +117,8 @@ impl Ui {
             Item::BodeStop => si_short(m.bode_stop, "Hz"),
             Item::BodePoints => m.bode_points.to_string(),
             Item::BodeAmp => si_short(m.bode_amp, "Vpp"),
-            Item::BodeIn => format!("CH{}", m.bode_in + 1),
-            Item::BodeOut => format!("CH{}", m.bode_out + 1),
+            Item::BodeIn => self.wave_name(m.bode_in),
+            Item::BodeOut => self.wave_name(m.bode_out),
             Item::BodeGen => GENERATORS[m.bode_gen.min(GENERATORS.len() - 1)].0.into(),
             Item::BodeAddr => m.bode_addr.clone(),
             Item::BodeCur => self.bode_cursor_text(),
@@ -130,13 +130,19 @@ impl Ui {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
             Item::BodeOn => v(&["Off", "On"]),
-            Item::BodeIn | Item::BodeOut => ch_names(),
+            Item::BodeIn | Item::BodeOut => self.wave_names(),
             Item::BodeGen => GENERATORS.iter().map(|g| g.0.to_string()).collect(),
             _ => return None,
         })
     }
 
     pub(super) fn bode_adjust(&mut self, it: Item, d: i32) -> bool {
+        if matches!(it, Item::BodeIn | Item::BodeOut) {
+            let cur = if it == Item::BodeIn { self.m.bode_in } else { self.m.bode_out };
+            let next = self.step_wave(cur, d);
+            if it == Item::BodeIn { self.m.bode_in = next; } else { self.m.bode_out = next; }
+            return true;
+        }
         let m = &mut self.m;
         let ladder = |x: f64, d: i32| {
             let l: Vec<f64> = (0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
@@ -149,8 +155,6 @@ impl Ui {
             Item::BodeStop => m.bode_stop = ladder(m.bode_stop, d).max(m.bode_start * 2.0),
             Item::BodePoints => m.bode_points = (m.bode_points as i32 + 5 * d).clamp(5, 200) as usize,
             Item::BodeAmp => m.bode_amp = ladder(m.bode_amp, d).clamp(0.01, 20.0),
-            Item::BodeIn => m.bode_in = src_step(m.bode_in, NCH, d),
-            Item::BodeOut => m.bode_out = src_step(m.bode_out, NCH, d),
             Item::BodeGen => m.bode_gen = (m.bode_gen as i32 + d).rem_euclid(GENERATORS.len() as i32) as usize,
             Item::BodeCur => {
                 let n = self.bode.points.len() as i32;
@@ -209,7 +213,7 @@ impl Ui {
     }
 
     pub(super) fn bode_begin(&mut self) {
-        if self.bode_gen() == BUILTIN && !oos_hal::model::platform().caps.has_gen() {
+        if !self.bode_sources_are_refs() && self.bode_gen() == BUILTIN && !oos_hal::model::platform().caps.has_gen() {
             let name = &oos_hal::model::platform().caps.name;
             return self.toast(&format!("No built-in generator on the {}: choose an external one", name));
         }
@@ -218,12 +222,34 @@ impl Ui {
         self.bode.points.clear();
         self.bode.idx = 0;
         *self.bode.err.lock().unwrap() = None;
+        // two stored records: the sweep is the sine fit of those samples, with no generator and no front end
+        if self.bode_sources_are_refs() {
+            let rec = Self::blank_record();
+            let freqs = self.bode.freqs.clone();
+            for &f in &freqs {
+                let _ = self.bode_point(&rec, f);
+            }
+            self.bode.idx = self.bode.freqs.len();
+            self.toast(&format!("Bode sweep done: {} points", self.bode.points.len()));
+            return;
+        }
         self.bode.saved = Some((self.m.tscale, self.m.trig_src, self.m.trig_level));
-        // trigger on the input channel at its centre, free running if nothing triggers
+        // trigger on a live input at its centre, free running if nothing triggers
         let (inp, out) = (self.m.bode_in, self.m.bode_out);
-        self.m.ch[inp].on = true;
-        self.m.ch[out].on = true;
-        (self.m.trig_type, self.m.trig_src, self.m.trig_level, self.m.trig_mode, self.m.run) = (TrigType::Edge, inp, 0.0, TrigMode::Auto, RunState::Run);
+        if let WaveId::Ch(c) = inp {
+            self.m.ch[c].on = true;
+        }
+        if let WaveId::Ch(c) = out {
+            self.m.ch[c].on = true;
+        }
+        let trig = match inp {
+            WaveId::Ch(c) => c,
+            WaveId::Ref(_) => match out {
+                WaveId::Ch(c) => c,
+                WaveId::Ref(_) => self.m.trig_src,
+            },
+        };
+        (self.m.trig_type, self.m.trig_src, self.m.trig_level, self.m.trig_mode, self.m.run) = (TrigType::Edge, trig, 0.0, TrigMode::Auto, RunState::Run);
         self.bode.running = true;
         if self.bode_gen() == BUILTIN {
             self.bode.afg_saved = Some((self.m.afg_on, self.m.afg_freq, self.m.afg_ampl, self.m.afg_offset, self.m.afg_wave, self.m.afg_mod));
@@ -256,6 +282,32 @@ impl Ui {
         self.toast(msg);
     }
 
+    /// Every wave this sweep reads is a stored ref.
+    fn bode_sources_are_refs(&self) -> bool {
+        let (inp, out) = (self.m.bode_in, self.m.bode_out);
+        let one = inp == out && self.bode_gen() == BUILTIN;
+        let ids = if one { [out, out] } else { [inp, out] };
+        ids.iter().all(|id| matches!(id, WaveId::Ref(_)))
+    }
+
+    /// One frequency. False when a source has no samples yet, so the sweep waits. A ref is its own `dt`,
+    /// with no coupling and no bandwidth limit.
+    fn bode_point(&mut self, rec: &Record, f: f64) -> bool {
+        let (inp, out) = (self.m.bode_in, self.m.bode_out);
+        if inp == out && self.bode_gen() == BUILTIN {
+            let Some(s) = self.wave_samples(rec, out) else { return false };
+            if let Some((a, _, _)) = bode::sine_fit(&s.v, s.dt, f).filter(|_| self.m.afg_ampl > 0.0) {
+                self.bode.points.push((f, 20.0 * (2.0 * a / self.m.afg_ampl).log10(), f64::NAN));
+            }
+            return true;
+        }
+        let Ok(t) = self.take_waves(rec, &[inp, out], &[]) else { return false };
+        if let Some((g, ph)) = bode::gain_phase(&t.v[0], &t.v[1], t.dt, f) {
+            self.bode.points.push((f, g, ph));
+        }
+        true
+    }
+
     /// One sweep step per new record: measure, then the next frequency.
     pub(super) fn bode_update(&mut self) {
         if !self.bode.running {
@@ -274,22 +326,9 @@ impl Ui {
             self.bode.wait -= 1;
             return;
         }
-        let (inp, out) = (self.m.bode_in, self.m.bode_out);
-        if rec.ch[inp].is_empty() || rec.ch[out].is_empty() {
-            return;
-        }
-        let (vo, dt) = self.meas_wave(&rec, out);
         let f = self.bode.freqs[self.bode.idx];
-        if inp == out && self.bode_gen() == BUILTIN {
-            // one channel on the generator: gain against the set amplitude (after the frequency limits), no phase
-            if let Some((a, _, _)) = bode::sine_fit(&vo, dt, f).filter(|_| self.m.afg_ampl > 0.0) {
-                self.bode.points.push((f, 20.0 * (2.0 * a / self.m.afg_ampl).log10(), f64::NAN));
-            }
-        } else {
-            let (vi, _) = self.meas_wave(&rec, inp);
-            if let Some((g, ph)) = bode::gain_phase(&vi, &vo, dt, f) {
-                self.bode.points.push((f, g, ph));
-            }
+        if !self.bode_point(&rec, f) {
+            return;
         }
         self.bode.idx += 1;
         if self.bode.idx >= self.bode.freqs.len() {
@@ -344,7 +383,7 @@ impl Ui {
         }
         cv.hline(a.x, a.x + a.w, py(0.0), LINE);
         cv.hline(a.x, a.x + a.w, gy(0.0).clamp(gt, gb), LINE);
-        let col_g = CH_COLORS[self.m.bode_out];
+        let col_g = self.wave_color(self.m.bode_out);
         let mut prev: Option<((i32, i32), (i32, i32))> = None;
         for &(hz, g, p) in &self.bode.points {
             let (x, yg, yp) = (x_of(hz), gy(g), py(p));
@@ -366,8 +405,8 @@ impl Ui {
             cv.dashed_vline(x, gt, pb, 4, 3, CURSOR);
             cv.text(&f.s, a.x + 6, a.y + a.h / 2 + 2, &self.bode_cursor_text(), CURSOR);
         }
-        let refn = if self.m.bode_in == self.m.bode_out && self.bode_gen() == BUILTIN { "generator".to_string() } else { format!("CH{}", self.m.bode_in + 1) };
-        cv.text(&f.s, a.x + 6, gt + 14, &format!("Gain CH{} / {}  {:.0} .. {:.0} dB", self.m.bode_out + 1, refn, gmin, gmax), col_g);
+        let refn = if self.m.bode_in == self.m.bode_out && self.bode_gen() == BUILTIN { "generator".to_string() } else { self.wave_name(self.m.bode_in) };
+        cv.text(&f.s, a.x + 6, gt + 14, &format!("Gain {} / {}  {:.0} .. {:.0} dB", self.wave_name(self.m.bode_out), refn, gmin, gmax), col_g);
         cv.text(&f.s, a.x + 6, pt + 14, "Phase -180 .. 180\u{b0}", ACCENT);
         let status = if self.bode.running {
             format!("sweeping {} of {}: {}", self.bode.idx + 1, self.bode.freqs.len(), si_short(self.bode.freqs[self.bode.idx], "Hz"))
