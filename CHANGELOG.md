@@ -1,5 +1,19 @@
 # Changes
 
+## 0.1.10
+
+Install from 0.1.7, 0.1.8 or 0.1.9 as always: the web page, System > Update, or the USB stick; then switch the scope
+off at the mains, wait 30 seconds and switch it on. From 0.1.6 or older: install 0.1.7 first (see 0.1.9).
+
+Fixed:
+
+- Web remote with Display > Graphics = GPU (the default): the live picture went back and forth between the current
+  screen and an older one, most visibly when a menu opened or closed (and the WLAN box seemed to drop its address).
+  The frame loop swapped the shown screen out to the web page, which only works when the next screen is drawn whole on
+  the CPU; with the GPU the screen comes back from it only now and then. Each picture that comes back now goes to the
+  web page as a copy. On a DHO924S, 120 pictures in a row while menus open and close: 86 older screens before, none
+  after, about 9.5 pictures a second over WLAN.
+
 ## 0.1.9
 
 Install from 0.1.7 or 0.1.8 as always: the web page, System > Update, or the USB stick; then switch the scope off at
