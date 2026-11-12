@@ -478,6 +478,17 @@ impl Source {
         }
     }
 
+    /// Hardware source: hands the counter set-up the UI wants to the acquisition thread (None: off) and returns the
+    /// latest reading; None off the hardware (the counter is then worked out from the records).
+    pub fn hw_counter(&self, want: Option<crate::board::CounterWant>) -> Option<Option<crate::board::CounterRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.counter_want = want;
+            return Some(g.counter);
+        }
+        None
+    }
+
     /// Hardware source: FPGA version (0 = not reached) and the latest XADC reading (die degC, VCCINT V).
     pub fn hw_board(&self) -> Option<(u32, Option<(f32, f32)>)> {
         if let Source::Hw { shared, .. } = self {

@@ -304,6 +304,39 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     b
 }
 
+/// The FPGA's frequency counter, once per pass of the acquisition loop: (re)started when the UI wants another set-up,
+/// read once a gate (and 0.1 s) has passed since the start or the last reading (docs/protocols/counter.md).
+#[cfg(target_os = "linux")]
+fn counter_tick(bar: &mut oos_hal::dho::bus::Bar1, out: &HwShared, counting: &mut Option<(crate::board::CounterWant, std::time::Instant)>, n: &mut u64) {
+    use oos_hal::dho::bus::Bus;
+    use oos_hal::dho::counter;
+    let want = out.lock().unwrap().counter_want;
+    if want != counting.map(|c| c.0) {
+        match want {
+            Some(w) => {
+                let mode = [counter::Mode::Frequency, counter::Mode::Period, counter::Mode::Totalize][w.mode.min(2)];
+                bar.apply(&counter::start(&counter::Config { ch: w.ch, mode, digits: w.digits }));
+                *counting = Some((w, std::time::Instant::now()));
+            }
+            None => {
+                bar.apply(&counter::stop());
+                *counting = None;
+            }
+        }
+        out.lock().unwrap().counter = None;
+        return;
+    }
+    if let Some((w, t)) = *counting {
+        let gate = counter::gate_s(w.digits);
+        if t.elapsed().as_secs_f64() >= gate + 0.1 {
+            let r = counter::read(bar);
+            *n += 1;
+            out.lock().unwrap().counter = Some(crate::board::CounterRead { period: counter::period(&r, gate), total: r.total, n: *n });
+            *counting = Some((w, std::time::Instant::now()));
+        }
+    }
+}
+
 /// Starts the acquisition thread (`app_mask` = channel set the stock system left behind; `program_afe` = OOS sets the
 /// AFEs from the UI channel settings, else they keep the stock set-up and the UI V/div must match it).
 #[cfg(target_os = "linux")]
@@ -392,7 +425,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut stamp;
         let mut xadc_at: Option<std::time::Instant> = None;
         let mut la_fails = 0u32;
+        // the frequency counter: what runs since when, and the readings so far
+        let mut counting: Option<(crate::board::CounterWant, std::time::Instant)> = None;
+        let mut count_n = 0u64;
         loop {
+            counter_tick(&mut bar, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
                 xadc_at = Some(std::time::Instant::now());

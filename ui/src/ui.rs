@@ -31,6 +31,7 @@ mod wlan;
 mod windows;
 mod time;
 mod remote;
+mod backlight;
 mod graphics;
 #[cfg(test)]
 mod lint;
@@ -219,6 +220,9 @@ pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 const FREQ_KEYS: [&str; 18] = ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "2", "3", "kHz", "0", ".", "Del", "MHz", "Clear", "Cancel"];
 /// Keys of the hex keypad picker.
 const KEYPAD: [&str; 19] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
+
+/// A channel key on the front panel held this many seconds: AC/DC (`Ui::panel_key`).
+pub const LONG_PRESS: f64 = 0.6;
 
 pub const KEY_NAMES: [(&str, u8); 30] = [
     ("navfwd", 0x06), ("navplay", 0x07), ("navback", 0x08),
@@ -546,6 +550,12 @@ enum Item {
     BodeGen,
     BodeAddr,
     BodeCur,
+    BodeSwTime,
+    BodeSwLog,
+    BodeSync,
+    BodeSyncEdge,
+    BodeSyncLvl,
+    BodeRef,
     CalCh,
     CalZero,
     CalAdc,
@@ -585,6 +595,8 @@ enum Item {
     RemTelnetInfo,
     /// Display > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
+    /// Display > Backlight, percent (ui/backlight.rs)
+    Backlight,
     WlanInfo,
     WlanScan,
     WlanForget,
@@ -856,6 +868,9 @@ pub struct Ui {
     /// counter: edges so far, frequency statistics
     cnt_total: u64,
     cnt_stat: MStat,
+    /// the hardware counter (tools.rs): latest reading, and a number raised by Clear counter
+    cnt_hw: Option<crate::board::CounterRead>,
+    cnt_clear: u64,
     /// channel B of delay and phase
     meas_src_b: usize,
     /// the reference the Slot rows work on
@@ -924,6 +939,11 @@ pub struct Ui {
     view_pass: bool,
     /// a USB stick is mounted
     usb: bool,
+    /// a channel key held on the front panel: channel, since when, and whether it was long enough for AC/DC already
+    /// (`panel_key`)
+    ch_hold: Option<(usize, f64, bool)>,
+    /// a finger on the card of a channel that is on, since when (a long touch: AC/DC, as the key)
+    card_hold: Option<(usize, f64)>,
     /// LA probe detect: None = not known (no hardware, not read yet)
     la_probe: Option<bool>,
     usb_check: f64,
@@ -1050,6 +1070,8 @@ impl Ui {
             refs: std::array::from_fn(|_| None),
             cnt_total: 0,
             cnt_stat: MStat::default(),
+            cnt_hw: None,
+            cnt_clear: 0,
             meas_src_b: 1,
             ref_sel: 0,
             ref_src: 0,
@@ -1093,6 +1115,8 @@ impl Ui {
             scr: Screen::PANEL,
             view_pass: false,
             usb: false,
+            ch_hold: None,
+            card_hold: None,
             la_probe: None,
             usb_check: 0.0,
             store_slot: 1,
@@ -1517,6 +1541,8 @@ impl Ui {
         self.wlan_poll();
         self.ntp_poll();
         self.usb_poll();
+        self.ch_hold_poll();
+        self.counter_poll();
         self.la_probe_poll();
         self.log_tick();
         self.m.clamp_offsets();
@@ -3381,6 +3407,35 @@ impl Ui {
         Rect::new(r.x - 2, top.y, r.w + 4, top.h)
     }
 
+    /// The acquisition mode as the top bar names it.
+    fn acq_name(&self) -> String {
+        match self.m.acq {
+            AcqMode::Normal => "Normal".to_string(),
+            AcqMode::Peak => "Peak".to_string(),
+            AcqMode::Average => format!("Average {}", self.m.avg_count),
+            AcqMode::HiRes => "High res".to_string(),
+        }
+    }
+
+    /// The acquisition text of the top bar from `x` on, before the buttons at `room`: sample rate and depth in the bold
+    /// font, else in the regular one, else without the spaces; the mode only when it fits too. Larger text with a long
+    /// depth ran under the buttons. (bold, rate and depth, mode)
+    fn top_acq(f: &Fonts, x: i32, room: i32, sr: f64, depth: f64, mode: String) -> (bool, String, Option<String>) {
+        let (rate, pts) = (si_digits(sr, "Sa/s", 3), si_digits(depth, "pts", 3));
+        let full = format!("{} \u{b7} {}", rate, pts);
+        let (bold, main) = if x + f.mb.width(&full) <= room {
+            (true, full)
+        } else if x + f.m.width(&full) <= room {
+            (false, full)
+        } else {
+            (false, format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', "")))
+        };
+        let end = x + if bold { f.mb.width(&main) } else { f.m.width(&main) };
+        let mode = format!(" \u{b7} {}", mode);
+        let mode = (end + f.m.width(&mode) <= room).then_some(mode);
+        (bold, main, mode)
+    }
+
     fn draw_top(&self, cv: &mut Canvas) {
         let f = self.fonts();
         let top = self.frame().top;
@@ -3405,16 +3460,10 @@ impl Ui {
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
         let tcol = if acq_open { ACCENT } else { TEXT };
-        let x = cv.text(&f.mb, r.x + r.w + 14, 25, &format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), tcol);
-        let acq = match self.m.acq {
-            AcqMode::Normal => "Normal".to_string(),
-            AcqMode::Peak => "Peak".to_string(),
-            AcqMode::Average => format!("Average {}", self.m.avg_count),
-            AcqMode::HiRes => "High res".to_string(),
-        };
-        let acq = format!(" \u{b7} {}", acq);
-        if x + f.m.width(&acq) <= room {
-            cv.text(&f.m, x, 25, &acq, tcol);
+        let (bold, main, mode) = Self::top_acq(f, r.x + r.w + 14, room, sr, depth as f64, self.acq_name());
+        let x = cv.text(if bold { &f.mb } else { &f.m }, r.x + r.w + 14, 25, &main, tcol);
+        if let Some(m) = mode {
+            cv.text(&f.m, x, 25, &m, tcol);
         }
         // buttons (the open menu in orange)
         let root = self.menu_root();
@@ -3429,7 +3478,7 @@ impl Ui {
         }
         // LAN: an address without a cable is only the fallback waiting for one
         let lan = self.addr_of("eth0").filter(|_| self.eth_link);
-        self.draw_link(cv, self.net_box(), if lan.is_none() { "LAN" } else if self.net_fixed { "LAN \u{b7} fixed" } else { "LAN \u{b7} DHCP" }, lan);
+        self.draw_link(cv, self.net_box(), if lan.is_none() { "LAN" } else if self.net_fixed { "LAN \u{b7} local" } else { "LAN \u{b7} DHCP" }, lan);
         // WLAN and USB sticks, while they are there
         if self.wlan_stick {
             self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
@@ -3767,6 +3816,7 @@ impl Ui {
             MenuId::Power => vec![m.pw_v, m.pw_i],
             MenuId::Spectrum => vec![m.spec_src],
             MenuId::Eye => vec![m.eye_src],
+            MenuId::Bode if m.bode_gen == bode::FREE => [Some(m.bode_out), m.bode_sw_in.checked_sub(1), Some(m.bode_sync)].into_iter().flatten().collect(),
             MenuId::Bode => vec![m.bode_in, m.bode_out],
             MenuId::BwTest => vec![m.bw_src],
             MenuId::Mask => vec![m.mask_src],
@@ -3803,7 +3853,7 @@ impl Ui {
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasStats, Item::MeasLabels, Item::MeasClear],
+            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasStats, Item::MeasLabels, Item::MeasClear],
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
@@ -3812,7 +3862,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Graphics, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Graphics, Item::Backlight, Item::TextSize, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -4472,7 +4522,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::backlight_kind(it)) {
             return k;
         }
         match it {
@@ -4493,7 +4543,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::backlight_label(it)) {
             return l;
         }
         match it {
@@ -4729,7 +4779,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.backlight_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4922,7 +4972,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.backlight_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -6212,7 +6262,7 @@ impl Ui {
             return;
         }
         match ev {
-            Ev::Key(k) => self.key(k),
+            Ev::Key(k) => self.panel_key(k),
             Ev::Touch { id, phase, x, y } => self.multi_touch(id, phase, x, y),
         }
     }
@@ -6228,6 +6278,67 @@ impl Ui {
         } else {
             1
         }
+    }
+
+    /// A key of the front panel (the panel sends a key's code when it is pressed and 0 when it is let go): as `key`,
+    /// but a channel key acts when it is let go, and held for `LONG_PRESS` it switches the channel between AC and DC
+    /// coupling instead (at once, while still held). Scripts, the control FIFO and the web remote press keys through
+    /// `key`, as before.
+    pub fn panel_key(&mut self, k: u8) {
+        let c = k.wrapping_sub(key::CH1) as usize;
+        if c < 4 && c < n_ch() {
+            // a second channel key while one is held: the held one counts as a short press
+            self.ch_release();
+            self.ch_hold = Some((c, self.now, false));
+            return;
+        }
+        if k == 0 {
+            self.ch_release();
+        } else if self.ch_hold.is_some() {
+            self.ch_release();
+        }
+        self.key(k);
+    }
+
+    /// A held channel key let go: its own action, unless it was held long enough for AC/DC.
+    fn ch_release(&mut self) {
+        if let Some((c, _, long)) = self.ch_hold.take() {
+            if !long {
+                self.key(key::CH1 + c as u8);
+            }
+        }
+    }
+
+    /// A channel key held for `LONG_PRESS`: AC/DC once; letting it go then does nothing more. The same for a finger
+    /// held on a channel's card: then the finger's lift is no tap.
+    fn ch_hold_poll(&mut self) {
+        if let Some((c, t)) = self.card_hold {
+            let still = self.touch.down && (self.touch.x - self.touch.x0).abs() < 16 && (self.touch.y - self.touch.y0).abs() < 16;
+            if !still {
+                self.card_hold = None;
+            } else if self.now - t >= LONG_PRESS {
+                self.card_hold = None;
+                self.touch.down = false;
+                self.toggle_ac_dc(c);
+            }
+        }
+        if let Some((c, t, false)) = self.ch_hold {
+            if self.now - t >= LONG_PRESS {
+                self.ch_hold = Some((c, t, true));
+                self.toggle_ac_dc(c);
+            }
+        }
+    }
+
+    /// A long press of a channel key: AC or DC coupling.
+    fn toggle_ac_dc(&mut self, c: usize) {
+        let to = if self.m.ch[c].coupling == Coupling::Ac { Coupling::Dc } else { Coupling::Ac };
+        if !board().couplings().contains(&to) {
+            return self.toast(&format!("CH{}: no {} coupling on this scope", c + 1, to.name()));
+        }
+        self.m.ch[c].coupling = to;
+        self.toast(&format!("CH{}: {} coupling", c + 1, to.name()));
+        self.settings_changed();
     }
 
     pub fn key(&mut self, k: u8) {
@@ -6557,6 +6668,11 @@ impl Ui {
                 let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
                 *t = TouchState { down: true, x0: x, y0: y, x, y, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0, win: self.cur_win };
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+                    return;
+                }
+                if !in_plot {
+                    let (chs, _, _) = self.cards();
+                    self.card_hold = chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
                     return;
                 }
                 if in_plot {
@@ -8222,6 +8338,72 @@ mod tests {
         ui.key(key::DEFAULT);
         assert_eq!(ui.m.quick, Quick::RunStop);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The top bar's acquisition text stays clear of the buttons in every text size, with the longest values.
+    #[test]
+    fn the_acquisition_text_fits_before_the_buttons() {
+        use super::*;
+        for ts in TEXT_SIZES {
+            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            ui.m.text_size = ts;
+            ui.relayout();
+            let f = ui.fonts();
+            let r = ui.run_pill();
+            let room = ui.top_buttons().first().map_or(ui.top_right(), |b| b.2.x) - 12;
+            for (sr, depth) in [(1.25e9, 125e6), (625e6, 62.5e6), (3.125e6, 1.25e6)] {
+                let (bold, main, mode) = Ui::top_acq(f, r.x + r.w + 14, room, sr, depth, "Average 1024".into());
+                let w = if bold { f.mb.width(&main) } else { f.m.width(&main) } + mode.as_ref().map_or(0, |m| f.m.width(m));
+                assert!(r.x + r.w + 14 + w <= room, "{:?} {} {}", ts, main, w);
+            }
+        }
+    }
+
+    /// A channel key held on the front panel: AC/DC, nothing else; a short press does what the key does, when it is
+    /// let go.
+    #[test]
+    fn a_long_press_of_a_channel_key_switches_ac_dc() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.step(0.033);
+        assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Dc && !ui.menu_open);
+        // short: the menu opens when the key is let go
+        ui.panel_key(key::CH1);
+        assert!(!ui.menu_open, "not yet");
+        ui.step(0.1);
+        ui.panel_key(0);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(0));
+        // long: AC while still held, the menu stays, the channel on
+        ui.panel_key(key::CH1);
+        ui.step(LONG_PRESS);
+        assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Ac);
+        ui.step(0.5);
+        ui.panel_key(0);
+        assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Ac && ui.menu_open, "letting go does nothing more");
+        ui.panel_key(key::CH1);
+        ui.step(1.0);
+        ui.panel_key(0);
+        assert_eq!(ui.m.ch[0].coupling, Coupling::Dc, "and back");
+        // a short press with the menu open: off
+        ui.panel_key(key::CH1);
+        ui.panel_key(0);
+        assert!(!ui.m.ch[0].on);
+        // scripts and the remote: every press at once
+        ui.key(key::CH1);
+        assert!(ui.m.ch[0].on);
+        // a finger held on the channel's card: AC/DC, and lifting it opens no menu
+        ui.close_menu();
+        let (x, y) = mid(ui.cards().0[0]);
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        ui.step(LONG_PRESS + 0.05);
+        assert_eq!(ui.m.ch[0].coupling, Coupling::Ac);
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+        assert!(!ui.menu_open, "no tap after a long touch");
+        // a short one is a tap
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        ui.step(0.1);
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(0) && ui.m.ch[0].coupling == Coupling::Ac);
     }
 
     /// Every front-panel key function is in the start menu, and every menu is reachable by its key and by touch.

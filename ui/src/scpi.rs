@@ -7,6 +7,7 @@
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
+//! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
@@ -472,6 +473,35 @@ impl Scpi {
                 }
                 return None;
             }
+            if kw(n0, "COUNter") && nodes.len() == 2 && !kw(nodes[1], "CURRent") {
+                let k = nodes[1];
+                if query {
+                    return Some(t(&if kw(k, "ENABle") {
+                        (m.cnt_on as u8).to_string()
+                    } else if kw(k, "SOURce") {
+                        format!("CHAN{}", m.cnt_src + 1)
+                    } else if kw(k, "MODE") {
+                        ["FREQ", "PER", "TOT"][m.cnt_mode.min(2)].to_string()
+                    } else if kw(k, "NDIGits") {
+                        m.cnt_digits.to_string()
+                    } else {
+                        return None;
+                    }));
+                }
+                let a = arg.trim().to_ascii_uppercase();
+                if kw(k, "ENABle") {
+                    m.cnt_on = parse_bool(arg)?;
+                } else if kw(k, "SOURce") {
+                    m.cnt_src = parse_ch(arg).filter(|&c| c < n_ch())?;
+                } else if kw(k, "MODE") {
+                    m.cnt_mode = ["FREQ", "PER", "TOT"].iter().position(|p| a.starts_with(p))?;
+                } else if kw(k, "NDIGits") {
+                    m.cnt_digits = a.parse::<u32>().ok().filter(|d| (3..=6).contains(d))?;
+                } else {
+                    return None;
+                }
+                return Some(None);
+            }
             if kw(n0, "ACQuire") && nodes.len() == 2 && !query && kw(nodes[1], "MDEPth") {
                 // AUTO or one of the depths of the Acquire menu (`mdepths`), e.g. 1000000 or 1M
                 let a = arg.trim().to_ascii_uppercase();
@@ -506,6 +536,13 @@ impl Scpi {
         }
         // measurement, waveform, display, system (need the record / canvas)
         let n0 = nodes.first().copied().unwrap_or("");
+        if kw(n0, "COUNter") && nodes.len() == 2 && kw(nodes[1], "CURRent") && query {
+            return t(&ui.counter_value().map_or("9.9E37".into(), e));
+        }
+        if kw(n0, "COUNter") && nodes.len() == 3 && kw(nodes[1], "TOTalize") && kw(nodes[2], "CLEar") && !query {
+            ui.counter_reset();
+            return None;
+        }
         if kw(n0, "MEASure") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
             let mut parts = arg.split(',');
             let item = parts.next().unwrap_or("").trim().to_ascii_uppercase();

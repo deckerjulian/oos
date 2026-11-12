@@ -14,7 +14,7 @@ change them.
 | PHY | Motorcomm YT8512 at MDIO address 0, 10/100 Mbit/s, reset line GPIO3_B7 (`snps,reset-gpio`, 10 ms low, then 50 ms) |
 | Kernel | `dwmac-rk` + `stmmac`, PHY driver `motorcomm` (both built in), no PHY interrupt: phylib reads the PHY once a second |
 | MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2) |
-| Address | DHCP (`udhcpc`, 5 tries), else 192.168.177.64/24; a cable or a server that comes later still gets DHCP |
+| Address | none without a cable; with one DHCP (`udhcpc`, 5 tries), else a link-local address 169.254.x.y/16 (RFC 3927: from the MAC, checked with `arping -D`, another one if it is taken; the top bar says `LAN · local`). A computer on the same cable without DHCP takes such an address itself, so it reaches the scope without any set-up. A server that comes later still gives DHCP |
 
 System > Network shows the address of eth0 and the speed of the link (`192.168.1.20 · 100 Mbit/s`).
 

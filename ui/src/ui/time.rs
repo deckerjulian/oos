@@ -162,6 +162,7 @@ impl Ui {
         self.sys_path = Some(path);
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();
         self.apply_tz();
+        self.apply_backlight();
     }
 
     /// Writes the settings (not in tests: there `sys_path` is none).

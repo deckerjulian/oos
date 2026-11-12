@@ -879,6 +879,16 @@ pub struct Model {
     pub bode_out: usize,
     pub bode_gen: usize,
     pub bode_addr: String,
+    /// Bode with a generator that sweeps on its own (`ui::bode::FREE`, same start/stop): sweep time (s), logarithmic
+    /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
+    /// `bode_ref` dBV)
+    pub bode_sw_time: f64,
+    pub bode_sw_log: bool,
+    pub bode_sync: usize,
+    pub bode_sync_slope: Slope,
+    pub bode_sync_level: f32,
+    pub bode_sw_in: usize,
+    pub bode_ref: f64,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
@@ -1151,6 +1161,13 @@ impl Default for Model {
             bode_gen: 0,
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
+            bode_sw_time: 1.0,
+            bode_sw_log: true,
+            bode_sync: NCH - 1,
+            bode_sync_slope: Slope::Rise,
+            bode_sync_level: 1.0,
+            bode_sw_in: 1,
+            bode_ref: 0.0,
             bw_src: 0,
             bw_hint: 0.0,
             bw_bins: 2000,
@@ -1582,6 +1599,15 @@ impl Model {
         }
         if n >= NCH {
             return changed;
+        }
+        // the Bode sync channel goes to the last input (CH4 by default, CH2 on a 2-channel model), its input to none
+        if self.bode_sync >= n {
+            self.bode_sync = n - 1;
+            changed = true;
+        }
+        if self.bode_sw_in > n {
+            self.bode_sw_in = 0;
+            changed = true;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
         for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src]

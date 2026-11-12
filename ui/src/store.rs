@@ -272,6 +272,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
     kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in + 1, m.bode_out + 1, m.bode_gen, m.bode_addr));
+    // free sweep: time, log, sync channel, edge, level, input (0 = none), reference dBV
+    kv("bode_sweep", format!("{} {} {} {} {} {} {}", m.bode_sw_time, m.bode_sw_log, m.bode_sync + 1, name(m.bode_sync_slope), m.bode_sync_level, m.bode_sw_in, m.bode_ref));
     kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src + 1, m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
     kv("eye", format!("{} {}", m.eye_src + 1, m.eye_rate));
@@ -590,6 +592,23 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.bode_out = p_idx(w[5], NCH + 1)?.max(1) - 1;
             m.bode_gen = p_idx(w[6], crate::ui::bode::GENERATORS.len())?;
             m.bode_addr = w.get(7).map_or("", |a| a.trim()).to_string();
+        }
+        "bode_sweep" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            if w.len() != 7 {
+                return Err("bode_sweep: want 7 values".into());
+            }
+            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
+            m.bode_sw_time = f(w[0])?;
+            if !m.bode_sw_time.is_finite() || m.bode_sw_time <= 0.0 {
+                return Err("bode_sweep: the sweep time must be above 0".into());
+            }
+            m.bode_sw_log = p_bool(w[1])?;
+            m.bode_sync = p_idx(w[2], NCH + 1)?.max(1) - 1;
+            m.bode_sync_slope = p_enum(w[3], &SLOPES[..2])?;
+            m.bode_sync_level = p_f32(w[4])?;
+            m.bode_sw_in = p_idx(w[5], NCH + 1)?;
+            m.bode_ref = f(w[6])?;
         }
         "spec" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -1096,6 +1115,7 @@ mod tests {
     /// A non-default set-up in every group of fields.
     fn custom() -> Model {
         let mut m = Model::default();
+        (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope, m.bode_sync_level, m.bode_sw_in, m.bode_ref) = (12.5, false, 2, Slope::Fall, -0.75, 0, -6.02);
         m.ch[1].on = true;
         m.ch[1].vscale = 1; // 200 uV/div
         m.ch[1].offset = -0.123_456_79;

@@ -61,8 +61,8 @@ Then every 2 s:
    keeps the address; a lost link or another network drops it.
 4. `wlan0` gone (stick pulled): wpa_supplicant and DHCP stop.
 
-`ignore_routes_with_linkdown` is set, so that the fallback address of eth0 (192.168.177.64/24, kept without a cable) does
-not take the traffic of a WLAN in that same network. `wlan0` gets route metric 20.
+`ignore_routes_with_linkdown` is set, so that a route of eth0 whose cable was pulled does not take the traffic of a WLAN
+in that same network. `wlan0` gets route metric 20.
 
 Logs: `/tmp/oos-wlan.log`, `/tmp/wpa_supplicant.log`. By hand: `wpa_cli -p /run/wpa_supplicant -i wlan0 status`.
 

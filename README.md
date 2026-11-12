@@ -153,7 +153,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Waveform windows: the plot split into two windows side by side, two stacked, or four, each channel, math channel and
   the LA in a window of your choice, all on one time base
 - Full screen: one tap at the top right of the plot hides the top bar and the cards, one more brings them back
-- Text size Normal, Large or Larger for the bars, cards, measurement rows, menus and dialogs
+- Text size Normal, Large or Larger for the bars, cards, measurement rows, menus and dialogs; backlight brightness
 - HDMI output as a mirror, as a separate waveform workspace, or laid out again at the monitor's size
 - the picture drawn on the GPU (Mali-T860, Panfrost; Display > Graphics, CPU as before is the other choice): a third
   less load on the frame loop, a monitor scaled without CPU work ([gpu/README.md](gpu/README.md)); the web picture as
@@ -161,7 +161,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 
 **Measurement and maths**
 - 35 automatic measurements plus delay and phase between channels, 14 at once, with statistics
-- Time, voltage, tracking and XY cursors; DVM and counter from the record
+- Time, voltage, tracking and XY cursors; DVM; frequency counter in the FPGA (reciprocal, up to 6 digits; frequency, period, totalize)
 - Second pane under the plot, as high as its content: spectrum with a peak list, results table with statistics, cursors
   and peaks, decoder events, or the trends of two measurements
 - Measurements labelled on the trace: level lines and arrows with their values
@@ -186,7 +186,8 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
   found as numbered peaks, RBW, trace modes, waterfall, THD, SNR, SFDR, limit line from a trace
 - Eye diagram with voltage and UI axes, density colours, TIE trend, histogram and spectrum, bathtub curve. Jitter split into TJ, RJ and DJ (dual-Dirac model) and measured DCD, DDJ and PJ, pooled over records
 - Power analysis: quality, harmonics, switching, ripple
-- Bode plot with the built-in generator or an external one (Rigol DG, Siglent SDG, generic SCPI)
+- Bode plot with the built-in generator or an external one (Rigol DG, Siglent SDG, generic SCPI), or from one record of
+  a generator that sweeps on its own and marks the sweep start on a sync output
 - Identify: names a signal and sets up a trigger and decoder for it
 - Bandwidth test: rise time, overshoot and magnitude response from a fast edge
 
@@ -243,12 +244,16 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 |---|---|
 | Boot, cold boot, acquisition, trigger, roll and scan, touch, front panel, generator (sine, built-in Bode), self-calibration | run on a DHO924S |
 | Signed updates from the web page and the shell, kexec trial start, trial and confirmation, install over ADB | run on a DHO924S |
+| An update with another device tree, tried by kexec first (kexec-tools, from 0.1.7) | run on a DHO924S: 0.1.6 to 0.1.7 to 0.1.8 through the web page, with cold starts |
+| Display > Graphics = GPU, JPEG live picture from the video encoder | run on a DHO924S on the panel; the GPU picture on a monitor (HDMI) not tried yet |
+| Frequency counter in the FPGA, backlight, AC/DC by a long press | run on a DHO924S (the counter with the built-in generator, 1.5 Hz to 9.9 MHz) |
 | Logic analyser with a PLA2216: lines, pulse widths, edge, pulse, pattern, duration and protocol trigger, UART, SPI and I2C on the lines, roll, scan, whole deep records, CSV | run on a DHO924S, three lines (D0 to D2) driven; thresholds have no effect here, under stock neither |
 | Generator modulation (AM, FM, PM), deep memory, limits, web, MCP, VXI-11 | run on a DHO924S |
 | HDMI output | run on a DHO924S |
 | Automatic rollback of a bad update | tests on the host only |
 | USB install without opening the scope | run on a DHO924S with a modified stock system: dry run, first install, run again |
 | Generator noise, system info, bandwidth test | tests on the host only |
+| Bode with a free-running sweep | tests on the host only (synthetic sweeps); the scan path for sweeps above about 0.9 s is not yet tried on a unit |
 | USB storage stick, 10:1 probe | run on a DHO924S |
 | WLAN | driver, firmware and scan run on a DHO924S with an RTL8188EU stick; joining a network tested on simulated radios only |
 | Overclocking (System > Overclock) | run on a DHO924S: 1.5 GHz with more noise, 2 GHz with wrong samples; the default stays 1.25 GHz |
@@ -309,7 +314,7 @@ Docker for them:
 |---|---|
 | `DHO800_DHO900_OOS_Install.GEL` | install from a USB stick through the stock system, without opening the scope: go on at [From a USB stick](#from-a-usb-stick) |
 | `oos-<version>.img` | install on a second card: steps 1, 2 and 6 to 8 below, with `--image oos-<version>.img` in step 6. Steps 3 to 5 are the build, skip them |
-| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on |
+| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on. From 0.1.6 or older, first `oos-0.1.7.oosupd` from the [0.1.7 release](https://github.com/deckerjulian/oos/releases/tag/v0.1.7): later builds bring another device tree, which only 0.1.7 and later can try before they install it |
 | `SHA256SUMS` | the checksums of all of them |
 
 Check what you downloaded. The number has to be the same as in the file's line of `SHA256SUMS`:
@@ -492,7 +497,8 @@ sudo python3 boot/switch.py show /dev/rdiskM
 3. The scope screen appears. Each failed step is named on the screen. A missing calibration file is a warning: the
    scope then runs on defaults and is less accurate.
 
-The IP address comes from DHCP and is shown in the top bar. Without DHCP the scope uses `192.168.177.64/24`.
+The IP address comes from DHCP and is shown in the top bar. Without DHCP the scope takes a link-local address
+(169.254.x.y, as computers do): a computer connected straight to the scope reaches it without any set-up.
 
 ### 8. Choose how OOS starts
 
@@ -599,6 +605,11 @@ works. Putting it back needs the card in a reader, with `recovery.bin` from the 
 ## Daily use
 
 **Controls.** Front-panel keys and knobs work as labelled. The Menu button at the bottom left reaches every function.
+A channel key held for more than half a second, or a finger held on a channel's card, switches that channel between
+AC and DC coupling.
+
+**Backlight.** Display > Backlight sets the panel's brightness from 10 to 100 %, in steps that look even to the eye. It is
+a setting of the scope (`/oos/system.conf`).
 
 **Auto.** Works on the channels that are on, at full bandwidth, and sets the memory depth back to Auto; each channel then
 gets its own bandwidth back. With no signal it restores the set-up. Afterwards a bar at the top of the plot offers a few
@@ -629,6 +640,28 @@ move the insertion point, a tap into the entry puts it there; typing and Delete 
 
 **Analysers.** Menu > Analysers holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. They replace the
 waveform; the button with three dots at the top right of the plot leads to Exit, Settings and, for the eye, Clear eye.
+
+**Bode with a free-running sweep.** For a generator that the scope does not control, but that sweeps on its own and
+gives a sync (marker) pulse at the start of each sweep. Wire the generator to the input of the device under test and to
+the input channel (CH1), the output of the device to the output channel (CH2), and the sync output to CH4. In Analysers >
+Bode set Generator = Free-running sweep, then the same Start freq, Stop freq, Sweep time and Sweep (Lin or Log) as on the
+generator, the Sync channel, its edge and level (the sync pulse must cross the level; set the channel's scale so the
+pulse is on the screen). Input (ref) Off compares the output with Ref level in dBV (0 dBV = 1 V RMS) instead of an
+input channel. Points is the number of frequencies read from the sweep. Start / stop sweep sets the time base and the
+memory for one sweep, triggers once (SINGLE) on the sync edge and waits; start the sweep on the generator. The plot
+shows the gain over frequency, the settings come back afterwards.
+- Each frequency is read in a short window of the record, about 4 periods long and never wider than 25 % in frequency,
+  by a fit of a sine that follows the sweep. Where the sweep passes a frequency in less than one period, that frequency
+  is left out (the message says so). Over three decades, 20 Hz needs a sweep time of a few seconds; a linear sweep
+  needs much more time for its low end than a logarithmic one.
+- Phase comes from the fit of both channels and is shown only with an input channel, where both fits are clean.
+- Sweeps up to about 0.9 s run as normal records (100 ms/div at most), the trigger one division from the left edge.
+  Longer sweeps run in scan mode (Auto Roll off during the sweep, up to 200 s/div, 500 s and more): the trigger sits
+  at the centre, the sweep in the right half, and the record holds min/max pairs. There the gain is half the
+  peak-to-peak value in each window, and there is no phase. The start of the sweep is taken from the sync edge in the
+  record itself.
+- On a 2-channel model use CH1 for the output, CH2 for the sync and Input (ref) Off.
+- `:BODE:RUN ON` starts it over SCPI, `:BODE:DATA?` returns the points (phase NaN where there is none).
 
 **Panes.** Display > Pane puts a second view under the waveform: Spectrum with a peak list, Results with statistics, cursors
 and peaks, decoder Events, or Trend with two charts. Tap the pane's title for its settings, a trend chart to change its
@@ -670,6 +703,8 @@ curl --data-binary @oos-<version>.oosupd http://<scope>:8080/update
 or open `http://<scope>:8080/update` in a browser. The scope restarts into the new build by kexec before anything is
 written, and the new build installs itself from there; if its kernel hangs, a power-cycle starts the previous build
 again. After the install, power-cycle: that start is the trial (coming from 0.1.0, which has no kexec start, too).
+From 0.1.6 or older go to 0.1.7 first: 0.1.8 and later bring another device tree (the GPU and the video encoder on),
+and only 0.1.7 and later start such an image by kexec with its own tree; 0.1.6 refuses it.
 The new build runs on trial. If it crashes in a loop or never becomes stable, the previous image is written back. System > Update shows the state and
 System > Roll back update returns to the previous image. Details: [docs/update.md](docs/update.md).
 

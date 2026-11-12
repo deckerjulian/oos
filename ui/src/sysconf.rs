@@ -11,6 +11,7 @@
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet)
 //! graphics = gpu            # Display > Graphics (gpu or cpu)
+//! backlight = 100            # Display > Backlight, percent (10..100)
 //! ```
 
 use crate::clock::Tz;
@@ -44,6 +45,8 @@ pub struct SysConf {
     /// Display > Graphics: the picture put together on the GPU (`gpu.rs`), else on the CPU. The GPU by default: a
     /// third less load on the frame loop, the same picture (gpu/README.md); where it does not start, the CPU draws.
     pub gpu: bool,
+    /// Display > Backlight, percent (ui/backlight.rs)
+    pub backlight: u32,
     /// lines this version does not know
     extra: Vec<String>,
 }
@@ -60,6 +63,7 @@ impl Default for SysConf {
             remote_vxi11: true,
             remote_telnet: true,
             gpu: true,
+            backlight: 100,
             extra: Vec::new(),
         }
     }
@@ -117,6 +121,7 @@ impl SysConf {
                     }
                     _ => false,
                 },
+                "backlight" => v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some(),
                 _ => {
                     c.extra.push(line.to_string());
                     true
@@ -140,6 +145,7 @@ impl SysConf {
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
         s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
         s.push_str(&format!("graphics = {}\n", if self.gpu { "gpu" } else { "cpu" }));
+        s.push_str(&format!("backlight = {}\n", self.backlight));
         for l in &self.extra {
             s.push_str(l);
             s.push('\n');
