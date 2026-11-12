@@ -234,13 +234,15 @@ pub struct Server {
     core_tcp: Option<TcpListener>,
     conns: Vec<Conn>,
     pub links: Vec<Option<Link>>,
+    /// who may connect (`netacl`, net.allow; empty: everyone)
+    pub acl: crate::netacl::Acl,
 }
 
 impl Server {
     pub fn open() -> Server {
         let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
         let pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));
-        let s = Server { pm_tcp: tcp(111), pm_udp, core_tcp: tcp(CORE_PORT), conns: Vec::new(), links: Vec::new() };
+        let s = Server { pm_tcp: tcp(111), pm_udp, core_tcp: tcp(CORE_PORT), conns: Vec::new(), links: Vec::new(), acl: crate::netacl::Acl::default() };
         eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if s.pm_tcp.is_some() { "111" } else { "unavailable" }, if s.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
         s
     }
@@ -249,6 +251,9 @@ impl Server {
         if let Some(u) = &self.pm_udp {
             let mut b = [0u8; 1500];
             while let Ok((n, from)) = u.recv_from(&mut b) {
+                if !self.acl.permits(from.ip()) {
+                    continue;
+                }
                 if let Some(c) = parse_call(&b[..n]) {
                     let _ = u.send_to(&portmap(&c), from);
                 }
@@ -256,7 +261,10 @@ impl Server {
         }
         for (l, core) in [(&self.pm_tcp, false), (&self.core_tcp, true)] {
             if let Some(l) = l {
-                while let Ok((s, _)) = l.accept() {
+                while let Ok((s, peer)) = l.accept() {
+                    if !self.acl.permits(peer.ip()) {
+                        continue;
+                    }
                     let _ = s.set_nonblocking(false);
                     let _ = s.set_nodelay(true);
                     if self.conns.len() < MAX_CONNS {

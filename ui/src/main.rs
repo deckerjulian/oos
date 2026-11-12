@@ -25,6 +25,7 @@ mod board;
 mod math;
 mod model;
 mod net;
+mod netacl;
 mod protocols;
 mod scpi;
 mod sntp;
@@ -312,6 +313,11 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut web = http::Http::open(arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080));
     let mut scpi = scpi::Scpi::open(arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555));
     let mut vxi = vxi11::Server::open();
+    // who may update or control the scope over the network: net.allow (docs/network.md 5); read once per start
+    let acl = netacl::Acl::load(&sysconf::default_path());
+    web.acl = acl.clone();
+    scpi.acl = acl.clone();
+    vxi.acl = acl;
     // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
     let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
     let mut hdmi: Option<drm::Display> = None;

@@ -1,0 +1,29 @@
+#!/bin/sh
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-mac: prints the MAC address rcS gives eth0 (docs/network.md 1), from `eth.mac` in the system settings (oos-conf):
+#   cid (default)       locally administered, fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID
+#   vendor              the unit's own LAN MAC (`oos-board mac`: vendor.bin), the one the stock system uses; cid if unreadable
+#   02:00:00:00:00:01   this address (unicast, not all zero); cid if it is not one
+# Nothing printed: no CID either, the kernel's random address stays.
+here=$(dirname "$0")
+log() { echo "oos-mac: $*" >&2; [ -w /dev/kmsg ] && echo "oos-mac: $*" > /dev/kmsg; }
+ok() {
+	echo "$1" | grep -Eq '^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$' || return 1
+	[ $((0x${1%%:*} & 1)) -eq 0 ] && [ "$(echo "$1" | tr -d ':0')" != "" ]
+}
+want=$("$here/oos-conf" eth.mac cid)
+case "$want" in
+cid|'') ;;
+vendor)
+	m=$("$here/oos-board" mac 2>/dev/null)
+	if ok "$m"; then echo "$m"; exit 0; fi
+	log "eth.mac = vendor: no usable MAC in vendor.bin (${m:--}), the one from the card's CID instead";;
+*)
+	if ok "$want"; then echo "$want"; exit 0; fi
+	log "eth.mac = $want is not a unicast MAC address, the one from the card's CID instead";;
+esac
+cid=$(cat "${OOS_CID_FILE:-/sys/block/mmcblk0/device/cid}" 2>/dev/null)
+[ -n "$cid" ] || exit 0
+h=$(echo "$cid" | md5sum | cut -c1-10)
+echo "02:$(echo "$h" | sed 's/../&:/g; s/:$//')"

@@ -13,7 +13,7 @@ change them.
 | MAC | GMAC of the RK3399 (`fe300000`), RMII, 50 MHz reference clock into the MAC (`clock_in_out = "input"`) |
 | PHY | Motorcomm YT8512 at MDIO address 0, 10/100 Mbit/s, reset line GPIO3_B7 (`snps,reset-gpio`, 10 ms low, then 50 ms) |
 | Kernel | `dwmac-rk` + `stmmac`, PHY driver `motorcomm` (both built in), no PHY interrupt: phylib reads the PHY once a second |
-| MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2) |
+| MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2, `oos-mac`); `eth.mac` (section 5) names another |
 | Address | DHCP (`udhcpc`, 5 tries), else 192.168.177.64/24; a cable or a server that comes later still gets DHCP |
 
 System > Network shows the address of eth0 and the speed of the link (`192.168.1.20 · 100 Mbit/s`).
@@ -142,3 +142,37 @@ ntp.server = pool.ntp.org
 tz = UTC0
 eth.retry_10m = on
 ```
+
+## 5. Firewall, remote access, telnet and the MAC address
+
+Four keys of the system settings that rcS reads before the network comes up (`oos-conf`). Each one is looked up in
+`/etc/oos/system.conf` first (the defaults of an image built for one unit: `OOS_UNIT`, docs/models.md 4.2), then in
+`/oos/system.conf`; the last line wins, also one with an empty value. oos-ui keeps these lines when it writes the file.
+Without `/etc/oos/system.conf` and without the keys everything is as before.
+
+| Key | Default | What |
+|---|---|---|
+| `net.allow` | (none) | address prefixes, `192.0.2.0/24 fd00::/8`. Firewall: inbound only from them; oos-ui: `POST /update`, `/mcp`, SCPI and VXI-11 only from them |
+| `telnet` | `on` | `off`: no telnetd (the root shell on the serial console and the panel stays) |
+| `eth.mac` | `cid` | `cid`: from the card's CID as before; `vendor`: the LAN MAC in vendor.bin, as the stock system uses it; or an address `02:00:00:00:00:01` |
+
+**Firewall** (`oos-firewall`, nftables, table `inet oos_fw`, before telnetd and oos-ui start). Inbound passes: loopback,
+answers to what the scope sent (DHCP, DNS, NTP; connection tracking), IPv6 neighbour discovery, DHCP replies, and
+anything from a listed prefix. The rest is dropped, on Ethernet and WLAN alike. Outbound is not limited. An entry that
+does not parse is left out and logged (`/tmp/oos-net.log`, kernel log); a list of which nothing parses closes everything
+but loopback rather than opening it. `nft` is a static build in the image (`rootfs/build-nft.sh`, nftables 1.1.3).
+The fallback address 192.168.177.64 is only reachable from a listed prefix.
+
+**oos-ui** reads `net.allow` once at start and applies it a second time per connection: `POST /update` and `/mcp`
+answer 403 to others, SCPI and VXI-11 close the connection. The page, the live picture, `/cmd` and the downloads stay
+open to the firewall's prefixes. Loopback is always allowed.
+
+**Telnet on again** with `telnet = off` in the image: write `telnet = on` into `/oos/system.conf` (root shell on UART2
+at 115200 baud or on the panel), then power-cycle. Or build the image without that line.
+
+**MAC**: an address that is not unicast or not six colon-separated bytes falls back to `cid` (logged). `vendor` asks the board
+(`oos-board mac`; on the DHO800/DHO900 `oos-fpgad model`, which needs the keys of vendor.bin, docs/models.md 1); without
+them it falls back to `cid` as well.
+
+Not verified on hardware: all of this section. Verified on the host: the ruleset loads into a Linux kernel with the
+static `nft` (arm64 container), `oos-conf` and `oos-mac` under busybox, the address lists of oos-ui (`netacl` tests).

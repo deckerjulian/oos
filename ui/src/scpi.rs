@@ -67,6 +67,8 @@ pub struct Scpi {
     /// :WAVeform:MODE: false = the screen record, true = every sample of the record in the screen window (RAW)
     wav_raw: bool,
     err: Vec<String>,
+    /// who may connect (`netacl`, net.allow; empty: everyone)
+    pub acl: crate::netacl::Acl,
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
@@ -138,12 +140,15 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
+        Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new(), acl: crate::netacl::Acl::default() }
     }
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
-            while let Ok((s, _)) = l.accept() {
+            while let Ok((s, peer)) = l.accept() {
+                if !self.acl.permits(peer.ip()) {
+                    continue; // dropped: closes the connection
+                }
                 let _ = s.set_nonblocking(false);
                 let _ = s.set_nodelay(true);
                 // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_now`)

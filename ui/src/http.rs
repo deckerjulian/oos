@@ -14,6 +14,7 @@
 //!   GET /update       update state and upload form; POST /update with a signed package (.oosupd) installs it
 //!                     (ui/update.rs: the signature is checked before anything is written)
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
+//! `net.allow` (`netacl`, docs/network.md 5) limits `POST /update` and `/mcp` to the listed address prefixes.
 
 use crate::gfx::Canvas;
 use crate::ui::Ui;
@@ -349,6 +350,8 @@ pub struct Http {
     /// connection, request so far, last data, accepted
     pending: Vec<(TcpStream, Vec<u8>, Instant, Instant)>,
     shots: Arc<Shots>,
+    /// who may install an update or use MCP (empty: everyone)
+    pub acl: crate::netacl::Acl,
 }
 
 impl Drop for Http {
@@ -463,7 +466,7 @@ impl Http {
             }
             None => eprintln!("oos-ui: web port {} not available", port),
         }
-        Http { l, pending: Vec::new(), shots: Shots::new() }
+        Http { l, pending: Vec::new(), shots: Shots::new(), acl: crate::netacl::Acl::default() }
     }
 
     /// Call right before rendering the next screen: hands the shown one to the live picture (`Shots::hand_over`).
@@ -538,6 +541,8 @@ impl Http {
                 let (route, query) = path.split_once('?').unwrap_or((&path, ""));
                 let req_body = &req[hdr_end.unwrap_or(req.len())..];
                 let post = text.starts_with("POST ");
+                // what changes the scope beyond keys and knobs: only from the allowed prefixes
+                let peer_ok = s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()));
                 // an answer that is text for the page to show, not the data asked for
                 let mut failed = false;
                 let mut csv = |r: Result<String, String>| match r {
@@ -549,6 +554,7 @@ impl Http {
                 };
                 let (ctype, body): (&str, Vec<u8>) = match route {
                     _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
+                    "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
                     "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
                     "/screen.png" => {

@@ -1,0 +1,29 @@
+#!/bin/sh
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-conf KEY [DEFAULT]: the value of KEY in the system settings, for the scripts of the image (docs/network.md 5).
+# The image default /etc/oos/system.conf first (an image built for one unit, OOS_UNIT), then /oos/system.conf: the
+# last `key = value` line wins, also one with an empty value. `#` at the start of a line or after a space is a comment.
+# Prints DEFAULT (or nothing) when no file has the key.
+files=
+for f in ${OOS_CONF_FILES:-/etc/oos/system.conf /oos/system.conf}; do
+	[ -r "$f" ] && files="$files $f"
+done
+v=
+[ -n "$files" ] && v=$(awk -v k="$1" '
+	{
+		sub(/^[ \t]+/, "")
+		if ($0 ~ /^#/) next
+		i = index($0, "=")
+		if (!i) next
+		kk = substr($0, 1, i - 1); sub(/[ \t]+$/, "", kk)
+		if (kk != k) next
+		vv = substr($0, i + 1); sub(/[ \t]#.*$/, "", vv); sub(/^[ \t]+/, "", vv); sub(/[ \t\r]+$/, "", vv)
+		val = vv; found = 1
+	}
+	END { if (found) print "=" val }' $files)
+case "$v" in
+=*) printf '%s\n' "${v#=}";;
+*) [ $# -ge 2 ] && printf '%s\n' "$2";;
+esac
+exit 0

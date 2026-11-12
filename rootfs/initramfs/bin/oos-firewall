@@ -1,0 +1,59 @@
+#!/bin/sh
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-firewall: inbound only from the prefixes of `net.allow` (oos-conf, docs/network.md 5), before any service of
+# the image listens. Loopback, answers to what the scope sent (DHCP, DNS, NTP) and IPv6 neighbour discovery always
+# pass; everything else that comes in is dropped. Outbound is not limited. No `net.allow` or an empty one: no firewall,
+# as before. A list of which nothing parses closes everything but loopback rather than opening it.
+#   oos-firewall          apply (rcS)
+#   oos-firewall --print  print the ruleset only (host tests: OOS_CONF_FILES)
+allow=$("$(dirname "$0")/oos-conf" net.allow)
+log() { echo "oos-firewall: $*" >&2; [ -w /dev/kmsg ] && echo "oos-firewall: $*" > /dev/kmsg; }
+[ -n "$allow" ] || exit 0
+v4=; v6=; bad=
+octet() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -le 255 ]; }
+for w in $(echo "$allow" | tr ',' ' '); do
+	a=${w%%/*}; n=${w#*/}; [ "$n" = "$w" ] && n=
+	case "$a" in
+	*:*)
+		# IPv6: hex digits and colons, nft checks the rest
+		if echo "$a" | grep -Eq '^[0-9A-Fa-f:]+$' && { [ -z "$n" ] || { echo "$n" | grep -Eq '^[0-9]+$' && [ "$n" -le 128 ]; }; }; then
+			v6="$v6${v6:+, }$w"
+		else bad="$bad $w"; fi;;
+	*)
+		IFS=. read -r o1 o2 o3 o4 rest <<-X
+		$a
+		X
+		if [ -z "$rest" ] && octet "$o1" && octet "$o2" && octet "$o3" && octet "$o4" && { [ -z "$n" ] || { echo "$n" | grep -Eq '^[0-9]+$' && [ "$n" -le 32 ]; }; }; then
+			v4="$v4${v4:+, }$w"
+		else bad="$bad $w"; fi;;
+	esac
+done
+[ -n "$bad" ] && log "net.allow: left out:$bad"
+[ -z "$v4$v6" ] && log "net.allow names nothing usable: inbound closed except loopback"
+rules() {
+	echo "table inet oos_fw"
+	echo "delete table inet oos_fw"
+	echo "table inet oos_fw {"
+	echo "	chain input {"
+	echo "		type filter hook input priority filter; policy drop;"
+	echo "		iif lo accept"
+	echo "		ct state established,related accept"
+	echo "		ct state invalid drop"
+	echo "		icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } ip6 hoplimit 255 accept"
+	# the DHCP client before it has an address (udhcpc reads on a raw socket, this is for its later renewals)
+	echo "		udp sport 67 udp dport 68 accept"
+	[ -n "$v4" ] && echo "		ip saddr { $v4 } accept"
+	[ -n "$v6" ] && echo "		ip6 saddr { $v6 } accept"
+	echo "	}"
+	echo "}"
+}
+if [ "${1:-}" = --print ]; then rules; exit 0; fi
+[ -x /bin/nft ] || { log "no /bin/nft in this image: NO firewall"; exit 1; }
+rules > /tmp/oos-firewall.nft
+if /bin/nft -f /tmp/oos-firewall.nft; then
+	log "inbound only from ${v4}${v4:+${v6:+, }}${v6}"
+else
+	log "nft refused the ruleset (/tmp/oos-firewall.nft): NO firewall"
+	exit 1
+fi
