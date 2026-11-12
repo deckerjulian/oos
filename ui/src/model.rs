@@ -50,6 +50,26 @@ pub fn src_step(i: usize, n: usize, d: i32) -> usize {
     src_step_in(i, n, d, n_ch())
 }
 
+/// 1-2-5 steps from `lo` to `hi`. `zero` inserts 0 (an unset geometry or resistance). `d` moves along that list and stops at the ends.
+pub fn eng_ladder(x: f64, d: i32, lo: f64, hi: f64, zero: bool) -> f64 {
+    let mut l = Vec::new();
+    if zero {
+        l.push(0.0);
+    }
+    let mut e = lo;
+    while e <= hi * 1.001 && l.len() < 48 {
+        l.push(e);
+        l.push(e * 2.0);
+        l.push(e * 5.0);
+        e *= 10.0;
+    }
+    if l.is_empty() {
+        return x;
+    }
+    let i = l.iter().position(|&v| v + 1e-12 >= x).unwrap_or(l.len() - 1);
+    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+}
+
 /// `src_step` for a unit with `nch` inputs.
 fn src_step_in(i: usize, n: usize, d: i32, nch: usize) -> usize {
     let v: Vec<usize> = (0..n).filter(|&k| k < nch || k >= NCH).collect();
@@ -160,6 +180,9 @@ pub enum AView {
     Bode,
     /// bandwidth test: step response of the front end (ui/bwtest.rs)
     Step,
+    Magnetic,
+    Inverter,
+    Dpt,
 }
 
 /// Power analysis page.
@@ -169,6 +192,48 @@ pub enum PowerMode {
     Harmonics,
     Switching,
     Ripple,
+}
+
+/// Magnetic plot: current against flux linkage, or B against H when the core is set.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MagPlot {
+    IPsi,
+    BH,
+}
+
+/// Inverter page.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InvPage {
+    Dq0,
+    Mech,
+}
+
+/// Where the inverter takes its angle.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InvAngle {
+    /// θ from the phase trio (DQ0 only)
+    Off,
+    Phase,
+    Analog,
+    Quad,
+    Hall,
+}
+
+/// The optional fourth probe of a double pulse.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DptFourth {
+    Off,
+    Gate,
+    DiodeV,
+    DiodeI,
+}
+
+/// Which edge the double-pulse plot is zoomed to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DptZoom {
+    Both,
+    TurnOn,
+    TurnOff,
 }
 
 /// Waveform histogram: off, vertical (voltage distribution of the whole screen), horizontal (time distribution in a
@@ -811,6 +876,48 @@ pub struct Model {
     pub bode_out: usize,
     pub bode_gen: usize,
     pub bode_addr: String,
+    /// magnetic analysis: voltage, current, turns, area m² (0 = unset), path m (0 = unset), copper Ω, plot, cursor
+    pub mag_v: usize,
+    pub mag_i: usize,
+    pub mag_n: f64,
+    pub mag_ae: f64,
+    pub mag_le: f64,
+    pub mag_rcu: f64,
+    pub mag_plot: MagPlot,
+    pub mag_cur: usize,
+    /// inverter: page, phases, angle source, pole pairs, analog angle channel, voltage trio (else current)
+    pub inv_page: InvPage,
+    pub inv_a: usize,
+    pub inv_b: usize,
+    pub inv_c: usize,
+    pub inv_ang: InvAngle,
+    pub inv_poles: u32,
+    pub inv_an: usize,
+    pub inv_volt: bool,
+    pub inv_tq: Option<usize>,
+    pub inv_ev: Option<usize>,
+    pub inv_ei: Option<usize>,
+    pub inv_scale: f64,
+    pub inv_degv: f64,
+    pub inv_off: f64,
+    /// analog angle is electrical (pole pairs convert it); false means the volts are already the shaft
+    pub inv_elec: bool,
+    pub inv_qa: u8,
+    pub inv_qb: u8,
+    pub inv_qi: Option<u8>,
+    pub inv_cpr: f64,
+    pub inv_swap: bool,
+    pub inv_ha: u8,
+    pub inv_hb: u8,
+    pub inv_hc: u8,
+    /// double pulse: Vds, Id, Vgs, optional fourth probe and its channel, gate percent, zoom
+    pub dpt_v: usize,
+    pub dpt_i: usize,
+    pub dpt_g: usize,
+    pub dpt_4th: DptFourth,
+    pub dpt_4ch: usize,
+    pub dpt_pct: f64,
+    pub dpt_zoom: DptZoom,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
@@ -1080,6 +1187,44 @@ impl Default for Model {
             bode_gen: 0,
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
+            mag_v: 0,
+            mag_i: 1,
+            mag_n: 1.0,
+            mag_ae: 0.0,
+            mag_le: 0.0,
+            mag_rcu: 0.0,
+            mag_plot: MagPlot::IPsi,
+            mag_cur: 0,
+            inv_page: InvPage::Dq0,
+            inv_a: 0,
+            inv_b: 1,
+            inv_c: 2,
+            inv_ang: InvAngle::Off,
+            inv_poles: 1,
+            inv_an: 3,
+            inv_volt: true,
+            inv_tq: None,
+            inv_ev: None,
+            inv_ei: None,
+            inv_scale: 1.0,
+            inv_degv: 1.0,
+            inv_off: 0.0,
+            inv_elec: false,
+            inv_qa: 0,
+            inv_qb: 1,
+            inv_qi: None,
+            inv_cpr: 1024.0,
+            inv_swap: false,
+            inv_ha: 0,
+            inv_hb: 1,
+            inv_hc: 2,
+            dpt_v: 0,
+            dpt_i: 1,
+            dpt_g: 2,
+            dpt_4th: DptFourth::Off,
+            dpt_4ch: 3,
+            dpt_pct: 10.0,
+            dpt_zoom: DptZoom::Both,
             bw_src: 0,
             bw_hint: 0.0,
             bw_bins: 2000,
@@ -1505,7 +1650,7 @@ impl Model {
             return changed;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
-        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src]
+        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src, &mut self.mag_v, &mut self.mag_i, &mut self.inv_a, &mut self.inv_b, &mut self.inv_c, &mut self.inv_an, &mut self.dpt_v, &mut self.dpt_i, &mut self.dpt_g, &mut self.dpt_4ch]
             .into_iter()
             .chain(self.zones.iter_mut().map(|z| &mut z.src))
         {
@@ -1514,7 +1659,7 @@ impl Model {
                 changed = true;
             }
         }
-        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs, &mut self.z_src] {
+        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs, &mut self.z_src, &mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei] {
             if s.is_some_and(|c| c >= n) {
                 *s = None;
                 changed = true;

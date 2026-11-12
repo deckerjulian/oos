@@ -11,6 +11,9 @@ use crate::wave::*;
 use crate::board::{board, Board};
 
 mod analysis;
+mod magnetic;
+mod motor;
+mod dpt;
 mod eyepage;
 mod panes;
 mod autoset;
@@ -208,6 +211,9 @@ pub enum MenuId {
     Spectrum,
     Eye,
     Power,
+    Magnetic,
+    Inverter,
+    Dpt,
     Identify,
     SelfCal,
     /// network overview and WLAN through a USB stick (ui/wlan.rs)
@@ -552,6 +558,47 @@ enum Item {
     QuickRun,
     LockAct,
     PowerAct,
+    MagOn,
+    MagV,
+    MagI,
+    MagN,
+    MagAe,
+    MagLe,
+    MagRcu,
+    MagPlot,
+    MagCur,
+    InvOn,
+    InvPage,
+    InvA,
+    InvB,
+    InvC,
+    InvAng,
+    InvPoles,
+    InvAn,
+    InvQty,
+    InvTq,
+    InvEv,
+    InvEi,
+    InvScale,
+    InvDeg,
+    InvOff,
+    InvElec,
+    InvQa,
+    InvQb,
+    InvQi,
+    InvCpr,
+    InvSwap,
+    InvHa,
+    InvHb,
+    InvHc,
+    DptOn,
+    DptV,
+    DptI,
+    DptG,
+    DptFourth,
+    Dpt4,
+    DptPct,
+    DptZoom,
 }
 
 #[derive(PartialEq)]
@@ -3349,6 +3396,32 @@ impl Ui {
             MenuId::Spectrum => vec![m.spec_src],
             MenuId::Eye => vec![m.eye_src],
             MenuId::Bode => vec![m.bode_in, m.bode_out],
+            MenuId::Magnetic => vec![m.mag_v, m.mag_i],
+            MenuId::Inverter if m.inv_page == InvPage::Dq0 => {
+                let mut v = vec![m.inv_a, m.inv_b, m.inv_c];
+                if m.inv_ang == InvAngle::Analog {
+                    v.push(m.inv_an);
+                }
+                v
+            }
+            MenuId::Inverter => {
+                let mut v = match m.inv_ang {
+                    InvAngle::Analog => vec![m.inv_an],
+                    InvAngle::Quad | InvAngle::Hall | InvAngle::Off => Vec::new(),
+                    InvAngle::Phase => vec![m.inv_a, m.inv_b, m.inv_c],
+                };
+                v.extend(m.inv_tq);
+                v.extend(m.inv_ev);
+                v.extend(m.inv_ei);
+                v
+            }
+            MenuId::Dpt => {
+                let mut v = vec![m.dpt_v, m.dpt_i, m.dpt_g];
+                if m.dpt_4th != DptFourth::Off {
+                    v.push(m.dpt_4ch);
+                }
+                v
+            }
             MenuId::BwTest => vec![m.bw_src],
             MenuId::Mask => vec![m.mask_src],
             MenuId::Dvm => [m.dvm_on.then_some(m.dvm_src), m.cnt_on.then_some(m.cnt_src)].into_iter().flatten().collect(),
@@ -3407,6 +3480,9 @@ impl Ui {
             MenuId::SelfCal => self.cal_items(),
             MenuId::Network => vec![Item::NetEth, Item::NetMac, Item::NetWeb, Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
             MenuId::Bode => self.bode_items(),
+            MenuId::Magnetic => self.magnetic_items(),
+            MenuId::Inverter => self.inverter_items(),
+            MenuId::Dpt => self.dpt_items(),
             MenuId::Afg => self.afg_items(),
             MenuId::BwTest => self.bw_items(),
             MenuId::ViewMore => self.view_more_items(),
@@ -3458,7 +3534,7 @@ impl Ui {
         if self.hist_pos.is_some() {
             disp.extend([NavBack, NavFwd]);
         }
-        let ana = vec![Open(MenuId::Spectrum), Open(MenuId::Eye), Open(MenuId::Power), Open(MenuId::Bode), Open(MenuId::BwTest), IdentifyAct];
+        let ana = vec![Open(MenuId::Spectrum), Open(MenuId::Eye), Open(MenuId::Power), Open(MenuId::Bode), Open(MenuId::BwTest), IdentifyAct, Open(MenuId::Magnetic), Open(MenuId::Inverter), Open(MenuId::Dpt)];
         // the generator page only on models with one (S models), the LA only with the port
         let mut ins = Vec::new();
         if oos_hal::model::platform().caps.has_gen() {
@@ -3931,6 +4007,9 @@ impl Ui {
             MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Network => "Network".into(),
             MenuId::Bode => "Bode plot".into(),
+            MenuId::Magnetic => "Magnetic".into(),
+            MenuId::Inverter => "Inverter".into(),
+            MenuId::Dpt => "Double pulse".into(),
             MenuId::Afg => "Generator (GI/GO)".into(),
             MenuId::BwTest => "Bandwidth test (step response)".into(),
             MenuId::ViewMore => self.view_name().into(),
@@ -3965,7 +4044,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
             return k;
         }
         match it {
@@ -3986,7 +4065,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
             return l;
         }
         match it {
@@ -4008,6 +4087,9 @@ impl Ui {
             Item::Open(MenuId::Storage) => "Storage",
             Item::Open(MenuId::Mask) => "Mask",
             Item::Open(MenuId::Zone) => "Zones",
+            Item::Open(MenuId::Magnetic) => "Magnetic",
+            Item::Open(MenuId::Inverter) => "Inverter",
+            Item::Open(MenuId::Dpt) => "Double pulse",
             Item::ColorGrade => "Colour grade",
             Item::StoreSlot => "Setup slot",
             Item::StoreSaveSetup => "Save setup",
@@ -4222,7 +4304,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4413,7 +4495,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -5175,7 +5257,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.ana_options(it).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
             return o;
         }
         let v: &[&str] = match it {

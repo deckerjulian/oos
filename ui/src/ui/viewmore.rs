@@ -22,6 +22,9 @@ impl Ui {
             AView::Power => "Power analysis",
             AView::Bode => "Bode plot",
             AView::Step => "Bandwidth test",
+            AView::Magnetic => "Magnetic",
+            AView::Inverter => "Inverter",
+            AView::Dpt => "Double pulse",
             AView::Scope => "Scope",
         }
     }
@@ -47,6 +50,9 @@ impl Ui {
             AView::Power => Some(MenuId::Power),
             AView::Bode => Some(MenuId::Bode),
             AView::Step => Some(MenuId::BwTest),
+            AView::Magnetic => Some(MenuId::Magnetic),
+            AView::Inverter => Some(MenuId::Inverter),
+            AView::Dpt => Some(MenuId::Dpt),
             AView::Scope => None,
         }
     }
@@ -100,7 +106,7 @@ mod tests {
 
     #[test]
     fn the_button_opens_the_menu_and_exit_ends_the_view() {
-        for view in [AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Step] {
+        for view in [AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt] {
             let mut ui = at(view);
             let r = ui.view_btn();
             ui.tap(r.x + 5, r.y + 5);

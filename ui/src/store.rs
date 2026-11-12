@@ -263,6 +263,11 @@ pub fn setup_text(m: &Model) -> String {
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
     kv("eye", format!("{} {}", m.eye_src + 1, m.eye_rate));
     kv("power", format!("{} {} {}", m.pw_v + 1, m.pw_i + 1, name(m.pw_mode)));
+    kv("magnetic", format!("{} {} {} {} {} {} {:?} {}", m.mag_v + 1, m.mag_i + 1, m.mag_n, m.mag_ae, m.mag_le, m.mag_rcu, m.mag_plot, m.mag_cur));
+    let opt = |c: Option<usize>| c.map_or("off".into(), |c| (c + 1).to_string());
+    let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
+    kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a + 1, m.inv_b + 1, m.inv_c + 1, m.inv_ang, m.inv_poles, m.inv_an + 1, m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
+    kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v + 1, m.dpt_i + 1, m.dpt_g + 1, m.dpt_4th, m.dpt_4ch + 1, m.dpt_pct, m.dpt_zoom));
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
@@ -558,7 +563,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "color_grade" => m.color_grade = p_bool(v)?,
         "dots" => m.dots = p_bool(v)?,
         "hdmi_wave" => m.hdmi_wave = p_bool(v)?,
-        "view" => m.view = p_enum(v, &[AView::Scope, AView::Spectrum, AView::Eye, AView::Power, AView::Bode])?,
+        "view" => m.view = p_enum(v, &[AView::Scope, AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Magnetic, AView::Inverter, AView::Dpt])?,
         "bode" => {
             // the address is the rest of the line: it may be empty
             let w: Vec<&str> = v.trim().splitn(8, char::is_whitespace).collect();
@@ -599,6 +604,61 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.pw_v = p_idx(w[0], NCH + 1)?.max(1) - 1;
             m.pw_i = p_idx(w[1], NCH + 1)?.max(1) - 1;
             m.pw_mode = p_enum(w[2], &[PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple])?;
+        }
+        "magnetic" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            if w.len() != 8 {
+                return Err("magnetic: want 8 values".into());
+            }
+            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
+            m.mag_v = p_idx(w[0], NCH + 1)?.max(1) - 1;
+            m.mag_i = p_idx(w[1], NCH + 1)?.max(1) - 1;
+            m.mag_n = f(w[2])?.clamp(1.0, 10_000.0);
+            m.mag_ae = f(w[3])?.max(0.0);
+            m.mag_le = f(w[4])?.max(0.0);
+            m.mag_rcu = f(w[5])?.max(0.0);
+            m.mag_plot = p_enum(w[6], &[MagPlot::IPsi, MagPlot::BH])?;
+            m.mag_cur = w[7].parse::<usize>().map_err(|e| e.to_string())?;
+        }
+        "inverter" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            if w.len() != 23 {
+                return Err("inverter: want 23 values".into());
+            }
+            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
+            let ch = |s: &str| -> Result<usize, String> { Ok(p_idx(s, NCH + 1)?.max(1) - 1) };
+            let opt = |s: &str| -> Result<Option<usize>, String> { if s == "off" { Ok(None) } else { Ok(Some(ch(s)?)) } };
+            let bit = |s: &str| -> Result<u8, String> {
+                let n = s.parse::<u8>().map_err(|e| e.to_string())?;
+                if n < 16 { Ok(n) } else { Err(format!("logic line {} out of range", n)) }
+            };
+            m.inv_page = p_enum(w[0], &[InvPage::Dq0, InvPage::Mech])?;
+            (m.inv_a, m.inv_b, m.inv_c) = (ch(w[1])?, ch(w[2])?, ch(w[3])?);
+            m.inv_ang = p_enum(w[4], &[InvAngle::Off, InvAngle::Phase, InvAngle::Analog, InvAngle::Quad, InvAngle::Hall])?;
+            m.inv_poles = p_u32(w[5])?.clamp(1, 32);
+            m.inv_an = ch(w[6])?;
+            m.inv_volt = p_bool(w[7])?;
+            (m.inv_tq, m.inv_ev, m.inv_ei) = (opt(w[8])?, opt(w[9])?, opt(w[10])?);
+            (m.inv_scale, m.inv_degv, m.inv_off) = (f(w[11])?, f(w[12])?, f(w[13])?);
+            m.inv_elec = p_bool(w[14])?;
+            (m.inv_qa, m.inv_qb) = (bit(w[15])?, bit(w[16])?);
+            m.inv_qi = if w[17] == "off" { None } else { Some(bit(w[17])?) };
+            m.inv_cpr = f(w[18])?.clamp(1.0, 100_000.0);
+            m.inv_swap = p_bool(w[19])?;
+            (m.inv_ha, m.inv_hb, m.inv_hc) = (bit(w[20])?, bit(w[21])?, bit(w[22])?);
+        }
+        "dpt" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            if w.len() != 7 {
+                return Err("dpt: want 7 values".into());
+            }
+            m.dpt_v = p_idx(w[0], NCH + 1)?.max(1) - 1;
+            m.dpt_i = p_idx(w[1], NCH + 1)?.max(1) - 1;
+            m.dpt_g = p_idx(w[2], NCH + 1)?.max(1) - 1;
+            m.dpt_4th = p_enum(w[3], &[DptFourth::Off, DptFourth::Gate, DptFourth::DiodeV, DptFourth::DiodeI])?;
+            m.dpt_4ch = p_idx(w[4], NCH + 1)?.max(1) - 1;
+            m.dpt_pct = w[5].parse::<f64>().map_err(|e| e.to_string())?.clamp(1.0, 49.0);
+            m.dpt_zoom = p_enum(w[6], &[DptZoom::Both, DptZoom::TurnOn, DptZoom::TurnOff])?;
         }
         "zone1" | "zone2" => {
             let z = &mut m.zones[if k == "zone1" { 0 } else { 1 }];

@@ -32,7 +32,7 @@ pub struct Quality {
 }
 
 /// Frequency of a periodic signal from its rising crossings of the mean (hysteresis 10 % of peak-peak).
-fn freq_of(x: &[f32], dt: f64) -> Option<f64> {
+pub(crate) fn freq_of(x: &[f32], dt: f64) -> Option<f64> {
     let f: Vec<f32> = x.iter().copied().filter(|v| v.is_finite()).collect();
     if f.len() < 4 {
         return None;
@@ -51,7 +51,7 @@ fn freq_of(x: &[f32], dt: f64) -> Option<f64> {
 
 /// Sample range [a, b) covering the largest whole number of cycles of `f` (at least the whole record when shorter
 /// than one cycle) and the number of cycles.
-fn whole_cycles(n: usize, dt: f64, f: f64) -> (usize, usize, usize) {
+pub(crate) fn whole_cycles(n: usize, dt: f64, f: f64) -> (usize, usize, usize) {
     let k = (n as f64 * dt * f).floor();
     if !(k >= 1.0) {
         return (0, n, 0);
@@ -190,7 +190,7 @@ pub struct Switching {
 }
 
 /// First crossing of `level` in direction `up` within samples [a, b) (fractional index).
-fn crossing(x: &[f32], a: usize, b: usize, level: f64, up: bool) -> Option<f64> {
+pub(crate) fn crossing(x: &[f32], a: usize, b: usize, level: f64, up: bool) -> Option<f64> {
     (a.max(1)..b.min(x.len())).find_map(|k| {
         let (p, q) = (x[k - 1] as f64, x[k] as f64);
         let hit = if up { p < level && q >= level } else { p > level && q <= level };
@@ -199,7 +199,7 @@ fn crossing(x: &[f32], a: usize, b: usize, level: f64, up: bool) -> Option<f64> 
 }
 
 /// ∫ p dt between fractional sample indices a and b (trapezoid, linear interpolation at the ends).
-fn integrate(p: &[f64], a: f64, b: f64, dt: f64) -> f64 {
+pub(crate) fn integrate(p: &[f64], a: f64, b: f64, dt: f64) -> f64 {
     if !(b > a) || p.len() < 2 {
         return 0.0;
     }

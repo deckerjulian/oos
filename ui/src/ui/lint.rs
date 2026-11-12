@@ -110,10 +110,17 @@ fn every_menu_fits() {
         u
     };
     use MenuId::*;
-    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network] {
+    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Magnetic, Inverter, Dpt] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }
+    walk(&|| open(Inverter, &|u| u.m.inv_page = InvPage::Mech), "Inverter mechanical", &mut out);
+    walk(&|| open(Inverter, &|u| { u.m.inv_page = InvPage::Mech; u.m.inv_ang = InvAngle::Analog; }), "Inverter analog", &mut out);
+    walk(&|| open(Inverter, &|u| { u.m.inv_page = InvPage::Mech; u.m.inv_ang = InvAngle::Quad; }), "Inverter quadrature", &mut out);
+    walk(&|| open(Inverter, &|u| { u.m.inv_page = InvPage::Mech; u.m.inv_ang = InvAngle::Hall; }), "Inverter hall", &mut out);
+    walk(&|| open(Inverter, &|u| u.m.inv_ang = InvAngle::Analog), "Inverter DQ0 analog", &mut out);
+    walk(&|| open(Dpt, &|u| u.m.dpt_4th = DptFourth::Gate), "Double pulse gate", &mut out);
+    walk(&|| open(Magnetic, &|u| { u.m.mag_ae = 1e-4; u.m.mag_le = 0.05; u.m.mag_plot = MagPlot::BH; }), "Magnetic B-H", &mut out);
     let trend = |u: &mut Ui| {
         u.m.pane = tables::PANE_TREND;
         u.m.meas = vec![(Meas::Vpp, 0), (Meas::Freq, 3)];

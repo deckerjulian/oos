@@ -32,6 +32,20 @@ pub struct State {
     pub eye_res: Option<(eye::EyeMeas, eye::Jitter, f64)>,
     pub page: super::eyepage::Page,
     pub power: Vec<String>,
+    pub mag: Option<oos_dsp::magnetic::Magnetic>,
+    pub mag_note: String,
+    pub dq: Option<oos_dsp::motor::Dq0>,
+    pub mech: Option<oos_dsp::motor::Mech>,
+    pub inv_note: String,
+    pub dpt: Option<oos_dsp::dpt::Pulse>,
+    /// E on / E off from `power::switching`, printed beside the double-pulse figures
+    pub dpt_loss: Option<(f64, f64)>,
+    pub dpt_note: String,
+    /// min/max of Vds, Id, Vgs inside the zoom window
+    pub dpt_t: (f64, f64),
+    pub dpt_v: Vec<(f32, f32)>,
+    pub dpt_i: Vec<(f32, f32)>,
+    pub dpt_g: Vec<(f32, f32)>,
     pub findings: Vec<identify::Finding>,
     /// protocol watch: on/off, the bus last named per channel group, time of the last check
     pub watch: bool,
@@ -533,6 +547,9 @@ impl Ui {
                 };
             }
             AView::Step => self.bw_update(&rec),
+            AView::Magnetic => self.magnetic_update(&rec),
+            AView::Inverter => self.inverter_update(&rec),
+            AView::Dpt => self.dpt_update(&rec),
             AView::Scope | AView::Bode => {}
         }
     }
@@ -545,11 +562,14 @@ impl Ui {
             AView::Power => self.draw_power(cv),
             AView::Bode => self.draw_bode(cv),
             AView::Step => self.draw_bw(cv),
+            AView::Magnetic => self.draw_magnetic(cv),
+            AView::Inverter => self.draw_inverter(cv),
+            AView::Dpt => self.draw_dpt(cv),
             AView::Scope => {}
         }
     }
 
-    fn panel(&self, cv: &mut Canvas, x: i32, y: i32, lines: &[String], col: Rgb) {
+    pub(crate) fn panel(&self, cv: &mut Canvas, x: i32, y: i32, lines: &[String], col: Rgb) {
         let f = &self.fonts;
         let w = lines.iter().map(|l| f.s.width(l)).max().unwrap_or(0) + 16;
         let r = Rect::new(x, y, w, lines.len() as i32 * 18 + 8);
