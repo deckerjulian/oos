@@ -131,6 +131,10 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
+        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
+    }
+
+    fn bind(port: u16) -> Option<TcpListener> {
         let l = TcpListener::bind(("0.0.0.0", port)).ok();
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
@@ -138,7 +142,21 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
+        l
+    }
+
+    /// System > Network > Remote services: the port open (`Some`), or closed with its connections.
+    pub fn set_open(&mut self, port: Option<u16>) {
+        match port {
+            Some(p) if self.l.is_none() => self.l = Self::bind(p),
+            Some(_) => {}
+            None => {
+                if self.l.take().is_some() {
+                    eprintln!("oos-ui: SCPI off");
+                }
+                self.clients.clear();
+            }
+        }
     }
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {

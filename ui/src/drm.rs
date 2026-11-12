@@ -152,6 +152,15 @@ const MAP_DUMB: libc::c_ulong = iowr(0xB3, std::mem::size_of::<MapDumb>());
 const DESTROY_DUMB: libc::c_ulong = iowr(0xB4, 4);
 const PAGE_FLIP_EVENT: u32 = 0x01;
 
+#[repr(C)]
+#[derive(Default)]
+struct PrimeHandle {
+    handle: u32,
+    flags: u32,
+    fd: i32,
+}
+const PRIME_HANDLE_TO_FD: libc::c_ulong = iowr(0x2D, std::mem::size_of::<PrimeHandle>());
+
 fn ioc<T>(fd: i32, req: libc::c_ulong, arg: &mut T) -> io::Result<()> {
     loop {
         let r = unsafe { libc::ioctl(fd, req as _, arg as *mut T) };
@@ -184,6 +193,8 @@ pub struct Display {
     saved: Option<Crtc>,
     bufs: Vec<Buf>,
     front: usize,
+    /// the buffer shown before `front`: still on the screen until the flip to `front` is done
+    prev: usize,
     flip_pending: bool,
     use_flip: bool,
     /// scaled output (HDMI): the map from the canvas, built for the first canvas size
@@ -305,7 +316,7 @@ impl Display {
         let saved = if ioc(fd, GETCRTC, &mut saved).is_ok() { Some(saved) } else { None };
 
         let (w, h) = (mode.hdisplay as u32, mode.vdisplay as u32);
-        let mut d = Display { fd, width: w as i32, height: h as i32, crtc_id, conn_id, mode, saved, bufs: Vec::new(), front: 0, flip_pending: false, use_flip: true, fit: None };
+        let mut d = Display { fd, width: w as i32, height: h as i32, crtc_id, conn_id, mode, saved, bufs: Vec::new(), front: 0, prev: 0, flip_pending: false, use_flip: true, fit: None };
         // on any error the buffers made so far are freed again (the HDMI search retries)
         match d.alloc().and_then(|_| d.set_crtc(0)) {
             Ok(()) => Ok(d),
@@ -319,7 +330,8 @@ impl Display {
 
     fn alloc(&mut self) -> io::Result<()> {
         let (fd, w, h) = (self.fd, self.width as u32, self.height as u32);
-        for _ in 0..2 {
+        // three: the GPU fills the third while one is shown and the next waits for its flip (Display > Graphics)
+        for _ in 0..3 {
             let mut cd = CreateDumb { width: w, height: h, bpp: 32, ..Default::default() };
             ioc(fd, CREATE_DUMB, &mut cd)?;
             let undo = |fb: Option<u32>, e: io::Error| {
@@ -365,8 +377,7 @@ impl Display {
 
     /// Copies the canvas into the back buffer and shows it at the next vblank.
     pub fn present(&mut self, cv: &Canvas) {
-        self.wait_flip();
-        let back = 1 - self.front;
+        let back = self.back();
         let b = &self.bufs[back];
         let stride = (b.pitch / 4) as usize;
         let w = (cv.w.min(self.width)) as usize;
@@ -376,12 +387,44 @@ impl Display {
                 std::ptr::copy_nonoverlapping(cv.px.as_ptr().add(y * cv.w as usize), b.map.add(y * stride), w);
             }
         }
+        self.flip(back);
+    }
+
+    /// Scan-out buffer `i` as a dma-buf for the GPU (Display > Graphics = GPU), with its row pitch in bytes.
+    pub fn export(&self, i: usize) -> io::Result<(std::os::fd::OwnedFd, i32)> {
+        use std::os::fd::FromRawFd;
+        let b = self.bufs.get(i).ok_or_else(|| io::Error::other("no such buffer"))?;
+        let mut p = PrimeHandle { handle: b.handle, flags: (libc::O_CLOEXEC | libc::O_RDWR) as u32, fd: -1 };
+        ioc(self.fd, PRIME_HANDLE_TO_FD, &mut p)?;
+        // SAFETY: the kernel just made this descriptor for us
+        Ok((unsafe { std::os::fd::OwnedFd::from_raw_fd(p.fd) }, b.pitch as i32))
+    }
+
+    pub fn buffers(&self) -> usize {
+        self.bufs.len()
+    }
+
+    /// The buffer the next picture goes into, once the last flip is done.
+    pub fn back(&mut self) -> usize {
+        self.wait_flip();
+        (self.front + 1) % self.bufs.len()
+    }
+
+    /// A buffer neither shown nor waiting to be: the GPU fills it without waiting for the flip.
+    pub fn free(&self) -> usize {
+        (0..self.bufs.len()).find(|&i| i != self.front && i != self.prev).unwrap_or((self.front + 1) % self.bufs.len())
+    }
+
+    /// Shows buffer `back` (filled by `present` or by the GPU) at the next vblank, once the last flip is done.
+    pub fn flip(&mut self, back: usize) {
+        self.wait_flip();
+        let b = &self.bufs[back];
         if self.use_flip {
             let mut pf = PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: PAGE_FLIP_EVENT, reserved: 0, user_data: 0 };
             match ioc(self.fd, PAGE_FLIP, &mut pf) {
                 Ok(()) => {
                     self.flip_pending = true;
-                    self.front = back;
+                    (self.prev, self.front) = (self.front, back);
                     return;
                 }
                 Err(e) => {
@@ -391,7 +434,7 @@ impl Display {
             }
         }
         let _ = self.set_crtc(back);
-        self.front = back;
+        (self.prev, self.front) = (self.front, back);
     }
 
     /// HDMI: the canvas scaled into the mode with its aspect ratio (black bars), shown at the next vblank. The flip
@@ -404,19 +447,31 @@ impl Display {
                 unsafe { std::ptr::write_bytes(b.map as *mut u8, 0, b.size) };
             }
         }
-        let back = 1 - self.front;
+        let back = self.free();
         let b = &self.bufs[back];
         let fit = self.fit.as_ref().unwrap();
         let stride = (b.pitch / 4) as usize;
         let dst = unsafe { std::slice::from_raw_parts_mut(b.map, b.size / 4) };
         fit.scale(&cv.px, dst, stride);
+        self.flip_quiet(back);
+    }
+
+    /// HDMI: shows buffer `back` (filled by the GPU, its bars included) without a flip event; a flip still pending
+    /// skips the frame. The CPU's scaled picture blackens its bars again afterwards.
+    pub fn flip_scaled(&mut self, back: usize) {
+        self.fit = None;
+        self.flip_quiet(back);
+    }
+
+    fn flip_quiet(&mut self, back: usize) {
+        let b = &self.bufs[back];
         let mut pf = PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: 0, reserved: 0, user_data: 0 };
         match ioc(self.fd, PAGE_FLIP, &mut pf) {
-            Ok(()) => self.front = back,
+            Ok(()) => (self.prev, self.front) = (self.front, back),
             Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {}
             Err(_) => {
                 if self.set_crtc(back).is_ok() {
-                    self.front = back;
+                    (self.prev, self.front) = (self.front, back);
                 }
             }
         }

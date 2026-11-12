@@ -15,14 +15,14 @@ const HOLD_WARN: f64 = 5.0;
 /// Without a new line for this long (a hung mount or driver load) a tap leaves the screen.
 const STALL_S: f64 = 60.0;
 
-pub struct Screen {
+pub struct StartScreen {
     pub view: View,
     /// uptime at the last update (the running stage's clock)
     pub uptime: f64,
     /// UI time when the start-up finished
     done_at: Option<f64>,
     dismissed: bool,
-    /// the own power-on picture as the background (W x H pixels)
+    /// the own power-on picture as the background (shown when it is as large as the screen)
     pub splash: Option<Vec<u32>>,
     /// "OOS 0.1.4 · Build ...", read once: which software is starting
     version: String,
@@ -41,7 +41,7 @@ impl Ui {
     /// Shows the start-up screen until the file says the start-up is complete.
     pub fn start_up_begin(&mut self, splash: Option<Vec<u32>>) {
         let version = version_line(std::fs::read_to_string("/etc/oos-build").ok().as_deref());
-        self.start_up = Some(Screen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash, version });
+        self.start_up = Some(StartScreen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash, version });
     }
 
     /// The start-up file's text and the current uptime. A file that is complete at the first update (oos-ui restarted
@@ -74,7 +74,7 @@ impl Ui {
     }
 
     /// No progress line for `STALL_S` seconds: the start-up probably hangs.
-    fn start_up_stalled(s: &Screen) -> bool {
+    fn start_up_stalled(s: &StartScreen) -> bool {
         s.view.finished.is_none() && s.uptime > 0.0 && s.uptime - s.view.t.max(s.view.stages.first().map_or(0.0, |x| x.t0)) > STALL_S
     }
 
@@ -116,19 +116,23 @@ impl Ui {
     pub(super) fn draw_start_up(&self, cv: &mut Canvas) {
         let Some(s) = &self.start_up else { return };
         let f = self.fonts();
+        let scr = self.scr.rect();
+        // the picture is laid out on 600 px: a taller screen gets it in its middle
+        let dy = ((scr.h - START_H) / 2).max(0);
         cv.no_clip();
         match &s.splash {
-            Some(px) if px.len() == cv.px.len() => cv.px.copy_from_slice(px),
+            Some(px) if px.len() == cv.px.len() => cv.image(Rect::new(0, 0, cv.w, cv.h), px, false),
             _ => {
-                cv.px.copy_from_slice(logo());
-                spaced(cv, &f.s, 182, "OPEN  OSCILLOSCOPE  SOFTWARE", 3, DIM);
+                cv.clear(BG);
+                cv.blit(logo(), (scr.w - LOGO_W) / 2, dy + LOGO_TOP);
+                spaced(cv, &f.s, dy + 182, "OPEN  OSCILLOSCOPE  SOFTWARE", 3, DIM);
             }
         }
         let v = &s.view;
         let rows = v.stages.len().max(1) as i32;
         let row_h = 26;
         let failed = matches!(v.finished, Some(Err(_)));
-        let card = Rect::new(W / 2 - 330, 212, 660, 16 + rows * row_h + 12 + 24 + if failed { 34 } else { 14 });
+        let card = Rect::new(scr.w / 2 - 330, dy + 212, 660, 16 + rows * row_h + 12 + 24 + if failed { 34 } else { 14 });
         cv.round(card, 10, DLG_BG, 235);
         let mut y = card.y + 16;
         let blink = (self.now * 2.0) as i64 % 2 == 0;
@@ -184,21 +188,21 @@ impl Ui {
         };
         cv.text_in(&f.mb, Rect::new(card.x, y, card.w, 24), 1, &line, col);
         // the version along the bottom edge, under the messages that ask for a tap; also over an own picture
-        cv.text_in(&f.s, Rect::new(0, H - 20, W, 16), 1, &s.version, DIM);
+        cv.text_in(&f.s, Rect::new(scr.x, scr.bottom() - 20, scr.w, 16), 1, &s.version, DIM);
         if let Some(Err(d)) = &v.finished {
             cv.text_in(&f.s, Rect::new(card.x, y + 24, card.w, 20), 1, &fit_text(&f.s, d, card.w - 40), DIM);
-            cv.text_in(&f.s, Rect::new(0, H - 40, W, 20), 1, "Tap to continue without acquisition", DIM);
+            cv.text_in(&f.s, Rect::new(scr.x, scr.bottom() - 40, scr.w, 20), 1, "Tap to continue without acquisition", DIM);
         } else if Self::start_up_stalled(s) {
             let quiet = s.uptime - v.t;
-            cv.text_in(&f.s, Rect::new(0, H - 40, W, 20), 1, &format!("No progress for {:.0} s (see /tmp/oos-cold.log) \u{b7} tap to continue without acquisition", quiet), AMBER);
+            cv.text_in(&f.s, Rect::new(scr.x, scr.bottom() - 40, scr.w, 20), 1, &format!("No progress for {:.0} s (see /tmp/oos-cold.log) \u{b7} tap to continue without acquisition", quiet), AMBER);
         }
     }
 }
 
-/// Text centred on the screen with `gap` extra pixels between the letters (baseline `y`).
+/// Text centred on the canvas with `gap` extra pixels between the letters (baseline `y`).
 fn spaced(cv: &mut Canvas, f: &crate::font::Font, y: i32, s: &str, gap: i32, c: Rgb) {
     let w: i32 = s.chars().map(|ch| f.width(&ch.to_string()) + gap).sum::<i32>() - gap;
-    let mut x = (W - w) / 2;
+    let mut x = (cv.w - w) / 2;
     for ch in s.chars() {
         let t = ch.to_string();
         cv.text(f, x, y, &t, c);
@@ -332,15 +336,25 @@ fn interlace(cv: &mut Canvas, area: Rect, paths: &[Vec<(f32, f32)>], hw: f32, c:
     all.paint(cv, c, 1.0);
 }
 
-/// The logo on the background, drawn once: a small scope screen with graticule and a glowing sine, next to the
-/// geometric "OOS" (two linked rings and an S of two arcs).
-fn logo() -> &'static [u32] {
-    static PX: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    PX.get_or_init(|| {
-        let mut cv = Canvas::new(W, H);
+/// Height the start-up picture is laid out on.
+const START_H: i32 = 600;
+/// The logo: the screen mark, the gap after it and the word, centred under the top edge.
+const LOGO_MARK: i32 = 112;
+const LOGO_GAP: i32 = 30;
+const LOGO_WORD: i32 = 159;
+const LOGO_W: i32 = LOGO_MARK + LOGO_GAP + LOGO_WORD;
+const LOGO_TOP: i32 = 44;
+
+/// The logo, drawn once into a tile of its own (`blit` puts it on the screen): a small scope screen with graticule and a
+/// glowing sine, next to the geometric "OOS" (two linked rings and an S of two arcs). The word's strokes reach 4 px
+/// past its width.
+fn logo() -> &'static Canvas {
+    static TILE: std::sync::OnceLock<Canvas> = std::sync::OnceLock::new();
+    TILE.get_or_init(|| {
+        let (mark, gap, word_w) = (LOGO_MARK, LOGO_GAP, LOGO_WORD);
+        let mut cv = Canvas::new(LOGO_W + 4, mark);
         cv.clear(BG);
-        let (mark, gap, word_w, top) = (112, 30, 159, 44);
-        let x0 = (W - (mark + gap + word_w)) / 2;
+        let (x0, top) = (0, 0);
         // the screen: bezel, graticule (4 x 4), centre axes
         let m = Rect::new(x0, top, mark, mark);
         cv.round(m, 20, BAR, 255);
@@ -378,7 +392,7 @@ fn logo() -> &'static [u32] {
         s.extend(arc(sx, cy + sr, srx, sr, -90.0, 155.0));
         let area = Rect::new(x0 + mark + gap - 4, top, word_w + 8, mark);
         interlace(&mut cv, area, &[o1, o2, s], hw, TEXT);
-        cv.px
+        cv
     })
 }
 
@@ -414,7 +428,7 @@ mod tests {
         // input waits while it runs
         assert!(u.start_up_input(&Ev::Touch { id: 0, phase: Phase::Up, x: 10, y: 10 }));
         assert!(u.start_up_active());
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.draw_start_up(&mut cv);
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
             let _ = std::fs::write(format!("{}/start-up-running.png", d), crate::store::png_of(&cv));
@@ -450,7 +464,7 @@ mod tests {
         u.start_up_update(&text, 14.2);
         u.now += 60.0;
         assert!(u.start_up_active());
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.draw_start_up(&mut cv);
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
             let _ = std::fs::write(format!("{}/start-up-failed.png", d), crate::store::png_of(&cv));
@@ -472,7 +486,7 @@ mod tests {
         u.power_dlg = false;
         // 61 s without a line: a tap leaves
         u.start_up_update(&text, 75.5);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.draw_start_up(&mut cv);
         assert!(u.start_up_input(&Ev::Touch { id: 0, phase: Phase::Up, x: 10, y: 10 }));
         assert!(!u.start_up_active());

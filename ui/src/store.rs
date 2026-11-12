@@ -269,7 +269,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("zdelay", m.zdelay.to_string());
     kv("color_grade", m.color_grade.to_string());
     kv("dots", m.dots.to_string());
-    kv("hdmi_wave", m.hdmi_wave.to_string());
+    kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
     kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in + 1, m.bode_out + 1, m.bode_gen, m.bode_addr));
     kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src + 1, m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
@@ -573,7 +573,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "zdelay" => m.zdelay = p_f32(v)?,
         "color_grade" => m.color_grade = p_bool(v)?,
         "dots" => m.dots = p_bool(v)?,
-        "hdmi_wave" => m.hdmi_wave = p_bool(v)?,
+        "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
+        // setups before the Layout mode: true = Waveform, false = Mirror
+        "hdmi_wave" => m.hdmi = if p_bool(v)? { HdmiMode::Waveform } else { HdmiMode::Mirror },
         "view" => m.view = p_enum(v, &[AView::Scope, AView::Spectrum, AView::Eye, AView::Power, AView::Bode])?,
         "bode" => {
             // the address is the rest of the line: it may be empty
@@ -1538,7 +1540,7 @@ mod tests {
         for c in ["key ch2", "key ch3", "key ch4", "key measure"] {
             crate::cmd::run(&mut ui, c);
         }
-        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         for _ in 0..3 {
             ui.step(0.04);
             ui.render(&mut cv);
@@ -1555,7 +1557,7 @@ mod tests {
         for c in ["key ch2", "key ch3", "key ch4"] {
             crate::cmd::run(&mut ui, c);
         }
-        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         for _ in 0..10 {
             ui.step(0.04);
             ui.render(&mut cv);

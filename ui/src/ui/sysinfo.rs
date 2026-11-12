@@ -237,8 +237,9 @@ impl Ui {
     pub(super) fn draw_sysinfo(&self, cv: &mut Canvas) {
         let Some(cols) = &self.sysinfo else { return };
         let f = self.fonts();
-        cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 140);
-        let r = Rect::new(10, 10, W - 20, H - 20);
+        let scr = self.scr.rect();
+        cv.blend(scr, rgb(0, 0, 0), 140);
+        let r = scr.inset(10);
         cv.round(r, 8, ACCENT, 255);
         cv.round(r.inset(2), 7, DLG_BG, 255);
         let top = Rect::new(r.x + 16, r.y + 8, r.w - 32, 30);
@@ -312,7 +313,7 @@ mod tests {
         assert!(rows.iter().all(|c| !c.is_empty()));
         assert!(rows[0].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "Model" && v.contains("DHO924S"))));
         assert!(rows[2].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "3-4 channels" && v == "312.5 MSa/s  31.25 Mpts")));
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         // any key closes it; the next frame forgets the rows
         ui.key(key::RUNSTOP);

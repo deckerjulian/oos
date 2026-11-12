@@ -9,6 +9,8 @@
 //! ntp.server = pool.ntp.org
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet)
+//! graphics = gpu            # Display > Graphics (gpu or cpu)
 //! ```
 
 use crate::clock::Tz;
@@ -33,13 +35,33 @@ pub struct SysConf {
     pub tz: String,
     /// a link that comes up at 10 Mbit/s gets one more autonegotiation (ethlink.rs)
     pub eth_retry_10m: bool,
+    /// the network services (System > Network > Remote services): web page with the update path (8080), SCPI (5555),
+    /// VXI-11 (111 and its core port), the telnet shell (23, read by rcS too)
+    pub remote_web: bool,
+    pub remote_scpi: bool,
+    pub remote_vxi11: bool,
+    pub remote_telnet: bool,
+    /// Display > Graphics: the picture put together on the GPU (`gpu.rs`), else on the CPU. The GPU by default: a
+    /// third less load on the frame loop, the same picture (gpu/README.md); where it does not start, the CPU draws.
+    pub gpu: bool,
     /// lines this version does not know
     extra: Vec<String>,
 }
 
 impl Default for SysConf {
     fn default() -> Self {
-        SysConf { ntp: false, ntp_server: DEFAULT_SERVER.into(), tz: DEFAULT_TZ.into(), eth_retry_10m: true, extra: Vec::new() }
+        SysConf {
+            ntp: false,
+            ntp_server: DEFAULT_SERVER.into(),
+            tz: DEFAULT_TZ.into(),
+            eth_retry_10m: true,
+            remote_web: true,
+            remote_scpi: true,
+            remote_vxi11: true,
+            remote_telnet: true,
+            gpu: true,
+            extra: Vec::new(),
+        }
     }
 }
 
@@ -84,6 +106,17 @@ impl SysConf {
                 "ntp.server" => server_ok(v).then(|| c.ntp_server = v.into()).is_some(),
                 "tz" => Tz::parse(v).is_ok().then(|| c.tz = v.into()).is_some(),
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
+                "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
+                "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
+                "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
+                "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
+                "graphics" => match v {
+                    "cpu" | "gpu" => {
+                        c.gpu = v == "gpu";
+                        true
+                    }
+                    _ => false,
+                },
                 _ => {
                     c.extra.push(line.to_string());
                     true
@@ -102,6 +135,11 @@ impl SysConf {
         s.push_str(&format!("ntp.server = {}\n", self.ntp_server));
         s.push_str(&format!("tz = {}\n", self.tz));
         s.push_str(&format!("eth.retry_10m = {}\n", word(self.eth_retry_10m)));
+        s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
+        s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
+        s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
+        s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
+        s.push_str(&format!("graphics = {}\n", if self.gpu { "gpu" } else { "cpu" }));
         for l in &self.extra {
             s.push_str(l);
             s.push('\n');
@@ -175,6 +213,7 @@ mod tests {
         c.ntp_server = "ptbtime1.ptb.de".into();
         c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
         c.eth_retry_10m = false;
+        (c.remote_web, c.remote_telnet) = (false, false);
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
         assert_eq!(back, c);

@@ -51,8 +51,9 @@ ip link set eth0 up 2>/dev/null
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &
-# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only)
-telnetd -l /bin/sh
+# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only); off with
+#    System > Network > Remote services > telnet (remote.telnet = off in /oos/system.conf, mounted in 0b)
+grep -qE '^[[:space:]]*remote\.telnet[[:space:]]*=[[:space:]]*(off|false|0)([[:space:]]|#|$)' /oos/system.conf 2>/dev/null || telnetd -l /bin/sh
 # 4) banner on the panel and the serial console
 /bin/oos-info | tee /dev/tty1 > /dev/kmsg
 # 4b) what the data partition (0b) keeps for the screen

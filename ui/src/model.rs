@@ -477,6 +477,19 @@ impl Quick {
     }
 }
 
+/// What an HDMI monitor shows. Mirror: the panel picture, scaled. Waveform: a settings line and the waveform area,
+/// scaled. Layout: the whole screen laid out again at the monitor's size, sharp, with the traces stretched; it costs a
+/// second render per monitor frame (about 5 to 10 ms on the unit at 1920 x 1080), so the panel may get fewer frames.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum HdmiMode {
+    Mirror,
+    #[default]
+    Waveform,
+    Layout,
+}
+
+pub const HDMI_MODES: [HdmiMode; 3] = [HdmiMode::Mirror, HdmiMode::Waveform, HdmiMode::Layout];
+
 /// Size of the text on the screen (Display > Text size): Normal is the original look, Large and Larger use fonts 2 and
 /// 4 px bigger with the rows, cards and dialogs grown to match. A preference: Default keeps it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -827,8 +840,8 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
-    /// HDMI monitor: false = mirror of the panel, true = own workspace (the waveform area large, settings on top)
-    pub hdmi_wave: bool,
+    /// what an HDMI monitor shows (Display > HDMI)
+    pub hdmi: HdmiMode,
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
@@ -1108,7 +1121,7 @@ impl Default for Model {
             color_grade: false,
             // samples as dots by default
             dots: true,
-            hdmi_wave: true,
+            hdmi: HdmiMode::Waveform,
             z_src: None,
             hist: Hist::Off,
             view: AView::Scope,

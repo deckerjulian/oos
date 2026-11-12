@@ -382,7 +382,7 @@ mod tests {
         let p = u.meas(0, Meas::Period);
         assert!((p - 1e-3).abs() < 1e-5, "demo CH1 period {}", p);
         u.auto_bar = Some(u.now);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.render(&mut cv);
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
             let _ = std::fs::write(format!("{}/auto-bar.png", d), crate::store::png_of(&cv));
@@ -465,7 +465,7 @@ mod tests {
         assert!(crate::board::dho::hw::settings(&ui.m, false).noise_reject);
         ui.m.trig_nrej = false;
         let mut scpi = crate::scpi::Scpi::open(0);
-        let cv = Canvas::new(W, H);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
         scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ ON");
         assert_eq!(scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ?"), b"1");
         assert!(ui.m.trig_nrej);

@@ -30,25 +30,54 @@ mod viewmore;
 mod wlan;
 mod windows;
 mod time;
+mod remote;
+mod graphics;
 #[cfg(test)]
 mod lint;
 mod bwtest;
 pub mod la;
 
-pub const W: i32 = 1024;
-pub const H: i32 = 600;
-/// Top bar: run state, menu buttons, Quick / Autoset / Single / System (buttons drawn 30 px high, tapped over the
-/// full 40 px).
-pub const TOP: Rect = Rect::new(0, 0, W, 40);
-/// Plot: the whole width and everything between the top bar and the cards; the channel markers (left edge), the
-/// trigger level marker (right edge), the trigger position marker (top edge), the axis labels, the status line and the
-/// measurement results are drawn inside it.
-const PLOT_X: i32 = 0;
-const PLOT_W: i32 = W;
-const PLOT_Y: i32 = TOP.h;
+// The frame (top bar, waveform area, bottom bar with the cards) comes from the screen size: `Ui::frame`,
+// `crate::layout`. Top bar: run state, menu buttons, network (buttons drawn 30 px high, tapped over the full bar
+// height). Plot: the whole width and everything between the bars; the channel markers (left edge), the trigger level
+// marker (right edge), the trigger position marker (top edge), the axis labels, the status line and the measurement
+// results are drawn inside it.
+pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
-pub const BOTTOM: Rect = Rect::new(0, 526, W, 74);
+
+/// Where a picture is drawn: everything on `under`, or with `over` (Display > Graphics = GPU) the layer over the
+/// traces, and the traces as `jobs` for the GPU (`Ui::render_layers`, `crate::gpu`).
+pub struct Layers<'a> {
+    pub under: &'a mut Canvas,
+    pub over: Option<&'a mut Canvas>,
+    pub jobs: Vec<TraceJob>,
+}
+
+impl Layers<'_> {
+    /// The canvas for what lies over the traces.
+    pub fn over(&mut self) -> &mut Canvas {
+        match &mut self.over {
+            Some(o) => o,
+            None => self.under,
+        }
+    }
+}
+
+/// A plot window's traces for the GPU: the phosphor maps of the shown channels (`zoom`: of the zoom window) in
+/// `area`, with the tables the CPU would use (`draw_traces`, `draw_graded`).
+pub struct TraceJob {
+    pub area: Rect,
+    pub zoom: bool,
+    pub graded: bool,
+    pub show: [bool; NCH],
+    /// per channel 1024 alphas (not graded)
+    pub alpha: Vec<u8>,
+    /// 1024 colours (graded)
+    pub colours: Vec<u32>,
+    pub shift: [u32; NCH],
+    pub col: [u32; NCH],
+}
 /// Layout sizes that grow with the text (Display > Text size). Everything else keeps its place: touch targets are
 /// 40 px high at every size, and the larger fonts are set into them.
 pub struct Lay {
@@ -234,6 +263,8 @@ pub enum MenuId {
     SelfCal,
     /// network overview and WLAN through a USB stick (ui/wlan.rs)
     Network,
+    /// which network services run (ui/remote.rs)
+    Remote,
     /// clock, NTP and time zone (ui/time.rs)
     Time,
     Bode,
@@ -543,8 +574,17 @@ enum Item {
     NetEth,
     NetMac,
     NetWeb,
-    NetPorts,
     NetWlan,
+    /// System > Network > Remote services (ui/remote.rs): a switch per service, and where it is reached
+    RemWeb,
+    RemScpi,
+    RemVxi,
+    RemTelnet,
+    RemScpiInfo,
+    RemVxiInfo,
+    RemTelnetInfo,
+    /// Display > Graphics: CPU or GPU (ui/graphics.rs)
+    Graphics,
     WlanInfo,
     WlanScan,
     WlanForget,
@@ -653,6 +693,70 @@ pub enum PowerAction {
     Restart,
 }
 
+/// Samples of one channel for the measurements in the background: a window of the hardware frame (shared, not
+/// copied) or an own copy of the screen record.
+enum MeasSrc {
+    Frame(std::sync::Arc<crate::board::Frame>, usize, usize, usize),
+    Own(Vec<f32>),
+}
+
+impl MeasSrc {
+    fn samples(&self) -> &[f32] {
+        match self {
+            MeasSrc::Frame(f, c, i0, i1) => &f.ch[*c][*i0..*i1],
+            MeasSrc::Own(v) => v,
+        }
+    }
+}
+
+/// One record's measurements: (channel, samples, dt, the smallest swing that counts as a signal).
+type MeasJob = (u64, Vec<(usize, MeasSrc, f64, f64)>);
+type MeasDone = (u64, Vec<(usize, Stats, oos_dsp::measure::Analysis)>);
+
+/// The measurements of a record, each channel on its own thread (the four channels of 100 kpts took 27 ms in a row
+/// on the unit).
+fn measure_channels(work: &[(usize, &[f32], f64, f64)]) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
+    let one = |&(c, v, dt, min): &(usize, &[f32], f64, f64)| (c, stats(v, dt), oos_dsp::measure::analyze_min(v, dt, min));
+    if work.len() < 2 {
+        return work.iter().map(one).collect();
+    }
+    std::thread::scope(|s| {
+        let hs: Vec<_> = work.iter().map(|w| s.spawn(move || one(w))).collect();
+        hs.into_iter().map(|h| h.join().expect("measurement thread")).collect()
+    })
+}
+
+/// The measurements in the background, on the unit (`Ui::measure_in_background`): a thread on the slower cores
+/// measures the newest record while the frame loop goes on, and its results are taken a frame or two later. A record
+/// that comes while one is measured waits; a newer one replaces it. Without it (tests, scripts, the host) the
+/// measurements are made in the frame they belong to.
+struct MeasWorker {
+    tx: std::sync::mpsc::Sender<MeasJob>,
+    rx: std::sync::mpsc::Receiver<MeasDone>,
+    /// a job is out
+    busy: bool,
+}
+
+impl MeasWorker {
+    fn start() -> Option<MeasWorker> {
+        let (tx, jobs) = std::sync::mpsc::channel::<MeasJob>();
+        let (done, rx) = std::sync::mpsc::channel::<MeasDone>();
+        std::thread::Builder::new()
+            .name("measure".into())
+            .spawn(move || {
+                crate::http::to_little_cores();
+                while let Ok((n, work)) = jobs.recv() {
+                    let w: Vec<(usize, &[f32], f64, f64)> = work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
+                    if done.send((n, measure_channels(&w))).is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok()?;
+        Some(MeasWorker { tx, rx, busy: false })
+    }
+}
+
 pub struct Ui {
     pub m: Model,
     pub src: Source,
@@ -688,6 +792,13 @@ pub struct Ui {
     search_on: bool,
     /// measurements per channel (oos-dsp) of the last record
     ana: [oos_dsp::measure::Analysis; NCH],
+    /// the measurements in the background (`measure_in_background`); `meas_want`: the record shown is still to be
+    /// measured; `meas_n`: the number of the record shown (a result for an older one is dropped); `meas_new`: new
+    /// results for the statistics, the trend and the counter
+    meas_bg: Option<MeasWorker>,
+    meas_want: bool,
+    meas_n: u64,
+    meas_new: bool,
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -720,8 +831,10 @@ pub struct Ui {
     /// to cards) is copied here during `render`
     pub hdmi_snap_want: bool,
     pub hdmi_snap: Vec<u32>,
+    /// the same for the GPU: the layer over the traces at that point (the monitor's workspace has no menus)
+    pub hdmi_over: Option<Canvas>,
     /// start-up screen (startup.rs) and the last start-up's result (About)
-    pub start_up: Option<startup::Screen>,
+    pub start_up: Option<startup::StartScreen>,
     start_up_last: Option<oos_hal::bootstatus::View>,
     /// signed updates (update.rs): running oos-update job, watcher notice
     upd: update::UpdateUi,
@@ -793,6 +906,10 @@ pub struct Ui {
     pub t_draw: f32,
     pub t_render: f32,
     pub t_present: f32,
+    /// Display > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
+    pub t_gpu: Option<[f32; 6]>,
+    /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
+    pub t_parts: [f32; 4],
     pub info: String,
     pub dirty_map: bool,
     vmax: [u32; NCH],
@@ -801,6 +918,10 @@ pub struct Ui {
     vmaxz_cg: u32,
     /// storage directory (setups, CSV, PNG), created when missing
     pub store_dir: std::path::PathBuf,
+    /// the screen the layout is made for: the panel, or another size in host test runs (`--size`)
+    pub scr: Screen,
+    /// `render_view` is drawing the second picture: the layout must not touch the phosphor maps
+    view_pass: bool,
     /// a USB stick is mounted
     usb: bool,
     /// LA probe detect: None = not known (no hardware, not read yet)
@@ -878,6 +999,10 @@ impl Ui {
             last: [None],
             stats: [Stats::default(); NCH],
             ana: Default::default(),
+            meas_bg: None,
+            meas_want: false,
+            meas_n: 0,
+            meas_new: false,
             history: std::collections::VecDeque::new(),
             hist_pos: None,
             search_on: false,
@@ -909,6 +1034,7 @@ impl Ui {
             cal: Default::default(),
             hdmi_snap_want: false,
             hdmi_snap: Vec::new(),
+            hdmi_over: None,
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
@@ -956,12 +1082,16 @@ impl Ui {
             t_draw: 0.0,
             t_render: 0.0,
             t_present: 0.0,
+            t_gpu: None,
+            t_parts: [0.0; 4],
             info: String::new(),
             dirty_map: true,
             vmax: [1; NCH],
             vmax_cg: 1,
             vmaxz_cg: 1,
             store_dir: std::path::PathBuf::from(crate::store::DEFAULT_DIR),
+            scr: Screen::PANEL,
+            view_pass: false,
             usb: false,
             la_probe: None,
             usb_check: 0.0,
@@ -1018,7 +1148,13 @@ impl Ui {
     fn plot_rect(&self) -> Rect {
         // the logic analyser lanes have their own strip under the graticule: the analog picture shrinks with it
         let avail = self.plot_base() - self.la_strip_h() - self.pane_h();
-        Rect::new(PLOT_X, self.plot_top(), PLOT_W, (avail / 8 * 8).max(160))
+        let body = self.frame().body;
+        Rect::new(body.x, self.plot_top(), body.w, (avail / 8 * 8).max(160))
+    }
+
+    /// Top bar, waveform area and bottom bar of the screen.
+    pub fn frame(&self) -> Frame {
+        Frame::of(self.scr)
     }
 
     /// Height for the graticule and the LA strip together (above the measurement rows).
@@ -1034,12 +1170,12 @@ impl Ui {
     }
 
     fn plot_top(&self) -> i32 {
-        if self.full_on() { 0 } else { PLOT_Y }
+        if self.full_on() { 0 } else { self.frame().body.y }
     }
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
     fn plot_bottom(&self) -> i32 {
-        if self.full_on() { H } else { BOTTOM.y }
+        if self.full_on() { self.scr.h } else { self.frame().bottom.y }
     }
 
     /// Waveform windows in use: one while zoom, XY or an analysis view has the plot.
@@ -1187,7 +1323,10 @@ impl Ui {
         let g = self.plot_rect();
         let wins = self.split_wins(g);
         let w0 = wins[0];
-        if g != self.grid || self.layout_zoom != self.m.zoom || self.wins.first() != Some(&w0) {
+        if self.view_pass {
+            // the second picture (HDMI layout): rectangles of its own, the maps of the panel
+            self.grid = g;
+        } else if g != self.grid || self.layout_zoom != self.m.zoom || self.wins.first() != Some(&w0) {
             self.grid = g;
             self.layout_zoom = self.m.zoom;
             if self.m.zoom {
@@ -1346,6 +1485,8 @@ impl Ui {
         self.hist_pos = None;
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
+        // a measurement still out belongs to the record cleared away
+        (self.meas_n, self.meas_want) = (self.meas_n + 1, false);
         self.ana = Default::default();
         self.mstat.clear();
         self.mask_pass = 0;
@@ -1549,29 +1690,21 @@ impl Ui {
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
             if got > 0 {
-                self.measure_last();
+                let p0 = std::time::Instant::now();
+                if self.meas_bg.is_some() {
+                    self.meas_n += 1;
+                    self.meas_want = true;
+                } else {
+                    self.measure_last();
+                    self.meas_new = true;
+                }
+                let p1 = std::time::Instant::now();
                 self.analyzer_update();
                 self.protocol_watch();
                 self.bode_update();
-                let rows = self.meas_rows();
-                self.trend_update(self.mstat.is_empty(), &rows);
-                self.mstat.resize(rows.len(), MStat::default());
-                self.counter_update();
-                for (i, row) in rows.iter().enumerate() {
-                    let v = row.v;
-                    if v.is_finite() {
-                        let st = &mut self.mstat[i];
-                        if st.n == 0 {
-                            st.min = v;
-                            st.max = v;
-                        }
-                        st.n += 1;
-                        st.sum += v;
-                        st.sumsq += v * v;
-                        st.min = st.min.min(v);
-                        st.max = st.max.max(v);
-                    }
-                }
+                let p2 = std::time::Instant::now();
+                self.prof_add(0, p1 - p0);
+                self.prof_add(1, p2 - p1);
             }
         } else {
             // stopped: redraw the stored record with the current scale/offset
@@ -1591,11 +1724,38 @@ impl Ui {
                 }
             }
         }
+        // the measurements of the newest record (in the background: when they are done, also after a stop)
+        self.meas_poll();
+        if std::mem::take(&mut self.meas_new) {
+            let rows = self.meas_rows();
+            self.trend_update(self.mstat.is_empty(), &rows);
+            self.mstat.resize(rows.len(), MStat::default());
+            self.counter_update();
+            for (i, row) in rows.iter().enumerate() {
+                let v = row.v;
+                if v.is_finite() {
+                    let st = &mut self.mstat[i];
+                    if st.n == 0 {
+                        st.min = v;
+                        st.max = v;
+                    }
+                    st.n += 1;
+                    st.sum += v;
+                    st.sumsq += v * v;
+                    st.min = st.min.min(v);
+                    st.max = st.max.max(v);
+                }
+            }
+        }
         if self.m.run == RunState::Stop {
             self.m.status = TrigStatus::Stop;
             self.wfm_rate = 0.0;
         }
+        let p3 = std::time::Instant::now();
         self.pane_tick();
+        let p4 = std::time::Instant::now();
+        self.prof_add(2, p4 - p3);
+        let p5 = std::time::Instant::now();
         // brightest pixel per channel: the trace brightness is graded relative to it
         // (follow upwards at once, downwards slowly: no flicker)
         let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
@@ -1612,6 +1772,7 @@ impl Ui {
                 }
             }
         }
+        self.prof_add(3, p5.elapsed());
         if self.m.color_grade {
             let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
             self.vmax_cg = follow(self.vmax_cg, self.ph.merged_max(on));
@@ -1743,26 +1904,38 @@ impl Ui {
     // ------------------------------------------------------------------ rendering
 
     pub fn render(&mut self, cv: &mut Canvas) {
+        self.render_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
+    }
+
+    /// The screen into `l`: with one canvas everything is drawn on it; with two (Display > Graphics = GPU) the
+    /// background, graticule and masks go under the traces, everything else over them, and the traces become jobs
+    /// for the GPU (`gpu.rs`). The order of the drawing is the same either way.
+    pub fn render_layers(&mut self, l: &mut Layers) {
         self.relayout();
+        if let Some(o) = l.over.as_deref_mut() {
+            o.no_clip();
+            o.clear(0);
+        }
         if self.start_up_active() {
-            self.draw_start_up(cv);
+            self.draw_start_up(l.under);
             // the power dialog over it (the power key works during the start-up)
-            self.draw_overlay(cv);
+            self.draw_overlay(l.over());
             return;
         }
-        cv.no_clip();
-        cv.clear(BG);
+        l.under.no_clip();
+        l.under.clear(BG);
         let g = self.grid;
         if self.m.zoom && !self.xy {
             let (o, z) = Self::split_zoom(g);
-            self.draw_grid(cv, o);
-            self.draw_traces(cv, o, &self.ph, &self.vmax, self.vmax_cg);
+            self.draw_grid(l.under, o);
+            self.traces(l, o, false);
             // zoom window in the overview: dim the rest, frame the window
             let (tz, dz) = self.view();
             let ppx = o.w as f32 / HDIV;
             let tdiv = self.m.time_per_div();
             let xa = o.x + (o.w as f32 / 2.0 + ((dz - tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
             let xb = o.x + (o.w as f32 / 2.0 + ((dz + tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
+            let cv = l.over();
             cv.set_clip(o);
             cv.blend(Rect::new(o.x, o.y, (xa - o.x).max(0), o.h), BG, 170);
             cv.blend(Rect::new(xb, o.y, (o.x + o.w - xb).max(0), o.h), BG, 170);
@@ -1771,20 +1944,21 @@ impl Ui {
             let f = self.fonts();
             let lbl = format!("Zoom \u{b7} {}/div \u{b7} delay {}", si_short(tz as f64, "s"), si(dz as f64, "s"));
             cv.text(&f.sb, o.x, o.y + o.h + 17, &lbl, ACCENT);
-            self.draw_grid(cv, z);
-            self.draw_traces(cv, z, &self.phz, &self.vmaxz, self.vmaxz_cg);
+            self.draw_grid(l.under, z);
+            self.traces(l, z, true);
         } else {
             for &w in &self.wins {
-                self.draw_grid(cv, w);
+                self.draw_grid(l.under, w);
             }
         }
         if self.view_on() {
+            // the analysers and XY draw their own picture: under what goes over it
             if self.xy {
-                self.draw_xy(cv);
+                self.draw_xy(l.under);
             } else {
-                self.draw_analyzer(cv);
+                self.draw_analyzer(l.under);
             }
-            self.draw_view_btn(cv);
+            self.draw_view_btn(l.over());
         } else {
             // window by window: each draws its own channels; what has no window of its own (references, decoders,
             // LA) goes with the first. Zoom has one window, its traces are drawn above.
@@ -1792,9 +1966,10 @@ impl Ui {
                 self.cur_win = i;
                 if !self.m.zoom {
                     self.area = self.wins[i];
-                    self.draw_mask(cv);
-                    self.draw_traces(cv, self.area, &self.ph, &self.vmax, self.vmax_cg);
+                    self.draw_mask(l.under);
+                    self.traces(l, self.area, false);
                 }
+                let cv = l.over();
                 self.draw_hist(cv);
                 self.draw_zones(cv);
                 if i == 0 {
@@ -1815,6 +1990,7 @@ impl Ui {
             self.cur_win = 0;
             self.area = self.wave_area();
         }
+        let cv = l.over();
         self.draw_cal_banner(cv);
         self.draw_info(cv);
         self.draw_full_btn(cv);
@@ -1826,12 +2002,26 @@ impl Ui {
         }
         self.draw_results(cv);
         self.draw_table(cv);
-        // HDMI workspace: the waveform area as it is now, before the bars and the menus go over it
+        // HDMI workspace: the waveform area as it is now, before the bars and the menus go over it (the GPU puts it
+        // together from the layers itself)
         if self.hdmi_snap_want {
-            let (y0, y1) = (TOP.h, BOTTOM.y);
-            self.hdmi_snap.clear();
-            self.hdmi_snap.extend_from_slice(&cv.px[(y0 * W) as usize..(y1 * W) as usize]);
+            match l.over.as_deref() {
+                None => {
+                    let cv = &*l.under;
+                    let body = self.frame().body;
+                    self.hdmi_snap.clear();
+                    self.hdmi_snap.extend_from_slice(&cv.px[(body.y * cv.w) as usize..(body.bottom() * cv.w) as usize]);
+                }
+                Some(o) => {
+                    let s = self.hdmi_over.get_or_insert_with(|| Canvas::new_layer(o.w, o.h));
+                    if (s.w, s.h) != (o.w, o.h) {
+                        *s = Canvas::new_layer(o.w, o.h);
+                    }
+                    s.copy_from(o);
+                }
+            }
         }
+        let cv = l.over();
         if !self.full_on() {
             self.draw_top(cv);
             self.draw_bottom(cv);
@@ -1840,6 +2030,53 @@ impl Ui {
         self.draw_toast(cv);
         self.draw_overlay(cv);
         self.frames += 1;
+    }
+
+    /// The traces of a plot window: drawn now on one canvas, a job for the GPU with layers. `zoom`: the zoom
+    /// window's maps.
+    fn traces(&self, l: &mut Layers, area: Rect, zoom: bool) {
+        let (ph, vmax, vmax_cg) = if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
+        if l.over.is_none() {
+            return self.draw_traces(l.under, area, ph, vmax, vmax_cg);
+        }
+        let show: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on && self.shows(c));
+        if !show.iter().any(|&s| s) {
+            return;
+        }
+        let graded = self.m.color_grade;
+        let (mut alpha, mut colours, mut shift) = (Vec::new(), Vec::new(), [0u32; NCH]);
+        if graded {
+            let (lut, sh) = self.grade_lut(vmax_cg);
+            colours = lut.to_vec();
+            shift[0] = sh;
+        } else {
+            alpha = vec![0u8; NCH * 1024];
+            for c in 0..NCH {
+                let (lut, sh, least) = self.trace_lut(vmax[c]);
+                for (i, a) in alpha[c * 1024..(c + 1) * 1024].iter_mut().enumerate() {
+                    *a = lut[i].max(least) as u8;
+                }
+                shift[c] = sh;
+            }
+        }
+        l.jobs.push(TraceJob { area, zoom, graded, show, alpha, colours, shift, col: CH_COLORS });
+    }
+
+    /// The screen once more, laid out for the size of `cv` (Display > HDMI = Layout): the same settings, menus and
+    /// records, sharp at the monitor's resolution. The traces come from the panel's phosphor maps, stretched to the
+    /// larger plot (`draw_traces`). The panel's layout is as it was afterwards.
+    pub fn render_view(&mut self, cv: &mut Canvas) {
+        self.render_view_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
+    }
+
+    /// `render_view` into layers (Display > Graphics = GPU): the traces become jobs at the monitor's size.
+    pub fn render_view_layers(&mut self, l: &mut Layers) {
+        let keep = (self.scr, self.grid, std::mem::take(&mut self.wins), self.area, self.cur_win, self.frames, self.hdmi_snap_want);
+        self.scr = Screen { w: l.under.w, h: l.under.h };
+        (self.view_pass, self.hdmi_snap_want) = (true, false);
+        self.render_layers(l);
+        self.view_pass = false;
+        (self.scr, self.grid, self.wins, self.area, self.cur_win, self.frames, self.hdmi_snap_want) = keep;
     }
 
     /// Graticule in the classic scope style: dotted division lines (Full), a solid frame (Full, Light) and solid
@@ -1967,10 +2204,6 @@ impl Ui {
         if self.m.color_grade {
             return self.draw_graded(cv, area, ph, vmax_cg);
         }
-        // brightness: floor + sqrt(hits / brightest), the intensity setting raises floor and gain
-        let inten = self.m.intensity as f32 / 100.0;
-        let floor = 30.0 + 140.0 * inten;
-        let gain = 0.35 + 1.3 * inten;
         let (w, h) = (ph.w, ph.h);
         for c in (0..NCH).rev() {
             if !self.m.ch[c].on || !self.shows(c) {
@@ -1978,46 +2211,70 @@ impl Ui {
             }
             let col = CH_COLORS[c];
             let (cr, cg, cb) = ((col >> 16) & 255, (col >> 8) & 255, col & 255);
-            let vmax = vmaxs[c].max(1);
-            let mut shift = 0;
-            while (vmax >> shift) > 1023 {
-                shift += 1;
-            }
-            let top = ((vmax >> shift).max(1)) as f32;
-            let mut lut = [0u32; 1024];
-            for (i, l) in lut.iter_mut().enumerate() {
-                let v = (i as f32 + 0.5) / top;
-                *l = if i == 0 && shift == 0 { 0 } else { (floor + (255.0 - floor) * (v * gain).min(1.0).sqrt()).min(255.0) as u32 };
-            }
+            let (lut, shift, least) = self.trace_lut(vmaxs[c]);
             let map = &ph.map[c];
-            for y in 0..h {
-                let row = &map[y * w..(y + 1) * w];
-                let o = ((area.y + y as i32) * cv.w + area.x) as usize;
-                for (x, &v) in row.iter().enumerate() {
-                    if v == 0 {
-                        continue;
+            let put = |p: &mut u32, v: u16| {
+                if v == 0 {
+                    return;
+                }
+                let a = lut[((v as usize) >> shift).min(1023)].max(least);
+                // additive with saturation, but channels on top of each other mix towards the newer one
+                let d = *p;
+                let r = (((d >> 16) & 255) * (255 - a) / 255 + cr * a / 255).min(255);
+                let g = (((d >> 8) & 255) * (255 - a) / 255 + cg * a / 255).min(255);
+                let b = ((d & 255) * (255 - a) / 255 + cb * a / 255).min(255);
+                *p = rgb(r, g, b);
+            };
+            match Self::stretch(area, w, h) {
+                None => {
+                    for y in 0..h {
+                        let row = &map[y * w..(y + 1) * w];
+                        let o = ((area.y + y as i32) * cv.w + area.x) as usize;
+                        for (x, &v) in row.iter().enumerate() {
+                            put(&mut cv.px[o + x], v);
+                        }
                     }
-                    let a = lut[((v as usize) >> shift).min(1023)].max(floor as u32 / 2);
-                    let p = &mut cv.px[o + x];
-                    // additive with saturation, but channels on top of each other mix towards the newer one
-                    let d = *p;
-                    let r = (((d >> 16) & 255) * (255 - a) / 255 + cr * a / 255).min(255);
-                    let g = (((d >> 8) & 255) * (255 - a) / 255 + cg * a / 255).min(255);
-                    let b = ((d & 255) * (255 - a) / 255 + cb * a / 255).min(255);
-                    *p = rgb(r, g, b);
+                }
+                Some((xs, ys)) => {
+                    for (y, &sy) in ys.iter().enumerate() {
+                        let o = ((area.y + y as i32) * cv.w + area.x) as usize;
+                        for (x, &sx) in xs.iter().enumerate() {
+                            put(&mut cv.px[o + x], map[sy * w + sx]);
+                        }
+                    }
                 }
             }
         }
     }
 
-    /// Colour-graded persistence: the hit maps of all enabled channels are added up and every pixel is coloured by its
-    /// density relative to the densest pixel (blue = rare .. red = frequent). Per frame only a 1024-entry LUT is
-    /// built; per pixel it is an add per channel and one table look-up.
-    fn draw_graded(&self, cv: &mut Canvas, area: Rect, ph: &Phosphor, vmax: u32) {
-        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| self.m.ch[c].on && self.shows(c)).map(|c| ph.map[c].as_slice()).collect();
-        if maps.is_empty() {
-            return;
+    /// One part of `step` into `t_parts` (`:SYSTem:STATe?`).
+    fn prof_add(&mut self, i: usize, d: std::time::Duration) {
+        self.t_parts[i] += 0.05 * (d.as_secs_f32() * 1e3 - self.t_parts[i]);
+    }
+
+    /// Brightness of a trace pixel by its count (`draw_traces`): floor + sqrt(hits / brightest), the intensity
+    /// setting raises floor and gain. The count shifted right by the second value indexes the table; a pixel that
+    /// was hit at all gets at least the third.
+    fn trace_lut(&self, vmax: u32) -> ([u32; 1024], u32, u32) {
+        let inten = self.m.intensity as f32 / 100.0;
+        let floor = 30.0 + 140.0 * inten;
+        let gain = 0.35 + 1.3 * inten;
+        let vmax = vmax.max(1);
+        let mut shift = 0;
+        while (vmax >> shift) > 1023 {
+            shift += 1;
         }
+        let top = ((vmax >> shift).max(1)) as f32;
+        let mut lut = [0u32; 1024];
+        for (i, l) in lut.iter_mut().enumerate() {
+            let v = (i as f32 + 0.5) / top;
+            *l = if i == 0 && shift == 0 { 0 } else { (floor + (255.0 - floor) * (v * gain).min(1.0).sqrt()).min(255.0) as u32 };
+        }
+        (lut, shift, floor as u32 / 2)
+    }
+
+    /// Colour of a colour-graded pixel by the summed count (`draw_graded`), and the shift of the index.
+    fn grade_lut(&self, vmax: u32) -> ([u32; 1024], u32) {
         let gain = 0.35 + 1.3 * self.m.intensity as f32 / 100.0;
         let vmax = vmax.max(1);
         let mut shift = 0;
@@ -2031,7 +2288,41 @@ impl Ui {
             let v = ((i as f32 + 0.5) / top * gain).min(1.0).sqrt();
             *l = pal[((v * 255.0) as usize).min(255)];
         }
+        (lut, shift)
+    }
+
+    /// A plot of another size than its phosphor map (the HDMI layout): for each of its columns and rows the cell of
+    /// the map it shows (the nearest). None: the same size, one pixel per cell.
+    fn stretch(area: Rect, w: usize, h: usize) -> Option<(Vec<usize>, Vec<usize>)> {
+        let (aw, ah) = (area.w.max(0) as usize, area.h.max(0) as usize);
+        if (aw, ah) == (w, h) || w == 0 || h == 0 {
+            return None;
+        }
+        Some(((0..aw).map(|x| x * w / aw).collect(), (0..ah).map(|y| y * h / ah).collect()))
+    }
+
+    /// Colour-graded persistence: the hit maps of all enabled channels are added up and every pixel is coloured by its
+    /// density relative to the densest pixel (blue = rare .. red = frequent). Per frame only a 1024-entry LUT is
+    /// built; per pixel it is an add per channel and one table look-up.
+    fn draw_graded(&self, cv: &mut Canvas, area: Rect, ph: &Phosphor, vmax: u32) {
+        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| self.m.ch[c].on && self.shows(c)).map(|c| ph.map[c].as_slice()).collect();
+        if maps.is_empty() {
+            return;
+        }
+        let (lut, shift) = self.grade_lut(vmax);
         let w = ph.w;
+        if let Some((xs, ys)) = Self::stretch(area, w, ph.h) {
+            for (y, &sy) in ys.iter().enumerate() {
+                let o = ((area.y + y as i32) * cv.w + area.x) as usize;
+                for (x, &sx) in xs.iter().enumerate() {
+                    let s: u32 = maps.iter().map(|m| m[sy * w + sx] as u32).sum();
+                    if s != 0 {
+                        cv.px[o + x] = lut[((s >> shift) as usize).min(1023)];
+                    }
+                }
+            }
+            return;
+        }
         for y in 0..ph.h {
             let o = ((area.y + y as i32) * cv.w + area.x) as usize;
             let row = y * w;
@@ -2202,27 +2493,32 @@ impl Ui {
         let ch = &self.m.ch[c];
         let txt = match self.m.hist {
             Hist::Vertical => {
+                // a bin per row of the map; a larger plot (HDMI layout) gives each bin its share of rows
+                let n = bins.len().max(1) as i32;
                 for (r, &b) in bins.iter().enumerate() {
                     let len = (b as f64 / peak * depth).round() as i32;
+                    let (y0, y1) = (r as i32 * a.h / n, (r as i32 + 1) * a.h / n);
                     if len > 0 {
-                        cv.blend(Rect::new(a.x, a.y + r as i32, len, 1), col, 150);
+                        cv.blend(Rect::new(a.x, a.y + y0, len, (y1 - y0).max(1)), col, 150);
                     }
                 }
-                // pixel row -> volts
-                let vpp = ch.volts_per_div() as f64 / (a.h as f64 / VDIV as f64);
-                let mv = (a.h as f64 / 2.0 - mean) * vpp - ch.offset as f64;
+                // map row -> volts
+                let vpp = ch.volts_per_div() as f64 / (n as f64 / VDIV as f64);
+                let mv = (n as f64 / 2.0 - mean) * vpp - ch.offset as f64;
                 format!("Hist CH{}  mean {}  \u{3c3} {}", c + 1, si(mv, "V"), si(sd * vpp, "V"))
             }
             _ => {
+                let n = bins.len().max(1) as i32;
                 for (x, &b) in bins.iter().enumerate() {
                     let len = (b as f64 / peak * depth * 0.6).round() as i32;
+                    let (x0, x1) = (x as i32 * a.w / n, (x as i32 + 1) * a.w / n);
                     if len > 0 {
-                        cv.blend(Rect::new(a.x + x as i32, a.y + a.h - len, 1, len), col, 150);
+                        cv.blend(Rect::new(a.x + x0, a.y + a.h - len, (x1 - x0).max(1), len), col, 150);
                     }
                 }
                 let (tdiv, delay) = self.view();
-                let spp = tdiv as f64 / (a.w as f64 / HDIV as f64);
-                let mt = (mean - a.w as f64 / 2.0) * spp + delay as f64;
+                let spp = tdiv as f64 / (n as f64 / HDIV as f64);
+                let mt = (mean - n as f64 / 2.0) * spp + delay as f64;
                 format!("Hist CH{} @ level  mean {}  \u{3c3} {}", c + 1, si(mt, "s"), si(sd * spp, "s"))
             }
         };
@@ -2870,6 +3166,8 @@ impl Ui {
         let base = (bh + f.s.size * 72 / 100) / 2;
         let pw = 42.max(f.sb.width("CH4") + 18);
         let vx = 8 + pw + 8;
+        // a row: the width of the screen less the edges
+        let row = |y: i32| Rect::new(METRICS.edge, y, self.scr.w - 2 * METRICS.edge, bh);
         let pill = |cv: &mut Canvas, y: i32, c: usize| {
             let r = Rect::new(8, y + 1, pw, bh - 2);
             cv.round(r, 3, CH_COLORS[c], 255);
@@ -2881,10 +3179,10 @@ impl Ui {
             for c in self.meas_groups() {
                 let mine: Vec<&tools::MeasRow> = rows.iter().filter(|r| r.ch == c).collect();
                 for part in mine.chunks(tools::STRIP_PER_ROW) {
-                    cv.fill(Rect::new(6, y, W - 12, bh), BAR);
+                    cv.fill(row(y), BAR);
                     pill(cv, y, c);
                     // the row's width shared out, whatever the number of values
-                    let pitch = (W - 8 - vx) / part.len() as i32;
+                    let pitch = (row(y).right() - 2 - vx) / part.len() as i32;
                     for (i, r) in part.iter().enumerate() {
                         let x = vx + i as i32 * pitch;
                         let x2 = cv.text(&f.s, x, y + base, &r.name, DIM) + 8;
@@ -2895,7 +3193,7 @@ impl Ui {
             }
         }
         if self.m.dvm_on || self.m.cnt_on {
-            cv.fill(Rect::new(6, y, W - 12, bh), BAR);
+            cv.fill(row(y), BAR);
             let mut x = 12;
             for (l, v) in self.dvm_row() {
                 x = cv.text(&f.s, x, y + base, &l, DIM) + 8;
@@ -2904,7 +3202,7 @@ impl Ui {
             y += self.lay().strip_row;
         }
         if self.m.cursor != CursorMode::Off && !in_pane {
-            cv.fill(Rect::new(6, y, W - 12, bh), BAR);
+            cv.fill(row(y), BAR);
             pill(cv, y, self.m.active);
             let mode = match self.m.cursor {
                 CursorMode::Volt => "Volt",
@@ -2918,7 +3216,7 @@ impl Ui {
             let vals = self.cursor_values();
             let x0 = r.x + r.w + 10;
             // the pitch of the values, closer where a large text size would push the last one off the row
-            let pitch = if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 }.min((W - 12 - x0) / vals.len().max(1) as i32);
+            let pitch = if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 }.min((row(y).right() - 6 - x0) / vals.len().max(1) as i32);
             for (i, (l, v)) in vals.iter().enumerate() {
                 let x = x0 + i as i32 * pitch;
                 let x2 = cv.text(&f.s, x, y + base, l, DIM) + 8;
@@ -3007,7 +3305,8 @@ impl Ui {
     fn net_box(&self) -> Rect {
         let k = self.m.text_size.index() as i32;
         let w = 122.max(28 + self.fonts().sb.width("255.255.255.255"));
-        Rect::new(W - 6 - w, 5 - 2 * k, w, 30 + 4 * k)
+        let top = self.frame().top;
+        Rect::new(top.right() - METRICS.edge - w, top.y + 5 - 2 * k, w, 30 + 4 * k)
     }
 
     /// Left of the network box while a WLAN stick is plugged in.
@@ -3017,7 +3316,9 @@ impl Ui {
         Rect::new(n.x - 6 - w, n.y, w, n.h)
     }
     /// Start menu button left of the channel cards (all menus and key functions by touch).
-    const MENU_BTN: Rect = Rect::new(6, 530, 62, 66);
+    fn menu_btn(&self) -> Rect {
+        self.frame().menu_btn
+    }
 
     /// Top-bar buttons, right-aligned before the network box: what is used most, and the menus without a front-panel key
     /// (Display, Storage, System). Everything else is in the start menu.
@@ -3075,14 +3376,16 @@ impl Ui {
     }
 
     /// Touch area of a top-bar button: the full bar height.
-    fn top_hit(r: Rect) -> Rect {
-        Rect::new(r.x - 2, 0, r.w + 4, TOP.h)
+    fn top_hit(&self, r: Rect) -> Rect {
+        let top = self.frame().top;
+        Rect::new(r.x - 2, top.y, r.w + 4, top.h)
     }
 
     fn draw_top(&self, cv: &mut Canvas) {
         let f = self.fonts();
-        cv.fill(TOP, BAR);
-        cv.hline(0, W - 1, TOP.h - 1, LINE);
+        let top = self.frame().top;
+        cv.fill(top, BAR);
+        cv.hline(top.x, top.right() - 1, top.bottom() - 1, LINE);
         // run / trigger state
         let (txt, col) = match (self.m.run, self.m.status) {
             _ if self.cal_running() => ("CAL", ACCENT),
@@ -3146,10 +3449,11 @@ impl Ui {
         let Some((s, _)) = &self.toast else { return };
         let f = self.fonts();
         let tw = f.mb.width(s) + 44;
-        let mut r = Rect::new(W / 2 - tw / 2, PLOT_Y + 4, tw, 28);
+        let body = self.frame().body;
+        let mut r = Rect::new(body.x + body.w / 2 - tw / 2, body.y + 4, tw, 28);
         let dlg = self.dlg_layout().map(|d| d.r).filter(|d| overlaps(*d, r));
         if let Some(d) = dlg {
-            let (left, right) = (d.x - 6, W - 6 - (d.x + d.w));
+            let (left, right) = (d.x - 6, body.right() - 6 - d.right());
             if right >= tw + 16 {
                 r.x = d.x + d.w + (right - tw) / 2;
             } else if left >= tw + 16 {
@@ -3195,17 +3499,18 @@ impl Ui {
     /// All bottom cards. LA and generator sit behind the channels, wide like them when they are on and the channels keep
     /// room for their text, else narrow.
     fn card_layout(&self) -> Cards {
-        let (y, h) = (530, 66);
+        let row = self.frame().cards;
+        let (y, h) = (row.y, row.h);
         // 2-channel models: no cards for CH3/CH4 (zero width, never drawn or hit)
         let n = n_ch();
         let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
         let n_off = n as i32 - n_on;
         let caps = &oos_hal::model::platform().caps;
         let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
-        let start = Self::MENU_BTN.x + Self::MENU_BTN.w + 7;
+        let start = row.x;
         let room = |wide: bool| {
             let a: i32 = aux.iter().filter(|a| a.0).map(|a| if a.1 && wide { AUX_WIDE } else { AUX_NARROW } + 7).sum();
-            W - 6 - start - n_off * (56 + 7) - n_on * 7 - a - (130 + 7) - 222
+            row.right() - start - n_off * (56 + 7) - n_on * 7 - a - (130 + 7) - 222
         };
         let wide = n_on == 0 || room(true) / n_on.max(1) >= CH_MIN;
         let won = if n_on > 0 { (room(wide) / n_on).min(213) } else { 0 };
@@ -3229,11 +3534,14 @@ impl Ui {
             })
         };
         let (la, gen) = (next(aux[0]), next(aux[1]));
-        let rest = W - 6 - x - 7;
+        let rest = row.right() - x - 7;
         let tw = ((rest as f32 * 0.42) as i32).min(rest - 222).max(130);
-        let time = Rect::new(x, y, tw, h);
-        x += tw + 7;
-        Cards { ch, la, gen, time, trig: Rect::new(x, y, W - 6 - x, h) }
+        let tw = tw.min(TIME_CARD_MAX);
+        let trw = (rest - tw).min(TRIG_CARD_MAX);
+        // a wide screen: TIME and trigger keep their largest size and move to the right edge, the room stays between
+        // the channels and them (as in the top bar)
+        let x = row.right() - trw - 7 - tw;
+        Cards { ch, la, gen, time: Rect::new(x, y, tw, h), trig: Rect::new(x + tw + 7, y, trw, h) }
     }
 
     /// The big digits of a card while `s` fits `room`, else the next size: nothing is cut off with every card on.
@@ -3301,10 +3609,10 @@ impl Ui {
         let (yn, yb, ys) = self.lay().card;
         // a line that would run out of a narrow card takes the normal size
         let small = |s: &str, room: i32| fit_font(&[&f.s, &Fonts::get(0).s], room, s);
-        cv.fill(BOTTOM, BG);
+        cv.fill(self.frame().bottom, BG);
         let root = if self.menu_open { Some(self.menu_root()) } else { None };
         // start menu button: three bars and "Menu"; amber "Locked" while touch is locked (a tap unlocks)
-        let r = Self::MENU_BTN;
+        let r = self.menu_btn();
         let (hl, lock) = (root == Some(MenuId::Main), self.m.touch_lock);
         cv.round(r, 7, if hl { ACCENT } else if lock { AMBER } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
@@ -3504,7 +3812,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Graphics, Item::TextSize, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -3516,7 +3824,8 @@ impl Ui {
             MenuId::Power => vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode],
             MenuId::Identify => self.identify_items(),
             MenuId::SelfCal => self.cal_items(),
-            MenuId::Network => vec![Item::NetEth, Item::NetRetry10, Item::NetMac, Item::NetWeb, Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
+            MenuId::Network => vec![Item::NetEth, Item::NetRetry10, Item::NetMac, Item::Open(MenuId::Remote), Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
+            MenuId::Remote => self.remote_items(),
             MenuId::Time => self.time_items(),
             MenuId::Bode => self.bode_items(),
             MenuId::Afg => self.afg_items(),
@@ -3609,31 +3918,99 @@ impl Ui {
         self.toast(&format!("History {}/{}", i + 1, n));
     }
 
-    /// Recomputes the measurements of the record shown.
+    /// Recomputes the measurements of the record shown, at once (a result from the background for an older record
+    /// is dropped). The samples are read where they are, not copied.
     fn measure_last(&mut self) {
-        let Some(rec) = self.last[0].clone() else { return };
+        let Some(rec) = self.last[0].as_ref() else { return };
+        let work: Vec<(usize, &[f32], f64, f64)> = (0..NCH)
+            .filter(|&c| self.m.ch[c].on)
+            .map(|c| {
+                let (v, dt) = self.meas_slice(rec, c);
+                (c, v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64)
+            })
+            .collect();
+        let done = measure_channels(&work);
+        self.meas_set(done);
+        self.meas_n += 1;
+        self.meas_want = false;
+    }
+
+    fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
         for c in 0..NCH {
-            if !self.m.ch[c].on {
-                (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
-                continue;
-            }
-            let (v, dt) = self.meas_wave(&rec, c);
-            self.stats[c] = stats(&v, dt);
-            self.ana[c] = oos_dsp::measure::analyze_min(&v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64);
+            (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
         }
+        for (c, st, an) in done {
+            (self.stats[c], self.ana[c]) = (st, an);
+        }
+    }
+
+    /// From now on the measurements of new records are made in the background (the frame loop on the unit).
+    pub fn measure_in_background(&mut self) {
+        self.meas_bg = MeasWorker::start();
+    }
+
+    /// The background's side, every frame: takes a finished result, and gives it the record shown when it wants one.
+    fn meas_poll(&mut self) {
+        let Some(w) = self.meas_bg.as_mut() else { return };
+        if let Ok((n, done)) = w.rx.try_recv() {
+            w.busy = false;
+            if n == self.meas_n {
+                self.meas_set(done);
+                self.meas_new = true;
+            }
+        }
+        let w = self.meas_bg.as_mut().expect("worker");
+        if w.busy || !self.meas_want {
+            return;
+        }
+        self.meas_want = false;
+        let Some(rec) = self.last[0].as_ref() else { return };
+        let job: Vec<(usize, MeasSrc, f64, f64)> = (0..NCH)
+            .filter(|&c| self.m.ch[c].on)
+            .map(|c| {
+                let min = 0.4 * self.m.ch[c].volts_per_div() as f64;
+                match self.meas_frame(rec, c) {
+                    Some((f, i0, i1)) => {
+                        let dt = f.dt;
+                        (c, MeasSrc::Frame(f, c, i0, i1), dt, min)
+                    }
+                    None => (c, MeasSrc::Own(rec.ch[c].clone()), rec.dt, min),
+                }
+            })
+            .collect();
+        let w = self.meas_bg.as_mut().expect("worker");
+        if w.tx.send((self.meas_n, job)).is_ok() {
+            w.busy = true;
+        } else {
+            // the thread is gone: measure here again
+            self.meas_bg = None;
+            self.measure_last();
+            self.meas_new = true;
+        }
+    }
+
+    /// The window of the hardware frame `meas_slice` measures channel `c` on, if it does.
+    fn meas_frame(&self, rec: &Record, c: usize) -> Option<(std::sync::Arc<crate::board::Frame>, usize, usize)> {
+        let r = rec.raw.as_ref().filter(|_| self.m.acq != AcqMode::HiRes)?;
+        (r.i1 <= r.frame.ch[c].len() && r.i1 - r.i0 > rec.ch[c].len()).then(|| (r.frame.clone(), r.i0, r.i1))
     }
 
     /// Samples to measure channel `c` on: every captured sample of the screen window when the hardware frame has more
     /// than the screen record (conditioned like the record), else the screen record.
-    fn meas_wave(&self, rec: &Record, c: usize) -> (Vec<f32>, f64) {
+    fn meas_slice<'a>(&self, rec: &'a Record, c: usize) -> (&'a [f32], f64) {
         // high res: the screen record is the mean of those samples, the measurements follow it
         if let Some(r) = rec.raw.as_ref().filter(|_| self.m.acq != AcqMode::HiRes) {
-            let v = &r.frame.ch[c];
-            if r.i1 <= v.len() && r.i1 - r.i0 > rec.ch[c].len() {
-                return (v[r.i0..r.i1].to_vec(), r.frame.dt);
+            if self.meas_frame(rec, c).is_some() {
+                return (&r.frame.ch[c][r.i0..r.i1], r.frame.dt);
             }
         }
-        (rec.ch[c].clone(), rec.dt)
+        (&rec.ch[c], rec.dt)
+    }
+
+    /// `meas_slice` as an own copy.
+    fn meas_wave(&self, rec: &Record, c: usize) -> (Vec<f32>, f64) {
+        let (v, dt) = self.meas_slice(rec, c);
+        (v.to_vec(), dt)
     }
 
     /// Search: times (s, relative to the trigger) of all events of the trigger condition in the record shown.
@@ -4058,6 +4435,7 @@ impl Ui {
             MenuId::Identify => "Identify: tap to apply".into(),
             MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Network => "Network".into(),
+            MenuId::Remote => "Remote services".into(),
             MenuId::Time => "Date and time".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Afg => "Generator (GI/GO)".into(),
@@ -4094,7 +4472,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)) {
             return k;
         }
         match it {
@@ -4115,7 +4493,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)) {
             return l;
         }
         match it {
@@ -4325,8 +4703,6 @@ impl Ui {
             Item::WlanForget => "Forget WLAN network",
             Item::NetEth => "Ethernet",
             Item::NetMac => "MAC",
-            Item::NetWeb => "Web remote",
-            Item::NetPorts => "Other access",
             Item::NetWlan => "WLAN",
             Item::WlanNet => "Networks",
             Item::WlanForgetNet => "Forget",
@@ -4353,7 +4729,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4470,7 +4846,7 @@ impl Ui {
             Item::GridFrame => onoff(m.grid_frame),
             Item::TrigNoise => onoff(m.trig_nrej),
             Item::Dots => onoff(m.dots),
-            Item::Hdmi => if m.hdmi_wave { "Waveform".into() } else { "Mirror".into() },
+            Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
             Item::ZoneOn => onoff(m.zones[self.zone_sel].on),
@@ -4519,7 +4895,7 @@ impl Ui {
             Item::XyMode => if self.xy { "XY".into() } else { "YT".into() },
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.clock_next),
-            Item::NetEth | Item::NetMac | Item::NetWeb | Item::NetPorts | Item::NetWlan => self.net_value(it),
+            Item::NetEth | Item::NetMac | Item::NetWlan => self.net_value(it),
             Item::RefSrc => format!("CH{}", self.ref_src + 1),
             Item::RefShow(i) => match &self.refs[i] {
                 None => "empty".into(),
@@ -4546,7 +4922,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -4771,7 +5147,13 @@ impl Ui {
                 m.dots = !m.dots;
                 self.dirty_map = true;
             }
-            Item::Hdmi => m.hdmi_wave = !m.hdmi_wave,
+            Item::Hdmi => {
+                let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
+                m.hdmi = HDMI_MODES[step(i, HDMI_MODES.len(), d)];
+                if self.m.hdmi == HdmiMode::Layout {
+                    self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
+                }
+            }
             Item::TextSize => {
                 let i = m.text_size.index();
                 m.text_size = TEXT_SIZES[(i as i32 + d).clamp(0, TEXT_SIZES.len() as i32 - 1) as usize];
@@ -5330,7 +5712,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)) {
+        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -5384,7 +5766,7 @@ impl Ui {
             Item::GridStyle => &["Full", "Light", "None"],
             Item::GridFrame | Item::TrigNoise => &["Off", "On"],
             Item::Dots | Item::ZoneOn => &["Off", "On"],
-            Item::Hdmi => &["Mirror", "Waveform"],
+            Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
             Item::ZoneSel => &["Z1", "Z2"],
             Item::ZoneSrc => return ch_names(),
@@ -5438,7 +5820,7 @@ impl Ui {
         if let Item::RefShow(_) = it {
             return Ctl::Button;
         }
-        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetWeb | Item::NetPorts | Item::NetWlan) || Self::time_text(it) {
+        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetWlan) || Self::time_text(it) || Self::remote_text(it) {
             return Ctl::Text;
         }
         match Self::kind(it) {
@@ -5511,14 +5893,14 @@ impl Ui {
             MenuId::Channel(c) | MenuId::ChMore(c) => (chs[c].x + chs[c].w / 2, false),
             MenuId::Horizontal => (tr.x + tr.w / 2, false),
             MenuId::Trigger => (trg.x + trg.w / 2, false),
-            MenuId::Main => (Self::MENU_BTN.x, false),
-            MenuId::Network => (self.net_box().x + self.net_box().w / 2, true),
-            MenuId::ViewMore => (W, true),
-            MenuId::La | MenuId::LaLines | MenuId::LaPat => self.aux_cards().0.map_or((W / 2, false), |r| (r.x + r.w / 2, false)),
-            MenuId::Afg => self.aux_cards().1.map_or((W / 2, false), |r| (r.x + r.w / 2, false)),
-            MenuId::Utility => self.top_buttons().iter().find(|t| t.0 == TopBtn::System).map_or((W / 2, false), |t| (t.2.x + t.2.w / 2, true)),
+            MenuId::Main => (self.menu_btn().x, false),
+            MenuId::Network | MenuId::Remote => (self.net_box().x + self.net_box().w / 2, true),
+            MenuId::ViewMore => (self.scr.w, true),
+            MenuId::La | MenuId::LaLines | MenuId::LaPat => self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
+            MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
+            MenuId::Utility => self.top_buttons().iter().find(|t| t.0 == TopBtn::System).map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
             // menus of front-panel keys (also opened from the start menu): centred above the cards
-            m => self.top_buttons().iter().find(|t| t.0 == TopBtn::Menu(m)).map_or((W / 2, false), |t| (t.2.x + t.2.w / 2, true)),
+            m => self.top_buttons().iter().find(|t| t.0 == TopBtn::Menu(m)).map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
         }
     }
 
@@ -5539,8 +5921,9 @@ impl Ui {
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
         let (ax, top) = self.menu_anchor();
-        let x = (ax - w / 2).clamp(6, W - 6 - w);
-        let y = if top { TOP.h + 4 } else { (BOTTOM.y - 4 - h).max(TOP.h + 4) };
+        let fr = self.frame();
+        let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
+        let y = if top { fr.top.bottom() + 4 } else { (fr.bottom.y - 4 - h).max(fr.top.bottom() + 4) };
         let r = Rect::new(x, y, w, h);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
         let back = self.parent.map(|_| Rect::new(close.x - 88, close.y, 82, DLG_CTRL));
@@ -5573,7 +5956,7 @@ impl Ui {
         let lines: usize = groups.iter().map(|g| g.1.len().div_ceil(PER_LINE).max(1)).sum();
         let w = 24 + lw + PER_LINE as i32 * cw + (PER_LINE as i32 - 1) * gap;
         let h = DLG_HEAD + lines as i32 * (DLG_ROW + 2) + 6;
-        let r = Rect::new(6, BOTTOM.y - 4 - h, w, h);
+        let r = Rect::new(METRICS.edge, self.frame().bottom.y - 4 - h, w, h);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
         let (mut rows, mut heads) = (Vec::new(), Vec::new());
         let mut line = 0;
@@ -5781,23 +6164,24 @@ impl Ui {
         self.pick = None;
     }
 
-    /// Power dialog box and its buttons.
-    const PWR_BOX: Rect = Rect::new(W / 2 - 250, H / 2 - 100, 500, 200);
-    const PWR_OFF: Rect = Rect::new(W / 2 - 230, H / 2 - 10, 140, 64);
-    const PWR_RESTART: Rect = Rect::new(W / 2 - 70, H / 2 - 10, 140, 64);
-    const PWR_CANCEL: Rect = Rect::new(W / 2 + 90, H / 2 - 10, 140, 64);
+    /// Power dialog in the middle of the screen: its box, and the buttons Power off, Restart, Cancel.
+    fn pwr_layout(&self) -> (Rect, [Rect; 3]) {
+        let b = self.scr.rect().center(500, 200);
+        let btn = |dx: i32| Rect::new(b.x + 250 + dx, b.y + 90, 140, 64);
+        (b, [btn(-230), btn(-70), btn(90)])
+    }
 
     fn draw_overlay(&self, cv: &mut Canvas) {
         let f = self.fonts();
         self.draw_osk(cv);
         if self.power_dlg {
-            cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 160);
-            let r = Self::PWR_BOX;
+            cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);
+            let (r, [off, restart, cancel]) = self.pwr_layout();
             cv.round(r, 8, ACCENT, 255);
             cv.round(r.inset(2), 7, DLG_BG, 255);
             cv.text_in(&f.lb, Rect::new(r.x, r.y + 18, r.w, 28), 1, "Power", ACCENT);
             cv.text_in(&f.m, Rect::new(r.x, r.y + 52, r.w, 24), 1, "Power key again or tap outside to cancel", DIM);
-            for (b, t, c) in [(Self::PWR_OFF, "Power off", RED), (Self::PWR_RESTART, "Restart", ACCENT), (Self::PWR_CANCEL, "Cancel", TEXT)] {
+            for (b, t, c) in [(off, "Power off", RED), (restart, "Restart", ACCENT), (cancel, "Cancel", TEXT)] {
                 btn(cv, b, mix(DLG_BG, c, 40), c);
                 cv.text_in(&f.mb, b, 1, t, c);
             }
@@ -5805,12 +6189,13 @@ impl Ui {
         if self.dialog.is_some() && self.sysinfo.is_some() {
             self.draw_sysinfo(cv);
         } else if let Some(lines) = &self.dialog {
-            cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 140);
+            let scr = self.scr.rect();
+            cv.blend(scr, rgb(0, 0, 0), 140);
             // taller for long texts (About with experimental limits)
-            let h = (40 + lines.len() as i32 * 30).clamp(260, H - 20);
+            let h = (40 + lines.len() as i32 * 30).clamp(260, scr.h - 20);
             // wider for long lines at the larger text sizes
-            let w = lines.iter().map(|l| f.m.width(l) + 40).max().unwrap_or(0).clamp(480, W - 20);
-            let r = Rect::new(W / 2 - w / 2, H / 2 - h / 2, w, h);
+            let w = lines.iter().map(|l| f.m.width(l) + 40).max().unwrap_or(0).clamp(480, scr.w - 20);
+            let r = scr.center(w, h);
             cv.round(r, 8, ACCENT, 255);
             cv.round(r.inset(2), 7, DLG_BG, 255);
             for (i, l) in lines.iter().enumerate() {
@@ -6320,7 +6705,7 @@ impl Ui {
                 }
                 if self.m.touch_lock {
                     // the Menu button ("Locked") is the one touch target left: it unlocks
-                    if Self::MENU_BTN.contains(was.2, was.3) {
+                    if self.menu_btn().contains(was.2, was.3) {
                         self.key(key::TOUCHLOCK);
                     }
                     return;
@@ -6410,13 +6795,14 @@ impl Ui {
     pub fn tap(&mut self, x: i32, y: i32) {
         if self.power_dlg {
             self.power_dlg = false;
-            if (Self::PWR_OFF.contains(x, y) || Self::PWR_RESTART.contains(x, y)) && self.update_busy() {
+            let (_, [off, restart, _]) = self.pwr_layout();
+            if (off.contains(x, y) || restart.contains(x, y)) && self.update_busy() {
                 // a cut now leaves recovery half-written (docs/update.md)
                 self.toast("Update running: wait until it is done");
-            } else if Self::PWR_OFF.contains(x, y) {
+            } else if off.contains(x, y) {
                 self.power_action = Some(PowerAction::Off);
                 self.toast("Powering off ...");
-            } else if Self::PWR_RESTART.contains(x, y) {
+            } else if restart.contains(x, y) {
                 self.power_action = Some(PowerAction::Restart);
                 self.toast("Restarting ...");
             }
@@ -6459,32 +6845,32 @@ impl Ui {
             return;
         }
         let pill = self.run_pill();
-        if Self::top_hit(pill).contains(x, y) {
+        if self.top_hit(pill).contains(x, y) {
             return self.key(key::RUNSTOP);
         }
-        if Self::top_hit(self.net_box()).contains(x, y) {
+        if self.top_hit(self.net_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Network);
         }
-        if self.wlan_stick && Self::top_hit(self.wlan_box()).contains(x, y) {
+        if self.wlan_stick && self.top_hit(self.wlan_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Network);
         }
-        if self.usb && Self::top_hit(self.usb_box()).contains(x, y) {
+        if self.usb && self.top_hit(self.usb_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Storage);
         }
         // sample rate, depth and mode in the top bar: the page that sets them
         let end = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x) - 4;
-        if Self::top_hit(Rect::new(pill.x + pill.w, pill.y, end - pill.x - pill.w, pill.h)).contains(x, y) {
+        if self.top_hit(Rect::new(pill.x + pill.w, pill.y, end - pill.x - pill.w, pill.h)).contains(x, y) {
             return self.toggle_menu(MenuId::Acquire);
         }
         for (b, _, r) in self.top_buttons() {
-            if Self::top_hit(r).contains(x, y) {
+            if self.top_hit(r).contains(x, y) {
                 return match b {
                     TopBtn::Menu(id) => self.toggle_menu(id),
                     TopBtn::System => self.toggle_menu(MenuId::Utility),
                 };
             }
         }
-        if Self::MENU_BTN.contains(x, y) {
+        if self.menu_btn().contains(x, y) {
             return self.toggle_menu(MenuId::Main);
         }
         // header of the results overlay (40 px touch area): fold / unfold
@@ -6566,6 +6952,9 @@ struct Cards {
 const AUX_NARROW: i32 = 56;
 const AUX_WIDE: i32 = 104;
 const CH_MIN: i32 = 100;
+/// Widest TIME and trigger cards: more room only spreads their text (the panel never gets that far, at most 234 / 324).
+const TIME_CARD_MAX: i32 = 240;
+const TRIG_CARD_MAX: i32 = 330;
 /// Colour of the generator card.
 const GEN_COLOR: Rgb = rgb(0xb3, 0x94, 0xf5);
 
@@ -6833,7 +7222,7 @@ mod tests {
             assert!(p.iter().filter(|x| x.kind == Kind::Crc).all(|x| x.ok), "{:?}: {:?}", proto, p);
             assert!(p.iter().any(|x| x.kind == Kind::Crc), "{:?}: no CRC/checksum", proto);
             // picture for the eye (target/test-shots)
-            let mut cv = Canvas::new(W, H);
+            let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
             let _ = std::fs::create_dir_all(&dir);
@@ -6863,7 +7252,7 @@ mod tests {
             assert!(hit.t1.abs() < 0.5e-6, "id {:x}: field ends at {} s", id, hit.t1);
             if id == 0x123 {
                 ui.open_menu(MenuId::Trigger);
-                let mut cv = Canvas::new(W, H);
+                let mut cv = Canvas::new(PANEL_W, PANEL_H);
                 ui.render(&mut cv);
                 let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
                 let _ = std::fs::create_dir_all(&dir);
@@ -6925,7 +7314,7 @@ mod tests {
                     assert!(p.iter().any(|x| matches!(x.kind, Kind::Id { .. }) && x.value == want && x.t1.abs() < tol));
                 }
                 if what == BusWhat::Id {
-                    let mut cv = Canvas::new(W, H);
+                    let mut cv = Canvas::new(PANEL_W, PANEL_H);
                     ui.render(&mut cv);
                     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
                     let _ = std::fs::create_dir_all(&dir);
@@ -6986,7 +7375,7 @@ mod tests {
             if what == BusWhat::Id && val.is_none() {
                 ui.m.dec_cs = Some(3);
                 ui.m.dec_uspeed = 0;
-                let mut cv = Canvas::new(W, H);
+                let mut cv = Canvas::new(PANEL_W, PANEL_H);
                 ui.render(&mut cv);
                 let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
                 let _ = std::fs::create_dir_all(&dir);
@@ -7122,7 +7511,7 @@ mod tests {
         let p = spectrum_peak(&ui).expect("a peak");
         // within a display column (the spectrum has one point per plot column)
         assert!((p - 1e3).abs() < 40.0, "peak at {} Hz", p);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         // eye: the recovered unit interval is half a period (0.5 ms)
         ui.adjust(Item::EyeOn, 1);
@@ -7152,7 +7541,7 @@ mod tests {
         use super::*;
         let dir = std::env::var("OOS_SHOTS").unwrap_or_else(|_| ".".into());
         let shot = |ui: &mut Ui, name: &str| {
-            let mut cv = Canvas::new(W, H);
+            let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);
             std::fs::write(format!("{}/{}.png", dir, name), crate::store::png_of(&cv)).unwrap();
         };
@@ -7203,6 +7592,66 @@ mod tests {
         shot(&mut ui, "canfd");
         ui.open_menu(MenuId::Main);
         shot(&mut ui, "main_menu");
+    }
+
+    /// Display > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
+    /// directly, on every kind of screen.
+    #[test]
+    fn recorded_layers_replay_to_the_same_pixels() {
+        use super::*;
+        let same = |ui: &mut Ui, what: &str| {
+            let (w, h) = (ui.scr.w, ui.scr.h);
+            let (mut u, mut o) = (Canvas::new(w, h), Canvas::new_layer(w, h));
+            ui.render_layers(&mut Layers { under: &mut u, over: Some(&mut o), jobs: Vec::new() });
+            let (mut ru, mut ro) = (Canvas::new(w, h), Canvas::new_layer(w, h));
+            ru.record(true);
+            ro.record(true);
+            ui.render_layers(&mut Layers { under: &mut ru, over: Some(&mut ro), jobs: Vec::new() });
+            let (cu, co) = (ru.rec.take().unwrap(), ro.rec.take().unwrap());
+            assert!(cu.cmds.len() > 10, "{}: nothing recorded", what);
+            let (mut pu, mut po) = (Canvas::new(w, h), Canvas::new_layer(w, h));
+            cu.replay(&mut pu);
+            co.replay(&mut po);
+            for (name, a, b) in [("under", &u, &pu), ("over", &o, &po)] {
+                let bad = a.px.iter().zip(&b.px).position(|(p, q)| p != q);
+                assert!(bad.is_none(), "{} {}: pixel {:?} differs: {:08x} drawn, {:08x} replayed", what, name, bad.map(|i| (i as i32 % w, i as i32 / w)), bad.map_or(0, |i| a.px[i]), bad.map_or(0, |i| b.px[i]));
+            }
+        };
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.ch[1].on = true;
+        for _ in 0..5 {
+            ui.step(0.05);
+        }
+        same(&mut ui, "scope");
+        ui.open_menu(MenuId::Main);
+        same(&mut ui, "main menu");
+        ui.close_menu();
+        ui.open_menu(MenuId::Measure);
+        same(&mut ui, "measure menu");
+        ui.close_menu();
+        ui.m.zoom = true;
+        ui.m.color_grade = true;
+        ui.step(0.05);
+        same(&mut ui, "zoom, colour grade");
+        ui.m.zoom = false;
+        ui.m.color_grade = false;
+        ui.adjust(Item::SpecOn, 1);
+        for _ in 0..10 {
+            ui.step(0.05);
+        }
+        same(&mut ui, "spectrum");
+        ui.adjust(Item::EyeOn, 1);
+        for _ in 0..10 {
+            ui.step(0.05);
+        }
+        same(&mut ui, "eye");
+        ui.m.view = AView::Scope;
+        ui.set_dec_proto(Proto::CanFd);
+        ui.m.dec_on = true;
+        for _ in 0..5 {
+            ui.step(0.05);
+        }
+        same(&mut ui, "decode");
     }
 
     fn spectrum_peak(ui: &super::Ui) -> Option<f64> {
@@ -7269,7 +7718,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(200));
         let cmds = got.lock().unwrap().clone();
         assert!(cmds.contains(":SOUR1:APPL:SIN 1000,1,0") && cmds.contains(":OUTP1 ON") && cmds.contains(":SOUR1:APPL:SIN 100000"), "{}", cmds);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
     }
 
@@ -7294,7 +7743,7 @@ mod tests {
         assert_eq!((ui.m.afg_on, ui.m.afg_freq), (false, 1234.0), "generator restored");
         // one channel on the generator: gain only
         assert!(ui.bode.points.iter().all(|p| p.2.is_nan() && p.1.is_finite()), "{:?}", ui.bode.points);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
     }
 
@@ -7331,7 +7780,7 @@ mod tests {
         key(&mut ui, "9"); // a ninth digit is ignored
         key(&mut ui, "Del");
         key(&mut ui, "0");
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
         let _ = std::fs::create_dir_all(&dir);
@@ -7365,7 +7814,7 @@ mod tests {
                     assert!(w.contains(&(true, 0x0c23, true)) && w.contains(&(false, 0xbeef, true)), "{:x?}", w);
                 }
             }
-            let mut cv = Canvas::new(W, H);
+            let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
             let _ = std::fs::create_dir_all(&dir);
@@ -7387,7 +7836,7 @@ mod tests {
         assert_eq!(ui.panel_tx.len(), 2);
         // tap on "Power off"
         ui.key(key::POWER);
-        let b = Ui::PWR_OFF;
+        let b = ui.pwr_layout().1[0];
         ui.tap(b.x + b.w / 2, b.y + b.h / 2);
         assert_eq!(ui.power_action, Some(PowerAction::Off));
         assert!(!ui.power_dlg);
@@ -7400,7 +7849,7 @@ mod tests {
         ui.key(key::POWER);
         ui.key(key::RUNSTOP);
         assert!(!ui.power_dlg && ui.power_action.is_none());
-        let b = Ui::PWR_RESTART;
+        let b = ui.pwr_layout().1[1];
         ui.key(key::POWER);
         ui.tap(b.x + 5, b.y + 5);
         assert_eq!(ui.power_action, Some(PowerAction::Restart));
@@ -7444,7 +7893,7 @@ mod tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.ch[1].on = true;
         ui.m.color_grade = true;
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         for zoom in [false, true] {
             ui.set_zoom(zoom);
             for _ in 0..5 {
@@ -7453,7 +7902,7 @@ mod tests {
             ui.render(&mut cv);
             let pal = heat_palette();
             let a = ui.area;
-            let hits = (a.y..a.y + a.h).flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y))).filter(|&(x, y)| pal.contains(&cv.px[(y * W + x) as usize])).count();
+            let hits = (a.y..a.y + a.h).flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y))).filter(|&(x, y)| pal.contains(&cv.px[(y * PANEL_W + x) as usize])).count();
             assert!(hits > 1000, "zoom {}: {} graded pixels", zoom, hits);
         }
     }
@@ -7574,7 +8023,7 @@ mod tests {
         ui.relayout();
         assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
         for (_, _, r) in ui.top_buttons() {
-            assert!(Ui::top_hit(r).h >= 40 && r.x + r.w <= ui.net_box().x, "{:?}", r);
+            assert!(ui.top_hit(r).h >= 40 && r.x + r.w <= ui.net_box().x, "{:?}", r);
         }
         // sticks: their boxes beside the network box, the buttons move over and stay on the bar
         (ui.usb, ui.wlan_stick) = (true, true);
@@ -7596,9 +8045,10 @@ mod tests {
             }
             let (chs, tr, trg) = ui.cards();
             let (sb, mb) = Ui::trig_parts(trg);
-            assert!(chs[0].x >= Ui::MENU_BTN.x + Ui::MENU_BTN.w && trg.x + trg.w <= W - 6 && trg.w >= 222 && tr.w >= 130, "{} on", n);
-            for r in chs.iter().chain([tr, trg, Ui::MENU_BTN].iter()) {
-                assert!(r.h >= 40 && r.y + r.h <= H && r.w >= 54, "{:?}", r);
+            let menu = ui.menu_btn();
+            assert!(chs[0].x >= menu.right() && trg.right() <= ui.scr.w - 6 && trg.w >= 222 && tr.w >= 130, "{} on", n);
+            for r in chs.iter().chain([tr, trg, menu].iter()) {
+                assert!(r.h >= 40 && r.bottom() <= ui.scr.h && r.w >= 54, "{:?}", r);
             }
             // two buttons in a card: the finger gets half of its height each
             assert!(trg.h / 2 >= 32 && sb.w >= 60 && mb.y > sb.y + sb.h, "{:?} {:?}", sb, mb);
@@ -7606,7 +8056,8 @@ mod tests {
         for m in [MenuId::Main, MenuId::Trigger, MenuId::Math, MenuId::MeasAdd, MenuId::Utility, MenuId::Channel(0), MenuId::Display, MenuId::Acquire] {
             ui.open_menu(m);
             let d = ui.dlg_layout().unwrap();
-            assert!(d.close.h >= 40 && d.r.y >= TOP.h && d.r.y + d.r.h <= BOTTOM.y, "{:?}", m);
+            let fr = ui.frame();
+            assert!(d.close.h >= 40 && d.r.y >= fr.top.bottom() && d.r.bottom() <= fr.bottom.y, "{:?}", m);
             assert!(d.rows.iter().all(|r| r.ctrl.h >= 40), "{:?}", m);
         }
     }
@@ -7703,7 +8154,7 @@ mod tests {
         ui.step(0.033);
         assert!(lit(&ui) > 500 && ui.mask_pass > 0 && !ui.mstat.is_empty());
         ui.key(key::CLEAR);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         for _ in 0..5 {
             ui.step(0.033);
             ui.render(&mut cv);
@@ -7715,7 +8166,7 @@ mod tests {
         assert_eq!(ui.m.run, RunState::Stop);
         // no trace pixel in the plot (below the mask pill)
         let a = ui.area;
-        let yellow = (a.y + 60..a.y + a.h - 20).flat_map(|y| (a.x + 60..a.x + a.w - 60).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * W + x) as usize] == CH_COLORS[0]).count();
+        let yellow = (a.y + 60..a.y + a.h - 20).flat_map(|y| (a.x + 60..a.x + a.w - 60).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] == CH_COLORS[0]).count();
         assert_eq!(yellow, 0);
         // Display > Clear does the same; SINGLE acquires and draws again
         ui.key(key::SINGLE);
@@ -7761,7 +8212,7 @@ mod tests {
         assert_eq!(ui.toast.as_ref().unwrap().0, "Auto set-up");
         // the start menu entry does the same and closes the menu
         ui.m.quick = Quick::RunStop;
-        let (x, y) = mid(Ui::MENU_BTN);
+        let (x, y) = mid(ui.menu_btn());
         ui.tap(x, y);
         let run = ui.m.run;
         let (x, y) = mid(row_of(&ui, Item::QuickRun).ctrl);
@@ -7790,7 +8241,7 @@ mod tests {
         assert!(ui.items(MenuId::Acquire).contains(&Item::Open(MenuId::Horizontal)));
         ui.close_menu();
         // the Menu button opens the start menu with all entries
-        let (x, y) = mid(Ui::MENU_BTN);
+        let (x, y) = mid(ui.menu_btn());
         ui.tap(x, y);
         assert_eq!(ui.menu, MenuId::Main);
         let all = ui.items(MenuId::Main);
@@ -7836,7 +8287,7 @@ mod tests {
         let (tr, _) = (ui.cards().1, ());
         touch(&mut ui, tr.x + 10, tr.y + 10);
         assert!(!ui.menu_open && ui.m.touch_lock);
-        let (x, y) = mid(Ui::MENU_BTN);
+        let (x, y) = mid(ui.menu_btn());
         touch(&mut ui, x, y);
         assert!(!ui.m.touch_lock && !ui.menu_open);
         touch(&mut ui, x, y);

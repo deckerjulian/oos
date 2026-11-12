@@ -154,7 +154,10 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
   the LA in a window of your choice, all on one time base
 - Full screen: one tap at the top right of the plot hides the top bar and the cards, one more brings them back
 - Text size Normal, Large or Larger for the bars, cards, measurement rows, menus and dialogs
-- HDMI output as a mirror or as a separate waveform workspace
+- HDMI output as a mirror, as a separate waveform workspace, or laid out again at the monitor's size
+- the picture drawn on the GPU (Mali-T860, Panfrost; Display > Graphics, CPU as before is the other choice): a third
+  less load on the frame loop, a monitor scaled without CPU work ([gpu/README.md](gpu/README.md)); the web picture as
+  JPEG from the video encoder (VPU)
 
 **Measurement and maths**
 - 35 automatic measurements plus delay and phase between channels, 14 at once, with statistics
@@ -641,7 +644,9 @@ gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
 **Web remote.** Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the
 window, so it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer;
 records above 2 million points have to be saved on the scope or read over SCPI. The live picture is a PNG of about 90 KB; "Live picture
-format" can switch it to the uncompressed 1.8 MB BMP (the choice is kept in the browser). The PNG is made off the
+format" can switch it to the uncompressed 1.8 MB BMP, or to a JPEG of about 75 KB that the scope's video encoder
+makes at under a third of the processor time of a PNG (text a little less sharp; screenshots stay PNG). The choice is kept in the
+browser. The PNG is made off the
 scope's frame loop, only of a changed screen, up to 20 a second (about 13 reach a browser over Ethernet); the page gets
 each new picture as soon as it is made, and while the screen stands still it gets "not modified" instead. The scope's
 own screen does not slow down for it. Pause stops the pictures, and a tab in the background stops them too. The Update link leads to the update page.
@@ -776,6 +781,7 @@ Third-party parts keep their own licences:
 | XDMA driver | Dual BSD/GPL |
 | BusyBox | GPL-2.0 |
 | e2fsck (e2fsprogs) | GPL-2.0; the notice is in the image at `/etc/licenses/e2fsck` |
+| Mesa, libdrm, glibc, libstdc++, zlib (the GPU helper, [gpu/README.md](gpu/README.md)) | MIT, MIT, LGPL-2.1, GPL-3.0 with the runtime exception, zlib; the texts are in the image under `/etc/licenses` |
 | Roboto font | Apache-2.0, see [ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt) |
 | wpa_supplicant | BSD-3-Clause; the text is in the image at `/etc/licenses/wpa_supplicant` |
 | RTL8188EU firmware | Realtek's redistribution licence, see [LICENCE.rtlwifi_firmware.txt](rootfs/initramfs/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt) |

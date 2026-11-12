@@ -882,7 +882,14 @@ pub struct Stats {
 }
 
 pub fn stats(v: &[f32], dt: f64) -> Stats {
-    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    // the finite samples: the record itself when it has no gap
+    let own: Vec<f32>;
+    let f: &[f32] = if v.iter().all(|x| x.is_finite()) {
+        v
+    } else {
+        own = v.iter().copied().filter(|x| x.is_finite()).collect();
+        &own
+    };
     if f.len() < 4 {
         return Stats::default();
     }
@@ -894,7 +901,7 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
     // top/base: histogram modes of the upper and lower 40 %
     let span = (vmax - vmin).max(1e-9);
     let mut hist = [0u32; 256];
-    for &x in &f {
+    for &x in f {
         hist[(((x - vmin) / span) * 255.0) as usize] += 1;
     }
     let mode = |a: usize, b: usize| -> usize { (a..b).max_by_key(|&i| hist[i]).unwrap_or(a) };

@@ -1,9 +1,9 @@
-# Ethernet, date and time
+# Ethernet, date and time, remote services
 
-How OOS brings up Ethernet, what it does about a link that comes up at 10 Mbit/s, and how it sets the clock from the
-network. WLAN through a USB stick is in [wlan.md](wlan.md).
+How OOS brings up Ethernet, what it does about a link that comes up at 10 Mbit/s, how it sets the clock from the
+network, and which services it offers on it. WLAN through a USB stick is in [wlan.md](wlan.md).
 
-The settings of this page live in `/oos/system.conf` (section 4), not in the setups: a saved or recalled setup does not
+The settings of this page live in `/oos/system.conf` (section 5), not in the setups: a saved or recalled setup does not
 change them.
 
 ## 1. Ethernet
@@ -123,13 +123,29 @@ on a FAT stick: those are local time, so a computer shows them right. exFAT and 
 **File names.** Once the clock was set in this boot (by NTP or by hand), new files carry the local date and time:
 `shot-20261111-143005.png`, `wave-20261111-143005.csv`, `la-...`, `log-...`, `events-...`, with `-2`, `-3` for a second
 file in the same second. Before that they are numbered as before (`shot-001.png`). A file `/tmp/oos-clock.set` tells a
-restarted oos-ui that the clock is right.
+restarted oos-ui that the clock is right. The web page names its downloads the same way (`oos-20261111-143005.png`):
+it asks the scope for its local time (`/stamp`), and takes the computer's own time while the scope's clock is not set.
 
 **Not verified on hardware:** setting the clock, the sync over Ethernet and WLAN, DNS through the name server of DHCP,
 the zone for FAT time stamps. Verified on the host: the SNTP packets, an exchange with a local server, the time zone
 rules, the schedule, the settings file, the page.
 
-## 4. `/oos/system.conf`
+## 4. Remote services
+
+System > Network > Remote services has a switch for each service, next to where it is reached:
+
+| service | port | what goes with it |
+|---|---|---|
+| Web remote | 8080 | live picture, keys and touch, downloads, LXI identification, MCP, **the update page** |
+| SCPI | 5555 (TCP) | the SCPI commands |
+| VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
+| telnet | 23 | a shell **without password** (development image) |
+
+All are on by default. A service switched off closes its port at once, with the connections on it. Switching off the
+web remote also takes away the update page: an update then comes from a USB stick. telnet is started by `rcS` at
+power-on, which reads `remote.telnet` from `/oos/system.conf`; oos-ui ends or starts it when the switch changes.
+
+## 5. `/oos/system.conf`
 
 `key = value` lines, written by oos-ui when a setting changes (one step, then a sync: the scope is switched off at the
 mains). Without `/oos` the file is `/tmp/oos-system.conf` and is lost at power-off. A value that does not parse keeps
@@ -141,4 +157,9 @@ ntp = off
 ntp.server = pool.ntp.org
 tz = UTC0
 eth.retry_10m = on
+remote.web = on
+remote.scpi = on
+remote.vxi11 = on
+remote.telnet = on
+graphics = gpu                # Display > Graphics: gpu or cpu (gpu/README.md)
 ```

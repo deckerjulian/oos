@@ -364,8 +364,13 @@ impl Local {
     }
 }
 
-/// Seconds since 1970 now (system clock).
+/// Seconds since 1970 now (system clock). `OOS_FIXED_TIME=<seconds>` stops it there, for host test runs whose pictures
+/// must not change with the time of day (tools/layout-check.sh).
 pub fn unix_now() -> f64 {
+    static FIXED: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    if let Some(t) = FIXED.get_or_init(|| std::env::var("OOS_FIXED_TIME").ok().and_then(|v| v.parse().ok())) {
+        return *t;
+    }
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
 }
 

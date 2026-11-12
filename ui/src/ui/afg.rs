@@ -340,7 +340,7 @@ mod arb_tests {
         ui.afg_set(None, None, None, None);
         assert_eq!(ui.m.afg_freq, 10e6);
 
-        let cv = Canvas::new(W, H);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let id = ui.m.afg_arb;
         scpi.exec_line(&mut ui, &cv, ":SOUR:ARB:DATA 0,1,0,-1");
@@ -357,7 +357,7 @@ mod arb_tests {
         assert_eq!((ui.m.grid_bright, ui.m.grid_frame), (70, false));
         let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
         assert_eq!((back.grid_bright, back.grid_frame), (70, false));
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.step(0.05);
         ui.render(&mut cv);
     }

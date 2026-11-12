@@ -193,7 +193,7 @@ impl Ui {
         }
         // the plot keeps its height; with many LA lanes there may be no room left
         let room = self.plot_base() - self.la_strip_h() - 160;
-        let h = ((BOTTOM.y - PLOT_Y) * 2 / 5).min(room);
+        let h = (self.frame().body.h * 2 / 5).min(room);
         if h < 100 { 0 } else { h.min(self.pane_want() + 4) }
     }
 

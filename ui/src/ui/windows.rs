@@ -102,7 +102,7 @@ mod tests {
     }
 
     fn render(u: &mut Ui) -> Canvas {
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.render(&mut cv);
         cv
     }

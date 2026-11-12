@@ -238,11 +238,27 @@ pub struct Server {
 
 impl Server {
     pub fn open() -> Server {
-        let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
-        let pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));
-        let s = Server { pm_tcp: tcp(111), pm_udp, core_tcp: tcp(CORE_PORT), conns: Vec::new(), links: Vec::new() };
-        eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if s.pm_tcp.is_some() { "111" } else { "unavailable" }, if s.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
+        let mut s = Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new() };
+        s.set_open(true);
         s
+    }
+
+    /// System > Network > Remote services: portmapper and core port open, or closed with their connections.
+    pub fn set_open(&mut self, on: bool) {
+        if !on {
+            if self.pm_tcp.take().is_some() | self.core_tcp.take().is_some() | self.pm_udp.take().is_some() {
+                eprintln!("oos-ui: VXI-11 off");
+            }
+            self.conns.clear();
+            return;
+        }
+        if self.pm_tcp.is_some() || self.core_tcp.is_some() {
+            return;
+        }
+        let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
+        self.pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));
+        (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
+        eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if self.pm_tcp.is_some() { "111" } else { "unavailable" }, if self.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
     }
 
     pub fn poll(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) {
