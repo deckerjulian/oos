@@ -604,7 +604,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 // the picture comes back only for someone who wants it: the web page, a screenshot, and twice a
                 // second for SCPI and the rest
                 let shot = ui.shot_request.is_some();
-                let read = shot || web.picture_wanted() || frame_n % 15 == 0;
+                // and every frame for a monitor that gets the panel's picture from the CPU (its buffers could not be
+                // given to the GPU), else it would show a picture up to half a second old
+                let hdmi_cpu = hdmi.is_some() && hdmi_gpu == Some(false);
+                let read = shot || web.picture_wanted() || frame_n % 15 == 0 || hdmi_cpu;
                 // 1. this frame's layers, while the GPU still puts the last one together
                 let tl = Instant::now();
                 gl.draw(&mut ui, cv.w, cv.h, false);

@@ -195,7 +195,11 @@ pub struct Display {
     front: usize,
     /// the buffer shown before `front`: still on the screen until the flip to `front` is done
     prev: usize,
-    flip_pending: bool,
+    /// page flips asked for with an event whose event has not been read yet (normally 0 or 1; more only after a late
+    /// event, which must not count for the flip after it)
+    flips_out: u32,
+    /// how often a flip event came later than `wait_flip` waited (said on stderr at 1, 2, 4, ...)
+    flips_late: u32,
     use_flip: bool,
     /// scaled output (HDMI): the map from the canvas, built for the first canvas size
     fit: Option<crate::gfx::Fit>,
@@ -204,6 +208,22 @@ pub struct Display {
 /// DRM connector types (drm_mode.h).
 const CONNECTOR_HDMIA: u32 = 11;
 const CONNECTOR_DSI: u32 = 16;
+
+/// The number of flip-complete events (`DRM_EVENT_FLIP_COMPLETE`) in what a read of the DRM file gave: events are
+/// a type and a length (u32 each) and their data.
+fn flip_events(buf: &[u8]) -> u32 {
+    let (mut at, mut n) = (0, 0);
+    while at + 8 <= buf.len() {
+        let typ = u32::from_ne_bytes(buf[at..at + 4].try_into().unwrap());
+        let len = u32::from_ne_bytes(buf[at + 4..at + 8].try_into().unwrap()) as usize;
+        if len < 8 {
+            break;
+        }
+        n += (typ == 2) as u32;
+        at += len;
+    }
+    n
+}
 
 impl Display {
     pub fn open(path: &str) -> io::Result<Display> {
@@ -316,7 +336,7 @@ impl Display {
         let saved = if ioc(fd, GETCRTC, &mut saved).is_ok() { Some(saved) } else { None };
 
         let (w, h) = (mode.hdisplay as u32, mode.vdisplay as u32);
-        let mut d = Display { fd, width: w as i32, height: h as i32, crtc_id, conn_id, mode, saved, bufs: Vec::new(), front: 0, prev: 0, flip_pending: false, use_flip: true, fit: None };
+        let mut d = Display { fd, width: w as i32, height: h as i32, crtc_id, conn_id, mode, saved, bufs: Vec::new(), front: 0, prev: 0, flips_out: 0, flips_late: 0, use_flip: true, fit: None };
         // on any error the buffers made so far are freed again (the HDMI search retries)
         match d.alloc().and_then(|_| d.set_crtc(0)) {
             Ok(()) => Ok(d),
@@ -362,17 +382,25 @@ impl Display {
         ioc(self.fd, SETCRTC, &mut c)
     }
 
+    /// Waits up to 100 ms for the events of the flips asked for. A late one stays counted (`flips_out`) and is read
+    /// the next time, so it never passes for the flip after it.
     fn wait_flip(&mut self) {
-        if !self.flip_pending {
-            return;
-        }
-        let mut p = libc::pollfd { fd: self.fd, events: libc::POLLIN, revents: 0 };
-        let r = unsafe { libc::poll(&mut p, 1, 100) };
-        if r > 0 {
+        while self.flips_out > 0 {
+            let mut p = libc::pollfd { fd: self.fd, events: libc::POLLIN, revents: 0 };
+            if unsafe { libc::poll(&mut p, 1, 100) } <= 0 {
+                self.flips_late += 1;
+                if self.flips_late.is_power_of_two() {
+                    eprintln!("oos-ui: page flip event late ({} times)", self.flips_late);
+                }
+                return;
+            }
             let mut buf = [0u8; 256];
-            unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            let n = unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            if n <= 0 {
+                return;
+            }
+            self.flips_out = self.flips_out.saturating_sub(flip_events(&buf[..n as usize]));
         }
-        self.flip_pending = false;
     }
 
     /// Copies the canvas into the back buffer and shows it at the next vblank.
@@ -423,10 +451,12 @@ impl Display {
             let mut pf = PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: PAGE_FLIP_EVENT, reserved: 0, user_data: 0 };
             match ioc(self.fd, PAGE_FLIP, &mut pf) {
                 Ok(()) => {
-                    self.flip_pending = true;
+                    self.flips_out += 1;
                     (self.prev, self.front) = (self.front, back);
                     return;
                 }
+                // the last flip still in the kernel (its event late): this frame by SETCRTC, flips go on after it
+                Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {}
                 Err(e) => {
                     eprintln!("oos-ui: page flip failed ({}), using SETCRTC", e);
                     self.use_flip = false;
