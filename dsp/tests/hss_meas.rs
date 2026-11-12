@@ -31,6 +31,86 @@ fn clock_of(v: &[f32], dt: f64, bit_rate: f64) -> Clock {
 }
 
 #[test]
+fn hss_clock_fills_the_single_channel_list() {
+    let v = load("clock_clean.f32");
+    let dt = 1.0 / 3.2e9;
+    let rise = rise_10_90(2e-9);
+    let amp = 1.0;
+    let rms = tanh_clock_rms();
+    let a = analyze(&v, dt);
+    let check = |m: Meas, want: f64, tol: f64, floor: f64| {
+        let got = a.get(m);
+        assert!(got.is_finite() && (got - want).abs() <= tol * want.abs().max(floor), "{m:?} {got} want {want}");
+    };
+    check(Meas::Vmax, 0.5, 0.02, 1e-3);
+    check(Meas::Vmin, -0.5, 0.02, 1e-3);
+    check(Meas::Vpp, amp, 0.02, 1e-3);
+    check(Meas::Vtop, 0.5, 0.02, 1e-3);
+    check(Meas::Vbase, -0.5, 0.02, 1e-3);
+    check(Meas::Vamp, amp, 0.02, 1e-3);
+    check(Meas::Vupper, 0.4, 0.02, 1e-3);
+    check(Meas::Vmid, 0.0, 0.02, 0.02);
+    check(Meas::Vlower, -0.4, 0.02, 1e-3);
+    check(Meas::Vavg, 0.0, 0.02, 0.02);
+    check(Meas::VavgCyc, 0.0, 0.02, 0.02);
+    check(Meas::Vrms, rms, 0.02, 1e-3);
+    check(Meas::VrmsCyc, rms, 0.02, 1e-3);
+    check(Meas::VrmsAc, rms, 0.02, 1e-3);
+    check(Meas::StdDev, rms, 0.02, 1e-3);
+    check(Meas::Overshoot, 0.0, 1.0, 2.0);
+    check(Meas::Preshoot, 0.0, 1.0, 2.0);
+    check(Meas::Area, 0.0, 0.02, 0.02 * 0.5 * v.len() as f64 * dt);
+    check(Meas::AreaCyc, 0.0, 0.02, 0.02 * 0.5 * 20e-9);
+    check(Meas::Period, 20e-9, 0.01, 1e-12);
+    check(Meas::Freq, 50e6, 0.01, 1e3);
+    check(Meas::Rise, rise, 0.05, 1e-12);
+    check(Meas::Fall, rise, 0.05, 1e-12);
+    check(Meas::PWidth, 10e-9, 0.05, 1e-12);
+    check(Meas::NWidth, 10e-9, 0.05, 1e-12);
+    check(Meas::PDuty, 50.0, 0.05, 0.5);
+    check(Meas::NDuty, 50.0, 0.05, 0.5);
+    check(Meas::PSlew, 0.8 * amp / rise, 0.05, 1e6);
+    check(Meas::NSlew, -0.8 * amp / rise, 0.05, 1e6);
+    check(Meas::HighTime, 10e-9 - rise, 0.08, 1e-12);
+    check(Meas::LowTime, 10e-9 - rise, 0.08, 1e-12);
+    // Both averages the above-90 % widths with the below-10 % widths. On this clock they are the same width.
+    check(Meas::Outside, 10e-9 - rise, 0.08, 1e-12);
+    check(Meas::NPeriods, 40e-9, 0.02, 1e-12);
+    check(Meas::CycMax, 0.5, 0.02, 1e-3);
+    check(Meas::CycMin, -0.5, 0.02, 1e-3);
+    check(Meas::CycPp, amp, 0.02, 1e-3);
+    check(Meas::CycAmp, amp, 0.02, 1e-3);
+    check(Meas::CycTop, 0.5, 0.02, 1e-3);
+    check(Meas::CycBase, -0.5, 0.02, 1e-3);
+    let pulses = a.rises.len().min(a.falls.len());
+    for (m, n) in [(Meas::PPulses, pulses), (Meas::NPulses, pulses), (Meas::PEdges, a.rises.len()), (Meas::NEdges, a.falls.len())] {
+        let got = a.get(m);
+        assert!((got - n as f64).abs() <= 2.0, "{m:?} {got} vs {n}");
+    }
+    let burst = a.get(Meas::Burst);
+    assert!(burst.is_finite() && burst > 1e-6, "burst {burst}");
+    for m in [Meas::TVmax, Meas::TVmin] {
+        let tv = a.get(m);
+        assert!(tv.is_finite() && tv >= 0.0 && tv < v.len() as f64 * dt, "{m:?} {tv}");
+    }
+}
+
+/// RMS of one period of the ±500 mV tanh clock: each edge is `0.5 tanh(t/τ)` and the two edges of a
+/// half-period multiply. The low half is the mirror, so it has the same RMS.
+fn tanh_clock_rms() -> f64 {
+    let tau = 2e-9 / (2.0 * 0.6f64.atanh());
+    let half = 10e-9;
+    let n = 20_000;
+    let mut s = 0.0;
+    for i in 0..n {
+        let t = (i as f64 + 0.5) / n as f64 * half;
+        let v = 0.5 * (t / tau).tanh() * ((half - t) / tau).tanh();
+        s += v * v;
+    }
+    (s / n as f64).sqrt()
+}
+
+#[test]
 fn hss_clock_levels_frequency_and_rise() {
     // 100 Mb/s clock, ±500 mV, 2 ns 20–80 % rise, 32 samples per UI. No jitter, no filter.
     let dt = 1.0 / 3.2e9;
@@ -193,6 +273,10 @@ fn hss_pcie4_nominal_opens_an_eye() {
     assert!(a.get(Meas::Vmax) > 0.45 && a.get(Meas::Vmin) < -0.45, "levels {} {}", a.get(Meas::Vmax), a.get(Meas::Vmin));
     assert!(a.get(Meas::Rise) > 20e-12 && a.get(Meas::Rise) < 45e-12, "rise {}", a.get(Meas::Rise));
     assert!(a.get(Meas::Fall) > 20e-12 && a.get(Meas::Fall) < 45e-12, "fall {}", a.get(Meas::Fall));
+    for m in oos_dsp::measure::ALL {
+        let g = a.get(m);
+        assert!(g.is_finite(), "pcie4 {m:?} {g}");
+    }
     assert!(m.amplitude > 0.55, "amp {}", m.amplitude);
     assert!(m.height > 0.15, "height {}", m.height);
     assert!(m.width > 0.6 * c.period, "width {}", m.width);

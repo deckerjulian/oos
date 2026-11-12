@@ -1293,6 +1293,17 @@ fn switching_slew_rds_ripple_turn_times_capacitance_and_rail() {
     let tone = power::tone_ripple(&v, dt, 1e3);
     assert!(close(tone.pp, 2.0, 1e-3) && close(tone.rms, 1.0 / 2f64.sqrt(), 1e-3), "{:?}", tone);
     assert!(power::switching_ripple(&v, dt, 2e6).pp.is_nan());
+    let dt_r = 1e-7;
+    let ripple: Vec<f32> = (0..20_000)
+        .map(|k| {
+            let t = k as f64 * dt_r;
+            ((2.0 * std::f64::consts::PI * 1e5 * t).sin() + 0.25 * (2.0 * std::f64::consts::PI * 1e6 * t).sin()) as f32
+        })
+        .collect();
+    let line = power::switching_ripple(&ripple, dt_r, 1e5);
+    assert!(close(line.pp, 2.0, 0.02) && close(line.rms, 1.0 / 2f64.sqrt(), 0.02), "{line:?}");
+    let clamped = power::switching_ripple(&ripple, dt_r, 5e6);
+    assert!(close(clamped.pp, 0.5, 0.05), "1 MHz clamp {clamped:?}");
     assert!(close(power::line_hz(&v, dt), 1e3, 5.0));
 
     let vin = sample(|t| pwl(&[(0.0, 0.0), (100e-6, 0.0), (110e-6, 10.0), (1e-3, 10.0)], t), 0.0, 1e-6, 1000);
@@ -1351,9 +1362,29 @@ fn eye_ber_subrate_common_mode_and_ssc() {
     let period = 1e-9;
     let trend: Vec<f32> = (0..256).map(|k| (1e-12 * (PI * k as f64).cos()) as f32).collect();
     assert!(close(eye::subrate_pp(&trend, period, 2), 2e-12, 1e-16), "{}", eye::subrate_pp(&trend, period, 2));
+    let tone = |div: f64| -> Vec<f32> { (0..512).map(|k| (1e-12 * (PI * k as f64 / (div / 2.0)).cos()) as f32).collect() };
+    assert!(close(eye::subrate_pp(&tone(4.0), period, 4), 2e-12, 1e-14), "F/4");
+    assert!(close(eye::subrate_pp(&tone(8.0), period, 8), 2e-12, 1e-14), "F/8");
     assert!(close(eye::srj_pp(&trend, period), 2e-12, 1e-15), "{}", eye::srj_pp(&trend, period));
+    let wide = tone(2.0);
+    let mixed: Vec<f32> = (0..512).map(|k| wide[k] + tone(4.0)[k] + tone(8.0)[k]).collect();
+    assert!(close(eye::srj_pp(&mixed, period), 6e-12, 0.05), "{}", eye::srj_pp(&mixed, period));
     assert_eq!(eye::phase_noise(&vec![0.0; 128], period, 1.0, 1.0 / period), 0.0);
+    let pn: Vec<f32> = (0..4096).map(|k| (5e-12 * (2.0 * PI * k as f64 / 64.0).sin()) as f32).collect();
+    let floor = eye::phase_noise(&pn, period, 1.0 / (period * 256.0), 1.0 / (period * 16.0));
+    // the sine's own bin is left out, so this is the window skirt, well under the 5 ps tone
+    assert!(floor.is_finite() && floor < 2.5e-12, "phase noise off the line {floor}");
     assert!(eye::npj(&[0.0; 10], &Clock::default(), &trend, &eye::EdgeMeans::default()).is_nan());
+    let n_edge = 2048usize;
+    let sine: Vec<f64> = (0..n_edge).map(|k| 10e-12 * (2.0 * PI * k as f64 / 32.0).sin()).collect();
+    let trend_j: Vec<f32> = sine.iter().map(|x| *x as f32).collect();
+    let edges: Vec<f64> = (0..n_edge).map(|k| k as f64 * period).collect();
+    let clk = Clock { period, phase: 0.0, edges, ticks: vec![], first_rising: true };
+    let left = eye::npj(&sine, &clk, &trend_j, &eye::EdgeMeans::default());
+    assert!(left.is_finite() && left < 2e-12, "npj after the sine {left}");
+    let ps = eye::psij(&trend_j, &clk, &sine, None, 1.0 / (period * 32.0), 0.4, 0.6 * period, None);
+    assert!(close(ps.before.tie_pp, 20e-12, 0.02), "psij before {}", ps.before.tie_pp);
+    assert!(ps.after.tie_pp < 2e-12 && ps.after.pj < ps.before.pj, "psij after {} pj {}", ps.after.tie_pp, ps.after.pj);
 
     assert!(close(eye::dc_common(&[1.0, 1.0], &[3.0, 3.0]), 2.0, 1e-9));
     assert!(close(eye::ac_common_pp(&[0.0, 1.0, 0.0, 1.0], None, 1e-6, false), 1.0, 1e-9));
