@@ -156,3 +156,50 @@ unless stated. The log lines below are in `/tmp/oos-ui.log`.
 12. Memory size (open question 5): only the stock 16,777,216 bursts are used. A larger ring needs the deep-record
     measurement first.
 13. Time per stamp play: the log timestamps of the read-back of N = 10,000; expect about 0.5 ms per segment.
+
+## Hardware averaging (spec 01): verification on hardware
+
+What changed and why: `docs/fork/specs/01-hw-averaging.md` section 7. Off by default: Acquire > Mode Average, Averages
+16, HW average On (or `:ACQ:TYPE AVER;:ACQ:AVER 16;:ACQ:AVER:HARD ON`). The top bar says "Average 16 HW" while the FPGA
+averages. Log lines in `/tmp/oos-ui.log`: `average Running batch k of n triggers, t in, show .., 0x10b0 = .., words ..`
+for the first 32 batches after every clear. Calibrator square on CH1 unless stated.
+
+1. Normal path unchanged: `tools/plan-matrix.sh` with the old and the new `oos-fpgad` on the unit, `diff` empty.
+   `oos-fpgad plan --average 16 --tdiv 1e-6 --all` shows the clear pulse, 0x1004 bit3, 0x10b0 = 15, 0x404c = 10, the
+   doubled 0x10e0 and 0x1110.
+2. Noise (spec 5.1): 200 us/div, Auto depth, RMS on the flat top (Measure Vrms on a cursor-gated part, or `:WAV:DATA?`
+   twice and the standard deviation on the host). Normal, then software Average 16, then HW Average 16: both averages
+   about 4 x below Normal. No drop with HW on means the frames are raw (option B of spec 3.2): leave HW average off and
+   note it in spec 01.
+3. Running or hold (open question 1, decides `avg::Kind`): pulse or square source at 20 Hz, Normal trigger, 1 us/div,
+   HW Average 16, default build (Running). Wait 5 s, then change the source amplitude by half.
+   - The trace follows within about 16 triggers (moving average: all the way after 16; exponential: 63 % after 16, the
+     rest over the next 50): the FPGA runs. Note which of the two from the settling.
+   - The trace stays at the old amplitude until CLEAR, and the log shows `0x10b0` or the words frozen: the FPGA holds.
+     Then `touch /tmp/oos-ui.off`, stop oos-ui, run `OOS_HWAVG=hold /bin/oos-ui $(cat /tmp/oos-ui.args)` and repeat:
+     the picture now changes every 16 triggers and follows the amplitude.
+   - Make the result the default in `ui/src/board/dho/hw.rs` `avg_kind` and record it in spec 01 section 6.
+4. Start of an average: CLEAR, then the first log lines. Words that start near 0x8000 and grow over the first batches
+   mean the accumulator starts at 0 (exponential from zero): then the first frames after a clear need hiding or
+   scaling (count from the log, `t in`).
+5. Progress register (open question 2): the `0x10b0 =` values over the first 32 batches. Always 15: configured value
+   only. Rising to 15: progress; then the status line can show it.
+6. Fraction bits (open question 4): DC input from the generator or a battery, 10 mV/div, HW Average 256. The averaged
+   words in the log, or `:WAV:MODE RAW;:WAV:DATA?`, take values between the ADC steps (about 14.6 codes apart in
+   Normal): the output carries bits below the ADC LSB.
+7. Restart on change (spec 5.5): while running, change V/div, time base, channel set and count. The old trace must not
+   blend into the new one (the configuration clears). Then RUN/STOP twice and SINGLE: each starts a new average (log
+   restarts at batch 1).
+8. Trigger position (spec 5.6, 0x404c = 10): 5 ns/div and 100 ns/div, fast edge at the trigger point. The edge stays at
+   the trigger point with HW average as in Normal. An offset of a few samples means 0x404c is wrong for this image.
+9. 2 and 4 channels (spec 5.7): CH1+CH2, then all four, HW Average 16 at 1 us/div. All channels average, none swapped
+   or shifted against Normal.
+10. Window word 0x1110 (spec 5.9; oos-ui always reads from point 0, so 0x1110 is 0 there): stop oos-ui as in step 3,
+    then `oos-fpgad run --average 2 --tdiv 1e-6 --all --out /tmp/a.bin --execute` and `oos-fpgad run --average 2 --tdiv
+    1e-6 --n 4000 --at -1997 --out /tmp/w.bin --execute`. The window must equal the full record from point pre - 1997
+    (within the noise of two different triggers on the calibrator). Repeat with `--mask 3` and `--mask 15` (m = 2, 4;
+    the start is not a multiple of 5).
+11. Deep records (spec 5.8): HW Average 16 at 1 M, 10 M and 25 M depth (the top bar shows "HW"; at 21 M to 25 M raw
+    points it falls back to software). The trace is complete and averaged, no wrap or garbage at the end.
+12. Fall-backs: roll (200 ms/div), scan (Auto Roll off), hardware segments on: the top bar drops "HW" and the software
+    average runs. The LA is not testable on this unit.

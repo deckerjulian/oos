@@ -164,3 +164,62 @@ is not visible in the library.
 3. Width of the count field. The stock UI offers powers of two; the register limit is unknown.
 4. Fractional bits in the averaged 16-bit output.
 5. Interaction with peak mode and with the LA: the library does not prevent combinations; OOS should refuse them.
+
+## 7. Implementation status (2026-11-12)
+
+Fork commits f31707b (HAL), d48794a (oos-ui). Host-tested only. Nothing ran on the unit. Hardware steps:
+`docs/fork/unit-dho804.md`, section "Hardware averaging".
+
+| item | state | where | default |
+|---|---|---|---|
+| mode and count | done | `acq::Mode::Average { count }`: 0x1004 bit3 (bits 0, 1, 3, 12 cleared first), 0x10b0 = `avg_count_reg` (count - 1, at least 1), 0x404c = 10 | - |
+| memory layout | done | `hz::mem_size_avg`, `hz::max_frames_avg`, `hz::avg_params` (applied in `seq::State::configure`); `tools/hzmodel.py avg` writes `hal/testdata/avg-memsize.txt`, the Rust test compares | - |
+| window word | done | `scu::avg_offset`, written as 0x1110 right after 0x1108 when `Window::avg` | - |
+| clear | done | `acq::avg_clear` (0x10b4 1, 0); in `configure` after the stop poll, before the acquisition writes; `seq::State::avg_clear_steps` (stop poll, pulse) for CLEAR, RUN, SINGLE and a complete hold average | - |
+| read | done | `seq::batch_read`: a batch of `count` recorded frames reads frame `count - 1` alone (option A) | - |
+| semantics | both | `avg::Kind::Running` (show every batch) and `avg::Kind::Hold` (show when `count` triggers are in, then clear), `avg::Tracker`; oos-ui picks Running unless `OOS_HWAVG=hold` | Running |
+| progress | diagnostic | `avg::progress` reads 0x10b0; oos-ui logs it with the first words of the first 32 batches after each clear | - |
+| model | done | `seg::sim::Engine` averages `Engine::raw` per trigger in average mode (running or hold, cleared by the 0x10b4 pulse); `acquire_batch` is generic over the bus and runs against it | - |
+| fixture | done | `hal/testdata/avg-writes.txt`: acquisition block, arm and read of Average 16, CH1, 100 ns/div, 1000 points, a batch of 10 with 4 recorded. Checked line by line against 1.1 to 1.5; the test also checks that it differs from normal mode only in the clear pulse, 0x1110, 0x1004, 0x10b0, 0x404c, 0x10e0 and the frame played | - |
+| oos-fpgad | done | `plan`/`run` take `--average N` | - |
+| oos-ui | done, opt-in | Acquire > HW average (shown in Average mode with the hardware source); setup key `avg_hw`; SCPI `:ACQuire:TYPE`, `:ACQuire:AVERages`, `:ACQuire:AVERages:HARDware`; top bar "Average N HW" while the FPGA averages | off |
+
+Behaviour:
+
+- Hardware averaging is used only when all hold (`hw::hw_avg_count`): Average mode, HW average on, a count that is a
+  power of two from 2 to 1024 (`avg::hw_count`; the menu offers only these, SCPI refuses others), ordinary triggered
+  records (not roll or scan), LA off, hardware segments off, and a record whose average segment leaves at least one
+  frame in the live ring (`hz::max_frames_avg` > 0: raw points up to about 21 M, and from 25 M to about 36 M, where the
+  stock rounding gives a smaller segment than the power of two below). Otherwise the software blend runs as before. `seq::State::configure` refuses Average with the LA, with hardware segments, or with a record that does not
+  fit, so no caller can send the combination by mistake.
+- Hardware segments and hardware averaging are mutually exclusive. With both switched on, segments win and the
+  average is the software one over the segments read back.
+- A change of the count, time base, depth, channels, trigger or any other setting makes a new `Settings`; the thread
+  configures again, which clears the average. CLEAR, RUN after STOP and SINGLE bump `Model::hw_avg_clear`; the thread
+  clears before the next arm. Self-cal and the generator end the configuration, the next one clears.
+- Frames the FPGA averaged carry `Frame::hw_avg`; `ui.rs` skips the software blend for them. Demo, replay and
+  non-averaged hardware frames still blend.
+- The batch length in average mode is limited by the frame ring and 1000 / ratio only, not by the 4 MB read size: one
+  frame is read whatever the batch holds. Arming ahead (`OOS_PREARM`) is off in average mode, so a clear never has to
+  stop an acquisition armed ahead.
+- SINGLE clears and shows the first batch (Running) or the first complete average (Hold).
+
+Decisions against the proposal:
+
+- The 0x1004 mask stays 0x100b (bit 0 cleared too), as OOS already writes it in every mode. Stock clears only bits 1,
+  3, 12. Unchanged so normal mode stays byte-identical.
+- Above 25 M raw points `mem_size_avg` follows the stock rounding to the next multiple of 2048 bursts (an exact
+  multiple gets one block more), not the power of two. Between 21 M and 25 M raw points the power of two hits the
+  cap and leaves no frame in the live ring; these depths average in software.
+- The record-mode frame limit with the average base (1.3, last formula) is not implemented: averaging and hardware
+  segments are exclusive, so nothing would call it.
+- The averaged words are decoded like normal ones (7500 codes per division around 32768), because the stock library
+  has no average-specific decoding (1.4). `avg::mean_words` and its test document what the model assumes: a 16 +
+  log2(N) bit accumulator, a shift back to 16 bits, truncation, sub-LSB steps kept (about 14.6 codes per ADC LSB).
+
+Proof that the live path without averaging is unchanged: `tools/plan-matrix.sh` with `oos-fpgad` built before
+(db8727e) and after (f31707b): 7,988 lines, byte-identical. `hal/testdata/second-frame-writes.txt` and
+`record-arm-writes.txt` pass unchanged.
+
+Not done: zoom window word 0x1114 (OOS has no zoom read-out), a status-line progress from 0x10b0 (waits for 5.2),
+counts above 1024.
