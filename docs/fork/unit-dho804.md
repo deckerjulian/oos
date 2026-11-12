@@ -122,3 +122,37 @@ with the baseline of spec 10 section 5 step 1 first.
      0x34 if the values look wrong.
    - A long run at 1 M depth and at 100 ns/div with data checks (step 1), and the read throughput from the
      `acquire_batch` timings against 128 B.
+
+## Hardware segments (spec 03): verification on hardware
+
+What changed and why: `docs/fork/specs/03-segmented-timestamps.md` section 7. Off by default: Acquire > Segments, then
+HW segments On (or `:ACQ:SEGM 100;:ACQ:SEGM:HARD ON`). Pulse source on CH1, Normal trigger, 100 ns/div (1408 points)
+unless stated. The log lines below are in `/tmp/oos-ui.log`.
+
+1. First-trigger stamp: record N = 10. The log shows `first-trigger stamp Some(..)`, non-zero (0x40b8 bit1 set at the end
+   of the recording). If it is `None`, read 0x40b8 by hand right after the first trigger: bit 1 is spec 1.1 open.
+2. Tick length (open question 3): 1 kHz pulses, N = 100. `:ACQ:SEGM:TIM?` steps should be 1 ms. Derive the tick from the
+   raw latch values in the log (`segment k latch ..`): expect 4,000,000 per ms (250 ps). If the steps are 16 x too short
+   or long, the counter is 4 ns with 4 fraction bits: change `seg::LATCH_TICK_FS`.
+3. Latch reference (open question 1): the latch value of segment k must differ from segment k - 1 by one period. If all
+   latches are equal, the latch holds "now" or the last recorded frame, not the last played one: then the stamps must
+   come from the headers (`Timeline` uses them when the latch is None).
+4. Header words 5..7 (open question 2): compare `header` with `latch` per segment in the log. Same steps (scaled by
+   1.6 ns / 250 ps) means the header is the trigger stamp; then the per-segment stamp plays can be dropped and the stamps
+   taken from the batch reads.
+5. Wrap: with the header as the source and a 250 ps tick, 48 bits wrap after 70 s. 10 Hz pulses, N = 1000 (100 s): the
+   times must rise monotonically through the whole table.
+6. Dead time: pulse pairs 2 us apart, N = 100 at 100 ns/div. Both pulses of a pair in consecutive segments, delta 2 us.
+7. Interval (0x4068): Seg. interval 1 ms with a 10 kHz source: segments 1 ms apart (within one source period).
+   Open question 4: whether 0x4068 also acts in live batches is not touched (the live arm writes 0).
+8. Early stop: N = 1000 with a slow source, STOP after about 100. The status line said "Recording k/1000"; the table
+   holds k rows; the history keys play segments 1..k and nothing beyond.
+9. Largest N at 1 k points: 61,440 at 100 ns/div with 1408 points (256 bursts). Frame 0 before and after the recording
+   of all 61,440 must be the same frame (no overwrite): browse to segment 1 at the end and compare its time stamp 0.
+10. Read-back from frame `first` > 0 (the live path only ever played from 0): the frames of the second and later
+    batches show the right signal, and each played segment shows the waveform of its stamp (use a source whose shape
+    changes over time, e.g. a sweep).
+11. Stamp play: the 272-byte read completes for 1, 2 and 4 channels, no `c2h` timeout, and 0x4034 bit13 is set after it.
+12. Memory size (open question 5): only the stock 16,777,216 bursts are used. A larger ring needs the deep-record
+    measurement first.
+13. Time per stamp play: the log timestamps of the read-back of N = 10,000; expect about 0.5 ms per segment.

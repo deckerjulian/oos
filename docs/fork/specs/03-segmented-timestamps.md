@@ -170,3 +170,44 @@ from the library, no capture). Header words 5..7 low until 5.3.
 3. Tick length: 250 ps exact, or 4 ns with fraction bits that need masking?
 4. Does 0x4068 also apply between frames of a normal live batch (the stock code writes 0 there)?
 5. Real frame memory size: 16,777,216 bursts (stock) or larger (OOS deep-record finding).
+
+## 7. Implementation status (2026-11-12)
+
+Fork commits 45dc87b (HAL), d925518 (oos-ui). Host-tested only. Nothing ran on the unit. Hardware steps:
+`docs/fork/unit-dho804.md`, section "Hardware segments".
+
+| item | state | where | default |
+|---|---|---|---|
+| record arm, interval | done | `scu::record_arm` (the 29 writes of `arm`, 0x4068 = `interval_ticks`), `seq::State::record_steps` (stamp clear first), fixture `hal/testdata/record-arm-writes.txt` (written by hand from 1.2) | - |
+| stamp registers | done | `scu::ts_first_clear`, `scu::ts_latch`, `scu::stamp`, shadow `Shadows::s40b8` | - |
+| limits | done | `hz::max_record_frames` (16,777,216 - 1 M bursts over the segment size), `tools/hzmodel.py`; UI cap 100,000 | - |
+| progress, stop | done | `seg::status` (0 until 0x4080 bit30, then 0x4010 - 0x4014 + 1; running = `(0x4034 & 0x2320) == 0`), `seg::stop` = `disarm_steps` | - |
+| stamps | done | `seg::stamps`: one stamp play per segment (`segment_stamp_steps`), header words 5..7 and the latched 0x40b0/0x40b4 of that play; `seg::Timeline` | - |
+| read-back | done | `seq::State::read_steps_at` (type-4 play from frame `first`), `seg::read`, `hw::seg_read_plan` | - |
+| model | done | `seg::sim::Engine`: record engine, plays, header and latch, for host runs of the whole sequence | - |
+| oos-ui | done, opt-in | Acquire > HW segments, Seg. interval, Segment times (table, CSV export through the table); setup keys `seg_hw`, `seg_interval`; SCPI `:ACQuire:SEGMents`, `:HARDware`, `:INTerval`, `:TIMes?` | off |
+
+Decisions against the proposal:
+
+- No `Step::ReadPair`. The stamp pair is read by `seg::read_pair` on the `Bus` after the steps, low word first. The
+  generic executor `seq::execute_bus` runs the segment steps on any `Bus` and C2H reader; `execute_into` uses the same
+  per-step code, so the verified write order of the live path is unchanged (`tools/plan-matrix.sh` output identical
+  before and after).
+- The stamp play does not use an 8-point TX length. The stock raw export never writes 8; it turns it into 128 / ratio
+  (record-play.md 7.1). The stamp play reads 128 words of all channels plus the header: 272 bytes.
+- Every segment gets a stamp play, also when the frames come with headers. The latch is what the stock record playback
+  uses; header words 5..7 are read from the same play and logged next to the latch for the first 8 segments (check 3).
+  `Timeline` takes the latch when present, else the header. Cost: one play per segment, about 0.5 ms, so 61,440
+  segments take about 30 s to stamp.
+- Units: latch 250 ps (1.1), header 1.6 ns (trigger.md 7). The two sources disagree on paper; check 2 decides. Header
+  stamps are unwrapped at 48 bits segment by segment; latched stamps are not unwrapped (64 bits).
+- The read-back delivers frames in batches of at most 48 (half the UI queue) and waits for the screen, so no segment is
+  dropped from the queue. After STOP during recording only the stamps are read; the segments stay in FPGA memory and are
+  played one at a time when browsed (history keys, table rows). The RAM history keeps 200 records in this mode.
+- Hardware segments are off in roll, scan and with the LA on (`hw::hw_segments_ok`); the software history records
+  instead. Any settings change, self-cal or generator change ends a recording and forgets its segments.
+- The model answers the open questions one way (latch = last frame of the last play, header = trigger time in 1.6 ns).
+  It proves the sequence is consistent, not that the unit behaves so.
+
+Not done: frame export with the stamps per segment (the table export has index and time only), averaging-specific
+segment layout (01), LA segments.
