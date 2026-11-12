@@ -126,7 +126,7 @@ const GRID_FRAME: Rgb = rgb(0x64, 0x64, 0x67);
 /// Averaging counts of Acquire > Averages.
 /// Stops of the density scale, rare to frequent (`heat_palette`).
 const HEAT_STOPS: [(f32, f32, f32); 5] = [(40.0, 70.0, 255.0), (0.0, 220.0, 255.0), (40.0, 240.0, 70.0), (255.0, 235.0, 30.0), (255.0, 40.0, 30.0)];
-const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+pub const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 /// Front-panel key codes (data byte of the MCU frame, see docs/protocols/frontpanel.md).
 #[allow(dead_code)] // the full code table, not every code is matched by name
@@ -392,6 +392,8 @@ enum Item {
     AcqSeg,
     /// segments recorded by the FPGA (`Model::seg_hw`)
     AcqSegHw,
+    /// Average mode: the FPGA averages (`Model::avg_hw`)
+    AcqAvgHw,
     AcqSegIvl,
     /// the trigger times of the hardware segments
     AcqSegTable,
@@ -1372,7 +1374,15 @@ impl Ui {
         self.mstat.clear();
         self.mask_pass = 0;
         self.mask_fail = 0;
+        self.hw_avg_restart();
         self.toast("Display cleared");
+    }
+
+    /// The hardware average starts over (`Model::hw_avg_clear`); nothing changes for the other sources.
+    fn hw_avg_restart(&mut self) {
+        if self.src.is_hw() {
+            self.m.hw_avg_clear += 1;
+        }
     }
 
     /// QUICK key and the Quick button of the top bar: the action chosen in System > Quick key.
@@ -1406,6 +1416,7 @@ impl Ui {
         let single = self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run;
         if single && !self.single_armed {
             self.m.hw_stamp += 1;
+            self.hw_avg_restart();
         }
         self.single_armed = single;
         // 2-channel models: CH3/CH4 stay off whatever switched them on (setups, autoset, demos, SCPI)
@@ -1421,6 +1432,10 @@ impl Ui {
         // segmented recording: a new RUN/SINGLE starts a new set of segments
         let running = self.m.run == RunState::Run;
         let hw_seg = self.seg_hw_on();
+        // RUN after STOP: the hardware average starts over (stock clears it on every state change)
+        if running && !self.was_running {
+            self.hw_avg_restart();
+        }
         if running && !self.was_running && self.m.segments > 0 {
             self.seg_n = 0;
             self.history.clear();
@@ -1499,7 +1514,9 @@ impl Ui {
                                 condition(&self.m, c, &mut rec.ch[c], dt);
                             }
                         }
-                        if self.m.acq == AcqMode::Average {
+                        // the FPGA averaged the frame already: blending would average the average
+                        let hw_avg = rec.raw.as_ref().is_some_and(|r| r.frame.hw_avg);
+                        if self.m.acq == AcqMode::Average && !hw_avg {
                             if let Some(prev) = &self.last[0] {
                                 let a = 1.0 / self.m.avg_count as f32;
                                 for c in 0..NCH {
@@ -3146,6 +3163,7 @@ impl Ui {
         let acq = match self.m.acq {
             AcqMode::Normal => "Normal".to_string(),
             AcqMode::Peak => "Peak".to_string(),
+            AcqMode::Average if self.src.is_hw() && board().avg_hw(&self.m) => format!("Average {} HW", self.m.avg_count),
             AcqMode::Average => format!("Average {}", self.m.avg_count),
             AcqMode::HiRes => "High res".to_string(),
         };
@@ -3529,6 +3547,9 @@ impl Ui {
                 let mut v = vec![Item::AcqMode];
                 if self.m.acq == AcqMode::Average {
                     v.push(Item::AcqAvg);
+                    if self.src.is_hw() {
+                        v.push(Item::AcqAvgHw);
+                    }
                 }
                 v.extend([Item::AcqDepth, Item::AcqSeg]);
                 if self.m.segments > 0 {
@@ -4379,6 +4400,7 @@ impl Ui {
             Item::AcqAvg => "Averages",
             Item::AcqSeg => "Segments",
             Item::AcqSegHw => "HW segments",
+            Item::AcqAvgHw => "HW average",
             Item::AcqSegIvl => "Seg. interval",
             Item::AcqSegTable => "Segment times",
             Item::AcqDepth => "Memory",
@@ -4573,6 +4595,7 @@ impl Ui {
             Item::AcqAvg => format!("{}", m.avg_count),
             Item::AcqSeg => if m.segments == 0 { "Off".into() } else { self.seg_count().to_string() },
             Item::AcqSegHw => onoff(m.seg_hw),
+            Item::AcqAvgHw => onoff(m.avg_hw),
             Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => format!("CH{}", self.meas_src + 1),
@@ -4692,6 +4715,12 @@ impl Ui {
                 let cur = if self.m.segments == 0 { 0 } else { self.seg_count() };
                 let i = o.iter().position(|&n| n >= cur).unwrap_or(0);
                 self.m.segments = o[cyc(i, o.len(), d)];
+            }
+            Item::AcqAvgHw => {
+                self.m.avg_hw = !self.m.avg_hw;
+                if self.m.avg_hw && !board().avg_hw(&self.m) {
+                    self.toast("HW average needs a count of 2..1024 and ordinary records: software average");
+                }
             }
             Item::AcqSegHw => {
                 self.m.seg_hw = !self.m.seg_hw;
@@ -5560,7 +5589,7 @@ impl Ui {
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
             Item::MeasSrcB | Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw => &["Off", "On"],
+            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw | Item::AcqAvgHw => &["Off", "On"],
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
@@ -7812,7 +7841,7 @@ mod tests {
         let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
         let frame = |seq: u64| {
             let v: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32).collect();
-            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None }
+            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, hw_avg: false }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
@@ -7831,6 +7860,88 @@ mod tests {
         // averaging needs every record: back to the record path
         ui.m.acq = AcqMode::Average;
         assert!(!ui.fast_ok());
+    }
+
+    // Break it catches: an FPGA-averaged frame blended once more in software, the software average lost for frames
+    // the FPGA did not average, no clear request on CLEAR / RUN / SINGLE, hardware averaging where the board falls back
+    // (roll, a count the FPGA does not take, the switch off).
+    #[test]
+    fn hardware_average_bypasses_the_blend_and_restarts() {
+        use super::*;
+        use oos_hal::dho::acq::Mode;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
+        ui.m.run = RunState::Run;
+        let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame { seq, dt: 0.8e-9, pre: 6250, ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()], acq: (1.25e9, 12_500), hw_avg, ..Default::default() };
+        let mid = |ui: &Ui| {
+            let c = &ui.last[0].as_ref().unwrap().ch[0];
+            c[c.len() / 2]
+        };
+        ui.step(0.02);
+        let c0 = {
+            let g = shared.lock().unwrap();
+            assert_eq!(g.want.as_ref().unwrap().mode, Mode::Average { count: 16 });
+            g.avg_clear
+        };
+        assert!(board().avg_hw(&ui.m));
+        assert!(ui.items(MenuId::Acquire).contains(&Item::AcqAvgHw));
+        for (k, v) in [1.0, 0.0].into_iter().enumerate() {
+            shared.lock().unwrap().queue.push_back(flat(k as u64 + 1, v, true));
+            ui.step(0.02);
+        }
+        assert_eq!(mid(&ui), 0.0);
+        // a frame the FPGA did not average is blended: 0 + (1 - 0) / 16
+        shared.lock().unwrap().queue.push_back(flat(3, 1.0, false));
+        ui.step(0.02);
+        assert!((mid(&ui) - 1.0 / 16.0).abs() < 1e-6, "{}", mid(&ui));
+        // CLEAR, then STOP and RUN, then SINGLE: each a new clear request
+        ui.clear_display();
+        ui.step(0.02);
+        let c1 = shared.lock().unwrap().avg_clear;
+        assert!(c1 > c0);
+        ui.m.run = RunState::Stop;
+        ui.step(0.02);
+        ui.m.run = RunState::Run;
+        ui.step(0.02);
+        let c2 = shared.lock().unwrap().avg_clear;
+        assert!(c2 > c1);
+        ui.m.trig_mode = TrigMode::Single;
+        ui.step(0.02);
+        assert!(shared.lock().unwrap().avg_clear > c2);
+        ui.m.trig_mode = TrigMode::Auto;
+        // fall-backs to the software average
+        ui.m.avg_count = 24;
+        assert!(!board().avg_hw(&ui.m));
+        ui.m.avg_count = 16;
+        ui.m.avg_hw = false;
+        assert!(!board().avg_hw(&ui.m));
+        ui.m.avg_hw = true;
+        ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+        assert!(!board().avg_hw(&ui.m));
+    }
+
+    #[test]
+    fn average_scpi() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(W, H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":ACQ:TYPE?"), "NORM");
+        q(&mut ui, ":ACQuire:TYPE AVERages");
+        q(&mut ui, ":ACQ:AVER 256");
+        q(&mut ui, ":ACQ:AVER:HARD ON");
+        assert_eq!((ui.m.acq, ui.m.avg_count, ui.m.avg_hw), (AcqMode::Average, 256, true));
+        assert_eq!((q(&mut ui, ":ACQ:TYPE?"), q(&mut ui, ":ACQ:AVER?"), q(&mut ui, ":ACQ:AVER:HARD?")), ("AVER".into(), "256".into(), "1".into()));
+        // counts the menu does not offer are refused and leave the count alone
+        q(&mut ui, ":ACQ:AVER 100");
+        q(&mut ui, ":ACQ:TYPE BOGUS");
+        assert_eq!((ui.m.acq, ui.m.avg_count), (AcqMode::Average, 256));
+        q(&mut ui, ":ACQ:AVER:HARD OFF");
+        q(&mut ui, ":ACQ:TYPE PEAK");
+        assert_eq!((ui.m.acq, ui.m.avg_hw), (AcqMode::Peak, false));
     }
 
     /// The row of item `it` in the open menu dialog.

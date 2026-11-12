@@ -194,6 +194,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("hold", m.hold.to_string());
     kv("acq", name(m.acq));
     kv("avg_count", m.avg_count.to_string());
+    kv("avg_hw", m.avg_hw.to_string());
     kv("segments", m.segments.to_string());
     kv("seg_hw", m.seg_hw.to_string());
     kv("seg_interval", m.seg_ivl.to_string());
@@ -452,6 +453,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "hold" => m.hold = p_f32(v)?,
         "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
         "avg_count" => m.avg_count = p_u32(v)?.max(1),
+        "avg_hw" => m.avg_hw = p_bool(v)?,
         "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_HW_MAX),
         "seg_hw" => m.seg_hw = p_bool(v)?,
         "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
@@ -1072,6 +1074,19 @@ mod tests {
         write(&d.join("ok.txt"), b"2").unwrap();
         assert_eq!(std::fs::read(d.join("ok.txt")).unwrap(), b"2");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // Break it catches: the hardware average switch lost in a setup or on by default, the count not stored with it.
+    #[test]
+    fn average_settings_round_trip() {
+        let mut m = Model::default();
+        assert!(!m.avg_hw);
+        (m.acq, m.avg_count, m.avg_hw) = (AcqMode::Average, 64, true);
+        let back = parse_setup(&setup_text(&m)).unwrap();
+        assert_eq!((back.acq, back.avg_count, back.avg_hw), (AcqMode::Average, 64, true));
+        // older setups without the key: software average
+        assert!(!parse_setup("acq = Average\navg_count = 8\n").unwrap().avg_hw);
+        assert!(parse_setup("avg_hw = maybe\n").is_err());
     }
 
     // Break it catches: hardware segment settings lost in a setup, a count clamped to the software limit, a negative

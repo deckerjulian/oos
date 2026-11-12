@@ -7,7 +7,8 @@
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
-//! :SYSTem:ERRor?, OOS: :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
+//! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
+//! :SYSTem:ERRor?, OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
 //! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
@@ -485,6 +486,40 @@ impl Scpi {
                     (Some(x), false) if kw(x, "HARDware") => m.seg_hw = parse_bool(arg)?,
                     (Some(x), true) if kw(x, "INTerval") => return Some(t(&e(m.seg_ivl as f64))),
                     (Some(x), false) if kw(x, "INTerval") => m.seg_ivl = num(arg)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
+                    _ => return None,
+                }
+                return Some(None);
+            }
+            // acquire mode and averaging; OOS: :ACQuire:AVERages:HARDware ON|OFF (docs/fork/specs/01-hw-averaging.md)
+            if kw(n0, "ACQuire") && nodes.len() == 2 && kw(nodes[1], "TYPE") {
+                if query {
+                    return Some(t(match m.acq {
+                        AcqMode::Normal => "NORM",
+                        AcqMode::Peak => "PEAK",
+                        AcqMode::Average => "AVER",
+                        AcqMode::HiRes => "HRES",
+                    }));
+                }
+                let a = arg.trim().to_ascii_uppercase();
+                m.acq = if a.starts_with("NORM") {
+                    AcqMode::Normal
+                } else if a.starts_with("PEAK") {
+                    AcqMode::Peak
+                } else if a.starts_with("AVER") {
+                    AcqMode::Average
+                } else if a.starts_with("HRES") {
+                    AcqMode::HiRes
+                } else {
+                    return None;
+                };
+                return Some(None);
+            }
+            if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "AVERages") {
+                match (nodes.get(2).copied(), query) {
+                    (None, true) => return Some(t(&m.avg_count.to_string())),
+                    (None, false) => m.avg_count = arg.trim().parse::<u32>().ok().filter(|n| crate::ui::AVERAGES.contains(n))?,
+                    (Some(x), true) if kw(x, "HARDware") => return Some(t(if m.avg_hw { "1" } else { "0" })),
+                    (Some(x), false) if kw(x, "HARDware") => m.avg_hw = parse_bool(arg)?,
                     _ => return None,
                 }
                 return Some(None);

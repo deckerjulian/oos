@@ -178,7 +178,7 @@ mod tests {
             })
             .collect();
         let window = 100_000e-9;
-        let frame = Arc::new(Frame { seq: 1, dt: 1e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None });
+        let frame = Arc::new(Frame { seq: 1, dt: 1e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false });
         let rms = |v: &[f32]| (v.iter().map(|y| (y - 1.0) * (y - 1.0)).sum::<f32>() / v.len() as f32).sqrt();
         let mut m = Model::default();
         m.trig_level = 5.0; // nothing to trigger on: the window stays at the hardware point
@@ -199,7 +199,7 @@ mod tests {
         let mut m = Model::default();
         m.trig_level = 0.0;
         let window = 9000e-9;
-        let f = Frame { seq: 1, dt: 1e-9, pre: 5400, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None };
+        let f = Frame { seq: 1, dt: 1e-9, pre: 5400, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false };
         let r = to_record(&Arc::new(f), &m, 3600, window, -window / 2.0);
         assert!(r.triggered);
         assert!(r.ch[0].iter().all(|y| y.is_finite()), "{} gaps", r.ch[0].iter().filter(|y| !y.is_finite()).count());
@@ -215,7 +215,7 @@ mod peak_detect {
         let m = Model { slope: Slope::Fall, ..Model::default() };
         let mut v: Vec<f32> = (0..100_000).map(|k| if (k / 25_000) % 2 == 0 { 0.0 } else { 3.0 }).collect();
         v[12_345] = 2.0; // one-sample glitch on the low level
-        let f = Arc::new(Frame { seq: 1, dt: 20e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None });
+        let f = Arc::new(Frame { seq: 1, dt: 20e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false });
         let window = m.time_per_div() as f64 * 10.0; // 2 ms > record: whole record on screen
         let t = std::time::Instant::now();
         let mut r = to_record(&f, &m, 3600, window, -window / 2.0);
@@ -247,7 +247,7 @@ mod bench {
             let dt = 0.8e-9 * (tdiv / 1e-7).max(1.0) * 1408.0 / pts as f64 * if pts == 1408 { 1.0 } else { 1.0 };
             let f = 3.0 / (tdiv * 10.0);
             let v: Vec<f32> = (0..pts).map(|k| (2.0 * std::f64::consts::PI * f * k as f64 * dt).sin() as f32).collect();
-            let fr = Arc::new(Frame { seq: 1, dt, pre: pts / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, pts), stamp: 0, la: None });
+            let fr = Arc::new(Frame { seq: 1, dt, pre: pts / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, pts), stamp: 0, la: None, hw_avg: false });
             let window = tdiv * 10.0;
             let mut ph = crate::wave::Phosphor::new(970, 448);
             let n = 400;

@@ -705,6 +705,9 @@ pub struct Model {
     pub status: TrigStatus,
     pub acq: AcqMode,
     pub avg_count: u32,
+    /// Average mode: the FPGA averages (docs/fork/specs/01-hw-averaging.md) where the board can (`Board::avg_hw`), else
+    /// the software average; experimental, not verified on the unit
+    pub avg_hw: bool,
     /// segmented recording: records per RUN/SINGLE (0 = off), browsed with the history afterwards
     pub segments: usize,
     /// segments recorded by the FPGA (one arm, hardware re-arm and trigger stamps) instead of the software history;
@@ -873,6 +876,8 @@ pub struct Model {
     pub bode_addr: String,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
+    /// hardware source: bumped when the hardware average has to start over (CLEAR, RUN, SINGLE); not stored
+    pub hw_avg_clear: u64,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
     /// bandwidth test (Analysers > Bandwidth): source, signal frequency hint (0 = Auto), bins per period
     pub bw_src: usize,
@@ -1036,6 +1041,7 @@ impl Default for Model {
             status: TrigStatus::Wait,
             acq: AcqMode::Normal,
             avg_count: 16,
+            avg_hw: false,
             segments: 0,
             seg_hw: false,
             seg_ivl: 0.0,
@@ -1144,6 +1150,7 @@ impl Default for Model {
             bode_out: 1,
             bode_gen: 0,
             hw_stamp: 0,
+            hw_avg_clear: 0,
             bode_addr: "192.168.1.100:5555".into(),
             bw_src: 0,
             bw_hint: 0.0,

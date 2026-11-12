@@ -106,7 +106,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     if mask & (1 << src) == 0 {
         src = mask.trailing_zeros() as usize;
     }
-    Settings {
+    let mut s = Settings {
         // roll and scan have their own way with the position
         delay: if slow_mode(m) == Slow::Off { m.delay as f64 } else { 0.0 },
         mode: if m.acq == AcqMode::Peak { oos_hal::dho::acq::Mode::Peak } else { oos_hal::dho::acq::Mode::Normal },
@@ -149,7 +149,35 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         window: None,
         la,
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m)).then(|| Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
+    };
+    if let Some(count) = hw_avg_count(m, &s) {
+        s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
+    s
+}
+
+/// The count of a hardware average for the model and its settings `s`, None for the software average
+/// (docs/fork/specs/01-hw-averaging.md): Average mode with `Model::avg_hw`, a power-of-two count, ordinary triggered
+/// records (not roll or scan, which average in software as in stock), no LA, no hardware segments (they record raw
+/// frames), and a record whose average segment fits the frame ring.
+fn hw_avg_count(m: &Model, s: &Settings) -> Option<u32> {
+    if m.acq != AcqMode::Average || !m.avg_hw || slow_mode(m) != Slow::Off || s.la.is_some() || s.segments.is_some() {
+        return None;
+    }
+    let p = hz::avg_params(hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0));
+    oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0)
+}
+
+/// The model's set-up averages in the FPGA (`Board::avg_hw`).
+pub fn avg_hw_ok(m: &Model) -> bool {
+    matches!(settings(m, false).mode, oos_hal::dho::acq::Mode::Average { .. })
+}
+
+/// How the FPGA average is read (spec 01, 6.1): running (default), or with OOS_HWAVG=hold a cumulative average of the
+/// count that is shown when complete and then cleared. The hardware test in docs/fork/unit-dho804.md decides.
+fn avg_kind() -> oos_hal::dho::avg::Kind {
+    static K: std::sync::OnceLock<oos_hal::dho::avg::Kind> = std::sync::OnceLock::new();
+    *K.get_or_init(|| if std::env::var("OOS_HWAVG").is_ok_and(|v| v == "hold") { oos_hal::dho::avg::Kind::Hold } else { oos_hal::dho::avg::Kind::Running })
 }
 
 /// Hardware segments record ordinary triggered frames: not in roll or scan, not with the LA (its record layout and
@@ -312,7 +340,7 @@ pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
         let v: &Vec<f32> = &ch[tc];
         log_header(hdr, v, s, p.pre as usize / k, k);
     }
-    Frame { seq, dt: k as f64 / p.rate as f64, pre: p.pre as usize / k, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None }
+    Frame { seq, dt: k as f64 / p.rate as f64, pre: p.pre as usize / k, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false }
 }
 
 /// The LA words of the acquisition `p` (read with `seq::acquire_la`) as a record: word j of the window at
@@ -343,7 +371,9 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     let mut b = s.clone();
     b.compress = if p.memsel > 1_000_000 { p.memsel.div_ceil(625_000) } else { 1 };
     let fb = oos_hal::dho::seq::frame_bytes(&b, p).max(1);
-    b.frames = ((4_000_000 / fb) as u32).min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
+    // hardware average: one frame is read whatever the batch holds, so the read size does not limit it
+    let by_size = if matches!(s.mode, oos_hal::dho::acq::Mode::Average { .. }) { u32::MAX } else { (4_000_000 / fb) as u32 };
+    b.frames = by_size.min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
     b
 }
 
@@ -441,6 +471,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut armed: Option<(Settings, u64)> = None;
         // the hardware segmented recording in progress or read back
         let mut segrun: Option<SegRun> = None;
+        // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
+        let mut avg: Option<(oos_hal::dho::avg::Tracker, u64, u32)> = None;
         loop {
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
@@ -517,9 +549,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
-            let (want, want_mode) = {
+            let (want, want_mode, avg_clear) = {
                 let g = out.lock().unwrap();
-                (g.want.clone(), g.slow)
+                (g.want.clone(), g.slow, g.avg_clear)
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -547,6 +579,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         la_fails = 0;
                         status(format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, p.rate, p.memsel));
                         current = Some((want.clone(), p));
+                        // the configuration cleared the average (`seq::State::configure`)
+                        avg = match want.mode {
+                            oos_hal::dho::acq::Mode::Average { count } => Some((oos_hal::dho::avg::Tracker::new(avg_kind(), count), avg_clear, 0)),
+                            _ => None,
+                        };
                     }
                     Err(e) => {
                         status(format!("settings: {}", e));
@@ -700,7 +737,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         // word 0 at the left edge like analog point 0; only what the sweeps have written so far
                         let la = la_t.map(|_| crate::ui::la::LaRec { words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()), t0: 0.0, dt: la_dt });
-                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la }
+                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false }
                     } else {
                         let len = ring.iter().map(|r| r.len()).max().unwrap_or(0);
                         // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
@@ -711,7 +748,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             words: Arc::new(ring_la.iter().copied().collect()),
                             dt: la_dt,
                         });
-                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la }
+                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false }
                     };
                     let mut g = out.lock().unwrap();
                     // a complete sweep must not be dropped by the next partial picture
@@ -742,6 +779,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 continue;
             }
             let b = batch_plan(&s, &p);
+            // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
+            if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
+                    status(format!("average clear: {}", e));
+                }
+                tr.reset();
+                (*seen, *logged) = (avg_clear, 0);
+            }
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
             // armed ahead with these settings and since the last SINGLE press: only the wait is left
             let ahead = armed.as_ref().is_some_and(|(a, st)| *a == b && *st == stamp);
@@ -768,8 +814,20 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         },
                         _ => None,
                     };
-                    // the next batch records while this one is decoded (after the LA read, which needs this record)
-                    if prearm_on() {
+                    // hardware average: one frame, shown or not, the average cleared after a complete hold average
+                    let after = avg.as_mut().map(|(tr, _, logged)| {
+                        let a = tr.batch(count);
+                        if *logged < 32 {
+                            // hardware check: 0x10b0 progress and the first words next to the triggers counted here
+                            *logged += 1;
+                            let w: Vec<String> = dma.data().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
+                            eprintln!("oos-ui hw: average {:?} batch {} of {} triggers, {} in, show {}, 0x10b0 = {}, words {}", tr.kind, *logged, count, a.triggers, a.show, oos_hal::dho::avg::progress(&mut bar), w.join(" "));
+                        }
+                        a
+                    });
+                    // the next batch records while this one is decoded (after the LA read, which needs this record);
+                    // not in average mode, where a clear may have to come first
+                    if prearm_on() && avg.is_none() {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -777,15 +835,21 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                     let fb = seq::frame_bytes(&b, &p);
                     // decode before taking the lock: the UI must not wait for 100 k-point conversions
+                    let shown = if after.is_some_and(|a| !a.show) { 0 } else { seq::batch_read(&b, count).1 };
                     let mut frames: Vec<Frame> = dma
                         .data()
                         .chunks_exact(fb)
-                        .take(count as usize)
+                        .take(shown as usize)
                         .map(|chunk| {
                             n += 1;
-                            Frame { stamp, ..decode(chunk, &b, &p, n) }
+                            Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
                         })
                         .collect();
+                    if after.is_some_and(|a| a.clear) {
+                        if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
+                            status(format!("average clear: {}", e));
+                        }
+                    }
                     if let (Some(w), Some(f)) = (la_words, frames.last_mut()) {
                         f.la = Some(la_record(w, &b, &p));
                     }
@@ -1004,7 +1068,7 @@ mod tests {
         // a scan frame of 1000 points spans the screen: point 0 left, point 999 right
         let m = Model::default();
         let v: Vec<f32> = (0..1000).map(|i| i as f32).collect();
-        let f = Frame { seq: 1, dt: 1e-3, pre: 0, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: true, scan: true, partial: true, acq: (0.0, 0), stamp: 0, la: None };
+        let f = Frame { seq: 1, dt: 1e-3, pre: 0, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: true, scan: true, partial: true, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false };
         let r = to_record(&Arc::new(f), &m, 100, 1.0, -0.5);
         assert!(r.partial && !r.triggered);
         assert!(r.ch[0][0] < 10.0 && r.ch[0][99] > 980.0, "{} {}", r.ch[0][0], r.ch[0][99]);

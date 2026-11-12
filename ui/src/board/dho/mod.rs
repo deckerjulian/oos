@@ -119,6 +119,10 @@ impl Board for Dho {
         hw::seg_max(m)
     }
 
+    fn avg_hw(&self, m: &Model) -> bool {
+        hw::avg_hw_ok(m)
+    }
+
     fn depths(&self) -> &'static [(&'static str, u64)] {
         &DEPTHS
     }

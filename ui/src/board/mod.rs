@@ -100,6 +100,11 @@ pub trait Board: Sync + 'static {
     /// no hardware segments (roll, scan, logic analyser); the UI then records the segments in software
     fn seg_max(&self, m: &Model) -> Option<usize>;
 
+    /// Average mode with `Model::avg_hw`: the board averages in hardware for the model's set-up. False where it cannot
+    /// (roll, scan, logic analyser, hardware segments, a count or depth it does not take); the UI then averages
+    /// the frames.
+    fn avg_hw(&self, m: &Model) -> bool;
+
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
 
@@ -163,6 +168,8 @@ pub struct Frame {
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
     pub la: Option<crate::ui::la::LaRec>,
+    /// the FPGA averaged this frame (Average mode with `Board::avg_hw`): the software average leaves it alone
+    pub hw_avg: bool,
 }
 
 /// Acquisition mode for slow time bases (roll-mode.md 1.2).
@@ -208,6 +215,8 @@ pub struct Shared {
     pub la_probe: Option<bool>,
     /// hardware segmented recording
     pub seg: HwSeg,
+    /// UI: `Model::hw_avg_clear`; a new value restarts the hardware average
+    pub avg_clear: u64,
 }
 
 /// Where a hardware segmented recording is.

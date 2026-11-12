@@ -573,6 +573,7 @@ impl Source {
             g.want = Some(board().want(m));
             g.slow = board().slow_mode(m);
             g.stamp = m.hw_stamp;
+            g.avg_clear = m.hw_avg_clear;
             // SINGLE takes nothing from before the key press
             let fresh = loop {
                 match g.queue.pop_front() {
