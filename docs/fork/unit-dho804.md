@@ -81,3 +81,44 @@ calibrates the new board.
 5. MAC: `ip link show eth0` gives `02:00:00:00:00:01`, the DHCP server hands out the expected address.
 6. Telnet: port 23 closed; `telnet = on` in `/oos/system.conf` plus a power cycle opens it.
 7. Fallback path (risk 2 in `docs/oos-review.md`): unchanged by this work, still open.
+
+## Transfer efficiency (spec 10): verification on hardware
+
+What changed and why: `docs/fork/specs/10-transfer-efficiency.md` section 7. Buffer reuse and the fused decode are always
+on; the arm ahead, interrupt completion and MaxPayload 256 are off until the steps below pass. Do one switch at a time,
+with the baseline of spec 10 section 5 step 1 first.
+
+1. Buffer reuse and fused decode (default build): 10 MHz sine at 100 ns/div, 1 and 4 channels, 10 minutes. No two
+   traces, no broken edges, no `c2h` errors in `/tmp/oos-ui.log`, oos-ui does not restart (`/tmp/oos-ui.log` has one
+   start). Repeat at 200 us/div with 1 M depth. Compare CPU of `oos-ui` in `top -d 1` with the baseline.
+2. Arm ahead: `touch /tmp/oos-ui.off`, stop oos-ui, run `OOS_PREARM=1 /bin/oos-ui $(cat /tmp/oos-ui.args)`.
+   - Waveform rate at 100 ns/div and 1 us/div, 1 and 4 channels, against step 1.
+   - Change time base, channel set, trigger level and V/div while running: the picture follows within one batch, no
+     `disarm` or `acquire` errors, no 30 ms stall per change (`configure` takes as long as without `OOS_PREARM`).
+   - Read 0x4034 right after a disarm (add a Peek if needed): bit 13 set or not decides whether `disarm` can drop its
+     10 ms wait.
+   - SINGLE in Normal mode with a slow trigger: no frame from before the press.
+   - Roll (200 ms/div) and back, self-cal, generator on/off (when fitted) while running.
+   - The LA path is not testable on this unit (no LA).
+3. Interrupt completion: in `/oos/system.conf` `xdma.params = poll_mode=0`, cold power cycle.
+   - `/tmp/oos-cold.log` shows `insmod xdma.ko poll_mode=0`.
+   - `dmesg | grep -i -e xdma -e msi`: with `interrupt_mode` unset the driver tries MSI first (the endpoint offers one
+     vector). Under the 6.12 kernel MSI goes through the GIC ITS (`msi-map` of the RK3399 PCIe node); stock 4.4 used
+     legacy INTx (IRQ 241).
+   - MSI enable bit: `od -An -tx2 -j 74 -N2 /sys/bus/pci/devices/0000:01:00.0/config` (MSI capability at 0x48 on the
+     stock dump; message control at 0x4a, bit 0 = enabled).
+   - `grep xdma /proc/interrupts` twice, 1 s apart, while acquiring: the count rises.
+   - The `cmpl_status_th` kernel thread is gone from `top` (it only exists with `poll_mode=1`).
+   - No C2H timeout over 10 minutes at 100 ns/div and at 200 us/div. A missing interrupt shows as a read that blocks
+     10 s and fails.
+   - If MSI fails: `xdma.params = poll_mode=0 interrupt_mode=2` (legacy INTx, as stock), same checks.
+   - To go back: remove the line (or `xdma.params = poll_mode=1`) and power-cycle.
+4. MaxPayload 256: uncomment `OOS_BOOTARGS_EXTRA="pci=pcie_bus_perf"` in `rootfs/unit/dho804/build.env`,
+   rebuild, install on the second card only.
+   - `/proc/cmdline` contains `pci=pcie_bus_perf`.
+   - Device control, bits 7:5 = 1 (256 B) on both ends: endpoint `od -An -tx2 -j 104 -N2
+     /sys/bus/pci/devices/0000:01:00.0/config` (capability at 0x60), root port the same at `-j 200` on `0000:00:00.0`
+     (capability at 0xc0). Offsets from the stock `lspci` dump; confirm them on the OOS kernel by walking the list from
+     0x34 if the values look wrong.
+   - A long run at 1 M depth and at 100 ns/div with data checks (step 1), and the read throughput from the
+     `acquire_batch` timings against 128 B.
