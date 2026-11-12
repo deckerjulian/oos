@@ -805,8 +805,9 @@ pub struct Ui {
     /// measurements per channel (oos-dsp) of the last record
     ana: [oos_dsp::measure::Analysis; NCH],
     /// the measurements in the background (`measure_in_background`); `meas_want`: the record shown is still to be
-    /// measured; `meas_n`: the number of the record shown (a result for an older one is dropped); `meas_new`: new
-    /// results for the statistics, the trend and the counter
+    /// measured; `meas_n`: counts what makes a result still out wrong (a clear, a measurement made here at once), a
+    /// result sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every
+    /// result would be dropped); `meas_new`: new results for the statistics, the trend and the counter
     meas_bg: Option<MeasWorker>,
     meas_want: bool,
     meas_n: u64,
@@ -1718,7 +1719,8 @@ impl Ui {
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if self.meas_bg.is_some() {
-                    self.meas_n += 1;
+                    // the result for the last record is still good when it comes after this one: `meas_n` only
+                    // changes where a result out becomes wrong (a clear, measuring here at once)
                     self.meas_want = true;
                 } else {
                     self.measure_last();
@@ -4005,6 +4007,7 @@ impl Ui {
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
             if n == self.meas_n {
+                // of the record shown when it was sent: in Run a few frames old, the newest result there is
                 self.meas_set(done);
                 self.meas_new = true;
             }
@@ -7295,6 +7298,20 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    /// Measurements in the background (the frame loop on the unit) while a new record comes every frame: their results
+    /// still arrive (0.1.7 to 0.1.10 dropped each one as older than the record shown, and the values froze in Run).
+    #[test]
+    fn background_measurements_follow_a_running_record() {
+        let mut u = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        u.measure_in_background();
+        let n = |u: &super::Ui| u.mstat.iter().map(|s| s.n).max().unwrap_or(0);
+        for _ in 0..120 {
+            u.step(1.0 / 30.0);
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        assert!(n(&u) >= 20, "{} results taken in 120 frames", n(&u));
+    }
 
     /// Measure > Add item: a second tap on a measurement removes it again, the others stay.
     #[test]
