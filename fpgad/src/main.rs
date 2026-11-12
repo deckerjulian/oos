@@ -477,6 +477,32 @@ fn status_lines(rd: &mut dyn FnMut(u32) -> u32) -> Vec<String> {
     ]
 }
 
+/// Parameters of xdma.ko without `xdma.params`: DMA completion by polling the write-back word, what OOS was verified
+/// with. The stock system loads it with interrupts (docs/fork/specs/10-transfer-efficiency.md 1.4).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const XDMA_DEFAULT: &str = "poll_mode=1";
+
+/// The xdma.ko parameters of `xdma.params` in the system settings (`oos-conf`; None or empty = `XDMA_DEFAULT`). Only
+/// `poll_mode=0|1` and `interrupt_mode=0..3` (0 auto, 1 MSI, 2 legacy INTx, 3 MSI-X), each at most once: the line goes
+/// to `insmod` through a shell.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn xdma_params(v: Option<&str>) -> Result<String, String> {
+    let v = v.map(str::trim).unwrap_or("");
+    if v.is_empty() {
+        return Ok(XDMA_DEFAULT.into());
+    }
+    let mut seen = Vec::new();
+    for w in v.split_whitespace() {
+        let ok = matches!(w, "poll_mode=0" | "poll_mode=1" | "interrupt_mode=0" | "interrupt_mode=1" | "interrupt_mode=2" | "interrupt_mode=3");
+        let key = w.split('=').next().unwrap_or(w);
+        if !ok || seen.contains(&key) {
+            return Err(format!("xdma.params: {:?} is not allowed (poll_mode=0|1, interrupt_mode=0..3, each once)", w));
+        }
+        seen.push(key);
+    }
+    Ok(v.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
 /// PCIe host + xdma bring-up with retries (the loop of oos-fpga-up, without the FPGA boot), then BAR1. The device and
 /// the xdma nodes are polled every 20 ms instead of the fixed 2 s / 1 s sleeps of oos-fpga-up (`insmod` returns once
 /// the driver probed, so a link that is up shows at once).
@@ -507,7 +533,13 @@ fn pcie_up() -> std::io::Result<oos_hal::dho::bus::Bar1> {
         if !dev() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "FPGA did not appear on PCIe"));
         }
-        if !sh(&format!("insmod {}/updates/xdma.ko poll_mode=1", m)) {
+        let conf = std::process::Command::new("/bin/oos-conf").arg("xdma.params").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        let params = xdma_params(conf.as_deref()).unwrap_or_else(|e| {
+            eprintln!("oos-fpgad: {}; loading xdma with {}", e, XDMA_DEFAULT);
+            XDMA_DEFAULT.into()
+        });
+        eprintln!("oos-fpgad: insmod xdma.ko {}", params);
+        if !sh(&format!("insmod {}/updates/xdma.ko {}", m, params)) {
             return Err(std::io::Error::other("insmod xdma failed"));
         }
         let nodes = || ["/dev/xdma0_bypass", "/dev/xdma0_c2h_0"].iter().all(|n| std::path::Path::new(n).exists());
@@ -852,6 +884,19 @@ mod tests {
         assert_eq!(pll_dry(&args(&["--freq", "1.25e9"])).unwrap(), None);
         assert_eq!(pll_dry(&args(&["--reset"])).unwrap(), None);
         assert!(pll_dry(&args(&["--freq", "5e9", "--dry"])).is_err());
+    }
+
+    // Break it catches: a default that changes without a hardware check, or a value that puts more than the two known
+    // parameters on the insmod shell line.
+    #[test]
+    fn xdma_parameters_from_the_system_settings() {
+        assert_eq!(xdma_params(None).unwrap(), "poll_mode=1");
+        assert_eq!(xdma_params(Some(" \n")).unwrap(), "poll_mode=1");
+        assert_eq!(xdma_params(Some("poll_mode=0\n")).unwrap(), "poll_mode=0");
+        assert_eq!(xdma_params(Some("poll_mode=0   interrupt_mode=2")).unwrap(), "poll_mode=0 interrupt_mode=2");
+        for bad in ["poll_mode=2", "poll_mode=0; reboot", "poll_mode=0 poll_mode=1", "interrupt_mode=4", "c2h_timeout=1", "poll_mode=0 $(id)"] {
+            assert!(xdma_params(Some(bad)).is_err(), "{}", bad);
+        }
     }
 
     #[test]

@@ -18,7 +18,22 @@ for try in 1 2 3 4 5 6; do
 done
 [ -e /sys/bus/pci/devices/0000:01:00.0 ] || { echo "oos-fpga-up: FPGA did not appear on PCIe"; exit 1; }
 echo "PCIe: $(cat /sys/bus/pci/devices/0000:01:00.0/vendor):$(cat /sys/bus/pci/devices/0000:01:00.0/device) $(cat /sys/bus/pci/devices/0000:01:00.0/current_link_speed) x$(cat /sys/bus/pci/devices/0000:01:00.0/current_link_width)"
-insmod $M/updates/xdma.ko poll_mode=1 || exit 1
+# xdma.ko parameters: `xdma.params` in the system settings (oos-conf), the same check as oos-fpgad; poll_mode=1 when unset
+p=$(/bin/oos-conf xdma.params 2>/dev/null)
+seen=
+set -f
+for w in $p; do
+	case "$w" in
+	poll_mode=[01] | interrupt_mode=[0-3]) ;;
+	*) echo "oos-fpga-up: xdma.params: $w not allowed, using poll_mode=1"; p=; break;;
+	esac
+	case " $seen " in *" ${w%%=*} "*) echo "oos-fpga-up: xdma.params: ${w%%=*} twice, using poll_mode=1"; p=; break;; esac
+	seen="$seen ${w%%=*}"
+done
+set +f
+[ -n "$p" ] || p=poll_mode=1
+echo "insmod xdma.ko $p"
+insmod $M/updates/xdma.ko $p || exit 1
 sleep 1
 v=$(oos-hw rd 0x4000 | awk '{print $3}')
 echo "FPGA version $v"
