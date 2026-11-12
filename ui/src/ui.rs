@@ -33,6 +33,7 @@ mod time;
 mod remote;
 mod backlight;
 mod graphics;
+mod script;
 #[cfg(test)]
 mod lint;
 mod bwtest;

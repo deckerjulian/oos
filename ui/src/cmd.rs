@@ -10,6 +10,9 @@
 //!   frames <n>               host only: advance n frames
 //!   storedir <path>          storage directory (setups, CSV, PNG)
 //!   textsize <name>          Display > Text size (normal, large, larger)
+//!   menu <name>              opens a menu by its title or the entry that opens it (ui/script.rs)
+//!   set <label> = <value>    an item of the open menu by its label, to the option shown as <value>
+//!   do <label>               presses an item of the open menu (an action or a sub-menu)
 //!   stat [path]              write fps / frame count / state to /tmp/oos-ui.stat
 //!   quit
 
@@ -89,6 +92,21 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
             ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: v[4], y: v[5] });
         }
         "release" => ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: 0, y: 0 }),
+        // by name: the rest of the line (labels have spaces)
+        "menu" | "set" | "do" => {
+            let rest = line.trim_start()[w[0].len()..].trim();
+            let r = match w[0] {
+                "menu" => ui.script_menu(rest),
+                "do" => ui.script_do(rest),
+                _ => match rest.split_once(" = ") {
+                    Some((l, v)) => ui.script_set(l, v),
+                    None => Err("set <label> = <value>".into()),
+                },
+            };
+            if let Err(e) = r {
+                eprintln!("oos-ui: {}: {}", line.trim(), e);
+            }
+        }
         "frames" if w.len() > 1 => return Out::Frames(num(w[1]).max(0) as u32),
         "shot" if w.len() > 1 => return Out::Shot(w[1].to_string()),
         "quit" => ui.quit = true,
