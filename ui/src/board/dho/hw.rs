@@ -509,6 +509,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             };
+            // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
+            let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
@@ -714,7 +716,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             let b = batch_plan(&s, &p);
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
-            match seq::acquire_batch(&mut state, &b, &p, &mut bar, &mut c2h, 25, |_| {}) {
+            let changed = || {
+                let g = out.lock().unwrap();
+                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1)
+            };
+            match seq::acquire_batch_until(&mut state, &b, &p, &mut bar, &mut c2h, 25, |_| {}, changed) {
                 Ok((bytes, count)) => {
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
@@ -756,6 +762,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                     drop(g);
                 }
+                // new settings while it waited for a trigger: at once to them
+                Err(e) if e == seq::NEW_SETTINGS => {}
                 Err(e) => {
                     status(format!("acquire: {}", e));
                     std::thread::sleep(std::time::Duration::from_millis(200));
