@@ -5,7 +5,7 @@
 #
 #   boot/build-dev-image.sh            -> boot/out/oos-dev.img (+ .sha256)
 #   OOS_UNIT=dho804 boot/build-dev-image.sh   the same with the defaults of one unit in /etc/oos
-#                                      (rootfs/unit/<name>/: limits.conf; docs/models.md 4.2)
+#                                      (rootfs/unit/<name>/: limits.conf, build.env; docs/models.md 4.2)
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
@@ -25,10 +25,13 @@ board="$root/rootfs/board/${OOS_BOARD:-dho}"
 unit="$root/rootfs/unit/${OOS_UNIT:-none}"
 if [ -n "${OOS_UNIT:-}" ]; then
 	[ -d "$unit" ] || { echo "no unit $unit" >&2; exit 1; }
+	# build choices of the unit, e.g. OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb (plain KEY=value lines)
+	[ -f "$unit/build.env" ] && . "$unit/build.env"
 else
 	unit="$out/no-unit"; mkdir -p "$unit"
 fi
 [ -f "$k/Image" ] || { echo "run kernel/build-base.sh first" >&2; exit 1; }
+[ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
 # Docker on Linux: be in the docker group, not root (under sudo, HOME and PATH are root's, rustup's cargo is gone, and
 # the results would belong to root)
 if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
@@ -84,6 +87,7 @@ build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$unit:/unit:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
 	. /board/etc/oos-board
+	[ -f /unit/build.env ] && . /unit/build.env
 	cp -a /src/. $r/
 	# what belongs to the board: etc/oos-board and bin/oos-board, which rcS asks
 	cp -a /board/. $r/

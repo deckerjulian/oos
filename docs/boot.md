@@ -106,6 +106,11 @@ The loader's messages go to UART2 (115200 8N1).
 - The switch between stock and OOS is the magic of `boot`: `OOSK` = OOS (via the fallback to `recovery`), `KRNL` = stock.
 - The PARM table stays as it is. Assumed, not yet verified on hardware: U-Boot checks a CRC over the first 942 bytes of
   the PARM copy, and a changed table drops into Rockusb.
+- The card runs at 3.3 V high speed (`cap-sd-highspeed`). `kernel/dts/rk3399-rigol-dho900-uhs.dts` is an opt-in variant
+  with UHS-I (SDR104, SDR50) and a 30 ms settling time on `vccio_sd`; the image takes it with
+  `OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb` (or a unit's `build.env`). Why each setting: the comment in that file.
+  Not yet verified under the OOS kernel. A warm restart from a stock system that left the card at 1.8 V into an OOS
+  image without the variant is not verified either: use a power cycle.
 
 ## OOS start-up after the kernel (rcS)
 
