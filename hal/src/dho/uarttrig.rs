@@ -91,21 +91,24 @@ pub fn bit_clocks(baud: f64) -> u32 {
     (CLOCK_HZ / baud.max(1.0)).round().clamp(1.0, u32::MAX as f64) as u32
 }
 
+impl Relation {
+    /// The relation code of the UART, SPI and I2C receivers.
+    pub fn code(self) -> u32 {
+        match self {
+            Relation::Eq => 0,
+            Relation::Ne => 1,
+            Relation::Gt => 2,
+            Relation::Lt => 3,
+            Relation::In => 4,
+            Relation::Out => 5,
+        }
+    }
+}
+
 fn cond_fields(c: Cond) -> (u32, u32, u32) {
     match c {
         Cond::Start => (0, 0, 0),
-        Cond::Data(r, _, _) => (
-            1,
-            match r {
-                Relation::Eq => 0,
-                Relation::Ne => 1,
-                Relation::Gt => 2,
-                Relation::Lt => 3,
-                Relation::In => 4,
-                Relation::Out => 5,
-            },
-            0,
-        ),
+        Cond::Data(r, _, _) => (1, r.code(), 0),
         Cond::Error(e) => (
             2,
             0,

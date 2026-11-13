@@ -70,6 +70,9 @@ pub enum Trig {
     Video { std: tpu::VideoStd, sync: tpu::VideoSync, line: u32 },
     /// the TPU's UART receiver on the main source at the main level (docs/fork/hwuart.md)
     Uart(crate::dho::uarttrig::Uart),
+    /// the TPU's SPI and I2C receivers on their own lines at the main level (docs/fork/hwserial.md)
+    Spi(crate::dho::serialtrig::Spi),
+    I2c(crate::dho::serialtrig::I2c),
 }
 
 /// The holdoff of a trigger set-up without one.
@@ -467,6 +470,8 @@ impl State {
             Trig::Nth { count, idle } => tpu::nth(ts, src, edge, *count, fs(*idle), nv(s.level), &vt),
             Trig::Video { std, sync, line } => tpu::video(ts, src, *std, true, *sync, *line, nv(s.level), &vt, tpu::VideoClk::Fast),
             Trig::Uart(u) => tpu::uart(ts, src, u, nv(s.level), &vt),
+            Trig::Spi(x) => tpu::spi(ts, x, nv(s.level), &vt),
+            Trig::I2c(x) => tpu::i2c(ts, x, nv(s.level), &vt),
         };
         // the shortest holdoff is what every trigger type leaves behind; once changed, it is written until it is back
         let set = (s.holdoff - HOLDOFF_MIN).abs() > 1e-12;
