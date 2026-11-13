@@ -22,7 +22,7 @@ mod reference_search_navigation_tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.set_offline(true);
         ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "Long reference".into(), t0: -7e-6, dt: 2e-9,
-            v: (0..1600).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect(), vpd: 0.5, offset: 0.0, on: true });
+            v: ((0..1600).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect::<Vec<_>>()).into(), vpd: 0.5, offset: 0.0, on: true });
         ui.m.set_trigger_wave(WaveId::Ref(0), false);
         ui.m.trig_level = 0.0;
         ui.m.slope = Slope::Rise;

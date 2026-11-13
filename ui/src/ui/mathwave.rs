@@ -149,7 +149,7 @@ impl Ui {
             return (id - NCH < below).then(|| self.math_record(id - NCH).ok().flatten()).flatten();
         }
         let r = self.refs.get(id - MATH_REF_BASE)?.as_ref()?;
-        Some(Arc::new(Signal { t0: self.source_time_origin(WaveId::Ref(id - MATH_REF_BASE), r.t0), dt: r.dt, v: Arc::new(r.v.clone()) }))
+        Some(Arc::new(Signal { t0: self.source_time_origin(WaveId::Ref(id - MATH_REF_BASE), r.t0), dt: r.dt, v: Arc::clone(&r.v) }))
     }
 
     pub(super) fn math_record(&self, k: usize) -> Result<Option<Arc<Signal>>, &'static str> {
@@ -196,7 +196,7 @@ mod tests {
         ui.last[0] = None;
         for ch in &mut ui.m.ch { ch.on = false; }
         for (i, t0, dt, v) in [(0, -2.0, 1.0, vec![0., 1., 2., 3., 4., 5.]), (1, -1.5, 0.5, vec![0., 1., 2., 3., 4., 5., 6., 7.])] {
-            ui.refs[i] = Some(RefWave { src: 0, color: i, label: format!("R{}", i + 1), t0, dt, v, vpd: 1.0, offset: 0.0, on: true });
+            ui.refs[i] = Some(RefWave { src: 0, color: i, label: format!("R{}", i + 1), t0, dt, v: v.into(), vpd: 1.0, offset: 0.0, on: true });
         }
         ui.m.math = MathOp::Sub;
         ui.m.math_a = MATH_REF_BASE;
@@ -237,7 +237,7 @@ mod tests {
         let mut ui = refs();
         ui.m.math = MathOp::Fft;
         let original = ui.refs[0].as_ref().unwrap().v.clone();
-        ui.refs[0].as_mut().unwrap().v = (0..128).map(|i| (i as f32 * std::f32::consts::TAU / 16.0).sin()).collect();
+        ui.refs[0].as_mut().unwrap().v = (0..128).map(|i| (i as f32 * std::f32::consts::TAU / 16.0).sin()).collect::<Vec<_>>().into();
         let w = ui.math_record(0).unwrap().unwrap();
         assert!(w.dt > 0.0 && !w.v.is_empty());
         assert!((w.dt - 1.0 / 128.0).abs() < 1e-12);
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn large_reference_math_is_background_cached_and_rejects_stale_settings() {
         let mut ui = refs();
-        ui.refs[0].as_mut().unwrap().v = vec![2.0; BACKGROUND + 1];
+        ui.refs[0].as_mut().unwrap().v = vec![2.0; BACKGROUND + 1] .into();
         ui.m.math = MathOp::Lin;
         ui.m.math_lin = (2.0, 1.0);
         assert!(ui.math_record(0).unwrap().is_none());
@@ -273,7 +273,7 @@ mod tests {
         let mut ui = refs();
         for slot in 0..2 {
             let r = ui.refs[slot].as_mut().unwrap();
-            r.t0 = 0.0; r.dt = 1.0; r.v = vec![2.0; BACKGROUND + 1];
+            r.t0 = 0.0; r.dt = 1.0; r.v = vec![2.0; BACKGROUND + 1] .into();
         }
         ui.m.math = MathOp::Conv;
         assert!(ui.math_record(0).unwrap().is_none());

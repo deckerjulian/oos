@@ -136,7 +136,7 @@ impl Ui {
         if matches!(model.trig_type, TrigType::Pattern | TrigType::Duration)
             || (model.trig_type == TrigType::Bus && (model.bus_on_la() || model.dec_proto.roles()[1].is_some() || model.dec_diff.is_some())) { return None; }
         let sample = |id| match id {
-            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt }),
+            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt }),
             WaveId::Ch(_) => self.last[0].as_ref().and_then(|record| self.wave_samples(record, id)),
         };
         let primary = if primary_slot == slot { None } else { Some(sample(WaveId::Ref(primary_slot))?) };
@@ -194,11 +194,11 @@ impl Ui {
         if cache.worker.as_ref().is_some_and(|worker| worker.busy) { return None; }
         let auxiliary = if paired {
             match second {
-                WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.clone(), t0: self.source_time_origin(second, r.t0), dt: r.dt }),
+                WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(second, r.t0), dt: r.dt }),
                 WaveId::Ch(_) => self.last[0].as_ref().and_then(|rec| self.wave_samples(rec, second)),
             }
         } else { None };
-        let job = Job { key, model, primary: r.v.clone(), secondary: auxiliary, dt: r.dt, t0: self.source_time_origin(WaveId::Ref(slot), r.t0),
+        let job = Job { key, model, primary: r.v.as_ref().clone(), secondary: auxiliary, dt: r.dt, t0: self.source_time_origin(WaveId::Ref(slot), r.t0),
             hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst] };
         cache.scans += 1;
         if r.v.len() > BACKGROUND_POINTS {
@@ -220,7 +220,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn reference(dt: f64, t0: f64, samples: Vec<f32>) -> RefWave {
-        RefWave { src: 0, color: 0, label: "Search fixture".into(), t0, dt, v: samples, vpd: 0.5, offset: 0.0, on: true }
+        RefWave { src: 0, color: 0, label: "Search fixture".into(), t0, dt, v: (samples).into(), vpd: 0.5, offset: 0.0, on: true }
     }
 
     fn fixture(points: usize) -> Ui {

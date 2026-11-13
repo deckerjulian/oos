@@ -478,7 +478,7 @@ impl Ui {
         self.remember_live();
         self.session_is_sim = true;
         self.replay = Default::default();
-        self.mstat.clear();
+        self.clear_measurement_statistics();
         let n = v.len();
         let dt = serial::dt_of(&lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
@@ -489,7 +489,7 @@ impl Ui {
             label: lane.name.into(),
             t0: 0.0,
             dt,
-            v,
+            v: v.into(),
             vpd,
             offset: (-0.5 * (lane.v_high + lane.v_low)) as f32,
             on: true,
@@ -656,7 +656,7 @@ impl Ui {
         let midpoint = 0.5 * (request.lane.v_high + request.lane.v_low);
         self.refs[request.slot] = Some(RefWave {
             src: 0, color: previous.as_ref().map_or(0, |r| r.color), label: request.lane.name.into(),
-            t0: 0.0, dt, v: samples,
+            t0: 0.0, dt, v: (samples).into(),
             vpd: previous.as_ref().map_or(((request.lane.v_high - request.lane.v_low) / 6.0) as f32, |r| r.vpd),
             offset: previous.as_ref().map_or(-midpoint as f32, |r| r.offset), on: true,
         });
@@ -1071,7 +1071,7 @@ mod tests {
     /// A step in the record, low then high, so the edge on screen has a place to move.
     fn put_step(u: &mut Ui, n: usize, dt: f64, tdiv: f32) {
         let v: Vec<f32> = (0..n).map(|i| if i < n / 5 { -0.5 } else { 0.5 }).collect();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "rec".into(), t0: 0.0, dt, v, vpd: 0.2, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "rec".into(), t0: 0.0, dt, v: v.into(), vpd: 0.2, offset: 0.0, on: true });
         u.m.sim_slot = 0;
         u.m.ch[0].on = false;
         u.m.run = RunState::Run;
@@ -1264,7 +1264,7 @@ mod tests {
             u.m.apply_sim_preset();
             u.sim_play_set(true).unwrap();
             u.refs[1] = Some(RefWave { src: 0, color: 1, label: "External".into(), t0: 0.0, dt: 2e-9,
-                v: (0..1024).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect(), vpd: 0.2, offset: 0.0, on: false });
+                v: ((0..1024).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>()).into(), vpd: 0.2, offset: 0.0, on: false });
             if change == 5 {
                 u.m.trig_type = TrigType::Delay;
                 u.m.set_trigger_wave(WaveId::Ref(1), true);
@@ -1286,7 +1286,7 @@ mod tests {
                 2 => u.m.set_trigger_wave(WaveId::Ref(1), false),
                 3 => u.refs[0].as_mut().unwrap().vpd *= 2.0,
                 4 => u.m.trig_nrej = !u.m.trig_nrej,
-                5 => u.refs[1].as_mut().unwrap().v = vec![0.0; 1024],
+                5 => u.refs[1].as_mut().unwrap().v = vec![0.0; 1024] .into(),
                 _ => u.m.trig_bus_val = 0xaa,
             }
             u.sim_finish(request, generated);
@@ -1303,7 +1303,7 @@ mod tests {
             u.m.apply_sim_preset();
             u.sim_play_set(true).unwrap();
             u.refs[source] = Some(RefWave { src: 0, color: source, label: "Long external trigger".into(), t0: 20e-9, dt: 10e-12,
-                v: (0..263_168).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect(), vpd: 0.2, offset: 0.0, on: false });
+                v: ((0..263_168).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>()).into(), vpd: 0.2, offset: 0.0, on: false });
             assert!(u.set_trigger_source(WaveId::Ref(source), false));
             u.m.trig_level = 0.0;
             u.m.trig_mode = TrigMode::Single;

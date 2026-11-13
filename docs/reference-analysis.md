@@ -1,5 +1,24 @@
 # Loaded waveforms, zoom and automatic analysis
 
+Measure opens a tabbed catalog with Standard, Jitter, Power, IMDA, DPM and WBG-DPT
+groups. **All 60 / Pairs** retains all 60 single-source measurements and 17 pair
+variants. **Selected (N)** pages every added row, with explicit Remove controls
+and individual settings for standard measurements.
+
+Additional catalog rows use the Screen/Full record gate and corrected physical
+source times. A bounded catalog worker reads shared immutable captures. Pending
+rows say Computing; unavailable input produces an empty value. Selecting an added
+result shows its calculation quality or the reason it is unavailable. Multiwire
+results use the physical intersection and the slowest participating sample interval.
+Records exceeding 32M points or 256 MiB of aligned buffers report a limit instead
+of silently shortening the record.
+
+Setup files retain catalog IDs and source roles alongside existing single/pair
+rows, with a shared 1024-row bound. SCPI `:MEAS:STRIP?` and `:MEAS:READOUT?`
+append these as `CAT<id>,A,B,C,D,value`; pending/missing values use the existing
+9.9E37 sentinel. The logger names each required source in its column. Analysis
+completion, stopped reads and panning never count as another acquisition.
+
 Load file adds a reference alongside live channels without replacing measurements,
 run state or the timebase. Take over and Offline waveforms enter explicit stored-
 record sessions; Live restores acquisition.

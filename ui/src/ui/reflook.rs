@@ -564,7 +564,7 @@ impl Ui {
         if let Some(own) = own {
             self.meas_own.insert((k, next), own);
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn meas_sources(&self) -> Vec<WaveId> {
@@ -591,7 +591,7 @@ impl Ui {
             own.high = high;
             own.refs_set = true;
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_refs(&mut self) {
@@ -604,7 +604,7 @@ impl Ui {
             own.high = high;
             own.refs_set = true;
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_idle(&mut self, d: i32) {
@@ -617,7 +617,7 @@ impl Ui {
             own.idle = v;
             own.idle_set = true;
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_side(&mut self) {
@@ -630,7 +630,7 @@ impl Ui {
             own.side = v;
             own.side_set = true;
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_n(&mut self, d: i32) {
@@ -641,7 +641,7 @@ impl Ui {
             own.n = v;
             own.n_set = true;
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_edges(&mut self) {
@@ -651,7 +651,7 @@ impl Ui {
             own.data = !cur;
             own.data_set = true;
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 }
 
@@ -687,7 +687,7 @@ mod tests {
     }
 
     fn put(u: &mut Ui, slot: usize, v: Vec<f32>, on: bool) {
-        u.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: format!("R{}", slot + 1), t0: 0.0, dt: 1e-9, v, vpd: 1.0, offset: 0.0, on });
+        u.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: format!("R{}", slot + 1), t0: 0.0, dt: 1e-9, v: v.into(), vpd: 1.0, offset: 0.0, on });
     }
 
     #[test]
@@ -768,17 +768,34 @@ mod tests {
         assert!(u.meas_own.contains_key(&(Meas::Vpp, WaveId::Ch(0))));
         assert!(u.meas_own.contains_key(&(Meas::Burst, WaveId::Ch(0))));
         u.key(key::MEASURE);
-        let group = Rect::new(26, 170 + 6 * 43, 164, 40);
-        u.tap(group.x + 8, group.y + 8);
-        assert_eq!(u.meas_category, 6);
-        let vpp = u.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasCfg(0)).expect("a place to open Vpp settings");
-        let burst = u.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasCfg(1)).expect("a place to open Burst settings");
-        u.tap(vpp.ctrl.x + vpp.ctrl.w / 2, vpp.ctrl.y + vpp.ctrl.h / 2);
+        let vpp = u.catalog_set_rect(Meas::Vpp).expect("a place to open Vpp settings");
+        u.tap(vpp.x + vpp.w / 2, vpp.y + vpp.h / 2);
         let g = u.cfg_geom().expect("Vpp has a settings dialog");
         assert!(g.source_m.w > 0 && g.refs.w > 0 && g.idle_m.is_none());
         u.meas_cfg = None;
-        u.tap(burst.ctrl.x + burst.ctrl.w / 2, burst.ctrl.y + burst.ctrl.h / 2);
-        let g = u.cfg_geom().unwrap();
+        let mut opened = false;
+        for _ in 0..12 {
+            let view = u.catalog_view();
+            if !opened {
+                if let Some(time) = u.catalog_group_rect(1) {
+                    if time.y < view.y + view.h - 4 && time.y + time.h > view.y + 4 {
+                        let y = (time.y + 4).clamp(view.y + 2, view.y + view.h - 2);
+                        u.tap(time.x + 12, y);
+                        opened = true;
+                        continue;
+                    }
+                }
+            } else if let Some(burst) = u.catalog_set_rect(Meas::Burst) {
+                let y = burst.y + burst.h / 2;
+                if view.contains(burst.x + burst.w / 2, y) {
+                    u.tap(burst.x + burst.w / 2, y);
+                    break;
+                }
+            }
+            let down = u.catalog_scroll_down().expect("scroll");
+            u.tap(down.x + 4, down.y + 4);
+        }
+        let g = u.cfg_geom().expect("Burst has a settings dialog");
         assert!(g.refs.w > 0 && g.idle_m.is_some(), "Burst keeps its own idle");
         u.meas_cfg_tap(g.idle_p.unwrap().x + 4, g.idle_p.unwrap().y + 4);
         let burst_idle = u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle;

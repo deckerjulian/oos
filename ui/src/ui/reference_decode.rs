@@ -274,7 +274,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn reference(v: Vec<f32>, dt: f64, t0: f64, vpd: f32) -> RefWave {
-        RefWave { src: 0, color: 0, label: "decoder fixture".into(), t0, dt, v, vpd, offset: 0.0, on: true }
+        RefWave { src: 0, color: 0, label: "decoder fixture".into(), t0, dt, v: v.into(), vpd, offset: 0.0, on: true }
     }
     fn uart(byte: u8, count: usize) -> (Vec<f32>, f64) {
         let mut values = vec![3.3; count];
@@ -378,12 +378,12 @@ mod tests {
         let clock = ui.refs[1].as_ref().unwrap();
         let mut rec = Record { ch: std::array::from_fn(|_| Vec::new()), dt: clock.dt, t0: clock.t0,
             triggered: true, partial: false, raw: None, la: None };
-        rec.ch[1] = clock.v.clone(); rec.dt = clock.dt; rec.t0 = clock.t0;
+        rec.ch[1] = clock.v.as_ref().clone(); rec.dt = clock.dt; rec.t0 = clock.t0;
         ui.last[0] = Some(rec);
         ui.m.dec_src2 = 1;
         assert_eq!(wait(&ui).as_ref(), packets.as_ref(), "mixed live/ref alignment must preserve packets");
         let full_clock = Arc::new(crate::board::Frame { seq: 19, dt: clock.dt,
-            ch: [Vec::new(), clock.v.clone(), Vec::new(), Vec::new()], ..crate::board::Frame::default() });
+            ch: [Vec::new(), clock.v.as_ref().clone(), Vec::new(), Vec::new()], ..crate::board::Frame::default() });
         let record = ui.last[0].as_mut().unwrap();
         record.ch[1] = vec![0.0; 4]; record.dt *= 50.0;
         record.raw = Some(crate::wave::Raw { frame: full_clock, i0: 10, i1: 14, t0: clock.t0 + 10.0 * clock.dt, conditioned: false });

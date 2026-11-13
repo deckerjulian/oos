@@ -396,7 +396,7 @@ impl Ui {
         match id {
             WaveId::Ref(i) => {
                 let r = self.refs.get(i)?.as_ref()?;
-                (r.v.len() >= 2 && r.dt > 0.0).then_some((r.v.clone(), r.dt))
+                (r.v.len() >= 2 && r.dt > 0.0).then_some((r.v.as_ref().clone(), r.dt))
             }
             WaveId::Ch(c) => self.on_rec(|rec| match &rec.raw {
                 Some(r) if c < r.frame.ch.len() && !r.frame.ch[c].is_empty() && r.frame.dt > 0.0 => Some((r.frame.ch[c].clone(), r.frame.dt)),

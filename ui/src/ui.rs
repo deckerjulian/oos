@@ -35,6 +35,7 @@ mod measlabels;
 mod overclock;
 mod tools;
 mod measurement_nav;
+mod meascatalog;
 pub(crate) mod facts;
 mod update;
 mod viewmore;
@@ -256,6 +257,8 @@ pub enum MenuId {
     Windows,
     /// list of all options of a choice (`Ui::pick` names the item); picking returns to the menu of the item
     Pick,
+    /// Full legacy measurement and pair catalog, including Selected.
+    MeasLegacy,
 }
 
 /// Buttons of the top bar.
@@ -294,7 +297,7 @@ struct RefWave {
     label: String,
     t0: f64,
     dt: f64,
-    v: Vec<f32>,
+    v: std::sync::Arc<Vec<f32>>,
     vpd: f32,
     offset: f32,
     on: bool,
@@ -703,6 +706,10 @@ enum Item {
     Offline,
     /// Appended so all previous menu item discriminants remain stable.
     DecCphyRate,
+    /// Remove a selected row, indexed across single, pair and catalog rows.
+    MeasRemove(u16),
+    CatSourceC,
+    CatSourceD,
 }
 
 #[derive(PartialEq)]
@@ -790,6 +797,13 @@ pub enum PowerAction {
 
 pub struct Ui {
     meas_category: usize,
+    /// Add-measurements catalog: tab, selected button, which groups are open, scroll, and the extra sources.
+    cat_tab: u8,
+    cat_sel: u16,
+    cat_open: [u16; 6],
+    cat_scroll: i32,
+    cat_c: WaveId,
+    cat_d: WaveId,
     meas_page: usize,
     meas_catalog_page: usize,
     workflow_hold: Option<workflow::LiveSession>,
@@ -1053,6 +1067,12 @@ impl Ui {
         }
         let mut ui = Ui {
             meas_category: 0,
+            cat_tab: 0,
+            cat_sel: 1,
+            cat_open: [1; 6],
+            cat_scroll: 0,
+            cat_c: WaveId::Ch(2),
+            cat_d: WaveId::Ch(3),
             meas_page: 0,
             meas_catalog_page: 0,
             workflow_hold: None,
@@ -1218,13 +1238,13 @@ impl Ui {
 
     /// Measurement results in a panel on the right instead of the strip under the grid.
     fn results_panel(&self) -> bool {
-        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty())
+        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty())
     }
 
     /// Channels with measurements, in the order of their first measurement (one strip row each).
     fn meas_groups(&self) -> Vec<WaveId> {
         let mut v = Vec::new();
-        for id in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)) {
+        for id in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)).chain(self.m.cat.iter().map(|e| meascatalog::primary_source(*e))) {
             if !v.contains(&id) {
                 v.push(id);
             }
@@ -1239,7 +1259,7 @@ impl Ui {
 
     /// Strip rows of the measurements of channel `c`: six to a row.
     fn meas_strip_rows(&self, id: WaveId) -> i32 {
-        let n = self.m.meas.iter().filter(|e| e.1 == id).count() + self.m.meas2.iter().filter(|e| e.1 == id).count();
+        let n = self.m.meas.iter().filter(|e| e.1 == id).count() + self.m.meas2.iter().filter(|e| e.1 == id).count() + self.m.cat.iter().filter(|e| meascatalog::primary_source(**e) == id).count();
         n.div_ceil(tools::STRIP_PER_ROW) as i32
     }
 
@@ -1964,7 +1984,7 @@ impl Ui {
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
         self.ana = Default::default();
-        self.mstat.clear();
+        self.clear_measurement_statistics();
         self.mask_pass = 0;
         self.mask_fail = 0;
         self.toast("Display cleared");
@@ -1988,6 +2008,7 @@ impl Ui {
 
     pub fn step(&mut self, dt_wall: f64) {
         self.poll_reference_measurements();
+        self.poll_catalog_measurements();
         self.sim_poll();
         self.eye_auto_poll();
         self.relayout();
@@ -2204,6 +2225,11 @@ impl Ui {
                 self.counter_update();
                 for (i, row) in rows.iter().enumerate() {
                     if self.is_basic_frame_row(i) { continue; }
+                    if row.computing {
+                        if let Some(entry) = i.checked_sub(self.m.meas.len() + self.m.meas2.len()).and_then(|i| self.m.cat.get(i)).copied() {
+                            self.queue_catalog_statistics(entry, self.wfm_total);
+                        }
+                    }
                     let v = row.v;
                     if v.is_finite() {
                         let st = &mut self.mstat[i];
@@ -2785,7 +2811,7 @@ impl Ui {
         let Some(r) = self.refs[self.ref_sel].as_ref().filter(|r| r.v.len() >= 2) else {
             return self.toast(&format!("R{} is empty", self.ref_sel + 1));
         };
-        self.mask_ref = Some(r.v.clone());
+        self.mask_ref = Some(r.v.as_ref().clone());
         self.m.mask_src = r.src.min(NCH - 1);
         self.build_mask();
         self.m.mask_on = true;
@@ -3926,7 +3952,7 @@ impl Ui {
             return None;
         }
         let a = self.over_area();
-        let total = self.m.meas.len() + self.m.meas2.len();
+        let total = self.measurement_count();
         let n = total.min(self.results_page_size()) as i32;
         let nav = if total > n as usize { 38 } else { 0 };
         let body_h = if self.results_min { 0 } else { n * Self::results_pitch(total as i32) + nav + 4 };
@@ -3955,6 +3981,8 @@ impl Ui {
     fn results_name(&self, index: usize, row: &tools::MeasRow) -> String {
         if let Some(&(kind, a, b)) = index.checked_sub(self.m.meas.len()).and_then(|i| self.m.meas2.get(i)) {
             format!("{}-{} {}", self.wave_name(a), self.wave_name(b), tools::PAIRS[kind.min(tools::PAIRS.len() - 1)].0)
+        } else if index >= self.m.meas.len() + self.m.meas2.len() {
+            self.selected_measurement_label(index)
         } else { format!("{} {}", self.wave_name(row.src), row.name) }
     }
 
@@ -4184,7 +4212,7 @@ impl Ui {
             (MenuId::Pick, Some(p)) => p.menu,
             (m, _) => m,
         };
-        if m == MenuId::MeasAdd || m == MenuId::MeasHold {
+        if matches!(m, MenuId::MeasAdd | MenuId::MeasHold | MenuId::MeasLegacy) {
             MenuId::Measure
         } else if m == MenuId::SimAdvanced {
             MenuId::Sim
@@ -4374,7 +4402,8 @@ impl Ui {
             MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
-            MenuId::MeasAdd => self.measurement_catalog(),
+            MenuId::MeasAdd => Vec::new(),
+            MenuId::MeasLegacy => self.measurement_catalog(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
@@ -4988,6 +5017,7 @@ impl Ui {
             MenuId::Acquire => "Acquire".into(),
             MenuId::Measure => "Measure".into(),
             MenuId::MeasAdd => "Add measurement".into(),
+            MenuId::MeasLegacy => "All measurements / Selected".into(),
             MenuId::MeasHold => "Add".into(),
             MenuId::MeasPair => format!("Pairs {} to {}", self.pair_source_caption(self.meas_src), self.pair_source_caption(self.meas_src_b)),
             MenuId::Dvm => "DVM and counter".into(),
@@ -5024,7 +5054,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasRemove(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -5133,6 +5163,7 @@ impl Ui {
             Item::MathBw => "Bandwidth",
             Item::MathSel => "Channel",
             Item::MathAuto => "Auto scale",
+            Item::Open(MenuId::MeasLegacy) => "All / Selected",
             Item::Open(_) => "",
             Item::ChOn(_) => "Display",
             Item::ChCoupling(_) => "Coupling",
@@ -5217,6 +5248,9 @@ impl Ui {
             Item::MeasAdd(k) => k.name(),
             Item::MeasCfg(_) => "Set",
             Item::MeasClear => "Clear all",
+            Item::MeasRemove(_) => "Remove",
+            Item::CatSourceC => "Source C",
+            Item::CatSourceD => "Source D",
             Item::CurMode => "Mode",
             Item::CurA => "Cursor A",
             Item::CurB => "Cursor B",
@@ -5284,6 +5318,8 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
+        if it == Item::CatSourceC { return self.wave_name(self.cat_c); }
+        if it == Item::CatSourceD { return self.wave_name(self.cat_d); }
         if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)) {
             return v;
         }
@@ -5483,6 +5519,12 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
+        if matches!(it, Item::CatSourceC | Item::CatSourceD) {
+            let current = if it == Item::CatSourceC { self.cat_c } else { self.cat_d };
+            let next = self.step_wave(current, d);
+            if it == Item::CatSourceC { self.cat_c = next; } else { self.cat_d = next; }
+            return;
+        }
         if matches!(it, Item::MathA | Item::MathB) {
             let sources = self.math_source_ids(self.m.math_sel);
             let current = if it == Item::MathA { self.m.math_a } else { self.m.math_b };
@@ -5974,13 +6016,19 @@ impl Ui {
         }
     }
 
+    fn clear_measurement_statistics(&mut self) {
+        self.mstat.clear();
+        self.replay.clear_deferred_statistics();
+        self.reset_catalog_statistics();
+    }
+
     fn settings_changed(&mut self) {
         self.cancel_bus_candidate(true);
         if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run { self.single_armed = false; }
         if self.m.run == RunState::Run {
             self.dirty_map = true;
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn activate(&mut self, it: Item) {
@@ -6093,13 +6141,13 @@ impl Ui {
                         } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
                             self.meas_cfg = self.meas_cfg.map(|n| n - 1);
                         }
-                        self.mstat.clear();
+                        self.clear_measurement_statistics();
                         self.toast(&format!("{} {} removed", k.name(), self.wave_name(self.meas_src)));
                         return;
                     } else {
                         if !self.meas_make_room() { return; }
                         self.m.meas.push(e);
-                        self.mstat.clear();
+                        self.clear_measurement_statistics();
                     }
                     if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
                         if let Some((a, _)) = self.meas_analysis(self.meas_src) {
@@ -6138,12 +6186,14 @@ impl Ui {
                 },
                 Item::ChBiasZero(c) => self.zero_input(c),
                 Item::MathExprEdit => self.wlan.osk = Some(wlan::Osk::for_expr(self.m.math_sel, &self.m.math_expr[self.m.math_sel])),
+                Item::MeasRemove(index) => self.remove_measurement(index as usize),
                 Item::MeasClear => {
                     self.m.meas.clear();
                     self.m.meas2.clear();
+                    self.m.cat.clear();
                     self.meas_own.clear();
                     self.meas_cfg = None;
-                    self.mstat.clear();
+                    self.clear_measurement_statistics();
                 }
                 Item::RefSave => {
                     let c = self.ref_src;
@@ -6151,7 +6201,7 @@ impl Ui {
                     let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
                         let (v, dt) = self.meas_wave(r, c);
                         let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
-                        RefWave { src: c, color: 0, label: String::new(), t0, dt, v, vpd: self.m.ch[c].volts_per_div(), offset: self.m.ch[c].offset, on: true }
+                        RefWave { src: c, color: 0, label: String::new(), t0, dt, v: v.into(), vpd: self.m.ch[c].volts_per_div(), offset: self.m.ch[c].offset, on: true }
                     });
                     match saved {
                         Some(w) => {
@@ -6382,7 +6432,7 @@ impl Ui {
                 self.clamp_zoom();
                 self.relayout();
                 self.dirty_map = true;
-                self.mstat.clear();
+                self.clear_measurement_statistics();
                 self.toast(&format!("Recalled {}", crate::store::file_name(&p)));
             }
             Err(e) => self.toast(&format!("Recall failed: {}", e)),
@@ -6508,7 +6558,7 @@ impl Ui {
             Item::TrigSrc | Item::TrigSrc2 => return self.trigger_sources().into_iter().map(Self::trigger_wave_label).collect(),
             Item::DecSrc => return self.decoder_sources().into_iter().map(decode_source_name).collect(),
             Item::RefSrc => return ch_names(),
-            Item::MeasSrc | Item::MeasSrcB => return self.wave_names(),
+            Item::MeasSrc | Item::MeasSrcB | Item::CatSourceC | Item::CatSourceD => return self.wave_names(),
             Item::MathA | Item::MathB => return self.math_source_ids(self.m.math_sel).into_iter().map(src_name).collect(),
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
             Item::TrigSlope => &["Rising", "Falling", "Either"],
@@ -6703,7 +6753,8 @@ impl Ui {
         if !self.menu_open {
             return None;
         }
-        if self.menu == MenuId::MeasAdd { return Some(self.measurement_chooser_layout()); }
+        if self.menu == MenuId::MeasAdd { return Some(self.catalog_dialog()); }
+        if self.menu == MenuId::MeasLegacy { return Some(self.measurement_chooser_layout()); }
         if self.menu == MenuId::Main {
             return Some(self.main_layout());
         }
@@ -6775,6 +6826,11 @@ impl Ui {
     }
 
     fn draw_menu(&self, cv: &mut Canvas) {
+        if !self.menu_open { return; }
+        if self.menu == MenuId::MeasAdd {
+            self.draw_catalog(cv);
+            return;
+        }
         let Some(d) = self.dlg_layout() else { return };
         let f = &self.fonts;
         cv.round(d.r, 8, ACCENT, 255);
@@ -6865,8 +6921,9 @@ impl Ui {
                     let txt = match picked {
                         Some((o, _)) => o,
                         None if row.it == Item::QuickRun => format!("Quick \u{b7} {}", self.m.quick.short()),
-                        None if self.menu == MenuId::MeasAdd && row.it == Item::Open(MenuId::Measure) => "Settings".into(),
-                        None if self.menu == MenuId::MeasAdd && row.it == Item::Open(MenuId::MeasPair) => "Channel pairs".into(),
+                        None if self.menu == MenuId::MeasLegacy && row.it == Item::Open(MenuId::Measure) => "Settings".into(),
+                        None if self.menu == MenuId::MeasLegacy && row.it == Item::Open(MenuId::MeasPair) => "Channel pairs".into(),
+                        None if matches!(row.it, Item::MeasRemove(_)) => if let Item::MeasRemove(index) = row.it { format!("Remove {}", self.selected_measurement_label(index as usize)) } else { unreachable!() },
                         None if kind == Kind::Action => self.item_label(row.it).to_string(),
                         None => self.value(row.it),
                     };
@@ -6892,6 +6949,9 @@ impl Ui {
 
     /// Tap inside the menu dialog; false when (x, y) is outside it.
     fn tap_menu(&mut self, x: i32, y: i32) -> bool {
+        if self.menu_open && self.menu == MenuId::MeasAdd {
+            return self.catalog_tap(x, y);
+        }
         if self.measurement_group_tap(x, y) { return true; }
         let Some(d) = self.dlg_layout() else { return false };
         if !d.r.contains(x, y) {
@@ -7128,6 +7188,7 @@ impl Ui {
                 self.m = Model::default();
                 self.m.meas = meas;
                 self.m.quick = quick;
+                self.clear_measurement_statistics();
                 self.select_workspace_source(WaveId::Ch(self.m.active));
                 self.meas_own.clear();
                 self.meas_cfg = None;
@@ -9029,7 +9090,7 @@ mod tests {
         ui.store_dest = crate::store::StoreDest::Desk;
         ui.step(0.033);
         let rec = ui.last[0].as_ref().unwrap();
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: rec.t0, dt: rec.dt, v: rec.ch[0].clone(), vpd: 1.0, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: rec.t0, dt: rec.dt, v: rec.ch[0].clone().into(), vpd: 1.0, offset: 0.0, on: true });
         ui.activate(Item::MaskFromRef);
         assert!(ui.m.mask_on && ui.mask.is_some());
         ui.adjust(Item::MaskInvert, 1);
@@ -9188,7 +9249,7 @@ mod tests {
         for c in 0..NCH {
             ui.m.ch[c].on = false;
         }
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "DQ".into(), t0: 0.0, dt: 1e-9, v: vec![0.0, 1.0], vpd: 0.2, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "DQ".into(), t0: 0.0, dt: 1e-9, v: vec![0.0, 1.0].into(), vpd: 0.2, offset: 0.0, on: true });
         let (chs, tr, trg) = ui.cards();
         assert!(chs.iter().all(|r| r.w == 0), "{:?}", chs);
         assert!(tr.w >= 124 && trg.w >= 222);
@@ -9339,7 +9400,7 @@ mod tests {
         ];
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);
-        let settings = ui.dlg_layout().unwrap().rows.iter().find(|row| row.it == Item::Open(MenuId::Measure)).unwrap().ctrl;
+        let settings = ui.catalog_settings_rect();
         ui.tap(settings.x + settings.w / 2, settings.y + settings.h / 2);
         assert_eq!(ui.menu, MenuId::Measure, "settings is visible in the chooser");
         assert_eq!(ui.items(MenuId::Measure), rest);

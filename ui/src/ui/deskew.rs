@@ -104,7 +104,7 @@ mod tests {
 
     fn reference(t0: f64, on: bool) -> RefWave {
         RefWave { src: 0, color: 0, label: "timing fixture".into(), t0, dt: 1e-9,
-            v: (0..500).map(|i| if i % 40 < 20 { -1.0 } else { 1.0 }).collect(),
+            v: ((0..500).map(|i| if i % 40 < 20 { -1.0 } else { 1.0 }).collect::<Vec<_>>()).into(),
             vpd: 0.5, offset: 0.0, on }
     }
     fn stopped() -> Ui {
@@ -193,8 +193,8 @@ mod tests {
         ui.m.ch[1].on = true; ui.m.run = RunState::Stop; ui.m.delay = 0.0;
         ui.workspace.stacked = true; ui.relayout(); ui.cur_win = 1;
         let a = reference(-250e-9, true).v;
-        let b = (0..a.len()).map(|i| a[i.saturating_sub(3)]).collect();
-        ui.last[0] = Some(Record { t0: -250e-9, dt: 1e-9, ch: [a, b, Vec::new(), Vec::new()],
+        let b: Vec<f32> = (0..a.len()).map(|i| a[i.saturating_sub(3)]).collect();
+        ui.last[0] = Some(Record { t0: -250e-9, dt: 1e-9, ch: [a.as_ref().clone(), b, Vec::new(), Vec::new()],
             raw: None, la: None, partial: false, triggered: true });
         ui.m.deskew_ch[2] = 9e-9;
         ui.select_workspace_source(WaveId::Ch(0));

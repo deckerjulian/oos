@@ -82,7 +82,7 @@ impl State {
     }
 }
 
-fn infer(v: &[f32], dt: f64, requested: Option<f64>, explicit_clock: bool) -> Result<(Summary, eye::Clock), String> {
+pub(in crate::ui) fn infer(v: &[f32], dt: f64, requested: Option<f64>, explicit_clock: bool) -> Result<(Summary, eye::Clock), String> {
     if v.len() < 8 || !dt.is_finite() || dt <= 0.0 { return Err("Need at least 8 samples with a valid interval".into()); }
     let st = stats(v, dt);
     let span = st.vmax - st.vmin;

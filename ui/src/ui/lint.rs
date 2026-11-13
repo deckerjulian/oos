@@ -1446,7 +1446,7 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
     std::fs::write(dir.join("wave-001.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
     u.activate(Item::RefImport);
     let r = u.refs[0].as_ref().expect("R1");
-    assert_eq!(r.v, want);
+    assert_eq!(r.v.as_ref(), &want);
     assert!((r.dt - dt).abs() < 1e-18);
     std::fs::remove_file(dir.join("wave-001.bin")).unwrap();
     // A real f32 WFM fixture is independent of the live channel-enable bits: importing the BIN
@@ -1471,7 +1471,7 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
         std::fs::write(dir.join("cap.wfm"), wfm).unwrap();
         u.activate(Item::RefImport);
         let loaded = u.refs[0].as_ref().expect("WFM loaded into R1");
-        assert_eq!(loaded.v, want);
+        assert_eq!(loaded.v.as_ref(), &want);
         assert_eq!(loaded.label, "captured");
         assert!((loaded.dt - dt).abs() < 1e-18);
         assert!((loaded.t0 - rec.t0).abs() < 1e-18);
@@ -1498,7 +1498,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     u.activate(Item::RefImport);
     let loaded = u.refs[0].as_ref().unwrap();
     assert!((loaded.dt - dt).abs() < 1e-18, "{}", loaded.dt);
-    assert_eq!(loaded.v, sine);
+    assert_eq!(loaded.v.as_ref(), &sine);
 
     let mut screen: [Vec<f32>; NCH] = Default::default();
     screen[0] = vec![0.25, 0.5, 0.75, 1.0];
@@ -1641,7 +1641,7 @@ fn write_wave(dir: &std::path::Path, slot: usize, t0: f64, dt: f64, v: &[f32]) {
 }
 
 fn put_ref(u: &mut Ui, slot: usize, t0: f64, dt: f64, v: Vec<f32>) {
-    u.refs[slot] = Some(RefWave { src: 0, color: 0, label: String::new(), t0, dt, v, vpd: 0.2, offset: 0.0, on: true });
+    u.refs[slot] = Some(RefWave { src: 0, color: 0, label: String::new(), t0, dt, v: v.into(), vpd: 0.2, offset: 0.0, on: true });
 }
 
 /// Voltage of a 1 kHz triangle current in an ideal inductor.
@@ -2027,7 +2027,7 @@ fn cphy_eye_full_screen_shot() {
     }
     let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
-    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v, vpd: 0.5, offset: 0.0, on: true });
+    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v: v.into(), vpd: 0.5, offset: 0.0, on: true });
     u.full = true;
     u.relayout();
     u.m.view = AView::Eye;

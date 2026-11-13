@@ -112,7 +112,7 @@ mod tests {
         let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.ch.iter_mut().for_each(|ch|ch.on=false);
         ui.m.run=RunState::Stop;ui.m.meas_full_record=true;ui.m.meas.clear();ui.m.meas2=vec![(0,WaveId::Ref(0),WaveId::Ref(1))];
         let values:Vec<f32>=(0..400_000).map(|i|if i%40<20{-0.5}else{0.5}).collect();
-        for i in 0..2 {ui.refs[i]=Some(RefWave{src:0,color:i,label:String::new(),t0:0.001+i as f64*3e-9,dt:1e-9,v:values.clone(),vpd:0.2,offset:0.0,on:true});}
+        for i in 0..2 {ui.refs[i]=Some(RefWave{src:0,color:i,label:String::new(),t0:0.001+i as f64*3e-9,dt:1e-9,v: (values.clone()).into(),vpd:0.2,offset:0.0,on:true});}
         let deadline=Instant::now()+Duration::from_secs(10);
         loop {ui.measure_refs();ui.poll_reference_measurements();
             if ui.meas_analysis(WaveId::Ref(0)).is_some()&&ui.meas_analysis(WaveId::Ref(1)).is_some(){break;}

@@ -634,8 +634,8 @@ mod tests {
     }
 
     fn sine_ref(n: usize, cycles: f64, dt: f64) -> RefWave {
-        let v = (0..n).map(|k| (k as f64 / n as f64 * cycles * std::f64::consts::TAU).sin() as f32).collect();
-        RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt, v, vpd: 10.0, offset: 3.0, on: true }
+        let v: Vec<f32> = (0..n).map(|k| (k as f64 / n as f64 * cycles * std::f64::consts::TAU).sin() as f32).collect();
+        RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt, v: v.into(), vpd: 10.0, offset: 3.0, on: true }
     }
 
     #[test]

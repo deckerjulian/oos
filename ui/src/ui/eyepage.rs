@@ -615,7 +615,7 @@ impl Ui {
             WaveId::Ref(i) => {
                 let r = self.refs.get(i)?.as_ref()?;
                 (r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0)
-                    .then(|| WaveSamp { v: r.v.clone(), t0: r.t0, dt: r.dt })
+                    .then(|| WaveSamp { v: r.v.as_ref().clone(), t0: r.t0, dt: r.dt })
             }
             WaveId::Ch(_) => self.wave_samples(rec, id),
         }
@@ -1553,7 +1553,7 @@ mod tests {
         ui.session_is_sim = false;
         ui.set_offline(true);
         ui.m.sim_slot = 0;
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "SSC clock".into(), t0: 0.0, dt, v: samples, vpd: 0.5, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "SSC clock".into(), t0: 0.0, dt, v: (samples).into(), vpd: 0.5, offset: 0.0, on: true });
         ui.m.eye_src = WaveId::Ref(0);
         ui.m.eye_rate = rate;
         ui.m.zoom = true;
@@ -1587,7 +1587,7 @@ mod tests {
             assert_eq!(reading(&ui, "SSCRate"), ssc);
         }
         // A waveform edit away from the old three fingerprint samples is still a new record.
-        ui.refs[0].as_mut().unwrap().v[1000] *= 0.8;
+        std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v)[1000] *= 0.8;
         ui.eye_update(&Ui::blank_record());
         assert_ne!(ui.azr.eye_ref, identity);
         assert_eq!(ui.azr.page.records, 1);
@@ -1596,7 +1596,7 @@ mod tests {
         ui.eye_update(&Ui::blank_record());
         assert_ne!(ui.azr.eye_ref, waveform_identity, "settings refresh the cached figures");
         assert_eq!(ui.azr.page.records, 1);
-        ui.refs[0].as_mut().unwrap().v.fill(0.0);
+        std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v).fill(0.0);
         ui.eye_update(&Ui::blank_record());
         assert!(ui.azr.eye.is_none() && ui.azr.eye_res.is_none(), "an edgeless replacement cannot keep stale results");
     }
@@ -1890,7 +1890,7 @@ mod tests {
         for (slot, signal) in [(0, CLEAN), (1, Sig { rate: CLEAN.rate * 2.0, ..CLEAN })] {
             let rec = record(signal, &mut noise);
             ui.refs[slot] = Some(RefWave { src: 0, color: slot, label: format!("Rate {slot}"), t0: rec.t0, dt: rec.dt,
-                v: rec.ch[0].clone(), vpd: 0.2, offset: 0.0, on: true });
+                v: (rec.ch[0].clone()).into(), vpd: 0.2, offset: 0.0, on: true });
         }
         ui.select_workspace_source(WaveId::Ref(1));
         ui.eye_make();
@@ -1903,7 +1903,7 @@ mod tests {
         ui.m.eye_rate = 125e6;
         ui.adjust(Item::EyeSrc, 1);
         assert_eq!(ui.m.eye_rate, 125e6, "a deliberately manual rate survives source selection");
-        ui.refs[1].as_mut().unwrap().v.fill(0.0);
+        std::sync::Arc::make_mut(&mut ui.refs[1].as_mut().unwrap().v).fill(0.0);
         ui.eye_make();
         assert_eq!(ui.m.eye_src, WaveId::Ref(1));
         assert_eq!(ui.m.eye_rate, 0.0, "a flat selected record does not silently use another source's clock");
@@ -2112,7 +2112,7 @@ mod automatic_setup_tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.set_offline(true);
         ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "Auto test".into(), t0: -1e-6,
-            dt, v: values, vpd: 0.2, offset: 0.0, on: true });
+            dt, v: (values).into(), vpd: 0.2, offset: 0.0, on: true });
         ui.select_workspace_source(WaveId::Ref(0));
         ui.m.run = RunState::Stop;
         ui
@@ -2203,7 +2203,7 @@ mod automatic_setup_tests {
         ui.eye_make();
         assert!(ui.azr.page.status[0].contains("Computing"));
         assert_eq!(ui.azr.eye_auto.submitted, 1);
-        ui.refs[0].as_mut().unwrap().v = square(300_000, 10);
+        ui.refs[0].as_mut().unwrap().v = square(300_000, 10).into();
         ui.eye_make();
         let start = std::time::Instant::now();
         while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 20 {

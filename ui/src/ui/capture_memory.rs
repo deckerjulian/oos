@@ -88,7 +88,7 @@ impl Ui {
 
     pub(super) fn accumulate_basic_summary(&mut self, channel: usize, values: crate::board::BasicStats) {
         if !values.valid { return; }
-        self.mstat.resize(self.m.meas.len() + self.m.meas2.len(), MStat::default());
+        self.mstat.resize(self.measurement_count(), MStat::default());
         for (row, &(kind, source)) in self.m.meas.iter().enumerate() {
             if source != WaveId::Ch(channel) { continue; }
             let Some(value) = values.reading(kind) else { continue; };
