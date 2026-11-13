@@ -31,6 +31,7 @@ mod wlan;
 mod windows;
 mod time;
 mod remote;
+mod ssh;
 mod backlight;
 mod graphics;
 mod script;
@@ -277,6 +278,8 @@ pub enum MenuId {
     Network,
     /// which network services run (ui/remote.rs)
     Remote,
+    /// the SSH server: password, host key, trusted keys (ui/ssh.rs)
+    Ssh,
     /// clock, NTP and time zone (ui/time.rs)
     Time,
     Bode,
@@ -607,10 +610,19 @@ enum Item {
     RemWeb,
     RemScpi,
     RemVxi,
-    RemTelnet,
+    RemSsh,
     RemScpiInfo,
     RemVxiInfo,
-    RemTelnetInfo,
+    /// System > Network > Remote services > SSH settings (ui/ssh.rs); `SshRemoveKey` is its picker
+    SshState,
+    SshPassword,
+    SshShowPass,
+    SshHostKey,
+    SshKeys,
+    SshKeyList,
+    SshImport,
+    SshRemove,
+    SshRemoveKey,
     /// Display > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
     /// Display > Backlight, percent (ui/backlight.rs)
@@ -938,6 +950,7 @@ pub struct Ui {
     pub sys_path: Option<std::path::PathBuf>,
     /// NTP worker and schedule (ui/time.rs)
     ntp: time::NtpUi,
+    ssh: ssh::SshUi,
     /// the system clock was set in this boot (NTP or by hand): file names carry the date
     pub clock_known: bool,
     pub t_step: f32,
@@ -1127,6 +1140,7 @@ impl Ui {
             sys: Default::default(),
             sys_path: None,
             ntp: Default::default(),
+            ssh: Default::default(),
             clock_known: false,
             t_step: 0.0,
             t_acq: 0.0,
@@ -1577,6 +1591,7 @@ impl Ui {
         self.update_poll();
         self.wlan_poll();
         self.ntp_poll();
+        self.ssh_poll();
         self.usb_poll();
         self.ch_hold_poll();
         self.counter_poll();
@@ -3908,6 +3923,7 @@ impl Ui {
             MenuId::SelfCal => self.cal_items(),
             MenuId::Network => vec![Item::NetEth, Item::NetRetry10, Item::NetMac, Item::Open(MenuId::Remote), Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
             MenuId::Remote => self.remote_items(),
+            MenuId::Ssh => self.ssh_items(),
             MenuId::Time => self.time_items(),
             MenuId::Bode => self.bode_items(),
             MenuId::Afg => self.afg_items(),
@@ -4626,6 +4642,7 @@ impl Ui {
             MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Network => "Network".into(),
             MenuId::Remote => "Remote services".into(),
+            MenuId::Ssh => "SSH".into(),
             MenuId::Time => "Date and time".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Afg => "Generator (GI/GO)".into(),
@@ -5576,7 +5593,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
-        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it) || self.time_activate(it)) {
+        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it) || self.time_activate(it) || self.ssh_activate(it)) {
             return;
         }
         match Self::kind(it) {
@@ -5657,6 +5674,10 @@ impl Ui {
                 Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::WlanForgetNet) => {
                     self.close_picker();
                     self.wlan_forget_pick(k);
+                }
+                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::SshRemoveKey) => {
+                    self.close_picker();
+                    self.ssh_remove_pick(k);
                 }
                 Item::PickOpt(k) => {
                     if let Some(p) = self.pick {
@@ -6129,7 +6150,7 @@ impl Ui {
             MenuId::Horizontal => (tr.x + tr.w / 2, false),
             MenuId::Trigger => (trg.x + trg.w / 2, false),
             MenuId::Main => (self.menu_btn().x, false),
-            MenuId::Network | MenuId::Remote => (self.net_box().x + self.net_box().w / 2, true),
+            MenuId::Network | MenuId::Remote | MenuId::Ssh => (self.net_box().x + self.net_box().w / 2, true),
             MenuId::ViewMore => (self.scr.w, true),
             MenuId::La | MenuId::LaLines | MenuId::LaPat => self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
             MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
@@ -6149,7 +6170,7 @@ impl Ui {
         let items = self.items(self.menu);
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
-        let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet));
+        let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet | Item::SshRemoveKey));
         let l = self.lay();
         let (cols, cw, rh, gap) = if wide { (2, l.dlg_col, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, l.grid_col + 40, DLG_ROW + 2, 8) } else if grid { (4, l.grid_col, DLG_ROW + 2, 8) } else if n > 5 { (2, l.dlg_col, DLG_ROW, 16) } else { (1, l.dlg_col, DLG_ROW, 16) };
         let nrows = (n + cols - 1) / cols;
