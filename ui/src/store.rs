@@ -176,6 +176,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("trig_type", name(m.trig_type));
     kv("trig_level2", m.trig_level2.to_string());
     kv("trig_nrej", m.trig_nrej.to_string());
+    kv("auto_nrej", m.auto_nrej.to_string());
     kv("trig_coup", name(m.trig_coup));
     kv("trig_src2", m.trig_src2.to_string());
     kv("trig_slope2", name(m.trig_slope2));
@@ -433,6 +434,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "holdoff" => m.holdoff = p_f32(v)?,
         "trig_type" => m.trig_type = p_enum(v, &TRIG_TYPES)?,
         "trig_nrej" => m.trig_nrej = p_bool(v)?,
+        "auto_nrej" => m.auto_nrej = p_bool(v)?,
         "trig_coup" => m.trig_coup = p_enum(v, &TRIG_COUPS)?,
         "trig_level2" => m.trig_level2 = p_f32(v)?,
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,

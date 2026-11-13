@@ -51,8 +51,9 @@ pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, eit
 }
 
 /// Where the edge of the set direction is, seen at the resolution of the screen: `v` around `pre` (+-`span` samples)
-/// smoothed by a centred moving average of `l` samples (one screen column), then a comparator with a hysteresis band of
-/// `hyst` (total width, as the hardware's), the edge of the set direction nearest to `pre`. Noise larger than the band
+/// smoothed by a centred moving average of `l` samples (one screen column), then the hardware's comparators with
+/// hysteresis `hyst` (`oos_dsp::edges::trigger_edges`: a rising edge arms below level - `hyst` and fires at the level),
+/// the edge of the set direction nearest to `pre`. Noise larger than the band
 /// (a slow sine at a high rate) cannot make an edge of the other direction look right, which a test on single samples
 /// cannot rule out. Only edges at times `fits` accepts count. Returns the edge and the nearest edge of either direction
 /// (for the statistics).
@@ -84,7 +85,7 @@ pub fn edge_smooth(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, e
             s.push(f32::NAN);
         }
     }
-    let edges = oos_dsp::edges::edges(&s, level, hyst);
+    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
     let d = |e: &oos_dsp::edges::Edge| (a as f64 + e.t - pre as f64).abs();
     let near = |ok: &dyn Fn(&oos_dsp::edges::Edge) -> bool| edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied();
     let want = near(&|e| either || e.rising == rising).map(|e| a as f64 + e.t);
@@ -208,8 +209,34 @@ mod tests {
         }
         // at the rising edge itself
         assert!((edge_smooth(&v, 12_480, 0.0, 0.06, true, false, 31_250, 62, |_| true).0.unwrap() - 12500.0).abs() < 60.0);
-        // falling
-        assert!((edge_smooth(&v, 12_480, 0.0, 0.06, false, false, 31_250, 62, |_| true).0.unwrap() - 6250.0).abs() < 60.0);
+        // falling, nearer the one at 6250 than the one at 18750 (from 12480 both are about as far: the comparators fire
+        // at the first crossing, so the noise decides which is nearer)
+        assert!((edge_smooth(&v, 11_000, 0.0, 0.06, false, false, 31_250, 62, |_| true).0.unwrap() - 6250.0).abs() < 60.0);
+    }
+
+    // Break it catches: the software trigger arming on noise the hardware ignores. A 0..5 V square with +-0.1 V noise
+    // and the level 0.15 V above the low rail at 1 V/div (h = 0.3 V): the hardware never arms a rising edge (it needs
+    // a sample below -0.15 V), so it forces frames, and the software must not find "edges" in that noise
+    #[test]
+    fn a_level_on_the_noise_of_a_rail_finds_no_edge() {
+        let mut r = 777u32;
+        let v: Vec<f32> = (0..20_000)
+            .map(|k| {
+                r = r.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                (if (k / 5000) % 2 == 1 { 5.0 } else { 0.0 }) + ((r >> 16) as f32 / 65536.0 - 0.5) * 0.2
+            })
+            .collect();
+        for l in [1usize, 4, 16] {
+            for pre in [1000, 2500, 12_000] {
+                let (e, any) = edge_smooth(&v, pre, 0.15, 0.3, true, false, 9000, l, |_| true);
+                assert_eq!(e, None, "l {} pre {}", l, pre);
+                // the falling edges arm (from 5 V) and fire
+                assert!(any.is_some_and(|x| !x.rising), "l {} pre {}", l, pre);
+            }
+        }
+        // the level in the middle: the rising edges are found at their crossings
+        let (e, _) = edge_smooth(&v, 5100, 2.5, 0.3, true, false, 9000, 1, |_| true);
+        assert!((e.unwrap() - 5000.0).abs() < 1.0);
     }
 
     /// A falling edge with noise crosses the level upwards too: with hysteresis that is no rising edge, and the rising

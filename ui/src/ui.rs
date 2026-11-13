@@ -533,6 +533,8 @@ enum Item {
     GridFrame,
     /// noise reject of the trigger comparators
     TrigNoise,
+    /// the auto set-up turns noise reject on for a noisy trigger signal (opt-in)
+    TrigAutoNoise,
     /// coupling of the edge trigger
     TrigCoup,
     LaOn,
@@ -4497,6 +4499,7 @@ impl Ui {
         if m.trig_type != TT::Bus && m.trig_line().is_none() {
             v.push(TrigNoise);
         }
+        v.push(TrigAutoNoise);
         v.push(TrigMode);
         v.push(SearchOn);
         if self.search_on {
@@ -4885,6 +4888,7 @@ impl Ui {
             Item::GridBright => "Grid bright.",
             Item::GridFrame => "Grid frame",
             Item::TrigNoise => "Noise reject",
+            Item::TrigAutoNoise => "Auto noise rej.",
             Item::TrigCoup => "Coupling",
             Item::ClearDisp => "Clear",
             Item::Dots => "Dots",
@@ -5060,6 +5064,7 @@ impl Ui {
             Item::GridBright => format!("{} %", m.grid_bright),
             Item::GridFrame => onoff(m.grid_frame),
             Item::TrigNoise => onoff(m.trig_nrej),
+            Item::TrigAutoNoise => onoff(m.auto_nrej),
             Item::TrigCoup => m.trig_coup.name().into(),
             Item::Dots => onoff(m.dots),
             Item::Hdmi => format!("{:?}", m.hdmi),
@@ -5417,6 +5422,7 @@ impl Ui {
             Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(10, 100) as u32,
             Item::GridFrame => m.grid_frame = !m.grid_frame,
             Item::TrigNoise => m.trig_nrej = !m.trig_nrej,
+            Item::TrigAutoNoise => m.auto_nrej = !m.auto_nrej,
             Item::TrigCoup => {
                 let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
                 m.trig_coup = TRIG_COUPS[cyc(i, TRIG_COUPS.len(), d)];
@@ -6019,7 +6025,7 @@ impl Ui {
             Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
             Item::GridStyle => &["Full", "Light", "None"],
-            Item::GridFrame | Item::TrigNoise => &["Off", "On"],
+            Item::GridFrame | Item::TrigNoise | Item::TrigAutoNoise => &["Off", "On"],
             Item::Dots | Item::ZoneOn => &["Off", "On"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),

@@ -5,14 +5,16 @@
 //! edge within a sample or two of it. `edge_smooth_near` first searches `NEAR_COLS` screen columns around the point and
 //! keeps that answer only when it provably equals the wide one; otherwise it runs the wide search.
 //!
-//! Why the near answer is the wide one when it is accepted: the comparator of `oos_dsp::edges` is decided by the last
-//! smoothed sample outside the hysteresis band, so from the first such sample in the near window on, both windows see
-//! the same state and the same edges. Let d be the distance of the near result from `pre`. Every wide edge within d has
-//! its time and its comparator transition between `pre` - d and the next out-of-band sample after `pre` + d (between an
-//! edge's level crossing and its transition the signal stays inside the band). So when the near window has an
-//! out-of-band sample before `pre` - d and one after `pre` + d, it holds every wide edge within d, in the same order:
-//! the nearest one (and the nearest of either direction) is the same. The times can differ in the last bits (the
-//! running sum starts at another sample, the window offset is added in another order), far below 1e-6 sample.
+//! Why the near answer is the wide one when it is accepted: `oos_dsp::edges::trigger_edges` keeps one armed flag per
+//! direction. A sample below level - h arms the rising comparator and disarms the falling one (it is below the level);
+//! a sample above level + h does the reverse. So both flags after such an out-of-band sample are the same whatever came
+//! before, and after the first out-of-band sample in the near window both windows see the same states and the same
+//! edges, each decided at its own crossing. Let d be the distance of the near result from `pre`. When the near window
+//! has an out-of-band sample before `pre` - d, every wide edge within d is also a near edge, in the same order: the
+//! nearest one (and the nearest of either direction) is the same. The near search also asks for an out-of-band sample
+//! after `pre` + d, so that the firing samples of those edges lie inside the near window. The times can differ in the
+//! last bits (the running sum starts at another sample, the window offset is added in another order), far below 1e-6
+//! sample.
 
 use crate::fastdraw::edge_smooth;
 use oos_dsp::edges::Edge;
@@ -38,13 +40,13 @@ pub fn edge_smooth_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bo
 #[allow(clippy::too_many_arguments)]
 fn near_only(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize, fits: &dyn Fn(f64) -> bool) -> Option<(Option<f64>, Option<Edge>)> {
     let (a, s) = smoothed(v, pre, span, l, level)?;
-    let edges = oos_dsp::edges::edges(&s, level, hyst);
+    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
     let d = |e: &Edge| (a as f64 + e.t - pre as f64).abs();
     let near = |ok: &dyn Fn(&Edge) -> bool| edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied();
     let want = near(&|e| either || e.rising == rising)?;
     let dist = d(&want);
-    // out-of-band samples on both sides beyond the result (absolute indices)
-    let (lo, hi) = (level - hyst / 2.0, level + hyst / 2.0);
+    // out-of-band samples (they set both comparators) on both sides beyond the result (absolute indices)
+    let (lo, hi) = (level - hyst, level + hyst);
     let out = |x: &f32| x.is_finite() && (*x > hi || *x < lo);
     let first = s.iter().position(out)? as f64 + a as f64;
     let last = s.iter().rposition(out)? as f64 + a as f64;
@@ -104,6 +106,17 @@ mod tests {
             sim::add_noise(&mut v, noise, 11);
             out.push((format!("sine noise {}", noise), v));
         }
+        // a not so clean logic signal (scaled to -1..1): ringing after each edge and noise of +-0.4
+        let mut ring: Vec<f32> = (0..n)
+            .map(|k| {
+                let ph = k % 2000;
+                let base: f32 = if ph < 1000 { -1.0 } else { 1.0 };
+                let since = (ph % 1000) as f32;
+                base - base.signum() * 0.5 * (-since / 40.0).exp() * (since / 6.0).cos()
+            })
+            .collect();
+        sim::add_noise(&mut ring, 0.4, 13);
+        out.push(("ringing logic noise 0.4".into(), ring));
         // runts: pulses to half height between full pulses
         let runt: Vec<f32> = (0..n).map(|k| match (k / 500) % 4 { 0 => 1.0, 2 => 0.1, _ => -1.0 }).collect();
         out.push(("runts".into(), runt));
@@ -139,12 +152,13 @@ mod tests {
         let (mut cases, mut hits) = (0, 0);
         for (name, v) in corpus() {
             // anywhere, and where the hardware puts it: on or next to an edge
-            let at_edges = oos_dsp::edges::edges(&v, 0.0, 0.1).into_iter().map(|e| e.t as usize).filter(|&t| t > 300 && t < v.len() - 300).step_by(7).take(12);
+            let at_edges = oos_dsp::edges::trigger_edges(&v, 0.0, 0.1).into_iter().map(|e| e.t as usize).filter(|&t| t > 300 && t < v.len() - 300).step_by(7).take(12);
             let pres: Vec<usize> = (300..v.len() - 300).step_by(4999).chain(at_edges.flat_map(|t| [t, t + 3, t - 40])).collect();
             for pre in pres {
                 for (l, span) in [(1, 600), (4, 2000), (16, 9000), (62, 19_000)] {
                     for hyst in [0.0f32, 0.06, 0.3] {
-                        for level in [0.0f32, 0.3, -0.5] {
+                        // -0.97: next to the low rail, where noise moves around the level but never arms a rising edge
+                        for level in [0.0f32, 0.3, -0.5, -0.97] {
                             for (rising, either) in [(true, false), (false, false), (true, true)] {
                                 let fits_all = |_: f64| true;
                                 let lo = pre as f64 - 50.0;
@@ -168,19 +182,20 @@ mod tests {
         assert!(cases > 10_000 && hits * 5 > cases / 2, "{} cases, near answered {}", cases / 2, hits);
     }
 
-    // Break it catches: a near result accepted although a closer wide edge is decided outside the near window, either
-    // after it (the signal lingers inside the band) or before it (the near window starts inside the band).
+    // Break it catches: a near result accepted although a closer wide edge depends on what lies before the near
+    // window: the comparator was armed (or not) by a sample the near window does not see
     #[test]
     fn near_first_falls_back_when_the_window_cannot_decide() {
         let pre = 1000;
-        // falling at pre - 30, then a rising crossing at pre - 10 that stays inside the band for 3000 samples
-        let late: Vec<f32> = (0..6000).map(|k| if k < pre - 30 { 1.0 } else if k < pre - 10 { -1.0 } else if k < pre + 3000 { 0.05 } else { 1.0 }).collect();
+        // +1 long before, then just above the level (inside the band) into the near window, a falling crossing at
+        // pre - 20 that only the history armed, -1 from pre + 5, a rising edge far away at pre + 200
+        let armed_before: Vec<f32> = (0..6000).map(|k| if k < pre - 300 { 1.0 } else if k < pre - 20 { 0.05 } else if k < pre + 5 { -0.05 } else if k < pre + 200 { -1.0 } else { 1.0 }).collect();
         // -1, then just below the level from pre - 200, a rising crossing at pre - 75 inside the band, +1 from pre - 60,
         // falling at pre + 79
         let early: Vec<f32> = (0..6000).map(|k| if k < pre - 200 { -1.0 } else if k < pre - 75 { -0.05 } else if k < pre - 60 { 0.05 } else if k < pre + 79 { 1.0 } else { -1.0 }).collect();
-        for v in [late, early] {
+        for (v, rising) in [(armed_before, false), (early, true)] {
             let wide = edge_smooth(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true);
-            assert!(wide.1.is_some_and(|e| e.rising), "{:?}", wide);
+            assert!(wide.1.is_some_and(|e| e.rising == rising), "{:?}", wide);
             assert!(near_only(&v, pre, 0.0, 0.3, true, true, NEAR_COLS + NEAR_PAD, 1, &|_| true).is_none());
             assert!(same(wide, edge_smooth_near(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true)));
         }
