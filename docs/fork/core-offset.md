@@ -92,6 +92,16 @@ alone at 1 us/div, input open):
   firmware has, 4 runs per reading, keep the best round within 1 step. The failure log line now includes the order
   (slots and measured codes per register step).
 
+## Round 12 (unit, build 20261113-222353)
+
+- Mode 2 (CH3 alone): order found again (codes per register step 9.0 to 10.6, about 0.62 ADC step). Two tries ended
+  "did not converge", best 5.60 and 1.21 steps; under the 1.0 limit of the time nothing was kept, and slot 6 stayed
+  at +9. The limit is now the stock 1.5 and the failure line traces the worst slot per round.
+- Modes 0 and 5 (start-up and probe-comp states): order not found. In mode 0 a nudge of core 1 moved every slot by
+  about -3690 codes, far more than 64 register steps give (cause not known, possibly clipping); in mode 5 the
+  moves varied from try to try (likely the probe-comp signal on the input). Both are refused as
+  intended and leave the offsets alone.
+
 ## What the change does
 
 `hal::dho::coretrim`, called from the acquisition thread right after a configuration, with nothing armed, once per
@@ -106,7 +116,7 @@ ADC mode and session:
    Correction = difference divided by the measured codes per register step, rounded; up to 8 rounds; target 0.6
    steps. Each reading averages 4 measure runs, and every round waits 50 ms after its writes (`order` waits 5 ms
    after each nudge), as the stock calibration does. When noise keeps one core above 0.6 in every round, the best
-   round is kept if its worst core is within 1 step (the stock calibration accepts 1.5). Codes per ADC step for the tolerance: 16, or
+   round is kept if its worst core is within 1.5 steps, the stock calibration's own tolerance. Up to 12 rounds. Codes per ADC step for the tolerance: 16, or
    32 where a digital gain of 2 or more puts the ADC x2 of 0x105c before the measure unit.
 3. Quietness gate: a channel is matched only when every slot's samples stay within 128 steps (max - min) and every
    slot's mean moves by at most 1 step over three runs 20 ms apart (one run's slot means scatter by about 0.3 step). Matching to the channel mean assumes each core

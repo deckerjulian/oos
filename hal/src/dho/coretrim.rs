@@ -31,8 +31,9 @@ pub trait TrimHw {
 /// 0.55 ADC step (unit round 11), so a core can always get within 0.3; the rest is measurement noise.
 pub const TOL: f64 = 0.6;
 /// Accepted result in ADC steps when the noise keeps some core above `TOL` in every round: the best round is kept if
-/// its worst core is within this. The stock calibration accepts 1.5.
-pub const ACCEPT: f64 = 1.0;
+/// its worst core is within this. The stock calibration accepts the same 1.5 (unit round 12: the trim brought the
+/// far core from +9 to within 1.21 steps and then kept nothing under a 1.0 limit).
+pub const ACCEPT: f64 = 1.5;
 /// Measure-unit runs averaged per reading in `trim`: one run's slot means scatter by about 0.25 step against each
 /// other (unit round 11: slot 6 read +8.48, +8.20, +8.45 in three runs), more than the single-run 0.05 the mean of
 /// 2^18 samples would give.
@@ -43,8 +44,8 @@ pub const AVG_RUNS: usize = 4;
 /// between calibration rounds.
 pub const ORDER_SETTLE_MS: u32 = 5;
 pub const TRIM_SETTLE_MS: u32 = 50;
-/// Rounds of correction before giving up.
-pub const ROUNDS: usize = 8;
+/// Rounds of correction before giving up (the stock calibration allows 20).
+pub const ROUNDS: usize = 12;
 /// Nudge for `order`, register steps: about 32 ADC steps at the stock's 8 codes per register step.
 pub const NUDGE: i32 = 64;
 /// A channel is matched only with its mean within this many steps of mid-scale: a core gain mismatch of 0.1 %
@@ -191,14 +192,20 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
     let mut m = average(&runs);
     // the round with the smallest worst core: noise can keep one core above TOL in every round
     let mut best = (f64::MAX, o);
+    // per round the worst core and its error, for the failure log
+    let mut trace: Vec<String> = Vec::new();
     for round in 0..=ROUNDS {
         let mut worst: f64 = 0.0;
+        let mut worst_at = (0usize, 0.0f64);
         let mut fix: Vec<(usize, i32)> = Vec::new();
         for (_, sl) in &usable {
             let target = sl.iter().map(|&k| m[k].mean).sum::<f64>() / sl.len() as f64;
             for &k in sl {
                 let e = (m[k].mean - target) / lsb[k];
-                worst = worst.max(e.abs());
+                if e.abs() > worst {
+                    worst = e.abs();
+                    worst_at = (k, e);
+                }
                 if e.abs() > TOL {
                     let n = core_of(k).ok_or(format!("slot {} has no core", k))?;
                     // a correction below half a register step cannot be made: that core is as close as it gets
@@ -210,6 +217,7 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
             }
         }
         residual = worst;
+        trace.push(format!("{:+.2}@{}", worst_at.1, worst_at.0));
         if worst < best.0 {
             best = (worst, o);
         }
@@ -235,7 +243,7 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
         }
         return Ok(Trimmed { offsets: offs, residual: worst, matched, skipped });
     }
-    Err(format!("core offsets did not converge in {} rounds, {:.2} steps left (best {:.2})", ROUNDS, residual, worst))
+    Err(format!("core offsets did not converge in {} rounds, {:.2} steps left (best {:.2}), worst step@slot per round {}", ROUNDS, residual, worst, trace.join(" ")))
 }
 
 /// `AVG_RUNS` runs of the measure unit averaged per slot (means averaged, min and max over all runs).
