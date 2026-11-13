@@ -2,6 +2,13 @@
 
 ## Not released yet
 
+New:
+
+- Bode with an external generator on the USB-A port of the scope (USBTMC, no PC): Analysers > Bode > Connection = USB
+  takes the first USBTMC instrument, shows its `*IDN?` answer or why there is none; SCPI `:BODE:GENerator "usb"`. A
+  new preset for the UNI-T UTG900 (UTG932, UTG962); Rigol DG and Siglent SDG work over USB as well. Tested on the
+  host with a simulated device only.
+
 Fixed:
 
 - Measurements froze in Run (since 0.1.7): the measurements are made beside the frame loop, and a result was only

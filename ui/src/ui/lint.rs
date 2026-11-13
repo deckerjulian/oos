@@ -148,6 +148,8 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
     walk(&|| open(Bode, &|u| u.m.bode_gen = bode::FREE), "Bode free sweep", &mut out);
     walk(&|| open(Bode, &|u| { u.m.bode_gen = bode::FREE; u.m.bode_sw_in = 0 }), "Bode free sweep no input", &mut out);
+    walk(&|| open(Bode, &|u| u.m.bode_gen = 5), "Bode UNI-T LAN", &mut out);
+    walk(&|| open(Bode, &|u| { u.m.bode_gen = 5; u.m.bode_usb = true }), "Bode UNI-T USB", &mut out);
     // the clock page in its longest states: a failure after a sync, a zone of its own, a long server name
     let ntp_failed = |u: &mut Ui| {
         u.sys.ntp = true;

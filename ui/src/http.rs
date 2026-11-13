@@ -1452,6 +1452,14 @@ setTimeout(() => {
         scpi.exec_line(&mut ui, &cv, ":BODE:GEN \"a b\"");
         assert_eq!(ui.m.bode_addr, "10.0.0.9:5025");
         assert_eq!(crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().bode_addr, "10.0.0.9:5025");
+        // "usb": the generator on the USB port, the LAN address kept for later
+        scpi.exec_line(&mut ui, &cv, ":BODE:GEN \"usb\"");
+        assert!(ui.m.bode_usb && ui.m.bode_addr == "10.0.0.9:5025");
+        assert_eq!(scpi.exec_line(&mut ui, &cv, ":BODE:GEN?"), b"usb".to_vec());
+        let m = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert!(m.bode_usb && m.bode_addr == "10.0.0.9:5025");
+        scpi.exec_line(&mut ui, &cv, ":BODE:GEN 10.0.0.10");
+        assert!(!ui.m.bode_usb && ui.m.bode_addr == "10.0.0.10");
     }
 
     #[test]

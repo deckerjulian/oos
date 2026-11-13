@@ -273,6 +273,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
     kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in + 1, m.bode_out + 1, m.bode_gen, m.bode_addr));
+    // the generator's connection: lan (the address above) or usb; a line of its own, so older versions skip it
+    kv("bode_link", if m.bode_usb { "usb" } else { "lan" }.to_string());
     // free sweep: time, log, sync channel, edge, level, input (0 = none), reference dBV
     kv("bode_sweep", format!("{} {} {} {} {} {} {}", m.bode_sw_time, m.bode_sw_log, m.bode_sync + 1, name(m.bode_sync_slope), m.bode_sync_level, m.bode_sw_in, m.bode_ref));
     kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src + 1, m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
@@ -594,6 +596,13 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.bode_out = p_idx(w[5], NCH + 1)?.max(1) - 1;
             m.bode_gen = p_idx(w[6], crate::ui::bode::GENERATORS.len())?;
             m.bode_addr = w.get(7).map_or("", |a| a.trim()).to_string();
+        }
+        "bode_link" => {
+            m.bode_usb = match v.trim() {
+                "usb" => true,
+                "lan" => false,
+                _ => return Err(format!("not lan or usb: {}", v)),
+            }
         }
         "bode_sweep" => {
             let w: Vec<&str> = v.split_whitespace().collect();

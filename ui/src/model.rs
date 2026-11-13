@@ -904,6 +904,8 @@ pub struct Model {
     pub bode_out: usize,
     pub bode_gen: usize,
     pub bode_addr: String,
+    /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
+    pub bode_usb: bool,
     /// Bode with a generator that sweeps on its own (`ui::bode::FREE`, same start/stop): sweep time (s), logarithmic
     /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
     /// `bode_ref` dBV)
@@ -1187,6 +1189,7 @@ impl Default for Model {
             bode_gen: 0,
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
+            bode_usb: false,
             bode_sw_time: 1.0,
             bode_sw_log: true,
             bode_sync: NCH - 1,

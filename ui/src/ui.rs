@@ -552,6 +552,7 @@ enum Item {
     BodeOut,
     BodeGen,
     BodeAddr,
+    BodeLink,
     BodeCur,
     BodeSwTime,
     BodeSwLog,

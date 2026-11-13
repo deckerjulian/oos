@@ -32,6 +32,7 @@ mod store;
 mod sysconf;
 mod trig;
 mod ui;
+mod usbtmc;
 mod vxi11;
 mod json;
 mod gpu;

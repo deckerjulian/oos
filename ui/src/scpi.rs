@@ -673,15 +673,18 @@ impl Scpi {
                 return t(&ui.bode_text());
             }
             if kw(nodes[1], "GENerator") {
+                // "usb": the generator on the USB-A port; anything else is its LAN address (kept while on USB)
                 if query {
-                    return t(&ui.m.bode_addr);
+                    return t(if ui.m.bode_usb { "usb" } else { ui.m.bode_addr.as_str() });
                 }
                 // one word, like the setup file keeps it
                 let a = arg.trim().trim_matches('"');
                 if a.contains(char::is_whitespace) {
                     self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                } else if a.eq_ignore_ascii_case("usb") {
+                    ui.m.bode_usb = true;
                 } else {
-                    ui.m.bode_addr = a.to_string();
+                    (ui.m.bode_addr, ui.m.bode_usb) = (a.to_string(), false);
                 }
                 return None;
             }
