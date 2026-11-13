@@ -648,7 +648,7 @@ fn dvm_reading(raw: &oos_hal::dho::dvm::Raw, key: DvmKey, s: &Settings, gain: &[
     use oos_hal::dho::dvm;
     let (ch, lane, _) = key;
     let vert = oos_hal::dho::levels::Vert { scale: s.ch[ch].scale, offset: s.ch[ch].offset, gain: gain[ch] };
-    let volts = dvm::decode(raw, dvm::EXP).map(|r| [dvm::Mode::Dc, dvm::Mode::AcRms, dvm::Mode::AcDcRms].map(|m| dvm::volts(&r, m, &vert, dvm::SCALE)));
+    let volts = dvm::decode(raw, dvm::EXP).map(|r| [dvm::Mode::Dc, dvm::Mode::AcRms, dvm::Mode::AcDcRms].map(|m| dvm::volts(&r, m, &vert)));
     crate::board::DvmRead { ch, lane, exp: dvm::EXP, raw: [raw.cfg, raw.sum_lo, raw.sum_hi, raw.sq_lo, raw.sq_hi], volts, n }
 }
 
