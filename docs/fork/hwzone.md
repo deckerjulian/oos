@@ -42,6 +42,9 @@ private RE notes `docs/fpga.md` "Zone trigger" (static analysis).
 - Fork-local `:SYSTem:DEBug:ZONE?`: `ch,slot,ctrl,s4030,s4038,frames_lo,frames_hi,fails_lo,fails_hi,armed,pass,
   frames,n`, then `sw_drops,acquired,used,records`. `off,enabled,active,...` without a hardware reading.
 
+The value and column mapping is `mask::Map`, shared with the mask test; sweep it with the mask first
+(`hwmask.md` "Sweep of the mapping"). `:SYSTem:DEBug:MASK:MAP` changes it for both.
+
 ## Assumptions
 
 | assumption | where | bench step |

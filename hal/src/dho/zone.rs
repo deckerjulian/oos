@@ -50,8 +50,13 @@ impl Column {
     /// The column for the zone's value range `lo..=hi` (volts) on a channel at `scale`/`offset`, rounded outwards to
     /// whole codes and clipped to the code range; off when the range lies wholly outside it.
     pub fn of_range(lo: f64, hi: f64, scale: f64, offset: f64) -> Column {
-        let l = mask::code(lo, scale, offset).floor();
-        let h = mask::code(hi, scale, offset).ceil();
+        Column::of_codes(mask::code(lo, scale, offset), mask::code(hi, scale, offset))
+    }
+
+    /// The column for the code range `lo..=hi`, rounded outwards and clipped; off when it lies wholly outside.
+    pub fn of_codes(lo: f64, hi: f64) -> Column {
+        let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+        let (l, h) = (lo.floor(), hi.ceil());
         if !(l.is_finite() && h.is_finite()) || h < 0.0 || l > mask::CODE_MAX || h < l {
             return Column::OUT;
         }
@@ -73,24 +78,23 @@ pub struct Zone {
     pub inside: bool,
 }
 
-/// The column layout over a record: `mask::COLUMNS` columns of `mask::per_column(points)` samples, the same as the mask
-/// unit (shared strobe). The stock system leaves the strobe at one count and writes fewer columns (1000 / (4 / ratio));
-/// docs/fork/hwzone.md says what the bench decides.
-pub fn columns(points: u32) -> (usize, u32) {
-    (mask::COLUMNS, mask::per_column(points as u64))
-}
-
-/// The table of zone `z` for a record of `points` samples at `rate` with the trigger at sample `pre`, on a channel at
-/// `scale`/`offset`. Column c covers samples c n .. (c + 1) n, at times (k - pre) / rate.
-pub fn table(z: &Zone, points: u32, rate: u64, pre: u32, scale: f64, offset: f64) -> Vec<Column> {
-    let (cols, n) = columns(points);
+/// The table of zone `z` for a record of `points` samples at `rate` with the trigger at sample `pre`, on channel set
+/// `mask` at `scale`/`offset`/`gain`, in the columns and codes of `map` (shared with the mask unit, `mask::Map`).
+/// Column c covers samples c n .. (c + 1) n (n = the layout's samples per column), at times (k - pre) / rate; columns
+/// outside `map.range` are not in the zone.
+#[allow(clippy::too_many_arguments)]
+pub fn table(z: &Zone, points: u32, rate: u64, pre: u32, mask: u32, scale: f64, offset: f64, gain: f64, map: &mask::Map) -> Vec<Column> {
+    let (cols, _, n) = map.layout(points, mask);
     let dt = 1.0 / rate.max(1) as f64;
     let poly = box_or_poly(&z.poly);
     (0..cols)
         .map(|c| {
-            let ta = (c as f64 * n as f64 - pre as f64) * dt;
-            let tb = ((c + 1) as f64 * n as f64 - pre as f64) * dt;
-            zonegeom::extent(&poly, ta, tb).map_or(Column::OUT, |(lo, hi)| Column::of_range(lo, hi, scale, offset))
+            if c < map.range.0 as usize || c > map.range.1 as usize {
+                return Column::OUT;
+            }
+            let ta = (c as f64 * n - pre as f64) * dt;
+            let tb = ((c + 1) as f64 * n - pre as f64) * dt;
+            zonegeom::extent(&poly, ta, tb).map_or(Column::OUT, |(lo, hi)| Column::of_codes(map.code(lo, scale, offset, gain), map.code(hi, scale, offset, gain)))
         })
         .collect()
 }
@@ -187,7 +191,7 @@ mod tests {
         // 10,000 points at 1 GSa/s, trigger in the middle (sample 5000): 10 samples = 10 ns per column, columns
         // 500.. at t >= 0; a box from 100 ns to 200 ns, 0.5..1.5 V at 1 V/div
         let z = Zone { poly: vec![(100e-9, 0.5), (200e-9, 1.5)], inside: true };
-        let t = table(&z, 10_000, 1_000_000_000, 5000, 1.0, 0.0);
+        let t = table(&z, 10_000, 1_000_000_000, 5000, 1, 1.0, 0.0, 1.0, &mask::Map::default());
         assert_eq!(t.len(), 1000);
         let on: Vec<usize> = (0..1000).filter(|&c| t[c].on).collect();
         // the columns over 100..200 ns: 510..519, and the neighbours that only touch a border may count (rounding)

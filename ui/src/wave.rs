@@ -513,6 +513,14 @@ impl Source {
         None
     }
 
+    /// Hardware source: the mask table last loaded (`Shared::mask_table`).
+    pub fn hw_mask_table(&self) -> Option<std::sync::Arc<Vec<[u8; 4]>>> {
+        if let Source::Hw { shared, .. } = self {
+            return shared.lock().unwrap().mask_table.clone();
+        }
+        None
+    }
+
     /// Hardware source: hands the zone trigger the UI wants to the acquisition thread (None: off) and returns the latest
     /// reading; None off the hardware.
     pub fn hw_zone(&self, want: Option<crate::board::ZoneWant>) -> Option<Option<crate::board::ZoneRead>> {

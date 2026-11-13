@@ -123,6 +123,16 @@ pub trait Board: Sync + 'static {
     /// the board has none.
     fn uart_debug(&self, m: &Model) -> String;
 
+    /// Fork, the mask/zone comparator mapping under test (docs/fork/hwmask.md "Sweep"): with `kv` one `key=value` set,
+    /// then the whole mapping as one line; an error for a bad key or value, or where the board has none.
+    fn mask_map(&self, kv: Option<&str>) -> Result<String, String>;
+
+    /// The comparator's 8-bit code of `volts` under the current mapping (channel at `scale` V/div, `offset` V,
+    /// digital gain `gain`), and its column layout for `points` per channel with channel set `chans`: (columns,
+    /// samples per column).
+    fn mask_code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64;
+    fn mask_layout(&self, points: u32, chans: u32) -> (usize, f64);
+
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
 
@@ -288,6 +298,12 @@ pub struct MaskRead {
     pub frames: u64,
     pub fails: u64,
     pub n: u64,
+    /// the set-up the table was built for: V/div, offset, digital gain of the channel, points per channel, channel set
+    pub scale: f64,
+    pub offset: f64,
+    pub gain: f64,
+    pub points: u32,
+    pub chans: u32,
 }
 
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
@@ -340,6 +356,8 @@ pub struct Shared {
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
     pub mask_want: Option<MaskWant>,
     pub mask: Option<MaskRead>,
+    /// the mask table last loaded: (lower, upper, lower enabled, upper enabled) per column
+    pub mask_table: Option<std::sync::Arc<Vec<[u8; 4]>>>,
     /// the FPGA's zone trigger: wanted by the UI (None: off), the latest reading
     pub zone_want: Option<ZoneWant>,
     pub zone: Option<ZoneRead>,

@@ -142,6 +142,8 @@ pub struct HwZone {
     pub zones: Vec<zone::Zone>,
     /// raised to clear the qualified-frame counter
     pub clear: u64,
+    /// value and column mapping (shared with the mask unit)
+    pub map: mask::Map,
 }
 
 /// A mask test in the FPGA: the volt band of each of the `mask::COLUMNS` columns on channel `ch`.
@@ -156,6 +158,8 @@ pub struct HwMask {
     pub stop_on_fail: bool,
     /// raised to clear the counters
     pub clear: u64,
+    /// value and column mapping of the comparator (`mask::Map`, the debug sweep)
+    pub map: mask::Map,
 }
 
 /// A hardware segmented recording.
@@ -355,8 +359,8 @@ impl State {
             return w;
         };
         let k = &s.ch[m.ch];
-        let cols = mask::table(&m.lo, &m.hi, k.scale, k.offset);
-        let run = (slot, mask::per_column(p.memsel as u64), m.clear, m.stop_on_fail);
+        let cols = mask::table_map(&m.lo, &m.hi, p.memsel, s.mask, k.scale, k.offset, self.gain[m.ch], &m.map);
+        let run = (slot, m.map.layout(p.memsel, s.mask).1, m.clear, m.stop_on_fail);
         if self.mask_run == Some(run) && self.mask_cols.as_ref() == Some(&cols) {
             return vec![];
         }
@@ -396,8 +400,8 @@ impl State {
             return w;
         };
         let k = &s.ch[z.ch];
-        let tabs: Vec<Vec<zone::Column>> = z.zones.iter().take(2).map(|x| zone::table(x, p.memsel, p.rate, p.pre, k.scale, k.offset)).collect();
-        let n = zone::columns(p.memsel).1;
+        let tabs: Vec<Vec<zone::Column>> = z.zones.iter().take(2).map(|x| zone::table(x, p.memsel, p.rate, p.pre, s.mask, k.scale, k.offset, self.gain[z.ch], &z.map)).collect();
+        let n = z.map.layout(p.memsel, s.mask).1;
         let run = (slot, n, zone::ctrl_word(&z.zones), z.clear);
         if self.zone_run == Some(run) && tabs.iter().enumerate().all(|(i, t)| self.zone_tabs[i].as_ref() == Some(t)) {
             return vec![];
@@ -1290,7 +1294,7 @@ mod tests {
         let only = |st: &mut State, s: &Settings| -> Vec<Write> {
             writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194) || w.0 == 0x4020).collect()
         };
-        let band = |h: f32| HwMask { ch: 0, lo: vec![-h; mask::COLUMNS], hi: vec![h; mask::COLUMNS], stop_on_fail: false, clear: 0 };
+        let band = |h: f32| HwMask { ch: 0, lo: vec![-h; mask::COLUMNS], hi: vec![h; mask::COLUMNS], stop_on_fail: false, clear: 0, map: mask::Map::default() };
         let mut st = State::handover(1, None);
         let base = Settings { window: None, ..Settings::default() };
         let on = Settings { hwmask: Some(band(1.0)), ..base.clone() };
@@ -1336,7 +1340,7 @@ mod tests {
             writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194 | 0x11d0 | 0x11d8 | 0x11dc | 0x4020)).collect()
         };
         let bx = |inside| zone::Zone { poly: vec![(-1e-4, 0.5), (1e-4, 1.5)], inside };
-        let z1 = HwZone { ch: 0, zones: vec![bx(true)], clear: 0 };
+        let z1 = HwZone { ch: 0, zones: vec![bx(true)], clear: 0, map: mask::Map::default() };
         let base = Settings { window: None, ..Settings::default() };
         let on = Settings { hwzone: Some(z1.clone()), ..base.clone() };
         let mut st = State::handover(1, None);
@@ -1353,7 +1357,7 @@ mod tests {
         let w = only(&mut st, &two);
         assert!(w.iter().filter(|x| x.0 == 0x11dc).count() == 1001 && w.contains(&(0x11d0, 0x0700_0000)) && w.contains(&(0x1190, 0x0010_0000)) && !w.contains(&(0x1190, 0x6010_0000)));
         // the mask test wins: the zone logic off, the mask keeps the slot it sets
-        let mut m = Settings { hwmask: Some(HwMask { ch: 0, lo: vec![-1.0; mask::COLUMNS], hi: vec![1.0; mask::COLUMNS], stop_on_fail: false, clear: 0 }), ..two.clone() };
+        let mut m = Settings { hwmask: Some(HwMask { ch: 0, lo: vec![-1.0; mask::COLUMNS], hi: vec![1.0; mask::COLUMNS], stop_on_fail: false, clear: 0, map: mask::Map::default() }), ..two.clone() };
         let w = only(&mut st, &m);
         assert_eq!(&w[..2], [(0x4020, 0x2001), (0x11d0, 0)]);
         assert_eq!(st.zone_ctrl(), None);
