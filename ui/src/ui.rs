@@ -29,6 +29,7 @@ mod logger;
 mod measlabels;
 mod overclock;
 mod tools;
+pub(crate) mod facts;
 mod update;
 mod viewmore;
 mod wlan;
@@ -3830,17 +3831,18 @@ impl Ui {
         self.toast(&format!("History {}/{}", i + 1, n));
     }
 
-    /// Recomputes the measurements of the record shown.
-    fn measure_last(&mut self) {
-        let Some(rec) = self.last[0].clone() else { return };
-        for c in 0..NCH {
-            if !self.m.ch[c].on {
-                (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
-                continue;
+    /// Recomputes the measurements of the record shown, and of every loaded ref.
+    pub(crate) fn measure_last(&mut self) {
+        if let Some(rec) = self.last[0].clone() {
+            for c in 0..NCH {
+                if !self.m.ch[c].on {
+                    (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
+                    continue;
+                }
+                let (v, dt) = self.meas_wave(&rec, c);
+                self.stats[c] = stats(&v, dt);
+                self.ana[c] = oos_dsp::measure::analyze_refs(&v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64, self.m.meas_lpct, self.m.meas_hpct);
             }
-            let (v, dt) = self.meas_wave(&rec, c);
-            self.stats[c] = stats(&v, dt);
-            self.ana[c] = oos_dsp::measure::analyze_refs(&v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64, self.m.meas_lpct, self.m.meas_hpct);
         }
         self.measure_refs();
     }

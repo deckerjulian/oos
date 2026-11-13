@@ -2093,3 +2093,102 @@ fn scpi_reads_a_ref_the_strip_and_the_eye() {
     }
     assert_eq!(screen.matches(';').count() + 1, strip.matches(';').count() + 1 + EYE_ITEMS.len(), "{screen}");
 }
+
+#[test]
+fn measurement_queries_read_a_channel_or_a_ref() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    for _ in 0..8 {
+        u.step(0.05);
+    }
+    let cv = Canvas::new(W, H);
+    let mut s = crate::scpi::Scpi::open(0);
+    let ask = |s: &mut crate::scpi::Scpi, u: &mut Ui, cmd: &str| String::from_utf8_lossy(&s.exec_line(u, &cv, cmd)).into_owned();
+    let ch = ask(&mut s, &mut u, ":MEAS:ITEM? VPP");
+    assert!(ch.parse::<f64>().unwrap().is_finite() && ch != "9.9E37", "{}", ch);
+
+    let mut ramp = vec![0.0f32; 40];
+    ramp.extend((0..100).map(|i| i as f32 / 99.0));
+    ramp.extend(vec![1.0; 80]);
+    put_ref(&mut u, 0, 0.0, 1e-9, ramp);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:REFS?"), "10/90");
+    let r10 = ask(&mut s, &mut u, ":MEAS:ITEM? RTIM,R1").parse::<f64>().unwrap();
+    ask(&mut s, &mut u, ":MEAS:REFS 20/80");
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:REFS?"), "20/80");
+    let r20 = ask(&mut s, &mut u, ":MEAS:ITEM? RTIME,REF1").parse::<f64>().unwrap();
+    assert!(r20 < r10 && r10.is_finite(), "10/90 {} 20/80 {}", r10, r20);
+    let med = ask(&mut s, &mut u, ":MEAS:ITEM? MEDIAN,R1").parse::<f64>().unwrap();
+    assert!(med.is_finite(), "{}", med);
+    let mut bits = Vec::new();
+    for k in 0..1600 {
+        bits.push(if (k / 100) % 2 == 0 { 0.0 } else { 1.0 });
+    }
+    put_ref(&mut u, 3, 0.0, 1e-9, bits);
+    let ui_est = ask(&mut s, &mut u, ":MEAS:ITEM? ESTUI,R4").parse::<f64>().unwrap();
+    assert!((ui_est - 200e-9).abs() < 20e-9 || (ui_est - 100e-9).abs() < 20e-9, "{}", ui_est);
+    assert!(ask(&mut s, &mut u, ":MEAS:ITEM? ONES,R4").parse::<f64>().unwrap() > 0.0);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? VPP,R11"), "9.9E37");
+    assert!(ask(&mut s, &mut u, ":SYST:ERR?").contains("-224"));
+
+    // clock rises at 100 ns and 200 ns; data leads by 10 ns and holds for 40 ns
+    let edge = |at: &[usize]| {
+        let mut v = vec![0.0f32; 300];
+        for &t in at {
+            for x in v.iter_mut().skip(t).take(40) {
+                *x = 1.0;
+            }
+        }
+        v
+    };
+    put_ref(&mut u, 0, 0.0, 1e-9, edge(&[100, 200]));
+    put_ref(&mut u, 1, 0.0, 1e-9, edge(&[90, 190]));
+    ask(&mut s, &mut u, ":MEAS:TSET 20e-9");
+    ask(&mut s, &mut u, ":MEAS:THOL 5e-9");
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 2.0);
+    ask(&mut s, &mut u, ":MEAS:TSET 5e-9");
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 0.0);
+
+    let pdt = 1e-4;
+    let tone = |amp: f64, shift: f64| -> Vec<f32> {
+        (0..2000).map(|k| (amp * (2.0 * std::f64::consts::PI * 50.0 * k as f64 * pdt + shift).sin()) as f32).collect()
+    };
+    put_ref(&mut u, 0, 0.0, pdt, tone(2.0, 0.0));
+    put_ref(&mut u, 1, 0.0, pdt, tone(1.0, 0.0));
+    let vrms = ask(&mut s, &mut u, ":POW:ITEM? VRMS,R1,R2").parse::<f64>().unwrap();
+    assert!((vrms - 2.0 / 2.0f64.sqrt()).abs() < 0.05, "{}", vrms);
+    let harm = ask(&mut s, &mut u, ":POW:HARM? R2");
+    assert!(harm.starts_with("1,"), "{}", harm);
+    put_ref(&mut u, 2, 0.0, pdt, tone(1.0, 2.0 * std::f64::consts::PI / 3.0));
+    let freq = ask(&mut s, &mut u, ":INV:ITEM? FREQ,R1,R2,R3").parse::<f64>().unwrap();
+    assert!((freq - 50.0).abs() < 1.0, "{}", freq);
+    let f1 = ask(&mut s, &mut u, ":SPEC:ITEM? F1,R1").parse::<f64>().unwrap();
+    assert!((f1 - 50.0).abs() < 1.0, "{}", f1);
+
+    let (mv, mi) = inductor_pair(1e-3, 2e-6, 4000);
+    put_ref(&mut u, 0, 0.0, 2e-6, mv);
+    put_ref(&mut u, 1, 0.0, 2e-6, mi);
+    let l = ask(&mut s, &mut u, ":MAG:ITEM? L,R1,R2").parse::<f64>().unwrap();
+    assert!((l - 1e-3).abs() < 1e-4, "{}", l);
+
+    let (vds, id, gate) = double_pulse(1e-9);
+    put_ref(&mut u, 0, 0.0, 1e-9, vds);
+    put_ref(&mut u, 1, 0.0, 1e-9, id);
+    put_ref(&mut u, 2, 0.0, 1e-9, gate);
+    let vp = ask(&mut s, &mut u, ":DPT:ITEM? VPEAK,R1,R2,R3").parse::<f64>().unwrap();
+    assert!((vp - 480.0).abs() < 5.0, "{}", vp);
+
+    ask(&mut s, &mut u, ":BODE:MODE PSRR");
+    assert_eq!(ask(&mut s, &mut u, ":BODE:MODE?"), "PSRR");
+    ask(&mut s, &mut u, ":BODE:MODE IMP");
+    assert_eq!(ask(&mut s, &mut u, ":BODE:MODE?"), "IMP");
+
+    let mut sq = Vec::new();
+    for k in 0..8000 {
+        let p = k % 400;
+        let x = if p < 40 { p as f32 / 40.0 } else if p < 200 { 1.0 } else if p < 240 { 1.0 - (p - 200) as f32 / 40.0 } else { 0.0 };
+        sq.push(x);
+    }
+    put_ref(&mut u, 0, 0.0, 1e-8, sq);
+    ask(&mut s, &mut u, ":MEAS:REFS 10/90");
+    let rise = ask(&mut s, &mut u, ":BAND:ITEM? RISE,R1").parse::<f64>().unwrap();
+    assert!(rise.is_finite() && rise > 0.0, "{}", rise);
+}

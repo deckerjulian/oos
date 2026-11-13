@@ -266,7 +266,8 @@ fn hist_mode(f: &[f32], vmin: f32, vmax: f32) -> f64 {
     let span = (vmax - vmin).max(1e-12);
     let mut hist = [0u32; 256];
     for &x in f {
-        hist[(((x - vmin) / span) * 255.0) as usize] += 1;
+        let i = (((x - vmin) / span) * 255.0) as usize;
+        hist[i.min(255)] += 1;
     }
     let b = (0..256).max_by_key(|&i| hist[i]).unwrap_or(0);
     vmin as f64 + span as f64 * (b as f64 + 0.5) / 255.0
@@ -901,5 +902,15 @@ mod tests {
 
     fn close_abs(x: f64, want: f64, abs: f64) -> bool {
         (x - want).abs() <= abs
+    }
+
+    #[test]
+    fn setup_hold_counts_a_late_data_edge() {
+        let clk = Analysis { valid: true, rises: vec![10e-9, 20e-9], falls: vec![15e-9, 25e-9], ..Analysis::default() };
+        let data = Analysis { valid: true, rises: vec![8e-9, 19e-9], falls: vec![12e-9, 22e-9], ..Analysis::default() };
+        // clocks at 10 ns (data at 8 ns, next 12 ns) and 20 ns (data at 19 ns, next 22 ns)
+        assert!((setup_time(&clk, &data) - 1.5e-9).abs() < 1e-12);
+        assert_eq!(setup_hold_violations(&clk, &data, 1.2e-9, 1.2e-9), 1.0);
+        assert_eq!(setup_hold_violations(&clk, &data, 2e-9, 3e-9), 2.0);
     }
 }
