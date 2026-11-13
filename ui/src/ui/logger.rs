@@ -39,7 +39,7 @@ impl Ui {
 
     pub(super) fn log_start(&mut self) {
         if self.meas_rows().is_empty() {
-            return self.toast("No measurements: Measure > Add item");
+            return self.toast("No measurements: tap Measure");
         }
         let dir = self.save_dir();
         let p = crate::store::next_name(&dir, "log", "csv");
