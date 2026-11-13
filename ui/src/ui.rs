@@ -855,6 +855,10 @@ pub struct Ui {
     meas_want: bool,
     meas_n: u64,
     meas_new: bool,
+    /// per channel: the measurement sent (`meas_env_sent`) and the one shown (`meas_env`) ran on min/max pairs
+    /// (`framestats::needs_samples` are then not available)
+    meas_env_sent: [bool; NCH],
+    meas_env: [bool; NCH],
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -1087,6 +1091,8 @@ impl Ui {
             meas_bg: None,
             meas_want: false,
             meas_n: 0,
+            meas_env_sent: [false; NCH],
+            meas_env: [false; NCH],
             meas_new: false,
             history: std::collections::VecDeque::new(),
             hist_pos: None,
@@ -1512,9 +1518,26 @@ impl Ui {
     /// Measurement `k` of channel `c` (NaN when off or not measurable).
     pub fn meas(&self, c: usize, k: Meas) -> f64 {
         if self.m.ch[c].on {
-            self.ana[c].get(k)
+            self.ana_get(c, k)
         } else {
             f64::NAN
+        }
+    }
+
+    /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
+    pub(crate) fn ana_get(&self, c: usize, k: Meas) -> f64 {
+        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+            f64::NAN
+        } else {
+            self.ana[c].get(k)
+        }
+    }
+
+    /// Whether channel `c` of record `rec` is measured on min/max pairs (`meas_slice`).
+    fn meas_on_pairs(&self, rec: &Record, c: usize) -> bool {
+        match self.meas_frame(rec, c) {
+            Some((f, _, _)) => f.envelope,
+            None => rec.pairs || rec.raw.as_ref().is_some_and(|r| r.frame.envelope),
         }
     }
 
@@ -4191,6 +4214,7 @@ impl Ui {
             })
             .collect();
         let done = measure_channels(&work);
+        self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
         self.meas_n += 1;
         self.meas_want = false;
@@ -4218,6 +4242,7 @@ impl Ui {
     }
 
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
+        self.meas_env = self.meas_env_sent;
         for c in 0..NCH {
             (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
         }
@@ -4248,6 +4273,7 @@ impl Ui {
         }
         self.meas_want = false;
         let Some(rec) = self.last[0].as_ref() else { return };
+        let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         let job: Vec<(usize, MeasSrc, f64, f64)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
@@ -4264,6 +4290,7 @@ impl Ui {
         let w = self.meas_bg.as_mut().expect("worker");
         if w.tx.send((self.meas_n, job)).is_ok() {
             w.busy = true;
+            self.meas_env_sent = env;
         } else {
             // the thread is gone: measure here again
             self.meas_bg = None;
@@ -7619,6 +7646,33 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    // Break it catches: Mean, RMS and Std dev shown from min/max pairs (a deep record read through the FPGA
+    // compression), or Max/Min/Pk-pk lost with them
+    #[test]
+    fn measurements_on_min_max_pairs_leave_out_the_mean_type() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let v: Vec<f32> = (0..n).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
+        for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
+            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope, ..Default::default() });
+            for _ in 0..3 {
+                ui.step(0.02);
+            }
+            let (avg, rms, max, pp) = (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
+            assert_eq!(avg.is_nan() && rms.is_nan(), envelope, "envelope {}: mean {} rms {}", envelope, avg, rms);
+            assert!((max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05, "envelope {}: max {} pk-pk {}", envelope, max, pp);
+            let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
+            assert!(row.is_none_or(|x| x.is_nan() == envelope));
+        }
+    }
 
     // Break it catches: the newest frame of a picture drawn another way than the others (record points instead of the
     // frame's samples), so the grade follows the mix of the two in each picture: the flicker at 500 us/div on the

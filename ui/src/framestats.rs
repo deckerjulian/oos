@@ -10,9 +10,20 @@
 //! Frames whose record is measured on its 3600 interpolated points (short time bases) are not counted: the sinc
 //! points overshoot between the samples, so max, min and peak-peak on the raw samples would be another measurement.
 //! `Counters::measured` against `used` shows how many frames the statistics cover.
+//!
+//! Envelope frames (min/max pairs: records above 1 M points through the FPGA compression, roll, scan) count for max,
+//! min and peak-peak only (`needs_samples`); the record measurements of such frames show the mean-type ones as not
+//! available (`Ui::ana_get`).
 
 use crate::board::Frame;
 use crate::model::*;
+
+/// Measurements that weigh every sample (mean, RMS, deviation, area). The min/max pairs of an envelope frame (FPGA
+/// compression of records above 1 M points, roll, scan) are no samples of the signal: these come out wrong on them,
+/// while maximum, minimum and peak-peak stay right.
+pub fn needs_samples(k: Meas) -> bool {
+    matches!(k, Meas::Vavg | Meas::Vrms | Meas::VavgCyc | Meas::VrmsCyc | Meas::VrmsAc | Meas::StdDev | Meas::Area | Meas::AreaCyc)
+}
 
 /// The measurements made per frame.
 pub const CHEAP: [Meas; 7] = [Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vavg, Meas::Vrms, Meas::StdDev, Meas::VrmsAc];
@@ -170,6 +181,9 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
     let mut counted = false;
     let mut cache: [Option<Option<Values>>; NCH] = Default::default();
     for ((k, c), fold) in folds.iter_mut() {
+        if f.envelope && needs_samples(*k) {
+            continue;
+        }
         let v = &f.ch[*c];
         if v.len() < 2 || i1 > v.len() {
             continue;
@@ -248,4 +262,32 @@ mod tests {
             assert_eq!(got.len(), if two { 2 * CHEAP.len() } else { CHEAP.len() });
         }
     }
+
+    // Break it catches: mean, RMS and deviation folded from the min/max pairs of an envelope frame (records above
+    // 1 M points read through the FPGA compression): the mean of the pairs of a square with a 20 % duty is not its mean
+    #[test]
+    fn envelope_frames_count_extremes_only() {
+        let mut m = Model { tscale: tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-9).unwrap(), trig_level: 0.0, ..Model::default() };
+        for c in 0..NCH {
+            m.ch[c].on = c == 0;
+        }
+        m.meas = CHEAP.iter().map(|&k| (k, 0)).collect();
+        // min/max pairs of a -1/+1 square with 20 % duty: every pair holds both levels around the edges, only one
+        // level elsewhere
+        let len = 12_512usize;
+        let v: Vec<f32> = (0..len).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
+        let dt = 1.0 / 1.25e9;
+        let mut folds = folds_for(&m);
+        let env = Frame { seq: 1, dt, pre: len / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope: true, ..Default::default() };
+        assert!(fold_frame(&env, &m, &mut folds));
+        for ((k, _), f) in &folds {
+            assert_eq!(f.n, if needs_samples(*k) { 0 } else { 1 }, "{:?}", k);
+        }
+        // the same values as samples: everything counts
+        let mut folds = folds_for(&m);
+        let raw = Frame { envelope: false, ..env };
+        assert!(fold_frame(&raw, &m, &mut folds));
+        assert!(folds.iter().all(|(_, f)| f.n == 1));
+    }
+
 }
