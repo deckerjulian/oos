@@ -195,7 +195,7 @@ impl Ui {
     pub fn request_waveform(&mut self) {
         self.close_menu();
         self.open_wave_request = true;
-        self.toast("Choose a CSV, BIN or WFM waveform. In the browser, use Load waveform above the screen.");
+        self.toast("Choose a CSV, BIN, WFM, TRC, ISF, TR0 or WFMX waveform. In the browser, use Load waveform above the screen.");
     }
 
     pub fn load_waveform_bytes(&mut self, data: &[u8], name: &str) -> Result<(), String> {

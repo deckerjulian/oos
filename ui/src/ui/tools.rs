@@ -506,7 +506,7 @@ impl Ui {
         self.setup_path().with_file_name(format!("ref{}.csv", self.ref_sel + 1))
     }
 
-    /// CSV / OOS `.bin` / `.wfm` (`:WFM#002` or `:WFM#003`) that Import slot can open: the slot's own files, then Storage.
+    /// Waveforms Import slot can open: the slot's own files, then Storage. Same extensions as `load`.
     fn ref_wave_candidates(&self) -> Vec<std::path::PathBuf> {
         let slot = self.ref_sel + 1;
         let mut v = Vec::new();
@@ -516,7 +516,7 @@ impl Ui {
             }
         };
         if let Some(dir) = self.setup_path().parent() {
-            for ext in ["csv", "bin", "wfm"] {
+            for ext in crate::store::WAVE_EXTS {
                 add(dir.join(format!("ref{}.{ext}", slot)));
             }
         }
@@ -525,7 +525,7 @@ impl Ui {
             files.sort();
             for p in files {
                 let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-                if matches!(ext.as_str(), "csv" | "bin" | "wfm") {
+                if crate::store::WAVE_EXTS.iter().any(|e| *e == ext) {
                     add(p);
                 }
             }
@@ -545,11 +545,11 @@ impl Ui {
         self.toast_saved(&p, res);
     }
 
-    /// Opens a captured waveform into the selected R slot: CSV, OOS `.bin`, or `.wfm` (`:WFM#002` or `:WFM#003`).
+    /// Opens a captured waveform into the selected R slot.
     pub(super) fn ref_import(&mut self) {
         let slot = self.ref_sel + 1;
         if let Some(dir) = self.setup_path().parent() {
-            for ext in ["wfm", "bin", "csv"] {
+            for ext in crate::store::WAVE_EXTS {
                 let p = dir.join(format!("ref{}.{ext}", slot));
                 if p.is_file() {
                     return self.ref_load_path(&p);
@@ -558,7 +558,7 @@ impl Ui {
         }
         self.ref_files = self.ref_wave_candidates();
         match self.ref_files.len() {
-            0 => self.toast("No CSV, BIN or WFM in storage"),
+            0 => self.toast("No CSV, BIN, WFM, TRC, ISF, TR0 or WFMX in storage"),
             1 => {
                 let p = self.ref_files[0].clone();
                 self.ref_load_path(&p);
@@ -633,22 +633,22 @@ impl Ui {
         Ok(())
     }
 
-    /// `refN.wfm`, then `refN.bin`, then `refN.csv`, beside the setups. The first file that is there is the one loaded.
+    /// `refN` beside the setups, in `WAVE_EXTS` order. The first file that is there is the one loaded.
     pub(crate) fn ref_import_slot(&mut self) -> Result<(), String> {
         let slot = self.ref_sel + 1;
         let Some(dir) = self.setup_path().parent().map(|d| d.to_path_buf()) else {
             return Err(format!("missing ref{slot}"));
         };
-        for ext in ["wfm", "bin", "csv"] {
+        for ext in crate::store::WAVE_EXTS {
             let p = dir.join(format!("ref{slot}.{ext}"));
             if p.is_file() {
                 return self.ref_load_file(&p);
             }
         }
-        Err(format!("missing ref{slot}.wfm, ref{slot}.bin or ref{slot}.csv"))
+        Err(format!("missing ref{slot} waveform"))
     }
 
-    /// Loads a csv, an OOS `.bin`, or a `.wfm` (`:WFM#002` or `:WFM#003`) into the selected slot.
+    /// Loads a waveform into the selected slot.
     /// A relative path is beside the setups. A missing file starts with `missing `.
     pub(crate) fn ref_load_named(&mut self, path: &str) -> Result<(), String> {
         let raw = path.trim().trim_matches('"');

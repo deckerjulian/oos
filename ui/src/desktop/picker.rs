@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use windows_sys::Win32::UI::Controls::Dialogs::*;
 
 pub fn waveform(owner: *mut std::ffi::c_void) -> Result<Option<PathBuf>, String> {
-    let filter: Vec<u16> = "Waveforms (*.csv;*.bin;*.wfm)\0*.csv;*.bin;*.wfm\0All files (*.*)\0*.*\0\0".encode_utf16().collect();
+    let filter: Vec<u16> = "Waveforms (*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx)\0*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx\0All files (*.*)\0*.*\0\0".encode_utf16().collect();
     let title: Vec<u16> = "Load waveform into the selected reference slot\0".encode_utf16().collect();
     let mut name = vec![0u16; 32_768];
     let mut options = OPENFILENAMEW {
