@@ -1,6 +1,7 @@
 # DVM from the FPGA block
 
-Status: implemented on `feat/dvm`, opt-in, not verified on the unit. Spec: `specs/08-counter-dvm.md` section 1.2.
+Status: opt-in. Result layout and units measured on the unit (2026-11-13, round 2: private RE notes
+`docs/logs/oos_unitlab_20261113.md`); decode fixed on `fix/dvm-decode`, not yet re-checked against the software DVM. Spec: `specs/08-counter-dvm.md` section 1.2.
 Next-round table row 2.5.
 
 ## What it does
@@ -29,37 +30,37 @@ after that. A reading the decode refuses, a reading of another channel, or no re
 | register | content | evidence |
 |---|---|---|
 | 0x2244 [0] | restart: written 1, then 0 together with the new fields | write path netlist-proven (sim); the pulse is how the stock driver writes it, the restart meaning is inferred |
-| 0x2244 [5:1] | log2 of the samples per window; stock default 28 | netlist-proven (sim); meaning from the stock driver's division by 2^exp |
-| 0x2244 [9:8] | lane: the channel with one, three or four channels; with two channels 0 for the lower, 2 for the higher | netlist-proven (sim) for the bits; lane choice from the stock driver |
-| 0x2244 read | [9:8,5:0] read back, the other bits status flip-flops of unknown meaning | netlist-proven (sim) |
+| 0x2244 [5:1] | log2 of the samples per window; stock default 28 | netlist-proven (sim); unit: N = 2^28 |
+| 0x2244 [9:8] | lane: the channel with one, three or four channels; with two channels 0 for the lower, 2 for the higher | netlist-proven (sim) for the bits; unit: with CH1 + CH2 the lane-2 reading follows CH2 |
+| 0x2244 read | not the configuration: `SQ_HI` with bits 7:0 replaced | measured |
 | 0x2248 [0] | latch: write 1 then 0 before reading the results | netlist-proven (sim) |
-| 0x224c, 0x2250 [31:16] | first result, 48 bits (0x224c = bits 31:0, 0x2250 [31:16] = bits 47:32); 0x2250 [15:0] reads 0 | bit layout netlist-proven (sim): only [31:16] have flip-flops |
-| 0x2254, 0x2258 | second result, 64 bits (0x2254 low) | netlist-proven (sim) as 64 status bits |
+| 0x224c, 0x2250 [31:16] | sum of the samples, 48 bits: `(0x2250 >> 16) << 32 \| 0x224c` | measured |
+| 0x2254, 0x2258 | sum of their squares, 64 bits: `0x2258 << 32 \| 0x2254` | measured (a square's sigma matches half its amplitude) |
 
-Not known, assumed in the decode (`hal/src/dho/dvm.rs`):
+Samples (measured): stored 12-bit ADC codes, mid-scale 2048 (open input: mean 2046.9, sigma 3.5), before the
+read-path gain. Volts: `(code - 2048) x 16 x dg / 7500 x V/div - offset`, dg = the channel's digital gain from the
+cal record (halved when 2 or more, the ADC x2 acts before storage). With the unit's cal file that is about 436 codes
+per division at 1 V/div and 437 at 500 mV/div (measured 428 and 438), and 400 at 100 mV/div. The unit session
+estimated about 200 at 100 mV/div from the probe-comp square, assuming a 0.3 V amplitude; that disagrees by a factor
+2 and is the first thing the re-check settles.
 
-- The first result is the sum of 16-bit sample codes, the second the sum of their squares. The stock driver divides
-  both by 2^exp and calls the second one an rms; that it is a sum of squares (and not, say, a sum of absolute values or
-  of squares around a reference) is a guess.
-- The samples are on the read-out scale, 7500 codes per division around 32768 (`Scale::ReadOut`). The alternative is
-  the measure unit's scale before the digital gain (`Scale::PreGain`, as `levels.rs`).
-- A window of 2^28 samples ends within 0.5 s and the latched result is a whole window.
-- The block needs the channel in the acquired set, and keeps summing in STOP.
+Other measured facts: mode and time base change nothing in the words; a new result every 1 to 2 readings (about
+0.6 s apart); after STOP one nearly all-zero window (sum 0x900), then the block runs on. `decode` refuses a mean below
+one code, at or above 4096, and a mean square below the mean squared.
 
-The decode refuses a reading whose sums cannot be a sum and a sum of squares of 16-bit codes (zero, mean outside the
-code range, mean square below the mean squared), so a wrong guess shows up as the software value, not as a wrong one.
+Open: CH2 alone reported lane 2 where `dvm::lane` gives 1 (one channel: every lane carries it, so the reading is
+right either way; the log line may have come from a set-up with CH1 still acquired). Four channels not tried.
 
-## Fixing the decode after the unit test
+## Re-check after the decode fix
 
-All of it is in `hal/src/dho/dvm.rs`, each with its table test:
+1. `dvm.hw = on`, CH1 probe comp at 500 mV/div, offset 0, 10 dumps of `:SYSTem:DEBug:DVM?` per mode (0, 1, 2):
+   `hw` within 2 % of `sw` (DC about 0.15 V, AC rms about 0.15 V).
+2. The same at 100 mV/div, offset -0.15 V, and at 1 V/div with offset +2 V and the input open. `hw` against `sw` at
+   each: a factor 2 at 100 mV/div means the samples sit before the ADC x2 after all; the range's digital gain is in
+   the configuration note `AFE CH1: ... digital gain`.
+3. STOP, then RUN: no wrong value on the strip (the zero window shows the software value for one reading).
 
-- result layout: `Raw::sum`, `Raw::sq`, `SUM_HI_SHIFT`;
-- sample scale: `SCALE`, `MID`, `FULL`, `CODES_PER_DIV`; 12-bit codes would show as a mean near 2048 and are refused
-  only if they break the plausibility checks, so check the mean in codes first;
-- meaning of the second result: `volts` (the moments `m1`, `m2`) and the check in `decode`;
-- window length: `EXP` here, `DVM_READ_S` in `hw.rs`.
-
-## On-unit test procedure
+## Original on-unit test procedure (first session)
 
 Needs the unit with an image of this branch, a DC source (a bench supply or a battery, measured with a handheld DMM)
 and the probe compensation output (1 kHz square). Over SCPI port 5555, one open socket, about 150 ms between
@@ -72,12 +73,10 @@ mode. `off,sw=...` without a reading.
 1. Baseline with `dvm.hw` off (default): DVM on CH1, `:SYSTem:DEBug:DVM?` answers `off,...`. Nothing else changed.
 2. Set `dvm.hw = on` in system.conf, restart oos-ui. `:SYST:SET dvm = true 0 0` (DVM on, CH1, DC).
 3. Idle check: CH1 open, 1 V/div, offset 0. Read the dump 10 times, 0.6 s apart. Expect n to rise, `cfg` to read
-   back 0x38 in [9:0] (lane 0, exp 28), the mean in codes (sum / 2^28) near 32768. Note how often the result words
-   change between readings: that gives the window length.
+   the mean in codes (sum / 2^28) near 2048. (Done 2026-11-13: mean 2046.9, a new result every 1 to 2 readings.)
 4. DC: apply the reference to CH1 at 1 V/div (about 2 V), then 10 records worth of readings (10 dumps, one per
    record, `:SINGle` + `:SYSTem:DEBug:DVM?` each). Compare `hw` DC with `sw` and the DMM. Repeat at 200 mV/div with
-   offset -2 V (the reference near the middle of the screen). If `hw` and `sw` differ by the digital gain (1.0x to
-   1.5x), switch `SCALE` to `PreGain`.
+   offset -2 V (the reference near the middle of the screen). `hw` and `sw` must agree within 2 %.
 5. Square: probe compensation on CH1, 500 mV/div, DVM modes 0, 1, 2 (`:SYST:SET dvm = true 0 <mode>`), 10 dumps each.
    Expect AC rms about half the amplitude, AC+DC rms sqrt(mean^2 + ac^2). If the second result divided by 2^28 is
    not near mean^2 + (amplitude/2)^2 in codes, it is not a sum of squares: note what it is.
