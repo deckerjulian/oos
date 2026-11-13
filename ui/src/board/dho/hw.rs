@@ -315,15 +315,15 @@ fn levels_measure(bar: &mut oos_hal::dho::bus::Bar1, s: &Settings, gain: &[f64; 
     levels::channel_levels(&got, s.mask, &vert).map(|l| l.map(|l| crate::board::ChLevels { lo: l.lo as f32, hi: l.hi as f32, mean: l.mean as f32, clipped: l.clipped }))
 }
 
-/// `trig.hw_status = on` in system.conf, or OOS_TRIG_HW_STATUS (any value but empty or 0): the trigger status comes
-/// from the SCU status bits, cleared after every batch as the stock UI does (docs/fork/trigger-lockin.md). Off by
-/// default until verified on the unit: the status then comes from the software refinement.
+/// The trigger status from the SCU status bits, cleared after every batch as the stock UI does
+/// (docs/fork/trigger-lockin.md; verified on the unit 2026-11-13). `trig.hw_status = off` in system.conf, or
+/// OOS_TRIG_HW_STATUS=0, takes it from the software refinement instead.
 pub fn hw_status_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         let env = std::env::var("OOS_TRIG_HW_STATUS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
         let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
-        crate::drawpipe::conf_value(env, &conf, "trig.hw_status").as_deref() == Some("on")
+        crate::drawpipe::conf_value(env, &conf, "trig.hw_status").as_deref() != Some("off")
     })
 }
 
