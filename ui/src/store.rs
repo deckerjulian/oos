@@ -880,13 +880,13 @@ pub struct WaveTrace {
     pub label: String,
 }
 
-/// CSV (`Time (s),Volts` or Storage `Time (s),CH1 (V),…`), an OOS `OOSW` `.bin`, or a Tektronix `.wfm` (`:WFM#002` / `:WFM#003`).
+/// CSV (`Time (s),Volts` or Storage `Time (s),CH1 (V),…`), an OOS `OOSW` `.bin`, or a `.wfm` whose header is `:WFM#002` or `:WFM#003`.
 pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
     if bytes.starts_with(b"OOSW") {
         return parse_oosw(bytes);
     }
     if bytes.len() >= 10 && (bytes[2..].starts_with(b":WFM#") || bytes[2..].starts_with(b"WFM#") || bytes.starts_with(b":WFM#")) {
-        return parse_tek_wfm(bytes).map(|t| vec![t]);
+        return parse_wfm(bytes).map(|t| vec![t]);
     }
     let text = std::str::from_utf8(bytes).map_err(|_| "that file is not a waveform".to_string())?;
     parse_wave_csv(text, name)
@@ -951,15 +951,15 @@ fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
     Ok(traces)
 }
 
-/// Tektronix reference waveform (`:WFM#002` / `:WFM#003`), YT vector, first frame.
-fn parse_tek_wfm(b: &[u8]) -> Result<WaveTrace, String> {
+/// Reference waveform whose header is `:WFM#002` or `:WFM#003`, YT vector, first frame.
+fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if b.len() < 78 {
         return Err("truncated WFM".into());
     }
     let le = match u16::from_le_bytes(b[0..2].try_into().unwrap()) {
         0x0F0F => true,
         0xF0F0 => false,
-        _ => return Err("not a Tektronix WFM".into()),
+        _ => return Err("header is not :WFM#002 or :WFM#003".into()),
     };
     let get_u32 = |o| {
         let v = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
@@ -976,7 +976,7 @@ fn parse_tek_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     };
     let ver = &b[2..10];
     if !ver.starts_with(b":WFM#") && !ver.starts_with(b"WFM#") {
-        return Err("not a Tektronix WFM".into());
+        return Err("header is not :WFM#002 or :WFM#003".into());
     }
     let bpp = b[15] as usize;
     if bpp == 0 || bpp > 8 {
@@ -984,7 +984,7 @@ fn parse_tek_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     }
     let curve = get_i32(16) as usize;
     let label = b[40..72].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string();
-    // WFM#002/#003: packed header after the 78-byte static block (Tek 001-1378-03)
+    // :WFM#002 / :WFM#003: packed header after the 78-byte static block
     let mut i = 78usize;
     let need = |n: usize| -> Result<(), String> { if b.len() < n { Err("truncated WFM".into()) } else { Ok(()) } };
     need(i + 90)?;
@@ -1508,7 +1508,7 @@ mod tests {
     }
 
     #[test]
-    fn oos_bin_and_tek_wfm_round_trip() {
+    fn oos_bin_and_wfm_round_trip() {
         let mut m = Model::default();
         m.ch[0].on = true;
         let rec = Record { t0: -2e-6, dt: 5e-9, ch: { let mut c: [Vec<f32>; NCH] = Default::default(); c[0] = vec![0.1, 0.2, -0.3, 0.4]; c }, triggered: true, partial: false, raw: None, la: None };
@@ -1519,7 +1519,7 @@ mod tests {
         assert!((t.t0 - rec.t0).abs() < 1e-18);
 
         let v = [0.0_f32, 0.5, 1.0, -0.25];
-        let wfm = tek_wfm003_f32(-1e-6, 1e-9, &v, "USB");
+        let wfm = wfm003_f32(-1e-6, 1e-9, &v, "USB");
         let g = parse_wave(&wfm, "x.wfm").unwrap();
         assert_eq!(g.len(), 1);
         assert_eq!(g[0].label, "USB");
@@ -1530,7 +1530,7 @@ mod tests {
         }
     }
 
-    fn tek_wfm003_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+    fn wfm003_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
         const CURVE: usize = 838;
         let mut b = vec![0u8; CURVE + v.len() * 4 + 8];
         b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
