@@ -140,7 +140,8 @@ pub(super) struct Replay {
 
 impl Ui {
     pub fn record_mode(&self) -> bool {
-        self.offline || self.session_is_sim || (self.m.n_on() == 0 && self.refs.iter().any(Option::is_some))
+        // A reference drawn with the live channels is not a session. Take over, Offline waveforms, and SIM are.
+        self.offline || self.session_is_sim || self.sim_play
     }
 
     pub(super) fn active_reference(&self) -> usize {
@@ -205,34 +206,97 @@ impl Ui {
             return Err("The file needs at least two samples and a valid sample interval.".into());
         }
         self.sim_cancel_generation();
-        self.remember_live();
-        self.set_offline(true);
+        let into_session = self.offline || self.session_is_sim;
         self.session_is_sim = false;
-        self.replay = Replay::default();
+        self.sim_play = false;
         let first = self.ref_sel.min(NREF - 1);
         for (k, trace) in traces.into_iter().take(NREF - first).enumerate() {
             let slot = first + k;
             let span = trace.v.iter().copied().filter(|x| x.is_finite()).fold(0.1f32, |a, b| a.max(b.abs()));
             self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: trace.v, vpd: (span / 3.0).max(1e-6), offset: 0.0, on: true });
         }
-        self.m.zoom = false;
-        self.present_record(first);
-        if self.look == reflook::RefLook::TakeOver {
-            self.solo_reference(first);
+        self.replay = Replay::default();
+        if into_session {
+            if !self.offline {
+                self.set_offline(true);
+            }
+            self.m.zoom = false;
+            self.present_record(first);
+            if self.look == reflook::RefLook::TakeOver {
+                self.solo_reference(first);
+            }
+            self.meas_src = WaveId::Ref(first);
+            self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
+            self.m.meas2.clear();
+            self.meas_own.clear();
+            self.meas_cfg = None;
+            self.ensure_meas_own();
+            self.m.meas_labels = false;
+            self.autoset_reference();
+            self.toast(&format!("Loaded {} into R{}", name, first + 1));
+        } else {
+            let (rate, n) = self.refs[first].as_ref().map(|r| (1.0 / r.dt, r.v.len())).unwrap_or((0.0, 0));
+            self.toast(&format!("R{} with the live channels · {} · {}", first + 1, si_digits(rate, "Sa/s", 3), si_digits(n as f64, "pts", 3)));
         }
-        self.meas_src = WaveId::Ref(first);
-        self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
-        self.m.meas2.clear();
-        self.meas_own.clear();
-        self.meas_cfg = None;
-        self.ensure_meas_own();
-        self.m.meas_labels = false;
         self.close_menu();
-        self.autoset_reference();
         self.measure_refs();
         self.relayout();
-        self.toast(&format!("Loaded {} into R{}", name, first + 1));
         Ok(())
+    }
+
+    /// Sample rate and length of the references drawn on the live screen, and whether each one meets the current time window.
+    pub(super) fn live_ref_note(&self) -> String {
+        if self.record_mode() {
+            return String::new();
+        }
+        let (tdiv, delay) = self.view();
+        let half = tdiv as f64 * HDIV as f64 / 2.0;
+        let (left, right) = (delay as f64 - half, delay as f64 + half);
+        let mut parts = Vec::new();
+        for (i, r) in self.refs.iter().enumerate() {
+            let Some(r) = r.as_ref() else { continue };
+            if !r.on || r.v.len() < 2 || !(r.dt > 0.0) {
+                continue;
+            }
+            let end = r.t0 + r.v.len() as f64 * r.dt;
+            let outside = end < left || r.t0 > right;
+            let where_ = if outside { " · outside this window" } else { "" };
+            parts.push(format!("R{} {} · {}{}", i + 1, si_digits(1.0 / r.dt, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3), where_));
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("With live · {}", parts.join("   "))
+        }
+    }
+
+    /// Move the live time base onto the first shown reference. The channels stay on.
+    pub(super) fn fit_shown_reference(&mut self) {
+        if self.record_mode() {
+            return;
+        }
+        let slot = if self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).is_some_and(|r| r.on && r.v.len() >= 2) {
+            self.ref_sel
+        } else {
+            match (0..NREF).find(|&i| self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 2 && r.dt > 0.0)) {
+                Some(i) => i,
+                None => return,
+            }
+        };
+        let spec = self.refs[slot].as_ref().map(|r| (r.t0, r.dt, r.v.len()));
+        if let Some((t0, dt, n)) = spec {
+            self.apply_record_timebase(t0, dt, n);
+            self.toast(&format!("Time base fit to R{}. The live channels stay on.", slot + 1));
+        }
+    }
+
+    pub(super) fn live_ref_fit_rect(&self) -> Option<Rect> {
+        let note = self.live_ref_note();
+        if note.is_empty() || self.view_on() || self.eye_open() {
+            return None;
+        }
+        let g = self.grid;
+        Some(Rect::new(g.x + 8, g.y + g.h - 28, 52, 22))
     }
 
     pub(super) fn reference_slice(&self, slot: usize) -> Option<(&[f32], f64, f64)> {

@@ -3442,6 +3442,17 @@ impl Ui {
             let n = self.search_events().len();
             backed_text(cv, &f.sb, x, y, &format!("Search: {} event{}", n, if n == 1 { "" } else { "s" }), AMBER);
         }
+        let note = self.live_ref_note();
+        if !note.is_empty() && !self.view_on() && !self.eye_open() {
+            let y = g.y + g.h - 16;
+            let fit = Rect::new(g.x + 8, y - 12, 52, 22);
+            btn(cv, fit, BTN, ACCENT);
+            cv.text_in(&f.s, fit, 1, "Fit", TEXT);
+            let lab = Rect::new(fit.x + fit.w + 8, y - 12, (g.x + g.w - fit.x - fit.w - 16).max(1), 22);
+            cv.set_clip(lab);
+            cv.text_in(&f.s, lab, 0, &note, LABEL);
+            cv.no_clip();
+        }
     }
 
     /// Search markers: an amber tick at the top of the plot for every event of the trigger condition.
@@ -7569,6 +7580,12 @@ impl Ui {
         }
         if self.waves_board_tap(x, y) {
             return;
+        }
+        if let Some(r) = self.live_ref_fit_rect() {
+            if r.contains(x, y) {
+                self.fit_shown_reference();
+                return;
+            }
         }
         if !self.menu_open && self.measurement_navigation_tap(x, y) { return; }
         if self.auto_bar_tap(x, y) {

@@ -1,10 +1,10 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Stored-reference session. Off, the live screen is unchanged. On, the analog cards are hidden.
-//! Take over shows one reference. Offline waveforms keeps several on screen together. Import does
-//! what Play does: analog stays off, TIME comes from the record's own interval and length, and the
-//! reference name sits where the trigger card would be. The DVM and the counter read that reference.
+//! Stored-reference session. A loaded reference stays on the live screen, with its own sample rate
+//! and length, until Take over or Offline waveforms is chosen. Those hide the analog cards. Take
+//! over shows one reference on the record's own time base. Offline waveforms keeps several together.
+//! A SIM session is separate: its readout starts with SIM, and Live returns to acquisition.
 
 use super::*;
 
@@ -95,7 +95,7 @@ impl Ui {
     }
 
     /// Horizontal scale that fits the record, including a factor below the live 1 ns step.
-    fn apply_record_timebase(&mut self, t0: f64, dt: f64, n: usize) {
+    pub(super) fn apply_record_timebase(&mut self, t0: f64, dt: f64, n: usize) {
         if n < 2 || !(dt > 0.0) {
             return;
         }
@@ -133,11 +133,12 @@ impl Ui {
     /// Sample rate and depth for the top line. The bool is the live acquire mode that follows it.
     pub(super) fn acq_caption(&self) -> (String, bool) {
         if self.record_mode() {
+            let kind = if self.session_is_sim { "SIM" } else { "REF" };
             if let Some(r) = self.refs.get(self.active_reference()).and_then(|r| r.as_ref()).filter(|r| r.v.len() >= 2 && r.dt > 0.0) {
                 let sr = 1.0 / r.dt;
-                return (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
+                return (format!("{} \u{b7} {} \u{b7} {}", kind, si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
             }
-            return ("\u{2014}".into(), false);
+            return (format!("{kind} \u{b7} \u{2014}"), false);
         }
         let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| self.m.srate_depth());
         (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), true)
@@ -199,7 +200,7 @@ impl Ui {
     pub(super) fn offline_value(&self, it: Item) -> Option<String> {
         match it {
             Item::Offline => Some(match self.look {
-                reflook::RefLook::Live => "Off".into(),
+                reflook::RefLook::Live => "With live".into(),
                 reflook::RefLook::TakeOver => "Take over".into(),
                 reflook::RefLook::Waves => "Offline".into(),
             }),
@@ -210,7 +211,7 @@ impl Ui {
 
     pub(super) fn offline_options(&self, it: Item) -> Option<Vec<String>> {
         match it {
-            Item::Offline => Some(vec!["Off".into(), "Take over".into(), "Offline".into()]),
+            Item::Offline => Some(vec!["With live".into(), "Take over".into(), "Offline".into()]),
             Item::DvmSrc | Item::CntSrc if self.offline => Some((0..NREF).map(|i| format!("R{}", i + 1)).collect()),
             _ => None,
         }
@@ -299,8 +300,8 @@ mod tests {
         let sine: Vec<f32> = (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
         write_csv(&dir, 1, 0.0, dt, &sine);
         live.activate(Item::RefImport);
-        assert!(!live.m.ch[0].on && live.offline, "import enters an explicit stored-waveform session");
-        assert!(live.cards().0.iter().all(|card| card.w == 0));
+        assert!(live.m.ch[0].on && !live.offline, "import stays with the live channels");
+        assert!(live.refs[0].as_ref().unwrap().on);
         let _ = scale;
 
         let mut play = ui();
@@ -362,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn import_gates_existing_references_before_the_first_measurement() {
+    fn import_keeps_the_live_window_until_take_over() {
         let mut u = ui();
         u.refs[1] = Some(RefWave {
             src: 0, color: 1, label: "previous capture".into(), t0: 0.0, dt: 1e-9,
@@ -371,14 +372,40 @@ mod tests {
                 if index % 4 < 2 { -amplitude } else { amplitude }
             }).collect(), vpd: 1.0, offset: 0.0, on: true,
         });
+        let held = (u.m.tscale, u.m.tfine, u.m.delay);
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {
             csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, if index % 4 < 2 { -0.5 } else { 0.5 }));
         }
         u.load_waveform_bytes(csv.as_bytes(), "new record.csv").unwrap();
-        assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 1e-6,
-            "existing refs use the imported screen gate immediately, not their full record");
-        assert!(u.reference_slice(1).unwrap().0.len() < 1000);
+        assert_eq!((u.m.tscale, u.m.tfine, u.m.delay), held);
+        assert!(u.m.ch[0].on && !u.offline);
+        assert!(u.refs[0].is_some() && u.refs[1].as_ref().unwrap().on);
+        u.set_look(reflook::RefLook::TakeOver);
+        assert_timebase(&u, 0.0, 1e-9, 100);
+        assert!(u.m.ch.iter().all(|c| !c.on));
+    }
+
+    #[test]
+    fn a_fast_record_stays_with_the_live_channels() {
+        let mut u = ui();
+        let live = u.m.time_per_div();
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..400 {
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-12, if index % 2 == 0 { -0.2 } else { 0.2 }));
+        }
+        u.load_waveform_bytes(csv.as_bytes(), "fast.csv").unwrap();
+        let (acq, live_mode) = u.acq_caption();
+        assert!(live_mode, "{}", acq);
+        assert_eq!(u.m.time_per_div(), live);
+        assert!(u.m.ch[0].on && !u.offline && !u.session_is_sim);
+        let note = u.live_ref_note();
+        assert!(note.contains("R1") && note.contains("Sa/s"), "{note}");
+        u.fit_shown_reference();
+        assert!(u.m.ch[0].on && !u.offline);
+        assert!(u.m.time_per_div() < live);
+        u.session_is_sim = true;
+        assert!(u.acq_caption().0.starts_with("SIM"), "{}", u.acq_caption().0);
     }
 
     fn assert_timebase(u: &Ui, t0: f64, dt: f64, n: usize) {
