@@ -971,6 +971,12 @@ pub struct Ui {
     /// brightest pixel of the merged maps (colour grade), main / zoom view
     vmax_cg: u32,
     vmaxz_cg: u32,
+    /// minimum persistence: frames in the picture on screen, and the brightest pixel per frame behind `vmax`, `vmaxz`,
+    /// `vmax_cg`, `vmaxz_cg` (`picture_ref`)
+    pic_frames: u32,
+    per_frame: [u32; NCH],
+    per_framez: [u32; NCH],
+    per_frame_cg: [u32; 2],
     /// storage directory (setups, CSV, PNG), created when missing
     pub store_dir: std::path::PathBuf,
     /// the screen the layout is made for: the panel, or another size in host test runs (`--size`)
@@ -1156,6 +1162,10 @@ impl Ui {
             vmax: [1; NCH],
             vmax_cg: 1,
             vmaxz_cg: 1,
+            pic_frames: 0,
+            per_frame: [1; NCH],
+            per_framez: [1; NCH],
+            per_frame_cg: [1; 2],
             store_dir: std::path::PathBuf::from(crate::store::DEFAULT_DIR),
             scr: Screen::PANEL,
             view_pass: false,
@@ -1789,6 +1799,12 @@ impl Ui {
             // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
             // record intervals (a 125 M record takes ~1 s to read)
             let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
+            // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
+            if persist != 0.0 {
+                self.pic_frames = 0;
+            } else if got > 0 {
+                self.pic_frames = got as u32;
+            }
             if got > 0 {
                 let iv = (self.now - self.last_rec_t).min(2.0);
                 self.rec_iv += 0.3 * (iv - self.rec_iv);
@@ -1872,28 +1888,8 @@ impl Ui {
         let p5 = std::time::Instant::now();
         // brightest pixel per channel: the trace brightness is graded relative to it
         // (follow upwards at once, downwards slowly: no flicker)
-        let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
-        let (mut full, mut fullz) = (false, false);
-        for c in 0..NCH {
-            if self.m.ch[c].on {
-                let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
-                self.vmax[c] = follow(self.vmax[c], mx);
-                full |= mx > 0xc000;
-                if self.m.zoom {
-                    let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
-                    self.vmaxz[c] = follow(self.vmaxz[c], mz);
-                    fullz |= mz > 0xc000;
-                }
-            }
-        }
+        let (full, fullz) = self.grade_refs();
         self.prof_add(3, p5.elapsed());
-        if self.m.color_grade {
-            let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
-            self.vmax_cg = follow(self.vmax_cg, self.ph.merged_max(on));
-            if self.m.zoom {
-                self.vmaxz_cg = follow(self.vmaxz_cg, self.phz.merged_max(on));
-            }
-        }
         // long or infinite persistence: halve the maps before the counts saturate (keeps the density ratios)
         if full {
             self.ph.halve();
@@ -2311,6 +2307,33 @@ impl Ui {
     /// Brightness of a trace pixel by its count (`draw_traces`): floor + sqrt(hits / brightest), the intensity
     /// setting raises floor and gain. The count shifted right by the second value indexes the table; a pixel that
     /// was hit at all gets at least the third.
+    /// The counts the picture is graded against (`picture_ref`), per channel and for colour grade; whether the main and
+    /// the zoom map are near saturation.
+    fn grade_refs(&mut self) -> (bool, bool) {
+        let n = self.pic_frames;
+        let (mut full, mut fullz) = (false, false);
+        for c in 0..NCH {
+            if self.m.ch[c].on {
+                let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
+                self.vmax[c] = picture_ref(self.vmax[c], &mut self.per_frame[c], mx, n);
+                full |= mx > 0xc000;
+                if self.m.zoom {
+                    let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
+                    self.vmaxz[c] = picture_ref(self.vmaxz[c], &mut self.per_framez[c], mz, n);
+                    fullz |= mz > 0xc000;
+                }
+            }
+        }
+        if self.m.color_grade {
+            let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
+            self.vmax_cg = picture_ref(self.vmax_cg, &mut self.per_frame_cg[0], self.ph.merged_max(on), n);
+            if self.m.zoom {
+                self.vmaxz_cg = picture_ref(self.vmaxz_cg, &mut self.per_frame_cg[1], self.phz.merged_max(on), n);
+            }
+        }
+        (full, fullz)
+    }
+
     fn trace_lut(&self, vmax: u32) -> ([u32; 1024], u32, u32) {
         let inten = self.m.intensity as f32 / 100.0;
         let floor = 30.0 + 140.0 * inten;
@@ -7504,9 +7527,74 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
     }
 }
 
+/// The count a trace pixel is graded against (full brightness), from the brightest pixel `mx` of the picture. It
+/// follows a higher `mx` at once and a lower one slowly (`prev`, no flicker). Minimum persistence (`frames` > 0, the
+/// frames in the picture): the picture holds as many frames as arrived since the last screen refresh, in batches, so
+/// its counts rise and fall with that number. Graded against the per-frame maximum (`per_frame`, followed the same
+/// way) times `frames`, equal frames give equal brightness whatever their number. Without this a refresh with one
+/// frame after one with several came out dim: the trace pumped at the batch rate (docs/fork/trigger-lockin.md).
+fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
+    let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
+    if frames == 0 {
+        return follow(prev, mx);
+    }
+    *per_frame = follow(*per_frame, mx.div_ceil(frames));
+    per_frame.saturating_mul(frames).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    // Break it catches: the trace brightness at minimum persistence following the number of frames per picture (one
+    // frame after a batch of several came out dim: the flicker after autoset, docs/fork/trigger-lockin.md)
+    #[test]
+    fn equal_frames_give_equal_brightness_whatever_their_number() {
+        let mut ui = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        ui.m.persist = 0;
+        for c in 1..super::NCH {
+            ui.m.ch[c].on = false;
+        }
+        // one frame: a 1 kHz square with a little noise, 3600 points over the screen
+        let mut x = 3u32;
+        let v: Vec<f32> = (0..3600)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                (if (k / 360) % 2 == 0 { 0.0 } else { 0.3 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+            })
+            .collect();
+        let (tdiv, window) = (ui.m.time_per_div(), ui.m.time_per_div() as f64 * super::HDIV as f64);
+        let picture = |ui: &mut super::Ui, n: u32| -> Vec<u32> {
+            ui.ph.clear();
+            for _ in 0..n {
+                ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None);
+            }
+            ui.pic_frames = n;
+            ui.grade_refs();
+            let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+            // as `draw_traces`: an empty pixel stays dark
+            ui.ph.map[0].iter().map(|&k| if k == 0 { 0 } else { lut[((k as u32) >> sh).min(1023) as usize] }).collect()
+        };
+        let first = picture(&mut ui, 4);
+        for n in [1, 7, 1, 2, 16, 1, 4] {
+            let p = picture(&mut ui, n);
+            let worst = first.iter().zip(&p).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 3, "{} frames: brightness off by {}", n, worst);
+        }
+        // the plain grade (longer persistence) is what pumped: one frame after sixteen is graded against 16 times its
+        // counts
+        ui.pic_frames = 0;
+        ui.m.persist = 1;
+        let _ = picture(&mut ui, 16);
+        ui.pic_frames = 0;
+        ui.grade_refs();
+        let bright = |ui: &super::Ui| ui.vmax[0];
+        let before = bright(&ui);
+        ui.ph.clear();
+        ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None);
+        ui.grade_refs();
+        assert!(bright(&ui) > ui.ph.map[0].iter().copied().max().unwrap() as u32 * 8, "{}", before);
+    }
 
     /// Measurements in the background (the frame loop on the unit) while a new record comes every frame: their results
     /// still arrive (0.1.7 to 0.1.10 dropped each one as older than the record shown, and the values froze in Run).
@@ -7526,6 +7614,7 @@ mod tests {
     #[test]
     fn add_item_toggles_a_measurement() {
         use super::*;
+
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.meas.clear();
         ui.meas_src = 0;

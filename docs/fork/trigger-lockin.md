@@ -174,8 +174,8 @@ Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = 
 | 4 software comparator = hardware, hysteresis table | done, ed4d03c |
 | 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
 | 5 status from 0x4034 | blocked: bits 6 and 7 are set while triggered and while auto-firing (read with `oos-fpgad rd 0x4034` on the unit), so they are sticky without the stock status clear. Needs a test of the clear on the unit. A software proxy (edge at the hardware point) is wrong for the noisy full-bandwidth frames of section 7 of trigger.md, so it is not used |
-| 6 counter for the time base | not done: after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
-| F1, F2 flicker | not started |
+| 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
+| F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 
 Not yet measured on the unit: autoset time with these changes, and the noisy 5 V signal before and after.
 
