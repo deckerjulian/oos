@@ -10,7 +10,7 @@ use crate::board::{Frame, Slow};
 use crate::board::{HwShared, Shared, QUEUE_MAX};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
-use oos_hal::dho::{afe, auxout, hz, tpu};
+use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -162,6 +162,11 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         hwmask: None,
         hwzone: None,
     };
+    // the hardware UART fires inside the frame, the software trigger point is the end of its stop bit: the record is
+    // centred on the software point (docs/fork/hwuart.md)
+    if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(m)) {
+        s.delay += uarttrig::sw_offset_s(u);
+    }
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
@@ -309,9 +314,9 @@ fn hw_trigger(m: &Model) -> Trig {
         TrigType::Duration => Trig::Duration { pats, la, when, lower, upper, levels },
         TrigType::SetupHold => Trig::SetupHold { clk: m.trig_src2 as u32 + 1, clk_edge: edge2, setup: m.setup as f64, hold: m.hold as f64, levelc: m.trig_level2 as f64 },
         TrigType::NthEdge => Trig::Nth { count: m.nth_n, idle: m.nth_idle as f64 },
-        // protocol trigger: the TPU fires on edges of the decoder's line (see `settings`), the software picks the
-        // matching frame out of the record
-        TrigType::Bus => Trig::Edge,
+        // protocol trigger: the TPU's UART receiver where it can (`trig.serial_hw = on`, `hw_uart`); else the TPU fires
+        // on edges of the decoder's line (see `settings`) and the software picks the matching frame out of the record
+        TrigType::Bus => hw_uart(m).map_or(Trig::Edge, Trig::Uart),
         TrigType::Video => Trig::Video {
             std: if m.video_std == VideoStd::Pal { HStd::Pal } else { HStd::Ntsc },
             // the TPU has no "all fields": odd field triggers once per frame [A]
@@ -409,6 +414,74 @@ fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Op
     if let (auxout::AuxOut::PassFail(p), Some(_)) = (&mut want.aux, &want.hwzone) {
         p.source = auxout::Source::Zone;
     }
+}
+
+/// `trig.serial_hw = on` in system.conf: the UART protocol trigger runs in the TPU's receiver (docs/fork/hwuart.md).
+/// Off by default until it is verified on the unit.
+pub fn serial_hw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| serial_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `trig.serial_hw` line of system.conf; off unless `on`.
+fn serial_hw_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
+}
+
+/// The UART protocol trigger of the model in the TPU's receiver, when it is enabled and can do it: a UART decoder on a
+/// channel (not the LA, not differential), 1..8 data bits, and a condition it has (frame start, a data byte, an error).
+/// The ID condition and wider values stay with the software trigger.
+pub fn hw_uart(m: &Model) -> Option<uarttrig::Uart> {
+    if !serial_hw_on() {
+        return None;
+    }
+    uart_of(m)
+}
+
+/// `hw_uart` without the system.conf switch.
+fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
+    use uarttrig::{Cond, ErrKind, Parity, Relation, Stop, Uart};
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Uart || m.dec_on_la() || m.dec_diff.is_some() || !(1..=8).contains(&m.dec_bits) {
+        return None;
+    }
+    let cond = match m.trig_bus {
+        BusWhat::Frame => Cond::Start,
+        BusWhat::Data if m.trig_bus_val <= 0xff && m.trig_bus_val >> m.dec_bits == 0 => Cond::Data(Relation::Eq, m.trig_bus_val as u8, m.trig_bus_val as u8),
+        BusWhat::Error => Cond::Error(ErrKind::Either),
+        _ => return None,
+    };
+    let parity = match m.dec_parity {
+        oos_dsp::decode::Parity::None => Parity::None,
+        oos_dsp::decode::Parity::Odd => Parity::Odd,
+        oos_dsp::decode::Parity::Even => Parity::Even,
+    };
+    Some(Uart { baud: crate::decode::BAUDS[m.dec_baud], bits: m.dec_bits, parity, stop: Stop::One, cond, invert: false })
+}
+
+/// Fork, `:SYSTem:DEBug:UART?`: what the TPU's UART receiver gets for the model (`off,...` when the software trigger
+/// stays in charge), the words, the event time and the record shift.
+pub fn uart_debug(m: &Model) -> String {
+    let Some(u) = uart_of(m) else {
+        return format!("off,enabled={}", serial_hw_on() as u8);
+    };
+    let w = uarttrig::words(&u);
+    format!(
+        "{},src=CH{},baud={},bits={},parity={:?},cond={:?},invert={},clocks={},r2100={:#010x},r2104={:#010x},r221c={:#010x},mux={},event_s={:.4e},shift_s={:.4e}",
+        if serial_hw_on() { "on" } else { "off" },
+        m.dec_src + 1,
+        u.baud,
+        u.bits,
+        u.parity,
+        u.cond,
+        u.invert as u8,
+        uarttrig::bit_clocks(u.baud),
+        w[1].1,
+        w[2].1,
+        w[0].1,
+        uarttrig::MUX,
+        uarttrig::event_s(&u),
+        uarttrig::sw_offset_s(&u)
+    )
 }
 
 /// The mask test of the acquisition settings from the UI's wish.
@@ -1569,6 +1642,57 @@ mod tests {
             let sw = crate::zone::hits(&crate::zone::Zone { on: true, src: 0, inside: true, pts: pts.clone() }, &v, t0, dt);
             assert_eq!((sw, touched(&pts)), (want, want), "{:?}", pts);
         }
+    }
+
+    #[test]
+    fn uart_from_the_decoder_settings() {
+        use oos_hal::dho::uarttrig::{Cond, ErrKind, Parity, Relation};
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_bits, m.dec_baud) = (TrigType::Bus, Proto::Uart, 1, 8, 7);
+        // (condition, value) -> receiver condition (None = the software trigger)
+        let cases = [
+            (BusWhat::Frame, 0, Some(Cond::Start)),
+            (BusWhat::Data, 0x41, Some(Cond::Data(Relation::Eq, 0x41, 0x41))),
+            (BusWhat::Data, 0x141, None),
+            (BusWhat::Error, 0, Some(Cond::Error(ErrKind::Either))),
+            (BusWhat::Id, 0x41, None),
+        ];
+        for (what, v, want) in cases {
+            (m.trig_bus, m.trig_bus_val) = (what, v);
+            assert_eq!(uart_of(&m).map(|u| u.cond), want, "{:?} {:#x}", what, v);
+        }
+        m.trig_bus = BusWhat::Frame;
+        m.dec_parity = oos_dsp::decode::Parity::Even;
+        let u = uart_of(&m).unwrap();
+        assert_eq!((u.parity, u.baud, u.bits, u.invert), (Parity::Even, crate::decode::BAUDS[7], 8, false));
+        // 7 data bits: a value with bit 7 set cannot match
+        (m.dec_bits, m.trig_bus, m.trig_bus_val) = (7, BusWhat::Data, 0x80);
+        assert_eq!(uart_of(&m), None);
+        // other protocols, the LA as input, RS-485: the software trigger
+        (m.dec_bits, m.trig_bus) = (8, BusWhat::Frame);
+        for f in [|m: &mut Model| m.dec_proto = Proto::Spi, |m: &mut Model| m.dec_proto = Proto::Uart9, |m: &mut Model| m.dec_diff = Some(2), |m: &mut Model| m.trig_type = TrigType::Edge] {
+            let mut x = m.clone();
+            f(&mut x);
+            assert_eq!(uart_of(&x), None);
+        }
+        assert!(!serial_hw_from("") && serial_hw_from("trig.serial_hw = on\n"));
+        assert!(uart_debug(&m).starts_with("off,src=CH2,"), "{}", uart_debug(&m));
+    }
+
+    #[test]
+    fn uart_shifts_the_record_to_the_software_point() {
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.trig_bus) = (TrigType::Bus, Proto::Uart, 0, BusWhat::Frame);
+        let u = uart_of(&m).unwrap();
+        let mut s = settings(&m, false);
+        let d0 = s.delay;
+        s.trigger = Trig::Uart(u);
+        // `settings` applies the shift only with the switch on; the same arithmetic here
+        if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(&m)) {
+            s.delay += uarttrig::sw_offset_s(u);
+        }
+        let bit = 1.0 / crate::decode::BAUDS[m.dec_baud];
+        assert!((s.delay - d0 - (9.4 * bit - 4.0 / 156.25e6)).abs() < 1e-12);
     }
 
     #[test]
