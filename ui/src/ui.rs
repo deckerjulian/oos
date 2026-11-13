@@ -679,6 +679,8 @@ enum Drag {
     Pending,
     /// drawing zone k (box: from the touch-down point to the finger; shape: the finger's path)
     Zone(usize),
+    /// zoom-area button is armed: the finger draws the box that becomes the zoom
+    ZoomBox,
     Offset(usize),
     Delay,
     Level,
@@ -766,6 +768,12 @@ pub struct Ui {
     zone_arm: Option<(usize, bool)>,
     /// screen path of the zone being drawn
     zone_path: Vec<(i32, i32)>,
+    /// zoom-area button: the next drag on the plot draws a box, and that box becomes the zoom
+    zoom_arm: bool,
+    /// screen corners of the zoom box being drawn
+    zoom_path: Vec<(i32, i32)>,
+    /// waveform rectangle and time base the zoom box started in: (rect, s/div, delay)
+    zoom_map: Option<(Rect, f32, f32)>,
     /// records dropped by the zone condition
     zone_drops: u64,
     /// fast path frames by where the edge of the set direction was: at the hardware trigger point; further away with
@@ -980,6 +988,9 @@ impl Ui {
             zone_sel: 0,
             zone_arm: None,
             zone_path: Vec::new(),
+            zoom_arm: false,
+            zoom_path: Vec::new(),
+            zoom_map: None,
             zone_drops: 0,
             fast_edges: [0; 4],
             fast_off: (0.0, 0.0),
@@ -1258,6 +1269,73 @@ impl Ui {
             // 2 px thick, the second pixel on the side of the arms
             cv.fill(Rect::new(hx0, py.min(py + ay), hx1 - hx0 + 1, 2), col);
             cv.fill(Rect::new(px.min(px + ax), vy0, 2, vy1 - vy0 + 1), col);
+        }
+    }
+
+    /// The zoom-area button under the full-screen button: (drawn, touch area). One press arms the next drag.
+    fn zoom_btn(&self) -> (Rect, Rect) {
+        let (full, hit) = self.full_btn();
+        // below the full-screen touch target, so the two buttons do not share a tap
+        let r = Rect::new(full.x, hit.y + hit.h + 2, full.w, full.h);
+        (r, Rect::new(r.x - 5, r.y, r.w + 10, 40))
+    }
+
+    fn draw_zoom_btn(&self, cv: &mut Canvas) {
+        let (r, _) = self.zoom_btn();
+        let armed = self.zoom_arm;
+        cv.round(r, 5, PANEL_BG, 220);
+        cv.round_outline(r, 5, if armed { AMBER } else { BTN_BORDER });
+        // the box this button arms
+        cv.rect(Rect::new(r.x + 8, r.y + 6, r.w - 16, r.h - 12), if armed { AMBER } else { TEXT });
+    }
+
+    /// The box while a zoom-area drag is in progress.
+    fn draw_zoom_box(&self, cv: &mut Canvas) {
+        if self.touch.drag != Drag::ZoomBox || self.zoom_path.len() != 2 {
+            return;
+        }
+        let ((x0, y0), (x1, y1)) = (self.zoom_path[0], self.zoom_path[1]);
+        let (w, h) = ((x1 - x0).abs(), (y1 - y0).abs());
+        if w < 2 && h < 2 {
+            return;
+        }
+        cv.set_clip(self.grid);
+        cv.rect(Rect::new(x0.min(x1), y0.min(y1), w.max(1), h.max(1)), ACCENT);
+        cv.no_clip();
+    }
+
+    /// Time base under a point of the waveform. While zoom is on, the overview keeps the main time base.
+    fn zoom_drag_map(&self, x: i32, y: i32) -> Option<(Rect, f32, f32)> {
+        if self.view_on() {
+            return None;
+        }
+        if self.m.zoom {
+            let (o, z) = Self::split_zoom(self.grid);
+            if o.contains(x, y) {
+                return Some((o, self.m.time_per_div(), self.m.delay));
+            }
+            if z.contains(x, y) {
+                return Some((z, tscales()[self.m.zscale], self.m.zdelay));
+            }
+            return None;
+        }
+        if self.area.w > 0 && self.area.contains(x, y) {
+            Some((self.area, self.m.time_per_div(), self.m.delay))
+        } else {
+            None
+        }
+    }
+
+    /// Press: arm the next drag. Press again: put it away. A view that replaces the waveform has nothing to zoom.
+    fn arm_zoom_area(&mut self) {
+        if self.view_on() {
+            self.toast("Not on this view");
+            return;
+        }
+        self.zoom_arm = !self.zoom_arm;
+        if self.zoom_arm {
+            self.zone_arm = None;
+            self.toast("Drag a box to zoom");
         }
     }
 
@@ -1957,7 +2035,9 @@ impl Ui {
         }
         self.draw_cal_banner(cv);
         self.draw_info(cv);
+        self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
+        self.draw_zoom_btn(cv);
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
         // Full on the external display is the plot and the strip. The statistics card and a lower pane stay on the panel.
@@ -6680,6 +6760,10 @@ impl Ui {
 
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
         let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        // the plot buttons are taps; a zoom box starts on the waveform, not on them
+        let on_chrome = ph == Phase::Down
+            && (self.full_btn().1.contains(x, y) || self.zoom_btn().1.contains(x, y) || (self.view_on() && self.view_btn().contains(x, y)));
+        let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
         let t = &mut self.touch;
         match ph {
             Phase::Down => {
@@ -6690,7 +6774,11 @@ impl Ui {
                 }
                 if in_plot {
                     t.drag = Drag::Pending;
-                    if let Some((k, _)) = self.zone_arm {
+                    if let Some(map) = zmap {
+                        t.drag = Drag::ZoomBox;
+                        self.zoom_path = vec![(x, y), (x, y)];
+                        self.zoom_map = Some(map);
+                    } else if let Some((k, _)) = self.zone_arm {
                         t.drag = Drag::Zone(k);
                         self.zone_path = vec![(x, y)];
                     }
@@ -6800,6 +6888,11 @@ impl Ui {
                             self.zone_path.push((x, y));
                         }
                     }
+                    Drag::ZoomBox => {
+                        if let Some(p) = self.zoom_path.last_mut() {
+                            *p = (x, y);
+                        }
+                    }
                     Drag::CursorA | Drag::CursorB => {
                         let v = if self.m.cursor == CursorMode::Time {
                             t.start_cur + dx as f32 / self.area.w as f32
@@ -6828,6 +6921,10 @@ impl Ui {
                     self.finish_zone(k);
                     return;
                 }
+                if was.1 == Drag::ZoomBox {
+                    self.finish_zoom_box();
+                    return;
+                }
                 if self.dialog.is_some() {
                     self.dialog = None;
                     return;
@@ -6847,6 +6944,50 @@ impl Ui {
                     }
                 }
             }
+        }
+    }
+
+    /// The drawn box becomes the zoom: its time span is the zoom window. A click is not a box, and the button stays armed.
+    fn finish_zoom_box(&mut self) {
+        let path = std::mem::take(&mut self.zoom_path);
+        let map = self.zoom_map.take();
+        if path.len() != 2 {
+            return;
+        }
+        let ((x0, y0), (x1, y1)) = (path[0], path[1]);
+        // one press, then one drag: a tap, or a second tap, does not zoom
+        if (x1 - x0).abs() < 12 || (y1 - y0).abs() < 12 {
+            return;
+        }
+        let Some((a, tdiv, delay)) = map else { return };
+        if a.w < 8 || tdiv <= 0.0 {
+            return;
+        }
+        let ppd = a.w as f32 / HDIV;
+        let at = |x: i32| {
+            let x = x.clamp(a.x, a.x + a.w - 1);
+            delay + (x - (a.x + a.w / 2)) as f32 / ppd * tdiv
+        };
+        let (t0, t1) = (at(x0.min(x1)), at(x0.max(x1)));
+        let span = t1 - t0;
+        if span <= 0.0 {
+            return;
+        }
+        // finest step whose window still holds the box, and not slower than the main time base
+        let scales = tscales();
+        let mut z = 0;
+        while z < self.m.tscale && scales[z] * HDIV < span * 0.999 {
+            z += 1;
+        }
+        let on = self.m.zoom;
+        self.m.zscale = z;
+        self.m.zdelay = (t0 + t1) * 0.5;
+        self.m.zoom = true;
+        self.clamp_zoom();
+        self.zoom_arm = false;
+        self.dirty_map = true;
+        if !on {
+            self.relayout();
         }
     }
 
@@ -6951,6 +7092,10 @@ impl Ui {
         }
         if self.full_btn().1.contains(x, y) {
             self.toggle_expand();
+            return;
+        }
+        if self.zoom_btn().1.contains(x, y) {
+            self.arm_zoom_area();
             return;
         }
         if self.view_on() && self.view_btn().contains(x, y) {
