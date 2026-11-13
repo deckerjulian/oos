@@ -53,9 +53,9 @@ pub fn report(raw: &[u8], comp: &[u8], k: usize, mask: u32) -> String {
         for f in fits.iter().take(3) {
             let l = f.layout;
             out += &format!(
-                "  block {}k, {} first, shift {:+}: {} of {} points within one code, largest difference {}\n",
+                "  block {}k, {:?} order, shift {:+}: {} of {} points within one code, largest difference {}\n",
                 l.block_k,
-                if l.min_first { "min" } else { "max" },
+                l.order,
                 l.shift,
                 f.within,
                 f.points,
@@ -65,7 +65,7 @@ pub fn report(raw: &[u8], comp: &[u8], k: usize, mask: u32) -> String {
         let best = fits.first();
         let verdict = match best {
             Some(f) if f.points > 0 && f.within == f.points && f.layout == pairs::LAYOUT => "PASS: the assumed layout (pairs::LAYOUT) explains every point".to_string(),
-            Some(f) if f.points > 0 && f.within == f.points => format!("LAYOUT DIFFERS: set pairs::BLOCK_K = {}, MIN_FIRST = {}, shift {:+}", f.layout.block_k, f.layout.min_first, f.layout.shift),
+            Some(f) if f.points > 0 && f.within == f.points => format!("LAYOUT DIFFERS: set pairs::BLOCK_K = {}, ORDER = {:?}, shift {:+}", f.layout.block_k, f.layout.order, f.layout.shift),
             _ => "FAIL: no candidate layout explains the read (not the same record, another k, or another kind of compression)".to_string(),
         };
         out += &format!("  {}\n", verdict);
@@ -86,9 +86,12 @@ mod tests {
         let raw: Vec<u16> = (0..40_000u32).map(|i| (30_000 + (i * 7919) % 3001 + if (i / 900) % 2 == 0 { 0 } else { 2000 }) as u16).collect();
         let ok = report(&bytes(&raw), &bytes(&pairs::model(&raw, 16, pairs::LAYOUT)), 16, 1);
         assert!(ok.contains("PASS"), "{}", ok);
-        let other = pairs::Layout { block_k: 1, ..pairs::LAYOUT };
+        let other = pairs::Layout { block_k: 1, order: pairs::Order::MinFirst, ..pairs::LAYOUT };
         let differs = report(&bytes(&raw), &bytes(&pairs::model(&raw, 16, other)), 16, 1);
         assert!(differs.contains("BLOCK_K = 1"), "{}", differs);
+        let fixed = pairs::Layout { order: pairs::Order::MinFirst, ..pairs::LAYOUT };
+        let differs = report(&bytes(&raw), &bytes(&pairs::model(&raw, 16, fixed)), 16, 1);
+        assert!(differs.contains("ORDER = MinFirst"), "{}", differs);
         let wrong = report(&bytes(&raw), &bytes(&pairs::model(&raw, 8, pairs::LAYOUT)), 16, 1);
         assert!(wrong.contains("FAIL"), "{}", wrong);
     }

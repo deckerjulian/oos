@@ -555,7 +555,7 @@ impl State {
             if s.compress > 1 {
                 // main compression on, factor k (live value 0xc0000004 at k = 4); TX length = compressed points
                 for w in v.iter_mut().filter(|w| w.0 == 0x1170) {
-                    w.1 = 0xc000_0000 | (s.compress & 0x0fff_ffff);
+                    w.1 = compress_word(compress_k(s, p));
                 }
             }
             let mut r = scu::readout_play4(&win, &mut self.sh, if s.play4 { first } else { 0 }, nf);
@@ -708,11 +708,33 @@ pub fn frame_bytes(s: &Settings, p: &hz::Params) -> usize {
     2 * (p.ratio * n) as usize + if s.header { 16 } else { 0 }
 }
 
-/// Points per channel after the FPGA compression: the whole record / k, rounded up to 8 like the stock TX
-/// length (roundup8(len)).
+/// Largest compression factor: 0x1170 holds k in bits 13:0, a larger value wraps (netlist simulation, private RE notes
+/// docs/re/netlist/blocks/datapath.md).
+pub const COMPRESS_K_MAX: u32 = 16383;
+
+/// The compression factor `s.compress` as it is written: 1..=`COMPRESS_K_MAX`, and at most memsel / 8, so a read has at
+/// least 8 points.
+pub fn compress_k(s: &Settings, p: &hz::Params) -> u32 {
+    s.compress.clamp(1, COMPRESS_K_MAX).min((p.memsel / 8).max(1))
+}
+
+/// The 0x1170 word for factor `k`: k > 1 enables the min/max path with k in bits 13:0; k <= 1 is the pass-through
+/// word. Enable with k = 0 stalls the read (no C2H word at all, netlist simulation), so it is never written.
+pub fn compress_word(k: u32) -> u32 {
+    match k.min(COMPRESS_K_MAX) {
+        0 | 1 => 0x4000_0001,
+        k => 0xc000_0000 | k,
+    }
+}
+
+/// Points per channel after the FPGA compression (`compress_k`): the most whole multiples of 8 points (so whole min/max
+/// pairs) whose samples lie inside the record, points x k <= memsel. The FPGA delivers exactly 0x11f0 points and waits
+/// for samples until it has them: asking for more than the window holds stalls the read. The stock rounding up to 8
+/// asked for 3912 points at k = 256 at 1 M (1 001 472 samples) and the c2h read timed out on the unit, while k = 128
+/// (7816 points, 1 000 448 samples) still fitted the 0x248 samples the window reads beyond the record (unitlab round 2).
 pub fn compressed_len(s: &Settings, p: &hz::Params) -> u32 {
-    let k = s.compress.max(1);
-    (p.memsel.div_ceil(k) + 7) / 8 * 8
+    let k = compress_k(s, p);
+    (p.memsel / k / 8 * 8).max(8)
 }
 
 /// Drops the stream padding behind every frame (`frame_stride`) in place: the frames end up back to back.
@@ -1075,6 +1097,32 @@ pub fn execute_into_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_b
 #[cfg(test)]
 mod tests {
     /// Holdoff writes only when one is set, and once more when it goes back.
+
+    // Break it catches: an enable bit written with k = 0 (the read stalls), k beyond the 14-bit field (it wraps), a
+    // TX length that asks for samples beyond the record (the c2h read of k = 256 at 1 M timed out).
+    #[test]
+    fn compression_word_and_length_stay_inside_the_hardware() {
+        assert_eq!(compress_word(0), 0x4000_0001);
+        assert_eq!(compress_word(1), 0x4000_0001);
+        assert_eq!(compress_word(4), 0xc000_0004);
+        assert_eq!(compress_word(16383), 0xc000_3fff);
+        assert_eq!(compress_word(16384), 0xc000_3fff);
+        assert_eq!(compress_word(u32::MAX), 0xc000_3fff);
+        for memsel in [1_000u32, 14_064, 62_504, 70_312, 100_000, 999_992, 1_000_000, 10_000_000, 125_000_000] {
+            for k in [0u32, 1, 2, 3, 4, 15, 16, 25, 64, 128, 200, 256, 1000, 16383, 20000, u32::MAX] {
+                let p = hz::Params { ratio: 1, rate: 1_250_000_000, memsel, dot_fs: 800_000, seg: 0, max_frames: 1, pre: memsel / 2, post: memsel / 2 };
+                let s = Settings { compress: k, ..Settings::default() };
+                let (kk, n) = (compress_k(&s, &p), compressed_len(&s, &p));
+                assert!((1..=COMPRESS_K_MAX).contains(&kk) && n % 8 == 0 && n >= 8, "{} {}: k {} n {}", memsel, k, kk, n);
+                assert!(n as u64 * kk as u64 <= memsel as u64, "{} at k {}: {} points x {}", memsel, k, n, kk);
+                // at most 8 points (4 pairs) short of the record
+                assert!(memsel as u64 - (n as u64 * kk as u64) < 8 * kk as u64, "{} at k {}", memsel, k);
+            }
+        }
+        // the unit's cases: k 256 at 1 M asked 3912 points, now 3904; k 128 7816 -> 7808, k 4 250 000 unchanged
+        let at = |k: u32| compressed_len(&Settings { compress: k, ..Settings::default() }, &hz::Params { ratio: 1, rate: 1_250_000_000, memsel: 1_000_000, dot_fs: 800_000, seg: 0, max_frames: 1, pre: 500_000, post: 500_000 });
+        assert_eq!((at(256), at(128), at(4)), (3904, 7808, 250_000));
+    }
     #[test]
     fn the_afe_sees_the_bnc_behind_a_probe() {
         let dir = std::env::var("OOS_CAL_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").into());

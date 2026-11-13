@@ -1548,7 +1548,8 @@ impl Ui {
     }
 
     /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
-    /// stop or a history view) while raw deep measurements are on and the record shown is of min/max pairs.
+    /// stop or a history view) while the record shown is of live-compression pairs, or of a deep record's pairs with raw
+    /// deep measurements on.
     fn stop_wants_final(&self) -> bool {
         let m = &self.m;
         m.trig_mode != TrigMode::Single
@@ -1556,8 +1557,7 @@ impl Ui {
             && !(m.mask_on && m.mask_stop)
             && self.hist_pos.is_none()
             && self.seg_pos.is_none()
-            && crate::deepmeas::want(m).is_some()
-            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::deepmeas::deep_pairs(&r.frame))
+            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::compress::live(&r.frame) || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame)))
     }
 
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
@@ -1935,7 +1935,8 @@ impl Ui {
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
-            let hold = crate::deepmeas::hold(&self.m, self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame));
+            let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
+            let hold = crate::deepmeas::hold(&self.m, shown) || crate::compress::hold(&self.m, shown);
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if hold {
@@ -7715,7 +7716,8 @@ mod tests {
         let n = 40_000usize;
         let v: Vec<f32> = (0..n).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
         for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope, ..Default::default() });
+            // a deep record (above 1 M points): pairs of the live compression are held instead (compress::hold)
+            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
             for _ in 0..3 {
                 ui.step(0.02);
             }
@@ -7725,6 +7727,57 @@ mod tests {
             let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
             assert!(row.is_none_or(|x| x.is_nan() == envelope));
         }
+    }
+
+    // Break it catches (compress.rs, raw newest frame every RAW_PERIOD): live-compression pair records measured between
+    // two raw ones (mean-type NaN flicker, statistics counting pairs), a raw record not measured, a STOP that keeps a
+    // pair record instead of asking for the final raw frame
+    #[test]
+    fn live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0), (Meas::Vmax, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (625e6, 100_000), ..Default::default() };
+        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.5 }).collect();
+        let steps = |ui: &mut Ui, k: usize| {
+            for _ in 0..k {
+                ui.step(0.02);
+            }
+        };
+        shared.lock().unwrap().queue.push_back(frame(1, false, raw.clone()));
+        steps(&mut ui, 2);
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
+        let counted = ui.mstat.first().map_or(0, |s| s.n);
+        for seq in 2..5 {
+            shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+            steps(&mut ui, 2);
+            assert_eq!(ui.meas(0, Meas::Vavg), avg);
+            assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
+        }
+        assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+        // STOP on a pair record: the final raw frame is asked for and shown
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 1);
+        assert!(ui.stop_final.is_some() && shared.lock().unwrap().final_req == 1);
+        {
+            let mut g = shared.lock().unwrap();
+            g.queue.push_back(frame(5, false, raw.iter().map(|x| 2.0 * x).collect()));
+            g.final_ack = 1;
+        }
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_none());
+        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)), Some((5, false)));
+        assert!((ui.meas(0, Meas::Vavg) - 0.5).abs() < 0.03);
     }
 
     // Break it catches (docs/fork/stop-exact.md): a STOP that keeps the pair record on screen while the measurements
