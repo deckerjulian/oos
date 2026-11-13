@@ -204,6 +204,43 @@ Verification on the unit, before turning it on by default:
    every batch) instead of staying set.
 6. Remove the key afterwards unless all of 2-5 hold; if they hold, make it the default.
 
+## Autoset levels from the measure unit (FPGA use)
+
+Measured on the unit with fixes 1-3 and 7: autoset 1.18-1.57 s on the probe-comp output; the two levels stages
+(Wide, Fit) take 0.6-0.7 s of it, each waiting for a 240 ms record at 20 ms/div.
+
+The FPGA's ADC measure unit (private RE notes docs/fpga.md "Measure unit", self-cal.md 2.4) gives every core's
+12-bit minimum and maximum (0x1048) and its mean (0x1044, 16-bit scale) over 2^e samples, with no acquisition.
+`hal::dho::levels`:
+- A run: 0x1040 = (0x1040 & 0x77fff0e0) | 18, then with bit 31; done (bit 30) after 2^18 samples = 1.68 ms;
+  per slot 0..7 select 0x1040[10:8], read 0x1044 and 0x1048. The same register handling as the self-cal's
+  `adc::measure`, with the shorter exponent and the peaks.
+- Slots per channel from the DDR core order (fpga.md): 1 channel all eight, 2 channels 6/4/7/5 (lower) and
+  2/0/3/1 (higher), 4 channels CH1 6/7, CH2 4/5, CH3 2/3, CH4 0/1. Assumed to be the measure unit's numbering
+  too: not verified on the unit.
+- Codes to volts: the unit reads after the ADC x2 of 0x105c and before the Q10 read-path gain (self-cal.md 13:
+  about 6970 codes per volt at 1 V/div, x1.077 = the 7500 per division of the records). So a 16-bit code c is the
+  read-out word 32768 + (c - 32768) x dg (dg = the cal record's digital gain without the x2), and its volts follow
+  from `seq::volts`. Host test: the levels equal the record path's volts for the same codes at several gains,
+  scales and offsets.
+- Plausibility: a channel's slots must agree (means within a tenth of the swing plus 64 codes; a wrong slot mapping
+  shows up there unless the channels carry the same signal), and the mean must lie between the extremes. Codes 0 or
+  4095 mark clipping.
+
+The auto set-up (hardware source) asks the acquisition thread for 24 runs (about 40 ms of signal, the full swing
+from about 25 Hz) at the wide scale once that scale is applied, rescales on clipping or less than 0.4 div and asks
+once more, then fits and goes to the search. Fallback to the record stages: no answer within 0.5 s, a channel
+without a usable reading, or still out of range after the second request. `autoset.levels = records` in
+system.conf (or OOS_AUTOSET_LEVELS=records) turns the unit off. The thread runs the unit while nothing is armed.
+
+Verification on the unit:
+1. CH1 alone on the probe-comp output, `:AUToscale`: the UI log (`oos-ui auto: measure-unit levels`) shows about
+   0..0.3 V, and the final 100 mV/div matches the record-based result (`autoset.levels = records`).
+2. Time it as before (8 runs): expected about 0.4-0.6 s less than 1.2-1.6 s.
+3. CH1 and CH2 on, a signal on CH1 only: CH2 must read flat and CH1 the swing (slot mapping of 2 channels); then all
+   four on (4-channel mapping). A refused channel logs `measure unit [..], records`.
+4. A 5 V signal: the first answer clips at 1 V/div, the second at 5 V/div fits.
+
 ## Status (feat/trigger)
 
 | Fix | State |
@@ -216,6 +253,7 @@ Verification on the unit, before turning it on by default:
 | 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
 | 5 status from 0x4034 | done behind `trig.hw_status` (default off), bits traced in the netlist (section above); on-unit verification pending |
 | 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
+| (a) autoset levels from the measure unit | done, on by default with the record stages as fallback; on-unit verification pending |
 | F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 
 Not yet measured on the unit: autoset time with these changes, and the noisy 5 V signal before and after.

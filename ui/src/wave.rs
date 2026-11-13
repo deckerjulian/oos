@@ -500,6 +500,17 @@ impl Source {
         None
     }
 
+    /// Hardware source: asks for measure-unit levels (`Shared::levels_want`) and returns the latest answer; None for
+    /// other sources.
+    pub fn hw_levels(&self, want: Option<(u64, u64, u32)>) -> Option<Option<(u64, [Option<crate::board::ChLevels>; 4])>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.levels_want = want;
+            return Some(g.levels);
+        }
+        None
+    }
+
     /// Hardware source with `trig.hw_status = on`: the latest trigger status of a batch (`Shared::trig_fired`).
     pub fn hw_trig_fired(&self) -> Option<(u64, Option<bool>)> {
         if let Source::Hw { shared, .. } = self {

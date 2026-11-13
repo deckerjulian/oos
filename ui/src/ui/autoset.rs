@@ -23,6 +23,45 @@ const MIN_VPP: f32 = 0.03;
 const SETTLE_RECORDS: u64 = 3;
 const SETTLE_S: f64 = 0.3;
 const GIVE_UP_S: f64 = 3.0;
+/// Measure-unit levels (hardware source): runs of 1.7 ms per request (about 40 ms of signal: the full swing of
+/// signals from about 25 Hz), the wait for an answer before the records take over, and the requests at most (the
+/// wide scale, then one other scale).
+const UNIT_RUNS: u32 = 24;
+const UNIT_GIVE_UP_S: f64 = 0.5;
+const UNIT_TRIES: u32 = 2;
+
+/// The auto set-up reads the levels with the FPGA's measure unit where the source has one, unless system.conf says
+/// `autoset.levels = records` (or OOS_AUTOSET_LEVELS=records).
+fn unit_levels_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let env = std::env::var("OOS_AUTOSET_LEVELS").ok();
+        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        crate::drawpipe::conf_value(env.as_deref(), &conf, "autoset.levels").as_deref() != Some("records")
+    })
+}
+
+/// What the measure-unit step did (`Ui::auto_unit`).
+enum UnitStep {
+    /// waits for the answer, or asked again at another scale
+    Wait,
+    /// its levels gave the fit: on to the search
+    Fitted,
+    /// no channel worth a period
+    NoSignal,
+    /// the records take over: no answer in time, a channel without a usable reading, or still out of range after the
+    /// last try
+    Records,
+}
+
+/// A request for measure-unit levels under way: its number (the stage's settings stamp), how many were made, since
+/// when it waits.
+#[derive(Clone, Copy, Debug)]
+struct Unit {
+    id: u64,
+    tries: u32,
+    since: f64,
+}
 
 enum Stage {
     Wide,
@@ -50,6 +89,8 @@ pub struct AutoRun {
     best: [Option<(f32, usize)>; NCH],
     /// `Model::hw_stamp` of the current stage: hardware records with an older one are from before it
     stamp: u64,
+    /// the levels come from the measure unit (hardware source) until it answers, fails or takes too long
+    unit: Option<Unit>,
 }
 
 /// The smallest scale of `ch` with at least `vdiv` volts per division.
@@ -101,7 +142,8 @@ impl Ui {
         m.run = RunState::Run;
         m.hw_stamp += 1;
         let stamp = m.hw_stamp;
-        self.auto = Some(AutoRun { back, stamp, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
+        let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some()).then_some(Unit { id: stamp, tries: 1, since: self.now });
+        self.auto = Some(AutoRun { back, stamp, unit, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
         self.mark_changed();
         self.toast("Auto set-up...");
     }
@@ -123,6 +165,18 @@ impl Ui {
 
     pub(super) fn auto_step(&mut self) {
         let Some(mut a) = self.auto.take() else { return };
+        if a.unit.is_some() {
+            match self.auto_unit(&mut a) {
+                UnitStep::Wait => {
+                    self.auto = Some(a);
+                    return;
+                }
+                UnitStep::Fitted => return self.auto_next(a),
+                UnitStep::NoSignal => return self.auto_end(a),
+                // the stage is Wide or, after a rescale, Fit
+                UnitStep::Records => {}
+            }
+        }
         // records of the time base before can still be under way, many of them at a high trigger rate: count from the
         // first one of this one
         if !a.fits && self.auto_record_fits() {
@@ -158,12 +212,12 @@ impl Ui {
                 }
                 if again {
                     a.stage = Stage::Fit;
-                } else if !self.auto_fit(&mut a) {
+                } else if !self.auto_fit(&mut a, None) {
                     return self.auto_end(a);
                 }
             }
             Stage::Fit => {
-                if !self.auto_fit(&mut a) {
+                if !self.auto_fit(&mut a, None) {
                     return self.auto_end(a);
                 }
             }
@@ -196,12 +250,79 @@ impl Ui {
                 a.stage = Stage::Search(i + 1);
             }
         }
+        self.auto_next(a)
+    }
+
+    /// A new stage: records taken from here on carry a new stamp.
+    fn auto_next(&mut self, mut a: AutoRun) {
         (a.records, a.since, a.fits) = (self.records, self.now, false);
-        // records taken from here on carry the new stamp
         self.m.hw_stamp += 1;
         a.stamp = self.m.hw_stamp;
         self.auto = Some(a);
         self.mark_changed();
+    }
+
+    /// The measure-unit step (`a.unit`), levels in volts as the records show them (hal levels.rs).
+    fn auto_unit(&mut self, a: &mut AutoRun) -> UnitStep {
+        let Some(u) = a.unit else { return UnitStep::Records };
+        let ans = self.src.hw_levels(Some((u.id, a.stamp, UNIT_RUNS))).flatten().filter(|r| r.0 == u.id);
+        let Some((_, lv)) = ans else {
+            if self.now < u.since + UNIT_GIVE_UP_S {
+                return UnitStep::Wait;
+            }
+            eprintln!("oos-ui auto: no measure-unit answer in {} s, records", UNIT_GIVE_UP_S);
+            return self.auto_unit_off(a);
+        };
+        let on: Vec<usize> = (0..n_ch()).filter(|&c| a.back.ch[c].on).collect();
+        if on.iter().any(|&c| lv[c].is_none()) {
+            eprintln!("oos-ui auto: measure unit {:?}, records", lv);
+            return self.auto_unit_off(a);
+        }
+        // as the Wide stage: clipping or less than 0.4 div asks again at another scale
+        let mut again = false;
+        for &c in &on {
+            let l = lv[c].unwrap_or_default();
+            let ch = &mut self.m.ch[c];
+            let vpd = ch.volts_per_div();
+            let small = scale_for(ch, 0.1 * ch.probe);
+            if l.clipped || l.hi.max(-l.lo) >= 3.9 * vpd {
+                ch.vscale = scale_for(ch, 5.0 * ch.probe);
+                again = true;
+            } else if l.hi - l.lo < 0.4 * vpd && ch.vscale != small {
+                ch.vscale = small;
+                again = true;
+            }
+        }
+        if again {
+            self.m.hw_stamp += 1;
+            a.stamp = self.m.hw_stamp;
+            self.mark_changed();
+            if u.tries >= UNIT_TRIES {
+                // the records look at the new scale
+                a.stage = Stage::Fit;
+                return self.auto_unit_off(a);
+            }
+            a.unit = Some(Unit { id: a.stamp, tries: u.tries + 1, since: self.now });
+            let _ = self.src.hw_levels(Some((a.stamp, a.stamp, UNIT_RUNS)));
+            return UnitStep::Wait;
+        }
+        let levels: [(f32, f32); NCH] = std::array::from_fn(|c| lv.get(c).copied().flatten().map_or((0.0, 0.0), |l| (l.lo, l.hi)));
+        eprintln!("oos-ui auto: measure-unit levels {:?}", levels);
+        a.unit = None;
+        let _ = self.src.hw_levels(None);
+        if self.auto_fit(a, Some(levels)) {
+            UnitStep::Fitted
+        } else {
+            UnitStep::NoSignal
+        }
+    }
+
+    /// The records take over from the measure unit: counted from now, on the stage set.
+    fn auto_unit_off(&mut self, a: &mut AutoRun) -> UnitStep {
+        a.unit = None;
+        let _ = self.src.hw_levels(None);
+        (a.records, a.since, a.fits) = (self.records, self.now, false);
+        UnitStep::Records
     }
 
     /// Opt-in (`Model::auto_nrej`): noise reject on when the noise on the trigger signal's two levels, about 6 sigma
@@ -214,13 +335,15 @@ impl Ui {
         }
     }
 
-    /// Scale, offset and trigger level of every channel worth a period, from the last record; then the search.
-    /// False when no channel is.
-    fn auto_fit(&mut self, a: &mut AutoRun) -> bool {
+    /// Scale, offset and trigger level of every channel worth a period, from `levels` (the measure unit) or else the
+    /// last record; then the search. False when no channel is.
+    fn auto_fit(&mut self, a: &mut AutoRun, levels: Option<[(f32, f32); NCH]>) -> bool {
         for c in (0..n_ch()).filter(|&c| a.back.ch[c].on) {
-            let (lo, hi) = self.auto_levels(c);
+            let (lo, hi) = levels.map_or_else(|| self.auto_levels(c), |l| l[c]);
             a.lv[c] = (lo, hi);
-            a.st[c] = crate::wave::stats(&self.record_volts(c), self.last[0].as_ref().map_or(1.0, |r| r.dt));
+            // the extremes only from the unit: the trigger level is their middle until a record of the search has top
+            // and base (`place`)
+            a.st[c] = if levels.is_some() { Stats { vmin: lo, vmax: hi, valid: true, ..Stats::default() } } else { crate::wave::stats(&self.record_volts(c), self.last[0].as_ref().map_or(1.0, |r| r.dt)) };
             let vpp = hi - lo;
             a.full[c] = vpp;
             a.want[c] = vpp.is_finite() && vpp >= MIN_VPP * self.m.ch[c].probe && vpp >= 0.3 * self.m.ch[c].volts_per_div();
@@ -244,6 +367,7 @@ impl Ui {
 
     fn auto_end(&mut self, a: AutoRun) {
         self.m.auto_fast = false;
+        let _ = self.src.hw_levels(None);
         eprintln!("oos-ui auto: levels {:?}, periods {:?}", a.lv, a.period);
         let stats = |c: usize| Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..a.st[c] };
         // the channels with a period first (the trigger goes to the first), then those with a signal but no steady
@@ -691,6 +815,77 @@ mod tests {
         assert!(ui.trigger_items().contains(&Item::TrigAutoNoise));
         ui.select_option(Item::TrigAutoNoise, "On");
         assert!(crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().auto_nrej);
+    }
+
+    /// A hardware source whose thread is played by hand, CH1 alone.
+    fn hw_ui() -> (Ui, crate::board::HwShared) {
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        for c in 0..NCH {
+            ui.m.ch[c].on = c == 0;
+        }
+        (ui, shared)
+    }
+
+    /// The thread's answer to the request in `shared`: CH1 from `lo` to `hi` V (None: no usable reading).
+    fn answer(shared: &crate::board::HwShared, ui: &Ui, ch1: Option<(f32, f32, bool)>) {
+        let mut g = shared.lock().unwrap();
+        let (id, need, runs) = g.levels_want.expect("a request");
+        assert_eq!((need, runs), (ui.auto.as_ref().unwrap().stamp, UNIT_RUNS));
+        let l = ch1.map(|(lo, hi, clipped)| crate::board::ChLevels { lo, hi, mean: (lo + hi) / 2.0, clipped });
+        g.levels = Some((id, [l, None, None, None]));
+    }
+
+    // Break it catches: the measure-unit levels not used (the 20 ms/div records again), used from an answer to an
+    // earlier request, or a failed reading that stops the auto set-up instead of handing over to the records
+    #[test]
+    fn measure_unit_levels_skip_the_level_records() {
+        let (mut ui, shared) = hw_ui();
+        ui.auto_start();
+        let now = ui.now;
+        assert!(ui.auto.as_ref().unwrap().unit.is_some());
+        // waiting: no answer yet, and an answer to another request does not count
+        ui.auto_step();
+        assert!(matches!(ui.auto.as_ref().unwrap().stage, Stage::Wide));
+        shared.lock().unwrap().levels = Some((0, [None; 4]));
+        ui.auto_step();
+        assert!(ui.auto.as_ref().unwrap().unit.is_some());
+        // the probe-comp output at 1 V/div: under 0.4 div, asked again at 0.1 V/div
+        answer(&shared, &ui, Some((0.0, 0.3, false)));
+        ui.auto_step();
+        assert_eq!(ui.m.ch[0].volts_per_div(), 0.1);
+        assert_eq!(ui.auto.as_ref().unwrap().unit.map(|u| u.tries), Some(2));
+        answer(&shared, &ui, Some((0.0, 0.3, false)));
+        ui.auto_step();
+        let a = ui.auto.as_ref().unwrap();
+        assert!(matches!(a.stage, Stage::Search(0)) && a.unit.is_none(), "no record was needed");
+        assert!((ui.m.trig_level - 0.15).abs() < 1e-6 && (ui.m.ch[0].offset + 0.15).abs() < 1e-6);
+        assert_eq!(ui.now, now);
+        assert_eq!(shared.lock().unwrap().levels_want, None);
+
+        // no usable reading for CH1: the records take over in the Wide stage
+        let (mut ui, shared) = hw_ui();
+        ui.auto_start();
+        answer(&shared, &ui, None);
+        ui.auto_step();
+        let a = ui.auto.as_ref().unwrap();
+        assert!(a.unit.is_none() && matches!(a.stage, Stage::Wide));
+        // no answer in time: the same
+        let (mut ui, _shared) = hw_ui();
+        ui.auto_start();
+        ui.now += UNIT_GIVE_UP_S + 0.01;
+        ui.auto_step();
+        assert!(ui.auto.as_ref().unwrap().unit.is_none());
+        // clipping at both tries: the records look at the last scale (Fit)
+        let (mut ui, shared) = hw_ui();
+        ui.auto_start();
+        for _ in 0..UNIT_TRIES {
+            answer(&shared, &ui, Some((-1.0, 30.0, true)));
+            ui.auto_step();
+        }
+        let a = ui.auto.as_ref().unwrap();
+        assert!(a.unit.is_none() && matches!(a.stage, Stage::Fit));
+        assert_eq!(ui.m.ch[0].volts_per_div(), 5.0);
     }
 
     #[test]

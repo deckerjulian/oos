@@ -244,6 +244,20 @@ pub struct Shared {
     /// `trig.hw_status = on`: what triggered the last batch, from the SCU status (number of the reading; Some(true)
     /// the TPU fired, Some(false) only forced acquisitions (auto timeout), None nothing accepted)
     pub trig_fired: Option<(u64, Option<bool>)>,
+    /// signal levels from the FPGA's measure unit, for the auto set-up: wanted (request number, the settings stamp
+    /// they need, runs of 1.7 ms) and the answer (request number, per channel; None where the unit gave nothing usable)
+    pub levels_want: Option<(u64, u64, u32)>,
+    pub levels: Option<(u64, [Option<ChLevels>; 4])>,
+}
+
+/// Levels of one channel from the measure unit, in volts as the records show them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ChLevels {
+    pub lo: f32,
+    pub hi: f32,
+    pub mean: f32,
+    /// the ADC range was reached: the scale is too small
+    pub clipped: bool,
 }
 
 /// Where a hardware segmented recording is.

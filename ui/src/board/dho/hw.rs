@@ -302,6 +302,22 @@ fn header_probe() -> bool {
 /// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
 /// Off unless OOS_PREARM is set: the stop of an acquisition armed ahead that is then not read (a settings change, the
 /// generator, self-cal, roll) is not verified on the unit yet (docs/fork/specs/10-transfer-efficiency.md).
+/// `runs` runs of the measure unit, folded into the levels of the channels of `s` (`oos_hal::dho::levels`), in the
+/// volts of the records.
+#[cfg(target_os = "linux")]
+fn levels_measure(bar: &mut oos_hal::dho::bus::Bar1, s: &Settings, gain: &[f64; 4], runs: u32) -> [Option<crate::board::ChLevels>; 4] {
+    use oos_hal::dho::levels;
+    let mut got = Vec::with_capacity(runs as usize);
+    for _ in 0..runs {
+        match levels::run(bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64))) {
+            Some(r) => got.push(r),
+            None => return [None; 4],
+        }
+    }
+    let vert = std::array::from_fn(|c| levels::Vert { scale: s.ch[c].scale, offset: s.ch[c].offset, gain: gain[c] });
+    levels::channel_levels(&got, s.mask, &vert).map(|l| l.map(|l| crate::board::ChLevels { lo: l.lo as f32, hi: l.hi as f32, mean: l.mean as f32, clipped: l.clipped }))
+}
+
 /// `trig.hw_status = on` in system.conf, or OOS_TRIG_HW_STATUS (any value but empty or 0): the trigger status comes
 /// from the SCU status bits, cleared after every batch as the stock UI does (docs/fork/trigger-lockin.md). Off by
 /// default until verified on the unit: the status then comes from the software refinement.
@@ -592,6 +608,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // the frequency counter: what runs since when, and the readings so far
         let mut counting: Option<(crate::board::CounterWant, std::time::Instant)> = None;
         let mut count_n = 0u64;
+        // the last request of the measure-unit levels answered
+        let mut levels_done: Option<u64> = None;
         loop {
             counter_tick(&mut bar, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
@@ -715,6 +733,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
             }
             let (s, p) = current.clone().unwrap();
+            // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
+            // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
+            let lw = out.lock().unwrap().levels_want;
+            if let Some((id, _, runs)) = lw.filter(|w| mode == Slow::Off && stamp >= w.1 && levels_done != Some(w.0)) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                let v = levels_measure(&mut bar, &s, &state.gain, runs);
+                out.lock().unwrap().levels = Some((id, v));
+                levels_done = Some(id);
+            }
             if mode != Slow::Off {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 // roll and scan (roll-mode.md): stream chunks; roll keeps 10 divisions and puts the newest point at the
