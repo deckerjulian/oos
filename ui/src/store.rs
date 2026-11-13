@@ -189,6 +189,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("grid_bright", m.grid_bright.to_string());
     kv("grid_frame", m.grid_frame.to_string());
     kv("windows", name(m.win_layout));
+    kv("density", name(m.density));
+    kv("split_pane", m.split_pane.to_string());
     kv("ch_window", m.ch_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("la_window", (m.la_win + 1).to_string());
@@ -456,6 +458,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "grid_bright" => m.grid_bright = p_u32(v)?.clamp(10, 100),
         "grid_frame" => m.grid_frame = p_bool(v)?,
         "windows" => m.win_layout = p_enum(v, &WinLayout::ALL)?,
+        "density" => m.density = p_enum(v, &Density::ALL)?,
+        "split_pane" => m.split_pane = p_idx(v, crate::ui::PANES_N)?,
         "ch_window" => {
             let w = p_list(v, NCH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.ch_win.copy_from_slice(&w);
@@ -762,6 +766,22 @@ pub fn parse_setup(text: &str) -> Result<Model, String> {
         let (k, v) = line.split_once('=').ok_or_else(|| format!("line {}: no '='", ln + 1))?;
         let k = k.trim();
         set(&mut m, k, v.trim()).map_err(|e| format!("line {}: {}: {}", ln + 1, k, e))?;
+    }
+    // a setup from before the density row: the windows and the pane already say which of the four it was
+    if !text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "density")) {
+        m.density = match m.win_layout {
+            WinLayout::Quad => Density::Four,
+            WinLayout::Cols | WinLayout::Rows => Density::Split,
+            WinLayout::One if m.pane != 0 => Density::Split,
+            WinLayout::One => Density::Scope,
+        };
+        // two across is not a density; the split is two stacked traces
+        if m.win_layout == WinLayout::Cols {
+            m.win_layout = WinLayout::Rows;
+        }
+        if m.density == Density::Split {
+            m.split_pane = m.pane;
+        }
     }
     if m.zscale > m.tscale {
         m.zscale = m.tscale;

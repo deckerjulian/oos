@@ -279,6 +279,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         match store::parse_setup(&t) {
             Ok(m) => {
                 ui.m = m;
+                ui.sync_full();
                 eprintln!("oos-ui: settings restored from {}", SETUP_FILE);
             }
             Err(e) => eprintln!("oos-ui: {}: {}", SETUP_FILE, e),

@@ -603,13 +603,32 @@ impl WinLayout {
             WinLayout::Quad => 4,
         }
     }
+}
+
+/// How much of the 1024×600 picture the plot takes. The same four apply to the panel and to a scaled window of it,
+/// and to the waveform on the external display.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Density {
+    /// top bar, plot, measurement strip, cards
+    #[default]
+    Scope,
+    /// plot and measurement strip
+    Full,
+    /// plot, and under it a pane of numbers or two stacked traces
+    Split,
+    /// four equal panes
+    Four,
+}
+
+impl Density {
+    pub const ALL: [Density; 4] = [Density::Scope, Density::Full, Density::Split, Density::Four];
 
     pub fn label(self) -> &'static str {
         match self {
-            WinLayout::One => "One",
-            WinLayout::Cols => "Side by side",
-            WinLayout::Rows => "Stacked",
-            WinLayout::Quad => "Four",
+            Density::Scope => "Scope",
+            Density::Full => "Full",
+            Density::Split => "Split",
+            Density::Four => "Four",
         }
     }
 }
@@ -780,6 +799,8 @@ pub struct Model {
     pub grid_frame: bool,
     /// waveform windows, and the window (0-based) of each channel and math channel
     pub win_layout: WinLayout,
+    /// Scope, Full, Split, Four. This is what the Windows row sets; `win_layout` is the split it asked for.
+    pub density: Density,
     pub ch_win: [usize; NCH],
     pub math_win: [usize; crate::math::NMATH],
     /// window of the LA lanes while the plot is split (one window: their strip under the plot)
@@ -836,8 +857,10 @@ pub struct Model {
     /// the other decoders; None = not touched yet; the slot of `dec_sel` is not used
     pub decs: [Option<DecCfg>; DECODERS],
     pub dec_sel: usize,
-    /// second pane under the plot, index into `ui::tables::PANES`
+    /// second pane under the plot, index into `ui::tables::PANES` (0 = traces, no pane drawn)
     pub pane: usize,
+    /// pane Split returns to after Scope, Full or Four (0 = two stacked traces)
+    pub split_pane: usize,
     /// what the measurements measure, drawn on the traces (measlabels.rs)
     pub meas_labels: bool,
     /// what the two charts of the Trend pane show: 0 = by the list, 1 = off, k = row k - 2 of the measurement list
@@ -889,7 +912,8 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
-    /// HDMI monitor: false = mirror of the panel, true = own workspace (the waveform area large, settings on top)
+    /// External display. False copies the panel. True puts the plot on the display and leaves the panel for controls.
+    /// The density changes that plot; the panel keeps its bars.
     pub hdmi_wave: bool,
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
@@ -1212,6 +1236,7 @@ impl Default for Model {
             decs: Default::default(),
             dec_sel: 0,
             pane: 0,
+            split_pane: 0,
             meas_labels: false,
             trend_sel: [0, 0],
             dec_on: false,
@@ -1343,6 +1368,7 @@ impl Default for Model {
             grid_bright: 100,
             grid_frame: true,
             win_layout: WinLayout::One,
+            density: Density::Scope,
             ch_win: [0; NCH],
             math_win: [0; crate::math::NMATH],
             la_win: 0,
