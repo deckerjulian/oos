@@ -228,6 +228,16 @@ impl Adc {
         w
     }
 
+    /// The 0x1034 word that writes core offset `o` (steps) to core `core` (register 0x14 + 8n), with the other bits of
+    /// the register 0 as every OOS and stock write has them. Err outside 0..7 / -1024..1023.
+    pub fn core_offset_word(core: usize, o: i32) -> Result<u32, String> {
+        if core > 7 || !(-1024..=1023).contains(&o) {
+            return Err(format!("core 0..7 and offset -1024..1023 steps, not {} / {}", core, o));
+        }
+        let w = Adc::default().core_offset(core, o);
+        Ok(w[0].val)
+    }
+
     /// Core offset register 0x14 + 8n (11-bit signed, -1024..1023; others not written).
     pub fn core_offset(&mut self, core: usize, o: i32) -> Vec<Wr> {
         let mut w = Vec::new();
@@ -313,6 +323,13 @@ pub fn measure(bus: &mut dyn crate::dho::bus::Bus, sleep_ms: &mut dyn FnMut(u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_offset_words() {
+        assert_eq!(Adc::core_offset_word(0, 5), Ok(0x0114_0005));
+        assert_eq!(Adc::core_offset_word(7, -1), Ok(0x014c_07ff));
+        assert!(Adc::core_offset_word(8, 0).is_err() && Adc::core_offset_word(0, 1024).is_err());
+    }
 
     #[test]
     fn mode_offsets_round_trip() {

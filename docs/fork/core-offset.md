@@ -22,6 +22,47 @@ A core offset difference is a fixed pattern at that rate. It hides under the noi
 hardware average (floor near 0.40 mV at 100 mV/div for N = 16 and 256) and in the DVM block, which sums one lane, a
 pair of cores (DC 3.1 mV low at 500 mV/div in round 5).
 
+## Round 6 (unit, CH3 alone, input open, 100 mV/div)
+
+| rate | cores | Normal | HW 16 |
+|---|---|---|---|
+| 31.25 / 156.25 MSa/s | one | no even/odd offset | floor 0.12 / 0.14 mV, no offset |
+| 62.5 MSa/s | two | even - odd +-11..25 codes, sign changes per frame | -12..-19 codes, fixed sign; floor 0.18-0.23 mV |
+| 312.5 MSa/s | two | | +11..+13 codes; floor 0.19 mV |
+| 1.25 GSa/s | eight | one phase of eight about +185 codes, the phase moves between frames | two phases 4 apart +67..+87; floor 0.75 mV |
+
+Reading:
+
+- One core is far off. At 1.25 GSa/s the high phase is +185 codes against the frame mean, so +211 codes against the
+  other seven. At 100 mV/div the digital gain of CH3 is 1.174 (cal file), so one ADC step is 18.8 codes: the core is
+  about **11 steps** high. The other seven sit within about +-1.5 steps of each other, as the stock tolerance
+  allows.
+- The two cores of the 62.5 and 312.5 MSa/s paths (regmap cores 0 and 1 in the netlist model) differ by 0.7 to 1
+  step. The far core is not one of them. It shows only where all eight cores are used.
+- The core's register index n is not known: the netlist's core numbers are not mapped to RT8847 registers
+  (rt8847.md open item 8). The step procedure below finds it.
+- The offsets OOS writes for CH3 alone are the stored mode-2 offsets of the Rigol file (`seq::State::configure`
+  writes them on the change to mode 2). In the unit's file (scope_dump 20261113): 32, 66, 33, 73, 53, 85, -32, 62
+  steps. The August file had 13, 70, -20, 21, 64, 52, 57, 69, so the cores were recalibrated since. No other
+  stored mode written in its place gives one core about 12 steps off with the rest within 1.5 steps; so the stored
+  values arrive, and one core has moved by about 12 steps since its calibration, or the measure unit the calibration
+  uses sees it differently from the acquisition.
+- OOS's own self-cal (the ADC cores item, off by default, never run on this unit) would trim mode 2 to +-1.5 steps if
+  the measure unit sees the error. The run-time match of this branch matches the eight cores to their mean. The
+  first version skipped a channel whose cores started more than 8 steps apart; with one channel that guard is
+  dropped now (it is only for the unverified slot grouping of two and four channels).
+
+Unit step to settle "does the measure unit see it" and find the core (oos-ui stopped, the acquisition left in CH3
+alone at 1 us/div, input open):
+
+1. `oos-fpgad adc slots --runs 8`: one slot about +11 steps from the slot average means the measure unit sees the
+   error, and both the self-cal and the run-time match can fix it. All slots within 1.5 steps means it does not: the
+   data path has an offset the calibration cannot see, and the fix moves to a per-phase correction.
+2. With a slot far off: for n = 0..7, `oos-fpgad adc offset n <stored - 8> --execute`, `adc slots`, then
+   `adc offset n <stored> --execute`. The slot that drops by 8 steps is core n. Stored values: mode 2 above (CH3
+   alone). This also gives the core order of mode 2.
+3. Start oos-ui with `cal.core_offset = tight`; the log line of mode 2 must show core n's offset lowered by about 11.
+
 ## What the change does
 
 `hal::dho::coretrim`, called from the acquisition thread right after a configuration, with nothing armed, once per
@@ -34,8 +75,8 @@ ADC mode and session:
    the mean of 2^18 samples per core is good to about 0.05 step). Codes per step: 16, or 32 where a digital gain of 2
    or more puts the ADC x2 of 0x105c before the measure unit.
 3. Channels are left alone when they clip, when their mean is more than 256 steps from mid-scale (core gain
-   differences would then move the core means by more than 0.25 step), or when their cores start more than 8 steps
-   apart (a slot grouping that mixes channels). The mode is then tried again at a later configuration, at most 5
+   differences would then move the core means by more than 0.25 step), or, with two or more channels, when their
+   cores start more than 8 steps apart (a slot grouping that mixes channels). The mode is then tried again at a later configuration, at most 5
    times per session.
 4. The new offsets go into the in-memory cal_adc payload, so later switches back to the mode apply them, and the
    payload is saved as `/oos/cal/cal_adc.hex` when it changed. OOS loads its own file first at the next start.

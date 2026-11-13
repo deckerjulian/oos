@@ -35,8 +35,10 @@ pub const NUDGE: i32 = 32;
 /// A channel is matched only with its mean within this many steps of mid-scale: a core gain mismatch of 0.1 %
 /// moves a core's mean by 0.25 step there.
 pub const MID_WINDOW: f64 = 256.0;
-/// A channel is matched only when its cores start within this many steps of each other: more means the slot grouping
-/// (`levels::slots`, not verified for every mode) put cores of different channels together.
+/// With two or more channels, a channel is matched only when its cores start within this many steps of each other:
+/// more means the slot grouping (`levels::slots`, not verified for the pair and four-channel modes) put cores of
+/// different channels together. With one channel every slot carries it, and a core far off is what the trim is for
+/// (unit round 6: one core about 12 steps high at 1.25 GSa/s).
 pub const SPREAD_MAX: f64 = 8.0;
 /// Mid-scale on the 16-bit measure scale.
 const MID: f64 = 32768.0;
@@ -114,7 +116,7 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
             let mean = sl.iter().map(|&k| first[k].mean).sum::<f64>() / sl.len().max(1) as f64;
             let clipped = sl.iter().any(|&k| first[k].min == 0 || first[k].max >= 4095);
             let near = sl.iter().all(|&k| (mean - MID).abs() <= MID_WINDOW * lsb[k]);
-            let alike = sl.iter().all(|&k| (first[k].mean - mean).abs() <= SPREAD_MAX * lsb[k]);
+            let alike = groups.len() == 1 || sl.iter().all(|&k| (first[k].mean - mean).abs() <= SPREAD_MAX * lsb[k]);
             let ok = sl.len() > 1 && !clipped && near && alike;
             if ok {
                 matched |= 1 << c;
@@ -270,6 +272,21 @@ mod tests {
         }
     }
 
+    // Round 6: one core about 12 steps above the other seven (1.25 GSa/s, one channel). Break it catches: the
+    // spread guard of the multi-channel case refusing the one-channel case, a mean target that stops short.
+    #[test]
+    fn one_core_far_off_is_brought_in() {
+        let mut m = model(MID);
+        m.err[5] += 12.0;
+        let cur = m.reg;
+        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
+        assert_eq!(t.matched, 1);
+        let total: Vec<f64> = (0..8).map(|n| m.err[n] + t.offsets[n] as f64).collect();
+        let mean = total.iter().sum::<f64>() / 8.0;
+        assert!(total.iter().all(|x| (x - mean).abs() <= TOL + 1e-9), "{:?}", total);
+        assert!(t.offsets[5] <= cur[5] - 11, "{:?}", t.offsets);
+    }
+
     #[test]
     fn a_group_with_two_levels_is_left_alone() {
         // a wrong slot grouping: half the slots carry another channel 20 steps away
@@ -288,8 +305,10 @@ mod tests {
         }
         let mut m = Mixed(model(MID));
         let cur = m.0.reg;
-        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
-        assert_eq!((t.offsets, t.skipped, m.0.writes), (cur, 1, 0));
+        // as one of two channels (with one channel every slot is the channel's, and this would be trimmed)
+        let groups = vec![(0, (0..8).collect()), (1, vec![])];
+        let t = trim(&mut m, &groups, &cur, &PERM, &[16.0; 8]).unwrap();
+        assert_eq!((t.offsets, t.skipped, m.0.writes), (cur, 0b11, 0));
     }
 
     #[test]
