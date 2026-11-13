@@ -215,6 +215,55 @@ for the first 32 batches after every clear. Calibrator square on CH1 unless stat
 12. Fall-backs: roll (200 ms/div), scan (Auto Roll off), hardware segments on: the top bar drops "HW" and the software
     average runs. The LA is not testable on this unit.
 
+## On-unit session: next-round table 1 (2026-11-13)
+
+Build 20261113-170512 (dho804 d1f76c6, default DTB). Full numbers, per-run tables and method: private RE notes
+`docs/logs/oos_unitlab_20261113.md`. Source: the 1 kHz probe-comp square, Auto, rising edge, so at most 1000
+triggers/s; rates are the fraction of triggers captured. Install: kexec install, then a software `reboot` was the trial
+start and confirmed itself; a warm reboot counts.
+
+| Switch | Verdict | Numbers (frames/s, 1 ch / 2 ch, Auto depth) |
+|---|---|---|
+| `acq.pipeline = batch` | default on | 100 ns/div 774 -> 785 / 767 -> 788; 10 us/div 385 -> 421 / 287 -> 313; 100 us/div 240 -> 267 / 177 -> 199. UI 30 fps at 10 us/div where frames mode falls to 2-6 fps. Screenshots equal |
+| `xdma.params = poll_mode=0` | default on (unit `system.conf`) | MSI on (0x4a = 0x0081), `ITS-PCI-MSI` IRQ counts, no `cmpl_status_th`; rates equal to poll within 2 %, one A53 5-20 points less busy; 20 min soak clean |
+| `perf.place = on` | default on | +1 to +8 % over batch; main thread cpu4, hw thread cpu5, workers cpu0-3. `oos-irq-place` was broken on the unit (busybox awk without math): fixed on this branch |
+| `acq.prearm = on` | default on | +1 to +8 % over place (1 ch 100 ns/div 805, 100 us/div 294; 2 ch 100 us/div 228). Settings changes, STOP, SINGLE in Normal behave as without it. Drops at 2 ch 10 us/div 20/s (A53 workers at ~90 %) |
+| MPS256 | not run | needs a newer image; not measurable with a 1 kHz trigger |
+| `trig.hw_status` | default on (already) | status correct in every run |
+| `acq.interp = fast` | keep opt-in | no rate or CPU difference; the probe-comp edge cannot show the interpolation error |
+| B1 HW average | broken | all-zero frames at >= 625 MSa/s (1 us/div, any 1 M depth, 10 us/div Auto); works at 62.5 MSa/s but levels off: noise 1.1 mV Normal, 0.75 / 0.63 / 0.53 / 0.46 mV at N = 2 / 4 / 16 / 256, SW 16 0.31-0.41 mV. 0x10b0 = N-1 always (no progress) |
+| B3 HW segments | broken | every recording ends at 10 segments (N = 10..1000). Stamps 0.3125 ms apart for 1 ms: the tick is 0.8 ns, `seg::LATCH_TICK_FS` must be 800,000. Header of segment k = latch of segment k-1 |
+
+Soak of batch + place + prearm + MSI, 20 min: 2 ch 100 ns/div 821/s, 1 ch 200 us/div 1 M 56/s, 2 ch 10 us/div 354/s;
+no restart, no xdma time-out, no C2H error.
+
+Found on the way:
+
+- Killing oos-ui during a read leaves a C2H transfer that times out 10 s later in the kernel. Every time-out of the
+  session came from such a restart.
+- In STOP the hw thread keeps acquiring (~550 frames/s counted, not used; oos-ui 38 % CPU). With or without prearm.
+- `acquire: no acquisition (0x4080 bit30 not set)` every ~2 s in Normal without a trigger reads like an error.
+- 10 us/div, delay 200 us, Auto depth (160 us record) draws 10 us of trace and leaves the rest of the screen empty.
+- Auto depth depends on history: 100 kpts at 100 ns/div from the user's setup, 1408 points after `:ACQ:MDEPth AUTO`.
+- The oos-ui keys `acq.pipeline`, `perf.place`, `acq.prearm` are read from `/oos/system.conf` only (`conf_value`), so
+  the unit's image `system.conf` cannot default them. Flipping them takes a code default change.
+
+### Round 2 on dho804 47223f9 (build 20261113-181907)
+
+Details: private RE notes `docs/logs/oos_unitlab_20261113.md`, "Round 2".
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| Live compression | keep opt-in | `compress-check` FAILs for every k, but every read matches a min/max pair per 2k samples **in time order** (min first only when the minimum comes first): k 3..128, 1 and 2 channels, 100 %. k 256 at 1 M: C2H read of 7824 bytes times out (twice). 2 ch 10 us/div 341 -> 409 frames/s, drops 18 -> 0; A53 load ~92 % -> ~20 %; 1 ch 1 us and 100 us/div 7-9 % fewer frames. STOP record raw, measurements equal |
+| DVM (`dvm.hw`) | keep opt-in, decode wrong | `hw` reads -0.67 V for 0.15 V. Words: N = 2^28, sum = `(sum_hi >> 16) << 32 \| sum_lo`, squares = `sq_hi << 32 \| sq_lo`, 12-bit codes centred at 2048, 428 codes/div at 1 V and 500 mV/div, ~200 at 100 mV/div (pre-gain dependent). Independent of time base and mode. CH2 alone uses lane 2. `cfg` read-back = `sq_hi` with bits 7:0 replaced |
+| Hardware mask (`mask.hw`) | broken | slot 0 / ctrl 0x00100000 and frames = acquired (171/s) are right, but every frame fails on a clean signal; it only passes at X 1 div and Y 3 div. Vertical scale and column mapping both off |
+| C2H chunks | pass | 4 ch, 1 M points, live, 5 min: no C2H error, no time-out, no restart |
+| B3 segments | count fixed | 100 of 100 and 1000 of 1000 recorded; tick still 0.8 ns (0.3125 ms per 1 ms) |
+| B1 average | unchanged | all-zero frames at >= 625 MSa/s |
+
+Not done, needs a cable moved: hwmask step 7 (AUX OUT to CH2), the AUX OUT check, the slot map with separate signals
+on CH1 and CH2, DVM with a DC reference or a signal on CH3/CH4.
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:

@@ -211,3 +211,10 @@ Decisions against the proposal:
 
 Not done: frame export with the stamps per segment (the table export has index and time only), averaging-specific
 segment layout (01), LA segments.
+
+## 8. Unit 2026-11-13 (B3)
+
+Measured: the latch counts 0.8 ns (not 250 ps); the header stamp of segment k is the latch of segment k - 1; every
+recording ended at the frames of the first poll because `seg::status` read the 0x2320 bits of 0x4034 as "stopped".
+Fixed on `fix/b1-b3`: count-only completion as in the stock record state, latch tick 0.8 ns, latch-only times.
+Statements above about 250 ps, the 1.6 ns header and `record_running` are superseded. Re-test: `docs/fork/b1-b3.md`.

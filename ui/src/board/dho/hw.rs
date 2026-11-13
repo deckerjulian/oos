@@ -10,7 +10,7 @@ use crate::board::{Frame, Slow};
 use crate::board::{HwShared, Shared, QUEUE_MAX};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
-use oos_hal::dho::{afe, auxout, hz, tpu};
+use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -45,6 +45,23 @@ fn screen_margin(memsel: i128) -> i128 {
     (memsel + (memsel / 8).max(64) + 7) / 8 * 8
 }
 
+/// Auto depth with a trigger delay: the record is centred on the delayed screen, but the trigger has to stay inside it
+/// (`seq::State::configure` clamps the delay to half a record, trigger.md 4). A delay beyond half of the `base` record
+/// then showed only the part of the screen up to the record's end (10 us/div, 200 us delay: 20 us of 100, unit
+/// 2026-11-13). The record then gets the depth that reaches from the trigger (a division inside) past the delay at the
+/// full rate; the depth limit of the channels still applies afterwards.
+fn delay_depth(mask: u32, tdiv: f64, delay: f64, base: i128) -> i128 {
+    let p = hz::prep(mask, oos_hal::dho::seq::tdiv_fs(tdiv), base, 0);
+    let span = p.memsel as f64 / p.rate.max(1) as f64;
+    if !delay.is_finite() || 2.0 * delay.abs() <= span {
+        return base;
+    }
+    let full = (hz::CLOCK / hz::ratio(mask) as i128) as f64;
+    // at most the deepest record of the board; `settings` then limits it to the channels' memory
+    let want = ((2.0 * delay.abs() + 2.0 * tdiv) * full).ceil().min(125e6) as i128;
+    ((want + 7) / 8 * 8).max(base)
+}
+
 /// The hardware settings for the UI model.
 pub fn settings(m: &Model, program_afe: bool) -> Settings {
     let mut mask = (0..NCH).filter(|&c| m.ch[c].on).fold(0u32, |a, c| a | 1 << c);
@@ -61,11 +78,8 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         0 if slow_mode(m) != Slow::Off => 0,
         0 => {
             let auto = hz::prep(mask, oos_hal::dho::seq::tdiv_fs(tdiv), 0, 0);
-            if auto.memsel as i128 > LIVE_DEPTH {
-                LIVE_DEPTH
-            } else {
-                screen_margin(auto.memsel as i128)
-            }
+            let base = if auto.memsel as i128 > LIVE_DEPTH { LIVE_DEPTH } else { screen_margin(auto.memsel as i128) };
+            delay_depth(mask, tdiv, m.delay as f64, base)
         }
         // roll and scan: a fixed depth below 1 M becomes 1 M (roll-mode.md 1.3)
         d if slow_mode(m) != Slow::Off => (d as i128).max(1_000_000),
@@ -162,6 +176,11 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         hwmask: None,
         hwzone: None,
     };
+    // the hardware UART fires inside the frame, the software trigger point is the end of its stop bit: the record is
+    // centred on the software point (docs/fork/hwuart.md)
+    if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(m)) {
+        s.delay += uarttrig::sw_offset_s(u);
+    }
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
@@ -200,13 +219,32 @@ fn aux_out(a: AuxOut) -> auxout::AuxOut {
 /// The count of a hardware average for the model and its settings `s`, None for the software average
 /// (docs/fork/specs/01-hw-averaging.md): Average mode with `Model::avg_hw`, a power-of-two count, ordinary triggered
 /// records (not roll or scan, which average in software as in stock), no LA, no hardware segments (they record raw
-/// frames), and a record whose average segment fits the frame ring.
+/// frames), a record whose average segment fits the frame ring, and a sample rate on the second divider
+/// (`avg_rate_ok`).
 fn hw_avg_count(m: &Model, s: &Settings) -> Option<u32> {
     if m.acq != AcqMode::Average || !m.avg_hw || slow_mode(m) != Slow::Off || s.la.is_some() || s.segments.is_some() {
         return None;
     }
     let p = hz::avg_params(hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0));
-    oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0)
+    oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0 && avg_rate_ok(p.rate, avg_fast_on()))
+}
+
+/// The FPGA averages at sample rate `rate`: 62.5 MSa/s and below (the second divider, 0x10d0 = 0), or any rate with
+/// `avg.hw_fast = on`. Unit 2026-11-13 (B1): above it (625 MSa/s, 1.25 GSa/s) every averaged frame was zero, at
+/// 62.5 MSa/s the average was right; the software average takes the fast rates until the unit shows them working.
+fn avg_rate_ok(rate: u64, fast: bool) -> bool {
+    fast || oos_hal::dho::spu::slow_path(rate)
+}
+
+/// `avg.hw_fast = on` in system.conf: hardware averaging above 62.5 MSa/s too, for the unit test of B1.
+fn avg_fast_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| avg_fast_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `avg.hw_fast` line of system.conf; off unless `on`.
+fn avg_fast_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "avg.hw_fast").as_deref() == Some("on")
 }
 
 /// The model's set-up averages in the FPGA (`Board::avg_hw`).
@@ -309,9 +347,9 @@ fn hw_trigger(m: &Model) -> Trig {
         TrigType::Duration => Trig::Duration { pats, la, when, lower, upper, levels },
         TrigType::SetupHold => Trig::SetupHold { clk: m.trig_src2 as u32 + 1, clk_edge: edge2, setup: m.setup as f64, hold: m.hold as f64, levelc: m.trig_level2 as f64 },
         TrigType::NthEdge => Trig::Nth { count: m.nth_n, idle: m.nth_idle as f64 },
-        // protocol trigger: the TPU fires on edges of the decoder's line (see `settings`), the software picks the
-        // matching frame out of the record
-        TrigType::Bus => Trig::Edge,
+        // protocol trigger: the TPU's UART receiver where it can (`trig.serial_hw = on`, `hw_uart`); else the TPU fires
+        // on edges of the decoder's line (see `settings`) and the software picks the matching frame out of the record
+        TrigType::Bus => hw_uart(m).map_or(Trig::Edge, Trig::Uart),
         TrigType::Video => Trig::Video {
             std: if m.video_std == VideoStd::Pal { HStd::Pal } else { HStd::Ntsc },
             // the TPU has no "all fields": odd field triggers once per frame [A]
@@ -356,7 +394,7 @@ pub fn hw_status_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         let env = std::env::var("OOS_TRIG_HW_STATUS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        let conf = crate::sysconf::fork_text();
         crate::drawpipe::conf_value(env, &conf, "trig.hw_status").as_deref() != Some("off")
     })
 }
@@ -365,7 +403,7 @@ pub fn hw_status_on() -> bool {
 /// default until the result layout is verified on the unit.
 pub fn dvm_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| dvm_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *ON.get_or_init(|| dvm_hw_from(&crate::sysconf::fork_text()))
 }
 
 /// The `dvm.hw` line of system.conf; off unless `on`.
@@ -377,7 +415,7 @@ fn dvm_hw_from(conf: &str) -> bool {
 /// test only where it cannot. Off by default until the sample scale and the slots are verified on the unit.
 pub fn mask_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| mask_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *ON.get_or_init(|| mask_hw_from(&crate::sysconf::fork_text()))
 }
 
 /// The `mask.hw` line of system.conf; off unless `on`.
@@ -389,7 +427,7 @@ fn mask_hw_from(conf: &str) -> bool {
 /// are no longer filtered in software where it can. Off by default until the mapping is verified on the unit.
 pub fn zone_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| zone_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *ON.get_or_init(|| zone_hw_from(&crate::sysconf::fork_text()))
 }
 
 /// The `zone.hw` line of system.conf; off unless `on`.
@@ -409,6 +447,74 @@ fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Op
     if let (auxout::AuxOut::PassFail(p), Some(_)) = (&mut want.aux, &want.hwzone) {
         p.source = auxout::Source::Zone;
     }
+}
+
+/// `trig.serial_hw = on` in system.conf: the UART protocol trigger runs in the TPU's receiver (docs/fork/hwuart.md).
+/// Off by default until it is verified on the unit.
+pub fn serial_hw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| serial_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `trig.serial_hw` line of system.conf; off unless `on`.
+fn serial_hw_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
+}
+
+/// The UART protocol trigger of the model in the TPU's receiver, when it is enabled and can do it: a UART decoder on a
+/// channel (not the LA, not differential), 1..8 data bits, and a condition it has (frame start, a data byte, an error).
+/// The ID condition and wider values stay with the software trigger.
+pub fn hw_uart(m: &Model) -> Option<uarttrig::Uart> {
+    if !serial_hw_on() {
+        return None;
+    }
+    uart_of(m)
+}
+
+/// `hw_uart` without the system.conf switch.
+fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
+    use uarttrig::{Cond, ErrKind, Parity, Relation, Stop, Uart};
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Uart || m.dec_on_la() || m.dec_diff.is_some() || !(1..=8).contains(&m.dec_bits) {
+        return None;
+    }
+    let cond = match m.trig_bus {
+        BusWhat::Frame => Cond::Start,
+        BusWhat::Data if m.trig_bus_val <= 0xff && m.trig_bus_val >> m.dec_bits == 0 => Cond::Data(Relation::Eq, m.trig_bus_val as u8, m.trig_bus_val as u8),
+        BusWhat::Error => Cond::Error(ErrKind::Either),
+        _ => return None,
+    };
+    let parity = match m.dec_parity {
+        oos_dsp::decode::Parity::None => Parity::None,
+        oos_dsp::decode::Parity::Odd => Parity::Odd,
+        oos_dsp::decode::Parity::Even => Parity::Even,
+    };
+    Some(Uart { baud: crate::decode::BAUDS[m.dec_baud], bits: m.dec_bits, parity, stop: Stop::One, cond, invert: false })
+}
+
+/// Fork, `:SYSTem:DEBug:UART?`: what the TPU's UART receiver gets for the model (`off,...` when the software trigger
+/// stays in charge), the words, the event time and the record shift.
+pub fn uart_debug(m: &Model) -> String {
+    let Some(u) = uart_of(m) else {
+        return format!("off,enabled={}", serial_hw_on() as u8);
+    };
+    let w = uarttrig::words(&u);
+    format!(
+        "{},src=CH{},baud={},bits={},parity={:?},cond={:?},invert={},clocks={},r2100={:#010x},r2104={:#010x},r221c={:#010x},mux={},event_s={:.4e},shift_s={:.4e}",
+        if serial_hw_on() { "on" } else { "off" },
+        m.dec_src + 1,
+        u.baud,
+        u.bits,
+        u.parity,
+        u.cond,
+        u.invert as u8,
+        uarttrig::bit_clocks(u.baud),
+        w[1].1,
+        w[2].1,
+        w[0].1,
+        uarttrig::MUX,
+        uarttrig::event_s(&u),
+        uarttrig::sw_offset_s(&u)
+    )
 }
 
 /// The mask test of the acquisition settings from the UI's wish.
@@ -466,7 +572,7 @@ fn dvm_reading(raw: &oos_hal::dho::dvm::Raw, key: DvmKey, s: &Settings, gain: &[
 fn prearm_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
-        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        let conf = crate::sysconf::fork_text();
         prearm_from(std::env::var_os("OOS_PREARM").is_some(), &conf)
     })
 }
@@ -1310,7 +1416,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         if *logged < 32 {
                             // hardware check: 0x10b0 progress and the first words next to the triggers counted here
                             *logged += 1;
-                            let w: Vec<String> = dma.data().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
+                            // the newest frame's first words (every recorded frame was played)
+                            let at = (count.max(1) as usize - 1) * seq::frame_bytes(&b, &p);
+                            let w: Vec<String> = dma.data().get(at..).unwrap_or_default().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
                             eprintln!("oos-ui hw: average {:?} batch {} of {} triggers, {} in, show {}, 0x10b0 = {}, words {}", tr.kind, *logged, count, a.triggers, a.show, oos_hal::dho::avg::progress(&mut bar), w.join(" "));
                         }
                         a
@@ -1326,7 +1434,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                     let fb = seq::frame_bytes(&b, &p);
                     // decode before taking the lock: the UI must not wait for 100 k-point conversions
-                    let shown = if after.is_some_and(|a| !a.show) { 0 } else { seq::batch_read(&b, count).1 };
+                    // every recorded frame was read; in average mode only the newest goes to the screen
+                    let shown = match after {
+                        Some(a) if !a.show => 0,
+                        _ => count,
+                    };
                     let avail = if fb == 0 { 0 } else { (shown as usize).min(dma.data().len() / fb) };
                     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
@@ -1359,6 +1471,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             .data()
                             .chunks_exact(fb.max(1))
                             .take(avail)
+                            .skip(if after.is_some() { avail.saturating_sub(1) } else { 0 })
                             .map(|chunk| {
                                 n += 1;
                                 Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
@@ -1465,7 +1578,7 @@ fn seg_step(run: &mut Option<SegRun>, s: &Settings, p: &hz::Params, state: &mut 
         let tag = seg::first_trigger(bar);
         seg::stop(state, bar, c2h)?;
         (r.recording, r.count, r.next, r.deliver, r.tl) = (false, x.recorded, 0, running, seg::Timeline::new(tag));
-        eprintln!("oos-ui hw: segments: {} of {} recorded, first-trigger stamp {:?}", x.recorded, r.n, tag);
+        eprintln!("oos-ui hw: segments: {} of {} recorded, 0x4034 {:#x}, first-trigger stamp {:?}", x.recorded, r.n, x.fsm, tag);
         out.lock().unwrap().seg.phase = if r.count == 0 { SegPhase::Done } else { SegPhase::Reading };
         return Ok(());
     }
@@ -1556,6 +1669,29 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 
 #[cfg(test)]
 mod tests {
+
+    // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
+    // inside it) ends before the screen does: 10 us/div with 200 us delay drew 20 us of the screen (unit 2026-11-13)
+    #[test]
+    fn auto_depth_covers_a_delayed_screen() {
+        for (tdiv, delay, chans) in [(10e-6f32, 200e-6f32, 1usize), (10e-6, -200e-6, 1), (1e-6, 50e-6, 2), (100e-6, 3e-3, 4), (10e-6, 0.0, 1)] {
+            let mut m = Model { tscale: tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap(), delay, ..Default::default() };
+            for c in 0..NCH {
+                m.ch[c].on = c < chans;
+            }
+            let s = settings(&m, false);
+            let mut st = oos_hal::dho::seq::State::handover(s.mask, None);
+            let (_, p) = st.configure(&s, None, None).unwrap();
+            // the record's span relative to the trigger: [first, last] in s
+            let dot = p.dot_fs as f64 * 1e-15;
+            let (first, last) = (-(p.pre as f64) * dot, p.post as f64 * dot);
+            let (lo, hi) = (delay as f64 - 5.0 * tdiv as f64, delay as f64 + 5.0 * tdiv as f64);
+            assert!(first <= lo + dot && last >= hi - dot, "{} s/div delay {} {} ch: record {}..{} s, screen {}..{}", tdiv, delay, chans, first, last, lo, hi);
+            if delay == 0.0 {
+                assert!(s.depth <= LIVE_DEPTH, "no delay: the plain Auto depth");
+            }
+        }
+    }
     use super::*;
     use crate::board::to_record;
 
@@ -1629,6 +1765,57 @@ mod tests {
             let sw = crate::zone::hits(&crate::zone::Zone { on: true, src: 0, inside: true, pts: pts.clone() }, &v, t0, dt);
             assert_eq!((sw, touched(&pts)), (want, want), "{:?}", pts);
         }
+    }
+
+    #[test]
+    fn uart_from_the_decoder_settings() {
+        use oos_hal::dho::uarttrig::{Cond, ErrKind, Parity, Relation};
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_bits, m.dec_baud) = (TrigType::Bus, Proto::Uart, 1, 8, 7);
+        // (condition, value) -> receiver condition (None = the software trigger)
+        let cases = [
+            (BusWhat::Frame, 0, Some(Cond::Start)),
+            (BusWhat::Data, 0x41, Some(Cond::Data(Relation::Eq, 0x41, 0x41))),
+            (BusWhat::Data, 0x141, None),
+            (BusWhat::Error, 0, Some(Cond::Error(ErrKind::Either))),
+            (BusWhat::Id, 0x41, None),
+        ];
+        for (what, v, want) in cases {
+            (m.trig_bus, m.trig_bus_val) = (what, v);
+            assert_eq!(uart_of(&m).map(|u| u.cond), want, "{:?} {:#x}", what, v);
+        }
+        m.trig_bus = BusWhat::Frame;
+        m.dec_parity = oos_dsp::decode::Parity::Even;
+        let u = uart_of(&m).unwrap();
+        assert_eq!((u.parity, u.baud, u.bits, u.invert), (Parity::Even, crate::decode::BAUDS[7], 8, false));
+        // 7 data bits: a value with bit 7 set cannot match
+        (m.dec_bits, m.trig_bus, m.trig_bus_val) = (7, BusWhat::Data, 0x80);
+        assert_eq!(uart_of(&m), None);
+        // other protocols, the LA as input, RS-485: the software trigger
+        (m.dec_bits, m.trig_bus) = (8, BusWhat::Frame);
+        for f in [|m: &mut Model| m.dec_proto = Proto::Spi, |m: &mut Model| m.dec_proto = Proto::Uart9, |m: &mut Model| m.dec_diff = Some(2), |m: &mut Model| m.trig_type = TrigType::Edge] {
+            let mut x = m.clone();
+            f(&mut x);
+            assert_eq!(uart_of(&x), None);
+        }
+        assert!(!serial_hw_from("") && serial_hw_from("trig.serial_hw = on\n"));
+        assert!(uart_debug(&m).starts_with("off,src=CH2,"), "{}", uart_debug(&m));
+    }
+
+    #[test]
+    fn uart_shifts_the_record_to_the_software_point() {
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.trig_bus) = (TrigType::Bus, Proto::Uart, 0, BusWhat::Frame);
+        let u = uart_of(&m).unwrap();
+        let mut s = settings(&m, false);
+        let d0 = s.delay;
+        s.trigger = Trig::Uart(u);
+        // `settings` applies the shift only with the switch on; the same arithmetic here
+        if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(&m)) {
+            s.delay += uarttrig::sw_offset_s(u);
+        }
+        let bit = 1.0 / crate::decode::BAUDS[m.dec_baud];
+        assert!((s.delay - d0 - (9.4 * bit - 4.0 / 156.25e6)).abs() < 1e-12);
     }
 
     #[test]
@@ -1729,6 +1916,29 @@ mod tests {
         ];
         for (want, mask, config, running, el, step, after) in cases {
             assert_eq!(dvm_step(want, mask, config, running, el), (step, after), "{:?} {:#b} {} {:?} {}", want, mask, config, running, el);
+        }
+    }
+
+    #[test]
+    fn avg_fast_from_conf() {
+        assert!(!avg_fast_from(""));
+        assert!(avg_fast_from("avg.hw_fast = on\n"));
+        assert!(!avg_fast_from("avg.hw_fast = yes\n"));
+    }
+
+    // Break it catches: the fast path (zero frames on the unit) averaged in hardware by default, the slow path refused.
+    #[test]
+    fn hardware_average_only_on_the_second_divider() {
+        let cases: [(u64, bool, bool); 6] = [
+            (1_250_000_000, false, false),
+            (625_000_000, false, false),
+            (125_000_000, false, false),
+            (62_500_000, false, true),
+            (1_000_000, false, true),
+            (1_250_000_000, true, true),
+        ];
+        for (rate, fast, ok) in cases {
+            assert_eq!(avg_rate_ok(rate, fast), ok, "{} fast {}", rate, fast);
         }
     }
 

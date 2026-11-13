@@ -8955,7 +8955,8 @@ mod tests {
         use oos_hal::dho::acq::Mode;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        // 100 us/div, Auto depth: 62.5 MSa/s, the second divider, where the FPGA averages (B1)
+        ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
         (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
         ui.m.run = RunState::Run;
         let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame { seq, dt: 0.8e-9, pre: 6250, ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()], acq: (1.25e9, 12_500), hw_avg, ..Default::default() };
@@ -9003,6 +9004,9 @@ mod tests {
         assert!(!board().avg_hw(&ui.m));
         ui.m.avg_hw = true;
         ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+        assert!(!board().avg_hw(&ui.m));
+        // 1 us/div at 1.25 GSa/s: averaged frames were zero on the unit (B1), software average
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         assert!(!board().avg_hw(&ui.m));
     }
 

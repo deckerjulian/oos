@@ -119,6 +119,10 @@ pub trait Board: Sync + 'static {
     /// off where the board has none or it is not enabled.
     fn zone_hw(&self) -> bool;
 
+    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:UART?`); "none" where
+    /// the board has none.
+    fn uart_debug(&self, m: &Model) -> String;
+
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
 

@@ -176,7 +176,7 @@ Fork commits f31707b (HAL), d48794a (oos-ui). Host-tested only. Nothing ran on t
 | memory layout | done | `hz::mem_size_avg`, `hz::max_frames_avg`, `hz::avg_params` (applied in `seq::State::configure`); `tools/hzmodel.py avg` writes `hal/testdata/avg-memsize.txt`, the Rust test compares | - |
 | window word | done | `scu::avg_offset`, written as 0x1110 right after 0x1108 when `Window::avg` | - |
 | clear | done | `acq::avg_clear` (0x10b4 1, 0); in `configure` after the stop poll, before the acquisition writes; `seq::State::avg_clear_steps` (stop poll, pulse) for CLEAR, RUN, SINGLE and a complete hold average | - |
-| read | done | `seq::batch_read`: a batch of `count` recorded frames reads frame `count - 1` alone (option A) | - |
+| read | done | every recorded frame is played, the newest shown (option B, as stock; unit 2026-11-13 B1, `docs/fork/b1-b3.md`) | - |
 | semantics | both | `avg::Kind::Running` (show every batch) and `avg::Kind::Hold` (show when `count` triggers are in, then clear), `avg::Tracker`; oos-ui picks Running unless `OOS_HWAVG=hold` | Running |
 | progress | diagnostic | `avg::progress` reads 0x10b0; oos-ui logs it with the first words of the first 32 batches after each clear | - |
 | model | done | `seg::sim::Engine` averages `Engine::raw` per trigger in average mode (running or hold, cleared by the 0x10b4 pulse); `acquire_batch` is generic over the bus and runs against it | - |
@@ -223,3 +223,8 @@ Proof that the live path without averaging is unchanged: `tools/plan-matrix.sh` 
 
 Not done: zoom window word 0x1114 (OOS has no zoom read-out), a status-line progress from 0x10b0 (waits for 5.2),
 counts above 1024.
+
+## 8. Unit 2026-11-13 (B1)
+
+Averaged frames were zero above 62.5 MSa/s and the noise levelled off near 0.5 mV. Causes, fixes and the re-test:
+`docs/fork/b1-b3.md`. Hardware averaging is limited to the second divider (62.5 MSa/s and below) until the re-test.

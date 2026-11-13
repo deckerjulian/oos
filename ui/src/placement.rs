@@ -68,7 +68,7 @@ fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         let env = std::env::var("OOS_PLACE").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        let conf = crate::sysconf::fork_text();
         crate::drawpipe::conf_value(env, &conf, "perf.place").as_deref() == Some("on")
     })
 }

@@ -135,6 +135,10 @@ impl Board for Dho {
         hw::zone_hw_on()
     }
 
+    fn uart_debug(&self, m: &Model) -> String {
+        hw::uart_debug(m)
+    }
+
     fn avg_hw(&self, m: &Model) -> bool {
         hw::avg_hw_ok(m)
     }

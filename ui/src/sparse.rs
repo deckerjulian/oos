@@ -269,7 +269,7 @@ pub fn interp() -> Interp {
     static I: std::sync::OnceLock<Interp> = std::sync::OnceLock::new();
     *I.get_or_init(|| {
         let env = std::env::var("OOS_INTERP").ok();
-        interp_from(env.as_deref(), &std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default())
+        interp_from(env.as_deref(), &crate::sysconf::fork_text())
     })
 }
 
