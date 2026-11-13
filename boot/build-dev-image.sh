@@ -4,8 +4,6 @@
 # build-dev-image.sh - the first OOS development boot image for `recovery` (Phase 2).
 #
 #   boot/build-dev-image.sh            -> boot/out/oos-dev.img (+ .sha256)
-#   OOS_UNIT=dho804 boot/build-dev-image.sh   the same with the defaults of one unit in /etc/oos
-#                                      (rootfs/unit/<name>/: limits.conf, system.conf; docs/fork/unit-dho804.md)
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
@@ -21,17 +19,7 @@ out="$here/out"
 board="$root/rootfs/board/${OOS_BOARD:-dho}"
 [ -f "$board/etc/oos-board" ] || { echo "no board $board" >&2; exit 1; }
 . "$board/etc/oos-board"
-# defaults of one unit (docs/models.md 4.2, docs/network.md 6): rootfs/unit/<OOS_UNIT>/ becomes /etc/oos/ in the image
-unit="$root/rootfs/unit/${OOS_UNIT:-none}"
-if [ -n "${OOS_UNIT:-}" ]; then
-	[ -d "$unit" ] || { echo "no unit $unit" >&2; exit 1; }
-	# build choices of the unit, e.g. OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb (plain KEY=value lines)
-	[ -f "$unit/build.env" ] && . "$unit/build.env"
-else
-	unit="$out/no-unit"; mkdir -p "$unit"
-fi
 [ -f "$k/Image" ] || { echo "run kernel/build-base.sh first" >&2; exit 1; }
-[ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
 # Docker on Linux: be in the docker group, not root (under sudo, HOME and PATH are root's, rustup's cargo is gone, and
 # the results would belong to root)
 if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
@@ -82,19 +70,18 @@ EOF
 [ -x "$root/rootfs/out/wpa_supplicant" ] && [ -x "$root/rootfs/out/wpa_cli" ] || "$root/rootfs/build-wlan-tools.sh"
 # /oos is checked before it is mounted
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
-# the LAN-only firewall (net.allow, docs/network.md 6)
-[ -x "$root/rootfs/out/nft" ] || "$root/rootfs/build-nft.sh"
 # an update with another device tree is tried by kexec_load with that tree (docs/update.md)
 [ -x "$root/rootfs/out/kexec" ] || "$root/rootfs/build-kexec.sh"
 # Display > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md)
 # (again when the helper's source is newer than the built one: Mesa itself is kept in rootfs/out/mesa)
 { [ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] && [ ! "$root/gpu/oos-gpu.c" -nt "$root/rootfs/out/gpu/bin/oos-gpu" ]; } || "$root/gpu/build.sh"
 
+# the fork's unit defaults, firewall and build choices (docs/fork/sync-checklist.md)
+. "$here/unit-hook.sh"
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$unit:/unit:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
+docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
 	. /board/etc/oos-board
-	[ -f /unit/build.env ] && . /unit/build.env
 	cp -a /src/. $r/
 	# what belongs to the board: etc/oos-board and bin/oos-board, which rcS asks
 	cp -a /board/. $r/
@@ -104,13 +91,11 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /ui/oos-ui $r/bin/oos-ui
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
-	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec /wlan/nft $r/bin/
+	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec $r/bin/
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools
-	cp /wlan/nft.COPYING $r/etc/licenses/nftables
 	# the GPU helper with Mesa and glibc (their own loader; oos-ui and the rest stay static)
 	cp -a /wlan/gpu/. $r/
-	# the unit defaults: /etc/oos/limits.conf (capabilities), /etc/oos/system.conf (network); none without OOS_UNIT
-	if [ -n "$(ls -A /unit)" ]; then mkdir -p $r/etc/oos; cp /unit/*.conf $r/etc/oos/; ls -l $r/etc/oos; fi
+	. /wlan/unit-hook/image.sh
 	ln -sf busybox $r/bin/sh
 	echo "$BUILD_ID" > $r/etc/oos-build
 	# rcS brings the acquisition hardware up at boot (cold boot + oos-ui --hw --afe); OOS_NO_AUTOACQ=1 leaves it out
@@ -128,8 +113,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	(cd $r && find . | sort | cpio -o -H newc -R 0:0 --quiet) > /tmp/root.cpio
 	gzip -9n < /tmp/root.cpio > /out/initramfs.cpio.gz
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
-	# extra kernel arguments of the unit (build.env), e.g. pci=pcie_bus_perf for MaxPayload 256 (docs/fork/unit-dho804.md)
-	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS${OOS_BOOTARGS_EXTRA:+ $OOS_BOOTARGS_EXTRA}"
+	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
 	# the busybox package in the image: its source goes with a release
 	dpkg-query -W -f "\${Package} \${Version}\n" busybox-static > /out/busybox.version

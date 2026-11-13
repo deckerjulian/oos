@@ -23,6 +23,7 @@ this unit uses, how to build its image, and what is still unverified.
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
 | Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24`, `remote.telnet = off`, `eth.mac = 02:00:00:00:00:01`), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
+| Image build | the fork's part of `boot/build-dev-image.sh` (unit dir, `build.env`, DTB check, `nft`, unit `*.conf`, `OOS_BOOTARGS_EXTRA`) lives in two sourced hooks; upstream's script carries two lines. The hook stages its container part in `rootfs/out/unit-hook/` (mounted as `/wlan`). A bad `OOS_UNIT` now fails after the Rust builds | `boot/unit-hook.sh`, `boot/unit-hook-image.sh`, docs/fork/sync-checklist.md |
 
 Without `OOS_UNIT` the image is upstream-identical in behaviour, apart from carrying `nft` (about 1 MB).
 
