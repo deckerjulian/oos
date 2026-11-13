@@ -85,6 +85,63 @@ mod tests {
         assert_eq!(u.replay.captures, 0, "panning is analysis, not an acquisition");
     }
 
+    fn wave(dt: f64, vpd: f32, offset: f32, color: usize) -> RefWave {
+        RefWave {
+            src: 0,
+            color,
+            label: String::new(),
+            t0: 0.0,
+            dt,
+            v: vec![0.0; 64],
+            vpd,
+            offset,
+            on: true,
+        }
+    }
+
+    #[test]
+    fn reference_badge_shows_vertical_scale_and_the_record_sample_rate() {
+        let fast = wave(20e-12, 0.25, 0.0, 0);
+        assert_eq!(Ui::ref_badge_readout(&fast), ("250 mV/div".into(), "50 GSa/s".into()));
+        let slow = wave(1e-9, 1.0, 0.0, 1);
+        assert_eq!(Ui::ref_badge_readout(&slow), ("1 V/div".into(), "1 GSa/s".into()));
+        let (scale, rate) = Ui::ref_badge_readout(&fast);
+        assert!(!scale.contains("s/div") && !rate.contains("/div"));
+    }
+
+    #[test]
+    fn reference_badges_keep_one_horizontal_scale() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        for ch in &mut u.m.ch {
+            ch.on = false;
+        }
+        let time = u.m.time_per_div();
+        u.refs[0] = Some(wave(20e-12, 0.25, 0.0, 1));
+        u.refs[1] = Some(wave(1e-9, 1.0, 2.0, 2));
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        assert_eq!(u.m.time_per_div(), time);
+        assert_eq!(Ui::ref_badge_readout(u.refs[0].as_ref().unwrap()).1, "50 GSa/s");
+        assert_eq!(Ui::ref_badge_readout(u.refs[1].as_ref().unwrap()).1, "1 GSa/s");
+        for color in [REF_COLORS[1].1, REF_COLORS[2].1] {
+            let mut span = 0;
+            for y in 40..520 {
+                let mut run = 0;
+                let mut best = 0;
+                for x in 0..cv.w {
+                    if cv.px[(y * cv.w + x) as usize] == color {
+                        run += 1;
+                        best = best.max(run);
+                    } else {
+                        run = 0;
+                    }
+                }
+                span = span.max(best);
+            }
+            assert!(span >= 48, "badge run {span} for {color:#x}");
+        }
+    }
+
     #[test]
     fn every_reference_uses_the_same_time_window_at_its_own_sample_interval() {
         let mut u = replay();
@@ -418,8 +475,10 @@ impl Ui {
             cv.set_clip(rect.inset(7));
             cv.text(&self.fonts.sb, rect.x + 10, rect.y + 18, &format!("R{}", slot + 1), col);
             cv.text(&self.fonts.s, rect.x + rect.w - 34, rect.y + 18, if r.on { "On" } else { "Off" }, if r.on { col } else { DIM });
-            cv.text(&self.fonts.mb, rect.x + 10, rect.y + 39, if r.label.is_empty() { "Waveform" } else { &r.label }, TEXT);
-            cv.text(&self.fonts.s, rect.x + 10, rect.y + 57, &format!("{}/div", si_short(r.vpd as f64, "V")), DIM);
+            let (scale, rate) = Self::ref_badge_readout(r);
+            cv.text(Self::card_font(&self.fonts, &scale, rect.w - 24), rect.x + 10, rect.y + 42, &scale, TEXT);
+            let sub = if r.label.is_empty() { rate } else { format!("{}  \u{b7}  {}", rate, r.label) };
+            cv.text(&self.fonts.s, rect.x + 10, rect.y + 58, &sub, DIM);
             cv.no_clip();
         }
     }
