@@ -1,5 +1,19 @@
 # Changes
 
+## Unreleased
+
+Fixed:
+
+- Display > Graphics = GPU with a monitor was slower than the CPU (reported in the forum: 16 to 19 frames a second
+  with four channels and HDMI Layout, the CPU 22 to 23). The GPU mixed the counts of the stretched traces itself, 16
+  reads of integer textures per pixel: 36 to 41 ms for the traces of a 1920x1080 monitor alone. Now the helper first
+  works out each map's LUT indices at the map's size and the monitor takes them through the GPU's own filter, one
+  read per pixel: 8 to 9 ms. Panel and monitor also keep their own textures in the helper, so a monitor frame no
+  longer makes the panel upload its maps whole and draw its layers again. On a DHO924S, four channels, 1920x1080:
+  30 frames a second in Mirror, Waveform and Layout (were 29, 25, 25; the CPU gives 30, 30, 26), the frame loop at
+  22 to 29 % of its core (CPU: 51 to 70 %). The panel's pixels are the same as before; the monitor's traces differ
+  from before only at their edges.
+
 ## 0.1.11
 
 Install from 0.1.7 or newer as always: the web page, System > Update, or the USB stick; then switch the scope off at

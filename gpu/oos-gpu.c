@@ -71,7 +71,7 @@ struct quad {
 	int32_t dx, dy, dw, dh;       /* place in the target */
 	uint32_t filter;              /* 0 nearest, 1 linear (layers and maps) */
 	uint32_t first_job, n_jobs;   /* this quad's jobs, in layer coordinates */
-	uint32_t reuse;               /* 1: layers, maps and tables as uploaded for this quad in an earlier frame */
+	uint32_t reuse;               /* 1: layers, maps and tables as the panel's last frame (set 0) uploaded them */
 	int32_t under_y0, under_y1;   /* rows that changed since the last frame from these arena bytes */
 	int32_t over_y0, over_y1;
 	/* NONE: the layer is pixels; else it is that many commands (`struct cmd`) at its offset, drawn here */
@@ -107,7 +107,11 @@ struct frame {
 	uint32_t n_quads, n_jobs;
 	uint32_t readback, readback_off; /* read the target back into the arena as xrgb rows of tw */
 	/* glyph alphas new to the atlas: rows of ATLAS_W bytes from atlas_off, to its row atlas_row */
-	uint32_t atlas_off, atlas_rows, atlas_row, pad;
+	uint32_t atlas_off, atlas_rows, atlas_row;
+	/* the set of textures: 0 the panel's, 1 the monitor's. Each keeps its layers, maps and LUT indices from its last
+	 * frame, so only changed rows are uploaded and unchanged layers are not drawn again; with one set for both, every
+	 * monitor frame replaced the panel's textures and the other way round. A quad with `reuse` takes set 0. */
+	uint32_t set;
 	struct quad q[MAX_QUADS];
 	struct job j[MAX_JOBS];
 };
@@ -171,13 +175,15 @@ struct tgt {
 };
 static struct tgt tgts[MAX_TARGETS];
 
-static GLuint prog_layer, prog_trace, prog_grade;
+static GLuint prog_layer, prog_trace, prog_grade, prog_index, prog_gpre;
 /* the read-back copy of a scan-out target */
 static GLuint rb_read, fb_read;
 static int rb_w, rb_h;
 static GLint u_layer_tex, u_layer_src, u_layer_dst, u_layer_tsz, u_layer_opaque;
-static GLint u_tr_maps[NCH], u_tr_lut, u_tr_on, u_tr_shift, u_tr_col, u_tr_job, u_tr_msz, u_tr_lin, u_tr_under, u_tr_jl, u_tr_lsz;
-static GLint u_gr_maps[NCH], u_gr_n, u_gr_lut, u_gr_shift, u_gr_job, u_gr_msz, u_gr_lin;
+static GLint u_tr_ix, u_tr_lut, u_tr_col, u_tr_job, u_tr_msz, u_tr_lin, u_tr_under, u_tr_jl, u_tr_lsz;
+static GLint u_gr_ix, u_gr_lut, u_gr_job, u_gr_msz, u_gr_lin;
+static GLint u_al_maps[NCH], u_al_on, u_al_shift, u_al_dst;
+static GLint u_gp_maps[NCH], u_gp_n, u_gp_shift, u_gp_dst;
 static GLuint vao;
 
 /* textures kept between frames, grown when a size changes */
@@ -190,7 +196,10 @@ struct tex {
 	/* drawn from commands: a hash of them and their images (0: not), the same again needs no drawing */
 	uint64_t drawn;
 };
-static struct tex layer_tex[MAX_QUADS][2], map_tex[MAX_JOBS][NCH], lut_tex[MAX_JOBS];
+#define SETS 2
+static struct tex layer_tex[SETS][MAX_QUADS][2], map_tex[SETS][MAX_JOBS][NCH], lut_tex[SETS][MAX_JOBS];
+/* each job's LUT indices at the size of its maps, worked out from them (FS_INDEX, FS_GRADE_PRE) */
+static struct tex pre_tex[SETS][MAX_JOBS];
 /* the glyph alphas of all fonts so far (R8, ATLAS_W wide) and the pixels of a frame's images (RGBA8) */
 static struct tex atlas_tex, img_tex;
 static GLuint prog_cmd, vao_cmd, vbo_cmd, ibo_cmd;
@@ -258,42 +267,50 @@ static const char *FS_LAYER = "#version 300 es\n"
 			      "void main(){ vec2 uv = (src.xy + px * src.zw) / lsz; vec4 c = texture(tex, uv).bgra;"
 			      " if (opaque == 1) c.a = 1.0; o = c; }\n";
 
-/* A job's traces in one pass: the layer under them, then channel 4 down to 1, each the count of its map cell through
- * its LUT as alpha over its colour (the CPU's `draw_traces`), opaque. With `lin` the four nearest cells of a stretched
- * map are mixed. One pass instead of one per channel: the Mali shades each pixel once. */
-static const char *FS_TRACE = "#version 300 es\n"
+/* A job's traces in two steps. First, at the size of its maps, each channel's cell as the index into its LUT plus 1
+ * (0: empty), all four channels in one RGBA16F texture (FS_INDEX). Then in the target: the layer under them, then
+ * channel 4 down to 1, each its LUT's alpha over its colour (the CPU's `draw_traces`), opaque (FS_TRACE). Stretched
+ * (a monitor) the GPU's own filter mixes the four nearest indices, one fetch for all channels, and the LUT comes after
+ * the mixing, so a thin trace keeps its brightness; unstretched (the panel) the texel is taken as it is, which gives
+ * the CPU's pixels. Mixing the counts in the shader instead took 16 fetches of integer textures per pixel: 36 to
+ * 41 ms for the traces of a 1920x1080 monitor, against 5 ms of the panel. */
+static const char *FS_INDEX = "#version 300 es\n"
 			      "precision highp float; precision highp usampler2D;\n"
-			      "uniform sampler2D under; uniform vec4 jl; uniform vec2 lsz;\n"
-			      "uniform usampler2D m0, m1, m2, m3; uniform highp sampler2D lut; uniform ivec4 on; uniform ivec4 shift;\n"
+			      "uniform usampler2D m0, m1, m2, m3; uniform ivec4 on; uniform ivec4 shift;\n"
+			      "out vec4 o;\n"
+			      "float e(usampler2D m, int c){ uint v = texelFetch(m, ivec2(gl_FragCoord.xy), 0).r;"
+			      " return v == 0u ? 0.0 : float(min(int(v) >> shift[c], 1023) + 1); }\n"
+			      "void main(){ o = vec4(on.x == 1 ? e(m0, 0) : 0.0, on.y == 1 ? e(m1, 1) : 0.0,"
+			      " on.z == 1 ? e(m2, 2) : 0.0, on.w == 1 ? e(m3, 3) : 0.0); }\n";
+static const char *FS_TRACE = "#version 300 es\n"
+			      "precision highp float;\n"
+			      "uniform sampler2D under; uniform vec4 jl; uniform vec2 lsz; uniform highp sampler2D ix; uniform highp sampler2D lut;\n"
 			      "uniform vec3 col[4]; uniform vec2 msz; uniform int lin;\n"
 			      "in vec2 px; out vec4 o;\n"
-			      "float cnt(usampler2D m, ivec2 c){ c = clamp(c, ivec2(0), ivec2(msz) - 1); return float(texelFetch(m, c, 0).r); }\n"
-			      "float val(usampler2D m){ if (lin == 0) return cnt(m, ivec2(px * msz));"
-			      " vec2 q = px * msz - 0.5; vec2 f = fract(q); ivec2 b = ivec2(floor(q));"
-			      " return floor(mix(mix(cnt(m, b), cnt(m, b + ivec2(1, 0)), f.x), mix(cnt(m, b + ivec2(0, 1)), cnt(m, b + ivec2(1, 1)), f.x), f.y) + 0.5); }\n"
-			      "vec3 over(vec3 d, float v, int c){ if (v < 1.0) return d;"
-			      " float a = texelFetch(lut, ivec2(min(int(v) >> shift[c], 1023), c), 0).r; return d * (1.0 - a) + col[c] * a; }\n"
+			      "vec3 over(vec3 d, float e, int c){ if (e < 0.5) return d;"
+			      " float a = texelFetch(lut, ivec2(min(int(e + 0.5) - 1, 1023), c), 0).r; return d * (1.0 - a) + col[c] * a; }\n"
 			      "void main(){ vec3 d = texture(under, (jl.xy + px * jl.zw) / lsz).bgr;"
-			      " if (on.w == 1) d = over(d, val(m3), 3); if (on.z == 1) d = over(d, val(m2), 2);"
-			      " if (on.y == 1) d = over(d, val(m1), 1); if (on.x == 1) d = over(d, val(m0), 0);"
+			      " vec4 e = lin == 1 ? texture(ix, px) : texelFetch(ix, clamp(ivec2(px * msz), ivec2(0), ivec2(msz) - 1), 0);"
+			      " d = over(d, e.w, 3); d = over(d, e.z, 2); d = over(d, e.y, 1); d = over(d, e.x, 0);"
 			      " o = vec4(d, 1.0); }\n";
 
-/* Colour grade: the sum of the shown maps through a colour LUT, opaque. */
+/* Colour grade the same way: first, at the size of the maps, the sum of the shown maps as the index into the colour
+ * LUT plus 1, then in the target that index's colour, opaque, where it is not empty. */
+static const char *FS_GRADE_PRE = "#version 300 es\n"
+				  "precision highp float; precision highp usampler2D;\n"
+				  "uniform usampler2D m0, m1, m2, m3; uniform int n; uniform int shift;\n"
+				  "out vec4 o;\n"
+				  "void main(){ ivec2 c = ivec2(gl_FragCoord.xy); uint s = texelFetch(m0, c, 0).r;"
+				  " if (n > 1) s += texelFetch(m1, c, 0).r; if (n > 2) s += texelFetch(m2, c, 0).r;"
+				  " if (n > 3) s += texelFetch(m3, c, 0).r;"
+				  " o = vec4(s == 0u ? 0.0 : float(min(int(s) >> shift, 1023) + 1), 0.0, 0.0, 0.0); }\n";
 static const char *FS_GRADE = "#version 300 es\n"
-			      "precision highp float; precision highp usampler2D;\n"
-			      "uniform usampler2D m0, m1, m2, m3; uniform int n; uniform highp sampler2D lut; uniform int shift;\n"
-			      "uniform vec2 msz; uniform int lin;\n"
+			      "precision highp float;\n"
+			      "uniform highp sampler2D ix; uniform highp sampler2D lut; uniform vec2 msz; uniform int lin;\n"
 			      "in vec2 px; out vec4 o;\n"
-			      "uint at(ivec2 c){ c = clamp(c, ivec2(0), ivec2(msz) - 1); uint s = texelFetch(m0, c, 0).r;"
-			      " if (n > 1) s += texelFetch(m1, c, 0).r; if (n > 2) s += texelFetch(m2, c, 0).r;"
-			      " if (n > 3) s += texelFetch(m3, c, 0).r; return s; }\n"
-			      "void main(){ float s;"
-			      " if (lin == 0) { s = float(at(ivec2(px * msz))); }"
-			      " else { vec2 q = px * msz - 0.5; vec2 f = fract(q); ivec2 b = ivec2(floor(q));"
-			      "  s = floor(mix(mix(float(at(b)), float(at(b + ivec2(1, 0))), f.x),"
-			      "   mix(float(at(b + ivec2(0, 1))), float(at(b + ivec2(1, 1))), f.x), f.y) + 0.5); }"
-			      " if (s < 1.0) discard;"
-			      " o = vec4(texelFetch(lut, ivec2(min(int(s) >> shift, 1023), 0), 0).bgr, 1.0); }\n";
+			      "void main(){ float e = lin == 1 ? texture(ix, px).r : texelFetch(ix, clamp(ivec2(px * msz), ivec2(0), ivec2(msz) - 1), 0).r;"
+			      " if (e < 0.5) discard;"
+			      " o = vec4(texelFetch(lut, ivec2(min(int(e + 0.5) - 1, 1023), 0), 0).bgr, 1.0); }\n";
 
 /* A layer from its commands, all in one instanced draw: each command a rectangle, its coverage per pixel as the
  * CPU's `Canvas` computes it (gfx.rs: `fill`, `blend`, `pixel`, `text`, `image`, `round`, `round_outline`, `line`).
@@ -334,13 +351,22 @@ static void gl_setup(void) {
 	u_layer_dst = glGetUniformLocation(prog_layer, "dst");
 	u_layer_tsz = glGetUniformLocation(prog_layer, "tsz");
 	u_layer_opaque = glGetUniformLocation(prog_layer, "opaque");
-	prog_trace = link_prog(FS_TRACE);
 	const char *tn[NCH] = {"m0", "m1", "m2", "m3"};
+	prog_index = link_prog(FS_INDEX);
 	for (int c = 0; c < NCH; c++)
-		u_tr_maps[c] = glGetUniformLocation(prog_trace, tn[c]);
+		u_al_maps[c] = glGetUniformLocation(prog_index, tn[c]);
+	u_al_on = glGetUniformLocation(prog_index, "on");
+	u_al_shift = glGetUniformLocation(prog_index, "shift");
+	u_al_dst = glGetUniformLocation(prog_index, "dst");
+	prog_gpre = link_prog(FS_GRADE_PRE);
+	for (int c = 0; c < NCH; c++)
+		u_gp_maps[c] = glGetUniformLocation(prog_gpre, tn[c]);
+	u_gp_n = glGetUniformLocation(prog_gpre, "n");
+	u_gp_shift = glGetUniformLocation(prog_gpre, "shift");
+	u_gp_dst = glGetUniformLocation(prog_gpre, "dst");
+	prog_trace = link_prog(FS_TRACE);
+	u_tr_ix = glGetUniformLocation(prog_trace, "ix");
 	u_tr_lut = glGetUniformLocation(prog_trace, "lut");
-	u_tr_on = glGetUniformLocation(prog_trace, "on");
-	u_tr_shift = glGetUniformLocation(prog_trace, "shift");
 	u_tr_col = glGetUniformLocation(prog_trace, "col");
 	u_tr_under = glGetUniformLocation(prog_trace, "under");
 	u_tr_jl = glGetUniformLocation(prog_trace, "jl");
@@ -349,12 +375,8 @@ static void gl_setup(void) {
 	u_tr_msz = glGetUniformLocation(prog_trace, "msz");
 	u_tr_lin = glGetUniformLocation(prog_trace, "lin");
 	prog_grade = link_prog(FS_GRADE);
-	const char *mn[NCH] = {"m0", "m1", "m2", "m3"};
-	for (int c = 0; c < NCH; c++)
-		u_gr_maps[c] = glGetUniformLocation(prog_grade, mn[c]);
-	u_gr_n = glGetUniformLocation(prog_grade, "n");
+	u_gr_ix = glGetUniformLocation(prog_grade, "ix");
 	u_gr_lut = glGetUniformLocation(prog_grade, "lut");
-	u_gr_shift = glGetUniformLocation(prog_grade, "shift");
 	u_gr_job = glGetUniformLocation(prog_grade, "dst");
 	u_gr_msz = glGetUniformLocation(prog_grade, "msz");
 	u_gr_lin = glGetUniformLocation(prog_grade, "lin");
@@ -535,9 +557,72 @@ static int draw_cmds(struct tex *t, uint32_t off, uint32_t n, int lw, int lh, in
 	return 0;
 }
 
+/* The job's LUT indices from its maps just uploaded, into pre_tex[s][ji] at the maps' size. 0: done, else the frame's
+ * error (a GPU that cannot draw into a half-float texture). */
+static int prepass(int s, uint32_t ji, const struct job *j) {
+	struct tex *p = &pre_tex[s][ji];
+	tex_ensure(p, j->mw, j->mh, GL_RGBA16F);
+	p->drawn = 0;
+	if (!p->fb) {
+		glGenFramebuffers(1, &p->fb);
+		glBindFramebuffer(GL_FRAMEBUFFER, p->fb);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, p->id, 0);
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+			say("cannot draw into a half-float texture");
+			return 24;
+		}
+	} else
+		glBindFramebuffer(GL_FRAMEBUFFER, p->fb);
+	glViewport(0, 0, j->mw, j->mh);
+	glDisable(GL_SCISSOR_TEST);
+	glDisable(GL_BLEND);
+	/* every pixel is written: the clear only spares the Mali loading the old content of each tile */
+	glClearColor(0, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT);
+	int first = -1, n = 0;
+	for (int c = 0; c < NCH; c++)
+		if (j->map_off[c] != NONE && first < 0)
+			first = c;
+	if (first < 0)
+		return 0;
+	GLuint prog = j->graded ? prog_gpre : prog_index;
+	glUseProgram(prog);
+	set_tsz(prog, j->mw, j->mh);
+	if (j->graded) {
+		for (int c = 0; c < NCH; c++) {
+			if (j->map_off[c] == NONE)
+				continue;
+			glActiveTexture(GL_TEXTURE1 + n);
+			glBindTexture(GL_TEXTURE_2D, map_tex[s][ji][c].id);
+			glUniform1i(u_gp_maps[n], 1 + n);
+			n++;
+		}
+		for (int c = n; c < NCH; c++)
+			glUniform1i(u_gp_maps[c], 1);
+		glUniform1i(u_gp_n, n);
+		glUniform1i(u_gp_shift, j->shift[0]);
+		draw_rect(u_gp_dst, 0, 0, j->mw, j->mh);
+		return 0;
+	}
+	GLint on[NCH], sh[NCH];
+	for (int c = 0; c < NCH; c++) {
+		on[c] = j->map_off[c] != NONE;
+		sh[c] = j->shift[c];
+		/* an unused sampler still gets a complete texture of the same kind */
+		glActiveTexture(GL_TEXTURE1 + c);
+		glBindTexture(GL_TEXTURE_2D, map_tex[s][ji][on[c] ? c : first].id);
+		glUniform1i(u_al_maps[c], 1 + c);
+	}
+	glUniform4iv(u_al_on, 1, on);
+	glUniform4iv(u_al_shift, 1, sh);
+	draw_rect(u_al_dst, 0, 0, j->mw, j->mh);
+	return 0;
+}
+
 static int do_frame(const struct frame *f, struct done *d) {
-	if (f->target >= MAX_TARGETS || !tgts[f->target].used || f->n_quads > MAX_QUADS || f->n_jobs > MAX_JOBS)
+	if (f->target >= MAX_TARGETS || !tgts[f->target].used || f->n_quads > MAX_QUADS || f->n_jobs > MAX_JOBS || f->set >= SETS)
 		return 1;
+	int fs = f->set;
 	struct tgt *t = &tgts[f->target];
 	float tw = t->w, th = t->h;
 	double t0 = now_ms();
@@ -577,20 +662,20 @@ static int do_frame(const struct frame *f, struct done *d) {
 		}
 		int st;
 		if (q->under_off != NONE && q->under_n != NONE) {
-			if ((st = draw_cmds(&layer_tex[qi][0], q->under_off, q->under_n, q->lw, q->lh, 0, img_hash)))
+			if ((st = draw_cmds(&layer_tex[fs][qi][0], q->under_off, q->under_n, q->lw, q->lh, 0, img_hash)))
 				return st;
 		} else if (q->under_off != NONE) {
 			if (!in_arena(q->under_off, ln))
 				return 3;
-			upload_bgra(&layer_tex[qi][0], q->under_off, q->lw, q->lh, q->under_y0, q->under_y1);
+			upload_bgra(&layer_tex[fs][qi][0], q->under_off, q->lw, q->lh, q->under_y0, q->under_y1);
 		}
 		if (q->over_off != NONE && q->over_n != NONE) {
-			if ((st = draw_cmds(&layer_tex[qi][1], q->over_off, q->over_n, q->lw, q->lh, 1, img_hash)))
+			if ((st = draw_cmds(&layer_tex[fs][qi][1], q->over_off, q->over_n, q->lw, q->lh, 1, img_hash)))
 				return st;
 		} else if (q->over_off != NONE) {
 			if (!in_arena(q->over_off, ln))
 				return 3;
-			upload_bgra(&layer_tex[qi][1], q->over_off, q->lw, q->lh, q->over_y0, q->over_y1);
+			upload_bgra(&layer_tex[fs][qi][1], q->over_off, q->lw, q->lh, q->over_y0, q->over_y1);
 		}
 	}
 	for (uint32_t ji = 0; ji < f->n_jobs; ji++) {
@@ -609,20 +694,23 @@ static int do_frame(const struct frame *f, struct done *d) {
 				continue;
 			if (!in_arena(j->map_off[c], mn))
 				return 6;
-			upload_rows(&map_tex[ji][c], j->map_off[c], j->mw, j->mh, GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, j->mw * 2, j->map_y0[c], j->map_y1[c]);
+			upload_rows(&map_tex[fs][ji][c], j->map_off[c], j->mw, j->mh, GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, j->mw * 2, j->map_y0[c], j->map_y1[c]);
 		}
 		if (j->graded) {
 			if (!in_arena(j->lut_off, 1024 * 4))
 				return 7;
-			lut_tex[ji].from = NONE;
-			upload_bgra(&lut_tex[ji], j->lut_off, 1024, 1, 0, 1);
+			lut_tex[fs][ji].from = NONE;
+			upload_bgra(&lut_tex[fs][ji], j->lut_off, 1024, 1, 0, 1);
 		} else {
 			if (!in_arena(j->lut_off, 1024 * NCH))
 				return 7;
-			tex_ensure(&lut_tex[ji], 1024, NCH, GL_R8);
-			glBindTexture(GL_TEXTURE_2D, lut_tex[ji].id);
+			tex_ensure(&lut_tex[fs][ji], 1024, NCH, GL_R8);
+			glBindTexture(GL_TEXTURE_2D, lut_tex[fs][ji].id);
 			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1024, NCH, GL_RED, GL_UNSIGNED_BYTE, arena + j->lut_off);
 		}
+		int st = prepass(fs, ji, j);
+		if (st)
+			return st;
 	}
 	double t1 = now_ms();
 	glBindFramebuffer(GL_FRAMEBUFFER, t->fb);
@@ -636,6 +724,7 @@ static int do_frame(const struct frame *f, struct done *d) {
 	for (uint32_t qi = 0; qi < f->n_quads; qi++) {
 		const struct quad *q = &f->q[qi];
 		GLint filt = q->filter ? GL_LINEAR : GL_NEAREST;
+		int qs = q->reuse ? 0 : fs;
 		/* scale from layer coordinates to the target */
 		float kx = (float)q->dw / q->sw, ky = (float)q->dh / q->sh;
 		/* everything of this quad stays inside its destination rectangle */
@@ -647,7 +736,7 @@ static int do_frame(const struct frame *f, struct done *d) {
 			glUseProgram(prog_layer);
 			set_tsz(prog_layer, tw, th);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, layer_tex[qi][0].id);
+			glBindTexture(GL_TEXTURE_2D, layer_tex[qs][qi][0].id);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt);
 			glUniform1i(u_layer_opaque, 1);
@@ -662,28 +751,23 @@ static int do_frame(const struct frame *f, struct done *d) {
 			const struct job *j = &f->j[ji];
 			float x = q->dx + (j->x - q->sx) * kx, y = q->dy + (j->y - q->sy) * ky, w = j->w * kx, h = j->h * ky;
 			int lin = q->filter && (w != j->mw || h != j->mh);
+			int shown = 0;
+			for (int c = 0; c < NCH; c++)
+				shown |= j->map_off[c] != NONE;
+			if (!shown || !pre_tex[qs][ji].id)
+				continue;
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D, pre_tex[qs][ji].id);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, lin ? GL_LINEAR : GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, lin ? GL_LINEAR : GL_NEAREST);
+			glActiveTexture(GL_TEXTURE2);
+			glBindTexture(GL_TEXTURE_2D, lut_tex[qs][ji].id);
 			if (j->graded) {
 				glDisable(GL_BLEND);
 				glUseProgram(prog_grade);
 				set_tsz(prog_grade, tw, th);
-				int n = 0;
-				for (int c = 0; c < NCH; c++) {
-					if (j->map_off[c] == NONE)
-						continue;
-					glActiveTexture(GL_TEXTURE1 + n);
-					glBindTexture(GL_TEXTURE_2D, map_tex[ji][c].id);
-					glUniform1i(u_gr_maps[n], 1 + n);
-					n++;
-				}
-				for (int c = n; c < NCH; c++)
-					glUniform1i(u_gr_maps[c], 1);
-				if (!n)
-					continue;
-				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, lut_tex[ji].id);
-				glUniform1i(u_gr_lut, 0);
-				glUniform1i(u_gr_n, n);
-				glUniform1i(u_gr_shift, j->shift[0]);
+				glUniform1i(u_gr_ix, 1);
+				glUniform1i(u_gr_lut, 2);
 				glUniform2f(u_gr_msz, j->mw, j->mh);
 				glUniform1i(u_gr_lin, lin);
 				draw_rect(u_gr_job, x, y, w, h);
@@ -695,36 +779,20 @@ static int do_frame(const struct frame *f, struct done *d) {
 			glUseProgram(prog_trace);
 			set_tsz(prog_trace, tw, th);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, layer_tex[qi][0].id);
+			glBindTexture(GL_TEXTURE_2D, layer_tex[qs][qi][0].id);
 			glUniform1i(u_tr_under, 0);
 			glUniform4f(u_tr_jl, j->x, j->y, j->w, j->h);
 			glUniform2f(u_tr_lsz, q->lw, q->lh);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, lut_tex[ji].id);
-			glUniform1i(u_tr_lut, 1);
+			glUniform1i(u_tr_ix, 1);
+			glUniform1i(u_tr_lut, 2);
 			glUniform2f(u_tr_msz, j->mw, j->mh);
 			glUniform1i(u_tr_lin, lin);
-			GLint on[NCH], sh[NCH];
 			GLfloat col[NCH * 3];
-			int first = -1;
-			for (int c = 0; c < NCH; c++)
-				if (j->map_off[c] != NONE && first < 0)
-					first = c;
-			if (first < 0)
-				continue;
 			for (int c = 0; c < NCH; c++) {
-				on[c] = j->map_off[c] != NONE;
-				sh[c] = j->shift[c];
 				col[c * 3] = (j->col[c] >> 16 & 255) / 255.0f;
 				col[c * 3 + 1] = (j->col[c] >> 8 & 255) / 255.0f;
 				col[c * 3 + 2] = (j->col[c] & 255) / 255.0f;
-				/* an unused sampler still gets a complete texture of the same kind */
-				glActiveTexture(GL_TEXTURE2 + c);
-				glBindTexture(GL_TEXTURE_2D, map_tex[ji][on[c] ? c : first].id);
-				glUniform1i(u_tr_maps[c], 2 + c);
 			}
-			glUniform4iv(u_tr_on, 1, on);
-			glUniform4iv(u_tr_shift, 1, sh);
 			glUniform3fv(u_tr_col, NCH, col);
 			draw_rect(u_tr_job, x, y, w, h);
 		}
@@ -735,7 +803,7 @@ static int do_frame(const struct frame *f, struct done *d) {
 			glUseProgram(prog_layer);
 			set_tsz(prog_layer, tw, th);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, layer_tex[qi][1].id);
+			glBindTexture(GL_TEXTURE_2D, layer_tex[qs][qi][1].id);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt);
 			glUniform1i(u_layer_opaque, 0);

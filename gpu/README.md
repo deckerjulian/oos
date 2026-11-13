@@ -25,6 +25,16 @@ Panel, Run, four channels, 30 frames a second in every column (2026-11-12, `:SYS
 The GPU itself is no faster than the CPU at the traces (the CPU skips every empty pixel of the phosphor maps, the GPU
 shades all of them); what it saves is the CPU's drawing of everything else, and the monitor's picture.
 
+With a 1920x1080 monitor, four channels, Run, a menu open (2026-11-13, frames a second / the frame loop's core):
+
+| | Mirror | Waveform | Layout |
+|---|---|---|---|
+| CPU | 30 / 51 % | 30 / 54 % | 26 / 70 % |
+| GPU | 30 / 22 % | 30 / 29 % | 30 / 28 % |
+
+The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 15 ms. Before the traces' two steps
+(below), the monitor's traces alone took 36 to 41 ms and the GPU fell behind the CPU (25 frames a second).
+
 ## How it works
 
 - **oos-ui** (`ui/src/ui.rs`, `Ui::render_layers`): the same drawing code as always, only into two canvases that
@@ -38,6 +48,13 @@ shades all of them); what it saves is the CPU's drawing of everything else, and 
   (the corners' 16 samples, the line's 16.16 steps, the glyphs' alphas). A test plays the commands back on the CPU
   the same way and compares them with drawing directly, on every kind of screen
   (`recorded_layers_replay_to_the_same_pixels`).
+- **The traces in two steps**: first, at the size of the maps, each cell as the index into its channel's LUT plus 1
+  (0: empty), the four channels in one half-float texture; then in the target one read of it per pixel, the LUT
+  after it. Stretched for a monitor, the GPU's filter mixes the indices (the LUT after the mixing keeps thin traces
+  bright); unstretched, the panel's pixels are exactly the CPU's. Colour grade the same way with the summed maps.
+- **Two sets of textures**: the panel's frames and the monitor's keep their own layers, maps and indices in the
+  helper (`set` in the frame), so each uploads only the rows that changed since its own last frame. Mirror takes the
+  panel's set (`reuse`).
 - **oos-gpu** (`gpu/oos-gpu.c`): a separate process, because oos-ui is one static musl binary and Mesa needs glibc.
   It draws each layer from its commands into a texture: one indexed draw, two triangles per command (Panfrost on
   this Mali took 14 us per instance of an instanced draw, 30 ms for one layer). A layer whose commands and images
@@ -78,8 +95,8 @@ of every shot; commands and pixel layers (`OOS_GPU_PIXELS=1`) give the same moni
   starts the update to 0.1.8 by kexec with the new tree (docs/update.md, "Another device tree"); 0.1.6 cannot, so it
   goes to 0.1.7 first. The tree was installed on the unit on 2026-11-12 and started cold: the GPU, the VPU and the
   trial confirmation came up.
-- Not tried with a monitor connected yet: the HDMI paths are checked on the host (pictures of all three modes) and
-  their buffers are taken the same way as the panel's.
+- Tried with a 1920x1080 monitor on a DHO924S; larger monitors (2560x1440, 4K) cost the GPU more per frame in
+  proportion to their pixels and are not measured.
 - With the logic analyser on and HDMI Layout, the LA columns are worked out again for every monitor frame.
 - The grid's dots are single pixels, about 2000 commands; the GPU draws them only when the layer under the traces
   changes.

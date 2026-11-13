@@ -123,7 +123,8 @@ struct FrameMsg {
     atlas_off: u32,
     atlas_rows: u32,
     atlas_row: u32,
-    pad: u32,
+    /// the helper's set of textures: 0 the panel's, 1 the monitor's (each keeps what its last frame uploaded)
+    set: u32,
     q: [QuadMsg; MAX_QUADS],
     j: [JobMsg; MAX_JOBS],
 }
@@ -164,7 +165,7 @@ pub struct Quad<'a> {
     pub dst: Rect,
     /// filtered scaling (a monitor), else nearest
     pub filter: bool,
-    /// layers, maps and tables as in an earlier frame for this quad (nothing is copied or uploaded)
+    /// layers, maps and tables as the panel's last frame left them for this quad (nothing is copied or uploaded)
     pub reuse: bool,
     pub jobs: &'a [TraceJob],
     pub ph: &'a Phosphor,
@@ -360,12 +361,14 @@ mod imp {
                 atlas_off: 0,
                 atlas_rows: 0,
                 atlas_row: 0,
-                pad: 0,
+                set: 0,
                 q: [QuadMsg::default(); MAX_QUADS],
                 j: [JobMsg::default(); MAX_JOBS],
             };
-            // the panel's frames use the first half of the arena, the monitor's the second: each keeps its blocks
+            // the panel's frames use the first half of the arena, the monitor's the second: each keeps its blocks,
+            // and in the helper its own textures
             let half = (index >= self.monitor_from) as usize;
+            f.set = half as u32;
             let base = self.arena;
             let mut at = half * ARENA / 2;
             if quads.len() > MAX_QUADS {
