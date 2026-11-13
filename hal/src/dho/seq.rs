@@ -713,14 +713,24 @@ pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, 
 /// `acquire_batch` whose wait for a trigger ends with `Err(NEW_SETTINGS)` as soon as `stop()` says so (checked every
 /// 10 ms): in NORMAL without a trigger the wait lasts 2 s, and new settings would wait for it.
 #[allow(clippy::too_many_arguments)]
-pub fn acquire_batch_until<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, mut log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<u32, String> {
+pub fn acquire_batch_until<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<u32, String> {
+    acquire_batch_idle(st, s, p, bar, c2h, dma, armed, wait_ms, log, stop, || false)
+}
+
+/// `acquire_batch_until` that lets the caller work while the ring fills: `idle()` is called instead of the sleep
+/// between two looks at the frame count, and the count is read after every call, so the read waits at most one call.
+/// `idle` returns false when it has nothing to do (the wait then sleeps as without it).
+#[allow(clippy::too_many_arguments)]
+pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, mut log: impl FnMut(String), stop: impl Fn() -> bool, mut idle: impl FnMut() -> bool) -> Result<u32, String> {
     let nf = frames(s, p);
     let arm = if armed { wait_steps(p) } else { st.arm_steps(s, p) };
     execute_bus_until(&arm, bar, c2h, dma, &mut log, &stop)?;
     let t = std::time::Instant::now();
     let mut count = bar.rd(0x4010).wrapping_add(1).min(nf);
     while count < nf && t.elapsed().as_millis() < wait_ms as u128 {
-        std::thread::sleep(std::time::Duration::from_micros(200));
+        if !idle() {
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
         count = bar.rd(0x4010).wrapping_add(1).clamp(1, nf);
     }
     log(format!("{} of {} frames after {:.1} ms", count, nf, t.elapsed().as_secs_f64() * 1e3));

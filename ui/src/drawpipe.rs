@@ -3,8 +3,8 @@
 //! Deposit pipeline (fork, docs/fork/perf-plan.md item 1): every acquired frame is used. In `batch` mode the
 //! acquisition thread decodes only the newest frame of a batch for the UI queue (the record for measurements, layers
 //! and the record path) and hands the read-out buffer itself (no copy) with the other frames to the deposit workers,
-//! one per little core. The workers claim the frames a few at a time; while the next batch records (armed ahead,
-//! OOS_PREARM) the acquisition thread claims single frames too (`help`), until the FPGA's ring is full. Each frame is
+//! one per little core. The workers claim the frames a few at a time; while the FPGA's ring fills with the next batch
+//! the acquisition thread claims single frames too (`help`, from `seq::acquire_batch_idle`). Each frame is
 //! decoded into kept vectors and drawn with the fast path (`draw_frame`, the same function as `Ui::fast_draw`) into
 //! the claimer's own maps, with the screen mapping the UI published (`View`); the trigger statistics and the cheap
 //! measurements (framestats.rs) are counted with it. Once per screen refresh the UI adds the maps to its phosphor
@@ -393,7 +393,7 @@ impl Pipe {
         b
     }
 
-    /// From the acquisition thread while it waits for the next batch: draws one frame of the oldest open batch into the
+    /// From the acquisition thread while the ring fills (`seq::acquire_batch_idle`): draws one frame of the oldest open batch into the
     /// helper's maps. False when there is none (the helper's maps then go to the UI).
     pub fn help(&self, h: &mut Helper) -> bool {
         let b = {

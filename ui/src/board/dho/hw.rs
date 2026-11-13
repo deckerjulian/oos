@@ -908,16 +908,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let g = out.lock().unwrap();
                 (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1)
             };
-            // armed ahead: the FPGA records the next batch; until its ring is full this thread draws frames of the
-            // last one (drawpipe.rs), one at a time, so the read waits at most one frame longer
-            if let Some(pipe) = crate::drawpipe::pipe().filter(|_| ahead) {
-                use oos_hal::dho::bus::Bus;
-                let nf = seq::frames(&b, &p);
-                let t = std::time::Instant::now();
-                while bar.rd(0x4010).wrapping_add(1) < nf && t.elapsed() < std::time::Duration::from_millis(25) && pipe.help(&mut helper) {}
-                pipe.help_done(&mut helper);
+            // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
+            // the frame count, so the read waits at most one frame longer
+            let pipe = crate::drawpipe::pipe();
+            let idle = || pipe.is_some_and(|x| x.help(&mut helper));
+            let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed, idle);
+            if let Some(x) = pipe {
+                x.help_done(&mut helper);
             }
-            match seq::acquire_batch_until(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed) {
+            match got {
                 Ok(count) => {
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
