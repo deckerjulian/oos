@@ -95,3 +95,8 @@ measured values; this is not a claim of DPOJET compliance equivalence.
 
 SSH provisioning and host-key/public-key management are described in
 [SSH access](ssh.md). Desktop OOS does not start an SSH server.
+
+Auto deskew aligns nearby transitions on shown sources; use a common known edge
+for calibration. It preserves hidden-source corrections and native file metadata.
+Clear deskew removes the calibration. Decoding and measurement alignment use the
+corrected physical origins rather than modifying waveform sample values.
