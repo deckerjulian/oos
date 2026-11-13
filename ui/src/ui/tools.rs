@@ -152,6 +152,11 @@ impl Ui {
             };
             v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit });
         }
+        for &(id, a, b, c, d) in &self.m.cat {
+            if let Some(row) = self.cat_row(id, a, b, c, d) {
+                v.push(row);
+            }
+        }
         v
     }
 
@@ -293,7 +298,7 @@ impl Ui {
 
     /// Refuse a full selection explicitly rather than silently removing an older measurement.
     pub(super) fn meas_make_room(&mut self) -> bool {
-        if self.m.meas.len() + self.m.meas2.len() >= MEAS_MAX {
+        if self.m.meas.len() + self.m.meas2.len() + self.m.cat.len() >= MEAS_MAX {
             self.toast("Measurement selection is full. Remove an item in Selected before adding another.");
             return false;
         }

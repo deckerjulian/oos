@@ -371,40 +371,20 @@ mod tests {
     }
 
     #[test]
-    fn source_settings_and_all_selected_items_are_reachable() {
+    fn the_catalog_opens_settings_and_adds_from_the_time_group() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.meas.clear();
-        for &kind in &ALL_MEAS { ui.activate(Item::MeasAdd(kind)); }
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);
-        if let Ok(directory) = std::env::var("OOS_SHOT_DIR") {
-            let mut canvas = Canvas::new(W, H);
-            ui.render(&mut canvas);
-            let _ = std::fs::write(std::path::Path::new(&directory).join("measurement-chooser.png"), crate::store::png_of(&canvas));
-        }
-        let layout = ui.dlg_layout().unwrap();
-        assert!(layout.rows.iter().any(|row| row.it == Item::MeasSrc));
-        assert!(layout.rows.iter().any(|row| row.it == Item::Open(MenuId::Measure)));
-        assert!(layout.rows.iter().any(|row| row.it == Item::Open(MenuId::MeasPair)));
-        let group = Ui::measurement_group_rect(6);
-        ui.tap(group.x + group.w / 2, group.y + group.h / 2);
-        assert_eq!(ui.meas_category, 6);
-        let mut visited = HashSet::new();
-        for page in 0..3 {
-            assert_eq!(ui.meas_catalog_page, page);
-            let layout = ui.dlg_layout().unwrap();
-            for row in &layout.rows {
-                assert!(row.ctrl.y + row.ctrl.h <= layout.r.y + layout.r.h);
-                if let Item::MeasAdd(kind) = row.it { visited.insert(kind); }
-            }
-            let (_, next) = Ui::catalog_page_buttons();
-            ui.tap(next.x + next.w / 2, next.y + next.h / 2);
-        }
-        assert_eq!(visited.len(), ALL_MEAS.len());
-        let last = *ALL_MEAS.last().unwrap();
-        let row = ui.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasAdd(last)).unwrap();
-        ui.tap(row.ctrl.x + row.ctrl.w / 2, row.ctrl.y + row.ctrl.h / 2);
-        assert!(!ui.m.meas.contains(&(last, WaveId::Ch(0))), "selected measurement can be removed");
+        let settings = ui.catalog_settings_rect();
+        ui.tap(settings.x + 4, settings.y + 4);
+        assert_eq!(ui.menu, MenuId::Measure, "settings stays reachable from the catalog");
+        ui.close_menu();
+        ui.key(key::MEASURE);
+        ui.catalog_add(super::super::meascatalog::Cat::LowTime);
+        assert!(ui.m.meas.iter().any(|e| e.0 == Meas::LowTime));
+        ui.catalog_add(super::super::meascatalog::Cat::LowTime);
+        assert!(!ui.m.meas.iter().any(|e| e.0 == Meas::LowTime), "adding again removes it");
     }
 
     #[test]

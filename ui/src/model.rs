@@ -904,6 +904,8 @@ pub struct Model {
     pub meas: Vec<(Meas, WaveId)>,
     /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
     pub meas2: Vec<(usize, WaveId, WaveId)>,
+    /// Catalog results that are not a `Meas` row: id, source A, source B, third source, fourth source.
+    pub cat: Vec<(u16, WaveId, WaveId, WaveId, WaveId)>,
     pub dvm_on: bool,
     pub dvm_src: usize,
     pub dvm_mode: usize,
@@ -1331,6 +1333,7 @@ impl Default for Model {
             grid: Grid::Full,
             meas: Vec::new(),
             meas2: Vec::new(),
+            cat: Vec::new(),
             dvm_on: false,
             dvm_src: 0,
             dvm_mode: 0,

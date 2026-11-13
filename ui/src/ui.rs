@@ -33,6 +33,7 @@ mod measlabels;
 mod overclock;
 mod tools;
 mod measurement_nav;
+mod meascatalog;
 pub(crate) mod facts;
 mod update;
 mod viewmore;
@@ -762,6 +763,13 @@ pub enum PowerAction {
 
 pub struct Ui {
     meas_category: usize,
+    /// Add-measurements catalog: tab, selected button, which groups are open, scroll, and the extra sources.
+    cat_tab: u8,
+    cat_sel: u16,
+    cat_open: [u16; 6],
+    cat_scroll: i32,
+    cat_c: WaveId,
+    cat_d: WaveId,
     meas_page: usize,
     meas_catalog_page: usize,
     workflow_hold: Option<workflow::LiveSession>,
@@ -1009,6 +1017,12 @@ impl Ui {
         }
         let mut ui = Ui {
             meas_category: 0,
+            cat_tab: 0,
+            cat_sel: 1,
+            cat_open: [1; 6],
+            cat_scroll: 0,
+            cat_c: WaveId::Ch(2),
+            cat_d: WaveId::Ch(3),
             meas_page: 0,
             meas_catalog_page: 0,
             workflow_hold: None,
@@ -1160,13 +1174,13 @@ impl Ui {
 
     /// Measurement results in a panel on the right instead of the strip under the grid.
     fn results_panel(&self) -> bool {
-        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty())
+        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty())
     }
 
     /// Channels with measurements, in the order of their first measurement (one strip row each).
     fn meas_groups(&self) -> Vec<WaveId> {
         let mut v = Vec::new();
-        for id in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)) {
+        for id in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)).chain(self.m.cat.iter().map(|e| e.1)) {
             if !v.contains(&id) {
                 v.push(id);
             }
@@ -1181,7 +1195,7 @@ impl Ui {
 
     /// Strip rows of the measurements of channel `c`: six to a row.
     fn meas_strip_rows(&self, id: WaveId) -> i32 {
-        let n = self.m.meas.iter().filter(|e| e.1 == id).count() + self.m.meas2.iter().filter(|e| e.1 == id).count();
+        let n = self.m.meas.iter().filter(|e| e.1 == id).count() + self.m.meas2.iter().filter(|e| e.1 == id).count() + self.m.cat.iter().filter(|e| e.1 == id).count();
         n.div_ceil(tools::STRIP_PER_ROW) as i32
     }
 
@@ -4308,7 +4322,7 @@ impl Ui {
             MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
-            MenuId::MeasAdd => self.measurement_catalog(),
+            MenuId::MeasAdd => Vec::new(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
@@ -4454,6 +4468,7 @@ impl Ui {
             let requested = self.refs[i].as_ref().is_some_and(|reference| reference.on)
                 || self.m.meas.iter().any(|entry| entry.1 == id)
                 || self.m.meas2.iter().any(|entry| entry.1 == id || entry.2 == id)
+                || self.m.cat.iter().any(|entry| entry.1 == id || entry.2 == id || entry.3 == id || entry.4 == id)
                 || meter == Some(i);
             if !requested {
                 // A hidden multi-million-sample SIM record must not hold up
@@ -6582,7 +6597,7 @@ impl Ui {
         if !self.menu_open {
             return None;
         }
-        if self.menu == MenuId::MeasAdd { return Some(self.measurement_chooser_layout()); }
+        if self.menu == MenuId::MeasAdd { return Some(self.catalog_dialog()); }
         if self.menu == MenuId::Main {
             return Some(self.main_layout());
         }
@@ -6654,6 +6669,10 @@ impl Ui {
     }
 
     fn draw_menu(&self, cv: &mut Canvas) {
+        if self.menu == MenuId::MeasAdd {
+            self.draw_catalog(cv);
+            return;
+        }
         let Some(d) = self.dlg_layout() else { return };
         let f = &self.fonts;
         cv.round(d.r, 8, ACCENT, 255);
@@ -6678,7 +6697,6 @@ impl Ui {
             btn(cv, b, BTN, BTN_BORDER);
             cv.text_in(&f.sb, b, 1, "Back", TEXT);
         }
-        self.draw_measurement_groups(cv);
         for (r, name) in &d.heads {
             cv.text_in(&f.sb, *r, 0, name, DIM);
         }
@@ -6763,6 +6781,9 @@ impl Ui {
 
     /// Tap inside the menu dialog; false when (x, y) is outside it.
     fn tap_menu(&mut self, x: i32, y: i32) -> bool {
+        if self.menu_open && self.menu == MenuId::MeasAdd {
+            return self.catalog_tap(x, y);
+        }
         if self.measurement_group_tap(x, y) { return true; }
         let Some(d) = self.dlg_layout() else { return false };
         if !d.r.contains(x, y) {
@@ -9037,7 +9058,7 @@ mod tests {
         ];
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);
-        let settings = ui.dlg_layout().unwrap().rows.iter().find(|row| row.it == Item::Open(MenuId::Measure)).unwrap().ctrl;
+        let settings = ui.catalog_settings_rect();
         ui.tap(settings.x + settings.w / 2, settings.y + settings.h / 2);
         assert_eq!(ui.menu, MenuId::Measure, "settings is visible in the chooser");
         assert_eq!(ui.items(MenuId::Measure), rest);

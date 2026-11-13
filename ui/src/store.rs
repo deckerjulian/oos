@@ -239,6 +239,9 @@ pub fn setup_text(m: &Model) -> String {
     kv("la_window", (m.la_win + 1).to_string());
     kv("meas", m.meas.iter().map(|&(k, id)| format!("{:?}:{}", k, id.token())).collect::<Vec<_>>().join(" "));
     kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a.token(), b.token())).collect::<Vec<_>>().join(" "));
+    if !m.cat.is_empty() {
+        kv("cat", m.cat.iter().map(|&(k, a, b, c, d)| format!("{}:{}:{}:{}:{}", k, a.token(), b.token(), c.token(), d.token())).collect::<Vec<_>>().join(" "));
+    }
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
     kv("counter", format!("{} {} {} {}", m.cnt_on, m.cnt_src, m.cnt_mode, m.cnt_digits));
     for c in 0..NCH {
@@ -539,6 +542,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 out.push((p_idx(k, crate::ui::PAIRS_N)?, WaveId::parse(a)?, WaveId::parse(b)?));
             }
             m.meas2 = out;
+        }
+        "cat" => {
+            let mut out = Vec::new();
+            for e in v.split_whitespace() {
+                let f: Vec<&str> = e.split(':').collect();
+                let [k, a, b, c, d] = f[..] else { return Err(format!("not item:a:b:c:d: {}", e)) };
+                let id = k.parse::<u16>().map_err(|_| format!("not a catalog id: {}", k))?;
+                out.push((id, WaveId::parse(a)?, WaveId::parse(b)?, WaveId::parse(c)?, WaveId::parse(d)?));
+            }
+            m.cat = out;
         }
         "dvm" => {
             let f: Vec<&str> = v.split_whitespace().collect();
