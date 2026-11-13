@@ -13,8 +13,8 @@ pub(super) enum TableKind {
     Search,
 }
 
-/// Second pane under the plot.
-pub const PANES: [&str; 5] = ["Off", "Spectrum", "Results", "Events", "Trend"];
+/// What Split puts under the plot. 0 is traces: two stacked windows, and this pane is not drawn.
+pub const PANES: [&str; 5] = ["Traces", "Spectrum", "Results", "Events", "Trend"];
 pub(super) const PANE_SPECTRUM: usize = 1;
 pub(super) const PANE_RESULTS: usize = 2;
 pub(super) const PANE_EVENTS: usize = 3;

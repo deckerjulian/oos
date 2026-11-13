@@ -843,6 +843,12 @@ impl Ui {
         let r = self.pane_rect();
         if Self::pane_close(r).contains(x, y) {
             self.m.pane = 0;
+            self.m.split_pane = 0;
+            // Split with no number pane is the two stacked traces
+            if self.m.density == Density::Split && self.m.win_layout == WinLayout::One {
+                self.m.win_layout = WinLayout::Rows;
+                self.spread_wins();
+            }
             return true;
         }
         if !r.contains(x, y) {

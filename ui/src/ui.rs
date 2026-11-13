@@ -427,9 +427,8 @@ enum Item {
     Persist,
     Intensity,
     GridStyle,
-    /// waveform windows (ui/windows.rs)
+    /// view density (ui/windows.rs): Scope, Full, Split, Four
     WinLayout,
-    FullScreen,
     WinCh(usize),
     WinMath(usize),
     WinLa,
@@ -731,7 +730,8 @@ pub struct Ui {
     wins: Vec<Rect>,
     /// the window being drawn
     cur_win: usize,
-    /// the plot over the whole screen, without the top bar and the cards
+    /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
+    /// shows the waveform, so the panel keeps the controls.
     full: bool,
     vmaxz: [u32; NCH],
     rng: Rng,
@@ -1115,8 +1115,8 @@ impl Ui {
         self.plot_bottom() - 2 - self.plot_top() - under
     }
 
-    /// Full screen: the plot takes the top bar and the cards too. Not with the touch lock, whose way out is the Menu
-    /// button.
+    /// Full density drawn on the panel. Not while the external display shows the waveform (the panel stays the
+    /// controls), and not with the touch lock, whose way out is the Menu button.
     fn full_on(&self) -> bool {
         self.full && !self.m.touch_lock
     }
@@ -1230,8 +1230,7 @@ impl Ui {
         self.m.la_win = if self.m.la_on() { i % n } else { 0 };
     }
 
-    /// The full-screen button at the top right of the plot: (drawn, touch area).
-    /// One tap enlarges the waveform over the 1024 x 600 panel; another tap brings the bars back. No extra gesture.
+    /// The expand button at the top right of the plot, the shortcut between Scope and Full: (drawn, touch area).
     fn full_btn(&self) -> (Rect, Rect) {
         let g = self.grid;
         // left of the view button while an analysis view has the plot
@@ -1251,7 +1250,9 @@ impl Ui {
         let col = if on { AMBER } else { TEXT };
         for (sx, sy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
             // corner of the bracket, and the way its arms go (x, y)
-            let (px, py, ax, ay) = if on { (cx + sx * 4, cy + sy * 3, sx, sy) } else { (cx + sx * 12, cy + sy * 9, -sx, -sy) };
+            // pointing out while Full is selected, including when the panel keeps its bars for the external display
+            let back = self.m.density == Density::Full && !self.m.touch_lock;
+            let (px, py, ax, ay) = if back { (cx + sx * 4, cy + sy * 3, sx, sy) } else { (cx + sx * 12, cy + sy * 9, -sx, -sy) };
             let (hx0, hx1) = (px.min(px + ax * (l - 1)), px.max(px + ax * (l - 1)));
             let (vy0, vy1) = (py.min(py + ay * (l - 1)), py.max(py + ay * (l - 1)));
             // 2 px thick, the second pixel on the side of the arms
@@ -1959,17 +1960,19 @@ impl Ui {
         self.draw_full_btn(cv);
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
+        // Full on the external display is the plot and the strip. The statistics card and a lower pane stay on the panel.
+        if self.hdmi_snap_want && self.m.density == Density::Full {
+            self.capture_hdmi(cv);
+        }
         if self.pane_h() > 0 {
             self.draw_pane(cv);
             self.draw_pane_close(cv);
         }
         self.draw_results(cv);
         self.draw_table(cv);
-        // HDMI workspace: the waveform area as it is now, before the bars and the menus go over it
-        if self.hdmi_snap_want {
-            let (y0, y1) = (TOP.h, BOTTOM.y);
-            self.hdmi_snap.clear();
-            self.hdmi_snap.extend_from_slice(&cv.px[(y0 * W) as usize..(y1 * W) as usize]);
+        // waveform on the external display: the band between the bars, before the bars and the menus go over it
+        if self.hdmi_snap_want && self.m.density != Density::Full {
+            self.capture_hdmi(cv);
         }
         if !self.full_on() {
             self.draw_top(cv);
@@ -3898,7 +3901,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -4582,7 +4585,7 @@ impl Ui {
             Item::SearchTable => "Event list",
             Item::SearchSave => "Save events",
             Item::StoreBin => "Save waveform (binary)",
-            Item::PaneSel => "Second pane",
+            Item::PaneSel => "Lower",
             Item::TrendSel(0) => "Trend chart 1",
             Item::TrendSel(_) => "Trend chart 2",
             Item::DecSrc => "Source",
@@ -5295,7 +5298,17 @@ impl Ui {
             }
             Item::PaneSel => {
                 self.m.pane = (self.m.pane as i32 + d).rem_euclid(tables::PANES.len() as i32) as usize;
-                if self.m.pane != 0 && self.pane_h() == 0 {
+                if self.m.density == Density::Split {
+                    self.m.split_pane = self.m.pane;
+                    let prev = self.m.win_layout;
+                    self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
+                    if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
+                        self.spread_wins();
+                        if self.m.zoom {
+                            self.toast("Windows show while zoom is off");
+                        }
+                    }
+                } else if self.m.pane != 0 && self.pane_h() == 0 {
                     self.toast("No room for a second pane here: fewer LA lanes or the scope view");
                 }
             }
@@ -5412,6 +5425,9 @@ impl Ui {
             return;
         }
         self.settings_changed();
+        if it == Item::Hdmi {
+            self.sync_full();
+        }
     }
 
     fn settings_changed(&mut self) {
@@ -5696,6 +5712,13 @@ impl Ui {
         }
     }
 
+    /// The band the external display scales when it shows the waveform: between the top bar and the cards.
+    fn capture_hdmi(&mut self, cv: &Canvas) {
+        let (y0, y1) = (TOP.h, BOTTOM.y);
+        self.hdmi_snap.clear();
+        self.hdmi_snap.extend_from_slice(&cv.px[(y0 * W) as usize..(y1 * W) as usize]);
+    }
+
     fn toast_saved(&mut self, p: &std::path::Path, r: std::io::Result<()>) {
         match r {
             Ok(()) => {
@@ -5782,6 +5805,7 @@ impl Ui {
                 }
                 self.m = m;
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
+                self.sync_full();
                 if self.mask.is_none() {
                     self.m.mask_on = false;
                 }
@@ -6926,7 +6950,7 @@ impl Ui {
             return;
         }
         if self.full_btn().1.contains(x, y) {
-            self.full = !self.full;
+            self.toggle_expand();
             return;
         }
         if self.view_on() && self.view_btn().contains(x, y) {
