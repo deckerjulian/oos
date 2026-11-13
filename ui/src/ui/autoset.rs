@@ -4,8 +4,9 @@
 //! Auto set-up on the hardware, for the channels that are on. A record only shows what the scale and time base let
 //! through, so this one acquires: a wide scale for the levels in Peak mode, then a scale that fits, then time bases from
 //! fast to slow until each channel shows a steady period with most of its height (fast first: a coarse time base can
-//! fold a fast signal into a period that is not there). A channel without a period keeps its settings, one that is off stays off. With no signal on any
-//! channel the set-up stays as it was.
+//! fold a fast signal into a period that is not there). A channel with a signal but no steady period keeps the fitted
+//! scale and level, at the time base that showed most of its height; one without a signal keeps its settings, one that
+//! is off stays off. With no signal on any channel the set-up stays as it was.
 
 use super::*;
 use crate::wave::{periodic, place, Stats};
@@ -43,6 +44,8 @@ pub struct AutoRun {
     /// the height of the levels stage, and of the window that gave the period
     full: [f32; NCH],
     swing: [f32; NCH],
+    /// per channel: the height and time base (index) of the search window that showed most of it
+    best: [Option<(f32, usize)>; NCH],
     /// `Model::hw_stamp` of the current stage: hardware records with an older one are from before it
     stamp: u64,
 }
@@ -96,7 +99,7 @@ impl Ui {
         m.run = RunState::Run;
         m.hw_stamp += 1;
         let stamp = m.hw_stamp;
-        self.auto = Some(AutoRun { back, stamp, stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
+        self.auto = Some(AutoRun { back, stamp, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
         self.mark_changed();
         self.toast("Auto set-up...");
     }
@@ -173,6 +176,9 @@ impl Ui {
                     // stand higher than a weak fast signal
                     let (lo, hi) = self.auto_levels(c);
                     let swing = hi - lo;
+                    if a.best[c].is_none_or(|b| swing > b.0) {
+                        a.best[c] = Some((swing, self.m.tscale));
+                    }
                     if swing >= 0.4 * a.full[c] && swing >= 1.5 * a.swing[c] {
                         if let Some(p) = periodic(&self.record_volts(c), dt) {
                             (a.period[c], a.swing[c], a.lv[c]) = (Some(p), swing, (lo, hi));
@@ -225,9 +231,13 @@ impl Ui {
     fn auto_end(&mut self, a: AutoRun) {
         self.m.auto_fast = false;
         eprintln!("oos-ui auto: levels {:?}, periods {:?}", a.lv, a.period);
-        let found: Vec<(usize, Stats, f64)> = (0..n_ch())
-            .filter_map(|c| a.period[c].map(|p| (c, Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..Stats::default() }, p)))
-            .collect();
+        let stats = |c: usize| Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..Stats::default() };
+        // the channels with a period first (the trigger goes to the first), then those with a signal but no steady
+        // period (noise, glitches, an irregular bus): they keep the fitted scale and level, the time base comes from the
+        // window that showed most of their height
+        let mut found: Vec<(usize, Stats, f64)> = (0..n_ch()).filter_map(|c| a.period[c].map(|p| (c, stats(c), p))).collect();
+        let timed = !found.is_empty();
+        found.extend((0..n_ch()).filter(|&c| a.want[c] && a.period[c].is_none()).map(|c| (c, stats(c), f64::NAN)));
         if found.is_empty() {
             // the stamp only counts up: records of the run must not pass as taken with the set-up restored
             let stamp = self.m.hw_stamp;
@@ -236,7 +246,7 @@ impl Ui {
             self.toast("Auto set-up: no signal found");
         } else {
             // the others as they were: on, with their scale
-            for c in (0..n_ch()).filter(|&c| a.period[c].is_none()) {
+            for c in (0..n_ch()).filter(|&c| !found.iter().any(|f| f.0 == c)) {
                 self.m.ch[c] = a.back.ch[c].clone();
             }
             self.m.acq = a.back.acq;
@@ -246,9 +256,15 @@ impl Ui {
                 self.m.ch[c].bw = a.back.ch[c].bw;
             }
             place(&mut self.m, &found);
-            self.toast("Auto set-up");
-            // the views of the signal on a bar in the waveform window
-            self.auto_bar = Some(self.now);
+            if timed {
+                self.toast("Auto set-up");
+                // the views of the signal on a bar in the waveform window
+                self.auto_bar = Some(self.now);
+            } else {
+                self.m.tscale = a.best[found[0].0].map_or(a.back.tscale, |b| b.1);
+                self.m.tfine = 1.0;
+                self.toast("Auto set-up: no steady period");
+            }
         }
         self.dirty_map = true;
         self.mark_changed();
@@ -545,16 +561,25 @@ mod tests {
     /// A hardware-like record of CH1 under settings stamp `stamp`: a 1 kHz square from `lo` to `hi` V over the window
     /// of the time base set now, 8000 samples, the hardware point in the middle.
     fn hw_record(ui: &Ui, stamp: u64, lo: f32, hi: f32) -> crate::wave::Record {
+        hw_record_of(ui, stamp, &|t| if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { hi } else { lo })
+    }
+
+    /// As `hw_record` with the signal `sig` of the time (s).
+    fn hw_record_of(ui: &Ui, stamp: u64, sig: &dyn Fn(f64) -> f32) -> crate::wave::Record {
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 8000usize;
         let dt = window * 1.25 / n as f64;
-        let v: Vec<f32> = (0..n).map(|i| if ((i as f64 * dt + 0.3e-3) % 1e-3) < 0.5e-3 { hi } else { lo }).collect();
+        let v: Vec<f32> = (0..n).map(|i| sig(i as f64 * dt)).collect();
         let f = std::sync::Arc::new(crate::board::Frame { seq: 1, dt, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], stamp, ..Default::default() });
         crate::board::to_record(&f, &ui.m, 3600, window, ui.m.delay as f64 - window / 2.0)
     }
 
     /// Runs an auto set-up on hardware-like records (`hw_record`) without letting time pass; returns the stages seen.
     fn run_hw(ui: &mut Ui, lo: f32, hi: f32) -> Vec<String> {
+        run_hw_of(ui, &|t| if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { hi } else { lo })
+    }
+
+    fn run_hw_of(ui: &mut Ui, sig: &dyn Fn(f64) -> f32) -> Vec<String> {
         for c in 0..NCH {
             ui.m.ch[c].on = c == 0;
         }
@@ -565,10 +590,10 @@ mod tests {
             let stamp = a.stamp;
             stages.push(match a.stage { Stage::Wide => "wide".to_string(), Stage::Fit => "fit".to_string(), Stage::Search(i) => format!("search {}", i) });
             // a record of the stage before does not count
-            ui.last[0] = Some(hw_record(ui, stamp - 1, lo, hi));
+            ui.last[0] = Some(hw_record_of(ui, stamp - 1, sig));
             ui.auto_step();
             assert_eq!(ui.auto.as_ref().map(|a| a.stamp), Some(stamp), "an old record ended a stage");
-            ui.last[0] = Some(hw_record(ui, stamp, lo, hi));
+            ui.last[0] = Some(hw_record_of(ui, stamp, sig));
             ui.auto_step();
         }
         panic!("auto set-up never ended: {:?}", stages);
@@ -593,6 +618,43 @@ mod tests {
         let stages = run_hw(&mut ui, -1.0, 2.0);
         assert_eq!(&stages[..2], ["wide", "search 0"]);
         assert!(ui.auto.is_none() && (ui.m.trig_level - 0.5).abs() < 0.1, "level {}", ui.m.trig_level);
+    }
+
+    // Break it catches: an auto set-up that throws away the scale and level it found because the signal has no steady
+    // period (the noisy 5 V signal of docs/fork/trigger-lockin.md), or one that keeps a channel without a signal
+    #[test]
+    fn a_signal_without_a_steady_period_keeps_scale_and_level() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let back = ui.m.clone();
+        // 0..5 V pulses at irregular distances (0.2 to 1.9 ms), seen at every time base
+        let edges: Vec<f64> = {
+            let (mut t, mut x, mut v) = (0.0f64, 7u32, Vec::new());
+            while t < 1.0 {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                t += 0.2e-3 + (x >> 8) as f64 / (1u64 << 24) as f64 * 1.7e-3;
+                v.push(t);
+            }
+            v
+        };
+        let sig = move |t: f64| {
+            let k = edges.partition_point(|&e| e <= t);
+            if k % 2 == 1 { 5.0 } else { 0.0 }
+        };
+        run_hw_of(&mut ui, &sig);
+        assert!(ui.auto.is_none());
+        assert!(ui.m.ch[0].on && ui.m.ch[0] != back.ch[0], "the fit stays");
+        let vpd = ui.m.ch[0].volts_per_div();
+        assert!((5.0 / vpd) > 2.0 && (5.0 / vpd) <= 8.0, "5 V over {} div", 5.0 / vpd);
+        assert!((ui.m.trig_level - 2.5).abs() < 0.3, "level {}", ui.m.trig_level);
+        assert_eq!(ui.m.trig_src, 0);
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("no steady period")));
+        assert!(!ui.auto_bar_on());
+        // a flat input is still no signal: the set-up stays
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let back = ui.m.clone();
+        run_hw_of(&mut ui, &|_| 0.004);
+        assert_eq!(ui.m.ch[0], back.ch[0]);
+        assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("no signal")));
     }
 
     #[test]
