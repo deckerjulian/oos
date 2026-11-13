@@ -74,15 +74,24 @@ ADC mode and session:
    Correction = rounded difference in steps; up to 8 rounds; tolerance 0.6 steps (the register has 1-step resolution;
    the mean of 2^18 samples per core is good to about 0.05 step). Codes per step: 16, or 32 where a digital gain of 2
    or more puts the ADC x2 of 0x105c before the measure unit.
-3. Channels are left alone when they clip, when their mean is more than 256 steps from mid-scale (core gain
+3. Quietness gate: a channel is matched only when every slot's samples stay within 64 steps (max - min) and every
+   slot's mean moves by at most 0.5 step over three runs 20 ms apart. Matching to the channel mean assumes each core
+   sees the same signal on average; a signal near a multiple of fs/8 would otherwise be trimmed into the offsets.
+   One that is not locked to the ADC clock moves the core means from run to run and is refused; one that is locked
+   (the built-in generator) cannot be told from an offset, so nothing is trimmed while the generator runs. Inputs open
+   or terminated is still the safe state, as for the stock calibration.
+4. Channels are left alone when they clip, when their mean is more than 256 steps from mid-scale (core gain
    differences would then move the core means by more than 0.25 step), or, with two or more channels, when their
    cores start more than 8 steps apart (a slot grouping that mixes channels). The mode is then tried again at a later configuration, at most 5
    times per session.
-4. The new offsets go into the in-memory cal_adc payload, so later switches back to the mode apply them, and the
-   payload is saved as `/oos/cal/cal_adc.hex` when it changed. OOS loads its own file first at the next start.
+5. The new offsets go into the in-memory cal_adc payload, so later switches back to the mode apply them, and into
+   `/oos/cal/core_offsets.hex` (the trimmed modes only, a `calfile` container). That file is read only while the key
+   is on and is laid over the cal_adc.hex in use (Rigol's, or the self-cal's `/oos/cal/cal_adc.hex`). At the first
+   configuration of a mode the kept values are written to the ADC before the match starts.
 
-What it never does: write any Rigol file (`/rigol/data/cal_*.hex`, RKey, vendor data). Back to the stock offsets:
-delete `/oos/cal/cal_adc.hex` (OOS then loads the Rigol file again) and turn the key off.
+What it never does: write or modify any Rigol file (`/rigol/data/cal_*.hex`, RKey, vendor data) or cal_adc.hex. The
+Rigol files are only read (`calfile::load_first`, `std::fs::read`); `calfile::save` refuses any path under /rigol.
+Undo: turn the key off. The overlay is then not read, and the offsets are those of the cal_adc.hex as before.
 
 Not changed: the ADC-cores item of the user self-cal keeps the stock 1.5-step tolerance and target; the runtime match
 runs after it anyway.
@@ -107,7 +116,8 @@ frame mean, in codes; report the spread (max - min of the phase means) averaged 
    per-lane check (dvm.md, lanes 0..3 against the software value).
 2. Turn on: `cal.core_offset = tight`, restart oos-ui, set each channel set once (each ADC mode used). The log shows
    `core offsets of ADC mode m: [..] -> [..], order [..], x steps left, matched .. skipped ..` per mode. Check that
-   `/oos/cal/cal_adc.hex` appeared and `/rigol/data/cal_adc.hex` is unchanged (sha256 before and after).
+   `/oos/cal/core_offsets.hex` appeared and `/rigol/data/cal_adc.hex` is unchanged (sha256 before and after).
+   With the probe-comp signal on the channel the log must say skipped (quietness gate).
 3. After: the same table. Expect the phase spread at 62.5 and 312.5 MSa/s to drop to about 1 step (16 to 19 codes),
    the HW 16 floor at 100 mV/div towards the SW 16 value, the DVM lane values within about 1 step of each other.
 4. A restart with the key on: the log shows no change for modes already matched (offsets equal), so nothing is saved

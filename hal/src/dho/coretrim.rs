@@ -23,6 +23,8 @@ pub trait TrimHw {
     fn slots(&mut self) -> Option<[Slot; 8]>;
     /// Writes the offset register of core `core` (-1024..1023 ADC steps).
     fn set_offset(&mut self, core: usize, o: i32);
+    /// Waits between the gate's runs.
+    fn wait_ms(&mut self, _ms: u32) {}
 }
 
 /// Tolerance in ADC steps: half the register's 1-step resolution plus measurement noise (the mean of 2^18 samples
@@ -40,6 +42,17 @@ pub const MID_WINDOW: f64 = 256.0;
 /// different channels together. With one channel every slot carries it, and a core far off is what the trim is for
 /// (unit round 6: one core about 12 steps high at 1.25 GSa/s).
 pub const SPREAD_MAX: f64 = 8.0;
+/// Quietness gate. Matching to the channel mean assumes every core sees the same signal on average; a signal that
+/// is not quiet, or that is correlated with the interleave (near a multiple of fs/8), would be trimmed into the
+/// offsets. A channel is matched only when every slot's samples stay within `QUIET_RANGE` steps (max - min of the
+/// 12-bit codes; an open input spans about 40) and every slot's mean stays within `STABLE` steps over `GATE_RUNS`
+/// runs `GATE_WAIT_MS` apart: an fs/8-correlated signal that is not locked to the ADC clock moves the core means from
+/// run to run. A signal locked to the ADC clock (the built-in generator) cannot be told from an offset: the caller
+/// does not trim while the generator runs.
+pub const QUIET_RANGE: u16 = 64;
+pub const STABLE: f64 = 0.5;
+pub const GATE_RUNS: usize = 3;
+pub const GATE_WAIT_MS: u32 = 20;
 /// Mid-scale on the 16-bit measure scale.
 const MID: f64 = 32768.0;
 
@@ -109,7 +122,19 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
     let mut matched = 0u32;
     let mut skipped = 0u32;
     let mut residual: f64 = 0.0;
-    let first = hw.slots().ok_or("measure unit not answering")?;
+    let mut runs = Vec::with_capacity(GATE_RUNS);
+    for i in 0..GATE_RUNS {
+        if i > 0 {
+            hw.wait_ms(GATE_WAIT_MS);
+        }
+        runs.push(hw.slots().ok_or("measure unit not answering")?);
+    }
+    let first = runs[0];
+    let quiet = |k: usize| runs.iter().all(|r| r[k].max.saturating_sub(r[k].min) <= QUIET_RANGE);
+    let stable = |k: usize| {
+        let (lo, hi) = runs.iter().fold((f64::MAX, f64::MIN), |(a, b), r| (a.min(r[k].mean), b.max(r[k].mean)));
+        hi - lo <= STABLE * lsb[k]
+    };
     let usable: Vec<&(usize, Vec<usize>)> = groups
         .iter()
         .filter(|(c, sl)| {
@@ -117,7 +142,7 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
             let clipped = sl.iter().any(|&k| first[k].min == 0 || first[k].max >= 4095);
             let near = sl.iter().all(|&k| (mean - MID).abs() <= MID_WINDOW * lsb[k]);
             let alike = groups.len() == 1 || sl.iter().all(|&k| (first[k].mean - mean).abs() <= SPREAD_MAX * lsb[k]);
-            let ok = sl.len() > 1 && !clipped && near && alike;
+            let ok = sl.len() > 1 && !clipped && near && alike && sl.iter().all(|&k| quiet(k) && stable(k));
             if ok {
                 matched |= 1 << c;
             } else {
@@ -160,6 +185,60 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
     Err(format!("core offsets did not converge in {} rounds, {:.2} steps left", ROUNDS, residual))
 }
 
+/// The trimmed offsets OOS keeps (`/oos/cal/core_offsets.hex`, a `calfile` container), apart from the cal_adc
+/// payload: loaded only with `cal.core_offset = tight`, so turning the key off goes back to the cal_adc.hex in use
+/// before (Rigol's or the self-cal's) without touching it. Payload: a u16 mask of the modes held, then 11 modes x 8
+/// i16 offsets, little endian.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Overlay {
+    pub modes: u16,
+    pub off: [[i32; 8]; 11],
+}
+
+/// File name of `Overlay` in OOS's cal directory.
+pub const OVERLAY_FILE: &str = "core_offsets.hex";
+const OVERLAY_LEN: usize = 2 + 11 * 16;
+
+impl Overlay {
+    pub fn set(&mut self, mode: usize, o: &[i32; 8]) {
+        if mode < 11 {
+            self.modes |= 1 << mode;
+            self.off[mode] = *o;
+        }
+    }
+
+    /// The offsets of the modes held, written over `cal`.
+    pub fn apply(&self, cal: &mut crate::dho::adc::CalAdc) {
+        for m in (0..11).filter(|m| self.modes & (1 << m) != 0) {
+            cal.set_offsets(m, &self.off[m]);
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut b = self.modes.to_le_bytes().to_vec();
+        for m in &self.off {
+            for &v in m {
+                b.extend((v as i16).to_le_bytes());
+            }
+        }
+        b
+    }
+
+    pub fn from_bytes(b: &[u8]) -> Option<Overlay> {
+        if b.len() != OVERLAY_LEN {
+            return None;
+        }
+        let mut o = Overlay { modes: u16::from_le_bytes([b[0], b[1]]) & 0x7ff, ..Overlay::default() };
+        for (m, row) in o.off.iter_mut().enumerate() {
+            for (n, v) in row.iter_mut().enumerate() {
+                let i = 2 + 16 * m + 2 * n;
+                *v = i16::from_le_bytes([b[i], b[i + 1]]) as i32;
+            }
+        }
+        Some(o)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +275,23 @@ mod tests {
 
     fn model(level: f64) -> Model {
         Model { err: ERR, reg: [3, -2, 0, 1, 0, 4, -1, 0], perm: PERM, level, lsb: 16.0, writes: 0 }
+    }
+
+    // Break it catches: an overlay that writes modes it does not hold over the cal file, a byte layout that does not
+    // read back.
+    #[test]
+    fn overlay_round_trip_and_apply() {
+        let mut o = Overlay::default();
+        o.set(2, &[1, -2, 3, -4, 5, -6, 7, -1024]);
+        o.set(11, &[9; 8]);
+        let b = o.to_bytes();
+        assert_eq!(b.len(), OVERLAY_LEN);
+        assert_eq!(Overlay::from_bytes(&b), Some(o.clone()));
+        assert_eq!(Overlay::from_bytes(&b[1..]), None);
+        let mut cal = crate::dho::adc::CalAdc::from_payload(vec![0; 0x738]).unwrap();
+        cal.set_offsets(0, &[5; 8]);
+        o.apply(&mut cal);
+        assert_eq!((cal.offsets(2), cal.offsets(0)), ([1, -2, 3, -4, 5, -6, 7, -1024], [5; 8]));
     }
 
     #[test]
@@ -285,6 +381,57 @@ mod tests {
         let mean = total.iter().sum::<f64>() / 8.0;
         assert!(total.iter().all(|x| (x - mean).abs() <= TOL + 1e-9), "{:?}", total);
         assert!(t.offsets[5] <= cur[5] - 11, "{:?}", t.offsets);
+    }
+
+    // Break it catches: a signal correlated with the interleave trimmed into the offsets.
+    #[test]
+    fn an_interleave_correlated_signal_is_refused() {
+        // a component near fs/8 that is not locked to the ADC clock: each core sees its own phase of it, and the
+        // phase walks between runs
+        struct Fs8 {
+            m: Model,
+            run: usize,
+        }
+        impl TrimHw for Fs8 {
+            fn slots(&mut self) -> Option<[Slot; 8]> {
+                let mut s = self.m.slots()?;
+                let ph = self.run as f64 * 0.7;
+                for n in 0..8 {
+                    s[self.m.perm[n]].mean += 6.0 * 16.0 * (std::f64::consts::TAU * n as f64 / 8.0 + ph).cos();
+                }
+                self.run += 1;
+                Some(s)
+            }
+            fn set_offset(&mut self, core: usize, o: i32) {
+                self.m.set_offset(core, o)
+            }
+        }
+        let mut f = Fs8 { m: model(MID), run: 0 };
+        let cur = f.m.reg;
+        let t = trim(&mut f, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
+        assert_eq!((t.offsets, t.skipped, f.m.writes), (cur, 1, 0));
+    }
+
+    #[test]
+    fn a_signal_is_refused() {
+        // the probe-comp square: every slot spans the whole swing
+        struct Sq(Model);
+        impl TrimHw for Sq {
+            fn slots(&mut self) -> Option<[Slot; 8]> {
+                let mut s = self.0.slots()?;
+                for x in s.iter_mut() {
+                    (x.min, x.max) = (x.min - 400, x.max + 400);
+                }
+                Some(s)
+            }
+            fn set_offset(&mut self, core: usize, o: i32) {
+                self.0.set_offset(core, o)
+            }
+        }
+        let mut m = Sq(model(MID));
+        let cur = m.0.reg;
+        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
+        assert_eq!((t.offsets, t.skipped), (cur, 1));
     }
 
     #[test]

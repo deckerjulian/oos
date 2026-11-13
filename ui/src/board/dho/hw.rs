@@ -283,6 +283,9 @@ impl oos_hal::dho::coretrim::TrimHw for UnitTrim<'_> {
     fn slots(&mut self) -> Option<[oos_hal::dho::levels::Slot; 8]> {
         oos_hal::dho::levels::run(self.bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64)))
     }
+    fn wait_ms(&mut self, ms: u32) {
+        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+    }
     fn set_offset(&mut self, core: usize, o: i32) {
         use oos_hal::dho::bus::Bus;
         for w in self.adc.core_offset(core, o) {
@@ -293,16 +296,37 @@ impl oos_hal::dho::coretrim::TrimHw for UnitTrim<'_> {
     }
 }
 
-/// Matches the core offsets of the active ADC mode (`coretrim`), keeps them in `cal` and saves `cal` to OOS's own
-/// cal directory when they changed (never to the Rigol files). True when the mode is done (matched, or nothing to
-/// change); false to try again at a later configuration.
+/// The core offsets laid over cal_adc: the kept file's with `cal.core_offset = tight`, none with the key off (the file
+/// is then not even read, so the key off is a full undo).
+fn overlay_in_use(tight: bool, load: impl FnOnce() -> Option<oos_hal::dho::coretrim::Overlay>) -> oos_hal::dho::coretrim::Overlay {
+    if tight {
+        load().unwrap_or_default()
+    } else {
+        oos_hal::dho::coretrim::Overlay::default()
+    }
+}
+
+/// The kept core offsets (`coretrim::Overlay`) from OOS's cal directory; None without a valid file.
+fn load_overlay() -> Option<oos_hal::dho::coretrim::Overlay> {
+    use oos_hal::dho::{calfile, coretrim};
+    let (b, _) = calfile::load_first(coretrim::OVERLAY_FILE, &[calfile::OOS_CAL_DIR])?;
+    coretrim::Overlay::from_bytes(calfile::parse(&b).ok()?)
+}
+
+/// Matches the core offsets of the active ADC mode (`coretrim`), keeps them in `cal` and in `overlay`, and saves the
+/// overlay to OOS's own cal directory when they changed (never a Rigol file, never cal_adc.hex). True when the mode is
+/// done (matched, or nothing to change); false to try again at a later configuration.
 #[cfg(target_os = "linux")]
-fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::State, cal: &mut oos_hal::dho::adc::CalAdc, mask: u32) -> bool {
+fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::State, cal: &mut oos_hal::dho::adc::CalAdc, overlay: &mut oos_hal::dho::coretrim::Overlay, mask: u32) -> bool {
     use oos_hal::dho::{calfile, coretrim};
     let mode = state.mode;
     let cur = cal.offsets(mode);
     let (groups, lsb) = coretrim::plan(mask, &state.gain);
     let mut hw = UnitTrim { bar, adc: &mut state.adc };
+    // the registers may still hold what the cold boot or the stock system wrote: start from `cal`'s values
+    for (n, &o) in cur.iter().enumerate() {
+        coretrim::TrimHw::set_offset(&mut hw, n, o);
+    }
     let Some(order) = coretrim::order(&mut hw, &cur, &lsb) else {
         eprintln!("oos-ui hw: core offsets of ADC mode {}: core order not found", mode);
         return false;
@@ -312,8 +336,9 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
             eprintln!("oos-ui hw: core offsets of ADC mode {}: {:?} -> {:?}, order {:?}, {:.2} steps left, matched {:#x} skipped {:#x}", mode, cur, t.offsets, order, t.residual, t.matched, t.skipped);
             if t.offsets != cur {
                 cal.set_offsets(mode, &t.offsets);
-                if let Err(e) = calfile::save(calfile::OOS_CAL_DIR, "cal_adc.hex", cal.payload(), calfile::now()) {
-                    eprintln!("oos-ui hw: core offsets: {}/cal_adc.hex not saved: {}", calfile::OOS_CAL_DIR, e);
+                overlay.set(mode, &t.offsets);
+                if let Err(e) = calfile::save(calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, &overlay.to_bytes(), calfile::now()) {
+                    eprintln!("oos-ui hw: core offsets: {}/{} not saved: {}", calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, e);
                 }
             }
             t.matched != 0 && t.skipped == 0
@@ -961,6 +986,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             Err(_) => None,
         };
         let mut cal_adc = adc::CalAdc::load(&cal_dir).ok();
+        // the matched core offsets: only with `cal.core_offset = tight` (key off = the cal_adc.hex above, unchanged)
+        let mut trim_overlay = overlay_in_use(core_offset_tight(), load_overlay);
+        if let Some(c) = cal_adc.as_mut() {
+            trim_overlay.apply(c);
+        }
         // LA pod zero codes (cal_la.hex, read only); without the file the middle of the DAC range (la.md 8.1)
         let la_cal = if oos_hal::model::platform().caps.la {
             oos_hal::dho::la::Cal::load(&cal_dir).unwrap_or_else(|| {
@@ -1077,6 +1107,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 if res.is_ok() {
                     cal = afe::Cal::load(&cal_dir).ok();
                     cal_adc = adc::CalAdc::load(&cal_dir).ok();
+                    // the matched offsets over the new trims; every mode is matched again from there
+                    if let Some(c) = cal_adc.as_mut() {
+                        trim_overlay.apply(c);
+                    }
+                    (trim_done, trim_tries) = ([false; 11], [0; 11]);
                 }
                 current = None;
                 let mut g = out.lock().unwrap();
@@ -1145,10 +1180,12 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         configs += 1;
                         // core offsets of the ADC mode (opt-in), with nothing armed right after the configuration
                         let m = state.mode.min(10);
-                        if core_offset_tight() && !trim_done[m] && trim_tries[m] < TRIM_TRIES {
+                        // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
+                        let gen_on = afg_done.is_some_and(|d| d.0);
+                        if core_offset_tight() && !gen_on && !trim_done[m] && trim_tries[m] < TRIM_TRIES {
                             trim_tries[m] += 1;
                             if let Some(c) = cal_adc.as_mut() {
-                                trim_done[m] = core_trim(&mut bar, &mut state, c, want.mask);
+                                trim_done[m] = core_trim(&mut bar, &mut state, c, &mut trim_overlay, want.mask);
                             }
                         }
                         // the configuration cleared the average (`seq::State::configure`)
@@ -2124,6 +2161,16 @@ mod tests {
         for (want, mask, config, running, el, step, after) in cases {
             assert_eq!(dvm_step(want, mask, config, running, el), (step, after), "{:?} {:#b} {} {:?} {}", want, mask, config, running, el);
         }
+    }
+
+    // Break it catches: the kept offsets applied with the key off (no full undo), or read at all then.
+    #[test]
+    fn overlay_only_with_the_key_on() {
+        let mut file = oos_hal::dho::coretrim::Overlay::default();
+        file.set(2, &[1; 8]);
+        assert_eq!(overlay_in_use(false, || panic!("read with the key off")), oos_hal::dho::coretrim::Overlay::default());
+        assert_eq!(overlay_in_use(true, || Some(file.clone())), file);
+        assert_eq!(overlay_in_use(true, || None).modes, 0);
     }
 
     #[test]
