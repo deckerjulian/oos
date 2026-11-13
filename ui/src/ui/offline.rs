@@ -1,16 +1,17 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Offline mode. Off, the live screen is unchanged. On, the analog cards are hidden, a session can
-//! start with no demo on those channels, and Import does what Play does: analog stays off, TIME
-//! comes from the record's own interval and length, and the reference name sits where the trigger
-//! card would be. The DVM and the counter read that reference.
+//! Stored-reference session. Off, the live screen is unchanged. On, the analog cards are hidden.
+//! Take over shows one reference. Offline waveforms keeps several on screen together. Import does
+//! what Play does: analog stays off, TIME comes from the record's own interval and length, and the
+//! reference name sits where the trigger card would be. The DVM and the counter read that reference.
 
 use super::*;
 
 /// Live settings put back when the mode is turned off.
 pub(super) struct LiveHold {
     on: [bool; NCH],
+    ref_on: [bool; NREF],
     run: RunState,
     status: TrigStatus,
     tscale: usize,
@@ -26,6 +27,7 @@ impl Ui {
         if on {
             self.offline_hold = Some(LiveHold {
                 on: std::array::from_fn(|c| self.m.ch[c].on),
+                ref_on: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)),
                 run: self.m.run,
                 status: self.m.status,
                 tscale: self.m.tscale,
@@ -33,15 +35,24 @@ impl Ui {
                 delay: self.m.delay,
             });
             self.offline = true;
+            if self.look == reflook::RefLook::Live {
+                self.look = reflook::RefLook::TakeOver;
+            }
             self.idle_analog();
             self.ph.clear();
             self.phz.clear();
         } else {
             self.offline = false;
+            self.look = reflook::RefLook::Live;
             self.sim_play = false;
             if let Some(h) = self.offline_hold.take() {
                 for (c, on) in h.on.into_iter().enumerate() {
                     self.m.ch[c].on = on && c < n_ch();
+                }
+                for (i, r) in self.refs.iter_mut().enumerate() {
+                    if let Some(r) = r {
+                        r.on = h.ref_on[i];
+                    }
                 }
                 self.m.run = h.run;
                 self.m.status = h.status;
@@ -180,14 +191,18 @@ impl Ui {
 
     pub(super) fn offline_label(it: Item) -> Option<&'static str> {
         match it {
-            Item::Offline => Some("Offline"),
+            Item::Offline => Some("Record"),
             _ => None,
         }
     }
 
     pub(super) fn offline_value(&self, it: Item) -> Option<String> {
         match it {
-            Item::Offline => Some(if self.offline { "On".into() } else { "Off".into() }),
+            Item::Offline => Some(match self.look {
+                reflook::RefLook::Live => "Off".into(),
+                reflook::RefLook::TakeOver => "Take over".into(),
+                reflook::RefLook::Waves => "Offline".into(),
+            }),
             Item::DvmSrc | Item::CntSrc if self.offline => Some(format!("R{}", self.offline_ref.min(NREF - 1) + 1)),
             _ => None,
         }
@@ -195,7 +210,7 @@ impl Ui {
 
     pub(super) fn offline_options(&self, it: Item) -> Option<Vec<String>> {
         match it {
-            Item::Offline => Some(vec!["Off".into(), "On".into()]),
+            Item::Offline => Some(vec!["Off".into(), "Take over".into(), "Offline".into()]),
             Item::DvmSrc | Item::CntSrc if self.offline => Some((0..NREF).map(|i| format!("R{}", i + 1)).collect()),
             _ => None,
         }
@@ -205,7 +220,10 @@ impl Ui {
         match it {
             Item::Offline => {
                 if d != 0 {
-                    self.set_offline(!self.offline);
+                    let order = [reflook::RefLook::Live, reflook::RefLook::TakeOver, reflook::RefLook::Waves];
+                    let i = order.iter().position(|x| *x == self.look).unwrap_or(0);
+                    let n = (i as i32 + d).rem_euclid(order.len() as i32) as usize;
+                    self.set_look(order[n]);
                 }
                 true
             }

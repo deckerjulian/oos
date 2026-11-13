@@ -103,10 +103,7 @@ impl MeasRow {
 impl Ui {
     /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
     pub fn meas_at(&self, id: WaveId, k: Meas) -> f64 {
-        match self.meas_analysis(id) {
-            Some((a, _)) => self.meas_of(&a, k),
-            None => f64::NAN,
-        }
+        self.meas_number(id, k)
     }
 
     /// One channel-pair row. `k` is an entry of `PAIRS`.
@@ -136,10 +133,8 @@ impl Ui {
             .meas
             .iter()
             .map(|&(k, id)| {
-                let (val, unit) = match self.meas_analysis(id) {
-                    Some((a, _)) => (self.meas_of(&a, k), self.meas_unit(id, k)),
-                    None => (f64::NAN, self.meas_unit(id, k)),
-                };
+                let val = self.meas_number(id, k);
+                let unit = self.meas_unit(id, k);
                 MeasRow { name: k.name().to_string(), src: id, v: val, unit }
             })
             .collect();

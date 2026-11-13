@@ -52,6 +52,10 @@ impl Ui {
     }
 
     pub(crate) fn fact_meas(&self, k: Meas, id: WaveId) -> f64 {
+        let custom = self.meas_own.get(&(k, id)).is_some_and(|o| o.refs_set || o.idle_set || o.side_set || o.n_set || o.data_set);
+        if custom {
+            return self.meas_number(id, k);
+        }
         match self.analysis_of(id) {
             Some((a, _)) => self.meas_of(&a, k),
             None => f64::NAN,

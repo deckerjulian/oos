@@ -21,6 +21,7 @@ mod selfcal;
 pub mod bode;
 mod sim;
 mod offline;
+mod reflook;
 mod workflow;
 pub mod startup;
 mod afg;
@@ -380,6 +381,8 @@ enum Item {
     MeasAdd(Meas),
     /// shortcut on the press-and-hold menu: the next usual measurement
     AddMeas,
+    /// settings of one added measurement, index into `m.meas`
+    MeasCfg(u16),
     MeasPair(usize),
     MeasSrcB,
     DvmOn,
@@ -836,6 +839,12 @@ pub struct Ui {
     sim_i: usize,
     /// Offline mode. Off, the live screen stays as it is.
     offline: bool,
+    /// Take over, offline waveforms, or the live scope.
+    look: reflook::RefLook,
+    /// Settings of each added measurement. Missing keys follow the shared measure menu.
+    meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
+    /// Settings dialog open on this index of `m.meas`.
+    meas_cfg: Option<u16>,
     /// Reference named on the card that replaces the trigger card, and read by the DVM and the counter.
     offline_ref: usize,
     offline_hold: Option<offline::LiveHold>,
@@ -1060,6 +1069,9 @@ impl Ui {
             sim_error: None,
             sim_i: 0,
             offline: false,
+            look: reflook::RefLook::Live,
+            meas_own: std::collections::HashMap::new(),
+            meas_cfg: None,
             offline_ref: 0,
             offline_hold: None,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, t0: 0.0, held: false, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
@@ -1125,6 +1137,7 @@ impl Ui {
             shot_request: None,
             quit: false,
         };
+        ui.ensure_meas_own();
         ui.relayout();
         ui
     }
@@ -2205,7 +2218,11 @@ impl Ui {
                 self.draw_hist(cv);
                 self.draw_zones(cv);
                 if i == 0 {
-                    self.draw_refs(cv);
+                    if self.waves_on() {
+                        self.draw_refs_at(cv, self.waves_plot(self.area), self.view());
+                    } else {
+                        self.draw_refs(cv);
+                    }
                 }
                 self.draw_math(cv);
                 if i == self.la_win_of() {
@@ -2218,6 +2235,9 @@ impl Ui {
                 self.draw_markers(cv);
                 self.draw_axes(cv);
                 self.draw_mask_pill(cv);
+                if i == 0 {
+                    self.draw_waves_board(cv);
+                }
             }
             self.cur_win = 0;
             self.area = self.wave_area();
@@ -2256,6 +2276,7 @@ impl Ui {
             self.draw_bottom(cv);
         }
         self.draw_menu(cv);
+        self.draw_meas_cfg(cv);
         self.draw_toast(cv);
         self.draw_overlay(cv);
         self.frames += 1;
@@ -4851,7 +4872,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -5039,6 +5060,7 @@ impl Ui {
             Item::MathLinA => "A",
             Item::MathLinB => "B",
             Item::MeasAdd(k) => k.name(),
+            Item::MeasCfg(_) => "Set",
             Item::MeasClear => "Clear all",
             Item::CurMode => "Mode",
             Item::CurA => "Cursor A",
@@ -5879,10 +5901,17 @@ impl Ui {
                         self.activate(Item::MeasAdd(k));
                     }
                 }
+                Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
                 Item::MeasAdd(k) => {
                     let e = (k, self.meas_src);
                     if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
                         self.m.meas.remove(index);
+                        self.meas_own.remove(&e);
+                        if self.meas_cfg == Some(index as u16) {
+                            self.meas_cfg = None;
+                        } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
+                            self.meas_cfg = self.meas_cfg.map(|n| n - 1);
+                        }
                         self.mstat.clear();
                         self.toast(&format!("{} {} removed", k.name(), self.wave_name(self.meas_src)));
                         return;
@@ -5899,6 +5928,7 @@ impl Ui {
                             }
                         }
                     }
+                    self.ensure_meas_own();
                     self.toast(&format!("{} {} added", k.name(), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
@@ -5929,6 +5959,8 @@ impl Ui {
                 Item::MeasClear => {
                     self.m.meas.clear();
                     self.m.meas2.clear();
+                    self.meas_own.clear();
+                    self.meas_cfg = None;
                     self.mstat.clear();
                 }
                 Item::RefSave => {
@@ -6214,6 +6246,7 @@ impl Ui {
 
     /// A tap on Measure opens the measurement list. Press again to close it.
     fn open_meas_list(&mut self) {
+        self.ensure_meas_own();
         if self.menu_open && self.menu == MenuId::MeasAdd {
             self.close_menu();
         } else {
@@ -6868,6 +6901,9 @@ impl Ui {
                 self.m = Model::default();
                 self.m.meas = meas;
                 self.m.quick = quick;
+                self.meas_own.clear();
+                self.meas_cfg = None;
+                self.ensure_meas_own();
                 self.stats_on = false;
                 self.xy = false;
                 self.mask = None;
@@ -7468,11 +7504,17 @@ impl Ui {
         if self.wlan.osk.is_some() {
             return self.osk_tap(x, y);
         }
+        if self.meas_cfg_tap(x, y) {
+            return;
+        }
         if self.dialog.is_some() {
             self.dialog = None;
             return;
         }
         if self.tap_menu(x, y) {
+            return;
+        }
+        if self.waves_board_tap(x, y) {
             return;
         }
         if !self.menu_open && self.measurement_navigation_tap(x, y) { return; }
