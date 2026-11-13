@@ -190,9 +190,14 @@ is no longer written and read back, so the A53 (512 kB L2) should gain more; not
 channels (each channel's deposit reads every group: 0.95 on the host) keep the decode.
 
 Not changed, for the next step:
-- Dots (`deposit_dots`, the default display): 130 us per channel at 100 k points, one scattered write per sample.
-  Counting rows per column first (lanes against store forwarding) was slower on the host for steep signals (each
-  sample on its own row); not kept.
+- Dots (`deposit_dots`, the default display), branch perf/dots: one add per sample is a chain of read-modify-writes on
+  one pixel wherever samples repeat the row before (flat tops, slow edges), each waiting for the last (230 us at 100 k
+  points flat on the host, 80 us for noise). Now a column whose predecessor had more than half its first 32 samples
+  repeating adds each run at once (`run x wgt`, saturating like the single adds); other columns stay one add per
+  sample. Bit-identical (`dots_are_bit_identical_to_one_add_per_sample`: 9 signals, 3 lengths, 4 mappings, 4 scales,
+  saturation). Host per channel at 100 k (`perf_guard_dots`, limit 1.25): flat, square 0.27, ramp 0.32, sine 0.77,
+  noisy square 0.89, noise and clipped 1.00. Drawing dots from the read-out words was slower (1.3x: the per-column
+  volt conversion through the board's loop), so dots keep the decode.
 - Four channels from the words in one pass per column (one ld4 for all channels) instead of one pass per channel.
 - Per-frame statistics (`framestats`, measurements on): +160 us per frame at 125 k points, more than the deposit.
 
