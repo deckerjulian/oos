@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Display > Graphics = GPU: the picture put together on the Mali by `oos-gpu` (gpu/oos-gpu.c).
+//! System > Graphics = GPU: the picture put together on the Mali by `oos-gpu` (gpu/oos-gpu.c).
 //!
 //! oos-ui draws the screen in two layers (`ui::Layers`: under the traces, over them) and leaves the traces as
 //! phosphor maps (`ui::TraceJob`). This module hands the three to `oos-gpu`, a separate process (oos-ui is one static

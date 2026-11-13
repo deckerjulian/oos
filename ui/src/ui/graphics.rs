@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Display > Graphics: the picture drawn on the CPU (as always), or put together on the GPU (`crate::gpu`): the CPU
+//! System > Graphics: the picture drawn on the CPU (as always), or put together on the GPU (`crate::gpu`): the CPU
 //! then draws the screen without the traces, and the Mali adds them and scales the picture for a monitor. A setting
 //! of the scope (`/oos/system.conf`, `graphics`); `main.rs` starts and stops the GPU helper from it and falls back to
 //! the CPU when the GPU is not there or fails.
@@ -47,7 +47,7 @@ mod tests {
     fn the_choice_is_a_setting_of_the_scope() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         assert!(u.sys.gpu, "the GPU by default");
-        assert!(u.items(MenuId::Display).contains(&Item::Graphics));
+        assert!(u.items(MenuId::Utility).contains(&Item::Graphics) && !u.items(MenuId::Display).contains(&Item::Graphics));
         u.select_option(Item::Graphics, "CPU");
         assert!(!u.sys.gpu && u.value(Item::Graphics) == "CPU");
         assert!(!crate::sysconf::SysConf::parse(&u.sys.text()).0.gpu);

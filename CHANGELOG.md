@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Changed:
+
+- Graphics (CPU or GPU) moved from Display to System: it is a setting of the scope, not of the picture.
+- CH2 is teal and CH4 sky blue now (the other way round until 0.1.11), as on the colour rings of the scope's inputs
+  and probes: CH1 yellow, CH2 cyan, CH3 magenta, CH4 blue. Asked for in the forum.
+
 Fixed:
 
 - Display > Graphics = GPU with a monitor was slower than the CPU (reported in the forum: 16 to 19 frames a second

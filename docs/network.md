@@ -161,5 +161,5 @@ remote.web = on
 remote.scpi = on
 remote.vxi11 = on
 remote.telnet = on
-graphics = gpu                # Display > Graphics: gpu or cpu (gpu/README.md)
+graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
 ```

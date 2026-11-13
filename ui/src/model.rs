@@ -73,12 +73,13 @@ fn opt_src_step_in(i: usize, d: i32, nch: usize) -> usize {
 pub const HDIV: f32 = 10.0;
 pub const VDIV: f32 = 8.0;
 
-/// Channel colours (yellow, sky blue, pink, teal: a colour-blind safe set).
+/// Channel colours (yellow, teal, pink, sky blue: a colour-blind safe set). CH2 teal and CH4 blue as the colour
+/// rings of the scope's own probes and inputs have them (CH2 cyan, CH4 blue); until 0.1.11 the two were the other way.
 const PALETTE: [Rgb; 8] = [
     rgb(0xf0, 0xe4, 0x42),
-    rgb(0x56, 0xb4, 0xe9),
-    rgb(0xe0, 0x8c, 0xc0),
     rgb(0x2e, 0xc4, 0xa0),
+    rgb(0xe0, 0x8c, 0xc0),
+    rgb(0x56, 0xb4, 0xe9),
     rgb(0xf0, 0x90, 0x40),
     rgb(0xa0, 0x90, 0xf0),
     rgb(0xc0, 0xd0, 0x60),

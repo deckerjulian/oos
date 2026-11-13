@@ -155,7 +155,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Full screen: one tap at the top right of the plot hides the top bar and the cards, one more brings them back
 - Text size Normal, Large or Larger for the bars, cards, measurement rows, menus and dialogs; backlight brightness
 - HDMI output as a mirror, as a separate waveform workspace, or laid out again at the monitor's size
-- the picture drawn on the GPU (Mali-T860, Panfrost; Display > Graphics, CPU as before is the other choice): a third
+- the picture drawn on the GPU (Mali-T860, Panfrost; System > Graphics, CPU as before is the other choice): a third
   less load on the frame loop, a monitor scaled without CPU work ([gpu/README.md](gpu/README.md)); the web picture as
   JPEG from the video encoder (VPU)
 
@@ -246,7 +246,7 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 | Boot, cold boot, acquisition, trigger, roll and scan, touch, front panel, generator (sine, built-in Bode), self-calibration | run on a DHO924S |
 | Signed updates from the web page and the shell, kexec trial start, trial and confirmation, install over ADB | run on a DHO924S |
 | An update with another device tree, tried by kexec first (kexec-tools, from 0.1.7) | run on a DHO924S: 0.1.6 to 0.1.7 to 0.1.8 through the web page, with cold starts |
-| Display > Graphics = GPU, JPEG live picture from the video encoder | run on a DHO924S on the panel; the GPU picture on a monitor (HDMI) not tried yet |
+| System > Graphics = GPU, JPEG live picture from the video encoder | run on a DHO924S, on the panel and with a 1920x1080 monitor in Mirror, Waveform and Layout |
 | Frequency counter in the FPGA, backlight, AC/DC by a long press | run on a DHO924S (the counter with the built-in generator, 1.5 Hz to 9.9 MHz) |
 | Logic analyser with a PLA2216: lines, pulse widths, edge, pulse, pattern, duration and protocol trigger, UART, SPI and I2C on the lines, roll, scan, whole deep records, CSV | run on a DHO924S, three lines (D0 to D2) driven; thresholds have no effect here, under stock neither |
 | Generator modulation (AM, FM, PM), deep memory, limits, web, MCP, VXI-11 | run on a DHO924S |

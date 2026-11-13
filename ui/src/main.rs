@@ -198,7 +198,7 @@ fn serve(mut ui: Ui, args: &[String]) {
     }
 }
 
-/// The layers of a GPU picture (Display > Graphics = GPU): under and over the traces, and the traces as jobs. The
+/// The layers of a GPU picture (System > Graphics = GPU): under and over the traces, and the traces as jobs. The
 /// picture itself is in the display's buffer; it comes back into the caller's canvas only when asked.
 struct GpuLayers {
     under: Canvas,
@@ -495,7 +495,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut hdmi_cv: Option<Canvas> = None;
     let mut hdmi_t: Option<Instant> = None;
     let mut frame_n = 0u64;
-    // Display > Graphics = GPU: the helper, the layers of the panel and of the monitor's own layout, the monitor's
+    // System > Graphics = GPU: the helper, the layers of the panel and of the monitor's own layout, the monitor's
     // settings line; `gpu_failed`: the GPU did not start or failed, the CPU draws until the setting changes
     let mut gpu: Option<gpu::Gpu> = None;
     let (mut gpu_want, mut gpu_failed) = (false, false);
@@ -568,7 +568,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         let t1 = Instant::now();
         let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
         ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi == model::HdmiMode::Waveform;
-        // Display > Graphics: the helper follows the setting
+        // System > Graphics: the helper follows the setting
         if ui.sys.gpu != gpu_want {
             gpu_changed = frame_n > 0;
             (gpu_want, gpu_failed) = (ui.sys.gpu, false);

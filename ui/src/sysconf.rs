@@ -10,7 +10,7 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet)
-//! graphics = gpu            # Display > Graphics (gpu or cpu)
+//! graphics = gpu            # System > Graphics (gpu or cpu)
 //! backlight = 100            # Display > Backlight, percent (10..100)
 //! ```
 
@@ -42,7 +42,7 @@ pub struct SysConf {
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
     pub remote_telnet: bool,
-    /// Display > Graphics: the picture put together on the GPU (`gpu.rs`), else on the CPU. The GPU by default: a
+    /// System > Graphics: the picture put together on the GPU (`gpu.rs`), else on the CPU. The GPU by default: a
     /// third less load on the frame loop, the same picture (gpu/README.md); where it does not start, the CPU draws.
     pub gpu: bool,
     /// Display > Backlight, percent (ui/backlight.rs)

@@ -99,7 +99,7 @@ mod tests {
         assert!(u.script_menu("nothing").is_err());
         u.script_menu("Mask").unwrap();
         assert_eq!(u.menu, MenuId::Mask);
-        u.script_menu("display").unwrap();
+        u.script_menu("system").unwrap();
         u.script_set("Graphics", "CPU").unwrap();
         assert!(!u.sys.gpu);
         assert!(u.script_set("Graphics", "Purple").is_err());

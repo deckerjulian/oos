@@ -1,6 +1,6 @@
-# The GPU picture (Display > Graphics = GPU)
+# The GPU picture (System > Graphics = GPU)
 
-The RK3399 has a Mali-T860 MP4. With Display > Graphics = GPU, oos-ui lets it draw the screen: the CPU only records
+The RK3399 has a Mali-T860 MP4. With System > Graphics = GPU, oos-ui lets it draw the screen: the CPU only records
 what is to be drawn, in two layers (under and over the traces), and leaves the traces as phosphor maps; the GPU draws
 the layers from those commands, adds the traces and scales the picture for a monitor. GPU is the default, CPU the
 other choice; it is a setting of the scope (`graphics` in `/oos/system.conf`, docs/network.md). Where the GPU does not

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// oos-gpu: the GPU half of oos-ui's picture (Display > Graphics = GPU).
+// oos-gpu: the GPU half of oos-ui's picture (System > Graphics = GPU).
 //
 // oos-ui describes the screen in two layers: what lies under the traces (background, graticule, masks) and what lies
 // over them (labels, cursors, bars, menus). Each layer comes as a list of drawing commands (rectangles, glyphs, line

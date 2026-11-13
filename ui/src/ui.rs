@@ -48,7 +48,7 @@ pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
 
-/// Where a picture is drawn: everything on `under`, or with `over` (Display > Graphics = GPU) the layer over the
+/// Where a picture is drawn: everything on `under`, or with `over` (System > Graphics = GPU) the layer over the
 /// traces, and the traces as `jobs` for the GPU (`Ui::render_layers`, `crate::gpu`).
 pub struct Layers<'a> {
     pub under: &'a mut Canvas,
@@ -597,7 +597,7 @@ enum Item {
     RemScpiInfo,
     RemVxiInfo,
     RemTelnetInfo,
-    /// Display > Graphics: CPU or GPU (ui/graphics.rs)
+    /// System > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
     /// Display > Backlight, percent (ui/backlight.rs)
     Backlight,
@@ -926,7 +926,7 @@ pub struct Ui {
     pub t_draw: f32,
     pub t_render: f32,
     pub t_present: f32,
-    /// Display > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
+    /// System > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
     pub t_gpu: Option<[f32; 6]>,
     /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
     pub t_parts: [f32; 4],
@@ -1940,7 +1940,7 @@ impl Ui {
         self.render_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
     }
 
-    /// The screen into `l`: with one canvas everything is drawn on it; with two (Display > Graphics = GPU) the
+    /// The screen into `l`: with one canvas everything is drawn on it; with two (System > Graphics = GPU) the
     /// background, graticule and masks go under the traces, everything else over them, and the traces become jobs
     /// for the GPU (`gpu.rs`). The order of the drawing is the same either way.
     pub fn render_layers(&mut self, l: &mut Layers) {
@@ -2102,7 +2102,7 @@ impl Ui {
         self.render_view_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
     }
 
-    /// `render_view` into layers (Display > Graphics = GPU): the traces become jobs at the monitor's size.
+    /// `render_view` into layers (System > Graphics = GPU): the traces become jobs at the monitor's size.
     pub fn render_view_layers(&mut self, l: &mut Layers) {
         let keep = (self.scr, self.grid, std::mem::take(&mut self.wins), self.area, self.cur_win, self.frames, self.hdmi_snap_want);
         self.scr = Screen { w: l.under.w, h: l.under.h };
@@ -3869,7 +3869,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Graphics, Item::Backlight, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Backlight, Item::TextSize, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -3894,7 +3894,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -7739,7 +7739,7 @@ mod tests {
         shot(&mut ui, "main_menu");
     }
 
-    /// Display > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
+    /// System > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
     /// directly, on every kind of screen.
     #[test]
     fn recorded_layers_replay_to_the_same_pixels() {
