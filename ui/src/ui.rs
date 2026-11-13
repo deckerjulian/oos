@@ -3249,8 +3249,10 @@ impl Ui {
         let (y, h) = (530, 66);
         // 2-channel models: no cards for CH3/CH4 (zero width, never drawn or hit)
         let n = n_ch();
+        // Stored refs with analog off: no CH1..CH4 cards. TIME and trigger keep the bar.
+        let hide_analog = (0..n).all(|c| !self.m.ch[c].on) && self.refs.iter().any(|r| r.as_ref().is_some_and(|r| r.on));
         let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
-        let n_off = n as i32 - n_on;
+        let n_off = if hide_analog { 0 } else { n as i32 - n_on };
         let caps = &oos_hal::model::platform().caps;
         let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
         let start = Self::MENU_BTN.x + Self::MENU_BTN.w + 7;
@@ -3263,7 +3265,7 @@ impl Ui {
         let mut x = start;
         let mut ch = [Rect::new(0, 0, 0, 0); NCH];
         for (c, r) in ch.iter_mut().enumerate() {
-            if c >= n {
+            if c >= n || hide_analog {
                 *r = Rect::new(x, y, 0, h);
                 continue;
             }
@@ -6590,6 +6592,12 @@ impl Ui {
             return self.toggle_menu(MenuId::Afg);
         }
         if tr.contains(x, y) {
+            // the zoom/delay line: tap it to toggle zoom without opening Horizontal
+            if y >= tr.y + tr.h / 2 {
+                let on = !self.m.zoom;
+                self.set_zoom(on);
+                return;
+            }
             return self.toggle_menu(MenuId::Horizontal);
         }
         if trg.contains(x, y) {
@@ -7632,6 +7640,26 @@ mod tests {
             // two buttons in a card: the finger gets half of its height each
             assert!(trg.h / 2 >= 32 && sb.w >= 60 && mb.y > sb.y + sb.h, "{:?} {:?}", sb, mb);
         }
+        // analog off, a ref on: the CH1..CH4 cards go, TIME stays; its lower half toggles zoom
+        for c in 0..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "DQ".into(), t0: 0.0, dt: 1e-9, v: vec![0.0, 1.0], vpd: 0.2, offset: 0.0, on: true });
+        let (chs, tr, trg) = ui.cards();
+        assert!(chs.iter().all(|r| r.w == 0), "{:?}", chs);
+        assert!(tr.w >= 130 && trg.w >= 222);
+        assert!(!ui.m.zoom);
+        ui.tap(tr.x + 10, tr.y + tr.h - 8);
+        assert!(ui.m.zoom && !ui.menu_open);
+        ui.tap(tr.x + 10, tr.y + tr.h - 8);
+        assert!(!ui.m.zoom);
+        ui.tap(tr.x + 10, tr.y + 10);
+        assert!(ui.menu_open && ui.menu_root() == MenuId::Horizontal);
+        ui.refs[0] = None;
+        for c in 0..n_ch() {
+            ui.m.ch[c].on = true;
+        }
+
         for m in [MenuId::Main, MenuId::Trigger, MenuId::Math, MenuId::MeasAdd, MenuId::Utility, MenuId::Channel(0), MenuId::Display, MenuId::Acquire] {
             ui.open_menu(m);
             let d = ui.dlg_layout().unwrap();
