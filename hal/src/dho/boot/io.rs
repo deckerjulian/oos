@@ -73,7 +73,7 @@ impl super::PllPins for GpioPll {
     }
 }
 
-/// Seconds the boot monitor gets before PCIe is probed (Rigol's scripts: fixed `sleep 10`). 3 s brought PCIe up at the
+/// Seconds the boot monitor gets before PCIe is probed (the stock scripts: fixed `sleep 10`). 3 s brought PCIe up at the
 /// first try on the unit, and the bring-up tries again if not.
 pub const FPGA_BOOT_WAIT_S: u64 = 3;
 

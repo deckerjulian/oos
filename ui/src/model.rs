@@ -166,16 +166,20 @@ pub const CH_COLORS: [Rgb; NCH] = {
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
 /// scales digitally (cal_vertical digital gain 2.15 / 5.38 / 10.76 at 500 / 200 / 100 uV, no forced 20 MHz).
 pub const VSCALES: [f32; 16] = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
-/// s/div: 5 ns .. 1000 s.
+/// Fastest time/div the ADC acquisition uses. Stored refs (SIM) may display faster than this.
+pub const HW_MIN_TDIV: f32 = 1e-9;
+
+/// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
+/// `HW_MIN_TDIV` (`hw_time_per_div`).
 pub fn tscales() -> Vec<f32> {
     let mut v = Vec::new();
-    let mut d = 1e-9_f64;
+    let mut d = 1e-11_f64;
     while d < 2000.0 {
         for m in [1.0, 2.0, 5.0] {
             let x = d * m;
-            // from 1 ns/div (stock 5 ns): below 5 ns/div the screen holds 12..62 samples, drawn with the
-            // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
-            if x >= 0.99e-9 && x <= 1000.1 {
+            // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn
+            // with the windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
+            if x >= 0.49e-10 && x <= 1000.1 {
                 v.push(x as f32);
             }
         }
@@ -231,6 +235,15 @@ pub enum AView {
     Magnetic,
     Inverter,
     Dpt,
+}
+
+/// Where the eye is drawn while the trace stays on screen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EyePlace {
+    /// A pane to the right of the trace. The default.
+    Side,
+    /// A pane under the trace.
+    Under,
 }
 
 /// Power analysis page.
@@ -352,12 +365,15 @@ pub enum Proto {
     Sent,
     /// USB 1.x / 2.0 low / full speed
     Usb,
+    Manchester,
+    Mlt3,
 }
 
-pub const PROTOS: [Proto; 25] = [
+pub const PROTOS: [Proto; 27] = [
     Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
     Proto::FlexRay, Proto::Dmx512, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
     Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Spdif, Proto::UsbPd, Proto::Arinc429, Proto::Sent, Proto::Usb,
+    Proto::Manchester, Proto::Mlt3,
 ];
 
 impl Proto {
@@ -388,6 +404,8 @@ impl Proto {
             Proto::Arinc429 => "ARINC 429",
             Proto::Sent => "SENT",
             Proto::Usb => "USB",
+            Proto::Manchester => "Manchester",
+            Proto::Mlt3 => "MLT-3",
         }
     }
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
@@ -603,13 +621,32 @@ impl WinLayout {
             WinLayout::Quad => 4,
         }
     }
+}
+
+/// How much of the 1024×600 picture the plot takes. The same four apply to the panel and to a scaled window of it,
+/// and to the waveform on the external display.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Density {
+    /// top bar, plot, measurement strip, cards
+    #[default]
+    Scope,
+    /// plot and measurement strip
+    Full,
+    /// plot, and under it a pane of numbers or two stacked traces
+    Split,
+    /// four equal panes
+    Four,
+}
+
+impl Density {
+    pub const ALL: [Density; 4] = [Density::Scope, Density::Full, Density::Split, Density::Four];
 
     pub fn label(self) -> &'static str {
         match self {
-            WinLayout::One => "One",
-            WinLayout::Cols => "Side by side",
-            WinLayout::Rows => "Stacked",
-            WinLayout::Quad => "Four",
+            Density::Scope => "Scope",
+            Density::Full => "Full",
+            Density::Split => "Split",
+            Density::Four => "Four",
         }
     }
 }
@@ -619,6 +656,28 @@ pub enum Grid {
     Full,
     Light,
     None,
+}
+
+/// Where the measurement strip is drawn. Under is below the graticule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StripDock {
+    Under,
+    Left,
+    Right,
+    Above,
+}
+
+impl StripDock {
+    pub const ALL: [StripDock; 4] = [StripDock::Under, StripDock::Left, StripDock::Right, StripDock::Above];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StripDock::Under => "Under",
+            StripDock::Left => "Left",
+            StripDock::Right => "Right",
+            StripDock::Above => "Above",
+        }
+    }
 }
 
 /// Settings of one decoder (the `dec_*` fields of `Model` are the one the menu edits).
@@ -780,6 +839,8 @@ pub struct Model {
     pub grid_frame: bool,
     /// waveform windows, and the window (0-based) of each channel and math channel
     pub win_layout: WinLayout,
+    /// Scope, Full, Split, Four. This is what the Windows row sets; `win_layout` is the split it asked for.
+    pub density: Density,
     pub ch_win: [usize; NCH],
     pub math_win: [usize; crate::math::NMATH],
     /// window of the LA lanes while the plot is split (one window: their strip under the plot)
@@ -836,10 +897,14 @@ pub struct Model {
     /// the other decoders; None = not touched yet; the slot of `dec_sel` is not used
     pub decs: [Option<DecCfg>; DECODERS],
     pub dec_sel: usize,
-    /// second pane under the plot, index into `ui::tables::PANES`
+    /// second pane under the plot, index into `ui::tables::PANES` (0 = traces, no pane drawn)
     pub pane: usize,
+    /// pane Split returns to after Scope, Full or Four (0 = two stacked traces)
+    pub split_pane: usize,
     /// what the measurements measure, drawn on the traces (measlabels.rs)
     pub meas_labels: bool,
+    /// measurement strip: under the plot, left, right, or above the trace
+    pub strip_dock: StripDock,
     /// what the two charts of the Trend pane show: 0 = by the list, 1 = off, k = row k - 2 of the measurement list
     pub trend_sel: [usize; 2],
     pub dec_on: bool,
@@ -889,7 +954,8 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
-    /// HDMI monitor: false = mirror of the panel, true = own workspace (the waveform area large, settings on top)
+    /// External display. False copies the panel. True puts the plot on the display and leaves the panel for controls.
+    /// The density changes that plot; the panel keeps its bars.
     pub hdmi_wave: bool,
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
@@ -914,6 +980,10 @@ pub struct Model {
     /// eye diagram: source, bit rate (0 = recovered from the edges)
     pub eye_src: WaveId,
     pub eye_rate: f64,
+    /// the bit rate was measured from the record, not entered on the control
+    pub eye_from_record: bool,
+    /// beside the trace, or under it
+    pub eye_place: EyePlace,
     /// BER for TJ, eye width and eye height. J2 and J9 ignore it.
     pub eye_ber: f64,
     /// phase-noise integration offsets, Hz
@@ -921,7 +991,7 @@ pub struct Model {
     pub eye_pn_hi: f64,
     /// NPJ stays off until this is set
     pub eye_npj: bool,
-    /// optional second source for common mode, and the rail for PSIJ
+    /// optional clock / other rail: its edges fold the eye (DQS, recovered clock). Common-mode figures also use it.
     pub eye_b: Option<WaveId>,
     pub eye_rail: Option<WaveId>,
     /// Hz removed from the TIE as a sine; 0 = none
@@ -958,6 +1028,12 @@ pub struct Model {
     pub meas_n: u32,
     /// false = clock edges, true = data edges
     pub meas_data: bool,
+    /// Rise/fall low and high as fractions of amplitude (0.1/0.9 or 0.2/0.8).
+    pub meas_lpct: f64,
+    pub meas_hpct: f64,
+    /// SetupAndHold limits (s). Zero means any negative setup or hold.
+    pub meas_tsetup: f64,
+    pub meas_thold: f64,
     /// ACPR channel width and spacing, Hz
     pub spec_acpr_w: f64,
     pub spec_acpr_s: f64,
@@ -1040,13 +1116,26 @@ pub struct Model {
     pub mask_x: f32,
     pub mask_y: f32,
     pub mask_stop: bool,
+    pub mask_inv: bool,
     /// action of the QUICK key
     pub quick: Quick,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
     pub la: crate::ui::la::LaSet,
-    /// SIM menu: which serial preset and which R slot Play writes
+    /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
     pub sim_preset: usize,
     pub sim_slot: usize,
+    pub sim_rate: f64,
+    pub sim_prbs: u8,
+    pub sim_vhigh: f64,
+    pub sim_vlow: f64,
+    pub sim_rise: f64,
+    pub sim_noise: f64,
+    pub sim_bw: f64,
+    pub sim_deemph: f64,
+    pub sim_ssc: bool,
+    pub sim_rj: f64,
+    pub sim_pj: f64,
+    pub sim_pjhz: f64,
 }
 
 pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
@@ -1212,7 +1301,9 @@ impl Default for Model {
             decs: Default::default(),
             dec_sel: 0,
             pane: 0,
+            split_pane: 0,
             meas_labels: false,
+            strip_dock: StripDock::Under,
             trend_sel: [0, 0],
             dec_on: false,
             dec_src: 2,
@@ -1263,6 +1354,8 @@ impl Default for Model {
             spec_dist: false,
             eye_src: WaveId::Ch(0),
             eye_rate: 0.0,
+            eye_from_record: false,
+            eye_place: EyePlace::Side,
             eye_ber: 1e-12,
             eye_pn_lo: 1e3,
             eye_pn_hi: 1e6,
@@ -1293,6 +1386,10 @@ impl Default for Model {
             meas_out: oos_dsp::measure::Outside::Both,
             meas_n: 2,
             meas_data: false,
+            meas_lpct: 0.1,
+            meas_hpct: 0.9,
+            meas_tsetup: 0.0,
+            meas_thold: 0.0,
             spec_acpr_w: 1e6,
             spec_acpr_s: 2e6,
             mag_v: WaveId::Ch(0),
@@ -1343,6 +1440,7 @@ impl Default for Model {
             grid_bright: 100,
             grid_frame: true,
             win_layout: WinLayout::One,
+            density: Density::Scope,
             ch_win: [0; NCH],
             math_win: [0; crate::math::NMATH],
             la_win: 0,
@@ -1365,11 +1463,25 @@ impl Default for Model {
             mask_x: 0.2,
             mask_y: 0.4,
             mask_stop: false,
+            mask_inv: false,
             quick: Quick::Screenshot,
             la: Default::default(),
             sim_preset: 3,
             sim_slot: 0,
+            sim_rate: 0.0,
+            sim_prbs: 31,
+            sim_vhigh: 0.0,
+            sim_vlow: 0.0,
+            sim_rise: 0.0,
+            sim_noise: 0.0,
+            sim_bw: 0.0,
+            sim_deemph: 0.0,
+            sim_ssc: false,
+            sim_rj: 0.0,
+            sim_pj: 0.0,
+            sim_pjhz: 0.0,
         };
+        m.apply_sim_preset();
         m.ch[0].offset = -1.5;
         m.trig_level = 1.5;
         m
@@ -1377,6 +1489,23 @@ impl Default for Model {
 }
 
 impl Model {
+    /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
+    pub fn apply_sim_preset(&mut self) {
+        let l = oos_dsp::serial::LANES[self.sim_preset.min(oos_dsp::serial::LANES.len() - 1)];
+        self.sim_rate = l.bits_per_s;
+        self.sim_prbs = l.prbs;
+        self.sim_vhigh = l.v_high;
+        self.sim_vlow = l.v_low;
+        self.sim_rise = l.rise;
+        self.sim_noise = l.noise_rms;
+        self.sim_bw = l.bw;
+        self.sim_deemph = l.deemph_db;
+        self.sim_ssc = l.ssc;
+        self.sim_rj = l.rj_rms;
+        self.sim_pj = l.pj_peak;
+        self.sim_pjhz = l.pj_hz;
+    }
+
     /// The settings of the selected generator.
     pub fn gen_read(&self) -> GenCh {
         GenCh {
@@ -1606,6 +1735,7 @@ impl Model {
                 use oos_dsp::decode_ext3::{UsbSpeed, USB_FULL, USB_LOW};
                 1.0 / if crate::decode::USB_SPEEDS[self.dec_uspeed] == UsbSpeed::Low { USB_LOW } else { USB_FULL }
             }
+            Proto::Manchester | Proto::Mlt3 => 1.0 / crate::decode::BAUDS[self.dec_baud],
         }
     }
 
@@ -1613,9 +1743,18 @@ impl Model {
         tscales()[self.tscale] * self.tfine
     }
 
-    /// The time base the acquisition runs at: the step, which covers at least the screen.
+    /// The time base the acquisition runs at: the step, which covers at least the screen. Display scales below
+    /// 1 ns/div stay on the plot; the ADC still takes a 1 ns/div window.
     pub fn hw_time_per_div(&self) -> f32 {
-        tscales()[self.tscale]
+        tscales()[self.tscale].max(HW_MIN_TDIV)
+    }
+
+    /// Live analog / LA cannot display below 1 ns/div; the ADC window is that floor.
+    pub fn floor_live_tdiv(&mut self) {
+        if tscales()[self.tscale] < HW_MIN_TDIV {
+            self.tscale = tscales().iter().position(|&t| t >= HW_MIN_TDIV).unwrap_or(0);
+            self.tfine = 1.0;
+        }
     }
 
     /// Keeps every offset within what the AFE of its scale can do.

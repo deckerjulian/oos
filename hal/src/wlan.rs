@@ -10,7 +10,45 @@
 
 use crate::update::hash::sha1;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
+#[cfg(not(unix))]
+use nosock::UnixDatagram;
+
+/// No Unix sockets (Windows): wpa_supplicant is never there, so opening the control socket fails like a missing one.
+#[cfg(not(unix))]
+mod nosock {
+    use std::io;
+    use std::path::Path;
+    use std::time::Duration;
+
+    pub struct UnixDatagram(());
+
+    fn none<T>() -> io::Result<T> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "no Unix sockets on this OS"))
+    }
+
+    impl UnixDatagram {
+        pub fn bind(_p: &Path) -> io::Result<Self> {
+            none()
+        }
+        pub fn connect(&self, _p: &Path) -> io::Result<()> {
+            none()
+        }
+        pub fn send(&self, _b: &[u8]) -> io::Result<usize> {
+            none()
+        }
+        pub fn recv(&self, _b: &mut [u8]) -> io::Result<usize> {
+            none()
+        }
+        pub fn set_read_timeout(&self, _t: Option<Duration>) -> io::Result<()> {
+            none()
+        }
+        pub fn set_write_timeout(&self, _t: Option<Duration>) -> io::Result<()> {
+            none()
+        }
+    }
+}
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -422,6 +460,7 @@ mod tests {
 
     /// A fake wpa_supplicant on a socket: the commands a join sends, with only hex in them.
     #[test]
+    #[cfg(unix)]
     fn join_commands() {
         let dir = std::env::temp_dir().join(format!("oos-wlan-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

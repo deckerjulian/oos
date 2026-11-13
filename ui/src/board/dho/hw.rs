@@ -816,8 +816,8 @@ mod tests {
         // the smallest records get at least 64 more points
         assert_eq!(screen_margin(62), 128);
         // 1 ns/div: 12 points per screen, read 80 at the full rate (more than stock's smallest record, 62 at 5 ns)
-        m.tscale = 0;
-        assert_eq!(tscales()[0], 1e-9);
+        m.tscale = tscales().iter().position(|&t| (t - 1e-9).abs() < 1e-12).unwrap();
+        assert!((tscales()[m.tscale] - 1e-9).abs() < 1e-12);
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-9), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre), (1_250_000_000, 80, 40), "depth {}", s.depth);

@@ -168,10 +168,13 @@ pub fn for_file(vendor: &[u8]) -> Option<Keys> {
 
 /// Best effort: without it the next start searches again.
 fn keep(line: &str) {
-    use std::os::unix::fs::OpenOptionsExt;
     use std::io::Write;
     let tmp = format!("{}.new", KEEP);
-    let done = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).and_then(|mut f| {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    let done = o.open(&tmp).and_then(|mut f| {
         f.write_all(line.as_bytes())?;
         f.sync_all()
     });

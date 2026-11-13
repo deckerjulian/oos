@@ -323,6 +323,7 @@ fn force_with_the_same_image_keeps_the_slot() {
 }
 
 #[test]
+#[cfg(unix)] // the lock is flock(2): the scope only
 fn mode_and_lock() {
     let f = Fake::new("mode", None);
     set_mode(&f.state(), true).unwrap();
@@ -421,6 +422,7 @@ fn persist_arm_needs_a_good_image_and_no_trial() {
 }
 
 #[test]
+#[cfg(unix)] // the lock is flock(2): the scope only
 fn busy_follows_the_lock() {
     let f = Fake::new("busy", Some(1));
     assert!(!busy(&f.state()), "no lock file yet");

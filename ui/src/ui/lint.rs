@@ -110,7 +110,7 @@ fn every_menu_fits() {
         u
     };
     use MenuId::*;
-    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Magnetic, Inverter, Dpt] {
+    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasHold, MeasPair, Dvm, Cursor, Display, Windows, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Magnetic, Inverter, Dpt] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }
@@ -127,6 +127,8 @@ fn every_menu_fits() {
         u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1))];
     };
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
+    walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Split")), "Windows split", &mut out);
+    walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Four")), "Windows four", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
     for t in TRIG_TYPES {
         walk(&|| open(Trigger, &|u| u.set_trig_type(t)), &format!("Trigger {}", t.name()), &mut out);
@@ -155,12 +157,16 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(u.menu_open && u.menu == MenuId::Acquire);
     u.tap(160, 20);
     assert!(!u.menu_open);
-    // what is used most, and the menus without a front-panel key
-    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Measure", "Cursor", "Display", "Storage", "System"]);
-    // the buttons beside it keep working
-    let (_, _, r) = u.top_buttons()[0];
+    // File loading and simulation are direct actions beside the usual tools.
+    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Load file", "SIM", "Measure", "Cursor", "Display", "Storage", "System"]);
+    let (_, _, load) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Load).unwrap();
+    u.tap(load.x + 5, load.y + 5);
+    assert!(u.open_wave_request && !u.menu_open);
+    u.open_wave_request = false;
+    // Measurement choices remain one tap away, without going through acquisition or another menu.
+    let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
     u.tap(r.x + 5, r.y + 5);
-    assert!(u.menu_open && u.menu != MenuId::Acquire);
+    assert!(u.menu_open && u.menu == MenuId::MeasAdd);
 }
 
 #[test]
@@ -263,7 +269,7 @@ fn with_two_channels() -> Ui {
 }
 
 #[test]
-fn fourteen_measurements_with_delay_and_phase() {
+fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     let mut u = with_two_channels();
     u.m.meas.clear();
     for k in ALL_MEAS.iter().take(10) {
@@ -273,10 +279,10 @@ fn fourteen_measurements_with_delay_and_phase() {
     for k in 0..6 {
         u.meas_pair_toggle(k);
     }
-    // never more than the limit: the oldest goes
-    assert_eq!(u.m.meas.len() + u.m.meas2.len(), tools::MEAS_MAX);
+    // A larger selection keeps all ten original measurements and all six pairs.
+    assert_eq!(u.m.meas.len() + u.m.meas2.len(), 16);
     let rows = u.meas_rows();
-    assert_eq!(rows.len(), tools::MEAS_MAX);
+    assert_eq!(rows.len(), 16);
     assert!(rows.iter().any(|r| r.name.starts_with("Delay rise-rise 1-2")));
     // the same channel twice makes no sense
     u.meas_src_b = WaveId::Ch(0);
@@ -1431,6 +1437,52 @@ fn a_reference_travels_through_a_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
+    let dir = std::env::temp_dir().join(format!("oos-refbin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = with_two_channels();
+    u.store_dir = dir.clone();
+    let rec = u.last[0].as_ref().unwrap().clone();
+    let want = rec.ch[0].clone();
+    let dt = rec.dt;
+    std::fs::write(dir.join("wave-001.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.activate(Item::RefImport);
+    let r = u.refs[0].as_ref().expect("R1");
+    assert_eq!(r.v, want);
+    assert!((r.dt - dt).abs() < 1e-18);
+    std::fs::remove_file(dir.join("wave-001.bin")).unwrap();
+    // A real f32 WFM fixture is independent of the live channel-enable bits: importing the BIN
+    // entered reference mode and deliberately switched those channels off.
+    for magic in [b":WFM#002", b":WFM#003"] {
+        const CURVE: usize = 838;
+        let mut wfm = vec![0u8; CURVE + want.len() * 4 + 8];
+        wfm[..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
+        wfm[2..10].copy_from_slice(magic);
+        wfm[15] = 4;
+        wfm[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
+        wfm[40..48].copy_from_slice(b"captured");
+        wfm[168..176].copy_from_slice(&1f64.to_le_bytes());
+        wfm[240..244].copy_from_slice(&4u32.to_le_bytes());
+        wfm[488..496].copy_from_slice(&dt.to_le_bytes());
+        wfm[496..504].copy_from_slice(&rec.t0.to_le_bytes());
+        wfm[826..830].copy_from_slice(&((want.len() * 4) as u32).to_le_bytes());
+        for (index, value) in want.iter().enumerate() {
+            wfm[CURVE + index * 4..CURVE + index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        u.refs[0] = None;
+        std::fs::write(dir.join("cap.wfm"), wfm).unwrap();
+        u.activate(Item::RefImport);
+        let loaded = u.refs[0].as_ref().expect("WFM loaded into R1");
+        assert_eq!(loaded.v, want);
+        assert_eq!(loaded.label, "captured");
+        assert!((loaded.dt - dt).abs() < 1e-18);
+        assert!((loaded.t0 - rec.t0).abs() < 1e-18);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A CSV in a ref slot is measured at the file's sample interval. The 20 MHz front-end limit
 /// does not touch it. CH1 still reads the hardware frame, and the live source is left alone.
 #[test]
@@ -1688,6 +1740,25 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     let n = oos_dsp::eye::tie(&clk.edges, &clk).len();
     assert_eq!(u.azr.page.status[0], format!("Jitter of {} edges, 1 records", n));
 
+    // DQS on R2 folds DQ on R1: the UI is the strobe's edge spacing, not a CDR from the data.
+    let ui = 1e-9;
+    let dt = ui / 16.0;
+    let n = 1600usize;
+    let dq: Vec<f32> = (0..n).map(|k| if ((k as f64 * dt + 0.5 * ui) / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
+    let dqs: Vec<f32> = (0..n).map(|k| if (k as f64 * dt / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
+    put_ref(&mut u, 0, 0.0, dt, dq);
+    put_ref(&mut u, 1, 0.0, dt, dqs);
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(1));
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let (_, _, period) = u.azr.eye_res.clone().expect("strobe eye");
+    assert!((period - ui).abs() < ui * 1e-3, "period {period}");
+    assert!(u.azr.page.title.contains("clock from R2"), "{}", u.azr.page.title);
+
     let (pdt, pn) = (1e-5, 2000usize);
     let tone = |amp: f64, shift: f64| -> Vec<f32> {
         (0..pn).map(|k| (amp * (2.0 * std::f64::consts::PI * 1000.0 * k as f64 * pdt + shift).sin()) as f32).collect()
@@ -1846,4 +1917,433 @@ fn gallery() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.activate(Item::Update);
     shot(&mut u, "s-update");
+}
+
+fn load_dq_dqs(u: &mut Ui) -> bool {
+    let dq = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads/ch3-dq_67a5.wfm");
+    let dqs = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads/ch1-dqs_a0b1.wfm");
+    if !dq.is_file() || !dqs.is_file() {
+        return false;
+    }
+    for c in 0..NCH {
+        u.m.ch[c].on = false;
+    }
+    u.m.la.on = false;
+    u.m.run = RunState::Stop;
+    u.last[0] = None;
+    u.ref_sel = 0;
+    u.ref_load_path(dq);
+    u.ref_sel = 1;
+    u.ref_load_path(dqs);
+    true
+}
+
+#[test]
+fn dq_and_dqs_refs_make_a_strobe_eye() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    if !load_dq_dqs(&mut u) {
+        return;
+    }
+    let r1 = u.refs[0].as_ref().unwrap();
+    let r2 = u.refs[1].as_ref().unwrap();
+    assert_eq!(r1.v.len(), 1_000_000);
+    assert_eq!(r2.v.len(), 1_000_000);
+    assert!((r1.dt - 2e-11).abs() < 1e-18 && (r2.dt - 2e-11).abs() < 1e-18);
+    assert!((r1.t0 - r2.t0).abs() < 1e-18);
+    u.m.meas = [
+        (Meas::Vpp, WaveId::Ref(0)),
+        (Meas::Vmax, WaveId::Ref(0)),
+        (Meas::Vmin, WaveId::Ref(0)),
+        (Meas::Freq, WaveId::Ref(0)),
+        (Meas::Vpp, WaveId::Ref(1)),
+        (Meas::Vmax, WaveId::Ref(1)),
+        (Meas::Period, WaveId::Ref(1)),
+        (Meas::Freq, WaveId::Ref(1)),
+    ]
+    .into();
+    u.m.meas_labels = true;
+    u.meas_src = WaveId::Ref(0);
+    u.measure_refs();
+    if let Some(r) = u.refs[1].as_mut() {
+        r.color = 1;
+    }
+    u.m.tscale = tscales().iter().position(|&t| (t - 2e-6).abs() < 1e-12).unwrap();
+    u.m.tfine = 1.0;
+    u.m.delay = -1.06e-6;
+    u.set_zoom(true);
+    u.m.zscale = tscales().iter().position(|&t| (t - 1e-9).abs() < 1e-12).unwrap();
+    u.m.zdelay = -1.06e-6;
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/ddr-dq-dqs-scope.png", dir), crate::store::png_of(&cv));
+    }
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(1));
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let (meas, _, period) = u.azr.eye_res.clone().expect("DQ vs DQS eye");
+    eprintln!("DQS UI {} s ({:.3} GT/s) height {} V width {} s title {}", period, 1e-9 / period, meas.height, meas.width, u.azr.page.title);
+    assert!(period > 1e-10 && period < 2e-9, "UI {period}");
+    assert!(u.azr.page.title.contains("clock from R2"), "{}", u.azr.page.title);
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/ddr-dq-dqs-eye.png", dir), crate::store::png_of(&cv));
+    }
+}
+
+#[test]
+fn cphy_eye_full_screen_shot() {
+    let dir = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads");
+    let va = dir.join("VA_SE_f764.wfm");
+    let clk = dir.join("ClockRecovery_b5e0.wfm");
+    if !va.is_file() || !clk.is_file() {
+        return;
+    }
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    for c in 0..NCH {
+        u.m.ch[c].on = false;
+    }
+    u.m.la.on = false;
+    u.m.run = RunState::Stop;
+    u.last[0] = None;
+    u.m.meas.clear();
+    u.ref_sel = 0;
+    u.ref_load_path(&va);
+    if let Some(r) = u.refs[0].as_mut() {
+        r.label = "VA".into();
+    }
+    let b = std::fs::read(&clk).unwrap();
+    let n = (b.len() - 8 - 820) / 4;
+    let mut v = Vec::with_capacity(n);
+    for k in 0..n {
+        let o = 820 + k * 4;
+        v.push(f32::from_le_bytes(b[o..o + 4].try_into().unwrap()));
+    }
+    let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
+    let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
+    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v, vpd: 0.5, offset: 0.0, on: true });
+    u.full = true;
+    u.relayout();
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(3));
+    u.m.eye_rate = 2.27e9;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    assert!(u.azr.eye.is_some());
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/cphy-va-eye-full.png", dir), crate::store::png_of(&cv));
+    }
+}
+
+/// R1–R10 answer `:MEASure:ITEM?`. The strip, the eye figures, and one readout of everything on screen.
+#[test]
+fn scpi_reads_a_ref_the_strip_and_the_eye() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let cv = Canvas::new(W, H);
+    let mut scpi = crate::scpi::Scpi::open(0);
+    for _ in 0..4 {
+        u.step(0.05);
+    }
+    let q = |scpi: &mut crate::scpi::Scpi, u: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(u, &cv, c)).unwrap();
+
+    let ch = q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,CHAN1");
+    assert!(ch.contains('E') && ch != "9.9E37", "{ch}");
+    for item in ["FREQUENCY", "PERIOD", "RTIME", "VBASE", "CYCAMP", "CYCPP", "HTIME", "BWIDTH"] {
+        let r = q(&mut scpi, &mut u, &format!(":MEAS:ITEM? {item}"));
+        assert!(r.contains('E'), "{item} {r}");
+    }
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("0,"), "a known item must not be an error");
+
+    let (dt, n) = (5e-9, 800usize);
+    let sine: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 1e6 * k as f64 * dt).sin() as f32).collect();
+    put_ref(&mut u, 0, 0.0, dt, sine.clone());
+    u.measure_refs();
+    let want = oos_dsp::measure::analyze_min(&sine, dt, 0.4 * 0.2).get(Meas::Vpp);
+    let got: f64 = q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R1").parse().unwrap();
+    assert!((got - want).abs() < 1e-4, "{got} vs {want}");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R2"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("0,"), "an empty slot is not an error");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R11"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? NOPE,R1"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+
+    put_ref(&mut u, 1, 25e-9, dt, sine);
+    u.measure_refs();
+    let delay: f64 = q(&mut scpi, &mut u, ":MEAS:ITEM? RRDELAY,R1,R2").parse().unwrap();
+    assert!((delay - 25e-9).abs() < 2e-9, "delay {delay}");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? SETUP,R1"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0)), (Meas::Freq, WaveId::Ch(0))];
+    u.m.meas2 = vec![(0, WaveId::Ref(0), WaveId::Ref(1))];
+    u.m.dvm_on = true;
+    let strip = q(&mut scpi, &mut u, ":MEAS:STR?");
+    assert!(strip.contains("VPP,R1,"), "{strip}");
+    assert!(strip.contains("FREQUENCY,CHAN1,"), "{strip}");
+    assert!(strip.contains("RRDELAY,R1,R2,"), "{strip}");
+    assert!(strip.contains("DVM,DC,CHAN1,"), "{strip}");
+
+    u.m.view = AView::Scope;
+    let screen = q(&mut scpi, &mut u, ":MEAS:READ?");
+    assert!(screen.contains("VPP,R1,"), "{screen}");
+    assert!(!screen.contains("HEIGHT"), "{screen}");
+
+    let sq: Vec<f32> = (0..8000).map(|k| if (k / 20) % 2 == 0 { 0.5 } else { -0.5 }).collect();
+    put_ref(&mut u, 2, 0.0, 1e-9, sq);
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(2);
+    u.m.eye_b = None;
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let height: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? HEIGHT").parse().unwrap();
+    let width: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? WIDT").parse().unwrap();
+    let ui_s: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? UI").parse().unwrap();
+    let tj = q(&mut scpi, &mut u, ":EYE:ITEM? TJ");
+    assert!(height > 0.5 && height < 1.2, "height {height}");
+    assert!(width > 0.0 && width < 40e-9, "width {width}");
+    assert!((ui_s - 20e-9).abs() < 2e-9, "ui {ui_s}");
+    assert!(tj.contains('E'), "{tj}");
+    assert_eq!(q(&mut scpi, &mut u, ":EYE:ITEM? NOPE"), "9.9E37");
+    let screen = q(&mut scpi, &mut u, ":MEAS:READ?");
+    for token in ["VPP,R1,", "HEIGHT,", "WIDTH,", "UI,", "TJ,", "AMPLITUDE,", "DVM,DC,CHAN1,"] {
+        assert!(screen.contains(token), "{token} missing in {screen}");
+    }
+    assert_eq!(screen.matches(';').count() + 1, strip.matches(';').count() + 1 + EYE_ITEMS.len(), "{screen}");
+}
+
+#[test]
+fn measurement_queries_read_a_channel_or_a_ref() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    for _ in 0..8 {
+        u.step(0.05);
+    }
+    let cv = Canvas::new(W, H);
+    let mut s = crate::scpi::Scpi::open(0);
+    let ask = |s: &mut crate::scpi::Scpi, u: &mut Ui, cmd: &str| String::from_utf8_lossy(&s.exec_line(u, &cv, cmd)).into_owned();
+    let ch = ask(&mut s, &mut u, ":MEAS:ITEM? VPP");
+    assert!(ch.parse::<f64>().unwrap().is_finite() && ch != "9.9E37", "{}", ch);
+
+    let mut ramp = vec![0.0f32; 40];
+    ramp.extend((0..100).map(|i| i as f32 / 99.0));
+    ramp.extend(vec![1.0; 80]);
+    put_ref(&mut u, 0, 0.0, 1e-9, ramp);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:REFS?"), "10/90");
+    let r10 = ask(&mut s, &mut u, ":MEAS:ITEM? RTIM,R1").parse::<f64>().unwrap();
+    ask(&mut s, &mut u, ":MEAS:REFS 20/80");
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:REFS?"), "20/80");
+    let r20 = ask(&mut s, &mut u, ":MEAS:ITEM? RTIME,REF1").parse::<f64>().unwrap();
+    assert!(r20 < r10 && r10.is_finite(), "10/90 {} 20/80 {}", r10, r20);
+    let med = ask(&mut s, &mut u, ":MEAS:ITEM? MEDIAN,R1").parse::<f64>().unwrap();
+    assert!(med.is_finite(), "{}", med);
+    let mut bits = Vec::new();
+    for k in 0..1600 {
+        bits.push(if (k / 100) % 2 == 0 { 0.0 } else { 1.0 });
+    }
+    put_ref(&mut u, 3, 0.0, 1e-9, bits);
+    let ui_est = ask(&mut s, &mut u, ":MEAS:ITEM? ESTUI,R4").parse::<f64>().unwrap();
+    assert!((ui_est - 200e-9).abs() < 20e-9 || (ui_est - 100e-9).abs() < 20e-9, "{}", ui_est);
+    assert!(ask(&mut s, &mut u, ":MEAS:ITEM? ONES,R4").parse::<f64>().unwrap() > 0.0);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? VPP,R11"), "9.9E37");
+    assert!(ask(&mut s, &mut u, ":SYST:ERR?").contains("-224"));
+
+    // clock rises at 100 ns and 200 ns; data leads by 10 ns and holds for 40 ns
+    let edge = |at: &[usize]| {
+        let mut v = vec![0.0f32; 300];
+        for &t in at {
+            for x in v.iter_mut().skip(t).take(40) {
+                *x = 1.0;
+            }
+        }
+        v
+    };
+    put_ref(&mut u, 0, 0.0, 1e-9, edge(&[100, 200]));
+    put_ref(&mut u, 1, 0.0, 1e-9, edge(&[90, 190]));
+    ask(&mut s, &mut u, ":MEAS:TSET 20e-9");
+    ask(&mut s, &mut u, ":MEAS:THOL 5e-9");
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 2.0);
+    ask(&mut s, &mut u, ":MEAS:TSET 5e-9");
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 0.0);
+
+    let pdt = 1e-4;
+    let tone = |amp: f64, shift: f64| -> Vec<f32> {
+        (0..2000).map(|k| (amp * (2.0 * std::f64::consts::PI * 50.0 * k as f64 * pdt + shift).sin()) as f32).collect()
+    };
+    put_ref(&mut u, 0, 0.0, pdt, tone(2.0, 0.0));
+    put_ref(&mut u, 1, 0.0, pdt, tone(1.0, 0.0));
+    let vrms = ask(&mut s, &mut u, ":POW:ITEM? VRMS,R1,R2").parse::<f64>().unwrap();
+    assert!((vrms - 2.0 / 2.0f64.sqrt()).abs() < 0.05, "{}", vrms);
+    let harm = ask(&mut s, &mut u, ":POW:HARM? R2");
+    assert!(harm.starts_with("1,"), "{}", harm);
+    put_ref(&mut u, 2, 0.0, pdt, tone(1.0, 2.0 * std::f64::consts::PI / 3.0));
+    let freq = ask(&mut s, &mut u, ":INV:ITEM? FREQ,R1,R2,R3").parse::<f64>().unwrap();
+    assert!((freq - 50.0).abs() < 1.0, "{}", freq);
+    let f1 = ask(&mut s, &mut u, ":SPEC:ITEM? F1,R1").parse::<f64>().unwrap();
+    assert!((f1 - 50.0).abs() < 1.0, "{}", f1);
+
+    let (mv, mi) = inductor_pair(1e-3, 2e-6, 4000);
+    put_ref(&mut u, 0, 0.0, 2e-6, mv);
+    put_ref(&mut u, 1, 0.0, 2e-6, mi);
+    let l = ask(&mut s, &mut u, ":MAG:ITEM? L,R1,R2").parse::<f64>().unwrap();
+    assert!((l - 1e-3).abs() < 1e-4, "{}", l);
+
+    let (vds, id, gate) = double_pulse(1e-9);
+    put_ref(&mut u, 0, 0.0, 1e-9, vds);
+    put_ref(&mut u, 1, 0.0, 1e-9, id);
+    put_ref(&mut u, 2, 0.0, 1e-9, gate);
+    let vp = ask(&mut s, &mut u, ":DPT:ITEM? VPEAK,R1,R2,R3").parse::<f64>().unwrap();
+    assert!((vp - 480.0).abs() < 5.0, "{}", vp);
+
+    ask(&mut s, &mut u, ":BODE:MODE PSRR");
+    assert_eq!(ask(&mut s, &mut u, ":BODE:MODE?"), "PSRR");
+    ask(&mut s, &mut u, ":BODE:MODE IMP");
+    assert_eq!(ask(&mut s, &mut u, ":BODE:MODE?"), "IMP");
+
+    let mut sq = Vec::new();
+    for k in 0..8000 {
+        let p = k % 400;
+        let x = if p < 40 { p as f32 / 40.0 } else if p < 200 { 1.0 } else if p < 240 { 1.0 - (p - 200) as f32 / 40.0 } else { 0.0 };
+        sq.push(x);
+    }
+    put_ref(&mut u, 0, 0.0, 1e-8, sq);
+    ask(&mut s, &mut u, ":MEAS:REFS 10/90");
+    let rise = ask(&mut s, &mut u, ":BAND:ITEM? RISE,R1").parse::<f64>().unwrap();
+    assert!(rise.is_finite() && rise > 0.0, "{}", rise);
+}
+
+/// Measure > Dock: under the plot, left, right, or above the trace. The plot gives that side up and keeps the rest.
+#[test]
+fn the_measurement_strip_docks_on_four_sides() {
+    let mut bare = Ui::new(Source::Demo { t: 0.0 });
+    bare.m.meas.clear();
+    bare.m.meas2.clear();
+    bare.m.cursor = CursorMode::Off;
+    bare.m.dvm_on = false;
+    bare.m.cnt_on = false;
+    bare.relayout();
+    let empty = bare.grid;
+    for side in StripDock::ALL {
+        bare.m.strip_dock = side;
+        bare.relayout();
+        assert_eq!(bare.grid, empty, "an empty strip stays where it is on {:?}", side);
+    }
+
+    let mut u = with_two_channels();
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0)), (Meas::Vrms, WaveId::Ch(1))];
+    u.m.cursor = CursorMode::Time;
+    u.m.strip_dock = StripDock::Under;
+    u.relayout();
+    let under = u.grid;
+    assert_eq!((under.x, under.w, under.y), (0, W, PLOT_Y));
+    let band = u.strip_rect().unwrap();
+    assert!(!overlaps(band, under), "under {:?}", band);
+    assert!(band.y >= under.y + under.h);
+
+    u.m.strip_dock = StripDock::Above;
+    u.relayout();
+    assert_eq!((u.grid.x, u.grid.w, u.grid.h), (0, W, under.h));
+    assert_eq!(u.grid.y, PLOT_Y + u.strip_rows_h());
+    let band = u.strip_rect().unwrap();
+    assert!(!overlaps(band, u.grid), "above {:?}", band);
+    assert!(band.y + band.h <= u.grid.y);
+
+    u.m.strip_dock = StripDock::Left;
+    u.relayout();
+    assert_eq!((u.grid.x, u.grid.w), (STRIP_SIDE, W - STRIP_SIDE));
+    assert!(u.grid.h > under.h, "the plot gets the rows back");
+    assert_eq!(u.grid.y, PLOT_Y);
+    let col = u.strip_rect().unwrap();
+    assert!(!overlaps(col, u.grid), "left {:?}", col);
+    assert_eq!(col.x + col.w, u.grid.x);
+
+    let left_h = u.grid.h;
+    u.m.strip_dock = StripDock::Right;
+    u.relayout();
+    assert_eq!((u.grid.x, u.grid.w, u.grid.h, u.grid.y), (0, W - STRIP_SIDE, left_h, PLOT_Y));
+    let col = u.strip_rect().unwrap();
+    assert!(!overlaps(col, u.grid), "right {:?}", col);
+    assert_eq!(col.x, u.grid.x + u.grid.w);
+
+    // a second pane stays in the plot column (Results is the pane that replaces the strip)
+    u.m.pane = 4;
+    u.relayout();
+    assert!(u.pane_h() > 0 && u.strip_rows() > 0);
+    assert!(!overlaps(u.pane_rect(), u.strip_rect().unwrap()));
+    u.m.pane = 0;
+
+    u.full = true;
+    u.m.strip_dock = StripDock::Above;
+    u.relayout();
+    assert_eq!(u.grid.y, u.strip_rows_h());
+    assert!(u.strip_rect().unwrap().y < u.grid.y);
+    u.full = false;
+
+    // the control on the Measure page picks the side
+    u.m.strip_dock = StripDock::Under;
+    u.open_menu(MenuId::Measure);
+    let hit = |ui: &Ui, k: usize| -> (i32, i32) {
+        let d = ui.dlg_layout().unwrap();
+        let row = d.rows.iter().find(|r| r.it == Item::StripDock).expect("dock row");
+        let Ctl::Seg(opts, sel) = &row.ctl else { panic!("dock is a row of buttons") };
+        assert_eq!(opts.as_slice(), ["Under", "Left", "Right", "Above"]);
+        assert_eq!(*sel, Some(StripDock::ALL.iter().position(|&s| s == ui.m.strip_dock).unwrap()));
+        let n = opts.len() as i32;
+        let sw = (row.ctrl.w - (n - 1) * 4) / n;
+        (row.ctrl.x + k as i32 * (sw + 4) + sw / 2, row.ctrl.y + row.ctrl.h / 2)
+    };
+    for (k, side) in StripDock::ALL.into_iter().enumerate() {
+        let (x, y) = hit(&u, k);
+        u.tap(x, y);
+        assert_eq!(u.m.strip_dock, side);
+        assert!(u.menu_open);
+    }
+    // the ends stay put
+    u.m.strip_dock = StripDock::Under;
+    u.adjust(Item::StripDock, -1);
+    assert_eq!(u.m.strip_dock, StripDock::Under);
+    u.m.strip_dock = StripDock::Above;
+    u.adjust(Item::StripDock, 1);
+    assert_eq!(u.m.strip_dock, StripDock::Above);
+
+    let text = crate::store::setup_text(&u.m);
+    assert!(text.contains("strip_dock = Above"));
+    assert_eq!(crate::store::parse_setup(&text).unwrap().strip_dock, StripDock::Above);
+    let old: String = text.lines().filter(|l| !l.starts_with("strip_dock")).collect::<Vec<_>>().join("\n");
+    assert_eq!(crate::store::parse_setup(&old).unwrap().strip_dock, StripDock::Under);
+    assert!(crate::store::parse_setup("strip_dock = Beside").is_err());
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
+    let _ = std::fs::create_dir_all(&dir);
+    let shot = |u: &mut Ui, n: &str| {
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        let _ = crate::store::write(&dir.join(n), &crate::store::png_of(&cv));
+    };
+    u.close_menu();
+    for (side, name) in [(StripDock::Under, "strip-under.png"), (StripDock::Left, "strip-left.png"), (StripDock::Right, "strip-right.png"), (StripDock::Above, "strip-above.png")] {
+        u.m.strip_dock = side;
+        shot(&mut u, name);
+        let g = u.grid;
+        let s = u.strip_rect().unwrap();
+        assert!(!overlaps(g, s), "{name} plot {g:?} strip {s:?}");
+    }
+    u.m.strip_dock = StripDock::Left;
+    u.open_menu(MenuId::Measure);
+    shot(&mut u, "strip-menu.png");
+    u.close_menu();
+    u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1))];
+    shot(&mut u, "strip-left-pair.png");
+    let s = u.strip_rect().unwrap();
+    assert!(!overlaps(u.grid, s));
 }

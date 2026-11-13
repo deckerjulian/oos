@@ -6,7 +6,9 @@
 use super::Ui;
 use crate::board::{board, Board};
 use oos_hal::model::with_adc_clock;
-use std::{fs, io::Write, path::Path};
+use std::{fs, io::Write};
+#[cfg(unix)]
+use std::path::Path;
 
 /// Text of a clock step; the top step gives wrong samples (docs/models.md 4.1).
 pub(super) fn label(hz: f64) -> String {
@@ -37,6 +39,13 @@ fn store(path: &str, hz: f64) -> std::io::Result<()> {
     sync_dir(path)
 }
 
+/// Makes the rename or removal durable (Linux). Windows opens no directory as a file, and needs no such step.
+#[cfg(not(unix))]
+fn sync_dir(_path: &str) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
 fn sync_dir(path: &str) -> std::io::Result<()> {
     let dir = Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     fs::File::open(dir)?.sync_all()

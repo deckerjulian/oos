@@ -8,7 +8,7 @@
 //! channel the set-up stays as it was.
 
 use super::*;
-use crate::wave::{periodic, place, Stats};
+use crate::wave::{autoset_shown, periodic, place, Stats};
 
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
 const TBASES: [f32; 5] = [20e-9, 2e-6, 200e-6, 2e-3, 20e-3];
@@ -211,6 +211,56 @@ impl Ui {
         }
         self.dirty_map = true;
         self.mark_changed();
+    }
+}
+
+impl Ui {
+    /// SIM is playing a record, or every analog channel is off and a reference is on screen.
+    /// A live channel with SIM stopped keeps the live set-up.
+    pub(super) fn reference_autoset(&self) -> bool {
+        if self.sim_play {
+            return true;
+        }
+        let live = (0..n_ch()).any(|c| self.m.ch[c].on);
+        !live && self.refs.iter().any(|r| r.as_ref().is_some_and(|r| r.on && r.v.len() >= 4 && r.dt > 0.0))
+    }
+
+    /// Scale, position and time base from each shown reference. Does not turn an analog channel on.
+    pub(super) fn autoset_reference(&mut self) {
+        let shown: Vec<(usize, Vec<f32>, f64)> = self
+            .refs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                let r = r.as_ref()?;
+                (r.on && r.v.len() >= 4 && r.dt > 0.0).then(|| (i, r.v.clone(), r.dt))
+            })
+            .collect();
+        if shown.is_empty() {
+            self.toast("Auto set-up: no reference on");
+            return;
+        }
+        let waves: Vec<(&[f32], f64)> = shown.iter().map(|(_, v, dt)| (v.as_slice(), *dt)).collect();
+        let views = autoset_shown(&mut self.m, &waves);
+        let mut any = false;
+        for ((i, _, _), view) in shown.iter().zip(views) {
+            if let Some((vpd, offset)) = view {
+                if let Some(r) = &mut self.refs[*i] {
+                    r.vpd = vpd;
+                    r.offset = offset;
+                    any = true;
+                }
+            }
+        }
+        if !any {
+            self.toast("Auto set-up: no signal found");
+            return;
+        }
+        self.ph.clear();
+        self.phz.clear();
+        self.measure_refs();
+        self.dirty_map = true;
+        self.toast("Auto set-up");
     }
 }
 
@@ -480,5 +530,75 @@ mod tests {
         let m = ui.m.clone();
         ui.auto_start();
         assert!(ui.auto.is_none() && ui.m == m);
+    }
+
+    fn sine_ref(n: usize, cycles: f64, dt: f64) -> RefWave {
+        let v = (0..n).map(|k| (k as f64 / n as f64 * cycles * std::f64::consts::TAU).sin() as f32).collect();
+        RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt, v, vpd: 10.0, offset: 3.0, on: true }
+    }
+
+    #[test]
+    fn live_autoset_ignores_a_shown_reference() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.ch[1].on = false;
+        ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
+        ui.m.trig_level = 9.0;
+        ui.m.trig_src = 2;
+        ui.key(key::AUTO);
+        let r = ui.refs[0].as_ref().unwrap();
+        assert!((r.vpd - 10.0).abs() < 1e-6 && (r.offset - 3.0).abs() < 1e-6);
+        assert!(!ui.m.ch[1].on);
+        assert_eq!(ui.m.trig_src, 0);
+        assert!(ui.m.trig_level < 2.0, "level {}", ui.m.trig_level);
+        assert_ne!(ui.m.ch[0].vscale, 12);
+    }
+
+    #[test]
+    fn offline_autoset_uses_the_shown_reference_and_leaves_channels_off() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        for c in 0..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.run = RunState::Stop;
+        ui.m.trig_level = 9.0;
+        ui.m.trig_src = 2;
+        ui.refs[9] = Some(sine_ref(2000, 10.0, 1e-7));
+        ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
+        ui.refs[0].as_mut().unwrap().on = false;
+        ui.key(key::AUTO);
+        assert!(ui.m.ch.iter().all(|c| !c.on));
+        assert_eq!(ui.m.run, RunState::Stop);
+        assert_eq!((ui.m.trig_src, ui.m.trig_level), (2, 9.0));
+        let hidden = ui.refs[0].as_ref().unwrap();
+        assert!((hidden.vpd - 10.0).abs() < 1e-6 && (hidden.offset - 3.0).abs() < 1e-6);
+        let r = ui.refs[9].as_ref().unwrap();
+        assert!((r.vpd - 0.5).abs() < 1e-6, "v/div {}", r.vpd);
+        assert!(r.offset.abs() < 0.05, "offset {}", r.offset);
+        assert!((ui.m.time_per_div() - 10e-6).abs() < 1e-12, "s/div {}", ui.m.time_per_div());
+    }
+
+    #[test]
+    fn sim_autoset_uses_the_playing_slot() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.sim_slot = 4;
+        ui.m.ch[1].on = true;
+        ui.activate(Item::SimPlay);
+        assert!(ui.sim_play && ui.m.run == RunState::Run);
+        let ch: Vec<(bool, usize, f32)> = ui.m.ch.iter().map(|c| (c.on, c.vscale, c.offset)).collect();
+        ui.m.trig_level = 9.0;
+        ui.m.trig_src = 2;
+        ui.m.tscale = tscales().len() - 1;
+        let r = ui.refs[4].as_mut().unwrap();
+        r.vpd = 10.0;
+        r.offset = 3.0;
+        ui.key(key::AUTO);
+        assert!(ui.sim_play && ui.m.run == RunState::Run);
+        assert_eq!(ui.m.ch.iter().map(|c| (c.on, c.vscale, c.offset)).collect::<Vec<_>>(), ch);
+        assert_eq!((ui.m.trig_src, ui.m.trig_level), (2, 9.0));
+        assert!(ui.refs[0].is_none());
+        let r = ui.refs[4].as_ref().unwrap();
+        assert!(r.vpd < 1.0, "v/div {}", r.vpd);
+        assert!(r.offset.abs() < 0.2, "offset {}", r.offset);
+        assert!(ui.m.time_per_div() <= 5e-9, "s/div {}", ui.m.time_per_div());
     }
 }

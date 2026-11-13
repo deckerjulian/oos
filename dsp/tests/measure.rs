@@ -123,6 +123,27 @@ fn skew_setup_and_hold() {
     assert!(close(setup_time(&a, &b), 375e-6, 0.02), "{}", setup_time(&a, &b));
     assert!(close(hold_time(&a, &b), 125e-6, 0.02), "{}", hold_time(&a, &b));
     assert!(close(skew(&b, &a, Pair(true, true)), -125e-6, 1e-3));
+    assert_eq!(setup_hold_violations(&a, &b, 0.0, 0.0), 0.0);
+    assert!(setup_hold_violations(&a, &b, 400e-6, 0.0) > 0.0);
+}
+
+#[test]
+fn est_ui_median_mode_and_linreg() {
+    let dt = 1e-6;
+    let fa = PulseTrain::square(1e3, 0.0, 1.0, 1e-6);
+    let v = sample(|t| fa.v(t), 0.0, dt, 5000);
+    let a = analyze(&v, dt);
+    assert!(close(a.get(Meas::EstUi), 500e-6, 0.05), "{}", a.get(Meas::EstUi));
+    assert!(a.get(Meas::Median).is_finite());
+    assert!(a.get(Meas::Mode).is_finite());
+    let ramp: Vec<f32> = (0..1000).map(|i| i as f32 * 0.01).collect();
+    let r = analyze(&ramp, 1.0);
+    assert!(close(r.get(Meas::LinSlope), 0.01, 0.02), "{}", r.get(Meas::LinSlope));
+    assert!(r.get(Meas::LinInt).abs() < 0.05, "{}", r.get(Meas::LinInt));
+    assert!(close(r.get(Meas::Median), 4.995, 0.01), "{}", r.get(Meas::Median));
+    assert!(a.get(Meas::UiWtd).is_finite());
+    assert!(a.get(Meas::PllUi).is_finite());
+    assert!(a.get(Meas::PamSep).is_finite() || a.get(Meas::Pam0).is_finite());
 }
 
 #[test]

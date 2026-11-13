@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
 """card-install.py: put an OOS boot image into the `recovery` partition of a DHO800/DHO900 boot card
-(card in the Mac's reader as /dev/rdiskN, or a card image file), and optionally arm the boot command.
+(card in a reader as /dev/rdiskN, or a card image file), and optionally arm the boot command.
 
     card-install.py install TARGET --image boot/out/oos-dev.img [--arm]    dry run: checks and prints the plan
     card-install.py restore TARGET --backup FILE                            dry run: puts a saved recovery back
@@ -11,8 +11,8 @@
 
 Checks before anything is written:
   - the PARM table at LBA 8192 has the stock layout (recovery 0x00020000@0x0002C000, misc 0x00002000@0x00006000)
-  - the image is an ANDROID! boot image whose Rockchip id holds (oos-bootimg.py) and fits the partition
-  - the current recovery content is a Rockchip KRNL ramdisk, an ANDROID! image, or a saved OOS image
+  - the image is an ANDROID! boot image whose loader id holds (oos-bootimg.py) and fits the partition
+  - the current recovery content is a KRNL ramdisk, an ANDROID! image, or a saved OOS image
 --arm also writes `boot-recovery` to LBA 32800 (bcb.py), so the next power-on boots the image once
 (the OOS development initramfs clears it again at start).
 """
@@ -54,7 +54,7 @@ def check_parm(f):
 
 def kind(blob):
     if blob[:4] == b"KRNL":
-        return "Rockchip KRNL image (stock recovery ramdisk)"
+        return "KRNL image (stock recovery ramdisk)"
     if blob[:8] == b"ANDROID!":
         name = blob[48:64].split(b"\0")[0].decode("latin1")
         return f"ANDROID! boot image, name {name!r}"
@@ -86,7 +86,7 @@ def main():
     if a.action == "install":
         f_, k, r, s = bi.parts(data)
         if data[bi.ID_OFFSET:bi.ID_OFFSET + 32] != bi.image_id(data[:bi.PAGE], k, r, s):
-            sys.exit(f"{src}: Rockchip id does not hold; the loader would refuse it")
+            sys.exit(f"{src}: loader id does not hold; the loader would refuse it")
         print(f"image {src}: {len(data)} bytes, id ok, sha256 {hashlib.sha256(data).hexdigest()[:16]}")
     if len(data) > RECOVERY_SECTORS * SECTOR:
         sys.exit("does not fit `recovery` (64 MiB)")

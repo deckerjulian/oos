@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""sdcard-layout.py: describe the boot SD card of a Rigol DHO800/DHO900 (Rockchip RK3399 legacy layout).
+"""sdcard-layout.py: describe the boot SD card of a DHO800/DHO900 (RK3399 legacy layout).
 
 Read-only. Input is a card image (sd-original.img), a raw device (/dev/rdiskN, needs sudo) or a partial dump.
 
 Reports
   - LBA 0-63         MBR/GPT signatures
-  - LBA 64           Rockchip IDB (TPL/SPL loader) present?
-  - LBA 7168-7679    Rockchip vendor storage (4 copies of 64 KiB): items, serial/MAC
-  - LBA 8192         Rockchip 'parameter' (PARM) block: CMDLINE mtdparts -> partition table
+  - LBA 64           IDB (TPL/SPL loader) present?
+  - LBA 7168-7679    vendor storage (4 copies of 64 KiB): items, serial/MAC
+  - LBA 8192         'parameter' (PARM) block: CMDLINE mtdparts -> partition table
   - Android 'misc'   bootloader control block (BCB) command
   - each partition   first bytes / format guess (KRNL, RSCE, ANDROID!, ext4, zero)
 
@@ -19,7 +19,7 @@ Options
   --compare DIR      compare partitions with existing dumps DIR/<name>.bin (md5)
 
 Partition sizes and offsets in the PARM block are in 512-byte sectors and RELATIVE to LBA 0x2000 (8192),
-as Rockchip's U-Boot interprets them.
+as the stock U-Boot interprets them.
 """
 import argparse, hashlib, os, re, struct, sys, zlib
 
@@ -140,9 +140,9 @@ def guess(b):
         what = "gzip ramdisk" if inner[:2] == b"\x1f\x8b" else ("arm64 Image" if b[8 + 0x38:8 + 0x3c] == b"ARMd" else inner.hex())
         return f"KRNL image, payload {n} bytes, {what}"
     if b[:6] == b"LOADER":
-        return "Rockchip U-Boot (LOADER image)"
+        return "U-Boot (LOADER image)"
     if b[:4] == b"BL3X":
-        return "Rockchip trust image (TF-A BL31 / OP-TEE)"
+        return "trust image (TF-A BL31 / OP-TEE)"
     if b[:4] == b"RSCE":
         return "RSCE resource (dtb + logos)"
     if b[:8] == b"ANDROID!":

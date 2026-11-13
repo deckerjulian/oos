@@ -124,7 +124,7 @@ pub enum Source {
     Vendor,
     /// `model = ...` in the limits file (or `--model`)
     Forced,
-    /// no readable vendor.bin (host, or the rigol partition is not mounted): DHO924S assumed
+    /// no readable vendor.bin (host, or the stock partition is not mounted): DHO924S assumed
     Assumed,
 }
 

@@ -203,7 +203,7 @@ pub fn adc_clk_window() -> (u32, u32) {
     ((c - 6.0).floor() as u32, (c + 6.0).ceil() as u32)
 }
 
-/// LMX2582 words for the ADC clock in effect: Rigol's table at 1.25 GHz, else `lmx2582::table_for` (experimental,
+/// LMX2582 words for the ADC clock in effect: the stock table at 1.25 GHz, else `lmx2582::table_for` (experimental,
 /// limits.conf `adc.clock_hz`; docs/protocols/pll.md "Other output frequencies").
 pub fn pll_table() -> Result<[[u8; 3]; 46], String> {
     if !crate::dho::clock::overclocked() {

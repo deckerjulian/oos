@@ -19,7 +19,7 @@ and meant for any software-side trigger/measurement in OOS.
 
 Conventions: waveforms are `&[f32]` volts every `dt` seconds; trigger points are fractional sample indices at the moment
 the condition is decided (closing edge of a pulse, end of a transition, expiry of a timeout, ...); measurements follow
-Rigol / IEEE 181 (top/base from the histogram, 10/50/90 % levels).
+IEEE 181 (top/base from the histogram, 10/50/90 % levels).
 
 ```
 cargo test     # 33 tests: every trigger type, measurement, decoder and math function against signals with known answers;

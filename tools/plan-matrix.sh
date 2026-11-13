@@ -5,7 +5,7 @@
 #
 #   tools/plan-matrix.sh [path/to/oos-fpgad] > plan-OLD.txt
 #
-# `oos-fpgad plan` only prints, it touches no hardware, so this is safe on the unit (busybox sh) and on the Mac. Run it
+# `oos-fpgad plan` only prints, it touches no hardware, so this is safe on the unit (busybox sh) and on a host. Run it
 # with the old build still on the unit BEFORE installing a new image, and with the new build, then `diff`: the analog
 # path must not change at 1.25 GHz. Needs the calibration files: on the unit
 # /rigol/data, on a host computer `OOS_CAL_DIR=local/cal`.

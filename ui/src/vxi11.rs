@@ -239,6 +239,16 @@ pub struct Server {
 }
 
 impl Server {
+    /// Nothing listening. A computer leaves VXI-11 to the scope, where port 111 is free.
+    pub fn closed() -> Server {
+        Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new() }
+    }
+
+    /// The core port, once the portmapper on 111 and the core channel are both up.
+    pub fn service_port(&self) -> Option<u16> {
+        (self.pm_tcp.is_some() && self.pm_udp.is_some() && self.core_tcp.is_some()).then_some(CORE_PORT)
+    }
+
     pub fn open() -> Server {
         let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
         let pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));

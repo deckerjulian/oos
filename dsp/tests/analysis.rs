@@ -287,6 +287,32 @@ fn eye_sparse_record_still_draws_lines() {
     assert!(close(e.eye_amplitude(), 1.0, 0.05));
 }
 
+/// A source-synchronous strobe (DQS) clocks the data (DQ). The eye is DQ folded on DQS edges, not CDR from DQ.
+#[test]
+fn eye_folds_data_on_a_strobe_clock() {
+    let (rate, spu, nui) = (1e9, 32usize, 2048usize);
+    let ui = 1.0 / rate;
+    let dt = ui / spu as f64;
+    let bits = prbs7(nui);
+    let mut dq = Vec::with_capacity(nui * spu);
+    let mut dqs = Vec::with_capacity(nui * spu);
+    for i in 0..nui * spu {
+        let t = i as f64 * dt;
+        let k = ((t + 0.5 * ui) / ui).floor() as usize;
+        dq.push(if bits[k.min(bits.len() - 1)] { 1.0 } else { 0.0 });
+        dqs.push(if (t / ui).floor() as usize % 2 == 0 { 1.0 } else { 0.0 });
+    }
+    let clk = eye::recover_clock(&dqs, dt, 0.5, 0.1, None).unwrap();
+    assert!(close(clk.period, ui, ui * 1e-6), "{}", clk.period);
+    let mut e = Eye::new(128, 64, 2, -0.25, 1.25);
+    e.accumulate(&dq, dt, &eye::center_strobe(&clk));
+    let m = e.measure(clk.period);
+    assert!(m.height > 0.7, "{:?}", m);
+    assert!(m.width > 0.5 * ui, "{:?}", m);
+    let idle = eye::gate_around_clock(&dq, dt, &clk, 1.5);
+    assert_eq!(idle.iter().filter(|x| x.is_finite()).count(), dq.len());
+}
+
 #[test]
 fn jitter_gaussian_edge_jitter_gives_rj() {
     let rate = 1e6;

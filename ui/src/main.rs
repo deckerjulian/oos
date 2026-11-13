@@ -4,6 +4,8 @@
 //! oos-ui: the OOS oscilloscope screen.
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
+//!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
+//!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
@@ -27,6 +29,8 @@ mod store;
 mod trig;
 mod ui;
 mod vxi11;
+mod hislip;
+mod announce;
 mod json;
 mod wave;
 mod zone;
@@ -34,6 +38,8 @@ mod zone;
 mod drm;
 #[cfg(target_os = "linux")]
 mod input;
+#[cfg(windows)]
+mod desktop;
 
 use gfx::Canvas;
 use ui::Ui;
@@ -105,6 +111,9 @@ fn main() {
         None => args,
     };
     let mut ui = Ui::new(source(&args));
+    if args.iter().any(|a| a == "--offline") {
+        ui.set_offline(true);
+    }
     if let Some(m) = &foreign {
         ui.toast(&format!("This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)", m));
     }
@@ -125,6 +134,11 @@ fn main() {
     }
     if let Some(d) = arg(&args, "--store-dir") {
         ui.store_dir = d.into();
+    } else if cfg!(windows) {
+        // no /tmp on Windows: setups, CSV and screenshots go to Documents\OOS
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            ui.store_dir = std::path::Path::new(&home).join("Documents").join("OOS");
+        }
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);
@@ -133,31 +147,54 @@ fn main() {
     {
         device_main(ui, &args);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        desktop::run(ui, &args);
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = ui;
         eprintln!("oos-ui: no display backend on this OS; use --script FILE");
     }
 }
 
-/// No display and no hardware: the demo source behind SCPI, the web server and VXI-11, for tools/device-test.py on a
-/// host. `OOS_DEMO_LOOP=<mask>` puts the generator on those channels, as a cable from the output would.
+/// No display and no hardware: the demo source behind SCPI and the web server on a computer, which also accepts
+/// HiSLIP. VXI-11 stays on the scope, where port 111 is free. `OOS_DEMO_LOOP=<mask>` puts the generator on those
+/// channels, as a cable from the output would.
 fn serve(mut ui: Ui, args: &[String]) {
-    let port = |name: &str, d: u16| arg(args, name).and_then(|p| p.parse().ok()).unwrap_or(d);
-    let mut web = http::Http::open(port("--web-port", 8080));
-    let mut scpi = scpi::Scpi::open(port("--scpi-port", 5555));
-    let mut vxi = vxi11::Server::open();
+    let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args);
     let mut cv = Canvas::new(ui::W, ui::H);
     while !ui.quit {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
         vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        hislip.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             cmd::run(&mut ui, &c);
         }
+        ann.poll();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+}
+
+/// The scope, where port 111 is free for VXI-11: the acquisition device is present, or the boot identity was read.
+/// A computer has neither, and accepts HiSLIP instead.
+fn on_scope() -> bool {
+    std::path::Path::new("/dev/xdma0_bypass").exists() || matches!(oos_hal::model::platform().source, oos_hal::model::Source::Vendor)
+}
+
+/// SCPI, the web server, and whichever of VXI-11 and HiSLIP this machine accepts, plus the announcement.
+fn lan(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
+    let port = |name: &str, d: u16| arg(args, name).and_then(|p| p.parse().ok()).unwrap_or(d);
+    let mut web = http::Http::open(port("--web-port", 8080));
+    let scpi = scpi::Scpi::open(port("--scpi-port", 5555));
+    let vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
+    let hislip = if scope { hislip::Server::closed() } else { hislip::Server::open(port("--hislip-port", hislip::PORT)) };
+    let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
+    web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
+    let ann = announce::Announcer::open(&services);
+    (web, scpi, vxi, hislip, ann)
 }
 
 fn run_script(ui: &mut Ui, path: &str) {
@@ -279,6 +316,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         match store::parse_setup(&t) {
             Ok(m) => {
                 ui.m = m;
+                ui.sync_full();
                 eprintln!("oos-ui: settings restored from {}", SETUP_FILE);
             }
             Err(e) => eprintln!("oos-ui: {}: {}", SETUP_FILE, e),
@@ -296,9 +334,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut led_t = Instant::now();
     let mut net_t: Option<Instant> = None;
     input::install_signal_handlers();
-    let mut web = http::Http::open(arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080));
-    let mut scpi = scpi::Scpi::open(arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555));
-    let mut vxi = vxi11::Server::open();
+    let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(on_scope(), args);
     // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
     let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
     let mut hdmi: Option<drm::Display> = None;
@@ -329,6 +365,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
         }
         scpi.poll(&mut ui, &cv);
         vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        hislip.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        ann.poll();
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             if let cmd::Out::Shot(p) = cmd::run(&mut ui, &c) {
                 ui.shot_request = Some(p);

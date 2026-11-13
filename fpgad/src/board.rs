@@ -30,6 +30,7 @@ pub fn line(zones: &[Zone], fpga: Option<(f32, f32)>) -> String {
 
 /// Power off through the front-panel MCU: sync, then `FA 05 01` twice like the stock system.
 fn power_off() -> Result<(), String> {
+    #[cfg(unix)]
     unsafe { libc::sync() };
     let mut f = std::fs::OpenOptions::new().write(true).open("/dev/ttyS0").map_err(|e| format!("/dev/ttyS0: {}", e))?;
     use std::io::Write;

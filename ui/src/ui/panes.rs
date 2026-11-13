@@ -400,7 +400,7 @@ impl Ui {
         let rows = self.result_rows();
         let (t, side) = self.results_box(r);
         if rows.is_empty() {
-            cv.text(&f.sb, t.x + 12, t.y + (r.h + 9) / 2, "No measurements: Measure > Add item", DIM);
+            cv.text(&f.sb, t.x + 12, t.y + (r.h + 9) / 2, "No measurements: tap Measure", DIM);
         } else {
             self.draw_result_table(cv, r, t, &rows);
         }
@@ -700,7 +700,7 @@ impl Ui {
         let rows = self.meas_rows();
         let charts = self.trend_charts();
         if rows.is_empty() || charts.is_empty() {
-            let s = if rows.is_empty() { "No measurements: Measure > Add item" } else { "Both charts off: Display > Trend chart 1, 2" };
+            let s = if rows.is_empty() { "No measurements: tap Measure" } else { "Both charts off: Display > Trend chart 1, 2" };
             cv.text(&f.sb, r.x + 12, r.y + (r.h + 9) / 2, s, DIM);
             return;
         }
@@ -843,6 +843,12 @@ impl Ui {
         let r = self.pane_rect();
         if Self::pane_close(r).contains(x, y) {
             self.m.pane = 0;
+            self.m.split_pane = 0;
+            // Split with no number pane is the two stacked traces
+            if self.m.density == Density::Split && self.m.win_layout == WinLayout::One {
+                self.m.win_layout = WinLayout::Rows;
+                self.spread_wins();
+            }
             return true;
         }
         if !r.contains(x, y) {

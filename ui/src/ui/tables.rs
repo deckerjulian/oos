@@ -13,8 +13,8 @@ pub(super) enum TableKind {
     Search,
 }
 
-/// Second pane under the plot.
-pub const PANES: [&str; 5] = ["Off", "Spectrum", "Results", "Events", "Trend"];
+/// What Split puts under the plot. 0 is traces: two stacked windows, and this pane is not drawn.
+pub const PANES: [&str; 5] = ["Traces", "Spectrum", "Results", "Events", "Trend"];
 pub(super) const PANE_SPECTRUM: usize = 1;
 pub(super) const PANE_RESULTS: usize = 2;
 pub(super) const PANE_EVENTS: usize = 3;
@@ -193,7 +193,7 @@ impl Ui {
     /// The second pane: under the plot and the lanes.
     pub(super) fn pane_rect(&self) -> Rect {
         let g = self.grid;
-        Rect::new(g.x, g.y + g.h + 2 + self.la_strip_h(), g.w, self.pane_h() - 4)
+        Rect::new(g.x, g.y + g.h + 2 + self.eye_below() + self.la_strip_h(), g.w, self.pane_h() - 4)
     }
 
     /// The close button of the pane.

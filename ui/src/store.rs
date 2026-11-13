@@ -17,6 +17,35 @@ pub const DEFAULT_DIR: &str = "/tmp/oos";
 /// Folder on a USB stick (`/bin/oos-usb` mounts it at /mnt/usb).
 pub const USB_DIR: &str = "/mnt/usb/OOS";
 
+/// Where CSV, PNG, mask and fast-frame files go.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StoreDest {
+    /// USB stick when mounted, otherwise the storage directory
+    Auto,
+    /// USB stick (`/mnt/usb/OOS`)
+    Stick,
+    /// Desktop folder of the logged-in user
+    Desk,
+}
+
+impl StoreDest {
+    pub const ALL: [StoreDest; 3] = [StoreDest::Auto, StoreDest::Stick, StoreDest::Desk];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            StoreDest::Auto => "Auto",
+            StoreDest::Stick => "USB",
+            StoreDest::Desk => "Desktop",
+        }
+    }
+}
+
+/// Desktop save folder (`$HOME/Desktop/OOS`, else `/root/Desktop/OOS`).
+pub fn desktop_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    PathBuf::from(home).join("Desktop").join("OOS")
+}
+
 /// A stick is mounted, by the text of /proc/mounts.
 pub fn usb_mounted(mounts: &str) -> bool {
     mounts.lines().any(|l| l.split(' ').nth(1) == Some("/mnt/usb"))
@@ -189,6 +218,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("grid_bright", m.grid_bright.to_string());
     kv("grid_frame", m.grid_frame.to_string());
     kv("windows", name(m.win_layout));
+    kv("density", name(m.density));
+    kv("split_pane", m.split_pane.to_string());
     kv("ch_window", m.ch_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("la_window", (m.la_win + 1).to_string());
@@ -249,6 +280,7 @@ pub fn setup_text(m: &Model) -> String {
     }
     kv("pane", m.pane.to_string());
     kv("meas_labels", m.meas_labels.to_string());
+    kv("strip_dock", name(m.strip_dock));
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());
     kv("auto_roll", m.auto_roll.to_string());
@@ -261,10 +293,11 @@ pub fn setup_text(m: &Model) -> String {
     kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in.token(), m.bode_out.token(), m.bode_gen, m.bode_addr));
     kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src.token(), m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
-    kv("eye", format!("{} {}", m.eye_src.token(), m.eye_rate));
+    kv("eye", format!("{} {} {}", m.eye_src.token(), m.eye_rate, if m.eye_from_record { 1 } else { 0 }));
+    kv("eye_place", name(m.eye_place));
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
-    kv("meas_cfg", format!("{} {:?} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }));
+    kv("meas_cfg", format!("{} {:?} {} {} {} {} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }, m.meas_lpct, m.meas_hpct, m.meas_tsetup, m.meas_thold));
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     kv("bode_mode", name(m.bode_mode));
     kv("eye_more", format!("{} {} {} {} {} {} {} {}", m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, if m.eye_npj { 1 } else { 0 }, opt(m.eye_rail), m.eye_notch, opt(m.eye_b), if m.eye_hp { 1 } else { 0 }));
@@ -274,7 +307,7 @@ pub fn setup_text(m: &Model) -> String {
     let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
     kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a.token(), m.inv_b.token(), m.inv_c.token(), m.inv_ang, m.inv_poles, m.inv_an.token(), m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
     kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v.token(), m.dpt_i.token(), m.dpt_g.token(), m.dpt_4th, m.dpt_4ch.token(), m.dpt_pct, m.dpt_zoom));
-    kv("sim", format!("{} {}", m.sim_preset, m.sim_slot));
+    kv("sim", format!("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.sim_preset, m.sim_slot, m.sim_rate, m.sim_prbs, m.sim_vhigh, m.sim_vlow, m.sim_rise, m.sim_noise, m.sim_bw, m.sim_deemph, if m.sim_ssc { 1 } else { 0 }, m.sim_rj, m.sim_pj, m.sim_pjhz, 0));
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
@@ -287,6 +320,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("mask_x", m.mask_x.to_string());
     kv("mask_y", m.mask_y.to_string());
     kv("mask_stop", m.mask_stop.to_string());
+    kv("mask_inv", m.mask_inv.to_string());
     kv("quick", name(m.quick));
     kv("la", m.la.to_text());
     kv("dec_la", format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")));
@@ -307,6 +341,12 @@ fn p_f32(v: &str) -> Result<f32, String> {
 
 fn p_u32(v: &str) -> Result<u32, String> {
     v.parse::<u32>().map_err(|_| format!("not an integer: {}", v))
+}
+
+/// Old setup files stored an index into the 5 ns .. 1000 s ladder.
+fn legacy_tscale(v: &str, ntime: usize) -> Result<usize, String> {
+    let five = tscales().iter().position(|&t| t >= 4.9e-9).unwrap_or(0);
+    Ok(five.saturating_add(p_idx(v, ntime.saturating_sub(five).max(1))?))
 }
 
 /// Index below n.
@@ -405,7 +445,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "active" => m.active = p_idx(v, NCH)?,
         "tdiv" => m.tscale = tdiv_index(v)?,
         // setups before the 1/2 ns steps: index into the old ladder (5 ns .. 1000 s)
-        "tscale" => m.tscale = p_idx(v, ntime - 2)? + 2,
+        "tscale" => m.tscale = legacy_tscale(v, ntime)?,
         "delay" => m.delay = p_f32(v)?,
         "trig_src" => m.trig_src = p_idx(v, NCH)?,
 "pat_la" => {
@@ -456,6 +496,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "grid_bright" => m.grid_bright = p_u32(v)?.clamp(10, 100),
         "grid_frame" => m.grid_frame = p_bool(v)?,
         "windows" => m.win_layout = p_enum(v, &WinLayout::ALL)?,
+        "density" => m.density = p_enum(v, &Density::ALL)?,
+        "split_pane" => m.split_pane = p_idx(v, crate::ui::PANES_N)?,
         "ch_window" => {
             let w = p_list(v, NCH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.ch_win.copy_from_slice(&w);
@@ -496,6 +538,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_sel" => m.dec_sel = p_idx(v, DECODERS)?,
         "pane" => m.pane = p_idx(v, crate::ui::PANES_N)?,
         "meas_labels" => m.meas_labels = p_bool(v)?,
+        "strip_dock" => m.strip_dock = p_enum(v, &StripDock::ALL)?,
         "trend_sel" => {
             let f: Vec<&str> = v.split_whitespace().collect();
             let [a, b] = f[..] else { return Err("trend_sel: two values".into()) };
@@ -563,7 +606,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "zoom" => m.zoom = p_bool(v)?,
         "auto_roll" => m.auto_roll = p_bool(v)?,
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
-        "zscale" => m.zscale = p_idx(v, ntime - 2)? + 2,
+        "zscale" => m.zscale = legacy_tscale(v, ntime)?,
         "zdelay" => m.zdelay = p_f32(v)?,
         "color_grade" => m.color_grade = p_bool(v)?,
         "dots" => m.dots = p_bool(v)?,
@@ -600,7 +643,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let w: Vec<&str> = v.split_whitespace().collect();
             m.eye_src = WaveId::parse(w.first().ok_or("eye: source")?)?;
             m.eye_rate = w.get(1).ok_or("eye: rate")?.parse::<f64>().map_err(|e| e.to_string())?;
+            // older files have no third field: the rate was entered, not measured
+            m.eye_from_record = w.get(2).is_some_and(|s| *s != "0");
         }
+        "eye_place" => m.eye_place = p_enum(v, &[EyePlace::Side, EyePlace::Under])?,
         "power" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 3 {
@@ -689,6 +735,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "mask_x" => m.mask_x = p_f32(v)?,
         "mask_y" => m.mask_y = p_f32(v)?,
         "mask_stop" => m.mask_stop = p_bool(v)?,
+        "mask_inv" => m.mask_inv = p_bool(v)?,
         "quick" => m.quick = p_enum(v, &QUICKS)?,
         "la" => m.la = crate::ui::la::LaSet::parse(v)?,
         "dec_la" => {
@@ -703,11 +750,19 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         "meas_cfg" => {
             let w: Vec<&str> = v.split_whitespace().collect();
-            let [idle, side, n, data] = w[..] else { return Err("meas_cfg: idle outside n data".into()) };
-            m.meas_idle = idle.parse::<f64>().map_err(|e| e.to_string())?;
-            m.meas_out = p_enum(side, &[oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both])?;
-            m.meas_n = p_u32(n)?.clamp(1, 32);
-            m.meas_data = p_bool(data)?;
+            if w.len() != 4 && w.len() != 8 {
+                return Err("meas_cfg: idle outside n data [lpct hpct tsetup thold]".into());
+            }
+            m.meas_idle = w[0].parse::<f64>().map_err(|e| e.to_string())?;
+            m.meas_out = p_enum(w[1], &[oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both])?;
+            m.meas_n = p_u32(w[2])?.clamp(1, 32);
+            m.meas_data = p_bool(w[3])?;
+            if w.len() == 8 {
+                m.meas_lpct = w[4].parse::<f64>().map_err(|e| e.to_string())?;
+                m.meas_hpct = w[5].parse::<f64>().map_err(|e| e.to_string())?;
+                m.meas_tsetup = w[6].parse::<f64>().map_err(|e| e.to_string())?;
+                m.meas_thold = w[7].parse::<f64>().map_err(|e| e.to_string())?;
+            }
         }
         "spec_acpr" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -718,9 +773,27 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "bode_mode" => m.bode_mode = p_enum(v, &[oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z])?,
         "sim" => {
             let w: Vec<&str> = v.split_whitespace().collect();
-            let [preset, slot] = w[..] else { return Err("sim: preset slot".into()) };
-            m.sim_preset = p_idx(preset, oos_dsp::serial::LANES.len())?;
-            m.sim_slot = p_idx(slot, NREF)?;
+            if w.len() < 2 {
+                return Err("sim: preset slot".into());
+            }
+            m.sim_preset = p_idx(w[0], oos_dsp::serial::LANES.len())?;
+            m.sim_slot = p_idx(w[1], NREF)?;
+            m.apply_sim_preset();
+            if w.len() >= 14 {
+                let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
+                m.sim_rate = f(w[2])?;
+                m.sim_prbs = w[3].parse::<u8>().map_err(|e| e.to_string())?;
+                m.sim_vhigh = f(w[4])?;
+                m.sim_vlow = f(w[5])?;
+                m.sim_rise = f(w[6])?;
+                m.sim_noise = f(w[7])?;
+                m.sim_bw = f(w[8])?;
+                m.sim_deemph = f(w[9])?;
+                m.sim_ssc = p_bool(w[10])?;
+                m.sim_rj = f(w[11])?;
+                m.sim_pj = f(w[12])?;
+                m.sim_pjhz = f(w[13])?;
+            }
         }
         "eye_more" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -762,6 +835,22 @@ pub fn parse_setup(text: &str) -> Result<Model, String> {
         let (k, v) = line.split_once('=').ok_or_else(|| format!("line {}: no '='", ln + 1))?;
         let k = k.trim();
         set(&mut m, k, v.trim()).map_err(|e| format!("line {}: {}: {}", ln + 1, k, e))?;
+    }
+    // a setup from before the density row: the windows and the pane already say which of the four it was
+    if !text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "density")) {
+        m.density = match m.win_layout {
+            WinLayout::Quad => Density::Four,
+            WinLayout::Cols | WinLayout::Rows => Density::Split,
+            WinLayout::One if m.pane != 0 => Density::Split,
+            WinLayout::One => Density::Scope,
+        };
+        // two across is not a density; the split is two stacked traces
+        if m.win_layout == WinLayout::Cols {
+            m.win_layout = WinLayout::Rows;
+        }
+        if m.density == Density::Split {
+            m.split_pane = m.pane;
+        }
     }
     if m.zscale > m.tscale {
         m.zscale = m.tscale;
@@ -845,6 +934,359 @@ pub fn wave_bin(rec: &Record, m: &Model) -> Vec<u8> {
         }
     }
     b
+}
+
+/// One trace taken from a file: volts, the sample step, and the time of the first sample.
+#[derive(Clone, Debug)]
+pub struct WaveTrace {
+    pub t0: f64,
+    pub dt: f64,
+    pub v: Vec<f32>,
+    pub label: String,
+}
+
+/// CSV (`Time (s),Volts` or Storage `Time (s),CH1 (V),…`), an OOS `OOSW` `.bin`, or a `.wfm` whose header is `:WFM#002` or `:WFM#003`.
+pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
+    if bytes.starts_with(b"OOSW") {
+        return parse_oosw(bytes);
+    }
+    if bytes.len() >= 10 && (bytes[2..].starts_with(b":WFM#") || bytes[2..].starts_with(b"WFM#") || bytes.starts_with(b":WFM#")) {
+        return parse_wfm(bytes).map(|t| vec![t]);
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "that file is not a waveform".to_string())?;
+    parse_wave_csv(text, name)
+}
+
+fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
+    if b.len() < 36 || &b[..4] != b"OOSW" {
+        return Err("not an OOS waveform".into());
+    }
+    let ver = u32::from_le_bytes(b[4..8].try_into().unwrap());
+    if ver != 1 {
+        return Err(format!("OOS waveform version {ver}"));
+    }
+    let nch = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+    let n = usize::try_from(u64::from_le_bytes(b[12..20].try_into().unwrap())).map_err(|_| "OOS waveform is too large".to_string())?;
+    let dt = f64::from_le_bytes(b[20..28].try_into().unwrap());
+    let t0 = f64::from_le_bytes(b[28..36].try_into().unwrap());
+    if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
+        return Err("that file holds no waveform".into());
+    }
+    let need = n.checked_mul(4).and_then(|bytes| bytes.checked_add(4)).and_then(|bytes| bytes.checked_mul(nch)).and_then(|bytes| bytes.checked_add(36)).ok_or("OOS waveform is too large")?;
+    if b.len() < need {
+        return Err("truncated OOS waveform".into());
+    }
+    let mut out = Vec::with_capacity(nch);
+    let mut p = 36;
+    for _ in 0..nch {
+        let ch = u32::from_le_bytes(b[p..p + 4].try_into().unwrap());
+        p += 4;
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            v.push(f32::from_le_bytes(b[p..p + 4].try_into().unwrap()));
+            p += 4;
+        }
+        out.push(WaveTrace { t0, dt, v, label: format!("CH{ch}") });
+    }
+    Ok(out)
+}
+
+fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
+    let mut rows: Vec<(f64, Vec<f64>)> = Vec::new();
+    for line in text.lines() {
+        let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
+        let Some(Some(t)) = cols.next() else { continue };
+        let rest: Vec<f64> = cols.map(|x| x.unwrap_or(f64::NAN)).collect();
+        if rest.is_empty() {
+            continue;
+        }
+        rows.push((t, rest));
+    }
+    let dt = match rows.as_slice() {
+        [a, b, ..] if b.0 > a.0 => b.0 - a.0,
+        _ => return Err("that file holds no waveform".into()),
+    };
+    let ntrace = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(1);
+    let mut traces = Vec::with_capacity(ntrace);
+    for k in 0..ntrace {
+        let v: Vec<f32> = rows.iter().map(|r| r.1.get(k).copied().unwrap_or(f64::NAN) as f32).collect();
+        let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
+        traces.push(WaveTrace { t0: rows[0].0, dt, v, label });
+    }
+    Ok(traces)
+}
+
+/// Reference waveform whose header is `:WFM#002` or `:WFM#003`, YT vector, first frame.
+fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
+    if b.len() < 78 {
+        return Err("truncated WFM".into());
+    }
+    let le = match u16::from_le_bytes(b[0..2].try_into().unwrap()) {
+        0x0F0F => true,
+        0xF0F0 => false,
+        _ => return Err("header is not :WFM#002 or :WFM#003".into()),
+    };
+    let get_u32 = |o| {
+        let v = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        if le { v } else { v.swap_bytes() }
+    };
+    let get_i32 = |o| get_u32(o) as i32;
+    let get_f64 = |o| {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&b[o..o + 8]);
+        if !le {
+            raw.reverse();
+        }
+        f64::from_le_bytes(raw)
+    };
+    let ver = &b[2..10];
+    if ver != b":WFM#002" && ver != b":WFM#003" {
+        return Err("header is not :WFM#002 or :WFM#003".into());
+    }
+    let bpp = b[15] as usize;
+    if bpp == 0 || bpp > 8 {
+        return Err("WFM sample size".into());
+    }
+    let curve = get_i32(16) as usize;
+    let label = b[40..72].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string();
+    // :WFM#002 / :WFM#003: packed header after the 78-byte static block
+    let mut i = 78usize;
+    let need = |n: usize| -> Result<(), String> { if b.len() < n { Err("truncated WFM".into()) } else { Ok(()) } };
+    need(i + 90)?;
+    i += 90; // reference file data
+    need(i + 160)?;
+    let vscale = get_f64(i);
+    let voff = get_f64(i + 8);
+    let fmt = get_u32(i + 72); // after scale, offset, size, units, 4 doubles
+    i += 160; // exp dim 1
+    need(i + 160)?;
+    i += 160; // exp dim 2
+    need(i + 136)?;
+    let dt = get_f64(i);
+    let t0 = get_f64(i + 8);
+    i += 136; // imp dim 1 → imp dim 2
+    need(i + 136 + 12 + 12 + 24 + 30)?;
+    i += 136 + 12 + 12 + 24; // imp dim 2, time bases, update spec → curve spec
+    let data_start = get_u32(i + 14) as usize;
+    let post_start = get_u32(i + 18) as usize;
+    if !(dt > 0.0) {
+        return Err("WFM has no time step".into());
+    }
+    if curve > b.len() || data_start > post_start {
+        return Err("WFM curve is empty".into());
+    }
+    let start = curve.saturating_add(data_start);
+    let stop = curve.saturating_add(post_start).min(b.len().saturating_sub(8));
+    if stop <= start + bpp {
+        return Err("WFM curve is empty".into());
+    }
+    let n = (stop - start) / bpp;
+    if n < 2 {
+        return Err("WFM curve is empty".into());
+    }
+    let mut v = Vec::with_capacity(n);
+    for k in 0..n {
+        let o = start + k * bpp;
+        let code = match fmt {
+            0 if bpp >= 2 => {
+                let s = i16::from_le_bytes(b[o..o + 2].try_into().unwrap());
+                (if le { s } else { s.swap_bytes() }) as f64
+            }
+            1 if bpp >= 4 => {
+                let s = i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+                (if le { s } else { s.swap_bytes() }) as f64
+            }
+            4 if bpp >= 4 => {
+                let mut raw = [0u8; 4];
+                raw.copy_from_slice(&b[o..o + 4]);
+                if !le {
+                    raw.reverse();
+                }
+                f32::from_le_bytes(raw) as f64
+            }
+            5 if bpp >= 8 => get_f64(o),
+            6 if bpp >= 1 => b[o] as f64,
+            7 if bpp >= 1 => b[o] as i8 as f64,
+            _ => return Err("WFM sample format".into()),
+        };
+        v.push((code * vscale + voff) as f32);
+    }
+    Ok(WaveTrace { t0, dt, v, label })
+}
+
+fn u32_le(b: &[u8], at: usize) -> Option<u32> {
+    b.get(at..at + 4)?.try_into().ok().map(u32::from_le_bytes)
+}
+
+fn u64_le(b: &[u8], at: usize) -> Option<u64> {
+    b.get(at..at + 8)?.try_into().ok().map(u64::from_le_bytes)
+}
+
+fn f64_le(b: &[u8], at: usize) -> Option<f64> {
+    b.get(at..at + 8)?.try_into().ok().map(f64::from_le_bytes)
+}
+
+fn f32_le(b: &[u8], at: usize) -> Option<f32> {
+    b.get(at..at + 4)?.try_into().ok().map(f32::from_le_bytes)
+}
+
+/// One OOSW blob: the record and the number of bytes consumed.
+pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
+    if b.len() < 36 || &b[..4] != b"OOSW" {
+        return Err("not an OOS waveform file".into());
+    }
+    let ver = u32_le(b, 4).unwrap_or(0);
+    if ver != 1 {
+        return Err(format!("waveform version {}", ver));
+    }
+    let nch = u32_le(b, 8).unwrap_or(0) as usize;
+    let n = u64_le(b, 12).unwrap_or(0) as usize;
+    let dt = f64_le(b, 20).unwrap_or(0.0);
+    let t0 = f64_le(b, 28).unwrap_or(0.0);
+    if nch == 0 || nch > NCH || dt <= 0.0 {
+        return Err("waveform header".into());
+    }
+    let mut off = 36;
+    let mut rec = Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+    for _ in 0..nch {
+        let c = u32_le(b, off).ok_or("truncated waveform")? as usize;
+        off += 4;
+        if c < 1 || c > NCH {
+            return Err(format!("channel {}", c));
+        }
+        if b.len() < off + 4 * n {
+            return Err("truncated waveform".into());
+        }
+        let mut v = vec![0f32; n];
+        for i in 0..n {
+            v[i] = f32_le(b, off + 4 * i).unwrap_or(f32::NAN);
+        }
+        rec.ch[c - 1] = v;
+        off += 4 * n;
+    }
+    Ok((rec, off))
+}
+
+/// Fast-frame file: "OOSF", u32 version 1, u32 frame count, then that many OOSW blobs.
+pub fn ff_bin(recs: &[Record], m: &Model) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"OOSF");
+    b.extend_from_slice(&1u32.to_le_bytes());
+    b.extend_from_slice(&(recs.len() as u32).to_le_bytes());
+    for rec in recs {
+        b.extend_from_slice(&wave_bin(rec, m));
+    }
+    b
+}
+
+pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
+    if b.len() >= 4 && &b[..4] == b"OOSW" {
+        return parse_wave_bin(b).map(|(r, _)| vec![r]);
+    }
+    if b.len() < 12 || &b[..4] != b"OOSF" {
+        return Err("not a fast-frame file".into());
+    }
+    let ver = u32_le(b, 4).unwrap_or(0);
+    if ver != 1 {
+        return Err(format!("fast-frame version {}", ver));
+    }
+    let n = u32_le(b, 8).unwrap_or(0) as usize;
+    let mut off = 12;
+    let mut recs = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (r, used) = parse_wave_bin(b.get(off..).unwrap_or(&[]))?;
+        recs.push(r);
+        off += used;
+    }
+    Ok(recs)
+}
+
+/// Highest numbered `<prefix>-NNN.<ext>` in `dir`, if any.
+pub fn latest_name(dir: &Path, prefix: &str, ext: &str) -> Option<PathBuf> {
+    let mut best: Option<(u32, PathBuf)> = None;
+    let rd = std::fs::read_dir(dir).ok()?;
+    for e in rd.flatten() {
+        let s = e.file_name().to_string_lossy().into_owned();
+        let want = format!("{}-", prefix);
+        if let Some(rest) = s.strip_prefix(&want).and_then(|r| r.strip_suffix(&format!(".{}", ext))) {
+            if let Ok(n) = rest.parse::<u32>() {
+                if best.as_ref().map_or(true, |(b, _)| n >= *b) {
+                    best = Some((n, e.path()));
+                }
+            }
+        }
+    }
+    best.map(|x| x.1)
+}
+
+/// Mask file: optional header (`# OOS mask` then `key=value` lines and `---`) then one volt per line.
+pub struct MaskFile {
+    pub src: Option<usize>,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub inv: Option<bool>,
+    pub v: Vec<f32>,
+}
+
+pub fn mask_text(src: usize, x: f32, y: f32, inv: bool, v: &[f32]) -> String {
+    let mut s = String::from("# OOS mask\n");
+    s.push_str(&format!("src={}\n", src + 1));
+    s.push_str(&format!("x={}\n", x));
+    s.push_str(&format!("y={}\n", y));
+    s.push_str(&format!("inv={}\n", if inv { 1 } else { 0 }));
+    s.push_str("---\n");
+    for x in v {
+        s.push_str(&format!("{:.9e}\n", x));
+    }
+    s
+}
+
+pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
+    let mut lines = text.lines().peekable();
+    let mut src = None;
+    let mut x = None;
+    let mut y = None;
+    let mut inv = None;
+    if lines.peek().map_or(false, |l| l.starts_with("# OOS mask")) {
+        lines.next();
+        for line in lines.by_ref() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line == "---" {
+                break;
+            }
+            let Some((k, v)) = line.split_once('=') else {
+                return Err(format!("mask header: {}", line));
+            };
+            match k.trim() {
+                "src" => {
+                    let n: usize = v.trim().parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+                    if n < 1 || n > NCH {
+                        return Err(format!("mask src {}", n));
+                    }
+                    src = Some(n - 1);
+                }
+                "x" => x = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
+                "y" => y = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
+                "inv" => inv = Some(matches!(v.trim(), "1" | "true" | "on")),
+                _ => {}
+            }
+        }
+    }
+    let mut v = Vec::new();
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        v.push(line.parse::<f32>().map_err(|e| e.to_string())?);
+    }
+    if v.is_empty() {
+        return Err("empty mask".into());
+    }
+    Ok(MaskFile { src, x, y, inv, v })
 }
 
 // ---------------------------------------------------------------------------------------------- PNG
@@ -1054,6 +1496,15 @@ pub fn png_of(cv: &Canvas) -> Vec<u8> {
     png(cv.w as u32, cv.h as u32, &cv.px)
 }
 
+/// Writes everything cached to the disks (a stick can be pulled, the scope switched off at the mains). Nothing to do
+/// on hosts without `sync(2)`; their files reach the disk on their own.
+pub fn sync_disks() {
+    #[cfg(unix)]
+    unsafe {
+        libc::sync()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1061,6 +1512,7 @@ mod tests {
     use crate::math::{MathOp, Window};
 
     #[test]
+    #[cfg(unix)]
     fn a_save_does_not_follow_links_or_write_to_devices() {
         let d = std::env::temp_dir().join(format!("oos-link-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
@@ -1145,6 +1597,7 @@ mod tests {
         m.intensity = 85;
         m.grid = Grid::Light;
         m.meas = vec![(Meas::Rise, WaveId::Ch(3)), (Meas::Vrms, WaveId::Ch(0)), (Meas::PDuty, WaveId::Ch(1))];
+        m.strip_dock = StripDock::Right;
         m.cursor = CursorMode::Volt;
         m.cur_a = 0.125;
         m.cur_b = 0.875;
@@ -1298,6 +1751,93 @@ mod tests {
         assert_eq!(lines[1], "-1.000000000e-3,0.5,-1");
         assert_eq!(lines[3], "-9.980000000e-4,,3.3");
         assert_eq!(lines.len(), 4);
+        let back = parse_wave(csv.as_bytes(), "wave.csv").unwrap();
+        assert_eq!(back.len(), 2);
+        assert!((back[0].dt - 1e-6).abs() < 1e-18);
+        assert_eq!(back[0].v[0], 0.5);
+        assert_eq!(back[1].v[2], 3.3);
+    }
+
+    #[test]
+    fn oos_bin_and_wfm_round_trip() {
+        let mut m = Model::default();
+        m.ch[0].on = true;
+        let rec = Record { t0: -2e-6, dt: 5e-9, ch: { let mut c: [Vec<f32>; NCH] = Default::default(); c[0] = vec![0.1, 0.2, -0.3, 0.4]; c }, triggered: true, partial: false, raw: None, la: None };
+        let bin = wave_bin(&rec, &m);
+        let t = &parse_wave(&bin, "wave.bin").unwrap()[0];
+        assert_eq!(t.v, rec.ch[0]);
+        assert!((t.dt - rec.dt).abs() < 1e-18);
+        assert!((t.t0 - rec.t0).abs() < 1e-18);
+
+        let v = [0.0_f32, 0.5, 1.0, -0.25];
+        let wfm = wfm_f32(b":WFM#003", -1e-6, 1e-9, &v, "lane");
+        let g = parse_wave(&wfm, "x.wfm").unwrap();
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].label, "lane");
+        assert!((g[0].dt - 1e-9).abs() < 1e-18);
+        assert!((g[0].t0 + 1e-6).abs() < 1e-18);
+        for (a, b) in g[0].v.iter().zip(v) {
+            assert!((a - b).abs() < 1e-6, "{a} {b}");
+        }
+        let old = wfm_f32(b":WFM#001", -1e-6, 1e-9, &v, "lane");
+        assert_eq!(parse_wave(&old, "old.wfm").unwrap_err(), "header is not :WFM#002 or :WFM#003");
+        let two = wfm_f32(b":WFM#002", 0.0, 2e-9, &v, "two");
+        assert_eq!(parse_wave(&two, "two.wfm").unwrap()[0].label, "two");
+    }
+
+    /// A short `:WFM#002` or `:WFM#003` curve of f32 samples, little endian.
+    fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+        const CURVE: usize = 838;
+        let mut b = vec![0u8; CURVE + v.len() * 4 + 8];
+        b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
+        b[2..10].copy_from_slice(magic);
+        b[15] = 4;
+        b[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
+        let lab = label.as_bytes();
+        b[40..40 + lab.len()].copy_from_slice(lab);
+        let put_f64 = |b: &mut [u8], o: usize, x: f64| b[o..o + 8].copy_from_slice(&x.to_le_bytes());
+        let put_u32 = |b: &mut [u8], o: usize, x: u32| b[o..o + 4].copy_from_slice(&x.to_le_bytes());
+        // exp dim 1 at 168
+        put_f64(&mut b, 168, 1.0);
+        put_f64(&mut b, 176, 0.0);
+        put_u32(&mut b, 168 + 72, 4);
+        // imp dim 1 at 488
+        put_f64(&mut b, 488, dt);
+        put_f64(&mut b, 496, t0);
+        // curve spec at 808
+        put_u32(&mut b, 808 + 14, 0);
+        put_u32(&mut b, 808 + 18, (v.len() * 4) as u32);
+        for (k, &x) in v.iter().enumerate() {
+            b[CURVE + k * 4..CURVE + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn wave_and_fast_frame_round_trip() {
+        let mut m = Model::default();
+        m.ch[0].on = true;
+        m.ch[2].on = true;
+        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+        rec.ch[0] = vec![0.5, 1.25];
+        rec.ch[2] = vec![-1.0, 0.0];
+        let b = wave_bin(&rec, &m);
+        let (back, n) = parse_wave_bin(&b).unwrap();
+        assert_eq!(n, b.len());
+        assert_eq!(back.dt, rec.dt);
+        assert_eq!(back.ch[0], rec.ch[0]);
+        assert_eq!(back.ch[2], rec.ch[2]);
+        let ff = ff_bin(&[rec.clone(), rec.clone()], &m);
+        let recs = parse_ff(&ff).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[1].ch[0], rec.ch[0]);
+        assert_eq!(parse_ff(&b).unwrap().len(), 1);
+        let t = mask_text(2, 0.2, 0.4, true, &[1.0, 2.5]);
+        let mf = parse_mask(&t).unwrap();
+        assert_eq!((mf.src, mf.inv, mf.v), (Some(2), Some(true), vec![1.0, 2.5]));
+        let old = parse_mask("1.0\n2.0\n").unwrap();
+        assert_eq!(old.v, vec![1.0, 2.0]);
+        assert!(old.src.is_none());
     }
 
     #[test]

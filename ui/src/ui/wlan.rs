@@ -115,7 +115,7 @@ fn scan() -> Result<Vec<Net>, String> {
 fn saved_to_card(c: &Ctrl) -> Result<(), String> {
     c.save()?;
     // the scope is usually switched off at the mains
-    unsafe { libc::sync() };
+    crate::store::sync_disks();
     Ok(())
 }
 
@@ -324,6 +324,15 @@ impl Ui {
 
     /// Text rows of the network page.
     pub(super) fn net_value(&self, it: Item) -> String {
+        #[cfg(windows)]
+        if !self.lan_status.is_empty() {
+            match it {
+                Item::NetEth => return if self.net.is_empty() { "No active LAN address".into() } else { format!("{} \u{b7} connected", self.net) },
+                Item::NetWeb => return self.lan_web_port.map_or_else(|| "Web port unavailable; choose another --web-port".into(), |port| format!("http://{}:{}", if self.net.is_empty() { "localhost" } else { &self.net }, port)),
+                Item::NetPorts => return self.lan_status.clone(),
+                _ => {}
+            }
+        }
         let addr = |n: &str| self.net_ifs.iter().find(|i| i.0 == n).map(|i| i.1.as_str());
         let file = |p: &str| std::fs::read_to_string(p).map(|t| t.trim().to_string()).unwrap_or_default();
         match it {

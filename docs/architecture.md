@@ -10,11 +10,11 @@ SD card (stock layout, boot.md)
  ├─ boot       stock Android kernel; magic "KRNL" -> stock boots, "OOSK" -> the loader falls back to recovery
  ├─ recovery   OOS image (kernel 6.12 + DTB + initramfs), built by boot/build-dev-image.sh
  ├─ backup     copy of the stock boot image (fallback), rollback slot, /oos data partition (update.md)
- └─ rigol      stock data incl. /rigol/data/cal_*.hex; OOS mounts it read only (oos-mount-rigol)
+ └─ rigol      stock data incl. /rigol/data/cal_*.hex; OOS mounts it read only (oos-mount-stock)
 
 initramfs /etc/rcS:  oos-oneshot (KRNL back, next power-on = stock) + start count -> oos-board early (FPGA BOOT command) ->
                      network in the background -> telnetd -> oos-board drivers (touch edt-ft5x06, beeper pwm-gpio) ->
-                     oos-ui (start-up screen) -> in the background oos-mount-rigol (read only) +
+                     oos-ui (start-up screen) -> in the background oos-mount-stock (read only) +
                      oos-board bring-up (oos-fpgad cold-boot --execute --power-on) (order and status: boot.md)
 FPGA:                cold boot by OOS (default); the warm hand-over from the stock system still works
 ```
@@ -90,7 +90,7 @@ Threads:
 | input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
-| scpi, http | SCPI server on 5555, web remote on 8080 |
+| scpi, http, hislip, announce | SCPI on 5555, web remote on 8080, HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),

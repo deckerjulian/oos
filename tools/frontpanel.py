@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """frontpanel.py: talk to the DHO800/DHO900 front-panel MCU over UART0 (protocol in docs/protocols/frontpanel.md).
 
-Run it ON THE SCOPE under OOS (Python 3, no extra modules). Do not run it under stock Android: there the Rigol
+Run it ON THE SCOPE under OOS (Python 3, no extra modules). Do not run it under stock Android: there the stock
 Launcher reads /dev/ttyS0 and both readers would lose bytes.
 
     frontpanel.py dump                 print every frame (cmd, data) while you press keys and turn knobs

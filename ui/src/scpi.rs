@@ -1,11 +1,17 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
+//! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
+//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
+//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
+//! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
+//! :WAVeform:SOURce CHANn|Rn|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
+//! :REFerence:SLOT R1..R10, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
+//! :SIM:PRESet <name>, :SIM:SLOT R1..R10, :SIM:PLAY ON|OFF, :SIM:SHOW ON|OFF,
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
@@ -62,7 +68,8 @@ pub fn send(s: &mut TcpStream, d: &[u8]) -> bool {
 pub struct Scpi {
     l: Option<TcpListener>,
     clients: Vec<Client>,
-    wav_src: usize,
+    /// :WAVeform:SOURce, a channel or a reference slot
+    wav_src: WaveId,
     wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
     /// :WAVeform:MODE: false = the screen record, true = every sample of the record in the screen window (RAW)
     wav_raw: bool,
@@ -91,6 +98,162 @@ fn parse_ch(s: &str) -> Option<usize> {
     }
 }
 
+fn shown(v: f64) -> String {
+    if v.is_finite() { e(v) } else { "9.9E37".into() }
+}
+
+fn arg_item(arg: &str) -> String {
+    arg.split(',').next().unwrap_or("").trim().to_ascii_uppercase()
+}
+
+fn arg_rest(arg: &str) -> &str {
+    arg.split_once(',').map(|(_, r)| r).unwrap_or("")
+}
+
+/// A measurement source: CHANn, or a ref slot R1–R10 (also REF1–REF10).
+fn parse_wave(s: &str) -> Option<WaveId> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some(c) = parse_ch(s) {
+        return Some(WaveId::Ch(c));
+    }
+    let (k, n) = suffix(s);
+    if kw(k, "REF") || k.eq_ignore_ascii_case("R") {
+        return n.filter(|&n| (1..=NREF).contains(&n)).map(|n| WaveId::Ref(n - 1));
+    }
+    None
+}
+
+fn wave_tok(id: WaveId) -> String {
+    match id {
+        WaveId::Ch(c) => format!("CHAN{}", c + 1),
+        WaveId::Ref(i) => format!("R{}", i + 1),
+    }
+}
+
+/// Single-channel items the strip can show. The first spelling of a measurement is the one `STRip` and `READout` print.
+/// A second spelling is only another way to ask.
+const MEAS_ITEMS: &[(&str, &str, Meas)] = &[
+    ("VPP", "VPP", Meas::Vpp),
+    ("VMAX", "VMAX", Meas::Vmax),
+    ("VMIN", "VMIN", Meas::Vmin),
+    ("VAVG", "VAVG", Meas::Vavg),
+    ("VRMS", "VRMS", Meas::Vrms),
+    ("VAMP", "VAMP", Meas::Vamp),
+    ("FREQuency", "FREQUENCY", Meas::Freq),
+    ("PERiod", "PERIOD", Meas::Period),
+    ("RTIMe", "RTIME", Meas::Rise),
+    ("FTIMe", "FTIME", Meas::Fall),
+    ("PWIDth", "PWIDTH", Meas::PWidth),
+    ("PDUTy", "PDUTY", Meas::PDuty),
+    ("NDUTy", "NDUTY", Meas::NDuty),
+    ("NWIDth", "NWIDTH", Meas::NWidth),
+    ("VTOP", "VTOP", Meas::Vtop),
+    ("VBASe", "VBASE", Meas::Vbase),
+    ("OVERshoot", "OVERSHOOT", Meas::Overshoot),
+    ("PREShoot", "PRESHOOT", Meas::Preshoot),
+    ("HTIMe", "HTIME", Meas::HighTime),
+    ("LTIMe", "LTIME", Meas::LowTime),
+    ("BWIDth", "BWIDTH", Meas::Burst),
+    ("TOUTside", "TOUTSIDE", Meas::Outside),
+    ("NPERiods", "NPERIODS", Meas::NPeriods),
+    ("CAMP", "CAMP", Meas::CycAmp),
+    ("CYCAmp", "CAMP", Meas::CycAmp),
+    ("CTOP", "CTOP", Meas::CycTop),
+    ("CBASe", "CBASE", Meas::CycBase),
+    ("CPP", "CPP", Meas::CycPp),
+    ("CYCPP", "CPP", Meas::CycPp),
+    ("CMAX", "CMAX", Meas::CycMax),
+    ("CMIN", "CMIN", Meas::CycMin),
+    ("VUPPer", "VUPPER", Meas::Vupper),
+    ("VMID", "VMID", Meas::Vmid),
+    ("VLOWer", "VLOWER", Meas::Vlower),
+    ("CAVG", "CAVG", Meas::VavgCyc),
+    ("CRMS", "CRMS", Meas::VrmsCyc),
+    ("ACRms", "ACRMS", Meas::VrmsAc),
+    ("SDEViation", "SDEVIATION", Meas::StdDev),
+    ("AREA", "AREA", Meas::Area),
+    ("CARea", "CAREA", Meas::AreaCyc),
+    ("PPULses", "PPULSES", Meas::PPulses),
+    ("NPULses", "NPULSES", Meas::NPulses),
+    ("PEDGes", "PEDGES", Meas::PEdges),
+    ("NEDGes", "NEDGES", Meas::NEdges),
+    ("TVMAX", "TVMAX", Meas::TVmax),
+    ("TVMIN", "TVMIN", Meas::TVmin),
+    ("PSLew", "PSLEW", Meas::PSlew),
+    ("NSLew", "NSLEW", Meas::NSlew),
+    ("ESTUI", "ESTUI", Meas::EstUi),
+    ("UI", "ESTUI", Meas::EstUi),
+    ("MEDian", "MEDIAN", Meas::Median),
+    ("MODE", "MODE", Meas::Mode),
+    ("LSLO", "LSLO", Meas::LinSlope),
+    ("LINSLOPE", "LSLO", Meas::LinSlope),
+    ("LINT", "LINT", Meas::LinInt),
+    ("LININT", "LINT", Meas::LinInt),
+    ("PAM0", "PAM0", Meas::Pam0),
+    ("L0", "PAM0", Meas::Pam0),
+    ("PAM1", "PAM1", Meas::Pam1),
+    ("L1", "PAM1", Meas::Pam1),
+    ("PAM2", "PAM2", Meas::Pam2),
+    ("L2", "PAM2", Meas::Pam2),
+    ("PAM3", "PAM3", Meas::Pam3),
+    ("L3", "PAM3", Meas::Pam3),
+    ("PSEP", "PSEP", Meas::PamSep),
+    ("BITS", "BITS", Meas::Bits),
+    ("ONES", "BITS", Meas::Bits),
+    ("PLLUI", "PLLUI", Meas::PllUi),
+    ("UIWTD", "UIWTD", Meas::UiWtd),
+    ("FOLD", "FOLD", Meas::FoldRms),
+];
+
+/// Channel-pair rows, in the same order as the Measure menu (`PAIRS`).
+const PAIR_ITEMS: &[(&str, &str, usize)] = &[
+    ("RRDelay", "RRDELAY", 0),
+    ("FFDelay", "FFDELAY", 1),
+    ("RFDelay", "RFDELAY", 2),
+    ("FRDelay", "FRDELAY", 3),
+    ("RRPHase", "RRPHASE", 4),
+    ("FFPHase", "FFPHASE", 5),
+    ("RFPHase", "RFPHASE", 6),
+    ("FRPHase", "FRPHASE", 7),
+    ("RRSkew", "RRSKEW", 8),
+    ("FFSkew", "FFSKEW", 9),
+    ("RFSkew", "RFSKEW", 10),
+    ("FRSkew", "FRSKEW", 11),
+    ("SETup", "SETUP", 12),
+    ("HOLD", "HOLD", 13),
+    ("SETHold", "SETHOLD", 14),
+    ("FSETup", "FSETUP", 15),
+    ("FHOLd", "FHOLD", 16),
+];
+
+fn meas_kind(item: &str) -> Option<Meas> {
+    MEAS_ITEMS.iter().find(|it| kw(item, it.0)).map(|it| it.2)
+}
+
+fn meas_token(k: Meas) -> &'static str {
+    MEAS_ITEMS.iter().find(|it| it.2 == k).map(|it| it.1).unwrap_or("ITEM")
+}
+
+fn pair_kind(item: &str) -> Option<usize> {
+    PAIR_ITEMS.iter().find(|it| kw(item, it.0)).map(|it| it.2)
+}
+
+fn pair_token(k: usize) -> &'static str {
+    PAIR_ITEMS.get(k.min(PAIR_ITEMS.len() - 1)).map(|it| it.1).unwrap_or("PAIR")
+}
+
+/// R1..R10, REF1..REF10, or 1..10.
+fn parse_slot(s: &str) -> Option<usize> {
+    let s = s.trim().trim_matches('"');
+    if let Some(WaveId::Ref(i)) = parse_wave(s) {
+        return Some(i);
+    }
+    s.parse::<usize>().ok().filter(|&n| (1..=NREF).contains(&n)).map(|n| n - 1)
+}
+
 fn parse_bool(s: &str) -> Option<bool> {
     match s.trim().to_ascii_uppercase().as_str() {
         "1" | "ON" => Some(true),
@@ -114,7 +277,7 @@ fn nearest(ladder: &[f32], v: f32) -> usize {
     best
 }
 
-/// Rigol number format: 7 significant digits, two-digit exponent ("2.000000E-04").
+/// Stock number format: 7 significant digits, two-digit exponent ("2.000000E-04").
 fn e(v: f64) -> String {
     if !v.is_finite() {
         return "9.9E37".into();
@@ -138,7 +301,11 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
+        Scpi { l, clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_raw: false, err: Vec::new() }
+    }
+
+    pub fn port(&self) -> Option<u16> {
+        self.l.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
     }
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
@@ -269,6 +436,32 @@ impl Scpi {
         }
         if nodes.len() == 1 && kw(nodes[0], "CLEar") {
             ui.key(crate::ui::key::CLEAR);
+            return None;
+        }
+        // A reference capture uses the same acquisition state as the screen.
+        // RUN and STOP are assignments, so repeating either must not toggle it.
+        // Call the shared record handler directly: an open UI dialog must not
+        // consume a remote acquisition command as a dialog-dismissal key.
+        if !query && nodes.len() == 1 && ui.record_mode()
+            && ["RUN", "STOP", "SINGle"].iter().any(|command| kw(nodes[0], command)) {
+            let key = crate::ui::key::RUNSTOP;
+            if kw(nodes[0], "RUN") {
+                if ui.m.trig_mode == TrigMode::Single {
+                    ui.m.trig_mode = TrigMode::Normal;
+                }
+                if ui.m.run != RunState::Run {
+                    ui.record_key(key);
+                }
+            } else if kw(nodes[0], "STOP") {
+                if ui.m.run == RunState::Run {
+                    ui.record_key(key);
+                } else {
+                    ui.sim_play_set(false);
+                }
+            } else {
+                ui.record_key(crate::ui::key::SINGLE);
+            }
+            ui.mark_changed();
             return None;
         }
         let m = &mut ui.m;
@@ -428,7 +621,7 @@ impl Scpi {
                         if query {
                             return Some(t(&m.trig_line().map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
                         }
-                        // D0..D15 like Rigol's source names, with the LA on
+                        // D0..D15 like the stock source names, with the LA on
                         match arg.trim().to_ascii_uppercase().strip_prefix('D').and_then(|n| n.parse::<u8>().ok()).filter(|&n| n < 16 && m.trig_la_ok()) {
                             Some(n) => m.trig_la = Some(n),
                             None => (m.trig_src, m.trig_la) = (parse_ch(arg)?, None),
@@ -489,56 +682,126 @@ impl Scpi {
         }
         // measurement, waveform, display, system (need the record / canvas)
         let n0 = nodes.first().copied().unwrap_or("");
-        if kw(n0, "MEASure") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            let mut parts = arg.split(',');
-            let item = parts.next().unwrap_or("").trim().to_ascii_uppercase();
-            let c = parts.next().and_then(parse_ch).unwrap_or(0);
-            let k = match item.as_str() {
-                "VPP" => Meas::Vpp,
-                "VMAX" => Meas::Vmax,
-                "VMIN" => Meas::Vmin,
-                "VAVG" => Meas::Vavg,
-                "VRMS" => Meas::Vrms,
-                "VAMP" => Meas::Vamp,
-                "FREQ" | "FREQUENCY" => Meas::Freq,
-                "PER" | "PERIOD" => Meas::Period,
-                "RTIM" | "RTIME" => Meas::Rise,
-                "FTIM" | "FTIME" => Meas::Fall,
-                "PWID" | "PWIDTH" => Meas::PWidth,
-                "PDUT" | "PDUTY" => Meas::PDuty,
-                "NDUT" | "NDUTY" => Meas::NDuty,
-                "NWID" | "NWIDTH" => Meas::NWidth,
-                "VTOP" => Meas::Vtop,
-                "VBAS" | "VBASE" => Meas::Vbase,
-                "OVER" | "OVERSHOOT" => Meas::Overshoot,
-                "PRES" | "PRESHOOT" => Meas::Preshoot,
-                "HTIM" | "HTIME" => Meas::HighTime,
-                "LTIM" | "LTIME" => Meas::LowTime,
-                "BWID" | "BWIDTH" => Meas::Burst,
-                "TOUT" | "TOUTSIDE" => Meas::Outside,
-                "NPER" | "NPERIODS" => Meas::NPeriods,
-                "CAMP" | "CYCAMP" => Meas::CycAmp,
-                "CTOP" => Meas::CycTop,
-                "CBAS" | "CBASE" => Meas::CycBase,
-                "CPP" | "CYCPP" => Meas::CycPp,
-                "CMAX" => Meas::CycMax,
-                "CMIN" => Meas::CycMin,
-                _ => {
-                    self.err.push("-224,\"Illegal parameter value\"".into());
+        if kw(n0, "MEASure") && nodes.len() == 2 && query {
+            if kw(nodes[1], "ITEM") {
+                return self.meas_item(ui, arg);
+            }
+            if kw(nodes[1], "STRip") {
+                return t(&meas_strip(ui));
+            }
+            // every measurement on the screen: the strip, and the eye figures when that page is up
+            if kw(nodes[1], "READout") {
+                return t(&meas_readout(ui));
+            }
+        }
+        if kw(n0, "EYE") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.eye_item(ui, arg);
+        }
+        if kw(n0, "MEASure") && nodes.len() == 2 {
+            let n1 = nodes[1];
+            if kw(n1, "REFS") {
+                if query {
+                    let ten = ui.m.meas_lpct < 0.15 && ui.m.meas_hpct > 0.85;
+                    return t(if ten { "10/90" } else { "20/80" });
+                }
+                let a = arg.trim().replace(' ', "");
+                let (lo, hi) = if a == "10/90" || a == "1090" || a == "10" {
+                    (0.1, 0.9)
+                } else if a == "20/80" || a == "2080" || a == "20" {
+                    (0.2, 0.8)
+                } else {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                };
+                ui.m.meas_lpct = lo;
+                ui.m.meas_hpct = hi;
+                ui.measure_last();
+                ui.mark_changed();
+                return None;
+            }
+            if kw(n1, "TSETup") || kw(n1, "THOLd") {
+                let setup = kw(n1, "TSETup");
+                if query {
+                    return t(&e(if setup { ui.m.meas_tsetup } else { ui.m.meas_thold }));
+                }
+                match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+                    Some(v) => {
+                        if setup {
+                            ui.m.meas_tsetup = v;
+                        } else {
+                            ui.m.meas_thold = v;
+                        }
+                        ui.mark_changed();
+                    }
+                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
+            }
+            if kw(n1, "ITEM") && query {
+                return self.meas_item(ui, arg);
+            }
+        }
+        if kw(n0, "POWer") && nodes.len() == 2 && query {
+            if kw(nodes[1], "HARMonics") {
+                let src = match self.waves(arg) {
+                    Ok(v) => v,
+                    Err(s) => {
+                        self.err.push(s);
+                        return t("9.9E37");
+                    }
+                };
+                return match ui.fact_harmonics(&src) {
+                    Ok(h) if h.is_empty() => t("9.9E37"),
+                    Ok(h) => t(&h.iter().map(|(n, a)| format!("{},{}", n, e(*a))).collect::<Vec<_>>().join(";")),
+                    Err(()) => {
+                        self.err.push("-224,\"Illegal parameter value\"".into());
+                        t("9.9E37")
+                    }
+                };
+            }
+            if kw(nodes[1], "ITEM") {
+                return self.sourced(ui, arg, |ui, item, src| ui.fact_power(item, src));
+            }
+        }
+        if kw(n0, "SPECtrum") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_spectrum(item, src));
+        }
+        if kw(n0, "MAGnetic") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_magnetic(item, src));
+        }
+        if kw(n0, "INVerter") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            let src = match self.waves(arg_rest(arg)) {
+                Ok(v) => v,
+                Err(s) => {
+                    self.err.push(s);
                     return t("9.9E37");
                 }
             };
-            let v = ui.meas(c, k);
-            return t(&if v.is_finite() { e(v) } else { "9.9E37".into() });
+            return match ui.fact_inverter(&arg_item(arg), &src) {
+                Ok(crate::ui::facts::Fact::Word(w)) => t(w),
+                Ok(crate::ui::facts::Fact::Num(v)) => t(&shown(v)),
+                Err(()) => {
+                    self.err.push("-224,\"Illegal parameter value\"".into());
+                    t("9.9E37")
+                }
+            };
+        }
+        if kw(n0, "DPT") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_dpt(item, src));
+        }
+        if kw(n0, "BANDwidth") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_bandwidth(item, src));
         }
         if kw(n0, "WAVeform") && nodes.len() == 2 {
             let n1 = nodes[1];
             if kw(n1, "SOURce") {
                 if query {
-                    return t(&format!("CHAN{}", self.wav_src + 1));
+                    return t(&self.wav_source_text());
                 }
-                if let Some(c) = parse_ch(arg) {
-                    self.wav_src = c;
+                if let Some(id) = parse_wave(arg) {
+                    self.wav_src = id;
+                } else if !arg.is_empty() {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
                 }
                 return None;
             }
@@ -567,6 +830,12 @@ impl Scpi {
             if kw(n1, "DATA") && query {
                 return Some(self.wave_data(ui, pre.1));
             }
+        }
+        if kw(n0, "REFerence") {
+            return self.ref_cmd(ui, &nodes[1..], query, arg);
+        }
+        if kw(n0, "SIM") {
+            return self.sim_cmd(ui, &nodes[1..], query, arg);
         }
         if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
             return Some(block(&bmp(cv)));
@@ -610,6 +879,25 @@ impl Scpi {
             if kw(nodes[1], "DATA") && query {
                 return t(&ui.bode_text());
             }
+            if kw(nodes[1], "MODE") {
+                const MODES: [(&str, oos_dsp::bode::Mode); 3] = [("LOOP", oos_dsp::bode::Mode::Loop), ("PSRR", oos_dsp::bode::Mode::Psrr), ("IMPedance", oos_dsp::bode::Mode::Z)];
+                if query {
+                    let name = match ui.m.bode_mode {
+                        oos_dsp::bode::Mode::Loop => "LOOP",
+                        oos_dsp::bode::Mode::Psrr => "PSRR",
+                        oos_dsp::bode::Mode::Z => "IMP",
+                    };
+                    return t(name);
+                }
+                match MODES.iter().find(|(k, _)| kw(arg, k)) {
+                    Some((_, m)) => {
+                        ui.m.bode_mode = *m;
+                        ui.mark_changed();
+                    }
+                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
+            }
             if kw(nodes[1], "GENerator") {
                 if query {
                     return t(&ui.m.bode_addr);
@@ -651,7 +939,7 @@ impl Scpi {
                 }
                 return None;
             }
-            // modulation (Rigol DG style): :MOD[:STATe] ON|OFF, :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh <%>, :MOD:FM:DEViation <Hz>,
+            // modulation (APPL style): :MOD[:STATe] ON|OFF, :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh <%>, :MOD:FM:DEViation <Hz>,
             // :MOD:PM:DEViation <deg>, :MOD:<type>:INTernal:FREQuency <Hz>, :MOD:<type>:INTernal:FUNCtion <shape>
             if has("MOD") {
                 const SHAPES: [&str; 6] = ["SINusoid", "SQUare", "TRIangle", "RAMP", "NRAMp", "NOISe"];
@@ -821,23 +1109,34 @@ impl Scpi {
         None
     }
 
+    fn wav_source_text(&self) -> String {
+        match self.wav_src {
+            WaveId::Ch(c) => format!("CHAN{}", c + 1),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        }
+    }
+
     /// (points, (preamble string, (yinc, yorigin, yref)))
     fn wave_params(&self, ui: &Ui) -> (usize, (String, (f64, f64, f64))) {
-        let c = self.wav_src;
-        let ch = &ui.m.ch[c];
-        let vpd = ch.volts_per_div() as f64;
-        let info = if self.wav_raw { ui.raw_info(c) } else { None };
-        let (pts, dt, t0) = info.or_else(|| ui.record_info(c)).unwrap_or((0, 0.0, 0.0));
+        let (pts, dt, t0, vpd, offset) = match self.wav_src {
+            WaveId::Ch(c) => {
+                let ch = &ui.m.ch[c];
+                let info = if self.wav_raw { ui.raw_info(c) } else { None };
+                let (pts, dt, t0) = info.or_else(|| ui.record_info(c)).unwrap_or((0, 0.0, 0.0));
+                (pts, dt, t0, ch.volts_per_div() as f64, ch.offset as f64)
+            }
+            WaveId::Ref(i) => ui.ref_info(i).unwrap_or((0, 0.0, 0.0, 1.0, 0.0)),
+        };
         let (yinc, yref) = match self.wav_fmt {
             1 => (vpd * VDIV as f64 / 60000.0, 32768.0),
             _ => (vpd * VDIV as f64 / 250.0, 128.0),
         };
-        let yorg = (ch.offset as f64 / yinc).round();
+        let yorg = if yinc == 0.0 { 0.0 } else { (offset / yinc).round() };
         let pre = format!("{},0,{},1,{},{},0,{},{},{}", self.wav_fmt, pts, e(dt), e(t0), e(yinc), yorg, yref);
         (pts, (pre, (yinc, yorg, yref)))
     }
 
-    /// `:LA:...` (Rigol's names where they exist): state, lines shown, pod thresholds, and the record of the last
+    /// `:LA:...` (the stock names where they exist): state, lines shown, pod thresholds, and the record of the last
     /// acquisition: `:LA:DATA?` is an IEEE block of u16 words, little endian, bit n = Dn, sample k at
     /// t0 + k dt from `:LA:PREamble?` (points,dt,t0).
     fn la_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
@@ -909,9 +1208,202 @@ impl Scpi {
         None
     }
 
+    fn waves(&mut self, arg: &str) -> Result<Vec<WaveId>, String> {
+        let mut v = Vec::new();
+        for s in arg.split(',') {
+            let s = s.trim();
+            if s.is_empty() {
+                continue;
+            }
+            // the item name is not a source; callers pass only the source list
+            match parse_wave(s) {
+                Some(id) => v.push(id),
+                None => return Err(format!("-224,\"Illegal parameter value\" {}", s)),
+            }
+        }
+        Ok(v)
+    }
+
+    fn sourced(&mut self, ui: &Ui, arg: &str, f: impl FnOnce(&Ui, &str, &[WaveId]) -> Result<f64, ()>) -> Option<Vec<u8>> {
+        let src = match self.waves(arg_rest(arg)) {
+            Ok(v) => v,
+            Err(s) => {
+                self.err.push(s);
+                return Some(b"9.9E37".to_vec());
+            }
+        };
+        self.one_fact(f(ui, &arg_item(arg), &src))
+    }
+
+    fn one_fact(&mut self, r: Result<f64, ()>) -> Option<Vec<u8>> {
+        match r {
+            Ok(v) => Some(shown(v).into_bytes()),
+            Err(()) => {
+                self.err.push("-224,\"Illegal parameter value\"".into());
+                Some(b"9.9E37".to_vec())
+            }
+        }
+    }
+
+    fn ref_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if kw(n0, "SLOT") {
+            if query {
+                return t(&format!("R{}", ui.ref_slot() + 1));
+            }
+            return match parse_slot(arg) {
+                Some(i) => {
+                    ui.ref_slot_set(i);
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if kw(n0, "SHOW") {
+            if query {
+                return t(if ui.ref_shown() == Some(true) { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) if ui.ref_show_set(on) => {
+                    ui.mark_changed();
+                    None
+                }
+                _ => {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if kw(n0, "CLEar") && !query {
+            ui.ref_clear_all();
+            ui.mark_changed();
+            return None;
+        }
+        if kw(n0, "SAVE") && !query {
+            return match ui.ref_save_slot() {
+                Ok(()) => {
+                    ui.mark_changed();
+                    None
+                }
+                Err(e) => {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", e));
+                    None
+                }
+            };
+        }
+        if kw(n0, "LOAD") && !query {
+            if arg.trim().is_empty() {
+                self.err.push("-224,\"Illegal parameter value\" no file".into());
+                return None;
+            }
+            let r = ui.ref_load_named(arg);
+            return self.ref_loaded(ui, r);
+        }
+        if kw(n0, "IMPort") && !query {
+            let r = if arg.trim().is_empty() { ui.ref_import_slot() } else { ui.ref_load_named(arg) };
+            return self.ref_loaded(ui, r);
+        }
+        self.err.push(format!("-113,\"Undefined header\" :REF:{}", n.join(":")));
+        None
+    }
+
+    fn ref_loaded(&mut self, ui: &mut Ui, r: Result<(), String>) -> Option<Vec<u8>> {
+        match r {
+            Ok(()) => {
+                ui.mark_changed();
+                None
+            }
+            Err(e) if e.starts_with("missing ") => {
+                self.err.push(format!("-256,\"File name not found\" {}", e.trim_start_matches("missing ")));
+                None
+            }
+            Err(e) => {
+                self.err.push(format!("-224,\"Illegal parameter value\" {}", e));
+                None
+            }
+        }
+    }
+
+    fn sim_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if kw(n0, "PRESet") {
+            if query {
+                return t(ui.sim_preset_name());
+            }
+            return if ui.sim_preset_set(arg) {
+                ui.mark_changed();
+                None
+            } else {
+                self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                None
+            };
+        }
+        if kw(n0, "SLOT") {
+            if query {
+                return t(&format!("R{}", ui.sim_slot() + 1));
+            }
+            return match parse_slot(arg) {
+                Some(i) => {
+                    ui.sim_slot_set(i);
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if kw(n0, "PLAY") {
+            if query {
+                return t(if ui.sim_playing() { "1" } else { "0" });
+            }
+            let on = if arg.trim().is_empty() { Some(true) } else { parse_bool(arg) };
+            return match on {
+                Some(on) => {
+                    ui.sim_play_set(on);
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if kw(n0, "SHOW") {
+            if query {
+                return t(if ui.sim_shown() == Some(true) { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) if ui.sim_show_set(on) => {
+                    ui.mark_changed();
+                    None
+                }
+                _ => {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        self.err.push(format!("-113,\"Undefined header\" :SIM:{}", n.join(":")));
+        None
+    }
+
     fn wave_data(&self, ui: &Ui, p: (f64, f64, f64)) -> Vec<u8> {
         let (yinc, yorg, yref) = p;
-        let v = if self.wav_raw { ui.raw_volts(self.wav_src).unwrap_or_else(|| ui.record_volts(self.wav_src)) } else { ui.record_volts(self.wav_src) };
+        let v = match self.wav_src {
+            WaveId::Ch(c) => {
+                if self.wav_raw { ui.raw_volts(c).unwrap_or_else(|| ui.record_volts(c)) } else { ui.record_volts(c) }
+            }
+            WaveId::Ref(i) => ui.ref_volts(i),
+        };
         match self.wav_fmt {
             2 => {
                 let s: Vec<String> = v.iter().map(|&x| e(x as f64)).collect();
@@ -931,6 +1423,118 @@ impl Scpi {
             }
         }
     }
+
+    /// :MEASure:ITEM? <item>[,CHANn|Rn[,src]]
+    fn meas_item(&mut self, ui: &Ui, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let mut parts = arg.split(',');
+        let item = parts.next().unwrap_or("").trim();
+        if item.is_empty() {
+            self.err.push("-224,\"Illegal parameter value\"".into());
+            return t("9.9E37");
+        }
+        if kw(item, "SETHold") || item.eq_ignore_ascii_case("SHOLD") {
+            let waves = match self.waves(&parts.collect::<Vec<_>>().join(",")) {
+                Ok(waves) => waves,
+                Err(error) => {
+                    self.err.push(error);
+                    return t("9.9E37");
+                }
+            };
+            let (clock, data) = match waves.as_slice() {
+                [] => ui.meas_pair_sources(),
+                [clock, data] => (*clock, *data),
+                _ => {
+                    self.err.push("-224,\"Illegal parameter value\"".into());
+                    return t("9.9E37");
+                }
+            };
+            return t(&shown(ui.fact_setup_hold(clock, data)));
+        }
+        // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
+        let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
+            None => WaveId::Ch(0),
+            Some(s) => match self.named_source(s) {
+                Some(id) => id,
+                None => return t("9.9E37"),
+            },
+        };
+        if let Some(k) = meas_kind(item) {
+            return t(&shown(ui.fact_meas(k, src)));
+        }
+        if let Some(k) = pair_kind(item) {
+            let Some(word) = parts.next().map(str::trim).filter(|s| !s.is_empty()) else {
+                self.err.push("-224,\"Illegal parameter value\"".into());
+                return t("9.9E37");
+            };
+            let Some(b) = self.named_source(word) else { return t("9.9E37") };
+            return t(&e(ui.pair_at(k, src, b)));
+        }
+        self.err.push("-224,\"Illegal parameter value\"".into());
+        t("9.9E37")
+    }
+
+    fn named_source(&mut self, s: &str) -> Option<WaveId> {
+        match parse_wave(s) {
+            Some(id) => Some(id),
+            None => {
+                self.err.push(format!("-224,\"Illegal parameter value\" {}", s));
+                None
+            }
+        }
+    }
+
+    /// :EYE:ITEM? <figure> — height, width, unit interval, total jitter, and the other figures on the eye page.
+    fn eye_item(&mut self, ui: &Ui, arg: &str) -> Option<Vec<u8>> {
+        let item = arg.split(',').next().unwrap_or("").trim();
+        let Some(name) = crate::ui::EYE_ITEMS.iter().find(|n| kw(item, n)) else {
+            self.err.push("-224,\"Illegal parameter value\"".into());
+            return Some(b"9.9E37".to_vec());
+        };
+        let v = ui.eye_readings().iter().find(|(n, _)| n == name).map(|(_, v)| *v).unwrap_or(f64::NAN);
+        Some(e(v).into_bytes())
+    }
+}
+
+/// The measurement strip: each row, then the DVM and the counter when they are on.
+fn meas_strip(ui: &Ui) -> String {
+    let mut p = Vec::new();
+    for &(k, id) in &ui.m.meas {
+        p.push(format!("{},{},{}", meas_token(k), wave_tok(id), e(ui.meas_at(id, k))));
+    }
+    for &(k, a, b) in &ui.m.meas2 {
+        p.push(format!("{},{},{},{}", pair_token(k), wave_tok(a), wave_tok(b), e(ui.pair_at(k, a, b))));
+    }
+    if ui.m.dvm_on {
+        let mode = ["DC", "ACRMS", "ACDC"][ui.m.dvm_mode.min(2)];
+        p.push(format!("DVM,{},{},{}", mode, wave_tok(WaveId::Ch(ui.m.dvm_src.min(NCH - 1))), e(ui.dvm_value())));
+    }
+    if ui.m.cnt_on {
+        let mode = ["FREQUENCY", "PERIOD", "TOTALIZE"][ui.m.cnt_mode.min(2)];
+        p.push(format!("COUNTER,{},{},{}", mode, wave_tok(WaveId::Ch(ui.m.cnt_src.min(NCH - 1))), e(ui.counter_value())));
+    }
+    p.join(";")
+}
+
+/// Strip rows, and the eye figures when the eye page is the one on screen.
+fn meas_readout(ui: &Ui) -> String {
+    let mut parts = Vec::new();
+    let strip = meas_strip(ui);
+    if !strip.is_empty() {
+        parts.push(strip);
+    }
+    if ui.m.view == AView::Eye {
+        let eye = crate::ui::EYE_ITEMS
+            .iter()
+            .map(|name| {
+                let v = ui.eye_readings().iter().find(|(n, _)| n == name).map(|(_, v)| *v).unwrap_or(f64::NAN);
+                format!("{},{}", name.to_ascii_uppercase(), e(v))
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        parts.push(eye);
+    }
+    parts.join(";")
 }
 
 /// IEEE 488.2 definite-length block: #9 + 9 digits + data.
@@ -964,4 +1568,181 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
         b.resize(b.len() + row - w * 3, 0);
     }
     b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wave::Source;
+
+    fn session() -> (Scpi, Ui, Canvas) {
+        (Scpi::open(0), Ui::new(Source::Demo { t: 0.0 }), Canvas::new(crate::ui::W, crate::ui::H))
+    }
+
+    fn line(s: &mut Scpi, ui: &mut Ui, cv: &Canvas, cmd: &str) -> String {
+        String::from_utf8(s.exec_line(ui, cv, cmd)).unwrap()
+    }
+
+    fn reference_session() -> (Scpi, Ui, Canvas) {
+        let (mut s, mut ui, cv) = session();
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..4000 {
+            let value = if index % 40 < 20 { -0.5 } else { 0.5 };
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, value));
+        }
+        ui.load_waveform_bytes(csv.as_bytes(), "reference.csv").unwrap();
+        line(&mut s, &mut ui, &cv, ":TIM:SCAL 1e-8;:TIM:OFFS 1e-6;:TRIG:EDGE:LEV 0;:TRIG:SWE NORM");
+        (s, ui, cv)
+    }
+
+    fn captures(ui: &Ui) -> f64 {
+        crate::json::parse(&ui.workflow_state()).unwrap().get("captures").unwrap().num().unwrap()
+    }
+
+    #[test]
+    fn reference_run_stop_are_idempotent_and_hold_acquisitions() {
+        let (mut s, mut ui, cv) = reference_session();
+        assert_eq!(line(&mut s, &mut ui, &cv, ":RUN;:SIM:PLAY?"), "1", "RUN updates replay immediately");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":RUN;:SIM:PLAY?"), "1", "repeated RUN must keep running");
+        ui.step(0.2);
+        assert!(captures(&ui) > 0.0, "RUN must capture a reference window");
+        let acquired = captures(&ui);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":STOP;:SIM:PLAY?;:TRIG:STAT?"), "0;STOP");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":STOP;:SIM:PLAY?"), "0", "repeated STOP must keep stopped");
+        ui.step(0.5);
+        assert_eq!(captures(&ui), acquired, "STOP must hold the acquired record");
+        assert_eq!(ui.m.run, RunState::Stop);
+    }
+
+    #[test]
+    fn reference_single_waits_for_a_trigger_and_rearms_with_a_menu_open() {
+        let (mut s, mut ui, cv) = reference_session();
+        ui.workflow_command("settings");
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10;:SING");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:PLAY?;:TRIG:STAT?"), "1;WAIT");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 0.0, "an impossible trigger must wait");
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 1.0);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:PLAY?;:TRIG:STAT?"), "0;STOP");
+        line(&mut s, &mut ui, &cv, ":SING");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 2.0, "a second SINGLE must re-arm and capture once");
+        assert_eq!(ui.m.run, RunState::Stop);
+        ui.step(0.5);
+        assert_eq!(captures(&ui), 2.0);
+    }
+
+    #[test]
+    fn sim_play_fills_the_slot_and_waveform_reads_it() {
+        let (mut s, mut ui, cv) = session();
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:PRES?"), "PCIe 4.0");
+        line(&mut s, &mut ui, &cv, ":SIM:PRES \"USB 2.0 HS\"");
+        line(&mut s, &mut ui, &cv, ":SIM:SLOT R3");
+        line(&mut s, &mut ui, &cv, ":SIM:PLAY");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:PRES?;:SIM:SLOT?;:SIM:PLAY?"), "USB 2.0 HS;R3;1");
+        let vpp = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? VPP,R3");
+        assert_ne!(vpp, "9.9E37");
+        line(&mut s, &mut ui, &cv, ":WAV:SOUR R3");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:SOUR?"), "R3");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:POIN?"), "65536");
+        line(&mut s, &mut ui, &cv, ":SIM:SHOW OFF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:SHOW?"), "0");
+        line(&mut s, &mut ui, &cv, ":SIM:PLAY OFF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:PLAY?"), "0");
+        line(&mut s, &mut ui, &cv, ":WAV:SOUR CHAN1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:SOUR?"), "CHAN1");
+    }
+
+    #[test]
+    fn load_and_import_csv_bin_and_wfm() {
+        let (mut s, mut ui, cv) = session();
+        let dir = std::env::temp_dir().join(format!("oos-ref-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        ui.store_dir = dir.clone();
+
+        let csv = dir.join("lane.csv");
+        std::fs::write(&csv, "Time (s),Volts\n0,0.1\n1e-9,0.4\n2e-9,-0.2\n").unwrap();
+        line(&mut s, &mut ui, &cv, &format!(":REF:SLOT R2;:REF:LOAD \"{}\"", csv.display()));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+        line(&mut s, &mut ui, &cv, ":WAV:FORM ASC;:WAV:SOUR R2");
+        let data = line(&mut s, &mut ui, &cv, ":WAV:DATA?");
+        assert!(data.starts_with("#9"), "{data}");
+        assert!(data.contains("1.000000E-01"), "{data}");
+
+        let bin_src = {
+            let mut m = crate::model::Model::default();
+            m.ch[0].on = true;
+            let rec = crate::wave::Record {
+                t0: 0.0,
+                dt: 1e-9,
+                ch: {
+                    let mut c: [Vec<f32>; crate::model::NCH] = Default::default();
+                    c[0] = vec![0.2, 0.3, 0.4];
+                    c
+                },
+                triggered: true,
+                partial: false,
+                raw: None,
+                la: None,
+            };
+            crate::store::wave_bin(&rec, &m)
+        };
+        let bin = dir.join("ref4.bin");
+        std::fs::write(&bin, &bin_src).unwrap();
+        line(&mut s, &mut ui, &cv, ":REF:SLOT 4");
+        line(&mut s, &mut ui, &cv, ":REF:IMP");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("0,"), "slot file should be the bin");
+        line(&mut s, &mut ui, &cv, ":WAV:SOUR REF4");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:POIN?"), "3");
+
+        let wfm = wfm_bytes();
+        std::fs::write(dir.join("ref4.wfm"), &wfm).unwrap();
+        line(&mut s, &mut ui, &cv, ":REF:IMP");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+        line(&mut s, &mut ui, &cv, ":WAV:SOUR R4");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:POIN?"), "4");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":REF:SHOW?"), "1");
+        line(&mut s, &mut ui, &cv, ":REF:SHOW OFF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":REF:SHOW?"), "0");
+
+        let bad = dir.join("nope.wfm");
+        let mut raw = wfm.clone();
+        raw[2..10].copy_from_slice(b":WFM#001");
+        std::fs::write(&bad, &raw).unwrap();
+        line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", bad.display()));
+        let err = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(err.contains(":WFM#002"), "{err}");
+        assert!(err.contains(":WFM#003"), "{err}");
+
+        line(&mut s, &mut ui, &cv, ":REF:CLE");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:POIN?"), "0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn wfm_bytes() -> Vec<u8> {
+        const CURVE: usize = 838;
+        let v = [0.0_f32, 0.5, 1.0, -0.25];
+        let mut b = vec![0u8; CURVE + v.len() * 4 + 8];
+        b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
+        b[2..10].copy_from_slice(b":WFM#002");
+        b[15] = 4;
+        b[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
+        b[40..44].copy_from_slice(b"lane");
+        let put_f64 = |b: &mut [u8], o: usize, x: f64| b[o..o + 8].copy_from_slice(&x.to_le_bytes());
+        let put_u32 = |b: &mut [u8], o: usize, x: u32| b[o..o + 4].copy_from_slice(&x.to_le_bytes());
+        put_f64(&mut b, 168, 1.0);
+        put_f64(&mut b, 176, 0.0);
+        put_u32(&mut b, 240, 4);
+        put_f64(&mut b, 488, 1e-9);
+        put_f64(&mut b, 496, 0.0);
+        put_u32(&mut b, 822, 0);
+        put_u32(&mut b, 826, (v.len() * 4) as u32);
+        for (k, &x) in v.iter().enumerate() {
+            b[CURVE + k * 4..CURVE + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
+        }
+        b
+    }
 }

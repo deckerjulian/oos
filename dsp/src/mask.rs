@@ -16,6 +16,8 @@ pub struct Mask {
     pub lo: Vec<f32>,
     /// upper limit per column (volts); +inf where the reference had no data
     pub hi: Vec<f32>,
+    /// when true, a pass is every sample *outside* the band (the envelope is the forbidden region)
+    pub invert: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,7 +73,7 @@ pub fn build(v: &[f32], tol_x: usize, tol_y: f32) -> Mask {
     let mx = sliding(v, tol_x, |a, b| a > b);
     let lo = mn.iter().map(|&x| if x.is_finite() { x - tol_y } else { f32::NEG_INFINITY }).collect();
     let hi = mx.iter().map(|&x| if x.is_finite() { x + tol_y } else { f32::INFINITY }).collect();
-    Mask { lo, hi }
+    Mask { lo, hi, invert: false }
 }
 
 impl Mask {
@@ -116,7 +118,8 @@ impl Mask {
                     continue;
                 }
                 let c = self.column(k, v.len());
-                if x < self.lo[c] || x > self.hi[c] {
+                let outside = x < self.lo[c] || x > self.hi[c];
+                if outside != self.invert {
                     violations += 1;
                     first.get_or_insert(k);
                 }
@@ -205,5 +208,19 @@ mod tests {
         let m2 = build(&r, 0, 0.1);
         assert_eq!((m2.lo[10], m2.hi[10]), (f32::NEG_INFINITY, f32::INFINITY));
         assert!(m2.test(&r).pass);
+    }
+
+    #[test]
+    fn inverted_envelope_fails_the_reference() {
+        let v: Vec<f32> = (0..40).map(|_| 1.0).collect();
+        let mut m = build(&v, 0, 0.1);
+        assert!(m.test(&v).pass);
+        m.invert = true;
+        let r = m.test(&v);
+        assert!(!r.pass);
+        assert_eq!(r.violations, 40);
+        let mut out = v.clone();
+        out[0] = 5.0;
+        assert_eq!(m.test(&out).violations, 39);
     }
 }

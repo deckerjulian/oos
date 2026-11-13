@@ -92,7 +92,7 @@ One read of register 0x1438 (same register address convention as the other proto
 | [11:0] | FPGA die temperature | `code * 503.975 / 4096 - 273.15` degC |
 | [27:16] | VCCINT | `code / 4096 * 3.0` V |
 
-These are the standard Xilinx XADC transfer functions. Check-table items SPU_CHIP (type 10) and SPU_VCCINT (type 11).
+These are the standard XADC transfer functions. Check-table items SPU_CHIP (type 10) and SPU_VCCINT (type 11).
 
 On the DHO924S the register reads 0, under OOS and under stock alike (`pcie2dev 0x1438`), so there is no FPGA temperature here and
 OOS watches the SoC zones only.
