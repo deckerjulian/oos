@@ -130,10 +130,30 @@ checklist.
 Ratios, not absolute times: hosts differ, ratios between two paths on the same host are stable. Keep a reference
 copy of each replaced function in the test module so the ratio has a fixed baseline.
 
+## Status
+
+Item 8, HAL part (branch perf/hal, 2026-11-13). Host M3 Max, release, one 4 MB batch:
+
+| case | upstream two-pass ms | f64 fused ms | f32 fused ms | f32 into kept vectors ms |
+|---|---|---|---|---|
+| 1 ch, 1420 x 2816 B | 1.45 | 0.71 | 0.40-0.44 | 0.37 |
+| 1 ch, 20 x 200 kB | 1.31 | 0.67 | 0.33 | 0.32 |
+| 2 ch, 1000 x 4000 B | 2.2 | 0.77 | 0.42 | 0.38 |
+| 4 ch, 500 x 8000 B | 2.2 | 1.06 | 0.58 | 0.56 |
+
+The f64 fused column is a clean reference copy (collect); the library's f64 version measured 1.38 ms because its
+`extend` did not vectorise. f32 error: under 0.01 code. The loop is near memory bandwidth, so f32 gains 1.6-2x, not
+the 5x of the arithmetic alone.
+
+- `seq::decode_volts_into(bytes, mask, cal, &mut [Vec<f32>; 4])`: no allocation once the vectors have room.
+- `decode_volts` keeps its signature: oos-ui builds unchanged.
+- Left for the ui: per-frame allocation in the batch loop goes away only when `hw.rs` `decode` takes recycled
+  vectors (a pool the UI thread returns dropped frames' `ch` vectors to) and calls `decode_volts_into`. Until then
+  every frame of >= 32 k samples per channel is a fresh musl mmap.
+
 ## Status of the UI items (branch perf/ui)
 
-- 2 done: `hw::decode_tail` decodes the last `QUEUE_MAX` frames of a batch. Guard: decoded <= kept, same frames and
-  sequence numbers as a full decode.
+- 2 reverted (every acquired frame is to be used, see the deposit pipeline).
 - 3 done, default on: `trignear::edge_smooth_near` in `fast_draw` and `to_record`. The near answer is kept only when
   the comparator state proves it equals the wide search (module comment), else the wide search runs. Guards: equality
   over a synthetic corpus (42 k cases, half answered near), two adversarial fallback frames; ignored timing test, host

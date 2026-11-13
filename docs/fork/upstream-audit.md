@@ -98,3 +98,12 @@ path is faster than its fork counterpart.
 5. Existing equivalence tests already guard correctness: `fused_decode_equals_deinterleave_and_volts`,
    `unpad_in_place_equals_unpad`, `prearm_writes_the_same_sequence_as_the_plain_batch_loop`,
    `dma_buf_is_reused_aligned_and_exact_with_short_reads`.
+
+## Status (2026-11-13, branch perf/hal)
+
+- `decode_volts` `on: Vec`: done, fixed slot table. Then f32 decode (perf-plan item 8), see perf-plan.md Status.
+- `execute_into`: removed; `execute_until` kept as wrapper.
+- Image build hook: done as `boot/unit-hook.sh` + `boot/unit-hook-image.sh` (not `rootfs/unit/hook.sh`: the hook is
+  build logic, the unit directory stays data). Output identical on stub inputs.
+- Guards 1, 3, 4: `hal/tests/alloc_batch.rs`, `hal/tests/early_trigger_end.rs`, `hal/tests/perf_ratio.rs`, run by
+  `tools/perf-guard.sh` (docs/fork/sync-checklist.md). Guard 2 (ui `decode`) is the ui's.
