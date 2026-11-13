@@ -363,7 +363,7 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
             for (n, &o) in cur.iter().enumerate() {
                 coretrim::TrimHw::set_offset(&mut hw, n, o);
             }
-            eprintln!("oos-ui hw: core offsets of ADC mode {}: {}", mode, e);
+            eprintln!("oos-ui hw: core offsets of ADC mode {}: {}, order {:?}", mode, e, order);
             false
         }
     }
