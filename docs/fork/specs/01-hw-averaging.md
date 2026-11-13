@@ -233,7 +233,7 @@ Unit log: private RE notes `docs/logs/oos_unitlab_20261113.md` (B1 in rounds 1 a
 |---|---|---|
 | averaged frames all zero above 62.5 MSa/s | 0x1004 bit 2 ("AvgSinc") clear. With bit 2 set every rate averages (312.5 MSa/s: 1.08 -> 0.46 mV at N = 16; 1.25 GSa/s 100k: 3.24 -> 1.2 mV); without it every rate above 62.5 MSa/s is zero (156, 312, 625, 1250 tested) | fixed: `acq::configure_la` sets bit 2 in average mode at every rate |
 | noise levelled off near 0.5 mV (100 mV/div) | the newest frame alone was played; the netlist couples averaging to the play-out | fixed: every recorded frame is played (750 frames/s at 62.5 MSa/s, 31/s before) |
-| HW 16 still above SW 16 (0.42 vs 0.34 mV at 100 mV/div), floor in proportion to V/div | not truncation: see the dump analysis below | open |
+| HW 16 still above SW 16 (0.42 vs 0.34 mV at 100 mV/div), floor in proportion to V/div | not found yet; not truncation and not an ADC core offset (dump analysis below) | open |
 | 0x10b0 reads N - 1 | read-back of the written register | none |
 
 Stock: `ConfigAcquire` sets bit 2 only for rate < max / 8, in every mode. With that rule stock average mode above
@@ -246,15 +246,14 @@ bit 2 clear, OOS with the chain bypassed needs bit 2 set.
 Dump analysis (62.5 MSa/s, 1 channel, 10k points, N = 2 and 16; `avg.debug_raw` of the b1-raw build, since removed):
 
 - `seq` (0x1004 bit 3 cleared, fields in order): even and odd words both carry the signal; no field with low bits.
-- Every dump has a fixed even/odd offset of about 180 codes (16-bit scale) between neighbouring samples: presumably the two ADC
-  cores that the divider by 20 alternates between. Per parity the averaged noise is 16-19 codes at N = 16 and 50-53
-  at N = 2 against 89-91 raw, close to 1 / sqrt(N). The point-to-point measure (difference / sqrt 2) of an averaged
-  frame is then dominated by the 180-code alternation (180 / sqrt 2 = 127; measured 120-135): the "floor" is this
-  core offset, a fixed number of codes, which is why it scales with V/div.
-- The software average does not show it, presumably because its frames are aligned per trigger, so the alternation lands
-  on either parity and cancels. The FPGA averages by memory address, where the parity is fixed.
+- Both debug reads show an even/odd offset between neighbouring words: a steady -180 codes (16-bit scale) in `seq`,
+  and in `wide` constant within a dump but different between dumps (-124 to -179, once +56). It is not an ADC core
+  offset: a core offset would be fixed, and the frames the UI shows have no such pattern (at 100 mV/div it would be
+  2.4 mV, measuring at least 1.7 mV point-to-point; Normal measured 1.07 mV, HW 16 0.42 mV). Most likely the two
+  parities are the two stored fields of one averaged point. Per parity the noise is 16-19 codes at N = 16 and 50-53 at
+  N = 2 against 89-91 raw, close to 1 / sqrt(N): the averaging itself works.
 - `wide` (average mode, twice the window): the words from 10240 on are bit-identical in all eight dumps of both runs
   (N = 2 and 16): stale memory behind the frame, not an accumulator or an earlier average. No extra precision there.
 
-Next for the floor: the per-core offset correction of the ADC at the divided rates (cal_adc), or a per-parity offset
-removal on averaged frames. Both need a unit measurement of the even/odd offset per rate and channel mode.
+Open: the gap between HW 16 and SW 16 as displayed. Unit check queued (round 6): even/odd mean difference and
+per-parity noise of a Normal and a HW 16 frame (`:WAV:DATA?`, 62.5 MSa/s, 100 mV/div, input open).
