@@ -746,7 +746,7 @@ impl<B: Bus> Ctx<'_, B> {
             adc: a,
             mode: usize::MAX,
             gain: [1.0; 4],
-            la_was_on: false, holdoff_set: false, aux: None,
+            la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0,
         };
         Ok(Outcome {
             state,

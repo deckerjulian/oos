@@ -23,6 +23,7 @@ pub mod hz;
 pub mod la;
 pub mod levels;
 pub mod lmx2582;
+pub mod mask;
 pub mod panel;
 pub mod roll;
 pub mod scu;

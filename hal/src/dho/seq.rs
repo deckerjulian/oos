@@ -6,7 +6,7 @@
 //! and the hardware source of `oos-ui`. Order (docs/protocols): [ADC mode] -> [AFE] -> TPU edge trigger -> wait FSM
 //! stopped -> acquisition configuration -> SCU auto/normal trigger -> arm -> wait done -> play-last read-out -> read.
 
-use crate::dho::{acq, adc, afe, auxout, hz, la, scu, tpu, Write};
+use crate::dho::{acq, adc, afe, auxout, hz, la, mask, scu, tpu, Write};
 
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -126,6 +126,22 @@ pub struct Settings {
     pub segments: Option<Segments>,
     /// what the rear AUX OUT BNC carries (docs/fork/auxout.md); written with the acquisition block when it changed
     pub aux: auxout::AuxOut,
+    /// the FPGA mask test (docs/fork/hwmask.md); None = off
+    pub hwmask: Option<HwMask>,
+}
+
+/// A mask test in the FPGA: the volt band of each of the `mask::COLUMNS` columns on channel `ch`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HwMask {
+    /// source channel 0..3; the test is off while it is not acquired
+    pub ch: usize,
+    /// lower and upper limit per column, volts at the probe tip (infinite = no limit)
+    pub lo: Vec<f32>,
+    pub hi: Vec<f32>,
+    /// the FSM stops on a failed frame
+    pub stop_on_fail: bool,
+    /// raised to clear the counters
+    pub clear: u64,
 }
 
 /// A hardware segmented recording.
@@ -142,7 +158,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut, hwmask: None }
     }
 }
 
@@ -161,6 +177,11 @@ pub struct State {
     pub holdoff_set: bool,
     /// the AUX OUT set-up last written; None = not written since the hand-over, so the first set-up writes it
     pub aux: Option<auxout::AuxOut>,
+    /// the mask unit: table last loaded, (slot, samples per column, clear, stop on fail) of the running test (None =
+    /// off), and the control shadow 0x1190
+    pub mask_cols: Option<Vec<mask::Column>>,
+    pub mask_run: Option<(u32, u32, u64, bool)>,
+    pub s1190: u32,
 }
 
 impl State {
@@ -174,7 +195,7 @@ impl State {
                 a.channel_mode(c, mode);
             }
         }
-        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None }
+        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0 }
     }
 
     /// Configuration steps for `s` (ADC mode if the channel set changed, AFEs, trigger, acquisition registers).
@@ -281,6 +302,7 @@ impl State {
                 st.extend(auxout::writes(&s.aux).into_iter().map(Step::Wr));
                 self.aux = Some(s.aux);
             }
+            st.extend(self.mask_steps(s, &p));
         }
         if let Some(l) = &s.la {
             // thresholds with every set-up (la.md 8.1: on change and once after the start)
@@ -293,6 +315,48 @@ impl State {
             st.extend(scu::auto_trigger(&mut self.sh, s.auto, tb, time_fs(s.holdoff)).into_iter().map(Step::Wr));
         }
         Ok((st, p))
+    }
+
+    /// The mask unit for `s` (docs/fork/hwmask.md): nothing while it runs as wanted; else off, the table when it
+    /// changed, compression, slot (counters cleared on a new slot, a new start or a clear request) and on again; off
+    /// when it is not wanted or its channel is not acquired. Called in the acquisition block with the FSM stopped.
+    fn mask_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        let want = s.hwmask.as_ref().and_then(|m| mask::slot(s.mask, m.ch).map(|sl| (m, sl)));
+        let Some((m, slot)) = want else {
+            if self.mask_run.take().is_none() {
+                return vec![];
+            }
+            self.sh.s4020 = mask::scu_bits(self.sh.s4020, false, false);
+            self.s1190 &= !mask::ctrl::SLOT_MASK;
+            return vec![Step::Note("mask test off".into()), Step::Wr((0x4020, self.sh.s4020)), Step::Wr((mask::COMPRESS, mask::compress::OFF)), Step::Wr((mask::CTRL, self.s1190))];
+        };
+        let k = &s.ch[m.ch];
+        let cols = mask::table(&m.lo, &m.hi, k.scale, k.offset);
+        let run = (slot, mask::per_column(p.memsel as u64), m.clear, m.stop_on_fail);
+        if self.mask_run == Some(run) && self.mask_cols.as_ref() == Some(&cols) {
+            return vec![];
+        }
+        let clear = self.mask_run.map_or(true, |r| r.0 != run.0 || r.2 != run.2);
+        let mut w = vec![];
+        self.sh.s4020 = mask::scu_bits(self.sh.s4020, false, false);
+        w.push((0x4020, self.sh.s4020));
+        if self.mask_cols.as_ref() != Some(&cols) {
+            w.extend(mask::load(&cols));
+            self.mask_cols = Some(cols);
+        }
+        w.push((mask::COMPRESS, mask::compress_word(run.1)));
+        w.extend(mask::select(&mut self.s1190, slot, clear));
+        self.sh.s4020 = mask::scu_bits(self.sh.s4020, true, m.stop_on_fail);
+        w.push((0x4020, self.sh.s4020));
+        self.mask_run = Some(run);
+        let mut st = vec![Step::Note(format!("mask test CH{} slot {}, {} samples per column{}", m.ch + 1, slot, run.1, if clear { ", counters cleared" } else { "" }))];
+        st.extend(w.into_iter().map(Step::Wr));
+        st
+    }
+
+    /// The control shadow while the mask test runs (for `mask::read`), None when it is off.
+    pub fn mask_ctrl(&self) -> Option<u32> {
+        self.mask_run.map(|_| self.s1190)
     }
 
     /// TPU writes of the trigger in `s` (trigger.md: section 6 edge, section 10 the other types).
@@ -1044,6 +1108,51 @@ mod tests {
         // the diagnostic arm without the acquisition block leaves AUX OUT alone
         let mut st = State::handover(1, None);
         assert_eq!(aux(&mut st, &Settings { blocks: 5, ..off }), vec![]);
+    }
+
+    #[test]
+    fn hardware_mask_starts_reloads_clears_and_stops() {
+        let only = |st: &mut State, s: &Settings| -> Vec<Write> {
+            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194) || w.0 == 0x4020).collect()
+        };
+        let band = |h: f32| HwMask { ch: 0, lo: vec![-h; mask::COLUMNS], hi: vec![h; mask::COLUMNS], stop_on_fail: false, clear: 0 };
+        let mut st = State::handover(1, None);
+        let base = Settings { window: None, ..Settings::default() };
+        let on = Settings { hwmask: Some(band(1.0)), ..base.clone() };
+        let w = only(&mut st, &on);
+        // off, 1000 columns + write enable dropped, compression for 2.5 Mpts, slot 0 with the counter clear, on; then
+        // the auto-trigger block writes 0x4020 from the same shadow
+        assert_eq!(w.len(), 1 + 1001 + 1 + 2 + 1 + 1, "{:x?}", &w[..4]);
+        assert_eq!(w[0], (0x4020, 0x2001));
+        assert_eq!(w[1], (0x1194, 0x1c00_0000 | 158 << 8 | 98));
+        assert_eq!(w[1001], (0x1194, 0));
+        assert_eq!(w[1002..1006], [(0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001)]);
+        assert_eq!(*w.last().unwrap(), (0x4020, 0xe001), "auto trigger keeps the mask bits");
+        assert_eq!(st.mask_ctrl(), Some(0x0010_0000));
+        // unchanged: nothing but the auto-trigger write
+        assert_eq!(only(&mut st, &on), vec![(0x4020, 0xe001)]);
+        // a tighter band: the table again, the counters keep counting
+        let w = only(&mut st, &Settings { hwmask: Some(band(0.5)), ..base.clone() });
+        assert_eq!(w.len(), 1 + 1001 + 1 + 1 + 1 + 1);
+        assert_eq!(w[1003], (0x1190, 0x0010_0000));
+        // a clear request: no table, the counters cleared
+        let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, ..band(0.5) }), ..base.clone() });
+        assert_eq!(w, vec![(0x4020, 0x6001), (0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001), (0x4020, 0xe001)]);
+        // stop on fail sets bit 12
+        let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, stop_on_fail: true, ..band(0.5) }), ..base.clone() });
+        assert_eq!(*w.last().unwrap(), (0x4020, 0xf001));
+        // off: enable and stop cleared, compression back, slot dropped
+        let w = only(&mut st, &base);
+        assert_eq!(w, vec![(0x4020, 0x6001), (0x1184, 0x4000_0001), (0x1190, 0), (0x4020, 0x6001)]);
+        assert_eq!(st.mask_ctrl(), None);
+        assert_eq!(only(&mut st, &base), vec![(0x4020, 0x6001)]);
+        // a source that is not acquired leaves the test off
+        let w = only(&mut st, &Settings { hwmask: Some(HwMask { ch: 1, ..band(1.0) }), ..base.clone() });
+        assert_eq!(w, vec![(0x4020, 0x6001)]);
+        // CH2 of CH1+CH2: slot 2
+        let two = Settings { mask: 0b11, hwmask: Some(HwMask { ch: 1, ..band(1.0) }), ..base.clone() };
+        let mut st = State::handover(0b11, None);
+        assert!(only(&mut st, &two).contains(&(0x1190, 0x0040_0000)));
     }
 
     #[test]
