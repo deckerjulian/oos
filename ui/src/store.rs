@@ -149,6 +149,20 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_parity", name(m.dec_parity));
 }
 
+/// The one bus on the plot.
+fn bus_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
+    let b = &m.bus;
+    kv("bus_on", b.on.to_string());
+    kv("bus_label", b.label.clone());
+    kv("bus_pos", b.pos.to_string());
+    kv("bus_kind", name(b.kind));
+    kv("bus_clk", b.clk.token());
+    kv("bus_data", b.data.token());
+    kv("bus_clk_thr", b.clk_thr.to_string());
+    kv("bus_data_thr", b.data_thr.to_string());
+    kv("bus_rw", b.addr_rw.to_string());
+}
+
 pub fn setup_text(m: &Model) -> String {
     let mut s = String::from("# OOS setup v1: key = value (oos-ui)\n");
     let mut kv = |k: &str, v: String| {
@@ -275,6 +289,7 @@ pub fn setup_text(m: &Model) -> String {
     }
     kv("dec_sel", m.dec_sel.to_string());
     dec_lines(m, &mut kv);
+    bus_lines(m, &mut kv);
     for k in (0..DECODERS).filter(|&k| k != m.dec_sel && m.decs[k].is_some()) {
         dec_lines(&m.dec_view(k), &mut |n: &str, v: String| kv(&format!("d{}.{}", k + 1, n), v));
     }
@@ -825,6 +840,15 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.eye_b = opt(b)?;
             m.eye_hp = p_bool(hp)?;
         }
+        "bus_on" => m.bus.on = p_bool(v)?,
+        "bus_label" => m.bus.label = crate::model::bus_label(v),
+        "bus_pos" => m.bus.pos = p_f32(v)?.clamp(BUS_POS_MIN, BUS_POS_MAX),
+        "bus_kind" => m.bus.kind = p_enum(v, &[BusKind::I2c])?,
+        "bus_clk" => m.bus.clk = WaveId::parse(v)?,
+        "bus_data" => m.bus.data = WaveId::parse(v)?,
+        "bus_clk_thr" => m.bus.clk_thr = p_f32(v)?.clamp(-40.0, 40.0),
+        "bus_data_thr" => m.bus.data_thr = p_f32(v)?.clamp(-40.0, 40.0),
+        "bus_rw" => m.bus.addr_rw = p_bool(v)?,
         "power_more" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [fline, fsw, vin, reference, clk] = w[..] else { return Err("power_more".into()) };
