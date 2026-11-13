@@ -85,6 +85,63 @@ mod tests {
         assert_eq!(u.replay.captures, 0, "panning is analysis, not an acquisition");
     }
 
+    fn wave(dt: f64, vpd: f32, offset: f32, color: usize) -> RefWave {
+        RefWave {
+            src: 0,
+            color,
+            label: String::new(),
+            t0: 0.0,
+            dt,
+            v: vec![0.0; 64],
+            vpd,
+            offset,
+            on: true,
+        }
+    }
+
+    #[test]
+    fn reference_badge_shows_vertical_scale_and_the_record_sample_rate() {
+        let fast = wave(20e-12, 0.25, 0.0, 0);
+        assert_eq!(Ui::ref_badge_readout(&fast), ("250 mV/div".into(), "50 GSa/s".into()));
+        let slow = wave(1e-9, 1.0, 0.0, 1);
+        assert_eq!(Ui::ref_badge_readout(&slow), ("1 V/div".into(), "1 GSa/s".into()));
+        let (scale, rate) = Ui::ref_badge_readout(&fast);
+        assert!(!scale.contains("s/div") && !rate.contains("/div"));
+    }
+
+    #[test]
+    fn reference_badges_keep_one_horizontal_scale() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        for ch in &mut u.m.ch {
+            ch.on = false;
+        }
+        let time = u.m.time_per_div();
+        u.refs[0] = Some(wave(20e-12, 0.25, 0.0, 1));
+        u.refs[1] = Some(wave(1e-9, 1.0, 2.0, 2));
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        assert_eq!(u.m.time_per_div(), time);
+        assert_eq!(Ui::ref_badge_readout(u.refs[0].as_ref().unwrap()).1, "50 GSa/s");
+        assert_eq!(Ui::ref_badge_readout(u.refs[1].as_ref().unwrap()).1, "1 GSa/s");
+        for color in [REF_COLORS[1].1, REF_COLORS[2].1] {
+            let mut span = 0;
+            for y in 40..520 {
+                let mut run = 0;
+                let mut best = 0;
+                for x in 0..cv.w {
+                    if cv.px[(y * cv.w + x) as usize] == color {
+                        run += 1;
+                        best = best.max(run);
+                    } else {
+                        run = 0;
+                    }
+                }
+                span = span.max(best);
+            }
+            assert!(span >= 48, "badge run {span} for {color:#x}");
+        }
+    }
+
     #[test]
     fn every_reference_uses_the_same_time_window_at_its_own_sample_interval() {
         let mut u = replay();
@@ -140,7 +197,8 @@ pub(super) struct Replay {
 
 impl Ui {
     pub fn record_mode(&self) -> bool {
-        self.offline || self.session_is_sim || (self.m.n_on() == 0 && self.refs.iter().any(Option::is_some))
+        // A reference drawn with the live channels is not a session. Take over, Offline waveforms, and SIM are.
+        self.offline || self.session_is_sim || self.sim_play
     }
 
     pub(super) fn active_reference(&self) -> usize {
@@ -205,34 +263,97 @@ impl Ui {
             return Err("The file needs at least two samples and a valid sample interval.".into());
         }
         self.sim_cancel_generation();
-        self.remember_live();
-        self.set_offline(true);
+        let into_session = self.offline || self.session_is_sim;
         self.session_is_sim = false;
-        self.replay = Replay::default();
+        self.sim_play = false;
         let first = self.ref_sel.min(NREF - 1);
         for (k, trace) in traces.into_iter().take(NREF - first).enumerate() {
             let slot = first + k;
             let span = trace.v.iter().copied().filter(|x| x.is_finite()).fold(0.1f32, |a, b| a.max(b.abs()));
             self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: trace.v, vpd: (span / 3.0).max(1e-6), offset: 0.0, on: true });
         }
-        self.m.zoom = false;
-        self.present_record(first);
-        if self.look == reflook::RefLook::TakeOver {
-            self.solo_reference(first);
+        self.replay = Replay::default();
+        if into_session {
+            if !self.offline {
+                self.set_offline(true);
+            }
+            self.m.zoom = false;
+            self.present_record(first);
+            if self.look == reflook::RefLook::TakeOver {
+                self.solo_reference(first);
+            }
+            self.meas_src = WaveId::Ref(first);
+            self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
+            self.m.meas2.clear();
+            self.meas_own.clear();
+            self.meas_cfg = None;
+            self.ensure_meas_own();
+            self.m.meas_labels = false;
+            self.autoset_reference();
+            self.toast(&format!("Loaded {} into R{}", name, first + 1));
+        } else {
+            let (rate, n) = self.refs[first].as_ref().map(|r| (1.0 / r.dt, r.v.len())).unwrap_or((0.0, 0));
+            self.toast(&format!("R{} with the live channels · {} · {}", first + 1, si_digits(rate, "Sa/s", 3), si_digits(n as f64, "pts", 3)));
         }
-        self.meas_src = WaveId::Ref(first);
-        self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
-        self.m.meas2.clear();
-        self.meas_own.clear();
-        self.meas_cfg = None;
-        self.ensure_meas_own();
-        self.m.meas_labels = false;
         self.close_menu();
-        self.autoset_reference();
         self.measure_refs();
         self.relayout();
-        self.toast(&format!("Loaded {} into R{}", name, first + 1));
         Ok(())
+    }
+
+    /// Sample rate and length of the references drawn on the live screen, and whether each one meets the current time window.
+    pub(super) fn live_ref_note(&self) -> String {
+        if self.record_mode() {
+            return String::new();
+        }
+        let (tdiv, delay) = self.view();
+        let half = tdiv as f64 * HDIV as f64 / 2.0;
+        let (left, right) = (delay as f64 - half, delay as f64 + half);
+        let mut parts = Vec::new();
+        for (i, r) in self.refs.iter().enumerate() {
+            let Some(r) = r.as_ref() else { continue };
+            if !r.on || r.v.len() < 2 || !(r.dt > 0.0) {
+                continue;
+            }
+            let end = r.t0 + r.v.len() as f64 * r.dt;
+            let outside = end < left || r.t0 > right;
+            let where_ = if outside { " · outside this window" } else { "" };
+            parts.push(format!("R{} {} · {}{}", i + 1, si_digits(1.0 / r.dt, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3), where_));
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("With live · {}", parts.join("   "))
+        }
+    }
+
+    /// Move the live time base onto the first shown reference. The channels stay on.
+    pub(super) fn fit_shown_reference(&mut self) {
+        if self.record_mode() {
+            return;
+        }
+        let slot = if self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).is_some_and(|r| r.on && r.v.len() >= 2) {
+            self.ref_sel
+        } else {
+            match (0..NREF).find(|&i| self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 2 && r.dt > 0.0)) {
+                Some(i) => i,
+                None => return,
+            }
+        };
+        let spec = self.refs[slot].as_ref().map(|r| (r.t0, r.dt, r.v.len()));
+        if let Some((t0, dt, n)) = spec {
+            self.apply_record_timebase(t0, dt, n);
+            self.toast(&format!("Time base fit to R{}. The live channels stay on.", slot + 1));
+        }
+    }
+
+    pub(super) fn live_ref_fit_rect(&self) -> Option<Rect> {
+        let note = self.live_ref_note();
+        if note.is_empty() || self.view_on() || self.eye_open() {
+            return None;
+        }
+        let g = self.grid;
+        Some(Rect::new(g.x + 8, g.y + g.h - 28, 52, 22))
     }
 
     pub(super) fn reference_slice(&self, slot: usize) -> Option<(&[f32], f64, f64)> {
@@ -418,8 +539,10 @@ impl Ui {
             cv.set_clip(rect.inset(7));
             cv.text(&self.fonts.sb, rect.x + 10, rect.y + 18, &format!("R{}", slot + 1), col);
             cv.text(&self.fonts.s, rect.x + rect.w - 34, rect.y + 18, if r.on { "On" } else { "Off" }, if r.on { col } else { DIM });
-            cv.text(&self.fonts.mb, rect.x + 10, rect.y + 39, if r.label.is_empty() { "Waveform" } else { &r.label }, TEXT);
-            cv.text(&self.fonts.s, rect.x + 10, rect.y + 57, &format!("{}/div", si_short(r.vpd as f64, "V")), DIM);
+            let (scale, rate) = Self::ref_badge_readout(r);
+            cv.text(Self::card_font(&self.fonts, &scale, rect.w - 24), rect.x + 10, rect.y + 42, &scale, TEXT);
+            let sub = if r.label.is_empty() { rate } else { format!("{}  \u{b7}  {}", rate, r.label) };
+            cv.text(&self.fonts.s, rect.x + 10, rect.y + 58, &sub, DIM);
             cv.no_clip();
         }
     }

@@ -252,6 +252,8 @@ enum TopBtn {
     Menu(MenuId),
     System,
     Load,
+    /// Back to live acquisition from a simulation or a stored waveform.
+    Live,
 }
 
 /// An open picker: the choice item, and the menu (with its Back target and focus) to return to.
@@ -662,6 +664,7 @@ enum Item {
     SimPreset,
     SimSlot,
     SimPlay,
+    SimLive,
     SimShow,
     SimRate,
     SimPat,
@@ -1213,7 +1216,17 @@ impl Ui {
     }
 
     pub(super) fn eye_side(&self) -> bool {
-        self.m.eye_place == EyePlace::Side || self.eye_below() == 0
+        match self.m.eye_place {
+            EyePlace::Side => true,
+            // Under with no room uses the side pane. Full never gives up the plot.
+            EyePlace::Under => self.eye_below() == 0,
+            EyePlace::Full => false,
+        }
+    }
+
+    /// The rectangle that holds the placement bar: the whole plot, or the side pane.
+    pub(super) fn eye_chrome_rect(&self) -> Rect {
+        if self.m.eye_place == EyePlace::Full { self.grid } else { self.eye_pane_rect() }
     }
 
     /// Height taken under the trace when the eye is stacked there.
@@ -1240,12 +1253,12 @@ impl Ui {
         }
     }
 
-    /// Where the eye page itself is drawn: the pane, under a bar of buttons.
+    /// Where the eye page itself is drawn: under the placement bar, on the whole plot or in the pane.
     fn eye_page_rect(&self) -> Rect {
         if !self.eye_open() {
             return self.area;
         }
-        let a = self.eye_pane_rect();
+        let a = self.eye_chrome_rect();
         const BAR: i32 = 36;
         Rect::new(a.x, a.y + BAR, a.w, (a.h - BAR).max(1))
     }
@@ -1634,7 +1647,11 @@ impl Ui {
 
     fn eye_tap(&mut self, x: i32, y: i32) -> bool {
         if self.eye_open() {
-            let (side, under) = self.eye_place_btns();
+            let (full, side, under) = self.eye_place_btns();
+            if full.contains(x, y) {
+                self.eye_set_place(EyePlace::Full);
+                return true;
+            }
             if side.contains(x, y) {
                 self.eye_set_place(EyePlace::Side);
                 return true;
@@ -2263,7 +2280,15 @@ impl Ui {
             self.draw_zoom_readout(cv, tz, dz);
         }
         if self.eye_open() {
-            self.draw_eye_pane(cv);
+            if self.m.eye_place == EyePlace::Full {
+                let a = self.grid;
+                cv.fill(a, BG);
+                cv.rect(a, CARD_BORDER);
+                self.draw_eye_bar(cv, a);
+                self.draw_eye(cv);
+            } else {
+                self.draw_eye_pane(cv);
+            }
         }
         self.draw_cal_banner(cv);
         self.draw_info(cv);
@@ -3097,12 +3122,43 @@ impl Ui {
         cv.no_clip();
     }
 
+    /// Vertical scale and the sample rate of this record. Time per division stays the one horizontal scale.
+    fn ref_badge_readout(r: &RefWave) -> (String, String) {
+        let scale = format!("{}/div", si_short(r.vpd as f64, "V"));
+        let rate = if r.dt.is_finite() && r.dt > 0.0 {
+            si_short(1.0 / r.dt, "Sa/s")
+        } else {
+            "\u{2014}".into()
+        };
+        (scale, rate)
+    }
+
+    /// Name, volts per division, and the record's sample rate, beside the trace.
+    fn draw_ref_badge(&self, cv: &mut Canvas, area: Rect, y: i32, col: Rgb, slot: usize, r: &RefWave) {
+        let f = &self.fonts;
+        let name = if r.label.is_empty() { format!("R{}", slot + 1) } else { r.label.clone() };
+        let (scale, rate) = Self::ref_badge_readout(r);
+        let text_w = f.sb.width(&name).max(f.s.width(&scale)).max(f.s.width(&rate));
+        let bw = (text_w + 12).clamp(36, (area.w - 16).max(36));
+        let bh = 46;
+        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - 2).max(area.y + 2));
+        let x0 = (area.x + 80).min((area.x + area.w - bw - 4).max(area.x + 2));
+        let b = Rect::new(x0, y0, bw, bh);
+        cv.round(b, 3, col, 255);
+        cv.set_clip(b);
+        let ink = rgb(0, 0, 0);
+        let row = b.h / 3;
+        cv.text_in(&f.sb, Rect::new(b.x, b.y + 1, b.w, row), 1, &name, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &scale, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + 2 * row, b.w, row), 1, &rate, ink);
+        cv.set_clip(area);
+    }
+
     fn draw_refs(&self, cv: &mut Canvas) {
         self.draw_refs_at(cv, self.area, self.view());
     }
 
     fn draw_refs_at(&self, cv: &mut Canvas, area: Rect, view: (f32, f32)) {
-        let f = &self.fonts;
         cv.set_clip(area);
         let ppy = area.h as f32 / VDIV;
         let cy = area.y as f32 + area.h as f32 / 2.0;
@@ -3159,12 +3215,7 @@ impl Ui {
                 prev = Some((x, y));
             }
             if let Some(y) = first {
-                let yy = y.clamp(area.y + 10, area.y + area.h - 10);
-                // right of the volt labels
-                let name = if r.label.is_empty() { format!("R{}", i + 1) } else { r.label.clone() };
-                let b = Rect::new(area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
-                cv.round(b, 3, col, 255);
-                cv.text_in(&f.s, b, 1, &name, rgb(0, 0, 0));
+                self.draw_ref_badge(cv, area, y, col, i, r);
             }
         }
         cv.no_clip();
@@ -3416,6 +3467,17 @@ impl Ui {
         if self.search_on {
             let n = self.search_events().len();
             backed_text(cv, &f.sb, x, y, &format!("Search: {} event{}", n, if n == 1 { "" } else { "s" }), AMBER);
+        }
+        let note = self.live_ref_note();
+        if !note.is_empty() && !self.view_on() && !self.eye_open() {
+            let y = g.y + g.h - 16;
+            let fit = Rect::new(g.x + 8, y - 12, 52, 22);
+            btn(cv, fit, BTN, ACCENT);
+            cv.text_in(&f.s, fit, 1, "Fit", TEXT);
+            let lab = Rect::new(fit.x + fit.w + 8, y - 12, (g.x + g.w - fit.x - fit.w - 16).max(1), 22);
+            cv.set_clip(lab);
+            cv.text_in(&f.s, lab, 0, &note, LABEL);
+            cv.no_clip();
         }
     }
 
@@ -3728,7 +3790,7 @@ impl Ui {
     /// (Display, Storage, System). Everything else is in the start menu.
     fn top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let f = &self.fonts;
-        let all: [(TopBtn, &'static str); 7] = [
+        let mut all = vec![
             (TopBtn::Load, "Load file"),
             (TopBtn::Menu(MenuId::Sim), "SIM"),
             (TopBtn::Menu(MenuId::Measure), "Measure"),
@@ -3737,6 +3799,9 @@ impl Ui {
             (TopBtn::Menu(MenuId::Storage), "Storage"),
             (TopBtn::System, "System"),
         ];
+        if self.record_mode() {
+            all.insert(0, (TopBtn::Live, "Live"));
+        }
         let mut x = self.top_right() - 8;
         let mut out = Vec::new();
         for &(b, l) in all.iter().rev() {
@@ -3820,12 +3885,12 @@ impl Ui {
         // buttons (the open menu in orange)
         let root = self.menu_root();
         for (b, l, r) in buttons {
-            let hl = self.menu_open
-                && match b {
-                    TopBtn::Menu(m) => root == m,
-                    TopBtn::System => root == MenuId::Utility,
-                    TopBtn::Load => false,
-                };
+            let hl = match b {
+                TopBtn::Live => true,
+                TopBtn::Menu(m) => self.menu_open && root == m,
+                TopBtn::System => self.menu_open && root == MenuId::Utility,
+                TopBtn::Load => false,
+            };
             btn(cv, r, BTN, if hl { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, l, if hl { ACCENT } else { TEXT });
         }
@@ -7542,6 +7607,12 @@ impl Ui {
         if self.waves_board_tap(x, y) {
             return;
         }
+        if let Some(r) = self.live_ref_fit_rect() {
+            if r.contains(x, y) {
+                self.fit_shown_reference();
+                return;
+            }
+        }
         if !self.menu_open && self.measurement_navigation_tap(x, y) { return; }
         if self.auto_bar_tap(x, y) {
             return;
@@ -7604,6 +7675,7 @@ impl Ui {
                     TopBtn::Menu(id) => self.toggle_menu(id),
                     TopBtn::System => self.toggle_menu(MenuId::Utility),
                     TopBtn::Load => self.request_waveform(),
+                    TopBtn::Live => self.return_to_live(),
                 };
             }
         }

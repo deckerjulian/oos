@@ -961,16 +961,18 @@ impl Ui {
         false
     }
 
-    /// Side and Under, then Close, on the bar above the eye.
-    pub(super) fn eye_place_btns(&self) -> (Rect, Rect) {
-        let a = self.eye_pane_rect();
-        let side = Rect::new(a.x + 6, a.y + 4, 52, 28);
-        (side, Rect::new(side.x + 56, side.y, 58, 28))
+    /// Full, Side and Under, then Close, on the bar above the eye.
+    pub(super) fn eye_place_btns(&self) -> (Rect, Rect, Rect) {
+        let a = self.eye_chrome_rect();
+        let full = Rect::new(a.x + 6, a.y + 4, 52, 28);
+        let side = Rect::new(full.x + 56, full.y, 52, 28);
+        (full, side, Rect::new(side.x + 56, side.y, 58, 28))
     }
 
     pub(super) fn eye_pane_close(&self) -> Rect {
-        let a = self.eye_pane_rect();
-        Rect::new(a.x + a.w - 46, a.y + 2, 42, 32)
+        let a = self.eye_chrome_rect();
+        let right = if self.m.eye_place == EyePlace::Full { self.full_btn().0.x - 8 } else { a.x + a.w - 4 };
+        Rect::new(right - 42, a.y + 2, 42, 32)
     }
 
     pub(super) fn eye_set_place(&mut self, place: EyePlace) {
@@ -1079,7 +1081,7 @@ impl Ui {
     }
 
     pub(super) fn draw_eye_btn(&self, cv: &mut Canvas) {
-        if self.view_on() {
+        if self.view_on() || (self.eye_open() && self.m.eye_place == EyePlace::Full) {
             return;
         }
         let r = self.eye_btn();
@@ -1100,10 +1102,10 @@ impl Ui {
         self.draw_eye(cv);
     }
 
-    fn draw_eye_bar(&self, cv: &mut Canvas, a: Rect) {
+    pub(super) fn draw_eye_bar(&self, cv: &mut Canvas, a: Rect) {
         let f = &self.fonts;
-        let (side, under) = self.eye_place_btns();
-        for (r, name, place) in [(side, "Side", EyePlace::Side), (under, "Under", EyePlace::Under)] {
+        let (full, side, under) = self.eye_place_btns();
+        for (r, name, place) in [(full, "Full", EyePlace::Full), (side, "Side", EyePlace::Side), (under, "Under", EyePlace::Under)] {
             let on = self.m.eye_place == place;
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.s, r, 1, name, if on { ACCENT } else { TEXT });
@@ -1890,9 +1892,9 @@ mod tests {
         a.w > 0 && b.w > 0 && a.h > 0 && b.h > 0 && !(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h)
     }
 
-    /// One press reads the bit rate from the record. The eye starts beside the trace; Under stacks it below.
+    /// One press reads the bit rate and opens the full page. Side and Under are extra and can be left again.
     #[test]
-    fn one_press_reads_the_rate_and_keeps_the_trace() {
+    fn one_press_opens_the_full_page_and_side_is_optional() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.run = RunState::Stop;
         ui.m.eye_rate = 123.0;
@@ -1903,21 +1905,29 @@ mod tests {
         ui.tap(b.x + 8, b.y + 8);
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.m.eye_from_record);
-        assert_eq!(ui.m.eye_place, EyePlace::Side);
+        assert_eq!(ui.m.eye_place, EyePlace::Full);
         assert!((ui.m.eye_rate - CLEAN.rate).abs() / CLEAN.rate < 0.02, "rate {}", ui.m.eye_rate);
         ui.render(&mut Canvas::new(W, H));
-        let (wave, eye) = (ui.grid, ui.eye_pane_rect());
-        assert!(separated(wave, eye), "wave {:?} eye {:?}", wave, eye);
-        assert!(eye.x >= wave.x + wave.w);
-        assert!(wave.w > eye.w && eye.w > 250, "wave {:?} eye {:?}", wave, eye);
-        let (_, under) = ui.eye_place_btns();
-        ui.tap(under.x + 4, under.y + 4);
+        let page = ui.eye_page_rect();
+        assert!(page.w >= 700 && page.h >= 300, "full page {:?}", page);
+        let home = layout(page, false);
+        assert!(home.fig_rows > 0 && home.jit_rows > 0 && home.charts[0].w > 40, "figures {:?}", home);
+        let (_, side, _) = ui.eye_place_btns();
+        ui.tap(side.x + 4, side.y + 4);
         ui.render(&mut Canvas::new(W, H));
         let (wave, eye) = (ui.grid, ui.eye_pane_rect());
-        assert_eq!(ui.m.eye_place, EyePlace::Under);
+        assert_eq!(ui.m.eye_place, EyePlace::Side);
         assert!(separated(wave, eye), "wave {:?} eye {:?}", wave, eye);
-        assert!(eye.y >= wave.y + wave.h - 1);
-        assert!(eye.w + 2 >= wave.w);
+        assert!(eye.x >= wave.x + wave.w);
+        let (_, _, under) = ui.eye_place_btns();
+        ui.tap(under.x + 4, under.y + 4);
+        ui.render(&mut Canvas::new(W, H));
+        assert_eq!(ui.m.eye_place, EyePlace::Under);
+        let (full, _, _) = ui.eye_place_btns();
+        ui.tap(full.x + 4, full.y + 4);
+        ui.render(&mut Canvas::new(W, H));
+        assert_eq!(ui.m.eye_place, EyePlace::Full);
+        assert!(ui.eye_page_rect().w >= 700);
         let c = ui.eye_pane_close();
         ui.tap(c.x + 4, c.y + 4);
         assert_eq!(ui.m.view, AView::Scope);
