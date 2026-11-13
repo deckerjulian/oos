@@ -136,7 +136,7 @@ impl Board for Dho {
     }
 
     fn uart_debug(&self, m: &Model) -> String {
-        hw::uart_debug(m)
+        hw::serial_debug(m)
     }
 
     fn mask_map(&self, kv: Option<&str>) -> Result<String, String> {
