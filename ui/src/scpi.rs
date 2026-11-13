@@ -1049,6 +1049,20 @@ impl Scpi {
         if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && query {
             return t(&ui.dvm_debug_text());
         }
+        // fork, unit debug: force the DVM block's lane with one channel (each lane = one pair of ADC cores)
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && kw(nodes[3], "LANE") {
+            if query {
+                return t(&ui.dvm_lane_text());
+            }
+            match arg.trim().to_ascii_uppercase().as_str() {
+                "AUTO" => ui.dvm_lane_set(None),
+                a => match a.parse::<u32>() {
+                    Ok(l) if l < 4 => ui.dvm_lane_set(Some(l)),
+                    _ => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                },
+            }
+            return None;
+        }
         if kw(n0, "SYSTem") && nodes.len() == 2 && kw(nodes[1], "ERRor") && query {
             return t(&if self.err.is_empty() { "0,\"No error\"".to_string() } else { self.err.remove(0) });
         }
