@@ -274,7 +274,7 @@ pub fn setup_text(m: &Model) -> String {
     let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
     kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a.token(), m.inv_b.token(), m.inv_c.token(), m.inv_ang, m.inv_poles, m.inv_an.token(), m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
     kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v.token(), m.dpt_i.token(), m.dpt_g.token(), m.dpt_4th, m.dpt_4ch.token(), m.dpt_pct, m.dpt_zoom));
-    kv("sim", format!("{} {}", m.sim_preset, m.sim_slot));
+    kv("sim", format!("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.sim_preset, m.sim_slot, m.sim_rate, m.sim_prbs, m.sim_vhigh, m.sim_vlow, m.sim_rise, m.sim_noise, m.sim_bw, m.sim_deemph, if m.sim_ssc { 1 } else { 0 }, m.sim_rj, m.sim_pj, m.sim_pjhz, 0));
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
@@ -724,9 +724,27 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "bode_mode" => m.bode_mode = p_enum(v, &[oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z])?,
         "sim" => {
             let w: Vec<&str> = v.split_whitespace().collect();
-            let [preset, slot] = w[..] else { return Err("sim: preset slot".into()) };
-            m.sim_preset = p_idx(preset, oos_dsp::serial::LANES.len())?;
-            m.sim_slot = p_idx(slot, NREF)?;
+            if w.len() < 2 {
+                return Err("sim: preset slot".into());
+            }
+            m.sim_preset = p_idx(w[0], oos_dsp::serial::LANES.len())?;
+            m.sim_slot = p_idx(w[1], NREF)?;
+            m.apply_sim_preset();
+            if w.len() >= 14 {
+                let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
+                m.sim_rate = f(w[2])?;
+                m.sim_prbs = w[3].parse::<u8>().map_err(|e| e.to_string())?;
+                m.sim_vhigh = f(w[4])?;
+                m.sim_vlow = f(w[5])?;
+                m.sim_rise = f(w[6])?;
+                m.sim_noise = f(w[7])?;
+                m.sim_bw = f(w[8])?;
+                m.sim_deemph = f(w[9])?;
+                m.sim_ssc = p_bool(w[10])?;
+                m.sim_rj = f(w[11])?;
+                m.sim_pj = f(w[12])?;
+                m.sim_pjhz = f(w[13])?;
+            }
         }
         "eye_more" => {
             let w: Vec<&str> = v.split_whitespace().collect();

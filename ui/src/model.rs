@@ -1048,9 +1048,21 @@ pub struct Model {
     pub quick: Quick,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
     pub la: crate::ui::la::LaSet,
-    /// SIM menu: which serial preset and which R slot Play writes
+    /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
     pub sim_preset: usize,
     pub sim_slot: usize,
+    pub sim_rate: f64,
+    pub sim_prbs: u8,
+    pub sim_vhigh: f64,
+    pub sim_vlow: f64,
+    pub sim_rise: f64,
+    pub sim_noise: f64,
+    pub sim_bw: f64,
+    pub sim_deemph: f64,
+    pub sim_ssc: bool,
+    pub sim_rj: f64,
+    pub sim_pj: f64,
+    pub sim_pjhz: f64,
 }
 
 pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
@@ -1373,7 +1385,20 @@ impl Default for Model {
             la: Default::default(),
             sim_preset: 3,
             sim_slot: 0,
+            sim_rate: 0.0,
+            sim_prbs: 31,
+            sim_vhigh: 0.0,
+            sim_vlow: 0.0,
+            sim_rise: 0.0,
+            sim_noise: 0.0,
+            sim_bw: 0.0,
+            sim_deemph: 0.0,
+            sim_ssc: false,
+            sim_rj: 0.0,
+            sim_pj: 0.0,
+            sim_pjhz: 0.0,
         };
+        m.apply_sim_preset();
         m.ch[0].offset = -1.5;
         m.trig_level = 1.5;
         m
@@ -1381,6 +1406,23 @@ impl Default for Model {
 }
 
 impl Model {
+    /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
+    pub fn apply_sim_preset(&mut self) {
+        let l = oos_dsp::serial::LANES[self.sim_preset.min(oos_dsp::serial::LANES.len() - 1)];
+        self.sim_rate = l.bits_per_s;
+        self.sim_prbs = l.prbs;
+        self.sim_vhigh = l.v_high;
+        self.sim_vlow = l.v_low;
+        self.sim_rise = l.rise;
+        self.sim_noise = l.noise_rms;
+        self.sim_bw = l.bw;
+        self.sim_deemph = l.deemph_db;
+        self.sim_ssc = l.ssc;
+        self.sim_rj = l.rj_rms;
+        self.sim_pj = l.pj_peak;
+        self.sim_pjhz = l.pj_hz;
+    }
+
     /// The settings of the selected generator.
     pub fn gen_read(&self) -> GenCh {
         GenCh {

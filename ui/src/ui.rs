@@ -622,6 +622,19 @@ enum Item {
     SimSlot,
     SimPlay,
     SimShow,
+    SimRate,
+    SimPat,
+    SimHigh,
+    SimLow,
+    SimRise,
+    SimBw,
+    SimDeemph,
+    SimNoise,
+    SimSsc,
+    SimRj,
+    SimPj,
+    SimPjHz,
+    SimDefaults,
 }
 
 #[derive(PartialEq)]
@@ -1803,6 +1816,7 @@ impl Ui {
             let f = &self.fonts;
             let lbl = format!("Zoom \u{b7} {}/div \u{b7} delay {}", si_short(tz as f64, "s"), si(dz as f64, "s"));
             cv.text(&f.sb, o.x, o.y + o.h + 17, &lbl, ACCENT);
+            self.draw_refs_at(cv, o, (self.m.time_per_div(), self.m.delay));
             self.draw_grid(cv, z);
             self.draw_traces(cv, z, &self.phz, &self.vmaxz, self.vmaxz_cg);
         } else {
@@ -2589,14 +2603,18 @@ impl Ui {
     }
 
     fn draw_refs(&self, cv: &mut Canvas) {
+        self.draw_refs_at(cv, self.area, self.view());
+    }
+
+    fn draw_refs_at(&self, cv: &mut Canvas, area: Rect, view: (f32, f32)) {
         let f = &self.fonts;
-        cv.set_clip(self.area);
-        let ppy = self.area.h as f32 / VDIV;
-        let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
-        let tdiv = self.view().0 as f64;
-        let delay = self.view().1 as f64;
-        let ppx = self.area.w as f64 / HDIV as f64;
-        let xmid = self.area.x as f64 + self.area.w as f64 / 2.0;
+        cv.set_clip(area);
+        let ppy = area.h as f32 / VDIV;
+        let cy = area.y as f32 + area.h as f32 / 2.0;
+        let tdiv = view.0 as f64;
+        let delay = view.1 as f64;
+        let ppx = area.w as f64 / HDIV as f64;
+        let xmid = area.x as f64 + area.w as f64 / 2.0;
         // only the samples that land on this screen (plus a little margin)
         let t_lo = delay - tdiv * HDIV as f64 * 0.6;
         let t_hi = delay + tdiv * HDIV as f64 * 0.6;
@@ -2614,7 +2632,7 @@ impl Ui {
             if k1 <= k0 {
                 continue;
             }
-            let step = ((k1 - k0) / (self.area.w as usize * 2)).max(1);
+            let step = ((k1 - k0) / (area.w as usize * 2)).max(1);
             let mut prev: Option<(i32, i32)> = None;
             let mut first = None;
             for k in (k0..=k1).step_by(step) {
@@ -2627,20 +2645,20 @@ impl Ui {
                 let x = (xmid + t / tdiv * ppx).round() as i32;
                 let y = (cy - (v + r.offset) / r.vpd * ppy).round() as i32;
                 if let Some((x0, y0)) = prev {
-                    if (x - x0).abs() < self.area.w * 2 && (y - y0).abs() < self.area.h * 4 {
+                    if (x - x0).abs() < area.w * 2 && (y - y0).abs() < area.h * 4 {
                         cv.line(x0, y0, x, y, col);
                     }
                 }
-                if first.is_none() && x >= self.area.x && x < self.area.x + self.area.w {
+                if first.is_none() && x >= area.x && x < area.x + area.w {
                     first = Some(y);
                 }
                 prev = Some((x, y));
             }
             if let Some(y) = first {
-                let yy = y.clamp(self.area.y + 10, self.area.y + self.area.h - 10);
+                let yy = y.clamp(area.y + 10, area.y + area.h - 10);
                 // right of the volt labels
                 let name = if r.label.is_empty() { format!("R{}", i + 1) } else { r.label.clone() };
-                let b = Rect::new(self.area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
+                let b = Rect::new(area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
                 cv.round(b, 3, col, 255);
                 cv.text_in(&f.s, b, 1, &name, rgb(0, 0, 0));
             }
