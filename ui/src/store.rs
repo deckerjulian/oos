@@ -1203,20 +1203,31 @@ fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         kv.insert(key.to_ascii_uppercase(), val);
     }
     let num = |k: &str| kv.get(k).and_then(|s| s.parse::<f64>().ok());
-    let bpp = num("BYT_NR").unwrap_or(1.0) as usize;
-    if !matches!(bpp, 1 | 2 | 4) {
+    let numeric = |k: &str, default: f64| -> Result<f64, String> {
+        match kv.get(k) {
+            Some(value) => value.parse().map_err(|_| format!("invalid waveform {k}")),
+            None => Ok(default),
+        }
+    };
+    let bpp = numeric("BYT_NR", 1.0)?;
+    if !matches!(bpp, 1.0 | 2.0 | 4.0) {
         return Err("that file holds no waveform".into());
     }
+    let bpp = bpp as usize;
     let dt = num("XINCR").filter(|x| x.is_finite() && *x > 0.0).ok_or("that file holds no waveform")?;
-    let xzero = num("XZERO").unwrap_or(0.0);
-    let pt_off = num("PT_OFF").unwrap_or(0.0);
-    let ymult = num("YMULT").unwrap_or(1.0);
-    let yoff = num("YOFF").unwrap_or(0.0);
-    let yzero = num("YZERO").unwrap_or(0.0);
+    let xzero = numeric("XZERO", 0.0)?;
+    let pt_off = numeric("PT_OFF", 0.0)?;
+    let ymult = numeric("YMULT", 1.0)?;
+    let yoff = numeric("YOFF", 0.0)?;
+    let yzero = numeric("YZERO", 0.0)?;
     if ![ymult, yoff, yzero, xzero, pt_off].iter().all(|x| x.is_finite()) {
         return Err("that file holds no waveform".into());
     }
-    let nr = num("NR_PT").map(|n| n as usize).unwrap_or(0);
+    let nr = match kv.get("NR_PT") {
+        None => 0,
+        Some(value) => value.parse::<usize>().ok().filter(|n| (2..=16_000_000).contains(n))
+            .ok_or("invalid waveform point count")?,
+    };
     let msb = kv.get("BYT_OR").is_some_and(|s| s.eq_ignore_ascii_case("MSB"));
     let signed = !kv.get("BN_FMT").is_some_and(|s| s.eq_ignore_ascii_case("RP"));
     let ascii = kv.get("ENCDG").is_some_and(|s| s.eq_ignore_ascii_case("ASC"));
@@ -1226,13 +1237,14 @@ fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     }
     let (raw, vals) = if b.get(i) == Some(&b'#') {
         i += 1;
-        let n = (b.get(i).copied().unwrap_or(b'0') - b'0') as usize;
+        let n = b.get(i).filter(|c| c.is_ascii_digit()).map(|c| (c - b'0') as usize)
+            .ok_or("invalid waveform block length")?;
         if !(1..=9).contains(&n) || i + 1 + n > b.len() {
             return Err("truncated waveform".into());
         }
         let len: usize = std::str::from_utf8(&b[i + 1..i + 1 + n]).ok().and_then(|s| s.parse().ok()).ok_or("truncated waveform")?;
         let start = i + 1 + n;
-        if len > 64 << 20 || start + len > b.len() {
+        if len > 64 << 20 || start.checked_add(len).is_none_or(|end| end > b.len()) {
             return Err(if len > 64 << 20 { "waveform is too large" } else { "truncated waveform" }.into());
         }
         (start, len)
@@ -1274,10 +1286,10 @@ fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             codes.push(code);
         }
     }
-    if nr >= 2 && codes.len() > nr && kv.get("PT_FMT").is_none_or(|s| !s.eq_ignore_ascii_case("ENV")) {
-        codes.truncate(nr);
-    }
-    let env = kv.get("PT_FMT").is_some_and(|s| s.eq_ignore_ascii_case("ENV")) && nr >= 2 && codes.len() >= nr * 2;
+    let env = kv.get("PT_FMT").is_some_and(|s| s.eq_ignore_ascii_case("ENV"));
+    if env && nr == 0 { return Err("an envelope needs a waveform point count".into()); }
+    let needed = if env { nr * 2 } else { nr };
+    if codes.len() < needed { return Err("truncated waveform".into()); }
     let t0 = xzero - pt_off * dt;
     let scale = |code: f64| ((code - yoff) * ymult + yzero) as f32;
     if env {
@@ -1520,7 +1532,7 @@ fn post_vars(text: &str) -> Result<(usize, Vec<String>), String> {
         return Err("that file holds no waveform".into());
     }
     let names = if head.len() >= nvars * 16 {
-        head[head.len() - nvars * 16..].as_bytes().chunks(16).map(|c| String::from_utf8_lossy(c).trim().to_string()).collect()
+        head.as_bytes()[head.len() - nvars * 16..].chunks(16).map(|c| String::from_utf8_lossy(c).trim().to_string()).collect()
     } else {
         (0..nvars).map(|k| if k == 0 { "time".into() } else { format!("CH{k}") }).collect()
     };
@@ -1528,6 +1540,7 @@ fn post_vars(text: &str) -> Result<(usize, Vec<String>), String> {
 }
 
 fn traces_from_columns(cols: &[f64], nvars: usize, names: &[String]) -> Result<Vec<WaveTrace>, String> {
+    if !(2..=64).contains(&nvars) { return Err("invalid waveform column count".into()); }
     let mut n = cols.len();
     if n > 0 && cols[n - 1].abs() >= 1e29 {
         n -= 1;
@@ -1547,6 +1560,9 @@ fn traces_from_columns(cols: &[f64], nvars: usize, names: &[String]) -> Result<V
     let dt = body[nvars] - t0;
     if !(t0.is_finite() && dt.is_finite() && dt > 0.0) {
         return Err("that file holds no waveform".into());
+    }
+    if !(0..rows).all(|r| uniform_time(body[r * nvars], t0, dt, r)) {
+        return Err("nonuniform waveform time axis is not supported".into());
     }
     let mut out = Vec::with_capacity(nvars - 1);
     for k in 1..nvars {
@@ -1621,7 +1637,8 @@ fn parse_tr0_ascii(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let (nvars, names) = post_vars(text)?;
     let rest = text[end + 4..].trim_start();
     let field = if width_bytes == 8 { 13 } else { 11 };
-    let packed = rest.len() >= field && !rest.as_bytes()[..field].iter().any(u8::is_ascii_whitespace) && rest[..field].trim().parse::<f64>().is_ok();
+    let packed = rest.as_bytes().get(..field).and_then(|b| std::str::from_utf8(b).ok())
+        .is_some_and(|s| !s.bytes().any(|b| b.is_ascii_whitespace()) && s.trim().parse::<f64>().is_ok());
     let mut cols = Vec::new();
     if packed {
         let bytes = rest.as_bytes();
@@ -1769,35 +1786,45 @@ fn parse_wfmx(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
 }
 
 fn wfmx_payload(b: &[u8], points: usize) -> Result<&[u8], String> {
-    let fits = |p: &[u8]| p.len() == points * 4 || p.len() == points * 8 || p.len() == points * 16;
-    if let Some(start) = b.windows(5).position(|w| w == b"<Data") {
+    let lengths = [4usize, 8, 16].map(|width| points.checked_mul(width).ok_or("waveform is too large"));
+    let [four, eight, sixteen] = lengths;
+    let lengths = [four?, eight?, sixteen?];
+    let fits = |p: &[u8]| lengths.contains(&p.len());
+    if let Some(start) = b.windows(5).enumerate().find_map(|(i, w)|
+        (w == b"<Data" && b.get(i + 5).is_some_and(|c| *c == b'>' || c.is_ascii_whitespace())).then_some(i)) {
         if let Some(gt) = b[start..].iter().position(|&c| c == b'>') {
             let from = start + gt + 1;
-            if let Some(end) = b[from..].windows(7).position(|w| w == b"</Data>") {
-                let inner = &b[from..from + end];
-                if fits(inner) {
-                    return Ok(inner);
+            for length in lengths {
+                if let Some(end) = from.checked_add(length) {
+                    if b.get(end..).is_some_and(|tail| tail.starts_with(b"</Data>")) {
+                        return Ok(&b[from..end]);
+                    }
                 }
             }
         }
     }
-    // Samples follow the header. An empty `<Data>` element means they start after the closing root tag.
+    // Samples follow the header. An empty `<Data>` element means they start after
+    // the closing root tag. Consume only the XML separator required by the exact
+    // payload size; leading/trailing float bytes can themselves be whitespace.
     if let Some(i) = b.windows(7).position(|w| w == b"</Data>") {
         let mut p = i + 7;
-        while b.get(p).is_some_and(u8::is_ascii_whitespace) {
-            p += 1;
+        let mut root = p;
+        while b.get(root).is_some_and(u8::is_ascii_whitespace) {
+            root += 1;
         }
-        if b.get(p) == Some(&b'<') && b.get(p + 1) == Some(&b'/') {
-            if let Some(gt) = b[p..].iter().position(|&c| c == b'>') {
-                p += gt + 1;
+        if b.get(root) == Some(&b'<') && b.get(root + 1) == Some(&b'/') {
+            if let Some(gt) = b[root..].iter().position(|&c| c == b'>') {
+                p = root + gt + 1;
             }
         }
-        while b.get(p).is_some_and(u8::is_ascii_whitespace) {
-            p += 1;
-        }
-        let mut tail = &b[p..];
-        while tail.last().is_some_and(|c| *c == b'\n' || *c == b'\r') {
-            tail = &tail[..tail.len() - 1];
+        let tail = &b[p..];
+        // A single XML line ending is supported after the root. Never trim the
+        // binary tail or skip an unbounded run of its possible first bytes. A
+        // present separator is structural, never a replacement for missing data.
+        for separator in [b"\r\n".as_slice(), b"\n".as_slice()] {
+            if let Some(payload) = tail.strip_prefix(separator) {
+                return if fits(payload) { Ok(payload) } else { Err("truncated or unsupported waveform payload".into()) };
+            }
         }
         if fits(tail) {
             return Ok(tail);
@@ -1846,7 +1873,15 @@ fn wfmx_volts(payload: &[u8], points: usize, t0: f64, dt: f64) -> Result<Vec<f32
 }
 
 fn x_matches(xs: &[f64], t0: f64, dt: f64) -> bool {
-    xs.len() >= 2 && (xs[0] - t0).abs() <= dt.abs() * 1e-3 + 1e-15 && (xs[1] - xs[0] - dt).abs() <= dt.abs() * 1e-3 + 1e-15
+    xs.len() >= 2 && xs.iter().enumerate().all(|(i, &x)| uniform_time(x, t0, dt, i))
+}
+
+/// A WaveTrace has one interval; adaptive/invalid time axes cannot be relabeled
+/// uniform without moving their samples. Tolerance covers source float rounding.
+fn uniform_time(time: f64, t0: f64, dt: f64, index: usize) -> bool {
+    let expected = t0 + index as f64 * dt;
+    let tolerance = (dt.abs() * 1e-5).max(expected.abs() * f64::EPSILON * 8.0).max(1e-18);
+    time.is_finite() && expected.is_finite() && (time - expected).abs() <= tolerance
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -2587,6 +2622,120 @@ mod tests {
         assert!(parse_wave(b"\x00\x01\x02\x03\xff", "no.bin").is_err());
         assert!(parse_wave(b"not a waveform\n", "no.csv").unwrap_err().contains("no waveform"));
         assert!(parse_wave(b"AGxx,1,2\n3,4,5\n", "no.bin").is_err());
+    }
+
+    #[test]
+    fn header_import_isf_block_digits_and_point_counts_are_checked() {
+        for byte in 0..=u8::MAX {
+            let mut b = b":WFMPRE:BYT_NR 1;NR_PT 2;XINCR 1e-9;:CURVE #".to_vec();
+            b.push(byte);
+            b.extend_from_slice(b"000000000");
+            assert!(parse_wave(&b, "bad.isf").is_err(), "block byte {byte}");
+        }
+        for field in ["NR_PT -1", "NR_PT 2.5", "NR_PT 18446744073709551615", "BYT_NR 1.5", "YMULT wrong"] {
+            let b = format!(":WFMPRE:BYT_NR 1;XINCR 1e-9;{field};:CURVE #12\0\x01");
+            assert!(parse_wave(b.as_bytes(), "bad.isf").is_err(), "{field}");
+        }
+        assert!(parse_wave(b":WFMPRE:BYT_NR 1;NR_PT 3;XINCR 1;:CURVE #12\0\x01", "short.isf")
+            .unwrap_err().contains("truncated"));
+    }
+
+    #[test]
+    fn header_import_isf_envelope_preserves_pairs_and_requires_complete_data() {
+        let header = b":WFMPRE:BYT_NR 1;NR_PT 2;PT_FMT ENV;XINCR 1;:CURVE #14";
+        let mut b = header.to_vec();
+        b.extend([-2i8 as u8, 2, -1i8 as u8, 1]);
+        let traces = parse_wave(&b, "envelope.isf").unwrap();
+        assert_eq!(traces.len(), 2);
+        assert_eq!(traces[0].v, [-2.0, -1.0]);
+        assert_eq!(traces[1].v, [2.0, 1.0]);
+        let short = b":WFMPRE:BYT_NR 1;NR_PT 2;PT_FMT ENV;XINCR 1;:CURVE #13\0\x01\x02";
+        assert!(parse_wave(short, "short.isf").unwrap_err().contains("truncated"));
+    }
+
+    #[test]
+    fn header_import_fixed_width_unicode_is_safe_and_invalid_data_is_refused() {
+        let text = format!("0002{}x$&%#", "é".repeat(16));
+        let (nvars, names) = post_vars(&text).unwrap();
+        assert_eq!((nvars, names.len()), (2, 2));
+        let text = format!("00020000000000009601*x $&%#{}", "é".repeat(16));
+        assert!(parse_wave(text.as_bytes(), "bad.tr0").is_err());
+    }
+
+    #[test]
+    fn header_import_transient_requires_every_time_sample_to_be_uniform() {
+        for time in [3.0, 1.0, f64::NAN, f64::INFINITY] {
+            let mut b = raw_f64(0.0, 1.0, &[10.0, 20.0, 30.0, 40.0]);
+            let start = b.len() - 4 * 16;
+            b[start + 2 * 16..start + 2 * 16 + 8].copy_from_slice(&time.to_le_bytes());
+            assert!(parse_wave(&b, "adaptive.tr0").unwrap_err().contains("nonuniform"));
+        }
+        let values = [10.0, 20.0, 30.0, 40.0];
+        let b = raw_f64(-2e-6, 2e-9, &values);
+        assert_close(&parse_wave(&b, "regular.tr0").unwrap()[0], -2e-6, 2e-9, &values);
+    }
+
+    #[test]
+    fn header_import_wfmx_preserves_whitespace_bytes_at_binary_boundaries() {
+        for first in [0x3f800020, 0x3f80000a, 0x3f80000d] {
+            for last in [0x0a800000, 0x0d800000] {
+                let values = [f32::from_bits(first), f32::from_bits(last)];
+                let b = wfmx_f32(0.0, 1.0, &values);
+                let trace = parse_wave(&b, "bytes.wfmx").unwrap().remove(0);
+                assert_eq!(trace.v.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), [first, last]);
+                let mut crlf = b.clone();
+                let separator = crlf.len() - 8 - 1;
+                crlf.insert(separator, b'\r');
+                assert_eq!(parse_wave(&crlf, "crlf.wfmx").unwrap()[0].v, values);
+            }
+        }
+    }
+
+    #[test]
+    fn header_import_wfmx_embedded_payload_uses_exact_length_not_binary_tag_bytes() {
+        let values = [f32::from_bits(0x3f800020), 2.0];
+        let mut b = b"<?xml?><DataFile><FileType>WaveformInternal</FileType><Points>2</Points><XOrg>0</XOrg><XInc>1</XInc><Data>".to_vec();
+        for value in values { b.extend(value.to_le_bytes()); }
+        b.extend_from_slice(b"</Data></DataFile>");
+        assert_eq!(parse_wave(&b, "embedded.wfmx").unwrap()[0].v, values);
+        let mut b = b"<Data>".to_vec();
+        let payload = b"</Data>123456789";
+        assert_eq!(payload.len(), 16);
+        b.extend_from_slice(payload);
+        b.extend_from_slice(b"</Data>");
+        assert_eq!(wfmx_payload(&b, 4).unwrap(), payload);
+        assert!(wfmx_payload(&b, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn header_import_wfmx_separator_cannot_replace_a_missing_payload_byte() {
+        let mut b = wfmx_f32(0.0, 1.0, &[1.0, 2.0]);
+        b.pop();
+        assert!(parse_wave(&b, "short.wfmx").unwrap_err().contains("truncated"));
+    }
+
+    #[test]
+    fn header_import_wfmx_checks_the_whole_explicit_time_axis() {
+        let mut payload = Vec::new();
+        for value in [0.0f64, 1.0, 3.0, 10.0, 20.0, 30.0] { payload.extend(value.to_le_bytes()); }
+        assert!(wfmx_volts(&payload, 3, 0.0, 1.0).is_err());
+        payload[16..24].copy_from_slice(&2.0f64.to_le_bytes());
+        assert_eq!(wfmx_volts(&payload, 3, 0.0, 1.0).unwrap(), [10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn header_import_known_formats_tolerate_all_truncation_boundaries_without_panicking() {
+        let values = [0.0, 1.0, -0.5, 0.25];
+        let fixtures = [
+            isf_i16(0.0, 1e-9, 1e-3, &[0, 1000, -500, 250]),
+            wavedesc_i16(0.0, 1e-9, 1e-3, 0.0, &[0, 1000, -500, 250]),
+            ag_f32(0.0, 1e-9, &values, "lane"),
+            tr0_f32(0.0, 1e-9, &values), raw_f64(0.0, 1e-9, &values), wfmx_f32(0.0, 1e-9, &values),
+        ];
+        for b in fixtures {
+            for end in 0..b.len() { let _ = parse_wave(&b[..end], "header.bin"); }
+            assert_eq!(parse_wave(&b, "header.bin").unwrap()[0].v.len(), 4);
+        }
     }
 
     fn assert_close(t: &WaveTrace, t0: f64, dt: f64, v: &[f32]) {
