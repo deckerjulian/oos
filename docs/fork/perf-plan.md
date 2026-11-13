@@ -188,6 +188,14 @@ the 5x of the arithmetic alone.
   workers reach about 5 k frames/s at 100 ns/div and 10 k at 1 us/div. At short time bases they will not keep up with
   the acquisition: the sparse interpolation dominates (polyphase kernel, item 4, needs the unit's screenshot check),
   and the A72 hw thread may take a share.
+  Work sharing: one worker per little core (`placement::little_count`, 4 on the RK3399, 2 where all cores are alike).
+  Workers claim 4 frames at a time from the batch; with OOS_PREARM the hw thread claims single frames while the next
+  batch records, polling 0x4010 between frames, so the read waits at most one frame. Without prearm the hw thread
+  does not help (the arm is inside `acquire_batch_until`, which has no hook during the ring fill; that needs a hal
+  change). Host per frame on one core (M3, perf_guard): 50 us at 100 ns/div (1408 pt, sparse), 25 us at 1 us/div,
+  163 us at 10 us/div; 4 workers 75 k / 116 k / 16 k frames/s. Estimate (not measured; A72 about 4x the host, A53
+  about 8x): 4 A53 reach about 10 k frames/s at 100 ns/div, 20 k at 1 us/div, 3 k at 10 us/div; the A72 helper adds up
+  to 5 k / 10 k / 1.5 k when its wait is long.
   Measurement statistics over every frame (`framestats.rs`): Max, Min, Pk-pk, Mean, RMS, Std dev / AC RMS of the
   Measure page are made by the workers for every frame, on the samples the record path measures (the record's
   trigger point via `board::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more

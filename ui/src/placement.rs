@@ -51,6 +51,17 @@ pub fn capacities(root: &Path) -> Vec<(usize, u32)> {
     (0..64).filter_map(|c| std::fs::read_to_string(root.join(format!("cpu{}/cpu_capacity", c))).ok().and_then(|v| v.trim().parse().ok()).map(|v| (c, v))).collect()
 }
 
+/// The number of little cores (None on a SoC whose cores are all alike, or without `cpu_capacity`): the deposit
+/// workers of the batch pipeline, one per little core.
+pub fn little_count() -> Option<usize> {
+    little_of(&capacities(Path::new("/sys/devices/system/cpu")))
+}
+
+fn little_of(cap: &[(usize, u32)]) -> Option<usize> {
+    let max = cap.iter().map(|x| x.1).max()?;
+    Some(cap.iter().filter(|x| x.1 < max).count()).filter(|&n| n > 0)
+}
+
 /// OOS_PLACE set (any value but empty or 0).
 fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -107,10 +118,12 @@ mod tests {
         let root = fake_sysfs(&[(0, 485), (1, 485), (2, 485), (3, 485), (4, 1024), (5, 1024)]);
         let p = Plan::from_capacities(&capacities(&root)).unwrap();
         assert_eq!((p.cpus(Role::Ui), p.cpus(Role::Hw)), (&[4][..], &[5][..]));
+        assert_eq!(little_of(&capacities(&root)), Some(4));
         std::fs::remove_dir_all(&root).unwrap();
         // all alike, or no capacity files: nothing to place
         let root = fake_sysfs(&[(0, 1024), (1, 1024), (2, 1024), (3, 1024)]);
         assert_eq!(Plan::from_capacities(&capacities(&root)), None);
+        assert_eq!(little_of(&capacities(&root)), None);
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(Plan::from_capacities(&[]), None);
         // one big core: the frame loop and the acquisition share it; the order of the files does not matter

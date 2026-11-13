@@ -568,6 +568,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut dma = oos_hal::dho::bus::DmaBuf::new();
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
+        // this thread's share of the deposit work while it waits (drawpipe.rs)
+        let mut helper = crate::drawpipe::Helper::default();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
         // the hardware segmented recording in progress or read back
@@ -906,6 +908,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let g = out.lock().unwrap();
                 (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1)
             };
+            // armed ahead: the FPGA records the next batch; until its ring is full this thread draws frames of the
+            // last one (drawpipe.rs), one at a time, so the read waits at most one frame longer
+            if let Some(pipe) = crate::drawpipe::pipe().filter(|_| ahead) {
+                use oos_hal::dho::bus::Bus;
+                let nf = seq::frames(&b, &p);
+                let t = std::time::Instant::now();
+                while bar.rd(0x4010).wrapping_add(1) < nf && t.elapsed() < std::time::Duration::from_millis(25) && pipe.help(&mut helper) {}
+                pipe.help_done(&mut helper);
+            }
             match seq::acquire_batch_until(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed) {
                 Ok(count) => {
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
