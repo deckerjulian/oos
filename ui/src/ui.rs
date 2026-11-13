@@ -5912,7 +5912,9 @@ impl Ui {
                 self.dirty_map = true;
             }
             key::AUTO => {
-                if self.src.is_hw() {
+                if self.reference_autoset() {
+                    self.autoset_reference();
+                } else if self.src.is_hw() {
                     self.auto_start();
                 } else {
                     autoset(&mut self.m, &self.src);
