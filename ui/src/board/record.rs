@@ -74,7 +74,7 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
         // the matching field nearest the hardware trigger: the record moves to it, as with the channels
         f.la.as_ref().and_then(|l| {
             let p = crate::trig::decode_la(m, &l.words, l.dt).ok()?;
-            let t = p.iter().filter(|x| crate::trig::matches(m, x)).map(|x| l.t0 + x.t1 * l.dt).min_by(|a, b| a.abs().total_cmp(&b.abs()))?;
+            let t = crate::trig::points(m, &p).into_iter().map(|t1| l.t0 + t1 * l.dt).min_by(|a, b| a.abs().total_cmp(&b.abs()))?;
             Some(f.pre as f64 + t / f.dt)
         })
     } else if m.pat_on_la() {

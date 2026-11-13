@@ -31,11 +31,10 @@ The SPI and I2C protocol triggers in the TPU's receivers, next to the UART (`hwu
 | I2C | ID/Addr = 7-bit address | address ==, mask 0x7f, either direction |
 | I2C | Error | missing ACK |
 
-Everything else stays with the edge trigger and the software decoder: SPI without CS (its clock-pause framing is a
-number of samples, not a time), SPI ID and Error, I2C Data (the software matches any byte of a frame, the receiver
-only the first bytes after the address), the LA as input, and any set-up whose lines are not all acquired channels.
-The UI has no settings yet for relations other than ==, masks, ranges, direction, 10-bit addresses, multi-byte data or
-the SPI timeout; `serialtrig` supports them.
+The menu settings beyond these (relations, limits, masks, CS polarity, the timeout without CS, I2C direction, 10-bit
+addresses, data bytes) are in `serial-ui.md`, with what the receivers take. Everything else stays with the edge trigger
+and the software decoder: SPI ID and Error, I2C data in any byte, the LA as input, and any set-up whose lines are not
+all acquired channels.
 
 Trigger position: SPI words and I2C start and missing ACK fire where the software trigger point is. The I2C address
 fires at the 8th SCL rise, one SCL period before the software point (the ACK bit). The record path re-aligns on the

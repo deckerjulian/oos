@@ -33,7 +33,7 @@ off by default. Code: `hal/src/dho/uarttrig.rs` (words, timing), `tpu::uart` (th
 | ID/Addr | software (UART has no ID) |
 
   Baud, data bits and parity come from the Decode menu; stop bits 1 and not inverted, as the software decoder.
-  Relations other than == exist in `uarttrig::Relation`; the UI has no setting for them yet.
+  Relations, polarity, stop bits and the error type are menu settings (`serial-ui.md`).
 - Everything else keeps the edge trigger on the line with the software decoder picking the frame.
 - Written in the trigger block of `configure` with the other trigger types (the acquisition thread disarms first).
 - The software trigger stays the reference: every record still goes through the decoder, and the screen's trigger

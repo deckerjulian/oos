@@ -122,6 +122,20 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_diff", m.dec_diff.map_or("none".into(), |c| (c + 1).to_string()));
     kv("trig_bus", m.trig_bus.name().to_string());
     kv("trig_bus_val", m.trig_bus_val.to_string());
+    let s = &m.ser;
+    kv("ser.rel", name(s.rel));
+    kv("ser.max", s.max.to_string());
+    kv("ser.mask", s.mask.to_string());
+    kv("ser.uart_inv", s.uart_inv.to_string());
+    kv("ser.uart_stop", name(s.uart_stop));
+    kv("ser.uart_err", name(s.uart_err));
+    kv("ser.spi_cs_high", s.spi_cs_high.to_string());
+    kv("ser.spi_timeout", s.spi_timeout.to_string());
+    kv("ser.addr_rel", name(s.addr_rel));
+    kv("ser.addr_max", s.addr_max.to_string());
+    kv("ser.dir", name(s.dir));
+    kv("ser.ten_bit", s.ten_bit.to_string());
+    kv("ser.bytes", s.bytes.to_string());
     kv("dec_thr", m.dec_thr.to_string());
     kv("dec_ascii", m.dec_ascii.to_string());
     kv("dec_proto", m.dec_proto.key());
@@ -577,6 +591,19 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_diff" => m.dec_diff = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
         "trig_bus" => m.trig_bus = *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?,
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
+        "ser.rel" => m.ser.rel = p_enum(v, &RELS)?,
+        "ser.max" => m.ser.max = v.trim().parse().map_err(|e| format!("ser.max: {}", e))?,
+        "ser.mask" => m.ser.mask = v.trim().parse().map_err(|e| format!("ser.mask: {}", e))?,
+        "ser.uart_inv" => m.ser.uart_inv = p_bool(v)?,
+        "ser.uart_stop" => m.ser.uart_stop = p_enum(v, &STOP_BITS)?,
+        "ser.uart_err" => m.ser.uart_err = p_enum(v, &UART_ERRS)?,
+        "ser.spi_cs_high" => m.ser.spi_cs_high = p_bool(v)?,
+        "ser.spi_timeout" => m.ser.spi_timeout = p_f32(v)?.max(0.0),
+        "ser.addr_rel" => m.ser.addr_rel = p_enum(v, &RELS)?,
+        "ser.addr_max" => m.ser.addr_max = p_u32(v)?.min(0x3ff),
+        "ser.dir" => m.ser.dir = p_enum(v, &I2C_DIRS)?,
+        "ser.ten_bit" => m.ser.ten_bit = p_bool(v)?,
+        "ser.bytes" => m.ser.bytes = p_u32(v)?.min(5) as u8,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
         "dec_proto" => m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?,
@@ -1224,6 +1251,8 @@ mod tests {
         m.cur_b = 0.875;
         m.touch_lock = true;
         m.aux_out = AuxOut::Off;
+        m.ser = SerialTrig { rel: Rel::Out, max: 0x1_2345_6789, mask: 0xf0f0, uart_inv: true, uart_stop: StopBits::Two, uart_err: UartErr::Parity, spi_cs_high: true, spi_timeout: 2e-6, addr_rel: Rel::In, addr_max: 0x3a0, dir: I2cDir::Read, ten_bit: true, bytes: 4 };
+        m.trig_bus_val = 0xab_cdef_0123;
         m.maths[3] = crate::math::MathCh { op: MathOp::Bpf, a: 4, b: 0, scale: 7, fc: 1234.0, bw: 56.0, offset: -1.5, win: Window::Blackman, lin: (1.0, 0.0) };
         m.math_bw = 777.0;
         m.zones[1] = crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };

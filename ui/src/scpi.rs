@@ -4,7 +4,7 @@
 //! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|VERNier|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
-//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
+//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:RS232|SPI|IIC:* (protocol trigger, scpi/ser.rs), :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
@@ -21,6 +21,8 @@ use crate::gfx::Canvas;
 use crate::board::{board, Board};
 use crate::model::*;
 use crate::ui::Ui;
+
+mod ser;
 use std::io::{ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -425,6 +427,9 @@ impl Scpi {
                     return Some(None);
                 }
                 return None;
+            }
+            if kw(n0, "TRIGger") && nodes.len() == 3 && ["RS232", "SPI", "IIC"].iter().any(|b| kw(nodes[1], b)) {
+                return ser::trig(m, nodes[1], nodes[2], arg, query);
             }
             if kw(n0, "TRIGger") {
                 let last = *nodes.last()?;
@@ -1282,6 +1287,15 @@ mod aux_out_tests {
         assert!(q(&mut ui, ":SYSTem:DEBug:ZONE?").starts_with("off,enabled=0,active=0,sw_drops=0,"));
         assert_eq!(q(&mut ui, ":SYSTem:DEBug:UART?"), "off,enabled=0");
         assert_eq!(q(&mut ui, ":SYSTem:DEBug:SERial?"), "off,enabled=0");
+        // the protocol trigger's settings through the dispatcher, into the setup
+        q(&mut ui, ":TRIGger:RS232:WHEN DATA");
+        q(&mut ui, ":TRIG:RS232:RELation OUT");
+        q(&mut ui, ":TRIG:RS232:DMAX 0x7e");
+        assert_eq!((q(&mut ui, ":TRIGger:RS232:RELation?"), ui.m.ser.max, ui.m.trig_bus), ("OUT".to_string(), 0x7e, BusWhat::Data));
+        assert!(crate::store::setup_text(&ui.m).contains("ser.rel = Out\n"));
+        q(&mut ui, ":TRIG:IIC:AWIDth 8");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-"));
+        while !q(&mut ui, ":SYST:ERR?").starts_with("0,") {}
         // the comparator mapping: set one key, read it back, put the original back
         let orig = q(&mut ui, ":SYSTem:DEBug:MASK:MAP?");
         assert!(orig.starts_with("domain="), "{}", orig);

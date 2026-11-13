@@ -784,7 +784,7 @@ impl Source {
                     // protocol trigger on LA lines: the decoder over the demo lines
                     _ if m.bus_on_la() => {
                         let lines: Vec<u16> = (0..ns).map(|k| demo_la(start + k as f64 * dts)).collect();
-                        crate::trig::decode_la(m, &lines, dts).unwrap_or_default().iter().find(|p| crate::trig::matches(m, p)).map(|p| p.t1)
+                        crate::trig::points(m, &crate::trig::decode_la(m, &lines, dts).unwrap_or_default()).first().copied()
                     }
                     // LA line: 0 / 1 samples of the demo line, the same trigger on them at level 0.5
                     Some(n) => {
