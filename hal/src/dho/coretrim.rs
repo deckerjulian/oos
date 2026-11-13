@@ -142,6 +142,8 @@ pub struct Trimmed {
     pub offsets: [i32; 8],
     /// largest core-to-channel-mean difference left, steps (0 when nothing was matched)
     pub residual: f64,
+    /// the same for the offsets the trim started from (the kept file's or cal_adc's), steps
+    pub kept: f64,
     /// channels matched / skipped (bit c = CH c+1)
     pub matched: u32,
     pub skipped: u32,
@@ -202,29 +204,43 @@ pub fn trim_gated(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i3
     let mut o = *cur;
     let core_of = |slot: usize| order.slot.iter().position(|&k| k == slot);
     let (matched, skipped) = (g.matched, g.skipped);
-    let mut residual: f64 = 0.0;
     let usable: Vec<&(usize, Vec<usize>)> = groups.iter().filter(|(c, _)| matched & (1 << c) != 0).collect();
     if usable.is_empty() {
-        return Ok(Trimmed { offsets: o, residual: 0.0, matched, skipped });
+        return Ok(Trimmed { offsets: o, residual: 0.0, kept: 0.0, matched, skipped });
     }
-    let mut m = g.start;
+    // the worst core of a reading: (|error|, slot, signed error) in ADC steps against its channel's mean
+    let worst_of = |m: &[Slot; 8]| {
+        let mut w = (0.0f64, 0usize, 0.0f64);
+        for (_, sl) in &usable {
+            let target = sl.iter().map(|&k| m[k].mean).sum::<f64>() / sl.len() as f64;
+            for &k in sl.iter() {
+                let e = (m[k].mean - target) / lsb[k];
+                if e.abs() > w.0 {
+                    w = (e.abs(), k, e);
+                }
+            }
+        }
+        w
+    };
+    // the starting offsets measured fresh (the order search nudged every core since the gate's readings): the kept
+    // values are replaced only by a confirmed better result (unit round 14: a re-match saved 1.15 steps over a kept
+    // file that had read 0.46)
+    hw.wait_ms(TRIM_SETTLE_MS);
+    let mut m = measure(hw)?;
+    let kept = worst_of(&m).0;
+    let mut residual = kept;
     // the round with the smallest worst core: noise can keep one core above TOL in every round
     let mut best = (f64::MAX, o);
     // per round the worst core and its error, for the failure log
     let mut trace: Vec<String> = Vec::new();
+    let mut settled = None;
     for round in 0..=ROUNDS {
-        let mut worst: f64 = 0.0;
-        let mut worst_at = (0usize, 0.0f64);
+        let (worst, at, err) = worst_of(&m);
         let mut fix: Vec<(usize, i32)> = Vec::new();
         for (_, sl) in &usable {
             let target = sl.iter().map(|&k| m[k].mean).sum::<f64>() / sl.len() as f64;
-            for &k in sl {
-                let e = (m[k].mean - target) / lsb[k];
-                if e.abs() > worst {
-                    worst = e.abs();
-                    worst_at = (k, e);
-                }
-                if e.abs() > TOL {
+            for &k in sl.iter() {
+                if ((m[k].mean - target) / lsb[k]).abs() > TOL {
                     let n = core_of(k).ok_or(format!("slot {} has no core", k))?;
                     // a correction below half a register step cannot be made: that core is as close as it gets
                     let step = ((m[k].mean - target) / order.codes[n]).round() as i32;
@@ -235,12 +251,13 @@ pub fn trim_gated(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i3
             }
         }
         residual = worst;
-        trace.push(format!("{:+.2}@{}", worst_at.1, worst_at.0));
+        trace.push(format!("{:+.2}@{}", err, at));
         if worst < best.0 {
             best = (worst, o);
         }
         if fix.is_empty() {
-            return Ok(Trimmed { offsets: o, residual, matched, skipped });
+            settled = Some(o);
+            break;
         }
         if round == ROUNDS {
             break;
@@ -252,16 +269,37 @@ pub fn trim_gated(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i3
         hw.wait_ms(TRIM_SETTLE_MS);
         m = measure(hw)?;
     }
-    let (worst, offs) = best;
-    if worst <= ACCEPT {
+    let cand = match settled {
+        Some(c) => c,
+        None if best.0 <= ACCEPT => best.1,
+        None => {
+            return Err(format!(
+                "core offsets did not converge in {} rounds, {:.2} steps left (best {:.2}, kept {:.2}), worst step@slot per round {}",
+                ROUNDS, residual, best.0, kept, trace.join(" ")
+            ))
+        }
+    };
+    let set = |hw: &mut dyn TrimHw, from: &[i32; 8], to: &[i32; 8]| {
         for n in 0..8 {
-            if offs[n] != o[n] {
-                hw.set_offset(n, offs[n]);
+            if from[n] != to[n] {
+                hw.set_offset(n, to[n]);
             }
         }
-        return Ok(Trimmed { offsets: offs, residual: worst, matched, skipped });
+    };
+    if cand == *cur {
+        set(hw, &o, cur);
+        return Ok(Trimmed { offsets: *cur, residual: kept, kept, matched, skipped });
     }
-    Err(format!("core offsets did not converge in {} rounds, {:.2} steps left (best {:.2}), worst step@slot per round {}", ROUNDS, residual, worst, trace.join(" ")))
+    // confirm with a fresh reading: one lucky reading must not replace better kept values
+    set(hw, &o, &cand);
+    hw.wait_ms(TRIM_SETTLE_MS);
+    let now = worst_of(&measure(hw)?).0;
+    if now < kept {
+        return Ok(Trimmed { offsets: cand, residual: now, kept, matched, skipped });
+    }
+    set(hw, &cand, cur);
+    hw.wait_ms(TRIM_SETTLE_MS);
+    Ok(Trimmed { offsets: *cur, residual: kept, kept, matched, skipped })
 }
 
 /// `AVG_RUNS` runs of the measure unit averaged per slot (means averaged, min and max over all runs).
@@ -537,6 +575,63 @@ mod tests {
         let mut q = model(MID);
         let g = gate(&mut q, &[(0, (0..8).collect())], &[16.0; 8]).unwrap();
         assert_eq!((g.matched, q.writes), (1, 0));
+    }
+
+    // Round 14: a re-match at start-up saved a worse result over a kept file. Break it catches: trimming or saving
+    // when the kept values are already within TOL.
+    #[test]
+    fn kept_good_values_are_left_alone() {
+        let mut m = model(MID);
+        m.err = [0.2, -0.1, 0.0, 0.3, -0.2, 0.1, -0.3, 0.0];
+        m.reg = [0; 8];
+        m.prev = [0; 8];
+        let t = trim(&mut m, &[(0, (0..8).collect())], &[0; 8], &ORD, &[16.0; 8]).unwrap();
+        assert_eq!((t.offsets, m.writes), ([0; 8], 0));
+        assert!(t.residual <= TOL && t.kept == t.residual, "{:?}", t);
+    }
+
+    // Break it catches: keeping a result on the strength of one good reading when a fresh one is worse than the kept
+    // values; the registers must hold the kept values again.
+    #[test]
+    fn a_worse_result_never_replaces_the_kept_values() {
+        // core 0 moves the opposite way to what the order says, and the reading right after the first correction
+        // happens to look perfect
+        struct Lucky {
+            m: Model,
+            base: [i32; 8],
+            lucky: usize,
+            written: bool,
+        }
+        impl TrimHw for Lucky {
+            fn slots(&mut self) -> Option<[Slot; 8]> {
+                let mut s = self.m.slots()?;
+                if self.lucky > 0 {
+                    self.lucky -= 1;
+                    for x in s.iter_mut() {
+                        x.mean = MID;
+                    }
+                }
+                Some(s)
+            }
+            fn set_offset(&mut self, core: usize, o: i32) {
+                let o = if core == 0 { 2 * self.base[0] - o } else { o };
+                self.m.set_offset(core, o);
+                if !self.written {
+                    (self.written, self.lucky) = (true, AVG_RUNS);
+                }
+            }
+            fn wait_ms(&mut self, ms: u32) {
+                self.m.wait_ms(ms)
+            }
+        }
+        let mut m = model(MID);
+        m.err = [0.9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        m.reg = [0; 8];
+        m.prev = [0; 8];
+        let mut h = Lucky { m, base: [0; 8], lucky: 0, written: false };
+        let t = trim(&mut h, &[(0, (0..8).collect())], &[0; 8], &ORD, &[16.0; 8]).unwrap();
+        assert_eq!((t.offsets, h.m.reg), ([0; 8], [0; 8]), "{:?}", t);
+        assert!(t.kept > TOL && t.residual == t.kept, "{:?}", t);
     }
 
     // Round 6: one core about 12 steps above the other seven (1.25 GSa/s, one channel). Break it catches: the

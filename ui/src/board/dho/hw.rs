@@ -339,6 +339,7 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
     for (n, &o) in cur.iter().enumerate() {
         coretrim::TrimHw::set_offset(&mut hw, n, o);
     }
+    coretrim::TrimHw::wait_ms(&mut hw, coretrim::TRIM_SETTLE_MS);
     // gates first: a mode whose input carries a signal is left alone without a nudge or a log line, and tried again
     // at a later configuration
     let g = match coretrim::gate(&mut hw, &groups, &lsb) {
@@ -358,7 +359,7 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
     };
     match coretrim::trim_gated(&mut hw, &groups, &cur, &order, &lsb, &g) {
         Ok(t) => {
-            eprintln!("oos-ui hw: core offsets of ADC mode {}: {:?} -> {:?}, order {:?}, {:.2} steps left, matched {:#x} skipped {:#x}", mode, cur, t.offsets, order, t.residual, t.matched, t.skipped);
+            eprintln!("oos-ui hw: core offsets of ADC mode {}: {:?} -> {:?}, order {:?}, {:.2} steps left (kept {:.2}), matched {:#x} skipped {:#x}", mode, cur, t.offsets, order, t.residual, t.kept, t.matched, t.skipped);
             if t.offsets != cur {
                 cal.set_offsets(mode, &t.offsets);
                 overlay.set(mode, &t.offsets);

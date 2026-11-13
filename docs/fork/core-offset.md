@@ -121,6 +121,16 @@ CH3 alone, input open, 100 mV/div, 1.25 GSa/s, trigger CH3.
 
 `cal.core_offset = tight` stays opt-in.
 
+## Round 14 (unit, dho804 cefb2b1)
+
+- Gates before the order search: modes 0 and 5 with the probe square on CH1 stay silent. Works.
+- Mode 2 applied the kept file, matched again and saved a worse result over it: [25, 66, 38, 77, 57, 79, -31, 59]
+  -> [26, 67, 35, 75, 56, 81, -29, 59], 1.15 steps left; slot 6 at +1.3 afterwards against +-0.55 in round 13.
+- Fix: the trim first measures the starting (kept) offsets after a settle wait. Within 0.6 steps they stay and
+  nothing is written. Otherwise a result is kept only when a fresh reading confirms it strictly better than the
+  start; else the registers go back to the start values and the file is not touched. The log line shows both
+  (`x steps left (kept y)`).
+
 ## What the change does
 
 `hal::dho::coretrim`, called from the acquisition thread right after a configuration, with nothing armed, once per
