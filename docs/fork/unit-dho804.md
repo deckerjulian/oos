@@ -248,6 +248,22 @@ Found on the way:
 - The oos-ui keys `acq.pipeline`, `perf.place`, `acq.prearm` are read from `/oos/system.conf` only (`conf_value`), so
   the unit's image `system.conf` cannot default them. Flipping them takes a code default change.
 
+### Round 2 on dho804 47223f9 (build 20261113-181907)
+
+Details: private RE notes `docs/logs/oos_unitlab_20261113.md`, "Round 2".
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| Live compression | keep opt-in | `compress-check` FAILs for every k, but every read matches a min/max pair per 2k samples **in time order** (min first only when the minimum comes first): k 3..128, 1 and 2 channels, 100 %. k 256 at 1 M: C2H read of 7824 bytes times out (twice). 2 ch 10 us/div 341 -> 409 frames/s, drops 18 -> 0; A53 load ~92 % -> ~20 %; 1 ch 1 us and 100 us/div 7-9 % fewer frames. STOP record raw, measurements equal |
+| DVM (`dvm.hw`) | keep opt-in, decode wrong | `hw` reads -0.67 V for 0.15 V. Words: N = 2^28, sum = `(sum_hi >> 16) << 32 \| sum_lo`, squares = `sq_hi << 32 \| sq_lo`, 12-bit codes centred at 2048, 428 codes/div at 1 V and 500 mV/div, ~200 at 100 mV/div (pre-gain dependent). Independent of time base and mode. CH2 alone uses lane 2. `cfg` read-back = `sq_hi` with bits 7:0 replaced |
+| Hardware mask (`mask.hw`) | broken | slot 0 / ctrl 0x00100000 and frames = acquired (171/s) are right, but every frame fails on a clean signal; it only passes at X 1 div and Y 3 div. Vertical scale and column mapping both off |
+| C2H chunks | pass | 4 ch, 1 M points, live, 5 min: no C2H error, no time-out, no restart |
+| B3 segments | count fixed | 100 of 100 and 1000 of 1000 recorded; tick still 0.8 ns (0.3125 ms per 1 ms) |
+| B1 average | unchanged | all-zero frames at >= 625 MSa/s |
+
+Not done, needs a cable moved: hwmask step 7 (AUX OUT to CH2), the AUX OUT check, the slot map with separate signals
+on CH1 and CH2, DVM with a DC reference or a signal on CH3/CH4.
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
