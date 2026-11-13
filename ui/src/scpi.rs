@@ -528,6 +528,15 @@ impl Scpi {
                 "MODE" => Meas::Mode,
                 "LSLO" | "LINSLOPE" => Meas::LinSlope,
                 "LINT" | "LININT" => Meas::LinInt,
+                "PAM0" | "L0" => Meas::Pam0,
+                "PAM1" | "L1" => Meas::Pam1,
+                "PAM2" | "L2" => Meas::Pam2,
+                "PAM3" | "L3" => Meas::Pam3,
+                "PSEP" => Meas::PamSep,
+                "BITS" | "ONES" => Meas::Bits,
+                "PLLUI" => Meas::PllUi,
+                "UIWTD" => Meas::UiWtd,
+                "FOLD" => Meas::FoldRms,
                 _ => {
                     self.err.push("-224,\"Illegal parameter value\"".into());
                     return t("9.9E37");

@@ -34,6 +34,7 @@ pub mod expr;
 pub mod eye;
 pub mod identify;
 pub mod interp;
+pub mod linecode;
 pub mod magnetic;
 pub mod mask;
 pub mod math;

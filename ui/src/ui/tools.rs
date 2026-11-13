@@ -5,7 +5,7 @@
 //! labels. All of them work on the records the screen shows.
 
 use super::*;
-use oos_dsp::measure::{burst_width, delay, duration_n, hold_time, phase, setup_hold_violations, setup_time, skew, time_outside, Analysis, Pair};
+use oos_dsp::measure::{burst_width, delay, duration_n, hold_time_at, phase, setup_hold_violations_at, setup_time_at, skew, time_outside, Analysis, Pair};
 
 /// Edge times are seconds from the first sample. Add the record's t0 so a pair of different records lines up.
 fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
@@ -41,7 +41,7 @@ pub enum PairKind {
 }
 
 /// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still means the same row.
-pub const PAIRS: [(&str, PairKind, bool, bool); 15] = [
+pub const PAIRS: [(&str, PairKind, bool, bool); 17] = [
     ("Delay rise-rise", PairKind::Delay, true, true),
     ("Delay fall-fall", PairKind::Delay, false, false),
     ("Delay rise-fall", PairKind::Delay, true, false),
@@ -57,6 +57,8 @@ pub const PAIRS: [(&str, PairKind, bool, bool); 15] = [
     ("Setup time", PairKind::Setup, true, true),
     ("Hold time", PairKind::Hold, true, true),
     ("Setup+Hold", PairKind::SetupAndHold, true, true),
+    ("Setup fall", PairKind::Setup, false, true),
+    ("Hold fall", PairKind::Hold, false, true),
 ];
 
 /// DVM modes and counter modes.
@@ -123,9 +125,9 @@ impl Ui {
                         PairKind::Phase => phase(&aa, &bb, p),
                         PairKind::Delay => delay(&aa, &bb, p),
                         PairKind::Skew => skew(&aa, &bb, p),
-                        PairKind::Setup => setup_time(&aa, &bb),
-                        PairKind::Hold => hold_time(&aa, &bb),
-                        PairKind::SetupAndHold => setup_hold_violations(&aa, &bb, self.m.meas_tsetup, self.m.meas_thold),
+                        PairKind::Setup => setup_time_at(&aa, &bb, ea),
+                        PairKind::Hold => hold_time_at(&aa, &bb, ea),
+                        PairKind::SetupAndHold => setup_hold_violations_at(&aa, &bb, self.m.meas_tsetup, self.m.meas_thold, ea),
                     }
                 }
                 _ => f64::NAN,

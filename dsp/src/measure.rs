@@ -70,15 +70,30 @@ pub enum Meas {
     LinSlope,
     /// Least-squares intercept at the first sample.
     LinInt,
+    Pam0,
+    Pam1,
+    Pam2,
+    Pam3,
+    /// Smallest gap between adjacent 4-level modes.
+    PamSep,
+    /// Mid-sliced ones in the record.
+    Bits,
+    /// Unit interval from a 2nd-order PLL clock.
+    PllUi,
+    /// Weighted 1/2/3-UI mean of mid spacings.
+    UiWtd,
+    /// RMS after folding onto the estimated UI.
+    FoldRms,
 }
 
-pub const ALL: [Meas; 51] = [
+pub const ALL: [Meas; 60] = [
     Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vtop, Meas::Vbase, Meas::Vamp, Meas::Vupper, Meas::Vmid, Meas::Vlower, Meas::Vavg,
     Meas::Vrms, Meas::VavgCyc, Meas::VrmsCyc, Meas::VrmsAc, Meas::StdDev, Meas::Overshoot, Meas::Preshoot, Meas::Area,
     Meas::AreaCyc, Meas::Period, Meas::Freq, Meas::Rise, Meas::Fall, Meas::PWidth, Meas::NWidth, Meas::PDuty, Meas::NDuty,
     Meas::PPulses, Meas::NPulses, Meas::PEdges, Meas::NEdges, Meas::TVmax, Meas::TVmin, Meas::PSlew, Meas::NSlew,
     Meas::HighTime, Meas::LowTime, Meas::Burst, Meas::Outside, Meas::NPeriods, Meas::CycAmp, Meas::CycTop, Meas::CycBase,
     Meas::CycPp, Meas::CycMax, Meas::CycMin, Meas::EstUi, Meas::Median, Meas::Mode, Meas::LinSlope, Meas::LinInt,
+    Meas::Pam0, Meas::Pam1, Meas::Pam2, Meas::Pam3, Meas::PamSep, Meas::Bits, Meas::PllUi, Meas::UiWtd, Meas::FoldRms,
 ];
 
 impl Meas {
@@ -135,6 +150,15 @@ impl Meas {
             Meas::Mode => "Mode",
             Meas::LinSlope => "Lin slope",
             Meas::LinInt => "Lin int.",
+            Meas::Pam0 => "L0",
+            Meas::Pam1 => "L1",
+            Meas::Pam2 => "L2",
+            Meas::Pam3 => "L3",
+            Meas::PamSep => "L sep.",
+            Meas::Bits => "Ones",
+            Meas::PllUi => "PLL UI",
+            Meas::UiWtd => "UI wtd",
+            Meas::FoldRms => "Fold RMS",
         }
     }
     pub fn unit(self) -> &'static str {
@@ -142,9 +166,9 @@ impl Meas {
             Meas::Overshoot | Meas::Preshoot | Meas::PDuty | Meas::NDuty => "%",
             Meas::Area | Meas::AreaCyc => "Vs",
             Meas::Period | Meas::Rise | Meas::Fall | Meas::PWidth | Meas::NWidth | Meas::TVmax | Meas::TVmin | Meas::HighTime
-            | Meas::LowTime | Meas::Burst | Meas::Outside | Meas::NPeriods | Meas::EstUi => "s",
+            | Meas::LowTime | Meas::Burst | Meas::Outside | Meas::NPeriods | Meas::EstUi | Meas::PllUi | Meas::UiWtd => "s",
             Meas::Freq => "Hz",
-            Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges => "",
+            Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges | Meas::Bits => "",
             Meas::PSlew | Meas::NSlew | Meas::LinSlope => "V/s",
             _ => "V",
         }
@@ -204,6 +228,11 @@ pub struct Analysis {
     pub mode: f64,
     pub lin_slope: f64,
     pub lin_int: f64,
+    pub pam: [f64; 4],
+    pub bits: f64,
+    pub pll_ui: f64,
+    pub ui_wtd: f64,
+    pub fold_rms: f64,
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -320,7 +349,7 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     analyze_refs(v, dt, min_amp, 0.1, 0.9)
 }
 
-/// IEEE-181 uses 10/90. Tek default rise/fall is 20/80 (`lpct` / `hpct` as fractions of amplitude).
+/// IEEE-181 uses 10/90. The menu also offers 20/80 (`lpct` / `hpct` as fractions of amplitude).
 pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
     let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
     if f.len() < 4 {
@@ -377,6 +406,11 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         mode: hist_mode(&f, vmin, vmax),
         lin_slope,
         lin_int,
+        pam: crate::linecode::pam4_levels(&f, vmin, vmax),
+        bits: f.iter().filter(|&&x| x >= 0.5 * (vmin + vmax)).count() as f64,
+        pll_ui: f64::NAN,
+        ui_wtd: f64::NAN,
+        fold_rms: f64::NAN,
         ..Default::default()
     };
     let amp = top - base;
@@ -392,6 +426,16 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         t.windows(2).map(|w| w[1] - w[0]).collect()
     };
     a.est_ui = crate::eye::unit_interval(&spacings).unwrap_or(f64::NAN);
+    a.ui_wtd = crate::linecode::unit_interval_runs(&spacings).unwrap_or(f64::NAN);
+    if a.rises.len() + a.falls.len() <= 8000 {
+        let mid_v = (base + amp * 0.5) as f32;
+        if let Some(c) = crate::eye::recover_clock_pll(v, dt, mid_v, (amp * 0.1) as f32, None, 0.0, true) {
+            a.pll_ui = c.period;
+        }
+        if a.est_ui.is_finite() {
+            a.fold_rms = crate::linecode::fold_rms(v, dt, a.est_ui);
+        }
+    }
     let lo = (base + lpct * amp) as f32;
     let hi_l = (base + hpct * amp) as f32;
     let mut rt = Vec::new();
@@ -537,6 +581,18 @@ impl Analysis {
             Meas::Mode => self.mode,
             Meas::LinSlope => self.lin_slope,
             Meas::LinInt => self.lin_int,
+            Meas::Pam0 => self.pam[0],
+            Meas::Pam1 => self.pam[1],
+            Meas::Pam2 => self.pam[2],
+            Meas::Pam3 => self.pam[3],
+            Meas::PamSep => {
+                let d = [self.pam[1] - self.pam[0], self.pam[2] - self.pam[1], self.pam[3] - self.pam[2]];
+                d.into_iter().filter(|x| x.is_finite() && *x > 0.0).fold(f64::NAN, |a, x| if a.is_nan() { x } else { a.min(x) })
+            }
+            Meas::Bits => self.bits,
+            Meas::PllUi => self.pll_ui,
+            Meas::UiWtd => self.ui_wtd,
+            Meas::FoldRms => self.fold_rms,
         }
     }
 
@@ -714,19 +770,27 @@ pub fn skew(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
     mean(&d)
 }
 
-/// Setup: rising clock time minus the closest earlier data mid. Positive when the data edge leads the clock.
-/// Tek pairs on the rising clock; data uses either-direction mids.
+/// Setup: clock edge minus the closest earlier data mid. Positive when the data edge leads the clock.
+/// `rise` selects rising or falling clock edges; data uses either-direction mids.
 pub fn setup_time(clock: &Analysis, data: &Analysis) -> f64 {
-    mean(&setup_times(clock, data))
+    setup_time_at(clock, data, true)
 }
 
-/// Hold: the next data mid minus the rising clock.
+pub fn setup_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
+    mean(&setup_times(clock, data, rise))
+}
+
+/// Hold: the next data mid minus the clock edge.
 pub fn hold_time(clock: &Analysis, data: &Analysis) -> f64 {
-    mean(&hold_times(clock, data))
+    hold_time_at(clock, data, true)
 }
 
-fn setup_times(clock: &Analysis, data: &Analysis) -> Vec<f64> {
-    let (c, d) = (&clock.rises, mids(data));
+pub fn hold_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
+    mean(&hold_times(clock, data, rise))
+}
+
+fn setup_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
+    let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
     let mut j = 0usize;
     let mut s = Vec::new();
     for &tc in c {
@@ -740,8 +804,8 @@ fn setup_times(clock: &Analysis, data: &Analysis) -> Vec<f64> {
     s
 }
 
-fn hold_times(clock: &Analysis, data: &Analysis) -> Vec<f64> {
-    let (c, d) = (&clock.rises, mids(data));
+fn hold_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
+    let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
     let mut j = 0usize;
     let mut s = Vec::new();
     for &tc in c {
@@ -755,9 +819,13 @@ fn hold_times(clock: &Analysis, data: &Analysis) -> Vec<f64> {
     s
 }
 
-/// Rising clock edges whose setup is below `tsetup` or hold below `thold` (Tek SetupAndHold search).
+/// Clock edges whose setup is below `tsetup` or hold below `thold`.
 pub fn setup_hold_violations(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64) -> f64 {
-    let (su, ho) = (setup_times(clock, data), hold_times(clock, data));
+    setup_hold_violations_at(clock, data, tsetup, thold, true)
+}
+
+pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64, rise: bool) -> f64 {
+    let (su, ho) = (setup_times(clock, data, rise), hold_times(clock, data, rise));
     if su.len() != ho.len() {
         let n = su.len().min(ho.len());
         return su[..n].iter().zip(&ho[..n]).filter(|(&s, &h)| s < tsetup || h < thold).count() as f64;

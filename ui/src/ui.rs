@@ -3721,6 +3721,7 @@ impl Ui {
             Proto::Arinc429 => v.push(DecArate),
             Proto::Sent => v.extend([DecTick, DecNibbles]),
             Proto::Usb => v.push(DecUsbSpeed),
+            Proto::Manchester | Proto::Mlt3 => v.push(DecBaud),
             _ => {}
         }
         // LA lines: the probe's comparators set the levels (LA page)
@@ -5544,7 +5545,9 @@ impl Ui {
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
         let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet));
-        let (cols, cw, rh, gap) = if wide { (2, 400, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, 190, DLG_ROW + 2, 8) } else if grid && self.menu == MenuId::MeasAdd { (6, 150, DLG_ROW + 2, 8) } else if grid { (4, 150, DLG_ROW + 2, 8) } else if n > 5 { (2, 400, DLG_ROW, 16) } else { (1, 400, DLG_ROW, 16) };
+        let (cols, cw, rh, gap) = if wide { (2, 400, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, 190, DLG_ROW + 2, 8) } else if grid && self.menu == MenuId::MeasAdd {
+            if n > 54 { (7, 130, DLG_ROW + 2, 8) } else { (6, 150, DLG_ROW + 2, 8) }
+        } else if grid { (4, 150, DLG_ROW + 2, 8) } else if n > 5 { (2, 400, DLG_ROW, 16) } else { (1, 400, DLG_ROW, 16) };
         let nrows = (n + cols - 1) / cols;
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
@@ -6653,6 +6656,10 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
                 Kind::Sample { right } => format!("{} {:0w$X}", if right { "R" } else { "L" }, p.value, w = (m.dec_bits as usize).div_ceil(4)),
                 Kind::Word { cmd } => format!("{} {:04X}{}", if cmd { "C/S" } else { "D" }, p.value, if p.ok { "" } else { " !P" }),
                 Kind::Crc => format!("{} {:X}{}", if m.dec_proto == Proto::Lin { "CS" } else { "CRC" }, p.value, if p.ok { "" } else { " !" }),
+                Kind::Field(l) if matches!(l, "MAC" | "SRC") && p.value2.is_some() => {
+                    format!("{} {}{}", if l == "SRC" { "SRC" } else { "MAC" }, oos_dsp::linecode::mac_text(p.value, p.value2.unwrap_or(0)), if p.ok { "" } else { " !" })
+                }
+                Kind::Field(l) if matches!(l, "IP" | "DIP") => format!("{} {}{}", if l == "DIP" { "DIP" } else { "IP" }, oos_dsp::linecode::ip_text(p.value), if p.ok { "" } else { " !" }),
                 Kind::Field(l) => match p.value2 {
                     Some(v2) if matches!(l, "DST" | "SRC" | "SER" | "PID") => format!("{} {:04X}{:08X}{}", l, v2, p.value, if p.ok { "" } else { " !" }),
                     _ => format!("{} {:X}{}", l, p.value, if p.ok { "" } else { " !" }),
@@ -7600,7 +7607,8 @@ mod tests {
         let (x, y) = mid(Ui::value_parts(row_of(&ui, Item::MathOpI).ctrl).1);
         ui.tap(x, y);
         assert_eq!(ui.items(MenuId::Pick).len(), MATH_OPS.len());
-        let (x, y) = mid(row_of(&ui, Item::PickOpt(MATH_OPS.len() - 1)).ctrl);
+        let fft = MATH_OPS.iter().position(|&o| o == MathOp::Fft).unwrap();
+        let (x, y) = mid(row_of(&ui, Item::PickOpt(fft)).ctrl);
         ui.tap(x, y);
         assert_eq!((ui.m.math, ui.menu), (MathOp::Fft, MenuId::Math));
         // tapping the menu's top-bar button while its picker is open closes the menu
