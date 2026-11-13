@@ -34,6 +34,7 @@ pub mod seq;
 pub mod spu;
 pub mod target;
 pub mod tpu;
+pub mod uarttrig;
 pub mod wpu;
 pub mod zone;
 pub mod zonegeom;

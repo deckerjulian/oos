@@ -68,6 +68,8 @@ pub enum Trig {
     SetupHold { clk: u32, clk_edge: tpu::Edge, setup: f64, hold: f64, levelc: f64 },
     Nth { count: u32, idle: f64 },
     Video { std: tpu::VideoStd, sync: tpu::VideoSync, line: u32 },
+    /// the TPU's UART receiver on the main source at the main level (docs/fork/hwuart.md)
+    Uart(crate::dho::uarttrig::Uart),
 }
 
 /// The holdoff of a trigger set-up without one.
@@ -457,6 +459,7 @@ impl State {
             }
             Trig::Nth { count, idle } => tpu::nth(ts, src, edge, *count, fs(*idle), nv(s.level), &vt),
             Trig::Video { std, sync, line } => tpu::video(ts, src, *std, true, *sync, *line, nv(s.level), &vt, tpu::VideoClk::Fast),
+            Trig::Uart(u) => tpu::uart(ts, src, u, nv(s.level), &vt),
         };
         // the shortest holdoff is what every trigger type leaves behind; once changed, it is written until it is back
         let set = (s.holdoff - HOLDOFF_MIN).abs() > 1e-12;
@@ -1278,6 +1281,19 @@ mod tests {
         // off
         let w = only(&mut st, &base);
         assert_eq!(w, vec![(0x4020, 0x6001), (0x11d0, 0), (0x1184, 0x4000_0001), (0x1190, 0), (0x4020, 0x6001)]);
+    }
+
+    #[test]
+    fn uart_trigger_is_written_with_the_trigger_block() {
+        use crate::dho::uarttrig::{Cond, Parity, Stop, Uart};
+        let u = Uart { baud: 115_200.0, bits: 8, parity: Parity::None, stop: Stop::One, cond: Cond::Start, invert: false };
+        let s = Settings { trig_src: 2, mask: 0b11, slope: tpu::Slope::Falling, trigger: Trig::Uart(u), ..Settings::default() };
+        let mut st = State::handover(0b11, None);
+        let w = writes(&st.configure(&s, None, None).unwrap().0);
+        let k = w.iter().position(|x| *x == (0x205c, 4)).expect("mux on the UART event");
+        assert!(w[..k].contains(&(0x2100, 1356)) && w[..k].contains(&(0x2104, 7)));
+        // the trigger block comes before the FSM stop poll and the acquisition block, like every trigger type
+        assert!(k < w.iter().position(|x| x.0 == 0x4020).unwrap());
     }
 
     #[test]
