@@ -52,11 +52,22 @@ fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result
     let baud = crate::decode::BAUDS[m.dec_baud];
     let can_rate = crate::decode::CAN_RATES[m.dec_canrate];
     Ok(match m.dec_proto {
-        Proto::Uart => uart(line, dt, baud, m.dec_bits, m.dec_parity, thr, hy, false),
+        Proto::Uart => uart(line, dt, baud, m.dec_bits, m.dec_parity, thr, hy, m.ser.uart_inv),
         Proto::I2c => i2c(get(m.dec_src)?, get(m.dec_src2)?, thr, hy),
         Proto::Spi => {
             let bit = 1e-9f64.max(dt);
-            spi(get(m.dec_src2)?, get(m.dec_src)?, None, opt(m.dec_cs)?, m.dec_mode, m.dec_bits, true, thr, hy, 20.0 * bit / dt)
+            // a clock pause of the trigger's timeout starts a frame, else 20 samples
+            let gap = if m.ser.spi_timeout > 0.0 { m.ser.spi_timeout as f64 / dt } else { 20.0 * bit / dt };
+            // the decoder takes CS active low: an active-high CS is mirrored at the threshold
+            let cs_hi: Option<Vec<f32>> = match (m.ser.spi_cs_high, opt(m.dec_cs)?) {
+                (true, Some(c)) => Some(c.iter().map(|&x| 2.0 * thr - x).collect()),
+                _ => None,
+            };
+            let cs = match &cs_hi {
+                Some(c) => Some(&c[..]),
+                None => opt(m.dec_cs)?,
+            };
+            spi(get(m.dec_src2)?, get(m.dec_src)?, None, cs, m.dec_mode, m.dec_bits, true, thr, hy, gap)
         }
         Proto::Can => can(line, dt, can_rate, thr, hy, m.dec_canh),
         Proto::Lin => lin(line, dt, baud, thr, hy),
@@ -109,12 +120,21 @@ fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result
     })
 }
 
-/// Whether a packet satisfies the protocol trigger condition of `m`.
+/// Whether a packet satisfies the protocol trigger condition of `m` on its own. UART and SPI data take the relation,
+/// limit and mask of `m.ser`; I2C addresses and data need the frame around them (`points`).
 pub fn matches(m: &Model, p: &Packet) -> bool {
     let v = m.trig_bus_val;
-    if let Some(r) = m.dec_proto.module().and_then(|x| x.trigger_match(m.trig_bus, v, p)) {
+    if let Some(r) = m.dec_proto.module().and_then(|x| x.trigger_match(m.trig_bus, v as u32, p)) {
         return r;
     }
+    let v32 = v as u32;
+    if matches!(m.dec_proto, Proto::Uart | Proto::Spi) && m.trig_bus == BusWhat::Data {
+        return p.kind == Kind::Data && m.ser.rel.test(p.value as u64, v, m.ser.max, m.ser.mask);
+    }
+    if m.dec_proto == Proto::I2c && matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
+        return false;
+    }
+    let v = v32;
     match m.trig_bus {
         BusWhat::Frame => match p.kind {
             Kind::Start | Kind::Break | Kind::Word { cmd: true } => true,
@@ -134,10 +154,82 @@ pub fn matches(m: &Model, p: &Packet) -> bool {
     }
 }
 
+/// The trigger points (packet ends) of `m`'s protocol condition among `packets`: `matches` per packet, and for I2C
+/// the address (relation, direction, 10-bit) and the first `ser.bytes` data bytes after it, big-endian, as the TPU's
+/// receiver compares them.
+pub fn points(m: &Model, packets: &[Packet]) -> Vec<f64> {
+    if m.dec_proto != Proto::I2c || !matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
+        return packets.iter().filter(|p| matches(m, p)).map(|p| p.t1).collect();
+    }
+    let s = &m.ser;
+    let mut out = Vec::new();
+    // per frame: the address (10-bit: its high bits until the second byte), then the data bytes so far
+    let (mut addr, mut hi10, mut read, mut n, mut acc) = (None::<u32>, None::<u32>, false, 0u8, 0u64);
+    for p in packets {
+        match p.kind {
+            Kind::Start | Kind::RepStart | Kind::Stop => (addr, hi10, n, acc) = (None, None, 0, 0),
+            Kind::Addr { read: r } => {
+                read = r;
+                (n, acc) = (0, 0);
+                if s.ten_bit && p.value & 0x7c == 0x78 {
+                    (addr, hi10) = (None, Some(p.value & 3));
+                } else {
+                    (addr, hi10) = (Some(p.value), None);
+                    if m.trig_bus == BusWhat::Id && addr_ok(m, p.value, read) {
+                        out.push(p.t1);
+                    }
+                }
+            }
+            Kind::Data => {
+                if let Some(h) = hi10.take() {
+                    let a = h << 8 | (p.value & 0xff);
+                    addr = Some(a);
+                    if m.trig_bus == BusWhat::Id && addr_ok(m, a, read) {
+                        out.push(p.t1);
+                    }
+                    continue;
+                }
+                if m.trig_bus != BusWhat::Data || addr.is_none() {
+                    continue;
+                }
+                // any data byte of the frame
+                if s.bytes == 0 {
+                    if s.rel.test((p.value & 0xff) as u64, m.trig_bus_val, s.max, s.mask & 0xff) {
+                        out.push(p.t1);
+                    }
+                    continue;
+                }
+                if n >= s.bytes.min(5) {
+                    continue;
+                }
+                acc = acc << 8 | (p.value & 0xff) as u64;
+                n += 1;
+                let mask = s.mask & ((1u64 << (8 * n as u32)) - 1);
+                if n == s.bytes.min(5) && s.rel.test(acc, m.trig_bus_val, s.max, mask) {
+                    out.push(p.t1);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The I2C address condition: relation against the value and `addr_max`, and the direction.
+fn addr_ok(m: &Model, a: u32, read: bool) -> bool {
+    let s = &m.ser;
+    let dir = match s.dir {
+        I2cDir::Either => true,
+        I2cDir::Read => read,
+        I2cDir::Write => !read,
+    };
+    dir && s.addr_rel.test(a as u64, m.trig_bus_val, s.addr_max as u64, 0x3ff)
+}
+
 /// All trigger points of `m`'s condition in `inp` (fractional sample indices).
 pub fn find_all(m: &Model, inp: &Input) -> Vec<f64> {
     if m.trig_type == TrigType::Bus {
-        return decode(m, inp.ch, inp.dt).unwrap_or_default().iter().filter(|p| matches(m, p)).map(|p| p.t1).collect();
+        return points(m, &decode(m, inp.ch, inp.dt).unwrap_or_default());
     }
     oos_dsp::trigger::find_all(&m.trigger(), inp)
 }
@@ -145,4 +237,86 @@ pub fn find_all(m: &Model, inp: &Input) -> Vec<f64> {
 /// The first trigger point after `from`.
 pub fn find_first(m: &Model, inp: &Input, from: f64) -> Option<f64> {
     find_all(m, inp).into_iter().find(|&t| t > from)
+}
+
+#[cfg(test)]
+mod serial_tests {
+    use super::*;
+
+    fn pk(t: f64, kind: Kind, value: u32) -> Packet {
+        Packet { t0: t, t1: t, kind, value, value2: None, ok: true }
+    }
+
+    #[test]
+    fn relations_mask_and_limits() {
+        // (relation, x, value, max, mask) -> match
+        let cases = [
+            (Rel::Eq, 0x41, 0x41, 0, u64::MAX, true),
+            (Rel::Ne, 0x41, 0x41, 0, u64::MAX, false),
+            (Rel::Gt, 0x42, 0x41, 0, u64::MAX, true),
+            (Rel::Lt, 0x41, 0, 0x41, u64::MAX, false),
+            (Rel::In, 0x35, 0x30, 0x39, u64::MAX, true),
+            (Rel::Out, 0x35, 0x30, 0x39, u64::MAX, false),
+            (Rel::Out, 0x40, 0x30, 0x39, u64::MAX, true),
+            // the mask applies to x and both limits
+            (Rel::Eq, 0x4f, 0x40, 0, 0xf0, true),
+        ];
+        for (r, x, v, max, mask, want) in cases {
+            assert_eq!(r.test(x, v, max, mask), want, "{:?} {:#x}", r, x);
+        }
+    }
+
+    #[test]
+    fn uart_and_spi_data_take_the_relation() {
+        let mut m = Model { dec_proto: Proto::Uart, trig_bus: BusWhat::Data, trig_bus_val: 0x30, ..Model::default() };
+        m.ser.rel = Rel::In;
+        m.ser.max = 0x39;
+        let p = [pk(1.0, Kind::Data, 0x2f), pk(2.0, Kind::Data, 0x35), pk(3.0, Kind::Data, 0x3a)];
+        assert_eq!(points(&m, &p), [2.0]);
+        m.dec_proto = Proto::Spi;
+        m.ser.rel = Rel::Ne;
+        assert_eq!(points(&m, &p), [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn i2c_address_direction_ten_bit_and_data_bytes() {
+        use Kind::*;
+        let mut m = Model { dec_proto: Proto::I2c, trig_bus: BusWhat::Id, trig_bus_val: 0x50, ..Model::default() };
+        // write to 0x50: 0x12 0x34 0x56; read from 0x50: 0xab; 10-bit write to 0x2a5: 0x01
+        let p = [
+            pk(0.0, Start, 0),
+            pk(1.0, Addr { read: false }, 0x50),
+            pk(2.0, Data, 0x12),
+            pk(3.0, Data, 0x34),
+            pk(4.0, Data, 0x56),
+            pk(5.0, RepStart, 0),
+            pk(6.0, Addr { read: true }, 0x50),
+            pk(7.0, Data, 0xab),
+            pk(8.0, Stop, 0),
+            pk(9.0, Start, 0),
+            pk(10.0, Addr { read: false }, 0x7a),
+            pk(11.0, Data, 0xa5),
+            pk(12.0, Data, 0x01),
+            pk(13.0, Stop, 0),
+        ];
+        assert_eq!(points(&m, &p), [1.0, 6.0]);
+        m.ser.dir = I2cDir::Read;
+        assert_eq!(points(&m, &p), [6.0]);
+        // 10-bit: the address completes with the second byte
+        (m.ser.dir, m.ser.ten_bit, m.trig_bus_val) = (I2cDir::Either, true, 0x2a5);
+        assert_eq!(points(&m, &p), [11.0]);
+        // data: any byte, then the first two bytes after the address, big-endian
+        (m.ser.ten_bit, m.trig_bus, m.trig_bus_val) = (false, BusWhat::Data, 0x34);
+        assert_eq!(points(&m, &p), [3.0]);
+        (m.ser.bytes, m.trig_bus_val) = (2, 0x1234);
+        assert_eq!(points(&m, &p), [3.0]);
+        (m.ser.bytes, m.trig_bus_val) = (3, 0x12_3456);
+        assert_eq!(points(&m, &p), [4.0]);
+        // a mask over the second byte only, and a range over the first byte
+        (m.ser.bytes, m.trig_bus_val, m.ser.mask) = (2, 0x0034, 0x00ff);
+        assert_eq!(points(&m, &p), [3.0]);
+        (m.ser.bytes, m.ser.mask, m.ser.rel, m.trig_bus_val, m.ser.max) = (1, u64::MAX, Rel::In, 0x10, 0xaf);
+        // the first byte of each frame: 0x12, 0xab and 0xa5 (the 7-bit reading of the third frame's address)
+        assert_eq!(points(&m, &p), [2.0, 7.0, 11.0]);
+    }
 }

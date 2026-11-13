@@ -27,6 +27,7 @@ mod overclock;
 mod tools;
 mod hwmask;
 mod hwzone;
+mod sertrig;
 mod update;
 mod viewmore;
 mod wlan;
@@ -235,6 +236,9 @@ pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 /// Keys of the frequency keypad: the unit ends the entry.
 const FREQ_KEYS: [&str; 18] = ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "2", "3", "kHz", "0", ".", "Del", "MHz", "Clear", "Cancel"];
 /// Keys of the hex keypad picker.
+/// Largest protocol trigger value: 40 bits (five I2C data bytes).
+pub const BUS_VAL_MAX: u64 = 0xff_ffff_ffff;
+
 const KEYPAD: [&str; 19] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
 
 /// A channel key on the front panel held this many seconds: AC/DC (`Ui::panel_key`).
@@ -368,6 +372,18 @@ enum Item {
     DecDiff,
     TrigBusWhat,
     TrigBusVal,
+    /// protocol trigger settings beyond condition and value (`SerialTrig`)
+    SerRel,
+    SerMax,
+    SerMask,
+    UartPol,
+    UartStop,
+    UartErr,
+    SpiCs,
+    SpiTimeout,
+    I2cDir,
+    I2cAddrBits,
+    I2cBytes,
     DecThr,
     DecFmt,
     DecProto,
@@ -4651,6 +4667,7 @@ impl Ui {
                 if matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
                     v.push(TrigBusVal);
                 }
+                v.extend(self.serial_items());
             }
             TT::Pulse => {
                 v.extend([TrigSrc, TrigPol]);
@@ -4759,7 +4776,7 @@ impl Ui {
             self.set_dec_proto(p);
             let m = &mut self.m;
             m.trig_type = t;
-            (m.trig_bus, m.trig_bus_val) = match p {
+            let (what, val) = match p {
                 Proto::Can => (BusWhat::Id, 0x123),
                 Proto::Lin => (BusWhat::Id, 0x21),
                 Proto::I2c => (BusWhat::Id, 0x50),
@@ -4774,6 +4791,7 @@ impl Ui {
                 Proto::Module(i) => crate::protocols::get(i).trigger_default(),
                 _ => (BusWhat::Frame, 0x40),
             };
+            (m.trig_bus, m.trig_bus_val, m.ser) = (what, val as u64, SerialTrig::default());
             self.dirty_map = true;
             return;
         }
@@ -4882,7 +4900,7 @@ impl Ui {
             MenuId::Ref => "Reference".into(),
             MenuId::Decode => "Decode".into(),
             MenuId::Pick => match self.pick {
-                Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
+                Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
                 Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
@@ -4905,6 +4923,7 @@ impl Ui {
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::MaskCreate | Item::MaskReset => Kind::Action,
             Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::AcqSegTable | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
+            Item::SpiTimeout => Kind::Value,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
             _ => Kind::Choice,
@@ -4967,6 +4986,17 @@ impl Ui {
             Item::DecCanRate => "Bit rate",
             Item::TrigBusWhat => "Match",
             Item::TrigBusVal => "Value",
+            Item::SerRel => "Relation",
+            Item::SerMax => "Max",
+            Item::SerMask => "Mask",
+            Item::UartPol => "Polarity",
+            Item::UartStop => "Stop bits",
+            Item::UartErr => "Error type",
+            Item::SpiCs => "CS",
+            Item::SpiTimeout => "Timeout",
+            Item::I2cDir => "Direction",
+            Item::I2cAddrBits => "Address",
+            Item::I2cBytes => "Bytes",
             Item::DecCanH => "Signal",
             Item::DecFdRate => "Data rate",
             Item::DecArate => "Bit rate",
@@ -5301,6 +5331,7 @@ impl Ui {
             Item::DecCanRate => si(crate::decode::CAN_RATES[m.dec_canrate], "bit/s"),
             Item::TrigBusWhat => m.trig_bus.name().into(),
             Item::TrigBusVal => format!("0x{:X}", m.trig_bus_val),
+            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_value(it),
             Item::DecCanH => if m.dec_canh { "CAN_H".into() } else { "RX/TX".into() },
             Item::DecFdRate => format!("{} M", crate::decode::FD_RATES[m.dec_fdrate] / 1e6),
             Item::DecArate => ARATE_NAMES[m.dec_arate].into(),
@@ -5711,7 +5742,8 @@ impl Ui {
                 let i = BUS_WHATS.iter().position(|&x| x == self.m.trig_bus).unwrap_or(0);
                 self.m.trig_bus = BUS_WHATS[cyc(i, BUS_WHATS.len(), d)];
             }
-            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, 0x1fff_ffff) as u32,
+            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64,
+            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_adjust(it, d),
             Item::DecCanH => self.m.dec_canh = !self.m.dec_canh,
             Item::DecThr => self.m.dec_thr += d as f32 * self.m.ch[self.m.dec_src].volts_per_div() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
@@ -5863,18 +5895,21 @@ impl Ui {
                     self.settings_changed();
                 }
                 Item::Trig50 => self.level_50(),
-                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::TrigBusVal) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::hex_item(p.it)) => {
                     // keypad: digits edit the entry, OK sets the value and goes back
                     match KEYPAD.get(k).copied() {
                         Some("OK") => {
-                            self.m.trig_bus_val = u32::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16).unwrap_or(0).min(0x1fff_ffff);
+                            let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16).unwrap_or(0).min(BUS_VAL_MAX);
+                            if let Some(p) = self.pick {
+                                self.set_hex(p.it, v);
+                            }
                             self.close_picker();
                         }
                         Some("Clear") => self.keypad.clear(),
                         Some("Del") => {
                             self.keypad.pop();
                         }
-                        Some(d) if self.keypad.len() < 8 => {
+                        Some(d) if self.keypad.len() < 10 => {
                             if self.keypad == "0" {
                                 self.keypad.clear();
                             }
@@ -6275,7 +6310,8 @@ impl Ui {
             Item::DecBaud => return crate::decode::BAUDS.iter().map(|b| b.to_string()).collect(),
             Item::DecCanRate => return crate::decode::CAN_RATES.iter().map(|&b| si(b, "bit/s")).collect(),
             // the value picker is a hex keypad
-            Item::TrigBusVal => return KEYPAD.iter().map(|k| k.to_string()).collect(),
+            Item::TrigBusVal | Item::SerMax | Item::SerMask => return KEYPAD.iter().map(|k| k.to_string()).collect(),
+            Item::SerRel | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => return Self::serial_options(it),
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
@@ -6321,8 +6357,8 @@ impl Ui {
     /// Opens the picker of a choice item of the current menu; picking an option returns to this menu.
     fn open_picker(&mut self, it: Item) {
         let it = if it == Item::AfgFreq { Item::AfgFreqEntry } else { it };
-        if it == Item::TrigBusVal {
-            self.keypad = format!("{:X}", self.m.trig_bus_val);
+        if Self::hex_item(it) {
+            self.keypad = format!("{:X}", self.hex_value(it));
         }
         if it == Item::AfgFreqEntry {
             self.keypad.clear();
@@ -8247,7 +8283,7 @@ mod tests {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
             ui.m.dec_proto = Proto::Can;
             ui.set_trig_type(TrigType::Bus);
-            ui.m.trig_bus_val = id;
+            ui.m.trig_bus_val = id as u64;
             ui.m.tscale = tscales().iter().position(|&t| (t - 50e-6).abs() < 1e-9).unwrap();
             for _ in 0..10 {
                 ui.step(1.0 / 30.0);
@@ -8314,11 +8350,11 @@ mod tests {
                 }
                 assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "{:?} {:?}: not triggered", proto, what);
                 let p = ui.decode_packets().unwrap();
-                assert!(p.iter().any(|x| crate::trig::matches(&ui.m, x) && x.t1.abs() < tol), "{:?} {:?}: no matching field ends at 0: {:?}", proto, what, p);
+                assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "{:?} {:?}: no matching field ends at 0: {:?}", proto, what, p);
                 if what == BusWhat::Id && proto != Proto::Sent {
                     let want = if proto == Proto::Arinc429 { 0o310 } else { 0x2a };
                     assert_eq!(id_default, want);
-                    assert!(p.iter().any(|x| matches!(x.kind, Kind::Id { .. }) && x.value == want && x.t1.abs() < tol));
+                    assert!(p.iter().any(|x| matches!(x.kind, Kind::Id { .. }) && x.value as u64 == want && x.t1.abs() < tol));
                 }
                 if what == BusWhat::Id {
                     let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -8362,10 +8398,10 @@ mod tests {
             }
             assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "USB {:?} {:?}: not triggered", what, val);
             let p = ui.decode_packets().unwrap();
-            assert!(p.iter().any(|x| crate::trig::matches(&ui.m, x) && x.t1.abs() < tol), "USB {:?}: no matching field ends at 0: {:?}", what, p);
+            assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "USB {:?}: no matching field ends at 0: {:?}", what, p);
             match (what, val) {
                 (BusWhat::Id, None) => assert!(p.iter().any(|x| x.kind == Kind::Field("ADDR") && x.value == 5 && x.t1.abs() < tol)),
-                (BusWhat::Id, Some(v)) => assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value == v && x.t1.abs() < tol)),
+                (BusWhat::Id, Some(v)) => assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value as u64 == v && x.t1.abs() < tol)),
                 (BusWhat::Frame, _) => assert!(p.iter().any(|x| x.kind == Kind::Field("SYNC") && x.t1.abs() < tol)),
                 _ => {}
             }
@@ -8784,7 +8820,10 @@ mod tests {
         for d in ["1", "8", "D", "A", "F", "1", "1", "0"] {
             key(&mut ui, d);
         }
-        key(&mut ui, "9"); // a ninth digit is ignored
+        // up to ten digits (40 bits): the eleventh is ignored
+        for d in ["9", "9", "9"] {
+            key(&mut ui, d);
+        }
         key(&mut ui, "Del");
         key(&mut ui, "0");
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -8793,7 +8832,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let _ = crate::store::write(&dir.join("j-keypad.png"), &crate::store::png_of(&cv));
         key(&mut ui, "OK");
-        assert_eq!(ui.m.trig_bus_val, 0x18da_f110);
+        assert_eq!(ui.m.trig_bus_val, 0x18_daf1_1090);
         assert_eq!(ui.menu, MenuId::Trigger);
     }
 

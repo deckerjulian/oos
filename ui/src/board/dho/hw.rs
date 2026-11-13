@@ -506,18 +506,40 @@ fn serial_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
 }
 
+/// The relation of the TPU's receivers for a model relation.
+fn hw_rel(r: Rel) -> uarttrig::Relation {
+    use uarttrig::Relation as R;
+    match r {
+        Rel::Eq => R::Eq,
+        Rel::Ne => R::Ne,
+        Rel::Gt => R::Gt,
+        Rel::Lt => R::Lt,
+        Rel::In => R::In,
+        Rel::Out => R::Out,
+    }
+}
+
 /// The UART protocol trigger of the model in the TPU's receiver, where it can do it: a UART decoder on a
-/// channel (not the LA, not differential), 1..8 data bits, and a condition it has (frame start, a data byte, an error).
-/// The ID condition and wider values stay with the software trigger.
+/// channel (not the LA, not differential), 1..8 data bits, and a condition it has: frame start, a data byte against
+/// the value and limit (no mask: the receiver has none), an error of the chosen kind. Polarity and stop bits as set.
+/// The ID condition, wider values and a mask stay with the software trigger.
 fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
-    use uarttrig::{Cond, ErrKind, Parity, Relation, Stop, Uart};
+    use uarttrig::{Cond, ErrKind, Parity, Stop, Uart};
     if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Uart || m.dec_on_la() || m.dec_diff.is_some() || !(1..=8).contains(&m.dec_bits) {
         return None;
     }
+    let s = &m.ser;
+    let fits = |v: u64| v >> m.dec_bits == 0;
     let cond = match m.trig_bus {
         BusWhat::Frame => Cond::Start,
-        BusWhat::Data if m.trig_bus_val <= 0xff && m.trig_bus_val >> m.dec_bits == 0 => Cond::Data(Relation::Eq, m.trig_bus_val as u8, m.trig_bus_val as u8),
-        BusWhat::Error => Cond::Error(ErrKind::Either),
+        BusWhat::Data if fits(m.trig_bus_val) && (!s.rel.uses_max() || fits(s.max)) && s.mask & 0xff == 0xff => {
+            Cond::Data(hw_rel(s.rel), m.trig_bus_val as u8, if s.rel.uses_max() { s.max as u8 } else { m.trig_bus_val as u8 })
+        }
+        BusWhat::Error => Cond::Error(match s.uart_err {
+            UartErr::Either => ErrKind::Either,
+            UartErr::Parity => ErrKind::Parity,
+            UartErr::Framing => ErrKind::Framing,
+        }),
         _ => return None,
     };
     let parity = match m.dec_parity {
@@ -525,7 +547,12 @@ fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
         oos_dsp::decode::Parity::Odd => Parity::Odd,
         oos_dsp::decode::Parity::Even => Parity::Even,
     };
-    Some(Uart { baud: crate::decode::BAUDS[m.dec_baud], bits: m.dec_bits, parity, stop: Stop::One, cond, invert: false })
+    let stop = match s.uart_stop {
+        StopBits::One => Stop::One,
+        StopBits::OneHalf => Stop::OneHalf,
+        StopBits::Two => Stop::Two,
+    };
+    Some(Uart { baud: crate::decode::BAUDS[m.dec_baud], bits: m.dec_bits, parity, stop, cond, invert: s.uart_inv })
 }
 
 /// Fork, `:SYSTem:DEBug:UART?`: what the TPU's UART receiver gets for the model (`off,...` when the software trigger
@@ -568,51 +595,88 @@ fn serial_of(m: &Model) -> Option<Trig> {
     uart_of(m).map(Trig::Uart).or_else(|| spi_of(m).map(Trig::Spi)).or_else(|| i2c_of(m).map(Trig::I2c))
 }
 
-/// The SPI protocol trigger in the receiver: an SPI decoder on channels with chip select (the software's clock-pause
-/// framing has no fixed time), 1..32 bits, and Frame (every word) or Data = value. CS active low, MSB first, the clock
-/// edge of the decoder's mode, as the software decoder.
+/// The SPI protocol trigger in the receiver: an SPI decoder on channels, framed by chip select (its polarity as set)
+/// or, without CS, by the clock pause of `ser.spi_timeout` (a time is needed: the software's default pause is a number
+/// of samples), 1..32 bits, and Frame (every word) or Data against value, limit and mask. MSB first, the clock edge of
+/// the decoder's mode, as the software decoder.
 fn spi_of(m: &Model) -> Option<serialtrig::Spi> {
-    use oos_hal::dho::uarttrig::Relation;
-    let cs = m.dec_cs?;
     if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Spi || m.dec_on_la() || !(1..=32).contains(&m.dec_bits) {
         return None;
     }
-    let full = serialtrig::word_mask(m.dec_bits);
-    let (v, mask) = match m.trig_bus {
-        BusWhat::Frame => (0, 0),
-        BusWhat::Data if m.trig_bus_val & !full == 0 => (m.trig_bus_val, full),
+    let s = &m.ser;
+    let timeout = (m.dec_cs.is_none() && s.spi_timeout > 0.0).then_some(s.spi_timeout as f64);
+    if m.dec_cs.is_none() && timeout.is_none() {
+        return None;
+    }
+    let full = serialtrig::word_mask(m.dec_bits) as u64;
+    let (rel, v, max, mask) = match m.trig_bus {
+        BusWhat::Frame => (Rel::Eq, 0, 0, 0),
+        BusWhat::Data if m.trig_bus_val & !full == 0 && (!s.rel.uses_max() || s.max & !full == 0) => (s.rel, m.trig_bus_val, if s.rel.uses_max() { s.max } else { m.trig_bus_val }, s.mask & full),
         _ => return None,
     };
     Some(serialtrig::Spi {
         clk: m.dec_src2 as u32 + 1,
         data: m.dec_src as u32 + 1,
-        cs: cs as u32 + 1,
+        // with timeout framing the receiver ignores CS: its line is the clock's
+        cs: m.dec_cs.unwrap_or(m.dec_src2) as u32 + 1,
         clk_falling: !matches!(m.dec_mode, 0 | 3),
-        cs_high: false,
-        timeout: None,
+        cs_high: s.spi_cs_high,
+        timeout,
         width: m.dec_bits,
-        rel: Relation::Eq,
-        min: v,
-        max: v,
-        mask,
+        rel: hw_rel(rel),
+        min: v as u32,
+        max: max as u32,
+        mask: mask as u32,
     })
 }
 
-/// The I2C protocol trigger in the receiver: Frame (start), ID/Addr = a 7-bit address (either direction) and Error
-/// (missing ACK). Data stays with the software: it matches any byte of a frame, the receiver only the first ones.
+/// The I2C protocol trigger in the receiver: Frame (start), Error (missing ACK), ID/Addr against value and limit
+/// (7 or 10 bits, the direction), and Data: the first `ser.bytes` (1..5) bytes after the address, big-endian,
+/// against value, limit and mask, in the chosen direction. Data in any byte (`bytes` 0) stays with the software.
 fn i2c_of(m: &Model) -> Option<serialtrig::I2c> {
-    use oos_hal::dho::uarttrig::Relation;
     use serialtrig::{Dir, I2cCond};
     if m.trig_type != TrigType::Bus || m.dec_proto != Proto::I2c || m.dec_on_la() {
         return None;
     }
-    let (cond, addr) = match m.trig_bus {
-        BusWhat::Frame => (I2cCond::Start, (0, 0, 0)),
-        BusWhat::Id if m.trig_bus_val <= 0x7f => (I2cCond::Address, (m.trig_bus_val, m.trig_bus_val, 0x7f)),
-        BusWhat::Error => (I2cCond::MissingAck, (0, 0, 0)),
+    let s = &m.ser;
+    let amax: u64 = if s.ten_bit { 0x3ff } else { 0x7f };
+    let bytes = s.bytes.clamp(1, 5) as u32;
+    // any data byte of a frame: the receiver compares only the first ones
+    if m.trig_bus == BusWhat::Data && s.bytes == 0 {
+        return None;
+    }
+    let dfull: u64 = (1u64 << (8 * bytes)) - 1;
+    let dir = match s.dir {
+        I2cDir::Either => Dir::Either,
+        I2cDir::Write => Dir::Write,
+        I2cDir::Read => Dir::Read,
+    };
+    let none = (0u32, 0u32, 0u32);
+    let (cond, addr, data_rel, data) = match m.trig_bus {
+        BusWhat::Frame => (I2cCond::Start, none, Rel::Eq, (0, 0, 0)),
+        BusWhat::Error => (I2cCond::MissingAck, none, Rel::Eq, (0, 0, 0)),
+        BusWhat::Id if m.trig_bus_val <= amax && s.addr_max as u64 <= amax => {
+            let hi = if s.addr_rel.uses_max() { s.addr_max } else { m.trig_bus_val as u32 };
+            (I2cCond::Address, (m.trig_bus_val as u32, hi, amax as u32), Rel::Eq, (0, 0, 0))
+        }
+        BusWhat::Data if m.trig_bus_val <= dfull && (!s.rel.uses_max() || s.max <= dfull) => {
+            let hi = if s.rel.uses_max() { s.max } else { m.trig_bus_val };
+            (I2cCond::Data, none, s.rel, (m.trig_bus_val, hi, s.mask & dfull))
+        }
         _ => return None,
     };
-    Some(serialtrig::I2c { scl: m.dec_src2 as u32 + 1, sda: m.dec_src as u32 + 1, cond, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr, data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) })
+    Some(serialtrig::I2c {
+        scl: m.dec_src2 as u32 + 1,
+        sda: m.dec_src as u32 + 1,
+        cond,
+        dir,
+        ten_bit: s.ten_bit,
+        addr_rel: hw_rel(if cond == I2cCond::Address { s.addr_rel } else { Rel::Eq }),
+        addr,
+        data_rel: hw_rel(data_rel),
+        bytes,
+        data,
+    })
 }
 
 /// Every comparator line of an SPI or I2C receiver is an acquired channel (`mask`, bit 0 = CH1); other triggers pass.
@@ -2074,6 +2138,11 @@ mod tests {
             (m.trig_bus, m.trig_bus_val) = (what, v);
             assert_eq!(i2c_of(&m).map(|i| i.cond), want, "{:?}", what);
         }
+        // data in the first two bytes after the address: the receiver, big-endian, mask of two bytes
+        (m.trig_bus, m.trig_bus_val, m.ser.bytes) = (BusWhat::Data, 0x1234, 2);
+        let d = i2c_of(&m).unwrap();
+        assert_eq!((d.cond, d.bytes, d.data), (I2cCond::Data, 2, (0x1234, 0x1234, 0xffff)));
+        m.ser.bytes = 0;
         (m.trig_bus, m.trig_bus_val) = (BusWhat::Id, 0x50);
         let i = i2c_of(&m).unwrap();
         assert_eq!((i.scl, i.sda, i.addr), (2, 1, (0x50, 0x50, 0x7f)));
@@ -2081,6 +2150,43 @@ mod tests {
         // lines that are not acquired fall back to the edge trigger
         assert!(serial_lines_acquired(&Trig::I2c(i), 0b11) && !serial_lines_acquired(&Trig::I2c(i), 0b01));
         assert!(serial_lines_acquired(&Trig::Edge, 0));
+    }
+
+    #[test]
+    fn serial_settings_reach_the_receivers() {
+        use oos_hal::dho::serialtrig::{Dir, I2cCond};
+        use oos_hal::dho::uarttrig::{Cond, ErrKind, Relation, Stop};
+        // UART: relation and limit, polarity, stop bits, error kind; a mask keeps the software
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_bits, m.trig_bus, m.trig_bus_val) = (TrigType::Bus, Proto::Uart, 8, BusWhat::Data, 0x30);
+        (m.ser.rel, m.ser.max, m.ser.uart_inv, m.ser.uart_stop) = (Rel::In, 0x39, true, StopBits::Two);
+        let u = uart_of(&m).unwrap();
+        assert_eq!((u.cond, u.invert, u.stop), (Cond::Data(Relation::In, 0x30, 0x39), true, Stop::Two));
+        m.ser.mask = 0x0f;
+        assert_eq!(uart_of(&m), None);
+        (m.ser.mask, m.ser.max) = (u64::MAX, 0x139);
+        assert_eq!(uart_of(&m), None, "a limit wider than the data bits");
+        (m.trig_bus, m.ser.uart_err) = (BusWhat::Error, UartErr::Parity);
+        assert_eq!(uart_of(&m).unwrap().cond, Cond::Error(ErrKind::Parity));
+        // SPI: without CS the timeout frames; relation, limit and mask to the width; CS polarity
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2, m.dec_cs, m.dec_bits) = (TrigType::Bus, Proto::Spi, 0, 1, None, 16);
+        (m.trig_bus, m.trig_bus_val, m.ser.rel, m.ser.max, m.ser.mask) = (BusWhat::Data, 0x1000, Rel::Out, 0x2000, 0xff00);
+        assert_eq!(spi_of(&m), None, "no CS and no timeout");
+        m.ser.spi_timeout = 2e-6;
+        let s = spi_of(&m).unwrap();
+        assert_eq!((s.timeout, s.cs, s.rel, s.min, s.max, s.mask), (Some(2e-6f32 as f64), 2, Relation::Out, 0x1000, 0x2000, 0xff00));
+        (m.dec_cs, m.ser.spi_cs_high) = (Some(2), true);
+        let s = spi_of(&m).unwrap();
+        assert_eq!((s.timeout, s.cs, s.cs_high), (None, 3, true));
+        // I2C: 10-bit address range, read only
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2, m.trig_bus, m.trig_bus_val) = (TrigType::Bus, Proto::I2c, 0, 1, BusWhat::Id, 0x200);
+        (m.ser.ten_bit, m.ser.addr_rel, m.ser.addr_max, m.ser.dir) = (true, Rel::In, 0x2ff, I2cDir::Read);
+        let i = i2c_of(&m).unwrap();
+        assert_eq!((i.cond, i.ten_bit, i.addr_rel, i.addr, i.dir), (I2cCond::Address, true, Relation::In, (0x200, 0x2ff, 0x3ff), Dir::Read));
+        m.ser.ten_bit = false;
+        assert_eq!(i2c_of(&m), None, "a 10-bit value with 7-bit addresses");
     }
 
     #[test]
