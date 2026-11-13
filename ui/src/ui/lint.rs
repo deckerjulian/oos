@@ -472,6 +472,32 @@ fn dvm_and_counter_read_the_source() {
 }
 
 #[test]
+fn dvm_prefers_a_decoded_block_reading_of_its_source() {
+    let mut u = with_two_channels();
+    u.m.dvm_on = true;
+    for _ in 0..4 {
+        u.step(0.04);
+    }
+    let sw = u.dvm_value();
+    assert!(sw.is_finite());
+    assert!(u.dvm_debug_text().starts_with("off,sw="));
+    let r = crate::board::DvmRead { ch: 0, lane: 0, exp: 28, raw: [0x39, 1, 2, 3, 4], volts: Some([0.25, 0.5, 0.75]), n: 3 };
+    // (reading, mode, value): the mode picks the value; another channel's or a refused reading leaves the software DVM
+    let cases: [(crate::board::DvmRead, usize, f64); 4] =
+        [(r, 0, 0.25), (r, 2, 0.75), (crate::board::DvmRead { ch: 1, ..r }, 0, sw), (crate::board::DvmRead { volts: None, ..r }, 0, sw)];
+    for (hw, mode, want) in cases {
+        u.dvm_hw = Some(hw);
+        u.m.dvm_mode = mode;
+        assert_eq!(u.dvm_value(), want, "{:?} mode {}", hw, mode);
+    }
+    u.dvm_hw = Some(r);
+    u.m.dvm_mode = 0;
+    let t = u.dvm_debug_text();
+    assert!(t.starts_with("ch=1,lane=0,exp=28,n=3,cfg=0x00000039,sum_lo=0x00000001"), "{}", t);
+    assert!(t.contains("hw=2.500000e-1;5.000000e-1;7.500000e-1,mode=0,sw="), "{}", t);
+}
+
+#[test]
 fn tracking_cursors_read_the_trace() {
     let mut u = with_two_channels();
     u.m.cursor = CursorMode::Track;
