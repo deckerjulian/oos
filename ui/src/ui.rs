@@ -2594,29 +2594,44 @@ impl Ui {
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
         let tdiv = self.view().0 as f64;
+        let delay = self.view().1 as f64;
         let ppx = self.area.w as f64 / HDIV as f64;
+        let xmid = self.area.x as f64 + self.area.w as f64 / 2.0;
+        // only the samples that land on this screen (plus a little margin)
+        let t_lo = delay - tdiv * HDIV as f64 * 0.6;
+        let t_hi = delay + tdiv * HDIV as f64 * 0.6;
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
-            if !r.on {
+            if !r.on || r.dt <= 0.0 || r.v.len() < 2 {
                 continue;
             }
             let col = REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1;
-            let step = (r.v.len() / (self.area.w as usize * 2)).max(1);
+            let last = r.v.len() - 1;
+            let k0 = ((t_lo - r.t0) / r.dt).floor().max(0.0) as usize;
+            let k1 = ((t_hi - r.t0) / r.dt).ceil().max(0.0) as usize;
+            let k0 = k0.min(last);
+            let k1 = k1.min(last);
+            if k1 <= k0 {
+                continue;
+            }
+            let step = ((k1 - k0) / (self.area.w as usize * 2)).max(1);
             let mut prev: Option<(i32, i32)> = None;
             let mut first = None;
-            for k in (0..r.v.len()).step_by(step) {
+            for k in (k0..=k1).step_by(step) {
                 let v = r.v[k];
                 if !v.is_finite() {
                     prev = None;
                     continue;
                 }
-                let t = r.t0 + k as f64 * r.dt - self.view().1 as f64;
-                let x = (self.area.x as f64 + self.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
+                let t = r.t0 + k as f64 * r.dt - delay;
+                let x = (xmid + t / tdiv * ppx).round() as i32;
                 let y = (cy - (v + r.offset) / r.vpd * ppy).round() as i32;
                 if let Some((x0, y0)) = prev {
-                    cv.line(x0, y0, x, y, col);
+                    if (x - x0).abs() < self.area.w * 2 && (y - y0).abs() < self.area.h * 4 {
+                        cv.line(x0, y0, x, y, col);
+                    }
                 }
-                if first.is_none() && x >= self.area.x {
+                if first.is_none() && x >= self.area.x && x < self.area.x + self.area.w {
                     first = Some(y);
                 }
                 prev = Some((x, y));
@@ -3100,8 +3115,9 @@ impl Ui {
         cv.round(r.inset(1), 5, mix(BAR, col, 36), 255);
         cv.circle(r.x + 16, r.y + 14, 4, col);
         cv.text(&f.mb, r.x + 30, r.y + 19, txt, col);
-        // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
+        // acquisition: sample rate and depth of the hardware when it runs, else of the model; a loaded SIM
+        // record is stored at its own rate, not the live ADC
+        let (sr, depth) = self.sim_rate_depth().or_else(|| self.src.hw_rate_depth().map(|(r, n)| (r, n as _))).unwrap_or_else(|| self.m.srate_depth());
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;

@@ -210,12 +210,12 @@ impl Canvas {
             std::mem::swap(&mut x0, &mut x1);
             std::mem::swap(&mut y0, &mut y1);
         }
-        let dx = x1 - x0;
-        let dy = y1 - y0;
+        let dx = (x1 - x0) as i64;
+        let dy = (y1 - y0) as i64;
         let grad = if dx != 0 { (dy << 16) / dx } else { 1 << 16 };
-        let mut yf = y0 << 16;
+        let mut yf = (y0 as i64) << 16;
         for x in x0..=x1 {
-            let yi = yf >> 16;
+            let yi = (yf >> 16) as i32;
             let fr = ((yf >> 8) & 255) as u32;
             if steep {
                 self.pixel(yi, x, c, 255 - fr);

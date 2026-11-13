@@ -166,16 +166,20 @@ pub const CH_COLORS: [Rgb; NCH] = {
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
 /// scales digitally (cal_vertical digital gain 2.15 / 5.38 / 10.76 at 500 / 200 / 100 uV, no forced 20 MHz).
 pub const VSCALES: [f32; 16] = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
-/// s/div: 5 ns .. 1000 s.
+/// Fastest time/div the ADC acquisition uses. Stored refs (SIM) may display faster than this.
+pub const HW_MIN_TDIV: f32 = 1e-9;
+
+/// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
+/// `HW_MIN_TDIV` (`hw_time_per_div`).
 pub fn tscales() -> Vec<f32> {
     let mut v = Vec::new();
-    let mut d = 1e-9_f64;
+    let mut d = 1e-11_f64;
     while d < 2000.0 {
         for m in [1.0, 2.0, 5.0] {
             let x = d * m;
-            // from 1 ns/div (stock 5 ns): below 5 ns/div the screen holds 12..62 samples, drawn with the
-            // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
-            if x >= 0.99e-9 && x <= 1000.1 {
+            // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn
+            // with the windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
+            if x >= 0.49e-10 && x <= 1000.1 {
                 v.push(x as f32);
             }
         }
@@ -1613,9 +1617,10 @@ impl Model {
         tscales()[self.tscale] * self.tfine
     }
 
-    /// The time base the acquisition runs at: the step, which covers at least the screen.
+    /// The time base the acquisition runs at: the step, which covers at least the screen. Display scales below
+    /// 1 ns/div stay on the plot; the ADC still takes a 1 ns/div window.
     pub fn hw_time_per_div(&self) -> f32 {
-        tscales()[self.tscale]
+        tscales()[self.tscale].max(HW_MIN_TDIV)
     }
 
     /// Keeps every offset within what the AFE of its scale can do.

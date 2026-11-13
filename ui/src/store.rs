@@ -309,6 +309,12 @@ fn p_u32(v: &str) -> Result<u32, String> {
     v.parse::<u32>().map_err(|_| format!("not an integer: {}", v))
 }
 
+/// Old setup files stored an index into the 5 ns .. 1000 s ladder.
+fn legacy_tscale(v: &str, ntime: usize) -> Result<usize, String> {
+    let five = tscales().iter().position(|&t| t >= 4.9e-9).unwrap_or(0);
+    Ok(five.saturating_add(p_idx(v, ntime.saturating_sub(five).max(1))?))
+}
+
 /// Index below n.
 /// A time/div value as an index into `tscales()` (exact step, 0.1 % tolerance).
 fn tdiv_index(v: &str) -> Result<usize, String> {
@@ -405,7 +411,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "active" => m.active = p_idx(v, NCH)?,
         "tdiv" => m.tscale = tdiv_index(v)?,
         // setups before the 1/2 ns steps: index into the old ladder (5 ns .. 1000 s)
-        "tscale" => m.tscale = p_idx(v, ntime - 2)? + 2,
+        "tscale" => m.tscale = legacy_tscale(v, ntime)?,
         "delay" => m.delay = p_f32(v)?,
         "trig_src" => m.trig_src = p_idx(v, NCH)?,
 "pat_la" => {
@@ -563,7 +569,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "zoom" => m.zoom = p_bool(v)?,
         "auto_roll" => m.auto_roll = p_bool(v)?,
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
-        "zscale" => m.zscale = p_idx(v, ntime - 2)? + 2,
+        "zscale" => m.zscale = legacy_tscale(v, ntime)?,
         "zdelay" => m.zdelay = p_f32(v)?,
         "color_grade" => m.color_grade = p_bool(v)?,
         "dots" => m.dots = p_bool(v)?,
