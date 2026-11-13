@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Measure > Labels on trace: what a measurement measures, on the trace: level lines for levels, arrows for spans.
 
-use super::{si, Canvas, Rect, Ui, CH_COLORS};
+use super::{si, Canvas, Rect, Ui, CH_COLORS, REF_COLORS};
 use crate::model::WaveId;
 use crate::gfx::Rgb;
 use oos_dsp::measure::{Analysis, Meas};
@@ -77,33 +77,52 @@ impl Ui {
     }
 
     pub(super) fn draw_meas_labels(&self, cv: &mut Canvas) {
-        let Some(rec) = self.last[0].as_ref().filter(|_| self.m.meas_labels) else { return };
+        if !self.m.meas_labels {
+            return;
+        }
         let a = self.area;
         // spans in rows between the levels, vertical arrows from the left, level labels spread over the width
         let (mut rows, mut verts, mut levels) = (0, 0, 0);
+        let (tdiv, delay) = self.view();
         for &(k, id) in self.m.meas.iter().take(MAX_LABELS) {
-            let WaveId::Ch(c) = id else { continue };
-            let ana = &self.ana[c];
-            let v = self.meas(c, k);
-            if !self.m.ch[c].on || !self.shows(c) || !ana.valid || !v.is_finite() {
+            let (ana, rec_t0, col) = match id {
+                WaveId::Ch(c) => {
+                    let rec = match self.last[0].as_ref() {
+                        Some(r) if self.m.ch[c].on && self.shows(c) => r,
+                        _ => continue,
+                    };
+                    let ana = &self.ana[c];
+                    if !ana.valid {
+                        continue;
+                    }
+                    (ana.clone(), rec.t0, CH_COLORS[c])
+                }
+                WaveId::Ref(i) => {
+                    let Some(r) = self.refs.get(i).and_then(|x| x.as_ref()).filter(|r| r.on) else { continue };
+                    let ana = &self.ref_ana[i];
+                    if !ana.valid {
+                        continue;
+                    }
+                    (ana.clone(), r.t0, REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1)
+                }
+            };
+            let v = self.meas_of(&ana, k);
+            if !v.is_finite() {
                 continue;
             }
-            let col = CH_COLORS[c];
             let text = format!("{} {}", k.name(), si(v, k.unit()));
-            // the measured record starts at the left edge of the record shown
-            let (tdiv, delay) = self.view();
             // an arrow from the very edge of the screen is hard to read
-            let left = delay as f64 - 4.7 * tdiv as f64 - rec.t0;
-            match mark(k, ana, left) {
+            let left = delay as f64 - 4.7 * tdiv as f64 - rec_t0;
+            match mark(k, &ana, left) {
                 Some(Mark::Level(l)) => {
-                    let y = self.y_of_volts(c, l as f32);
+                    let y = self.y_of_wave(id, l as f32);
                     cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, col);
                     self.meas_label(cv, a.x + a.w * (3 + 2 * (levels % 3)) / 10, y - 11, &text, col);
                     levels += 1;
                 }
                 Some(Mark::Vertical(lo, hi)) => {
                     let x = a.x + 46 + verts * 30;
-                    let (y0, y1) = (self.y_of_volts(c, hi as f32), self.y_of_volts(c, lo as f32));
+                    let (y0, y1) = (self.y_of_wave(id, hi as f32), self.y_of_wave(id, lo as f32));
                     cv.vline(x, y0, y1, col);
                     for (y, d) in [(y0, 1), (y1, -1)] {
                         cv.line(x, y, x - 4, y + 7 * d, col);
@@ -113,12 +132,12 @@ impl Ui {
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
-                    let (x0, x1) = (self.x_of_time((rec.t0 + t0) as f32), self.x_of_time((rec.t0 + t1) as f32));
+                    let (x0, x1) = (self.x_of_time((rec_t0 + t0) as f32), self.x_of_time((rec_t0 + t1) as f32));
                     if x1 <= x0 + 1 || x1 < a.x || x0 > a.x + a.w {
                         continue;
                     }
                     let mid = (ana.top + ana.base) / 2.0 + (ana.top - ana.base) * (0.22 - 0.16 * rows as f64);
-                    let y = self.y_of_volts(c, mid as f32);
+                    let y = self.y_of_wave(id, mid as f32);
                     cv.hline(x0, x1, y, col);
                     let head = 7.min((x1 - x0) / 2);
                     for (x, d) in [(x0, 1), (x1, -1)] {

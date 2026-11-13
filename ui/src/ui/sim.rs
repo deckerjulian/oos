@@ -10,7 +10,28 @@ use oos_dsp::serial::{self, Lane, LANES};
 
 const PRBS: [u8; 5] = [7, 9, 15, 23, 31];
 
+/// Serial-record strip: levels, bit period, edges, widths. Two rows of six.
+/// First six also have on-trace labels (pk-pk, amp, rise, fall, period, +width).
+const SIM_MEAS: [Meas; 12] = [
+    Meas::Vpp,
+    Meas::Vamp,
+    Meas::Rise,
+    Meas::Fall,
+    Meas::Period,
+    Meas::PWidth,
+    Meas::Freq,
+    Meas::PDuty,
+    Meas::Overshoot,
+    Meas::NWidth,
+    Meas::PSlew,
+    Meas::PEdges,
+];
+
 impl Ui {
+    fn sim_meas(slot: usize) -> Vec<(Meas, WaveId)> {
+        SIM_MEAS.into_iter().map(|k| (k, WaveId::Ref(slot))).collect()
+    }
+
     pub(super) fn sim_items(&self) -> Vec<Item> {
         vec![
             Item::SimPreset,
@@ -219,7 +240,9 @@ impl Ui {
         self.m.zscale = bit;
         self.m.zdelay = look;
         self.clamp_zoom();
-        self.m.meas = Self::default_meas().into_iter().map(|(k, _)| (k, WaveId::Ref(slot))).collect();
+        self.m.meas = Self::sim_meas(slot);
+        self.m.meas2.clear();
+        self.m.meas_labels = true;
         self.meas_src = WaveId::Ref(slot);
         self.m.eye_src = WaveId::Ref(slot);
         self.m.eye_rate = lane.bits_per_s;
@@ -274,6 +297,7 @@ mod tests {
         assert!((tscales()[u.m.zscale] as f64 - 50e-12).abs() < 1e-12, "zoom {}", tscales()[u.m.zscale]);
         assert!((u.m.delay as f64 - 256e-9).abs() < 1e-12);
         assert!(u.m.meas.iter().all(|(_, id)| *id == WaveId::Ref(2)));
+        assert_eq!(u.m.meas.len(), 12);
         u.render(&mut Canvas::new(W, H));
         let names = serial::names().join(" ");
         assert!(!names.to_ascii_lowercase().contains("hss"));
@@ -296,12 +320,21 @@ mod tests {
         let (sr, n) = u.sim_rate_depth().expect("rate");
         assert!((sr - 80e9).abs() < 1.0, "sr {}", sr);
         assert_eq!(n, 65_536);
-        let vpp = u.meas_rows().into_iter().find(|r| r.name == "Pk-pk").expect("pk-pk").v;
+        let rows = u.meas_rows();
+        assert_eq!(rows.len(), 12);
+        for want in ["Pk-pk", "Freq", "Period", "Rise", "Fall", "+Duty", "Amp", "Overshoot", "+Width", "-Width", "+Slew", "+Edges"] {
+            let row = rows.iter().find(|r| r.name == want).unwrap_or_else(|| panic!("missing {want}"));
+            assert!(row.v.is_finite(), "{want} {}", row.v);
+        }
+        let vpp = rows.iter().find(|r| r.name == "Pk-pk").unwrap().v;
         assert!(vpp > 0.5 && vpp < 1.2, "vpp {}", vpp);
+        assert!(u.m.meas_labels);
         let mut cv = Canvas::new(W, H);
         u.render(&mut cv);
         if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
-            let _ = std::fs::write(format!("{}/sim-usb32-gen2-loaded.png", dir), crate::store::png_of(&cv));
+            let png = crate::store::png_of(&cv);
+            let _ = std::fs::write(format!("{}/sim-usb32-gen2-loaded.png", dir), &png);
+            let _ = std::fs::write(format!("{}/sim-usb32-measurements.png", dir), &png);
         }
     }
 

@@ -2439,6 +2439,20 @@ impl Ui {
         (a.y as f32 + a.h as f32 / 2.0 - (v + ch.offset) / ch.volts_per_div() * ppd).round() as i32
     }
 
+    fn y_of_wave(&self, id: WaveId, v: f32) -> i32 {
+        match id {
+            WaveId::Ch(c) => self.y_of_volts(c, v),
+            WaveId::Ref(i) => {
+                let a = self.area;
+                let Some(r) = self.refs.get(i).and_then(|x| x.as_ref()) else {
+                    return a.y;
+                };
+                let ppd = a.h as f32 / VDIV;
+                (a.y as f32 + a.h as f32 / 2.0 - (v + r.offset) / r.vpd.max(1e-12) * ppd).round() as i32
+            }
+        }
+    }
+
     fn x_of_time(&self, t: f32) -> i32 {
         let a = self.area;
         let (tdiv, delay) = self.view();
