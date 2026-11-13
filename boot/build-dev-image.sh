@@ -115,6 +115,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
 	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
+	. /wlan/unit-hook/dtb.sh
 	# the busybox package in the image: its source goes with a release
 	dpkg-query -W -f "\${Package} \${Version}\n" busybox-static > /out/busybox.version
 	chown -R "$OUT_OWNER" /out

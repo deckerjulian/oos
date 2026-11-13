@@ -371,7 +371,14 @@ in). With `net.ipv6 = on`, `oos-net6` sets before eth0 comes up: stable-privacy 
 MAC, so it can go into DNS. A new card or `rm /oos/net/ipv6.secret` gives a new one. The secret is synced to the card
 as soon as it is made: `/oos` is ext2 without a journal, and the first version left it in the page cache, so a reboot
 soon after the first start lost it and every start made new addresses. `/tmp/oos-net.log` says `secret made` or
-`secret kept`. A WLAN stick gets the same mode.
+`secret kept`.
+The other input of the hash is the interface's permanent MAC address (`dev->perm_addr` in the kernel's addrconf), not
+the one `oos-mac` sets later with `ip link`. The RK3399 GMAC driver makes a random one at probe when the vendor storage
+has none (`rk_vendor_read eth mac address failed`), so the addresses still changed at every start. A unit image whose
+`eth.mac` is a fixed address therefore carries it in its DTB as `local-mac-address` of the Ethernet node
+(`boot/unit-hook-dtb.sh`, checked by `tools/unit-dtb-check.sh`); the driver takes that at probe and it becomes the
+permanent address. With `eth.mac = cid` or `vendor` (known only on the scope) the DTB stays as it is, and the IPv6
+addresses change per start. A WLAN stick gets the same mode.
 There is no DHCPv6. `udhcpc.script` flushes only the IPv4 addresses of an interface: it used to flush all, which took
 the IPv6 link-local address with it (the kernel makes that one only when the link comes up), so the scope had no IPv6
 at all after its first DHCP lease.
