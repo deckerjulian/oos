@@ -100,8 +100,13 @@ impl Ui {
     }
 
     pub(super) fn run_caption(&self) -> (&'static str, Rgb) {
-        if self.offline {
-            return if self.sim_play { ("PLAY", GREEN) } else { ("HOLD", AMBER) };
+        if self.record_mode() {
+            return match (self.m.run, self.m.status) {
+                (RunState::Stop, _) => ("STOP", RED),
+                (_, TrigStatus::Wait) => ("ARMED", AMBER),
+                (_, TrigStatus::Triggered) => ("TRIG'D", GREEN),
+                _ => ("AUTO", GREEN),
+            };
         }
         match (self.m.run, self.m.status) {
             _ if self.cal_running() => ("CAL", ACCENT),
@@ -114,8 +119,8 @@ impl Ui {
 
     /// Sample rate and depth for the top line. The bool is the live acquire mode that follows it.
     pub(super) fn acq_caption(&self) -> (String, bool) {
-        if self.offline {
-            if let Some(r) = self.refs.get(self.offline_ref).and_then(|r| r.as_ref()).filter(|r| r.on && r.v.len() >= 2 && r.dt > 0.0) {
+        if self.record_mode() {
+            if let Some(r) = self.refs.get(self.active_reference()).and_then(|r| r.as_ref()).filter(|r| r.v.len() >= 2 && r.dt > 0.0) {
                 let sr = 1.0 / r.dt;
                 return (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
             }
@@ -127,7 +132,7 @@ impl Ui {
 
     /// Slot the DVM and the counter read while the mode is on.
     pub(super) fn offline_meter(&self) -> Option<usize> {
-        self.offline.then_some(self.offline_ref.min(NREF - 1))
+        self.record_mode().then_some(self.active_reference())
     }
 
     pub(super) fn ref_card_lines(&self) -> (String, String) {
@@ -234,7 +239,7 @@ mod tests {
         u.set_offline(true);
         assert!(u.cards().0.iter().all(|r| r.w == 0));
         assert!(u.m.ch.iter().all(|c| !c.on));
-        assert_eq!(u.run_caption().0, "HOLD");
+        assert_eq!(u.run_caption().0, "STOP");
         assert!(!u.acq_caption().1);
         u.set_offline(false);
         assert!(u.m.ch[0].on);
@@ -255,10 +260,10 @@ mod tests {
         assert!(u.last[0].is_none());
         assert!(u.m.ch.iter().all(|c| !c.on));
         assert!(u.ph.map.iter().all(|m| m.iter().all(|&h| h == 0)));
-        assert_eq!(u.run_caption().0, "HOLD");
+        assert_eq!(u.run_caption().0, "STOP");
         let r = Ui::RUN_PILL;
         u.tap(r.x + 8, r.y + 8);
-        assert_eq!(u.run_caption().0, "HOLD");
+        assert_eq!(u.run_caption().0, "STOP");
     }
 
     #[test]
@@ -274,9 +279,9 @@ mod tests {
         let sine: Vec<f32> = (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
         write_csv(&dir, 1, 0.0, dt, &sine);
         live.activate(Item::RefImport);
-        assert!(live.m.ch[0].on);
-        assert_eq!(live.m.tscale, scale);
-        assert!(!live.offline);
+        assert!(!live.m.ch[0].on && live.offline, "import enters an explicit stored-waveform session");
+        assert!(live.cards().0.iter().all(|card| card.w == 0));
+        let _ = scale;
 
         let mut play = ui();
         play.activate(Item::SimPlay);
@@ -292,10 +297,11 @@ mod tests {
         u.activate(Item::SimPlay);
         assert!(u.m.ch.iter().all(|c| !c.on));
         assert!(u.sim_play);
-        assert_eq!(u.run_caption().0, "PLAY");
+        assert!(matches!(u.run_caption().0, "ARMED" | "AUTO" | "TRIG'D"));
         assert_eq!(u.ref_card_lines(), ("R3".into(), "PCIe 4.0".into()));
         let rec = u.refs[2].as_ref().unwrap();
-        assert_timebase(&u, rec.t0, rec.dt, rec.v.len());
+        assert!(u.m.zoom);
+        assert!(u.m.time_per_div() as f64 * HDIV as f64 >= rec.v.len() as f64 * rec.dt);
         let (play_sr, _) = u.acq_caption();
         assert!(play_sr.contains("Sa/s") && !play_sr.contains("Normal"), "{}", play_sr);
         u.m.dvm_on = true;
@@ -308,7 +314,7 @@ mod tests {
         u.activate(Item::RefImport);
         assert!(u.m.ch.iter().all(|c| !c.on));
         assert!(!u.sim_play);
-        assert_eq!(u.run_caption().0, "HOLD");
+        assert_eq!(u.run_caption().0, "STOP");
         assert_eq!(u.ref_card_lines().0, "R1");
         let loaded = u.refs[0].as_ref().unwrap();
         assert_eq!(loaded.v, sine);
@@ -326,7 +332,7 @@ mod tests {
         u.m.cnt_mode = 2;
         assert_ne!(u.dvm_row()[1].1, "----");
 
-        u.set_offline(false);
+        u.return_to_live();
         assert!(u.m.ch[0].on);
         assert_eq!((u.m.tscale, u.m.tfine, u.m.delay), held);
         assert!(!u.sim_play);

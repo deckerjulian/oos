@@ -962,13 +962,13 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         return Err(format!("OOS waveform version {ver}"));
     }
     let nch = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
-    let n = u64::from_le_bytes(b[12..20].try_into().unwrap()) as usize;
+    let n = usize::try_from(u64::from_le_bytes(b[12..20].try_into().unwrap())).map_err(|_| "OOS waveform is too large".to_string())?;
     let dt = f64::from_le_bytes(b[20..28].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[28..36].try_into().unwrap());
-    if nch == 0 || nch > 8 || n < 2 || !(dt > 0.0) {
+    if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
         return Err("that file holds no waveform".into());
     }
-    let need = 36 + nch * (4 + 4 * n);
+    let need = n.checked_mul(4).and_then(|bytes| bytes.checked_add(4)).and_then(|bytes| bytes.checked_mul(nch)).and_then(|bytes| bytes.checked_add(36)).ok_or("OOS waveform is too large")?;
     if b.len() < need {
         return Err("truncated OOS waveform".into());
     }

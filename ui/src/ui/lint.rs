@@ -157,12 +157,16 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(u.menu_open && u.menu == MenuId::Acquire);
     u.tap(160, 20);
     assert!(!u.menu_open);
-    // what is used most, and the menus without a front-panel key
-    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Measure", "Cursor", "Display", "Storage", "System"]);
-    // the buttons beside it keep working
-    let (_, _, r) = u.top_buttons()[0];
+    // File loading and simulation are direct actions beside the usual tools.
+    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Load file", "SIM", "Measure", "Cursor", "Display", "Storage", "System"]);
+    let (_, _, load) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Load).unwrap();
+    u.tap(load.x + 5, load.y + 5);
+    assert!(u.open_wave_request && !u.menu_open);
+    u.open_wave_request = false;
+    // Measurement choices remain one tap away, without going through acquisition or another menu.
+    let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
     u.tap(r.x + 5, r.y + 5);
-    assert!(u.menu_open && u.menu != MenuId::Acquire);
+    assert!(u.menu_open && u.menu == MenuId::MeasAdd);
 }
 
 #[test]
@@ -265,7 +269,7 @@ fn with_two_channels() -> Ui {
 }
 
 #[test]
-fn fourteen_measurements_with_delay_and_phase() {
+fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     let mut u = with_two_channels();
     u.m.meas.clear();
     for k in ALL_MEAS.iter().take(10) {
@@ -275,10 +279,10 @@ fn fourteen_measurements_with_delay_and_phase() {
     for k in 0..6 {
         u.meas_pair_toggle(k);
     }
-    // never more than the limit: the oldest goes
-    assert_eq!(u.m.meas.len() + u.m.meas2.len(), tools::MEAS_MAX);
+    // A larger selection keeps all ten original measurements and all six pairs.
+    assert_eq!(u.m.meas.len() + u.m.meas2.len(), 16);
     let rows = u.meas_rows();
-    assert_eq!(rows.len(), tools::MEAS_MAX);
+    assert_eq!(rows.len(), 16);
     assert!(rows.iter().any(|r| r.name.starts_with("Delay rise-rise 1-2")));
     // the same channel twice makes no sense
     u.meas_src_b = WaveId::Ch(0);
@@ -1449,10 +1453,33 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
     assert_eq!(r.v, want);
     assert!((r.dt - dt).abs() < 1e-18);
     std::fs::remove_file(dir.join("wave-001.bin")).unwrap();
-    u.refs[0] = None;
-    std::fs::write(dir.join("cap.wfm"), crate::store::wave_bin(&rec, &u.m)).unwrap();
-    u.activate(Item::RefImport);
-    assert_eq!(u.refs[0].as_ref().unwrap().v, want);
+    // A real f32 WFM fixture is independent of the live channel-enable bits: importing the BIN
+    // entered reference mode and deliberately switched those channels off.
+    for magic in [b":WFM#002", b":WFM#003"] {
+        const CURVE: usize = 838;
+        let mut wfm = vec![0u8; CURVE + want.len() * 4 + 8];
+        wfm[..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
+        wfm[2..10].copy_from_slice(magic);
+        wfm[15] = 4;
+        wfm[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
+        wfm[40..48].copy_from_slice(b"captured");
+        wfm[168..176].copy_from_slice(&1f64.to_le_bytes());
+        wfm[240..244].copy_from_slice(&4u32.to_le_bytes());
+        wfm[488..496].copy_from_slice(&dt.to_le_bytes());
+        wfm[496..504].copy_from_slice(&rec.t0.to_le_bytes());
+        wfm[826..830].copy_from_slice(&((want.len() * 4) as u32).to_le_bytes());
+        for (index, value) in want.iter().enumerate() {
+            wfm[CURVE + index * 4..CURVE + index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        u.refs[0] = None;
+        std::fs::write(dir.join("cap.wfm"), wfm).unwrap();
+        u.activate(Item::RefImport);
+        let loaded = u.refs[0].as_ref().expect("WFM loaded into R1");
+        assert_eq!(loaded.v, want);
+        assert_eq!(loaded.label, "captured");
+        assert!((loaded.dt - dt).abs() < 1e-18);
+        assert!((loaded.t0 - rec.t0).abs() < 1e-18);
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

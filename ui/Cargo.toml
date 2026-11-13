@@ -14,7 +14,7 @@ oos-dsp = { path = "../dsp" }
 # a desktop window for the host build (src/desktop.rs); the scope build does not use it
 [target.'cfg(windows)'.dependencies]
 minifb = "0.27"
-windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_UI_Controls_Dialogs"] }
 
 [profile.release]
 opt-level = 3

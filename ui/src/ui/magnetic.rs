@@ -346,8 +346,8 @@ impl Ui {
                 (v.len() >= 2 && dt > 0.0).then_some(WaveSamp { v, t0, dt })
             }
             WaveId::Ref(i) => {
-                let r = self.refs.get(i)?.as_ref()?;
-                (r.v.len() >= 2 && r.dt > 0.0).then_some(WaveSamp { v: r.v.clone(), t0: r.t0, dt: r.dt })
+                let (v, t0, dt) = self.reference_slice(i)?;
+                (v.len() >= 2 && dt > 0.0).then_some(WaveSamp { v: v.to_vec(), t0, dt })
             }
         }
     }

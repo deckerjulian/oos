@@ -137,8 +137,8 @@ impl Ui {
                 (!v.is_empty()).then_some((v.as_slice(), rec.t0, rec.dt))
             }
             WaveId::Ref(i) => {
-                let r = self.refs.get(i)?.as_ref()?;
-                (r.v.len() >= 2 && r.dt > 0.0).then_some((r.v.as_slice(), r.t0, r.dt))
+                let (v, t0, dt) = self.reference_slice(i)?;
+                (v.len() >= 2 && dt > 0.0).then_some((v, t0, dt))
             }
         }
     }

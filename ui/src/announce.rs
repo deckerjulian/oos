@@ -457,6 +457,7 @@ pub struct Announcer {
     burst: u8,
     next: Instant,
     refresh: Instant,
+    interfaces_next: Instant,
 }
 
 impl Announcer {
@@ -467,14 +468,32 @@ impl Announcer {
             Some(_) => eprintln!("oos-ui: announcing {} (identification {})", names.join(", "), IDENTIFICATION_PATH),
             None => eprintln!("oos-ui: announcement not available"),
         }
-        Announcer { sock, services: services.to_vec(), joined: Vec::new(), last: Vec::new(), burst: 2, next: Instant::now(), refresh: Instant::now() + Duration::from_secs(60) }
+        Announcer { sock, services: services.to_vec(), joined: Vec::new(), last: Vec::new(), burst: 2, next: Instant::now(), refresh: Instant::now() + Duration::from_secs(60), interfaces_next: Instant::now() }
+    }
+
+    /// The responder owns a socket and has real listeners to announce.
+    pub fn available(&self) -> bool {
+        self.sock.is_some() && !self.services.is_empty()
+    }
+
+    /// Addresses in the most recent announcement, excluding down and loopback interfaces.
+    pub fn local_addresses(&self) -> &[[u8; 4]] {
+        &self.last
     }
 
     pub fn poll(&mut self) {
+        // Adapter enumeration is expensive on Windows and Linux; a fresh list once per second is enough.
+        let ifs = if Instant::now() >= self.interfaces_next {
+            self.interfaces_next = Instant::now() + Duration::from_secs(1);
+            addresses()
+        } else {
+            self.last.clone()
+        };
         if self.sock.is_none() || self.services.is_empty() {
+            // The UI can still show a real address when another mDNS responder owns the port.
+            self.last = ifs;
             return;
         }
-        let ifs = addresses();
         let fresh: Vec<[u8; 4]> = ifs.iter().copied().filter(|a| !self.joined.contains(a)).collect();
         if let Some(sock) = self.sock.as_ref() {
             for a in &fresh {

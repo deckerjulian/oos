@@ -6,6 +6,7 @@
 //!   knob <name> <+n|-n|push> knob turns (hpos vpos hscale vscale tlevel multi1 multi2)
 //!   tap <x> <y>              touch tap
 //!   drag <x0> <y0> <x1> <y1> touch drag (8 steps)
+//!   workflow <live|sim|load|measure|settings> direct source and measurement actions
 //!   shot <path>              screenshot (PPM)
 //!   frames <n>               host only: advance n frames
 //!   storedir <path>          storage directory (setups, CSV, PNG)
@@ -24,7 +25,9 @@ pub enum Out {
 /// Commands the web remote may run: its own buttons and touch gestures. The others name files or end the program;
 /// they stay with the local control FIFO and the host scripts.
 pub fn remote_ok(line: &str) -> bool {
-    matches!(line.split_whitespace().next(), Some("key" | "knob" | "tap" | "drag"))
+    let words: Vec<&str> = line.split_whitespace().collect();
+    matches!(words.first().copied(), Some("key" | "knob" | "tap" | "drag"))
+        || (words.len() == 2 && words[0] == "workflow" && matches!(words[1], "live" | "sim" | "load" | "measure" | "settings"))
 }
 
 pub fn run(ui: &mut Ui, line: &str) -> Out {
@@ -34,6 +37,7 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
     }
     let num = |s: &str| -> i32 { s.trim_start_matches('+').parse().unwrap_or(0) };
     match w[0] {
+        "workflow" if remote_ok(line) => ui.workflow_command(w[1]),
         "key" if w.len() > 1 => {
             let code = if let Some(h) = w[1].strip_prefix("0x") {
                 u8::from_str_radix(h, 16).unwrap_or(0)

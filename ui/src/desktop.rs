@@ -14,13 +14,20 @@
 //!   1-4    CH1-CH4      F  Math       R  Ref      L  LA        G  Generator  T  Trigger menu
 //!   H      Horizontal menu            Q  Quick    Z  zoom (H scale push)     F12  screenshot (PNG)
 //!
-//! The window keeps the screen's 1024 x 600 shape when it is resized; the bars around it take no input.
+//! The 1024 x 600 scope screen sits beside a visible front panel. Both scale together when resized.
+//! Ctrl+O opens the native waveform picker. LAN services control this same session.
 
 use crate::cmd;
 use crate::gfx::Canvas;
 use crate::ui::{self, Ev, Phase, Ui};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 use std::time::Instant;
+
+mod lan;
+mod panel;
+mod picker;
+
+const DESKTOP_W: i32 = ui::W + panel::WIDTH;
 
 /// One wheel notch as minifb reports it on Windows (WHEEL_DELTA 120 x 0.1).
 const NOTCH: f32 = 12.0;
@@ -29,10 +36,10 @@ const NOTCH: f32 = 12.0;
 fn to_screen(win: &Window, x: f32, y: f32) -> Option<(i32, i32)> {
     let (ww, wh) = win.get_size();
     let (ww, wh) = (ww.max(1) as f32, wh.max(1) as f32);
-    let s = (ww / ui::W as f32).min(wh / ui::H as f32);
-    let (ox, oy) = ((ww - ui::W as f32 * s) / 2.0, (wh - ui::H as f32 * s) / 2.0);
+    let s = (ww / DESKTOP_W as f32).min(wh / ui::H as f32);
+    let (ox, oy) = ((ww - DESKTOP_W as f32 * s) / 2.0, (wh - ui::H as f32 * s) / 2.0);
     let (sx, sy) = ((x - ox) / s, (y - oy) / s);
-    let inside = sx >= 0.0 && sy >= 0.0 && sx < ui::W as f32 && sy < ui::H as f32;
+    let inside = sx >= 0.0 && sy >= 0.0 && sx < DESKTOP_W as f32 && sy < ui::H as f32;
     inside.then_some((sx as i32, sy as i32))
 }
 
@@ -68,27 +75,66 @@ fn key_cmd(k: Key) -> Option<&'static str> {
     })
 }
 
-pub fn run(mut ui: Ui) {
+fn dispatch(ui: &mut Ui, command: &str) {
+    if let Some(action) = command.strip_prefix("workflow ") {
+        ui.workflow_command(action);
+    } else {
+        cmd::run(ui, command);
+    }
+}
+
+fn open_waveform(ui: &mut Ui, win: &Window) {
+    match picker::waveform(win.get_window_handle()) {
+        Ok(Some(path)) => {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "waveform".into());
+            match std::fs::read(&path).map_err(|e| format!("Cannot read {name}: {e}")).and_then(|bytes| ui.load_waveform_bytes(&bytes, &name)) {
+                Ok(()) => {}
+                Err(error) => ui.toast(&error),
+            }
+        }
+        Ok(None) => ui.toast("Open canceled; the current waveform is unchanged"),
+        Err(error) => ui.toast(&error),
+    }
+}
+
+pub fn run(mut ui: Ui, args: &[String]) {
     let opts = WindowOptions { resize: true, scale: Scale::X1, scale_mode: ScaleMode::AspectRatioStretch, ..WindowOptions::default() };
-    let mut win = match Window::new("OOS", ui::W as usize, ui::H as usize, opts) {
+    let mut win = match Window::new("OOS Plus", DESKTOP_W as usize, ui::H as usize, opts) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("oos-ui: window: {}", e);
             std::process::exit(1);
         }
     };
-    // the loop paces itself at 30 frames/s, as on the scope
-    win.set_target_fps(30);
+    // Poll input faster than drawing: short clicks must not disappear between 30 fps frames.
+    win.set_target_fps(120);
     let mut cv = Canvas::new(ui::W, ui::H);
+    let mut desktop = Canvas::new(DESKTOP_W, ui::H);
+    let mut services = lan::Services::open(args);
     let mut last = Instant::now();
     let mut wheel = 0.0f32;
     let mut touch: Option<(i32, i32)> = None;
+    let mut was_down = false;
+    let mut panel_pressed = None;
+    let controls = panel::controls();
     let mut shot_n = 0u32;
     while win.is_open() && !ui.quit {
         // mouse = finger 0; a drag that leaves the picture ends where it left
         let down = win.get_mouse_down(MouseButton::Left);
         let at = win.get_unscaled_mouse_pos(MouseMode::Pass).and_then(|(x, y)| to_screen(&win, x, y));
-        match (down, touch, at) {
+        if down && !was_down {
+            panel_pressed = at.and_then(|(x, y)| controls.iter().position(|c| c.rect.contains(x, y)));
+        }
+        if !down && was_down {
+            if let (Some(index), Some((x, y))) = (panel_pressed.take(), at) {
+                if controls[index].rect.contains(x, y) {
+                    dispatch(&mut ui, controls[index].command);
+                }
+            }
+        }
+        was_down = down;
+        let on_screen = at.filter(|&(x, _)| x < ui::W);
+        match (down, touch, on_screen) {
             (true, None, Some((x, y))) => {
                 ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
                 touch = Some((x, y));
@@ -97,7 +143,7 @@ pub fn run(mut ui: Ui) {
                 ui.handle(Ev::Touch { id: 0, phase: Phase::Move, x, y });
                 touch = Some((x, y));
             }
-            (false, Some((x, y)), _) => {
+            (false, Some((x, y)), _) | (true, Some((x, y)), None) => {
                 ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
                 touch = None;
             }
@@ -128,12 +174,30 @@ pub fn run(mut ui: Ui) {
             cmd::run(&mut ui, &format!("knob {} {:+}", knob, n));
         }
         for k in win.get_keys_pressed(KeyRepeat::Yes) {
-            if k == Key::F12 {
+            let ctrl = win.is_key_down(Key::LeftCtrl) || win.is_key_down(Key::RightCtrl);
+            if k == Key::O && ctrl {
+                ui.request_waveform();
+            } else if k == Key::M {
+                ui.workflow_command("measure");
+            } else if k == Key::F12 {
                 let p = crate::store::next_name(&ui.store_dir, "shot", "png");
                 ui.shot_request = Some(p.to_string_lossy().into_owned());
             } else if let Some(c) = key_cmd(k) {
                 cmd::run(&mut ui, c);
             }
+        }
+        services.poll(&mut ui, &cv);
+        if std::mem::take(&mut ui.open_wave_request) {
+            open_waveform(&mut ui, &win);
+            // The dialog pumps Windows messages independently; discard elapsed acquisition time and mouse state.
+            last = Instant::now();
+            touch = None;
+            panel_pressed = None;
+            was_down = false;
+        }
+        if last.elapsed().as_secs_f64() < 1.0 / 30.0 {
+            win.update();
+            continue;
         }
         let dt = last.elapsed().as_secs_f64().min(0.2);
         last = Instant::now();
@@ -142,7 +206,13 @@ pub fn run(mut ui: Ui) {
         if let Some(p) = ui.shot_request.take() {
             crate::save_shot(&mut ui, &cv, p, &mut shot_n);
         }
-        if let Err(e) = win.update_with_buffer(&cv.px, ui::W as usize, ui::H as usize) {
+        for y in 0..ui::H as usize {
+            let from = y * ui::W as usize;
+            let to = y * DESKTOP_W as usize;
+            desktop.px[to..to + ui::W as usize].copy_from_slice(&cv.px[from..from + ui::W as usize]);
+        }
+        panel::draw(&mut desktop, &ui, at);
+        if let Err(e) = win.update_with_buffer(&desktop.px, DESKTOP_W as usize, ui::H as usize) {
             eprintln!("oos-ui: window: {}", e);
             break;
         }

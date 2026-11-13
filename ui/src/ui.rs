@@ -21,6 +21,7 @@ mod selfcal;
 pub mod bode;
 mod sim;
 mod offline;
+mod workflow;
 pub mod startup;
 mod afg;
 mod sysinfo;
@@ -29,6 +30,7 @@ mod logger;
 mod measlabels;
 mod overclock;
 mod tools;
+mod measurement_nav;
 pub(crate) mod facts;
 mod update;
 mod viewmore;
@@ -244,6 +246,7 @@ pub enum MenuId {
 enum TopBtn {
     Menu(MenuId),
     System,
+    Load,
 }
 
 /// An open picker: the choice item, and the menu (with its Back target and focus) to return to.
@@ -727,6 +730,15 @@ pub enum PowerAction {
 }
 
 pub struct Ui {
+    meas_category: usize,
+    meas_page: usize,
+    meas_catalog_page: usize,
+    workflow_hold: Option<workflow::LiveSession>,
+    session_is_sim: bool,
+    replay: workflow::Replay,
+    pub open_wave_request: bool,
+    pub lan_status: String,
+    pub lan_web_port: Option<u16>,
     pub m: Model,
     pub src: Source,
     pub fonts: Fonts,
@@ -951,6 +963,15 @@ impl Ui {
             m.ch[0].offset = -1.25;
         }
         let mut ui = Ui {
+            meas_category: 0,
+            meas_page: 0,
+            meas_catalog_page: 0,
+            workflow_hold: None,
+            session_is_sim: false,
+            replay: workflow::Replay::default(),
+            open_wave_request: false,
+            lan_status: String::new(),
+            lan_web_port: None,
             m,
             src,
             fonts: Fonts::load(),
@@ -1116,7 +1137,7 @@ impl Ui {
             return dvm;
         }
         let meas = if self.results_panel() { 0 } else { self.meas_groups().iter().map(|&c| self.meas_strip_rows(c)).sum() };
-        meas + (self.m.cursor != CursorMode::Off) as i32 + dvm
+        self.visible_measurement_rows(meas) + (self.m.cursor != CursorMode::Off) as i32 + dvm
     }
 
     /// The plot: 10 x 8 divisions between the top bar and the cards. A strip under the plot or above the trace
@@ -1609,24 +1630,13 @@ impl Ui {
         }
         self.was_running = running;
         let persist = PERSIST[self.m.persist].1;
-        // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if self.offline {
-            // the record is the session: no demo acquisition on CH1-CH4
-            self.idle_analog();
-            let ready = self.refs.get(self.offline_ref).and_then(|r| r.as_ref()).is_some_and(|r| r.v.len() >= 2);
-            if self.sim_play && !ready {
-                self.sim_play = false;
-            }
-        } else if self.sim_play && self.m.run == RunState::Run {
-            self.sim_play = false;
-        }
-        // a source started in STOP (replay) still shows its first record, unless the screen was cleared.
-        // analog off and no LA: do not arm the ADC / demo path (SIM Play is a stored ref)
-        if self.sim_play {
-            self.sim_tick(dt_wall);
+        if self.record_mode() {
+            if self.m.run == RunState::Run { self.sim_play = true; }
+            self.replay_acquire(dt_wall);
+            if self.m.run == RunState::Stop { self.refresh_stopped_reference(); }
         }
         let live = self.m.n_on() > 0 || self.m.la_on();
-        if !self.offline && live && (self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared)) {
+        if !self.record_mode() && live && (self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared)) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -1793,7 +1803,7 @@ impl Ui {
                     }
                 }
             }
-        } else if !self.offline {
+        } else if !self.record_mode() {
             // stopped: redraw the stored record with the current scale/offset
             self.ph.clear();
             self.phz.clear();
@@ -1812,7 +1822,7 @@ impl Ui {
             }
         }
         if self.m.run == RunState::Stop {
-            self.m.status = TrigStatus::Stop;
+            if !self.record_mode() { self.m.status = TrigStatus::Stop; }
             self.wfm_rate = 0.0;
         }
         self.pane_tick();
@@ -3165,8 +3175,9 @@ impl Ui {
         let g = self.grid;
         let y = g.y + 14;
         // only what makes the picture something else than a live measurement; the rates are on System info
-        let src = if self.offline {
-            "Offline"
+        let record_caption = self.record_caption();
+        let src = if self.record_mode() {
+            record_caption.as_str()
         } else {
             match self.src.name() {
                 "DEMO" => "Demo signals",
@@ -3304,6 +3315,7 @@ impl Ui {
         if self.strip_rows() == 0 {
             return;
         }
+        if self.draw_paged_measurement_strip(cv) { return; }
         match self.m.strip_dock {
             StripDock::Left | StripDock::Right => self.draw_strip_side(cv),
             _ => self.draw_strip_band(cv, self.strip_band_y()),
@@ -3427,9 +3439,11 @@ impl Ui {
         let a = self.over_area();
         let y = a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32;
         let x = a.x + a.w - 56 - RESULTS_W;
-        let n = (self.m.meas.len() + self.m.meas2.len()) as i32;
+        let total = self.m.meas.len() + self.m.meas2.len();
+        let n = total.min(self.results_page_size()) as i32;
         let head = Rect::new(x, y, RESULTS_W, 30);
-        Some((head, Rect::new(x, y + 30, RESULTS_W, if self.results_min { 0 } else { n * Self::results_pitch(n) + 4 })))
+        let nav = if total > n as usize { 38 } else { 0 };
+        Some((head, Rect::new(x, y + 30, RESULTS_W, if self.results_min { 0 } else { n * Self::results_pitch(total as i32) + nav + 4 })))
     }
 
     /// Height of a row of the results card: two lines, or one when there are many.
@@ -3459,8 +3473,9 @@ impl Ui {
         }
         let rows = self.meas_rows();
         let pitch = Self::results_pitch(rows.len() as i32);
-        for (i, r) in rows.iter().enumerate() {
-            let by = body.y + i as i32 * pitch;
+        let (first, end) = self.results_page_range(rows.len());
+        for (page_row, (i, r)) in rows.iter().enumerate().skip(first).take(end - first).enumerate() {
+            let by = body.y + page_row as i32 * pitch;
             cv.hline(body.x + 8, body.x + body.w - 9, by, LINE);
             let st = self.mstat.get(i).copied().unwrap_or_default();
             let mean = st.sum / st.n.max(1) as f64;
@@ -3481,6 +3496,7 @@ impl Ui {
             }
             cv.text(&f.mb, body.x + 10, by + 35, &r.text(), self.wave_color(r.src));
         }
+        self.draw_results_page_buttons(cv, body, rows.len());
     }
 
     const RUN_PILL: Rect = Rect::new(8, 6, 92, 28);
@@ -3494,7 +3510,9 @@ impl Ui {
     /// (Display, Storage, System). Everything else is in the start menu.
     fn top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let f = &self.fonts;
-        let all: [(TopBtn, &'static str); 5] = [
+        let all: [(TopBtn, &'static str); 7] = [
+            (TopBtn::Load, "Load file"),
+            (TopBtn::Menu(MenuId::Sim), "SIM"),
             (TopBtn::Menu(MenuId::Measure), "Measure"),
             (TopBtn::Menu(MenuId::Cursor), "Cursor"),
             (TopBtn::Menu(MenuId::Display), "Display"),
@@ -3564,8 +3582,9 @@ impl Ui {
         let (caption, live_acq) = self.acq_caption();
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
-        let acq_open = self.menu_open && self.menu_root() == if self.offline { MenuId::Ref } else { MenuId::Acquire };
+        let acq_open = self.menu_open && self.menu_root() == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
         let tcol = if acq_open { ACCENT } else { TEXT };
+        cv.set_clip(Rect::new(114, 0, (room - 114).max(1), TOP.h));
         let x = cv.text(&f.mb, 114, 25, &caption, tcol);
         if live_acq {
             let acq = match self.m.acq {
@@ -3579,6 +3598,7 @@ impl Ui {
                 cv.text(&f.m, x, 25, &acq, tcol);
             }
         }
+        cv.no_clip();
         // buttons (the open menu in orange)
         let root = self.menu_root();
         for (b, l, r) in buttons {
@@ -3586,6 +3606,7 @@ impl Ui {
                 && match b {
                     TopBtn::Menu(m) => root == m,
                     TopBtn::System => root == MenuId::Utility,
+                    TopBtn::Load => false,
                 };
             btn(cv, r, BTN, if hl { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, l, if hl { ACCENT } else { TEXT });
@@ -3662,6 +3683,10 @@ impl Ui {
     /// room for their text, else narrow.
     fn card_layout(&self) -> Cards {
         let (y, h) = (530, 66);
+        if self.record_mode() {
+            return Cards { ch: [Rect::new(0, y, 0, h); NCH], la: None, gen: None,
+                time: Rect::new(656, y, 164, h), trig: Rect::new(827, y, 191, h) };
+        }
         // 2-channel models: no cards for CH3/CH4 (zero width, never drawn or hit)
         let n = if self.offline { 0 } else { n_ch() };
         // Stored refs with analog off: no CH1..CH4 cards. TIME and trigger keep the bar.
@@ -3756,6 +3781,7 @@ impl Ui {
         }
         cv.text_in(&f.sb, Rect::new(r.x, r.y + 42, r.w, 16), 1, if lock { "Locked" } else { "Menu" }, col);
         let (chs, tr, trg) = self.cards();
+        if self.record_mode() { self.draw_record_cards(cv); }
         for (c, &r) in chs.iter().enumerate() {
             if r.w == 0 {
                 continue;
@@ -3823,8 +3849,8 @@ impl Ui {
         // trigger: type, slope / polarity / standard and level; source and sweep buttons.
         // Offline mode puts the reference name here: no edge, no level, no sweep.
         let r = trg;
-        if self.offline {
-            self.draw_offline_card(cv, r, root == Some(MenuId::Ref));
+        if self.record_mode() {
+            self.draw_session_card(cv, r);
             return;
         }
         let sel = root == Some(MenuId::Trigger);
@@ -3986,7 +4012,7 @@ impl Ui {
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
-            MenuId::MeasAdd => ALL_MEAS.iter().map(|&k| Item::MeasAdd(k)).collect(),
+            MenuId::MeasAdd => self.measurement_catalog(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
@@ -4126,8 +4152,8 @@ impl Ui {
     /// Each loaded ref, at the slot's own sample interval. Coupling and the bandwidth limit are not applied.
     fn measure_refs(&mut self) {
         for i in 0..NREF {
-            self.ref_ana[i] = match &self.refs[i] {
-                Some(r) if r.v.len() >= 2 && r.dt > 0.0 => oos_dsp::measure::analyze_refs(&r.v, r.dt, 0.4 * r.vpd as f64, self.m.meas_lpct, self.m.meas_hpct),
+            self.ref_ana[i] = match self.reference_slice(i) {
+                Some((samples, _, dt)) if samples.len() >= 2 && dt > 0.0 => oos_dsp::measure::analyze_refs(samples, dt, 0.4 * self.refs[i].as_ref().unwrap().vpd as f64, self.m.meas_lpct, self.m.meas_hpct),
                 _ => Default::default(),
             };
         }
@@ -4428,6 +4454,9 @@ impl Ui {
 
     /// Row label, with the trigger rows named after their role in the selected trigger type.
     fn item_label(&self, it: Item) -> &'static str {
+        if it == Item::SimPlay {
+            return if !self.session_is_sim { "Start simulation" } else if self.m.run == RunState::Run { "Stop simulation" } else { "Run simulation" };
+        }
         let t = self.m.trig_type;
         let two_level = matches!(t, TrigType::Slope | TrigType::Runt | TrigType::Window);
         match it {
@@ -4888,6 +4917,7 @@ impl Ui {
             Item::RefColor => self.refs[self.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into(),
             Item::HScale => si_short(m.time_per_div() as f64, "s"),
             Item::HDelay => si(m.delay as f64, "s"),
+            Item::TrigSrc if self.record_mode() => format!("R{}", self.active_reference() + 1),
             Item::TrigSrc => format!("CH{}", m.trig_src + 1),
             Item::TrigSlope => match m.slope {
                 Slope::Rise => "Rising".into(),
@@ -5065,6 +5095,16 @@ impl Ui {
 
     fn adjust(&mut self, it: Item, d: i32) {
         if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+            return;
+        }
+        if it == Item::TrigSrc && self.record_mode() {
+            let slots: Vec<_> = (0..NREF).filter(|&i| self.refs[i].is_some()).collect();
+            if !slots.is_empty() {
+                let pos = slots.iter().position(|&i| i == self.active_reference()).unwrap_or(0);
+                let slot = slots[(pos as i32 + d).rem_euclid(slots.len() as i32) as usize];
+                self.ref_sel = slot; self.offline_ref = slot; self.m.sim_slot = slot;
+                self.replay = Default::default();
+            }
             return;
         }
         let m = &mut self.m;
@@ -5629,8 +5669,13 @@ impl Ui {
                 }
                 Item::MeasAdd(k) => {
                     let e = (k, self.meas_src);
-                    if !self.m.meas.contains(&e) {
-                        self.meas_make_room();
+                    if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
+                        self.m.meas.remove(index);
+                        self.mstat.clear();
+                        self.toast(&format!("{} {} removed", k.name(), self.wave_name(self.meas_src)));
+                        return;
+                    } else {
+                        if !self.meas_make_room() { return; }
                         self.m.meas.push(e);
                     }
                     if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
@@ -6018,6 +6063,7 @@ impl Ui {
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
             Item::ChProbe(_) => &["1x", "10x", "100x"],
+            Item::TrigSrc if self.record_mode() => return (0..NREF).filter(|&i| self.refs[i].is_some()).map(|i| format!("R{}", i + 1)).collect(),
             Item::TrigSrc | Item::DecSrc | Item::RefSrc => return ch_names(),
             Item::MeasSrc | Item::MeasSrcB => return self.wave_names(),
             Item::MathA | Item::MathB => return (0..NCH + self.m.math_sel).filter(|&s| src_ok(s)).map(src_name).collect(),
@@ -6206,6 +6252,7 @@ impl Ui {
         if !self.menu_open {
             return None;
         }
+        if self.menu == MenuId::MeasAdd { return Some(self.measurement_chooser_layout()); }
         if self.menu == MenuId::Main {
             return Some(self.main_layout());
         }
@@ -6301,6 +6348,7 @@ impl Ui {
             btn(cv, b, BTN, BTN_BORDER);
             cv.text_in(&f.sb, b, 1, "Back", TEXT);
         }
+        self.draw_measurement_groups(cv);
         for (r, name) in &d.heads {
             cv.text_in(&f.sb, *r, 0, name, DIM);
         }
@@ -6358,6 +6406,8 @@ impl Ui {
                     let txt = match picked {
                         Some((o, _)) => o,
                         None if row.it == Item::QuickRun => format!("Quick \u{b7} {}", self.m.quick.short()),
+                        None if self.menu == MenuId::MeasAdd && row.it == Item::Open(MenuId::Measure) => "Settings".into(),
+                        None if self.menu == MenuId::MeasAdd && row.it == Item::Open(MenuId::MeasPair) => "Channel pairs".into(),
                         None if kind == Kind::Action => self.item_label(row.it).to_string(),
                         None => self.value(row.it),
                     };
@@ -6383,6 +6433,7 @@ impl Ui {
 
     /// Tap inside the menu dialog; false when (x, y) is outside it.
     fn tap_menu(&mut self, x: i32, y: i32) -> bool {
+        if self.measurement_group_tap(x, y) { return true; }
         let Some(d) = self.dlg_layout() else { return false };
         if !d.r.contains(x, y) {
             return false;
@@ -6537,6 +6588,7 @@ impl Ui {
             self.dialog = None;
             return;
         }
+        if self.record_key(k) { return; }
         let m = &mut self.m;
         match k {
             0x15..=0x18 if (k - 0x15) as usize >= n_ch() => {
@@ -6615,7 +6667,7 @@ impl Ui {
                 }
                 self.toast("Force trigger");
             }
-            key::MEASURE => self.toggle_menu(MenuId::Measure),
+            key::MEASURE => self.open_meas_list(),
             key::CURSOR => {
                 if self.m.cursor == CursorMode::Off {
                     self.m.cursor = CursorMode::Time;
@@ -7176,6 +7228,7 @@ impl Ui {
         if self.tap_menu(x, y) {
             return;
         }
+        if !self.menu_open && self.measurement_navigation_tap(x, y) { return; }
         if self.auto_bar_tap(x, y) {
             return;
         }
@@ -7210,10 +7263,6 @@ impl Ui {
             return;
         }
         if Self::top_hit(Self::RUN_PILL).contains(x, y) {
-            if self.offline {
-                self.toggle_offline_run();
-                return;
-            }
             return self.key(key::RUNSTOP);
         }
         if Self::top_hit(Self::NET_BOX).contains(x, y) {
@@ -7228,7 +7277,7 @@ impl Ui {
         // sample rate, depth and mode in the top bar: the page that sets them
         let end = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x) - 4;
         if Self::top_hit(Rect::new(Self::RUN_PILL.x + Self::RUN_PILL.w, Self::RUN_PILL.y, end - Self::RUN_PILL.x - Self::RUN_PILL.w, Self::RUN_PILL.h)).contains(x, y) {
-            return self.toggle_menu(if self.offline { MenuId::Ref } else { MenuId::Acquire });
+            return self.toggle_menu(if self.record_mode() { MenuId::Ref } else { MenuId::Acquire });
         }
         for (b, _, r) in self.top_buttons() {
             if Self::top_hit(r).contains(x, y) {
@@ -7237,6 +7286,7 @@ impl Ui {
                     TopBtn::Menu(MenuId::Measure) => self.open_meas_list(),
                     TopBtn::Menu(id) => self.toggle_menu(id),
                     TopBtn::System => self.toggle_menu(MenuId::Utility),
+                    TopBtn::Load => self.request_waveform(),
                 };
             }
         }
@@ -7282,9 +7332,27 @@ impl Ui {
             }
             return self.toggle_menu(MenuId::Horizontal);
         }
+        if self.record_mode() {
+            for (slot, rect) in self.record_cards() {
+                if rect.contains(x, y) {
+                    self.ref_sel = slot;
+                    self.offline_ref = slot;
+                    self.meas_src = WaveId::Ref(slot);
+                    if x >= rect.x + rect.w - 42 && y < rect.y + 28 {
+                        if let Some(reference) = self.refs[slot].as_mut() { reference.on = !reference.on; }
+                        return;
+                    }
+                    return self.toggle_menu(MenuId::Ref);
+                }
+            }
+        }
         if trg.contains(x, y) {
-            if self.offline {
-                return self.toggle_menu(MenuId::Ref);
+            if self.record_mode() {
+                let (run, live) = Self::session_buttons(trg);
+                if run.contains(x, y) { self.key(key::RUNSTOP); }
+                else if live.contains(x, y) { self.return_to_live(); }
+                else { self.toggle_menu(MenuId::Trigger); }
+                return;
             }
             // the buttons are low: each takes its half of the card for the finger
             if x >= Self::trig_parts(trg).0.x - 6 {
@@ -8404,7 +8472,8 @@ mod tests {
         ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "DQ".into(), t0: 0.0, dt: 1e-9, v: vec![0.0, 1.0], vpd: 0.2, offset: 0.0, on: true });
         let (chs, tr, trg) = ui.cards();
         assert!(chs.iter().all(|r| r.w == 0), "{:?}", chs);
-        assert!(tr.w >= 130 && trg.w >= 222);
+        assert!(tr.w >= 130 && trg.w >= 180);
+        assert!(!ui.record_cards().is_empty(), "stored references have visible source cards");
         assert!(!ui.m.zoom);
         ui.tap(tr.x + 10, tr.y + tr.h - 8);
         assert!(ui.m.zoom && !ui.menu_open);
@@ -8549,10 +8618,13 @@ mod tests {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let rest = vec![
-            Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasPair), Item::MeasIdle, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::MeasClear,
+            Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear,
         ];
         ui.key(key::MEASURE);
-        assert_eq!(ui.menu, MenuId::Measure);
+        assert_eq!(ui.menu, MenuId::MeasAdd);
+        let settings = ui.dlg_layout().unwrap().rows.iter().find(|row| row.it == Item::Open(MenuId::Measure)).unwrap().ctrl;
+        ui.tap(settings.x + settings.w / 2, settings.y + settings.h / 2);
+        assert_eq!(ui.menu, MenuId::Measure, "settings is visible in the chooser");
         assert_eq!(ui.items(MenuId::Measure), rest);
         for it in ui.items(MenuId::Measure) {
             assert_ne!(ui.item_label(it), "Add item");
@@ -8652,7 +8724,7 @@ mod tests {
             ui.step(0.033);
         }
         // the menu keys
-        for (k, m) in [(key::HMENU, MenuId::Acquire), (key::ANALYSE, MenuId::Decode), (key::TMENU, MenuId::Trigger), (key::MEASURE, MenuId::Measure), (key::CURSOR, MenuId::Cursor), (key::MATH, MenuId::Math), (key::REF, MenuId::Ref)] {
+        for (k, m) in [(key::HMENU, MenuId::Acquire), (key::ANALYSE, MenuId::Decode), (key::TMENU, MenuId::Trigger), (key::MEASURE, MenuId::MeasAdd), (key::CURSOR, MenuId::Cursor), (key::MATH, MenuId::Math), (key::REF, MenuId::Ref)] {
             ui.close_menu();
             ui.key(k);
             assert!(ui.menu_open && ui.menu == m, "key {:#x}", k);

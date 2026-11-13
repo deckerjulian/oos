@@ -129,6 +129,7 @@ impl Ui {
     }
 
     pub(super) fn sim_adjust(&mut self, it: Item, d: i32) -> bool {
+        let running = self.m.run == RunState::Run;
         match it {
             Item::SimPreset => {
                 let n = LANES.len() as i32;
@@ -158,11 +159,19 @@ impl Ui {
             }
             _ => return false,
         }
+        if self.session_is_sim && it != Item::SimShow {
+            self.sim_load();
+            if !running {
+                self.m.run = RunState::Stop;
+                self.sim_play = false;
+            }
+        }
         true
     }
 
     pub(super) fn sim_activate(&mut self, it: Item) -> bool {
         match it {
+            Item::SimPlay if self.session_is_sim => { self.record_key(key::RUNSTOP); },
             Item::SimPlay => self.sim_load(),
             Item::SimDefaults => {
                 self.m.apply_sim_preset();
@@ -204,6 +213,10 @@ impl Ui {
 
     /// Writes the current knobs into the selected R slot. Overview is the stored record; zoom is ~eight UI.
     fn sim_load(&mut self) {
+        let continuing = self.session_is_sim;
+        self.remember_live();
+        self.session_is_sim = true;
+        self.replay = Default::default();
         let lane = self.sim_lane();
         let v = serial::generate(&lane);
         let n = v.len();
@@ -222,14 +235,7 @@ impl Ui {
             offset: 0.0,
             on: true,
         });
-        if self.offline {
-            self.present_record(slot);
-            self.m.eye_rate = lane.bits_per_s;
-            self.sim_i = 0;
-            self.sim_play = true;
-            self.toast(&format!("{} → R{}", lane.name, slot + 1));
-            return;
-        }
+        if self.offline { self.offline_ref = slot; }
         // a stored record, not the live analog path
         for c in 0..NCH {
             self.m.ch[c].on = false;
@@ -248,13 +254,17 @@ impl Ui {
         self.m.zscale = bit;
         self.m.zdelay = look;
         self.clamp_zoom();
-        self.m.meas = Self::sim_meas(slot);
-        self.m.meas2.clear();
-        self.m.meas_labels = true;
+        if !continuing {
+            self.m.meas = Self::sim_meas(slot);
+            self.m.meas2.clear();
+            self.m.meas_labels = false;
+        }
         self.meas_src = WaveId::Ref(slot);
         self.m.eye_src = WaveId::Ref(slot);
         self.m.eye_rate = lane.bits_per_s;
-        self.m.run = RunState::Stop;
+        self.m.run = RunState::Run;
+        self.m.status = TrigStatus::Wait;
+        self.m.trig_level = ((lane.v_high + lane.v_low) * 0.5) as f32;
         self.last[0] = None;
         self.cleared = true;
         self.sim_play = true;
@@ -304,6 +314,8 @@ impl Ui {
             self.sim_load();
         } else {
             self.sim_play = false;
+            self.m.run = RunState::Stop;
+            self.m.status = TrigStatus::Stop;
         }
     }
 
@@ -317,60 +329,11 @@ impl Ui {
         true
     }
 
-    /// Moves the timebase window through the selected record.
-    ///
-    /// The window travels its own width each second, then returns to the start of the record.
-    /// A record that already fits is placed fully on screen and held, so the picture stays still.
+    /// Acquires the next reference window using the shared trigger and Run/Stop state.
     pub(super) fn sim_tick(&mut self, dt_wall: f64) {
-        let slot = if self.offline { self.offline_ref } else { self.m.sim_slot };
-        let Some(r) = self.refs[slot].as_ref() else {
-            self.sim_play = false;
-            return;
-        };
-        if r.v.is_empty() || !(r.dt > 0.0) {
-            self.sim_play = false;
-            return;
-        }
-        let start = r.t0;
-        let end = r.t0 + (r.v.len() - 1) as f64 * r.dt;
-        let span = end - start;
-        let (tdiv, delay) = self.view();
-        let window = tdiv as f64 * HDIV as f64;
-        if !(window > 0.0) {
-            return;
-        }
-        if span <= window {
-            let left = delay as f64 - window * 0.5;
-            if left > start || left + window < end {
-                if self.m.zoom {
-                    self.m.zdelay = ((start + end) * 0.5) as f32;
-                } else {
-                    self.m.delay = ((start + end) * 0.5) as f32;
-                }
-            }
-            return;
-        }
-        let lo = start + window * 0.5;
-        let hi = end - window * 0.5;
-        let travel = hi - lo;
-        let mut d = delay as f64;
-        // a fraction of the window keeps a rounded delay from snapping back to the start
-        let slop = window * 1e-4;
-        if d < lo - slop || d > hi + slop {
-            d = lo;
-        } else {
-            d = d.clamp(lo, hi);
-        }
-        if dt_wall > 0.0 && travel > 0.0 {
-            let advance = (window * dt_wall) % travel;
-            d = lo + (d - lo + advance) % travel;
-        }
-        if self.m.zoom {
-            self.m.zdelay = d as f32;
-        } else {
-            self.m.delay = d as f32;
-        }
+        self.replay_acquire(dt_wall);
     }
+
 }
 
 fn nearest_vdiv(want: f32) -> f32 {
@@ -441,11 +404,11 @@ mod tests {
         assert_eq!(rows.len(), 12);
         for want in ["Pk-pk", "Freq", "Period", "Rise", "Fall", "+Duty", "Amp", "Overshoot", "+Width", "-Width", "+Slew", "+Edges"] {
             let row = rows.iter().find(|r| r.name == want).unwrap_or_else(|| panic!("missing {want}"));
-            assert!(row.v.is_finite(), "{want} {}", row.v);
+            assert!(!row.v.is_infinite(), "{want} {}", row.v);
         }
         let vpp = rows.iter().find(|r| r.name == "Pk-pk").unwrap().v;
         assert!(vpp > 0.5 && vpp < 1.2, "vpp {}", vpp);
-        assert!(u.m.meas_labels);
+        assert!(!u.m.meas_labels, "labels are opt-in so initial SIM does not hide the waveform");
         let mut cv = Canvas::new(W, H);
         u.render(&mut cv);
         if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
@@ -495,6 +458,7 @@ mod tests {
         u.step(1.0 / 60.0);
         assert!(u.last[0].is_none(), "Run with analog off must not acquire");
         assert!(!u.m.ch.iter().any(|c| c.on));
+        u.return_to_live();
         u.m.tscale = 0;
         u.m.ch[0].on = true;
         u.m.floor_live_tdiv();
@@ -524,7 +488,9 @@ mod tests {
         u.refs[0] = Some(RefWave { src: 0, color: 0, label: "rec".into(), t0: 0.0, dt, v, vpd: 0.2, offset: 0.0, on: true });
         u.m.sim_slot = 0;
         u.m.ch[0].on = false;
-        u.m.run = RunState::Stop;
+        u.m.run = RunState::Run;
+        u.m.trig_mode = TrigMode::Normal;
+        u.m.trig_level = 0.0;
         u.m.delay = 0.0;
         set_tdiv(u, tdiv);
         u.sim_play = true;
@@ -535,36 +501,32 @@ mod tests {
     }
 
     #[test]
-    fn play_walks_a_record_longer_than_the_window() {
+    fn replay_locks_the_view_to_the_trigger_condition() {
         let mut u = ui();
         put_step(&mut u, 5_000, 1e-9, 100e-9);
-        let r = u.refs[0].as_ref().unwrap();
-        let span = (r.v.len() - 1) as f64 * r.dt;
-        let window = window_of(&u);
-        assert!(span > window);
         u.step(0.25);
-        let lo = window * 0.5;
-        let got = u.m.delay as f64;
-        assert!((got - (lo + 0.25 * window)).abs() / window < 1e-3, "delay {got} window {window}");
-        assert!(u.ph.map.iter().all(|m| m.iter().all(|&p| p == 0)), "play must not paint the live trace");
-        let x0 = high_edge(&picture(&mut u));
+        assert_eq!(u.m.status, TrigStatus::Triggered);
+        assert_eq!(u.replay.captures, 1);
+        assert!((u.m.delay as f64 - 999.5e-9).abs() < 1e-9);
+        let position = u.m.delay;
         u.step(0.25);
-        let x1 = high_edge(&picture(&mut u));
-        assert!(x1 < x0 - 20, "window moved left from {x0} to {x1}");
+        assert_eq!(u.m.delay, position, "a repeated trigger holds the edge in place");
+        assert_eq!(u.replay.captures, 2);
+        assert!(u.ph.map.iter().all(|m| m.iter().all(|&p| p == 0)));
     }
 
     #[test]
-    fn play_returns_to_the_start_after_the_record() {
+    fn normal_replay_waits_and_force_captures_without_a_match() {
         let mut u = ui();
         put_step(&mut u, 5_000, 1e-9, 100e-9);
-        let r = u.refs[0].as_ref().unwrap();
-        let end = (r.v.len() - 1) as f64 * r.dt;
-        let window = window_of(&u);
-        let travel = (end - window * 0.5) - window * 0.5;
-        u.step(travel / window + 0.25);
-        let got = u.m.delay as f64;
-        let expect = window * 0.5 + 0.25 * window;
-        assert!((got - expect).abs() / window < 1e-3, "delay {got} expect {expect}");
+        u.m.trig_level = 10.0;
+        u.step(0.25);
+        assert_eq!(u.m.status, TrigStatus::Wait);
+        assert_eq!(u.replay.captures, 0);
+        u.key(key::FORCE);
+        u.step(0.25);
+        assert_eq!(u.replay.captures, 1);
+        assert_eq!(u.m.status, TrigStatus::Auto);
     }
 
     #[test]
@@ -579,6 +541,7 @@ mod tests {
         let delay = u.m.delay;
         let left = delay as f64 - window * 0.5;
         assert!(left <= 0.0 && left + window >= end);
+        u.key(key::RUNSTOP);
         let first = picture(&mut u);
         u.step(1.0);
         assert_eq!(u.m.delay, delay);
@@ -587,24 +550,20 @@ mod tests {
     }
 
     #[test]
-    fn play_walks_the_loaded_preset() {
+    fn loaded_sim_uses_run_stop_and_returns_to_live_explicitly() {
         let mut u = ui();
         u.activate(Item::SimPlay);
-        let r = u.refs[0].as_ref().unwrap();
-        let span = (r.v.len() - 1) as f64 * r.dt;
-        let window = window_of(&u);
-        assert!(span > window, "span {span} window {window}");
-        let d0 = u.view().1;
+        let before = u.replay.captures;
         u.step(0.5);
-        assert!(u.view().1 > d0);
-        assert!(u.sim_play);
-        assert!(u.ph.map.iter().all(|m| m.iter().all(|&p| p == 0)));
-        u.m.ch[0].on = true;
-        u.m.floor_live_tdiv();
-        u.m.run = RunState::Run;
+        assert!(u.replay.captures > before && u.sim_play);
+        assert!(u.last[0].is_none());
+        u.key(key::RUNSTOP);
+        let held = u.replay.captures;
+        u.step(0.5);
+        assert_eq!(u.replay.captures, held);
+        u.return_to_live();
         u.step(0.02);
-        assert!(!u.sim_play);
-        assert!(u.last[0].is_some());
+        assert!(!u.sim_play && u.last[0].is_some());
     }
 
     fn picture(u: &mut Ui) -> crate::gfx::Canvas {

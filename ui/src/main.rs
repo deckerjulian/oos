@@ -149,7 +149,7 @@ fn main() {
     }
     #[cfg(windows)]
     {
-        desktop::run(ui);
+        desktop::run(ui, &args);
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {

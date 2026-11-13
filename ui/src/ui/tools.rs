@@ -24,8 +24,8 @@ fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
     b
 }
 
-/// Measurements at once.
-pub(super) const MEAS_MAX: usize = 14;
+/// A bounded selection can hold the complete catalog for every analog channel and reference slot.
+pub(super) const MEAS_MAX: usize = 1024;
 /// Measurements on one row of the strip when it runs across the screen.
 pub(super) const STRIP_PER_ROW: usize = 6;
 
@@ -181,11 +181,11 @@ impl Ui {
                 Some((self.ana[c].clone(), s.t0))
             }
             WaveId::Ref(i) => {
-                let r = self.refs.get(i)?.as_ref()?;
-                if r.v.len() < 2 || !(r.dt > 0.0) {
+                let (samples, t0, dt) = self.reference_slice(i)?;
+                if samples.len() < 2 || !(dt > 0.0) {
                     return None;
                 }
-                Some((self.ref_ana[i].clone(), r.t0))
+                Some((self.ref_ana[i].clone(), t0))
             }
         }
     }
@@ -285,16 +285,13 @@ impl Ui {
         true
     }
 
-    /// Room for one more: the oldest one goes when all are taken.
-    pub(super) fn meas_make_room(&mut self) {
+    /// Refuse a full selection explicitly rather than silently removing an older measurement.
+    pub(super) fn meas_make_room(&mut self) -> bool {
         if self.m.meas.len() + self.m.meas2.len() >= MEAS_MAX {
-            if self.m.meas.is_empty() {
-                self.m.meas2.remove(0);
-            } else {
-                self.m.meas.remove(0);
-            }
-            self.mstat.clear();
+            self.toast("Measurement selection is full. Remove an item in Selected before adding another.");
+            return false;
         }
+        true
     }
 
     /// Delay or phase `k` between the sources of the Measure page: on when it was off, off when it was on.
@@ -306,7 +303,7 @@ impl Ui {
         if let Some(i) = self.m.meas2.iter().position(|x| *x == e) {
             self.m.meas2.remove(i);
         } else {
-            self.meas_make_room();
+            if !self.meas_make_room() { return; }
             self.m.meas2.push(e);
         }
         self.mstat.clear();
@@ -666,38 +663,8 @@ impl Ui {
             return Err(format!("missing {}", crate::store::file_name(p)));
         }
         let bytes = std::fs::read(p).map_err(|_| format!("missing {}", crate::store::file_name(p)))?;
-        let traces = crate::store::parse_wave(&bytes, &crate::store::file_name(p))?;
-        if traces.is_empty() || traces.iter().all(|t| t.v.len() < 2 || !(t.dt > 0.0)) {
-            return Err("that file holds no waveform".into());
-        }
-        let c = self.ref_src;
-        let n = traces.len().min(NREF);
-        for (k, tr) in traces.into_iter().take(n).enumerate() {
-            if tr.v.len() < 2 || !(tr.dt > 0.0) {
-                continue;
-            }
-            let slot = (self.ref_sel + k) % NREF;
-            let span = tr.v.iter().copied().fold(0.0_f32, |m, x| if x.is_finite() { m.max(x.abs()) } else { m }).max(0.1);
-            self.refs[slot] = Some(RefWave {
-                src: c,
-                color: 0,
-                label: tr.label,
-                t0: tr.t0,
-                dt: tr.dt,
-                v: tr.v,
-                vpd: nearest_ref_vdiv(span / 4.0),
-                offset: 0.0,
-                on: true,
-            });
-        }
-        if self.offline {
-            self.present_record(self.ref_sel);
-        }
-        self.measure_refs();
-        self.analyzer_update();
-        Ok(())
+        self.load_waveform_bytes(&bytes, &crate::store::file_name(p))
     }
-
     /// Name of a channel on its card: its label, or CHn.
     pub(super) fn ch_name(&self, c: usize) -> String {
         if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }

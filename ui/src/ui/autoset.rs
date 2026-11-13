@@ -583,7 +583,7 @@ mod tests {
         ui.m.sim_slot = 4;
         ui.m.ch[1].on = true;
         ui.activate(Item::SimPlay);
-        assert!(ui.sim_play && ui.m.run == RunState::Stop);
+        assert!(ui.sim_play && ui.m.run == RunState::Run);
         let ch: Vec<(bool, usize, f32)> = ui.m.ch.iter().map(|c| (c.on, c.vscale, c.offset)).collect();
         ui.m.trig_level = 9.0;
         ui.m.trig_src = 2;
@@ -592,7 +592,7 @@ mod tests {
         r.vpd = 10.0;
         r.offset = 3.0;
         ui.key(key::AUTO);
-        assert!(ui.sim_play && ui.m.run == RunState::Stop);
+        assert!(ui.sim_play && ui.m.run == RunState::Run);
         assert_eq!(ui.m.ch.iter().map(|c| (c.on, c.vscale, c.offset)).collect::<Vec<_>>(), ch);
         assert_eq!((ui.m.trig_src, ui.m.trig_level), (2, 9.0));
         assert!(ui.refs[0].is_none());
