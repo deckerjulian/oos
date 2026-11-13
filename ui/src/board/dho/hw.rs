@@ -45,6 +45,23 @@ fn screen_margin(memsel: i128) -> i128 {
     (memsel + (memsel / 8).max(64) + 7) / 8 * 8
 }
 
+/// Auto depth with a trigger delay: the record is centred on the delayed screen, but the trigger has to stay inside it
+/// (`seq::State::configure` clamps the delay to half a record, trigger.md 4). A delay beyond half of the `base` record
+/// then showed only the part of the screen up to the record's end (10 us/div, 200 us delay: 20 us of 100, unit
+/// 2026-11-13). The record then gets the depth that reaches from the trigger (a division inside) past the delay at the
+/// full rate; the depth limit of the channels still applies afterwards.
+fn delay_depth(mask: u32, tdiv: f64, delay: f64, base: i128) -> i128 {
+    let p = hz::prep(mask, oos_hal::dho::seq::tdiv_fs(tdiv), base, 0);
+    let span = p.memsel as f64 / p.rate.max(1) as f64;
+    if !delay.is_finite() || 2.0 * delay.abs() <= span {
+        return base;
+    }
+    let full = (hz::CLOCK / hz::ratio(mask) as i128) as f64;
+    // at most the deepest record of the board; `settings` then limits it to the channels' memory
+    let want = ((2.0 * delay.abs() + 2.0 * tdiv) * full).ceil().min(125e6) as i128;
+    ((want + 7) / 8 * 8).max(base)
+}
+
 /// The hardware settings for the UI model.
 pub fn settings(m: &Model, program_afe: bool) -> Settings {
     let mut mask = (0..NCH).filter(|&c| m.ch[c].on).fold(0u32, |a, c| a | 1 << c);
@@ -61,11 +78,8 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         0 if slow_mode(m) != Slow::Off => 0,
         0 => {
             let auto = hz::prep(mask, oos_hal::dho::seq::tdiv_fs(tdiv), 0, 0);
-            if auto.memsel as i128 > LIVE_DEPTH {
-                LIVE_DEPTH
-            } else {
-                screen_margin(auto.memsel as i128)
-            }
+            let base = if auto.memsel as i128 > LIVE_DEPTH { LIVE_DEPTH } else { screen_margin(auto.memsel as i128) };
+            delay_depth(mask, tdiv, m.delay as f64, base)
         }
         // roll and scan: a fixed depth below 1 M becomes 1 M (roll-mode.md 1.3)
         d if slow_mode(m) != Slow::Off => (d as i128).max(1_000_000),
@@ -356,7 +370,7 @@ pub fn hw_status_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         let env = std::env::var("OOS_TRIG_HW_STATUS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        let conf = crate::sysconf::fork_text();
         crate::drawpipe::conf_value(env, &conf, "trig.hw_status").as_deref() != Some("off")
     })
 }
@@ -365,7 +379,7 @@ pub fn hw_status_on() -> bool {
 /// default until the result layout is verified on the unit.
 pub fn dvm_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| dvm_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *ON.get_or_init(|| dvm_hw_from(&crate::sysconf::fork_text()))
 }
 
 /// The `dvm.hw` line of system.conf; off unless `on`.
@@ -377,7 +391,7 @@ fn dvm_hw_from(conf: &str) -> bool {
 /// test only where it cannot. Off by default until the sample scale and the slots are verified on the unit.
 pub fn mask_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| mask_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *ON.get_or_init(|| mask_hw_from(&crate::sysconf::fork_text()))
 }
 
 /// The `mask.hw` line of system.conf; off unless `on`.
@@ -389,7 +403,7 @@ fn mask_hw_from(conf: &str) -> bool {
 /// are no longer filtered in software where it can. Off by default until the mapping is verified on the unit.
 pub fn zone_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| zone_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *ON.get_or_init(|| zone_hw_from(&crate::sysconf::fork_text()))
 }
 
 /// The `zone.hw` line of system.conf; off unless `on`.
@@ -466,7 +480,7 @@ fn dvm_reading(raw: &oos_hal::dho::dvm::Raw, key: DvmKey, s: &Settings, gain: &[
 fn prearm_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
-        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        let conf = crate::sysconf::fork_text();
         prearm_from(std::env::var_os("OOS_PREARM").is_some(), &conf)
     })
 }
@@ -1496,6 +1510,29 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 
 #[cfg(test)]
 mod tests {
+
+    // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
+    // inside it) ends before the screen does: 10 us/div with 200 us delay drew 20 us of the screen (unit 2026-11-13)
+    #[test]
+    fn auto_depth_covers_a_delayed_screen() {
+        for (tdiv, delay, chans) in [(10e-6f32, 200e-6f32, 1usize), (10e-6, -200e-6, 1), (1e-6, 50e-6, 2), (100e-6, 3e-3, 4), (10e-6, 0.0, 1)] {
+            let mut m = Model { tscale: tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap(), delay, ..Default::default() };
+            for c in 0..NCH {
+                m.ch[c].on = c < chans;
+            }
+            let s = settings(&m, false);
+            let mut st = oos_hal::dho::seq::State::handover(s.mask, None);
+            let (_, p) = st.configure(&s, None, None).unwrap();
+            // the record's span relative to the trigger: [first, last] in s
+            let dot = p.dot_fs as f64 * 1e-15;
+            let (first, last) = (-(p.pre as f64) * dot, p.post as f64 * dot);
+            let (lo, hi) = (delay as f64 - 5.0 * tdiv as f64, delay as f64 + 5.0 * tdiv as f64);
+            assert!(first <= lo + dot && last >= hi - dot, "{} s/div delay {} {} ch: record {}..{} s, screen {}..{}", tdiv, delay, chans, first, last, lo, hi);
+            if delay == 0.0 {
+                assert!(s.depth <= LIVE_DEPTH, "no delay: the plain Auto depth");
+            }
+        }
+    }
     use super::*;
     use crate::board::to_record;
 
