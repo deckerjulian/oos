@@ -131,6 +131,10 @@ impl Board for Dho {
         hw::mask_hw_on()
     }
 
+    fn zone_hw(&self) -> bool {
+        hw::zone_hw_on()
+    }
+
     fn avg_hw(&self, m: &Model) -> bool {
         hw::avg_hw_ok(m)
     }

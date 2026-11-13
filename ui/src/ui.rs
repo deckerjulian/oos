@@ -26,6 +26,7 @@ mod measlabels;
 mod overclock;
 mod tools;
 mod hwmask;
+mod hwzone;
 mod update;
 mod viewmore;
 mod wlan;
@@ -869,6 +870,9 @@ pub struct Ui {
     zone_path: Vec<(i32, i32)>,
     /// records dropped by the zone condition
     zone_drops: u64,
+    /// the zone unit (hwzone.rs): latest reading, and a number raised to clear its counter
+    zone_hw: Option<crate::board::ZoneRead>,
+    zone_hw_clear: u64,
     /// fast path frames by where the edge of the set direction was: at the hardware trigger point; further away with
     /// an edge of the other direction at the point (the hardware fired on the wrong edge); further away with no edge at
     /// the point (the point is off); none found. And the offsets of the last kind in samples: sum, largest
@@ -1117,6 +1121,8 @@ impl Ui {
             zone_arm: None,
             zone_path: Vec::new(),
             zone_drops: 0,
+            zone_hw: None,
+            zone_hw_clear: 0,
             fast_edges: [0; 4],
             fast_off: (0.0, 0.0),
             seg_n: 0,
@@ -1601,6 +1607,7 @@ impl Ui {
         self.ana = Default::default();
         self.mstat.clear();
         self.mask_counts_reset();
+        (self.zone_drops, self.zone_hw_clear) = (0, self.zone_hw_clear + 1);
         self.hw_avg_restart();
         self.toast("Display cleared");
     }
@@ -1646,6 +1653,7 @@ impl Ui {
         self.counter_poll();
         self.dvm_poll();
         self.mask_hw_poll();
+        self.zone_hw_poll();
         self.la_probe_poll();
         self.log_tick();
         self.m.clamp_offsets();
@@ -1997,7 +2005,7 @@ impl Ui {
             && !m.zoom
             && !self.xy
             && m.z_src.is_none()
-            && !m.zones.iter().any(|z| z.usable())
+            && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())
             && board().slow_mode(m) == crate::board::Slow::Off
             && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
     }
@@ -5522,7 +5530,7 @@ impl Ui {
             }
             Item::TouchLock => m.touch_lock = !m.touch_lock,
             Item::AuxOut => {
-                let all = AuxOut::choices(board().mask_hw());
+                let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
                 m.aux_out = all[cyc(i, all.len(), d)];
             }
@@ -6125,7 +6133,7 @@ impl Ui {
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::TouchLock => &["On", "Locked"],
-            Item::AuxOut => return AuxOut::choices(board().mask_hw()).iter().map(|a| a.name().to_string()).collect(),
+            Item::AuxOut => return AuxOut::choices(board().mask_hw() || board().zone_hw()).iter().map(|a| a.name().to_string()).collect(),
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],
             Item::DecSel => &["D1", "D2", "D3", "D4"],
@@ -9193,7 +9201,7 @@ mod aux_out_tests {
     fn aux_out_in_the_system_menu_with_the_offered_choices() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
-        let want: &[&str] = if board().mask_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
+        let want: &[&str] = if board().mask_hw() || board().zone_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
         assert_eq!(ui.options(Item::AuxOut), want);
         assert_eq!(ui.value(Item::AuxOut), "Trigger out");
         ui.select_option(Item::AuxOut, "Off");

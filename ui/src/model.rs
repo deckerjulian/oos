@@ -164,8 +164,8 @@ pub enum AuxOut {
 pub const AUX_OUTS: [AuxOut; 3] = [AuxOut::TrigOut, AuxOut::Off, AuxOut::PassFail];
 
 impl AuxOut {
-    /// what the menu and SCPI take: pass/fail only where the mask test can run in hardware (`Board::mask_hw`); a setup
-    /// file takes every value
+    /// what the menu and SCPI take: pass/fail only where the mask test or the zone trigger can run in hardware
+    /// (`Board::mask_hw`, `Board::zone_hw`); a setup file takes every value
     pub fn offered(self, hw_mask: bool) -> bool {
         self != AuxOut::PassFail || hw_mask
     }
