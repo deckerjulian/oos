@@ -717,11 +717,32 @@ pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
         log_header(hdr, &f.ch[tc], s, p.pre as usize / k, k);
     }
+    set_meta(s, p, seq, f);
+}
+
+/// Every field of a decoded frame but the channel vectors (kept as they are).
+fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
+    let k = oos_hal::dho::seq::compress_k(s, p) as usize;
     // a window of the record (`batch_plan`): the trigger point counts from its first point
     let (_, start) = oos_hal::dho::seq::window(s, p);
     let pre = p.pre.saturating_sub(start) as usize / k;
     let ch = std::mem::take(&mut f.ch);
     *f = Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false };
+}
+
+/// `decode_into` without the decode (drawpipe::draw_frame_codes): the frame's fields as the decode sets them, the
+/// channel vectors emptied, and where the read-out holds each channel. None with compression or a frame header (the
+/// decode only).
+pub fn codes_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) -> Option<crate::drawpipe::CodeLayout> {
+    if s.header || oos_hal::dho::seq::compress_k(s, p) > 1 || bytes.is_empty() {
+        return None;
+    }
+    for v in f.ch.iter_mut() {
+        v.clear();
+    }
+    set_meta(s, p, seq, f);
+    let m = oos_hal::dho::seq::code_map(s.mask, s.ch.map(|k| (k.scale, k.offset)));
+    Some(crate::drawpipe::CodeLayout { stride: m.ratio, word: m.word, affine: m.affine, volt: oos_hal::dho::seq::volt_code, volts: oos_hal::dho::seq::lane_volts_into })
 }
 
 /// Read-out buffers of the batch mode: one being read, two with the deposit workers (each holds one share and has room
@@ -1591,7 +1612,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             Some(next) => {
                                 let full = std::mem::replace(&mut dma, next);
                                 let (bs, ps) = (b.clone(), p);
-                                pipe.feed(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)));
+                                let (cs, cp) = (b.clone(), p);
+                                let codes: crate::drawpipe::CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
+                                pipe.feed_codes(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes));
                             }
                             None => crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1),
                         }

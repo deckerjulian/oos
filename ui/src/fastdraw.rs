@@ -112,6 +112,162 @@ pub struct Map {
 /// a noisy or fast signal at 100 samples per column covers tens of rows in every column, and the scattered writes
 /// were three quarters of the time.
 pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
+    deposit_from(map, w, h, v, m, wgt);
+}
+
+/// `deposit` straight from a frame's read-out words (`Codes`): the same picture, without the f32 copy of the channel.
+pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) {
+    deposit_from(map, w, h, v, m, wgt);
+}
+
+/// The samples of one channel as `deposit` needs them: their number, the extremes of a range and one sample.
+pub trait Samples {
+    fn len(&self) -> usize;
+    /// (min, max) of samples `a..b` (`min_max`: NaN skipped; (inf, -inf) when none)
+    fn extremes(&self, a: usize, b: usize) -> (f32, f32);
+    fn at(&self, i: usize) -> f32;
+}
+
+impl Samples for [f32] {
+    fn len(&self) -> usize {
+        <[f32]>::len(self)
+    }
+    #[inline]
+    fn extremes(&self, a: usize, b: usize) -> (f32, f32) {
+        min_max(&self[a..b])
+    }
+    #[inline]
+    fn at(&self, i: usize) -> f32 {
+        self[i]
+    }
+}
+
+/// One channel of a read-out (16-bit little-endian words, `stride` words per group, this channel's at `word`) with the
+/// board's word-to-volt mapping. The mapping is monotone (a multiply by `scale` and a subtraction, each rounded
+/// monotonically), so the extremes of the volts are the volts of the extreme words: exact, without converting every word.
+pub struct Codes<'a> {
+    pub bytes: &'a [u8],
+    /// the same bytes as words when they are 2-byte aligned (the read-out buffers are): the vector loops
+    pub words: Option<&'a [u16]>,
+    pub stride: usize,
+    pub word: usize,
+    pub n: usize,
+    pub affine: (f32, f32),
+    pub volt: fn(u16, (f32, f32)) -> f32,
+}
+
+impl Codes<'_> {
+    /// Word `i` of the channel.
+    #[inline]
+    pub fn code(&self, i: usize) -> u16 {
+        let j = 2 * (i * self.stride + self.word);
+        u16::from_le_bytes([self.bytes[j], self.bytes[j + 1]])
+    }
+}
+
+impl Samples for Codes<'_> {
+    fn len(&self) -> usize {
+        self.n
+    }
+    #[inline]
+    fn extremes(&self, a: usize, b: usize) -> (f32, f32) {
+        if a >= b {
+            return (f32::INFINITY, f32::NEG_INFINITY);
+        }
+        let (lo, hi) = match (self.words, self.stride) {
+            (Some(w), s) => word_extremes(w, s, self.word, a, b),
+            (None, 1) => code_extremes::<2>(&self.bytes[2 * a..2 * b], 0),
+            (None, 2) => code_extremes::<4>(&self.bytes[4 * a..(4 * b).min(self.bytes.len())], self.word),
+            (None, _) => code_extremes::<8>(&self.bytes[8 * a..(8 * b).min(self.bytes.len())], self.word),
+        };
+        let (x, y) = ((self.volt)(lo, self.affine), (self.volt)(hi, self.affine));
+        // a negative scale turns the order around
+        if x <= y { (x, y) } else { (y, x) }
+    }
+    #[inline]
+    fn at(&self, i: usize) -> f32 {
+        (self.volt)(self.code(i), self.affine)
+    }
+}
+
+/// Smallest and largest of samples `a..b` (not empty) of the channel at `word` of every group of `stride` words.
+/// On aarch64 NEON: whole groups of 8 samples through the de-interleaving loads (ld1/ld2/ld4), the rest one by one.
+#[inline]
+fn word_extremes(w: &[u16], stride: usize, word: usize, a: usize, b: usize) -> (u16, u16) {
+    let (mut lo, mut hi) = (u16::MAX, u16::MIN);
+    #[allow(unused_mut)]
+    let mut i = a;
+    #[cfg(target_arch = "aarch64")]
+    {
+        use core::arch::aarch64::*;
+        // SAFETY: NEON is aarch64 baseline; every load reads 8 groups that lie inside `w` (checked by `end`)
+        unsafe {
+            let (mut vl, mut vh) = (vdupq_n_u16(u16::MAX), vdupq_n_u16(0));
+            let end = |i: usize| (i + 8) * stride <= w.len() && i + 8 <= b;
+            match stride {
+                1 => {
+                    while end(i) {
+                        let x = vld1q_u16(w.as_ptr().add(i));
+                        (vl, vh) = (vminq_u16(vl, x), vmaxq_u16(vh, x));
+                        i += 8;
+                    }
+                }
+                2 => {
+                    while end(i) {
+                        let g = vld2q_u16(w.as_ptr().add(2 * i));
+                        let x = if word == 0 { g.0 } else { g.1 };
+                        (vl, vh) = (vminq_u16(vl, x), vmaxq_u16(vh, x));
+                        i += 8;
+                    }
+                }
+                4 => {
+                    while end(i) {
+                        let g = vld4q_u16(w.as_ptr().add(4 * i));
+                        let x = match word {
+                            0 => g.0,
+                            1 => g.1,
+                            2 => g.2,
+                            _ => g.3,
+                        };
+                        (vl, vh) = (vminq_u16(vl, x), vmaxq_u16(vh, x));
+                        i += 8;
+                    }
+                }
+                _ => {}
+            }
+            (lo, hi) = (lo.min(vminvq_u16(vl)), hi.max(vmaxvq_u16(vh)));
+        }
+    }
+    while i < b {
+        let x = w[i * stride + word];
+        lo = lo.min(x);
+        hi = hi.max(x);
+        i += 1;
+    }
+    (lo, hi)
+}
+
+/// Smallest and largest word `k` of every group of `G` bytes in `b` (the groups of one range of samples; the last
+/// group may be short when its word is still inside).
+#[inline]
+fn code_extremes<const G: usize>(b: &[u8], k: usize) -> (u16, u16) {
+    let (mut lo, mut hi) = (u16::MAX, u16::MIN);
+    let mut it = b.chunks_exact(G);
+    for g in &mut it {
+        let x = u16::from_le_bytes([g[2 * k], g[2 * k + 1]]);
+        lo = lo.min(x);
+        hi = hi.max(x);
+    }
+    let r = it.remainder();
+    if r.len() >= 2 * k + 2 {
+        let x = u16::from_le_bytes([r[2 * k], r[2 * k + 1]]);
+        lo = lo.min(x);
+        hi = hi.max(x);
+    }
+    (lo, hi)
+}
+
+fn deposit_from<S: Samples + ?Sized>(map: &mut [u16], w: usize, h: usize, v: &S, m: &Map, wgt: u16) {
     SPANS.with(|sp| {
         let sp = &mut *sp.borrow_mut();
         let Some((c0, c1, rmin, rmax, pixels)) = spans(v, m, w, h, sp) else { return };
@@ -158,8 +314,8 @@ fn sweep_cost(rows: usize, cols: usize) -> usize {
 
 /// The spans of `deposit` into `sp`: columns `c0..c1`, the rows used (`rmin..=rmax`) and the pixel count; None when
 /// nothing is drawn.
-fn spans(v: &[f32], m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usize, usize, usize, usize, usize)> {
-    if v.is_empty() || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
+fn spans<S: Samples + ?Sized>(v: &S, m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usize, usize, usize, usize, usize)> {
+    if v.len() == 0 || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
         return None;
     }
     // first sample of column c: ceil(k_of(c)); per column one min/max over a slice (no per-sample screen math)
@@ -184,11 +340,14 @@ fn spans(v: &[f32], m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usiz
         if kb <= ka {
             continue;
         }
-        let (mut mn, mut mx) = min_max(&v[ka..kb]);
+        let (mut mn, mut mx) = v.extremes(ka, kb);
         // the join to the previous column's last sample
-        if ka > 0 && v[ka - 1].is_finite() {
-            mn = mn.min(v[ka - 1]);
-            mx = mx.max(v[ka - 1]);
+        if ka > 0 {
+            let j = v.at(ka - 1);
+            if j.is_finite() {
+                mn = mn.min(j);
+                mx = mx.max(j);
+            }
         }
         ka = kb;
         if !(mn <= mx) {
@@ -375,7 +534,7 @@ mod tests {
                             deposit(&mut b, w, h, &v, &m, wgt);
                             assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
                             let mut sp = Spans::default();
-                            if let Some((c0, c1, r0, r1, px)) = spans(&v, &m, w, h, &mut sp) {
+                            if let Some((c0, c1, r0, r1, px)) = spans(&v[..], &m, w, h, &mut sp) {
                                 sweeps += (px > sweep_cost(r1 - r0 + 1, c1 - c0)) as usize;
                             }
                             cases += 1;

@@ -836,6 +836,44 @@ pub fn decode_volts_into(bytes: &[u8], mask: u32, cal: [(f64, f64); 4], out: &mu
     }
 }
 
+/// Where a read-out holds each channel without decoding it (fork, docs/fork/perf-plan.md "codes"): words per group,
+/// the word of each channel in its group (`decode_volts_into`'s mapping) and `volt_code`'s (volts per code, offset).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CodeMap {
+    pub ratio: usize,
+    pub word: [Option<usize>; 4],
+    pub affine: [(f32, f32); 4],
+}
+
+/// `CodeMap` of a read-out of channels `mask` with `cal[c]` = (scale, offset) of CH c+1.
+pub fn code_map(mask: u32, cal: [(f64, f64); 4]) -> CodeMap {
+    let ratio = hz::ratio(mask) as usize;
+    let slot = slots(mask, ratio);
+    let mut word = [None; 4];
+    for (k, c) in slot.iter().enumerate().take(ratio) {
+        if let Some(c) = *c {
+            word[c] = Some(k);
+        }
+    }
+    CodeMap { ratio, word, affine: cal.map(affine) }
+}
+
+/// The volts `decode_volts_into` gives for read-out word `x` of a channel with `affine` (the same f32 operations).
+#[inline]
+pub fn volt_code(x: u16, (a, off): (f32, f32)) -> f32 {
+    volt32(x, a, off)
+}
+
+/// Volts of samples `a..b` of the channel at `word` of every group of `ratio` words in `bytes`, into `out` (cleared
+/// first): `volt_code` of each, in one loop.
+pub fn lane_volts_into(bytes: &[u8], ratio: usize, word: usize, a: usize, b: usize, (sa, off): (f32, f32), out: &mut Vec<f32>) {
+    out.clear();
+    out.extend((a..b).map(|i| {
+        let j = 2 * (i * ratio + word);
+        volt32(u16::from_le_bytes([bytes[j], bytes[j + 1]]), sa, off)
+    }));
+}
+
 /// Slot k of a group of `ratio` words goes to channel `slot[k]` (deinterleave's mapping): ratio 1 and 2 = the enabled
 /// channels in order, ratio 4 = word k is CH k+1 when it is enabled. A fixed table: no allocation per frame.
 fn slots(mask: u32, ratio: usize) -> [Option<usize>; 4] {
@@ -1104,6 +1142,26 @@ pub fn execute_into_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_b
 #[cfg(test)]
 mod tests {
     /// Holdoff writes only when one is set, and once more when it goes back.
+
+    // Break it catches: a code map that puts a channel at another word than the decode, or volts that differ from it
+    #[test]
+    fn code_map_reads_what_the_decode_reads() {
+        let cal = [(1.0, 0.1), (0.5, -0.2), (2.0, 0.0), (0.2, 0.05)];
+        for mask in 1u32..16 {
+            let bytes: Vec<u8> = (0..4 * 37 + 3u32).flat_map(|i| ((30_000 + i * 97 % 5000) as u16).to_le_bytes()).collect();
+            let d = decode_volts(&bytes, mask, cal);
+            let m = code_map(mask, cal);
+            for c in 0..4 {
+                let Some(k) = m.word[c] else {
+                    assert!(d[c].is_empty(), "mask {} CH{}", mask, c + 1);
+                    continue;
+                };
+                let n = (bytes.len() / 2 + m.ratio - 1 - k) / m.ratio;
+                let v: Vec<f32> = (0..n).map(|i| volt_code(u16::from_le_bytes([bytes[2 * (i * m.ratio + k)], bytes[2 * (i * m.ratio + k) + 1]]), m.affine[c])).collect();
+                assert_eq!(v, d[c], "mask {} CH{}", mask, c + 1);
+            }
+        }
+    }
 
     // Break it catches: an enable bit written with k = 0 (the read stalls), k beyond the 14-bit field (it wraps), a
     // TX length that asks for samples beyond the record (the c2h read of k = 256 at 1 M timed out).

@@ -175,14 +175,25 @@ Host results: deposit per channel 0.37-0.98 of the old (sine 0.49, noise 0.37, s
 181 -> 81 us; `perf_guard_deposit_worker_per_frame` at 125 k points: frames mode 130 -> 85 us, one pipeline core 155
 -> 113 us. Not measured on the A53.
 
+Drawn from the read-out words (branch perf/codes): a worker frame of at least `CODES_MIN_BYTES` (64 kB) with 1 or
+2 words per group (`CODES_MAX_STRIDE`), no per-frame measurements, lines, DC or HF-reject trigger coupling and at
+least 2 samples per column is drawn by `drawpipe::draw_frame_codes` without the f32 copy of its channels. The board
+gives the frame's fields and where each channel sits (`hw::codes_into`, hal `seq::code_map`); the deposit takes the
+per-column extremes of the 16-bit words (NEON ld1/ld2 + umin/umax) and converts only those to volts: the word-to-volt
+mapping is monotone (an exact subtraction, then a rounded multiply and subtraction), so this is exact. The trigger
+source is decoded only in the near window of `trignear::edge_smooth_near` (`edge_near_window`, the same arithmetic
+with absolute indices), all of it only where the wide search is needed. Output identical: picture and trigger
+statistics equal to decode + `draw_frame` over 7 set-ups x 3 signals x 4 trigger/display variants, incl. the wide
+fallback, and through the pipe workers. Host (M3) per frame: 1 ch 100 k 47 -> 30 us (0.64), 2 ch 70 k 0.72, CH1+CH3
+50 k 0.68, 1 ch 40 k 0.75 (`perf_guard_codes_per_frame`, limit 0.9). The read-out is half the size of the f32 copy and
+is no longer written and read back, so the A53 (512 kB L2) should gain more; not measured. Smaller frames and 4
+channels (each channel's deposit reads every group: 0.95 on the host) keep the decode.
+
 Not changed, for the next step:
 - Dots (`deposit_dots`, the default display): 130 us per channel at 100 k points, one scattered write per sample.
   Counting rows per column first (lanes against store forwarding) was slower on the host for steep signals (each
   sample on its own row); not kept.
-- Memory traffic: decode writes 400 kB of f32 per channel and the deposit reads it back; on the A53 (512 kB L2) that
-  is likely the larger cost. A fused decode + deposit from the 16-bit codes (the volt mapping is monotone, so the
-  column extremes come from the code extremes exactly) with only the trigger window decoded would cut it about 5x,
-  but needs a board hook in drawpipe (codes are board-specific).
+- Four channels from the words in one pass per column (one ld4 for all channels) instead of one pass per channel.
 - Per-frame statistics (`framestats`, measurements on): +160 us per frame at 125 k points, more than the deposit.
 
 ## Status of item 7 (branch feat/compress)
