@@ -397,7 +397,7 @@ impl Ui {
         self.setup_path().with_file_name(format!("ref{}.csv", self.ref_sel + 1))
     }
 
-    /// CSV / OOS `.bin` / Tek `.wfm` that Import slot can open: the slot's own files, then Storage.
+    /// CSV / OOS `.bin` / `.wfm` (`:WFM#002` or `:WFM#003`) that Import slot can open: the slot's own files, then Storage.
     fn ref_wave_candidates(&self) -> Vec<std::path::PathBuf> {
         let slot = self.ref_sel + 1;
         let mut v = Vec::new();
@@ -436,7 +436,7 @@ impl Ui {
         self.toast_saved(&p, res);
     }
 
-    /// Opens a captured waveform into the selected R slot: CSV, OOS `.bin`, or Tek `.wfm`.
+    /// Opens a captured waveform into the selected R slot: CSV, OOS `.bin`, or `.wfm` (`:WFM#002` or `:WFM#003`).
     pub(super) fn ref_import(&mut self) {
         let slot = self.ref_sel + 1;
         if let Some(dir) = self.setup_path().parent() {
