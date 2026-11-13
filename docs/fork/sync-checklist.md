@@ -21,9 +21,11 @@ sync". Nothing here touches the unit.
 6. `cargo check --all-targets` of `hal`, `ui`, `fpgad` on linux/arm64 (container), so the `target_os = "linux"` paths
    compile:
    `docker run --rm -v "$PWD:/src" -v oos-target-<worktree>:/tgt -e CARGO_TARGET_DIR=/tgt -w /src/<crate> rust:1-alpine cargo check --all-targets`
-   Use one target volume per worktree, and touch the sources first
-   (`find hal dsp ui fpgad -name '*.rs' | xargs touch`). Every worktree mounts at `/src`, so on a shared or reused
-   volume cargo can take another tree's build as fresh and report a false pass or failure.
+   Use one target volume per worktree, and clean the workspace crates first, in the same container before the check:
+   `for p in oos-hal oos-dsp oos-ui oos-fpgad; do cargo clean -p $p; done` (each separately: one unknown spec fails
+   the whole call). Every worktree mounts at `/src`, so on a shared or reused volume cargo can take another tree's
+   build as fresh and report a false pass or failure. Touching the sources on the host did not force a rebuild
+   through the Docker mount. The output must show `Checking oos-*` lines.
 7. `tools/perf-guard.sh`: allocation counts and the early trigger end (deterministic), then the timing ratios of the
    fork's fast paths against reference copies of the paths they replaced. A failing ratio means the merge brought an
    upstream path back into the fork's loop, or slowed the fork's one: find which before fast-forwarding.
