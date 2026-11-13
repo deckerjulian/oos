@@ -107,6 +107,10 @@ pub trait Board: Sync + 'static {
     /// the frames.
     fn avg_hw(&self, m: &Model) -> bool;
 
+    /// The DVM reads the board's hardware DVM (`DvmWant`) instead of the records; off where the board has none or it is
+    /// not enabled.
+    fn dvm_hw(&self) -> bool;
+
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
 
@@ -204,6 +208,25 @@ pub struct CounterRead {
     pub n: u64,
 }
 
+/// The FPGA's DVM block as the UI wants it (`dvm.hw = on`): the channel it measures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DvmWant {
+    pub ch: usize,
+}
+
+/// A reading of the DVM block (fork, docs/fork/dvm.md): the channel, lane and window exponent it was taken with, the
+/// raw registers (0x2244 read back, 0x224c, 0x2250, 0x2254, 0x2258), the values in volts (DC, AC rms, AC+DC rms;
+/// None when the decode refused the reading), and the number of the reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DvmRead {
+    pub ch: usize,
+    pub lane: u32,
+    pub exp: u32,
+    pub raw: [u32; 5],
+    pub volts: Option<[f64; 3]>,
+    pub n: u64,
+}
+
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
 pub struct Shared {
@@ -241,6 +264,9 @@ pub struct Shared {
     /// the FPGA's frequency counter: wanted by the UI (None: off), the latest reading
     pub counter_want: Option<CounterWant>,
     pub counter: Option<CounterRead>,
+    /// the FPGA's DVM block: wanted by the UI (None: off), the latest reading
+    pub dvm_want: Option<DvmWant>,
+    pub dvm: Option<DvmRead>,
     /// `trig.hw_status = on`: what triggered the last batch, from the SCU status (number of the reading; Some(true)
     /// the TPU fired, Some(false) only forced acquisitions (auto timeout), None nothing accepted)
     pub trig_fired: Option<(u64, Option<bool>)>,

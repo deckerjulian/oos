@@ -123,6 +123,10 @@ impl Board for Dho {
         hw::seg_max(m)
     }
 
+    fn dvm_hw(&self) -> bool {
+        hw::dvm_hw_on()
+    }
+
     fn avg_hw(&self, m: &Model) -> bool {
         hw::avg_hw_ok(m)
     }

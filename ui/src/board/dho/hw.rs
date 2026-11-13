@@ -327,6 +327,61 @@ pub fn hw_status_on() -> bool {
     })
 }
 
+/// `dvm.hw = on` in system.conf: the DVM reads the FPGA's DVM block (docs/fork/dvm.md) instead of the records. Off by
+/// default until the result layout is verified on the unit.
+pub fn dvm_hw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| dvm_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `dvm.hw` line of system.conf; off unless `on`.
+fn dvm_hw_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
+}
+
+/// Seconds between two readings of the DVM block, and from its (re)start to the first one. The window of 2^28 samples
+/// is 0.21 s at 1.25 GSa/s; how long it really takes is open (docs/fork/dvm.md).
+const DVM_READ_S: f64 = 0.5;
+
+/// What the DVM block runs on: channel, lane, and the number of the acquisition configuration it was started after.
+type DvmKey = (usize, u32, u64);
+
+/// The next step of the DVM block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DvmStep {
+    Idle,
+    /// (re)start on this lane
+    Start(u32),
+    Stop,
+    Read,
+}
+
+/// The DVM block's next step: (re)started when the wanted channel, its lane in the acquired set `mask` or the
+/// acquisition configuration (`config`, raised on every configuration) changed; stopped when nothing is wanted or the
+/// channel is not acquired; read `DVM_READ_S` after the start or the last reading.
+fn dvm_step(want: Option<usize>, mask: u32, config: u64, running: Option<DvmKey>, elapsed_s: f64) -> (DvmStep, Option<DvmKey>) {
+    let target = want.and_then(|ch| oos_hal::dho::dvm::lane(mask, ch).map(|l| (ch, l, config)));
+    if target != running {
+        let step = match (target, running) {
+            (Some((_, l, _)), _) => DvmStep::Start(l),
+            (None, Some(_)) => DvmStep::Stop,
+            (None, None) => DvmStep::Idle,
+        };
+        return (step, target);
+    }
+    (if running.is_some() && elapsed_s >= DVM_READ_S { DvmStep::Read } else { DvmStep::Idle }, running)
+}
+
+/// One reading of the DVM block for the UI: the raw registers and, when the decode takes them, the three values in the
+/// volts of channel `ch` of `s`.
+fn dvm_reading(raw: &oos_hal::dho::dvm::Raw, key: DvmKey, s: &Settings, gain: &[f64; 4], n: u64) -> crate::board::DvmRead {
+    use oos_hal::dho::dvm;
+    let (ch, lane, _) = key;
+    let vert = oos_hal::dho::levels::Vert { scale: s.ch[ch].scale, offset: s.ch[ch].offset, gain: gain[ch] };
+    let volts = dvm::decode(raw, dvm::EXP).map(|r| [dvm::Mode::Dc, dvm::Mode::AcRms, dvm::Mode::AcDcRms].map(|m| dvm::volts(&r, m, &vert, dvm::SCALE)));
+    crate::board::DvmRead { ch, lane, exp: dvm::EXP, raw: [raw.cfg, raw.sum_lo, raw.sum_hi, raw.sq_lo, raw.sq_hi], volts, n }
+}
+
 /// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
 /// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
 /// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
@@ -617,6 +672,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // the frequency counter: what runs since when, and the readings so far
         let mut counting: Option<(crate::board::CounterWant, std::time::Instant)> = None;
         let mut count_n = 0u64;
+        // the DVM block: what it runs on since when, the readings so far, and the number of the configurations applied
+        let mut dvm_run: Option<(DvmKey, std::time::Instant)> = None;
+        let mut dvm_n = 0u64;
+        let mut configs = 0u64;
         // the last request of the measure-unit levels answered
         let mut levels_done: Option<u64> = None;
         let mut slots_done: Option<u64> = None;
@@ -729,6 +788,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         la_fails = 0;
                         status(format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, p.rate, p.memsel));
                         current = Some((want.clone(), p));
+                        configs += 1;
                         // the configuration cleared the average (`seq::State::configure`)
                         avg = match want.mode {
                             oos_hal::dho::acq::Mode::Average { count } => Some((oos_hal::dho::avg::Tracker::new(avg_kind(), count), avg_clear, 0)),
@@ -743,6 +803,35 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
             }
             let (s, p) = current.clone().unwrap();
+            // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
+            {
+                use oos_hal::dho::dvm;
+                let want = out.lock().unwrap().dvm_want.map(|w| w.ch);
+                let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
+                let (step, key) = dvm_step(want, s.mask, configs, dvm_run.map(|r| r.0), elapsed);
+                match step {
+                    DvmStep::Start(lane) => {
+                        disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                        bar.apply(&dvm::start(lane, dvm::EXP));
+                        out.lock().unwrap().dvm = None;
+                    }
+                    DvmStep::Stop => {
+                        disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                        bar.apply(&dvm::stop());
+                        out.lock().unwrap().dvm = None;
+                    }
+                    DvmStep::Read => {
+                        let raw = dvm::read(&mut bar);
+                        dvm_n += 1;
+                        let r = key.map(|k| dvm_reading(&raw, k, &s, &state.gain, dvm_n));
+                        out.lock().unwrap().dvm = r;
+                    }
+                    DvmStep::Idle => {}
+                }
+                if step != DvmStep::Idle {
+                    dvm_run = key.map(|k| (k, std::time::Instant::now()));
+                }
+            }
             // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
             // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
             let lw = out.lock().unwrap().levels_want;
@@ -1249,6 +1338,36 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 mod tests {
     use super::*;
     use crate::board::to_record;
+
+    #[test]
+    fn dvm_hw_from_conf() {
+        assert!(!dvm_hw_from(""));
+        assert!(dvm_hw_from("dvm.hw = on # FPGA DVM\n"));
+        assert!(!dvm_hw_from("dvm.hw = yes\n"));
+    }
+
+    #[test]
+    fn dvm_steps() {
+        let t0 = Some((1, 2, 7));
+        // (want, mask, config, running, elapsed) -> (step, running after)
+        let cases: [(Option<usize>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 8] = [
+            (None, 0b11, 7, None, 0.0, DvmStep::Idle, None),
+            // CH2 of CH1+CH2: lane 2
+            (Some(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
+            (Some(1), 0b11, 7, t0, 0.1, DvmStep::Idle, t0),
+            (Some(1), 0b11, 7, t0, 0.6, DvmStep::Read, t0),
+            // a new configuration restarts it
+            (Some(1), 0b11, 8, t0, 0.1, DvmStep::Start(2), Some((1, 2, 8))),
+            // CH2 alone: lane 1
+            (Some(1), 0b10, 7, t0, 0.6, DvmStep::Start(1), Some((1, 1, 7))),
+            // the channel left the acquired set, or the DVM was switched off
+            (Some(1), 0b01, 7, t0, 0.6, DvmStep::Stop, None),
+            (None, 0b11, 7, t0, 0.6, DvmStep::Stop, None),
+        ];
+        for (want, mask, config, running, el, step, after) in cases {
+            assert_eq!(dvm_step(want, mask, config, running, el), (step, after), "{:?} {:#b} {} {:?} {}", want, mask, config, running, el);
+        }
+    }
 
     #[test]
     fn prearm_from_env_or_conf() {
