@@ -100,6 +100,10 @@ pub enum Layout {
     Stock,
     /// `COLUMNS` columns, this strobe count
     Count(u32),
+    /// The strobe sweep (round 8): `COLUMNS` columns, `count` written as is (up to `MAX_COUNT`, not kept to the
+    /// record), `unit` samples per strobe for the time mapping. The column strobe comes from the read-back state
+    /// machine and its unit is open; a wrong pair can stall the acquisition (the stall guard then falls back).
+    Raw { count: u32, unit: f64 },
 }
 
 /// The value and time mapping of the comparator (assumptions under test). `Map::default()` is the first guess.
@@ -161,11 +165,15 @@ impl Map {
                 let n = fit(n as u64, 1);
                 (COLUMNS, n, n as f64)
             }
+            Layout::Raw { count, unit } => {
+                let n = count.clamp(1, MAX_COUNT);
+                (COLUMNS, n, n as f64 * unit)
+            }
         }
     }
 
     /// Parses `key=value` into the map: domain readout|pregain, cpd <codes/div>, mid <code>, shift <bits>, offs
-    /// <8-bit codes>, invert 0|1, cols record|clocks|stock|<count>, range <a>-<b>.
+    /// <8-bit codes>, invert 0|1, cols record|clocks|stock|<count>|raw:<count>:<samples per strobe>, range <a>-<b>.
     pub fn set(&mut self, kv: &str) -> Result<(), String> {
         let (k, v) = kv.split_once('=').ok_or_else(|| format!("no '=' in {}", kv))?;
         let (k, v) = (k.trim(), v.trim());
@@ -188,6 +196,14 @@ impl Map {
                     "record" => Layout::Record,
                     "clocks" => Layout::Clocks,
                     "stock" => Layout::Stock,
+                    r if r.starts_with("raw:") => {
+                        let (c, u) = r[4..].split_once(':').ok_or_else(|| format!("cols raw:<count>:<samples per strobe>: {}", v))?;
+                        let u = num(u)?;
+                        if u <= 0.0 {
+                            return Err(format!("samples per strobe must be > 0: {}", v));
+                        }
+                        Layout::Raw { count: num(c)?.clamp(1.0, MAX_COUNT as f64) as u32, unit: u }
+                    }
                     n => Layout::Count(num(n)?.clamp(1.0, 0x0fff_ffff as f64) as u32),
                 }
             }
@@ -208,6 +224,7 @@ impl Map {
             Layout::Clocks => "clocks".to_string(),
             Layout::Stock => "stock".to_string(),
             Layout::Count(n) => n.to_string(),
+            Layout::Raw { count, unit } => format!("raw:{}:{}", count, unit),
         };
         let d = if self.domain == Domain::PreGain { "pregain" } else { "readout" };
         format!("domain={} cpd={} mid={} shift={} offs={} invert={} cols={} range={}-{}", d, self.codes_per_div, self.mid, self.shift, self.offset, self.invert as u8, cols, self.range.0, self.range.1)
@@ -446,7 +463,7 @@ mod tests {
     #[test]
     fn layouts() {
         // (layout, points, channel set) -> (columns, strobe count, samples per column)
-        let cases: [(Layout, u32, u32, (usize, u32, f64)); 9] = [
+        let cases: [(Layout, u32, u32, (usize, u32, f64)); 11] = [
             // 2.5 Mpts would need 2500: kept to 1023, the columns cover the first 1.02 M samples
             (Layout::Record, 2_500_000, 1, (1000, 1023, 1023.0)),
             (Layout::Record, 10_000, 1, (1000, 10, 10.0)),
@@ -458,6 +475,9 @@ mod tests {
             (Layout::Count(7), 10_000, 1, (1000, 7, 7.0)),
             // a count that runs past the record (round 5: 400 at 10k stalled the acquisition): kept to the record
             (Layout::Count(400), 10_000, 1, (1000, 10, 10.0)),
+            // the strobe sweep is not kept to the record
+            (Layout::Raw { count: 400, unit: 0.25 }, 10_000, 1, (1000, 400, 100.0)),
+            (Layout::Raw { count: 5000, unit: 1.0 }, 10_000, 1, (1000, 1023, 1023.0)),
         ];
         for (l, pts, m, want) in cases {
             assert_eq!(Map { layout: l, ..Map::default() }.layout(pts, m), want, "{:?} {} {:#b}", l, pts, m);
@@ -478,6 +498,10 @@ mod tests {
         assert_eq!(back, m);
         m.set("cols=37").unwrap();
         assert_eq!(m.layout, Layout::Count(37));
+        m.set("cols=raw:100:2.5").unwrap();
+        assert_eq!(m.layout, Layout::Raw { count: 100, unit: 2.5 });
+        assert!(m.text().contains("cols=raw:100:2.5"));
+        assert!(m.set("cols=raw:100").is_err() && m.set("cols=raw:100:0").is_err());
         assert!(m.set("cols=").is_err() && m.set("domain=raw").is_err() && m.set("nope=1").is_err() && m.set("cpd").is_err());
     }
 

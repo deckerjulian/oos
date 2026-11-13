@@ -111,6 +111,25 @@ publishes the reason in `Shared::unit_blocked`. The UI then runs the software te
 `:SYSTem:DEBug:MASK?` reports `blocked=1`. Changing any of those settings tries the hardware again. The cause of the
 stall is open.
 
+## Strobe sweep (round 8)
+
+regmap: the column strobe comes from a read-back state machine (0x4030 bit 20), not from the ADC stream. A 10-bit
+counter of strobes ends the window. With fewer than 1000 x count strobes per record the window never ends and the
+FSM waits in state 5: the stall. The strobe unit and the terminal count are open.
+
+`cols=raw:<count>:<samples per strobe>` writes `count` to 0x1184 as is (up to 1023, not kept to the record) and
+maps the table by `count x samples per strobe` samples per column. The stall message in /tmp/oos-ui.log carries
+0x4030, the read-back bit and the state. A stalled point drops to software for that map; the next value retries.
+
+Grid, one channel, clean probe-comp square, then the +10 µs shift:
+
+- 200 µs/div at 10k, 100k and Auto, and 1 ms/div at 10k.
+- count 1, 2, 3, 5, 10, 25, 40, 100, 1023; samples per strobe 1 and 4.
+- Per point: stall or not (read-back bit, state), hw and sw fail counts, `:SYSTem:DEBug:MASK:COLumns? 250,750`.
+
+The largest count without a stall gives the strobes per record (count x 1000). The samples per strobe that makes hw
+and sw agree on the shift gives the unit.
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output. Optional: BNC cable from AUX OUT to CH2 (step 7). Start from a known state:
