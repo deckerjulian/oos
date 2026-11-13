@@ -96,7 +96,7 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
   coloured by its density relative to the densest pixel on a temperature scale blue -> cyan -> green -> yellow -> red
   (rare -> frequent; intensity shifts the scale). Merged rather than per channel, so overlapping traces count together;
   with infinite persistence it shows jitter and rare events. Cost per frame: one 1024-entry LUT from a
-  256-colour palette, then per pixel one add per channel and a table look-up (about 0.6 ms per frame on the Mac with
+  256-colour palette, then per pixel one add per channel and a table look-up (about 0.6 ms per frame on a host with
   4 channels, so a few ms on the A72).
 - **Storage** (toolbar Storage, or Menu > Storage): save setup to `setup<slot>.txt` (slot 1-9), recall setup from it,
   save the waveform of the record shown as CSV (`wave-NNN.csv`: `Time (s)` relative to the trigger + one `CHn (V)`
@@ -141,12 +141,12 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
 
 ## SCPI (TCP 5555)
 
-A Rigol-compatible subset, enough for scripts and the openSciLab bridge: `*IDN? *RST *OPC? *CLS`, `:RUN :STOP :SINGle
+A stock-compatible subset, enough for scripts and the openSciLab bridge: `*IDN? *RST *OPC? *CLS`, `:RUN :STOP :SINGle
 :AUToscale :CLEar`, `:CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert`, `:TIMebase[:MAIN]:SCALe|OFFSet`,
 `:TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe :TRIGger:SWEep :TRIGger:STATus?`, `:ACQuire:SRATe?|MDEPth?`,
 `:MEASure:ITEM? <item>,CHANn`, `:WAVeform:SOURce|MODE|FORMat(BYTE/WORD/ASCii)|POINts?|PREamble?|DATA?` (the displayed
 record, volts = (code - yorigin - yref) * yinc), `:DISPlay:DATA?` (24-bit BMP of the screen), `:SYSTem:ERRor?`.
-Remote changes go through the same model as the screen. Tested from the Mac against the unit on 2026-11-02.
+Remote changes go through the same model as the screen. Tested from a host against the unit on 2026-11-02.
 
 ## Live FPGA source (experimental)
 

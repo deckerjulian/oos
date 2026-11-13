@@ -155,7 +155,7 @@ New:
 - SCPI `:WAVeform:MODE RAW` reads every sample of the record in the screen window.
 - OOS drives no hardware on another board: when `vendor.bin` names a model outside the DHO800/DHO900 family,
   `oos-fpgad` refuses and `oos-ui` shows the demo signal.
-- `tools/platform-probe.sh` describes another Rigol model for a port, read only ([docs/porting.md](docs/porting.md)).
+- `tools/platform-probe.sh` describes another model for a port, read only ([docs/porting.md](docs/porting.md)).
 
 Measured:
 

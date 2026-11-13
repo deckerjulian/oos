@@ -4,7 +4,7 @@
 // oos-hw: minimal bring-up tool for the DHO800/DHO900 under OOS (static aarch64 binary).
 //
 //   oos-hw fpga-boot [addr]     send "\rBOOT\r" + addr (big endian, default 0x400000) to the FPGA boot monitor
-//                               on /dev/spidev1.0 (mode 0, 8 bit, 10 MHz) - exactly what Rigol's spi2boot does.
+//                               on /dev/spidev1.0 (mode 0, 8 bit, 10 MHz) - exactly what the stock spi2boot does.
 //                               No other monitor command exists in this tool (no flash erase/program).
 //   oos-hw rd <off> [count]     read 32-bit FPGA registers from /dev/xdma0_bypass (BAR1, 32 KiB)
 //   oos-hw wr <off> <value>     write one register (only offsets 0x1000-0x4fff, see docs/protocols/fpga-boot.md)
@@ -28,11 +28,11 @@
 
 static int die(const char *m) { perror(m); return 1; }
 
-// ---- LMX2582 sample clock PLL, 3-wire bus on GPIOs (protocol of Rigol's spi2pll_lxm2582_gpio.ko) ----------------
+// ---- LMX2582 sample clock PLL, 3-wire bus on GPIOs (protocol of the stock spi2pll_lxm2582_gpio.ko) ----------------
 // LE low; per byte, MSB first: SDIO = bit, SCLK low, wait, SCLK high, wait (data taken on the rising edge);
 // SCLK low after each byte; after the word: LE high pulse (latch), LE low. One write = one 24-bit word.
-// Register values: the TICSPro export used by the stock tool spi2pll_lxm2582 (1.25 GHz), highest register first,
-// 50 ms apart (as Rigol's own tool), R0 (FCAL_EN) last. Values checked identical to Rigol's. See docs/protocols/pll.md.
+// Register values: the register export used by the stock tool spi2pll_lxm2582 (1.25 GHz), highest register first,
+// 50 ms apart (as the stock tool), R0 (FCAL_EN) last. Values checked identical to the stock tool. See docs/protocols/pll.md.
 static const uint8_t lmx2582_init[][3] = {
     {70,0x00,0x00},{69,0x00,0x00},{68,0x00,0x89},{64,0x00,0x77},{62,0x00,0x00},{61,0x00,0x01},{59,0x00,0x00},
     {48,0x03,0xfc},{47,0x00,0xdf},{46,0x0f,0x63},{45,0x00,0x00},{44,0x00,0x00},{43,0x00,0x00},{42,0x00,0x00},
@@ -103,7 +103,7 @@ static int pll_init(void) {
         }
         set(le, 1);
         set(le, 0);
-        usleep(50000);   // Rigol's spi2pll_lxm2582 waits 50 ms between words
+        usleep(50000);   // the stock spi2pll_lxm2582 waits 50 ms between words
     }
     printf("LMX2582: %zu words written (1.25 GHz table)\n", sizeof lmx2582_init / sizeof lmx2582_init[0]);
     return 0;
@@ -134,7 +134,7 @@ static volatile uint32_t *bar(int rw) {
     return (volatile uint32_t *)p;
 }
 
-// ---- AFE (4x RT1642), bit-banged SPI on the SPI2 pins + 4 chip selects (protocol of Rigol's spi2afe_gpio.ko) ------
+// ---- AFE (4x RT1642), bit-banged SPI on the SPI2 pins + 4 chip selects (protocol of the stock spi2afe_gpio.ko) ------
 // mode 0, MSB first, ~5 us half period. write: CS low, {reg, val>>8, val}, CS high.
 // read: CS low, {reg|0x80}, then 16 bits sampled after each rising SCLK edge, CS high.
 static int afe_sclk = -1, afe_mosi = -1, afe_miso = -1, afe_cs[4] = {-1, -1, -1, -1};

@@ -5166,7 +5166,7 @@ impl Ui {
                         "An open operating system for the DHO800/DHO900".into(),
                         if build.is_empty() { format!("oos-ui {}", env!("CARGO_PKG_VERSION")) } else { format!("Build {}", oos_hal::update::short(build.trim())) },
                         self.info.clone(),
-                        format!("Rigol {}", p.ident()),
+                        p.ident(),
                         p.caps_line(),
                     ];
                     // experimental limits (limits.conf) and detection problems: the details are on System info

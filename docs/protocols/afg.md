@@ -413,7 +413,7 @@ sine/square/triangle/up/down ramp) and `afg::modulate` write the AM/FM/PM sequen
 the 4096-entry modulation RAM (FM 4095 entries) and write the rate again, before the output goes on (`start_mod`). The AM
 table uses the sine formula of section 3 with the other shapes in place of the sine (assumed for those shapes); the FM/PM
 table holds the shape at full scale in s16.
-UI: Generator page Modulation / Mod. rate / Depth or deviation / Mod. shape; SCPI `:SOURce:MOD...` (Rigol DG style);
+UI: Generator page Modulation / Mod. rate / Depth or deviation / Mod. shape; SCPI `:SOURce:MOD...` (APPL style);
 `oos-fpgad afg ... --mod am|fm|pm`.
 
 ## 15a. Noise modulation

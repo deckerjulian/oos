@@ -1,6 +1,6 @@
-# OOS: an open operating system for the Rigol DHO800/DHO900
+# OOS: an open operating system for the DHO800/DHO900
 
-OOS replaces the software of a Rigol DHO800/DHO900 oscilloscope with a Linux 6.12 kernel and a new scope application
+OOS replaces the software of a DHO800/DHO900 oscilloscope with a Linux 6.12 kernel and a new scope application
 written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
 
 > **Experimental software. Read the [disclaimer](#disclaimer) before you install it.**
@@ -20,18 +20,18 @@ All pictures are screenshots of a DHO924S running OOS. More in the [gallery](#ga
 
 OOS builds on the work of these projects. Thank you to everyone behind them:
 
-- **[NovaOS](https://github.com/Bradyok/novaos-kernel-source)** by Olympian LED, Inc., for publishing the GPL source of
+- **[NovaOS](https://github.com/Bradyok/novaos-kernel-source)** for publishing the GPL source of
   its Linux port to this hardware, which showed what a kernel needs here and where OOS started. The patches, device tree
   and configuration of the OOS kernel are written anew today. Its install notes also helped with the loader's image format.
 - **[Norbert Kiszka](https://github.com/norbertkiszka)**, for the modified firmware for these scopes and the findings
   shared in public, which showed how much more this hardware can do.
-- **[Linux](https://kernel.org)**, the kernel underneath everything, and **[Rockchip](https://github.com/rockchip-linux/kernel)**
-  for the board support it runs on here.
-- **[Xilinx XDMA driver](https://github.com/Xilinx/dma_ip_drivers)**, which connects the SoC to the FPGA over PCIe.
+- **[Linux](https://kernel.org)**, the kernel underneath everything, and the [SoC board support](https://github.com/rockchip-linux/kernel)
+  it runs on here.
+- **[XDMA driver](https://github.com/Xilinx/dma_ip_drivers)**, which connects the SoC to the FPGA over PCIe.
 - **[BusyBox](https://busybox.net)**, the userland of the image.
 - **[e2fsprogs](https://e2fsprogs.sourceforge.net)** by Theodore Ts'o, which checks the data partition at every start.
 - **[wpa_supplicant](https://w1.fi/wpa_supplicant/)** by Jouni Malinen and contributors, for WLAN.
-- **[linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)** and Realtek, for the
+- **[linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)**, for the
   firmware of the WLAN stick.
 - **[Rust](https://www.rust-lang.org)** and the **[libc](https://github.com/rust-lang/libc)** crate, the only dependency
   of the OOS code.
@@ -91,9 +91,9 @@ Installing OOS means that you accept in particular the following risks:
   also lift limits. Values outside the defaults are outside any rating and can make the scope unusable or damage it.
   Overclocked samples are worse and at 2 GHz wrong: see [docs/models.md](docs/models.md).
 
-OOS is an independent project. It is not affiliated with, endorsed by or supported by RIGOL TECHNOLOGIES CO., LTD.
-Rigol and all other names are trademarks of their respective owners and are used here only to identify the hardware.
-Do not contact Rigol for support with OOS. The repository contains no Rigol code. At run time OOS uses the FPGA image
+OOS is an independent project. It is not affiliated with, endorsed by or supported by the maker of this instrument.
+Names are trademarks of their respective owners and are used here only to identify the hardware.
+Do not contact the instrument maker for support with OOS. The repository contains no manufacturer code. At run time OOS uses the FPGA image
 already in the scope's flash, the calibration files on its own card and the stock software on that card, which it needs to
 read the scope's identity. It only reads them.
 
@@ -114,7 +114,7 @@ Details and limits: [docs/models.md](docs/models.md).
 | DHO924S | 250 MHz | 4 | yes | yes | - |
 
 **Tested on hardware: DHO924S only.** All other models are prepared from the known model table and have never run OOS.
-The feature columns follow Rigol's model line-up; whether the EDU variants have the LA port is not confirmed. DHO1000,
+The feature columns follow the model line-up; whether the EDU variants have the LA port is not confirmed. DHO1000,
 HDO1000/2000/4000 and MHO models are different boards and are not supported; [docs/porting.md](docs/porting.md) says
 what would carry over and how an owner can describe one.
 
@@ -177,7 +177,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
   found as numbered peaks, RBW, trace modes, waterfall, THD, SNR, SFDR, limit line from a trace
 - Eye diagram with voltage and UI axes, density colours, TIE trend, histogram and spectrum, bathtub curve. Jitter split into TJ, RJ and DJ (dual-Dirac model) and measured DCD, DDJ and PJ, pooled over records
 - Power analysis: quality, harmonics, switching, ripple
-- Bode plot with the built-in generator or an external one (Rigol DG, Siglent SDG, generic SCPI)
+- Bode plot with the built-in generator or an external one (APPL, BSWV, generic SCPI)
 - Identify: names a signal and sets up a trigger and decoder for it
 - Bandwidth test: rise time, overshoot and magnitude response from a fast edge
 
@@ -191,7 +191,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 
 | Interface | Port | Purpose |
 |---|---|---|
-| SCPI over TCP | 5555 | Rigol-style command subset, see [ui/src/scpi.rs](ui/src/scpi.rs); `:WAVeform:MODE RAW` reads every sample of the record in the screen window |
+| SCPI over TCP | 5555 | stock-style command subset, see [ui/src/scpi.rs](ui/src/scpi.rs); `:WAVeform:MODE RAW` reads every sample of the record in the screen window |
 | VXI-11 | 111, 9009 | VISA `TCPIP::<ip>::INSTR` |
 | Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
 | LXI identification | 8080 | `/lxi/identification` |
@@ -322,7 +322,7 @@ clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
 - Python 3 and this repository (`git clone https://github.com/deckerjulian/oos.git`)
 - To build the image yourself, not with a file from a release: [Rust](https://rustup.rs) with
   `rustup target add aarch64-unknown-linux-musl`, and Docker, running. A Rust from the distribution's packages usually
-  lacks that target and `rust-lld`. Hosts: macOS on Apple silicon, Linux on arm64 or x86-64. On Linux, run the scripts
+  lacks that target and `rust-lld`. Hosts: macOS on arm64, Linux on arm64 or x86-64. On Linux, run the scripts
   as yourself, not with `sudo`: put yourself in the `docker` group (`sudo usermod -aG docker $USER`, then log in again).
   On x86-64 the kernel is cross-compiled; the image's busybox, wpa_supplicant and e2fsck come from arm64 containers,
   which need QEMU once: `docker run --privileged --rm tonistiigi/binfmt --install arm64`. The workflow
@@ -411,9 +411,9 @@ check the file's time.
 
 #### Building on Linux
 
-Steps 3 to 5 on Linux, here with Debian or Ubuntu, on an ordinary x86-64 PC as well as on arm64. On x86-64:
+Steps 3 to 5 on Linux, here with apt, on an ordinary x86-64 PC as well as on arm64. On x86-64:
 
-- the kernel and `oos-hw` are cross-compiled with Ubuntu's `gcc-aarch64-linux-gnu` inside the build container; you
+- the kernel and `oos-hw` are cross-compiled with the distribution's `gcc-aarch64-linux-gnu` inside the build container; you
   install no cross compiler yourself,
 - the Rust programs are cross-compiled by rustup's `aarch64-unknown-linux-musl` target and `rust-lld`,
 - busybox, wpa_supplicant and e2fsck come from arm64 containers, which run through QEMU (the `binfmt` line below).
@@ -472,7 +472,7 @@ sudo python3 boot/switch.py show /dev/rdiskM
 ### 7. First start
 
 1. Eject the card, put it into the scope, close the instrument, connect Ethernet and switch on.
-2. You see the Rigol logo from the stock loader, then the OOS start-up screen with a checklist.
+2. You see the stock logo from the stock loader, then the OOS start-up screen with a checklist.
 3. The scope screen appears. Each failed step is named on the screen. A missing calibration file is a warning: the
    scope then runs on defaults and is less accurate.
 
@@ -530,7 +530,7 @@ You need a FAT32 USB stick with at least 200 MiB free, and `DHO800_DHO900_OOS_In
 4. Read `oos-install.log` on the stick on a computer. It should end with `exit code 0`.
 5. Delete `oos-dry-run.txt` and run the update again. The log should end with `OOS selected for the next power-on`
    and `exit code 0`.
-6. Copy the folder `OOS-rescue` from the stick to a computer and keep it. It holds your calibration (`rigol-data`), the
+6. Copy the folder `OOS-rescue` from the stick to a computer and keep it. It holds your calibration (`cal-data`), the
    stock `recovery` and the start of the card.
 7. Switch the scope off at the mains, wait 30 seconds and switch it on. OOS starts.
 
@@ -548,7 +548,7 @@ adb root
 adb connect <scope>:55555        # adb root drops the connection
 
 # your calibration and licences, onto your computer
-adb pull /rigol/data rigol-data
+adb pull /rigol/data cal-data
 
 # the tool for the scope, not the one in fpgad/target/release
 adb push fpgad/target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
@@ -666,8 +666,8 @@ again. Unless noted, the fixes below need the card in the reader, so you have to
 | What you see | Meaning | What to do |
 |---|---|---|
 | The stock system starts instead of OOS | one-shot mode, or the loader refused the OOS image and used the fallback | `boot/switch.py show`, then select OOS again. If that repeats, rebuild the image. |
-| Rigol logo stays, nothing else, on every start | the kernel hangs before OOS runs | `sudo python3 boot/switch.py stock /dev/rdiskM --execute`, then install a working image |
-| Black screen; a Rockchip USB device (2207:330c) appears | the loader refused `recovery` and has no fallback | `switch.py stock`. If needed, `sudo python3 boot/card-install.py restore /dev/rdiskM --backup backups/recovery-<date>.bin --execute` |
+| Stock logo stays, nothing else, on every start | the kernel hangs before OOS runs | `sudo python3 boot/switch.py stock /dev/rdiskM --execute`, then install a working image |
+| Black screen; USB device 2207:330c appears | the loader refused `recovery` and has no fallback | `switch.py stock`. If needed, `sudo python3 boot/card-install.py restore /dev/rdiskM --backup backups/recovery-<date>.bin --execute` |
 | Start-up screen stops at a step | a hardware step failed | Read the stage on the screen. Logs are at `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over telnet. |
 | A new build misbehaves | | System > Roll back update, or `oos-update rollback --execute` |
 | Nothing helps | | Write `sd-original.img` to the second card again (step 2) |
@@ -747,6 +747,6 @@ Third-party parts keep their own licences:
 | e2fsck (e2fsprogs) | GPL-2.0; the notice is in the image at `/etc/licenses/e2fsck` |
 | Roboto font | Apache-2.0, see [ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt) |
 | wpa_supplicant | BSD-3-Clause; the text is in the image at `/etc/licenses/wpa_supplicant` |
-| RTL8188EU firmware | Realtek's redistribution licence, see [LICENCE.rtlwifi_firmware.txt](rootfs/initramfs/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt) |
+| RTL8188EU firmware | the firmware redistribution licence, see [LICENCE.rtlwifi_firmware.txt](rootfs/initramfs/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt) |
 
 If you pass on an OOS image, the GPL requires you to provide the corresponding source, including the kernel source.

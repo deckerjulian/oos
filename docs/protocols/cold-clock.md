@@ -48,7 +48,7 @@ pwm-fan driver (`board.md`), so pwm3 never takes it.
 - DT: `pwm@ff420030` is disabled. No node refers to the pinctrl groups on GPIO0_A0/A1/A3/A4/A6/A7/B0 (`clk-32k`,
   `test-clkout0`, `sdio0-wp`, `pwm3a-pin`, ...). No hogs on gpio0. Pulls and drive therefore stay at the same reset
   defaults as stock.
-- Kernel 6.12 (Rockchip BSP): a GPIO request goes through `gpiochip_generic_request` -> pinctrl
+- Kernel 6.12 (SoC BSP): a GPIO request goes through `gpiochip_generic_request` -> pinctrl
   `rockchip_pmx_gpio_request_enable`, which **forces the mux to GPIO**. The gpio range is registered with
   `base = pin_base` (CONFIG_GPIO_SYSFS=y), so line N of gpiochip0 really is GPIO0 pin N. Unlike 4.4, the direction set
   does not touch the mux, but the request already did.
@@ -221,7 +221,7 @@ PCIe reload), then `cold-boot` steps 3..8 without the PLL step (+ E1c if still 0
 **E5: MCU frames of the start (low prior).** Besides `FA 05 00`: LEDs off (`frontpanel.md`), power-on mode `FA FF 05 31 AF`.
 Then PLL table + E1c. `FA 05 00` plus the PLL table alone does not bring up the count in a cold state (verified on the unit).
 
-Not proposed: TI's "R0 again after 10 ms" (covered by repeated table runs); `\rVER?\r` to confirm the slot-0x400000 image runs
+Not proposed: the datasheet's "R0 again after 10 ms" (covered by repeated table runs); `\rVER?\r` to confirm the slot-0x400000 image runs
 (0x4000 = 0xe2072115 and DDR pass already make a missed BOOT unlikely, and it is a monitor command outside OOS's BOOT-only
 rule).
 

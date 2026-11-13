@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# One-shot return to stock. The stock loader (Rigol U-Boot 2014.10, 2024-08-29) boots `boot`; when the image in `boot`
+# One-shot return to stock. The stock loader (U-Boot 2014.10, 2024-08-29) boots `boot`; when the image in `boot`
 # fails its check it tries `recovery` (this OOS image), then `backup`. OOS is selected by replacing the magic "KRNL" at
 # the start of `boot` with "OOSK"; this script puts "KRNL" back so the next power-on boots stock Android.
 # It also clears a leftover "boot-recovery" in `misc` (not evaluated by this loader).

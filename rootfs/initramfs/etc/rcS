@@ -15,7 +15,7 @@ st ok Linux "$(uname -r)"
 /bin/oos-mount-data > /tmp/oos-data.log 2>&1
 [ -x /bin/oos-update ] && /bin/oos-update boot >> /tmp/oos-update.log 2>&1
 # 0c) the stock partition, read only: oos-ui reads the model and the serial number from it when it starts
-/bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1
+/bin/oos-mount-stock >> /tmp/oos-data.log 2>&1
 # 0d) experimental ADC clock (limits.conf adc.clock_hz): a start that did not reach the end leaves its mark, and the next
 #     one goes back to the stock clock by itself, so a clock that hangs the scope cannot keep it hanging
 if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
@@ -77,7 +77,7 @@ if /bin/oos-board has-hardware; then
 	(setsid sh -c '
 		ST=/tmp/oos-boot.status
 		st() { printf "%s\t%s\t%s\t%s\n" "$(cut -d" " -f1 /proc/uptime)" "$1" "$2" "$3" >> $ST; }
-		/bin/oos-mount-rigol >> /tmp/oos-cold.log 2>&1
+		/bin/oos-mount-stock >> /tmp/oos-cold.log 2>&1
 		if /bin/oos-board bring-up $ST >> /tmp/oos-cold.log 2>&1; then
 			rm -f /oos/clock-try; sync
 			st end "" ""

@@ -23,7 +23,7 @@ result `c >> 1`.
 ## MCU -> RK3399 (keys and knobs)
 
 - Check head 0xFA, tail 0xAF and the CRC of every frame.
-- `cmd == 6` with `data & 0x70 != 0` is the motor of other Rigol products; it is not used on the DHO.
+- `cmd == 6` with `data & 0x70 != 0` is the motor of other products; it is not used on the DHO.
 - A row/column form of the code also exists: `row | col << 4` (+0x200 on press), from a per-row state table. The data
   byte below is what counts.
 - To record codes under OOS (where nothing else reads the port): `tools/frontpanel.py dump`.
@@ -64,7 +64,7 @@ The other codes are not yet verified on hardware.
 | Vertical SCALE | 0xda | 0xdb | 0xdc |
 | Trigger LEVEL | 0xea | 0xeb | 0xec |
 
-Codes of other Rigol models (menu keys F1-F7, 0x3x-0x7x) do not occur on the DHO. `tools/frontpanel.py decode <hex bytes>`
+Codes of other models (menu keys F1-F7, 0x3x-0x7x) do not occur on the DHO. `tools/frontpanel.py decode <hex bytes>`
 names recorded frames.
 
 LEDs: `cmd 1/2/3, data 0xff` switched all front-panel LEDs on (verified on the unit, by eye).
@@ -89,10 +89,10 @@ LEDs: `cmd 1/2/3, data 0xff` switched all front-panel LEDs on (verified on the u
   slope. Verified on the unit, by eye: bit 4 lights the blue Intensity LED; CH1-CH4 (in their channel colours), RUN/STOP
   green, the rising-slope LED.
 - Power commands, the power LED and the MCU firmware version: `board.md` section 4. Motor functions exist for other
-  Rigol products and are unused on the DHO.
+  other products and are unused on the DHO.
 
 ## Other inputs seen on the unit
 
-- `rk29-keypad` (`event0`): the SARADC keys of the Rockchip reference design and the power key GPIO0_A5.
-- `fts_ts` (`event1`): FocalTech touch on I2C2 @0x38.
-- USB: the front USB-A port is host port 3-1 (controller fe900000). The unit has no built-in Wi-Fi; the only device seen there was a plugged-in Realtek RTL8188EU Wi-Fi stick (0bda:8179). No HID device.
+- `rk29-keypad` (`event0`): the SARADC keys of the SoC reference design and the power key GPIO0_A5.
+- `fts_ts` (`event1`): touch controller on I2C2 @0x38.
+- USB: the front USB-A port is host port 3-1 (controller fe900000). The unit has no built-in Wi-Fi; the only device seen there was a plugged-in RTL8188EU Wi-Fi stick (0bda:8179). No HID device.

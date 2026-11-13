@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""bcb.py: read or set the boot command that Rigol's stock U-Boot (2014.10-RK3399) reads from `misc`.
+"""bcb.py: read or set the boot command that the stock U-Boot (2014.10-RK3399) reads from `misc`.
 
 Found in the stock U-Boot (uboot.bin, code at file offset 0x800 + 0x76b8): it looks up `misc`, reads 3 sectors at
 misc start + 0x20 sectors (16 KiB) and compares the string at the start of that buffer with
     "boot-recovery"  -> bootrk recovery     (OOS boot image in `recovery`)
     "boot-factory"   -> bootrk factory
-    "bootloader" / "loader" -> Rockchip Rockusb (download mode over USB)
+    "bootloader" / "loader" -> USB download mode
 anything else -> the normal `boot` path (stock Android). The AOSP-style text at misc offset 0 is not read.
 
 Card layout: `misc` starts at LBA 32768 (PARM 0x2000@0x6000 + 0x2000), so the command lives at LBA 32800.
 
-    bcb.py show   TARGET                    TARGET = card image, /dev/rdiskN (Mac), /dev/mmcblk0 or /dev/block/mmcblk0
+    bcb.py show   TARGET                    TARGET = card image, /dev/rdiskN, /dev/mmcblk0 or /dev/block/mmcblk0
     bcb.py set    TARGET recovery|loader    dry run: prints what would be written
     bcb.py clear  TARGET                    dry run
     add --execute to write; the sector is read back and compared. --misc-lba overrides 32768.
@@ -44,7 +44,7 @@ def describe(sec):
         if cmd == v:
             return f"{cmd.decode()!r} -> {'boots `recovery` (OOS)' if k == 'recovery' else k}"
     if cmd == b"loader":
-        return "'loader' -> Rockusb"
+        return "'loader' -> USB download mode"
     return f"{cmd!r} -> unknown to the stock U-Boot, normal boot"
 
 

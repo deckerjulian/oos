@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""oos-bootimg.py: build, inspect and unpack the boot image that the stock Rockchip loader of the Rigol DHO800/DHO900
+"""oos-bootimg.py: build, inspect and unpack the boot image that the stock loader of the DHO800/DHO900
 accepts in the `recovery` partition. Pure standard library, touches no device.
 
 Format (see docs/boot.md):
@@ -10,7 +10,7 @@ Format (see docs/boot.md):
                        name[16], cmdline[512], id[32], extra_cmdline[1024]
   kernel   uncompressed arm64 Image (text_offset 0), entered at 0x00280000
   ramdisk  gzip newc cpio, at 0x04BF0000
-  second   Rockchip RSCE container with "rk-kernel.dtb"
+  second   RSCE container with "rk-kernel.dtb"
   id       SHA-1(kernel, le32 len, ramdisk, le32 len, second, le32 len, header[32:576]), zero-padded to 32 bytes
            The loader refuses an image whose id is wrong. It hashes with the RK3399 crypto engine, so every
            section length must be a multiple of 4 (the ramdisk is padded here; kernel and RSCE already are).
@@ -42,7 +42,7 @@ def pad(b, n=PAGE):
     return b + bytes(-len(b) % n)
 
 
-# ---- Rockchip resource container ----------------------------------------------------------------------------
+# ---- resource container ----------------------------------------------------------------------------
 def rsce(entries):
     blk = 512
     hdr = bytearray(blk)

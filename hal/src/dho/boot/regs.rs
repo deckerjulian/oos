@@ -235,7 +235,7 @@ pub fn qi_trim(core: u32, on: bool) -> Wr {
     adc(200, 0x0100_0000 | (0x13 + 8 * core) << 16 | if on { 0x4000 } else { 0 }, 800)
 }
 
-/// LMX2582 1.25 GHz table of Rigol's `spi2pll_lxm2582` (TICSPro export), highest register first, R0 (FCAL_EN) last;
+/// LMX2582 1.25 GHz table of the stock `spi2pll_lxm2582` (register export), highest register first, R0 (FCAL_EN) last;
 /// `[addr, data hi, data lo]` [U] (pll.md, checked byte for byte against the stock tool).
 pub const PLL_TABLE: [[u8; 3]; 46] = [
     [70, 0x00, 0x00], [69, 0x00, 0x00], [68, 0x00, 0x89], [64, 0x00, 0x77], [62, 0x00, 0x00], [61, 0x00, 0x01], [59, 0x00, 0x00],
@@ -246,7 +246,7 @@ pub const PLL_TABLE: [[u8; 3]; 46] = [
     [13, 0x40, 0x00], [12, 0x70, 0x01], [11, 0x00, 0x18], [10, 0x10, 0xd8], [9, 0x03, 0x02], [8, 0x10, 0x84], [7, 0x28, 0xb2],
     [4, 0x19, 0x43], [2, 0x05, 0x00], [1, 0x08, 0x08], [0, 0x22, 0x1c],
 ];
-/// Pause after each LMX2582 word (Rigol's tool: 50 ms) [U].
+/// Pause after each LMX2582 word (the stock tool: 50 ms) [U].
 pub const PLL_WORD_GAP_US: u64 = 50_000;
 /// The same in `early_start`.
 pub const PLL_EARLY_GAP_US: u64 = 1_000;

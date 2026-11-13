@@ -3,10 +3,10 @@
 Verified on the unit: every pin below is claimed with the label given here, PCIe PERST# as `ep` (GPIO 82, out high),
 GPIO 120 via sysfs (input, low with no LA probe). This is the state under stock.
 
-Numbering: Linux 4.4 Rockchip global number = bank * 32 + offset, offset = letter(A=0, B=8, C=16, D=24) + pin.
+Numbering: Linux 4.4 SoC global number = bank * 32 + offset, offset = letter(A=0, B=8, C=16, D=24) + pin.
 Linux 6.12 numbers gpiochips dynamically: in OOS always address pins as `gpiochipN` + offset (libgpiod) or by DT phandle.
 
-## Bit-banged buses (Rigol modules, pins fixed in the module)
+## Bit-banged buses (stock modules, pins fixed in the module)
 
 | Global | Pin | Module | Label / role | Notes |
 |---:|---|---|---|---|
@@ -26,7 +26,7 @@ chip selects. OOS can drive it with the real controller: `spi2 { cs-gpios = <&gp
 <&gpio2 RK_PA5 ..>, <&gpio2 RK_PA4 ..>; }` (the stock DT enables `spi2` with a `spidev`, but the module takes the
 pins over as GPIOs). Bus format: see `../protocols/afe-spi.md`.
 
-## Simple GPIOs (Rigol modules)
+## Simple GPIOs (stock modules)
 
 | Global | Pin | Module / device | Label | Direction | Notes |
 |---:|---|---|---|---|---|

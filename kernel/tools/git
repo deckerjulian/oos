@@ -1,5 +1,5 @@
 #!/bin/sh
-# Not git. This source tree is not a git repository, but some Rockchip BSP driver Makefiles ask `git log` for their
+# Not git. This source tree is not a git repository, but some SoC BSP driver Makefiles ask `git log` for their
 # revision and compile the answer into the module. build.sh puts this script first on PATH: it answers exactly the
 # `git log` queries the release's own build made, with the answers recorded there (git-log-answers.txt; the work
 # directory is written @W@), so the modules come out identical. Any other git command fails; nothing is fetched.

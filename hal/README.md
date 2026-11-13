@@ -1,7 +1,7 @@
 # oos-hal: hardware layer of OOS
 
 Rust library (only `libc`) shared by `oos-ui` and the coming `oos-fpgad`. It builds the FPGA register sequences of
-the Rigol DHO800/DHO900 as pure functions (lists of `(offset, value)` plus software shadows of the write-only
+the DHO800/DHO900 as pure functions (lists of `(offset, value)` plus software shadows of the write-only
 registers) and applies them through `bus::Bus` (`bus::Bar1` = `/dev/xdma0_bypass` on the unit, `bus::Recorder` in tests).
 
 No vendor code is used. The hardware is described in `../docs/protocols/`.

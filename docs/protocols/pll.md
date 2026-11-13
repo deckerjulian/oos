@@ -1,4 +1,4 @@
-# Sample clock: TI LMX2582 (and LMK04828)
+# Sample clock: LMX2582 (and LMK04828)
 
 ## LMX2582, 3-wire bus
 
@@ -46,7 +46,7 @@ runs after the ADC sync and the eye scan (`cold-clock.md`), so read it after tho
 
 ## Other output frequencies (offline, untested)
 
-Nothing in this section has been written to a unit. Field names, positions and limits are from TI's LMX2582 datasheet
+Nothing in this section has been written to a unit. Field names, positions and limits are from the LMX2582 datasheet
 **SNAS680E** (rev. E, August 2022; register descriptions Tables 7-5..7-50, input path Table 7-1, MASH order Table 7-2,
 channel divider Table 7-4). Code: `oos_hal::dho::lmx2582` (decode and `table_for`), dry run `oos-fpgad pll --freq <Hz> --dry`.
 

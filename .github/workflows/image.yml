@@ -75,7 +75,7 @@ jobs:
       # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,
       # wpa_supplicant, e2fsck, scripts. The programs built from the OOS source only get a notice: Cargo mixes the host
       # into its crate hashes (rustc -vV says "host: ..."), which ends up in the symbol names and the code layout, and
-      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
+      # the distribution's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
       - name: arm64 and x86-64 builds the same
         run: |
           own='  initramfs/bin/oos-(hw|ui|fpgad|update)$'

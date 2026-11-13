@@ -118,7 +118,7 @@ impl Ui {
 
         // ---- column 1: unit and software
         let mut a = vec![Row::Head("Unit".into())];
-        a.push(kv("Model", format!("Rigol {}", c.name)));
+        a.push(kv("Model", c.name.clone()));
         a.push(kv("Serial", p.serial.clone().unwrap_or("-".into())));
         a.push(kv("MAC", p.mac.clone().unwrap_or("-".into())));
         a.push(kv("Series", c.series));
