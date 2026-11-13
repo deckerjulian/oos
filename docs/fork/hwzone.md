@@ -45,6 +45,31 @@ private RE notes `docs/fpga.md` "Zone trigger" (static analysis).
 The value and column mapping is `mask::Map`, shared with the mask test; sweep it with the mask first
 (`hwmask.md` "Sweep of the mapping"). `:SYSTem:DEBug:MASK:MAP` changes it for both.
 
+## Rate
+
+Round 3 on the unit: qualification right in every case, but 29 passing frames/s against 187/s with the software
+filter (200 us/div, 1 kHz probe-comp, box on the trace). 1 / 29 s is the 25 ms the batch read waits for the ring to
+fill plus about 9 ms of arm and read: with the zone logic armed the ring got one frame per arm, and every batch waited
+out the 25 ms for the rest. A batch is now `zone.batch` frames while the zone trigger runs (system.conf, default 1), so
+the read follows the first qualified frame at once. `:SYSTem:DEBug:ZONE?` reports the last batch as `batch=<read>/
+<planned>,batch_ms=<arm to read>`; with `zone.batch = 8` the bench sees whether the ring holds more than one
+qualified frame per arm after all.
+
+Readback (regmap, netlist): the arm bit (0x4030[28]) and the pass flag (0x4038[19]) are right but clear whenever no
+acquisition cycle runs (0x4030 bit 8 = 0, FSM state 0), which is when OOS reads them, after the batch. The debug line
+now shows `cycle` and `state`: `armed` and `pass` mean something only with `cycle=1`. The FSM decides in state 5 once
+the record is complete: pass goes on to completion, fail re-arms in hardware (14, 15, 0). A rejected frame costs a
+whole acquisition. 0x11a0 is a snapshot of qualified frames (latch 0x1190 bit 28, clear bit 30); its strobe likely
+needs the mask column strobe, so it depends on the column layout of `mask::Map` too.
+
+regmap reads the 29/s as most frames being rejected rather than lost in re-arm. Both are checked on the bench: with
+the box on the trace, latch `frames` over 10 s in mode intersect, then not intersect. If the two counts do not add up
+to the triggers in that time, the table limits or columns are off (sweep with `hwmask.md` "Sweep of the mapping");
+if they add up and used/s stays low, the batch wait is the cause.
+
+Bench: the round 3 box case with `zone.batch` unset, then 4 and 16; note used/s, `batch` and `batch_ms` for each,
+and the software-filter rate for comparison. Goal: at least the software rate.
+
 ## Assumptions
 
 | assumption | where | bench step |
@@ -53,7 +78,7 @@ The value and column mapping is `mask::Map`, shared with the mask test; sweep it
 | 1000 columns of points / 1000 samples over the record | `zone::columns` | 4 |
 | Column times relative to the trigger at sample `pre` | `zone::table` | 4 |
 | A failing frame is not accepted; the FSM re-arms | | 2, 3 |
-| Slot = ADC lane, as the mask test | `mask::slot` | 5 |
+| Slot = stream slot, as the mask test (CH2 alone 0, CH2 of CH1+CH2 1) | `mask::slot` | 5 |
 
 ## On-unit procedure
 
@@ -61,7 +86,7 @@ Probe on CH1 at the probe-comp output (1 kHz square). `zone.hw = on` in system.c
 `:SYSTem:DEBug:ZONE?` and `:SYSTem:STATe?` after each step. Hardware mask test off.
 
 1. CH1 only, 1 V/div, 200 us/div, edge CH1 rising at 50 %, Normal sweep. Draw zone 1 as a box on the high level
-   right after the trigger, mode "intersect". The debug line shows `slot=0`, `armed=1`, frames rising, `pass=1`.
+   right after the trigger, mode "intersect". The debug line shows `slot=0`; `armed=1` and `pass=1` only on readings with `cycle=1`.
    The picture keeps updating at the normal rate.
 2. Move the box above the trace (no touch). Expect no new frames: the status stays WAIT and `frames` stops while
    `:SYSTem:STATe?` shows no new acquisitions accepted. If frames keep arriving and `pass=0`, the zone only flags:
@@ -74,7 +99,7 @@ Probe on CH1 at the probe-comp output (1 kHz square). `zone.hw = on` in system.c
    40 % and 60 %: no frames. Move it to the last division of the screen across a falling edge: frames pass again
    (columns reach the end of the record). If a box only works when shifted, record the shift: it gives the column
    layout or the time origin.
-5. Slot mapping: probe on CH2, zone on CH2, CH1 off: `slot=1`. CH1 and CH2 on, zone on CH2: `slot=2`; the zone must
+5. Slot mapping: probe on CH2, zone on CH2, CH1 off: `slot=0`. CH1 and CH2 on, zone on CH2: `slot=1`; the zone must
    follow CH2, not CH1 (offset CH1 by 2 div: no effect on qualification).
 6. Two zones: zone 1 intersect on the high level, zone 2 not intersect above the trace: frames pass. Zone 2 moved onto
    the trace: no frames.

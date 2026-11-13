@@ -943,7 +943,22 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     if s.single {
         b.frames = 1;
     }
+    // the zone trigger: the ring gets one qualified frame per arm on the unit (round 3: 29 frames/s, the 25 ms wait
+    // for more frames per batch), so a batch is `zone_batch` frames (docs/fork/hwzone.md "Rate")
+    if s.hwzone.is_some() {
+        b.frames = b.frames.min(zone_batch());
+    }
     b
+}
+
+/// Frames per batch while the zone trigger runs: `zone.batch = <n>` in system.conf, default 1.
+fn zone_batch() -> u32 {
+    static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *N.get_or_init(|| zone_batch_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+fn zone_batch_from(conf: &str) -> u32 {
+    crate::drawpipe::conf_value(None, conf, "zone.batch").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).clamp(1, 1000)
 }
 
 /// The part of a deep record the screen shows, as a read-out window (`Settings::window`: points, first point from the
@@ -1613,7 +1628,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the frame count, so the read waits at most one frame longer
             let pipe = crate::drawpipe::pipe();
             let idle = || pipe.is_some_and(|x| x.help(&mut helper));
+            let t_batch = std::time::Instant::now();
             let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed, idle);
+            let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
             if let Some(x) = pipe {
                 x.help_done(&mut helper);
             }
@@ -1716,7 +1733,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         let n = g.zone.map_or(0, |r| r.n) + 1;
                         g.zone = zr.map(|(ch, slot, ctrl, r)| {
                             let c = r.counters;
-                            crate::board::ZoneRead { ch, slot, ctrl, raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi], frames: c.frames(), armed: r.armed(), pass: r.pass(), n }
+                            crate::board::ZoneRead { ch, slot, ctrl, raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi], frames: c.frames(), armed: r.armed(), pass: r.pass(), in_cycle: r.in_cycle(), state: r.state(), n, batch: (count, b.frames, batch_ms) }
                         });
                     }
                     // hardware average: one frame, shown or not, the average cleared after a complete hold average
@@ -2213,6 +2230,50 @@ mod tests {
     }
 
     #[test]
+    fn zone_batches_hold_zone_batch_frames() {
+        assert_eq!((zone_batch_from(""), zone_batch_from("zone.batch = 8\n"), zone_batch_from("zone.batch = 0\n")), (1, 8, 1));
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        assert!(batch_plan(&s, &p).frames > 1);
+        let z = Settings { hwzone: Some(oos_hal::dho::seq::HwZone { ch: 0, zones: vec![], clear: 0, map: oos_hal::dho::mask::Map::default() }), ..s };
+        assert_eq!(batch_plan(&z, &p).frames, zone_batch());
+    }
+
+    /// Unit round 5: at 100 us/div with 10k points the record is 1.6 screens long, and a table spread over the record
+    /// failed every frame of a clean 1 kHz square. Mapped by time, the clean signal passes and a 10 us shift fails;
+    /// spread over the record (the old mapping) the clean signal fails.
+    #[test]
+    fn mask_table_follows_the_screen_when_the_record_is_longer() {
+        use oos_hal::dho::mask;
+        let (n, pre, rate) = (10_000usize, 5_000u32, 6_250_000u64);
+        let dt = 1.0 / rate as f64;
+        // 0 / 3 V, 1 kHz, rising edge at the trigger; `shift` seconds later
+        let wave = |shift: f64| -> Vec<f32> { (0..n).map(|k| (k as f64 - pre as f64) * dt - shift).map(|t| if (t * 1e3).rem_euclid(1.0) < 0.5 { 3.0 } else { 0.0 }).collect() };
+        // the screen: -0.5..0.5 ms = samples 1875..8125; the mask from it
+        let (s0, s1) = (1875, 8125);
+        let m = oos_dsp::mask::build(&wave(0.0)[s0..s1], 20, 0.3);
+        let (lo, hi) = m.columns(mask::COLUMNS);
+        let fails = |t: &mask::Timing, v: &[f32]| -> bool {
+            let map = mask::Map::default();
+            let cols = mask::table_map(&lo, &hi, t, 1.0, -1.5, 1.0, &map);
+            let per = map.layout(t.points, 1).2;
+            v.iter().enumerate().any(|(k, &x)| {
+                let c = (k as f64 / per) as usize;
+                let code = map.code(x as f64, 1.0, -1.5, 1.0).floor() as i32;
+                c < cols.len() && ((cols[c].lo_en && code < cols[c].lo as i32) || (cols[c].hi_en && code > cols[c].hi as i32))
+            })
+        };
+        let by_time = mask::Timing { points: n as u32, pre, rate, mask: 1, screen: (-0.5e-3, 1e-3) };
+        assert!(!fails(&by_time, &wave(0.0)), "clean signal");
+        assert!(fails(&by_time, &wave(10e-6)), "10 us shift");
+        assert!(fails(&by_time, &wave(-10e-6)), "-10 us shift");
+        let over_record = mask::Timing { screen: (-(pre as f64) * dt, n as f64 * dt), ..by_time };
+        assert!(fails(&over_record, &wave(0.0)), "the old mapping fails the clean signal");
+    }
+
+    #[test]
     fn zone_hw_from_conf() {
         assert!(!zone_hw_from(""));
         assert!(zone_hw_from("zone.hw = on\n"));
@@ -2265,7 +2326,9 @@ mod tests {
         };
         let m = oos_dsp::mask::build(&wave(false, 1), 20, 0.2);
         let (lo, hi) = m.columns(mask::COLUMNS);
-        let cols = mask::table_map(&lo, &hi, n as u32, 1, scale, offset, 1.0, &mask::Map::default());
+        // the record is the screen here: 20,000 samples at 10 MSa/s around the trigger
+        let t = mask::Timing { points: n as u32, pre: n as u32 / 2, rate: 10_000_000, mask: 1, screen: (-1e-3, 2e-3) };
+        let cols = mask::table_map(&lo, &hi, &t, scale, offset, 1.0, &mask::Map::default());
         // the read-out word of a sample (inverse of `seq::decode_volts`), and the 8-bit comparator on it
         let fails = |v: &[f32]| -> bool {
             v.iter().enumerate().any(|(k, &x)| {

@@ -13,11 +13,15 @@ pub const CTRL: u32 = 0x11d0;
 /// Table write ports of zone 1 and 2: 7:0 lower limit, 15:8 upper limit, 16 column in the zone, 27:18 column, 28 write
 /// enable (level-sensitive).
 pub const TABLES: [u32; 2] = [0x11d8, 0x11dc];
-/// Status reads: 0x4030 bit 28 zone logic armed, 0x4038 bit 19 the latched zone pass flag.
+/// Status reads: 0x4030 bit 28 zone logic armed, 0x4038 bit 19 the latched zone pass flag. Both read 0 between
+/// acquisition cycles (0x4030 bit 8 clear, FSM state 0x4030[3:0] = 0); in a cycle without the arm, pass reads 1.
 pub const ARMED_REG: u32 = 0x4030;
 pub const ARMED: u32 = 1 << 28;
 pub const PASS_REG: u32 = 0x4038;
 pub const PASS: u32 = 1 << 19;
+/// 0x4030 bit 8: an acquisition cycle runs; [3:0] the FSM state.
+pub const CYCLE: u32 = 1 << 8;
+pub const STATE_MASK: u32 = 0xf;
 
 /// Bits of `CTRL`.
 pub mod ctrl {
@@ -146,6 +150,15 @@ impl Raw {
     pub fn pass(&self) -> bool {
         self.s4038 & PASS != 0
     }
+
+    /// The read fell inside an acquisition cycle, so `armed` and `pass` mean something.
+    pub fn in_cycle(&self) -> bool {
+        self.s4030 & CYCLE != 0
+    }
+
+    pub fn state(&self) -> u32 {
+        self.s4030 & STATE_MASK
+    }
 }
 
 /// The status words and the latched counters.
@@ -216,7 +229,10 @@ mod tests {
             }
         }
         let r = read(&mut B, 0x0010_0000);
-        assert!(r.armed() && r.pass());
+        assert!(r.armed() && r.pass() && !r.in_cycle() && r.state() == 0);
+        // the unit's reading between cycles (round 3)
+        let idle = Raw { s4030: 0xcf04_a880, s4038: 0x2080_0700, counters: mask::Raw::default() };
+        assert!(!idle.in_cycle() && !idle.armed() && !idle.pass() && idle.state() == 0);
         assert_eq!(r.counters.frames(), 42);
     }
 }
