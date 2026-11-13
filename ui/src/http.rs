@@ -1148,14 +1148,46 @@ setTimeout(() => {
     }
 
     /// With a frame loop that hands its screens over before each render, the picture is the screen that was shown,
-    /// taken without a copy, and the loop's canvas gets a buffer of the right size to draw into.
+    /// taken without a copy, and the loop's canvas gets a buffer of the right size to draw into. The hand-over is told
+    /// by the buffer, not its content: a blank canvas swapped for a zeroed spare has equal pixels.
+    ///
+    /// Break it catches as well: the test's own race. A request in before the first frame is answered with a copy of
+    /// the screen (`Shots::request` -> `tick`: the loop has not yet said that it renders whole frames), and frames
+    /// handed over afterwards are pictures made ahead. Run in one order or the other by the client's timing, that
+    /// failed about 1 in 7 under load; both orders now run on purpose.
     #[test]
     fn live_picture_from_the_frame_loop_without_a_copy() {
+        for frames_first in [true, false] {
+            live_picture_hand_over(frames_first);
+        }
+    }
+
+    fn live_picture_hand_over(frames_first: bool) {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let mut frame = 0u32;
+        // the first screen handed over (the canvas got another buffer): the one before the render
+        let mut shown: Option<Vec<u32>> = None;
+        let mut one_frame = |h: &mut Http, cv: &mut Canvas, shown: &mut Option<Vec<u32>>| {
+            let (before, buf) = (cv.px.clone(), cv.px.as_ptr());
+            h.before_render(cv, true);
+            if cv.px.as_ptr() != buf && shown.is_none() {
+                *shown = Some(before);
+            }
+            assert_eq!(cv.px.len(), (cv.w * cv.h) as usize);
+            frame += 1;
+            cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+        };
+        if frames_first {
+            for _ in 0..3 {
+                h.poll(&mut ui, &cv, &mut scpi);
+                one_frame(&mut h, &mut cv, &mut shown);
+            }
+            assert!(shown.is_none(), "nothing handed over before a request");
+        }
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
@@ -1164,26 +1196,29 @@ setTimeout(() => {
             let _ = c.read_to_end(&mut out);
             out
         });
-        let mut shown = None;
-        let mut frame = 0u32;
-        while !t.is_finished() {
+        // the request is in before the next frame, whatever the load; the screen at that moment
+        while h.shots.lock().waiting.is_empty() && !t.is_finished() {
             h.poll(&mut ui, &cv, &mut scpi);
-            // a frame: hand over, then render a screen of its own (each frame another colour)
-            let before = cv.px.clone();
-            h.before_render(&mut cv, true);
-            if cv.px != before && shown.is_none() {
-                shown = Some(before);
-            }
-            assert_eq!(cv.px.len(), (cv.w * cv.h) as usize);
-            frame += 1;
-            cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let at_request = cv.px.clone();
+        while !t.is_finished() {
+            one_frame(&mut h, &mut cv, &mut shown);
+            h.poll(&mut ui, &cv, &mut scpi);
             std::thread::sleep(Duration::from_millis(5));
         }
         let out = t.join().unwrap();
         let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
-        let shown = shown.expect("a screen was handed over");
-        assert!(out[e..] == crate::store::png(cv.w as u32, cv.h as u32, &shown), "the PNG of the screen that was shown");
+        let png = |px: &[u32]| crate::store::png(cv.w as u32, cv.h as u32, px);
+        if frames_first {
+            // the frame loop runs: the next screen goes over by a buffer swap, and it is the picture
+            let shown = shown.expect("a screen was handed over");
+            assert!(out[e..] == png(&shown), "the PNG of the screen that was shown");
+        } else {
+            // before the first frame: the screen of that moment, copied
+            assert!(out[e..] == png(&at_request), "the PNG of the screen at the request");
+        }
     }
 
     /// A screenshot asked for as PNG never gets JPEG bytes, a JPEG viewer gets PNG only once the VPU failed.
