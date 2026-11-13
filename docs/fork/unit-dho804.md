@@ -19,13 +19,14 @@ this unit uses, how to build its image, and what is still unverified.
 | Boot card | opt-in device tree with `sd-uhs-sdr104`, `sd-uhs-sdr50`, `regulator-settling-time-down-us = <30000>` on `vccio_sd`, no `regulator-init-microvolt` | `kernel/dts/rk3399-rigol-dho900-uhs.dts`, `kernel/build-base.sh` copies every board DTB |
 | Firewall | `net.allow` prefixes: nftables ruleset before any service starts; static `nft` in the image | `rootfs/initramfs/bin/oos-firewall`, `rootfs/build-nft.sh`, rcS |
 | Remote ACL | the same prefixes in oos-ui: `POST /update`, `/mcp` get 403, SCPI and VXI-11 connections are closed | `ui/src/netacl.rs`, `http.rs`, `scpi.rs`, `vxi11.rs` |
-| Telnet | upstream's `remote.telnet` (0.1.9+); the unit image sets it `off`. rcS reads it through `oos-conf`, oos-ui loads `/etc/oos/system.conf` under `/oos/system.conf`, so it does not start telnetd either | rcS, `ui/src/sysconf.rs` (`IMAGE_PATH`, `image_defaults`) |
+| SSH, no telnet | Dropbear on port 22 replaces telnet: rcS starts `oos-ssh` instead of `telnetd`, the telnet switch and `crate::remote` are gone. Generated root password and host keys in `/oos/ssh`, trusted keys from a USB stick, password login off only with a key. Listens only with `net.allow` and the firewall loaded. Keys `remote.ssh` (default off, unit image on), `ssh.password` (docs/network.md 7) | `rootfs/initramfs/bin/oos-ssh`, `rootfs/build-dropbear.sh`, rcS, `ui/src/ssh.rs`, `ui/src/ui/ssh.rs`, `ui/src/ui/remote.rs`, `tools/ssh-sim.sh` |
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
-| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24`, `remote.telnet = off`, `eth.mac = 02:00:00:00:00:01`), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
+| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24 169.254.0.0/16`, `remote.ssh = on`, `eth.mac = 02:00:00:00:00:01`), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
 | Image build | the fork's part of `boot/build-dev-image.sh` (unit dir, `build.env`, DTB check, `nft`, unit `*.conf`, `OOS_BOOTARGS_EXTRA`) lives in two sourced hooks; upstream's script carries two lines. The hook stages its container part in `rootfs/out/unit-hook/` (mounted as `/wlan`). A bad `OOS_UNIT` now fails after the Rust builds | `boot/unit-hook.sh`, `boot/unit-hook-image.sh`, docs/fork/sync-checklist.md |
 
-Without `OOS_UNIT` the image is upstream-identical in behaviour, apart from carrying `nft` (about 1 MB).
+Without `OOS_UNIT` the image behaves like upstream's apart from carrying `nft` (about 1 MB) and Dropbear (450 KB), and
+having no telnet. SSH stays off there: no `remote.ssh` and no `net.allow`.
 
 ## Building the image
 
@@ -40,7 +41,8 @@ OOS_UNIT=dho804 boot/build-dev-image.sh     # boot/out/oos-dev.img, .oosupd, GEL
 Check the result before it goes anywhere near the scope:
 
 - `boot/out/initramfs.cpio.gz` contains `etc/oos/limits.conf`, `etc/oos/system.conf`, `bin/nft`, `bin/oos-firewall`,
-  `bin/oos-conf`, `bin/oos-mac` (`gzip -dc ... | cpio -t`).
+  `bin/oos-conf`, `bin/oos-mac`, `bin/oos-ssh`, `bin/dropbearmulti` with its `dropbear`, `dropbearkey`, `scp` links
+  (`gzip -dc ... | cpio -t`).
 - The DTB in the image is the UHS one: `fdtget -p boot/out/oos-dho900.dtb /mmc@fe320000` lists `sd-uhs-sdr104`.
 
 The GEL install accepts the model vendor.bin names (DHO924S), so the unit passes the model check. Install on the second SD card only
@@ -64,6 +66,8 @@ calibrates the new board.
   mixed IPv4/IPv6 lists, host bits in a prefix and an all-invalid list. Packet filtering itself was not exercised.
 - `oos-conf`, `oos-firewall --print` and `oos-mac` under busybox `sh`: precedence, empty values, bad prefixes, bad and
   multicast MACs, missing CID; the CID path gives the same MAC as the old rcS code.
+- `tools/ssh-sim.sh`: `oos-ssh` with the image's busybox, `nft` and Dropbear against an OpenSSH client (docs/network.md
+  7, last paragraph).
 
 ## Needs verification on hardware
 
@@ -80,8 +84,11 @@ calibrates the new board.
    outside host through: on the scope `nft delete table inet oos_fw`, then `POST /mcp` from another subnet gives 403
    and SCPI 5555 closes at once. Power-cycle afterwards to restore the firewall.
 5. MAC: `ip link show eth0` gives `02:00:00:00:00:01`, the DHCP server hands out the expected address.
-6. Telnet: port 23 closed after boot and after oos-ui has started; System > Network > Remote services > telnet opens it
-   at once, `remote.telnet = on` in `/oos/system.conf` from the next start.
+6. SSH: port 23 closed; port 22 open from 192.0.2.x only; `/tmp/oos-ssh.state` says `on: password and keys` after the
+   first start; Show password gives a password that logs in; the host key fingerprint on the page matches the client's;
+   the password and the host key are unchanged after a power cycle and after an update; a key imported from a stick
+   and one added with `ssh-copy-id` both log in; Password login > Off refused with no key, then keys only works; SSH >
+   Off closes port 22 and ends sessions.
 7. Fallback path (risk 2 in `docs/oos-review.md`): unchanged by this work, still open.
 
 ## Transfer efficiency (spec 10): verification on hardware

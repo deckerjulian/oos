@@ -60,13 +60,10 @@ ip link set eth0 up 2>/dev/null
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &
-# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only); off with
-#    System > Network > Remote services > telnet (remote.telnet = off in /oos/system.conf, mounted in 0b), or by the
-#    image default in /etc/oos/system.conf (oos-conf: an image built for one unit, docs/network.md 6)
-case "$(/bin/oos-conf remote.telnet on)" in
-off|false|0) echo "oos: telnet off (system settings)" > /dev/kmsg;;
-*) telnetd -l /bin/sh;;
-esac
+# 3) remote shell: SSH (Dropbear, oos-ssh, docs/network.md 7) after the firewall, in the background: the first start
+#    makes the password and the host keys in /oos/ssh. No telnet in this fork: no shell on the network without
+#    authentication. The serial console stays as it is.
+(setsid sh -c '/bin/oos-ssh start >> /tmp/oos-ssh.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 4) banner on the panel and the serial console
 /bin/oos-info | tee /dev/tty1 > /dev/kmsg
 # 4b) what the data partition (0b) keeps for the screen

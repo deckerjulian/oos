@@ -9,7 +9,8 @@
 //! ntp.server = pool.ntp.org
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
-//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet)
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh)
+//! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
 //! graphics = gpu            # Display > Graphics (gpu or cpu)
 //! backlight = 100            # Display > Backlight, percent (10..100)
 //! ```
@@ -40,11 +41,13 @@ pub struct SysConf {
     /// a link that comes up at 10 Mbit/s gets one more autonegotiation (ethlink.rs)
     pub eth_retry_10m: bool,
     /// the network services (System > Network > Remote services): web page with the update path (8080), SCPI (5555),
-    /// VXI-11 (111 and its core port), the telnet shell (23, read by rcS too)
+    /// VXI-11 (111 and its core port), SSH (22, `/bin/oos-ssh` reads it too; off by default, docs/network.md 7)
     pub remote_web: bool,
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
-    pub remote_telnet: bool,
+    pub remote_ssh: bool,
+    /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
+    pub ssh_password: bool,
     /// Display > Graphics: the picture put together on the GPU (`gpu.rs`), else on the CPU. The GPU by default: a
     /// third less load on the frame loop, the same picture (gpu/README.md); where it does not start, the CPU draws.
     pub gpu: bool,
@@ -64,7 +67,8 @@ impl Default for SysConf {
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
-            remote_telnet: true,
+            remote_ssh: false,
+            ssh_password: true,
             gpu: true,
             backlight: 100,
             extra: Vec::new(),
@@ -121,7 +125,8 @@ impl SysConf {
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
-                "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
+                "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
+                "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "graphics" => match v {
                     "cpu" | "gpu" => {
                         c.gpu = v == "gpu";
@@ -151,7 +156,8 @@ impl SysConf {
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
-        s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
+        s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
+        s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
         s.push_str(&format!("graphics = {}\n", if self.gpu { "gpu" } else { "cpu" }));
         s.push_str(&format!("backlight = {}\n", self.backlight));
         for l in &self.extra {
@@ -241,6 +247,8 @@ mod tests {
         assert_eq!(c.ntp_server, "pool.ntp.org");
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
+        // no shell on the network unless an image or the user switches SSH on
+        assert!(!c.remote_ssh && c.ssh_password);
         assert_eq!(SysConf::parse("").0, c);
     }
 
@@ -251,7 +259,7 @@ mod tests {
         c.ntp_server = "ptbtime1.ptb.de".into();
         c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
         c.eth_retry_10m = false;
-        (c.remote_web, c.remote_telnet) = (false, false);
+        (c.remote_web, c.remote_ssh, c.ssh_password) = (false, true, false);
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
         assert_eq!(back, c);
@@ -292,14 +300,17 @@ mod tests {
 
     #[test]
     fn image_defaults_under_the_settings() {
-        let image = "# unit\nnet.allow = 192.0.2.0/24\nremote.telnet = off\neth.mac = 02:00:00:00:00:01\n";
+        let image = "# unit\nnet.allow = 192.0.2.0/24\nremote.ssh = on\neth.mac = 02:00:00:00:00:01\n";
         let (base, bad) = SysConf::image_defaults(image);
-        assert!(bad.is_empty() && !base.remote_telnet && base.remote_web);
+        assert!(bad.is_empty() && base.remote_ssh && base.ssh_password && base.remote_web);
         // the unit's own keys stay in the image file, not in the settings written later
         assert!(!base.text().contains("net.allow") && !base.text().contains("eth.mac"));
         let (c, _) = SysConf::parse_over(base.clone(), "ntp = on\n");
-        assert!(c.ntp && !c.remote_telnet);
-        let (c, _) = SysConf::parse_over(base, "remote.telnet = on\n");
-        assert!(c.remote_telnet);
+        assert!(c.ntp && c.remote_ssh);
+        let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
+        assert!(!c.remote_ssh && !c.ssh_password);
+        // telnet is not part of this fork: an old line stays in the file and starts nothing
+        let (c, bad) = SysConf::parse("remote.telnet = on\n");
+        assert!(bad.is_empty() && c.text().contains("\nremote.telnet = on\n") && !c.remote_ssh);
     }
 }

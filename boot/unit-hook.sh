@@ -28,4 +28,6 @@ fi
 [ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
 # the LAN-only firewall (net.allow, docs/network.md 6)
 [ -x "$root/rootfs/out/nft" ] || "$root/rootfs/build-nft.sh"
+# the SSH server (docs/network.md 7)
+[ -x "$root/rootfs/out/dropbearmulti" ] || "$root/rootfs/build-dropbear.sh"
 cp "$here/unit-hook-image.sh" "$stage/image.sh"

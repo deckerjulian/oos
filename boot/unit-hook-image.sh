@@ -7,6 +7,10 @@ d=/wlan/unit-hook
 # the LAN-only firewall (net.allow, docs/network.md 6)
 cp /wlan/nft $r/bin/
 cp /wlan/nft.COPYING $r/etc/licenses/nftables
+# the SSH server, started by rcS through oos-ssh (docs/network.md 7)
+cp /wlan/dropbearmulti $r/bin/
+for p in dropbear dropbearkey scp; do ln -sf dropbearmulti $r/bin/$p; done
+cp /wlan/dropbear.COPYING $r/etc/licenses/dropbear
 # the unit defaults: /etc/oos/limits.conf (capabilities), /etc/oos/system.conf (network); none without OOS_UNIT
 if [ -n "$(ls -A $d/etc-oos)" ]; then mkdir -p $r/etc/oos; cp $d/etc-oos/*.conf $r/etc/oos/; ls -l $r/etc/oos; fi
 # extra kernel arguments of the unit (build.env), e.g. pci=pcie_bus_perf for MaxPayload 256 (docs/fork/unit-dho804.md)

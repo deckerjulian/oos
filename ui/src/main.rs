@@ -44,7 +44,7 @@ mod json;
 mod gpu;
 mod vpu;
 mod layout;
-mod remote;
+mod ssh;
 mod wave;
 mod zone;
 #[cfg(target_os = "linux")]
@@ -478,6 +478,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     }
     // settings of the scope itself: NTP, time zone, Ethernet (/oos/system.conf)
     ui.load_system(sysconf::default_path());
+    ui.set_ssh_dir(ssh::dir());
     let mut setup_last = store::setup_text(&ui.m);
     let mut setup_t = Instant::now();
     ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease").map(|s| format!("Linux {}", s.trim())).unwrap_or_default();
@@ -502,8 +503,9 @@ fn device_main(mut ui: Ui, args: &[String]) {
     web.acl = acl.clone();
     scpi.acl = acl.clone();
     vxi.acl = acl;
-    // System > Network > Remote services, as applied: web, SCPI, VXI-11, telnet (None: not yet, at the start)
-    let mut remote_now: Option<[bool; 4]> = None;
+    // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
+    // at the start)
+    let mut remote_now: Option<[bool; 5]> = None;
     // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
     let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
     let mut hdmi: Option<drm::Display> = None;
@@ -549,10 +551,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 },
             }
         }
-        // the services follow their switches: the ports were opened above, telnet is started by rcS
-        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_telnet];
+        // the services follow their switches: the ports were opened above, SSH is started by rcS (oos-ssh)
+        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
         if remote_now != Some(want) {
-            let was = remote_now.unwrap_or([true, true, true, !want[3]]);
+            let was = remote_now.unwrap_or([true, true, true, want[3], want[4]]);
             if want[0] != was[0] {
                 web.set_open(want[0].then_some(web_port));
             }
@@ -562,8 +564,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
             if want[2] != was[2] {
                 vxi.set_open(want[2]);
             }
-            if want[3] != was[3] {
-                remote::telnet(want[3]);
+            if want[3] != was[3] || want[4] != was[4] {
+                ssh::apply(want[3]);
             }
             remote_now = Some(want);
         }
