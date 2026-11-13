@@ -883,6 +883,9 @@ pub struct Ui {
     /// the record a background measurement is wanted of (`meas_want`), when it must not be the newest at the time the
     /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
     meas_pending: Option<Record>,
+    /// what choosing the Bus trigger switched on by itself (`set_trig_type`): the channels and whether the decoder; leaving
+    /// Bus switches exactly those off again, what the user had on stays
+    bus_auto: Option<([bool; NCH], bool)>,
     /// STOP waiting for the hardware's final frame (docs/fork/stop-exact.md): the request number and until when
     final_req: u64,
     stop_final: Option<f64>,
@@ -1134,6 +1137,7 @@ impl Ui {
             meas_env_sent: [false; NCH],
             meas_env: [false; NCH],
             meas_pending: None,
+            bus_auto: None,
             final_req: 0,
             stop_final: None,
             meas_new: false,
@@ -4773,11 +4777,29 @@ impl Ui {
 
     /// Switches the trigger type and sets starting values that trigger on the demo signals.
     fn set_trig_type(&mut self, t: TrigType) {
+        let was_bus = self.m.trig_type == TrigType::Bus;
+        // leaving Bus: off again what entering it switched on (the decoder kept the live picture raw, its demo sources
+        // stayed on); a type set elsewhere since leaves nothing to undo
+        let undo = if t != TrigType::Bus { self.bus_auto.take().filter(|_| was_bus) } else { None };
+        if let Some((chans, dec)) = undo {
+            for c in (0..NCH).filter(|&c| chans[c]) {
+                self.m.ch[c].on = false;
+            }
+            if dec {
+                self.m.dec_on = false;
+            }
+        }
         if t == TrigType::Bus {
             // the decoder defines the protocol: switch it on with its demo sources and a value its traffic contains
+            let before: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
+            let dec_before = self.m.dec_on;
             self.m.dec_on = true;
             let p = self.m.dec_proto;
             self.set_dec_proto(p);
+            // Bus chosen again keeps what the first choice switched on
+            if !was_bus {
+                self.bus_auto = Some((std::array::from_fn(|c| self.m.ch[c].on && !before[c]), !dec_before));
+            }
             let m = &mut self.m;
             m.trig_type = t;
             let (what, val) = match p {
@@ -8275,6 +8297,36 @@ mod tests {
             let _ = std::fs::create_dir_all(&dir);
             let _ = crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
         }
+    }
+
+    // Break it catches: the Bus trigger's own switches staying after going back to Edge (decoder on: the live picture
+    // stayed raw; its demo source channels stayed on), or switching off what the user had on before Bus
+    #[test]
+    fn leaving_the_bus_trigger_undoes_only_what_it_switched_on() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        for c in 0..NCH {
+            ui.m.ch[c].on = c == 0;
+        }
+        ui.m.dec_on = false;
+        ui.m.dec_proto = Proto::I2c;
+        ui.set_trig_type(TrigType::Bus);
+        assert!(ui.m.dec_on && ui.m.ch[2].on && ui.m.ch[3].on, "Bus: the decoder and its sources (I2C on CH3/CH4)");
+        // Bus again: nothing new recorded, still undone once
+        ui.set_trig_type(TrigType::Bus);
+        ui.set_trig_type(TrigType::Edge);
+        assert!(!ui.m.dec_on, "the decoder Bus switched on is off again");
+        let on: Vec<bool> = (0..NCH).map(|c| ui.m.ch[c].on).collect();
+        assert_eq!(on, vec![true, false, false, false], "only the user's CH1 stays");
+        // what the user had on before stays on: the decoder and CH3
+        ui.m.dec_on = true;
+        ui.m.ch[2].on = true;
+        ui.set_trig_type(TrigType::Bus);
+        ui.set_trig_type(TrigType::Edge);
+        assert!(ui.m.dec_on && ui.m.ch[2].on && !ui.m.ch[3].on, "user's decoder and CH3 kept, CH4 off again");
+        // another type in between that is not Bus: nothing to undo twice
+        ui.set_trig_type(TrigType::Slope);
+        assert!(ui.m.dec_on && ui.m.ch[2].on);
     }
 
     /// Protocol trigger: the end of the matching CAN identifier sits at the trigger point; "Error" never fires on clean
