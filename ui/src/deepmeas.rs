@@ -68,6 +68,11 @@ pub fn deep_pairs(f: &Frame) -> bool {
     f.envelope && !f.roll && !f.scan && f.acq.1 > crate::compress::MAX_DEPTH as usize
 }
 
+/// A raw read of a deep record's screen window (the record of its batch while raw deep reads come).
+pub fn deep_raw_frame(f: &Frame) -> bool {
+    !f.envelope && !f.roll && !f.scan && f.acq.1 > crate::compress::MAX_DEPTH as usize
+}
+
 /// Points of the raw screen window `hw` reads for a deep record (screen and a quarter screen each side, at least 4096
 /// points, within the record), and whether its `channels` fit `MAX_BYTES`.
 pub fn fits(rate: f64, tdiv: f64, memsel: usize, channels: usize) -> bool {

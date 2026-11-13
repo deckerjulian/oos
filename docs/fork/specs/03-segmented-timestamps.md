@@ -217,4 +217,6 @@ segment layout (01), LA segments.
 Measured: the latch counts 0.8 ns (not 250 ps); the header stamp of segment k is the latch of segment k - 1; every
 recording ended at the frames of the first poll because `seg::status` read the 0x2320 bits of 0x4034 as "stopped".
 Fixed on `fix/b1-b3`: count-only completion as in the stock record state, latch tick 0.8 ns, latch-only times.
-Statements above about 250 ps, the 1.6 ns header and `record_running` are superseded. Re-test: `docs/fork/b1-b3.md`.
+Statements above about 250 ps, the 1.6 ns header and `record_running` are superseded. Verified on the unit in round 4
+(private RE notes `docs/logs/oos_unitlab_20261113.md`): N of N at N = 10, 100, 1000; STOP keeps what was recorded
+(1303 of 3000); steps 1.000 ms; header(k) = latch(k - 1); interval 5 ms gives 6 ms steps at 1 kHz.

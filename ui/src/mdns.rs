@@ -551,6 +551,8 @@ pub struct Config {
     /// the instance label of the services, `Rigol DHO924S OOS (204527)`
     pub instance: String,
     pub services: Vec<Service>,
+    /// the services listen on IPv6 too (`net6::enabled`): AAAA records for the interface's IPv6 addresses
+    pub v6: bool,
 }
 
 /// An interface with its addresses (only those that are up, running and take multicast).
@@ -698,8 +700,12 @@ impl Responder {
             v.push(Rec::new(host.clone(), Data::A(a), TTL_HOST, true));
             v.push(Rec::new(reverse4(a), Data::Ptr(host.clone()), TTL_HOST, true));
         }
-        // no AAAA: the web remote, SCPI and VXI-11 listen on IPv4 only, and a computer that gets an IPv6 address tries
-        // it first (curl took seconds on a Mac before it fell back); questions over IPv6 get the A record and an NSEC
+        // AAAA only when the services listen on IPv6 (`Config::v6`): a computer that gets an IPv6 address tries it
+        // first (curl took seconds on a Mac before it fell back to IPv4); without, questions over IPv6 get the A
+        // record and an NSEC
+        if self.cfg.v6 {
+            v.extend(ifc.v6.iter().map(|&a| Rec::new(host.clone(), Data::Aaaa(a), TTL_HOST, true)));
+        }
         for s in &self.cfg.services {
             let ty = Self::service_type(&s.kind);
             let inst = self.instance(&s.kind);
@@ -1554,6 +1560,7 @@ mod tests {
                 Service { kind: "_scpi-raw._tcp".into(), port: 5555, txt: Vec::new() },
                 Service { kind: "_vxi-11._tcp".into(), port: 111, txt: Vec::new() },
             ],
+            v6: false,
         }
     }
 
@@ -1989,6 +1996,30 @@ mod tests {
         // all interfaces gone: waiting for one
         r.set_ifaces(t + 3.0, Vec::new());
         assert_eq!(r.state(), State::NoNetwork);
+    }
+
+    // net.ipv6 = on: AAAA for every IPv6 address of the interface asked on, no NSEC for it, a SRV brings both families
+    #[test]
+    fn aaaa_when_the_services_listen_on_ipv6() {
+        let mut r = Responder::new(7);
+        r.set_config(0.0, Config { v6: true, ..cfg() });
+        let mut e = eth([192, 168, 1, 20]);
+        let (ll, global): (Ipv6Addr, Ipv6Addr) = ("fe80::0:ff:fe00:1".parse().unwrap(), "2001:db8:5:7:1d2e:3f4a:5b6c:7d8e".parse().unwrap());
+        e.v6 = vec![ll, global];
+        r.set_ifaces(0.0, vec![e]);
+        let mut t = 0.0;
+        while r.phase != Phase::Run {
+            t += 0.05;
+            r.tick(t);
+        }
+        let from6 = SocketAddr::from((Ipv6Addr::from(0xfe80_0000_0000_0000_0000_0000_0000_0099u128), PORT));
+        let m = one(&r.receive(t + 1.0, &query(0, &[(&["dho924s-204527", "local"], T_AAAA, false)]), from6, ETH, true));
+        let got: Vec<Vec<u8>> = m.an.iter().filter(|a| a.rtype == T_AAAA).map(|a| a.canon.clone()).collect();
+        assert_eq!(got, vec![ll.octets().to_vec(), global.octets().to_vec()]);
+        assert!(m.an.iter().all(|a| a.flush) && !m.ar.iter().any(|r| r.rtype == T_NSEC));
+        assert!(has(&m.ar, "dho924s-204527.local", T_A), "the other family as additional");
+        let m = one(&r.receive(t + 2.0, &query(0, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
+        assert!(has(&m.ar, "dho924s-204527.local", T_A) && has(&m.ar, "dho924s-204527.local", T_AAAA));
     }
 
     #[test]

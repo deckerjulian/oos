@@ -257,8 +257,8 @@ impl Server {
         if self.pm_tcp.is_some() || self.core_tcp.is_some() {
             return;
         }
-        let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
-        self.pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));
+        let tcp = |p: u16| crate::net6::tcp(p).inspect(|l| drop(l.set_nonblocking(true)));
+        self.pm_udp = crate::net6::udp(111).inspect(|u| drop(u.set_nonblocking(true)));
         (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
         eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if self.pm_tcp.is_some() { "111" } else { "unavailable" }, if self.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
     }

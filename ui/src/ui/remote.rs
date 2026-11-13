@@ -89,7 +89,7 @@ impl Ui {
         add(s.remote_vxi11, "_vxi-11._tcp", 111, &[]);
         // the fork's SSH (docs/network.md 7): announced only while oos-ssh would listen (it needs `net.allow` as well)
         add(s.remote_ssh && crate::ssh::listens(), "_ssh._tcp", 22, &[]);
-        mdns::Config { on: s.remote_mdns, instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name), name, services }
+        mdns::Config { on: s.remote_mdns, instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name), name, services, v6: crate::net6::enabled() }
     }
 
     /// The name's row: `<name>.local` while mDNS is on (the one in use: `-2` after a conflict), else the name.

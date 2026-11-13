@@ -7,7 +7,8 @@
 //! ```text
 //! ntp = off                 # System > Date and time > Time from NTP
 //! ntp.server = dhcp        # dhcp: the server of the DHCP lease (option 42), else pool.ntp.org
-//! tz = CET-1CEST,M3.5.0,M10.5.0/3
+//! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
+//! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
 //!                           # remote.mdns)
@@ -38,6 +39,8 @@ pub const DHCP_NTP_FILE: &str = "/tmp/oos-dhcp-ntp.";
 /// The interfaces whose lease counts, in this order.
 pub const DHCP_IFACES: [&str; 2] = ["eth0", "wlan0"];
 pub const DEFAULT_TZ: &str = "UTC0";
+/// The POSIX zone strings of a lease (DHCP option 100, RFC 4833; `udhcpc.script`): `<this><interface>`.
+pub const DHCP_TZ_FILE: &str = "/tmp/oos-dhcp-tz.";
 /// Longest server name taken.
 pub const SERVER_MAX: usize = 63;
 
@@ -46,8 +49,10 @@ pub struct SysConf {
     /// set the clock from an NTP server once a network link is up (off: OOS sends nothing to the outside)
     pub ntp: bool,
     pub ntp_server: String,
-    /// POSIX time zone string (clock.rs)
+    /// POSIX time zone string (clock.rs), or `dhcp`: the lease's (`tz_of`)
     pub tz: String,
+    /// with `tz = dhcp`: the zone while no lease names a valid one
+    pub tz_fallback: String,
     /// a link that comes up at 10 Mbit/s gets one more autonegotiation (ethlink.rs)
     pub eth_retry_10m: bool,
     /// the network services (System > Network > Remote services): web page with the update path (8080), SCPI (5555),
@@ -78,6 +83,7 @@ impl Default for SysConf {
             ntp: false,
             ntp_server: DEFAULT_SERVER.into(),
             tz: DEFAULT_TZ.into(),
+            tz_fallback: DEFAULT_TZ.into(),
             eth_retry_10m: true,
             remote_web: true,
             remote_scpi: true,
@@ -98,7 +104,7 @@ pub fn server_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= SERVER_MAX && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c)) && !s.starts_with(['-', '.'])
 }
 
-/// Where the server asked came from.
+/// Where the server asked (or the zone in use) came from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NtpOrigin {
     /// the setting names it
@@ -122,6 +128,21 @@ pub fn ntp_server(setting: &str, lease: impl Fn(&str) -> Option<String>) -> (Str
         }
     }
     (FALLBACK_SERVER.to_string(), NtpOrigin::NoDhcp)
+}
+
+/// The zone for the settings `tz` and `tz.fallback`: the setting itself, or with `dhcp` the first string of the lease on
+/// eth0, else on wlan0, that is a valid POSIX zone (`Tz::parse`: the string comes from the network), else the fallback.
+/// `lease` gives the text of an interface's file (`DHCP_TZ_FILE`), None without one.
+pub fn tz_of(setting: &str, fallback: &str, lease: impl Fn(&str) -> Option<String>) -> (String, NtpOrigin) {
+    if setting != DHCP {
+        return (setting.to_string(), NtpOrigin::Set);
+    }
+    for i in DHCP_IFACES {
+        if let Some(s) = lease(i).map(|t| t.trim().to_string()).filter(|s| Tz::parse(s).is_ok()) {
+            return (s, NtpOrigin::Dhcp(i));
+        }
+    }
+    (fallback.to_string(), NtpOrigin::NoDhcp)
 }
 
 fn on_off(v: &str) -> Option<bool> {
@@ -167,7 +188,12 @@ impl SysConf {
                     true
                 }
                 "ntp.server" => server_ok(v).then(|| c.ntp_server = v.into()).is_some(),
+                "tz" if v.eq_ignore_ascii_case(DHCP) => {
+                    c.tz = DHCP.into();
+                    true
+                }
                 "tz" => Tz::parse(v).is_ok().then(|| c.tz = v.into()).is_some(),
+                "tz.fallback" => Tz::parse(v).is_ok().then(|| c.tz_fallback = v.into()).is_some(),
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
@@ -204,6 +230,9 @@ impl SysConf {
         s.push_str(&format!("ntp = {}\n", word(self.ntp)));
         s.push_str(&format!("ntp.server = {}\n", self.ntp_server));
         s.push_str(&format!("tz = {}\n", self.tz));
+        if self.tz_fallback != DEFAULT_TZ {
+            s.push_str(&format!("tz.fallback = {}\n", self.tz_fallback));
+        }
         s.push_str(&format!("eth.retry_10m = {}\n", word(self.eth_retry_10m)));
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
@@ -223,9 +252,10 @@ impl SysConf {
         s
     }
 
-    /// The time zone (UTC if the string is not one).
+    /// The time zone without a lease: the setting, with `dhcp` the fallback (UTC if the string is not one).
     pub fn zone(&self) -> Tz {
-        Tz::parse(&self.tz).unwrap_or_else(|_| Tz::utc())
+        let s = if self.tz == DHCP { &self.tz_fallback } else { &self.tz };
+        Tz::parse(s).unwrap_or_else(|_| Tz::utc())
     }
 
     /// The defaults of an image built for one unit: the known keys of `image` (`IMAGE_PATH`); its other lines
@@ -409,6 +439,36 @@ mod tests {
         assert_eq!(ntp_server(DHCP, skip).0, "172.16.0.9");
     }
 
+    // option 100 comes from the network: only a valid POSIX zone of at most 60 characters is taken
+    #[test]
+    fn dhcp_zone_from_the_lease_or_the_fallback() {
+        let (c, bad) = SysConf::parse("tz = DHCP\ntz.fallback = CET-1CEST,M3.5.0,M10.5.0/3\n");
+        assert!(bad.is_empty(), "{:?}", bad);
+        assert_eq!((c.tz.as_str(), c.tz_fallback.as_str()), (DHCP, "CET-1CEST,M3.5.0,M10.5.0/3"));
+        assert!(c.text().contains("\ntz = dhcp\ntz.fallback = CET-1CEST,M3.5.0,M10.5.0/3\n"));
+        assert_eq!(SysConf::parse(&c.text()).0, c);
+        // without a lease the fallback is the zone, also for `zone()`
+        assert_eq!(c.zone(), Tz::parse("CET-1CEST,M3.5.0,M10.5.0/3").unwrap());
+        assert!(!SysConf::default().text().contains("tz.fallback"), "the default is not written");
+        let (_, bad) = SysConf::parse("tz.fallback = dhcp\n");
+        assert_eq!(bad.len(), 1, "the fallback is a zone, not dhcp");
+        let fb = "CET-1CEST,M3.5.0,M10.5.0/3";
+        let none = |_: &str| None;
+        assert_eq!(tz_of("JST-9", fb, |_| Some("EST5".into())), ("JST-9".into(), NtpOrigin::Set));
+        assert_eq!(tz_of(DHCP, fb, none), (fb.into(), NtpOrigin::NoDhcp));
+        let eth = |i: &str| (i == "eth0").then(|| "EST5EDT,M3.2.0,M11.1.0\n".to_string());
+        assert_eq!(tz_of(DHCP, fb, eth), ("EST5EDT,M3.2.0,M11.1.0".into(), NtpOrigin::Dhcp("eth0")));
+        let wlan = |i: &str| (i == "wlan0").then(|| "JST-9".to_string());
+        assert_eq!(tz_of(DHCP, fb, wlan), ("JST-9".into(), NtpOrigin::Dhcp("wlan0")));
+        // what a server must not get through: junk, shell text, a name of the tz database, too long; eth0's bad string
+        // falls through to wlan0
+        for junk in ["", "Europe/Amsterdam", "CET-1;reboot", "CET-1\nntp = off", "$(reboot)", &format!("<{}>-1", "A".repeat(60)), "CET-1CEST,M13.5.0,M10.5.0/3", "\u{e9}T-1"] {
+            assert_eq!(tz_of(DHCP, fb, |_| Some(junk.to_string())), (fb.into(), NtpOrigin::NoDhcp), "{:?}", junk);
+        }
+        let both = |i: &str| Some(if i == "eth0" { "nonsense" } else { "JST-9" }.to_string());
+        assert_eq!(tz_of(DHCP, fb, both), ("JST-9".into(), NtpOrigin::Dhcp("wlan0")));
+    }
+
     #[test]
     fn saved_and_loaded() {
         let dir = std::env::temp_dir().join(format!("oos-sysconf-{}", std::process::id()));
@@ -425,12 +485,14 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    // the DHO804 unit image: clock from NTP in CET, the server of the DHCP lease unless the settings name one
+    // the DHO804 unit image: clock from NTP, server and zone of the DHCP lease (CET without one) unless the settings
+    // name them
     #[test]
     fn unit_image_takes_the_time_from_the_dhcp_server() {
         let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/unit/dho804/system.conf"));
         assert!(bad.is_empty(), "{:?}", bad);
-        assert!(base.ntp && base.tz == "CET-1CEST,M3.5.0,M10.5.0/3" && base.ntp_server == DHCP);
+        assert!(base.ntp && base.tz == DHCP && base.tz_fallback == "CET-1CEST,M3.5.0,M10.5.0/3" && base.ntp_server == DHCP);
+        assert_eq!(base.zone(), Tz::parse("CET-1CEST,M3.5.0,M10.5.0/3").unwrap());
         let lease = |i: &str| (i == "eth0").then(|| "192.0.2.1".to_string());
         let (fresh, _) = SysConf::parse_over(base.clone(), "");
         assert_eq!(ntp_server(&fresh.ntp_server, lease), ("192.0.2.1".into(), NtpOrigin::Dhcp("eth0")));

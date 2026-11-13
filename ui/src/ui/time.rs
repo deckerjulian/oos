@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! System > Date and time: the clock from an NTP server (off by default: OOS sends nothing to the outside unless asked),
-//! the server (by default the one the DHCP lease names, option 42), the time zone, the clock by hand; and System >
+//! the server (by default the one the DHCP lease names, option 42), the time zone (also from the lease, option 100),
+//! the clock by hand; and System >
 //! Network > 10 Mbit retry. The settings live in
 //! `/oos/system.conf` (sysconf.rs). A worker thread asks the server (sntp.rs), so the frame loop never waits on the
 //! network. Once the clock is set, file names carry the local date and time (`Ui::new_file`).
@@ -128,8 +129,10 @@ pub(super) struct NtpUi {
     tz_checked: f64,
     /// the server of the last request and where it came from (NTP server = DHCP: the lease or the fallback)
     asked: Option<(String, NtpOrigin)>,
-    /// tests: the directory of the lease files (`oos-dhcp-ntp.<interface>`) instead of /tmp
+    /// tests: the directory of the lease files (`oos-dhcp-ntp.<interface>`, `oos-dhcp-tz.<interface>`) instead of /tmp
     lease_dir: Option<std::path::PathBuf>,
+    /// the zone in use, its string and where it came from (`tz = dhcp`: the lease or the fallback); `resolve_zone`
+    zone: Option<(Tz, String, NtpOrigin)>,
 }
 
 /// One sync: ask, then set the clock.
@@ -189,9 +192,29 @@ impl Ui {
         }
     }
 
-    /// The time zone of the settings.
+    /// The time zone in use: the setting, with `tz = dhcp` the lease's or the fallback (`resolve_zone`).
     pub fn zone(&self) -> Tz {
-        self.sys.zone()
+        match &self.ntp.zone {
+            Some((z, _, _)) => z.clone(),
+            None => self.sys.zone(),
+        }
+    }
+
+    /// The zone for the settings and the lease now; a change goes to the log.
+    fn resolve_zone(&mut self) {
+        let (s, origin) = sysconf::tz_of(&self.sys.tz, &self.sys.tz_fallback, |i| self.lease(sysconf::DHCP_TZ_FILE, i));
+        if self.ntp.zone.as_ref().is_some_and(|(_, old, o)| *old == s && *o == origin) {
+            return;
+        }
+        let z = Tz::parse(&s).unwrap_or_else(|_| Tz::utc());
+        if self.sys.tz == sysconf::DHCP {
+            let from = match origin {
+                NtpOrigin::Dhcp(i) => format!("DHCP on {}", i),
+                _ => "fallback, no zone from DHCP".into(),
+            };
+            eprintln!("oos-ui: time zone {} ({})", s, from);
+        }
+        self.ntp.zone = Some((z, s, origin));
     }
 
     /// Local time now.
@@ -199,8 +222,10 @@ impl Ui {
         self.zone().local(clock::unix_now().floor() as i64)
     }
 
-    /// The local offset for the kernel (FAT time stamps on a stick), when it changed.
+    /// The zone with the lease (`resolve_zone`) and its local offset for the kernel (FAT time stamps on a stick), when
+    /// it changed.
     fn apply_tz(&mut self) {
+        self.resolve_zone();
         let off = self.zone().offset_at(clock::unix_now() as i64).0;
         if self.ntp.kernel_tz == Some(off) || cfg!(test) {
             return;
@@ -234,18 +259,21 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ NTP
 
-    /// The text of an interface's lease file (`sysconf::DHCP_NTP_FILE`), None without one.
-    fn lease(&self, iface: &str) -> Option<String> {
+    /// The text of an interface's lease file (`file` = `sysconf::DHCP_NTP_FILE` or `DHCP_TZ_FILE`), None without one.
+    fn lease(&self, file: &str, iface: &str) -> Option<String> {
         match &self.ntp.lease_dir {
-            Some(d) => std::fs::read_to_string(d.join(format!("oos-dhcp-ntp.{}", iface))).ok(),
+            Some(d) => {
+                let base = std::path::Path::new(file).file_name()?.to_string_lossy();
+                std::fs::read_to_string(d.join(format!("{}{}", base, iface))).ok()
+            }
             None if cfg!(test) => None,
-            None => std::fs::read_to_string(format!("{}{}", sysconf::DHCP_NTP_FILE, iface)).ok(),
+            None => std::fs::read_to_string(format!("{}{}", file, iface)).ok(),
         }
     }
 
     /// The server to ask now: `dhcp` is looked up at each request, the lease may have changed.
     fn ntp_target(&self) -> (String, NtpOrigin) {
-        sysconf::ntp_server(&self.sys.ntp_server, |i| self.lease(i))
+        sysconf::ntp_server(&self.sys.ntp_server, |i| self.lease(sysconf::DHCP_NTP_FILE, i))
     }
 
     fn net_up(&self) -> bool {
@@ -398,10 +426,7 @@ impl Ui {
             Item::NtpOn => onoff(self.sys.ntp),
             Item::NtpServer => server_label(&self.sys.ntp_server),
             Item::NtpStatus => self.ntp_status(),
-            Item::TimeZone => match clock::zone_name(&self.sys.tz) {
-                Some(n) => n.to_string(),
-                None => short(&self.sys.tz),
-            },
+            Item::TimeZone => self.zone_label(),
             Item::NetRetry10 => onoff(self.sys.eth_retry_10m),
             _ => return None,
         })
@@ -416,9 +441,27 @@ impl Ui {
         v
     }
 
+    /// The zone row: the picker name or the string; with `tz = dhcp` the zone in use and where it came from,
+    /// `CET (DHCP)` or `CET (no DHCP)`.
+    fn zone_label(&self) -> String {
+        if self.sys.tz != sysconf::DHCP {
+            return clock::zone_name(&self.sys.tz).map_or_else(|| short(&self.sys.tz), str::to_string);
+        }
+        let abbr = self.zone().abbr_at(clock::unix_now() as i64).to_string();
+        match self.ntp.zone.as_ref().map(|z| z.2) {
+            Some(NtpOrigin::Dhcp(_)) => format!("{} ({})", abbr, DHCP_LABEL),
+            _ => format!("{} (no {})", abbr, DHCP_LABEL),
+        }
+    }
+
+    /// The zone settings the knob walks through: DHCP, then the common zones.
+    fn zone_cycle() -> Vec<&'static str> {
+        std::iter::once(sysconf::DHCP).chain(ZONES.iter().map(|z| z.1)).collect()
+    }
+
     fn zone_options(&self) -> Vec<String> {
-        let mut v: Vec<String> = ZONES.iter().map(|z| z.0.to_string()).collect();
-        if clock::zone_name(&self.sys.tz).is_none() {
+        let mut v: Vec<String> = std::iter::once(DHCP_LABEL.to_string()).chain(ZONES.iter().map(|z| z.0.to_string())).collect();
+        if self.sys.tz != sysconf::DHCP && clock::zone_name(&self.sys.tz).is_none() {
             v.push(short(&self.sys.tz));
         }
         v.push(OTHER.into());
@@ -474,8 +517,9 @@ impl Ui {
                 self.set_server(SERVERS[cyc(i, SERVERS.len())]);
             }
             Item::TimeZone => {
-                let i = ZONES.iter().position(|z| z.1 == self.sys.tz).unwrap_or(0);
-                self.set_tz(ZONES[cyc(i, ZONES.len())].1);
+                let list = Self::zone_cycle();
+                let i = list.iter().position(|&z| z == self.sys.tz).unwrap_or(0);
+                self.set_tz(list[cyc(i, list.len())]);
             }
             Item::TimeNow | Item::NtpStatus => {}
             _ => return false,
@@ -501,7 +545,11 @@ impl Ui {
                 let now = if self.sys.ntp_server == sysconf::DHCP { "" } else { self.sys.ntp_server.as_str() };
                 self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::NtpServer, now));
             }
-            Item::TimeZone if o == OTHER => self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::Tz, &self.sys.tz)),
+            Item::TimeZone if o == OTHER => {
+                let now = if self.sys.tz == sysconf::DHCP { self.sys.tz_fallback.clone() } else { self.sys.tz.clone() };
+                self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::Tz, &now));
+            }
+            Item::TimeZone if o == DHCP_LABEL => self.set_tz(sysconf::DHCP),
             Item::RemName => self.remote_pick(k),
             Item::NtpServer => {
                 if let Some(s) = SERVERS.iter().find(|s| server_label(s) == *o) {
@@ -698,6 +746,40 @@ mod tests {
         assert_eq!(u.value(Item::NtpStatus), "Asking the server ...");
         u.select_option(Item::NtpServer, "DHCP");
         assert_eq!(u.sys.ntp_server, "dhcp");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn dhcp_zone_from_the_lease_with_its_source_on_the_page() {
+        let dir = std::env::temp_dir().join(format!("oos-time-tz-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut u = ui();
+        u.ntp.lease_dir = Some(dir.clone());
+        u.sys.tz_fallback = "JST-9".into();
+        assert_eq!(u.options(Item::TimeZone)[0], "DHCP", "first in the picker");
+        u.select_option(Item::TimeZone, "DHCP");
+        assert_eq!(u.sys.tz, sysconf::DHCP);
+        // no lease: the fallback, and the row says so
+        assert_eq!(u.value(Item::TimeZone), "JST (no DHCP)");
+        assert!(u.value(Item::TimeNow).contains(" JST"), "{}", u.value(Item::TimeNow));
+        // a lease with a zone: taken at the next check (once a minute), not at the start only
+        std::fs::write(dir.join("oos-dhcp-tz.eth0"), "<+0545>-5:45\n").unwrap();
+        u.step(61.0);
+        assert_eq!(u.value(Item::TimeZone), "+0545 (DHCP)");
+        assert_eq!(u.zone(), Tz::parse("<+0545>-5:45").unwrap());
+        // a bad string from the network is not used
+        std::fs::write(dir.join("oos-dhcp-tz.eth0"), "Europe/Amsterdam\n").unwrap();
+        u.step(61.0);
+        assert_eq!(u.value(Item::TimeZone), "JST (no DHCP)");
+        // the knob walks DHCP and the zones; Other starts from the fallback
+        u.adjust(Item::TimeZone, 1);
+        assert_eq!(u.sys.tz, "UTC0");
+        u.adjust(Item::TimeZone, -1);
+        assert_eq!(u.sys.tz, sysconf::DHCP);
+        let opts = u.options(Item::TimeZone);
+        u.time_pick(Item::TimeZone, opts.len() - 1);
+        assert_eq!(u.wlan.osk.as_ref().map(|o| o.text.as_str()), Some("JST-9"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

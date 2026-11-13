@@ -34,6 +34,20 @@ pub fn slow_mode(m: &Model) -> Slow {
     }
 }
 
+/// SINGLE ends with the first frame after the press (`Settings::single`): one frame per batch and no batch after it
+/// until the next press. Not when the UI may refuse that frame and wait for another: a protocol trigger (the decoder
+/// decides) or a zone trigger.
+fn single_takes_first(m: &Model) -> bool {
+    m.trig_mode == TrigMode::Single && m.trig_type != TrigType::Bus && !m.zones.iter().any(|z| z.usable())
+}
+
+/// Whether the thread acquires another batch for SINGLE: not once a batch brought frames under this press's `stamp`
+/// (`done`). The UI's STOP reached the thread only a few UI steps later, and each batch in between counted:
+/// `acquired` +10 at 1 us/div, +3 at 1 ms/div per press (unit 2026-11-13).
+fn single_wants_more(b: &Settings, done: Option<u64>, stamp: u64) -> bool {
+    !b.single || done != Some(stamp)
+}
+
 /// Live record length for Auto depth (keeps the read short enough for a fluid display).
 const LIVE_DEPTH: i128 = 100_000;
 
@@ -154,7 +168,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         } as f64,
         auto: m.trig_mode == TrigMode::Auto,
         auto_fast: m.auto_fast && m.trig_mode == TrigMode::Auto,
-        single: m.trig_mode == TrigMode::Single,
+        single: single_takes_first(m),
         play4: true,
         blocks: 7,
         header: header_probe(),
@@ -220,82 +234,13 @@ fn aux_out(a: AuxOut) -> auxout::AuxOut {
 /// The count of a hardware average for the model and its settings `s`, None for the software average
 /// (docs/fork/specs/01-hw-averaging.md): Average mode with `Model::avg_hw`, a power-of-two count, ordinary triggered
 /// records (not roll or scan, which average in software as in stock), no LA, no hardware segments (they record raw
-/// frames), a record whose average segment fits the frame ring, and a sample rate on the second divider
-/// (`avg_rate_ok`).
+/// frames), and a record whose average segment fits the frame ring.
 fn hw_avg_count(m: &Model, s: &Settings) -> Option<u32> {
     if m.acq != AcqMode::Average || !m.avg_hw || slow_mode(m) != Slow::Off || s.la.is_some() || s.segments.is_some() {
         return None;
     }
     let p = hz::avg_params(hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0));
-    oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0 && avg_rate_ok(p.rate, avg_fast_on()))
-}
-
-/// The FPGA averages at sample rate `rate`: 62.5 MSa/s and below (the second divider, 0x10d0 = 0), or any rate with
-/// `avg.hw_fast = on`. Unit 2026-11-13 (B1): above it (625 MSa/s, 1.25 GSa/s) every averaged frame was zero, at
-/// 62.5 MSa/s the average was right; the software average takes the fast rates until the unit shows them working.
-fn avg_rate_ok(rate: u64, fast: bool) -> bool {
-    fast || oos_hal::dho::spu::slow_path(rate)
-}
-
-/// `avg.debug_raw = seq | wide` in system.conf (B1, docs/fork/b1-b3.md): after each of the first `AVG_RAW_DUMPS`
-/// batches after a clear, the newest averaged frame is read again at twice the length (`seq::AvgRaw`).
-fn avg_debug_raw() -> Option<oos_hal::dho::seq::AvgRaw> {
-    static V: std::sync::OnceLock<Option<oos_hal::dho::seq::AvgRaw>> = std::sync::OnceLock::new();
-    *V.get_or_init(|| avg_debug_raw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
-}
-
-/// The `avg.debug_raw` line of system.conf.
-fn avg_debug_raw_from(conf: &str) -> Option<oos_hal::dho::seq::AvgRaw> {
-    match crate::drawpipe::conf_value(None, conf, "avg.debug_raw").as_deref() {
-        Some("seq") => Some(oos_hal::dho::seq::AvgRaw::Seq),
-        Some("wide") => Some(oos_hal::dho::seq::AvgRaw::Wide),
-        _ => None,
-    }
-}
-
-/// `avg.debug_sinc = on` in system.conf (B1): 0x1004 bit 2 set at every rate in average mode.
-fn avg_debug_sinc() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::drawpipe::conf_value(None, &std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default(), "avg.debug_sinc").as_deref() == Some("on"))
-}
-
-/// Raw dumps per clear (`avg.debug_raw`).
-const AVG_RAW_DUMPS: u32 = 4;
-
-/// One debug read of frame `frame` (`seq::State::avg_raw_steps`): the per-parity summary to the log, the words to
-/// /tmp/oos-avg-raw-<k>.bin (little-endian u16).
-#[cfg(target_os = "linux")]
-#[allow(clippy::too_many_arguments)]
-fn avg_raw_dump(state: &mut oos_hal::dho::seq::State, s: &Settings, p: &hz::Params, bar: &mut oos_hal::dho::bus::Bar1, c2h: &mut std::fs::File, frame: u32, how: oos_hal::dho::seq::AvgRaw, k: u32) {
-    let steps = state.avg_raw_steps(s, p, frame, how);
-    match oos_hal::dho::seq::execute(&steps, bar, None, c2h, |_| {}) {
-        Ok(bytes) => {
-            let words: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
-            let path = format!("/tmp/oos-avg-raw-{}.bin", k);
-            let saved = std::fs::write(&path, &bytes).map_or_else(|e| format!("not saved: {}", e), |_| path);
-            eprintln!("oos-ui hw: average raw {:?} frame {}: {} words, {} ({})", how, frame, words.len(), oos_hal::dho::avg::field_summary(&words), saved);
-        }
-        Err(e) => {
-            eprintln!("oos-ui hw: average raw {:?}: {}", how, e);
-            // a failed `Seq` read leaves bit 3 cleared: average mode back on
-            if how == oos_hal::dho::seq::AvgRaw::Seq {
-                use oos_hal::dho::bus::Bus;
-                state.sh.s1004 |= 8;
-                bar.wr(0x1004, state.sh.s1004);
-            }
-        }
-    }
-}
-
-/// `avg.hw_fast = on` in system.conf: hardware averaging above 62.5 MSa/s too, for the unit test of B1.
-fn avg_fast_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| avg_fast_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
-}
-
-/// The `avg.hw_fast` line of system.conf; off unless `on`.
-fn avg_fast_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "avg.hw_fast").as_deref() == Some("on")
+    oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0)
 }
 
 /// The model's set-up averages in the FPGA (`Board::avg_hw`).
@@ -1014,6 +959,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut helper = crate::drawpipe::Helper::default();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
+        // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
+        let mut single_done: Option<u64> = None;
         // the hardware segmented recording in progress or read back
         let mut segrun: Option<SegRun> = None;
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
@@ -1140,12 +1087,6 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         status(format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, p.rate, p.memsel));
                         current = Some((want.clone(), p));
                         configs += 1;
-                        // debug (B1): 0x1004 bit 2 at every rate in average mode, after the configuration
-                        if matches!(want.mode, oos_hal::dho::acq::Mode::Average { .. }) && avg_debug_sinc() {
-                            let w = oos_hal::dho::acq::force_avg_sinc(&mut state.sh);
-                            bar.apply(&[w]);
-                            eprintln!("oos-ui hw: average debug: 0x1004 = {:#x} (bit 2 forced)", w.1);
-                        }
                         // the configuration cleared the average (`seq::State::configure`)
                         avg = match want.mode {
                             oos_hal::dho::acq::Mode::Average { count } => Some((oos_hal::dho::avg::Tracker::new(avg_kind(), count), avg_clear, 0)),
@@ -1427,6 +1368,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 out.lock().unwrap().queue.clear();
             }
             let b = batch_plan(&s, &p);
+            if !single_wants_more(&b, single_done, stamp) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
             if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -1567,17 +1513,16 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             let at = (count.max(1) as usize - 1) * seq::frame_bytes(&b, &p);
                             let w: Vec<String> = dma.data().get(at..).unwrap_or_default().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
                             eprintln!("oos-ui hw: average {:?} batch {} of {} triggers, {} in, show {}, 0x10b0 = {}, words {}", tr.kind, *logged, count, a.triggers, a.show, oos_hal::dho::avg::progress(&mut bar), w.join(" "));
-                            // debug (B1): the newest frame again at twice the length, both stored fields per point
-                            if let Some(how) = avg_debug_raw().filter(|_| *logged <= AVG_RAW_DUMPS) {
-                                avg_raw_dump(&mut state, &b, &p, &mut bar, &mut c2h, count.max(1) - 1, how, *logged);
-                            }
                         }
                         a
                     });
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
                     // not in average mode, where a clear may have to come first, and not where the deep measurements
                     // read the newest frame raw (its ring must stay for the replay at STOP)
-                    if prearm_on() && avg.is_none() && prearm_keeps_replay(&b, &p, deep_want) {
+                    if count > 0 && b.single {
+                        single_done = Some(stamp);
+                    }
+                    if prearm_on() && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -1839,6 +1784,27 @@ mod tests {
         }
     }
 
+    // Break it catches: batches after the SINGLE frame until the UI's STOP reached the thread (`acquired` +10 at
+    // 1 us/div, +3 at 1 ms/div per press on the unit); or a SINGLE that waits for good where the UI refuses frames
+    #[test]
+    fn single_stops_after_the_batch_with_its_frame() {
+        let mut m = Model { trig_mode: TrigMode::Single, ..Default::default() };
+        let b = settings(&m, false);
+        assert!(b.single);
+        assert!(single_wants_more(&b, None, 4), "the first batch after the press");
+        assert!(!single_wants_more(&b, Some(4), 4), "its frame came: no more for this press");
+        assert!(single_wants_more(&b, Some(4), 5), "the next press");
+        m.trig_mode = TrigMode::Normal;
+        assert!(single_wants_more(&settings(&m, false), Some(4), 4), "RUN is not limited");
+        // the UI may refuse the frame: protocol trigger, zone trigger
+        m.trig_mode = TrigMode::Single;
+        m.trig_type = TrigType::Bus;
+        assert!(!settings(&m, false).single);
+        m.trig_type = TrigType::Edge;
+        m.zones[0] = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0)] };
+        assert!(m.zones[0].usable() && !settings(&m, false).single);
+    }
+
     // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
     // inside it) ends before the screen does: 10 us/div with 200 us delay drew 20 us of the screen (unit 2026-11-13)
     #[test]
@@ -2093,38 +2059,6 @@ mod tests {
         ];
         for (want, mask, config, running, el, step, after) in cases {
             assert_eq!(dvm_step(want, mask, config, running, el), (step, after), "{:?} {:#b} {} {:?} {}", want, mask, config, running, el);
-        }
-    }
-
-    #[test]
-    fn avg_debug_raw_from_conf() {
-        use oos_hal::dho::seq::AvgRaw;
-        let cases: [(&str, Option<AvgRaw>); 4] = [("", None), ("avg.debug_raw = seq\n", Some(AvgRaw::Seq)), ("avg.debug_raw = wide\n", Some(AvgRaw::Wide)), ("avg.debug_raw = on\n", None)];
-        for (conf, want) in cases {
-            assert_eq!(avg_debug_raw_from(conf), want, "{:?}", conf);
-        }
-    }
-
-    #[test]
-    fn avg_fast_from_conf() {
-        assert!(!avg_fast_from(""));
-        assert!(avg_fast_from("avg.hw_fast = on\n"));
-        assert!(!avg_fast_from("avg.hw_fast = yes\n"));
-    }
-
-    // Break it catches: the fast path (zero frames on the unit) averaged in hardware by default, the slow path refused.
-    #[test]
-    fn hardware_average_only_on_the_second_divider() {
-        let cases: [(u64, bool, bool); 6] = [
-            (1_250_000_000, false, false),
-            (625_000_000, false, false),
-            (125_000_000, false, false),
-            (62_500_000, false, true),
-            (1_000_000, false, true),
-            (1_250_000_000, true, true),
-        ];
-        for (rate, fast, ok) in cases {
-            assert_eq!(avg_rate_ok(rate, fast), ok, "{} fast {}", rate, fast);
         }
     }
 

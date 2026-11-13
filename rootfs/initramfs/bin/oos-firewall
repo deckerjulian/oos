@@ -5,16 +5,34 @@
 # the image listens. Loopback, answers to what the scope sent (DHCP, DNS, NTP) and IPv6 neighbour discovery always
 # pass; everything else that comes in is dropped. Outbound is not limited. No `net.allow` or an empty one: no firewall,
 # as before. A list of which nothing parses closes everything but loopback rather than opening it.
-#   oos-firewall          apply (rcS)
-#   oos-firewall --print  print the ruleset only (host tests: OOS_CONF_FILES)
+# The word `onlink6` in the list admits the IPv6 prefixes on the link: the routes without a gateway the kernel made
+# from the router's advertisements, /48 to /128, not fe80::/64 (a shorter one, `2000::/3` from a rogue router, would
+# open the scope to the internet). They change with the provider: `watch` checks them every 10 s, puts them in the
+# nft set `onlink6` and in /tmp/oos-net6.prefixes for oos-ui (netacl.rs, net6.rs). busybox ip has no monitor.
+#   oos-firewall             apply (rcS)
+#   oos-firewall watch       keep the set `onlink6` up to date (rcS, in the background)
+#   oos-firewall --print     print the ruleset only (host tests: OOS_CONF_FILES, OOS_ROUTES6 = a file in place of
+#                            `ip -6 route show`)
+#   oos-firewall --prefixes  print the prefixes on the link only
 allow=$("$(dirname "$0")/oos-conf" net.allow)
-log() { echo "oos-firewall: $*" >&2; [ -w /dev/kmsg ] && echo "oos-firewall: $*" > /dev/kmsg; }
+log() { echo "oos-firewall: $*" >&2; [ ! -w /dev/kmsg ] || echo "oos-firewall: $*" > /dev/kmsg; }
+PFX=/tmp/oos-net6.prefixes
+prefixes() {
+	{ if [ -n "${OOS_ROUTES6:-}" ]; then cat "$OOS_ROUTES6"; else ip -6 route show 2>/dev/null; fi; } | awk '
+		$1 ~ /^[0-9A-Fa-f:]+\/[0-9]+$/ && $2 == "dev" && $3 != "lo" {
+			p = tolower($1); n = substr(p, index(p, "/") + 1) + 0
+			if (n < 48 || n > 128 || p ~ /^(fe[89ab]|ff)/) next
+			print p
+		}' | sort -u
+}
+if [ "${1:-}" = --prefixes ]; then prefixes; exit 0; fi
 [ -n "$allow" ] || exit 0
-v4=; v6=; bad=
+v4=; v6=; bad=; on6=
 octet() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -le 255 ]; }
 for w in $(echo "$allow" | tr ',' ' '); do
 	a=${w%%/*}; n=${w#*/}; [ "$n" = "$w" ] && n=
 	case "$a" in
+	onlink6) on6=1;;
 	*:*)
 		# IPv6: hex digits and colons, nft checks the rest
 		if echo "$a" | grep -Eq '^[0-9A-Fa-f:]+$' && { [ -z "$n" ] || { echo "$n" | grep -Eq '^[0-9]+$' && [ "$n" -le 128 ]; }; }; then
@@ -30,11 +48,21 @@ for w in $(echo "$allow" | tr ',' ' '); do
 	esac
 done
 [ -n "$bad" ] && log "net.allow: left out:$bad"
-[ -z "$v4$v6" ] && log "net.allow names nothing usable: inbound closed except loopback"
+[ -z "$v4$v6$on6" ] && log "net.allow names nothing usable: inbound closed except loopback"
+# the prefixes as an nft list, `a/64, b/56`
+list() { echo $1 | sed 's/ /, /g'; }
+p6=
+[ -n "$on6" ] && p6=$(prefixes)
 rules() {
 	echo "table inet oos_fw"
 	echo "delete table inet oos_fw"
 	echo "table inet oos_fw {"
+	if [ -n "$on6" ]; then
+		echo "	set onlink6 {"
+		echo "		type ipv6_addr; flags interval; auto-merge"
+		[ -n "$p6" ] && echo "		elements = { $(list "$p6") }"
+		echo "	}"
+	fi
 	echo "	chain input {"
 	echo "		type filter hook input priority filter; policy drop;"
 	echo "		iif lo accept"
@@ -45,14 +73,37 @@ rules() {
 	echo "		udp sport 67 udp dport 68 accept"
 	[ -n "$v4" ] && echo "		ip saddr { $v4 } accept"
 	[ -n "$v6" ] && echo "		ip6 saddr { $v6 } accept"
+	[ -n "$on6" ] && echo "		ip6 saddr @onlink6 accept"
 	echo "	}"
 	echo "}"
 }
 if [ "${1:-}" = --print ]; then rules; exit 0; fi
 [ -x /bin/nft ] || { log "no /bin/nft in this image: NO firewall"; exit 1; }
+keep() { printf '%s\n' $1 > $PFX.new && mv $PFX.new $PFX; }
+if [ "${1:-}" = watch ]; then
+	[ -n "$on6" ] || exit 0
+	cur=$(cat $PFX 2>/dev/null)
+	while :; do
+		sleep "${OOS_FW6_PERIOD:-10}"
+		new=$(prefixes)
+		[ "$new" = "$cur" ] && continue
+		{ echo "flush set inet oos_fw onlink6"; [ -n "$new" ] && echo "add element inet oos_fw onlink6 { $(list "$new") }"; } > /tmp/oos-firewall6.nft
+		if /bin/nft -f /tmp/oos-firewall6.nft; then
+			keep "$new"; cur=$new
+			log "IPv6 prefixes on the link: $(list "${new:-none}")"
+		else
+			log "nft refused the prefixes (/tmp/oos-firewall6.nft)"
+		fi
+	done
+fi
 rules > /tmp/oos-firewall.nft
 if /bin/nft -f /tmp/oos-firewall.nft; then
-	log "inbound only from ${v4}${v4:+${v6:+, }}${v6}"
+	on6log=
+	if [ -n "$on6" ]; then
+		keep "$p6"
+		on6log=" and the IPv6 prefixes on the link ($(list "${p6:-none yet}"))"
+	fi
+	log "inbound only from ${v4}${v4:+${v6:+, }}${v6}${on6log}"
 else
 	log "nft refused the ruleset (/tmp/oos-firewall.nft): NO firewall"
 	exit 1
