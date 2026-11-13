@@ -4,8 +4,12 @@
 //! newest record of a screen refresh (`Ui::measure_last`, `MeasWorker`), so their statistics counted a few records a
 //! second. The cheap ones (max, min, peak-peak, mean, RMS, standard deviation) are made here for every frame the deposit
 //! workers draw, on the samples the record path would measure (`Ui::meas_slice`: the screen window of the frame, when it
-//! holds more samples than the screen record), with the expressions of `oos_dsp::measure::analyze_min`. Frames whose
-//! record would be measured on its interpolated points (short time bases) are not counted here.
+//! holds more samples than the screen record), with the definitions of `oos_dsp::measure::analyze_min` (sums split over
+//! lanes: equal to 1e-12 relative, extremes exact).
+//!
+//! Frames whose record is measured on its 3600 interpolated points (short time bases) are not counted: the sinc
+//! points overshoot between the samples, so max, min and peak-peak on the raw samples would be another measurement.
+//! `Counters::measured` against `used` shows how many frames the statistics cover.
 
 use crate::board::Frame;
 use crate::model::*;
@@ -82,21 +86,51 @@ impl Values {
         if v.len() < 4 || !v.iter().all(|x| x.is_finite()) {
             return None;
         }
-        // one pass, each sum in `analyze_min`'s order (two independent chains instead of two passes); the extremes
-        // as values: the first index of a maximum holds the same value as any other
-        let (mut vmax, mut vmin) = (v[0], v[0]);
-        let (mut sum, mut sumsq) = (-0.0f64, -0.0f64);
-        for &x in v {
-            vmax = if x > vmax { x } else { vmax };
-            vmin = if x < vmin { x } else { vmin };
-            let y = x as f64;
-            sum += y;
-            sumsq += y.powi(2);
+        // one pass, the sums split over `L` lanes (vectorised): the same values as `analyze_min` to about 1e-15
+        // relative, the extremes exact
+        const L: usize = 8;
+        let (mut hi, mut lo) = ([v[0]; L], [v[0]; L]);
+        let (mut sum, mut sumsq) = ([0.0f64; L], [0.0f64; L]);
+        let mut chunks = v.chunks_exact(L);
+        for c in &mut chunks {
+            let c: &[f32; L] = c.try_into().expect("L samples");
+            for j in 0..L {
+                let x = c[j];
+                hi[j] = if x > hi[j] { x } else { hi[j] };
+                lo[j] = if x < lo[j] { x } else { lo[j] };
+                let y = x as f64;
+                sum[j] += y;
+                sumsq[j] += y * y;
+            }
         }
+        for (j, &x) in chunks.remainder().iter().enumerate() {
+            hi[j] = if x > hi[j] { x } else { hi[j] };
+            lo[j] = if x < lo[j] { x } else { lo[j] };
+            sum[j] += x as f64;
+            sumsq[j] += x as f64 * x as f64;
+        }
+        let vmax = hi.iter().copied().fold(hi[0], |a, b| if b > a { b } else { a });
+        let vmin = lo.iter().copied().fold(lo[0], |a, b| if b < a { b } else { a });
         let n = v.len() as f64;
-        let avg = sum / n;
-        let rms = (sumsq / n).sqrt();
-        let std = if std { (v.iter().map(|&x| (x as f64 - avg).powi(2)).sum::<f64>() / n).sqrt() } else { f64::NAN };
+        let avg = sum.iter().sum::<f64>() / n;
+        let rms = (sumsq.iter().sum::<f64>() / n).sqrt();
+        let std = if std {
+            let mut d = [0.0f64; L];
+            let mut chunks = v.chunks_exact(L);
+            for c in &mut chunks {
+                let c: &[f32; L] = c.try_into().expect("L samples");
+                for j in 0..L {
+                    let e = c[j] as f64 - avg;
+                    d[j] += e * e;
+                }
+            }
+            for (j, &x) in chunks.remainder().iter().enumerate() {
+                d[j] += (x as f64 - avg) * (x as f64 - avg);
+            }
+            (d.iter().sum::<f64>() / n).sqrt()
+        } else {
+            f64::NAN
+        };
         Some(Values { vmax: vmax as f64, vmin: vmin as f64, avg, rms, std })
     }
 
@@ -199,7 +233,16 @@ mod tests {
                 counted += fold_frame(&f, &m, &mut got) as usize;
                 reference(&f, &m, &mut want);
             }
-            assert_eq!(got, want, "{} s/div {} pt", tdiv, len);
+            assert_eq!(got.len(), want.len());
+            for ((k, a), (k2, b)) in got.iter().zip(&want) {
+                assert_eq!((k, a.n), (k2, b.n), "{} s/div {} pt", tdiv, len);
+                // the extremes exact; sums of f64 in another order: 1e-12 relative (12-bit data)
+                if matches!(k.0, Meas::Vmax | Meas::Vmin | Meas::Vpp) {
+                    assert_eq!(a, b, "{:?} {} s/div", k, tdiv);
+                }
+                let close = |x: f64, y: f64| (x - y).abs() <= 1e-12 * y.abs().max(1e-3);
+                assert!(close(a.sum, b.sum) && close(a.sumsq, b.sumsq) && close(a.min, b.min) && close(a.max, b.max), "{:?} {} s/div: {:?} vs {:?}", k, tdiv, a, b);
+            }
             let sparse = len == 1408;
             assert!(if sparse { counted == 0 } else { counted == 30 }, "{} s/div: {} counted", tdiv, counted);
             assert_eq!(got.len(), if two { 2 * CHEAP.len() } else { CHEAP.len() });

@@ -106,6 +106,8 @@ pub struct Counters {
     pub acquired: AtomicU64,
     pub used: AtomicU64,
     pub dropped: AtomicU64,
+    /// frames whose cheap measurements went into the statistics (framestats.rs)
+    pub measured: AtomicU64,
 }
 
 /// The process's counters (the acquisition thread, the workers and the UI add to them).
@@ -412,7 +414,9 @@ fn work(rx: Receiver<Job>, view: &Mutex<ViewState>, mail: &Mutex<Mail>, counters
                 (job.decode)(&bytes[i * job.fb..(i + 1) * job.fb], &mut f);
                 let st = Stats { edges: &mut a.edges, off: &mut a.off };
                 a.triggered += draw_frame(&mut a.ph, &v.m, &f, Some(st)) as u64;
-                crate::framestats::fold_frame(&f, &v.m, &mut a.folds);
+                if crate::framestats::fold_frame(&f, &v.m, &mut a.folds) {
+                    Counters::add(&counters.measured, 1);
+                }
                 a.frames += 1;
             }
         }
@@ -579,6 +583,7 @@ mod tests {
                 assert!(got.map[c] == want.map[c], "{} s/div {} pt: CH{} differs", tdiv, memsel, c + 1);
             }
             assert_eq!(c.read(), (0, 0, 0));
+            assert_eq!(c.measured.load(Ordering::Relaxed), folds.first().map_or(0, |x| x.1.n));
             // merged once; both buffers back in the pool
             assert_eq!(pipe.merge(&mut got, &mut clear, &mut edges, &mut off), Merged::default());
             let back: Vec<_> = std::iter::from_fn(|| pipe.take_buffer()).collect();

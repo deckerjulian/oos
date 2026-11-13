@@ -193,7 +193,11 @@ the 5x of the arithmetic alone.
   trigger point via `board::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more
   than 3600 samples) and folded into the page's statistics (`Ui::mstat_fold`); other measurements keep counting the
   measured records. Frames whose record is measured on interpolated points (short time bases) are not counted.
-  Guard: per-frame values identical to `to_record` + `analyze_min` (bitwise, sums in the same order). Cost: the
-  sequential f64 sums the identity needs are latency bound: +31 us per frame at 12.5 k points, +290 us at 125 k on
-  the host with all of them on (2 workers: 36 k and 4.5 k frames/s). A lane-split sum would be 4-8x cheaper with
-  values equal to about 1e-15 relative: not done, it breaks the bitwise guard. Averaging: phase 2.
+  Sums split over 8 lanes (the data is 12 bit; bit identity of f64 sums has no physical meaning). Guard: per-frame
+  values equal to `to_record` + `analyze_min`, n and the extremes exact, sums 1e-12 relative. Host cost with all six
+  on: +19 us per frame at 12.5 k points, +190 us at 125 k (2 workers: 45 k and 5.9 k frames/s). Short time bases stay
+  out (the record is measured on sinc points, which overshoot between samples: raw-sample max/min would be another
+  definition); `measured` in the status line and "Frames in statistics" in System info show the coverage.
+  Software averaging: deferred until the unit shows whether the FPGA average (B1) works and covers deep records
+  (`fpga.md` "Average mode": coupled to the frame read-out, unverified). In batch mode Average stays outside the fast
+  path, so every frame goes through the queue as in frames mode.

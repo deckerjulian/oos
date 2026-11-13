@@ -229,6 +229,11 @@ impl Ui {
         let (acq, used, dropped) = crate::drawpipe::counters().read();
         if acq > 0 {
             d.push(kv("Frames used", format!("{} of {} ({} dropped, {:?} pipeline)", fmt_count(used as f64), fmt_count(acq as f64), fmt_count(dropped as f64), crate::drawpipe::mode())));
+            let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
+            if crate::drawpipe::mode() == crate::drawpipe::Mode::Batch {
+                // short time bases measure the interpolated record: those frames stay out of the statistics
+                d.push(kv("Frames in statistics", format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64))));
+            }
         }
         d.push(kv("Screen", format!("{:.0} fps", self.fps)));
         if p.experimental() {
