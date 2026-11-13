@@ -282,6 +282,15 @@ pub mod sim {
                         for w in self.avg_words(k, words) {
                             self.stream.extend(w.to_le_bytes());
                         }
+                    } else if self.reg(0x1170) & 1 << 31 != 0 {
+                        // FPGA compression (0x1170 bit 31, k in bits 27:0): `words` min/max points of the frame's
+                        // `words` x k samples in the layout `pairs::LAYOUT` (ratio 1)
+                        let c = (self.reg(0x1170) & 0x0fff_ffff).max(1) as usize;
+                        let raw: Vec<u16> = (0..words * c).map(|i| Engine::word(k, i)).collect();
+                        for i in 0..words {
+                            let w = crate::dho::pairs::point(&raw, c, crate::dho::pairs::LAYOUT, i).unwrap_or(0);
+                            self.stream.extend(w.to_le_bytes());
+                        }
                     } else {
                         for i in 0..words {
                             self.stream.extend(Engine::word(k, i).to_le_bytes());

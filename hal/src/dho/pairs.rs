@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+//! What a frame read with the FPGA display compression holds (0x1170, `seq::Settings::compress` = k), and a check of
+//! a compressed read against a raw read of the same record (fork, docs/fork/compress.md).
+//!
+//! Unit evidence (acquisition-start.md, "FPGA compression = min/max (peak) decimation", k = 4 at 1 M points): one
+//! point per k samples, aligned with the record, consecutive points alternating low/high. Not shown yet: whether a
+//! pair is the minimum and maximum of the same 2k samples (`BLOCK_K` = 2) or the minimum of k samples and the maximum
+//! of the next k (`BLOCK_K` = 1), which point comes first, and larger k. `check` decides these on a pair of reads;
+//! the constants below are what the UI assumes until it has.
+
+/// Samples a block stands for, in units of k. 2: points 2i and 2i+1 are the minimum and maximum of the same 2k
+/// samples (every extreme survives). 1: point j covers its own k samples, even points one extreme, odd points the
+/// other (an extreme in the wrong half is lost).
+pub const BLOCK_K: usize = 2;
+/// The first point of a pair is the minimum.
+pub const MIN_FIRST: bool = true;
+/// Points per min/max pair.
+pub const PAIR: usize = 2;
+
+/// A layout of the compressed points (see `BLOCK_K`); `shift` moves the points against the record by whole points
+/// (point j stands for the block of point j + shift of an aligned read).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub block_k: usize,
+    pub min_first: bool,
+    pub shift: i64,
+}
+
+/// The layout the UI assumes.
+pub const LAYOUT: Layout = Layout { block_k: BLOCK_K, min_first: MIN_FIRST, shift: 0 };
+
+/// Point `j` of a compressed read of `raw` with factor `k` in layout `l`, None outside the record.
+pub fn point(raw: &[u16], k: usize, l: Layout, j: usize) -> Option<u16> {
+    let k = k.max(1);
+    let j = j as i64 + l.shift;
+    if j < 0 {
+        return None;
+    }
+    let j = j as usize;
+    let (block, first_is_min) = if l.block_k >= 2 { (j / PAIR, j.is_multiple_of(PAIR)) } else { (j, j.is_multiple_of(PAIR)) };
+    let span = l.block_k.max(1) * k;
+    let a = if l.block_k >= 2 { block * span } else { j * k };
+    let b = (a + span).min(raw.len());
+    if a >= b {
+        return None;
+    }
+    let s = &raw[a..b];
+    let want_min = first_is_min == l.min_first;
+    if want_min { s.iter().min().copied() } else { s.iter().max().copied() }
+}
+
+/// The whole compressed read of `raw` (`seq::compressed_len` points, before the rounding up to 8) in layout `l`.
+pub fn model(raw: &[u16], k: usize, l: Layout) -> Vec<u16> {
+    let n = raw.len().div_ceil(k.max(1));
+    (0..n).map_while(|j| point(raw, k, l, j)).collect()
+}
+
+/// How well one layout explains a compressed read.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fit {
+    pub layout: Layout,
+    /// points compared, points within one code, largest difference in codes
+    pub points: usize,
+    pub within: usize,
+    pub max_err: u32,
+}
+
+/// Points compared per layout (enough for a 1 kHz square at every depth, cheap at k = 256).
+pub const CHECK_POINTS: usize = 20_000;
+
+/// Every candidate layout (block of k or 2k, either order, shifts of -2..=2 points) against the compressed read `comp`
+/// of the raw read `raw` of the same record (one channel, read-out words), best first. Only points whose block lies
+/// inside both reads count, at most `CHECK_POINTS` from the middle of the record (the trigger point).
+pub fn check(raw: &[u16], comp: &[u16], k: usize) -> Vec<Fit> {
+    let n = comp.len().min(raw.len().div_ceil(k.max(1)));
+    let lo = n.saturating_sub(CHECK_POINTS) / 2;
+    let hi = (lo + CHECK_POINTS).min(n);
+    let mut fits = Vec::new();
+    for block_k in [2, 1] {
+        for min_first in [true, false] {
+            for shift in -2..=2i64 {
+                let layout = Layout { block_k, min_first, shift };
+                let (mut points, mut within, mut max_err) = (0, 0, 0u32);
+                for (j, &c) in comp.iter().enumerate().take(hi).skip(lo) {
+                    let Some(m) = point(raw, k, layout, j) else { continue };
+                    let e = (c as i32 - m as i32).unsigned_abs();
+                    points += 1;
+                    within += (e <= 1) as usize;
+                    max_err = max_err.max(e);
+                }
+                fits.push(Fit { layout, points, within, max_err });
+            }
+        }
+    }
+    fits.sort_by(|a, b| (b.within, a.max_err).cmp(&(a.within, b.max_err)));
+    fits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn noisy(n: usize) -> Vec<u16> {
+        let mut x = 12345u32;
+        (0..n)
+            .map(|i| {
+                x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let sq = if (i / 700) % 2 == 0 { 30_000 } else { 36_000 };
+                (sq + (x >> 16) as i32 % 200 - 100) as u16
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_assumed_layout_is_min_and_max_of_2k_samples() {
+        let raw = [5u16, 9, 1, 7, 3, 3, 8, 2];
+        assert_eq!(model(&raw, 2, LAYOUT), vec![1, 9, 2, 8]);
+        // the other order, and a block of k
+        assert_eq!(model(&raw, 2, Layout { min_first: false, ..LAYOUT }), vec![9, 1, 8, 2]);
+        assert_eq!(model(&raw, 2, Layout { block_k: 1, ..LAYOUT }), vec![5, 7, 3, 8]);
+        // a short last block, and a shift by one point
+        assert_eq!(model(&raw[..7], 2, LAYOUT), vec![1, 9, 3, 8]);
+        assert_eq!(model(&raw, 2, Layout { shift: 1, ..LAYOUT }), vec![9, 2, 8]);
+    }
+
+    #[test]
+    fn a_single_sample_spike_survives_with_blocks_of_2k_only() {
+        let mut raw = vec![1000u16; 64];
+        // a spike in the half of a block whose point is the minimum with blocks of k
+        raw[16] = 4000;
+        assert!(model(&raw, 4, LAYOUT).contains(&4000));
+        assert!(!model(&raw, 4, Layout { block_k: 1, ..LAYOUT }).contains(&4000));
+    }
+
+    #[test]
+    fn check_finds_the_layout_a_read_was_made_with() {
+        let raw = noisy(60_000);
+        for k in [4usize, 16, 64, 256] {
+            for truth in [LAYOUT, Layout { min_first: false, ..LAYOUT }, Layout { block_k: 1, ..LAYOUT }, Layout { shift: -1, ..LAYOUT }] {
+                // a read shifted by -1 point: one point in front of the aligned ones
+                let aligned = model(&raw, k, Layout { shift: 0, ..truth });
+                let comp: Vec<u16> = std::iter::repeat_n(0, (-truth.shift).max(0) as usize).chain(aligned).collect();
+                let best = check(&raw, &comp, k)[0];
+                assert_eq!(best.layout, truth, "k {}", k);
+                assert_eq!((best.within, best.max_err), (best.points, 0), "k {}", k);
+                assert!(best.points > 100, "k {}: {} points", k, best.points);
+            }
+        }
+    }
+}

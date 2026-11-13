@@ -743,6 +743,20 @@ pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut St
     Ok(count)
 }
 
+/// A second read of frame `index` of the batch just read with FPGA compression (`s.compress` > 1), this time raw: the
+/// same record, every sample (fork, docs/fork/compress.md). The ring is played again as for the LA read and the stamp
+/// plays of hardware segments; nothing may arm or write the FPGA in between. The frame lands in `dma`
+/// (`frame_bytes` of `raw_settings(s)`).
+#[allow(clippy::too_many_arguments)]
+pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, index: u32, log: impl FnMut(String)) -> Result<(), String> {
+    execute_bus(&st.read_steps_at(&raw_settings(s), p, index, 1), bar, c2h, dma, log)
+}
+
+/// `s` without the FPGA compression: what `read_raw_again` reads with.
+pub fn raw_settings(s: &Settings) -> Settings {
+    Settings { compress: 1, frames: 1, ..s.clone() }
+}
+
 /// Arms the next batch right after a read (and the LA read of the same record), so the FPGA records while the host
 /// decodes: the same writes as the arm `acquire_batch` would issue next, earlier. Read it with `acquire_batch(..,
 /// armed = true, ..)` and the same `s` and `p`; anything else that writes the FPGA first needs `disarm`.
