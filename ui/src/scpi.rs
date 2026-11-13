@@ -9,7 +9,7 @@
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
-//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, :SYSTem:AOUTput TOUT|OFF (rear AUX OUT; OFF is OOS), fork: :SYSTem:DEBug:DVM? (DVM block raw), :SYSTem:DEBug:MASK? (mask unit raw), :SYSTem:DEBug:ZONE? (zone unit raw), :SYSTem:DEBug:UART? (TPU UART words), OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
+//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, :SYSTem:AOUTput TOUT|OFF (rear AUX OUT; OFF is OOS), fork: :SYSTem:DEBug:DVM? (DVM block raw), :SYSTem:DEBug:MASK? (mask unit raw), :SYSTem:DEBug:MASK:MAP[?] key=value, :SYSTem:DEBug:MASK:COLumns? a,b, :SYSTem:DEBug:ZONE? (zone unit raw), :SYSTem:DEBug:UART? (TPU UART words), OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
 //! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
@@ -1023,6 +1023,24 @@ impl Scpi {
         if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "ZONE") && query {
             return t(&ui.zone_debug_text());
         }
+        // fork: the comparator mapping of the mask test and zone trigger, and the per-column view (docs/fork/hwmask.md)
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && kw(nodes[3], "MAP") {
+            match board().mask_map(if query { None } else { Some(arg.trim()) }) {
+                Ok(s) if query => return t(&s),
+                Ok(_) => ui.mark_changed(),
+                Err(e) => self.err.push(format!("-224,\"Illegal parameter value\" {}", e)),
+            }
+            return None;
+        }
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && kw(nodes[3], "COLumns") && query {
+            let mut it = arg.split(',').map(|x| x.trim().parse::<usize>());
+            let (a, b) = match (it.next(), it.next()) {
+                (Some(Ok(a)), Some(Ok(b))) => (a.min(b), a.max(b)),
+                (Some(Ok(a)), None) => (a, a),
+                _ => (0, 9),
+            };
+            return t(&ui.mask_columns_text(a, b));
+        }
         // fork: the mask unit's raw counters and slot next to the software test (docs/fork/hwmask.md)
         if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && query {
             return t(&ui.mask_debug_text());
@@ -1249,5 +1267,17 @@ mod aux_out_tests {
         assert!(q(&mut ui, ":SYSTem:DEBug:MASK?").starts_with("off,enabled=0,active=0,sw_pass=0,sw_fail=0,"));
         assert!(q(&mut ui, ":SYSTem:DEBug:ZONE?").starts_with("off,enabled=0,active=0,sw_drops=0,"));
         assert_eq!(q(&mut ui, ":SYSTem:DEBug:UART?"), "off,enabled=0");
+        // the comparator mapping: set one key, read it back, put the original back
+        let orig = q(&mut ui, ":SYSTem:DEBug:MASK:MAP?");
+        assert!(orig.starts_with("domain="), "{}", orig);
+        q(&mut ui, ":SYSTem:DEBug:MASK:MAP cols=stock");
+        assert!(q(&mut ui, ":SYST:DEB:MASK:MAP?").contains("cols=stock"));
+        q(&mut ui, ":SYST:DEB:MASK:MAP cols=bogus");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+        for kv in orig.split(' ') {
+            q(&mut ui, &format!(":SYST:DEB:MASK:MAP {}", kv));
+        }
+        assert_eq!(q(&mut ui, ":SYST:DEB:MASK:MAP?"), orig);
+        assert_eq!(q(&mut ui, ":SYST:DEB:MASK:COL? 0,3"), "off");
     }
 }

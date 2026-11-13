@@ -77,6 +77,169 @@ pub fn code(volts: f64, scale: f64, offset: f64) -> f64 {
     (MID + (volts + offset) / scale * CODES_PER_DIV) / (1u32 << SHIFT) as f64
 }
 
+/// Which 16-bit scale the comparator's 8-bit sample is cut from (the debug sweep, docs/fork/hwmask.md).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Domain {
+    /// the read-out words: `CODES_PER_DIV` per division at the channel's V/div
+    ReadOut,
+    /// before the read path's digital gain: `CODES_PER_DIV / gain` per division (the scale of the trigger comparators
+    /// and of the DVM block, whose 12-bit codes are this >> 4)
+    PreGain,
+}
+
+/// How the table columns spread over the record (the debug sweep).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Layout {
+    /// `COLUMNS` columns, the strobe count = samples per column (points / 1000)
+    Record,
+    /// `COLUMNS` columns, the strobe count in sample clocks (one clock carries 4 / ratio samples of the channel)
+    Clocks,
+    /// the stock zone set-up: strobe count 1, 1000 / (4 / ratio) columns over the record
+    Stock,
+    /// `COLUMNS` columns, this strobe count
+    Count(u32),
+}
+
+/// The value and time mapping of the comparator (assumptions under test). `Map::default()` is the first guess.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Map {
+    pub domain: Domain,
+    /// 16-bit codes per division before the domain's gain
+    pub codes_per_div: f64,
+    /// the 16-bit code at the channel's offset (screen centre)
+    pub mid: f64,
+    /// right shift from 16 to 8 bits
+    pub shift: u32,
+    /// added to every 8-bit code
+    pub offset: f64,
+    /// the code axis upside down (255 at the bottom of the screen)
+    pub invert: bool,
+    pub layout: Layout,
+    /// columns with their limits enabled (others test nothing): to find the failing ones
+    pub range: (u16, u16),
+}
+
+impl Default for Map {
+    fn default() -> Map {
+        Map { domain: Domain::ReadOut, codes_per_div: CODES_PER_DIV, mid: MID, shift: SHIFT, offset: 0.0, invert: false, layout: Layout::Record, range: (0, COLUMNS as u16 - 1) }
+    }
+}
+
+impl Map {
+    /// The 8-bit code of `volts` on a channel at `scale` V/div, `offset` V and digital gain `gain`, unrounded.
+    pub fn code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64 {
+        let g = if self.domain == Domain::PreGain && gain > 0.0 { gain } else { 1.0 };
+        let mut d = (volts + offset) / scale * self.codes_per_div / g;
+        if self.invert {
+            d = -d;
+        }
+        (self.mid + d) / (1u64 << self.shift.min(16)) as f64 + self.offset
+    }
+
+    /// The column layout for `points` per channel with the channel set `mask`: (columns, strobe count, samples per
+    /// column).
+    pub fn layout(&self, points: u32, mask: u32) -> (usize, u32, f64) {
+        let per_clock = (4 / crate::dho::hz::ratio(mask)).max(1) as u64;
+        let pts = points.max(1) as u64;
+        match self.layout {
+            Layout::Record => {
+                let n = per_column(pts);
+                (COLUMNS, n, n as f64)
+            }
+            Layout::Clocks => {
+                let n = (pts / COLUMNS as u64 / per_clock).max(1) as u32;
+                (COLUMNS, n, (n as u64 * per_clock) as f64)
+            }
+            Layout::Stock => {
+                let cols = COLUMNS / per_clock as usize;
+                (cols, 1, pts as f64 / cols as f64)
+            }
+            Layout::Count(n) => (COLUMNS, n.max(1), pts as f64 / COLUMNS as f64),
+        }
+    }
+
+    /// Parses `key=value` into the map: domain readout|pregain, cpd <codes/div>, mid <code>, shift <bits>, offs
+    /// <8-bit codes>, invert 0|1, cols record|clocks|stock|<count>, range <a>-<b>.
+    pub fn set(&mut self, kv: &str) -> Result<(), String> {
+        let (k, v) = kv.split_once('=').ok_or_else(|| format!("no '=' in {}", kv))?;
+        let (k, v) = (k.trim(), v.trim());
+        let num = |v: &str| v.parse::<f64>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v));
+        match k {
+            "domain" => {
+                self.domain = match v {
+                    "readout" => Domain::ReadOut,
+                    "pregain" => Domain::PreGain,
+                    _ => return Err(format!("domain readout|pregain: {}", v)),
+                }
+            }
+            "cpd" => self.codes_per_div = num(v)?.max(1.0),
+            "mid" => self.mid = num(v)?,
+            "shift" => self.shift = num(v)?.clamp(0.0, 16.0) as u32,
+            "offs" => self.offset = num(v)?,
+            "invert" => self.invert = matches!(v, "1" | "on" | "true"),
+            "cols" => {
+                self.layout = match v {
+                    "record" => Layout::Record,
+                    "clocks" => Layout::Clocks,
+                    "stock" => Layout::Stock,
+                    n => Layout::Count(num(n)?.clamp(1.0, 0x0fff_ffff as f64) as u32),
+                }
+            }
+            "range" => {
+                let (a, b) = v.split_once('-').ok_or_else(|| format!("range a-b: {}", v))?;
+                let (a, b) = (num(a)? as u16, num(b)? as u16);
+                self.range = (a.min(b), a.max(b));
+            }
+            _ => return Err(format!("unknown key {}", k)),
+        }
+        Ok(())
+    }
+
+    /// The map as `set` takes it, one line.
+    pub fn text(&self) -> String {
+        let cols = match self.layout {
+            Layout::Record => "record".to_string(),
+            Layout::Clocks => "clocks".to_string(),
+            Layout::Stock => "stock".to_string(),
+            Layout::Count(n) => n.to_string(),
+        };
+        let d = if self.domain == Domain::PreGain { "pregain" } else { "readout" };
+        format!("domain={} cpd={} mid={} shift={} offs={} invert={} cols={} range={}-{}", d, self.codes_per_div, self.mid, self.shift, self.offset, self.invert as u8, cols, self.range.0, self.range.1)
+    }
+}
+
+/// The union of the bands of the equal source columns `lo`/`hi` (spread over the record) that overlap the record
+/// fraction `f0..f1`.
+pub fn rebin(lo: &[f32], hi: &[f32], f0: f64, f1: f64) -> (f32, f32) {
+    let n = lo.len().min(hi.len());
+    if n == 0 || f1 <= 0.0 || f0 >= 1.0 {
+        return (f32::NEG_INFINITY, f32::INFINITY);
+    }
+    let a = ((f0.max(0.0) * n as f64).floor() as usize).min(n - 1);
+    let b = ((f1.min(1.0) * n as f64).ceil() as usize).clamp(a + 1, n);
+    (lo[a..b].iter().copied().fold(f32::INFINITY, f32::min), hi[a..b].iter().copied().fold(f32::NEG_INFINITY, f32::max))
+}
+
+/// The table for the volt bands `lo`/`hi` (spread over the whole record) under `map`: one column per hardware column of
+/// `map.layout`, each the union of the bands it covers; columns outside `map.range` and beyond the record test nothing.
+pub fn table_map(lo: &[f32], hi: &[f32], points: u32, mask: u32, scale: f64, offset: f64, gain: f64, map: &Map) -> Vec<Column> {
+    let (cols, _, per) = map.layout(points, mask);
+    let pts = points.max(1) as f64;
+    (0..cols)
+        .map(|c| {
+            let (f0, f1) = (c as f64 * per / pts, (c + 1) as f64 * per / pts);
+            if f0 >= 1.0 || c < map.range.0 as usize || c > map.range.1 as usize {
+                return Column { lo: 0, hi: CODE_MAX as u8, lo_en: false, hi_en: false };
+            }
+            let (l, h) = rebin(lo, hi, f0, f1);
+            let (cl, ch) = (map.code(l as f64, scale, offset, gain), map.code(h as f64, scale, offset, gain));
+            // inverted: the lower volt limit becomes the upper code limit
+            let (a, b) = if cl <= ch { (cl, ch) } else { (ch, cl) };
+            Column::of_codes(a, b)
+        })
+        .collect()
+}
+
 /// One column of the table. The comparator fails a sample below `lo` (when `lo_en`) or above `hi` (when `hi_en`); a
 /// sample equal to a limit passes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,8 +254,12 @@ impl Column {
     /// The column for the volt band `lo..=hi`. Limits are rounded outwards, so a sample the software mask passes is
     /// never failed here. A limit at or beyond the end of the code range (or infinite) is disabled.
     pub fn of_band(lo: f32, hi: f32, scale: f64, offset: f64) -> Column {
-        let l = code(lo as f64, scale, offset).floor();
-        let h = code(hi as f64, scale, offset).ceil();
+        Column::of_codes(code(lo as f64, scale, offset), code(hi as f64, scale, offset))
+    }
+
+    /// The column for the code band `lo..=hi`, rounded outwards; a limit at or beyond the code range is disabled.
+    pub fn of_codes(lo: f64, hi: f64) -> Column {
+        let (l, h) = (lo.floor(), hi.ceil());
         let lo_en = l.is_finite() && l > 0.0;
         let hi_en = h.is_finite() && h < CODE_MAX;
         Column { lo: if lo_en { l.min(CODE_MAX) as u8 } else { 0 }, hi: if hi_en { h.max(0.0) as u8 } else { CODE_MAX as u8 }, lo_en, hi_en }
@@ -111,10 +278,6 @@ impl Column {
     }
 }
 
-/// The table of the volt bands `lo`/`hi` (one per column, `COLUMNS` of them) for a channel at `scale`/`offset`.
-pub fn table(lo: &[f32], hi: &[f32], scale: f64, offset: f64) -> Vec<Column> {
-    lo.iter().zip(hi).map(|(&l, &h)| Column::of_band(l, h, scale, offset)).collect()
-}
 
 /// Writes that load `cols` (column order 0..), then drop the write enable. The test must be off meanwhile.
 pub fn load(cols: &[Column]) -> Vec<Write> {
@@ -226,6 +389,82 @@ mod tests {
         // a band on one side of the range keeps the other limit
         let c = Column::of_band(2.0, 9.0, 1.0, 0.0);
         assert!(c.lo_en && !c.hi_en && c.lo == 186);
+    }
+
+    #[test]
+    fn map_codes_by_domain_shift_offset_and_inversion() {
+        let d = Map::default();
+        // the default is the first guess: the read-out word >> 8
+        assert_eq!(d.code(1.0, 1.0, 0.0, 1.095), code(1.0, 1.0, 0.0));
+        // before the digital gain: 7500 / g codes per division (the DVM block's 428 12-bit codes at g 1.095)
+        let pg = Map { domain: Domain::PreGain, ..d };
+        assert!((pg.code(1.0, 1.0, 0.0, 1.095) - (128.0 + 7500.0 / 1.095 / 256.0)).abs() < 1e-9);
+        assert!(((pg.code(1.0, 1.0, 0.0, 1.095) - 128.0) * 16.0 - 428.0).abs() < 1.0);
+        // a 12-bit code >> 4 is the same as a 16-bit >> 8 of the left-aligned word: shift 4 with mid 2048, 469 codes/div
+        let twelve = Map { mid: 2048.0, codes_per_div: 7500.0 / 16.0, shift: 4, ..d };
+        assert!((twelve.code(1.0, 1.0, 0.0, 1.0) - d.code(1.0, 1.0, 0.0, 1.0)).abs() < 1e-9);
+        assert_eq!(Map { offset: 3.0, ..d }.code(0.0, 1.0, 0.0, 1.0), 131.0);
+        assert!((Map { invert: true, ..d }.code(1.0, 1.0, 0.0, 1.0) - (128.0 - 7500.0 / 256.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn layouts() {
+        // (layout, points, channel set) -> (columns, strobe count, samples per column)
+        let cases: [(Layout, u32, u32, (usize, u32, f64)); 7] = [
+            (Layout::Record, 2_500_000, 1, (1000, 2500, 2500.0)),
+            (Layout::Record, 10_000, 1, (1000, 10, 10.0)),
+            (Layout::Clocks, 2_500_000, 1, (1000, 625, 2500.0)),
+            (Layout::Clocks, 2_500_000, 0b11, (1000, 1250, 2500.0)),
+            (Layout::Stock, 10_000, 1, (250, 1, 40.0)),
+            (Layout::Stock, 10_000, 0b1111, (1000, 1, 10.0)),
+            (Layout::Count(7), 10_000, 1, (1000, 7, 10.0)),
+        ];
+        for (l, pts, m, want) in cases {
+            assert_eq!(Map { layout: l, ..Map::default() }.layout(pts, m), want, "{:?} {} {:#b}", l, pts, m);
+        }
+    }
+
+    #[test]
+    fn map_keys_round_trip() {
+        let mut m = Map::default();
+        for kv in ["domain=pregain", "cpd=6848", "mid=32000", "shift=8", "offs=-2.5", "invert=1", "cols=clocks", "range=10-20"] {
+            m.set(kv).unwrap();
+        }
+        assert_eq!(m.text(), "domain=pregain cpd=6848 mid=32000 shift=8 offs=-2.5 invert=1 cols=clocks range=10-20");
+        let mut back = Map::default();
+        for kv in m.text().split(' ') {
+            back.set(kv).unwrap();
+        }
+        assert_eq!(back, m);
+        m.set("cols=37").unwrap();
+        assert_eq!(m.layout, Layout::Count(37));
+        assert!(m.set("cols=").is_err() && m.set("domain=raw").is_err() && m.set("nope=1").is_err() && m.set("cpd").is_err());
+    }
+
+    #[test]
+    fn table_map_rebins_limits_the_range_and_inverts() {
+        // 1000 source bands: -1..1 V, column 500 reaches +2 V
+        let (mut lo, mut hi) = (vec![-1.0f32; 1000], vec![1.0f32; 1000]);
+        hi[500] = 2.0;
+        let d = Map::default();
+        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &d);
+        assert_eq!(t.len(), 1000);
+        assert_eq!(t[0], Column::of_band(-1.0, 1.0, 1.0, 0.0));
+        assert_eq!(t[500], Column::of_band(-1.0, 2.0, 1.0, 0.0));
+        // stock layout: 250 columns of 4 source columns; column 125 holds source 500
+        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &Map { layout: Layout::Stock, ..d });
+        assert_eq!((t.len(), t[125], t[124]), (250, Column::of_band(-1.0, 2.0, 1.0, 0.0), Column::of_band(-1.0, 1.0, 1.0, 0.0)));
+        // only columns 10..=20 test
+        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &Map { range: (10, 20), ..d });
+        assert!(t.iter().enumerate().all(|(c, k)| (k.lo_en && k.hi_en) == (10..=20).contains(&c)));
+        // inverted: the volt band maps to the mirrored codes, lower limit below the upper
+        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &Map { invert: true, ..d });
+        assert_eq!(t[0], Column::of_codes(128.0 - 7500.0 / 256.0, 128.0 + 7500.0 / 256.0));
+        assert!(t[500].lo < t[0].lo);
+        // a band without data stays open
+        lo[3] = f32::NEG_INFINITY;
+        hi[3] = f32::INFINITY;
+        assert!(!table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &d)[3].lo_en);
     }
 
     #[test]

@@ -78,6 +78,42 @@ impl Ui {
     }
 }
 
+impl Ui {
+    /// Fork, `:SYSTem:DEBug:MASK:COLumns? a,b`: per column a..=b of the loaded table its limits and enables, and the
+    /// lowest and highest code of the newest raw record's samples in that column under the current mapping, with the
+    /// columns that would fail. The hardware itself has no per-column result; this is the software's view of the same
+    /// table and samples (docs/fork/hwmask.md "Sweep").
+    pub fn mask_columns_text(&self, a: usize, b: usize) -> String {
+        let Some(r) = self.mask_hw else { return "off".into() };
+        let Some(t) = self.src.hw_mask_table() else { return "no table".into() };
+        let frame = self.last[0].as_ref().and_then(|x| x.raw.as_ref()).map(|x| x.frame.clone()).filter(|f| !f.envelope);
+        let samples: &[f32] = frame.as_ref().map_or(&[], |f| &f.ch[r.ch][..]);
+        let (cols, per) = board().mask_layout(r.points, r.chans);
+        columns_view(&t[..cols.min(t.len())], samples, per, |v| board().mask_code(v as f64, r.scale, r.offset, r.gain), a, b)
+    }
+}
+
+/// Columns a..=b of `table` against `samples` (`per` samples per column, `code` the 8-bit code of a sample): per
+/// column `c:lo-hi/<lo en><hi en>:min-max`, a `!` where a sample is below an enabled lower or above an enabled upper
+/// limit; first the count and the first failing columns.
+fn columns_view(table: &[[u8; 4]], samples: &[f32], per: f64, code: impl Fn(f32) -> f64, a: usize, b: usize) -> String {
+    let b = b.min(table.len().saturating_sub(1));
+    let mut fails = Vec::new();
+    let mut rows = Vec::new();
+    for c in a..=b {
+        let [lo, hi, le, he] = table[c];
+        let (k0, k1) = (((c as f64 * per) as usize).min(samples.len()), (((c + 1) as f64 * per) as usize).min(samples.len()));
+        let (mn, mx) = samples[k0..k1].iter().filter(|v| v.is_finite()).map(|&v| code(v).floor()).fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(x), b.max(x)));
+        let fail = mn.is_finite() && ((le == 1 && mn < lo as f64) || (he == 1 && mx > hi as f64));
+        if fail {
+            fails.push(c);
+        }
+        rows.push(format!("{}:{}-{}/{}{}:{}-{}{}", c, lo, hi, le, he, mn, mx, if fail { "!" } else { "" }));
+    }
+    let first: Vec<String> = fails.iter().take(8).map(|c| c.to_string()).collect();
+    format!("cols={}-{},samples={},per={:.1},fail={},first={};{}", a, b, samples.len(), per, fails.len(), first.join(" "), rows.join(";"))
+}
+
 /// A new reading `now` after `before` shows a new failure on channel `src` (a cleared counter is none).
 fn mask_stops(before: Option<MaskRead>, now: Option<MaskRead>, src: usize) -> bool {
     let Some(n) = now.filter(|r| r.ch == src) else { return false };
@@ -116,6 +152,16 @@ mod tests {
         for (b, n, src, want) in cases {
             assert_eq!(mask_stops(b, n, src), want, "{:?} {:?}", b, n);
         }
+    }
+
+    #[test]
+    fn column_view_marks_the_failing_columns() {
+        // 3 columns of 2 samples; code = volts * 10 + 100
+        let t = [[90, 110, 1, 1], [90, 110, 1, 1], [90, 110, 0, 0]];
+        let v = [0.0, 0.5, -2.0, 0.0, 5.0, -5.0];
+        let s = columns_view(&t, &v, 2.0, |x| x as f64 * 10.0 + 100.0, 0, 9);
+        assert_eq!(s, "cols=0-2,samples=6,per=2.0,fail=1,first=1;0:90-110/11:100-105;1:90-110/11:80-100!;2:90-110/00:50-150");
+        assert!(columns_view(&t, &[], 2.0, |x| x as f64, 0, 1).contains("fail=0"));
     }
 
     #[test]

@@ -39,6 +39,53 @@ default until the steps below confirm the assumptions. Register description: `sp
 
 Only bits 9:0 and 15 of 0x1184 reach the comparator logic. Records above 1023 x 1000 points may mis-count columns.
 
+## Sweep of the mapping (unit round 2)
+
+Round 2 (private RE notes `docs/logs/oos_unitlab_20261113.md`): slot 0 and the frame count are right (171/s against
+171/s), but every frame fails on a clean signal while the software passes; it passes only at X 1 div and Y 3 div. So
+the value mapping and the column layout are both off. Two likely causes:
+- The record at 200 us/div, Auto depth is 2.5 Mpts: 2500 samples per column, but only bits 9:0 and 15 of 0x1184 reach
+  the comparator, so the strobe count the hardware sees is not 2500.
+- The DVM block on the same front end sees 12-bit codes around 2048 with about 428 codes per division at 1 V/div
+  (about 200 at 100 mV/div): the scale before the digital gain (`7500 / gain` in 16 bits), not the read-out's 7500.
+
+The mapping is `mask::Map`, shared by the mask test and the zone trigger. It is set at start from system.conf lines
+`mask.map.<key> = <value>` and at run time with `:SYSTem:DEBug:MASK:MAP <key>=<value>` (no rebuild, no restart; the
+next batch reloads the table). `:SYSTem:DEBug:MASK:MAP?` reads it back.
+
+| key | values | meaning |
+|---|---|---|
+| `domain` | `readout` (default), `pregain` | 16-bit scale: read-out words, or before the digital gain (codes/div divided by the channel's gain) |
+| `cpd` | number, default 7500 | 16-bit codes per division |
+| `mid` | number, default 32768 | 16-bit code at the channel's offset (screen centre) |
+| `shift` | 0..16, default 8 | right shift to the 8-bit sample (a 12-bit sample: `mid=2048 cpd=468.75 shift=4`) |
+| `offs` | number, default 0 | added to every 8-bit code |
+| `invert` | 0, 1 | code axis upside down |
+| `cols` | `record` (default), `clocks`, `stock`, or a number | 1000 columns of points/1000 samples; the same count in sample clocks (4/ratio samples each); the stock zone set-up (count 1, 1000/(4/ratio) columns); 1000 columns with this strobe count |
+| `range` | `a-b`, default `0-999` | only these columns test; the others pass everything |
+
+The hardware gives no per-column result. `:SYSTem:DEBug:MASK:COLumns? a,b` shows the software's view of the same
+table: per column `c:lo-hi/<lo en><hi en>:min-max` with the lowest and highest code of the newest raw record's
+samples in that column under the current mapping, `!` where it would fail, then `fail=N,first=...`. It needs a raw
+record (not compressed, the fast path keeps one per screen update). With `range` the hardware itself localises
+failures: halve the range until the fail counter stops rising.
+
+Procedure (probe-comp on CH1, 1 V/div, hardware mask on, Reset between steps, 2000 frames per reading of
+`:SYSTem:DEBug:MASK?`):
+1. Short record first, to take the strobe count out: 20 us/div, depth 10k (10 samples per column). Create mask with
+   the default tolerances. Note `fails/frames` for `domain=readout` and `domain=pregain`.
+2. If both fail every frame: `range=0-499` and `range=500-999`, then halve the failing half until a range of about 10
+   columns. `:SYSTem:DEBug:MASK:COLumns? a,b` over it shows whether the codes (min-max against lo-hi) or the edges
+   (a column whose samples hold both levels) are off. Codes off by a constant: `offs`; by a factor: `cpd`; mirrored:
+   `invert=1`. Edges in the wrong column by a constant factor: `cols=clocks` or `cols=stock`, else a count
+   (`cols=<n>`) and note which n lines up.
+3. When step 1 passes (0 fails in 2000 on the clean signal, fails rising with a 0.2 div offset nudge), repeat at 1, 2
+   and 4 channels (the clock layout depends on it) and at 100 mV/div and 2 V/div (the gain).
+4. Then the long record: 200 us/div, Auto (2.5 Mpts). With `cols=record` the count 2500 does not fit 10 bits; try
+   `cols=` 2500 & 1023 (452) and `cols=1023`, and note whether bit 15 changes anything (`cols=33220` is 452 with bit 15 set).
+5. Write the winning map into this file and make it the default in `mask::Map::default()`; the zone trigger takes the
+   same map (`hwzone.md`).
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output. Optional: BNC cable from AUX OUT to CH2 (step 7). Start from a known state:
