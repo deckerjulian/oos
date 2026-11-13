@@ -210,6 +210,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 | LXI identification | 8080 | `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | Telnet | 23 | root shell, no password |
+| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-204527.local:8080`, and its services for browsing ([docs/network.md](docs/network.md)) |
 
 None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
 the slow cores with spare time only (on a DHO924S the screen stays at 30 frames a second with two web viewers). All of

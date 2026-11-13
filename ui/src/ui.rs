@@ -599,6 +599,9 @@ enum Item {
     RemScpiInfo,
     RemVxiInfo,
     RemTelnetInfo,
+    /// the mDNS switch, and the scope's name on the network (`<name>.local`, a picker with Other on the keyboard)
+    RemMdns,
+    RemName,
     /// System > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
     /// Display > Views (ui/views.rs)
@@ -5505,7 +5508,7 @@ impl Ui {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone)) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName)) => {
                     let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
                     self.close_picker();
                     self.time_pick(it, k);
@@ -5902,8 +5905,8 @@ impl Ui {
     /// Control of a menu row whose control rectangle is `w` px wide: segmented buttons when all options fit, a
     /// picker (- value +, the value opens the list of all options) for longer option lists, else - value +.
     fn ctl(&self, it: Item, w: i32) -> Ctl {
-        // - and + step, the value opens the keypad (`open_picker`)
-        if it == Item::AfgFreq {
+        // - and + step, the value opens the keypad (`open_picker`); the name's value opens its list even when short
+        if matches!(it, Item::AfgFreq | Item::RemName) {
             return Ctl::Pick;
         }
         if let Item::RefShow(_) = it {

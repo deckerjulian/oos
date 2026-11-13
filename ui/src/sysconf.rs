@@ -6,10 +6,12 @@
 //!
 //! ```text
 //! ntp = off                 # System > Date and time > Time from NTP
-//! ntp.server = pool.ntp.org
+//! ntp.server = dhcp        # dhcp: the server of the DHCP lease (option 42), else pool.ntp.org
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
-//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet)
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet,
+//!                           # remote.mdns)
+//! net.name = dho924s-204527 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
 //! backlight = 100            # Display > Backlight, percent (10..100)
 //! ```
@@ -22,7 +24,15 @@ use std::path::{Path, PathBuf};
 pub const PATH: &str = "/oos/system.conf";
 /// Without the data partition: in RAM, lost at power-off.
 pub const TMP_PATH: &str = "/tmp/oos-system.conf";
-pub const DEFAULT_SERVER: &str = "pool.ntp.org";
+/// `ntp.server = dhcp`: the NTP server the DHCP lease names (option 42, RFC 2132), else `FALLBACK_SERVER`.
+pub const DHCP: &str = "dhcp";
+pub const DEFAULT_SERVER: &str = DHCP;
+/// Asked with `ntp.server = dhcp` while no lease names a server.
+pub const FALLBACK_SERVER: &str = "pool.ntp.org";
+/// The servers of a lease, space separated, one file per interface (`udhcpc.script`): `<this><interface>`.
+pub const DHCP_NTP_FILE: &str = "/tmp/oos-dhcp-ntp.";
+/// The interfaces whose lease counts, in this order.
+pub const DHCP_IFACES: [&str; 2] = ["eth0", "wlan0"];
 pub const DEFAULT_TZ: &str = "UTC0";
 /// Longest server name taken.
 pub const SERVER_MAX: usize = 63;
@@ -42,6 +52,11 @@ pub struct SysConf {
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
     pub remote_telnet: bool,
+    /// the mDNS responder (mdns.rs): `<net_name>.local` and the services for computers that browse
+    pub remote_mdns: bool,
+    /// the scope's name on the network (`mdns::name_ok`): host name, sent to DHCP, `<name>.local`. Empty: not set yet,
+    /// then the one from model and serial number (`Ui::net_name`)
+    pub net_name: String,
     /// System > Graphics: the picture put together on the GPU (`gpu.rs`), else on the CPU. The GPU by default: a
     /// third less load on the frame loop, the same picture (gpu/README.md); where it does not start, the CPU draws.
     pub gpu: bool,
@@ -62,6 +77,8 @@ impl Default for SysConf {
             remote_scpi: true,
             remote_vxi11: true,
             remote_telnet: true,
+            remote_mdns: true,
+            net_name: String::new(),
             gpu: true,
             backlight: 100,
             extra: Vec::new(),
@@ -72,6 +89,32 @@ impl Default for SysConf {
 /// A host name or an address: letters, digits, `.`, `-`, `:` (IPv6).
 pub fn server_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= SERVER_MAX && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c)) && !s.starts_with(['-', '.'])
+}
+
+/// Where the server asked came from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NtpOrigin {
+    /// the setting names it
+    Set,
+    /// `dhcp`: the lease of this interface
+    Dhcp(&'static str),
+    /// `dhcp`, but no lease names a server: `FALLBACK_SERVER`
+    NoDhcp,
+}
+
+/// The server to ask for the setting `ntp.server`: the setting itself, or with `dhcp` the first good server of the
+/// lease on eth0, else on wlan0, else `FALLBACK_SERVER`. `lease` gives the text of an interface's file
+/// (`DHCP_NTP_FILE`), None without one. Called at each request: a lease can change at any time.
+pub fn ntp_server(setting: &str, lease: impl Fn(&str) -> Option<String>) -> (String, NtpOrigin) {
+    if setting != DHCP {
+        return (setting.to_string(), NtpOrigin::Set);
+    }
+    for i in DHCP_IFACES {
+        if let Some(s) = lease(i).and_then(|t| t.split_whitespace().find(|s| server_ok(s)).map(str::to_string)) {
+            return (s, NtpOrigin::Dhcp(i));
+        }
+    }
+    (FALLBACK_SERVER.to_string(), NtpOrigin::NoDhcp)
 }
 
 fn on_off(v: &str) -> Option<bool> {
@@ -107,6 +150,10 @@ impl SysConf {
             let (k, v) = (k.trim(), v.split(" #").next().unwrap_or("").trim());
             let ok = match k {
                 "ntp" => on_off(v).map(|b| c.ntp = b).is_some(),
+                "ntp.server" if v.eq_ignore_ascii_case(DHCP) => {
+                    c.ntp_server = DHCP.into();
+                    true
+                }
                 "ntp.server" => server_ok(v).then(|| c.ntp_server = v.into()).is_some(),
                 "tz" => Tz::parse(v).is_ok().then(|| c.tz = v.into()).is_some(),
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
@@ -114,6 +161,11 @@ impl SysConf {
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
                 "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
+                "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
+                "net.name" => {
+                    let n = v.to_ascii_lowercase();
+                    crate::mdns::name_ok(&n).then(|| c.net_name = n).is_some()
+                }
                 "graphics" => match v {
                     "cpu" | "gpu" => {
                         c.gpu = v == "gpu";
@@ -144,6 +196,10 @@ impl SysConf {
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
         s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
+        s.push_str(&format!("remote.mdns = {}\n", word(self.remote_mdns)));
+        if !self.net_name.is_empty() {
+            s.push_str(&format!("net.name = {}\n", self.net_name));
+        }
         s.push_str(&format!("graphics = {}\n", if self.gpu { "gpu" } else { "cpu" }));
         s.push_str(&format!("backlight = {}\n", self.backlight));
         for l in &self.extra {
@@ -206,7 +262,7 @@ mod tests {
     fn defaults_send_nothing_out() {
         let c = SysConf::default();
         assert!(!c.ntp);
-        assert_eq!(c.ntp_server, "pool.ntp.org");
+        assert_eq!(c.ntp_server, "dhcp");
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
         assert_eq!(SysConf::parse("").0, c);
@@ -219,7 +275,8 @@ mod tests {
         c.ntp_server = "ptbtime1.ptb.de".into();
         c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
         c.eth_retry_10m = false;
-        (c.remote_web, c.remote_telnet) = (false, false);
+        (c.remote_web, c.remote_telnet, c.remote_mdns) = (false, false, false);
+        c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
         assert_eq!(back, c);
@@ -240,6 +297,52 @@ mod tests {
         for s in ["", "-x", ".x", "a/b", "a b", &"x".repeat(64)] {
             assert!(!server_ok(s), "{}", s);
         }
+    }
+
+    #[test]
+    fn the_name_on_the_network() {
+        let c = SysConf::default();
+        assert!(c.remote_mdns, "mDNS on by default: it stays on the link");
+        assert!(c.net_name.is_empty() && !c.text().contains("net.name"));
+        let (d, bad) = SysConf::parse("net.name = Lab-Scope-3\nremote.mdns = off\n");
+        assert!(bad.is_empty());
+        assert_eq!((d.net_name.as_str(), d.remote_mdns), ("lab-scope-3", false));
+        assert!(d.text().contains("\nnet.name = lab-scope-3\n") && d.text().contains("\nremote.mdns = off\n"));
+        for bad_name in ["lab scope", "-x", "a.b", "x_y", &"x".repeat(64)] {
+            let (e, bad) = SysConf::parse(&format!("net.name = {}\n", bad_name));
+            assert_eq!((e.net_name.as_str(), bad.len()), ("", 1), "{}", bad_name);
+        }
+    }
+
+    #[test]
+    fn dhcp_server_round_trip() {
+        let mut c = SysConf::default();
+        c.ntp = true;
+        assert!(c.text().contains("\nntp.server = dhcp\n"));
+        assert_eq!(SysConf::parse(&c.text()).0, c);
+        // a file of an older version keeps its server; DHCP by hand in any case
+        assert_eq!(SysConf::parse("ntp.server = pool.ntp.org\n").0.ntp_server, "pool.ntp.org");
+        let (d, bad) = SysConf::parse("ntp.server = DHCP\n");
+        assert!(bad.is_empty());
+        assert_eq!(d.ntp_server, DHCP);
+        assert!(d.text().contains("\nntp.server = dhcp\n"));
+    }
+
+    #[test]
+    fn dhcp_server_resolves_from_the_lease() {
+        let none = |_: &str| None;
+        assert_eq!(ntp_server("ptbtime1.ptb.de", |_| Some("10.0.0.1".into())), ("ptbtime1.ptb.de".into(), NtpOrigin::Set));
+        assert_eq!(ntp_server(DHCP, none), ("pool.ntp.org".into(), NtpOrigin::NoDhcp));
+        // eth0 first, the first server of the list
+        let both = |i: &str| Some(if i == "eth0" { "192.168.1.1 192.168.1.2\n" } else { "10.0.0.1" }.to_string());
+        assert_eq!(ntp_server(DHCP, both), ("192.168.1.1".into(), NtpOrigin::Dhcp("eth0")));
+        let wlan = |i: &str| (i == "wlan0").then(|| "10.0.0.1\n".to_string());
+        assert_eq!(ntp_server(DHCP, wlan), ("10.0.0.1".into(), NtpOrigin::Dhcp("wlan0")));
+        // an empty file or one with nothing usable counts as none
+        let junk = |i: &str| Some(if i == "eth0" { "" } else { "a;b -x" }.to_string());
+        assert_eq!(ntp_server(DHCP, junk), ("pool.ntp.org".into(), NtpOrigin::NoDhcp));
+        let skip = |_: &str| Some("bad/one 172.16.0.9".to_string());
+        assert_eq!(ntp_server(DHCP, skip).0, "172.16.0.9");
     }
 
     #[test]
