@@ -86,14 +86,25 @@ pub const MATH_OPS: [MathOp; 30] = [
 
 /// Math channels (8, math on math).
 pub const NMATH: usize = 8;
+/// Keep existing CH and Math setup indices stable; references follow M8.
+pub const MATH_REF_BASE: usize = crate::model::NCH + NMATH;
+pub const MATH_SOURCES: usize = MATH_REF_BASE + crate::model::NREF;
 
 /// Name of a math source: 0..3 = CH1..CH4, 4.. = M1..M8.
 pub fn src_name(i: usize) -> String {
     if i < 4 {
         format!("CH{}", i + 1)
-    } else {
+    } else if i < MATH_REF_BASE {
         format!("M{}", i - 3)
+    } else {
+        format!("R{}", i - MATH_REF_BASE + 1)
     }
+}
+
+pub fn parse_expr(text: &str) -> Result<oos_dsp::expr::Expr, String> {
+    let names: Vec<_> = (0..MATH_SOURCES).map(src_name).collect();
+    let names: Vec<_> = names.iter().map(String::as_str).collect();
+    oos_dsp::expr::Expr::parse_sources(text, &names)
 }
 
 pub const WINDOWS: [Window; 5] = [Window::Rect, Window::Hann, Window::Hamming, Window::Blackman, Window::Flattop];

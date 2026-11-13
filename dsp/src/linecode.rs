@@ -126,7 +126,9 @@ pub fn unnrzi(a: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-/// Four histogram modes, low to high, of equal voltage bands.
+/// Four histogram representatives, low to high, of equal voltage bands.
+/// Empty bands are NaN. Occupied bands alone are not a PAM4 validity test:
+/// a noisy three-level signal can occupy all four fixed voltage bands.
 pub fn pam4_levels(f: &[f32], vmin: f32, vmax: f32) -> [f64; 4] {
     let span = (vmax - vmin).max(1e-12);
     let mut hist = [0u32; 256];
@@ -137,7 +139,8 @@ pub fn pam4_levels(f: &[f32], vmin: f32, vmax: f32) -> [f64; 4] {
     for q in 0..4 {
         let (a, b) = (q * 64, (q + 1) * 64);
         let i = (a..b).max_by_key(|&i| hist[i]).unwrap_or(a);
-        out[q] = vmin as f64 + span as f64 * (i as f64 + 0.5) / 255.0;
+        out[q] = if hist[i] == 0 { f64::NAN }
+            else { (vmin as f64 + span as f64 * (i as f64 + 0.5) / 255.0).clamp(vmin as f64, vmax as f64) };
     }
     out
 }
@@ -368,6 +371,35 @@ pub fn mlt3(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<Packet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pam_quartile_representatives_stay_inside_sample_extrema() {
+        for samples in [vec![-1.0, 1.0, 1.0, 1.0], vec![-0.02, 0.404, 0.404, 0.404]] {
+            let lo = samples.iter().copied().fold(f32::INFINITY, f32::min);
+            let hi = samples.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let levels = pam4_levels(&samples, lo, hi);
+            assert!(levels.iter().filter(|level| level.is_finite()).all(|level| (lo as f64..=hi as f64).contains(level)));
+            assert_eq!(levels[3], hi as f64);
+            let occupied: Vec<f64> = levels.into_iter().filter(|level| level.is_finite()).collect();
+            assert!(occupied.windows(2).all(|pair| pair[0] <= pair[1]));
+        }
+    }
+
+    #[test]
+    fn pam_quartile_constant_signal_does_not_invent_missing_levels() {
+        for value in [0.0, 1.0, -0.25, 1e-9] {
+            let levels = pam4_levels(&[value; 16], value, value);
+            assert_eq!(levels[0], value as f64);
+            assert!(levels[1..].iter().all(|level| level.is_nan()));
+        }
+    }
+
+    #[test]
+    fn pam_quartile_binary_signal_has_no_invented_middle_levels() {
+        let levels = pam4_levels(&[-1.0, 1.0, -1.0, 1.0], -1.0, 1.0);
+        assert!(levels[0].is_finite() && levels[3].is_finite());
+        assert!(levels[1].is_nan() && levels[2].is_nan());
+    }
 
     #[test]
     fn fir_keeps_dc_and_kills_nyquist() {

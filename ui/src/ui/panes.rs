@@ -494,7 +494,7 @@ impl Ui {
                 CursorMode::Xy => "XY",
                 _ => "Time",
             };
-            cv.text(&f.sb, s.x, line(0), &format!("Cursors  \u{b7}  {}  \u{b7}  {}", mode, self.ch_name(self.m.active)), TEXT);
+            cv.text(&f.sb, s.x, line(0), &format!("Cursors  \u{b7}  {}  \u{b7}  {}", mode, self.cursor_badge().map_or("No source".into(), |(label, _)| label)), TEXT);
             for (i, (l, v)) in cur.iter().enumerate() {
                 let (x, y) = (s.x + (i as i32 % 2) * half, line(1 + i as i32 / 2));
                 cv.text(&f.s, x, y, l, DIM);

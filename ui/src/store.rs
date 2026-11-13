@@ -135,6 +135,7 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_tick", m.dec_tick.to_string());
     kv("dec_nibbles", m.dec_nibbles.to_string());
     kv("dec_uspeed", m.dec_uspeed.to_string());
+    kv("dec_cphy_rate", m.dec_cphy_rate.to_string());
     kv("dec_src4", m.dec_src4.map_or("none".into(), |c| (c + 1).to_string()));
     kv("dec_diff", m.dec_diff.map_or("none".into(), |c| (c + 1).to_string()));
     kv("trig_bus", m.trig_bus.name().to_string());
@@ -183,6 +184,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("tdiv", tscales()[m.tscale].to_string());
     kv("delay", m.delay.to_string());
     kv("trig_src", m.trig_src.to_string());
+    kv("trig_ref", m.trig_ref.map_or("none".into(), |i| i.to_string()));
     kv("trig_la", m.trig_la.map_or("none".to_string(), |n| n.to_string()));
     kv("pat_la", m.pat_la.iter().map(|&b| match b { Bit::H => 'H', Bit::L => 'L', _ => 'X' }).collect());
     kv("trig_level", m.trig_level.to_string());
@@ -193,6 +195,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("trig_level2", m.trig_level2.to_string());
     kv("trig_nrej", m.trig_nrej.to_string());
     kv("trig_src2", m.trig_src2.to_string());
+    kv("trig_ref2", m.trig_ref2.map_or("none".into(), |i| i.to_string()));
     kv("trig_slope2", name(m.trig_slope2));
     kv("trig_pol", name(m.trig_pol));
     kv("trig_when", name(m.trig_when));
@@ -298,6 +301,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
     kv("meas_cfg", format!("{} {:?} {} {} {} {} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }, m.meas_lpct, m.meas_hpct, m.meas_tsetup, m.meas_thold));
+    kv("meas_full_record", m.meas_full_record.to_string());
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     kv("bode_mode", name(m.bode_mode));
     kv("eye_more", format!("{} {} {} {} {} {} {} {}", m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, if m.eye_npj { 1 } else { 0 }, opt(m.eye_rail), m.eye_notch, opt(m.eye_b), if m.eye_hp { 1 } else { 0 }));
@@ -366,6 +370,20 @@ fn p_idx(v: &str, n: usize) -> Result<usize, String> {
     }
 }
 
+fn p_decode_source(v: &str) -> Result<usize, String> {
+    let source = if v.trim().starts_with(['R', 'r']) {
+        match WaveId::parse(v.trim())? { WaveId::Ref(i) => DEC_REF_BASE + i, _ => unreachable!() }
+    } else { p_idx(v, DEC_SOURCE_COUNT)? };
+    decode_wave(source).map(|_| source).ok_or_else(|| "decoder source must be CH or R; LA uses dec_la".into())
+}
+
+fn p_decode_optional_one_based(v: &str) -> Result<Option<usize>, String> {
+    if v.trim() == "none" { return Ok(None); }
+    if v.trim().starts_with(['R', 'r']) { return p_decode_source(v).map(Some); }
+    let source = p_idx(v, DEC_SOURCE_COUNT + 1)?.max(1) - 1;
+    decode_wave(source).map(|_| Some(source)).ok_or_else(|| "invalid decoder source".into())
+}
+
 fn p_enum<T: Debug + Copy>(v: &str, all: &[T]) -> Result<T, String> {
     all.iter().copied().find(|x| format!("{:?}", x) == v).ok_or_else(|| format!("unknown value: {}", v))
 }
@@ -395,8 +413,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let c = m.maths.get_mut(n.wrapping_sub(1)).ok_or("unknown math channel")?;
             match field {
                 "op" => c.op = p_enum(v, &MATH_OPS)?,
-                "a" => c.a = p_idx(v, NCH + crate::math::NMATH)?,
-                "b" => c.b = p_idx(v, NCH + crate::math::NMATH)?,
+                "a" => c.a = p_idx(v, crate::math::MATH_SOURCES)?,
+                "b" => c.b = p_idx(v, crate::math::MATH_SOURCES)?,
                 "scale" => c.scale = p_idx(v, crate::math::math_scales().len())?,
                 "fc" => c.fc = p_f32(v)?,
                 "bw" => c.bw = p_f32(v)?,
@@ -449,6 +467,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "tscale" => m.tscale = legacy_tscale(v, ntime)?,
         "delay" => m.delay = p_f32(v)?,
         "trig_src" => m.trig_src = p_idx(v, NCH)?,
+        "trig_ref" => m.trig_ref = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
 "pat_la" => {
             if v.trim().len() != 16 {
                 return Err(format!("pat_la: {:?}", v));
@@ -466,6 +485,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "trig_nrej" => m.trig_nrej = p_bool(v)?,
         "trig_level2" => m.trig_level2 = p_f32(v)?,
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
+        "trig_ref2" => m.trig_ref2 = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
         "trig_slope2" => m.trig_slope2 = p_enum(v, &SLOPES)?,
         "trig_pol" => m.trig_pol = p_enum(v, &POLS)?,
         "trig_when" => m.trig_when = p_enum(v, &WHENS)?,
@@ -562,8 +582,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "v_expand_gnd" => m.v_expand_gnd = p_bool(v)?,
         "h_expand" => m.h_expand = p_enum(v, &HEXPANDS)?,
         "math" => m.math = p_enum(v, &MATH_OPS)?,
-        "math_a" => m.math_a = p_idx(v, NCH + crate::math::NMATH)?,
-        "math_b" => m.math_b = p_idx(v, NCH + crate::math::NMATH)?,
+        "math_a" => m.math_a = p_idx(v, crate::math::MATH_SOURCES)?,
+        "math_b" => m.math_b = p_idx(v, crate::math::MATH_SOURCES)?,
         "math_bw" => m.math_bw = p_f32(v)?,
         "math_sel" => m.math_sel = p_idx(v, crate::math::NMATH)?,
         "math_scale" => m.math_scale = p_idx(v, crate::math::math_scales().len())?,
@@ -583,7 +603,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "math_offset" => m.math_offset = p_f32(v)?,
         "fft_win" => m.fft_win = p_enum(v, &WINDOWS)?,
         "dec_on" => m.dec_on = p_bool(v)?,
-        "dec_src" => m.dec_src = p_idx(v, NCH)?,
+        "dec_src" => m.dec_src = p_decode_source(v)?,
         "dec_baud" => m.dec_baud = p_idx(v, crate::decode::BAUDS.len())?,
         "dec_canrate" => m.dec_canrate = p_idx(v, crate::decode::CAN_RATES.len())?,
         "dec_canh" => m.dec_canh = p_bool(v)?,
@@ -592,15 +612,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_tick" => m.dec_tick = p_idx(v, crate::decode::SENT_TICKS.len())?,
         "dec_nibbles" => m.dec_nibbles = p_u32(v)?.clamp(1, 6),
         "dec_uspeed" => m.dec_uspeed = p_idx(v, crate::decode::USB_SPEEDS.len())?,
-        "dec_src4" => m.dec_src4 = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
-        "dec_diff" => m.dec_diff = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
+        "dec_cphy_rate" => m.dec_cphy_rate = crate::decode::parse_cphy_rate(v)?,
+        "dec_src4" => m.dec_src4 = p_decode_optional_one_based(v)?,
+        "dec_diff" => m.dec_diff = p_decode_optional_one_based(v)?,
         "trig_bus" => m.trig_bus = *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?,
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
         "dec_proto" => m.dec_proto = p_enum(v, &PROTOS)?,
-        "dec_src2" => m.dec_src2 = p_idx(v, NCH)?,
-        "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_idx(v, NCH)?) },
+        "dec_src2" => m.dec_src2 = p_decode_source(v)?,
+        "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_decode_source(v)?) },
         "dec_mode" => m.dec_mode = p_idx(v, 4)? as u8,
         "dec_bits" => m.dec_bits = p_u32(v)?.clamp(4, 32),
         "dec_parity" => m.dec_parity = p_enum(v, &PARITIES)?,
@@ -749,6 +770,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 *r = if *s == "-" { None } else { Some(s.parse::<u8>().map_err(|_| format!("dec_la: {:?}", v))?.min(15)) };
             }
         }
+        "meas_full_record" => m.meas_full_record = p_bool(v)?,
         "meas_cfg" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 4 && w.len() != 8 {
@@ -962,8 +984,14 @@ pub struct WaveTrace {
     pub label: String,
 }
 
-/// CSV (`Time (s),Volts` or Storage `Time (s),CH1 (V),…`), an OOS `OOSW` `.bin`, or a `.wfm` whose header is `:WFM#002` or `:WFM#003`.
+/// Import bounds shared by native readers and remote uploads. They include the
+/// supplied 80 MB / 20-million-point captures without unbounded allocations.
+pub const MAX_WAVEFORM_BYTES: usize = 128 << 20;
+pub const MAX_WAVEFORM_SAMPLES: usize = 32_000_000;
+
+/// CSV (`Time (s),Volts` or Storage `Time (s),CH1 (V),…`), an OOS `OOSW` `.bin`, or a Tek `.wfm` version 001, 002 or 003.
 pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
+    if bytes.len() > MAX_WAVEFORM_BYTES { return Err("waveform exceeds the 128 MiB import limit".into()); }
     if bytes.starts_with(b"OOSW") {
         return parse_oosw(bytes);
     }
@@ -986,6 +1014,7 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let n = usize::try_from(u64::from_le_bytes(b[12..20].try_into().unwrap())).map_err(|_| "OOS waveform is too large".to_string())?;
     let dt = f64::from_le_bytes(b[20..28].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[28..36].try_into().unwrap());
+    if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
     if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
         return Err("that file holds no waveform".into());
     }
@@ -1017,6 +1046,7 @@ fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
         if rest.is_empty() {
             continue;
         }
+        if rows.len() >= MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
         rows.push((t, rest));
     }
     let dt = match rows.as_slice() {
@@ -1033,7 +1063,10 @@ fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
     Ok(traces)
 }
 
-/// Reference waveform whose header is `:WFM#002` or `:WFM#003`, YT vector, first frame.
+/// Tek reference waveform version 001/002/003, YT vector, first frame.
+/// Version 001 uses an 88-byte reference block, 156-byte explicit dimensions,
+/// and 132-byte implicit dimensions. Later versions use 90/160/136 bytes.
+/// See Tektronix Reference Waveform File Format (077-0220-10/11).
 fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if b.len() < 78 {
         return Err("truncated WFM".into());
@@ -1041,7 +1074,7 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     let le = match u16::from_le_bytes(b[0..2].try_into().unwrap()) {
         0x0F0F => true,
         0xF0F0 => false,
-        _ => return Err("header is not :WFM#002 or :WFM#003".into()),
+        _ => return Err("header is not a Tek WFM version 001, 002 or 003".into()),
     };
     let get_u32 = |o| {
         let v = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
@@ -1057,50 +1090,55 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
         f64::from_le_bytes(raw)
     };
     let ver = &b[2..10];
-    if ver != b":WFM#002" && ver != b":WFM#003" {
-        return Err("header is not :WFM#002 or :WFM#003".into());
+    if ver != b":WFM#001" && ver != b":WFM#002" && ver != b":WFM#003" {
+        return Err("header is not a Tek WFM version 001, 002 or 003".into());
     }
     let bpp = b[15] as usize;
     if bpp == 0 || bpp > 8 {
         return Err("WFM sample size".into());
     }
-    let curve = get_i32(16) as usize;
+    let curve = usize::try_from(get_i32(16)).map_err(|_| "WFM curve offset is negative")?;
     let label = b[40..72].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string();
-    // :WFM#002 / :WFM#003: packed header after the 78-byte static block
+    let (reference_size, explicit_size, implicit_size) = if ver == b":WFM#001" { (88, 156, 132) } else { (90, 160, 136) };
+    // Packed header follows the common 78-byte static block.
     let mut i = 78usize;
     let need = |n: usize| -> Result<(), String> { if b.len() < n { Err("truncated WFM".into()) } else { Ok(()) } };
-    need(i + 90)?;
-    i += 90; // reference file data
-    need(i + 160)?;
+    need(i + reference_size)?;
+    i += reference_size;
+    need(i + explicit_size)?;
     let vscale = get_f64(i);
     let voff = get_f64(i + 8);
     let fmt = get_u32(i + 72); // after scale, offset, size, units, 4 doubles
-    i += 160; // exp dim 1
-    need(i + 160)?;
-    i += 160; // exp dim 2
-    need(i + 136)?;
+    i += explicit_size;
+    need(i + explicit_size)?;
+    i += explicit_size;
+    need(i + implicit_size)?;
     let dt = get_f64(i);
     let t0 = get_f64(i + 8);
-    i += 136; // imp dim 1 → imp dim 2
-    need(i + 136 + 12 + 12 + 24 + 30)?;
-    i += 136 + 12 + 12 + 24; // imp dim 2, time bases, update spec → curve spec
+    i += implicit_size;
+    need(i + implicit_size + 12 + 12 + 24 + 30)?;
+    i += implicit_size + 12 + 12 + 24;
     let data_start = get_u32(i + 14) as usize;
     let post_start = get_u32(i + 18) as usize;
-    if !(dt > 0.0) {
-        return Err("WFM has no time step".into());
+    if !dt.is_finite() || dt <= 0.0 || !t0.is_finite() || !vscale.is_finite() || !voff.is_finite() {
+        return Err("WFM time and voltage scaling must be finite with a positive time step".into());
     }
-    if curve > b.len() || data_start > post_start {
+    if curve < i + 30 || data_start > post_start {
         return Err("WFM curve is empty".into());
     }
-    let start = curve.saturating_add(data_start);
-    let stop = curve.saturating_add(post_start).min(b.len().saturating_sub(8));
-    if stop <= start + bpp {
+    let expected_bpp = match fmt { 0 => 2, 1 | 2 | 4 => 4, 3 | 5 => 8, 6 | 7 => 1, _ => return Err("WFM sample format".into()) };
+    if bpp != expected_bpp { return Err("WFM sample format does not match bytes per point".into()); }
+    let start = curve.checked_add(data_start).ok_or("WFM curve offset overflow")?;
+    let stop = curve.checked_add(post_start).ok_or("WFM curve offset overflow")?;
+    if stop > b.len().saturating_sub(8) { return Err("truncated WFM curve".into()); }
+    if stop <= start || (stop - start) % bpp != 0 {
         return Err("WFM curve is empty".into());
     }
     let n = (stop - start) / bpp;
     if n < 2 {
         return Err("WFM curve is empty".into());
     }
+    if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
     let mut v = Vec::with_capacity(n);
     for k in 0..n {
         let o = start + k * bpp;
@@ -1112,6 +1150,12 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
             1 if bpp >= 4 => {
                 let s = i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
                 (if le { s } else { s.swap_bytes() }) as f64
+            }
+            2 => get_u32(o) as f64,
+            3 => {
+                let mut raw: [u8; 8] = b[o..o + 8].try_into().unwrap();
+                if !le { raw.reverse(); }
+                u64::from_le_bytes(raw) as f64
             }
             4 if bpp >= 4 => {
                 let mut raw = [0u8; 4];
@@ -1824,37 +1868,78 @@ mod tests {
             assert!((a - b).abs() < 1e-6, "{a} {b}");
         }
         let old = wfm_f32(b":WFM#001", -1e-6, 1e-9, &v, "lane");
-        assert_eq!(parse_wave(&old, "old.wfm").unwrap_err(), "header is not :WFM#002 or :WFM#003");
+        assert_eq!(parse_wave(&old, "old.wfm").unwrap()[0].v, v);
         let two = wfm_f32(b":WFM#002", 0.0, 2e-9, &v, "two");
         assert_eq!(parse_wave(&two, "two.wfm").unwrap()[0].label, "two");
     }
 
-    /// A short `:WFM#002` or `:WFM#003` curve of f32 samples, little endian.
+    /// A short Tek WFM curve of f32 samples, little endian.
     fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
-        const CURVE: usize = 838;
-        let mut b = vec![0u8; CURVE + v.len() * 4 + 8];
+        let (explicit, implicit, specification, curve) = if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
+        let mut b = vec![0u8; curve + v.len() * 4 + 8];
         b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
         b[2..10].copy_from_slice(magic);
         b[15] = 4;
-        b[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
+        b[16..20].copy_from_slice(&(curve as i32).to_le_bytes());
         let lab = label.as_bytes();
         b[40..40 + lab.len()].copy_from_slice(lab);
         let put_f64 = |b: &mut [u8], o: usize, x: f64| b[o..o + 8].copy_from_slice(&x.to_le_bytes());
         let put_u32 = |b: &mut [u8], o: usize, x: u32| b[o..o + 4].copy_from_slice(&x.to_le_bytes());
-        // exp dim 1 at 168
-        put_f64(&mut b, 168, 1.0);
-        put_f64(&mut b, 176, 0.0);
-        put_u32(&mut b, 168 + 72, 4);
-        // imp dim 1 at 488
-        put_f64(&mut b, 488, dt);
-        put_f64(&mut b, 496, t0);
-        // curve spec at 808
-        put_u32(&mut b, 808 + 14, 0);
-        put_u32(&mut b, 808 + 18, (v.len() * 4) as u32);
+        put_f64(&mut b, explicit, 1.0);
+        put_f64(&mut b, explicit + 8, 0.0);
+        put_u32(&mut b, explicit + 72, 4);
+        put_f64(&mut b, implicit, dt);
+        put_f64(&mut b, implicit + 8, t0);
+        put_u32(&mut b, specification + 14, 0);
+        put_u32(&mut b, specification + 18, (v.len() * 4) as u32);
         for (k, &x) in v.iter().enumerate() {
-            b[CURVE + k * 4..CURVE + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
+            b[curve + k * 4..curve + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
         }
         b
+    }
+
+    #[test]
+    fn all_tek_wfm_versions_keep_voltage_calibration_time_origin_and_byte_order() {
+        for magic in [b":WFM#001", b":WFM#002", b":WFM#003"] {
+            let (explicit, implicit, specification, curve) = if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
+            for big_endian in [false, true] {
+                let codes = [-2.0, 0.0, 2.0, 4.0];
+                let mut bytes = wfm_f32(magic, -9.5e-7, 20e-12, &codes, "captured");
+                bytes[explicit..explicit + 8].copy_from_slice(&0.125f64.to_le_bytes());
+                bytes[explicit + 8..explicit + 16].copy_from_slice(&0.75f64.to_le_bytes());
+                if big_endian {
+                    bytes[0..2].copy_from_slice(&[0xf0, 0xf0]);
+                    for offset in [16, explicit + 72, specification + 14, specification + 18] { bytes[offset..offset + 4].reverse(); }
+                    for offset in [explicit, explicit + 8, implicit, implicit + 8] { bytes[offset..offset + 8].reverse(); }
+                    for offset in (curve..curve + codes.len() * 4).step_by(4) { bytes[offset..offset + 4].reverse(); }
+                }
+                let parsed = parse_wave(&bytes, "capture.wfm").unwrap();
+                assert_eq!(parsed[0].v, [0.5, 0.75, 1.0, 1.25]);
+                assert_eq!(parsed[0].label, "captured");
+                assert_eq!(parsed[0].dt, 20e-12);
+                assert_eq!(parsed[0].t0, -9.5e-7);
+            }
+        }
+    }
+
+    #[test]
+    fn tek_wfm_rejects_truncated_misaligned_or_invalid_scaling_before_decoding() {
+        let original = wfm_f32(b":WFM#001", 0.0, 20e-12, &[-1.0, 1.0], "capture");
+        let mut truncated = original.clone();
+        truncated.remove(truncated.len() - 9);
+        assert!(parse_wave(&truncated, "capture.wfm").unwrap_err().contains("truncated"));
+        let mut wrong_size = original.clone();
+        wrong_size[15] = 2;
+        assert!(parse_wave(&wrong_size, "capture.wfm").unwrap_err().contains("bytes per point"));
+        let mut negative = original.clone();
+        negative[16..20].copy_from_slice(&(-1i32).to_le_bytes());
+        assert!(parse_wave(&negative, "capture.wfm").unwrap_err().contains("negative"));
+        let mut bad_time = original.clone();
+        bad_time[478..486].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(parse_wave(&bad_time, "capture.wfm").unwrap_err().contains("finite"));
+        let mut bad_voltage = original;
+        bad_voltage[166..174].copy_from_slice(&f64::INFINITY.to_le_bytes());
+        assert!(parse_wave(&bad_voltage, "capture.wfm").unwrap_err().contains("finite"));
     }
 
     #[test]

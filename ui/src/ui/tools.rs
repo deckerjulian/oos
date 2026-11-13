@@ -5,24 +5,7 @@
 //! labels. All of them work on the records the screen shows.
 
 use super::*;
-use oos_dsp::measure::{burst_width, delay, duration_n, hold_time_at, phase, setup_hold_violations_at, setup_time_at, skew, time_outside, Analysis, Pair};
-
-/// Edge times are seconds from the first sample. Add the record's t0 so a pair of different records lines up.
-fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
-    if t0 == 0.0 {
-        return a.clone();
-    }
-    let mut b = a.clone();
-    for t in &mut b.rises {
-        *t += t0;
-    }
-    for t in &mut b.falls {
-        *t += t0;
-    }
-    b.t_vmax += t0;
-    b.t_vmin += t0;
-    b
-}
+use oos_dsp::measure::{burst_width, duration_n, time_outside, Analysis};
 
 /// A bounded selection can hold the complete catalog for every analog channel and reference slot.
 pub(super) const MEAS_MAX: usize = 1024;
@@ -72,6 +55,7 @@ pub(super) struct MeasRow {
     pub src: WaveId,
     pub v: f64,
     pub unit: &'static str,
+    pub computing: bool,
 }
 
 impl MeasRow {
@@ -90,7 +74,8 @@ impl MeasRow {
     }
 
     fn fmt_digits(&self, v: f64, digits: usize) -> String {
-        if !v.is_finite() {
+        if self.computing { "Computing".into() }
+        else if !v.is_finite() {
             "----".into()
         } else if self.unit == "\u{b0}" {
             format!("{:.1}\u{b0}", v)
@@ -103,30 +88,21 @@ impl MeasRow {
 impl Ui {
     /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
     pub fn meas_at(&self, id: WaveId, k: Meas) -> f64 {
+        if let WaveId::Ch(channel) = id {
+            if Self::channel_basic_kind(k) { return self.channel_basic_reading(channel, k).unwrap_or(f64::NAN); }
+        }
         match self.meas_analysis(id) {
-            Some((a, _)) => self.meas_of(&a, k),
+            Some((a, t0)) => {
+                let value = self.cached_measurement_reading(id, k, &a).unwrap_or_else(|| self.meas_of(&a, k));
+                if matches!(k, Meas::TVmax | Meas::TVmin) { t0 + value } else { value }
+            }
             None => f64::NAN,
         }
     }
 
     /// One channel-pair row. `k` is an entry of `PAIRS`.
     pub fn pair_at(&self, k: usize, a: WaveId, b: WaveId) -> f64 {
-        let (_, kind, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
-        let p = Pair(ea, eb);
-        match (self.meas_analysis(a), self.meas_analysis(b)) {
-            (Some((aa, ta)), Some((bb, tb))) => {
-                let (aa, bb) = (shift_edges(&aa, ta), shift_edges(&bb, tb));
-                match kind {
-                    PairKind::Phase => phase(&aa, &bb, p),
-                    PairKind::Delay => delay(&aa, &bb, p),
-                    PairKind::Skew => skew(&aa, &bb, p),
-                    PairKind::Setup => setup_time_at(&aa, &bb, ea),
-                    PairKind::Hold => hold_time_at(&aa, &bb, ea),
-                    PairKind::SetupAndHold => setup_hold_violations_at(&aa, &bb, self.m.meas_tsetup, self.m.meas_thold, ea),
-                }
-            }
-            _ => f64::NAN,
-        }
+        self.cached_pair(k, a, b)
     }
 
     /// All measurements, in the order of the statistics.
@@ -136,11 +112,8 @@ impl Ui {
             .meas
             .iter()
             .map(|&(k, id)| {
-                let (val, unit) = match self.meas_analysis(id) {
-                    Some((a, _)) => (self.meas_of(&a, k), self.meas_unit(id, k)),
-                    None => (f64::NAN, self.meas_unit(id, k)),
-                };
-                MeasRow { name: k.name().to_string(), src: id, v: val, unit }
+                let val = self.meas_at(id, k);
+                MeasRow { name: k.name().to_string(), src: id, v: val, unit: self.meas_unit(id, k), computing: !val.is_finite() && self.measurement_computing(id) }
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
@@ -155,7 +128,8 @@ impl Ui {
                 PairKind::SetupAndHold => "",
                 _ => "s",
             };
-            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit });
+            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit,
+                computing: self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b) });
         }
         v
     }
@@ -170,35 +144,25 @@ impl Ui {
 
     /// Analysis of one source, and the time of its first sample. A channel must be on. A ref is the stored
     /// record, hidden or not. None when that wave is missing.
-    pub(super) fn meas_analysis(&self, id: WaveId) -> Option<(oos_dsp::measure::Analysis, f64)> {
+    pub(super) fn meas_analysis(&self, id: WaveId) -> Option<(std::sync::Arc<oos_dsp::measure::Analysis>, f64)> {
         match id {
             WaveId::Ch(c) => {
                 if c >= n_ch() || !self.m.ch[c].on {
                     return None;
                 }
-                let rec = self.last[0].as_ref()?;
-                let s = self.wave_samples(rec, id)?;
-                Some((self.ana[c].clone(), s.t0))
+                self.channel_measurement(c, true)
             }
             WaveId::Ref(i) => {
-                let (samples, t0, dt) = self.reference_slice(i)?;
-                if samples.len() < 2 || !(dt > 0.0) {
-                    return None;
-                }
-                let analysis = if self.ref_ana_valid[i] {
-                    self.ref_ana[i].clone()
-                } else {
-                    // Hidden references skip idle capture work, but an explicit
-                    // measurement still uses this reference's current gate,
-                    // sample interval and thresholds. Do not infer cache validity
-                    // from NaN results: a valid DC record may lack timing values.
-                    oos_dsp::measure::analyze_refs(samples, dt,
-                        0.4 * self.refs[i].as_ref().unwrap().vpd as f64,
-                        self.m.meas_lpct, self.m.meas_hpct)
-                };
-                Some((analysis, t0))
+                self.reference_measurement(i)
             }
         }
+    }
+
+    /// Extremum times use the physical waveform coordinate, including the gate's
+    /// start. Keep DSP timestamps relative so durations and edge pairing do not change.
+    pub(super) fn meas_of_at(&self, a: &Analysis, k: Meas, t0: f64) -> f64 {
+        let value = self.meas_of(a, k);
+        if matches!(k, Meas::TVmax | Meas::TVmin) { t0 + value } else { value }
     }
 
     /// A measurement with the Measure menu's idle, outside and N settings. The other items are `Analysis::get`.
@@ -214,7 +178,7 @@ impl Ui {
     pub(super) fn meas_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::MeasIdle | Item::MeasN | Item::MeasTsetup | Item::MeasThold => Kind::Value,
-            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs => Kind::Choice,
+            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate => Kind::Choice,
             _ => return None,
         })
     }
@@ -226,6 +190,7 @@ impl Ui {
             Item::MeasN => "N periods",
             Item::MeasEdges => "Edges",
             Item::MeasRefs => "Refs",
+            Item::MeasGate => "Gate",
             Item::MeasTsetup => "Tsetup",
             Item::MeasThold => "Thold",
             _ => return None,
@@ -240,6 +205,7 @@ impl Ui {
             Item::MeasN => m.meas_n.to_string(),
             Item::MeasEdges => if m.meas_data { "Data".into() } else { "Clock".into() },
             Item::MeasRefs => format!("{:.0}/{:.0}", m.meas_lpct * 100.0, m.meas_hpct * 100.0),
+            Item::MeasGate => self.measurement_gate_label().into(),
             Item::MeasTsetup => si_short(m.meas_tsetup, "s"),
             Item::MeasThold => si_short(m.meas_thold, "s"),
             _ => return None,
@@ -251,12 +217,16 @@ impl Ui {
             Item::MeasOutside => ["Above", "Below", "Both"].iter().map(|s| s.to_string()).collect(),
             Item::MeasEdges => vec!["Clock".into(), "Data".into()],
             Item::MeasRefs => vec!["10/90".into(), "20/80".into()],
+            Item::MeasGate => vec!["Screen".into(), "Full record".into()],
             _ => return None,
         })
     }
 
     pub(super) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
         match it {
+            Item::MeasGate => {
+                if d.rem_euclid(2) != 0 { self.set_measurement_full_record(!self.m.meas_full_record); }
+            }
             Item::MeasIdle => {
                 let cur = if self.m.meas_idle > 0.0 { self.m.meas_idle } else { 0.0 };
                 let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
@@ -331,7 +301,7 @@ impl Ui {
         }
         let a = &self.ana[c];
         self.cnt_total += a.rises.len() as u64;
-        let v = a.get(Meas::Freq);
+        let v = self.meas_at(WaveId::Ch(c), Meas::Freq);
         if v.is_finite() {
             let st = &mut self.cnt_stat;
             if st.n == 0 {
@@ -357,13 +327,13 @@ impl Ui {
             _ => Meas::Vrms,
         };
         if let Some(i) = self.offline_meter() {
-            return self.ref_ana[i].get(mode);
+            return self.meas_at(WaveId::Ref(i), mode);
         }
         let c = self.m.dvm_src;
         if !self.m.ch[c].on {
             return f64::NAN;
         }
-        self.ana[c].get(mode)
+        self.meas_at(WaveId::Ch(c), mode)
     }
 
     /// Counter reading: frequency, period, or the totalised edge count. NaN when that mode has nothing to show.
@@ -374,8 +344,8 @@ impl Ui {
         let c = self.m.cnt_src.min(NCH - 1);
         match self.m.cnt_mode {
             2 => self.cnt_total as f64,
-            1 if self.m.ch[c].on => self.ana[c].get(Meas::Period),
-            0 if self.m.ch[c].on => self.ana[c].get(Meas::Freq),
+            1 if self.m.ch[c].on => self.meas_at(WaveId::Ch(c), Meas::Period),
+            0 if self.m.ch[c].on => self.meas_at(WaveId::Ch(c), Meas::Freq),
             _ => f64::NAN,
         }
     }
@@ -396,22 +366,25 @@ impl Ui {
             if let Some(i) = self.offline_meter() {
                 let a = &self.ref_ana[i];
                 let digits = self.m.cnt_digits as usize;
+                let period = self.meas_at(WaveId::Ref(i), Meas::Period);
+                let frequency = self.meas_at(WaveId::Ref(i), Meas::Freq);
                 let t = match self.m.cnt_mode {
                     2 => fmt_count(a.rises.len() as f64),
-                    1 if a.get(Meas::Period).is_finite() => si_digits(a.get(Meas::Period), "s", digits),
-                    0 if a.get(Meas::Freq).is_finite() => si_digits(a.get(Meas::Freq), "Hz", digits),
+                    1 if period.is_finite() => si_digits(period, "s", digits),
+                    0 if frequency.is_finite() => si_digits(frequency, "Hz", digits),
                     _ => "----".into(),
                 };
                 v.push((format!("Counter R{} {}", i + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
             } else {
                 let c = self.m.cnt_src;
-                let a = &self.ana[c];
                 let digits = self.m.cnt_digits as usize;
                 let on = self.m.ch[c].on;
+                let period = self.meas_at(WaveId::Ch(c), Meas::Period);
+                let frequency = self.meas_at(WaveId::Ch(c), Meas::Freq);
                 let t = match self.m.cnt_mode {
                     2 => fmt_count(self.cnt_total as f64),
-                    1 if on && a.get(Meas::Period).is_finite() => si_digits(a.get(Meas::Period), "s", digits),
-                    0 if on && a.get(Meas::Freq).is_finite() => si_digits(a.get(Meas::Freq), "Hz", digits),
+                    1 if on && period.is_finite() => si_digits(period, "s", digits),
+                    0 if on && frequency.is_finite() => si_digits(frequency, "Hz", digits),
                     _ => "----".into(),
                 };
                 v.push((format!("Counter CH{} {}", c + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
@@ -424,21 +397,26 @@ impl Ui {
         v
     }
 
-    /// The value of the active channel at time `t` of the last record.
+    /// The selected source at a physical record time, independent of view offset.
     pub(super) fn wave_at(&self, t: f64) -> Option<f32> {
-        let r = self.last[0].as_ref()?;
-        let w = &r.ch[self.m.active];
-        if w.is_empty() || r.dt <= 0.0 {
-            return None;
-        }
-        let i = ((t - r.t0) / r.dt).round();
-        (i >= 0.0 && (i as usize) < w.len()).then(|| w[i as usize]).filter(|v| v.is_finite())
+        let (w, t0, dt) = match self.selected_workspace_source()? {
+            WaveId::Ch(c) => { let r = self.last[0].as_ref()?; (r.ch[c].as_slice(), r.t0, r.dt) },
+            WaveId::Ref(i) => { let r = self.refs[i].as_ref()?; (r.v.as_slice(), r.t0, r.dt) },
+        };
+        if w.is_empty() || !dt.is_finite() || dt <= 0.0 { return None; }
+        let index = (t - t0) / dt;
+        if !index.is_finite() || index < 0.0 || index > w.len().saturating_sub(1) as f64 { return None; }
+        let i = index.floor() as usize;
+        let a = *w.get(i)?;
+        let b = w.get(i + 1).copied().unwrap_or(a);
+        let value = a + index.fract() as f32 * (b - a);
+        value.is_finite().then_some(value)
     }
 
     /// Times of the two cursors.
     pub(super) fn cursor_times(&self) -> (f64, f64) {
         let (tpd, delay) = self.view();
-        let t = |c: f32| ((c - 0.5) * HDIV * tpd + delay) as f64;
+        let t = |c: f32| (c as f64 - 0.5) * HDIV as f64 * tpd as f64 + delay as f64;
         (t(self.m.cur_a), t(self.m.cur_b))
     }
 
@@ -684,4 +662,65 @@ impl Ui {
 
 fn nearest_ref_vdiv(want: f32) -> f32 {
     VSCALES.iter().copied().min_by(|a, b| (a - want).abs().partial_cmp(&(b - want).abs()).unwrap()).unwrap_or(0.2)
+}
+
+#[cfg(test)]
+mod physical_extremum_time_tests {
+    use super::*;
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-15, "{actual:e} != {expected:e}");
+    }
+
+    #[test]
+    fn extremum_times_follow_physical_origins_and_screen_gate_for_channels_and_refs() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.run = RunState::Stop;
+        ui.m.zoom = false;
+        ui.m.tscale = tscales().iter().position(|&v| (v - 10e-9).abs() < 1e-14).unwrap();
+        ui.m.tfine = 1.0;
+        ui.m.delay = 200e-9;
+        let (t0, dt) = (-500e-9, 10e-9);
+        let mut values = vec![0.0; 100];
+        values[5] = 3.0;
+        values[80] = -2.0;
+        values[68] = 1.0;
+        values[72] = -1.0;
+        let mut rec = Ui::blank_record();
+        rec.t0 = t0;
+        rec.dt = dt;
+        rec.ch[0] = values.clone();
+        ui.last[0] = Some(rec);
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "nonzero origin".into(),
+            t0, dt, v: values, vpd: 0.5, offset: 0.0, on: true });
+        ui.m.meas = vec![(Meas::TVmax, WaveId::Ch(0)), (Meas::TVmin, WaveId::Ref(0)), (Meas::Vpp, WaveId::Ref(0))];
+
+        for (full, max_time, min_time, vpp) in [(true, -450e-9, 300e-9, 5.0), (false, 180e-9, 220e-9, 2.0)] {
+            ui.set_measurement_full_record(full);
+            for id in [WaveId::Ch(0), WaveId::Ref(0)] {
+                close(ui.meas_at(id, Meas::TVmax), max_time);
+                close(ui.meas_at(id, Meas::TVmin), min_time);
+                close(ui.fact_meas(Meas::TVmax, id), max_time);
+                close(ui.fact_meas(Meas::TVmin, id), min_time);
+                assert_eq!(ui.meas_at(id, Meas::Vpp), vpp, "voltage measurements must not gain a time offset");
+            }
+            let rows = ui.meas_rows();
+            close(rows[0].v, max_time);
+            close(rows[1].v, min_time);
+            assert_eq!(rows[2].v, vpp);
+        }
+    }
+
+    #[test]
+    fn first_reference_maximum_reports_its_record_origin() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let origin = -9.99990584751956e-7;
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "clock origin".into(),
+            t0: origin, dt: 20e-12, v: vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0],
+            vpd: 0.5, offset: 0.0, on: true });
+        ui.set_measurement_full_record(true);
+        close(ui.meas_at(WaveId::Ref(0), Meas::TVmax), origin);
+        close(ui.fact_meas(Meas::TVmax, WaveId::Ref(0)), origin);
+        close(ui.meas_at(WaveId::Ref(0), Meas::TVmin), origin + 40e-12);
+    }
 }

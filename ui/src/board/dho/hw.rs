@@ -7,7 +7,7 @@
 
 use crate::board::{Frame, Slow};
 #[cfg(target_os = "linux")]
-use crate::board::{HwShared, Shared, QUEUE_MAX};
+use crate::board::{HwShared, Shared};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Settings, Trig};
 use oos_hal::dho::{afe, hz, tpu};
@@ -254,17 +254,31 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
 
 /// Decodes a read-out of the whole record into a frame.
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
-    let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
-    let w = oos_hal::dho::seq::deinterleave(bytes, s.mask);
-    let ch = std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset) });
-    // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
-    let k = s.compress.max(1) as usize;
-    if !hdr.is_empty() {
-        let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
-        let v: &Vec<f32> = &ch[tc];
-        log_header(hdr, v, s, p.pre as usize / k, k);
+    FrameDecoder::default().decode(bytes, s, p, seq)
+}
+
+#[derive(Default)]
+pub(super) struct FrameDecoder { converter: super::decode_pipeline::Converter }
+impl FrameDecoder {
+    pub(super) fn decode(&mut self, bytes: &[u8], s: &Settings, p: &hz::Params, sequence: u64) -> Frame {
+        let mut frame = Frame::default();
+        self.decode_into(bytes, s, p, sequence, &mut frame);
+        frame
     }
-    Frame { seq, dt: k as f64 / p.rate as f64, pre: p.pre as usize / k, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None }
+    pub(super) fn decode_into(&mut self, bytes: &[u8], s: &Settings, p: &hz::Params, sequence: u64, frame: &mut Frame) {
+        let (header, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
+        self.converter.convert(bytes, s, &mut frame.ch);
+        let compression = s.compress.max(1) as usize;
+        frame.seq = sequence; frame.dt = compression as f64 / p.rate as f64;
+        frame.pre = p.pre as usize / compression;
+        frame.roll = false; frame.envelope = compression > 1; frame.scan = false; frame.partial = false;
+        frame.acq = (p.rate as f64, p.memsel as usize); frame.stamp = 0; frame.la = None;
+        frame.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&frame.ch[c]));
+        if !header.is_empty() {
+            let c = (s.trig_src.clamp(1, 4) - 1) as usize;
+            log_header(header, &frame.ch[c], s, frame.pre, compression);
+        }
+    }
 }
 
 /// The LA words of the acquisition `p` (read with `seq::acquire_la`) as a record: word j of the window at
@@ -288,15 +302,22 @@ pub fn bw_code(i: usize) -> u32 {
     }
 }
 
-/// Batch settings for a configured acquisition: frames per batch (at most ~4 MB per read, the frame ring, 1000 /
-/// ratio) and, for records above 1 M points, FPGA compression to ~625 k points per frame (the
-/// stock live length at 2.5 M / k = 4).
+/// Preserve the selected acquisition depth. FPGA display compression cannot be
+/// used here: its min/max envelope cannot reconstruct the missing native samples.
 pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     let mut b = s.clone();
-    b.compress = if p.memsel > 1_000_000 { p.memsel.div_ceil(625_000) } else { 1 };
+    b.compress = 1;
     let fb = oos_hal::dho::seq::frame_bytes(&b, p).max(1);
-    b.frames = ((4_000_000 / fb) as u32).min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
+    b.frames = ((4_000_000 / fb) as u32).min(p.max_frames).min(1000 / p.ratio.max(1)).max(1)
+        .min(frame_queue_capacity(s, p) as u32);
     b
+}
+
+/// A deep acquisition may exceed the queue budget by itself, but there is never
+/// a second one waiting behind it. Small records retain the bounded fast batch.
+pub fn frame_queue_capacity(s: &Settings, p: &hz::Params) -> usize {
+    let bytes = (p.memsel as usize).saturating_mul(s.mask.count_ones().max(1) as usize).saturating_mul(4).max(1);
+    (64 * 1024 * 1024 / bytes).clamp(1, crate::board::QUEUE_MAX)
 }
 
 /// Starts the acquisition thread (`app_mask` = channel set the stock system left behind; `program_afe` = OOS sets the
@@ -366,6 +387,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut state = seq::State::handover(app_mask, cal_adc.as_ref());
         let mut current: Option<(Settings, hz::Params)> = None;
         let mut n = 0u64;
+        let mut decoders = super::decode_pipeline::DecoderPool::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(4));
         // roll/scan mode: streaming state (parameters, ring of volts per channel, last publish)
         let mut rolling: Option<oos_hal::dho::roll::Params> = None;
         let mut ring: [std::collections::VecDeque<f32>; NCH] = Default::default();
@@ -638,7 +660,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         // word 0 at the left edge like analog point 0; only what the sweeps have written so far
                         let la = la_t.map(|_| crate::ui::la::LaRec { words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()), t0: 0.0, dt: la_dt });
-                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la }
+                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, basic: Default::default(), la }
                     } else {
                         let len = ring.iter().map(|r| r.len()).max().unwrap_or(0);
                         // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
@@ -649,14 +671,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             words: Arc::new(ring_la.iter().copied().collect()),
                             dt: la_dt,
                         });
-                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la }
+                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, basic: Default::default(), la }
                     };
                     let mut g = out.lock().unwrap();
                     // a complete sweep must not be dropped by the next partial picture
                     if g.queue.back().map_or(true, |b| b.partial) {
                         g.queue.clear();
                     }
-                    g.queue.push_back(f.clone());
+                    let f = Arc::new(f);
+                    g.queue.push_back(Arc::clone(&f));
                     g.frame = f;
                     g.halted = halted;
                 }
@@ -670,7 +693,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             if rolling.take().is_some() {
                 bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
             }
-            let b = batch_plan(&s, &p);
+            let mut b = batch_plan(&s, &p);
+            let room = frame_queue_capacity(&s, &p).saturating_sub(out.lock().unwrap().queue.len());
+            if room == 0 {
+                // Backpressure before arming another batch; never discard an
+                // acquired frame merely because a display refresh is late.
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
+            b.frames = b.frames.min(room as u32);
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
             match seq::acquire_batch(&mut state, &b, &p, &mut bar, &mut c2h, 25, |_| {}) {
                 Ok((bytes, count)) => {
@@ -691,24 +722,18 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         },
                         _ => None,
                     };
-                    let fb = seq::frame_bytes(&b, &p);
-                    // decode before taking the lock: the UI must not wait for 100 k-point conversions
-                    let mut frames: Vec<Frame> = bytes
-                        .chunks_exact(fb)
-                        .take(count as usize)
-                        .map(|chunk| {
-                            n += 1;
-                            Frame { stamp, ..decode(chunk, &b, &p, n) }
-                        })
-                        .collect();
+                    // Bounded CPU workers convert every frame before publication.
+                    // Shared DMA bytes are held once and sequence order is restored.
+                    let mut frames = match decoders.decode_batch(bytes, &b, &p, n.wrapping_add(1), stamp, count as usize) {
+                        Ok(frames) => frames,
+                        Err(error) => { status(format!("decode: {error}")); continue; }
+                    };
+                    n = n.wrapping_add(frames.len() as u64);
                     if let (Some(w), Some(f)) = (la_words, frames.last_mut()) {
-                        f.la = Some(la_record(w, &b, &p));
+                        Arc::get_mut(f).expect("unpublished decoded frame is uniquely owned").la = Some(la_record(w, &b, &p));
                     }
                     let mut g = out.lock().unwrap();
                     g.queue.extend(frames);
-                    while g.queue.len() > QUEUE_MAX {
-                        g.queue.pop_front();
-                    }
                     if let Some(f) = g.queue.back() {
                         g.frame = f.clone();
                     }
@@ -789,7 +814,7 @@ mod tests {
         // a scan frame of 1000 points spans the screen: point 0 left, point 999 right
         let m = Model::default();
         let v: Vec<f32> = (0..1000).map(|i| i as f32).collect();
-        let f = Frame { seq: 1, dt: 1e-3, pre: 0, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: true, scan: true, partial: true, acq: (0.0, 0), stamp: 0, la: None };
+        let f = Frame { seq: 1, dt: 1e-3, pre: 0, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: true, scan: true, partial: true, acq: (0.0, 0), stamp: 0, basic: Default::default(), la: None };
         let r = to_record(&Arc::new(f), &m, 100, 1.0, -0.5);
         assert!(r.partial && !r.triggered);
         assert!(r.ch[0][0] < 10.0 && r.ch[0][99] > 980.0, "{} {}", r.ch[0][0], r.ch[0][99]);
@@ -837,6 +862,21 @@ mod tests {
         }
         assert_eq!(settings(&m, false).depth, m.max_mem() as i128);
         assert_eq!(m.max_mem(), 31_250_000);
+    }
+
+    #[test]
+    fn deep_memory_is_not_compressed_and_queue_bytes_are_bounded() {
+        let mut m = Model::default();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 125_000_000).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        let b = batch_plan(&s, &p);
+        assert_eq!(b.compress, 1, "selected memory must retain every native sample");
+        assert_eq!(b.frames, 1);
+        assert_eq!(frame_queue_capacity(&s, &p), 1);
+        let small = hz::Params { memsel: 1000, max_frames: 1000, ..p };
+        assert_eq!(frame_queue_capacity(&s, &small), crate::board::QUEUE_MAX);
+        assert!(batch_plan(&s, &small).frames <= crate::board::QUEUE_MAX as u32);
     }
 
     #[test]

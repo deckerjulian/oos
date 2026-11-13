@@ -270,7 +270,9 @@ fn hist_mode(f: &[f32], vmin: f32, vmax: f32) -> f64 {
         hist[i.min(255)] += 1;
     }
     let b = (0..256).max_by_key(|&i| hist[i]).unwrap_or(0);
-    vmin as f64 + span as f64 * (b as f64 + 0.5) / 255.0
+    // The last bin contains vmax; its nominal centre must not exceed the
+    // observed range (also keeps a constant record exactly constant).
+    (vmin as f64 + span as f64 * (b as f64 + 0.5) / 255.0).clamp(vmin as f64, vmax as f64)
 }
 
 fn linreg(v: &[f32], dt: f64) -> (f64, f64) {
@@ -587,6 +589,7 @@ impl Analysis {
             Meas::Pam2 => self.pam[2],
             Meas::Pam3 => self.pam[3],
             Meas::PamSep => {
+                if self.pam.iter().any(|level| !level.is_finite()) { return f64::NAN; }
                 let d = [self.pam[1] - self.pam[0], self.pam[2] - self.pam[1], self.pam[3] - self.pam[2]];
                 d.into_iter().filter(|x| x.is_finite() && *x > 0.0).fold(f64::NAN, |a, x| if a.is_nan() { x } else { a.min(x) })
             }
@@ -627,15 +630,18 @@ fn level_times(v: &[f32], level: f32, dt: f64) -> (Vec<f64>, Vec<f64>) {
     (rises, falls)
 }
 
-/// Durations of complete pulses: each opening edge to the next closing edge that does not contain another opening.
+/// Durations of complete pulses, with ascending edge times. Each opening goes to
+/// the next closing edge only when no strictly later opening lies between them.
 fn pair_widths(open: &[f64], close: &[f64]) -> Vec<f64> {
-    let (mut w, mut j) = (Vec::new(), 0);
+    let (mut w, mut j, mut next) = (Vec::new(), 0, 0);
     for (i, &s) in open.iter().enumerate() {
         while j < close.len() && close[j] <= s {
             j += 1;
         }
         let Some(&e) = close.get(j) else { break };
-        if !open[i + 1..].iter().any(|&x| x > s && x < e) {
+        next = next.max(i + 1);
+        while next < open.len() && (open[next].is_nan() || open[next] <= s) { next += 1; }
+        if s.is_nan() || !open.get(next).is_some_and(|&x| x < e) {
             w.push(e - s);
         }
     }
@@ -837,6 +843,73 @@ pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_pulse_join_matches_suffix_reference_with_duplicate_and_nan_edges() {
+        fn old(open:&[f64],close:&[f64])->Vec<f64>{
+            let (mut widths,mut j)=(Vec::new(),0);
+            for (i,&s) in open.iter().enumerate(){
+                while j<close.len()&&close[j]<=s{j+=1;}
+                let Some(&e)=close.get(j) else{break};
+                if !open[i+1..].iter().any(|&x|x>s&&x<e){widths.push(e-s);}
+            }
+            widths
+        }
+        let cases:Vec<(Vec<f64>,Vec<f64>)>=vec![
+            (vec![],vec![]),(vec![1.0],vec![]),(vec![],vec![1.0]),
+            (vec![1.0,1.0,2.0,3.0],vec![1.0,1.5,2.0,2.5,3.5]),
+            (vec![3.0,4.0],vec![0.0,1.0]),(vec![0.0,1.0,2.0],vec![3.0]),
+            (vec![f64::NAN;3],vec![f64::NAN;3]),
+        ];
+        for (open,close) in cases {
+            let (a,b)=(pair_widths(&open,&close),old(&open,&close));
+            assert_eq!(a.len(),b.len());assert!(a.iter().zip(b).all(|(a,b)|*a==b||(a.is_nan()&&b.is_nan())));
+        }
+        let mut state=7u32;
+        for count in [2,17,100,1_000] {
+            let mut values=||{state=state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);(state%100) as f64};
+            let mut open:Vec<_>=(0..count).map(|_|values()).collect();let mut close:Vec<_>=(0..count+3).map(|_|values()).collect();
+            open.sort_by(f64::total_cmp);close.sort_by(f64::total_cmp);
+            assert_eq!(pair_widths(&open,&close),old(&open,&close));
+        }
+    }
+
+    #[test]
+    fn complete_pulse_join_is_linear_on_a_large_sorted_record() {
+        let open:Vec<f64>=(0..400_000).map(|i|i as f64).collect();let close:Vec<f64>=open.iter().map(|t|t+0.5).collect();
+        let start=std::time::Instant::now();let widths=pair_widths(&open,&close);let elapsed=start.elapsed();
+        assert_eq!(widths.len(),400_000);assert!(widths.iter().all(|&width|width==0.5));
+        assert!(elapsed<std::time::Duration::from_millis(500),"sorted pulse join took {elapsed:?}");
+        eprintln!("sorted complete-pulse join400k: {elapsed:?}");
+    }
+
+    #[test]
+    fn histogram_mode_representative_stays_inside_sample_extrema() {
+        for samples in [vec![-1.0, 1.0, 1.0, 1.0], vec![-0.02, 0.404, 0.404, 0.404]] {
+            let lo = samples.iter().copied().fold(f32::INFINITY, f32::min);
+            let hi = samples.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let mode = hist_mode(&samples, lo, hi);
+            assert!((lo as f64..=hi as f64).contains(&mode));
+            assert_eq!(mode, hi as f64, "the occupied last bin represents the observed maximum");
+        }
+    }
+
+    #[test]
+    fn histogram_mode_constant_signal_is_exact() {
+        for value in [0.0, 1.0, -0.25, 1e-9] {
+            assert_eq!(hist_mode(&[value; 16], value, value), value as f64);
+        }
+    }
+
+    #[test]
+    fn pam_separation_requires_all_four_occupied_bands() {
+        for samples in [vec![-1.0, 1.0, -1.0, 1.0], vec![0.25; 16]] {
+            let analysis = analyze(&samples, 1e-9);
+            assert!(analysis.get(Meas::PamSep).is_nan());
+        }
+        let analysis = analyze(&[-1.0, -0.33, 0.33, 1.0], 1e-9);
+        assert!(analysis.get(Meas::PamSep).is_finite());
+    }
 
     #[test]
     fn width_and_pulses_match_the_definition() {

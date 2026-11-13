@@ -10,13 +10,55 @@ pub(super) struct LiveSession {
 }
 
 #[cfg(test)]
+mod import_measurement_tests {
+    use super::*;
+
+    const CSV: &[u8] = b"Time (s),Volts\n0,-1\n0.000000001,1\n0.000000002,-1\n0.000000003,1\n";
+
+    #[test]
+    fn additive_imports_keep_all_configured_single_pair_and_gate_settings() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.load_waveform_auto(CSV, "first.csv").unwrap();
+        ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(0))).collect();
+        ui.m.meas2 = (0..PAIRS_N).map(|kind| (kind, WaveId::Ref(0), WaveId::Ref(1))).collect();
+        ui.m.meas_full_record = true;
+        ui.m.meas_labels = true;
+        ui.m.meas_lpct = 0.2;
+        ui.m.meas_hpct = 0.8;
+        let expected = (ui.m.meas.clone(), ui.m.meas2.clone());
+        ui.load_waveform_auto(CSV, "second.csv").unwrap();
+        ui.load_waveform_auto(CSV, "third.csv").unwrap();
+        assert!(ui.refs[0].is_some() && ui.refs[1].is_some() && ui.refs[2].is_some());
+        assert_eq!((ui.m.meas.clone(), ui.m.meas2.clone()), expected);
+        assert!(ui.m.meas_full_record && ui.m.meas_labels);
+        assert_eq!((ui.m.meas_lpct, ui.m.meas_hpct), (0.2, 0.8));
+        assert_eq!(ui.meas_src, WaveId::Ref(2), "new source is selected without replacing existing readouts");
+    }
+
+    #[test]
+    fn a_first_import_respects_a_deliberately_empty_or_custom_catalog() {
+        for custom in [Vec::new(), vec![(Meas::Vmax, WaveId::Ch(0))]] {
+            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            ui.m.meas = custom.clone();
+            ui.load_waveform_auto(CSV, "custom.csv").unwrap();
+            assert_eq!(ui.m.meas, custom);
+        }
+        let mut untouched = Ui::new(Source::Demo { t: 0.0 });
+        untouched.load_waveform_auto(CSV, "default.csv").unwrap();
+        assert!(untouched.m.meas.iter().all(|entry| entry.1 == WaveId::Ref(0)), "fresh defaults follow the first imported source");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn replay() -> Ui {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         u.remember_live();
-        u.session_is_sim = true;
+        u.offline = true;
+        u.offline_ref = 0;
+        u.m.trig_ref = Some(0);
         for ch in &mut u.m.ch { ch.on = false; }
         u.m.la.on = false;
         u.m.sim_slot = 0;
@@ -101,6 +143,65 @@ mod tests {
     }
 
     #[test]
+    fn reference_two_source_triggers_use_secondary_scale_and_rebuild_cached_hits() {
+        for kind in [TrigType::Delay, TrigType::SetupHold] {
+            for secondary in [WaveId::Ref(1), WaveId::Ch(1)] {
+                let mut u = replay();
+                u.m.trig_type = kind;
+                u.m.trig_level = 0.0;
+                u.m.trig_level2 = 0.0;
+                u.m.slope = Slope::Rise;
+                u.m.trig_slope2 = Slope::Rise;
+                u.m.trig_when = WhenKind::Gt;
+                u.m.trig_t1 = 0.0;
+                u.m.setup = 20e-9;
+                u.m.hold = 1e-9;
+                u.m.set_trigger_wave(secondary, true);
+                let values: Vec<f32> = (0..5000).map(|i| if i % 40 < 30 { -0.05 } else { 0.05 }).collect();
+                match secondary {
+                    WaveId::Ref(i) => u.refs[i] = Some(RefWave { src: 0, color: 1,
+                        label: "Low-amplitude secondary".into(), t0: 0.0, dt: 1e-9,
+                        v: values, vpd: 2.0, offset: 0.0, on: false }),
+                    WaveId::Ch(c) => {
+                        u.m.ch[c].probe = 1.0;
+                        u.m.ch[c].vfine = 2.0 / VSCALES[u.m.ch[c].vscale];
+                        let mut rec = Ui::blank_record();
+                        rec.dt = 1e-9;
+                        rec.ch[c] = values;
+                        u.last[0] = Some(rec);
+                    }
+                }
+
+                u.key(key::SINGLE);
+                u.replay_acquire(0.2);
+                assert_eq!((u.m.status, u.replay.captures, u.m.run),
+                    (TrigStatus::Wait, 0, RunState::Run), "{kind:?} {secondary:?}: large secondary hysteresis should reject the small waveform");
+
+                // Change only its scale. The source buffer, thresholds and type
+                // are identical, so this also exercises cache invalidation.
+                match secondary {
+                    WaveId::Ref(i) => u.refs[i].as_mut().unwrap().vpd = 0.02,
+                    WaveId::Ch(c) => u.m.ch[c].vfine = 0.02 / VSCALES[u.m.ch[c].vscale],
+                }
+                u.now += 0.2;
+                u.replay_acquire(0.2);
+                assert_eq!((u.m.status, u.replay.captures, u.m.run),
+                    (TrigStatus::Triggered, 1, RunState::Stop), "{kind:?} {secondary:?}: secondary scale must control its own comparator");
+
+                match secondary {
+                    WaveId::Ref(i) => u.refs[i].as_mut().unwrap().vpd = 2.0,
+                    WaveId::Ch(c) => u.m.ch[c].vfine = 2.0 / VSCALES[u.m.ch[c].vscale],
+                }
+                u.key(key::SINGLE);
+                u.now += 0.2;
+                u.replay_acquire(0.2);
+                assert_eq!((u.m.status, u.replay.captures, u.m.run),
+                    (TrigStatus::Wait, 1, RunState::Run), "{kind:?} {secondary:?}: cached hits must be removed when secondary hysteresis grows");
+            }
+        }
+    }
+
+    #[test]
     fn leaving_sim_restores_live_settings_and_keeps_the_saved_record() {
         let mut u = replay();
         u.return_to_live();
@@ -128,17 +229,70 @@ mod tests {
     }
 }
 
+struct DeferredCaptureStatistics {
+    capture: u64,
+    context: String,
+    rows: Vec<usize>,
+}
+
 #[derive(Default)]
 pub(super) struct Replay {
     cursor: f64,
-    next: f64,
+    pub(super) next: f64,
     force: bool,
     frame: Option<(usize, usize, usize)>,
     viewport: Option<(usize, f32, f32)>,
     pub captures: u64,
+    pub(super) trigger_time: Option<f64>,
+    pub(super) sim_revision: u64,
+    pub(super) sim_attempt: u64,
+    pub(super) sim_next: f64,
+    pub(super) fresh_sim: bool,
+    pub(super) sim_config_change: bool,
+    deferred_statistics: Option<DeferredCaptureStatistics>,
+}
+
+impl Replay {
+    pub(super) fn reset_search(&mut self) {
+        self.cursor = 0.0;
+    }
 }
 
 impl Ui {
+    fn capture_statistics_context(&self) -> String {
+        let refs: Vec<_> = self.refs.iter().map(|r| r.as_ref().map(|r|
+            (r.v.as_ptr() as usize, r.v.len(), r.dt.to_bits(), r.t0.to_bits(), r.vpd.to_bits()))).collect();
+        let channels: Vec<_> = self.m.ch.iter().map(|ch| (ch.volts_per_div().to_bits(), ch.unit.name())).collect();
+        let gate = (!self.m.meas_full_record).then(|| { let (scale, delay) = self.view(); (scale.to_bits(), delay.to_bits()) });
+        format!("{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}", self.m.meas, self.m.meas2,
+            (self.m.meas_full_record, self.m.meas_lpct.to_bits(), self.m.meas_hpct.to_bits(), self.m.meas_idle.to_bits(),
+                self.m.meas_n, self.m.meas_data, self.m.meas_out, self.m.meas_tsetup.to_bits(), self.m.meas_thold.to_bits()),
+            refs, channels, gate, self.m.trigger(), self.m.trigger_wave(),
+            (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val, self.m.trig_nrej))
+    }
+
+    fn add_capture_statistic(stat: &mut MStat, value: f64) {
+        if !value.is_finite() { return; }
+        if stat.n == 0 { stat.min = value; stat.max = value; }
+        stat.n += 1; stat.sum += value; stat.sumsq += value * value;
+        stat.min = stat.min.min(value); stat.max = stat.max.max(value);
+    }
+
+    /// Finish only rows pending for this exact accepted record and measurement
+    /// gate/configuration. A worker completion or repeated read is not a capture.
+    pub(super) fn finish_deferred_capture_statistics(&mut self) {
+        let Some(mut pending) = self.replay.deferred_statistics.take() else { return };
+        if pending.capture != self.replay.captures || pending.context != self.capture_statistics_context() { return; }
+        let rows = self.meas_rows();
+        self.mstat.resize(rows.len(), MStat::default());
+        pending.rows.retain(|&index| {
+            let Some(row) = rows.get(index) else { return false };
+            if row.computing { return true; }
+            Self::add_capture_statistic(&mut self.mstat[index], row.v);
+            false
+        });
+        if !pending.rows.is_empty() { self.replay.deferred_statistics = Some(pending); }
+    }
     pub fn record_mode(&self) -> bool {
         self.offline || self.session_is_sim || (self.m.n_on() == 0 && self.refs.iter().any(Option::is_some))
     }
@@ -161,7 +315,10 @@ impl Ui {
         }
     }
 
+    pub fn waveform_epoch(&self) -> u64 { self.workflow_epoch }
+
     pub fn return_to_live(&mut self) {
+        self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
         self.set_offline(false);
         self.session_is_sim = false;
@@ -181,7 +338,7 @@ impl Ui {
             self.m.meas = Self::default_meas();
         }
         self.m.floor_live_tdiv();
-        self.meas_src = WaveId::Ch(self.m.active);
+        self.select_workspace_source(WaveId::Ch(self.m.active));
         self.last[0] = None;
         self.cleared = false;
         self.ph.clear();
@@ -193,37 +350,78 @@ impl Ui {
     }
 
     pub fn request_waveform(&mut self) {
+        self.cancel_bus_candidate(true);
+        self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.close_menu();
         self.open_wave_request = true;
         self.toast("Choose a CSV, BIN or WFM waveform. In the browser, use Load waveform above the screen.");
     }
 
     pub fn load_waveform_bytes(&mut self, data: &[u8], name: &str) -> Result<(), String> {
-        // Validate before changing the session, so a bad file leaves the working display intact.
         let traces = crate::store::parse_wave(data, name)?;
+        self.commit_waveform_traces(traces, name, false)
+    }
+
+    /// Native/tool Load adds a file without silently replacing the prior source.
+    pub fn load_waveform_auto(&mut self, data: &[u8], name: &str) -> Result<(), String> {
+        let traces = crate::store::parse_wave(data, name)?;
+        self.commit_waveform_traces(traces, name, true)
+    }
+
+    /// Main-thread commit for a native file parsed by the import worker. Validate
+    /// before mutating the session; failure leaves the working screen intact.
+    pub fn commit_waveform_traces(&mut self, traces: Vec<crate::store::WaveTrace>, name: &str, auto: bool) -> Result<(), String> {
         if traces.is_empty() || traces.iter().any(|t| t.v.len() < 2 || !t.dt.is_finite() || t.dt <= 0.0 || !t.t0.is_finite()) {
             return Err("The file needs at least two samples and a valid sample interval.".into());
         }
+        let first = if auto {
+            (0..NREF).find(|&start| start + traces.len() <= NREF && self.refs[start..start + traces.len()].iter().all(Option::is_none))
+                .ok_or("No empty reference slots; select a slot and use Reference > Import to replace it")?
+        } else { self.ref_sel.min(NREF - 1) };
+        if first + traces.len() > NREF {
+            return Err("The file has more traces than the remaining reference slots".into());
+        }
+        // Adding a source must not discard a user's catalog or channel-pair setup.
+        // A fresh, untouched live default gets useful reference readouts on its first import.
+        let initialize_measurements = self.refs.iter().all(Option::is_none)
+            && self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
+        self.cancel_bus_candidate(true);
+        self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
         self.remember_live();
         self.set_offline(true);
         self.session_is_sim = false;
+        self.sim_play = false;
         self.replay = Replay::default();
-        let first = self.ref_sel.min(NREF - 1);
-        for (k, trace) in traces.into_iter().take(NREF - first).enumerate() {
+        // A file is a new stopped scope workspace, not the previous LA/Eye/math view.
+        self.reset_workspace_for_import();
+        self.m.la.on = false;
+        self.m.view = AView::Scope;
+        self.xy = false;
+        self.m.eye_b = None;
+        self.m.eye_rail = None;
+        self.invalidate_reference_eye();
+        for (k, trace) in traces.into_iter().enumerate() {
             let slot = first + k;
-            let span = trace.v.iter().copied().filter(|x| x.is_finite()).fold(0.1f32, |a, b| a.max(b.abs()));
-            self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: trace.v, vpd: (span / 3.0).max(1e-6), offset: 0.0, on: true });
+            // Min/max only: do not run millions of samples through edge/period
+            // analysis merely to establish a sensible vertical fit.
+            let (lo, hi) = trace.v.iter().copied().filter(|x| x.is_finite())
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)));
+            let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo, hi) } else { (0.0, 1.0) };
+            self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: trace.v,
+                vpd: ((hi - lo).abs() / 6.0).max(1e-6), offset: -0.5 * (hi + lo), on: true });
         }
-        self.m.zoom = false;
-        self.present_record(first);
+        self.ref_sel = first;
+        self.m.set_trigger_wave(WaveId::Ref(first), false);
+        self.m.trig_ref2 = None;
+        if initialize_measurements {
+            self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
+        }
+        self.mstat.clear();
         self.meas_src = WaveId::Ref(first);
-        self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
-        self.m.meas2.clear();
-        self.m.meas_labels = false;
         self.close_menu();
-        self.autoset_reference();
-        self.measure_refs();
+        self.present_record(first);
+        self.fit_reference_trigger_levels();
         self.relayout();
         self.toast(&format!("Loaded {} into R{}", name, first + 1));
         Ok(())
@@ -245,9 +443,13 @@ impl Ui {
     pub(crate) fn record_key(&mut self, key_code: u8) -> bool {
         if matches!(key_code, key::RUNSTOP | key::SINGLE | key::FORCE) { self.sim_cancel_generation(); }
         if !self.record_mode() { return false; }
-        if key_code == key::DEFAULT || (0x15..=0x18).contains(&key_code) {
+        if key_code == key::DEFAULT {
             self.return_to_live();
             self.key(key_code);
+            return true;
+        }
+        if (0x15..=0x18).contains(&key_code) {
+            self.activate_live_channel((key_code - 0x15) as usize);
             return true;
         }
         if matches!(key_code, key::RUNSTOP | key::SINGLE | key::FORCE) && self.refs.get(self.active_reference()).and_then(Option::as_ref).is_none() {
@@ -292,27 +494,19 @@ impl Ui {
     pub(super) fn replay_acquire(&mut self, _dt_wall: f64) {
         if self.m.run != RunState::Run || !self.sim_play || self.now < self.replay.next { return; }
         self.replay.next = self.now + 0.1;
-        let slot = self.active_reference();
+        let slot = self.m.trig_ref.unwrap_or_else(|| self.active_reference());
         let Some(r) = self.refs.get(slot).and_then(Option::as_ref) else { return; };
         if r.v.len() < 8 || r.dt <= 0.0 { return; }
         let count = ((self.view().0 as f64 * HDIV as f64 / r.dt).ceil() as usize).clamp(8, r.v.len());
-        let mut model = self.m.clone();
-        model.trig_src = 0;
-        let empty = [];
-        let input = oos_dsp::trigger::Input {
-            ch: std::array::from_fn(|c| if c == 0 { r.v.as_slice() } else {
-                self.refs.get((slot + c) % NREF).and_then(Option::as_ref).filter(|other| (other.dt - r.dt).abs() < r.dt * 1e-6 && (other.t0 - r.t0).abs() < r.dt * 0.1).map_or(&empty[..], |other| other.v.as_slice())
-            }),
-            dt: r.dt,
-            hyst: [r.vpd.max(1e-6) * 0.1; NCH],
-        };
-        let hit = crate::trig::find_first(&model, &input, self.replay.cursor)
-            .or_else(|| crate::trig::find_first(&model, &input, 0.0));
+        let Some(hits) = self.reference_trigger_hits(slot) else { self.m.status = TrigStatus::Wait; return; };
+        let after = r.t0 + self.replay.cursor * r.dt;
+        let next = hits.partition_point(|&time| time <= after);
+        let hit = hits.get(next).or_else(|| hits.first()).copied();
         if hit.is_none() && self.m.trig_mode != TrigMode::Auto && !self.replay.force {
             self.m.status = TrigStatus::Wait;
             return;
         }
-        let middle = hit.unwrap_or((self.replay.cursor + count as f64 * 0.5).min((r.v.len() - 1) as f64));
+        let middle = hit.map(|time| (time - r.t0) / r.dt).unwrap_or((self.replay.cursor + count as f64 * 0.5).min((r.v.len() - 1) as f64));
         let lo = (middle.max(count as f64 * 0.5) as usize).saturating_sub(count / 2).min(r.v.len() - count);
         let hi = lo + count;
         let centre = r.t0 + middle * r.dt;
@@ -320,6 +514,11 @@ impl Ui {
         self.replay.frame = Some((slot, lo, hi));
         self.replay.force = false;
         self.replay.captures += 1;
+        self.replay.trigger_time = hit;
+        if self.session_is_sim && self.replay.fresh_sim {
+            self.replay.sim_revision = self.replay.sim_revision.wrapping_add(1);
+            self.replay.fresh_sim = false;
+        }
         if self.m.zoom { self.m.zdelay = centre as f32; } else { self.m.delay = centre as f32; }
         self.replay.viewport = Some((slot, self.view().0, self.view().1));
         self.m.status = if hit.is_some() { TrigStatus::Triggered } else { TrigStatus::Auto };
@@ -327,17 +526,22 @@ impl Ui {
             self.m.run = RunState::Stop;
             self.sim_play = false;
         }
+        if self.replay.sim_config_change {
+            self.invalidate_reference_eye();
+            self.mstat.clear();
+            self.replay.sim_config_change = false;
+        }
         self.measure_refs();
         self.analyzer_update();
         let rows = self.meas_rows();
         self.mstat.resize(rows.len(), MStat::default());
-        for (row, stat) in rows.iter().zip(&mut self.mstat) {
-            if row.v.is_finite() {
-                if stat.n == 0 { stat.min = row.v; stat.max = row.v; }
-                stat.n += 1; stat.sum += row.v; stat.sumsq += row.v * row.v;
-                stat.min = stat.min.min(row.v); stat.max = stat.max.max(row.v);
-            }
+        let mut pending = Vec::new();
+        for (index, (row, stat)) in rows.iter().zip(&mut self.mstat).enumerate() {
+            if row.computing { pending.push(index); }
+            else { Self::add_capture_statistic(stat, row.v); }
         }
+        self.replay.deferred_statistics = (!pending.is_empty()).then(|| DeferredCaptureStatistics {
+            capture: self.replay.captures, context: self.capture_statistics_context(), rows: pending });
     }
 
     pub fn workflow_command(&mut self, action: &str) {
@@ -369,7 +573,7 @@ impl Ui {
 
     pub(super) fn record_caption(&self) -> String {
         let slot = self.active_reference();
-        format!("{} R{} · view window · #{}", if self.session_is_sim { "SIM" } else { "Reference" }, slot + 1, self.replay.captures)
+        format!("{} R{} · {} measurements · #{}", if self.session_is_sim { "SIM" } else { "Reference" }, slot + 1, self.measurement_gate_label(), self.replay.captures)
     }
 
     pub fn workflow_state(&self) -> String {
@@ -381,10 +585,11 @@ impl Ui {
             ("mode", J::s(if self.session_is_sim { "sim" } else if self.record_mode() { "reference" } else { "live" })),
             ("running", J::Bool(self.m.run == RunState::Run)),
             ("busy", J::Bool(self.sim_generating())),
+            ("measurementBusy", J::Bool(self.measurement_busy())),
             ("source", J::s(&if self.record_mode() { format!("R{}", self.active_reference() + 1) } else { format!("CH{}", self.m.active + 1) })),
             ("captures", J::Num(self.replay.captures as f64)),
             ("status", J::s(status)),
-            ("gate", J::s(if self.record_mode() { "screen" } else { "record" })),
+            ("gate", J::s(if self.m.meas_full_record { "full-record" } else { "screen" })),
             ("loadRect", self.top_buttons().iter().find(|button| button.0 == TopBtn::Load).map_or(J::Null, |button| {
                 let r = button.2;
                 J::Arr(vec![J::Num(r.x as f64), J::Num(r.y as f64), J::Num(r.w as f64), J::Num(r.h as f64)])

@@ -1,0 +1,97 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Local console key management. New imports are bare OpenSSH Ed25519 public keys.
+# Existing authorized_keys content and per-device host identity are preserved.
+set -eu
+umask 077
+state=/oos/ssh
+seed=/etc/oos-ssh/authorized_keys
+pidfile=/run/oos-ssh.pid
+fail() { echo "oos-ssh: $*" >&2; exit 1; }
+mounted() { grep -q ' /oos ' /proc/mounts; }
+prepare() {
+	mounted || fail '/oos is not mounted: SSH stays off (no temporary host identity)'
+	[ ! -L "$state" ] || fail 'refusing symlink state directory'
+	mkdir -p "$state"; chmod 700 "$state"
+	[ ! -L "$state/authorized_keys" ] || fail 'refusing symlink authorized_keys'
+	if [ ! -e "$state/authorized_keys" ]; then
+		if [ -s "$seed" ]; then cp "$seed" "$state/authorized_keys"; else : > "$state/authorized_keys"; fi
+	fi
+	chmod 600 "$state/authorized_keys"
+	# Offline provisioning can create files with the computer user's numeric UID.
+	# The daemon authenticates root and requires root-owned key paths.
+	chown 0:0 "$state" "$state/authorized_keys"
+}
+valid_blob() {
+	[ "${#1}" = 68 ] || return 1
+	case "$1" in *[!A-Za-z0-9+/]*) return 1;; esac
+	printf '%s' "$1" | base64 -d > "$tmp/blob" 2>/dev/null || return 1
+	[ "$(wc -c < "$tmp/blob" | tr -d ' ')" = 51 ] || return 1
+	[ "$(od -An -tx1 -N19 "$tmp/blob" | tr -d ' \n')" = 0000000b7373682d6564323535313900000020 ]
+}
+has_key() {
+	while read -r type blob rest || [ -n "$type$blob$rest" ]; do
+		if [ "$type" = ssh-ed25519 ] && valid_blob "$blob"; then return 0; fi
+	done < "$state/authorized_keys"
+	return 1
+}
+running() {
+	[ -r "$pidfile" ] || return 1
+	read -r pid < "$pidfile"
+	case "$pid" in ''|*[!0-9]*) return 1;; esac
+	[ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = /bin/dropbear ] && kill -0 "$pid" 2>/dev/null
+}
+stop() { if running; then kill "$pid"; fi; rm -f "$pidfile"; }
+start() {
+	[ ! -e "$state/disabled" ] || { echo 'SSH disabled locally'; return; }
+	has_key || { echo 'SSH off: provision an Ed25519 public key (oos-ssh add FILE)'; return; }
+	[ -x /bin/dropbear ] && [ -x /bin/dropbearkey ] || fail 'Dropbear was not included in this image'
+	running && { echo 'SSH already running'; return; }
+	host="$state/dropbear_ed25519_host_key"
+	[ ! -L "$host" ] || fail 'refusing symlink host key'
+	if [ ! -e "$host" ]; then
+		/bin/dropbearkey -t ed25519 -f "$tmp/host" >/dev/null
+		mv "$tmp/host" "$host"; sync
+	fi
+	chmod 600 "$host"
+	chown 0:0 "$host"
+	/bin/dropbear -s -j -k -E -p 22 -r "$host" -D "$state" -P "$pidfile" >>/tmp/oos-ssh.log 2>&1
+	echo 'SSH key-only on port 22; oos-ssh fingerprint shows this device identity'
+}
+action=${1:-status}
+case "$action" in start|add|remove|enable|disable|list|status|fingerprint|stop) ;; *) fail 'use: start | stop | status | fingerprint | list | add FILE | remove BASE64 | enable | disable';; esac
+prepare
+# Serialize local key changes and host-key creation. An interrupted operation never
+# truncates authorized_keys, and a removed build-seed key is not re-added next boot.
+mkdir "$state/.lock" 2>/dev/null || fail 'another key operation is active (remove stale /oos/ssh/.lock at the console)'
+tmp=$(mktemp -d "$state/.work.XXXXXX")
+trap 'rm -rf "$tmp"; rmdir "$state/.lock"' EXIT HUP INT TERM
+case "$action" in
+	start) start;;
+	stop) stop;;
+	status) if running; then echo 'SSH running, key-only, port 22'; else echo 'SSH stopped'; fi;;
+	list) cat "$state/authorized_keys";;
+	fingerprint) [ -f "$state/dropbear_ed25519_host_key" ] || fail 'no host identity yet'; /bin/dropbearkey -y -f "$state/dropbear_ed25519_host_key";;
+	disable) : > "$state/disabled"; stop; sync; echo 'SSH disabled; keys preserved';;
+	enable) rm -f "$state/disabled"; start;;
+	add)
+		[ "$#" = 2 ] && [ -f "$2" ] || fail 'use: oos-ssh add PUBLIC_KEY_FILE'
+		# Reject multiple lines/options/private keys rather than interpreting them.
+		tr -d '\r' < "$2" > "$tmp/input"
+		[ "$(awk 'END {print NR}' "$tmp/input")" = 1 ] || fail 'one public key per import'
+		read -r type blob comment < "$tmp/input" || true
+		[ "${type:-}" = ssh-ed25519 ] && valid_blob "${blob:-}" || fail 'invalid bare OpenSSH Ed25519 public key'
+		if awk -v key="$blob" '$1=="ssh-ed25519" && $2==key {found=1} END {exit !found}' "$state/authorized_keys"; then echo 'Key already present'; exit 0; fi
+		cp "$state/authorized_keys" "$tmp/keys"
+		# A legacy file need not end in a newline; never concatenate two keys.
+		printf '\nssh-ed25519 %s %s\n' "$blob" "$(printf '%s' "${comment:-}" | tr -cd '[:print:]')" >> "$tmp/keys"
+		chmod 600 "$tmp/keys"; mv "$tmp/keys" "$state/authorized_keys"; sync
+		echo 'Public key added; use oos-ssh start to open SSH';;
+	remove)
+		[ "$#" = 2 ] && valid_blob "$2" || fail 'use: oos-ssh remove BASE64_KEY_FROM_LIST'
+		awk -v key="$2" '!($1=="ssh-ed25519" && $2==key)' "$state/authorized_keys" > "$tmp/keys"
+		chmod 600 "$tmp/keys"; mv "$tmp/keys" "$state/authorized_keys"; sync
+		if ! has_key; then stop; fi
+		echo 'Public key removed; existing authenticated sessions may remain';;
+esac

@@ -6,7 +6,7 @@
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
-//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:GATing SCREEN|NONE, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
@@ -15,6 +15,10 @@
 //! :SIM:SSC:MODE OFF|DOWN|CENTER, :SIM:SSC:DEViation <fraction>, :SIM:SSC:FREQuency <Hz>,
 //! :SIM:JITTer:DCD <seconds pp>|:CORRelated <seconds RMS>|:CORNer <Hz>, :SIM:PATTern PRBS7..31.
 //! SIM configuration is applied together on the next :SIM:PLAY ON. :SIM:BUSY? reports background generation.
+//! :DECode:{SOURce,SOURce2,CS,SOURce4,DIFFerential} names CH1..CH4/R1..R10 (NONE for optional roles).
+//! :DECode:{PROTocol,STATe,SELect,THReshold,INPut} configures the selected decoder; EVENts? returns BUSY while
+//! a long stored record is computing, and BUSY? polls without changing acquisition or statistics.
+//! :DECode:CPHY:RATE {AUTO|symbols_per_second} sets a known C-PHY symbol rate; :DECode:SRATe is an alias.
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
@@ -417,17 +421,37 @@ impl Scpi {
                 return t(&format!("OOS,{},{},oos-ui {}", p.caps.name, p.serial.as_deref().unwrap_or("0"), env!("CARGO_PKG_VERSION")));
             }
             "*OPC" => return if query { t("1") } else { None },
-            "*CLS" => {
+            "*CLS" if !query => {
                 self.err.clear();
                 return None;
             }
-            "*RST" => {
+            "*RST" if !query => {
                 ui.key(crate::ui::key::DEFAULT);
                 return None;
             }
             _ => {}
         }
         let nodes: Vec<&str> = head.trim_start_matches(':').split(':').collect();
+        if !query && nodes.len() == 1 {
+            let command = if kw(nodes[0], "STOP") { Some(0) } else if kw(nodes[0], "RUN") { Some(1) }
+                else if kw(nodes[0], "SINGle") { Some(2) } else { None };
+            if command.is_some_and(|command| ui.mixed_bus_command(command)) { return None; }
+        }
+        if !query && ((nodes.len() == 1 && kw(nodes[0], "TFORce"))
+            || (nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "FORCe"))) {
+            if !ui.mixed_bus_command(3) {
+                if ui.record_mode() { ui.record_key(crate::ui::key::FORCE); }
+                else { ui.key(crate::ui::key::FORCE); }
+            }
+            return None;
+        }
+        if nodes.len() == 3 && kw(nodes[0], "DECode") && kw(nodes[1], "CPHY")
+            && (kw(nodes[2], "RATE") || kw(nodes[2], "SRATe")) {
+            return self.decode_cphy_rate_cmd(ui, query, arg);
+        }
+        if nodes.len() == 2 && kw(nodes[0], "DECode") {
+            return self.decode_cmd(ui, nodes[1], query, arg);
+        }
         if nodes.len() >= 2 && kw(nodes[0], "LA") {
             return self.la_cmd(ui, &nodes[1..], query, arg);
         }
@@ -438,7 +462,7 @@ impl Scpi {
             ui.key(crate::ui::key::AUTO);
             return None;
         }
-        if nodes.len() == 1 && kw(nodes[0], "CLEar") {
+        if !query && nodes.len() == 1 && kw(nodes[0], "CLEar") {
             ui.key(crate::ui::key::CLEAR);
             return None;
         }
@@ -473,11 +497,63 @@ impl Scpi {
             ui.mark_changed();
             return None;
         }
+        // Reference trigger identities belong to the UI acquisition router, not
+        // a silent physical-channel alias inside Model::trigger().
+        if nodes.first().is_some_and(|node| kw(node, "TRIGger")) {
+            let last = nodes.last().copied().unwrap_or("");
+            let (leaf, source_number) = suffix(last);
+            if (nodes.len() == 2 || nodes.len() == 3) && kw(leaf, "SOURce") {
+                let secondary = source_number == Some(2);
+                if query {
+                    if !secondary && ui.m.trig_ref.is_none() {
+                        if let Some(line) = ui.m.trig_line() { return t(&format!("D{line}")); }
+                    }
+                    let id = if secondary { ui.m.trigger_wave2() } else { ui.m.trigger_wave() };
+                    return t(&match id { WaveId::Ref(i) => format!("R{}", i + 1), WaveId::Ch(c) => format!("CHAN{}", c + 1) });
+                }
+                if let Some(id) = parse_wave(arg) {
+                    if !ui.set_trigger_source(id, secondary) { self.err.push("-224,\"Trigger source is unavailable\"".into()); }
+                    ui.mark_changed();
+                    return None;
+                }
+                // Leave D0..D15 to the existing LA source handler.
+                if !arg.trim().to_ascii_uppercase().starts_with('D') {
+                    self.err.push("-224,\"Invalid trigger source\"".into());
+                    return None;
+                }
+            }
+            if nodes.len() == 2 && kw(last, "TYPe") {
+                if query { return t(ui.m.trig_type.name()); }
+                let name = arg.trim().to_ascii_uppercase();
+                let kind = match name.as_str() {
+                    "EDGE" => Some(TrigType::Edge), "PULSE" | "PULS" => Some(TrigType::Pulse),
+                    "SLOPE" | "SLOP" => Some(TrigType::Slope), "VIDEO" | "VID" => Some(TrigType::Video),
+                    "PATTERN" | "PATT" => Some(TrigType::Pattern), "DURATION" | "DUR" => Some(TrigType::Duration),
+                    "TIMEOUT" | "TIM" => Some(TrigType::Timeout), "RUNT" => Some(TrigType::Runt),
+                    "WINDOW" | "WIND" => Some(TrigType::Window), "DELAY" | "DEL" => Some(TrigType::Delay),
+                    "SETUPHOLD" | "SETUP" => Some(TrigType::SetupHold), "NTHEDGE" | "NTH" => Some(TrigType::NthEdge),
+                    "BUS" => Some(TrigType::Bus), _ => None,
+                };
+                if let Some(kind) = kind { ui.trigger_type_set(kind); ui.mark_changed(); }
+                else { self.err.push("-224,\"Invalid trigger type\"".into()); }
+                return None;
+            }
+            if nodes.len() == 3 && kw(nodes[1], "RUNT") {
+                let value = if kw(last, "UPPer") || kw(last, "ALEVel") { Some(&mut ui.m.trig_level) }
+                    else if kw(last, "LOWer") || kw(last, "BLEVel") { Some(&mut ui.m.trig_level2) } else { None };
+                if let Some(value) = value {
+                    if query { return t(&e(*value as f64)); }
+                    if let Some(number) = num(arg) { *value = number; ui.mark_changed(); }
+                    else { self.err.push("-224,\"Invalid runt threshold\"".into()); }
+                    return None;
+                }
+            }
+        }
         let m = &mut ui.m;
         let r: Option<Option<Vec<u8>>> = (|| {
             let n0 = nodes.first().copied().unwrap_or("");
             let (k0, sfx) = suffix(n0);
-            if nodes.len() == 1 {
+            if !query && nodes.len() == 1 {
                 if kw(n0, "RUN") {
                     m.run = RunState::Run;
                     if m.trig_mode == TrigMode::Single {
@@ -686,7 +762,7 @@ impl Scpi {
             None
         })();
         if let Some(resp) = r {
-            ui.mark_changed();
+            if !query { ui.mark_changed(); }
             return resp;
         }
         // measurement, waveform, display, system (need the record / canvas)
@@ -708,6 +784,17 @@ impl Scpi {
         }
         if kw(n0, "MEASure") && nodes.len() == 2 {
             let n1 = nodes[1];
+            if kw(n1, "GATing") {
+                if query { return t(if ui.m.meas_full_record { "NONE" } else { "SCREEN" }); }
+                let full_record = if kw(arg.trim(), "SCReen") { false }
+                    else if kw(arg.trim(), "NONE") { true }
+                    else {
+                        self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return None;
+                    };
+                ui.set_measurement_full_record(full_record);
+                return None;
+            }
             if kw(n1, "REFS") {
                 if query {
                     let ten = ui.m.meas_lpct < 0.15 && ui.m.meas_hpct > 0.85;
@@ -1115,6 +1202,96 @@ impl Scpi {
             return t(&if self.err.is_empty() { "0,\"No error\"".to_string() } else { self.err.remove(0) });
         }
         self.err.push(format!("-113,\"Undefined header\" {}", cmd));
+        None
+    }
+
+    fn decode_cmd(&mut self, ui: &mut Ui, node: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
+        if kw(node, "SRATe") { return self.decode_cphy_rate_cmd(ui, query, arg); }
+        let text = |value: String| Some(value.into_bytes());
+        let illegal = |s: &mut Self| { s.err.push(format!("-224,\"Illegal decoder parameter\" {}", arg)); None };
+        if kw(node, "EVENts") && query {
+            return match ui.decode_events_result() {
+                Ok(events) => text(events),
+                Err("Decode computing") => text("BUSY".into()),
+                Err(error) => { self.err.push(format!("-230,\"{}\"", error)); None }
+            };
+        }
+        if kw(node, "BUSY") && query { return text(if ui.decode_busy() { "1" } else { "0" }.into()); }
+        let role = if kw(node, "SOURce") || kw(node, "SOURce1") || node.eq_ignore_ascii_case("SOUR1") { Some(0) }
+            else if kw(node, "SOURce2") || node.eq_ignore_ascii_case("SOUR2") { Some(1) }
+            else if kw(node, "CS") { Some(2) }
+            else if kw(node, "SOURce4") || node.eq_ignore_ascii_case("SOUR4") { Some(3) }
+            else if kw(node, "DIFFerential") { Some(4) } else { None };
+        if let Some(role) = role {
+            if query {
+                if ui.m.dec_on_la() && role < 4 {
+                    return text(ui.m.dec_la[role].map_or("NONE".into(), |line| format!("D{line}")));
+                }
+                let source = match role { 0 => Some(ui.m.dec_src), 1 => Some(ui.m.dec_src2), 2 => ui.m.dec_cs, 3 => ui.m.dec_src4, _ => ui.m.dec_diff };
+                return text(source.map_or("NONE".into(), decode_source_name));
+            }
+            if ui.m.dec_on_la() && role < 4 {
+                let source = arg.strip_prefix('D').or_else(|| arg.strip_prefix('d')).and_then(|v| v.parse::<u8>().ok()).filter(|&v| v < 16);
+                if source.is_none() && !(role >= 2 && arg.eq_ignore_ascii_case("NONE")) { return illegal(self); }
+                ui.m.dec_la[role] = source;
+                ui.mark_changed();
+                return None;
+            }
+            let source = if arg.eq_ignore_ascii_case("NONE") { None }
+                else { match parse_wave(arg) { Some(WaveId::Ch(c)) => Some(c), Some(WaveId::Ref(i)) => Some(DEC_REF_BASE + i), None => return illegal(self) } };
+            if !ui.configure_decoder_source(role, source) { return illegal(self); }
+            ui.mark_changed();
+            return None;
+        }
+        if kw(node, "PROTocol") || node.eq_ignore_ascii_case("PROTO") {
+            if query { return text(ui.m.dec_proto.name().into()); }
+            let compact = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric()).flat_map(char::to_uppercase).collect::<String>();
+            let name = compact(arg);
+            let Some(protocol) = PROTOS.iter().copied().find(|p| compact(p.name()) == name) else { return illegal(self) };
+            // SCPI configures an instrument, not the demo's suggested sources/trigger.
+            ui.m.dec_proto = protocol;
+            if protocol == Proto::Cphy { ui.m.dec_thr = 0.02; ui.m.dec_la_in = false; }
+            ui.mark_changed();
+            return None;
+        }
+        if kw(node, "STATe") {
+            if query { return text(if ui.m.dec_on { "1" } else { "0" }.into()); }
+            let Some(on) = parse_bool(arg) else { return illegal(self) };
+            ui.m.dec_on = on;
+            ui.mark_changed();
+            return None;
+        }
+        if kw(node, "SELect") {
+            if query { return text((ui.m.dec_sel + 1).to_string()); }
+            let Some(slot) = arg.parse::<usize>().ok().filter(|n| (1..=DECODERS).contains(n)) else { return illegal(self) };
+            ui.m.dec_select(slot - 1);
+            return None;
+        }
+        if kw(node, "THReshold") {
+            if query { return text(e(ui.m.dec_thr as f64)); }
+            let Some(threshold) = num(arg) else { return illegal(self) };
+            ui.m.dec_thr = threshold;
+            ui.mark_changed();
+            return None;
+        }
+        if kw(node, "INPut") {
+            if query { return text(if ui.m.dec_la_in { "LA" } else { "WAVEFORM" }.into()); }
+            if arg.eq_ignore_ascii_case("LA") && ui.m.la_on() && ui.m.dec_proto != Proto::Cphy { ui.m.dec_la_in = true; }
+            else if arg.eq_ignore_ascii_case("WAVEFORM") || arg.eq_ignore_ascii_case("ANALOG") { ui.m.dec_la_in = false; }
+            else { return illegal(self); }
+            ui.mark_changed();
+            return None;
+        }
+        self.err.push(format!("-113,\"Undefined header\" DECode:{}", node));
+        None
+    }
+
+    fn decode_cphy_rate_cmd(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        if query { return Some(if ui.m.dec_cphy_rate == 0.0 { b"AUTO".to_vec() } else { e(ui.m.dec_cphy_rate).into_bytes() }); }
+        match crate::decode::parse_cphy_rate(arg) {
+            Ok(rate) => { ui.m.dec_cphy_rate = rate; ui.mark_changed(); }
+            Err(_) => self.err.push(format!("-224,\"Invalid C-PHY symbol rate\" {}", arg)),
+        }
         None
     }
 
@@ -1658,6 +1835,251 @@ mod tests {
     }
 
     #[test]
+    fn generic_model_queries_preserve_statistics_configuration_and_pending_requests() {
+        let (mut s, mut ui, cv) = session();
+        for _ in 0..4 { ui.step(0.05); }
+        let statistics = ui.measurement_statistics_snapshot_for_test();
+        assert!(statistics.iter().any(|&(count, _)| count >= 3), "seed statistics from genuine acquired demo frames");
+        let configuration = crate::store::setup_text(&ui.m);
+        let workflow = ui.workflow_state();
+        let acquisition_stamp = ui.m.hw_stamp;
+        line(&mut s, &mut ui, &cv, ":UNDEFINED_ONE?;:UNDEFINED_TWO?");
+        assert_eq!(s.err.len(), 2);
+        let errors = s.err.clone();
+        s.wav_src = WaveId::Ref(2);
+        s.wav_fmt = 1;
+        s.wav_raw = true;
+        // An independently pending client request must not be consumed or
+        // cancelled while another client polls configuration/status.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        let pending = b":MEAS:ITEM? VPP,CHAN1".to_vec();
+        s.clients.push(Client { s: stream, buf: pending.clone() });
+        for query in [":TRIG:STAT?", ":TIM:SCAL?", ":CHAN1:DISP?", ":CHAN1:OFFS?", ":ACQ:SRAT?", ":ACQ:MDEP?"] {
+            assert!(!line(&mut s, &mut ui, &cv, query).is_empty(), "{query} must return its existing reply");
+            assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{query} must preserve every statistic bit-for-bit");
+            assert_eq!(crate::store::setup_text(&ui.m), configuration, "{query} must not change configuration");
+            assert_eq!(ui.workflow_state(), workflow, "{query} must not change acquisition/run state");
+            assert_eq!(ui.m.hw_stamp, acquisition_stamp);
+            assert_eq!(s.err, errors, "status reads must not consume queued errors");
+            assert_eq!(s.clients.len(), 1);
+            assert_eq!(s.clients[0].buf, pending);
+            assert_eq!((s.wav_src, s.wav_fmt, s.wav_raw), (WaveId::Ref(2), 1, true));
+        }
+        line(&mut s, &mut ui, &cv, ":TIM:SCAL 0.000005");
+        assert!(ui.measurement_statistics_snapshot_for_test().is_empty(), "a successful setting still invalidates statistics");
+        assert!((ui.m.time_per_div() as f64 - 5e-6).abs() < 1e-12);
+        assert_eq!(s.err, errors);
+        assert_eq!(s.clients[0].buf, pending);
+    }
+
+
+    #[test]
+    fn unsupported_write_only_queries_preserve_records_statistics_and_error_queue() {
+        for run in [RunState::Run, RunState::Stop] {
+            let (mut s, mut ui, cv) = session();
+            for _ in 0..4 { ui.step(0.05); }
+            ui.m.run = run;
+            ui.m.trig_mode = TrigMode::Normal;
+            ui.m.trig_level = 0.125;
+            let statistics = ui.measurement_statistics_snapshot_for_test();
+            assert!(statistics.iter().any(|&(count, _)| count >= 3), "use genuinely acquired demo statistics");
+            let configuration = crate::store::setup_text(&ui.m);
+            let workflow = ui.workflow_state();
+            let record: Vec<u32> = ui.record_volts(0).iter().map(|value| value.to_bits()).collect();
+            assert!(!record.is_empty());
+            line(&mut s, &mut ui, &cv, ":EXISTING_ERROR_ONE?;:EXISTING_ERROR_TWO?");
+            assert_eq!(s.err.len(), 2);
+            for query in ["RUN?", ":STOP?", ":SING?", ":SINGLE?", "*CLS?", "*RST?", ":CLE?", ":CLEAR?"] {
+                let errors = s.err.clone();
+                assert!(line(&mut s, &mut ui, &cv, query).is_empty(), "{query} has no defined query response");
+                assert_eq!(crate::store::setup_text(&ui.m), configuration, "{query} must not execute its action");
+                assert_eq!(ui.workflow_state(), workflow, "{query} must preserve Run/Stop and acquisition state");
+                assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{query} must preserve all acquired statistics");
+                assert_eq!(ui.record_volts(0).iter().map(|value| value.to_bits()).collect::<Vec<_>>(), record, "{query} must not clear data");
+                assert_eq!(s.err.len(), errors.len() + 1);
+                assert_eq!(&s.err[..errors.len()], errors.as_slice(), "{query} must not clear existing errors");
+                assert!(s.err.last().unwrap().starts_with("-113,"), "unsupported query must report Undefined header");
+            }
+            let errors = s.err.clone();
+            assert_eq!(line(&mut s, &mut ui, &cv, ":AUTOSCALE?"), "0", "the existing supported status query stays valid");
+            assert_eq!(line(&mut s, &mut ui, &cv, "*OPC?"), "1");
+            assert_eq!(s.err, errors);
+            assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics);
+        }
+    }
+
+    fn decoded_reference_fixture(ui: &mut Ui, points: usize) {
+        let mut values = vec![3.3; points];
+        let bits = std::iter::once(false).chain((0..8).map(|bit| 0xa5u8 >> bit & 1 != 0)).chain(std::iter::once(true));
+        for (bit, high) in bits.enumerate() { values[100 + bit * 20..100 + (bit + 1) * 20].fill(if high { 3.3 } else { 0.0 }); }
+        ui.commit_waveform_traces(vec![crate::store::WaveTrace { v: values, dt: 1.0 / (115_200.0 * 20.0), t0: -0.008, label: "UART reference".into() }], "reference", true).unwrap();
+    }
+
+    #[test]
+    fn decoder_scpi_configures_refs_reports_original_packet_times_and_rejects_empty_sources() {
+        let (mut s, mut ui, cv) = session();
+        decoded_reference_fixture(&mut ui, 1000);
+        assert_eq!(ui.m.n_on(), 0);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:PROTO UART;:DEC:SOUR R1;:DEC:THR 1.65;:DEC:STAT ON;:SYST:SET dec_baud = 7;:DEC:SOUR?;:DEC:PROTO?;:DEC:STAT?"), "R1;UART;1");
+        let events = line(&mut s, &mut ui, &cv, ":DEC:EVEN?");
+        assert!(events.contains("D1 UART R1") && events.contains("A5"), "{events}");
+        let first_time: f64 = events.split(',').next().unwrap().parse().unwrap();
+        assert!(first_time > -0.008 && first_time < -0.007);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:BUSY?"), "0");
+        let state = crate::store::setup_text(&ui.m);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:SOUR R10;:DEC:SOUR?"), "R1");
+        assert_eq!(crate::store::setup_text(&ui.m), state);
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:CS NONE;:DEC:SOUR4 NONE;:DEC:DIFF NONE;:DEC:CS?;:DEC:SOUR4?;:DEC:DIFF?"), "NONE;NONE;NONE");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:SEL 2;:DEC:SEL?;:DEC:SEL 1;:DEC:SOUR?"), "2;R1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    #[test]
+    fn decoder_scpi_large_reference_reports_busy_then_fresh_events_without_acquisition() {
+        let (mut s, mut ui, cv) = session();
+        decoded_reference_fixture(&mut ui, 300_000);
+        line(&mut s, &mut ui, &cv, ":DEC:PROTO UART;:DEC:SOUR R1;:DEC:THR 1.65;:DEC:STAT ON;:SYST:SET dec_baud = 7");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:EVEN?"), "BUSY");
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while line(&mut s, &mut ui, &cv, ":DEC:BUSY?") == "1" {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let events = line(&mut s, &mut ui, &cv, ":DEC:EVEN?");
+        assert!(events.contains("D1 UART R1") && events.contains("A5"), "{events}");
+        assert_eq!(ui.m.run, RunState::Stop);
+        assert!(ui.workflow_state().contains("\"captures\":0"));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    #[test]
+    fn cphy_scpi_configures_three_refs_and_exports_the_published_16_bit_word() {
+        let (mut s, mut ui, cv) = session();
+        let mut symbols = vec![3; 12]; symbols.extend([3,4,4,4,4,4,3]);
+        symbols.extend([0,2,2,4,1,0,0]); symbols.extend([4; 7]);
+        let states = oos_dsp::cphy::states_for_symbols(0, &symbols);
+        let traces = (0..3).map(|wire| crate::store::WaveTrace {
+            v: states.iter().flat_map(|&state| std::iter::repeat(oos_dsp::cphy::wire_values(state)[wire]).take(20)).collect(),
+            dt: 5e-12, t0: -12e-9, label: format!("C-PHY {}", ['A','B','C'][wire]),
+        }).collect();
+        ui.commit_waveform_traces(traces, "C-PHY fixture", true).unwrap();
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:PROTO CPHY;:DEC:SOUR R1;:DEC:SOUR2 R2;:DEC:CS R3;:DEC:STAT ON;:DEC:PROTO?;:DEC:SOUR?;:DEC:SOUR2?;:DEC:CS?"), "C-PHY;R1;R2;R3");
+        let events = line(&mut s, &mut ui, &cv, ":DEC:EVEN?");
+        assert!(events.contains("D1 C-PHY R1") && events.contains("SYNC") && events.contains("7290"), "{events}");
+        let lines: Vec<_> = events.lines().filter(|line| line.contains("7290")).collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].split(',').next().unwrap().parse::<f64>().unwrap() < 0.0);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:CS NONE;:DEC:CS?"), "R3");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    #[test]
+    fn cphy_known_rate_roundtrips_per_decoder_setup_and_rejects_invalid_values() {
+        let (mut s, mut ui, cv) = session();
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:CPHY:RATE?"), "AUTO");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:PROTO CPHY;:DEC:CPHY:RATE 2.25e9;:DEC:CPHY:RATE?;:DEC:SRAT?"), "2.250000E+09;2.250000E+09");
+        let configured = crate::store::setup_text(&ui.m);
+        assert_eq!(crate::store::parse_setup(&configured).unwrap().dec_cphy_rate, 2.25e9);
+        let old_setup = configured.lines().filter(|line| !line.trim_start().starts_with("dec_cphy_rate") && !line.contains(".dec_cphy_rate")).collect::<Vec<_>>().join("\n");
+        assert_eq!(crate::store::parse_setup(&old_setup).unwrap().dec_cphy_rate, 0.0, "old setups keep Auto");
+        for bad in ["-1", "NaN", "inf", "1e13", "garbage"] {
+            line(&mut s, &mut ui, &cv, &format!(":DEC:CPHY:RATE {bad}"));
+            assert_eq!(crate::store::setup_text(&ui.m), configured);
+            assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
+            let mut restored = ui.m.clone();
+            assert!(crate::store::set(&mut restored, "dec_cphy_rate", bad).is_err());
+            assert_eq!(restored.dec_cphy_rate, 2.25e9);
+        }
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:SEL 2;:DEC:CPHY:RATE?;:DEC:SEL 1;:DEC:CPHY:RATE?"), "AUTO;2.250000E+09");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:CPHY:RATE AUTO;:DEC:CPHY:RATE?"), "AUTO");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    #[test]
+    fn write_only_actions_without_query_suffix_still_execute() {
+        let (mut s, mut ui, cv) = session();
+        for _ in 0..4 { ui.step(0.05); }
+        assert!(!ui.record_volts(0).is_empty());
+        line(&mut s, &mut ui, &cv, ":STOP");
+        assert_eq!(ui.m.run, RunState::Stop);
+        line(&mut s, &mut ui, &cv, ":RUN");
+        assert_eq!(ui.m.run, RunState::Run);
+        line(&mut s, &mut ui, &cv, ":SINGLE");
+        assert_eq!((ui.m.run, ui.m.trig_mode), (RunState::Run, TrigMode::Single));
+        line(&mut s, &mut ui, &cv, ":EXISTING_ERROR?");
+        assert!(!s.err.is_empty());
+        line(&mut s, &mut ui, &cv, "*CLS");
+        assert!(s.err.is_empty());
+        line(&mut s, &mut ui, &cv, ":STOP;:CLEAR");
+        assert!(ui.record_volts(0).is_empty());
+        ui.m.trig_level = 0.125;
+        line(&mut s, &mut ui, &cv, "*RST");
+        assert_eq!(ui.m.trig_level, Model::default().trig_level);
+        assert_eq!(ui.m.trig_mode, Model::default().trig_mode);
+        assert!(s.err.is_empty());
+    }
+
+    #[test]
+    fn digital_trigger_source_queries_preserve_identity_and_secondary_channel() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, ":LA:STAT ON;:TRIG:EDGE:SOUR D7");
+        assert_eq!(ui.m.trig_line(), Some(7), "D7 must be the active digital source");
+        assert_eq!(line(&mut s, &mut ui, &cv,
+            ":TRIG:EDGE:SOUR?;:TRIG:SOUR?;:TRIG:SOUR2?"), "D7;D7;CHAN4");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:SOUR CHAN2");
+        assert_eq!(ui.m.trig_line(), None);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:EDGE:SOUR?;:TRIG:SOUR2?"), "CHAN2;CHAN4");
+    }
+
+    #[test]
+    fn reference_trigger_source_query_takes_precedence_over_a_stale_la_selection() {
+        let (mut s, mut ui, cv) = reference_session();
+        ui.m.la.on = true;
+        ui.m.trig_la = Some(7);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:EDGE:SOUR?;:TRIG:SOUR?"), "R1;R1");
+    }
+
+    #[test]
+    fn measurement_gating_screen_tracks_pan_while_none_measures_the_full_record() {
+        let (mut s, mut ui, cv) = session();
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..4000 {
+            let amplitude = if index < 2000 { 0.25 } else { 0.75 };
+            let value = if index % 40 < 20 { -amplitude } else { amplitude };
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, value));
+        }
+        ui.load_waveform_bytes(csv.as_bytes(), "gate-regions.csv").unwrap();
+        line(&mut s, &mut ui, &cv, ":TIM:SCAL 1e-8;:TIM:OFFS 1e-6;:MEAS:GAT SCREEN");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:GATING?"), "SCREEN");
+        let vpp = |s: &mut Scpi, ui: &mut Ui| line(s, ui, &cv, ":MEAS:ITEM? VPP,R1").parse::<f64>().unwrap();
+        let first = vpp(&mut s, &mut ui);
+        assert!((first - 0.5).abs() < 1e-6, "first screen Vpp {first}, timebase {:?}, delay {}, zoom {}, state {}", ui.m.time_per_div(), ui.m.delay, ui.m.zoom, ui.workflow_state());
+        line(&mut s, &mut ui, &cv, ":TIM:OFFS 3e-6");
+        assert!((vpp(&mut s, &mut ui) - 1.5).abs() < 1e-6, "SCREEN follows the stopped viewport");
+
+        line(&mut s, &mut ui, &cv, ":MEAS:GATING NONE");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:GAT?"), "NONE");
+        assert!((vpp(&mut s, &mut ui) - 1.5).abs() < 1e-6);
+        line(&mut s, &mut ui, &cv, ":TIM:OFFS 1e-6");
+        assert!((vpp(&mut s, &mut ui) - 1.5).abs() < 1e-6, "NONE keeps the full record while panning");
+
+        line(&mut s, &mut ui, &cv, ":MEAS:GAT SCREEN");
+        assert!((vpp(&mut s, &mut ui) - 0.5).abs() < 1e-6, "restoring SCREEN recomputes the stopped gate");
+        assert_eq!((ui.m.run, captures(&ui)), (RunState::Stop, 0.0), "gate changes and pan must not acquire");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+
+        line(&mut s, &mut ui, &cv, ":MEAS:GAT unsupported");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:GAT?"), "SCREEN");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
+    }
+
+    #[test]
     fn reference_run_stop_are_idempotent_and_hold_acquisitions() {
         let (mut s, mut ui, cv) = reference_session();
         assert_eq!(line(&mut s, &mut ui, &cv, ":RUN;:SIM:PLAY?"), "1", "RUN updates replay immediately");
@@ -1835,12 +2257,11 @@ mod tests {
 
         let bad = dir.join("nope.wfm");
         let mut raw = wfm.clone();
-        raw[2..10].copy_from_slice(b":WFM#001");
+        raw[2..10].copy_from_slice(b":WFM#999");
         std::fs::write(&bad, &raw).unwrap();
         line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", bad.display()));
         let err = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
-        assert!(err.contains(":WFM#002"), "{err}");
-        assert!(err.contains(":WFM#003"), "{err}");
+        assert!(err.contains("version 001, 002 or 003"), "{err}");
 
         line(&mut s, &mut ui, &cv, ":REF:CLE");
         assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:POIN?"), "0");

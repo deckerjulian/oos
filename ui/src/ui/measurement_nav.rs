@@ -51,10 +51,11 @@ impl Ui {
     pub(super) fn measurement_chooser_layout(&self) -> Dlg {
         let r = Rect::new(14, 70, W - 28, 402);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
-        let source = Row { it: Item::MeasSrc, label: Rect::new(26, 122, 66, 40), ctrl: Rect::new(94, 122, 190, 40), ctl: Ctl::Pick };
-        let settings = Row { it: Item::Open(MenuId::Measure), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(298, 122, 142, 40), ctl: Ctl::Button };
-        let pairs = Row { it: Item::Open(MenuId::MeasPair), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(452, 122, 164, 40), ctl: Ctl::Button };
-        let mut rows = vec![source, settings, pairs];
+        let source = Row { it: Item::MeasSrc, label: Rect::new(26, 122, 54, 40), ctrl: Rect::new(84, 122, 172, 40), ctl: Ctl::Pick };
+        let gate = Row { it: Item::MeasGate, label: Rect::new(270, 122, 42, 40), ctrl: Rect::new(316, 122, 244, 40), ctl: Ctl::Seg(vec!["Screen".into(), "Full record".into()], Some(usize::from(self.m.meas_full_record))) };
+        let settings = Row { it: Item::Open(MenuId::Measure), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(572, 122, 128, 40), ctl: Ctl::Button };
+        let pairs = Row { it: Item::Open(MenuId::MeasPair), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(712, 122, 164, 40), ctl: Ctl::Button };
+        let mut rows = vec![source, gate, settings, pairs];
         for (i, item) in self.measurement_catalog().into_iter().enumerate() {
             let x = 208 + i as i32 % 4 * 195;
             let y = 170 + i as i32 / 4 * 43;
@@ -72,8 +73,8 @@ impl Ui {
             cv.text_in(&self.fonts.mb, rect, 1, label, if selected { DARK_TEXT } else { TEXT });
         }
         let source_count = self.m.meas.iter().filter(|e| e.1 == self.meas_src).count();
-        let line = format!("{} selected on {}  ·  tap to add or remove", source_count, self.wave_name(self.meas_src));
-        cv.text(&self.fonts.s, 634, 145, &line, DIM);
+        let line = format!("{} selected", source_count);
+        cv.text(&self.fonts.s, 892, 145, &line, DIM);
         let all = self.measurement_catalog_all();
         if all.len() > 24 {
             let pages = all.len().div_ceil(24);
@@ -191,7 +192,7 @@ impl Ui {
                 let r = self.strip_column();
                 cv.fill(r, BG);
                 cv.text(&self.fonts.sb, r.x + 8, r.y + 16, "Measurements", TEXT);
-                cv.text(&self.fonts.s, r.x + 8, r.y + 34, &format!("{}–{} of {}", first + 1, end, lines.len()), DIM);
+                cv.text(&self.fonts.s, r.x + 8, r.y + 34, &format!("{}-{} of {} · {}", first + 1, end, lines.len(), self.measurement_gate_label()), DIM);
                 let mut current_source = lines[..first].iter().rev().find_map(|line| line.pill.as_ref().map(|p| p.0.clone())).unwrap_or_default();
                 for (row, line) in lines[first..end].iter().enumerate() {
                     let y = r.y + 44 + row as i32 * 20;
@@ -229,7 +230,7 @@ impl Ui {
                         cv.text(&self.fonts.sb, vx, y + 12, &value, color);
                     }
                 }
-                cv.text(&self.fonts.sb, 12, y0 + BAND_ROWS * STRIP_ROW + 21, &format!("Measurements {}–{} of {}", first + 1, end, rows.len()), TEXT);
+                cv.text(&self.fonts.sb, 12, y0 + BAND_ROWS * STRIP_ROW + 21, &format!("Measurements {}-{} of {} · {}", first + 1, end, rows.len(), self.measurement_gate_label()), TEXT);
                 // Meter and cursor rows remain available beneath the page controls.
                 let extra_y = y0 + (BAND_ROWS + NAV_ROWS) * STRIP_ROW;
                 for (row, (label, value)) in self.dvm_row().iter().enumerate() {
@@ -241,6 +242,12 @@ impl Ui {
                 if self.m.cursor != CursorMode::Off {
                     let y = extra_y + if self.m.dvm_on || self.m.cnt_on { STRIP_ROW } else { 0 };
                     let mut x = 12;
+                    if let Some((label, color)) = self.cursor_badge() {
+                        let pill = Rect::new(8, y + 1, 42, 14);
+                        cv.round(pill, 3, color, 255);
+                        cv.text_in(&self.fonts.sb, pill, 1, &label, DARK_TEXT);
+                        x = 58;
+                    }
                     for (label, value) in self.cursor_values() {
                         x = cv.text(&self.fonts.s, x, y + 12, &label, DIM) + 8;
                         x = cv.text(&self.fonts.sb, x, y + 12, &value, TEXT) + 24;
@@ -258,7 +265,7 @@ impl Ui {
     }
 
     pub(super) fn results_page_size(&self) -> usize {
-        ((self.over_area().h - 98).max(22) / 22).clamp(1, 8) as usize
+        ((self.over_area().h - 98).max(42) / 42).clamp(1, 8) as usize
     }
 
     pub(super) fn results_page_range(&self, total: usize) -> (usize, usize) {
@@ -273,7 +280,7 @@ impl Ui {
     pub(super) fn draw_results_page_buttons(&self, cv: &mut Canvas, body: Rect, total: usize) {
         if total <= self.results_page_size() || self.results_min { return; }
         let (first, end) = self.results_page_range(total);
-        cv.text(&self.fonts.s, body.x + 10, body.y + body.h - 14, &format!("{}–{} / {}", first + 1, end, total), DIM);
+        cv.text(&self.fonts.s, body.x + 10, body.y + body.h - 14, &format!("{}-{} / {}", first + 1, end, total), DIM);
         let (prev, next) = Self::results_page_buttons(body);
         for (rect, label) in [(prev, "Prev"), (next, "Next")] {
             btn(cv, rect, BTN, BTN_BORDER);

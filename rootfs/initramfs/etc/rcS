@@ -50,8 +50,9 @@ ip link set eth0 up 2>/dev/null
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &
-# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only)
-telnetd -l /bin/sh
+# 3) key-only remote shell. No listener without a provisioned public key and
+# persistent data mount; host identity survives updates. Console access remains.
+[ -x /bin/oos-ssh ] && (/bin/oos-ssh start >> /tmp/oos-ssh.log 2>&1 &)
 # 4) banner on the panel and the serial console
 /bin/oos-info | tee /dev/tty1 > /dev/kmsg
 # 4b) what the data partition (0b) keeps for the screen

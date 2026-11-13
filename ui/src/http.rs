@@ -24,7 +24,7 @@ use std::time::Duration;
 
 /// Longest request: `POST /update` (a package is ~31 MB, the image at most 64 MiB), every other request.
 const MAX_UPDATE: usize = 70 << 20;
-const MAX_WAVEFORM: usize = 64 << 20;
+const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
@@ -108,7 +108,7 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 <button id="sim-mode" onclick="c('workflow sim')">SIM</button><button id="return-live" onclick="c('workflow live')" hidden>Return to live</button>
 <button id="acquire-toggle" onclick="c('key runstop')" aria-label="Run or stop acquisition">Run/Stop</button><button onclick="c('key single')">Single</button>
 <button onclick="c('workflow measure')">Add measurement</button><span id="session-state" class="session" aria-live="polite">Reading source...</span></div>
-<p id="wave-status" class="file-hint" role="status">CSV, OOS BIN or WFM · up to 64 MiB. You can also drop a file on the waveform.</p>
+<p id="wave-status" class="file-hint" role="status">CSV, OOS BIN or WFM · up to 128 MiB. You can also drop a file on the waveform.</p>
 <img id="s" width="1024" height="600" alt="scope screen" src="/screen.png">
 <div class="g"><div class="k"><span>Acquisition</span><div>
 <button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Autoset</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
@@ -146,7 +146,7 @@ document.getElementById('sim-mode').className=v.mode==='sim'?'on':'';document.ge
 document.getElementById('acquire-toggle').textContent=v.running?'Stop':'Run';
 }).catch(()=>{}).finally(()=>{statePending=false;});}
 async function uploadWave(file){if(!file||uploading)return;const status=document.getElementById('wave-status'),button=document.getElementById('load-wave'),slot=document.getElementById('wave-slot');
-if(file.size>64*1024*1024){status.textContent='That file is larger than 64 MiB. Export a shorter waveform and try again.';status.className='file-hint bad';return;}
+if(file.size>128*1024*1024){status.textContent='That file is larger than 128 MiB. Export a shorter waveform and try again.';status.className='file-hint bad';return;}
 uploading=true;button.disabled=true;slot.disabled=true;button.textContent='Loading...';status.className='file-hint';status.textContent='Loading '+file.name+' into R'+slot.value+'...';
 try{const response=await fetch('/waveform?name='+encodeURIComponent(file.name)+'&slot='+encodeURIComponent(slot.value),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});const text=await response.text();if(!response.ok)throw Error(text);status.textContent=text;refreshState();}
 catch(error){status.textContent='Could not load waveform: '+(error.message||'check the connection and try again.');status.className='file-hint bad';}
@@ -627,7 +627,7 @@ mod tests {
         malformed.extend_from_slice(&1e-9f64.to_le_bytes());
         malformed.extend_from_slice(&0f64.to_le_bytes());
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.bin&slot=4", &malformed));
-        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("too large"), "{reply}");
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("32-million-sample import limit"), "{reply}");
         assert_eq!(ui.ref_slot(), 2);
         for slot in ["0", "11", "nope", ""] {
             let reply = request(&mut h, &mut ui, &cv, &mut scpi, post(&format!("/waveform?slot={slot}"), csv.as_bytes()));
@@ -641,6 +641,8 @@ mod tests {
 
     #[test]
     fn waveform_upload_has_its_own_limit_and_origin_protection() {
+        assert_eq!(MAX_WAVEFORM, 128 << 20, "native and browser imports share the parser byte limit");
+        assert!(PAGE.contains("up to 128 MiB") && PAGE.contains("file.size>128*1024*1024"));
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::W, crate::ui::H);

@@ -13,6 +13,42 @@ pub(super) enum TableKind {
     Search,
 }
 
+#[cfg(test)]
+mod reference_search_navigation_tests {
+    use super::*;
+
+    #[test]
+    fn stopped_reference_table_jumps_to_an_event_outside_the_current_main_window() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "Long reference".into(), t0: -7e-6, dt: 2e-9,
+            v: (0..1600).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect(), vpd: 0.5, offset: 0.0, on: true });
+        ui.m.set_trigger_wave(WaveId::Ref(0), false);
+        ui.m.trig_level = 0.0;
+        ui.m.slope = Slope::Rise;
+        ui.m.tscale = tscales().iter().position(|&time| time >= 1e-9).unwrap();
+        ui.m.delay = 0.0;
+        ui.set_zoom(true);
+        ui.replay.captures = 9;
+        ui.mstat = vec![MStat { n: 7, sum: 14.0, ..MStat::default() }];
+        ui.adjust(Item::SearchOn, 1);
+        ui.activate(Item::SearchTable);
+        assert_eq!(ui.table, Some(TableKind::Search));
+        let events = ui.search_events();
+        assert_eq!(events.len(), 100);
+        let (rect, _) = ui.table_rect(events.len());
+        ui.tap(rect.x + 16, rect.y + HEAD_H + 8);
+        assert!((ui.m.zdelay as f64 - events[0]).abs() < 1e-12, "detail must reach the stored event, not clamp back into the previous ADC window");
+        assert!((ui.m.delay as f64 - events[0]).abs() < 1e-12, "overview follows an event outside its former range");
+        assert_eq!(ui.m.run, RunState::Stop);
+        assert_eq!(ui.replay.captures, 9);
+        assert_eq!((ui.mstat[0].n, ui.mstat[0].sum), (7, 14.0));
+        assert!(ui.last[0].is_none());
+        let rows = ui.table_rows(TableKind::Search);
+        assert!(rows[0].who.starts_with("R1 #"));
+    }
+}
+
 /// What Split puts under the plot. 0 is traces: two stacked windows, and this pane is not drawn.
 pub const PANES: [&str; 5] = ["Traces", "Spectrum", "Results", "Events", "Trend"];
 pub(super) const PANE_SPECTRUM: usize = 1;
@@ -42,9 +78,10 @@ impl Ui {
             }
             let m = self.m.dec_view(k);
             let Ok(p) = self.decode_packets_of(&m) else { continue };
-            for x in &p {
+            for x in p.iter() {
                 let text = packet_tag(&m, x).map_or_else(|| packet_text(&m, x), |t| t.to_string());
-                v.push(EventRow { t: x.t0, who: format!("D{} {}", k + 1, m.dec_proto.name()), text, ok: x.ok });
+                let source = if m.dec_on_la() { String::new() } else { format!(" {}", decode_source_name(m.dec_src)) };
+                v.push(EventRow { t: x.t0, who: format!("D{} {}{}", k + 1, m.dec_proto.name(), source), text, ok: x.ok });
             }
         }
         v.sort_by(|a, b| a.t.total_cmp(&b.t));
@@ -52,7 +89,11 @@ impl Ui {
     }
 
     fn search_rows(&self) -> Vec<EventRow> {
-        self.search_events().into_iter().enumerate().map(|(i, t)| EventRow { t, who: format!("{}", i + 1), text: self.m.trig_type.name().to_string(), ok: true }).collect()
+        self.search_events().iter().copied().enumerate().map(|(i, t)| self.search_row(i, t)).collect()
+    }
+
+    fn search_row(&self, index: usize, t: f64) -> EventRow {
+        EventRow { t, who: format!("{} #{}", self.trigger_source_label(), index + 1), text: self.m.trig_type.name().to_string(), ok: true }
     }
 
     /// The decoder events as text, one per line: time, decoder, content (SCPI).
@@ -90,24 +131,34 @@ impl Ui {
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
         let Some(k) = self.table else { return };
         let f = &self.fonts;
-        let rows = self.table_rows(k);
-        let (r, fit) = self.table_rect(rows.len());
+        let (total, mut rows) = if k == TableKind::Search { (self.search_events().len(), Vec::new()) }
+            else { let rows = self.table_rows(k); (rows.len(), rows) };
+        let (r, fit) = self.table_rect(total);
+        let top = self.table_top.min(total.saturating_sub(fit));
+        if k == TableKind::Search {
+            rows = self.search_events().iter().copied().enumerate().skip(top).take(fit).map(|(i, t)| self.search_row(i, t)).collect();
+        } else { rows = rows.into_iter().skip(top).take(fit).collect(); }
         cv.round(r, 6, CARD_BORDER, 255);
         cv.round(r.inset(1), 5, BAR, 240);
         let title = match k {
-            TableKind::Decode => format!("Decoder events \u{b7} {}", rows.len()),
-            TableKind::Search => format!("Search events \u{b7} {}", rows.len()),
+            TableKind::Decode => if self.decode_busy() { "Decoder events - Computing".into() } else { format!("Decoder events \u{b7} {}", total) },
+            TableKind::Search => if self.m.trig_ref.is_some() && self.reference_search_busy() { "Search · computing…".into() }
+                else { format!("Search {} · {}", self.trigger_source_label(), total) },
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
         for (b, t) in Self::table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]) {
             btn(cv, *b, BTN, BTN_BORDER);
             cv.text_in(&f.mb, *b, 1, t, TEXT);
         }
-        let top = self.table_top.min(rows.len().saturating_sub(fit));
         if rows.is_empty() {
-            cv.text(&f.s, r.x + 12, r.y + HEAD_H + 18, "nothing found in this record", DIM);
+            let empty = if k == TableKind::Search && self.m.trig_ref.is_some() && !self.reference_search_supported() {
+                "This condition needs physical hardware channels"
+            } else if k == TableKind::Decode && self.decode_busy() { "Decoding the full reference record..." }
+            else if k == TableKind::Search && self.reference_search_busy() { "Searching the full reference record…" }
+            else { "nothing found in this record" };
+            cv.text(&f.s, r.x + 12, r.y + HEAD_H + 18, empty, DIM);
         }
-        for (i, e) in rows.iter().skip(top).take(fit).enumerate() {
+        for (i, e) in rows.iter().enumerate() {
             let y = r.y + HEAD_H + i as i32 * ROW_H;
             cv.hline(r.x + 8, r.x + r.w - 9, y, LINE);
             cv.text(&f.s, r.x + 12, y + 18, &si(e.t, "s"), LABEL);
@@ -119,13 +170,15 @@ impl Ui {
     /// A tap while the table is open; true when it was on the table.
     pub(super) fn table_tap(&mut self, x: i32, y: i32) -> bool {
         let Some(k) = self.table else { return false };
-        let rows = self.table_rows(k);
-        let (r, fit) = self.table_rect(rows.len());
+        let events = (k == TableKind::Search).then(|| self.search_events());
+        let rows = if events.is_none() { self.table_rows(k) } else { Vec::new() };
+        let total = events.as_ref().map_or(rows.len(), |events| events.len());
+        let (r, fit) = self.table_rect(total);
         if !r.contains(x, y) {
             return false;
         }
         let [up, down, close] = Self::table_buttons(r);
-        let last = rows.len().saturating_sub(fit);
+        let last = total.saturating_sub(fit);
         self.table_top = self.table_top.min(last);
         if close.contains(x, y) {
             self.table = None;
@@ -135,8 +188,7 @@ impl Ui {
             self.table_top = (self.table_top + fit).min(last);
         } else if y >= r.y + HEAD_H {
             let i = self.table_top + ((y - r.y - HEAD_H) / ROW_H) as usize;
-            if let Some(e) = rows.get(i) {
-                let t = e.t;
+            if let Some(t) = events.as_ref().and_then(|events| events.get(i).copied()).or_else(|| rows.get(i).map(|event| event.t)) {
                 self.go_to_time(t);
             }
         }
@@ -149,12 +201,21 @@ impl Ui {
             return self.toast("Stop the scope to go to an event");
         }
         if self.m.zoom {
+            if self.m.trig_ref.is_some() {
+                let half_main = self.m.time_per_div() * HDIV * 0.5;
+                let half_zoom = tscales()[self.m.zscale] * HDIV * 0.5;
+                if (t as f32 - self.m.delay).abs() + half_zoom > half_main {
+                    self.m.delay = t as f32;
+                    if let Some(saved) = self.zoom_saved.as_mut() { saved.2 = t as f32; }
+                }
+            }
             self.m.zdelay = t as f32;
             self.clamp_zoom();
         } else {
             self.m.delay = t as f32;
         }
-        self.settings_changed();
+        if self.m.trig_ref.is_some() { self.refresh_stopped_reference(); }
+        else { self.settings_changed(); }
         self.toast(&format!("At {}", si(t, "s")));
     }
 

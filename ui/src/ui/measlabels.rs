@@ -3,7 +3,7 @@
 //! Measure > Labels on trace: what a measurement measures, on the trace: level lines for levels, arrows for spans.
 
 use super::{si, Canvas, Rect, Ui, CH_COLORS, REF_COLORS};
-use crate::model::{WaveId, VDIV};
+use crate::model::WaveId;
 use crate::gfx::Rgb;
 use oos_dsp::measure::{Analysis, Meas};
 
@@ -24,7 +24,8 @@ pub(super) enum Mark {
 
 /// First index of `v` above `after`.
 fn next_after(v: &[f64], after: f64) -> Option<f64> {
-    v.iter().copied().find(|&t| t > after)
+    if after.is_nan() { return None; }
+    v.get(v.partition_point(|&time| time <= after)).copied()
 }
 
 /// The mark of measurement `k`, starting from the first time on the screen `t0`; `None` = nothing to draw for it.
@@ -115,9 +116,7 @@ impl Ui {
                 let Some(r) = self.refs.get(i).and_then(|r| r.as_ref()) else {
                     return a.y + a.h / 2;
                 };
-                let ppy = a.h as f32 / VDIV;
-                let cy = a.y as f32 + a.h as f32 / 2.0;
-                (cy - (v + r.offset) / r.vpd.max(1e-12) * ppy).round() as i32
+                self.zoom_y_of_divs(a, (v + r.offset) / r.vpd.max(1e-12)).round() as i32
             }
         }
     }
@@ -172,7 +171,7 @@ impl Ui {
             if !ana.valid {
                 continue;
             }
-            let v = self.meas_of(ana, k);
+            let v = self.meas_at(id, k);
             if !v.is_finite() {
                 continue;
             }

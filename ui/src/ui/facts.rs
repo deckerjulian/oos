@@ -8,7 +8,7 @@ use super::*;
 use oos_dsp::bandwidth;
 use oos_dsp::dpt::{self, Fourth};
 use oos_dsp::magnetic::{self, Geom};
-use oos_dsp::measure::{self, setup_hold_violations, Analysis, Meas};
+use oos_dsp::measure::Meas;
 use oos_dsp::motor::{self, Theta};
 use oos_dsp::power;
 use oos_dsp::spectrum;
@@ -27,44 +27,17 @@ impl Ui {
         }
     }
 
-    fn min_amp(&self, id: WaveId) -> f64 {
-        match id {
-            WaveId::Ch(c) => 0.4 * self.m.ch[c.min(n_ch() - 1)].volts_per_div() as f64,
-            WaveId::Ref(i) => self.refs.get(i).and_then(|r| r.as_ref()).map(|r| 0.4 * r.vpd as f64).unwrap_or(0.0),
-        }
-    }
-
-    /// Analysis of one source, and the time of its first sample. A channel must be on. A ref may be hidden.
-    fn analysis_of(&self, id: WaveId) -> Option<(Analysis, f64)> {
-        if let WaveId::Ch(c) = id {
-            if c >= n_ch() || !self.m.ch[c].on {
-                return None;
-            }
-        }
-        self.on_rec(|rec| {
-            let s = self.wave_samples(rec, id)?;
-            Some((measure::analyze_refs(&s.v, s.dt, self.min_amp(id), self.m.meas_lpct, self.m.meas_hpct), s.t0))
-        })
-    }
-
     pub(crate) fn meas_pair_sources(&self) -> (WaveId, WaveId) {
         (self.meas_src, self.meas_src_b)
     }
 
     pub(crate) fn fact_meas(&self, k: Meas, id: WaveId) -> f64 {
-        match self.analysis_of(id) {
-            Some((a, _)) => self.meas_of(&a, k),
-            None => f64::NAN,
-        }
+        self.meas_at(id, k)
     }
 
     /// Rising-clock edges that miss the configured setup or hold limit.
     pub(crate) fn fact_setup_hold(&self, clk: WaveId, data: WaveId) -> f64 {
-        let (Some((ca, ta)), Some((da, tb))) = (self.analysis_of(clk), self.analysis_of(data)) else {
-            return f64::NAN;
-        };
-        let (ca, da) = (shift_t0(&ca, ta), shift_t0(&da, tb));
-        setup_hold_violations(&ca, &da, self.m.meas_tsetup, self.m.meas_thold)
+        self.pair_at(14, clk, data)
     }
 
     fn grid(&self, req: &[WaveId], opt: &[Option<WaveId>]) -> Option<(f64, f64, Vec<Vec<f32>>, Vec<Option<Vec<f32>>>)> {
@@ -439,20 +412,4 @@ impl Ui {
 struct InvPack {
     dq: Option<oos_dsp::motor::Dq0>,
     mech: oos_dsp::motor::Mech,
-}
-
-fn shift_t0(a: &Analysis, t0: f64) -> Analysis {
-    if t0 == 0.0 {
-        return a.clone();
-    }
-    let mut b = a.clone();
-    for t in &mut b.rises {
-        *t += t0;
-    }
-    for t in &mut b.falls {
-        *t += t0;
-    }
-    b.t_vmax += t0;
-    b.t_vmin += t0;
-    b
 }

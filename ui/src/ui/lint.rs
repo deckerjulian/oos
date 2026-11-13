@@ -215,7 +215,7 @@ fn system_info_has_the_rates() {
     assert!(u.sysinfo_rows().iter().flatten().any(|r| matches!(r, super::sysinfo::Row::Kv(k, ..) if k.contains("Waveforms"))));
 }
 
-/// All mixes of channels, LA and generator: the row fits, nothing overlaps, every card can be touched.
+/// Compact source controls fit every mix; auxiliary tools remain in Sources.
 #[test]
 fn bottom_row_fits_in_every_mix() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
@@ -225,35 +225,30 @@ fn bottom_row_fits_in_every_mix() {
         }
         (u.m.la.on, u.m.afg_on) = (bits & 16 != 0, bits & 32 != 0);
         let c = u.card_layout();
-        let (la, gen) = (c.la.expect("the DHO924S has an LA port"), c.gen.expect("and a generator"));
-        let mut all: Vec<Rect> = c.ch.to_vec();
-        all.extend([la, gen, c.time, c.trig]);
+        assert!(c.la.is_none() && c.gen.is_none(), "auxiliary tools do not reserve LCD footer space");
+        let mut all: Vec<Rect> = c.ch.into_iter().filter(|rect| rect.w > 0).collect();
+        all.extend([c.time, c.trig]);
         for (i, a) in all.iter().enumerate() {
-            assert!(a.w >= 54 && a.x + a.w <= W - 6, "mix {:b}: {:?}", bits, a);
+            assert!(a.w >= 38 && a.h >= 30 && a.x + a.w <= W, "mix {:b}: {:?}", bits, a);
             assert!(!all[i + 1..].iter().any(|b| overlaps(*a, *b)), "mix {:b}: {:?}", bits, a);
         }
-        assert!(c.trig.w >= 222 && c.time.w >= 130, "mix {:b}", bits);
-        // a channel that is on keeps room for its text
+        assert!(c.trig.w >= 222 && c.time.w >= 124, "mix {:b}", bits);
+        // A visible channel keeps a distinct source hit target.
         for k in 0..NCH {
-            assert!(!u.m.ch[k].on || c.ch[k].w >= 90, "mix {:b}: CH{} {}", bits, k + 1, c.ch[k].w);
+            assert!(!u.m.ch[k].on || c.ch[k].w >= 38, "mix {:b}: CH{} {}", bits, k + 1, c.ch[k].w);
         }
     }
 }
 
 #[test]
-fn la_and_generator_cards_open_their_pages() {
+fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
-    let tap = |u: &mut Ui, r: Rect| u.tap(r.x + r.w / 2, r.y + r.h / 2);
-    // an LA that is off comes on, like a channel; a second tap only closes the page
-    let r = u.aux_cards().0.unwrap();
-    tap(&mut u, r);
+    u.tap(80, BOTTOM.y + 15);
+    u.tap(110, BOTTOM.y - 49); // Sources: Logic analyser, immediately above Generator.
     assert!(u.m.la.on && u.menu_open && u.menu == MenuId::La);
-    let r = u.aux_cards().0.unwrap();
-    tap(&mut u, r);
-    assert!(u.m.la.on && !u.menu_open);
-    // the generator page opens, the output stays off
-    let r = u.aux_cards().1.unwrap();
-    tap(&mut u, r);
+    u.close_menu();
+    u.tap(80, BOTTOM.y + 15);
+    u.tap(110, BOTTOM.y - 19);
     assert!(u.menu_open && u.menu == MenuId::Afg);
     assert!(!u.m.afg_on, "a card must not switch an output on");
 }
@@ -1516,7 +1511,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
         ch: screen.clone(),
         triggered: true,
         partial: false,
-        raw: Some(crate::wave::Raw { frame: std::sync::Arc::new(frame), i0: 0, i1: 200, t0: -2e-7 }),
+        raw: Some(crate::wave::Raw { frame: std::sync::Arc::new(frame), i0: 0, i1: 200, t0: -2e-7, conditioned: false }),
         la: None,
     });
     let rec = u.last[0].as_ref().unwrap();

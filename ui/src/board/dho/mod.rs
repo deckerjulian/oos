@@ -7,6 +7,7 @@
 
 pub mod fpga;
 pub mod hw;
+mod decode_pipeline;
 #[cfg(test)]
 mod tests;
 

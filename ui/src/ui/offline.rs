@@ -74,8 +74,15 @@ impl Ui {
         });
         if let Some((t0, dt, n)) = spec {
             self.apply_record_timebase(t0, dt, n);
+            self.m.zoom = n > 8192 && !self.zoom_user_closed;
+            if self.m.zoom {
+                let detail = dt * 8192.0 / HDIV as f64;
+                self.m.zscale = tscales().iter().rposition(|&t| t as f64 <= detail).unwrap_or(0);
+                self.m.zdelay = (t0 + 0.5 * dt * 8192.0) as f32;
+            }
         }
         self.m.eye_src = WaveId::Ref(slot);
+        self.select_workspace_source(WaveId::Ref(slot));
         self.ph.clear();
         self.phz.clear();
         // Install the stopped screen gate before touching other references.
@@ -128,7 +135,18 @@ impl Ui {
             }
             return ("\u{2014}".into(), false);
         }
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| self.m.srate_depth());
+        let captured = self.last[0].as_ref().and_then(|r| {
+            if let Some(raw) = r.raw.as_ref() {
+                return Some((raw.frame.acq.0, raw.frame.acq.1 as u64));
+            }
+            if matches!(self.src, Source::Demo { .. }) {
+                let points = r.ch.iter().map(Vec::len).max().unwrap_or(0);
+                return (points > 0 && r.dt > 0.0).then_some((1.0 / r.dt, points as u64));
+            }
+            None
+        });
+        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64))
+            .or(captured).unwrap_or_else(|| self.m.srate_depth());
         (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), true)
     }
 

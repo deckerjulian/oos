@@ -219,13 +219,18 @@ fn address_rrs(id: &Identity, ttl: u32) -> Vec<Rr> {
 }
 
 fn pack(id: u16, answer: &[Rr], extra: &[Rr]) -> Vec<u8> {
+    pack_questions(id, 0, &[], answer, extra)
+}
+
+fn pack_questions(id: u16, count: u16, questions: &[u8], answer: &[Rr], extra: &[Rr]) -> Vec<u8> {
     let mut o = Vec::new();
     put_u16(&mut o, id);
     put_u16(&mut o, 0x8400);
-    put_u16(&mut o, 0);
+    put_u16(&mut o, count);
     put_u16(&mut o, answer.len() as u16);
     put_u16(&mut o, 0);
     put_u16(&mut o, extra.len() as u16);
+    o.extend_from_slice(questions);
     for r in answer.iter().chain(extra) {
         put_name(&mut o, &r.name);
         put_u16(&mut o, r.typ);
@@ -295,7 +300,7 @@ fn be_u16(msg: &[u8], p: usize) -> Option<u16> {
     Some(u16::from_be_bytes(b))
 }
 
-fn read_questions(msg: &[u8]) -> Option<(Vec<Question>, Vec<(String, u16)>, usize)> {
+fn read_questions(msg: &[u8]) -> Option<(Vec<Question>, Vec<(String, u16)>, usize, usize)> {
     if msg.len() < 12 {
         return None;
     }
@@ -315,6 +320,7 @@ fn read_questions(msg: &[u8]) -> Option<(Vec<Question>, Vec<(String, u16)>, usiz
         p += 4;
         qs.push(Question { name, typ, unicast: class & 0x8000 != 0 });
     }
+    let question_end = p;
     let mut known = Vec::new();
     for _ in 0..an {
         let (name, n) = read_name(msg, p)?;
@@ -325,7 +331,7 @@ fn read_questions(msg: &[u8]) -> Option<(Vec<Question>, Vec<(String, u16)>, usiz
         p += 2 + rd;
         known.push((name, typ));
     }
-    Some((qs, known, u16::from_be_bytes([msg[0], msg[1]]) as usize))
+    Some((qs, known, u16::from_be_bytes([msg[0], msg[1]]) as usize, question_end))
 }
 
 fn wants(q: &Question, name: &str, typ: u16) -> bool {
@@ -333,8 +339,8 @@ fn wants(q: &Question, name: &str, typ: u16) -> bool {
 }
 
 /// A response to one query, or nothing when the query is not for us.
-pub fn answer(query: &[u8], id: &Identity, services: &[Svc]) -> Option<(Vec<u8>, bool)> {
-    let (qs, known, qid) = read_questions(query)?;
+pub fn answer(query: &[u8], id: &Identity, services: &[Svc], legacy: bool) -> Option<(Vec<u8>, bool)> {
+    let (qs, known, qid, question_end) = read_questions(query)?;
     let mut ans = Vec::new();
     let mut extra = Vec::new();
     let mut unicast = false;
@@ -372,6 +378,16 @@ pub fn answer(query: &[u8], id: &Identity, services: &[Svc]) -> Option<(Vec<u8>,
     extra.retain(|r| !known_has(r));
     if ans.is_empty() && extra.is_empty() {
         return None;
+    }
+    if legacy {
+        // RFC 6762 §6.7: a one-shot resolver uses an ephemeral source port.
+        // Echo its exact questions (including case/compression), never flush
+        // its cache, and keep its non-coherent cache lifetime short.
+        for rr in ans.iter_mut().chain(&mut extra) {
+            rr.class &= !0x8000;
+            rr.ttl = rr.ttl.min(10);
+        }
+        return Some((pack_questions(qid as u16, qs.len() as u16, &query[12..question_end], &ans, &extra), true));
     }
     Some((pack(qid as u16, &ans, &extra), unicast))
 }
@@ -550,7 +566,7 @@ impl Announcer {
             }
         }
         for (buf, from) in got {
-            let Some((pkt, unicast)) = answer(&buf, &id, &self.services) else { continue };
+            let Some((pkt, unicast)) = answer(&buf, &id, &self.services, from.port() != MDNS_PORT) else { continue };
             if unicast {
                 if let Some(sock) = self.sock.as_ref() {
                     let _ = sock.send_to(&pkt, from);
@@ -619,6 +635,9 @@ mod tests {
 
     fn names(msg: &[u8]) -> Vec<(String, u16, Vec<u8>)> {
         let mut p = 12;
+        for _ in 0..be_u16(msg, 4).unwrap() {
+            p = read_name(msg, p).unwrap().1 + 4;
+        }
         let an = u16::from_be_bytes([msg[6], msg[7]]) as usize;
         let extra = u16::from_be_bytes([msg[10], msg[11]]) as usize;
         let mut o = Vec::new();
@@ -698,16 +717,16 @@ mod tests {
             put_u16(&mut m, IN | 0x8000); // unicast requested
             m
         };
-        let (pkt, uni) = answer(&q("_hislip._tcp.local"), &id, &services).unwrap();
+        let (pkt, uni) = answer(&q("_hislip._tcp.local"), &id, &services, false).unwrap();
         assert!(uni);
         let recs = names(&pkt);
         let srv = recs.iter().find(|r| r.1 == SRV).unwrap();
         assert_eq!(srv_port(&srv.2), 4880);
         assert!(recs.iter().filter(|r| r.1 == TXT).all(|r| !String::from_utf8_lossy(&r.2).contains("path=")));
-        let (pkt, _) = answer(&q("_http._tcp.local"), &id, &services).unwrap();
+        let (pkt, _) = answer(&q("_http._tcp.local"), &id, &services, false).unwrap();
         let recs = names(&pkt);
         assert!(recs.iter().any(|r| r.1 == TXT && String::from_utf8_lossy(&r.2).contains("path=/lxi/identification")));
-        assert!(answer(&advertisement(&id, &services), &id, &services).is_none(), "a response is not answered");
+        assert!(answer(&advertisement(&id, &services), &id, &services, false).is_none(), "a response is not answered");
     }
 
     #[test]
@@ -722,6 +741,50 @@ mod tests {
         assert!(text.contains("path=/lxi/identification"));
     }
 
+    fn record_headers(msg: &[u8]) -> Vec<(u16, u32)> {
+        let mut at = 12;
+        for _ in 0..be_u16(msg, 4).unwrap() { at = read_name(msg, at).unwrap().1 + 4; }
+        let mut headers = Vec::new();
+        for _ in 0..be_u16(msg, 6).unwrap() + be_u16(msg, 10).unwrap() {
+            at = read_name(msg, at).unwrap().1;
+            let class = be_u16(msg, at + 2).unwrap();
+            let ttl = u32::from_be_bytes(msg[at + 4..at + 8].try_into().unwrap());
+            let size = be_u16(msg, at + 8).unwrap() as usize;
+            headers.push((class, ttl));
+            at += 10 + size;
+        }
+        assert_eq!(at, msg.len(), "the echoed question must not corrupt resource record offsets");
+        headers
+    }
+
+    #[test]
+    fn legacy_dns_sd_echoes_exact_compressed_questions_without_cache_flush() {
+        let (id, services) = sample();
+        let mut query = Vec::new();
+        for value in [0x9876, 0, 2, 0, 0, 0] { put_u16(&mut query, value); }
+        put_name(&mut query, "_HTTP._tcp.local");
+        put_u16(&mut query, PTR);
+        put_u16(&mut query, IN); // no QU bit: an ephemeral source still requires unicast
+        query.push(4);
+        query.extend_from_slice(b"_lxi");
+        query.extend_from_slice(&[0xc0, 18]); // reuse the first question's _tcp.local
+        put_u16(&mut query, PTR);
+        put_u16(&mut query, IN);
+        let (reply, unicast) = answer(&query, &id, &services, true).unwrap();
+        assert!(unicast);
+        assert_eq!(be_u16(&reply, 0), Some(0x9876));
+        assert_eq!(be_u16(&reply, 4), Some(2));
+        assert_eq!(&reply[12..query.len()], &query[12..], "preserve resolver question case and compression exactly");
+        assert_eq!(be_u16(&reply, 6), Some(2));
+        assert!(record_headers(&reply).iter().all(|&(class, ttl)| class == IN && ttl <= 10));
+        assert!(names(&reply).iter().any(|entry| entry.1 == SRV && srv_port(&entry.2) == 8080));
+        // The same ordinary mDNS query keeps its multicast/cache coherency rules.
+        let (mdns, unicast) = answer(&query, &id, &services, false).unwrap();
+        assert!(!unicast);
+        assert_eq!(be_u16(&mdns, 4), Some(0));
+        assert!(record_headers(&mdns).iter().any(|&(class, ttl)| class == FLUSH && ttl == TTL));
+    }
+
     #[test]
     fn a_query_to_the_socket_is_answered() {
         let services = listening(Some(8080), Some(5555), None, Some(4880));
@@ -731,6 +794,9 @@ mod tests {
         socket.set_nonblocking(true).unwrap();
         let destination = socket.local_addr().unwrap();
         a.sock = Some(socket);
+        a.burst = 0;
+        a.refresh = Instant::now() + Duration::from_secs(60);
+        a.interfaces_next = Instant::now() + Duration::from_secs(60);
         let mut q = Vec::new();
         put_u16(&mut q, 9);
         put_u16(&mut q, 0);
@@ -740,7 +806,7 @@ mod tests {
         put_u16(&mut q, 0);
         put_name(&mut q, "_scpi-raw._tcp.local");
         put_u16(&mut q, PTR);
-        put_u16(&mut q, IN | 0x8000);
+        put_u16(&mut q, IN); // legacy source port requires unicast even without QU
         let c = UdpSocket::bind("127.0.0.1:0").unwrap();
         c.set_nonblocking(true).unwrap();
         c.send_to(&q, destination).unwrap();
@@ -754,6 +820,9 @@ mod tests {
                 Err(error) => panic!("no discovery response: {error}"),
             }
         };
+        assert_eq!(be_u16(&buf[..n], 4), Some(1));
+        assert_eq!(&buf[12..q.len()], &q[12..]);
+        assert!(record_headers(&buf[..n]).iter().all(|&(class, ttl)| class == IN && ttl <= 10));
         let recs = names(&buf[..n]);
         assert!(recs.iter().any(|r| r.1 == SRV && srv_port(&r.2) == 5555), "{recs:?}");
     }

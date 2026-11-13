@@ -6,6 +6,8 @@
 //! fast to slow until each channel shows a steady period with most of its height (fast first: a coarse time base can
 //! fold a fast signal into a period that is not there). A channel without a period keeps its settings, one that is off stays off. With no signal on any
 //! channel the set-up stays as it was.
+//! The hardware Auto action only targets live ADC channels. Stored/SIM records
+//! use the separate Fit record action; its bounded helper is retained below.
 
 use super::*;
 use crate::wave::{autoset_shown, periodic, place, Stats};
@@ -55,6 +57,19 @@ fn tscale_for(t: f32) -> usize {
 }
 
 impl Ui {
+    pub(super) fn autoset_live_only(&mut self) {
+        if self.record_mode() || !(0..n_ch()).any(|channel| self.m.ch[channel].on) {
+            self.toast("Autoset needs a live channel; use Fit record");
+            return;
+        }
+        if self.src.is_hw() { self.auto_start(); }
+        else {
+            autoset(&mut self.m, &self.src);
+            self.dirty_map = true;
+            self.settings_changed();
+            self.toast("Auto set-up");
+        }
+    }
     /// An auto set-up is under way.
     pub fn auto_running(&self) -> bool {
         self.auto.is_some()
@@ -62,8 +77,11 @@ impl Ui {
 
     /// AUTO key on the hardware: starts the run, `auto_step` goes on from the step loop.
     pub(super) fn auto_start(&mut self) {
+        if self.record_mode() {
+            return self.toast("Autoset needs a live channel; use Fit record");
+        }
         let Some(first) = (0..n_ch()).find(|&c| self.m.ch[c].on) else {
-            return self.toast("Auto set-up: no channel on");
+            return self.toast("Autoset needs a live channel; use Fit record");
         };
         let back = Box::new(self.m.clone());
         self.auto_bar = None;
@@ -80,6 +98,7 @@ impl Ui {
         m.trig_la = None;
         m.trig_mode = TrigMode::Auto;
         m.trig_src = first;
+        m.trig_ref = None;
         m.tscale = tscale_for(LEVELS_TBASE);
         // a fixed deep memory would make every step of the search take seconds, and an auto set-up has no use for it
         m.mdepth = 0;
@@ -104,8 +123,9 @@ impl Ui {
 
     /// Lowest and highest volts of the last record.
     fn auto_levels(&self, c: usize) -> (f32, f32) {
-        let v = self.record_volts(c);
-        (v.iter().copied().fold(f32::MAX, f32::min).min(f32::MAX), v.iter().copied().fold(f32::MIN, f32::max))
+        let Some(record) = &self.last[0] else { return (f32::NAN, f32::NAN) };
+        let s = crate::wave::autoset_summary(&record.ch[c], record.dt);
+        (s.vmin, s.vmax)
     }
 
     pub(super) fn auto_step(&mut self) {
@@ -167,7 +187,7 @@ impl Ui {
                     let (lo, hi) = self.auto_levels(c);
                     let swing = hi - lo;
                     if swing >= 0.4 * a.full[c] && swing >= 1.5 * a.swing[c] {
-                        if let Some(p) = periodic(&self.record_volts(c), dt) {
+                        if let Some(p) = self.last[0].as_ref().and_then(|r| periodic(&r.ch[c], dt)) {
                             (a.period[c], a.swing[c], a.lv[c]) = (Some(p), swing, (lo, hi));
                         }
                     }
@@ -199,6 +219,7 @@ impl Ui {
                 self.m.ch[c] = a.back.ch[c].clone();
             }
             self.m.acq = a.back.acq;
+            self.m.mdepth = a.back.mdepth;
             // the search ran at full bandwidth (a fast signal must not look small); the channel's own choice comes back,
             // Auto by default, which keeps the noise of slow time bases off the trigger (trigger.md 7)
             for &(c, _, _) in &found {
@@ -215,8 +236,8 @@ impl Ui {
 }
 
 impl Ui {
-    /// SIM is playing a record, or every analog channel is off and a reference is on screen.
-    /// A live channel with SIM stopped keeps the live set-up.
+    /// Whether the separate Fit record action is working with stored references.
+    /// The hardware Auto action does not call this reference fitting path.
     pub(super) fn reference_autoset(&self) -> bool {
         if self.sim_play {
             return true;
@@ -225,42 +246,58 @@ impl Ui {
         !live && self.refs.iter().any(|r| r.as_ref().is_some_and(|r| r.on && r.v.len() >= 4 && r.dt > 0.0))
     }
 
-    /// Scale, position and time base from each shown reference. Does not turn an analog channel on.
+    /// Bounded Fit record helper: scale/position/time base from shown refs;
+    /// never called by hardware Auto and never turns an ADC channel on.
     pub(super) fn autoset_reference(&mut self) {
-        let shown: Vec<(usize, Vec<f32>, f64)> = self
+        let shown: Vec<usize> = self
             .refs
             .iter()
             .enumerate()
             .filter_map(|(i, r)| {
                 let r = r.as_ref()?;
-                (r.on && r.v.len() >= 4 && r.dt > 0.0).then(|| (i, r.v.clone(), r.dt))
+                (r.on && r.v.len() >= 4 && r.dt.is_finite() && r.dt > 0.0).then_some(i)
             })
             .collect();
         if shown.is_empty() {
-            self.toast("Auto set-up: no reference on");
+            self.toast("Fit record: no reference on");
             return;
         }
-        let waves: Vec<(&[f32], f64)> = shown.iter().map(|(_, v, dt)| (v.as_slice(), *dt)).collect();
+        // Borrow the records: four 20M files must not create four extra 80MB vectors.
+        let waves: Vec<(&[f32], f64)> = shown.iter().map(|&i| { let r = self.refs[i].as_ref().unwrap(); (r.v.as_slice(), r.dt) }).collect();
         let views = autoset_shown(&mut self.m, &waves);
         let mut any = false;
-        for ((i, _, _), view) in shown.iter().zip(views) {
+        let mut fitted = Vec::new();
+        for (&i, view) in shown.iter().zip(views) {
             if let Some((vpd, offset)) = view {
-                if let Some(r) = &mut self.refs[*i] {
+                if let Some(r) = &mut self.refs[i] {
                     r.vpd = vpd;
                     r.offset = offset;
                     any = true;
+                    fitted.push(i);
                 }
             }
         }
         if !any {
-            self.toast("Auto set-up: no signal found");
+            self.toast("Fit record: no signal found");
             return;
         }
+        // Keep the chosen time window in an actual record, including files whose
+        // first sample is far from zero. Prefer the user's selected shown source.
+        let selected = self.selected_workspace_source().and_then(|id| match id { WaveId::Ref(i) if fitted.contains(&i) => Some(i), _ => None });
+        if let Some(reference) = selected.or_else(|| fitted.first().copied()).and_then(|i| self.refs[i].as_ref()) {
+            let end = reference.t0 + reference.dt * reference.v.len().saturating_sub(1) as f64;
+            let half = self.m.time_per_div() as f64 * HDIV as f64 * 0.5;
+            let center = self.m.delay as f64;
+            if center + half < reference.t0 || center - half > end {
+                self.m.delay = (reference.t0 + 0.5 * (end - reference.t0)) as f32;
+            }
+        }
+        if self.m.zoom { self.reset_zoom(); }
         self.ph.clear();
         self.phz.clear();
         self.measure_refs();
         self.dirty_map = true;
-        self.toast("Auto set-up");
+        self.toast("Record fitted");
     }
 }
 
@@ -328,14 +365,25 @@ impl Ui {
     pub(super) fn auto_view(&mut self, v: AutoView) {
         let c = self.m.trig_src;
         let ok = |x: f64| x.is_finite() && x > 0.0;
-        let period = Some(self.meas(c, Meas::Period)).filter(|&p| ok(p));
+        // The bar navigates the fitted ADC capture. A previous edge view may
+        // make the Screen measurement gate too short to contain even one full
+        // period; that must not disable the next edge/period navigation action.
+        let native = self.last[0].as_ref().map(|record| {
+            if let Some(raw) = record.raw.as_ref().filter(|raw| !raw.frame.envelope && !raw.frame.ch[c].is_empty()) {
+                crate::wave::autoset_summary(&raw.frame.ch[c], raw.frame.dt)
+            } else { crate::wave::autoset_summary(&record.ch[c], record.dt) }
+        });
+        let period = native.as_ref().map(|summary| summary.period).filter(|&p| ok(p))
+            .or_else(|| Some(self.meas(c, Meas::Period)).filter(|&p| ok(p)));
         let Some(p) = period else { return self.toast("No period on the trigger channel") };
         let (t, slope) = match v {
             AutoView::Few => (p * 3.0 / HDIV as f64, None),
             AutoView::Many => (p * 10.0 / HDIV as f64, None),
             // the 10-90 % time over about two divisions; a period / 20 when there is no edge time
-            AutoView::Rise => (Some(self.meas(c, Meas::Rise)).filter(|&x| ok(x)).unwrap_or(p / 10.0) / 2.0, Some(Slope::Rise)),
-            AutoView::Fall => (Some(self.meas(c, Meas::Fall)).filter(|&x| ok(x)).unwrap_or(p / 10.0) / 2.0, Some(Slope::Fall)),
+            AutoView::Rise => (native.as_ref().map(|summary| summary.rise).filter(|&x| ok(x))
+                .or_else(|| Some(self.meas(c, Meas::Rise)).filter(|&x| ok(x))).unwrap_or(p / 10.0) / 2.0, Some(Slope::Rise)),
+            AutoView::Fall => (native.as_ref().map(|summary| summary.fall).filter(|&x| ok(x))
+                .or_else(|| Some(self.meas(c, Meas::Fall)).filter(|&x| ok(x))).unwrap_or(p / 10.0) / 2.0, Some(Slope::Fall)),
         };
         self.m.tscale = tscale_for(t as f32);
         self.m.tfine = 1.0;
@@ -420,6 +468,59 @@ fn auto_icon(cv: &mut Canvas, r: Rect, v: AutoView) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reference_autoset_reuses_samples_and_recenters_a_record_away_from_zero() {
+        let mut ui=Ui::new(Source::Demo{t:0.0});
+        ui.m.ch.iter_mut().for_each(|ch|ch.on=false);ui.m.run=RunState::Stop;
+        ui.refs[0]=Some(sine_ref(2000,10.0,1e-7));
+        ui.refs[0].as_mut().unwrap().t0=0.123;
+        let pointer=ui.refs[0].as_ref().unwrap().v.as_ptr();
+        let trigger=(ui.m.trigger_wave(),ui.m.trig_level,ui.m.trig_mode);
+        ui.autoset_reference();
+        let record=ui.refs[0].as_ref().unwrap();
+        assert_eq!(record.v.as_ptr(),pointer);
+        assert!(ui.m.delay as f64>=record.t0 && ui.m.delay as f64<=record.t0+record.dt*record.v.len() as f64);
+        assert_eq!((ui.m.trigger_wave(),ui.m.trig_level,ui.m.trig_mode),trigger);
+        assert_eq!((ui.m.run,ui.replay.captures),(RunState::Stop,0));
+    }
+
+    #[test]
+    fn successful_hardware_autoset_restores_configured_memory_depth() {
+        let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.mdepth=1;
+        let back=Box::new(ui.m.clone());ui.m.mdepth=0;
+        ui.auto_end(AutoRun{back,stage:Stage::Search(0),records:0,since:0.0,fits:true,
+            lv:[(-1.0,1.0);NCH],want:[true;NCH],period:[Some(1e-6),None,None,None],full:[2.0;NCH],swing:[2.0;NCH]});
+        assert_eq!(ui.m.mdepth,1);
+    }
+
+    #[test]
+    #[ignore="local user-provided D-drive files; no app, window or services"]
+    fn actual_gen7_20m_reference_fit_is_bounded_and_keeps_native_records() {
+        let mut ui=Ui::new(Source::Demo{t:0.0});
+        for path in ["D:/Gen7_65GB_CP_Q6_n_Ch2.wfm","D:/Gen7_65GB_CP_Q6_p_Ch1.wfm"] {
+            let bytes=std::fs::read(path).unwrap();ui.load_waveform_auto(&bytes,path.rsplit('/').next().unwrap()).unwrap();
+        }
+        let identity:Vec<_>=ui.refs.iter().flatten().map(|r|(r.v.as_ptr(),r.v.len(),r.dt,r.t0)).collect();
+        let acquisition=(ui.m.run,ui.m.trigger_wave(),ui.m.trig_mode,ui.m.trig_level,ui.records,ui.replay.captures);
+        let start=std::time::Instant::now();
+        for slot in 0..2 {
+            let other=ui.refs[1-slot].as_ref().map(|r|(r.vpd,r.offset));
+            ui.select_workspace_source(WaveId::Ref(slot));
+            assert!(ui.fit_selected_record());
+            assert_eq!(other,ui.refs[1-slot].as_ref().map(|r|(r.vpd,r.offset)));
+            let record=ui.refs[slot].as_ref().unwrap();
+            let half=ui.m.time_per_div() as f64*HDIV as f64*0.5;
+            assert!(ui.m.delay as f64-half<=record.t0+1e-14);
+            assert!(ui.m.delay as f64+half>=record.t0+(record.v.len()-1) as f64*record.dt-1e-14);
+        }
+        let elapsed=start.elapsed();
+        assert_eq!(identity,ui.refs.iter().flatten().map(|r|(r.v.as_ptr(),r.v.len(),r.dt,r.t0)).collect::<Vec<_>>());
+        assert_eq!(acquisition,(ui.m.run,ui.m.trigger_wave(),ui.m.trig_mode,ui.m.trig_level,ui.records,ui.replay.captures));
+        assert!(ui.refs.iter().flatten().all(|r|r.vpd>0.0&&r.offset.is_finite()));
+        assert!(elapsed<std::time::Duration::from_secs(3),"bounded setup took {elapsed:?}");
+        eprintln!("actual Gen7 two20M explicit selected-reference Fit: {elapsed:?}; native pointers/metadata, other refs and acquisition state unchanged");
+    }
 
     /// The bar after an auto set-up: periods and edges of the trigger channel, gone after a tap elsewhere.
     #[test]
@@ -544,9 +645,12 @@ mod tests {
         ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
         ui.m.trig_level = 9.0;
         ui.m.trig_src = 2;
+        ui.select_workspace_source(WaveId::Ref(0));
+        let reference = { let r = ui.refs[0].as_ref().unwrap(); (r.v.as_ptr(), r.v.len(), r.dt, r.t0) };
         ui.key(key::AUTO);
         let r = ui.refs[0].as_ref().unwrap();
         assert!((r.vpd - 10.0).abs() < 1e-6 && (r.offset - 3.0).abs() < 1e-6);
+        assert_eq!((r.v.as_ptr(), r.v.len(), r.dt, r.t0), reference);
         assert!(!ui.m.ch[1].on);
         assert_eq!(ui.m.trig_src, 0);
         assert!(ui.m.trig_level < 2.0, "level {}", ui.m.trig_level);
@@ -554,7 +658,18 @@ mod tests {
     }
 
     #[test]
-    fn offline_autoset_uses_the_shown_reference_and_leaves_channels_off() {
+    fn hardware_autoset_entry_cannot_bypass_offline_mode_even_with_a_retained_adc_flag() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        ui.m.ch[0].on = true;
+        let before = ui.m.clone();
+        ui.auto_start();
+        assert_eq!(ui.m, before); assert!(!ui.auto_running());
+        assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
+    }
+
+    #[test]
+    fn offline_autoset_is_a_noop_and_directs_the_user_to_fit_record() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         for c in 0..NCH {
             ui.m.ch[c].on = false;
@@ -565,20 +680,24 @@ mod tests {
         ui.refs[9] = Some(sine_ref(2000, 10.0, 1e-7));
         ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
         ui.refs[0].as_mut().unwrap().on = false;
+        let before = ui.m.clone();
+        let references: Vec<_> = ui.refs.iter().flatten().map(|reference| (reference.v.as_ptr(), reference.v.len(), reference.dt, reference.t0, reference.vpd, reference.offset, reference.on)).collect();
         ui.key(key::AUTO);
+        assert_eq!(ui.m, before);
+        assert_eq!(references, ui.refs.iter().flatten().map(|reference| (reference.v.as_ptr(), reference.v.len(), reference.dt, reference.t0, reference.vpd, reference.offset, reference.on)).collect::<Vec<_>>());
+        assert!(!ui.auto_running());
+        assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
         assert!(ui.m.ch.iter().all(|c| !c.on));
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!((ui.m.trig_src, ui.m.trig_level), (2, 9.0));
         let hidden = ui.refs[0].as_ref().unwrap();
         assert!((hidden.vpd - 10.0).abs() < 1e-6 && (hidden.offset - 3.0).abs() < 1e-6);
-        let r = ui.refs[9].as_ref().unwrap();
-        assert!((r.vpd - 0.5).abs() < 1e-6, "v/div {}", r.vpd);
-        assert!(r.offset.abs() < 0.05, "offset {}", r.offset);
-        assert!((ui.m.time_per_div() - 10e-6).abs() < 1e-12, "s/div {}", ui.m.time_per_div());
+        ui.activate(Item::AutosetAct);
+        assert_eq!(ui.m, before, "the menu action follows the same ADC-only rule");
     }
 
     #[test]
-    fn sim_autoset_uses_the_playing_slot() {
+    fn sim_autoset_does_not_fit_regenerate_or_stop_the_playing_record() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.sim_slot = 4;
         ui.m.ch[1].on = true;
@@ -592,14 +711,19 @@ mod tests {
         let r = ui.refs[4].as_mut().unwrap();
         r.vpd = 10.0;
         r.offset = 3.0;
+        let before = ui.m.clone();
+        let source = { let r = ui.refs[4].as_ref().unwrap(); (r.v.as_ptr(), r.v.len(), r.dt, r.t0, r.vpd, r.offset) };
+        let captures = ui.replay.captures;
         ui.key(key::AUTO);
+        assert_eq!(ui.m, before);
+        let r = ui.refs[4].as_ref().unwrap();
+        assert_eq!((r.v.as_ptr(), r.v.len(), r.dt, r.t0, r.vpd, r.offset), source);
+        assert_eq!(ui.replay.captures, captures);
+        assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
         assert!(ui.sim_play && ui.m.run == RunState::Run);
         assert_eq!(ui.m.ch.iter().map(|c| (c.on, c.vscale, c.offset)).collect::<Vec<_>>(), ch);
         assert_eq!((ui.m.trig_src, ui.m.trig_level), (2, 9.0));
         assert!(ui.refs[0].is_none());
-        let r = ui.refs[4].as_ref().unwrap();
-        assert!(r.vpd < 1.0, "v/div {}", r.vpd);
-        assert!(r.offset.abs() < 0.2, "offset {}", r.offset);
-        assert!(ui.m.time_per_div() <= 5e-9, "s/div {}", ui.m.time_per_div());
+        assert!(!ui.auto_running());
     }
 }
