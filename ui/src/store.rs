@@ -1016,7 +1016,7 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
         f64::from_le_bytes(raw)
     };
     let ver = &b[2..10];
-    if !ver.starts_with(b":WFM#") && !ver.starts_with(b"WFM#") {
+    if ver != b":WFM#002" && ver != b":WFM#003" {
         return Err("header is not :WFM#002 or :WFM#003".into());
     }
     let bpp = b[15] as usize;
@@ -1746,22 +1746,27 @@ mod tests {
         assert!((t.t0 - rec.t0).abs() < 1e-18);
 
         let v = [0.0_f32, 0.5, 1.0, -0.25];
-        let wfm = wfm003_f32(-1e-6, 1e-9, &v, "USB");
+        let wfm = wfm_f32(b":WFM#003", -1e-6, 1e-9, &v, "lane");
         let g = parse_wave(&wfm, "x.wfm").unwrap();
         assert_eq!(g.len(), 1);
-        assert_eq!(g[0].label, "USB");
+        assert_eq!(g[0].label, "lane");
         assert!((g[0].dt - 1e-9).abs() < 1e-18);
         assert!((g[0].t0 + 1e-6).abs() < 1e-18);
         for (a, b) in g[0].v.iter().zip(v) {
             assert!((a - b).abs() < 1e-6, "{a} {b}");
         }
+        let old = wfm_f32(b":WFM#001", -1e-6, 1e-9, &v, "lane");
+        assert_eq!(parse_wave(&old, "old.wfm").unwrap_err(), "header is not :WFM#002 or :WFM#003");
+        let two = wfm_f32(b":WFM#002", 0.0, 2e-9, &v, "two");
+        assert_eq!(parse_wave(&two, "two.wfm").unwrap()[0].label, "two");
     }
 
-    fn wfm003_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+    /// A short `:WFM#002` or `:WFM#003` curve of f32 samples, little endian.
+    fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
         const CURVE: usize = 838;
         let mut b = vec![0u8; CURVE + v.len() * 4 + 8];
         b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
-        b[2..10].copy_from_slice(b":WFM#003");
+        b[2..10].copy_from_slice(magic);
         b[15] = 4;
         b[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
         let lab = label.as_bytes();

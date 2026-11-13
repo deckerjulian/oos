@@ -601,6 +601,130 @@ impl Ui {
         self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(p)));
     }
 
+    /// The Slot row: R1 is 0.
+    pub(crate) fn ref_slot(&self) -> usize {
+        self.ref_sel
+    }
+
+    pub(crate) fn ref_slot_set(&mut self, slot: usize) -> bool {
+        if slot >= NREF {
+            return false;
+        }
+        self.ref_sel = slot;
+        true
+    }
+
+    /// Whether the selected slot is drawn. None when it is empty.
+    pub(crate) fn ref_shown(&self) -> Option<bool> {
+        self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).map(|r| r.on)
+    }
+
+    pub(crate) fn ref_show_set(&mut self, on: bool) -> bool {
+        let Some(r) = self.refs.get_mut(self.ref_sel).and_then(|r| r.as_mut()) else { return false };
+        r.on = on;
+        true
+    }
+
+    /// Empties every reference slot, the same as Clear all.
+    pub(crate) fn ref_clear_all(&mut self) {
+        self.refs = std::array::from_fn(|_| None);
+        self.measure_refs();
+        self.analyzer_update();
+    }
+
+    /// Writes the Source channel into the selected slot.
+    pub(crate) fn ref_save_slot(&mut self) -> Result<(), String> {
+        let c = self.ref_src;
+        let rec = self.last[0].clone();
+        let Some(r) = rec.as_ref().filter(|r| c < r.ch.len() && !r.ch[c].is_empty()) else {
+            return Err("source channel has no data".into());
+        };
+        let (v, dt) = self.meas_wave(r, c);
+        if v.len() < 2 || !(dt > 0.0) {
+            return Err("source channel has no data".into());
+        }
+        let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
+        self.refs[self.ref_sel] = Some(RefWave {
+            src: c,
+            color: 0,
+            label: String::new(),
+            t0,
+            dt,
+            v,
+            vpd: self.m.ch[c].volts_per_div(),
+            offset: self.m.ch[c].offset,
+            on: true,
+        });
+        self.measure_refs();
+        self.analyzer_update();
+        Ok(())
+    }
+
+    /// `refN.wfm`, then `refN.bin`, then `refN.csv`, beside the setups. The first file that is there is the one loaded.
+    pub(crate) fn ref_import_slot(&mut self) -> Result<(), String> {
+        let slot = self.ref_sel + 1;
+        let Some(dir) = self.setup_path().parent().map(|d| d.to_path_buf()) else {
+            return Err(format!("missing ref{slot}"));
+        };
+        for ext in ["wfm", "bin", "csv"] {
+            let p = dir.join(format!("ref{slot}.{ext}"));
+            if p.is_file() {
+                return self.ref_load_path(&p);
+            }
+        }
+        Err(format!("missing ref{slot}.wfm, ref{slot}.bin or ref{slot}.csv"))
+    }
+
+    /// Loads a csv, an OOS `.bin`, or a `.wfm` (`:WFM#002` or `:WFM#003`) into the selected slot.
+    /// A relative path is beside the setups. A missing file starts with `missing `.
+    pub(crate) fn ref_load_named(&mut self, path: &str) -> Result<(), String> {
+        let raw = path.trim().trim_matches('"');
+        if raw.is_empty() {
+            return Err("no file".into());
+        }
+        let p = std::path::Path::new(raw);
+        let p = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.setup_path().parent().map(|d| d.join(p)).unwrap_or_else(|| p.to_path_buf())
+        };
+        self.ref_load_path(&p)
+    }
+
+    fn ref_load_path(&mut self, p: &std::path::Path) -> Result<(), String> {
+        if !p.is_file() {
+            return Err(format!("missing {}", crate::store::file_name(p)));
+        }
+        let bytes = std::fs::read(p).map_err(|_| format!("missing {}", crate::store::file_name(p)))?;
+        let traces = crate::store::parse_wave(&bytes, &crate::store::file_name(p))?;
+        if traces.is_empty() || traces.iter().all(|t| t.v.len() < 2 || !(t.dt > 0.0)) {
+            return Err("that file holds no waveform".into());
+        }
+        let c = self.ref_src;
+        let n = traces.len().min(NREF);
+        for (k, tr) in traces.into_iter().take(n).enumerate() {
+            if tr.v.len() < 2 || !(tr.dt > 0.0) {
+                continue;
+            }
+            let slot = (self.ref_sel + k) % NREF;
+            let span = tr.v.iter().copied().fold(0.0_f32, |m, x| if x.is_finite() { m.max(x.abs()) } else { m }).max(0.1);
+            self.refs[slot] = Some(RefWave {
+                src: c,
+                color: 0,
+                label: tr.label,
+                t0: tr.t0,
+                dt: tr.dt,
+                v: tr.v,
+                vpd: nearest_ref_vdiv(span / 4.0),
+                offset: 0.0,
+                on: true,
+            });
+        }
+        self.measure_refs();
+        self.analyzer_update();
+        Ok(())
+    }
+
     /// Name of a channel on its card: its label, or CHn.
     pub(super) fn ch_name(&self, c: usize) -> String {
         if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
