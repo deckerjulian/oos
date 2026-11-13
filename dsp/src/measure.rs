@@ -60,15 +60,40 @@ pub enum Meas {
     CycPp,
     CycMax,
     CycMin,
+    /// GCD of mid-crossing spacings (same estimator as the eye diagram).
+    EstUi,
+    /// Sample median.
+    Median,
+    /// Histogram mode of the voltage range.
+    Mode,
+    /// Least-squares slope of voltage vs time.
+    LinSlope,
+    /// Least-squares intercept at the first sample.
+    LinInt,
+    Pam0,
+    Pam1,
+    Pam2,
+    Pam3,
+    /// Smallest gap between adjacent 4-level modes.
+    PamSep,
+    /// Mid-sliced ones in the record.
+    Bits,
+    /// Unit interval from a 2nd-order PLL clock.
+    PllUi,
+    /// Weighted 1/2/3-UI mean of mid spacings.
+    UiWtd,
+    /// RMS after folding onto the estimated UI.
+    FoldRms,
 }
 
-pub const ALL: [Meas; 46] = [
+pub const ALL: [Meas; 60] = [
     Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vtop, Meas::Vbase, Meas::Vamp, Meas::Vupper, Meas::Vmid, Meas::Vlower, Meas::Vavg,
     Meas::Vrms, Meas::VavgCyc, Meas::VrmsCyc, Meas::VrmsAc, Meas::StdDev, Meas::Overshoot, Meas::Preshoot, Meas::Area,
     Meas::AreaCyc, Meas::Period, Meas::Freq, Meas::Rise, Meas::Fall, Meas::PWidth, Meas::NWidth, Meas::PDuty, Meas::NDuty,
     Meas::PPulses, Meas::NPulses, Meas::PEdges, Meas::NEdges, Meas::TVmax, Meas::TVmin, Meas::PSlew, Meas::NSlew,
     Meas::HighTime, Meas::LowTime, Meas::Burst, Meas::Outside, Meas::NPeriods, Meas::CycAmp, Meas::CycTop, Meas::CycBase,
-    Meas::CycPp, Meas::CycMax, Meas::CycMin,
+    Meas::CycPp, Meas::CycMax, Meas::CycMin, Meas::EstUi, Meas::Median, Meas::Mode, Meas::LinSlope, Meas::LinInt,
+    Meas::Pam0, Meas::Pam1, Meas::Pam2, Meas::Pam3, Meas::PamSep, Meas::Bits, Meas::PllUi, Meas::UiWtd, Meas::FoldRms,
 ];
 
 impl Meas {
@@ -120,6 +145,20 @@ impl Meas {
             Meas::CycPp => "Cyc pk-pk",
             Meas::CycMax => "Cyc max",
             Meas::CycMin => "Cyc min",
+            Meas::EstUi => "Est. UI",
+            Meas::Median => "Median",
+            Meas::Mode => "Mode",
+            Meas::LinSlope => "Lin slope",
+            Meas::LinInt => "Lin int.",
+            Meas::Pam0 => "L0",
+            Meas::Pam1 => "L1",
+            Meas::Pam2 => "L2",
+            Meas::Pam3 => "L3",
+            Meas::PamSep => "L sep.",
+            Meas::Bits => "Ones",
+            Meas::PllUi => "PLL UI",
+            Meas::UiWtd => "UI wtd",
+            Meas::FoldRms => "Fold RMS",
         }
     }
     pub fn unit(self) -> &'static str {
@@ -127,10 +166,10 @@ impl Meas {
             Meas::Overshoot | Meas::Preshoot | Meas::PDuty | Meas::NDuty => "%",
             Meas::Area | Meas::AreaCyc => "Vs",
             Meas::Period | Meas::Rise | Meas::Fall | Meas::PWidth | Meas::NWidth | Meas::TVmax | Meas::TVmin | Meas::HighTime
-            | Meas::LowTime | Meas::Burst | Meas::Outside | Meas::NPeriods => "s",
+            | Meas::LowTime | Meas::Burst | Meas::Outside | Meas::NPeriods | Meas::EstUi | Meas::PllUi | Meas::UiWtd => "s",
             Meas::Freq => "Hz",
-            Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges => "",
-            Meas::PSlew | Meas::NSlew => "V/s",
+            Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges | Meas::Bits => "",
+            Meas::PSlew | Meas::NSlew | Meas::LinSlope => "V/s",
             _ => "V",
         }
     }
@@ -181,6 +220,19 @@ pub struct Analysis {
     pub cyc_pp: f64,
     pub cyc_max: f64,
     pub cyc_min: f64,
+    /// Rise/fall thresholds as fractions of amplitude (IEEE-181 default 0.1 / 0.9).
+    pub lpct: f64,
+    pub hpct: f64,
+    pub est_ui: f64,
+    pub median: f64,
+    pub mode: f64,
+    pub lin_slope: f64,
+    pub lin_int: f64,
+    pub pam: [f64; 4],
+    pub bits: f64,
+    pub pll_ui: f64,
+    pub ui_wtd: f64,
+    pub fold_rms: f64,
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -189,6 +241,58 @@ fn mean(v: &[f64]) -> f64 {
     } else {
         v.iter().sum::<f64>() / v.len() as f64
     }
+}
+
+fn refs(lpct: f64, hpct: f64) -> (f64, f64) {
+    let lo = if lpct.is_finite() && lpct > 0.0 && lpct < 0.5 { lpct } else { 0.1 };
+    let hi = if hpct.is_finite() && hpct > 0.5 && hpct < 1.0 { hpct } else { 0.9 };
+    if hi > lo { (lo, hi) } else { (0.1, 0.9) }
+}
+
+fn median_samples(f: &[f32]) -> f64 {
+    let mut s = f.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = s.len();
+    if n == 0 {
+        f64::NAN
+    } else if n % 2 == 1 {
+        s[n / 2] as f64
+    } else {
+        (s[n / 2 - 1] as f64 + s[n / 2] as f64) / 2.0
+    }
+}
+
+fn hist_mode(f: &[f32], vmin: f32, vmax: f32) -> f64 {
+    let span = (vmax - vmin).max(1e-12);
+    let mut hist = [0u32; 256];
+    for &x in f {
+        hist[(((x - vmin) / span) * 255.0) as usize] += 1;
+    }
+    let b = (0..256).max_by_key(|&i| hist[i]).unwrap_or(0);
+    vmin as f64 + span as f64 * (b as f64 + 0.5) / 255.0
+}
+
+fn linreg(v: &[f32], dt: f64) -> (f64, f64) {
+    let (mut n, mut st, mut sy, mut stt, mut sty) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (i, &x) in v.iter().enumerate() {
+        if !x.is_finite() {
+            continue;
+        }
+        let t = i as f64 * dt;
+        let y = x as f64;
+        n += 1.0;
+        st += t;
+        sy += y;
+        stt += t * t;
+        sty += t * y;
+    }
+    let den = n * stt - st * st;
+    if n < 2.0 || !(den.abs() > 0.0) {
+        return (f64::NAN, f64::NAN);
+    }
+    let slope = (n * sty - st * sy) / den;
+    let intercept = (sy * stt - st * sty) / den;
+    (slope, intercept)
 }
 
 /// Top/base by histogram modes of the upper/lower 40 % (fallback: max/min when there are no flat levels).
@@ -242,6 +346,11 @@ pub fn analyze(v: &[f32], dt: f64) -> Analysis {
 /// Like `analyze`, but edges and time values only when the amplitude (top - base) is at least `min_amp` volts, so
 /// noise on a flat trace does not produce frequencies (the scope passes a fraction of a division).
 pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
+    analyze_refs(v, dt, min_amp, 0.1, 0.9)
+}
+
+/// IEEE-181 uses 10/90. The menu also offers 20/80 (`lpct` / `hpct` as fractions of amplitude).
+pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
     let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
     if f.len() < 4 {
         return Analysis::default();
@@ -263,6 +372,8 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     let rms = (f.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / n).sqrt();
     let std = (f.iter().map(|&x| (x as f64 - avg).powi(2)).sum::<f64>() / n).sqrt();
     let (top, base) = top_base(&f, vmin, vmax);
+    let (lpct, hpct) = refs(lpct, hpct);
+    let (lin_slope, lin_int) = linreg(v, dt);
     let mut a = Analysis {
         valid: true,
         vmax: vmax as f64,
@@ -288,6 +399,18 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
         cyc_pp: f64::NAN,
         cyc_max: f64::NAN,
         cyc_min: f64::NAN,
+        lpct,
+        hpct,
+        est_ui: f64::NAN,
+        median: median_samples(&f),
+        mode: hist_mode(&f, vmin, vmax),
+        lin_slope,
+        lin_int,
+        pam: crate::linecode::pam4_levels(&f, vmin, vmax),
+        bits: f.iter().filter(|&&x| x >= 0.5 * (vmin + vmax)).count() as f64,
+        pll_ui: f64::NAN,
+        ui_wtd: f64::NAN,
+        fold_rms: f64::NAN,
         ..Default::default()
     };
     let amp = top - base;
@@ -298,7 +421,23 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     let e = edges(v, mid, (amp * 0.1) as f32);
     a.rises = e.iter().filter(|x| x.rising).map(|x| x.t * dt).collect();
     a.falls = e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect();
-    let (l10, l90) = ((base + 0.1 * amp) as f32, (base + 0.9 * amp) as f32);
+    let spacings: Vec<f64> = {
+        let t = mids(&a);
+        t.windows(2).map(|w| w[1] - w[0]).collect()
+    };
+    a.est_ui = crate::eye::unit_interval(&spacings).unwrap_or(f64::NAN);
+    a.ui_wtd = crate::linecode::unit_interval_runs(&spacings).unwrap_or(f64::NAN);
+    if a.rises.len() + a.falls.len() <= 8000 {
+        let mid_v = (base + amp * 0.5) as f32;
+        if let Some(c) = crate::eye::recover_clock_pll(v, dt, mid_v, (amp * 0.1) as f32, None, 0.0, true) {
+            a.pll_ui = c.period;
+        }
+        if a.est_ui.is_finite() {
+            a.fold_rms = crate::linecode::fold_rms(v, dt, a.est_ui);
+        }
+    }
+    let lo = (base + lpct * amp) as f32;
+    let hi_l = (base + hpct * amp) as f32;
     let mut rt = Vec::new();
     let mut ft = Vec::new();
     // an edge's levels lie between its neighbours. Searching further costs a pass over the record per edge: a million
@@ -307,22 +446,22 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
         let i = x.t as usize + 1;
         let (before, after) = (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
         if x.rising {
-            if let (Some(p), Some(q)) = (cross(v, i, l10, true, true, before), cross(v, i, l90, true, false, after)) {
+            if let (Some(p), Some(q)) = (cross(v, i, lo, true, true, before), cross(v, i, hi_l, true, false, after)) {
                 rt.push((q - p) * dt);
             }
-        } else if let (Some(p), Some(q)) = (cross(v, i, l90, false, true, before), cross(v, i, l10, false, false, after)) {
+        } else if let (Some(p), Some(q)) = (cross(v, i, hi_l, false, true, before), cross(v, i, lo, false, false, after)) {
             ft.push((q - p) * dt);
         }
     }
     a.rise_time = mean(&rt);
     a.fall_time = mean(&ft);
-    // keep the 10 % and 90 % crossings: high time, low time and time outside are measured there
-    let (hr, hf) = level_times(v, l90, dt);
-    let (lr, lf) = level_times(v, l10, dt);
+    // keep the high and low reference crossings: high time, low time and time outside are measured there
+    let (hr, hf) = level_times(v, hi_l, dt);
+    let (lr, lf) = level_times(v, lo, dt);
     let hi = pair_widths(&hr, &hf);
-    let lo = pair_widths(&lf, &lr);
+    let low = pair_widths(&lf, &lr);
     a.high_time = mean(&hi);
-    a.low_time = mean(&lo);
+    a.low_time = mean(&low);
     (a.hi_rises, a.hi_falls, a.lo_rises, a.lo_falls) = (hr, hf, lr, lf);
     if a.rises.len() >= 2 {
         let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, &a.rises);
@@ -386,9 +525,9 @@ impl Analysis {
             Meas::Vtop => self.top,
             Meas::Vbase => self.base,
             Meas::Vamp => amp,
-            Meas::Vupper => self.base + 0.9 * amp,
+            Meas::Vupper => self.base + self.hpct_or_default() * amp,
             Meas::Vmid => self.base + 0.5 * amp,
-            Meas::Vlower => self.base + 0.1 * amp,
+            Meas::Vlower => self.base + self.lpct_or_default() * amp,
             Meas::Vavg => self.avg,
             Meas::Vrms => self.rms,
             Meas::VavgCyc => self.cyc_avg,
@@ -424,8 +563,8 @@ impl Analysis {
             Meas::NEdges => self.falls.len() as f64,
             Meas::TVmax => self.t_vmax,
             Meas::TVmin => self.t_vmin,
-            Meas::PSlew => 0.8 * amp / self.rise_time,
-            Meas::NSlew => -0.8 * amp / self.fall_time,
+            Meas::PSlew => (self.hpct_or_default() - self.lpct_or_default()) * amp / self.rise_time,
+            Meas::NSlew => -(self.hpct_or_default() - self.lpct_or_default()) * amp / self.fall_time,
             Meas::HighTime => self.high_time,
             Meas::LowTime => self.low_time,
             Meas::Burst => burst_width(self, 0.0),
@@ -437,7 +576,31 @@ impl Analysis {
             Meas::CycPp => self.cyc_pp,
             Meas::CycMax => self.cyc_max,
             Meas::CycMin => self.cyc_min,
+            Meas::EstUi => self.est_ui,
+            Meas::Median => self.median,
+            Meas::Mode => self.mode,
+            Meas::LinSlope => self.lin_slope,
+            Meas::LinInt => self.lin_int,
+            Meas::Pam0 => self.pam[0],
+            Meas::Pam1 => self.pam[1],
+            Meas::Pam2 => self.pam[2],
+            Meas::Pam3 => self.pam[3],
+            Meas::PamSep => {
+                let d = [self.pam[1] - self.pam[0], self.pam[2] - self.pam[1], self.pam[3] - self.pam[2]];
+                d.into_iter().filter(|x| x.is_finite() && *x > 0.0).fold(f64::NAN, |a, x| if a.is_nan() { x } else { a.min(x) })
+            }
+            Meas::Bits => self.bits,
+            Meas::PllUi => self.pll_ui,
+            Meas::UiWtd => self.ui_wtd,
+            Meas::FoldRms => self.fold_rms,
         }
+    }
+
+    fn lpct_or_default(&self) -> f64 {
+        if self.lpct > 0.0 { self.lpct } else { 0.1 }
+    }
+    fn hpct_or_default(&self) -> f64 {
+        if self.hpct > 0.0 { self.hpct } else { 0.9 }
     }
 }
 
@@ -607,12 +770,30 @@ pub fn skew(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
     mean(&d)
 }
 
-/// Setup: clock mid time minus the closest earlier data mid time. Positive when the data edge leads the clock.
+/// Setup: clock edge minus the closest earlier data mid. Positive when the data edge leads the clock.
+/// `rise` selects rising or falling clock edges; data uses either-direction mids.
 pub fn setup_time(clock: &Analysis, data: &Analysis) -> f64 {
-    let (c, d) = (mids(clock), mids(data));
+    setup_time_at(clock, data, true)
+}
+
+pub fn setup_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
+    mean(&setup_times(clock, data, rise))
+}
+
+/// Hold: the next data mid minus the clock edge.
+pub fn hold_time(clock: &Analysis, data: &Analysis) -> f64 {
+    hold_time_at(clock, data, true)
+}
+
+pub fn hold_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
+    mean(&hold_times(clock, data, rise))
+}
+
+fn setup_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
+    let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
     let mut j = 0usize;
     let mut s = Vec::new();
-    for &tc in &c {
+    for &tc in c {
         while j < d.len() && d[j] < tc {
             j += 1;
         }
@@ -620,15 +801,14 @@ pub fn setup_time(clock: &Analysis, data: &Analysis) -> f64 {
             s.push(tc - d[j - 1]);
         }
     }
-    mean(&s)
+    s
 }
 
-/// Hold: the next data mid time minus the clock mid time.
-pub fn hold_time(clock: &Analysis, data: &Analysis) -> f64 {
-    let (c, d) = (mids(clock), mids(data));
+fn hold_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
+    let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
     let mut j = 0usize;
     let mut s = Vec::new();
-    for &tc in &c {
+    for &tc in c {
         while j < d.len() && d[j] <= tc {
             j += 1;
         }
@@ -636,7 +816,21 @@ pub fn hold_time(clock: &Analysis, data: &Analysis) -> f64 {
             s.push(d[j] - tc);
         }
     }
-    mean(&s)
+    s
+}
+
+/// Clock edges whose setup is below `tsetup` or hold below `thold`.
+pub fn setup_hold_violations(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64) -> f64 {
+    setup_hold_violations_at(clock, data, tsetup, thold, true)
+}
+
+pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64, rise: bool) -> f64 {
+    let (su, ho) = (setup_times(clock, data, rise), hold_times(clock, data, rise));
+    if su.len() != ho.len() {
+        let n = su.len().min(ho.len());
+        return su[..n].iter().zip(&ho[..n]).filter(|(&s, &h)| s < tsetup || h < thold).count() as f64;
+    }
+    su.iter().zip(&ho).filter(|(&s, &h)| s < tsetup || h < thold).count() as f64
 }
 
 #[cfg(test)]
@@ -689,5 +883,23 @@ mod tests {
         let t = std::time::Instant::now();
         assert!((an.width(true) - 0.5).abs() < 1e-9 && an.pulses(true) == 400_000.0);
         assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn twenty_eighty_rise_is_shorter_than_ten_ninety() {
+        let mut v = vec![0.0f32; 20];
+        v.extend((0..100).map(|i| i as f32 / 99.0));
+        v.extend(vec![1.0; 80]);
+        v.extend((0..100).map(|i| 1.0 - i as f32 / 99.0));
+        v.extend(vec![0.0; 20]);
+        let a10 = analyze_refs(&v, 1e-9, 0.0, 0.1, 0.9);
+        let a20 = analyze_refs(&v, 1e-9, 0.0, 0.2, 0.8);
+        assert!(close_abs(a10.rise_time, 80e-9, 5e-9), "{}", a10.rise_time);
+        assert!(close_abs(a20.rise_time, 60e-9, 5e-9), "{}", a20.rise_time);
+        assert!(a20.rise_time < a10.rise_time);
+    }
+
+    fn close_abs(x: f64, want: f64, abs: f64) -> bool {
+        (x - want).abs() <= abs
     }
 }

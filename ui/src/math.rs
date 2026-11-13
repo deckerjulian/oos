@@ -4,6 +4,7 @@
 //! Math channel operations (computed by oos-dsp).
 
 pub use oos_dsp::math::Window;
+use oos_dsp::linecode::{self, Gate};
 use oos_dsp::math::{binary, unary, Op1, Op2};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -29,11 +30,24 @@ pub enum MathOp {
     Bpf,
     Bsf,
     Fft,
+    Fir,
+    And,
+    Or,
+    Xor,
+    Nand,
+    Nor,
+    Not,
+    A2d,
+    D2a,
+    Conv,
+    Unnrzi,
 }
 
-pub const MATH_OPS: [MathOp; 19] = [
+pub const MATH_OPS: [MathOp; 30] = [
     MathOp::Off, MathOp::Add, MathOp::Sub, MathOp::Mul, MathOp::Div, MathOp::Intg, MathOp::Diff, MathOp::Abs, MathOp::Sqrt, MathOp::Lg,
     MathOp::Ln, MathOp::Exp, MathOp::Lin, MathOp::Expr, MathOp::Lpf, MathOp::Hpf, MathOp::Bpf, MathOp::Bsf, MathOp::Fft,
+    MathOp::Fir, MathOp::And, MathOp::Or, MathOp::Xor, MathOp::Nand, MathOp::Nor, MathOp::Not, MathOp::A2d, MathOp::D2a, MathOp::Conv,
+    MathOp::Unnrzi,
 ];
 
 /// Math channels (8, math on math).
@@ -72,10 +86,21 @@ impl MathOp {
             MathOp::Bpf => "Band-pass",
             MathOp::Bsf => "Band-stop",
             MathOp::Fft => "FFT",
+            MathOp::Fir => "FIR",
+            MathOp::And => "AND",
+            MathOp::Or => "OR",
+            MathOp::Xor => "XOR",
+            MathOp::Nand => "NAND",
+            MathOp::Nor => "NOR",
+            MathOp::Not => "NOT",
+            MathOp::A2d => "A2D",
+            MathOp::D2a => "D2A",
+            MathOp::Conv => "Conv",
+            MathOp::Unnrzi => "NRZI inv",
         }
     }
     pub fn two_sources(self) -> bool {
-        matches!(self, MathOp::Add | MathOp::Sub | MathOp::Mul | MathOp::Div)
+        matches!(self, MathOp::Add | MathOp::Sub | MathOp::Mul | MathOp::Div | MathOp::And | MathOp::Or | MathOp::Xor | MathOp::Nand | MathOp::Nor | MathOp::Conv)
     }
     pub fn unit(self) -> &'static str {
         match self {
@@ -100,7 +125,7 @@ impl MathOp {
     }
     /// Filters with a corner/centre frequency; band filters also have a bandwidth.
     pub fn has_fc(self) -> bool {
-        matches!(self, MathOp::Lpf | MathOp::Hpf | MathOp::Bpf | MathOp::Bsf)
+        matches!(self, MathOp::Lpf | MathOp::Hpf | MathOp::Bpf | MathOp::Bsf | MathOp::Fir)
     }
     pub fn has_bw(self) -> bool {
         matches!(self, MathOp::Bpf | MathOp::Bsf)
@@ -149,6 +174,17 @@ pub fn compute(op: MathOp, a: &[f32], b: &[f32], dt: f64, fc: f64, bw: f64) -> V
         MathOp::Bpf => unary(Op1::Bandpass(fc, bw), a, dt),
         MathOp::Bsf => unary(Op1::Bandstop(fc, bw), a, dt),
         MathOp::Off | MathOp::Fft => Vec::new(),
+        MathOp::Fir => linecode::fir_lowpass(a, dt, fc),
+        MathOp::And => linecode::gate(a, b, Gate::And),
+        MathOp::Or => linecode::gate(a, b, Gate::Or),
+        MathOp::Xor => linecode::gate(a, b, Gate::Xor),
+        MathOp::Nand => linecode::gate(a, b, Gate::Nand),
+        MathOp::Nor => linecode::gate(a, b, Gate::Nor),
+        MathOp::Not => linecode::not(a),
+        MathOp::A2d => linecode::a2d(a),
+        MathOp::D2a => linecode::d2a(a),
+        MathOp::Conv => linecode::conv(a, b),
+        MathOp::Unnrzi => linecode::unnrzi(a),
     }
 }
 

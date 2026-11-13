@@ -5,7 +5,7 @@
 //! labels. All of them work on the records the screen shows.
 
 use super::*;
-use oos_dsp::measure::{burst_width, delay, duration_n, hold_time, phase, setup_time, skew, time_outside, Analysis, Pair};
+use oos_dsp::measure::{burst_width, delay, duration_n, hold_time_at, phase, setup_hold_violations_at, setup_time_at, skew, time_outside, Analysis, Pair};
 
 /// Edge times are seconds from the first sample. Add the record's t0 so a pair of different records lines up.
 fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
@@ -37,10 +37,11 @@ pub enum PairKind {
     Skew,
     Setup,
     Hold,
+    SetupAndHold,
 }
 
 /// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still means the same row.
-pub const PAIRS: [(&str, PairKind, bool, bool); 14] = [
+pub const PAIRS: [(&str, PairKind, bool, bool); 17] = [
     ("Delay rise-rise", PairKind::Delay, true, true),
     ("Delay fall-fall", PairKind::Delay, false, false),
     ("Delay rise-fall", PairKind::Delay, true, false),
@@ -55,6 +56,9 @@ pub const PAIRS: [(&str, PairKind, bool, bool); 14] = [
     ("Skew fall-rise", PairKind::Skew, false, true),
     ("Setup time", PairKind::Setup, true, true),
     ("Hold time", PairKind::Hold, true, true),
+    ("Setup+Hold", PairKind::SetupAndHold, true, true),
+    ("Setup fall", PairKind::Setup, false, true),
+    ("Hold fall", PairKind::Hold, false, true),
 ];
 
 /// DVM modes and counter modes.
@@ -116,8 +120,9 @@ impl Ui {
                     PairKind::Phase => phase(&aa, &bb, p),
                     PairKind::Delay => delay(&aa, &bb, p),
                     PairKind::Skew => skew(&aa, &bb, p),
-                    PairKind::Setup => setup_time(&aa, &bb),
-                    PairKind::Hold => hold_time(&aa, &bb),
+                    PairKind::Setup => setup_time_at(&aa, &bb, ea),
+                    PairKind::Hold => hold_time_at(&aa, &bb, ea),
+                    PairKind::SetupAndHold => setup_hold_violations_at(&aa, &bb, self.m.meas_tsetup, self.m.meas_thold, ea),
                 }
             }
             _ => f64::NAN,
@@ -145,7 +150,12 @@ impl Ui {
                 WaveId::Ch(c) => (c + 1).to_string(),
                 WaveId::Ref(i) => format!("R{}", i + 1),
             };
-            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit: if kind == PairKind::Phase { "\u{b0}" } else { "s" } });
+            let unit = match kind {
+                PairKind::Phase => "\u{b0}",
+                PairKind::SetupAndHold => "",
+                _ => "s",
+            };
+            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit });
         }
         v
     }
@@ -192,8 +202,8 @@ impl Ui {
 
     pub(super) fn meas_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::MeasIdle | Item::MeasN => Kind::Value,
-            Item::MeasOutside | Item::MeasEdges => Kind::Choice,
+            Item::MeasIdle | Item::MeasN | Item::MeasTsetup | Item::MeasThold => Kind::Value,
+            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs => Kind::Choice,
             _ => return None,
         })
     }
@@ -204,6 +214,9 @@ impl Ui {
             Item::MeasOutside => "Outside",
             Item::MeasN => "N periods",
             Item::MeasEdges => "Edges",
+            Item::MeasRefs => "Refs",
+            Item::MeasTsetup => "Tsetup",
+            Item::MeasThold => "Thold",
             _ => return None,
         })
     }
@@ -215,6 +228,9 @@ impl Ui {
             Item::MeasOutside => format!("{:?}", m.meas_out),
             Item::MeasN => m.meas_n.to_string(),
             Item::MeasEdges => if m.meas_data { "Data".into() } else { "Clock".into() },
+            Item::MeasRefs => format!("{:.0}/{:.0}", m.meas_lpct * 100.0, m.meas_hpct * 100.0),
+            Item::MeasTsetup => si_short(m.meas_tsetup, "s"),
+            Item::MeasThold => si_short(m.meas_thold, "s"),
             _ => return None,
         })
     }
@@ -223,26 +239,47 @@ impl Ui {
         Some(match it {
             Item::MeasOutside => ["Above", "Below", "Both"].iter().map(|s| s.to_string()).collect(),
             Item::MeasEdges => vec!["Clock".into(), "Data".into()],
+            Item::MeasRefs => vec!["10/90".into(), "20/80".into()],
             _ => return None,
         })
     }
 
     pub(super) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
-        let m = &mut self.m;
         match it {
             Item::MeasIdle => {
-                let cur = if m.meas_idle > 0.0 { m.meas_idle } else { 0.0 };
+                let cur = if self.m.meas_idle > 0.0 { self.m.meas_idle } else { 0.0 };
                 let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
                 let i = l.iter().position(|&v| v >= cur * 0.999).unwrap_or(0);
-                m.meas_idle = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+                self.m.meas_idle = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+            }
+            Item::MeasTsetup | Item::MeasThold => {
+                let cur = if it == Item::MeasTsetup { self.m.meas_tsetup } else { self.m.meas_thold };
+                let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
+                let i = l.iter().position(|&v| v >= cur * 0.999).unwrap_or(0);
+                let v = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+                if it == Item::MeasTsetup {
+                    self.m.meas_tsetup = v;
+                } else {
+                    self.m.meas_thold = v;
+                }
             }
             Item::MeasOutside => {
                 let all = [oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both];
-                let i = all.iter().position(|&x| x == m.meas_out).unwrap_or(2);
-                m.meas_out = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
+                let i = all.iter().position(|&x| x == self.m.meas_out).unwrap_or(2);
+                self.m.meas_out = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
             }
-            Item::MeasN => m.meas_n = (m.meas_n as i32 + d).clamp(1, 32) as u32,
-            Item::MeasEdges => m.meas_data = !m.meas_data,
+            Item::MeasN => self.m.meas_n = (self.m.meas_n as i32 + d).clamp(1, 32) as u32,
+            Item::MeasEdges => self.m.meas_data = !self.m.meas_data,
+            Item::MeasRefs => {
+                if self.m.meas_lpct < 0.15 {
+                    self.m.meas_lpct = 0.2;
+                    self.m.meas_hpct = 0.8;
+                } else {
+                    self.m.meas_lpct = 0.1;
+                    self.m.meas_hpct = 0.9;
+                }
+                self.measure_last();
+            }
             _ => return false,
         }
         true

@@ -612,7 +612,10 @@ impl Ui {
                 m.dec_baud = nearest(&crate::decode::BAUDS, *baud);
             }
             D::OneWire { ch, thr } => (m.dec_proto, m.dec_src, m.dec_thr) = (Proto::OneWire, *ch, *thr),
-            D::Manchester { .. } => m.dec_on = false,
+            D::Manchester { ch, bitrate, thr } => {
+                (m.dec_proto, m.dec_src, m.dec_thr) = (Proto::Manchester, *ch, *thr);
+                m.dec_baud = nearest(&crate::decode::BAUDS, *bitrate);
+            }
         }
     }
 

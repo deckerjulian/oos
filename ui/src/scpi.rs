@@ -163,6 +163,28 @@ const MEAS_ITEMS: &[(&str, &str, Meas)] = &[
     ("TVMIN", "TVMIN", Meas::TVmin),
     ("PSLew", "PSLEW", Meas::PSlew),
     ("NSLew", "NSLEW", Meas::NSlew),
+    ("ESTUI", "ESTUI", Meas::EstUi),
+    ("UI", "ESTUI", Meas::EstUi),
+    ("MEDian", "MEDIAN", Meas::Median),
+    ("MODE", "MODE", Meas::Mode),
+    ("LSLO", "LSLO", Meas::LinSlope),
+    ("LINSLOPE", "LSLO", Meas::LinSlope),
+    ("LINT", "LINT", Meas::LinInt),
+    ("LININT", "LINT", Meas::LinInt),
+    ("PAM0", "PAM0", Meas::Pam0),
+    ("L0", "PAM0", Meas::Pam0),
+    ("PAM1", "PAM1", Meas::Pam1),
+    ("L1", "PAM1", Meas::Pam1),
+    ("PAM2", "PAM2", Meas::Pam2),
+    ("L2", "PAM2", Meas::Pam2),
+    ("PAM3", "PAM3", Meas::Pam3),
+    ("L3", "PAM3", Meas::Pam3),
+    ("PSEP", "PSEP", Meas::PamSep),
+    ("BITS", "BITS", Meas::Bits),
+    ("ONES", "BITS", Meas::Bits),
+    ("PLLUI", "PLLUI", Meas::PllUi),
+    ("UIWTD", "UIWTD", Meas::UiWtd),
+    ("FOLD", "FOLD", Meas::FoldRms),
 ];
 
 /// Channel-pair rows, in the same order as the Measure menu (`PAIRS`).
@@ -181,6 +203,9 @@ const PAIR_ITEMS: &[(&str, &str, usize)] = &[
     ("FRSkew", "FRSKEW", 11),
     ("SETup", "SETUP", 12),
     ("HOLD", "HOLD", 13),
+    ("SETHold", "SETHOLD", 14),
+    ("FSETup", "FSETUP", 15),
+    ("FHOLd", "FHOLD", 16),
 ];
 
 fn meas_kind(item: &str) -> Option<Meas> {
