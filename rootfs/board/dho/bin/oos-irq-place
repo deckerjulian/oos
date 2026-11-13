@@ -10,12 +10,21 @@
 P=${OOS_PROC:-/proc}
 S=${OOS_SYS:-/sys}
 [ "$(/bin/oos-conf perf.place off 2>/dev/null)" = on ] || exit 0
-# the cores with less than the largest cpu_capacity, as a hex mask
-mask=$(for f in "$S"/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
+# the cores with less than the largest cpu_capacity, as a hex mask (shell arithmetic: the unit's busybox awk has no
+# math support, so `2 ^ c` fails there)
+max=0
+for f in "$S"/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
+	[ -r "$f" ] || continue
+	v=$(cat "$f"); [ "$v" -gt "$max" ] && max=$v
+done
+m=0
+for f in "$S"/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
 	[ -r "$f" ] || continue
 	c=${f%/cpu_capacity}; c=${c##*/cpu}
-	echo "$c $(cat "$f")"
-done | awk '{ cap[$1] = $2; if ($2 > max) max = $2 } END { m = 0; for (c in cap) if (cap[c] < max) m += 2 ^ c; if (m) printf "%x\n", m }')
+	[ "$(cat "$f")" -lt "$max" ] && m=$((m | 1 << c))
+done
+mask=
+[ "$m" -gt 0 ] && mask=$(printf '%x' "$m")
 [ -n "$mask" ] || { echo "oos-irq-place: no little cores"; exit 0; }
 irqs=$(awk -F: '/xdma/ { gsub(/ /, "", $1); print $1 }' "$P/interrupts")
 [ -n "$irqs" ] || { echo "oos-irq-place: no xdma interrupt (poll_mode=1: completions by xdma's threads)"; exit 0; }
