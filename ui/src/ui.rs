@@ -1647,6 +1647,11 @@ impl Ui {
             };
             let mut got = 0;
             let (mut ta, mut td) = (0f32, 0f32);
+            if !self.fast_ok() {
+                if let Some(p) = crate::drawpipe::pipe() {
+                    p.set_view(None, 0, 0);
+                }
+            }
             // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
             if self.fast_ok() {
                 let t0 = std::time::Instant::now();
@@ -1661,6 +1666,15 @@ impl Ui {
                     }
                 }
                 got += frames.len();
+                // the older frames of the batches, drawn by the deposit worker (opt-in)
+                if let Some(p) = crate::drawpipe::pipe() {
+                    p.set_view(Some(&self.m), self.ph.w, self.ph.h);
+                    let d = p.merge(&mut self.ph, &mut clear_pending);
+                    if d.triggered > 0 {
+                        self.m.status = TrigStatus::Triggered;
+                    }
+                    got += d.frames as usize;
+                }
                 td += t0.elapsed().as_secs_f32() * 1000.0;
             }
             for _ in 0..k {
@@ -1920,70 +1934,8 @@ impl Ui {
     /// One frame of the fast path into the main phosphor map; false if its trigger edge was not found near the
     /// hardware trigger point. Sparse frames (fewer than 2 samples per column) take the record path instead.
     fn fast_draw(&mut self, f: &crate::board::Frame) -> bool {
-        let m = &self.m;
-        let (w, h) = (self.ph.w, self.ph.h);
-        let tdiv = m.time_per_div() as f64;
-        let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-        if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
-            if let Some(t) = crate::sparse::draw(&mut self.ph, &self.m, f, 24) {
-                return t;
-            }
-            let fr = std::sync::Arc::new(f.clone());
-            let window = tdiv * HDIV as f64;
-            let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
-            for c in 0..NCH {
-                if self.m.ch[c].on && !rec.ch[c].is_empty() {
-                    self.ph.draw_ex(c, &self.m, (self.m.time_per_div(), self.m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None);
-                }
-            }
-            return rec.triggered;
-        }
-        let src = &f.ch[m.trig_src];
-        // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
-        let on_la = m.trig_on_la();
-        // the edge of the set direction nearest the hardware trigger point, up to half a screen away, on the signal smoothed
-        // to one screen column: at decimated rates the hardware point lands near the level on either edge (trigger.md 8)
-        let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
-        let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-        let half = (tdiv * HDIV as f64 / 2.0 / f.dt) as usize;
-        let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
-        let edge = if on_la {
-            None
-        } else {
-            let (e, any) = crate::trignear::edge_smooth_near(src, f.pre, crate::board::sw_trig_level(m, f), hyst, rising, either, half, col, |_| true);
-            let k = match (e, any) {
-                (None, _) => 3,
-                (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => 0,
-                (Some(_), Some(n)) if !either && n.rising != rising => 1,
-                (Some(t), _) => {
-                    let d = (t - f.pre as f64).abs();
-                    self.fast_off = (self.fast_off.0 + d, self.fast_off.1.max(d));
-                    2
-                }
-            };
-            self.fast_edges[k] += 1;
-            e
-        };
-        let m = &self.m;
-        let ti = edge.unwrap_or(f.pre as f64);
-        let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
-        let ppd_y = h as f32 / VDIV;
-        for c in 0..NCH {
-            let ch = &m.ch[c];
-            if !ch.on || f.ch[c].is_empty() {
-                continue;
-            }
-            let vpd = ch.volts_per_div();
-            let sign = -1.0;
-            let xm = crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
-            if m.dots {
-                crate::fastdraw::deposit_dots(&mut self.ph.map[c], w, h, &f.ch[c], &xm, 24);
-            } else {
-                crate::fastdraw::deposit(&mut self.ph.map[c], w, h, &f.ch[c], &xm, 24);
-            }
-        }
-        // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
-        edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc
+        let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
+        crate::drawpipe::draw_frame(&mut self.ph, &self.m, f, Some(stats))
     }
 
     // ------------------------------------------------------------------ rendering

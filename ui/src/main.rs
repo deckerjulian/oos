@@ -35,6 +35,7 @@ mod trig;
 mod trignear;
 mod placement;
 mod sparse;
+mod drawpipe;
 mod ui;
 mod usbtmc;
 mod vxi11;

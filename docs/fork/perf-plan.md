@@ -150,3 +150,13 @@ copy of each replaced function in the test module so the ratio has a fixed basel
   plan's 4x needs a polyphase kernel over the screen window only, which changes pixels: not done, it needs a
   screenshot comparison on the unit. Guards: pixel equality over 612 set-ups (450 answered by the new path), bitwise
   kernel equality incl. record ends and NaN samples, ignored timing ratio <= 0.8.
+- 1 done as a first cut, opt-in `OOS_DRAWPIPE=1`: `drawpipe.rs`. The hw thread copies the bytes of the frames the
+  queue does not keep (up to ~900 per batch) to a worker on the A53s, which decodes and draws them with
+  `draw_frame` (now also the body of `Ui::fast_draw`, one source of truth) into its own maps. The UI publishes its
+  mapping each screen frame and adds the worker's maps once per screen frame; a mapping change or an older settings
+  stamp drops the work, a busy worker drops the batch. Guards: worker maps equal `draw_frame` over the same frames
+  (dense, sparse, dots, 1 and 2 channels), frame and trigger counts, stale batches and maps dropped. Host: 20 k
+  frames/s at 1408 points, 40 k at 12.5 k points on one core (ignored test `worker_throughput`). Not yet: the
+  `fast_edges` statistics leave out the worker's frames; one worker only; the copy is up to 4 MB per batch on the
+  hw thread. Unit checks: wfm/s at 100 ns and 1 us/div with and without it, `top -H` for the worker's core, UI frame
+  time (the merge adds 4 x 970 x 448 saturating adds per screen frame).

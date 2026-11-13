@@ -939,6 +939,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let fb = seq::frame_bytes(&b, &p);
                     // decode before taking the lock: the UI must not wait for 100 k-point conversions
                     let shown = if after.is_some_and(|a| !a.show) { 0 } else { seq::batch_read(&b, count).1 };
+                    // the frames the queue does not keep: to the deposit worker when it is on (drawpipe.rs)
+                    if let Some(pipe) = crate::drawpipe::pipe().filter(|_| after.is_none() && fb > 0) {
+                        let older = (shown as usize).min(dma.data().len() / fb).saturating_sub(QUEUE_MAX);
+                        if older > 0 {
+                            let (bs, ps) = (b.clone(), p);
+                            pipe.feed(&dma.data()[..older * fb], fb, stamp, Box::new(move |c| decode(c, &bs, &ps, 0)));
+                        }
+                    }
                     let mut frames = decode_tail(dma.data(), fb, shown as usize, QUEUE_MAX, &mut n, |chunk, seq| Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, seq) });
                     if after.is_some_and(|a| a.clear) {
                         if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
