@@ -102,6 +102,24 @@ alone at 1 us/div, input open):
   moves varied from try to try (likely the probe-comp signal on the input). Both are refused as
   intended and leave the offsets alone.
 
+## Round 13 (unit, build 20261113-224914): works
+
+CH3 alone, input open, 100 mV/div, 1.25 GSa/s, trigger CH3.
+
+- Mode 2: [32, 66, 33, 73, 53, 85, -32, 62] -> [25, 66, 38, 77, 57, 79, -31, 59], 0.39 steps left, saved to
+  `/oos/cal/core_offsets.hex`. At the next start the kept values were applied and matched again (0.46 left, no
+  change). `/rigol/data/cal_adc.hex` unchanged (sha256).
+- Slot means: slot 6 from +9 steps to all slots within -0.42..+0.55.
+- Phase spread at 1.25 GSa/s (10 frames): 230 codes (207..261) -> 21 codes (9..32). Noise p2p 1.36 -> about 1.0 mV.
+- DVM lanes 0..3 at 500 mV/div: -4.75 / -0.81 / +8.22 / -6.88 -> -4.43 / -4.50 / -4.92 / -3.12 mV (software -5.4).
+  At 100 mV/div: -0.68 / -0.01 / +2.12 / -0.92 -> -0.57 / -0.61 / -0.65 / -0.32 mV (software -0.7).
+- A first try during the start-up mode switches did not converge: the worst slot cycled 6, 7, 5 every round, which
+  fits a channel set that changed under the trim. It kept nothing and the next configuration succeeded.
+- Modes 0 and 5 (CH1 with the probe-comp square) refuse the order every start: the signal moves the slots between
+  runs. Harmless, but the order search should come after the quietness gate so these modes are skipped quietly.
+
+`cal.core_offset = tight` stays opt-in.
+
 ## What the change does
 
 `hal::dho::coretrim`, called from the acquisition thread right after a configuration, with nothing armed, once per
