@@ -1186,29 +1186,32 @@ impl Ui {
     }
 
     /// The full-screen button at the top right of the plot: (drawn, touch area).
+    /// One tap enlarges the waveform over the 1024 x 600 panel; another tap brings the bars back. No extra gesture.
     fn full_btn(&self) -> (Rect, Rect) {
         let g = self.grid;
         // left of the view button while an analysis view has the plot
         let right = if self.view_on() { self.view_btn().x - 6 } else { g.x + g.w - 4 };
-        let r = Rect::new(right - 30, g.y + 3, 30, 24);
-        (r, Rect::new(r.x - 10, g.y, r.w + 14, 40))
+        let r = Rect::new(right - 36, g.y + 3, 36, 28);
+        (r, Rect::new(r.x - 8, g.y, r.w + 16, 44))
     }
 
     fn draw_full_btn(&self, cv: &mut Canvas) {
         let (r, _) = self.full_btn();
-        cv.round(r, 5, PANEL_BG, 220);
-        cv.round_outline(r, 5, BTN_BORDER);
+        let on = self.full_on();
+        cv.round(r, 5, if on { mix(PANEL_BG, AMBER, 40) } else { PANEL_BG }, 230);
+        cv.round_outline(r, 5, if on { AMBER } else { mix(BTN_BORDER, AMBER, 90) });
         // four corner brackets: at the corners pointing in to enlarge, near the middle pointing out to go back
         let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-        let l = 6;
+        let l = 7;
+        let col = if on { AMBER } else { TEXT };
         for (sx, sy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
             // corner of the bracket, and the way its arms go (x, y)
-            let (px, py, ax, ay) = if self.full_on() { (cx + sx * 3, cy + sy * 2, sx, sy) } else { (cx + sx * 10, cy + sy * 8, -sx, -sy) };
+            let (px, py, ax, ay) = if on { (cx + sx * 4, cy + sy * 3, sx, sy) } else { (cx + sx * 12, cy + sy * 9, -sx, -sy) };
             let (hx0, hx1) = (px.min(px + ax * (l - 1)), px.max(px + ax * (l - 1)));
             let (vy0, vy1) = (py.min(py + ay * (l - 1)), py.max(py + ay * (l - 1)));
             // 2 px thick, the second pixel on the side of the arms
-            cv.fill(Rect::new(hx0, py.min(py + ay), hx1 - hx0 + 1, 2), TEXT);
-            cv.fill(Rect::new(px.min(px + ax), vy0, 2, vy1 - vy0 + 1), TEXT);
+            cv.fill(Rect::new(hx0, py.min(py + ay), hx1 - hx0 + 1, 2), col);
+            cv.fill(Rect::new(px.min(px + ax), vy0, 2, vy1 - vy0 + 1), col);
         }
     }
 

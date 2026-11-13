@@ -326,5 +326,23 @@ mod tests {
         u.open_menu(MenuId::Windows);
         let cv = render(&mut u);
         std::fs::write(format!("{}/win-menu.png", d), crate::store::png_of(&cv)).unwrap();
+        // the small corner control vs the same plot with the bars gone
+        u.close_menu();
+        u.m.win_layout = WinLayout::One;
+        u.spread_wins();
+        u.stats_on = true;
+        u.full = false;
+        for _ in 0..12 {
+            u.step(0.05);
+        }
+        let cv = render(&mut u);
+        std::fs::write(format!("{}/fullscreen-btn.png", d), crate::store::png_of(&cv)).unwrap();
+        let (_, hit) = u.full_btn();
+        u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
+        for _ in 0..8 {
+            u.step(0.05);
+        }
+        let cv = render(&mut u);
+        std::fs::write(format!("{}/fullscreen-expanded.png", d), crate::store::png_of(&cv)).unwrap();
     }
 }
