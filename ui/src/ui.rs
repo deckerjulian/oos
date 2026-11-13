@@ -25,6 +25,7 @@ mod logger;
 mod measlabels;
 mod overclock;
 mod tools;
+mod hwmask;
 mod update;
 mod viewmore;
 mod wlan;
@@ -1017,6 +1018,11 @@ pub struct Ui {
     mask: Option<oos_dsp::mask::Mask>,
     mask_pass: u64,
     mask_fail: u64,
+    /// the mask in the columns of the hardware table (hwmask.rs), the latest counters of the mask unit, and a number
+    /// raised to clear them
+    mask_cols: Option<(Vec<f32>, Vec<f32>)>,
+    mask_hw: Option<crate::board::MaskRead>,
+    mask_hw_clear: u64,
     pub shot_request: Option<String>,
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)
@@ -1199,6 +1205,9 @@ impl Ui {
             mask: None,
             mask_pass: 0,
             mask_fail: 0,
+            mask_cols: None,
+            mask_hw: None,
+            mask_hw_clear: 0,
             shot_request: None,
             quit: false,
         };
@@ -1588,8 +1597,7 @@ impl Ui {
         (self.meas_n, self.meas_want) = (self.meas_n + 1, false);
         self.ana = Default::default();
         self.mstat.clear();
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
         self.hw_avg_restart();
         self.toast("Display cleared");
     }
@@ -1634,6 +1642,7 @@ impl Ui {
         self.ch_hold_poll();
         self.counter_poll();
         self.dvm_poll();
+        self.mask_hw_poll();
         self.la_probe_poll();
         self.log_tick();
         self.m.clamp_offsets();
@@ -1973,7 +1982,7 @@ impl Ui {
     }
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
-    /// as a full record (averaging, mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
+    /// as a full record (averaging, a software mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
     fn fast_ok(&self) -> bool {
         let m = &self.m;
         matches!(self.src, Source::Hw { .. })
@@ -1981,7 +1990,7 @@ impl Ui {
             && m.acq == AcqMode::Normal
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
-            && !m.mask_on
+            && (!m.mask_on || self.mask_hw_active())
             && !m.zoom
             && !self.xy
             && m.z_src.is_none()
@@ -2472,7 +2481,8 @@ impl Ui {
             self.mask_pass += 1;
         } else {
             self.mask_fail += 1;
-            if self.m.mask_stop && self.m.run == RunState::Run {
+            // with the hardware test the counters decide (hwmask.rs)
+            if self.m.mask_stop && self.m.run == RunState::Run && !self.mask_hw_active() {
                 self.m.run = RunState::Stop;
                 self.toast("Mask failed: stopped");
             }
@@ -2486,6 +2496,7 @@ impl Ui {
         let tol_x = (self.m.mask_x / HDIV * r.len() as f32).round() as usize;
         let tol_y = self.m.mask_y * self.m.ch[self.m.mask_src].volts_per_div();
         self.mask = Some(oos_dsp::mask::build(r, tol_x, tol_y));
+        self.mask_cols_update();
     }
 
     /// Creates the mask from the source channel of the record shown and starts the test.
@@ -2497,8 +2508,7 @@ impl Ui {
         self.mask_ref = Some(v);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
         self.toast(&format!("Mask created from CH{}", c + 1));
     }
 
@@ -2537,18 +2547,19 @@ impl Ui {
         }
         let f = self.fonts();
         let c = self.m.mask_src;
+        let (pass, fail) = self.mask_counts();
         let parts: [(String, Rgb); 6] = [
-            ("Mask ".into(), TEXT),
+            (if self.mask_hw_active() { "Mask (HW) ".into() } else { "Mask ".into() }, TEXT),
             (format!("CH{}", c + 1), CH_COLORS[c]),
             ("  \u{b7}  Passed ".into(), DIM),
-            (fmt_count(self.mask_pass as f64), GREEN),
+            (fmt_count(pass as f64), GREEN),
             ("  \u{b7}  Failed ".into(), DIM),
-            (fmt_count(self.mask_fail as f64), if self.mask_fail > 0 { RED } else { TEXT }),
+            (fmt_count(fail as f64), if fail > 0 { RED } else { TEXT }),
         ];
         let w: i32 = parts.iter().map(|(s, _)| f.sb.width(s)).sum::<i32>() + 24;
         let a = self.area;
         let r = Rect::new(a.x + 8, a.y + 24, w, 24);
-        let col = if self.mask_fail > 0 { RED } else { GREEN };
+        let col = if fail > 0 { RED } else { GREEN };
         cv.round(r, 12, mix(BAR, col, 110), 255);
         cv.round(r.inset(1), 11, mix(BAR, col, 26), 255);
         let mut x = r.x + 12;
@@ -5508,7 +5519,7 @@ impl Ui {
             }
             Item::TouchLock => m.touch_lock = !m.touch_lock,
             Item::AuxOut => {
-                let all = AuxOut::choices();
+                let all = AuxOut::choices(board().mask_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
                 m.aux_out = all[cyc(i, all.len(), d)];
             }
@@ -5915,10 +5926,7 @@ impl Ui {
                     self.shot_request = Some(p.to_string_lossy().into_owned());
                 }
                 Item::MaskCreate => self.create_mask(),
-                Item::MaskReset => {
-                    self.mask_pass = 0;
-                    self.mask_fail = 0;
-                }
+                Item::MaskReset => self.mask_counts_reset(),
                 Item::Stock => self.stock_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
                 Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
@@ -6114,7 +6122,7 @@ impl Ui {
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::TouchLock => &["On", "Locked"],
-            Item::AuxOut => return AuxOut::choices().iter().map(|a| a.name().to_string()).collect(),
+            Item::AuxOut => return AuxOut::choices(board().mask_hw()).iter().map(|a| a.name().to_string()).collect(),
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],
             Item::DecSel => &["D1", "D2", "D3", "D4"],
@@ -9182,12 +9190,15 @@ mod aux_out_tests {
     fn aux_out_in_the_system_menu_with_the_offered_choices() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
-        let want: &[&str] = if AUX_PASSFAIL { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
+        let want: &[&str] = if board().mask_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
         assert_eq!(ui.options(Item::AuxOut), want);
         assert_eq!(ui.value(Item::AuxOut), "Trigger out");
         ui.select_option(Item::AuxOut, "Off");
         assert_eq!((ui.m.aux_out, ui.value(Item::AuxOut).as_str()), (AuxOut::Off, "Off"));
         ui.select_option(Item::AuxOut, "Trigger out");
         assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
+        // pass/fail where the mask test runs in hardware
+        assert_eq!(AuxOut::choices(true), AUX_OUTS);
+        assert_eq!(AuxOut::choices(false), [AuxOut::TrigOut, AuxOut::Off]);
     }
 }

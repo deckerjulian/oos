@@ -157,6 +157,8 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         la,
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m)).then(|| Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
         aux: aux_out(m.aux_out),
+        // the mask test comes from the UI's mask (`Shared::mask_want`), merged in the acquisition thread
+        hwmask: None,
     };
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
@@ -347,6 +349,23 @@ pub fn dvm_hw_on() -> bool {
 /// The `dvm.hw` line of system.conf; off unless `on`.
 fn dvm_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
+}
+
+/// `mask.hw = on` in system.conf: the mask test runs in the FPGA's mask unit (docs/fork/hwmask.md) and the software
+/// test only where it cannot. Off by default until the sample scale and the slots are verified on the unit.
+pub fn mask_hw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| mask_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `mask.hw` line of system.conf; off unless `on`.
+fn mask_hw_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "mask.hw").as_deref() == Some("on")
+}
+
+/// The mask test of the acquisition settings from the UI's wish.
+fn hw_mask(w: &crate::board::MaskWant) -> oos_hal::dho::seq::HwMask {
+    oos_hal::dho::seq::HwMask { ch: w.ch, lo: w.lo.clone(), hi: w.hi.clone(), stop_on_fail: w.stop, clear: w.clear }
 }
 
 /// Seconds between two readings of the DVM block, and from its (re)start to the first one. The window of 2^28 samples
@@ -765,9 +784,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
-            let (want, want_mode, avg_clear) = {
+            let (want, want_mode, avg_clear, mask_want) = {
                 let g = out.lock().unwrap();
-                (g.want.clone(), g.slow, g.avg_clear)
+                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.as_ref().map(hw_mask))
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -777,6 +796,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
+            want.hwmask = mask_want;
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
@@ -1096,6 +1116,16 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         let mut g = out.lock().unwrap();
                         g.trig_fired = Some((g.trig_fired.map_or(1, |x| x.0 + 1), f));
                     }
+                    // the mask unit's counters after every batch (docs/fork/hwmask.md)
+                    let mr = state.mask_ctrl().zip(b.hwmask.as_ref()).zip(state.mask_run).map(|((ctrl, m), run)| {
+                        let raw = oos_hal::dho::mask::read(&mut bar, ctrl);
+                        (m.ch, run.0, ctrl, raw)
+                    });
+                    {
+                        let mut g = out.lock().unwrap();
+                        let n = g.mask.map_or(0, |r| r.n) + 1;
+                        g.mask = mr.map(|(ch, slot, ctrl, raw)| crate::board::MaskRead { ch, slot, ctrl, raw: [raw.frames_lo, raw.frames_hi, raw.fails_lo, raw.fails_hi], frames: raw.frames(), fails: raw.fails(), n });
+                    }
                     // hardware average: one frame, shown or not, the average cleared after a complete hold average
                     let after = avg.as_mut().map(|(tr, _, logged)| {
                         let a = tr.batch(count);
@@ -1351,6 +1381,56 @@ mod tests {
         assert!(w.iter().any(|x| matches!(x, oos_hal::dho::seq::Step::Wr((0x1430, 2)))));
         m.aux_out = AuxOut::PassFail;
         assert_eq!(settings(&m, false).aux, auxout::AuxOut::PassFail(auxout::PassFail::DEFAULT));
+    }
+
+    #[test]
+    fn mask_columns_of_the_board() {
+        assert_eq!(crate::board::MASK_COLUMNS, oos_hal::dho::mask::COLUMNS);
+    }
+
+    #[test]
+    fn mask_hw_from_conf() {
+        assert!(!mask_hw_from(""));
+        assert!(mask_hw_from("mask.hw = on\n"));
+        assert!(!mask_hw_from("mask.hw = 1\n"));
+    }
+
+    /// The software mask in the hardware table, and the comparator modelled on the read-out words (the assumed sample
+    /// scale, `mask::code`): what the software passes the table passes, a runt fails both.
+    #[test]
+    fn hardware_table_agrees_with_the_software_mask() {
+        use oos_hal::dho::mask;
+        let (scale, offset) = (1.0, -1.5);
+        let n = 20_000;
+        // 5 periods of a 0..3 V square with a little noise, and a runt in period 3
+        let wave = |runt: bool, seed: u32| -> Vec<f32> {
+            (0..n)
+                .map(|k| {
+                    let ph = k % 4000;
+                    let hi = if runt && k / 4000 == 3 { 1.2 } else { 3.0 };
+                    let noise = (((k as u32).wrapping_mul(2_654_435_761).wrapping_add(seed) >> 16) as f32 / 65536.0 - 0.5) * 0.04;
+                    (if ph < 2000 { hi } else { 0.0 }) + noise
+                })
+                .collect()
+        };
+        let m = oos_dsp::mask::build(&wave(false, 1), 20, 0.2);
+        let (lo, hi) = m.columns(mask::COLUMNS);
+        let cols = mask::table(&lo, &hi, scale, offset);
+        // the read-out word of a sample (inverse of `seq::decode_volts`), and the 8-bit comparator on it
+        let fails = |v: &[f32]| -> bool {
+            v.iter().enumerate().any(|(k, &x)| {
+                let w = (32768.0 + (x as f64 + offset) / scale * 7500.0).round().clamp(0.0, 65535.0) as u32;
+                let c = (w >> mask::SHIFT) as u8;
+                let col = cols[k * mask::COLUMNS / n];
+                (col.lo_en && c < col.lo) || (col.hi_en && c > col.hi)
+            })
+        };
+        for seed in 2..8 {
+            let v = wave(false, seed);
+            assert!(m.test(&v).pass && !fails(&v), "seed {}", seed);
+        }
+        let v = wave(true, 9);
+        assert!(!m.test(&v).pass && fails(&v));
     }
 
     #[test]

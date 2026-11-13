@@ -502,6 +502,19 @@ impl Source {
         None
     }
 
+    /// Hardware source: hands the mask test the UI wants to the acquisition thread (None: off) and returns the latest
+    /// counter reading; None off the hardware.
+    pub fn hw_mask(&self, want: Option<crate::board::MaskWant>) -> Option<Option<crate::board::MaskRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            if g.mask_want != want {
+                g.mask_want = want;
+            }
+            return Some(g.mask);
+        }
+        None
+    }
+
     /// Hardware source: hands the DVM set-up the UI wants to the acquisition thread (None: off) and returns the latest
     /// reading; None off the hardware.
     pub fn hw_dvm(&self, want: Option<crate::board::DvmWant>) -> Option<Option<crate::board::DvmRead>> {

@@ -335,8 +335,7 @@ impl Ui {
         self.mask_ref = Some(v);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
         self.toast(&format!("Mask loaded from {}", crate::store::file_name(&p)));
     }
 

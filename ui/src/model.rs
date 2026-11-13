@@ -156,25 +156,23 @@ pub enum AuxOut {
     TrigOut,
     /// constant low
     Off,
-    /// a pulse per failed (or passed) acquisition of the hardware mask test; offered only with `AUX_PASSFAIL`
+    /// a pulse per failed acquisition of the hardware mask test (`mask.hw = on`, docs/fork/hwmask.md); without it the
+    /// output stays low
     PassFail,
 }
 
 pub const AUX_OUTS: [AuxOut; 3] = [AuxOut::TrigOut, AuxOut::Off, AuxOut::PassFail];
 
-/// The pass/fail source of AUX OUT is the FPGA mask unit, which OOS does not drive yet (the mask test runs in
-/// software). Until it does, pass/fail is not offered in the menu, over SCPI or in setup files.
-pub const AUX_PASSFAIL: bool = cfg!(feature = "aux-passfail");
-
 impl AuxOut {
-    /// the choices the menu, SCPI and setup files take
-    pub fn offered(self) -> bool {
-        self != AuxOut::PassFail || AUX_PASSFAIL
+    /// what the menu and SCPI take: pass/fail only where the mask test can run in hardware (`Board::mask_hw`); a setup
+    /// file takes every value
+    pub fn offered(self, hw_mask: bool) -> bool {
+        self != AuxOut::PassFail || hw_mask
     }
 
     /// the offered choices in menu order
-    pub fn choices() -> Vec<AuxOut> {
-        AUX_OUTS.iter().copied().filter(|a| a.offered()).collect()
+    pub fn choices(hw_mask: bool) -> Vec<AuxOut> {
+        AUX_OUTS.iter().copied().filter(|a| a.offered(hw_mask)).collect()
     }
 
     pub fn name(self) -> &'static str {
