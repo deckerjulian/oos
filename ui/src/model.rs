@@ -928,6 +928,8 @@ pub struct Model {
     pub hw_stamp: u64,
     /// hardware source: bumped when the hardware average has to start over (CLEAR, RUN, SINGLE); not stored
     pub hw_avg_clear: u64,
+    /// AUTO sweep with the shortest auto-trigger time, set by the auto set-up while it reads levels; not stored
+    pub auto_fast: bool,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
     /// bandwidth test (Analysers > Bandwidth): source, signal frequency hint (0 = Auto), bins per period
     pub bw_src: usize,
@@ -1202,6 +1204,7 @@ impl Default for Model {
             bode_gen: 0,
             hw_stamp: 0,
             hw_avg_clear: 0,
+            auto_fast: false,
             bode_addr: "192.168.1.100:5555".into(),
             bode_usb: false,
             bode_sw_time: 1.0,

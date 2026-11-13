@@ -1114,6 +1114,16 @@ pub fn periodic(v: &[f32], dt: f64) -> Option<f64> {
     Some((rises[rises.len() - 1] - rises[0]) as f64 / gaps.len() as f64 * 2.0 * dt)
 }
 
+/// The trigger level halfway through a signal: between top and base where it has flat levels (a spike or overshoot
+/// moves the extremes, not these), else between the extremes. Used by level 50 % and the auto set-up.
+pub fn mid_level(s: &Stats) -> f32 {
+    if s.top > s.base {
+        (s.top + s.base) / 2.0
+    } else {
+        (s.vmax + s.vmin) / 2.0
+    }
+}
+
 /// The end of an auto set-up: `found` = channel, levels, period; the rest of the set-up stays.
 pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
     // one horizontal band per channel (8 div / n), signal fills 80 % of its band; in a split plot per window: n and the
@@ -1139,7 +1149,7 @@ pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
     }
     if let Some((c, s, _)) = found.first() {
         m.trig_src = *c;
-        m.trig_level = (s.vmax + s.vmin) / 2.0;
+        m.trig_level = mid_level(s);
         m.slope = Slope::Rise;
         m.trig_mode = TrigMode::Auto;
         m.active = *c;
@@ -1158,6 +1168,21 @@ pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: level 50 % on the extremes, which a spike or overshoot pulls off the middle of the swing
+    #[test]
+    fn mid_level_ignores_spikes_on_a_square_and_takes_the_extremes_of_a_sine() {
+        let mut sq: Vec<f32> = (0..4000).map(|k| if (k / 500) % 2 == 0 { 0.0 } else { 5.0 }).collect();
+        for k in [499, 1499, 2499] {
+            sq[k + 1] = 9.0;
+        }
+        sq[1000] = -2.0;
+        let s = stats(&sq, 1e-6);
+        assert_eq!((s.vmax + s.vmin) / 2.0, 3.5);
+        assert!((mid_level(&s) - 2.5).abs() < 0.1, "{}", mid_level(&s));
+        let sine: Vec<f32> = (0..4000).map(|k| 1.0 + (k as f32 / 400.0 * std::f32::consts::TAU).sin()).collect();
+        assert!((mid_level(&stats(&sine, 1e-6)) - 1.0).abs() < 0.01);
+    }
 
     #[test]
     fn periodic_takes_a_sine_and_refuses_noise_and_dc() {

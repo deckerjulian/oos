@@ -5943,7 +5943,7 @@ impl Ui {
     fn level_50(&mut self) {
         let s = self.stats[self.m.trig_src];
         if s.valid {
-            self.m.trig_level = (s.vmax + s.vmin) / 2.0;
+            self.m.trig_level = crate::wave::mid_level(&s);
             self.settings_changed();
         }
     }
