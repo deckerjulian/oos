@@ -176,7 +176,7 @@ and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the 
 
 | name | type | data |
 |---|---|---|
-| `<name>.local` | A, AAAA | the addresses of the interface the question came in on |
+| `<name>.local` | A | the address of the interface the question came in on (no AAAA: the web remote, SCPI and VXI-11 listen on IPv4 only, and a computer would try the IPv6 address first) |
 | `y.x.254.169.in-addr.arpa` (the IPv4 address reversed) | PTR | `<name>.local` |
 | `_services._dns-sd._udp.local` | PTR | each service type below that is switched on |
 | `_http._tcp.local` | PTR, SRV, TXT | web remote: port 8080, `path=/` |
@@ -185,7 +185,7 @@ and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the 
 
 The instance name a computer lists is `Rigol DHO924S OOS (204527)` (with a name of its own: `Rigol DHO924S OOS
 (lab-scope-3)`). A service switched off is not announced; its records get a goodbye. A name of the scope without the
-type asked for is answered with an NSEC record of the types it has (no AAAA on an interface without IPv6).
+type asked for is answered with an NSEC record of the types it has (A, so a question for AAAA gets a quick "none").
 
 Before it answers, the responder probes for the name three times 250 ms apart and announces its records twice, a second
 apart (RFC 6762 §8). It does that again after each change of the name, the services or the interfaces. When another

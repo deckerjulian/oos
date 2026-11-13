@@ -5,7 +5,7 @@
 //! `http://dho924s-204527.local:8080` reaches the web remote, also when the scope only has a link-local address
 //! (169.254.x.y, rcS without DHCP), and a computer that browses for web pages, SCPI or VXI-11 instruments lists it.
 //!
-//! - Answers: A and AAAA of `<name>.local` with the addresses of the interface the question came in on, the reverse
+//! - Answers: A of `<name>.local` (no AAAA: the services listen on IPv4 only) with the address of the interface the question came in on, the reverse
 //!   PTR of its IPv4 address, `_services._dns-sd._udp.local`, and per service that is switched on a PTR, SRV and TXT
 //!   (`_http._tcp` 8080, `_scpi-raw._tcp` 5555, `_vxi-11._tcp` 111). NSEC says which types a name of the scope has.
 //! - Questions with the unicast-response bit (QU) get a unicast answer; a question from a port other than 5353 (a plain
@@ -698,9 +698,8 @@ impl Responder {
             v.push(Rec::new(host.clone(), Data::A(a), TTL_HOST, true));
             v.push(Rec::new(reverse4(a), Data::Ptr(host.clone()), TTL_HOST, true));
         }
-        for a in &ifc.v6 {
-            v.push(Rec::new(host.clone(), Data::Aaaa(*a), TTL_HOST, true));
-        }
+        // no AAAA: the web remote, SCPI and VXI-11 listen on IPv4 only, and a computer that gets an IPv6 address tries
+        // it first (curl took seconds on a Mac before it fell back); questions over IPv6 get the A record and an NSEC
         for s in &self.cfg.services {
             let ty = Self::service_type(&s.kind);
             let inst = self.instance(&s.kind);
@@ -1985,7 +1984,7 @@ mod tests {
         assert!(!outs.iter().any(|o| o.iface == ETH && o.dest == Dest::Group6), "eth0 has no IPv6 address");
         let m = one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-204527", "local"], T_ANY, false)]), SocketAddr::from(([10, 0, 0, 9], PORT)), 5, true));
         assert!(m.an.iter().any(|a| a.rtype == T_A && a.canon == vec![10, 0, 0, 5]));
-        assert!(m.an.iter().any(|a| a.rtype == T_AAAA));
+        assert!(!m.an.iter().any(|a| a.rtype == T_AAAA), "the services have no IPv6");
         assert!(!m.an.iter().any(|a| a.canon == vec![192, 168, 1, 20]), "only the address of the interface asked on");
         // all interfaces gone: waiting for one
         r.set_ifaces(t + 3.0, Vec::new());
