@@ -797,6 +797,8 @@ pub struct Ui {
     /// the reference the Slot rows work on
     ref_sel: usize,
     ref_src: usize,
+    /// files the Import slot picker is showing
+    ref_files: Vec<std::path::PathBuf>,
     xy: bool,
     knob_t: [f64; 16],
     pub now: f64,
@@ -959,6 +961,7 @@ impl Ui {
             meas_src_b: WaveId::Ch(1),
             ref_sel: 0,
             ref_src: 0,
+            ref_files: Vec::new(),
             xy: false,
             pinch: Pinch { active: false, p0: (0, 0), p1: (0, 0), ref_dx: 0, ref_dy: 0 },
             knob_t: [0.0; 16],
@@ -5118,6 +5121,13 @@ impl Ui {
                     self.close_picker();
                     self.wlan_forget_pick(k);
                 }
+                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::RefImport) => {
+                    let p = self.ref_files.get(k).cloned();
+                    self.close_picker();
+                    if let Some(p) = p {
+                        self.ref_load_path(&p);
+                    }
+                }
                 Item::PickOpt(k) => {
                     if let Some(p) = self.pick {
                         let opts = self.options(p.it);
@@ -5158,11 +5168,7 @@ impl Ui {
                     None => self.toast("No waveform to save"),
                 },
                 Item::RefExport => self.ref_export(),
-                Item::RefImport => {
-                    self.ref_import();
-                    self.measure_refs();
-                    self.analyzer_update();
-                },
+                Item::RefImport => self.ref_import(),
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
                 Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
@@ -5499,6 +5505,7 @@ impl Ui {
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
+            Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
             Item::QuickAct => return QUICKS.iter().map(|q| q.name().to_string()).collect(),
             Item::Overclock => return board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
             _ => &[],

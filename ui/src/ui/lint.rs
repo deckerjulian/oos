@@ -1431,6 +1431,29 @@ fn a_reference_travels_through_a_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
+    let dir = std::env::temp_dir().join(format!("oos-refbin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = with_two_channels();
+    u.store_dir = dir.clone();
+    let rec = u.last[0].as_ref().unwrap().clone();
+    let want = rec.ch[0].clone();
+    let dt = rec.dt;
+    std::fs::write(dir.join("wave-001.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.activate(Item::RefImport);
+    let r = u.refs[0].as_ref().expect("R1");
+    assert_eq!(r.v, want);
+    assert!((r.dt - dt).abs() < 1e-18);
+    std::fs::remove_file(dir.join("wave-001.bin")).unwrap();
+    u.refs[0] = None;
+    std::fs::write(dir.join("cap.wfm"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.activate(Item::RefImport);
+    assert_eq!(u.refs[0].as_ref().unwrap().v, want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A CSV in a ref slot is measured at the file's sample interval. The 20 MHz front-end limit
 /// does not touch it. CH1 still reads the hardware frame, and the live source is left alone.
 #[test]
