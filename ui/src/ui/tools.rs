@@ -421,23 +421,44 @@ impl Ui {
 
     pub(super) fn mask_save(&mut self) {
         let Some(r) = &self.mask_ref else { return self.toast("No mask yet: Create mask first") };
-        let mut t = String::from("# OOS mask: the reference waveform in volts, one value per line\n");
-        for v in r {
-            t.push_str(&format!("{}\n", v));
+        let t = crate::store::mask_text(self.m.mask_src, self.m.mask_x, self.m.mask_y, self.m.mask_inv, r);
+        let slot = self.mask_path();
+        if let Err(e) = crate::store::write(&slot, t.as_bytes()) {
+            return self.toast(&format!("Save failed: {}", e));
         }
-        let p = self.mask_path();
+        let p = crate::store::next_name(&self.save_dir(), "mask", "txt");
         let res = crate::store::write(&p, t.as_bytes());
         self.toast_saved(&p, res);
     }
 
     pub(super) fn mask_load(&mut self) {
-        let p = self.mask_path();
+        let slot = self.mask_path();
+        let p = if slot.is_file() {
+            slot
+        } else if let Some(p) = crate::store::latest_name(&self.save_dir(), "mask", "txt") {
+            p
+        } else {
+            return self.toast("No mask file in the slot or save folder");
+        };
         let Ok(t) = std::fs::read_to_string(&p) else { return self.toast(&format!("No {}", crate::store::file_name(&p))) };
-        let v: Vec<f32> = t.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.trim().parse().ok()).filter(|v: &f32| v.is_finite()).collect();
-        if v.len() < 2 {
-            return self.toast("That file holds no mask");
+        let mf = match crate::store::parse_mask(&t) {
+            Ok(m) if m.v.len() >= 2 => m,
+            Ok(_) => return self.toast("That file holds no mask"),
+            Err(e) => return self.toast(&format!("Load failed: {}", e)),
+        };
+        if let Some(src) = mf.src {
+            self.m.mask_src = src;
         }
-        self.mask_ref = Some(v);
+        if let Some(x) = mf.x {
+            self.m.mask_x = x;
+        }
+        if let Some(y) = mf.y {
+            self.m.mask_y = y;
+        }
+        if let Some(inv) = mf.inv {
+            self.m.mask_inv = inv;
+        }
+        self.mask_ref = Some(mf.v);
         self.build_mask();
         self.m.mask_on = true;
         self.mask_pass = 0;

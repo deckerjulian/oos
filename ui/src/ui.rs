@@ -315,6 +315,7 @@ enum Item {
     RefShow(usize),
     RefClear,
     MathOpI,
+    MathFam,
     MathA,
     MathB,
     MathScale,
@@ -554,17 +555,23 @@ enum Item {
     WlanForgetNet,
     ColorGrade,
     StoreSlot,
+    StoreDest,
     StoreSaveSetup,
     StoreRecall,
     StoreCsv,
     StorePng,
+    StoreFfSave,
+    StoreFfLoad,
     MaskOn,
     MaskSrc,
     MaskX,
     MaskY,
     MaskAction,
+    MaskInvert,
     MaskCreate,
+    MaskFromRef,
     MaskReset,
+    MaskClear,
     QuickAct,
     /// option n of the open picker
     PickOpt(usize),
@@ -853,6 +860,10 @@ pub struct Ui {
     vmaxz_cg: u32,
     /// storage directory (setups, CSV, PNG), created when missing
     pub store_dir: std::path::PathBuf,
+    /// Auto / USB stick / desktop for waveform, mask and screenshot files
+    store_dest: crate::store::StoreDest,
+    /// Math menu category (kept when the operation is Off)
+    math_fam: MathFamily,
     /// a USB stick is mounted
     usb: bool,
     /// LA probe detect: None = not known (no hardware, not read yet)
@@ -1006,6 +1017,8 @@ impl Ui {
             vmax_cg: 1,
             vmaxz_cg: 1,
             store_dir: std::path::PathBuf::from(crate::store::DEFAULT_DIR),
+            store_dest: crate::store::StoreDest::Auto,
+            math_fam: MathFamily::Arith,
             usb: false,
             la_probe: None,
             usb_check: 0.0,
@@ -2130,7 +2143,9 @@ impl Ui {
         let Some(r) = &self.mask_ref else { return };
         let tol_x = (self.m.mask_x / HDIV * r.len() as f32).round() as usize;
         let tol_y = self.m.mask_y * self.m.ch[self.m.mask_src].volts_per_div();
-        self.mask = Some(oos_dsp::mask::build(r, tol_x, tol_y));
+        let mut mask = oos_dsp::mask::build(r, tol_x, tol_y);
+        mask.invert = self.m.mask_inv;
+        self.mask = Some(mask);
     }
 
     /// Creates the mask from the source channel of the record shown and starts the test.
@@ -2145,6 +2160,64 @@ impl Ui {
         self.mask_pass = 0;
         self.mask_fail = 0;
         self.toast(&format!("Mask created from CH{}", c + 1));
+    }
+
+    /// Creates the mask from the selected reference slot.
+    fn create_mask_from_ref(&mut self) {
+        let Some(r) = self.refs[self.ref_sel].as_ref().filter(|r| r.v.len() >= 2) else {
+            return self.toast(&format!("R{} is empty", self.ref_sel + 1));
+        };
+        self.mask_ref = Some(r.v.clone());
+        self.m.mask_src = r.src.min(NCH - 1);
+        self.build_mask();
+        self.m.mask_on = true;
+        self.mask_pass = 0;
+        self.mask_fail = 0;
+        self.toast(&format!("Mask created from R{}", self.ref_sel + 1));
+    }
+
+    /// Off plus the operations of the selected Math category.
+    fn math_ops_in_family(&self) -> Vec<MathOp> {
+        let mut v = vec![MathOp::Off];
+        v.extend_from_slice(self.math_fam.ops());
+        v
+    }
+
+    fn ff_save(&mut self) {
+        let recs: Vec<Record> = if !self.history.is_empty() {
+            self.history.iter().cloned().collect()
+        } else if let Some(rec) = self.last[0].as_ref() {
+            vec![rec.clone()]
+        } else {
+            return self.toast("No frames to save");
+        };
+        let p = crate::store::next_name(&self.save_dir(), "frame", "bin");
+        let r = crate::store::write(&p, &crate::store::ff_bin(&recs, &self.m));
+        self.toast_saved(&p, r);
+    }
+
+    fn ff_load(&mut self) {
+        let p = match crate::store::latest_name(&self.save_dir(), "frame", "bin") {
+            Some(p) => p,
+            None => return self.toast("No frame-NNN.bin in the save folder"),
+        };
+        let data = match std::fs::read(&p) {
+            Ok(b) => b,
+            Err(e) => return self.toast(&format!("Load failed: {}", e)),
+        };
+        match crate::store::parse_ff(&data) {
+            Ok(recs) if !recs.is_empty() => {
+                self.history = recs.into();
+                let n = self.history.len();
+                self.hist_pos = Some(n - 1);
+                self.last[0] = Some(self.history[n - 1].clone());
+                self.m.run = RunState::Stop;
+                self.measure_last();
+                self.toast(&format!("Loaded {} frames from {}", n, crate::store::file_name(&p)));
+            }
+            Ok(_) => self.toast("That file holds no frames"),
+            Err(e) => self.toast(&format!("Load failed: {}", e)),
+        }
     }
 
     /// Forbidden region of the mask (outside the envelope) tinted red, the envelope edges a little stronger.
@@ -2164,13 +2237,21 @@ impl Ui {
             let yh = y_of(hi).clamp(top, bot);
             let yl = (y_of(lo) + 1).clamp(top, bot);
             let px = a.x + x;
-            if yh > top {
-                cv.blend(Rect::new(px, top, 1, yh - top), RED, 58);
-                cv.blend(Rect::new(px, yh - 1, 1, 1), RED, 120);
-            }
-            if yl < bot {
-                cv.blend(Rect::new(px, yl, 1, bot - yl), RED, 58);
-                cv.blend(Rect::new(px, yl, 1, 1), RED, 120);
+            if self.m.mask_inv {
+                if yl > yh {
+                    cv.blend(Rect::new(px, yh, 1, yl - yh), RED, 58);
+                    cv.blend(Rect::new(px, yh, 1, 1), RED, 120);
+                    cv.blend(Rect::new(px, yl - 1, 1, 1), RED, 120);
+                }
+            } else {
+                if yh > top {
+                    cv.blend(Rect::new(px, top, 1, yh - top), RED, 58);
+                    cv.blend(Rect::new(px, yh - 1, 1, 1), RED, 120);
+                }
+                if yl < bot {
+                    cv.blend(Rect::new(px, yl, 1, bot - yl), RED, 58);
+                    cv.blend(Rect::new(px, yl, 1, 1), RED, 120);
+                }
             }
         }
     }
@@ -3593,7 +3674,7 @@ impl Ui {
                 }
                 v
             }
-            MenuId::Storage => vec![Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StorePng],
+            MenuId::Storage => vec![Item::StoreDest, Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StoreFfSave, Item::StoreFfLoad, Item::StorePng],
             MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecAcprW, Item::SpecAcprS, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
             MenuId::Eye => vec![Item::EyeOn, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyeClear],
             MenuId::Power => {
@@ -3621,16 +3702,16 @@ impl Ui {
             MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
-            MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
+            MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskInvert, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskFromRef, Item::MaskReset, Item::MaskClear, Item::MaskSave, Item::MaskLoad],
             MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
             }
-            MenuId::Math if self.m.math == MathOp::Off => vec![Item::MathSel, Item::MathOpI],
-            MenuId::Math if self.m.math == MathOp::Expr => vec![Item::MathSel, Item::MathOpI, Item::MathExprI, Item::MathExprEdit, Item::MathScale, Item::MathOffset, Item::MathAuto],
+            MenuId::Math if self.m.math == MathOp::Off => vec![Item::MathSel, Item::MathFam, Item::MathOpI],
+            MenuId::Math if self.m.math == MathOp::Expr => vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathExprI, Item::MathExprEdit, Item::MathScale, Item::MathOffset, Item::MathAuto],
             MenuId::Math => {
-                let mut v = vec![Item::MathSel, Item::MathOpI, Item::MathA];
+                let mut v = vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathA];
                 if self.m.math.two_sources() {
                     v.push(Item::MathB);
                 }
@@ -4203,7 +4284,7 @@ impl Ui {
             Item::ChScale(_) | Item::ChOffset(_) | Item::HScale | Item::HDelay | Item::TrigLevel | Item::AcqAvg | Item::CurA | Item::CurB | Item::Intensity | Item::GridBright => Kind::Value,
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
-            Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::MaskCreate | Item::MaskReset => Kind::Action,
+            Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
             Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
@@ -4240,17 +4321,23 @@ impl Ui {
             Item::Open(MenuId::Dpt) => "Double pulse",
             Item::ColorGrade => "Colour grade",
             Item::StoreSlot => "Setup slot",
+            Item::StoreDest => "Save to",
             Item::StoreSaveSetup => "Save setup",
             Item::StoreRecall => "Recall setup",
             Item::StoreCsv => "Save waveform (CSV)",
             Item::StorePng => "Save screenshot (PNG)",
+            Item::StoreFfSave => "Save fast-frame",
+            Item::StoreFfLoad => "Load fast-frame",
             Item::MaskOn => "Mask test",
             Item::MaskSrc => "Source",
             Item::MaskX => "Tolerance X",
             Item::MaskY => "Tolerance Y",
             Item::MaskAction => "On fail",
-            Item::MaskCreate => "Create mask",
+            Item::MaskInvert => "Invert",
+            Item::MaskCreate => "Create from CH",
+            Item::MaskFromRef => "Create from ref",
             Item::MaskReset => "Reset counts",
+            Item::MaskClear => "Clear mask",
             Item::MeasStats => "Statistics",
             Item::MeasLabels => "Labels on trace",
             Item::Zoom => "Zoom",
@@ -4295,6 +4382,7 @@ impl Ui {
             Item::RefShow(i) => ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"][i.min(NREF - 1)],
             Item::RefClear => "Clear all",
             Item::MathOpI => "Operation",
+            Item::MathFam => "Category",
             Item::MathA => "Source A",
             Item::MathB => "Source B",
             Item::MathScale => "Scale",
@@ -4578,6 +4666,9 @@ impl Ui {
             Item::Histogram => format!("{:?}", m.hist),
             Item::TouchLock => if m.touch_lock { "Locked".into() } else { "On".into() },
             Item::MathOpI => m.math.name().into(),
+            Item::MathFam => self.math_fam.name().into(),
+            Item::StoreDest => self.store_dest.name().into(),
+            Item::MaskInvert => onoff(m.mask_inv),
             Item::MeasStats => onoff(self.stats_on),
             Item::MeasLabels => onoff(self.m.meas_labels),
             Item::Zoom => onoff(m.zoom),
@@ -4909,10 +5000,22 @@ impl Ui {
                 m.quick = QUICKS[cyc(i, QUICKS.len(), d)];
             }
             Item::MathOpI => {
-                let i = MATH_OPS.iter().position(|&x| x == m.math).unwrap();
-                m.math = MATH_OPS[cyc(i, MATH_OPS.len(), d)];
+                let fam = self.math_fam;
+                let mut ops = vec![MathOp::Off];
+                ops.extend_from_slice(fam.ops());
+                let i = ops.iter().position(|&x| x == m.math).unwrap_or(0);
+                m.math = ops[cyc(i, ops.len(), d)];
                 m.math_offset = 0.0;
                 self.math_autoscale();
+            }
+            Item::MathFam => {
+                let i = MathFamily::ALL.iter().position(|&f| f == self.math_fam).unwrap_or(0);
+                self.math_fam = MathFamily::ALL[cyc(i, MathFamily::ALL.len(), d)];
+                if m.math != MathOp::Off && m.math.family() != self.math_fam {
+                    m.math = self.math_fam.ops()[0];
+                    m.math_offset = 0.0;
+                    self.math_autoscale();
+                }
             }
             // sources: CH1..4 and the math channels below the selected one
             Item::MathA => m.math_a = src_step(m.math_a.min(NCH + m.math_sel - 1), NCH + m.math_sel, d),
@@ -4920,6 +5023,9 @@ impl Ui {
             Item::MathSel => {
                 let k = cyc(m.math_sel, NMATH, d);
                 m.math_select(k);
+                if m.math != MathOp::Off {
+                    self.math_fam = m.math.family();
+                }
             }
             Item::MathBw => {
                 let l = time_ladder();
@@ -5024,6 +5130,10 @@ impl Ui {
             Item::Overclock => self.overclock_step(d),
             Item::ColorGrade => self.m.color_grade = !self.m.color_grade,
             Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(1, 9) as u32,
+            Item::StoreDest => {
+                let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);
+                self.store_dest = crate::store::StoreDest::ALL[cyc(i, crate::store::StoreDest::ALL.len(), d)];
+            }
             Item::MaskOn => {
                 self.m.mask_on = !self.m.mask_on;
                 if self.m.mask_on && self.mask.is_none() {
@@ -5046,6 +5156,10 @@ impl Ui {
                 self.build_mask();
             }
             Item::MaskAction => self.m.mask_stop = !self.m.mask_stop,
+            Item::MaskInvert => {
+                self.m.mask_inv = !self.m.mask_inv;
+                self.build_mask();
+            }
             Item::RefSrc => self.ref_src = src_step(self.ref_src, NCH, d),
             Item::RefShow(i) => {
                 if let Some(r) = &mut self.refs[i] {
@@ -5303,10 +5417,21 @@ impl Ui {
                     self.shot_request = Some(p.to_string_lossy().into_owned());
                 }
                 Item::MaskCreate => self.create_mask(),
+                Item::MaskFromRef => self.create_mask_from_ref(),
+                Item::MaskClear => {
+                    self.mask = None;
+                    self.mask_ref = None;
+                    self.m.mask_on = false;
+                    self.mask_pass = 0;
+                    self.mask_fail = 0;
+                    self.toast("Mask cleared");
+                }
                 Item::MaskReset => {
                     self.mask_pass = 0;
                     self.mask_fail = 0;
                 }
+                Item::StoreFfSave => self.ff_save(),
+                Item::StoreFfLoad => self.ff_load(),
                 Item::Stock => self.stock_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
                 Item::SrcOn => {
@@ -5343,14 +5468,31 @@ impl Ui {
         self.usb && self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR)
     }
 
-    /// Where screenshots and CSV files go now.
+    /// Where screenshots, CSV, mask copies and fast-frame files go now.
     pub fn save_dir(&self) -> std::path::PathBuf {
-        if self.usb_used() { std::path::PathBuf::from(crate::store::USB_DIR) } else { self.store_dir.clone() }
+        match self.store_dest {
+            crate::store::StoreDest::Stick => std::path::PathBuf::from(crate::store::USB_DIR),
+            crate::store::StoreDest::Desk => {
+                if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) {
+                    crate::store::desktop_dir()
+                } else {
+                    self.store_dir.join("Desktop")
+                }
+            }
+            crate::store::StoreDest::Auto => {
+                if self.usb_used() { std::path::PathBuf::from(crate::store::USB_DIR) } else { self.store_dir.clone() }
+            }
+        }
     }
 
     /// For the message after saving.
     pub fn saved_where(&self) -> &'static str {
-        if self.usb_used() { " on the USB stick" } else { "" }
+        match self.store_dest {
+            crate::store::StoreDest::Desk => " on the desktop",
+            crate::store::StoreDest::Stick => " on the USB stick",
+            crate::store::StoreDest::Auto if self.usb_used() => " on the USB stick",
+            _ => "",
+        }
     }
 
     /// After a file: on the stick for real, so that it can be pulled. Not in the frame loop, a stick can take its time.
@@ -5396,6 +5538,7 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 if self.mask.is_none() {
                     self.m.mask_on = false;
                 }
@@ -5440,7 +5583,7 @@ impl Ui {
             return o;
         }
         let v: &[&str] = match it {
-            Item::ChOn(_) | Item::ChInvert(_) | Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn | Item::ColorGrade | Item::MaskOn => &["Off", "On"],
+            Item::ChOn(_) | Item::ChInvert(_) | Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn | Item::ColorGrade | Item::MaskOn | Item::MaskInvert => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
             Item::MaskAction => &["None", "Stop"],
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
@@ -5512,7 +5655,9 @@ impl Ui {
             Item::BootMode => &["One-shot", "Persist"],
             Item::FftWin => &["Rect", "Hann", "Hamming", "Blackman", "Flattop"],
             // long lists: shown as a picker (see `ctl`)
-            Item::MathOpI => return MATH_OPS.iter().map(|o| o.name().to_string()).collect(),
+            Item::MathOpI => return self.math_ops_in_family().iter().map(|o| o.name().to_string()).collect(),
+            Item::MathFam => return MathFamily::ALL.iter().map(|f| f.name().to_string()).collect(),
+            Item::StoreDest => return crate::store::StoreDest::ALL.iter().map(|d| d.name().to_string()).collect(),
             Item::TrigType => return TRIG_TYPES.iter().map(|t| t.name().to_string()).collect(),
             Item::AcqDepth => return mdepths().iter().map(|d| d.0.to_string()).collect(),
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
@@ -7557,6 +7702,74 @@ mod tests {
         assert_eq!(ui.mask_fail, 1);
     }
 
+    #[test]
+    fn math_category_filters_the_operation_list() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.select_option(Item::MathFam, "Logic");
+        let ops = ui.options(Item::MathOpI);
+        assert!(ops.contains(&"AND".into()) && ops.contains(&"XOR".into()));
+        assert!(!ops.iter().any(|s| s == "FFT" || s == "A+B"));
+        ui.select_option(Item::MathOpI, "AND");
+        assert_eq!(ui.m.math, MathOp::And);
+        ui.select_option(Item::MathFam, "Convert");
+        assert_eq!(ui.m.math, MathOp::A2d);
+        ui.select_option(Item::MathFam, "Arithmetic");
+        assert!(ui.options(Item::MathOpI).contains(&"Conv".into()));
+    }
+
+    #[test]
+    fn mask_from_ref_invert_save_and_load() {
+        use super::*;
+        let dir = std::env::temp_dir().join(format!("oos-mask-{}", std::process::id()));
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.store_dir = dir.clone();
+        ui.store_dest = crate::store::StoreDest::Desk;
+        ui.step(0.033);
+        let rec = ui.last[0].as_ref().unwrap();
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: rec.t0, dt: rec.dt, v: rec.ch[0].clone(), vpd: 1.0, offset: 0.0, on: true });
+        ui.activate(Item::MaskFromRef);
+        assert!(ui.m.mask_on && ui.mask.is_some());
+        ui.adjust(Item::MaskInvert, 1);
+        assert!(ui.m.mask_inv && ui.mask.as_ref().unwrap().invert);
+        ui.activate(Item::MaskSave);
+        let desk = dir.join("Desktop");
+        assert!(desk.join("mask-001.txt").is_file());
+        assert!(dir.join("mask1.txt").is_file());
+        let t = std::fs::read_to_string(desk.join("mask-001.txt")).unwrap();
+        assert!(t.starts_with("# OOS mask\n") && t.contains("inv=1"));
+        ui.activate(Item::MaskClear);
+        assert!(ui.mask.is_none() && !ui.m.mask_on);
+        ui.m.mask_inv = false;
+        ui.activate(Item::MaskLoad);
+        assert!(ui.m.mask_on && ui.m.mask_inv && ui.mask_ref.as_ref().unwrap().len() > 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fast_frame_save_and_load_and_desktop_dest() {
+        use super::*;
+        let dir = std::env::temp_dir().join(format!("oos-ff-{}", std::process::id()));
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.store_dir = dir.clone();
+        ui.store_dest = crate::store::StoreDest::Desk;
+        for _ in 0..4 {
+            ui.step(0.033);
+        }
+        assert!(ui.history.len() >= 3);
+        ui.activate(Item::StoreFfSave);
+        let p = dir.join("Desktop/frame-001.bin");
+        assert!(p.is_file());
+        let n = ui.history.len();
+        ui.history.clear();
+        ui.last[0] = None;
+        ui.activate(Item::StoreFfLoad);
+        assert_eq!(ui.history.len(), n);
+        assert!(ui.hist_pos.is_some());
+        assert_eq!(ui.m.run, RunState::Stop);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Save setup, waveform CSV; recall restores the setup but not the run state.
     #[test]
     fn storage_save_and_recall() {
@@ -7741,10 +7954,11 @@ mod tests {
         assert_eq!((ui.menu, ui.m.trig_type), (MenuId::Trigger, TrigType::Delay));
         // math operation
         ui.toggle_menu(MenuId::Math);
+        ui.select_option(Item::MathFam, "Filter");
         let (x, y) = mid(Ui::value_parts(row_of(&ui, Item::MathOpI).ctrl).1);
         ui.tap(x, y);
-        assert_eq!(ui.items(MenuId::Pick).len(), MATH_OPS.len());
-        let fft = MATH_OPS.iter().position(|&o| o == MathOp::Fft).unwrap();
+        assert_eq!(ui.items(MenuId::Pick).len(), ui.options(Item::MathOpI).len());
+        let fft = ui.options(Item::MathOpI).iter().position(|s| s == "FFT").unwrap();
         let (x, y) = mid(row_of(&ui, Item::PickOpt(fft)).ctrl);
         ui.tap(x, y);
         assert_eq!((ui.m.math, ui.menu), (MathOp::Fft, MenuId::Math));
@@ -7760,8 +7974,8 @@ mod tests {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let items = [
-            Item::TrigType, Item::MathOpI, Item::FftWin, Item::VidSync, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct,
-            Item::AcqMode, Item::TrigWhen, Item::Pat(1), Item::DecCs, Item::DecProto, Item::GridStyle, Item::ChProbe(0), Item::TrigMode,
+            Item::TrigType, Item::MathOpI, Item::MathFam, Item::FftWin, Item::VidSync, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct,
+            Item::AcqMode, Item::TrigWhen, Item::Pat(1), Item::DecCs, Item::DecProto, Item::GridStyle, Item::ChProbe(0), Item::TrigMode, Item::StoreDest,
         ];
         for it in items {
             let opts = ui.options(it);
@@ -7772,7 +7986,7 @@ mod tests {
             }
         }
         // long lists get a picker, short ones segmented buttons
-        for it in [Item::TrigType, Item::MathOpI, Item::FftWin, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct] {
+        for it in [Item::TrigType, Item::FftWin, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct] {
             assert!(matches!(ui.ctl(it, 300), Ctl::Pick), "{:?}", it);
         }
         assert!(matches!(ui.ctl(Item::AcqMode, 300), Ctl::Seg(..)));

@@ -43,11 +43,45 @@ pub enum MathOp {
     Unnrzi,
 }
 
+/// Math menu categories: Arithmetic, Function, Filter, Logic, Convert.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MathFamily {
+    Arith,
+    Fn,
+    Filter,
+    Logic,
+    Convert,
+}
+
+impl MathFamily {
+    pub const ALL: [MathFamily; 5] = [MathFamily::Arith, MathFamily::Fn, MathFamily::Filter, MathFamily::Logic, MathFamily::Convert];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MathFamily::Arith => "Arithmetic",
+            MathFamily::Fn => "Function",
+            MathFamily::Filter => "Filter",
+            MathFamily::Logic => "Logic",
+            MathFamily::Convert => "Convert",
+        }
+    }
+
+    /// Operations of this category (not Off).
+    pub fn ops(self) -> &'static [MathOp] {
+        match self {
+            MathFamily::Arith => &[MathOp::Add, MathOp::Sub, MathOp::Mul, MathOp::Div, MathOp::Conv],
+            MathFamily::Fn => &[MathOp::Intg, MathOp::Diff, MathOp::Abs, MathOp::Sqrt, MathOp::Lg, MathOp::Ln, MathOp::Exp, MathOp::Lin, MathOp::Expr],
+            MathFamily::Filter => &[MathOp::Lpf, MathOp::Hpf, MathOp::Bpf, MathOp::Bsf, MathOp::Fir, MathOp::Fft],
+            MathFamily::Logic => &[MathOp::And, MathOp::Or, MathOp::Xor, MathOp::Nand, MathOp::Nor, MathOp::Not],
+            MathFamily::Convert => &[MathOp::A2d, MathOp::D2a, MathOp::Unnrzi],
+        }
+    }
+}
+
 pub const MATH_OPS: [MathOp; 30] = [
-    MathOp::Off, MathOp::Add, MathOp::Sub, MathOp::Mul, MathOp::Div, MathOp::Intg, MathOp::Diff, MathOp::Abs, MathOp::Sqrt, MathOp::Lg,
-    MathOp::Ln, MathOp::Exp, MathOp::Lin, MathOp::Expr, MathOp::Lpf, MathOp::Hpf, MathOp::Bpf, MathOp::Bsf, MathOp::Fft,
-    MathOp::Fir, MathOp::And, MathOp::Or, MathOp::Xor, MathOp::Nand, MathOp::Nor, MathOp::Not, MathOp::A2d, MathOp::D2a, MathOp::Conv,
-    MathOp::Unnrzi,
+    MathOp::Off, MathOp::Add, MathOp::Sub, MathOp::Mul, MathOp::Div, MathOp::Conv, MathOp::Intg, MathOp::Diff, MathOp::Abs, MathOp::Sqrt,
+    MathOp::Lg, MathOp::Ln, MathOp::Exp, MathOp::Lin, MathOp::Expr, MathOp::Lpf, MathOp::Hpf, MathOp::Bpf, MathOp::Bsf, MathOp::Fir,
+    MathOp::Fft, MathOp::And, MathOp::Or, MathOp::Xor, MathOp::Nand, MathOp::Nor, MathOp::Not, MathOp::A2d, MathOp::D2a, MathOp::Unnrzi,
 ];
 
 /// Math channels (8, math on math).
@@ -99,6 +133,15 @@ impl MathOp {
             MathOp::Unnrzi => "NRZI inv",
         }
     }
+    pub fn family(self) -> MathFamily {
+        match self {
+            MathOp::Off | MathOp::Add | MathOp::Sub | MathOp::Mul | MathOp::Div | MathOp::Conv => MathFamily::Arith,
+            MathOp::Intg | MathOp::Diff | MathOp::Abs | MathOp::Sqrt | MathOp::Lg | MathOp::Ln | MathOp::Exp | MathOp::Lin | MathOp::Expr => MathFamily::Fn,
+            MathOp::Lpf | MathOp::Hpf | MathOp::Bpf | MathOp::Bsf | MathOp::Fir | MathOp::Fft => MathFamily::Filter,
+            MathOp::And | MathOp::Or | MathOp::Xor | MathOp::Nand | MathOp::Nor | MathOp::Not => MathFamily::Logic,
+            MathOp::A2d | MathOp::D2a | MathOp::Unnrzi => MathFamily::Convert,
+        }
+    }
     pub fn two_sources(self) -> bool {
         matches!(self, MathOp::Add | MathOp::Sub | MathOp::Mul | MathOp::Div | MathOp::And | MathOp::Or | MathOp::Xor | MathOp::Nand | MathOp::Nor | MathOp::Conv)
     }
@@ -120,6 +163,12 @@ impl MathOp {
             MathOp::Sub => format!("{} - {}", a, b),
             MathOp::Mul => format!("{} x {}", a, b),
             MathOp::Div => format!("{} / {}", a, b),
+            MathOp::And => format!("{} AND {}", a, b),
+            MathOp::Or => format!("{} OR {}", a, b),
+            MathOp::Xor => format!("{} XOR {}", a, b),
+            MathOp::Nand => format!("{} NAND {}", a, b),
+            MathOp::Nor => format!("{} NOR {}", a, b),
+            MathOp::Conv => format!("Conv({}, {})", a, b),
             op => format!("{}({})", op.name(), a),
         }
     }
@@ -199,4 +248,21 @@ pub fn math_scales() -> Vec<f64> {
         d *= 10.0;
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_op_has_a_category() {
+        for &op in &MATH_OPS {
+            if op == MathOp::Off {
+                continue;
+            }
+            assert!(op.family().ops().contains(&op), "{:?} not listed under {:?}", op, op.family());
+        }
+        let n: usize = MathFamily::ALL.iter().map(|f| f.ops().len()).sum();
+        assert_eq!(n, MATH_OPS.len() - 1);
+    }
 }

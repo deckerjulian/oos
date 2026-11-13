@@ -17,6 +17,35 @@ pub const DEFAULT_DIR: &str = "/tmp/oos";
 /// Folder on a USB stick (`/bin/oos-usb` mounts it at /mnt/usb).
 pub const USB_DIR: &str = "/mnt/usb/OOS";
 
+/// Where CSV, PNG, mask and fast-frame files go.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StoreDest {
+    /// USB stick when mounted, otherwise the storage directory
+    Auto,
+    /// USB stick (`/mnt/usb/OOS`)
+    Stick,
+    /// Desktop folder of the logged-in user
+    Desk,
+}
+
+impl StoreDest {
+    pub const ALL: [StoreDest; 3] = [StoreDest::Auto, StoreDest::Stick, StoreDest::Desk];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            StoreDest::Auto => "Auto",
+            StoreDest::Stick => "USB",
+            StoreDest::Desk => "Desktop",
+        }
+    }
+}
+
+/// Desktop save folder (`$HOME/Desktop/OOS`, else `/root/Desktop/OOS`).
+pub fn desktop_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    PathBuf::from(home).join("Desktop").join("OOS")
+}
+
 /// A stick is mounted, by the text of /proc/mounts.
 pub fn usb_mounted(mounts: &str) -> bool {
     mounts.lines().any(|l| l.split(' ').nth(1) == Some("/mnt/usb"))
@@ -287,6 +316,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("mask_x", m.mask_x.to_string());
     kv("mask_y", m.mask_y.to_string());
     kv("mask_stop", m.mask_stop.to_string());
+    kv("mask_inv", m.mask_inv.to_string());
     kv("quick", name(m.quick));
     kv("la", m.la.to_text());
     kv("dec_la", format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")));
@@ -695,6 +725,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "mask_x" => m.mask_x = p_f32(v)?,
         "mask_y" => m.mask_y = p_f32(v)?,
         "mask_stop" => m.mask_stop = p_bool(v)?,
+        "mask_inv" => m.mask_inv = p_bool(v)?,
         "quick" => m.quick = p_enum(v, &QUICKS)?,
         "la" => m.la = crate::ui::la::LaSet::parse(v)?,
         "dec_la" => {
@@ -1055,6 +1086,181 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
         v.push((code * vscale + voff) as f32);
     }
     Ok(WaveTrace { t0, dt, v, label })
+}
+
+fn u32_le(b: &[u8], at: usize) -> Option<u32> {
+    b.get(at..at + 4)?.try_into().ok().map(u32::from_le_bytes)
+}
+
+fn u64_le(b: &[u8], at: usize) -> Option<u64> {
+    b.get(at..at + 8)?.try_into().ok().map(u64::from_le_bytes)
+}
+
+fn f64_le(b: &[u8], at: usize) -> Option<f64> {
+    b.get(at..at + 8)?.try_into().ok().map(f64::from_le_bytes)
+}
+
+fn f32_le(b: &[u8], at: usize) -> Option<f32> {
+    b.get(at..at + 4)?.try_into().ok().map(f32::from_le_bytes)
+}
+
+/// One OOSW blob: the record and the number of bytes consumed.
+pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
+    if b.len() < 36 || &b[..4] != b"OOSW" {
+        return Err("not an OOS waveform file".into());
+    }
+    let ver = u32_le(b, 4).unwrap_or(0);
+    if ver != 1 {
+        return Err(format!("waveform version {}", ver));
+    }
+    let nch = u32_le(b, 8).unwrap_or(0) as usize;
+    let n = u64_le(b, 12).unwrap_or(0) as usize;
+    let dt = f64_le(b, 20).unwrap_or(0.0);
+    let t0 = f64_le(b, 28).unwrap_or(0.0);
+    if nch == 0 || nch > NCH || dt <= 0.0 {
+        return Err("waveform header".into());
+    }
+    let mut off = 36;
+    let mut rec = Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+    for _ in 0..nch {
+        let c = u32_le(b, off).ok_or("truncated waveform")? as usize;
+        off += 4;
+        if c < 1 || c > NCH {
+            return Err(format!("channel {}", c));
+        }
+        if b.len() < off + 4 * n {
+            return Err("truncated waveform".into());
+        }
+        let mut v = vec![0f32; n];
+        for i in 0..n {
+            v[i] = f32_le(b, off + 4 * i).unwrap_or(f32::NAN);
+        }
+        rec.ch[c - 1] = v;
+        off += 4 * n;
+    }
+    Ok((rec, off))
+}
+
+/// Fast-frame file: "OOSF", u32 version 1, u32 frame count, then that many OOSW blobs.
+pub fn ff_bin(recs: &[Record], m: &Model) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"OOSF");
+    b.extend_from_slice(&1u32.to_le_bytes());
+    b.extend_from_slice(&(recs.len() as u32).to_le_bytes());
+    for rec in recs {
+        b.extend_from_slice(&wave_bin(rec, m));
+    }
+    b
+}
+
+pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
+    if b.len() >= 4 && &b[..4] == b"OOSW" {
+        return parse_wave_bin(b).map(|(r, _)| vec![r]);
+    }
+    if b.len() < 12 || &b[..4] != b"OOSF" {
+        return Err("not a fast-frame file".into());
+    }
+    let ver = u32_le(b, 4).unwrap_or(0);
+    if ver != 1 {
+        return Err(format!("fast-frame version {}", ver));
+    }
+    let n = u32_le(b, 8).unwrap_or(0) as usize;
+    let mut off = 12;
+    let mut recs = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (r, used) = parse_wave_bin(b.get(off..).unwrap_or(&[]))?;
+        recs.push(r);
+        off += used;
+    }
+    Ok(recs)
+}
+
+/// Highest numbered `<prefix>-NNN.<ext>` in `dir`, if any.
+pub fn latest_name(dir: &Path, prefix: &str, ext: &str) -> Option<PathBuf> {
+    let mut best: Option<(u32, PathBuf)> = None;
+    let rd = std::fs::read_dir(dir).ok()?;
+    for e in rd.flatten() {
+        let s = e.file_name().to_string_lossy().into_owned();
+        let want = format!("{}-", prefix);
+        if let Some(rest) = s.strip_prefix(&want).and_then(|r| r.strip_suffix(&format!(".{}", ext))) {
+            if let Ok(n) = rest.parse::<u32>() {
+                if best.as_ref().map_or(true, |(b, _)| n >= *b) {
+                    best = Some((n, e.path()));
+                }
+            }
+        }
+    }
+    best.map(|x| x.1)
+}
+
+/// Mask file: optional header (`# OOS mask` then `key=value` lines and `---`) then one volt per line.
+pub struct MaskFile {
+    pub src: Option<usize>,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub inv: Option<bool>,
+    pub v: Vec<f32>,
+}
+
+pub fn mask_text(src: usize, x: f32, y: f32, inv: bool, v: &[f32]) -> String {
+    let mut s = String::from("# OOS mask\n");
+    s.push_str(&format!("src={}\n", src + 1));
+    s.push_str(&format!("x={}\n", x));
+    s.push_str(&format!("y={}\n", y));
+    s.push_str(&format!("inv={}\n", if inv { 1 } else { 0 }));
+    s.push_str("---\n");
+    for x in v {
+        s.push_str(&format!("{:.9e}\n", x));
+    }
+    s
+}
+
+pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
+    let mut lines = text.lines().peekable();
+    let mut src = None;
+    let mut x = None;
+    let mut y = None;
+    let mut inv = None;
+    if lines.peek().map_or(false, |l| l.starts_with("# OOS mask")) {
+        lines.next();
+        for line in lines.by_ref() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line == "---" {
+                break;
+            }
+            let Some((k, v)) = line.split_once('=') else {
+                return Err(format!("mask header: {}", line));
+            };
+            match k.trim() {
+                "src" => {
+                    let n: usize = v.trim().parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+                    if n < 1 || n > NCH {
+                        return Err(format!("mask src {}", n));
+                    }
+                    src = Some(n - 1);
+                }
+                "x" => x = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
+                "y" => y = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
+                "inv" => inv = Some(matches!(v.trim(), "1" | "true" | "on")),
+                _ => {}
+            }
+        }
+    }
+    let mut v = Vec::new();
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        v.push(line.parse::<f32>().map_err(|e| e.to_string())?);
+    }
+    if v.is_empty() {
+        return Err("empty mask".into());
+    }
+    Ok(MaskFile { src, x, y, inv, v })
 }
 
 // ---------------------------------------------------------------------------------------------- PNG
@@ -1573,6 +1779,33 @@ mod tests {
             b[CURVE + k * 4..CURVE + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
         }
         b
+    }
+
+    #[test]
+    fn wave_and_fast_frame_round_trip() {
+        let mut m = Model::default();
+        m.ch[0].on = true;
+        m.ch[2].on = true;
+        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+        rec.ch[0] = vec![0.5, 1.25];
+        rec.ch[2] = vec![-1.0, 0.0];
+        let b = wave_bin(&rec, &m);
+        let (back, n) = parse_wave_bin(&b).unwrap();
+        assert_eq!(n, b.len());
+        assert_eq!(back.dt, rec.dt);
+        assert_eq!(back.ch[0], rec.ch[0]);
+        assert_eq!(back.ch[2], rec.ch[2]);
+        let ff = ff_bin(&[rec.clone(), rec.clone()], &m);
+        let recs = parse_ff(&ff).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[1].ch[0], rec.ch[0]);
+        assert_eq!(parse_ff(&b).unwrap().len(), 1);
+        let t = mask_text(2, 0.2, 0.4, true, &[1.0, 2.5]);
+        let mf = parse_mask(&t).unwrap();
+        assert_eq!((mf.src, mf.inv, mf.v), (Some(2), Some(true), vec![1.0, 2.5]));
+        let old = parse_mask("1.0\n2.0\n").unwrap();
+        assert_eq!(old.v, vec![1.0, 2.0]);
+        assert!(old.src.is_none());
     }
 
     #[test]
