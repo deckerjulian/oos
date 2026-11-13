@@ -857,6 +857,8 @@ pub struct Ui {
     pub hdmi_snap: Vec<u32>,
     /// the same for the GPU: the layer over the traces at that point (the monitor's workspace has no menus)
     pub hdmi_over: Option<Canvas>,
+    /// the monitor's size while one is driven (main.rs), for `:SYSTem:STATe?`
+    pub hdmi_out: Option<(u32, u32)>,
     /// start-up screen (startup.rs) and the last start-up's result (About)
     pub start_up: Option<startup::StartScreen>,
     start_up_last: Option<oos_hal::bootstatus::View>,
@@ -935,6 +937,8 @@ pub struct Ui {
     pub t_present: f32,
     /// System > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
     pub t_gpu: Option<[f32; 6]>,
+    /// the helper's time of the last panel frame and, while the GPU draws for a monitor, of the last monitor frame (ms)
+    pub t_gpu_screens: Option<(f32, Option<f32>)>,
     /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
     pub t_parts: [f32; 4],
     pub info: String,
@@ -1067,6 +1071,7 @@ impl Ui {
             hdmi_snap_want: false,
             hdmi_snap: Vec::new(),
             hdmi_over: None,
+            hdmi_out: None,
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
@@ -1117,6 +1122,7 @@ impl Ui {
             t_render: 0.0,
             t_present: 0.0,
             t_gpu: None,
+            t_gpu_screens: None,
             t_parts: [0.0; 4],
             info: String::new(),
             dirty_map: true,

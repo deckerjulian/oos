@@ -89,6 +89,23 @@ in floating point; two single pixels of a corner over colour-graded traces are 4
 `OOS_GPU_HDMI=1920x1080 OOS_GPU_HDMI_MODE=Mirror|Waveform|Layout` the script runner also writes the monitor's picture
 of every shot; commands and pixel layers (`OOS_GPU_PIXELS=1`) give the same monitor pictures to within 2.
 
+## Guarding the speed
+
+The pictures being right says nothing about their cost: up to 0.1.11 a monitor made the GPU slower than the CPU and
+every test passed. Two checks since:
+
+- **On the scope** (`tools/device-test.py --tier a0`, `frame_rate_by_graphics_and_monitor`): four channels in Run, a
+  menu open, Graphics = CPU and = GPU, with a monitor plugged in in each HDMI mode. It fails below 27 frames a second
+  (22 for the CPU in Layout), when the GPU is more than 1.5 frames a second behind the CPU or its frame loop busier,
+  and when the GPU's own time (`gpu panel .. monitor ..` in `:SYSTem:STATe?`, the helper's upload and draw) leaves
+  less than a third of the budget: 45 ms for a panel and a monitor frame together (a monitor frame comes with every
+  second panel frame), 22 ms for a panel frame without a monitor. The frame rate alone missed it: with 0.1.11's
+  helper the panel still made 30 frames a second while the pair took 48 to 62 ms of GPU time.
+- **On the host** (`gpu/test-host.sh`, after the picture comparison): `gpu/bench.txt` with a 1920x1080 monitor in
+  each mode; a monitor frame may cost per pixel at most what a panel frame costs. Mesa's software renderer reads
+  integer textures cheaply, so this catches only gross regressions (0.1.11's helper: 0.86 to 1.14; since: 0.5 to
+  0.76).
+
 ## Known limits
 
 - The GPU and the VPU are switched on by the device tree of 0.1.8; 0.1.7 has the code and draws on the CPU. 0.1.7

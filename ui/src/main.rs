@@ -359,6 +359,13 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                         std::process::exit(3);
                     }
                     cmd::write_ppm(hc, &p.replace(".ppm", "-hdmi.ppm")).expect("write shot");
+                    // OOS_GPU_TIMES=<file>: the helper's time of the last panel frame and of this monitor frame, a
+                    // line per shot (gpu/test-host.sh: the monitor's cost per pixel against the panel's)
+                    if let Some(f) = std::env::var_os("OOS_GPU_TIMES") {
+                        use std::io::Write;
+                        let line = format!("{:.3} {:.3}\n", g.times.panel, g.times.monitor);
+                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut f| f.write_all(line.as_bytes()));
+                    }
                 }
             }
             cmd::Out::None => {}
@@ -674,6 +681,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 }
                 let t = g.times;
                 ui.t_gpu = Some([layers, copy, wait, t.upload, t.draw, t.read]);
+                ui.t_gpu_screens = Some((t.panel, (hdmi.is_some() && hdmi_gpu == Some(true)).then_some(t.monitor)));
                 Ok(())
             })();
             match r {
@@ -686,7 +694,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             }
         }
         if !drawn {
-            ui.t_gpu = None;
+            (ui.t_gpu, ui.t_gpu_screens) = (None, None);
             ui.render(&mut cv);
         }
         let t2 = Instant::now();
@@ -743,6 +751,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 },
             }
         }
+        ui.hdmi_out = hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
         let a = 0.05;
         ui.t_step += a * ((t1 - t0).as_secs_f32() * 1000.0 - ui.t_step);
         ui.t_render += a * ((t2 - t1).as_secs_f32() * 1000.0 - ui.t_render);

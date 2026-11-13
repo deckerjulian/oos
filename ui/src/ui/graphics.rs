@@ -25,6 +25,13 @@ impl Ui {
         (it == Item::Graphics).then(|| vec!["CPU".into(), "GPU".into()])
     }
 
+    /// System > Graphics and `:SYSTem:GRAPhics`.
+    pub fn graphics_set(&mut self, gpu: bool) {
+        if self.sys.gpu != gpu {
+            self.graphics_adjust(Item::Graphics, 1);
+        }
+    }
+
     pub(super) fn graphics_adjust(&mut self, it: Item, _d: i32) -> bool {
         if it != Item::Graphics {
             return false;
@@ -56,5 +63,27 @@ mod tests {
         assert!(crate::sysconf::SysConf::parse(&u.sys.text()).0.gpu);
         // a file without the line (older versions): the default
         assert!(crate::sysconf::SysConf::parse("ntp = off\n").0.gpu);
+    }
+
+    #[test]
+    fn graphics_and_monitor_over_scpi() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.sys_path = None;
+        let cv = Canvas::new(PANEL_W, PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        scpi.exec_line(&mut u, &cv, ":SYST:GRAP CPU");
+        assert_eq!(scpi.exec_line(&mut u, &cv, ":SYSTem:GRAPhics?"), b"CPU");
+        assert!(!u.sys.gpu);
+        scpi.exec_line(&mut u, &cv, ":SYST:GRAP gpu");
+        assert!(u.sys.gpu);
+        scpi.exec_line(&mut u, &cv, ":SYST:GRAP purple");
+        assert!(scpi.exec_line(&mut u, &cv, ":SYST:ERR?").starts_with(b"-224"));
+        // the state line says what is chosen and whether a monitor is driven
+        let st = String::from_utf8(scpi.exec_line(&mut u, &cv, ":SYST:STAT?")).unwrap();
+        assert!(st.contains("graphics gpu hdmi off"), "{}", st);
+        u.hdmi_out = Some((1920, 1080));
+        u.m.hdmi = HdmiMode::Layout;
+        let st = String::from_utf8(scpi.exec_line(&mut u, &cv, ":SYST:STAT?")).unwrap();
+        assert!(st.ends_with("hdmi 1920x1080 Layout"), "{}", st);
     }
 }

@@ -184,6 +184,9 @@ pub struct Times {
     pub wait: f32,
     /// from sending to the answer
     pub latency: f32,
+    /// the helper's whole time (upload and draw) of the last frame of the panel and of the monitor
+    pub panel: f32,
+    pub monitor: f32,
 }
 
 /// A frame sent to the helper and not collected yet (`Gpu::submit`, `Gpu::collect`, in the order sent).
@@ -191,6 +194,8 @@ pub struct Ticket {
     /// where the picture comes back, and its size, when it was asked for
     readback: Option<(usize, i32, i32)>,
     sent: std::time::Instant,
+    /// a frame of the monitor (its time goes to `Times::monitor`)
+    monitor: bool,
 }
 
 impl Ticket {
@@ -568,7 +573,7 @@ mod imp {
             let t1 = std::time::Instant::now();
             self.sock.write_all(bytes(&f)).map_err(|e| format!("frame: {}", e))?;
             self.times.copy = (t1 - t0).as_secs_f32() * 1e3;
-            Ok(Ticket { readback: read.then_some((f.readback_off as usize, tw, th)), sent: t1 })
+            Ok(Ticket { readback: read.then_some((f.readback_off as usize, tw, th)), sent: t1, monitor: half == 1 })
         }
 
         /// Waits for a frame `submit` sent; with `back` its picture (asked for when it was sent) comes into it.
@@ -577,6 +582,12 @@ mod imp {
             self.wait(Duration::from_millis(1500))?;
             self.times.wait = w0.elapsed().as_secs_f32() * 1e3;
             self.times.latency = t.sent.elapsed().as_secs_f32() * 1e3;
+            let ms = self.times.upload + self.times.draw;
+            if t.monitor {
+                self.times.monitor = ms;
+            } else {
+                self.times.panel = ms;
+            }
             if let (Some((off, tw, th)), Some(cv)) = (t.readback, back) {
                 if (cv.w, cv.h) != (tw, th) {
                     return Err("read-back canvas of another size".into());

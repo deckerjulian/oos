@@ -27,6 +27,10 @@ Fixed:
   30 frames a second in Mirror, Waveform and Layout (were 29, 25, 25; the CPU gives 30, 30, 26), the frame loop at
   22 to 29 % of its core (CPU: 51 to 70 %). The panel's pixels are the same as before; the monitor's traces differ
   from before only at their edges.
+- Tests that would have caught it: the device test measures the frame rate, the frame loop's load and the GPU's time
+  per frame with Graphics = CPU and = GPU and, with a monitor, in each HDMI mode (`frame_rate_by_graphics_and_monitor`,
+  run against 0.1.11's helper it fails); `gpu/test-host.sh` checks a monitor frame's cost per pixel. New for it:
+  `:SYSTem:GRAPhics CPU|GPU`, and `:SYSTem:STATe?` names the graphics, the monitor and the GPU time per screen.
 
 ## 0.1.11
 
