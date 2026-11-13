@@ -578,29 +578,42 @@ pub fn deinterleave(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
 }
 
 /// `deinterleave` and `volts` in one pass, straight from the read-out bytes: `cal[c]` = (scale, offset) of CH c+1.
-/// The same numbers as the two passes (the same f64 expression per sample), without the per-channel `u16` vectors.
+/// The same mapping and lengths as the two passes, in f32 (`volt32`), without the per-channel `u16` vectors. One
+/// exact-size vector per enabled channel.
 pub fn decode_volts(bytes: &[u8], mask: u32, cal: [(f64, f64); 4]) -> [Vec<f32>; 4] {
+    let mut out: [Vec<f32>; 4] = Default::default();
+    decode_volts_into(bytes, mask, cal, &mut out);
+    out
+}
+
+/// `decode_volts` into kept vectors: the enabled channels are refilled in place, the others left empty. A frame that
+/// fits their capacity allocates nothing (musl's malloc maps every block of 128 kB or more anew, with page faults).
+pub fn decode_volts_into(bytes: &[u8], mask: u32, cal: [(f64, f64); 4], out: &mut [Vec<f32>; 4]) {
     let ratio = hz::ratio(mask) as usize;
     let slot = slots(mask, ratio);
     let group = 2 * ratio;
-    let tail = &bytes[bytes.len() / group * group..];
-    let mut out: [Vec<f32>; 4] = Default::default();
+    let whole = bytes.len() / group;
+    let tail = &bytes[whole * group..];
+    for o in out.iter_mut() {
+        o.clear();
+    }
     for (k, c) in slot.iter().enumerate().take(ratio) {
         let Some(c) = *c else { continue };
-        // one exact-size pass per channel over its word of every group; the group size as a constant keeps it a
-        // vectorised loop
-        let mut o = match ratio {
-            1 => lane::<2>(bytes, 0, cal[c]),
-            2 => lane::<4>(bytes, k, cal[c]),
-            _ => lane::<8>(bytes, k, cal[c]),
-        };
         // the word of an incomplete last group, as deinterleave hands it out
-        if let Some(b) = tail.get(2 * k..2 * k + 2) {
-            o.push(volt(u16::from_le_bytes([b[0], b[1]]), cal[c].0, cal[c].1));
+        let last = tail.get(2 * k..2 * k + 2);
+        let (a, off) = affine(cal[c]);
+        let o = &mut out[c];
+        o.reserve_exact(whole + last.is_some() as usize);
+        // one pass per channel over its word of every group; the group size as a constant keeps it a vectorised loop
+        match ratio {
+            1 => lane::<2>(bytes, 0, a, off, o),
+            2 => lane::<4>(bytes, k, a, off, o),
+            _ => lane::<8>(bytes, k, a, off, o),
         }
-        out[c] = o;
+        if let Some(b) = last {
+            o.push(volt32(u16::from_le_bytes([b[0], b[1]]), a, off));
+        }
     }
-    out
 }
 
 /// Slot k of a group of `ratio` words goes to channel `slot[k]` (deinterleave's mapping): ratio 1 and 2 = the enabled
@@ -619,9 +632,25 @@ fn slots(mask: u32, ratio: usize) -> [Option<usize>; 4] {
     slot
 }
 
-/// Volts of word `k` of every whole group of `G` bytes (`decode_volts`).
-fn lane<const G: usize>(bytes: &[u8], k: usize, (scale, offset): (f64, f64)) -> Vec<f32> {
-    bytes.chunks_exact(G).map(|g| volt(u16::from_le_bytes([g[2 * k], g[2 * k + 1]]), scale, offset)).collect()
+/// Volts of word `k` of every whole group of `G` bytes, appended to `o` (`decode_volts_into`).
+fn lane<const G: usize>(bytes: &[u8], k: usize, a: f32, off: f32, o: &mut Vec<f32>) {
+    let at = o.len();
+    o.resize(at + bytes.len() / G, 0.0);
+    for (d, g) in o[at..].iter_mut().zip(bytes.chunks_exact(G)) {
+        *d = volt32(u16::from_le_bytes([g[2 * k], g[2 * k + 1]]), a, off);
+    }
+}
+
+/// (volts per code, offset) of a channel in f32 for `volt32`.
+fn affine((scale, offset): (f64, f64)) -> (f32, f32) {
+    ((scale / 7500.0) as f32, offset as f32)
+}
+
+/// `volt` in f32: the code minus 32768 is exact, then one multiply and one subtract. The error against the f64 `volt`
+/// is a few f32 ulps of the full-scale value, under 1e-6 of a division: below 1 % of one code (1 / 7500 div).
+#[inline]
+fn volt32(x: u16, a: f32, off: f32) -> f32 {
+    (x as i32 - 32768) as f32 * a - off
 }
 
 /// Volts of read-out words: 7500 codes per division around 32768 (preamble yinc = V/div / 7500), minus the offset.
@@ -1132,24 +1161,50 @@ mod tests {
             .collect()
     }
 
+    /// The bound of `volt32` against the f64 `volt` of code `x`: 4 f32 ulps of the larger of the two terms.
+    fn f32_bound(x: u16, (scale, offset): (f64, f64)) -> f64 {
+        4.0 * f32::EPSILON as f64 * ((x as f64 - 32768.0).abs() / 7500.0 * scale.abs() + offset.abs()) + f32::MIN_POSITIVE as f64
+    }
+
     // Break it catches: a fused decode that maps a word to the wrong channel, drops the words of an incomplete last
-    // group, or rounds differently from `deinterleave` + `volts` (the display and the measurements would move).
+    // group, or moves a value by more than the f32 rounding (the display and the measurements would move).
     #[test]
     fn fused_decode_equals_deinterleave_and_volts() {
         let cal = [(1.0, -1.5), (0.02, 0.013), (5.0, 2.5), (0.5, 0.0)];
+        let mut worst = 0f64;
         for mask in 1..16u32 {
             for len in [0usize, 2, 6, 8, 14, 16, 2816, 8000, 12_502] {
                 let b = noise(len, mask * 7919 + len as u32);
-                let want: [Vec<f32>; 4] = {
-                    let w = deinterleave(&b, mask);
-                    std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { volts(&w[c], cal[c].0, cal[c].1) })
-                };
+                let w = deinterleave(&b, mask);
                 let got = decode_volts(&b, mask, cal);
                 for c in 0..4 {
-                    // bit for bit, NaN-free by construction
-                    let (g, w): (Vec<u32>, Vec<u32>) = (got[c].iter().map(|x| x.to_bits()).collect(), want[c].iter().map(|x| x.to_bits()).collect());
-                    assert_eq!(g, w, "mask {:#x}, {} bytes, CH{}", mask, len, c + 1);
+                    assert_eq!(got[c].len(), w[c].len(), "mask {:#x}, {} bytes, CH{}", mask, len, c + 1);
+                    let want = volts(&w[c], cal[c].0, cal[c].1);
+                    for (i, (&g, &x)) in got[c].iter().zip(&w[c]).enumerate() {
+                        let d = (g as f64 - want[i] as f64).abs();
+                        worst = worst.max(d / (cal[c].0 / 7500.0));
+                        assert!(d <= f32_bound(x, cal[c]), "mask {:#x}, {} bytes, CH{} word {}: {} vs {}", mask, len, c + 1, i, g, want[i]);
+                    }
                 }
+            }
+        }
+        // in codes: far below one
+        assert!(worst < 0.01, "{} codes", worst);
+    }
+
+    // Break it catches: kept vectors that keep stale samples or a channel that is no longer enabled, or that differ from
+    // the allocating decode.
+    #[test]
+    fn decode_into_kept_vectors_equals_decode() {
+        let cal = [(1.0, -1.5), (0.02, 0.013), (5.0, 2.5), (0.5, 0.0)];
+        let mut out: [Vec<f32>; 4] = Default::default();
+        for (mask, len) in [(0xfu32, 8000usize), (1, 2816), (0b1010, 4002), (0b0111, 802), (8, 6)] {
+            let b = noise(len, mask);
+            decode_volts_into(&b, mask, cal, &mut out);
+            let want = decode_volts(&b, mask, cal);
+            for c in 0..4 {
+                let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<u32>>();
+                assert_eq!(bits(&out[c]), bits(&want[c]), "mask {:#x}, CH{}", mask, c + 1);
             }
         }
     }
@@ -1259,63 +1314,5 @@ mod tests {
         let arm = writes(&State::handover(1, None).arm_only_steps(&s, &p));
         assert_eq!(&arm[..17], &d[..]);
         assert!(matches!(a.disarm_steps()[1], Step::Poll { reg: 0x4034, ms: 10, .. }));
-    }
-
-    /// Host benchmark of one 4 MB batch: the read and decode path before (new zero-filled vector per read, unpad,
-    /// deinterleave to u16, volts) and after (reused DMA buffer, fused decode). `cargo test --release -- --ignored
-    /// --nocapture bench_batch`.
-    #[test]
-    #[ignore]
-    fn bench_batch_decode() {
-        struct Mem<'a>(&'a [u8], usize);
-        impl std::io::Read for Mem<'_> {
-            fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
-                let k = b.len().min(self.0.len() - self.1);
-                b[..k].copy_from_slice(&self.0[self.1..self.1 + k]);
-                self.1 += k;
-                Ok(k)
-            }
-        }
-        let cal = [(1.0, 0.0), (0.5, 0.1), (2.0, -0.3), (1.0, 0.0)];
-        for (mask, frame, frames) in [(1u32, 2816usize, 1420usize), (1, 2500, 1600), (1, 200_000, 20), (3, 4000, 1000), (0xf, 8000, 500)] {
-            let data = noise(frames * frame, 1);
-            let runs = 20;
-            let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1e3 / runs as f64;
-            // read: a new vector per read (zero fill, move to the front) vs the reused buffer
-            let t = std::time::Instant::now();
-            for _ in 0..runs {
-                let mut v = crate::dho::bus::read_dma(&mut Mem(&data, 0), data.len(), |_, _| {}).unwrap();
-                unpad(&mut v, frame);
-                std::hint::black_box(v);
-            }
-            let read_old = ms(t);
-            let mut dma = crate::dho::bus::DmaBuf::new();
-            let t = std::time::Instant::now();
-            for _ in 0..runs {
-                let b = dma.read(&mut Mem(&data, 0), data.len(), |_, _| {}).unwrap();
-                let n = unpad_in(b, frame);
-                dma.truncate(n);
-                std::hint::black_box(dma.data());
-            }
-            let read_new = ms(t);
-            // decode: deinterleave to u16 + volts vs the fused decode
-            let t = std::time::Instant::now();
-            for _ in 0..runs {
-                for f in dma.data().chunks_exact(frame) {
-                    let w = deinterleave(f, mask);
-                    let ch: [Vec<f32>; 4] = std::array::from_fn(|c| if w[c].is_empty() { Vec::new() } else { volts(&w[c], cal[c].0, cal[c].1) });
-                    std::hint::black_box(ch);
-                }
-            }
-            let dec_old = ms(t);
-            let t = std::time::Instant::now();
-            for _ in 0..runs {
-                for f in dma.data().chunks_exact(frame) {
-                    std::hint::black_box(decode_volts(f, mask, cal));
-                }
-            }
-            let dec_new = ms(t);
-            eprintln!("mask {:#x}, {} frames of {} bytes: read {:.2} -> {:.2} ms, decode {:.2} -> {:.2} ms per batch", mask, frames, frame, read_old, read_new, dec_old, dec_new);
-        }
     }
 }
