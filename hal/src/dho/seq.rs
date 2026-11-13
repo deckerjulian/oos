@@ -1040,7 +1040,9 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(s: &Step, bar: &mut B, 
             let ok = last & bit != 0;
             log(format!("{} {} ({:#x} = {:#010x}, {:.1} ms)", what, if ok { "ok" } else { "TIMEOUT" }, reg, last, t.elapsed().as_secs_f64() * 1e3));
             if !ok && *reg == 0x4080 {
-                return Err("no acquisition (0x4080 bit30 not set)".into());
+                // 0x4030 bit 20 = mask/zone read-back started, [3:0] = FSM state (5 = waiting for the column window)
+                let st = bar.rd(0x4030);
+                return Err(format!("no acquisition (0x4080 bit30 not set; 0x4030 = {:#010x}, readback {}, state {})", st, st >> 20 & 1, st & 0xf));
             }
         }
         Step::Read { frames, frame } => {
