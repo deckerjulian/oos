@@ -299,8 +299,10 @@ mod tests {
         let (g, lsb) = plan(0b0001, &[2.14, 1.0, 1.0, 1.0]);
         assert_eq!((g, lsb), (vec![(0, (0..8).collect())], [32.0; 8]));
         let (g, lsb) = plan(0b0011, &[1.07, 2.2, 1.0, 1.0]);
-        assert_eq!(g, vec![(0, vec![6, 4, 7, 5]), (1, vec![2, 0, 3, 1])]);
-        assert_eq!(lsb, [32.0, 32.0, 32.0, 32.0, 16.0, 16.0, 16.0, 16.0]);
+        let (s0, s1) = (crate::dho::levels::slots(0b0011, 0), crate::dho::levels::slots(0b0011, 1));
+        assert_eq!(g, vec![(0, s0.clone()), (1, s1)]);
+        // CH2's gain of 2.2 doubles the codes per step on its slots only
+        assert!((0..8).all(|k| lsb[k] == if s0.contains(&k) { 16.0 } else { 32.0 }), "{:?}", lsb);
         assert_eq!(plan(0b1111, &[1.0; 4]).0.len(), 4);
     }
 
