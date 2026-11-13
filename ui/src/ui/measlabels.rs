@@ -52,6 +52,12 @@ pub(super) fn mark(k: Meas, a: &Analysis, t0: f64) -> Option<Mark> {
             let f = first_fall?;
             Mark::Span(f, next_after(&a.rises, f)?)
         }
+        Meas::Median => Mark::Level(a.median),
+        Meas::Mode => Mark::Level(a.mode),
+        Meas::EstUi if a.est_ui > 0.0 => {
+            let r = first_rise?;
+            Mark::Span(r, r + a.est_ui)
+        }
         Meas::Rise if a.rise_time > 0.0 => {
             let r = first_rise?;
             Mark::Span(r - a.rise_time / 2.0, r + a.rise_time / 2.0)

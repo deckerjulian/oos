@@ -523,6 +523,11 @@ impl Scpi {
                 "CPP" | "CYCPP" => Meas::CycPp,
                 "CMAX" => Meas::CycMax,
                 "CMIN" => Meas::CycMin,
+                "ESTUI" | "UI" => Meas::EstUi,
+                "MED" | "MEDIAN" => Meas::Median,
+                "MODE" => Meas::Mode,
+                "LSLO" | "LINSLOPE" => Meas::LinSlope,
+                "LINT" | "LININT" => Meas::LinInt,
                 _ => {
                     self.err.push("-224,\"Illegal parameter value\"".into());
                     return t("9.9E37");

@@ -264,7 +264,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("eye", format!("{} {}", m.eye_src.token(), m.eye_rate));
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
-    kv("meas_cfg", format!("{} {:?} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }));
+    kv("meas_cfg", format!("{} {:?} {} {} {} {} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }, m.meas_lpct, m.meas_hpct, m.meas_tsetup, m.meas_thold));
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     kv("bode_mode", name(m.bode_mode));
     kv("eye_more", format!("{} {} {} {} {} {} {} {}", m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, if m.eye_npj { 1 } else { 0 }, opt(m.eye_rail), m.eye_notch, opt(m.eye_b), if m.eye_hp { 1 } else { 0 }));
@@ -702,11 +702,19 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         "meas_cfg" => {
             let w: Vec<&str> = v.split_whitespace().collect();
-            let [idle, side, n, data] = w[..] else { return Err("meas_cfg: idle outside n data".into()) };
-            m.meas_idle = idle.parse::<f64>().map_err(|e| e.to_string())?;
-            m.meas_out = p_enum(side, &[oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both])?;
-            m.meas_n = p_u32(n)?.clamp(1, 32);
-            m.meas_data = p_bool(data)?;
+            if w.len() != 4 && w.len() != 8 {
+                return Err("meas_cfg: idle outside n data [lpct hpct tsetup thold]".into());
+            }
+            m.meas_idle = w[0].parse::<f64>().map_err(|e| e.to_string())?;
+            m.meas_out = p_enum(w[1], &[oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both])?;
+            m.meas_n = p_u32(w[2])?.clamp(1, 32);
+            m.meas_data = p_bool(w[3])?;
+            if w.len() == 8 {
+                m.meas_lpct = w[4].parse::<f64>().map_err(|e| e.to_string())?;
+                m.meas_hpct = w[5].parse::<f64>().map_err(|e| e.to_string())?;
+                m.meas_tsetup = w[6].parse::<f64>().map_err(|e| e.to_string())?;
+                m.meas_thold = w[7].parse::<f64>().map_err(|e| e.to_string())?;
+            }
         }
         "spec_acpr" => {
             let w: Vec<&str> = v.split_whitespace().collect();

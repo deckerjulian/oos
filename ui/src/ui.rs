@@ -408,6 +408,9 @@ enum Item {
     MeasOutside,
     MeasN,
     MeasEdges,
+    MeasRefs,
+    MeasTsetup,
+    MeasThold,
     CurMode,
     CurA,
     CurB,
@@ -3495,7 +3498,7 @@ impl Ui {
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasIdle, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::MeasClear],
+            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::MeasClear],
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
@@ -3629,7 +3632,7 @@ impl Ui {
             }
             let (v, dt) = self.meas_wave(&rec, c);
             self.stats[c] = stats(&v, dt);
-            self.ana[c] = oos_dsp::measure::analyze_min(&v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64);
+            self.ana[c] = oos_dsp::measure::analyze_refs(&v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64, self.m.meas_lpct, self.m.meas_hpct);
         }
         self.measure_refs();
     }
@@ -3638,7 +3641,7 @@ impl Ui {
     fn measure_refs(&mut self) {
         for i in 0..NREF {
             self.ref_ana[i] = match &self.refs[i] {
-                Some(r) if r.v.len() >= 2 && r.dt > 0.0 => oos_dsp::measure::analyze_min(&r.v, r.dt, 0.4 * r.vpd as f64),
+                Some(r) if r.v.len() >= 2 && r.dt > 0.0 => oos_dsp::measure::analyze_refs(&r.v, r.dt, 0.4 * r.vpd as f64, self.m.meas_lpct, self.m.meas_hpct),
                 _ => Default::default(),
             };
         }
