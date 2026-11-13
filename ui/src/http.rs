@@ -574,11 +574,11 @@ impl Http {
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = TcpListener::bind(("0.0.0.0", port)).ok();
+        let l = crate::net6::tcp(port);
         match &l {
             Some(l) => {
                 let _ = l.set_nonblocking(true);
-                eprintln!("oos-ui: web remote on port {}", port);
+                eprintln!("oos-ui: web remote on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
             }
             None => eprintln!("oos-ui: web port {} not available", port),
         }
@@ -918,6 +918,12 @@ mod tests {
         assert!(!f("Host: x", "/cmd", false));
         assert!(!f("Host: dho924.local:8080", "/cmd", false));
         assert!(!f("Host: [fe80::1]:8080", "/cmd", false));
+        // the scope by its global IPv6 address (net.ipv6 = on), with and without the port, and the page's own requests
+        assert!(!f("Host: [2001:db8:5:7:1d2e:3f4a:5b6c:7d8e]:8080", "/cmd", false));
+        assert!(!f("Host: [2001:db8:5:7::7d8e]", "/cmd", false));
+        assert!(!f("Host: [2001:DB8:5:7::7D8E]:8080\r\nOrigin: http://[2001:db8:5:7::7d8e]:8080\r\nSec-Fetch-Site: same-origin", "/update", true));
+        assert!(f("Host: [2001:db8:5:7::7d8e]:8080\r\nOrigin: http://[2001:db8:5:7::1]:8080", "/update", true));
+        assert!(f("Host: [2001:db8::1].evil.example:8080", "/cmd", false));
         assert!(!f("", "/cmd", false));
         assert!(!f("Host: 192.168.177.64:8080\r\nOrigin: http://192.168.177.64:8080\r\nSec-Fetch-Site: same-origin", "/update", true));
         // a page elsewhere

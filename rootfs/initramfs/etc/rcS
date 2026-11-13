@@ -41,8 +41,12 @@ ip link set lo up
 # date while it runs
 name=$(/bin/oos-conf net.name | sed -n 's/^\([A-Za-z0-9-]*\).*/\1/p')
 echo "${name:-oos}" > /proc/sys/kernel/hostname
-# inbound only from `net.allow` (system settings, docs/network.md 6), before anything listens; none without the key
+# inbound only from `net.allow` (system settings, docs/network.md 6), before anything listens; none without the key.
+# With `onlink6` in it a watcher keeps the IPv6 prefixes on the link in the firewall (they change with the provider)
 /bin/oos-firewall >> /tmp/oos-net.log 2>&1
+(setsid sh -c '/bin/oos-firewall watch >> /tmp/oos-net.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+# `net.ipv6 = on`: stable SLAAC addresses and the services on IPv6 too (oos-net6, docs/network.md 8), before eth0 is up
+[ "$(/bin/oos-conf net.ipv6)" = on ] && /bin/oos-net6 >> /tmp/oos-net.log 2>&1
 # a fixed MAC (the kernel picks a random one per boot, which filled the bench DHCP pool on 2026-11-03): by default
 # locally administered from the SD card's CID; `eth.mac` can name the stock one or a fixed address (oos-mac)
 mac=$(/bin/oos-mac 2>> /tmp/oos-net.log)

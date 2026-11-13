@@ -26,8 +26,8 @@ running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 
 dhcp_stop() {
 	running $DHCP && kill "$(cat $DHCP)"
-	rm -f $DHCP /tmp/oos-dhcp-ntp.wlan0
-	ip addr flush dev wlan0 2>/dev/null
+	rm -f $DHCP /tmp/oos-dhcp-ntp.wlan0 /tmp/oos-dhcp-tz.wlan0
+	ip -4 addr flush dev wlan0 2>/dev/null
 }
 
 load() {

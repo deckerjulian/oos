@@ -24,8 +24,8 @@ IPv6 (only with `net.ipv6 = on`, unit image on; other images unchanged):
   already listens on both. mDNS publishes AAAA for the interface's IPv6 addresses.
 - Firewall: `net.allow` token `onlink6` = the IPv6 prefixes on the link (routes without a gateway from RA, length
   48..128, not fe80::/64). nft named set `onlink6` filled by `oos-firewall`, refreshed by `oos-firewall watch` (10 s)
-  which writes `/tmp/oos-net6.prefixes` for netacl. ICMPv6 for ND/RA (present), plus echo, packet-too-big, time
-  exceeded, parameter problem from the allowed sources and PTB from anywhere.
+  which writes `/tmp/oos-net6.prefixes` for netacl. ICMPv6: ND/RA rule present; errors for the scope's own traffic
+  pass as `related`; everything from allowed sources passes.
 - netacl: `onlink6` reads `/tmp/oos-net6.prefixes`.
 - Web guard: IPv6 literals already accepted; add tests for global literals and `[addr]` without a port.
 - Tests: sysconf/time (tz dhcp), netacl (onlink6), http guard, mdns AAAA, `tools/fw-sim.sh` (rules, prefix parsing,
@@ -33,4 +33,8 @@ IPv6 (only with `net.ipv6 = on`, unit image on; other images unchanged):
 
 ## Status
 
-- in progress: plan written.
+- done: time zone from DHCP (e58354a); IPv6 switch, dual-stack binds, AAAA, `onlink6` in firewall and netacl,
+  `oos-net6`, udhcpc.script flushes IPv4 only (it removed the link-local address: the unit had no IPv6 at all),
+  `tools/fw-sim.sh`, docs/network.md 3, 5, 6, 8.
+- next: report to team-lead, merge after approval, then unitlab installs and sets `tz = dhcp` in /oos/system.conf.
+- not done: RDNSS (no consumer in the image), option 101 (no zoneinfo), IPv6 address on the Network page.
