@@ -26,6 +26,18 @@ About -13 mV per volt on the positive side, about -4 mV per volt on the negative
   The reading is `gain_err * DAC_actual - offset`. They separate across scales: scales that share an input gain
   path share the lsb but not the gain.
 
+## Specification
+
+DHO800 data sheet, DC offset accuracy: +-(0.1 div + 2 mV + 1.5 % of the offset) at 200 mV/div and below,
++-(0.1 div + 2 mV + 1.0 % of the offset) above. DC gain accuracy +-1 % of full scale above 5 mV/div. Offset range
++-1 V up to 65 mV/div, +-8 V up to 270 mV/div, +-20 V up to 2.75 V/div, +-100 V up to 10 V/div.
+
+Round 9 against it: at 1 V/div and +2 V the limit is 100 + 2 + 20 = 122 mV; the reading is -27 mV. Even the
+offset-proportional term alone (1.0 %, 20 mV at 2 V) is of the same size as the error. Inside the specification.
+
+Decision rule: close the item when the sweep stays inside the limit at every point and shows no channel or path far
+from the others. An OOS lsb trim only for a clean per-path error well outside the limit.
+
 ## Measurement (unitlab)
 
 CH3, input terminated with 50 Ohm (open if no terminator), Normal acquisition, Auto trigger, VAVG over the screen
