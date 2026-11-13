@@ -272,6 +272,13 @@ Several channels:
   record (1 M points) is then one read of 8 MB (`batch_plan` reads at least one frame whatever its size). That
   read is the suspect; not reproduced on purpose.
 
+Trigger status from the SCU (`trig.hw_status = on`, oos-ui restarted, CH1 probe-comp, 500 us/div, 10 reads of
+`:TRIGger:STATus?` each): Auto sweep level 0.15 V TD 10/10 (74 frames/s); level 0.6 V AUTO 10/10 (6 frames/s);
+Normal sweep level 0.6 V WAIT 10/10 (0 frames/s); Normal 0.15 V TD. 0x4034 now changes: 0x0c2/0xcd2 while
+triggering (bits 6 and 7), 0x012 then 0x492 while auto-firing (bit 7 without bit 6), as traced. All verification
+steps hold: the branch makes it the default (`trig.hw_status = off` restores the software status). system.conf was
+restored afterwards.
+
 Fix (branch fix/autoset-multich): the measure unit only with one channel on; the deep record at 100 k points with
 more than one channel (0.8 MB at 4 channels, 33 samples a period at 125 kHz). Open: whether an 8 MB read itself
 crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read), and the real slot map.
@@ -286,7 +293,7 @@ crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read), 
 | 7 level from top/base | done, 8f6f7f9 |
 | 4 software comparator = hardware, hysteresis table | done, ed4d03c |
 | 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
-| 5 status from 0x4034 | done behind `trig.hw_status` (default off), bits traced in the netlist (section above); on-unit verification pending |
+| 5 status from 0x4034 | verified on the unit 2026-11-13; default on in fix/autoset-multich |
 | 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
 | (a) autoset levels from the measure unit | done, on by default with the record stages as fallback; on-unit verification pending |
 | autoset search in at most three records | done; on-unit timing pending |
