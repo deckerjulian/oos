@@ -1775,11 +1775,21 @@ impl Ui {
                         let zv = (tscales()[self.m.zscale], self.m.zdelay);
                         let t1 = std::time::Instant::now();
                         let zw = self.z_weights(&rec);
-                        for c in 0..NCH {
-                            if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
-                                if self.m.zoom {
-                                    self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
+                        // the fast path draws the other frames of the picture from their samples (`draw_frame`): the
+                        // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
+                        // against one span per column) and the grading of the picture follows how many of each it holds:
+                        // the trace flickered with the batch sizes (docs/fork/flicker.md)
+                        let frame = rec.raw.as_ref().filter(|_| self.fast_ok()).map(|r| r.frame.clone());
+                        if let Some(f) = frame {
+                            let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
+                            crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
+                        } else {
+                            for c in 0..NCH {
+                                if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
+                                    self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
+                                    if self.m.zoom {
+                                        self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
+                                    }
                                 }
                             }
                         }
@@ -7593,6 +7603,53 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    // Break it catches: the newest frame of a picture drawn another way than the others (record points instead of the
+    // frame's samples), so the grade follows the mix of the two in each picture: the flicker at 500 us/div on the
+    // probe-comp output (docs/fork/flicker.md). Equal frames, 1 to 5 of them per picture, must look the same.
+    #[test]
+    fn hardware_pictures_look_the_same_whatever_the_frames_per_picture() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        ui.m.persist = 0;
+        ui.m.trig_level = 0.15;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        assert!(ui.fast_ok());
+        // 100 k samples over 1.2 screens: a 0.3 V square with a little noise
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 100_000usize;
+        let mut x = 9u32;
+        let v: Vec<f32> = (0..n)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                (if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+            })
+            .collect();
+        let frame = |seq: u64| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+        let mut seq = 0;
+        let mut picture = |ui: &mut Ui, k: usize| -> Vec<u32> {
+            {
+                let mut g = shared.lock().unwrap();
+                for _ in 0..k {
+                    seq += 1;
+                    g.queue.push_back(frame(seq));
+                }
+            }
+            ui.step(0.033);
+            let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+            ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
+        };
+        let first = picture(&mut ui, 3);
+        for k in [1, 2, 3, 1, 5, 1, 2] {
+            let p = picture(&mut ui, k);
+            let worst = first.iter().zip(&p).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 3, "{} frames: brightness off by {}", k, worst);
+        }
+    }
 
     // Break it catches: Trig'd shown for a batch the auto timeout forced (the software found an edge in it), or the
     // hardware status ignored when the thread reports it
