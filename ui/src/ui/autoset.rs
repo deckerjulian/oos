@@ -575,13 +575,8 @@ mod tests {
         assert!(!ui.m.auto_fast);
     }
 
-    /// A hardware-like record of CH1 under settings stamp `stamp`: a 1 kHz square from `lo` to `hi` V over the window
-    /// of the time base set now, 8000 samples, the hardware point in the middle.
-    fn hw_record(ui: &Ui, stamp: u64, lo: f32, hi: f32) -> crate::wave::Record {
-        hw_record_of(ui, stamp, &|t| if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { hi } else { lo })
-    }
-
-    /// As `hw_record` with the signal `sig` of the time (s).
+    /// A hardware-like record of CH1 under settings stamp `stamp`: the signal `sig` of the time (s) over the window of
+    /// the time base set now, 8000 samples, the hardware point in the middle.
     fn hw_record_of(ui: &Ui, stamp: u64, sig: &dyn Fn(f64) -> f32) -> crate::wave::Record {
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 8000usize;
@@ -591,7 +586,7 @@ mod tests {
         crate::board::to_record(&f, &ui.m, 3600, window, ui.m.delay as f64 - window / 2.0)
     }
 
-    /// Runs an auto set-up on hardware-like records (`hw_record`) without letting time pass; returns the stages seen.
+    /// Runs an auto set-up on hardware-like records (`hw_record_of`) without letting time pass; returns the stages seen.
     fn run_hw(ui: &mut Ui, lo: f32, hi: f32) -> Vec<String> {
         run_hw_of(ui, &|t| if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { hi } else { lo })
     }
