@@ -87,6 +87,8 @@ pub trait Board: Sync + 'static {
     fn slow_mode(&self, m: &Model) -> Slow;
     /// time base (s/div) from which the board streams in roll mode
     fn roll_tdiv(&self) -> f64;
+    /// hysteresis of the trigger comparators in divisions for the trigger source's scale at the BNC (V/div)
+    fn trig_hyst_div(&self, scale_bnc: f64, noise_reject: bool) -> f64;
     /// starts the acquisition thread
     #[cfg(target_os = "linux")]
     fn spawn(&self, o: Spawn) -> HwShared;

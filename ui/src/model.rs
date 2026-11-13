@@ -1692,9 +1692,11 @@ impl Model {
         }
     }
     /// The logic analyser is on (and the model has it).
-    /// Comparator hysteresis of the trigger in divisions (trigger.md 2.3): 0.3, 0.7 with noise reject.
+    /// Comparator hysteresis of the trigger in divisions, as the hardware gets it (trigger.md 2.3): 0.3, 0.7 with
+    /// noise reject, more at 2 mV/div and below (the table of the trigger source's scale at the BNC).
     pub fn trig_hyst_div(&self) -> f32 {
-        if self.trig_nrej { 0.7 } else { 0.3 }
+        let c = &self.ch[self.trig_src.min(NCH - 1)];
+        crate::board::board().trig_hyst_div(c.volts_per_div() as f64 / c.probe as f64, self.trig_nrej) as f32
     }
 
     /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and

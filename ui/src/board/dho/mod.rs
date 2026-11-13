@@ -77,6 +77,10 @@ impl Board for Dho {
         hw::ROLL_TDIV
     }
 
+    fn trig_hyst_div(&self, scale_bnc: f64, noise_reject: bool) -> f64 {
+        oos_hal::dho::tpu::noise_hysteresis(scale_bnc * 1e9, noise_reject)
+    }
+
     #[cfg(target_os = "linux")]
     fn spawn(&self, o: super::Spawn) -> super::HwShared {
         hw::spawn(o.mask, o.program_afe, o.cal_dir, o.start_up)
