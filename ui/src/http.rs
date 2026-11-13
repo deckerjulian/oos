@@ -133,7 +133,7 @@ pub fn to_little_cores() {
 }
 
 /// The calling thread onto the fastest cores (RK3399: the two A72), and the processes it starts after this with it.
-/// Display > Graphics = GPU: the frame loop and the GPU helper compare and send the layers there (on an A53 a
+/// System > Graphics = GPU: the frame loop and the GPU helper compare and send the layers there (on an A53 a
 /// frame's compare took three times as long).
 #[cfg(target_os = "linux")]
 pub fn pin_to_big_cores() {
@@ -605,14 +605,14 @@ impl Http {
         self.shots.hand_over(cv, whole);
     }
 
-    /// Display > Graphics = GPU: the frame loop hands over the pictures that come back from the GPU
+    /// System > Graphics = GPU: the frame loop hands over the pictures that come back from the GPU
     /// (`picture_read_back`), `tick` copies none and nothing is swapped. `cv` holds the last picture read back, not
     /// one drawn every frame: a buffer swapped out of it would stay in it, an older picture, until the next read.
     pub fn before_gpu_frame(&mut self) {
         self.shots.lock().frames = true;
     }
 
-    /// Display > Graphics = GPU: `cv` was just read back whole; a copy goes to the encoder when it wants one.
+    /// System > Graphics = GPU: `cv` was just read back whole; a copy goes to the encoder when it wants one.
     pub fn picture_read_back(&self, cv: &Canvas) {
         let mut st = self.shots.lock();
         let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
@@ -623,7 +623,7 @@ impl Http {
         }
     }
 
-    /// The live picture would take the next screen (Display > Graphics = GPU: read it back for it).
+    /// The live picture would take the next screen (System > Graphics = GPU: read it back for it).
     pub fn picture_wanted(&self) -> bool {
         let st = self.shots.lock();
         let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
@@ -1189,7 +1189,7 @@ setTimeout(() => {
         assert!(Shots::fits(true, false, true), "the VPU failed: PNG for everyone");
     }
 
-    /// Display > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
+    /// System > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
     /// frame). Nothing is swapped out of it (a swapped-in buffer stayed until the next read: the web page went back
     /// and forth between the new and an older screen), and the picture is one that came back.
     #[test]

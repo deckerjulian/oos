@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# build.sh - the GPU part of the image (Display > Graphics = GPU, gpu/README.md), in Docker, into rootfs/out/gpu/:
+# build.sh - the GPU part of the image (System > Graphics = GPU, gpu/README.md), in Docker, into rootfs/out/gpu/:
 #   bin/oos-gpu                       the helper (gpu/oos-gpu.c)
 #   usr/lib/aarch64-linux-gnu/...     Mesa with only Panfrost (EGL, GLES 3, GBM), no LLVM at run time, and what it
 #                                     links (libdrm, zlib, libstdc++, glibc)

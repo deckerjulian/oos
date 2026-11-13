@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! System > Date and time: the clock from an NTP server (off by default: OOS sends nothing to the outside unless asked),
-//! the server, the time zone, the clock by hand; and System > Network > 10 Mbit retry. The settings live in
+//! the server (by default the one the DHCP lease names, option 42), the time zone, the clock by hand; and System >
+//! Network > 10 Mbit retry. The settings live in
 //! `/oos/system.conf` (sysconf.rs). A worker thread asks the server (sntp.rs), so the frame loop never waits on the
 //! network. Once the clock is set, file names carry the local date and time (`Ui::new_file`).
 
 use super::*;
 use crate::clock::{self, Local, Tz, ZONES};
 use crate::sntp;
-use crate::sysconf;
+use crate::sysconf::{self, NtpOrigin};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 /// A sync again after this long (the clock of the RK3399 drifts a few seconds a day).
@@ -21,8 +22,9 @@ const RETRY_FIRST: f64 = 15.0;
 const RETRY_MAX: f64 = 900.0;
 /// Left in /tmp (RAM) once the clock was set in this boot: a restarted oos-ui knows the clock is right.
 const CLOCK_SET: &str = "/tmp/oos-clock.set";
-/// Servers offered in the picker; another one through "Other".
-pub const SERVERS: [&str; 5] = ["pool.ntp.org", "time.google.com", "time.cloudflare.com", "time.nist.gov", "ptbtime1.ptb.de"];
+/// Servers offered in the picker (`dhcp` shows as "DHCP"); another one through "Other".
+pub const SERVERS: [&str; 6] = [sysconf::DHCP, "pool.ntp.org", "time.google.com", "time.cloudflare.com", "time.nist.gov", "ptbtime1.ptb.de"];
+const DHCP_LABEL: &str = "DHCP";
 const OTHER: &str = "Other ...";
 /// Characters of a server or zone string shown in a row.
 const SHOW_MAX: usize = 18;
@@ -124,6 +126,10 @@ pub(super) struct NtpUi {
     /// the offset last given to the kernel (FAT time stamps), and when it was checked
     kernel_tz: Option<i32>,
     tz_checked: f64,
+    /// the server of the last request and where it came from (NTP server = DHCP: the lease or the fallback)
+    asked: Option<(String, NtpOrigin)>,
+    /// tests: the directory of the lease files (`oos-dhcp-ntp.<interface>`) instead of /tmp
+    lease_dir: Option<std::path::PathBuf>,
 }
 
 /// One sync: ask, then set the clock.
@@ -146,6 +152,15 @@ fn worker(jobs: Receiver<String>, out: Sender<Result<Synced, String>>) {
     }
 }
 
+/// A server as the page shows it.
+fn server_label(s: &str) -> String {
+    if s == sysconf::DHCP {
+        DHCP_LABEL.into()
+    } else {
+        short(s)
+    }
+}
+
 fn short(s: &str) -> String {
     if s.chars().count() <= SHOW_MAX {
         return s.to_string();
@@ -160,6 +175,7 @@ impl Ui {
     pub fn load_system(&mut self, path: std::path::PathBuf) {
         self.sys = sysconf::SysConf::load(&path);
         self.sys_path = Some(path);
+        self.net_name_init();
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();
         self.apply_tz();
         self.apply_backlight();
@@ -218,6 +234,20 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ NTP
 
+    /// The text of an interface's lease file (`sysconf::DHCP_NTP_FILE`), None without one.
+    fn lease(&self, iface: &str) -> Option<String> {
+        match &self.ntp.lease_dir {
+            Some(d) => std::fs::read_to_string(d.join(format!("oos-dhcp-ntp.{}", iface))).ok(),
+            None if cfg!(test) => None,
+            None => std::fs::read_to_string(format!("{}{}", sysconf::DHCP_NTP_FILE, iface)).ok(),
+        }
+    }
+
+    /// The server to ask now: `dhcp` is looked up at each request, the lease may have changed.
+    fn ntp_target(&self) -> (String, NtpOrigin) {
+        sysconf::ntp_server(&self.sys.ntp_server, |i| self.lease(i))
+    }
+
     fn net_up(&self) -> bool {
         (self.eth_link && self.addr_of("eth0").is_some()) || self.addr_of(oos_hal::wlan::IFACE).is_some()
     }
@@ -238,7 +268,8 @@ impl Ui {
                     self.ntp.rx = Some(rx);
                 }
             }
-            let server = self.sys.ntp_server.clone();
+            let (server, origin) = self.ntp_target();
+            self.ntp.asked = Some((server.clone(), origin));
             if !self.ntp.tx.as_ref().is_some_and(|tx| tx.send(server).is_ok()) && !cfg!(test) {
                 self.ntp.st.done(self.now, Err("no worker".into()));
             }
@@ -265,7 +296,26 @@ impl Ui {
             return self.toast("No network link");
         }
         self.ntp.st.kick(self.now);
-        self.toast(&format!("Asking {} ...", short(&self.sys.ntp_server)));
+        self.toast(&format!("Asking {} ...", short(&self.ntp_target().0)));
+    }
+
+    /// With NTP server = DHCP: the server of the last request and where it came from, `192.168.1.1 (DHCP)` or
+    /// `pool.ntp.org (no DHCP)`.
+    fn dhcp_tag(&self) -> Option<String> {
+        if self.sys.ntp_server != sysconf::DHCP {
+            return None;
+        }
+        let (s, o) = self.ntp.asked.as_ref()?;
+        Some(match o {
+            NtpOrigin::Dhcp(_) => format!("{} (DHCP)", short(s)),
+            _ => format!("{} (no DHCP)", short(s)),
+        })
+    }
+
+    /// Tests: as if the last request had gone to `server`.
+    #[cfg(test)]
+    pub(super) fn ntp_dhcp_asked_for_tests(&mut self, server: &str, origin: NtpOrigin) {
+        self.ntp.asked = Some((server.into(), origin));
     }
 
     /// The state line of the page.
@@ -275,6 +325,15 @@ impl Ui {
         let hm = |unix: f64| self.zone().local(unix as i64).hms()[..5].to_string();
         if !self.sys.ntp {
             return if self.clock_known { "Off, clock set by hand".into() } else { "Off".into() };
+        }
+        // DHCP: which server it was, in place of the offset and the times
+        if let Some(tag) = self.dhcp_tag() {
+            match (st.busy, &st.last_ok, &st.last_err) {
+                (true, _, _) => return format!("Asking {} ...", tag),
+                (_, _, Some((_, e))) => return format!("{}, {}", e, tag),
+                (_, Some(ok), None) => return format!("Synced {}, {}", at(ok.at), tag),
+                _ => {}
+            }
         }
         if st.busy {
             return "Asking the server ...".into();
@@ -337,7 +396,7 @@ impl Ui {
                 if self.clock_known { s } else { format!("{} (not set)", s) }
             }
             Item::NtpOn => onoff(self.sys.ntp),
-            Item::NtpServer => short(&self.sys.ntp_server),
+            Item::NtpServer => server_label(&self.sys.ntp_server),
             Item::NtpStatus => self.ntp_status(),
             Item::TimeZone => match clock::zone_name(&self.sys.tz) {
                 Some(n) => n.to_string(),
@@ -349,7 +408,7 @@ impl Ui {
     }
 
     fn server_options(&self) -> Vec<String> {
-        let mut v: Vec<String> = SERVERS.iter().map(|s| s.to_string()).collect();
+        let mut v: Vec<String> = SERVERS.iter().map(|s| server_label(s)).collect();
         if !SERVERS.contains(&self.sys.ntp_server.as_str()) {
             v.push(short(&self.sys.ntp_server));
         }
@@ -382,6 +441,7 @@ impl Ui {
             self.sys_save();
             self.ntp.st.last_ok = None;
             self.ntp.st.last_err = None;
+            self.ntp.asked = None;
             self.ntp.st.kick(self.now);
         }
     }
@@ -437,10 +497,14 @@ impl Ui {
         let opts = self.options(it);
         let Some(o) = opts.get(k) else { return };
         match it {
-            Item::NtpServer if o == OTHER => self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::NtpServer, &self.sys.ntp_server)),
+            Item::NtpServer if o == OTHER => {
+                let now = if self.sys.ntp_server == sysconf::DHCP { "" } else { self.sys.ntp_server.as_str() };
+                self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::NtpServer, now));
+            }
             Item::TimeZone if o == OTHER => self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::Tz, &self.sys.tz)),
+            Item::RemName => self.remote_pick(k),
             Item::NtpServer => {
-                if let Some(s) = SERVERS.iter().find(|s| *s == o) {
+                if let Some(s) = SERVERS.iter().find(|s| server_label(s) == *o) {
                     self.set_server(s);
                 }
             }
@@ -571,6 +635,8 @@ mod tests {
     fn page_shows_the_state_and_takes_the_settings() {
         let mut u = ui();
         assert!(!u.sys.ntp, "off by default");
+        assert_eq!(u.value(Item::NtpServer), "DHCP");
+        u.select_option(Item::NtpServer, "pool.ntp.org");
         assert_eq!(u.value(Item::NtpStatus), "Off");
         assert!(u.value(Item::TimeNow).ends_with("UTC (not set)"), "{}", u.value(Item::TimeNow));
         u.select_option(Item::NtpOn, "On");
@@ -595,6 +661,44 @@ mod tests {
         assert_eq!(u.sys.ntp_server, "ptbtime1.ptb.de");
         // a new server is asked at once
         assert!(u.ntp.st.due.is_some_and(|d| d <= u.now));
+    }
+
+    #[test]
+    fn dhcp_asks_the_server_of_the_lease_at_each_request() {
+        let dir = std::env::temp_dir().join(format!("oos-time-dhcp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut u = ui();
+        u.ntp.lease_dir = Some(dir.clone());
+        assert_eq!(u.sys.ntp_server, sysconf::DHCP, "the default");
+        assert_eq!(u.options(Item::NtpServer)[0], "DHCP", "first in the picker");
+        u.select_option(Item::NtpOn, "On");
+        // no lease file: the fallback, and the line says so
+        u.step(0.04);
+        assert_eq!(u.ntp.asked, Some(("pool.ntp.org".into(), NtpOrigin::NoDhcp)));
+        assert_eq!(u.value(Item::NtpStatus), "Asking pool.ntp.org (no DHCP) ...");
+        u.ntp_report(Err("no answer".into()));
+        assert_eq!(u.value(Item::NtpStatus), "no answer, pool.ntp.org (no DHCP)");
+        // a lease on wlan0, then one on eth0 that wins: read at the request, not at the start
+        std::fs::write(dir.join("oos-dhcp-ntp.wlan0"), "10.1.2.3\n").unwrap();
+        u.ntp_sync_now();
+        u.step(0.04);
+        assert_eq!(u.ntp.asked, Some(("10.1.2.3".into(), NtpOrigin::Dhcp("wlan0"))));
+        std::fs::write(dir.join("oos-dhcp-ntp.eth0"), "192.168.1.1 192.168.1.2\n").unwrap();
+        u.ntp_report(Err("no answer".into()));
+        u.ntp_sync_now();
+        u.step(0.04);
+        assert_eq!(u.value(Item::NtpStatus), "Asking 192.168.1.1 (DHCP) ...");
+        u.ntp_report(Ok(Synced { at: clock::unix_now(), server: "192.168.1.1".into(), offset: 0.02, stratum: 2 }));
+        let s = u.value(Item::NtpStatus);
+        assert!(s.starts_with("Synced ") && s.ends_with(", 192.168.1.1 (DHCP)"), "{}", s);
+        // a server of its own: the line as before
+        u.select_option(Item::NtpServer, "time.nist.gov");
+        u.step(0.04);
+        assert_eq!(u.value(Item::NtpStatus), "Asking the server ...");
+        u.select_option(Item::NtpServer, "DHCP");
+        assert_eq!(u.sys.ntp_server, "dhcp");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -34,6 +34,8 @@ mod remote;
 mod ssh;
 mod backlight;
 mod graphics;
+pub mod views;
+pub use views::VIEWS_MAX;
 mod script;
 #[cfg(test)]
 mod lint;
@@ -49,7 +51,7 @@ pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
 
-/// Where a picture is drawn: everything on `under`, or with `over` (Display > Graphics = GPU) the layer over the
+/// Where a picture is drawn: everything on `under`, or with `over` (System > Graphics = GPU) the layer over the
 /// traces, and the traces as `jobs` for the GPU (`Ui::render_layers`, `crate::gpu`).
 pub struct Layers<'a> {
     pub under: &'a mut Canvas,
@@ -625,8 +627,13 @@ enum Item {
     SshImport,
     SshRemove,
     SshRemoveKey,
-    /// Display > Graphics: CPU or GPU (ui/graphics.rs)
+    /// the mDNS switch, and the scope's name on the network (`<name>.local`, a picker with Other on the keyboard)
+    RemMdns,
+    RemName,
+    /// System > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
+    /// Display > Views (ui/views.rs)
+    Views,
     /// Display > Backlight, percent (ui/backlight.rs)
     Backlight,
     WlanInfo,
@@ -698,6 +705,9 @@ pub enum Phase {
 enum Drag {
     None,
     Pending,
+    /// went down in an edge strip of the plot with more than one view: a horizontal swipe switches views, a vertical
+    /// drag becomes `Pending` (ui/views.rs)
+    ViewEdge,
     /// drawing zone k (box: from the touch-down point to the finger; shape: the finger's path)
     Zone(usize),
     Offset(usize),
@@ -884,6 +894,8 @@ pub struct Ui {
     pub hdmi_snap: Vec<u32>,
     /// the same for the GPU: the layer over the traces at that point (the monitor's workspace has no menus)
     pub hdmi_over: Option<Canvas>,
+    /// the monitor's size while one is driven (main.rs), for `:SYSTem:STATe?`
+    pub hdmi_out: Option<(u32, u32)>,
     /// start-up screen (startup.rs) and the last start-up's result (About)
     pub start_up: Option<startup::StartScreen>,
     start_up_last: Option<oos_hal::bootstatus::View>,
@@ -961,8 +973,10 @@ pub struct Ui {
     pub t_draw: f32,
     pub t_render: f32,
     pub t_present: f32,
-    /// Display > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
+    /// System > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
     pub t_gpu: Option<[f32; 6]>,
+    /// the helper's time of the last panel frame and, while the GPU draws for a monitor, of the last monitor frame (ms)
+    pub t_gpu_screens: Option<(f32, Option<f32>)>,
     /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
     pub t_parts: [f32; 4],
     pub info: String,
@@ -971,6 +985,12 @@ pub struct Ui {
     /// brightest pixel of the merged maps (colour grade), main / zoom view
     vmax_cg: u32,
     vmaxz_cg: u32,
+    /// minimum persistence: frames in the picture on screen, and the brightest pixel per frame behind `vmax`, `vmaxz`,
+    /// `vmax_cg`, `vmaxz_cg` (`picture_ref`)
+    pic_frames: u32,
+    per_frame: [u32; NCH],
+    per_framez: [u32; NCH],
+    per_frame_cg: [u32; 2],
     /// storage directory (setups, CSV, PNG), created when missing
     pub store_dir: std::path::PathBuf,
     /// the screen the layout is made for: the panel, or another size in host test runs (`--size`)
@@ -1099,6 +1119,7 @@ impl Ui {
             hdmi_snap_want: false,
             hdmi_snap: Vec::new(),
             hdmi_over: None,
+            hdmi_out: None,
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
@@ -1150,12 +1171,17 @@ impl Ui {
             t_render: 0.0,
             t_present: 0.0,
             t_gpu: None,
+            t_gpu_screens: None,
             t_parts: [0.0; 4],
             info: String::new(),
             dirty_map: true,
             vmax: [1; NCH],
             vmax_cg: 1,
             vmaxz_cg: 1,
+            pic_frames: 0,
+            per_frame: [1; NCH],
+            per_framez: [1; NCH],
+            per_frame_cg: [1; 2],
             store_dir: std::path::PathBuf::from(crate::store::DEFAULT_DIR),
             scr: Screen::PANEL,
             view_pass: false,
@@ -1582,6 +1608,12 @@ impl Ui {
             Quick::Single => self.key(key::SINGLE),
             Quick::RunStop => self.key(key::RUNSTOP),
             Quick::Clear => self.clear_display(),
+            Quick::NextView => {
+                if self.m.views < 2 {
+                    return self.toast("Set Display > Views first");
+                }
+                self.view_step(1)
+            }
         }
     }
 
@@ -1789,6 +1821,19 @@ impl Ui {
             // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
             // record intervals (a 125 M record takes ~1 s to read)
             let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
+            // `trig.hw_status = on`: the SCU says whether the TPU fired or the auto timeout forced the batch; it
+            // overrides what the software refinement concluded (docs/fork/trigger-lockin.md)
+            if got > 0 {
+                if let Some((_, Some(tpu))) = self.src.hw_trig_fired() {
+                    self.m.status = if tpu { TrigStatus::Triggered } else { TrigStatus::Auto };
+                }
+            }
+            // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
+            if persist != 0.0 {
+                self.pic_frames = 0;
+            } else if got > 0 {
+                self.pic_frames = got as u32;
+            }
             if got > 0 {
                 let iv = (self.now - self.last_rec_t).min(2.0);
                 self.rec_iv += 0.3 * (iv - self.rec_iv);
@@ -1872,28 +1917,8 @@ impl Ui {
         let p5 = std::time::Instant::now();
         // brightest pixel per channel: the trace brightness is graded relative to it
         // (follow upwards at once, downwards slowly: no flicker)
-        let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
-        let (mut full, mut fullz) = (false, false);
-        for c in 0..NCH {
-            if self.m.ch[c].on {
-                let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
-                self.vmax[c] = follow(self.vmax[c], mx);
-                full |= mx > 0xc000;
-                if self.m.zoom {
-                    let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
-                    self.vmaxz[c] = follow(self.vmaxz[c], mz);
-                    fullz |= mz > 0xc000;
-                }
-            }
-        }
+        let (full, fullz) = self.grade_refs();
         self.prof_add(3, p5.elapsed());
-        if self.m.color_grade {
-            let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
-            self.vmax_cg = follow(self.vmax_cg, self.ph.merged_max(on));
-            if self.m.zoom {
-                self.vmaxz_cg = follow(self.vmaxz_cg, self.phz.merged_max(on));
-            }
-        }
         // long or infinite persistence: halve the maps before the counts saturate (keeps the density ratios)
         if full {
             self.ph.halve();
@@ -1963,7 +1988,7 @@ impl Ui {
         self.render_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
     }
 
-    /// The screen into `l`: with one canvas everything is drawn on it; with two (Display > Graphics = GPU) the
+    /// The screen into `l`: with one canvas everything is drawn on it; with two (System > Graphics = GPU) the
     /// background, graticule and masks go under the traces, everything else over them, and the traces become jobs
     /// for the GPU (`gpu.rs`). The order of the drawing is the same either way.
     pub fn render_layers(&mut self, l: &mut Layers) {
@@ -2125,7 +2150,7 @@ impl Ui {
         self.render_view_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
     }
 
-    /// `render_view` into layers (Display > Graphics = GPU): the traces become jobs at the monitor's size.
+    /// `render_view` into layers (System > Graphics = GPU): the traces become jobs at the monitor's size.
     pub fn render_view_layers(&mut self, l: &mut Layers) {
         let keep = (self.scr, self.grid, std::mem::take(&mut self.wins), self.area, self.cur_win, self.frames, self.hdmi_snap_want);
         self.scr = Screen { w: l.under.w, h: l.under.h };
@@ -2311,6 +2336,33 @@ impl Ui {
     /// Brightness of a trace pixel by its count (`draw_traces`): floor + sqrt(hits / brightest), the intensity
     /// setting raises floor and gain. The count shifted right by the second value indexes the table; a pixel that
     /// was hit at all gets at least the third.
+    /// The counts the picture is graded against (`picture_ref`), per channel and for colour grade; whether the main and
+    /// the zoom map are near saturation.
+    fn grade_refs(&mut self) -> (bool, bool) {
+        let n = self.pic_frames;
+        let (mut full, mut fullz) = (false, false);
+        for c in 0..NCH {
+            if self.m.ch[c].on {
+                let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
+                self.vmax[c] = picture_ref(self.vmax[c], &mut self.per_frame[c], mx, n);
+                full |= mx > 0xc000;
+                if self.m.zoom {
+                    let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
+                    self.vmaxz[c] = picture_ref(self.vmaxz[c], &mut self.per_framez[c], mz, n);
+                    fullz |= mz > 0xc000;
+                }
+            }
+        }
+        if self.m.color_grade {
+            let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
+            self.vmax_cg = picture_ref(self.vmax_cg, &mut self.per_frame_cg[0], self.ph.merged_max(on), n);
+            if self.m.zoom {
+                self.vmaxz_cg = picture_ref(self.vmaxz_cg, &mut self.per_frame_cg[1], self.phz.merged_max(on), n);
+            }
+        }
+        (full, fullz)
+    }
+
     fn trace_lut(&self, vmax: u32) -> ([u32; 1024], u32, u32) {
         let inten = self.m.intensity as f32 / 100.0;
         let floor = 30.0 + 140.0 * inten;
@@ -3467,7 +3519,11 @@ impl Ui {
         } else if x + f.m.width(&full) <= room {
             (false, full)
         } else {
-            (false, format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', "")))
+            // tighter, then the rate alone (large text with the view buttons, a USB stick, a WLAN stick)
+            let tight = format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', ""));
+            let alone = rate.replace(' ', "");
+            let main = [tight, alone].into_iter().find(|t| x + f.m.width(t) <= room).unwrap_or_default();
+            (false, main)
         };
         let end = x + if bold { f.mb.width(&main) } else { f.m.width(&main) };
         let mode = format!(" \u{b7} {}", mode);
@@ -3496,7 +3552,7 @@ impl Ui {
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
         let (sr, depth) = self.src.rate_depth(&self.m);
         let buttons = self.top_buttons();
-        let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
+        let room = self.view_box().map_or(buttons.first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
         let tcol = if acq_open { ACCENT } else { TEXT };
         let (bold, main, mode) = Self::top_acq(f, r.x + r.w + 14, room, sr, depth as f64, self.acq_name());
@@ -3504,6 +3560,7 @@ impl Ui {
         if let Some(m) = mode {
             cv.text(&f.m, x, 25, &m, tcol);
         }
+        self.draw_view_box(cv);
         // buttons (the open menu in orange)
         let root = self.menu_root();
         for (b, l, r) in buttons {
@@ -3911,7 +3968,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Graphics, Item::Backlight, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::Views, Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Backlight, Item::TextSize, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -3937,7 +3994,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -4682,7 +4739,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::backlight_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
             return k;
         }
         match it {
@@ -4703,7 +4760,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::backlight_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
             return l;
         }
         match it {
@@ -4945,7 +5002,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.backlight_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -5173,7 +5230,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.backlight_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
             return;
         }
         if self.seg_adjust(it, d) {
@@ -5672,7 +5729,7 @@ impl Ui {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone)) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName)) => {
                     let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
                     self.close_picker();
                     self.time_pick(it, k);
@@ -5972,7 +6029,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)) {
+        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -6075,8 +6132,8 @@ impl Ui {
     /// Control of a menu row whose control rectangle is `w` px wide: segmented buttons when all options fit, a
     /// picker (- value +, the value opens the list of all options) for longer option lists, else - value +.
     fn ctl(&self, it: Item, w: i32) -> Ctl {
-        // - and + step, the value opens the keypad (`open_picker`)
-        if it == Item::AfgFreq {
+        // - and + step, the value opens the keypad (`open_picker`); the name's value opens its list even when short
+        if matches!(it, Item::AfgFreq | Item::RemName) {
             return Ctl::Pick;
         }
         if let Item::RefShow(_) = it {
@@ -6888,7 +6945,9 @@ impl Ui {
                     return;
                 }
                 if in_plot {
-                    t.drag = Drag::Pending;
+                    let edge = self.view_edge(x);
+                    let t = &mut self.touch;
+                    t.drag = if edge { Drag::ViewEdge } else { Drag::Pending };
                     if let Some((k, _)) = self.zone_arm {
                         t.drag = Drag::Zone(k);
                         self.zone_path = vec![(x, y)];
@@ -6901,6 +6960,15 @@ impl Ui {
                 }
                 t.x = x;
                 t.y = y;
+                if t.drag == Drag::ViewEdge {
+                    let (x0, dx, dy) = (t.x0, x - t.x0, y - t.y0);
+                    match self.view_swipe(x0, dx, dy) {
+                        Some(true) => self.touch.drag = Drag::None,
+                        Some(false) => return,
+                        None => self.touch.drag = Drag::Pending,
+                    }
+                }
+                let t = &mut self.touch;
                 let (tx0, ty0, tdrag) = (t.x0, t.y0, t.drag);
                 let (dx, dy) = (x - tx0, y - ty0);
                 if tdrag == Drag::Pending && (dx.abs() > 10 || dy.abs() > 10) {
@@ -7038,7 +7106,7 @@ impl Ui {
                     }
                     return;
                 }
-                if was.1 == Drag::None || was.1 == Drag::Pending {
+                if was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge {
                     if (x - was.2).abs() < 16 && (y - was.3).abs() < 16 {
                         self.tap(was.2, was.3);
                     } else {
@@ -7185,8 +7253,11 @@ impl Ui {
         if self.usb && self.top_hit(self.usb_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Storage);
         }
+        if self.view_box_tap(x, y) {
+            return;
+        }
         // sample rate, depth and mode in the top bar: the page that sets them
-        let end = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x) - 4;
+        let end = self.view_box().map_or(self.top_buttons().first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 4;
         if self.top_hit(Rect::new(pill.x + pill.w, pill.y, end - pill.x - pill.w, pill.h)).contains(x, y) {
             return self.toggle_menu(MenuId::Acquire);
         }
@@ -7504,9 +7575,111 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
     }
 }
 
+/// The count a trace pixel is graded against (full brightness), from the brightest pixel `mx` of the picture. It
+/// follows a higher `mx` at once and a lower one slowly (`prev`, no flicker). Minimum persistence (`frames` > 0, the
+/// frames in the picture): the picture holds as many frames as arrived since the last screen refresh, in batches, so
+/// its counts rise and fall with that number. Graded against the per-frame maximum (`per_frame`, followed the same
+/// way) times `frames`, equal frames give equal brightness whatever their number. Without this a refresh with one
+/// frame after one with several came out dim: the trace pumped at the batch rate (docs/fork/trigger-lockin.md).
+fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
+    let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
+    if frames == 0 {
+        return follow(prev, mx);
+    }
+    *per_frame = follow(*per_frame, mx.div_ceil(frames));
+    per_frame.saturating_mul(frames).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    // Break it catches: Trig'd shown for a batch the auto timeout forced (the software found an edge in it), or the
+    // hardware status ignored when the thread reports it
+    #[test]
+    fn hardware_trigger_status_overrides_the_software_one() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        ui.m.trig_level = 0.5;
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 4000usize;
+        let frame = |seq: u64| crate::board::Frame {
+            seq,
+            dt: window / n as f64 * 1.2,
+            pre: n / 2,
+            ch: [(0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(), Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        };
+        let mut seq = 0;
+        let mut run = |ui: &mut Ui, fired: Option<(u64, Option<bool>)>| {
+            {
+                let mut g = shared.lock().unwrap();
+                for _ in 0..3 {
+                    seq += 1;
+                    g.queue.push_back(frame(seq));
+                }
+                g.trig_fired = fired;
+            }
+            ui.step(0.02);
+            ui.m.status
+        };
+        // off (no reading): the software finds the edge at the hardware point
+        assert_eq!(run(&mut ui, None), TrigStatus::Triggered);
+        assert_eq!(run(&mut ui, Some((1, Some(false)))), TrigStatus::Auto);
+        assert_eq!(run(&mut ui, Some((2, Some(true)))), TrigStatus::Triggered);
+    }
+
+    // Break it catches: the trace brightness at minimum persistence following the number of frames per picture (one
+    // frame after a batch of several came out dim: the flicker after autoset, docs/fork/trigger-lockin.md)
+    #[test]
+    fn equal_frames_give_equal_brightness_whatever_their_number() {
+        let mut ui = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        ui.m.persist = 0;
+        for c in 1..super::NCH {
+            ui.m.ch[c].on = false;
+        }
+        // one frame: a 1 kHz square with a little noise, 3600 points over the screen
+        let mut x = 3u32;
+        let v: Vec<f32> = (0..3600)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                (if (k / 360) % 2 == 0 { 0.0 } else { 0.3 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+            })
+            .collect();
+        let (tdiv, window) = (ui.m.time_per_div(), ui.m.time_per_div() as f64 * super::HDIV as f64);
+        let picture = |ui: &mut super::Ui, n: u32| -> Vec<u32> {
+            ui.ph.clear();
+            for _ in 0..n {
+                ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
+            }
+            ui.pic_frames = n;
+            ui.grade_refs();
+            let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+            // as `draw_traces`: an empty pixel stays dark
+            ui.ph.map[0].iter().map(|&k| if k == 0 { 0 } else { lut[((k as u32) >> sh).min(1023) as usize] }).collect()
+        };
+        let first = picture(&mut ui, 4);
+        for n in [1, 7, 1, 2, 16, 1, 4] {
+            let p = picture(&mut ui, n);
+            let worst = first.iter().zip(&p).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 3, "{} frames: brightness off by {}", n, worst);
+        }
+        // the plain grade (longer persistence) is what pumped: one frame after sixteen is graded against 16 times its
+        // counts
+        ui.pic_frames = 0;
+        ui.m.persist = 1;
+        let _ = picture(&mut ui, 16);
+        ui.pic_frames = 0;
+        ui.grade_refs();
+        let bright = |ui: &super::Ui| ui.vmax[0];
+        let before = bright(&ui);
+        ui.ph.clear();
+        ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
+        ui.grade_refs();
+        assert!(bright(&ui) > ui.ph.map[0].iter().copied().max().unwrap() as u32 * 8, "{}", before);
+    }
 
     /// Measurements in the background (the frame loop on the unit) while a new record comes every frame: their results
     /// still arrive (0.1.7 to 0.1.10 dropped each one as older than the record shown, and the values froze in Run).
@@ -7526,6 +7699,7 @@ mod tests {
     #[test]
     fn add_item_toggles_a_measurement() {
         use super::*;
+
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.meas.clear();
         ui.meas_src = 0;
@@ -7936,7 +8110,7 @@ mod tests {
         shot(&mut ui, "main_menu");
     }
 
-    /// Display > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
+    /// System > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
     /// directly, on every kind of screen.
     #[test]
     fn recorded_layers_replay_to_the_same_pixels() {

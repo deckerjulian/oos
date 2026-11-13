@@ -19,6 +19,7 @@ pub mod counter;
 pub mod gpio;
 pub mod hz;
 pub mod la;
+pub mod levels;
 pub mod lmx2582;
 pub mod panel;
 pub mod roll;

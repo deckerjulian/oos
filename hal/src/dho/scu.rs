@@ -67,6 +67,40 @@ pub mod status {
     pub const STOPPED: u32 = 1 << 13;
     /// waiting for a trigger
     pub const WAIT_TRIG: u32 = 1 << 4;
+    /// sticky: the TPU's trigger fired (rising edge of SLICE_X62Y75_BFF, the trigger output into the SCU FSM), until
+    /// the status clear (`clear_status`). Netlist, docs/fork/trigger-lockin.md "Trigger status from the hardware"
+    pub const TPU_TRIGGER: u32 = 1 << 6;
+    /// sticky: the FSM accepted a trigger while waiting (SLICE_X53Y73_AFF rising): the TPU's, the auto-trigger timeout
+    /// (0x4020 bit0, 0x4060/0x4064) or a forced one, until the status clear
+    pub const ACCEPTED: u32 = 1 << 7;
+}
+
+/// What triggered the acquisitions since the last status clear, from a read of 0x4034.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fired {
+    /// the TPU fired at least once (the stock status priority puts bit 6 first)
+    Trigger,
+    /// acquisitions were accepted, none on a TPU trigger: the auto timeout (or force) made them
+    Forced,
+    /// nothing accepted
+    None,
+}
+
+pub fn fired(v: u32) -> Fired {
+    if v & status::TPU_TRIGGER != 0 {
+        Fired::Trigger
+    } else if v & status::ACCEPTED != 0 {
+        Fired::Forced
+    } else {
+        Fired::None
+    }
+}
+
+/// The stock status clear (libscope `DevSystemSCU_clrStatus(1, 1)`): the last read value with bits 31:30 set, then
+/// with them clear. Bit 31 clears the sticky bits 6 and 7 (the netlist: SLICE_X34Y76_AFF in their next-state LUTs).
+pub fn clear_status(last: u32) -> Vec<Write> {
+    let v = last & 0x3fff_ffff;
+    vec![(0x4034, v | 0xc000_0000), (0x4034, v)]
 }
 
 /// 0x4080 bit30: the armed acquisition is complete.
@@ -287,6 +321,17 @@ pub fn auto_trigger(sh: &mut Shadows, auto: bool, tdiv_fs: i128, holdoff_fs: i12
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: an auto-forced batch shown as triggered (or the reverse), or a clear that leaves bits 31:30 set
+    #[test]
+    fn status_tells_tpu_trigger_from_forced() {
+        // read on the unit with both sticky bits set (never cleared), and the cases after a clear
+        assert_eq!(fired(0x11d2), Fired::Trigger);
+        assert_eq!(fired(0x1192), Fired::Forced);
+        assert_eq!(fired(0x1012), Fired::None);
+        assert_eq!(clear_status(0x11d2), vec![(0x4034, 0xc000_11d2), (0x4034, 0x11d2)]);
+        assert_eq!(clear_status(0xc000_0001)[1], (0x4034, 1));
+    }
 
     #[test]
     fn auto_trigger_200us() {

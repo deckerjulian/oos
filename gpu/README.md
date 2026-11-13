@@ -1,6 +1,6 @@
-# The GPU picture (Display > Graphics = GPU)
+# The GPU picture (System > Graphics = GPU)
 
-The RK3399 has a Mali-T860 MP4. With Display > Graphics = GPU, oos-ui lets it draw the screen: the CPU only records
+The RK3399 has a Mali-T860 MP4. With System > Graphics = GPU, oos-ui lets it draw the screen: the CPU only records
 what is to be drawn, in two layers (under and over the traces), and leaves the traces as phosphor maps; the GPU draws
 the layers from those commands, adds the traces and scales the picture for a monitor. GPU is the default, CPU the
 other choice; it is a setting of the scope (`graphics` in `/oos/system.conf`, docs/network.md). Where the GPU does not
@@ -25,6 +25,16 @@ Panel, Run, four channels, 30 frames a second in every column (2026-11-12, `:SYS
 The GPU itself is no faster than the CPU at the traces (the CPU skips every empty pixel of the phosphor maps, the GPU
 shades all of them); what it saves is the CPU's drawing of everything else, and the monitor's picture.
 
+With a 1920x1080 monitor, four channels, Run, a menu open (2026-11-13, frames a second / the frame loop's core):
+
+| | Mirror | Waveform | Layout |
+|---|---|---|---|
+| CPU | 30 / 51 % | 30 / 54 % | 26 / 70 % |
+| GPU | 30 / 22 % | 30 / 29 % | 30 / 28 % |
+
+The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 15 ms. Before the traces' two steps
+(below), the monitor's traces alone took 36 to 41 ms and the GPU fell behind the CPU (25 frames a second).
+
 ## How it works
 
 - **oos-ui** (`ui/src/ui.rs`, `Ui::render_layers`): the same drawing code as always, only into two canvases that
@@ -38,6 +48,13 @@ shades all of them); what it saves is the CPU's drawing of everything else, and 
   (the corners' 16 samples, the line's 16.16 steps, the glyphs' alphas). A test plays the commands back on the CPU
   the same way and compares them with drawing directly, on every kind of screen
   (`recorded_layers_replay_to_the_same_pixels`).
+- **The traces in two steps**: first, at the size of the maps, each cell as the index into its channel's LUT plus 1
+  (0: empty), the four channels in one half-float texture; then in the target one read of it per pixel, the LUT
+  after it. Stretched for a monitor, the GPU's filter mixes the indices (the LUT after the mixing keeps thin traces
+  bright); unstretched, the panel's pixels are exactly the CPU's. Colour grade the same way with the summed maps.
+- **Two sets of textures**: the panel's frames and the monitor's keep their own layers, maps and indices in the
+  helper (`set` in the frame), so each uploads only the rows that changed since its own last frame. Mirror takes the
+  panel's set (`reuse`).
 - **oos-gpu** (`gpu/oos-gpu.c`): a separate process, because oos-ui is one static musl binary and Mesa needs glibc.
   It draws each layer from its commands into a texture: one indexed draw, two triangles per command (Panfrost on
   this Mali took 14 us per instance of an instanced draw, 30 ms for one layer). A layer whose commands and images
@@ -72,14 +89,31 @@ in floating point; two single pixels of a corner over colour-graded traces are 4
 `OOS_GPU_HDMI=1920x1080 OOS_GPU_HDMI_MODE=Mirror|Waveform|Layout` the script runner also writes the monitor's picture
 of every shot; commands and pixel layers (`OOS_GPU_PIXELS=1`) give the same monitor pictures to within 2.
 
+## Guarding the speed
+
+The pictures being right says nothing about their cost: up to 0.1.11 a monitor made the GPU slower than the CPU and
+every test passed. Two checks since:
+
+- **On the scope** (`tools/device-test.py --tier a0`, `frame_rate_by_graphics_and_monitor`): four channels in Run, a
+  menu open, Graphics = CPU and = GPU, with a monitor plugged in in each HDMI mode. It fails below 27 frames a second
+  (22 for the CPU in Layout), when the GPU is more than 1.5 frames a second behind the CPU or its frame loop busier,
+  and when the GPU's own time (`gpu panel .. monitor ..` in `:SYSTem:STATe?`, the helper's upload and draw) leaves
+  less than a third of the budget: 45 ms for a panel and a monitor frame together (a monitor frame comes with every
+  second panel frame), 22 ms for a panel frame without a monitor. The frame rate alone missed it: with 0.1.11's
+  helper the panel still made 30 frames a second while the pair took 48 to 62 ms of GPU time.
+- **On the host** (`gpu/test-host.sh`, after the picture comparison): `gpu/bench.txt` with a 1920x1080 monitor in
+  each mode; a monitor frame may cost per pixel at most what a panel frame costs. Mesa's software renderer reads
+  integer textures cheaply, so this catches only gross regressions (0.1.11's helper: 0.86 to 1.14; since: 0.5 to
+  0.76).
+
 ## Known limits
 
 - The GPU and the VPU are switched on by the device tree of 0.1.8; 0.1.7 has the code and draws on the CPU. 0.1.7
   starts the update to 0.1.8 by kexec with the new tree (docs/update.md, "Another device tree"); 0.1.6 cannot, so it
   goes to 0.1.7 first. The tree was installed on the unit on 2026-11-12 and started cold: the GPU, the VPU and the
   trial confirmation came up.
-- Not tried with a monitor connected yet: the HDMI paths are checked on the host (pictures of all three modes) and
-  their buffers are taken the same way as the panel's.
+- Tried with a 1920x1080 monitor on a DHO924S; larger monitors (2560x1440, 4K) cost the GPU more per frame in
+  proportion to their pixels and are not measured.
 - With the logic analyser on and HDMI Layout, the LA columns are worked out again for every monitor frame.
 - The grid's dots are single pixels, about 2000 commands; the GPU draws them only when the layer under the traces
   changes.

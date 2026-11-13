@@ -135,6 +135,11 @@ pub fn stat_text(ui: &Ui) -> String {
     let (acq, used, dropped) = crate::drawpipe::counters().read();
     let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
     let gpu = format!("{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {}", gpu, crate::drawpipe::mode(), crate::sparse::interp(), acq, used, dropped, measured);
+    // the graphics chosen (the GPU part above only while the GPU really draws) and the monitor
+    let hdmi = ui.hdmi_out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));
+    // the GPU's time per frame of each screen: a monitor frame comes every second frame, the pair has 2/30 s
+    let screens = ui.t_gpu_screens.map_or(String::new(), |(p, m)| format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m))));
+    let gpu = format!("{}{} graphics {}{}", gpu, screens, if ui.sys.gpu { "gpu" } else { "cpu" }, hdmi);
     format!(
         "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}{}\n",
         ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1, gpu

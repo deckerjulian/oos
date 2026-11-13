@@ -163,6 +163,97 @@ Fixes:
 
 Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = frames` needs an oos-ui restart.
 
+## Trigger status from the hardware (FPGA use)
+
+0x4034 bits 6 and 7, traced in the netlist of the 00.01.05.00.01 bitstream (private RE notes
+`docs/re/netlist`: `regmap/read_sim.tsv` gives the source FF of each read bit; the cones were dumped with
+`regmap/nl.py` over the pickled netlist, register FFs named from `regmap/regmap_adc.tsv` and
+`blocks/scu_regs.tsv`):
+
+| Bit | Source FF | Next state | Event |
+|---|---|---|---|
+| 6 | SLICE_X31Y89_A5FF | `event OR (self AND NOT clr)` | SLICE_X38Y85_A5FF = X62Y75_BFF AND NOT X38Y65_A5FF: rising edge of X62Y75_BFF |
+| 7 | SLICE_X34Y90_AFF (FDSE) | set by the event, held until clr | SLICE_X54Y91_AFF = X53Y73_AFF AND NOT X52Y73_C5FF: rising edge of X53Y73_AFF |
+
+- clr = SLICE_X34Y76_AFF, the write FF of 0x4034 bit 31 (regmap: 0x4034 31:30 W, libscope
+  `DevSystemSCU_clrStatus`; partial decode, also listed as 0x4030 bit 31).
+- SLICE_X62Y75_BFF is the TPU trigger into the SCU FSM: in simulation the edge trigger fires it and then
+  X53Y73_AFF (`blocks/datapath.md`, "Trigger path into the SCU FSM"). Its cone reaches no auto-trigger register.
+- SLICE_X53Y73_AFF = self OR (X57Y78_AFF AND (X52Y73_A5FF OR 0x400c[18] OR X62Y75_BFF OR X39Y66_CFF)). X57Y78_AFF
+  is 0x4034 bit 4 (waiting for a trigger). X39Y66_CFF has 0x4060 (t1) at depth 3, 0x4064 (t2) at depth 2 and
+  0x4020 (auto enable) at depth 3 in its cone: the auto-trigger timeout. So X53Y73_AFF is "the FSM accepted a
+  trigger", from the TPU, the auto timeout or another source.
+- So bit 6 = the TPU fired, bit 7 = a trigger was accepted, both sticky until a status clear. Forced by the
+  auto timeout = bit 7 without bit 6. The stock priority (bit 6 first, acquisition-start.md section 2) agrees.
+  The assumed names there (bit 6 = AUTO, bit 7 = TD) are the wrong way round.
+- On the unit (running build, never cleared): 0x11d2 with the level above the signal, 0x11c2 and others while
+  triggering. Bits 6 and 7 set in both: sticky, as traced.
+
+Implementation: `trig.hw_status = on` in system.conf (or OOS_TRIG_HW_STATUS=1). After every batch the
+acquisition thread reads 0x4034, writes the stock clear (`scu::clear_status`: the read value with bits 31:30
+set, then clear) before the next arm, and reports TPU fired / forced only / nothing. The UI shows Trig'd or
+Auto from it whenever frames came. Off by default: the status then comes from the software refinement (fix 4).
+
+Verification on the unit, before turning it on by default:
+1. Add `trig.hw_status = on` to /oos/system.conf, restart oos-ui. CH1 on the probe-comp output, edge rising,
+   AUTO sweep, 500 us/div.
+2. Level 0.15 V (inside the signal): `:TRIGger:STATus?` must read TD, continuously.
+3. Level 0.6 V (above the signal): it must read AUTO, continuously; the frames come at the auto rate.
+4. NORMAL sweep with level 0.6 V: no frames, WAIT.
+5. `oos-fpgad rd 0x4034` a few times in case 2 and 3: bit 6 and 7 must now come and go (cleared after
+   every batch) instead of staying set.
+6. Remove the key afterwards unless all of 2-5 hold; if they hold, make it the default.
+
+## Autoset levels from the measure unit (FPGA use)
+
+Measured on the unit with fixes 1-3 and 7: autoset 1.18-1.57 s on the probe-comp output; the two levels stages
+(Wide, Fit) take 0.6-0.7 s of it, each waiting for a 240 ms record at 20 ms/div.
+
+The FPGA's ADC measure unit (private RE notes docs/fpga.md "Measure unit", self-cal.md 2.4) gives every core's
+12-bit minimum and maximum (0x1048) and its mean (0x1044, 16-bit scale) over 2^e samples, with no acquisition.
+`hal::dho::levels`:
+- A run: 0x1040 = (0x1040 & 0x77fff0e0) | 18, then with bit 31; done (bit 30) after 2^18 samples = 1.68 ms;
+  per slot 0..7 select 0x1040[10:8], read 0x1044 and 0x1048. The same register handling as the self-cal's
+  `adc::measure`, with the shorter exponent and the peaks.
+- Slots per channel from the DDR core order (fpga.md): 1 channel all eight, 2 channels 6/4/7/5 (lower) and
+  2/0/3/1 (higher), 4 channels CH1 6/7, CH2 4/5, CH3 2/3, CH4 0/1. Assumed to be the measure unit's numbering
+  too: not verified on the unit.
+- Codes to volts: the unit reads after the ADC x2 of 0x105c and before the Q10 read-path gain (self-cal.md 13:
+  about 6970 codes per volt at 1 V/div, x1.077 = the 7500 per division of the records). So a 16-bit code c is the
+  read-out word 32768 + (c - 32768) x dg (dg = the cal record's digital gain without the x2), and its volts follow
+  from `seq::volts`. Host test: the levels equal the record path's volts for the same codes at several gains,
+  scales and offsets.
+- Plausibility: a channel's slots must agree (means within a tenth of the swing plus 64 codes; a wrong slot mapping
+  shows up there unless the channels carry the same signal), and the mean must lie between the extremes. Codes 0 or
+  4095 mark clipping.
+
+The auto set-up (hardware source) asks the acquisition thread for 24 runs (about 40 ms of signal, the full swing
+from about 25 Hz) at the wide scale once that scale is applied, rescales on clipping or less than 0.4 div and asks
+once more, then fits and goes to the search. Fallback to the record stages: no answer within 0.5 s, a channel
+without a usable reading, or still out of range after the second request. `autoset.levels = records` in
+system.conf (or OOS_AUTOSET_LEVELS=records) turns the unit off. The thread runs the unit while nothing is armed.
+
+Verification on the unit:
+1. CH1 alone on the probe-comp output, `:AUToscale`: the UI log (`oos-ui auto: measure-unit levels`) shows about
+   0..0.3 V, and the final 100 mV/div matches the record-based result (`autoset.levels = records`).
+2. Time it as before (8 runs): expected about 0.4-0.6 s less than 1.2-1.6 s.
+3. CH1 and CH2 on, a signal on CH1 only: CH2 must read flat and CH1 the swing (slot mapping of 2 channels); then all
+   four on (4-channel mapping). A refused channel logs `measure unit [..], records`.
+4. A 5 V signal: the first answer clips at 1 V/div, the second at 5 V/div fits.
+
+## Autoset search in fewer records
+
+The search went through five time bases (20 ns to 20 ms/div), a record each, from fast to slow so that a coarse rate
+cannot fold a fast signal into a period that is not there. On the probe-comp output it took four records, about
+0.5-0.6 s. The hardware source now takes three at most (`HW_PLAN` in autoset.rs), on the samples of the acquisition
+(the frame behind the record), not the 3600-point screen record:
+1. 2 us/div at the full rate: periods up to 8 us (125 kHz and up). It also rules out folding for the next one.
+2. One deep record, 1 M points at 2 ms/div (41.7 MSa/s): periods from 0.2 us to 8 ms, so 125 Hz to 125 kHz
+   with at least 300 samples per period.
+3. 20 ms/div only for a channel the deep record shows fewer than three rises of (or less than 70 % of its height).
+The probe-comp output needs two records. Other sources (demo, replay) keep the five time bases. The hardware peak
+detect was not used: its window semantics above divider 8 are open (fpga.md).
+
 ## Status (feat/trigger)
 
 | Fix | State |
@@ -173,9 +264,11 @@ Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = 
 | 7 level from top/base | done, 8f6f7f9 |
 | 4 software comparator = hardware, hysteresis table | done, ed4d03c |
 | 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
-| 5 status from 0x4034 | blocked: bits 6 and 7 are set while triggered and while auto-firing (read with `oos-fpgad rd 0x4034` on the unit), so they are sticky without the stock status clear. Needs a test of the clear on the unit. A software proxy (edge at the hardware point) is wrong for the noisy full-bandwidth frames of section 7 of trigger.md, so it is not used |
-| 6 counter for the time base | not done: after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
-| F1, F2 flicker | not started |
+| 5 status from 0x4034 | done behind `trig.hw_status` (default off), bits traced in the netlist (section above); on-unit verification pending |
+| 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
+| (a) autoset levels from the measure unit | done, on by default with the record stages as fallback; on-unit verification pending |
+| autoset search in at most three records | done; on-unit timing pending |
+| F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 
 Not yet measured on the unit: autoset time with these changes, and the noisy 5 V signal before and after.
 

@@ -608,6 +608,107 @@ def menus_open_and_close(s, o):
     s.q("*IDN?")
 
 
+# Frame rate: of the 30 a second the frame loop aims at, at least this many with four channels in Run, in every
+# combination of graphics and monitor mode; the CPU drawing the monitor's own screen (Layout) is known to be heavier.
+FPS_FLOOR = 27.0
+FPS_FLOOR_CPU_LAYOUT = 22.0
+# the GPU may be this far below the CPU in the same mode (noise), and its frame loop this much busier (points)
+GPU_BEHIND_FPS = 1.5
+GPU_BUSIER = 5.0
+# The GPU's own time (the helper's upload and draw, `gpu panel .. monitor ..` of the state line): a monitor frame comes
+# with every second panel frame, so the pair has 2/30 s; two thirds of that, and of one frame without a monitor. The
+# frame rate alone hides a GPU near its limit: up to 0.1.11 the pair took about 56 ms with a monitor and the panel
+# still made 30 frames a second, until a menu or colour grade tipped it over.
+GPU_PAIR_MS = 45.0
+GPU_PANEL_MS = 22.0
+
+
+def frame_rate(s, secs=4.0):
+    """Frames a second over `secs` (the frame counter, not the smoothed value) and the last state line."""
+    t0, a = time.time(), s.q(":SYST:STAT?")
+    time.sleep(secs)
+    b = s.q(":SYST:STAT?")
+    n = lambda t: int(re.search(r"frames (\d+)", t)[1])
+    return (n(b) - n(a)) / (time.time() - t0), b
+
+
+def loop_load(s, secs=3):
+    """Percent of a core: the busiest thread of oos-ui (the frame loop) and the GPU helper in all."""
+    snap = "for p in $(pidof oos-ui) $(pidof oos-gpu); do for t in /proc/$p/task/*; do echo $p $(cut -d' ' -f1,2,14,15 $t/stat); done; done"
+    t = s.shell(f"{snap}; echo @@M; sleep {secs}; {snap}", wait=secs + 2)
+    a, _, b = t.partition("@@M")
+    ticks = lambda x: {l.split()[1]: (l.split()[0], l.split()[2], int(l.split()[3]) + int(l.split()[4])) for l in x.strip().splitlines() if len(l.split()) == 5}
+    a, b = ticks(a), ticks(b)
+    ui_pid = s.shell("pidof oos-ui").strip()
+    loop, helper = 0.0, 0.0
+    for tid, (pid, name, v) in b.items():
+        d = (v - a.get(tid, (pid, name, v))[2]) / secs  # ticks of 10 ms: percent
+        if pid == ui_pid:
+            loop = max(loop, d)
+        else:
+            helper += d
+    return loop, helper
+
+
+@test("a0")
+def frame_rate_by_graphics_and_monitor(s, o):
+    """Four channels in Run, the frame rate and the frame loop's load with System > Graphics = CPU and = GPU, and with a
+    monitor plugged in, in each HDMI mode. The GPU must not fall behind the CPU: with a monitor it did up to 0.1.11
+    (25 frames a second against 30) and no test saw it."""
+    if s.sim:
+        raise Skip("no frame loop of the scope in the simulation")
+    keep_g, keep_h = s.q(":SYST:GRAP?"), s.q(":SYST:GET? hdmi")
+    s.base()
+    for c in CH:
+        s.w(f":CHAN{c}:DISP 1")
+        s.w(f":CHAN{c}:SCAL 1")
+    s.w(":TIM:SCAL 0.0005")
+    mon = re.search(r"hdmi (\d+x\d+)", s.q(":SYST:STAT?"))
+    modes = ["Mirror", "Waveform", "Layout"] if mon else [None]
+    rows, bad = {}, []
+    # with a menu open, as the screen mostly is while someone works at it
+    s.cmd("key measure")
+    try:
+        for g in ("CPU", "GPU"):
+            s.w(f":SYST:GRAP {g}")
+            time.sleep(3)  # the GPU helper starts
+            for h in modes:
+                if h:
+                    s.w(f":SYST:SET hdmi = {h}")
+                time.sleep(2)
+                fps, st = frame_rate(s)
+                loop, helper = loop_load(s)
+                if g == "GPU" and " gpu layers" not in st:
+                    bad.append(f"GPU {h or 'panel'}: Graphics = GPU, but the CPU draws (the helper did not start or failed)")
+                gp = re.search(r"gpu panel ([\d.]+)(?: monitor ([\d.]+))? ms", st)
+                pan = float(gp[1]) if gp else math.nan
+                mo = float(gp[2]) if gp and gp[2] else (math.nan if h else 0.0)
+                rows[(g, h)] = (fps, loop, helper, pan, mo)
+                if g == "GPU":
+                    if h and not pan + mo <= GPU_PAIR_MS:
+                        bad.append(f"GPU {h}: panel {pan:.1f} + monitor {mo:.1f} ms of GPU time, at most {GPU_PAIR_MS:.0f} for the pair")
+                    if not h and not pan <= GPU_PANEL_MS:
+                        bad.append(f"GPU panel: {pan:.1f} ms of GPU time a frame, at most {GPU_PANEL_MS:.0f}")
+    finally:
+        s.cmd("key measure")
+        s.w(f":SYST:GRAP {keep_g}")
+        s.w(f":SYST:SET hdmi = {keep_h}")
+        s.base()
+    for (g, h), (fps, loop, *_) in rows.items():
+        floor = FPS_FLOOR_CPU_LAYOUT if (g, h) == ("CPU", "Layout") else FPS_FLOOR
+        if fps < floor:
+            bad.append(f"{g} {h or 'panel'}: {fps:.1f} frames a second, at least {floor:.0f} expected")
+    for h in modes:
+        c, gp = rows[("CPU", h)], rows[("GPU", h)]
+        if gp[0] < c[0] - GPU_BEHIND_FPS:
+            bad.append(f"{h or 'panel'}: the GPU {gp[0]:.1f} frames a second, the CPU {c[0]:.1f}")
+        if gp[1] > c[1] + GPU_BUSIER:
+            bad.append(f"{h or 'panel'}: the frame loop busier with the GPU ({gp[1]:.0f} %) than with the CPU ({c[1]:.0f} %)")
+    table = "; ".join(f"{g} {h or 'panel'} {v[0]:.1f} fps loop {v[1]:.0f} %" + (f" helper {v[2]:.0f} % gpu {v[3]:.1f}" + (f"+{v[4]:.1f}" if h else "") + " ms" if g == "GPU" else "") for (g, h), v in rows.items())
+    assert not bad, " / ".join(bad) + " -- " + table
+    return (f"monitor {mon[1]}: " if mon else "no monitor: ") + table
+
+
 # ---------------------------------------------------------------------------------------------- a1: generator on CH1
 
 
