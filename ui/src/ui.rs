@@ -1947,7 +1947,7 @@ impl Ui {
         let edge = if on_la {
             None
         } else {
-            let (e, any) = crate::fastdraw::edge_smooth(src, f.pre, crate::board::sw_trig_level(m, f), hyst, rising, either, half, col, |_| true);
+            let (e, any) = crate::trignear::edge_smooth_near(src, f.pre, crate::board::sw_trig_level(m, f), hyst, rising, either, half, col, |_| true);
             let k = match (e, any) {
                 (None, _) => 3,
                 (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => 0,

@@ -32,6 +32,7 @@ mod sntp;
 mod store;
 mod sysconf;
 mod trig;
+mod trignear;
 mod ui;
 mod usbtmc;
 mod vxi11;

@@ -56,7 +56,7 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
             // the screen window stays inside the frame where it can
             let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
             let fits = |t: f64| first > last || (first..=last).contains(&t);
-            let found = crate::fastdraw::edge_smooth(&f.ch[m.trig_src], f.pre, sw_trig_level(m, f), hyst[m.trig_src], rising, either, screen / 2, col, fits).0;
+            let found = crate::trignear::edge_smooth_near(&f.ch[m.trig_src], f.pre, sw_trig_level(m, f), hyst[m.trig_src], rising, either, screen / 2, col, fits).0;
             // a filtered trigger path (coupling) can fire where the samples show no crossing of that level: the
             // hardware point stands
             found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
