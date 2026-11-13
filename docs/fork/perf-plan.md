@@ -200,6 +200,9 @@ the 5x of the arithmetic alone.
   at 1 us/div, 163 us at 10 us/div; 4 workers 75 k / 116 k / 16 k frames/s. Estimate (not measured; A72 about 4x the host, A53
   about 8x): 4 A53 reach about 10 k frames/s at 100 ns/div, 20 k at 1 us/div, 3 k at 10 us/div; the A72 helper adds up
   to 5 k / 10 k / 1.5 k when its wait is long.
+  Arm ahead, opt-in `acq.prearm = on` in system.conf or OOS_PREARM (any value; set wins over the key): `seq::prearm`
+  arms the next batch before the decode of the current one (spec 10 item 3.5). Default off until the unit check
+  (unit-dho804.md, arm ahead).
   Fast interpolation, opt-in `acq.interp = fast` / OOS_INTERP=fast (`sparse::fast_many`): the exact 16-tap sinc
   on a grid of 24 points per sample (one fixed filter per phase over consecutive samples, vectorised), linear in
   between, used where the grid has at most 4x the screen's 3600 points (else exact). A 4-lobe kernel at the same

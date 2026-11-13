@@ -100,7 +100,8 @@ with the baseline of spec 10 section 5 step 1 first.
 1. Buffer reuse and fused decode (default build): 10 MHz sine at 100 ns/div, 1 and 4 channels, 10 minutes. No two
    traces, no broken edges, no `c2h` errors in `/tmp/oos-ui.log`, oos-ui does not restart (`/tmp/oos-ui.log` has one
    start). Repeat at 200 us/div with 1 M depth. Compare CPU of `oos-ui` in `top -d 1` with the baseline.
-2. Arm ahead: `touch /tmp/oos-ui.off`, stop oos-ui, run `OOS_PREARM=1 /bin/oos-ui $(cat /tmp/oos-ui.args)`.
+2. Arm ahead: `acq.prearm = on` in /oos/system.conf and restart oos-ui, or `touch /tmp/oos-ui.off`, stop oos-ui,
+   run `OOS_PREARM=1 /bin/oos-ui $(cat /tmp/oos-ui.args)`.
    - Waveform rate at 100 ns/div and 1 us/div, 1 and 4 channels, against step 1.
    - Change time base, channel set, trigger level and V/div while running: the picture follows within one batch, no
      `disarm` or `acquire` errors, no 30 ms stall per change (`configure` takes as long as without `OOS_PREARM`).

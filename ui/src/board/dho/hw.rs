@@ -299,9 +299,6 @@ fn header_probe() -> bool {
     *ON.get_or_init(|| std::env::var_os("OOS_FRAME_HEADER").is_some())
 }
 
-/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
-/// Off unless OOS_PREARM is set: the stop of an acquisition armed ahead that is then not read (a settings change, the
-/// generator, self-cal, roll) is not verified on the unit yet (docs/fork/specs/10-transfer-efficiency.md).
 /// `runs` runs of the measure unit, folded into the levels of the channels of `s` (`oos_hal::dho::levels`), in the
 /// volts of the records.
 #[cfg(target_os = "linux")]
@@ -330,9 +327,21 @@ pub fn hw_status_on() -> bool {
     })
 }
 
+/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
+/// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
+/// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
+/// (docs/fork/specs/10-transfer-efficiency.md).
 fn prearm_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("OOS_PREARM").is_some())
+    *ON.get_or_init(|| {
+        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        prearm_from(std::env::var_os("OOS_PREARM").is_some(), &conf)
+    })
+}
+
+/// OOS_PREARM set, else the `acq.prearm` line of system.conf; off unless `on`.
+fn prearm_from(env_set: bool, conf: &str) -> bool {
+    env_set || crate::drawpipe::conf_value(None, conf, "acq.prearm").as_deref() == Some("on")
 }
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
@@ -1231,6 +1240,15 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 mod tests {
     use super::*;
     use crate::board::to_record;
+
+    #[test]
+    fn prearm_from_env_or_conf() {
+        assert!(!prearm_from(false, ""));
+        assert!(prearm_from(true, ""));
+        assert!(prearm_from(true, "acq.prearm = off\n"));
+        assert!(prearm_from(false, "ntp = off\nacq.prearm = on   # arm ahead\n"));
+        assert!(!prearm_from(false, "acq.prearm = yes\n"));
+    }
 
     #[test]
     fn slow_modes_follow_auto_roll() {
