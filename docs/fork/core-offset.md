@@ -148,17 +148,23 @@ Within one boot they hold across oos-ui restarts (round 13: 0.46, round 15: 0.29
 
 The core offsets have two components:
 
-- A lasting one: a core that the stored cal_adc offsets no longer cover. Core 5 sits about +9 steps above the
-  others at every boot (untrimmed slot 6: +8.5 in round 11, +9.3 in round 12).
-- A per-boot one: the cold boot runs the ADC's internal trim at every power-up (oos-fpgad step 14). With the same
-  stored offsets, untrimmed slots 0 and 1 (cores 0 and 2) differ by about 3 steps between boots (round 11: +2.1 and
-  -4.2, round 12: -0.8 and -1.2). The trims follow it: core 0 25 -> 30 -> 26, core 2 38 -> 33 -> 34 over three boots.
-  No stored value covers this part. It is also why the stock calibration's offsets do not match this unit.
+- A lasting bias: core 5 sits well above the others at every boot, on average about +9 steps (untrimmed slot 6:
+  +8.5 in round 11, +9.3 in round 12, +5.6 / +11.3 / +9.0 in the three boots of round 17). The stored cal_adc
+  offsets no longer cover it.
+- A per-boot scatter: the cold boot runs the ADC's internal trim at every power-up (oos-fpgad step 14). Round 17,
+  trim off, same stored offsets, three boots: within a boot three reads agree to about 0.2 step; between boots
+  slots 0, 1, 4 and 6 move by 2 to 6 steps (slot 0: +2.7 / -1.1 / +2.9, slot 1: -1.0 / -3.2 / -3.9, slot 4: -3.5 /
+  -1.9 / -4.7). Core 5 scatters too, about +-3 around its bias. The trims follow it: core 0 25 -> 30 -> 26, core 2
+  38 -> 33 -> 34 over three boots. No stored value covers this part. It is also why the stock calibration's offsets
+  do not match this unit.
+
+Round 17 table: private RE notes docs/logs/oos_unitlab_20261113.md, "Round 17".
 
 So the trim runs every session, and the file only takes a result where some core moved by more than 4 register
-steps (`SAVE_MIN_STEPS`, about the per-boot scatter): the lasting part, without rewriting the card at every boot.
-The session uses every confirmed result. Hardware averaging and the DVM lanes depend on the trim for this reason;
-`cal.core_offset = tight` stays opt-in for now.
+steps (`SAVE_MIN_STEPS`). At about 0.6 ADC step per register step, the 2 to 6 step scatter is 3 to 10 register
+steps, so a boot with a large scatter still rewrites the file; most re-matches stay within 4 (round 16: largest
+move 4). The session uses every confirmed result. Hardware averaging and the DVM lanes depend on the trim for this
+reason; `cal.core_offset = tight` stays opt-in for now.
 
 ## What the change does
 

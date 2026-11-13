@@ -304,10 +304,10 @@ pub fn trim_gated(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i3
 
 /// A trim result goes into `OVERLAY_FILE` only when some core moved by more than this many register steps from the
 /// values the trim started from. The cold boot runs the ADC's internal trim at every power-up, which scatters some
-/// core offsets by about 2 to 3 ADC steps (4 to 5 register steps) from boot to boot (unit rounds 11 to 16: cores 0 and
-/// 2 moved 25 -> 30 -> 26 and 38 -> 33 -> 34 over three boots; within one boot the values held). No stored value covers
-/// that part; each session matches it again. What the file keeps is the part that stays: a core the stored cal_adc
-/// offsets no longer cover (core 5 at about +9 steps against the others; the first trim moved it 85 -> 79).
+/// core offsets by 2 to 6 ADC steps from boot to boot (unit round 17, trim off; cores 0 and 2 trimmed 25 -> 30 -> 26
+/// and 38 -> 33 -> 34 over three boots; within one boot the values held). No stored value covers that part; each
+/// session matches it again. What the file keeps is the part that stays: core 5's bias of about +9 steps against the
+/// others, which the stored cal_adc offsets no longer cover (it scatters by about +-3 around that per boot).
 pub const SAVE_MIN_STEPS: i32 = 4;
 
 /// Whether a trim from `start` to `new` is worth writing to `OVERLAY_FILE` (`SAVE_MIN_STEPS`).
