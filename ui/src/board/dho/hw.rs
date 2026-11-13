@@ -10,7 +10,7 @@ use crate::board::{Frame, Slow};
 use crate::board::{HwShared, Shared, QUEUE_MAX};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
-use oos_hal::dho::{afe, hz, tpu};
+use oos_hal::dho::{afe, auxout, hz, tpu};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -156,11 +156,21 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         window: None,
         la,
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m)).then(|| Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
+        aux: aux_out(m.aux_out),
     };
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
     s
+}
+
+/// The AUX OUT set-up of the menu choice. Pass/fail takes the default pulse of `auxout::PassFail` (docs/fork/auxout.md).
+fn aux_out(a: AuxOut) -> auxout::AuxOut {
+    match a {
+        AuxOut::TrigOut => auxout::AuxOut::TriggerOut,
+        AuxOut::Off => auxout::AuxOut::Off,
+        AuxOut::PassFail => auxout::AuxOut::PassFail(auxout::PassFail::DEFAULT),
+    }
 }
 
 /// The count of a hardware average for the model and its settings `s`, None for the software average
@@ -1240,6 +1250,19 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 mod tests {
     use super::*;
     use crate::board::to_record;
+
+    #[test]
+    fn aux_out_reaches_the_settings() {
+        let mut m = Model::default();
+        assert_eq!(settings(&m, false).aux, auxout::AuxOut::TriggerOut);
+        m.aux_out = AuxOut::Off;
+        let s = settings(&m, false);
+        assert_eq!(s.aux, auxout::AuxOut::Off);
+        let w = oos_hal::dho::seq::State::handover(s.mask, None).configure(&s, None, None).unwrap().0;
+        assert!(w.iter().any(|x| matches!(x, oos_hal::dho::seq::Step::Wr((0x1430, 2)))));
+        m.aux_out = AuxOut::PassFail;
+        assert_eq!(settings(&m, false).aux, auxout::AuxOut::PassFail(auxout::PassFail::DEFAULT));
+    }
 
     #[test]
     fn prearm_from_env_or_conf() {

@@ -67,7 +67,7 @@ Status: specification from static analysis. Short form.
 2. Does the tested count follow triggers (acquisition side) or plays (transfer side)?
 3. Stop on fail via 0x4020 bit 12 without software involvement.
 4. Lane select in 1, 2 and 4 channel modes.
-5. AUX OUT pulse on fail (0x119c) with a second scope.
+5. AUX OUT pulse on fail (0x119c) with a second scope (`docs/fork/auxout.md`).
 
 ## 6. Confidence and open questions
 

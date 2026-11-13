@@ -9,7 +9,7 @@
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
-//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
+//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, :SYSTem:AOUTput TOUT|OFF (rear AUX OUT; OFF is OOS), OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
 //! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
@@ -973,6 +973,30 @@ impl Scpi {
                 }
                 return None;
             }
+            // rear AUX OUT, stock names TOUT and PFAil; OFF is OOS's (constant low)
+            if kw(nodes[1], "AOUTput") {
+                if query {
+                    return t(match ui.m.aux_out {
+                        AuxOut::TrigOut => "TOUT",
+                        AuxOut::Off => "OFF",
+                        AuxOut::PassFail => "PFA",
+                    });
+                }
+                let want = match arg.trim().to_ascii_uppercase().as_str() {
+                    "TOUT" => Some(AuxOut::TrigOut),
+                    "OFF" => Some(AuxOut::Off),
+                    "PFA" | "PFAIL" => Some(AuxOut::PassFail),
+                    _ => None,
+                };
+                match want.filter(|a| a.offered()) {
+                    Some(a) => {
+                        ui.m.aux_out = a;
+                        ui.mark_changed();
+                    }
+                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
+            }
             if kw(nodes[1], "LOG") && !query {
                 match parse_bool(arg) {
                     Some(on) => ui.log_set(on),
@@ -1178,5 +1202,28 @@ mod vernier_tests {
         // a saved setup keeps both
         let b = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
         assert_eq!(b.ch[0].volts_per_div(), ui.m.ch[0].volts_per_div());
+    }
+}
+#[cfg(test)]
+mod aux_out_tests {
+    use super::*;
+
+    #[test]
+    fn aux_out_over_scpi_and_in_the_setup() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":SYST:AOUT?"), "TOUT", "trigger out by default, as the FPGA powers up");
+        q(&mut ui, ":SYSTem:AOUTput off");
+        assert_eq!((q(&mut ui, ":SYSTem:AOUTput?"), ui.m.aux_out), ("OFF".to_string(), AuxOut::Off));
+        assert!(crate::store::setup_text(&ui.m).contains("aux_out = Off\n"));
+        q(&mut ui, ":SYST:AOUT TOUT");
+        assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
+        q(&mut ui, ":SYST:AOUT PFAil");
+        assert_eq!(ui.m.aux_out == AuxOut::PassFail, AUX_PASSFAIL);
+        q(&mut ui, ":SYST:AOUT TOUT");
+        q(&mut ui, ":SYST:AOUT blink");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
     }
 }

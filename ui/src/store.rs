@@ -225,6 +225,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("cur_c", m.cur_c.to_string());
     kv("cur_d", m.cur_d.to_string());
     kv("touch_lock", m.touch_lock.to_string());
+    kv("aux_out", name(m.aux_out));
     kv("fine_v", m.fine_v.to_string());
     kv("fine_t", m.fine_t.to_string());
     if m.tfine != 1.0 {
@@ -535,6 +536,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "cur_c" => m.cur_c = p_f32(v)?,
         "cur_d" => m.cur_d = p_f32(v)?,
         "touch_lock" => m.touch_lock = p_bool(v)?,
+        "aux_out" => m.aux_out = Some(p_enum(v, &AUX_OUTS)?).filter(|a| a.offered()).ok_or_else(|| format!("aux_out {} needs the hardware mask unit", v))?,
         "fine_v" => m.fine_v = p_bool(v)?,
         "fine_t" => m.fine_t = p_bool(v)?,
         "tfine" => m.tfine = p_f32(v)?.clamp(0.1, 1.0),
@@ -1221,6 +1223,7 @@ mod tests {
         m.cur_a = 0.125;
         m.cur_b = 0.875;
         m.touch_lock = true;
+        m.aux_out = AuxOut::Off;
         m.maths[3] = crate::math::MathCh { op: MathOp::Bpf, a: 4, b: 0, scale: 7, fc: 1234.0, bw: 56.0, offset: -1.5, win: Window::Blackman, lin: (1.0, 0.0) };
         m.math_bw = 777.0;
         m.zones[1] = crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };
@@ -1283,6 +1286,17 @@ mod tests {
         assert!(parse_setup("ch9.on = true").is_err());
         assert!(parse_setup("pat = H L").is_err());
         assert!(parse_setup("delay").is_err());
+    }
+
+    /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state), pass/fail only with the
+    /// hardware mask unit.
+    #[test]
+    fn setup_aux_out() {
+        assert_eq!(parse_setup("ch2.on = true").unwrap().aux_out, AuxOut::TrigOut);
+        assert!(setup_text(&Model::default()).contains("aux_out = TrigOut\n"));
+        assert_eq!(parse_setup("aux_out = Off").unwrap().aux_out, AuxOut::Off);
+        assert!(parse_setup("aux_out = Blink").is_err());
+        assert_eq!(parse_setup("aux_out = PassFail").is_ok(), AUX_PASSFAIL);
     }
 
     /// The Quick key action: written by name, read back, unknown names rejected, missing key = Screenshot.
