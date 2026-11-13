@@ -1925,6 +1925,9 @@ impl Ui {
         let tdiv = m.time_per_div() as f64;
         let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
         if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
+            if let Some(t) = crate::sparse::draw(&mut self.ph, &self.m, f, 24) {
+                return t;
+            }
             let fr = std::sync::Arc::new(f.clone());
             let window = tdiv * HDIV as f64;
             let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);

@@ -143,3 +143,10 @@ copy of each replaced function in the test module so the ratio has a fixed basel
   Not in ui/: the xdma interrupt to an A53 belongs in the rootfs (`oos-fpga-up`: `echo 1 > /proc/irq/<xdma>/
   smp_affinity`, IRQ number from `/proc/interrupts`, 241 on this unit). Unit check: `top -H -d 1` per core,
   `/proc/interrupts`, UI frame time with and without `OOS_PLACE`.
+- 4 done, default on, bit-identical: `sparse::draw` replaces `Frame::clone` + `to_record` + `draw_ex` for sparse
+  frames with an edge trigger found on a channel (else `to_record` as before). Most of the cost is `lanczos8`
+  (30 of 40 us per channel at 3600 points), not the clone (5 %). `sparse::lanczos8_many` sums eight points at a time,
+  each in `lanczos8`'s order, so the points are the same bits. Host ratio 0.60-0.62 (40 -> 24 us per channel). The
+  plan's 4x needs a polyphase kernel over the screen window only, which changes pixels: not done, it needs a
+  screenshot comparison on the unit. Guards: pixel equality over 612 set-ups (450 answered by the new path), bitwise
+  kernel equality incl. record ends and NaN samples, ignored timing ratio <= 0.8.

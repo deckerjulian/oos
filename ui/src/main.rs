@@ -34,6 +34,7 @@ mod sysconf;
 mod trig;
 mod trignear;
 mod placement;
+mod sparse;
 mod ui;
 mod usbtmc;
 mod vxi11;
