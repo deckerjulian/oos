@@ -368,7 +368,7 @@ mod tests {
     fn a_file_waits_for_a_slot_and_lands_on_the_one_chosen() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         let kept: Vec<f32> = (0..40).map(|i| if i < 20 { -0.2 } else { 0.2 }).collect();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "keep".into(), t0: 0.0, dt: 1e-9, v: kept.clone(), vpd: 0.2, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "keep".into(), t0: 0.0, dt: 1e-9, v: kept.clone().into(), vpd: 0.2, offset: 0.0, on: true });
         u.request_waveform();
         assert!(u.load_slot_ask && !u.open_wave_request);
         let title = Ui::load_slot_box();
@@ -376,7 +376,7 @@ mod tests {
         assert!(u.load_slot_ask && !u.open_wave_request, "a tap on the title loads nothing");
         u.tap(Ui::load_slot_cancel().x + 4, Ui::load_slot_cancel().y + 4);
         assert!(!u.load_slot_ask && !u.open_wave_request);
-        assert_eq!(u.refs[0].as_ref().unwrap().v, kept);
+        assert_eq!(u.refs[0].as_ref().unwrap().v.as_ref(), &kept);
         u.request_waveform();
         u.tap(Ui::load_slot_button(9).x + 4, Ui::load_slot_button(9).y + 4);
         assert_eq!(u.waveform_destination(), Some(9));
@@ -387,7 +387,7 @@ mod tests {
             csv.push_str(&format!("{},{}\n", k as f64 * 1e-9, if k < 40 { -0.4 } else { 0.4 }));
         }
         u.load_waveform_bytes_at(csv.as_bytes(), "lane.csv", u.waveform_destination().unwrap()).unwrap();
-        assert_eq!(u.refs[0].as_ref().unwrap().v, kept);
+        assert_eq!(u.refs[0].as_ref().unwrap().v.as_ref(), &kept);
         assert!(u.refs[9].is_some() && u.refs[1].is_none());
         assert_eq!(u.ref_slot(), 9);
         assert_eq!(u.m.deskew_ref[9], 0.0);
@@ -408,8 +408,8 @@ mod tests {
         samples[0] = square(0);
         samples[1] = square(40);
         u.last[0] = Some(Record { t0: 0.0, dt: 1e-9, ch: samples, triggered: true, partial: false, raw: None, la: None });
-        u.refs[3] = Some(RefWave { src: 0, color: 1, label: String::new(), t0: 0.0, dt: 1e-9, v: square(80), vpd: 0.2, offset: 0.0, on: true });
-        u.refs[4] = Some(RefWave { src: 0, color: 2, label: String::new(), t0: 0.0, dt: 1e-9, v: square(200), vpd: 0.2, offset: 0.0, on: false });
+        u.refs[3] = Some(RefWave { src: 0, color: 1, label: String::new(), t0: 0.0, dt: 1e-9, v: square(80).into(), vpd: 0.2, offset: 0.0, on: true });
+        u.refs[4] = Some(RefWave { src: 0, color: 2, label: String::new(), t0: 0.0, dt: 1e-9, v: square(200).into(), vpd: 0.2, offset: 0.0, on: false });
         u.measure_last();
         let before = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
         assert!((before - 40e-9).abs() < 2e-9, "{before}");

@@ -356,7 +356,7 @@ mod performance_and_timing_tests {
     use super::*;
 
     fn reference(values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
-        RefWave { src: 0, color: 0, label: "fixed analysis".into(), v: values, dt, t0,
+        RefWave { src: 0, color: 0, label: "fixed analysis".into(), v: values.into(), dt, t0,
             vpd: 0.5, offset: 0.0, on: true }
     }
 
