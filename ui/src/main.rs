@@ -23,6 +23,7 @@ mod gfx;
 mod http;
 mod board;
 mod math;
+mod mdns;
 mod model;
 mod net;
 mod protocols;
@@ -488,6 +489,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut vxi = vxi11::Server::open();
     // System > Network > Remote services, as applied: web, SCPI, VXI-11, telnet (None: not yet, at the start)
     let mut remote_now: Option<[bool; 4]> = None;
+    // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
+    let mut mdns = mdns::Mdns::new(None);
+    let mut mdns_now: Option<mdns::Config> = None;
+    let mut mdns_t: Option<Instant> = None;
     // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
     let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
     let mut hdmi: Option<drm::Display> = None;
@@ -550,6 +555,17 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 remote::telnet(want[3]);
             }
             remote_now = Some(want);
+        }
+        if mdns_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
+            mdns_t = Some(Instant::now());
+            let c = ui.mdns_config(web_port, scpi_port);
+            if mdns_now.as_ref() != Some(&c) {
+                if mdns_now.as_ref().map_or(true, |o| o.name != c.name) {
+                    remote::hostname(&c.name);
+                }
+                mdns.set(c.clone());
+                mdns_now = Some(c);
+            }
         }
         scpi.poll(&mut ui, &cv);
         vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
@@ -796,6 +812,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
             fps_t = Instant::now();
         }
     }
+    // goodbyes on the network (SIGTERM, quit)
+    mdns.stop();
     inp.set_leds(0);
     if let Some(h) = hdmi {
         h.close();

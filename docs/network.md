@@ -153,6 +153,70 @@ All are on by default. A service switched off closes its port at once, with the 
 web remote also takes away the update page: an update then comes from a USB stick. telnet is started by `rcS` at
 power-on, which reads `remote.telnet` from `/oos/system.conf`; oos-ui ends or starts it when the switch changes.
 
+### 4.1 The scope by name: mDNS and DNS-SD
+
+The last row of the page: **mDNS** (on by default) and **Name**, which shows where the scope is reached,
+`dho924s-204527.local`. A computer on the same network opens the web remote at `http://dho924s-204527.local:8080`,
+also when the scope only has a link-local address (169.254.x.y, a cable straight to a computer without DHCP), and
+VISA reaches it at `TCPIP::dho924s-204527.local::INSTR`. macOS, iOS, Linux with Avahi and Windows 10 and newer resolve
+`.local` names by themselves.
+
+**The name.** At the first start oos-ui makes it from the model and the last six digits of the serial number
+(`dho924s-204527`) and writes it to `/oos/system.conf` (`net.name`). The Name picker offers it, the name set, and
+Other: the keyboard takes 1 to 63 letters, digits and hyphens (one DNS label, not starting or ending with a hyphen;
+upper case is taken as lower case). The name is also the kernel's host name: rcS sets it at power-on and the DHCP
+client sends it (`udhcpc -x hostname:`), so a router lists the scope by it. A new name counts for mDNS at once, for the
+router from the next lease (the next start, or the next WLAN connection). Without `net.name` (the very first start)
+rcS uses `oos`. An SD card moved to another scope keeps its name: choose the one from model and serial in the picker.
+
+**What it answers.** oos-ui has its own responder (`ui/src/mdns.rs`, RFC 6762 and RFC 6763), in a thread of its own
+that sleeps in `poll` between packets; there is no avahi on the image. It listens on UDP port 5353 at 224.0.0.251 and,
+where the kernel has IPv6, at ff02::fb, on every interface that is up, has an address and takes multicast (eth0, wlan0),
+and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the link-local address, a WLAN stick.
+
+| name | type | data |
+|---|---|---|
+| `<name>.local` | A, AAAA | the addresses of the interface the question came in on |
+| `y.x.254.169.in-addr.arpa` (the IPv4 address reversed) | PTR | `<name>.local` |
+| `_services._dns-sd._udp.local` | PTR | each service type below that is switched on |
+| `_http._tcp.local` | PTR, SRV, TXT | web remote: port 8080, `path=/` |
+| `_scpi-raw._tcp.local` | PTR, SRV, TXT | SCPI: port 5555 |
+| `_vxi-11._tcp.local` | PTR, SRV, TXT | VXI-11: port 111 |
+
+The instance name a computer lists is `Rigol DHO924S OOS (204527)` (with a name of its own: `Rigol DHO924S OOS
+(lab-scope-3)`). A service switched off is not announced; its records get a goodbye. A name of the scope without the
+type asked for is answered with an NSEC record of the types it has (no AAAA on an interface without IPv6).
+
+Before it answers, the responder probes for the name three times 250 ms apart and announces its records twice, a second
+apart (RFC 6762 §8). It does that again after each change of the name, the services or the interfaces. When another
+host already has the name, the scope takes `<name>-2`, `<name>-3` and so on, and the Name row shows the one in use
+(the setting stays; a conflict over the instance name gives `... (2)`). The log `/tmp/oos-ui.log` has a line when the
+records are announced and one for each conflict:
+
+```
+oos-ui: mDNS: dho924s-204527.local on eth0 wlan0, services _http._tcp _scpi-raw._tcp _vxi-11._tcp
+oos-ui: mDNS: dho924s-204527.local is taken (dho924s-204527.local type 1), now dho924s-204527-2.local
+```
+
+Questions with the unicast-response bit get a unicast answer; a question from a port other than 5353 (a plain DNS
+resolver) gets a legacy unicast answer with its id and question and a TTL of at most 10 s, so these work as well:
+
+```
+dig @224.0.0.251 -p 5353 dho924s-204527.local
+dig @224.0.0.251 -p 5353 -x 169.254.7.9
+dns-sd -B _scpi-raw._tcp            (macOS: browse; avahi-browse -r _scpi-raw._tcp on Linux)
+dns-sd -G v4v6 dho924s-204527.local
+```
+
+**Switching it off.** mDNS = Off (`remote.mdns = off`) sends a goodbye (TTL 0) for every record and closes port 5353;
+the scope then answers nothing on it. It is on by default because it only works on the local link: routers do not
+forward 224.0.0.251 and ff02::fb, and it sends nothing but the answers, the probes and the announcements. oos-ui also
+sends the goodbye when it ends.
+
+**Verified on the host only** (macOS): the packets, compression, probing, conflicts, the answers (unit tests), and the
+responder on en0 with mDNSResponder (`dns-sd -G` and `-B` found the test name and its services). **Not verified on
+hardware:** the responder on the scope, the host name in the DHCP request.
+
 ## 5. `/oos/system.conf`
 
 `key = value` lines, written by oos-ui when a setting changes (one step, then a sync: the scope is switched off at the
@@ -169,5 +233,7 @@ remote.web = on
 remote.scpi = on
 remote.vxi11 = on
 remote.telnet = on
+remote.mdns = on              # mDNS and DNS-SD (4.1)
+net.name = dho924s-204527     # the name on the network, written at the first start
 graphics = gpu                # Display > Graphics: gpu or cpu (gpu/README.md)
 ```

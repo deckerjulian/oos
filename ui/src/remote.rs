@@ -1,9 +1,24 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The telnet shell of System > Network > Remote services. rcS starts busybox `telnetd` at power-on unless
-//! `remote.telnet = off`; a change while oos-ui runs ends it or starts it here. (Web, SCPI and VXI-11 are oos-ui's own
-//! ports: `main.rs` opens and closes them.)
+//! The telnet shell of System > Network > Remote services, and the kernel's host name. rcS starts busybox `telnetd`
+//! at power-on unless `remote.telnet = off`; a change while oos-ui runs ends it or starts it here. (Web, SCPI, VXI-11
+//! and mDNS are oos-ui's own: `main.rs` opens and closes them.)
+
+const HOSTNAME: &str = "/proc/sys/kernel/hostname";
+
+/// The kernel's host name, the scope's name on the network (System > Network > Remote services > Name). rcS sets it at
+/// power-on from `net.name` and the DHCP clients send it (`-x hostname:`); a new name reaches the router with the next
+/// lease.
+pub fn hostname(name: &str) {
+    if std::fs::read_to_string(HOSTNAME).is_ok_and(|n| n.trim() == name) {
+        return;
+    }
+    match std::fs::write(HOSTNAME, name) {
+        Ok(()) => eprintln!("oos-ui: host name {}", name),
+        Err(e) => eprintln!("oos-ui: host name {}: {}", name, e),
+    }
+}
 
 /// Running `telnetd` processes, by the name in /proc (none on a host without /proc).
 fn telnetd_pids() -> Vec<i32> {

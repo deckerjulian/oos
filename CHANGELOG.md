@@ -9,6 +9,14 @@ New:
   and where it came from, e.g. `Synced 14:30:05, 192.168.1.1 (DHCP)` or `pool.ntp.org (no DHCP)`. DHCP is the first
   entry of the picker and the default of a new settings file; a server chosen before stays. Time from NTP stays off
   by default.
+- The scope by name: `http://dho924s-204527.local:8080` reaches the web remote, also with only a link-local address
+  (a cable straight to a computer). oos-ui answers mDNS (RFC 6762) for `<name>.local` and announces the web remote,
+  SCPI and VXI-11 for browsing (DNS-SD, RFC 6763: `_http._tcp`, `_scpi-raw._tcp`, `_vxi-11._tcp`), only the services
+  that are switched on. System > Network > Remote services has two new rows: mDNS (on by default) and Name, which
+  shows `<name>.local`. The name comes from the model and the serial number and can be changed in the Name picker
+  (Other: the keyboard); it is also the host name the scope sends to DHCP, so a router lists it. When another host
+  already has the name, the scope takes `<name>-2`. Tested on the host (macOS finds the name and the services), not yet
+  on a scope.
 
 Fixed:
 

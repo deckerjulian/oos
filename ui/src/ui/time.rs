@@ -175,6 +175,7 @@ impl Ui {
     pub fn load_system(&mut self, path: std::path::PathBuf) {
         self.sys = sysconf::SysConf::load(&path);
         self.sys_path = Some(path);
+        self.net_name_init();
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();
         self.apply_tz();
         self.apply_backlight();
@@ -501,6 +502,7 @@ impl Ui {
                 self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::NtpServer, now));
             }
             Item::TimeZone if o == OTHER => self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::Tz, &self.sys.tz)),
+            Item::RemName => self.remote_pick(k),
             Item::NtpServer => {
                 if let Some(s) = SERVERS.iter().find(|s| server_label(s) == *o) {
                     self.set_server(s);
