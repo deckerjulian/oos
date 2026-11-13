@@ -162,6 +162,7 @@ const REF_COLORS: [(&str, Rgb); 5] = [("White", rgb(0xd8, 0xd8, 0xd8)), ("Red", 
 /// Kinds of delay and phase measurement and of second panes, for the setups.
 pub const PAIRS_N: usize = tools::PAIRS.len();
 pub const PANES_N: usize = tables::PANES.len();
+pub use eyepage::EYE_ITEMS;
 pub use panes::{PANE_HARMS, TREND_SEL_N};
 pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 
@@ -1310,11 +1311,12 @@ impl Ui {
 
     /// Measurement `k` of channel `c` (NaN when off or not measurable).
     pub fn meas(&self, c: usize, k: Meas) -> f64 {
-        if c < self.m.ch.len() && self.m.ch[c].on {
-            self.meas_of(&self.ana[c], k)
-        } else {
-            f64::NAN
-        }
+        self.meas_at(WaveId::Ch(c), k)
+    }
+
+    /// Eye figures from the last refresh, in the order the page stores them. Empty until the eye has run.
+    pub fn eye_readings(&self) -> &[(&'static str, f64)] {
+        &self.azr.page.readings
     }
 
     #[allow(dead_code)]

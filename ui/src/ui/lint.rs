@@ -2014,3 +2014,82 @@ fn cphy_eye_full_screen_shot() {
         let _ = std::fs::write(format!("{}/cphy-va-eye-full.png", dir), crate::store::png_of(&cv));
     }
 }
+
+/// R1–R10 answer `:MEASure:ITEM?`. The strip, the eye figures, and one readout of everything on screen.
+#[test]
+fn scpi_reads_a_ref_the_strip_and_the_eye() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let cv = Canvas::new(W, H);
+    let mut scpi = crate::scpi::Scpi::open(0);
+    for _ in 0..4 {
+        u.step(0.05);
+    }
+    let q = |scpi: &mut crate::scpi::Scpi, u: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(u, &cv, c)).unwrap();
+
+    let ch = q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,CHAN1");
+    assert!(ch.contains('E') && ch != "9.9E37", "{ch}");
+    for item in ["FREQUENCY", "PERIOD", "RTIME", "VBASE", "CYCAMP", "CYCPP", "HTIME", "BWIDTH"] {
+        let r = q(&mut scpi, &mut u, &format!(":MEAS:ITEM? {item}"));
+        assert!(r.contains('E'), "{item} {r}");
+    }
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("0,"), "a known item must not be an error");
+
+    let (dt, n) = (5e-9, 800usize);
+    let sine: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 1e6 * k as f64 * dt).sin() as f32).collect();
+    put_ref(&mut u, 0, 0.0, dt, sine.clone());
+    u.measure_refs();
+    let want = oos_dsp::measure::analyze_min(&sine, dt, 0.4 * 0.2).get(Meas::Vpp);
+    let got: f64 = q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R1").parse().unwrap();
+    assert!((got - want).abs() < 1e-4, "{got} vs {want}");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R2"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("0,"), "an empty slot is not an error");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R11"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? NOPE,R1"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+
+    put_ref(&mut u, 1, 25e-9, dt, sine);
+    u.measure_refs();
+    let delay: f64 = q(&mut scpi, &mut u, ":MEAS:ITEM? RRDELAY,R1,R2").parse().unwrap();
+    assert!((delay - 25e-9).abs() < 2e-9, "delay {delay}");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? SETUP,R1"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0)), (Meas::Freq, WaveId::Ch(0))];
+    u.m.meas2 = vec![(0, WaveId::Ref(0), WaveId::Ref(1))];
+    u.m.dvm_on = true;
+    let strip = q(&mut scpi, &mut u, ":MEAS:STR?");
+    assert!(strip.contains("VPP,R1,"), "{strip}");
+    assert!(strip.contains("FREQUENCY,CHAN1,"), "{strip}");
+    assert!(strip.contains("RRDELAY,R1,R2,"), "{strip}");
+    assert!(strip.contains("DVM,DC,CHAN1,"), "{strip}");
+
+    u.m.view = AView::Scope;
+    let screen = q(&mut scpi, &mut u, ":MEAS:READ?");
+    assert!(screen.contains("VPP,R1,"), "{screen}");
+    assert!(!screen.contains("HEIGHT"), "{screen}");
+
+    let sq: Vec<f32> = (0..8000).map(|k| if (k / 20) % 2 == 0 { 0.5 } else { -0.5 }).collect();
+    put_ref(&mut u, 2, 0.0, 1e-9, sq);
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(2);
+    u.m.eye_b = None;
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let height: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? HEIGHT").parse().unwrap();
+    let width: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? WIDT").parse().unwrap();
+    let ui_s: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? UI").parse().unwrap();
+    let tj = q(&mut scpi, &mut u, ":EYE:ITEM? TJ");
+    assert!(height > 0.5 && height < 1.2, "height {height}");
+    assert!(width > 0.0 && width < 40e-9, "width {width}");
+    assert!((ui_s - 20e-9).abs() < 2e-9, "ui {ui_s}");
+    assert!(tj.contains('E'), "{tj}");
+    assert_eq!(q(&mut scpi, &mut u, ":EYE:ITEM? NOPE"), "9.9E37");
+    let screen = q(&mut scpi, &mut u, ":MEAS:READ?");
+    for token in ["VPP,R1,", "HEIGHT,", "WIDTH,", "UI,", "TJ,", "AMPLITUDE,", "DVM,DC,CHAN1,"] {
+        assert!(screen.contains(token), "{token} missing in {screen}");
+    }
+    assert_eq!(screen.matches(';').count() + 1, strip.matches(';').count() + 1 + EYE_ITEMS.len(), "{screen}");
+}

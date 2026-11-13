@@ -16,6 +16,19 @@ use oos_dsp::eye::{self, Bathtub, EdgeMeans, Jitter, JitterFit};
 
 /// Seconds between refreshes of the page.
 const REFRESH: f64 = 0.2;
+
+/// Figures on the eye page, in the order the boxes draw them. The long form is what `:EYE:ITEM?` accepts
+/// (the upper-case letters are the short form). A missing figure is stored as NaN.
+pub const EYE_ITEMS: &[&str] = &[
+    "ONE", "ZERO", "AMPLitude", "CROSsing", "RISe", "FALL", "HEIGht", "WIDTh", "Q", "HBER", "RECords", "EDGes", "UI", "SAMPling",
+    "TPP", "TRMS", "DCD", "DDJ", "PJRms", "PRMS", "C2C", "F2", "F4", "F8", "SRJ", "PN", "TPRE", "TPOST", "PPRE", "PPOST", "DCCM", "ACCM", "XOVer", "TNT", "SSCPpm", "SSCRate",
+    "TJ", "RJ", "DJ", "OPENing", "SEEN", "TJBer", "EWBer", "J2", "J9", "NPJ",
+];
+
+/// The figures `eye_facts` adds beside the ones `text_jitter` and `text_eye` already stored.
+const EYE_FACTS: &[&str] = &[
+    "HBER", "F2", "F4", "F8", "SRJ", "PN", "TPRE", "TPOST", "PPRE", "PPOST", "DCCM", "ACCM", "XOVer", "TNT", "SSCPpm", "SSCRate", "TJBer", "EWBer", "J2", "J9", "NPJ",
+];
 /// TIE values kept, the newest.
 const POOL: usize = 16384;
 /// UI of a record that go into the spectrum.
@@ -269,6 +282,8 @@ pub struct Page {
     pub(super) eye_measured: Vec<Cell>,
     pub(super) eye_model: Vec<Cell>,
     pub(super) stats: Vec<Cell>,
+    /// One number per figure in `EYE_ITEMS`. NaN where the page has no number.
+    pub(super) readings: Vec<(&'static str, f64)>,
 }
 
 impl Default for Page {
@@ -307,11 +322,17 @@ impl Default for Page {
             eye_measured: Vec::new(),
             eye_model: Vec::new(),
             stats: Vec::new(),
+            readings: Vec::new(),
         }
     }
 }
 
 impl Page {
+    fn put_fig(&mut self, name: &'static str, v: f64) {
+        debug_assert!(EYE_ITEMS.contains(&name), "{name}");
+        self.readings.push((name, v));
+    }
+
     /// Takes the TIE of one record into the sums.
     fn add(&mut self, tie: &[f64], clk: &eye::Clock) {
         self.records += 1;
@@ -439,6 +460,10 @@ impl Page {
         let means = format!("needs {} per edge", eye::RUN_MIN);
         let ddj = self.means.ddj();
         let dcd = self.means.dcd();
+        self.readings.clear();
+        for (name, v) in [("TPP", j.pp), ("TRMS", j.rms), ("DCD", dcd), ("DDJ", ddj), ("PJRms", pj), ("PRMS", j.period_jitter_rms), ("C2C", j.c2c_rms), ("TJ", j.tj_pp), ("RJ", j.rj_rms), ("DJ", j.dj_pp), ("OPENing", self.tub.opening), ("SEEN", self.tub.seen)] {
+            self.put_fig(name, v);
+        }
         self.measured = vec![
             figure("TIE pp", j.pp, "s", Kind::Measured, &few),
             figure("TIE rms", j.rms, "s", Kind::Measured, &few),
@@ -480,6 +505,9 @@ impl Page {
             _ => format!("{}  \u{3c3} {}", si(v, "V"), si(s, "V")),
         };
         let tr = if m.rise.is_finite() && m.fall.is_finite() { format!("{} / {}", si(m.rise, "s"), si(m.fall, "s")) } else { "not resolved".to_string() };
+        for (name, v) in [("ONE", m.one), ("ZERO", m.zero), ("AMPLitude", m.amplitude), ("CROSsing", m.crossing_pct), ("RISe", m.rise), ("FALL", m.fall), ("HEIGht", m.height), ("WIDTh", m.width), ("Q", m.q_factor), ("RECords", self.records as f64), ("EDGes", self.pool.len() as f64), ("UI", self.ui.mean()), ("SAMPling", dt)] {
+            self.put_fig(name, v);
+        }
         self.eye_measured = vec![
             cell("One", level(m.one, m.sigma_one), if m.one.is_finite() { Kind::Measured } else { Kind::Missing }),
             cell("Zero", level(m.zero, m.sigma_zero), if m.zero.is_finite() { Kind::Measured } else { Kind::Missing }),
@@ -698,41 +726,26 @@ impl Ui {
     }
 
     /// The measurements that sit beside the existing eye and jitter figures.
-    fn eye_facts(&self, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, rec: &Record, means: &EdgeMeans) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+    fn eye_facts(&mut self, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, rec: &Record, means: &EdgeMeans) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
         let few = format!("needs {} edges", eye::MIN_EDGES);
         let miss = |l| cell(l, few.clone(), Kind::Missing);
         if j.fit == JitterFit::TooFew {
+            for name in EYE_FACTS {
+                self.azr.page.put_fig(name, f64::NAN);
+            }
             let model = ["TJ@BER", "EW@BER", "J2", "J9", "NPJ"].map(miss).to_vec();
             let measured = ["F/2", "F/4", "F/8", "SRJ", "Pn rms", "Pn note", "TIE pre", "TIE post", "DC CM", "AC CM", "Cross", "T/nT", "SSC ppm", "SSC rate"].map(miss).to_vec();
             let eye_model = vec![cell("Ht@BER", "no eye".into(), Kind::Missing)];
             return (measured, model, eye_model);
         }
         let ber = self.m.eye_ber;
-        let mut model = vec![
-            figure("TJ@BER", eye::tj_at(j, ber), "s", Kind::Model, &few),
-            figure("EW@BER", eye::eye_width_at(j, clk.period, ber), "UI", Kind::Model, &few),
-            figure("J2", eye::tj_at(j, eye::BER_J2), "s", Kind::Model, &few),
-            figure("J9", eye::tj_at(j, eye::BER_J9), "s", Kind::Model, &few),
-        ];
-        if self.m.eye_npj {
-            model.push(figure("NPJ", eye::npj(tie, clk, trend, means), "s", Kind::Model, &few));
-        } else {
-            model.push(cell("NPJ", "off".into(), Kind::Missing));
-        }
-        let mut measured = vec![
-            figure("F/2", eye::subrate_pp(trend, clk.period, 2), "s", Kind::Measured, &few),
-            figure("F/4", eye::subrate_pp(trend, clk.period, 4), "s", Kind::Measured, &few),
-            figure("F/8", eye::subrate_pp(trend, clk.period, 8), "s", Kind::Measured, &few),
-            figure("SRJ", eye::srj_pp(trend, clk.period), "s", Kind::Measured, &few),
-            figure("Pn rms", eye::phase_noise(trend, clk.period, self.m.eye_pn_lo, self.m.eye_pn_hi), "s", Kind::Measured, &few),
-            cell("Pn note", if eye::is_clock(clk) { "clock" } else { "data" }.into(), if eye::is_clock(clk) { Kind::Measured } else { Kind::Missing }),
-        ];
+        let (tjber, ewber, j2, j9) = (eye::tj_at(j, ber), eye::eye_width_at(j, clk.period, ber), eye::tj_at(j, eye::BER_J2), eye::tj_at(j, eye::BER_J9));
+        let npj = if self.m.eye_npj { eye::npj(tie, clk, trend, means) } else { f64::NAN };
+        let (f2, f4, f8) = (eye::subrate_pp(trend, clk.period, 2), eye::subrate_pp(trend, clk.period, 4), eye::subrate_pp(trend, clk.period, 8));
+        let srj = eye::srj_pp(trend, clk.period);
+        let pn = eye::phase_noise(trend, clk.period, self.m.eye_pn_lo, self.m.eye_pn_hi);
         let rail = self.m.eye_rail.and_then(|id| self.wave_samples(rec, id)).map(|s| (s.v, s.dt));
         let ps = eye::psij(trend, clk, tie, rail.as_ref().map(|(v, d)| (v.as_slice(), *d)), self.m.eye_notch, meas.height, meas.width, Some((wave, dt)));
-        measured.push(figure("TIE pre", ps.before.tie_pp, "s", Kind::Measured, &few));
-        measured.push(figure("TIE post", ps.after.tie_pp, "s", Kind::Measured, &few));
-        measured.push(figure("PJ pre", ps.before.pj, "s", Kind::Measured, &few));
-        measured.push(figure("PJ post", ps.after.pj, "s", Kind::Measured, &few));
         let (dc, ac, cross) = if let Some(b) = self.m.eye_b {
             match self.take_waves(rec, &[self.m.eye_src, b], &[]) {
                 Ok(t) => (eye::dc_common(&t.v[0], &t.v[1]), eye::ac_common_pp(&t.v[0], Some(&t.v[1]), t.dt, self.m.eye_hp), eye::diff_crossover(&t.v[0], &t.v[1])),
@@ -741,14 +754,43 @@ impl Ui {
         } else {
             (f64::NAN, eye::ac_common_pp(wave, None, dt, self.m.eye_hp), f64::NAN)
         };
+        let tnt = eye::tnt_ratio(wave, dt, clk);
+        let (ppm, _) = eye::ssc_deviation(clk);
+        let ssc_hz = eye::ssc_rate(clk);
+        let hber = meas.height_at(ber);
+        for (name, v) in [("HBER", hber), ("F2", f2), ("F4", f4), ("F8", f8), ("SRJ", srj), ("PN", pn), ("TPRE", ps.before.tie_pp), ("TPOST", ps.after.tie_pp), ("PPRE", ps.before.pj), ("PPOST", ps.after.pj), ("DCCM", dc), ("ACCM", ac), ("XOVer", cross), ("TNT", tnt), ("SSCPpm", ppm), ("SSCRate", ssc_hz), ("TJBer", tjber), ("EWBer", ewber), ("J2", j2), ("J9", j9), ("NPJ", npj)] {
+            self.azr.page.put_fig(name, v);
+        }
+        let mut model = vec![
+            figure("TJ@BER", tjber, "s", Kind::Model, &few),
+            figure("EW@BER", ewber, "UI", Kind::Model, &few),
+            figure("J2", j2, "s", Kind::Model, &few),
+            figure("J9", j9, "s", Kind::Model, &few),
+        ];
+        if self.m.eye_npj {
+            model.push(figure("NPJ", npj, "s", Kind::Model, &few));
+        } else {
+            model.push(cell("NPJ", "off".into(), Kind::Missing));
+        }
+        let mut measured = vec![
+            figure("F/2", f2, "s", Kind::Measured, &few),
+            figure("F/4", f4, "s", Kind::Measured, &few),
+            figure("F/8", f8, "s", Kind::Measured, &few),
+            figure("SRJ", srj, "s", Kind::Measured, &few),
+            figure("Pn rms", pn, "s", Kind::Measured, &few),
+            cell("Pn note", if eye::is_clock(clk) { "clock" } else { "data" }.into(), if eye::is_clock(clk) { Kind::Measured } else { Kind::Missing }),
+        ];
+        measured.push(figure("TIE pre", ps.before.tie_pp, "s", Kind::Measured, &few));
+        measured.push(figure("TIE post", ps.after.tie_pp, "s", Kind::Measured, &few));
+        measured.push(figure("PJ pre", ps.before.pj, "s", Kind::Measured, &few));
+        measured.push(figure("PJ post", ps.after.pj, "s", Kind::Measured, &few));
         measured.push(figure("DC CM", dc, "V", Kind::Measured, "no B"));
         measured.push(figure("AC CM", ac, "V", Kind::Measured, &few));
         measured.push(figure("Cross", cross, "V", Kind::Measured, "no B"));
-        measured.push(figure("T/nT", eye::tnt_ratio(wave, dt, clk), "dB", Kind::Measured, &few));
-        let (ppm, _) = eye::ssc_deviation(clk);
+        measured.push(figure("T/nT", tnt, "dB", Kind::Measured, &few));
         measured.push(figure("SSC ppm", ppm, "ppm", Kind::Measured, &few));
-        measured.push(figure("SSC rate", eye::ssc_rate(clk), "Hz", Kind::Measured, &few));
-        let eye_model = vec![figure("Ht@BER", meas.height_at(ber), "V", Kind::Model, "no eye")];
+        measured.push(figure("SSC rate", ssc_hz, "Hz", Kind::Measured, &few));
+        let eye_model = vec![figure("Ht@BER", hber, "V", Kind::Model, "no eye")];
         (measured, model, eye_model)
     }
 
@@ -1252,6 +1294,21 @@ mod tests {
         ui.analyzer_update();
         assert_eq!((ui.azr.eye.as_ref().unwrap().v_max, ui.azr.page.records), (top, n));
         assert!(ui.azr.page.status[1].contains("Under 3 edges"), "{:?}", ui.azr.page.status);
+    }
+
+    /// Every figure the page draws has one number for SCPI, including the ones that came out missing.
+    #[test]
+    fn every_figure_has_one_number() {
+        let ui = page(CLEAN, 2);
+        let got: Vec<_> = ui.azr.page.readings.iter().map(|(n, _)| *n).collect();
+        for name in EYE_ITEMS {
+            assert_eq!(got.iter().filter(|n| *n == name).count(), 1, "{name} in {got:?}");
+        }
+        assert_eq!(got.len(), EYE_ITEMS.len());
+        assert!(ui.azr.page.readings.iter().any(|(n, v)| *n == "HEIGht" && v.is_finite()));
+        assert!(ui.azr.page.readings.iter().any(|(n, v)| *n == "WIDTh" && v.is_finite()));
+        assert!(ui.azr.page.readings.iter().any(|(n, v)| *n == "UI" && v.is_finite()));
+        assert!(ui.azr.page.readings.iter().any(|(n, v)| *n == "TJ" && v.is_finite()));
     }
 
     /// Time of the parts on a deep record: `cargo test --release eye_page_timing -- --ignored --nocapture`.

@@ -97,6 +97,33 @@ impl MeasRow {
 }
 
 impl Ui {
+    /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
+    pub fn meas_at(&self, id: WaveId, k: Meas) -> f64 {
+        match self.meas_analysis(id) {
+            Some((a, _)) => self.meas_of(&a, k),
+            None => f64::NAN,
+        }
+    }
+
+    /// One channel-pair row. `k` is an entry of `PAIRS`.
+    pub fn pair_at(&self, k: usize, a: WaveId, b: WaveId) -> f64 {
+        let (_, kind, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
+        let p = Pair(ea, eb);
+        match (self.meas_analysis(a), self.meas_analysis(b)) {
+            (Some((aa, ta)), Some((bb, tb))) => {
+                let (aa, bb) = (shift_edges(&aa, ta), shift_edges(&bb, tb));
+                match kind {
+                    PairKind::Phase => phase(&aa, &bb, p),
+                    PairKind::Delay => delay(&aa, &bb, p),
+                    PairKind::Skew => skew(&aa, &bb, p),
+                    PairKind::Setup => setup_time(&aa, &bb),
+                    PairKind::Hold => hold_time(&aa, &bb),
+                }
+            }
+            _ => f64::NAN,
+        }
+    }
+
     /// All measurements, in the order of the statistics.
     pub(super) fn meas_rows(&self) -> Vec<MeasRow> {
         let mut v: Vec<MeasRow> = self
@@ -112,21 +139,8 @@ impl Ui {
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
-            let (name, kind, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
-            let p = Pair(ea, eb);
-            let val = match (self.meas_analysis(a), self.meas_analysis(b)) {
-                (Some((aa, ta)), Some((bb, tb))) => {
-                    let (aa, bb) = (shift_edges(&aa, ta), shift_edges(&bb, tb));
-                    match kind {
-                        PairKind::Phase => phase(&aa, &bb, p),
-                        PairKind::Delay => delay(&aa, &bb, p),
-                        PairKind::Skew => skew(&aa, &bb, p),
-                        PairKind::Setup => setup_time(&aa, &bb),
-                        PairKind::Hold => hold_time(&aa, &bb),
-                    }
-                }
-                _ => f64::NAN,
-            };
+            let (name, kind, _, _) = PAIRS[k.min(PAIRS.len() - 1)];
+            let val = self.pair_at(k, a, b);
             let tag = |id: WaveId| match id {
                 WaveId::Ch(c) => (c + 1).to_string(),
                 WaveId::Ref(i) => format!("R{}", i + 1),
@@ -291,7 +305,7 @@ impl Ui {
     }
 
     /// DVM reading of its source, volts.
-    pub(super) fn dvm_value(&self) -> f64 {
+    pub fn dvm_value(&self) -> f64 {
         let c = self.m.dvm_src;
         if !self.m.ch[c].on {
             return f64::NAN;
@@ -301,6 +315,20 @@ impl Ui {
             1 => Meas::VrmsAc,
             _ => Meas::Vrms,
         })
+    }
+
+    /// Counter reading: frequency, period, or the totalised edge count. NaN when that mode has nothing to show.
+    pub fn counter_value(&self) -> f64 {
+        if !self.m.cnt_on {
+            return f64::NAN;
+        }
+        let c = self.m.cnt_src.min(NCH - 1);
+        match self.m.cnt_mode {
+            2 => self.cnt_total as f64,
+            1 if self.m.ch[c].on => self.ana[c].get(Meas::Period),
+            0 if self.m.ch[c].on => self.ana[c].get(Meas::Freq),
+            _ => f64::NAN,
+        }
     }
 
     /// The strip row of DVM and counter: (label, value) pairs.
