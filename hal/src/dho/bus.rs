@@ -29,6 +29,11 @@ pub fn read_dma(c2h: &mut impl std::io::Read, bytes: usize, short: impl FnMut(us
 
 const PAGE: usize = 4096;
 
+/// Largest single C2H read() (4 MiB, whole pages). Live batches are planned to about 4 MB (`batch_plan` in oos-ui), but
+/// one frame is read whatever its size: 1 M points of 3 or 4 channels is 8 MB, a compressed deep record of 4 channels
+/// 5 MB. Larger transfers are split into reads of this size; the stream continues across them as across a short read.
+pub const MAX_READ: usize = 4 << 20;
+
 /// A C2H read buffer kept across reads. The transfer lands at the start of a 4 KiB aligned region of whole pages that
 /// nothing else uses: the RK3399's PCIe is not cache coherent and the driver maps the user pages for the DMA, so a
 /// buffer that shares a cache line or page with other heap data lets the transfer's cache maintenance corrupt that data
@@ -70,10 +75,12 @@ impl DmaBuf {
         let off = self.off;
         let mut got = 0;
         while got < bytes {
-            match c2h.read(&mut self.raw[off + got..off + bytes])? {
+            // at most `MAX_READ` per read(): the rest of the stream follows in the next one, as after a short read
+            let want = (bytes - got).min(MAX_READ);
+            match c2h.read(&mut self.raw[off + got..off + got + want])? {
                 0 => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("end of stream after {} of {} bytes", got, bytes))),
                 k => {
-                    if k < bytes - got {
+                    if k < want {
                         short(got, k);
                     }
                     got += k;
@@ -188,6 +195,35 @@ mod tests {
         let still = mapped();
         std::fs::remove_file(&path).unwrap();
         assert!(!still, "the mapping of the device file is still there after the Bar1 was dropped");
+    }
+
+    // Break it catches: a C2H transfer of more than `MAX_READ` handed to the driver in one read() (an 8 MB frame of
+    // 4 channels at 1 M points), or a split that loses or reorders bytes
+    #[test]
+    fn large_reads_are_split_into_max_read_pieces() {
+        struct Rec(Vec<u8>, usize, Vec<usize>);
+        impl std::io::Read for Rec {
+            fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+                self.2.push(b.len());
+                let k = b.len().min(self.0.len() - self.1);
+                b[..k].copy_from_slice(&self.0[self.1..self.1 + k]);
+                self.1 += k;
+                Ok(k)
+            }
+        }
+        let n = 8_000_016;
+        let data: Vec<u8> = (0..n).map(|i| (i * 7 % 251) as u8).collect();
+        let mut r = Rec(data.clone(), 0, Vec::new());
+        let mut shorts = 0;
+        let mut b = super::DmaBuf::new();
+        assert_eq!(b.read(&mut r, n, |_, _| shorts += 1).unwrap(), &data[..]);
+        assert!(r.2.iter().all(|&x| x <= super::MAX_READ), "{:?}", r.2);
+        assert_eq!(r.2.len(), n.div_ceil(super::MAX_READ));
+        assert_eq!(shorts, 0, "planned pieces are no short reads");
+        // a small read stays one read()
+        let mut r = Rec(data[..4096].to_vec(), 0, Vec::new());
+        b.read(&mut r, 4096, |_, _| {}).unwrap();
+        assert_eq!(r.2, vec![4096]);
     }
 
     #[test]
