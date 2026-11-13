@@ -113,6 +113,9 @@ const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
 /// records kept for history playback
 const HISTORY: usize = 200;
+/// Longest wait of a STOP for the hardware's final frame (`Ui::stop_final`): a batch in progress, its read and the raw
+/// read of the newest frame.
+const STOP_FINAL_WAIT: f64 = 3.0;
 /// LA words a history entry keeps: above this only the newest record has its LA (200 x 1 M words = 400 MB at most).
 const HISTORY_LA_WORDS: usize = 1_000_000;
 /// Segment counts of the segmented recording (0 = off); the menu offers those within the limit of the set-up
@@ -860,6 +863,9 @@ pub struct Ui {
     /// (`framestats::needs_samples` are then not available)
     meas_env_sent: [bool; NCH],
     meas_env: [bool; NCH],
+    /// STOP waiting for the hardware's final frame (docs/fork/stop-exact.md): the request number and until when
+    final_req: u64,
+    stop_final: Option<f64>,
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -1099,6 +1105,8 @@ impl Ui {
             meas_n: 0,
             meas_env_sent: [false; NCH],
             meas_env: [false; NCH],
+            final_req: 0,
+            stop_final: None,
             meas_new: false,
             history: std::collections::VecDeque::new(),
             hist_pos: None,
@@ -1533,6 +1541,19 @@ impl Ui {
         }
     }
 
+    /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
+    /// stop or a history view) while raw deep measurements are on and the record shown is of min/max pairs.
+    fn stop_wants_final(&self) -> bool {
+        let m = &self.m;
+        m.trig_mode != TrigMode::Single
+            && m.segments == 0
+            && !(m.mask_on && m.mask_stop)
+            && self.hist_pos.is_none()
+            && self.seg_pos.is_none()
+            && crate::deepmeas::want(m).is_some()
+            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::deepmeas::deep_pairs(&r.frame))
+    }
+
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
     pub(crate) fn ana_get(&self, c: usize, k: Meas) -> f64 {
         if self.meas_env[c] && crate::framestats::needs_samples(k) {
@@ -1707,13 +1728,20 @@ impl Ui {
                 self.seg_times.clear();
             }
         }
+        // STOP of a deep record on pairs with raw deep measurements: the hardware reads the newest frame raw and
+        // stops arming; until it is here the records go on (docs/fork/stop-exact.md)
+        if !running && self.was_running && self.stop_wants_final() {
+            self.final_req += 1;
+            self.stop_final = Some(self.now + STOP_FINAL_WAIT);
+        }
+        let final_done = self.src.hw_hold(!running && self.last[0].is_some(), self.final_req);
         self.was_running = running;
         if hw_seg {
             self.seg_poll(running);
         }
         let persist = PERSIST[self.m.persist].1;
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
+        if self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -1861,7 +1889,7 @@ impl Ui {
                     }
                     None => {}
                 }
-                if self.m.run == RunState::Stop {
+                if self.m.run == RunState::Stop && self.stop_final.is_none() {
                     break;
                 }
             }
@@ -1960,6 +1988,10 @@ impl Ui {
                     st.max = st.max.max(v);
                 }
             }
+        }
+        // the final frame was taken (or did not come in time): stopped
+        if self.stop_final.is_some_and(|t| final_done || self.now > t) {
+            self.stop_final = None;
         }
         if self.m.run == RunState::Stop {
             self.m.status = TrigStatus::Stop;
@@ -7685,6 +7717,85 @@ mod tests {
             let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
             assert!(row.is_none_or(|x| x.is_nan() == envelope));
         }
+    }
+
+    // Break it catches (docs/fork/stop-exact.md): a STOP that keeps the pair record on screen while the measurements
+    // show an older raw record, a final frame not taken or taken after the stop, frames after it taken, the hardware
+    // left arming in STOP or held in RUN, a STOP waiting forever, a plain STOP of a shallow record waiting at all
+    #[test]
+    fn stop_shows_the_final_raw_frame_of_a_deep_record() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, acq), ..Default::default() };
+        let raw = |top: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { top } else { 0.0 }).collect() };
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
+        let steps = |ui: &mut Ui, k: usize| {
+            for _ in 0..k {
+                ui.step(0.02);
+            }
+        };
+        shared.lock().unwrap().queue.push_back(frame(1, true, 10_000_000, pairs.clone()));
+        steps(&mut ui, 3);
+        assert!(!shared.lock().unwrap().hold);
+        // STOP on a pair record: the thread is held and asked for the final frame, the UI waits for it
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 2);
+        {
+            let g = shared.lock().unwrap();
+            assert!(g.hold && g.final_req == 1);
+        }
+        assert!(ui.stop_final.is_some() && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope)));
+        // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
+        {
+            let mut g = shared.lock().unwrap();
+            g.queue.push_back(frame(2, true, 10_000_000, pairs.clone()));
+            g.queue.push_back(frame(3, false, 10_000_000, raw(2.0)));
+            g.final_ack = 1;
+        }
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_none());
+        let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
+        assert_eq!(shown, Some((3, false)), "the final raw frame is the record shown");
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.5).abs() < 0.03, "mean of the record shown: {}", avg);
+        assert_eq!(ui.m.status, TrigStatus::Stop);
+        // frames after it stay unseen in STOP
+        shared.lock().unwrap().queue.push_back(frame(4, false, 10_000_000, raw(4.0)));
+        steps(&mut ui, 2);
+        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
+        assert!(shared.lock().unwrap().hold);
+        // RUN: armed again
+        ui.m.run = RunState::Run;
+        steps(&mut ui, 1);
+        assert!(!shared.lock().unwrap().hold);
+        // no answer: the STOP ends after STOP_FINAL_WAIT anyway
+        shared.lock().unwrap().queue.clear();
+        shared.lock().unwrap().queue.push_back(frame(5, true, 10_000_000, pairs.clone()));
+        steps(&mut ui, 2);
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_some());
+        steps(&mut ui, (STOP_FINAL_WAIT / 0.02) as usize + 2);
+        assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
+        // a shallow record: STOP holds the thread at once, without a final frame
+        ui.m.run = RunState::Run;
+        steps(&mut ui, 1);
+        shared.lock().unwrap().queue.push_back(frame(6, false, 100_000, raw(1.0)));
+        steps(&mut ui, 2);
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 1);
+        assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
+        crate::deepmeas::force(None);
     }
 
     // Break it catches (deepmeas.rs): with raw deep reads on, a pair record measured between two raw ones (Mean back
