@@ -14,9 +14,9 @@ a 4 MB read holds up to k times more frames, and each frame is cheaper to decode
 |---|---|---|---|---|
 | 1 us/div, 1 ch | 14 k at 1.25 GSa/s | 3 | 28 k -> 9.4 k | 142 -> 426 |
 | 2 us/div, 1 ch | 28 k at 1.25 GSa/s | 6 | 56 k -> 9.4 k | 71 -> 426 |
-| 10 us/div, 1 ch | 100 k at 625 MSa/s | 15 | 200 k -> 13.3 k | 20 -> 299 |
+| 10 us/div, 1 ch | 100 k at 625 MSa/s | 15 | 200 k -> 13.3 k | 20 -> 300 |
 | 10 us/div, 2 ch | 70 k at 625 MSa/s | 15 | 281 k -> 18.8 k | 14 -> 213 |
-| 100 us/div .. 1 ms/div, 1 ch | 100 k | 15 | 200 k -> 13.3 k | 20 -> 299 |
+| 100 us/div .. 1 ms/div, 1 ch | 100 k | 15 | 200 k -> 13.3 k | 20 -> 300 |
 
 From `live_compression_plan_by_time_base`. The frame ring (`max_frames`, 448 at 100 k points) and the trigger rate
 bound the batch too: a 1 kHz signal at 10 us/div gives 1 frame per ms whatever the read size.
@@ -40,11 +40,19 @@ Otherwise every sample is read, as before.
 
 ## What stays raw
 
-Every record the UI keeps is raw. After each compressed batch the acquisition thread plays the newest frame of the
-same batch once more without compression (`seq::read_raw_again`, before the next arm and before prearm), and that
-frame takes the newest frame's place in the queue. `acquire` makes the record from it: measurements, cursors, FFT,
-decode, history, autoset, the record shown after STOP. If the second read fails, the compressed frame is used and the
-status line says so.
+Every record the UI measures is raw. At most once per `compress::RAW_PERIOD` (200 ms) the acquisition thread plays
+the newest frame of a compressed batch once more without compression (`seq::read_raw_again`, before the next arm and
+before prearm), and that frame takes the newest frame's place in the queue. `acquire` makes the record from it:
+measurements, cursors, FFT, decode, history, autoset. If the second read fails, the compressed frame is used and the
+status line says so. A raw read after every batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab
+round 2); once per 200 ms it is a few reads a second.
+
+Between two raw records the newest record is of pairs. While running the UI does not measure those
+(`compress::hold`): the measurement shown stays that of the last raw record, so every value belongs to one record and
+the statistics count each raw record once; measurements update up to 5 times a second. STOP on a pair record asks the
+thread for the final frame raw (docs/fork/stop-exact.md: `final_replay` reads the whole newest frame of the last batch
+raw), so the record left on screen is raw. Batches of the live compression are not armed ahead (`acq.prearm`), so that
+read is always possible.
 
 The compressed frames are only drawn. `drawpipe::draw_frame` sends a frame of the live compression (`compress::live`:
 envelope, not roll or scan, at most 1 M deep) through the dense path: trigger refinement on the pairs with an even
@@ -61,12 +69,20 @@ span per column (brightness uniform along the span), as the record path already 
 | constant | where | value | meaning |
 |---|---|---|---|
 | `BLOCK_K` | `hal/src/dho/pairs.rs` | 2 | a pair is min and max of the same 2k samples (1: min of k samples, max of the next k) |
-| `MIN_FIRST` | `hal/src/dho/pairs.rs` | true | the first point of a pair is the minimum |
+| `ORDER` | `hal/src/dho/pairs.rs` | `Time` | the two points of a pair in the order the extremes first occur |
 | `LAYOUT.shift` | `hal/src/dho/pairs.rs` | 0 | points aligned with the record |
 | `POINTS_PER_COLUMN` | `ui/src/compress.rs` | 4 | sets k = floor(samples per column / 4) |
 | `SCREEN_COLUMNS` | `ui/src/compress.rs` | 1000 | columns k is computed for |
-| `K_MIN`, `K_MAX` | `ui/src/compress.rs` | 2, 0x0fff_ffff | smallest useful k, register field |
+| `K_MIN`, `K_MAX` | `ui/src/compress.rs` | 2, 16383 | smallest useful k; 0x1170 bits 13:0 (`seq::COMPRESS_K_MAX`) |
+| `RAW_PERIOD` | `ui/src/compress.rs` | 200 ms | least time between two raw reads of a compressed batch's newest frame |
 | `MAX_DEPTH` | `ui/src/compress.rs` | 1 M | deepest record of the live compression |
+
+Hardware guards in `hal/src/dho/seq.rs`: `compress_word` never writes the enable bit with k = 0 (the read stalls) and
+clamps k to 16383 (larger values wrap); `compress_k` keeps k <= memsel / 8; `compressed_len` asks for the most
+multiples of 8 points with points x k <= memsel. The FPGA delivers exactly 0x11f0 points and waits for samples until it
+has them: the stock rounding up asked for 3912 points at k = 256 at 1 M (1 001 472 samples, the window holds 1 000 584)
+and the c2h read of 7824 bytes timed out on the unit; k = 128 asked 1 000 448 and fitted. So neither the small read
+nor k itself: the length. Now 3904 points at k = 256.
 
 The drawing needs only `PAIR` = 2 (points 2i and 2i + 1 form a pair). `BLOCK_K` decides whether a glitch survives:
 with 1, an extreme in the half of a block whose point holds the other extreme is lost. If the unit shows `BLOCK_K` = 1,
@@ -78,11 +94,12 @@ off.
 | claim | level |
 |---|---|
 | 0x1170 = 0xc0000000 \| k compresses the play to ceil(memsel / k) points, aligned, alternating low/high | unit, k = 4 at 1 M (acquisition-start.md); time axis exact for k 16..200 at deep records |
-| pair = min and max of 2k samples, min first | assumption (`check` decides) |
-| a frame of the ring can be played again after a batch read | unit for the LA read and the segment stamp plays; not for an analog raw replay after a compressed one |
-| k down to 3 (1 us/div) | not shown; the stock live path uses k >= 2 only from 1001 samples per column |
+| pair = min and max of 2k samples from the window start, in time order | unit, 100 % of the points for k 3, 4, 15, 16, 64, 128, 1 and 2 ch (unitlab round 2); netlist simulation (k up to 16383, k = 0 stalls) |
+| k = 256 at 1 M time-out = TX length beyond the window | inferred from the sample counts above; unit re-test pending |
+| a frame of the ring can be played again after a batch read | unit: the raw replay returns the same record (round 2) |
+| k down to 3 (1 us/div) | unit (round 2) |
 | picture of pairs = software min/max of the raw record | host model only |
-| wfm/s gain | host estimate only |
+| wfm/s and CPU | unit round 2, raw read every batch: 2 ch 10 us/div 341 -> 409 frames/s, drops 18 -> 0, A53 92 % -> 23 %; 1 ch 1 and 100 us/div -7 to -9 %. With `RAW_PERIOD`: not measured |
 
 ## Host tests
 
@@ -123,7 +140,7 @@ Probe on the 1 kHz compensation output, CH1 and CH2 on the same probe or a secon
    Each run writes `/tmp/c$k.bin` (compressed) and `/tmp/c$k.bin.raw` (the same frame raw). Copy both to the host and
    run `oos-fpgad compress-check /tmp/c$k.bin.raw /tmp/c$k.bin --k $k` (or on the unit).
    - PASS for every k: the constants stand.
-   - LAYOUT DIFFERS: set `pairs::BLOCK_K`, `MIN_FIRST`, the shift as reported, rerun the host tests, repeat.
+   - LAYOUT DIFFERS: set `pairs::BLOCK_K`, `ORDER`, the shift as reported, rerun the host tests, repeat.
    - FAIL: the raw replay does not return the same record (compare the edge positions of `.raw` and the compressed
      read x k), or k is not honoured at that size. Then compression stays off; note the k where it breaks (`K_MAX`).
 3. Small k and the live geometry: repeat step 2 with `--tdiv 1e-6 --compress 3` and `--tdiv 1e-5 --compress 15`
@@ -147,9 +164,11 @@ Record the results here and in `docs/fork/unit-dho804.md`; flip the default only
 
 ## Risks and open points
 
-- The raw replay after a compressed read is not shown on the unit. If it fails, the UI's newest frame is compressed:
-  measurements then run on pairs (as for deep records today), not raw. Step 2 decides.
-- k = 3 to 15 is below what the stock live path uses; a minimum k of the FPGA would show as FAIL in step 3.
+- Measurements follow at up to 5 a second while compressed (`RAW_PERIOD`), not per record.
+- The mask unit's compression 0x1184 (`hal/src/dho/mask.rs`) is written with a 28-bit k (records / 1000 columns, up to
+  125 000 at 125 M). If 0x1184 has the 14-bit field of 0x1170, k above 16383 wraps there. Not changed here.
+- Time-ordered pairs carry which extreme came first; the trigger refinement on pairs does not use it yet (it averages
+  pairs, good to about a pair).
 - Trigger refinement on pairs is good to about one pair (a quarter column): an edge can move by one column between
   frames, a slightly wider edge in persistence than raw at the same rate.
 - The Settings change (k) depends on the model, so toggling a raw-only feature reconfigures the acquisition, as any

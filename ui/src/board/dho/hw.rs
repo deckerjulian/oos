@@ -643,7 +643,7 @@ pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut
     let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
     oos_hal::dho::seq::decode_volts_into(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)), &mut f.ch);
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
-    let k = s.compress.max(1) as usize;
+    let k = oos_hal::dho::seq::compress_k(s, p) as usize;
     if !hdr.is_empty() && header_probe() {
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
         log_header(hdr, &f.ch[tc], s, p.pre as usize / k, k);
@@ -747,22 +747,27 @@ fn window_below(s: &Settings, p: &hz::Params, cap: i64) -> Option<(u32, i64)> {
     Some((n as u32, lo - pre))
 }
 
-/// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch whose newest frame the deep
-/// measurements may read raw (`deep_raw_settings`), since the next batch would write the ring under it. Prearm gains at
+/// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch of the live compression or
+/// one whose newest frame the deep measurements may read raw (`deep_raw_settings`), since the next batch would write
+/// the ring under it. Prearm gains at
 /// short time bases; deep compressed records take most of a batch in the read anyway.
 fn prearm_keeps_replay(b: &Settings, p: &hz::Params, deep: Option<crate::deepmeas::Want>) -> bool {
-    deep.is_none() || deep_raw_settings(b, p).is_none()
+    !raw_newest(b, p) && (deep.is_none() || deep_raw_settings(b, p).is_none())
 }
 
 /// The raw read at STOP (docs/fork/stop-exact.md) of the newest frame of the batch `b` with `count` frames read just
-/// before: when the deep measurements want samples, the batch was read as pairs and its newest frame not already
-/// raw, and nothing was armed ahead (`ahead`: the ring is being written again).
+/// before, when that frame was read as pairs and not already raw and nothing was armed ahead (`ahead`: the ring is
+/// being written again): the whole frame for the live compression, the screen window for a deep record when the deep
+/// measurements want samples.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn final_replay(b: &Settings, p: &hz::Params, count: u32, newest_raw: bool, ahead: bool, deep: Option<crate::deepmeas::Want>) -> Option<Settings> {
-    if count == 0 || newest_raw || ahead || deep.is_none() {
+    if count == 0 || newest_raw || ahead {
         return None;
     }
-    deep_raw_settings(b, p)
+    if raw_newest(b, p) {
+        return Some(oos_hal::dho::seq::raw_settings(b));
+    }
+    deep.and_then(|_| deep_raw_settings(b, p))
 }
 
 /// The raw read of a deep record's screen window for the measurements (deepmeas.rs): the batch `b` read the whole
@@ -907,6 +912,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
         // the last raw read of a deep record's screen window for the measurements (deepmeas.rs)
         let mut deep_last: Option<std::time::Instant> = None;
+        // the last raw read of the newest frame of a live-compressed batch (compress.rs, at most one per RAW_PERIOD)
+        let mut comp_last: Option<std::time::Instant> = None;
         // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
         // raw), and whether arming is paused for a STOP (`Shared::hold`, docs/fork/stop-exact.md)
         let mut fresh: Option<(Settings, hz::Params, u32, bool)> = None;
@@ -1371,8 +1378,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         },
                         _ => None,
                     };
-                    // live compression: the newest frame once more, raw, before anything arms the FPGA again
-                    let raw_frame = if raw_newest(&b, &p) && count > 0 {
+                    // live compression: the newest frame once more, raw, before anything arms the FPGA again; at most
+                    // once per compress::RAW_PERIOD (each read cost 7-9 % of the frames at 1 channel on the unit)
+                    let raw_frame = if raw_newest(&b, &p) && count > 0 && comp_last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD) {
+                        comp_last = Some(std::time::Instant::now());
                         match seq::read_raw_again(&mut state, &b, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
                             Ok(()) => Some(decode(raw_dma.data(), &seq::raw_settings(&b), &p, 0)),
                             Err(e) => {
@@ -2092,10 +2101,10 @@ mod tests {
             assert!(raw_newest(&Settings { compress: k, ..Settings::default() }, &p));
         }
         // 10 us/div, one channel: 100 k points at 625 MSa/s (the Auto depth cap), 200 kB raw per frame become 13 kB,
-        // 20 frames per batch become 299 (then the frame ring, 448, is the limit)
+        // 20 frames per batch become 300 (then the frame ring, 448, is the limit)
         let (k, fb, frames, raw_frames, p) = plan(10e-6, false);
         assert_eq!((p.rate, p.memsel, k, raw_frames), (625_000_000, 100_000, 15, 20), "{:?}", p);
-        assert_eq!((fb, frames), (13_344, 299));
+        assert_eq!((fb, frames), (13_328, 300));
         // the model needs every sample
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
@@ -2140,6 +2149,18 @@ mod tests {
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
         assert!(prearm_keeps_replay(&batch_plan(&s, &p), &p, w));
+        // the live compression at 10 us/div: the whole newest frame raw at STOP, with or without deep measurements;
+        // no arming ahead for its batches
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        let mut s = settings(&m, false);
+        live_compress(&m, &mut s);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        let b = batch_plan(&s, &p);
+        assert!(b.compress > 1 && raw_newest(&b, &p));
+        let r = final_replay(&b, &p, 3, false, false, None).expect("raw newest at STOP");
+        assert_eq!((r.compress, r.window), (1, None));
+        assert!(final_replay(&b, &p, 3, true, false, None).is_none(), "newest frame already raw");
+        assert!(!prearm_keeps_replay(&b, &p, None));
     }
 
     // Break it catches: a raw deep read of the wrong part of the record (screen or trigger point outside it), one
