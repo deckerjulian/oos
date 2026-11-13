@@ -217,9 +217,15 @@ impl Ui {
         }
         self.m.zoom = false;
         self.present_record(first);
+        if self.look == reflook::RefLook::TakeOver {
+            self.solo_reference(first);
+        }
         self.meas_src = WaveId::Ref(first);
         self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
         self.m.meas2.clear();
+        self.meas_own.clear();
+        self.meas_cfg = None;
+        self.ensure_meas_own();
         self.m.meas_labels = false;
         self.close_menu();
         self.autoset_reference();

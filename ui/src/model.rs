@@ -48,7 +48,7 @@ pub fn src_ok(s: usize) -> bool {
 
 /// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
 /// that record's sample interval. Refs are not packed into the channel/math index.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum WaveId {
     Ch(usize),
     Ref(usize),

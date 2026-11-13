@@ -172,7 +172,7 @@ impl Ui {
             if !ana.valid {
                 continue;
             }
-            let v = self.meas_of(ana, k);
+            let v = self.meas_number(id, k);
             if !v.is_finite() {
                 continue;
             }

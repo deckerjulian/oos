@@ -58,7 +58,16 @@ impl Ui {
         for (i, item) in self.measurement_catalog().into_iter().enumerate() {
             let x = 208 + i as i32 % 4 * 195;
             let y = 170 + i as i32 / 4 * 43;
-            rows.push(Row { it: item, label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(x, y, 183, 40), ctl: Ctl::Button });
+            let added = match item {
+                Item::MeasAdd(k) => self.m.meas.iter().position(|&(mk, id)| mk == k && id == self.meas_src),
+                _ => None,
+            };
+            if let Some(index) = added {
+                rows.push(Row { it: item, label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(x, y, 124, 40), ctl: Ctl::Button });
+                rows.push(Row { it: Item::MeasCfg(index as u16), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(x + 128, y, 55, 40), ctl: Ctl::Button });
+            } else {
+                rows.push(Row { it: item, label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(x, y, 183, 40), ctl: Ctl::Button });
+            }
         }
         Dlg { r, close, back: None, rows, heads: Vec::new() }
     }
