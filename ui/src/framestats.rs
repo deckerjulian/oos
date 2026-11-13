@@ -157,7 +157,8 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
     let window = m.time_per_div() as f64 * HDIV as f64;
     let t_first = m.delay as f64 - window / 2.0;
     // the record's trigger point and screen window (`board::to_record`; roll and scan do not take the fast path)
-    if f.roll || f.scan {
+    // min/max pairs of the live compression are no samples (compress.rs): the raw newest frame of the batch counts
+    if f.roll || f.scan || crate::compress::live(f) {
         return false;
     }
     let ti = crate::board::trigger_point(f, m, n, window, t_first).unwrap_or(f.pre as f64);

@@ -38,7 +38,9 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     let (w, h) = (ph.w, ph.h);
     let tdiv = m.time_per_div() as f64;
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
+    // min/max pairs of the live compression (compress.rs) take the dense path with a pair deposit
+    let pairs = crate::compress::live(f) && x_per_sample <= 0.5;
+    if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan) {
         if let Some(t) = crate::sparse::draw(ph, m, f, 24) {
             return t;
         }
@@ -60,7 +62,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
     let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
     let half = (tdiv * HDIV as f64 / 2.0 / f.dt) as usize;
-    let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
+    let col = if pairs { crate::compress::smooth_len(x_per_sample) } else { (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize };
     let edge = if on_la {
         None
     } else {
@@ -91,7 +93,9 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
         let vpd = ch.volts_per_div();
         let sign = -1.0;
         let xm = crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
-        if m.dots {
+        if pairs {
+            crate::compress::deposit_pairs(&mut ph.map[c], w, h, &f.ch[c], &xm, 24, m.dots);
+        } else if m.dots {
             crate::fastdraw::deposit_dots(&mut ph.map[c], w, h, &f.ch[c], &xm, 24);
         } else {
             crate::fastdraw::deposit(&mut ph.map[c], w, h, &f.ch[c], &xm, 24);

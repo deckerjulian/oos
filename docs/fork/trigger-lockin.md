@@ -268,9 +268,14 @@ Several channels:
 - CH1, CH2 on the probe-comp output, CH3 open (4-channel mode): the measure unit gave CH3 the signal
   (-0.05..0.33 V) and refused CH1 and CH2; the records took over correctly. So the slot map from the DDR core order
   is wrong for 2 and 4 channels (`hal::dho::levels`).
-- With 3 and 4 channels the unit rebooted, twice. Both times an autoset ran with mask 0x7 or 0xf. The deep search
-  record (1 M points) is then one read of 8 MB (`batch_plan` reads at least one frame whatever its size). That
-  read is the suspect; not reproduced on purpose.
+- The unit restarted twice in that window. Evidence says neither was a crash: after the first, `dmesg` ran at
+  863 s with an uptime of 1 min, i.e. a kexec start of the OOS kernel (oos-update's install/trial start), not a
+  reset; the user also power-cycled deliberately at about 16:55 to confirm build 165356, and was changing the time
+  base in the second window. `kernel.panic = 0`, so a panic would hang, not restart. pstore (ramoops is registered;
+  mounted read-only for the check, then unmounted) holds no `dmesg-ramoops` panic record, only the console of the
+  last boot, which ends in a regular kexec start. So no crash evidence for the 8 MB read.
+- The CH1 + CH3 trigger level of 1.37 V was not reproduced; its log line went with the restart. It ran the
+  measure-unit path with two channels, which is now off (one channel only).
 
 Trigger status from the SCU (`trig.hw_status = on`, oos-ui restarted, CH1 probe-comp, 500 us/div, 10 reads of
 `:TRIGger:STATus?` each): Auto sweep level 0.15 V TD 10/10 (74 frames/s); level 0.6 V AUTO 10/10 (6 frames/s);
@@ -282,6 +287,30 @@ restored afterwards.
 Fix (branch fix/autoset-multich): the measure unit only with one channel on; the deep record at 100 k points with
 more than one channel (0.8 MB at 4 channels, 33 samples a period at 125 kHz). Open: whether an 8 MB read itself
 crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read), and the real slot map.
+
+## Slot map procedure (for unitlab)
+
+The measure unit's numbering of the ADC cores per channel mode is unknown for 2 and 4 channels (the DDR core order
+did not match). `:DEBug:SLOTs?` (fork, needs a build with branch fix/c2h-chunks) runs the unit once (2^18 samples
+per core) and answers the previous query: `<request>;min,max,mean;...` for slots 0..7 (12-bit min and max, mean on
+the 16-bit scale). Send it twice about 0.3 s apart and use the second answer; repeat 3 times per case.
+
+Set-up: probe-comp (1 kHz, 0.3 V) on exactly one input at a time, the other inputs open. Every channel 100 mV/div,
+offset 0, DC, Auto bandwidth, 500 us/div, Auto sweep, Normal acquisition. Restore the user's settings afterwards.
+
+| Case | Channels on | Signal on | Expect |
+|---|---|---|---|
+| 1 | CH1 | CH1 | all 8 slots swing |
+| 2 | CH1, CH2 | CH1 | 4 slots swing, 4 flat: CH1's slots in 2-channel mode |
+| 3 | CH1, CH2 | CH2 | the other 4 |
+| 4 | CH1, CH3 | CH1 | as case 2 or not: whether the pair matters |
+| 5 | CH2, CH4 | CH2 | the higher/lower split for another pair |
+| 6 | CH1-CH4 | CH1 | 2 slots swing: CH1's slots in 4-channel mode |
+| 7-9 | CH1-CH4 | CH2, CH3, CH4 in turn | their slots |
+
+A slot swings when max - min is well above the flat slots' (open input: a few codes). Write the table of slots per
+channel and mode into this section; `hal::dho::levels::slots` then takes it, and autoset may use the unit with
+several channels again.
 
 ## Status (feat/trigger)
 

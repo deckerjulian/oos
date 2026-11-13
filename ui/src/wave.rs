@@ -537,6 +537,17 @@ impl Source {
         None
     }
 
+    /// Hardware source: asks for one raw measure-unit run (`Shared::slots_want`) and returns the latest answer; None
+    /// for other sources.
+    pub fn hw_slots(&self, want: u64) -> Option<Option<crate::board::SlotDump>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.slots_want = Some(want);
+            return Some(g.slots);
+        }
+        None
+    }
+
     /// Hardware source with `trig.hw_status = on`: the latest trigger status of a batch (`Shared::trig_fired`).
     pub fn hw_trig_fired(&self) -> Option<(u64, Option<bool>)> {
         if let Source::Hw { shared, .. } = self {
