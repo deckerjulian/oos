@@ -352,23 +352,6 @@ pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
     Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false }
 }
 
-/// Decodes the last `keep` of the first `shown` frames of `fb` bytes in `data`: the queue keeps no more, the frames
-/// before them would be dropped unseen. `n` still counts every frame of the batch, so the decoded ones carry the same
-/// sequence numbers as when all were decoded.
-pub fn decode_tail(data: &[u8], fb: usize, shown: usize, keep: usize, n: &mut u64, mut dec: impl FnMut(&[u8], u64) -> Frame) -> Vec<Frame> {
-    let avail = if fb == 0 { 0 } else { shown.min(data.len() / fb) };
-    let skip = avail.saturating_sub(keep);
-    *n += skip as u64;
-    data.chunks_exact(fb.max(1))
-        .take(avail)
-        .skip(skip)
-        .map(|chunk| {
-            *n += 1;
-            dec(chunk, *n)
-        })
-        .collect()
-}
-
 /// The LA words of the acquisition `p` (read with `seq::acquire_la`) as a record: word j of the window at
 /// (start + j - trigger index) / LA rate from the hardware trigger point (la.md 3.3; the trigger index is [A] until
 /// test T1).
@@ -947,7 +930,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             pipe.feed(&dma.data()[..older * fb], fb, stamp, Box::new(move |c| decode(c, &bs, &ps, 0)));
                         }
                     }
-                    let mut frames = decode_tail(dma.data(), fb, shown as usize, QUEUE_MAX, &mut n, |chunk, seq| Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, seq) });
+                    let mut frames: Vec<Frame> = dma
+                        .data()
+                        .chunks_exact(fb)
+                        .take(shown as usize)
+                        .map(|chunk| {
+                            n += 1;
+                            Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
+                        })
+                        .collect();
                     if after.is_some_and(|a| a.clear) {
                         if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
                             status(format!("average clear: {}", e));
@@ -1340,28 +1331,6 @@ mod tests {
         }
         assert!(checked > 1000 && la_seen, "{} set-ups checked, LA among them: {}", checked, la_seen);
         assert!(bad.is_empty(), "{} padded set-ups, e.g. {:?}", bad.len(), &bad[..bad.len().min(8)]);
-    }
-
-    // Break it catches: a batch loop that decodes every frame of a 1000-frame batch although the queue keeps 96, or
-    // that numbers the kept frames differently from a full decode.
-    #[test]
-    fn a_batch_decodes_only_the_frames_the_queue_keeps() {
-        let p = hz::Params { ratio: 1, rate: 1_250_000_000, memsel: 64, dot_fs: 800_000, seg: 0, max_frames: 1000, pre: 32, post: 32 };
-        let s = Settings { mask: 1, ..Settings::default() };
-        let fb = seq_bytes(&s, &p);
-        let data: Vec<u8> = (0..1000 * fb).map(|i| (i * 7 % 251) as u8).collect();
-        for shown in [0usize, 1, 50, crate::board::QUEUE_MAX, crate::board::QUEUE_MAX + 1, 1000, 1200] {
-            let (mut n_all, mut n_tail, mut calls) = (5u64, 5u64, 0usize);
-            let all: Vec<Frame> = data.chunks_exact(fb).take(shown).map(|c| { n_all += 1; decode(c, &s, &p, n_all) }).collect();
-            let tail = decode_tail(&data, fb, shown, crate::board::QUEUE_MAX, &mut n_tail, |c, k| { calls += 1; decode(c, &s, &p, k) });
-            assert!(calls <= crate::board::QUEUE_MAX && calls == tail.len(), "{} decoded of {}", calls, shown);
-            assert_eq!(n_tail, n_all, "sequence counter after {} frames", shown);
-            let want = &all[all.len().saturating_sub(crate::board::QUEUE_MAX)..];
-            assert_eq!(tail.len(), want.len());
-            for (a, b) in tail.iter().zip(want) {
-                assert_eq!((a.seq, a.pre, &a.ch), (b.seq, b.pre, &b.ch));
-            }
-        }
     }
 
     #[test]
