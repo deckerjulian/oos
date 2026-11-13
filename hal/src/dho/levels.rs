@@ -102,9 +102,16 @@ pub fn volts(c: f64, v: &Vert) -> f64 {
     (c - 32768.0) * dg / 7500.0 * v.scale - v.offset
 }
 
+/// How far the means of one channel's cores may lie apart beyond a tenth of its swing: 0.05 div (7500 codes per
+/// division on the 16-bit scale, `volts`). The cores of one channel differ by their own DC offsets: on the unit
+/// (2026-11-13, round 8) one ADC lane sat about 0.024 div (~175 codes) above the others at 100 and 500 mV/div, and the
+/// 64 codes allowed before refused an open input (CH3, cores 4/6) in 4-channel mode. Twice that outlier still refuses
+/// a core that shows another channel's signal.
+pub const AGREE_CODES: f64 = 375.0;
+
 /// The levels of every channel of `mask` from one or more runs (lowest and highest over all runs, mean of the
 /// means). None for a channel without slots, or whose slots disagree: their means further apart than a tenth of the
-/// channel's swing plus 64 codes, which a wrong slot mapping gives unless the channels carry the same signal.
+/// channel's swing plus `AGREE_CODES`, which a wrong slot mapping gives unless the channels carry the same signal.
 pub fn channel_levels(runs: &[[Slot; 8]], mask: u32, vert: &[Vert; 4]) -> [Option<Levels>; 4] {
     std::array::from_fn(|ch| {
         let sl = slots(mask, ch);
@@ -119,7 +126,7 @@ pub fn channel_levels(runs: &[[Slot; 8]], mask: u32, vert: &[Vert; 4]) -> [Optio
         let means: Vec<f64> = sl.iter().map(|&k| runs.iter().map(|r| r[k].mean).sum::<f64>() / runs.len() as f64).collect();
         let (mlo, mhi) = means.iter().fold((f64::MAX, f64::MIN), |(a, b), &m| (a.min(m), b.max(m)));
         let swing = (hi - lo) as f64 * 16.0;
-        if mhi - mlo > 0.1 * swing + 64.0 {
+        if mhi - mlo > 0.1 * swing + AGREE_CODES {
             return None;
         }
         let mean = means.iter().sum::<f64>() / means.len() as f64;
@@ -210,6 +217,15 @@ mod tests {
         let l = channel_levels(&[s], 0b0111, &v);
         assert!(l[0].is_some_and(|x| x.hi - x.lo > 2.0) && l[1].is_some_and(|x| x.hi - x.lo > 2.0));
         assert!(l[2].is_some_and(|x| x.hi - x.lo < 0.05) && l[3].is_none());
+        // round 8 on the unit: CH3 open in 4-channel mode, core 6 on the lane that sits ~175 codes (0.024 div) above
+        // the others. A flat input with that core offset is still a reading
+        let mut s = [flat; 8];
+        s[6] = Slot { min: 2051, max: 2067, mean: 32768.0 + 175.0 };
+        let l = channel_levels(&[s], 0xf, &v);
+        assert!(l[2].is_some_and(|x| x.hi - x.lo < 0.1), "{:?}", l[2]);
+        // a core that shows a signal 0.1 div away on a flat channel is not
+        s[6] = Slot { min: 2090, max: 2106, mean: 32768.0 + 750.0 };
+        assert!(channel_levels(&[s], 0xf, &v)[2].is_none());
         // four channels: CH1 on slots 0/2 a 2 V square, CH4 on 5/7 flat; the others flat at other levels
         let mut s = [flat; 8];
         s[0] = sq;

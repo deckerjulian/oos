@@ -223,8 +223,9 @@ The FPGA's ADC measure unit (private RE notes docs/fpga.md "Measure unit", self-
   read-out word 32768 + (c - 32768) x dg (dg = the cal record's digital gain without the x2), and its volts follow
   from `seq::volts`. Host test: the levels equal the record path's volts for the same codes at several gains,
   scales and offsets.
-- Plausibility: a channel's slots must agree (means within a tenth of the swing plus 64 codes; a wrong slot mapping
-  shows up there unless the channels carry the same signal), and the mean must lie between the extremes. Codes 0 or
+- Plausibility: a channel's slots must agree (means within a tenth of the swing plus 375 codes, 0.05 div; a wrong slot
+  mapping shows up there unless the channels carry the same signal). The floor was 64 codes: an open CH3 in 4-channel
+  mode was refused on the unit (round 8), its cores 4/6 apart by one ADC lane's DC offset (~175 codes, 0.024 div), and the mean must lie between the extremes. Codes 0 or
   4095 mark clipping.
 
 The auto set-up (hardware source) asks the acquisition thread for 24 runs (about 40 ms of signal, the full swing

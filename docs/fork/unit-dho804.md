@@ -314,6 +314,29 @@ Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 6", "Round 
 | Time zone from DHCP | pass | option 100 present; `CET (DHCP)` in Date and time |
 | IPv6 | pass, address not stable | SLAAC global + link-local, `onlink6` = the RA prefix, web/SCPI/SSH over IPv6 from the LAN, mDNS AAAA. Both addresses change at every boot (stable-privacy secret not kept) |
 
+### Round 8 (builds 20261113-204100 and -210854, dho804 8453168 and 4fc44f8)
+
+Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 8".
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| MAC at probe, IPv6 | pass | no random MAC; same global and link-local address over five starts, `secret kept` |
+| Compression default | pass | 1 ch 10 us/div 451 -> 502-510, 2 ch 10 us/div 354 -> 436 (0 drops), A53 ~85 % -> ~16 %; 1 us/div level |
+| Raw fallbacks | pass | `compress k 1` in Peak, Average, HiRes, AC, 20 MHz, trigger AC/LFR, zoom, FFT, decoder, spectrum, mask, zone, segments, XY, Single; roll still shows k 15 |
+| DVM lanes | lane 2 off | open CH3: lanes 0/1/3 within 3 mV, lane 2 +11..13 mV at 500 mV/div; AUTO picks lane 2 |
+| Hardware mask | partly | pass at 20 and 100 us/div; misses a 10 us shift at 200 us/div; fails every clean frame at 1 ms/div; at 100 k depth the acquisition stops. Slots 0/1 right |
+| Hardware zone | partly | qualifies; 147/s at 20 us/div 10k, 94/s at 200 us/div 10k; stops the acquisition at 100 k; latch frames stay 0 |
+| Measure-unit slots | pass | all six cases as the table; AUTO case 2 uses the unit, cases 5/6 fall back to records (CH3 None) |
+
+### Round 9 (build 20261113-210854): core offsets, 2-channel lanes
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| `oos-fpgad adc slots/offset` | broken | `adc` is missing from the register-command list in `main.rs` (line 307), so it prints nothing and exits 0 |
+| Far core | seen by the measure unit | `:DEBug:SLOTs?`, CH3 alone open, 1.25 GSa/s: slot 6 +8.7 steps from the average, the rest within -4.2..+2.7 |
+| `cal.core_offset = tight` | does not trim | log `core offsets of ADC mode 2: core order not found`; no overlay file; slots unchanged; cal_adc.hex sha256 unchanged |
+| 2-channel lane fix | pass | CH3 open at +2 V reads -26..-27 mV with CH1 on or off and either trigger source (was +143 mV); residual about -13 mV per volt of offset in every state |
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
