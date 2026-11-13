@@ -22,3 +22,8 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = false
+
+# Keep long-reference DSP and Eye analysis responsive in the source watcher.
+# The UI itself keeps the normal fast incremental development build.
+[profile.dev.package.oos-dsp]
+opt-level = 2

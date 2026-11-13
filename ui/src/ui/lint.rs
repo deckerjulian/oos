@@ -1575,6 +1575,11 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     assert!(u.last[0].is_none());
     assert!(matches!(u.src, Source::Demo { .. }));
 
+    // The following fixtures replace refs directly, rather than importing a new
+    // workflow record. Leave the import's stopped screen gate before testing
+    // full-record analyser adapters at unrelated sample intervals.
+    u.return_to_live();
+
     // three phase refs, no live record
     let (f, a, pn, pdt) = (50.0, 10.0, 2000usize, 1e-4);
     let w = 2.0 * std::f64::consts::PI * f;

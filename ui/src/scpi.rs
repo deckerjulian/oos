@@ -12,6 +12,9 @@
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :REFerence:SLOT R1..R10, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
 //! :SIM:PRESet <name>, :SIM:SLOT R1..R10, :SIM:PLAY ON|OFF, :SIM:SHOW ON|OFF,
+//! :SIM:SSC:MODE OFF|DOWN|CENTER, :SIM:SSC:DEViation <fraction>, :SIM:SSC:FREQuency <Hz>,
+//! :SIM:JITTer:DCD <seconds pp>|:CORRelated <seconds RMS>|:CORNer <Hz>, :SIM:PATTern PRBS7..31.
+//! SIM configuration is applied together on the next :SIM:PLAY ON. :SIM:BUSY? reports background generation.
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
@@ -341,14 +344,12 @@ impl Scpi {
             'lines: while let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') {
                 let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
                 let line = String::from_utf8_lossy(&line).trim().to_string();
-                for cmd in line.split(';') {
-                    if let Some(resp) = self.exec(ui, cv, cmd.trim()) {
-                        let mut out = resp;
-                        out.push(b'\n');
-                        if !send(&mut self.clients[i].s, &out) {
-                            closed = true;
-                            break 'lines;
-                        }
+                let mut response = self.exec_line(ui, cv, &line);
+                if !response.is_empty() {
+                    response.push(b'\n');
+                    if !send(&mut self.clients[i].s, &response) {
+                        closed = true;
+                        break 'lines;
                     }
                 }
             }
@@ -380,6 +381,9 @@ impl Scpi {
     }
 
     fn exec(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
+        if let Some(error) = ui.take_sim_error() {
+            self.err.push(format!("-224,\"SIM generation failed\" {error}"));
+        }
         let r = self.exec_cmd(ui, cv, cmd);
         // a client that never asks for its errors, or sends megabytes of nonsense, must not fill the memory
         for e in &mut self.err {
@@ -438,6 +442,11 @@ impl Scpi {
             ui.key(crate::ui::key::CLEAR);
             return None;
         }
+        if !query && nodes.len() == 1 && kw(nodes[0], "STOP") && ui.sim_generating() {
+            let _ = ui.sim_play_set(false);
+            ui.mark_changed();
+            return None;
+        }
         // A reference capture uses the same acquisition state as the screen.
         // RUN and STOP are assignments, so repeating either must not toggle it.
         // Call the shared record handler directly: an open UI dialog must not
@@ -456,7 +465,7 @@ impl Scpi {
                 if ui.m.run == RunState::Run {
                     ui.record_key(key);
                 } else {
-                    ui.sim_play_set(false);
+                    let _ = ui.sim_play_set(false);
                 }
             } else {
                 ui.record_key(crate::ui::key::SINGLE);
@@ -847,7 +856,7 @@ impl Scpi {
                 return t(&format!("{:?}", ui.m.view).to_ascii_uppercase());
             }
             match VIEWS.iter().find(|(k, _)| kw(arg, k)) {
-                Some((_, v)) => ui.m.view = *v,
+                Some((_, v)) => ui.set_analysis_view(*v),
                 None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
             }
             return None;
@@ -1332,6 +1341,53 @@ impl Scpi {
     fn sim_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
         let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "BUSY") && query {
+            return t(if ui.sim_generating() { "1" } else { "0" });
+        }
+        if n.len() == 2 && kw(n0, "SSC") && kw(n[1], "MODE") {
+            if query {
+                return t(if !ui.m.sim_ssc { "OFF" } else if ui.m.sim_ssc_center { "CENTER" } else { "DOWN" });
+            }
+            match arg.trim().to_ascii_uppercase().as_str() {
+                "OFF" => ui.m.sim_ssc = false,
+                "DOWN" => { ui.m.sim_ssc = true; ui.m.sim_ssc_center = false; }
+                "CENTER" | "CENT" => { ui.m.sim_ssc = true; ui.m.sim_ssc_center = true; }
+                _ => { self.err.push("-224,\"Illegal parameter value\" SSC mode".into()); return None; }
+            }
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 2 && (kw(n0, "SSC") || kw(n0, "JITTer")) {
+            let setting = if kw(n0, "SSC") {
+                if kw(n[1], "DEViation") { Some((&mut ui.m.sim_ssc_deviation, 0.0, 0.05)) }
+                else if kw(n[1], "FREQuency") { Some((&mut ui.m.sim_ssc_hz, 1e3, 1e6)) }
+                else { None }
+            } else if kw(n[1], "DCD") { Some((&mut ui.m.sim_dcd_pp, 0.0, 100e-12)) }
+            else if kw(n[1], "CORRelated") { Some((&mut ui.m.sim_corr_rj, 0.0, 50e-12)) }
+            else if kw(n[1], "CORNer") { Some((&mut ui.m.sim_corr_hz, 1e3, 100e6)) }
+            else { None };
+            if let Some((value, min, max)) = setting {
+                if query { return t(&e(*value)); }
+                match arg.trim().parse::<f64>() {
+                    Ok(v) if v.is_finite() && v >= min && v <= max => *value = v,
+                    _ => { self.err.push("-224,\"Illegal parameter value\" SIM setting".into()); return None; }
+                }
+                ui.mark_changed();
+                return None;
+            }
+        }
+        if n.len() == 1 && (kw(n0, "PATTern") || n0.eq_ignore_ascii_case("PAT")) {
+            if query { return t(&format!("PRBS{}", ui.m.sim_prbs)); }
+            let a = arg.trim().to_ascii_uppercase();
+            let order = a.strip_prefix("PRBS").unwrap_or(&a).trim_start_matches('-').parse::<u8>().ok();
+            if let Some(p @ (7 | 9 | 13 | 15 | 23 | 31)) = order {
+                ui.m.sim_prbs = p;
+                ui.mark_changed();
+            } else {
+                self.err.push("-224,\"Illegal parameter value\" PRBS order".into());
+            }
+            return None;
+        }
         if kw(n0, "PRESet") {
             if query {
                 return t(ui.sim_preset_name());
@@ -1367,8 +1423,10 @@ impl Scpi {
             let on = if arg.trim().is_empty() { Some(true) } else { parse_bool(arg) };
             return match on {
                 Some(on) => {
-                    ui.sim_play_set(on);
-                    ui.mark_changed();
+                    match ui.sim_play_set(on) {
+                        Ok(()) => ui.mark_changed(),
+                        Err(error) => self.err.push(format!("-224,\"Illegal parameter value\" {}", error)),
+                    }
                     None
                 }
                 None => {
@@ -1632,6 +1690,73 @@ mod tests {
         assert_eq!(ui.m.run, RunState::Stop);
         ui.step(0.5);
         assert_eq!(captures(&ui), 2.0);
+    }
+
+    #[test]
+    fn raw_tcp_compound_queries_share_one_response_message() {
+        let (mut s, mut ui, cv) = session();
+        let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.write_all(b"*IDN?;*OPC?\n").unwrap();
+        for _ in 0..3 { s.poll(&mut ui, &cv); }
+        let mut response = std::io::BufReader::new(client.try_clone().unwrap());
+        let mut first = String::new();
+        std::io::BufRead::read_line(&mut response, &mut first).unwrap();
+        assert!(first.starts_with("OOS,") && first.ends_with(";1\n"), "{first:?}");
+        client.write_all(b"*OPC?\n").unwrap();
+        for _ in 0..3 { s.poll(&mut ui, &cv); }
+        let mut second = String::new();
+        std::io::BufRead::read_line(&mut response, &mut second).unwrap();
+        assert_eq!(second, "1\n", "compound replies must not leave a stray response for the next query");
+    }
+
+    #[test]
+    fn a_remote_eye_view_analyzes_a_stopped_reference_without_another_capture() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, ":SIM:PRES \"USB 2.0 HS\";:SIM:PLAY ON;:STOP");
+        let acquired = captures(&ui);
+        line(&mut s, &mut ui, &cv, ":VIEW EYE");
+        let unit_interval: f64 = line(&mut s, &mut ui, &cv, ":EYE:ITEM? UI").parse().unwrap();
+        assert!((unit_interval * 480e6 - 1.0).abs() < 0.02, "UI {unit_interval}");
+        let edges: f64 = line(&mut s, &mut ui, &cv, ":EYE:ITEM? EDGES").parse().unwrap();
+        assert!(edges > 1000.0, "Eye needs the full reference, got {edges} edges");
+        assert_eq!(captures(&ui), acquired, "opening Eye must not acquire another window");
+        assert_eq!(ui.m.run, RunState::Stop);
+    }
+
+    #[test]
+    fn sim_advanced_parameters_validate_without_regenerating_the_record() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, ":SIM:SSC:MODE CENTER;:SIM:SSC:DEV 0.007;:SIM:SSC:FREQ 40000;:SIM:JITT:DCD 4e-12;:SIM:JITT:CORR 2e-12;:SIM:JITT:CORN 2e6;:SIM:PATT PRBS-13");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:SSC:MODE?;:SIM:PATT?;:SIM:BUSY?"), "CENTER;PRBS13;0");
+        for (command, expected) in [
+            (":SIM:SSC:DEV?", 0.007), (":SIM:SSC:FREQ?", 40000.0),
+            (":SIM:JITT:DCD?", 4e-12), (":SIM:JITT:CORR?", 2e-12), (":SIM:JITT:CORN?", 2e6),
+        ] {
+            let actual: f64 = line(&mut s, &mut ui, &cv, command).parse().unwrap();
+            assert!((actual - expected).abs() <= expected.abs() * 1e-6, "{command}: {actual}");
+        }
+        assert!((0..NREF).all(|slot| ui.ref_volts(slot).is_empty()), "configuration must not replace sources until Play");
+        for command in [":SIM:SSC:MODE BAD", ":SIM:SSC:DEV NaN", ":SIM:SSC:FREQ 0", ":SIM:JITT:DCD -1", ":SIM:JITT:CORR inf", ":SIM:JITT:CORN 1e30", ":SIM:PATT PRBS8"] {
+            line(&mut s, &mut ui, &cv, command);
+            assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "{command}");
+        }
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:SSC:MODE?;:SIM:PATT?"), "CENTER;PRBS13");
+        assert_eq!(ui.m.sim_ssc_deviation, 0.007);
+        assert_eq!(ui.m.sim_dcd_pp, 4e-12);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    #[test]
+    fn sim_rejects_an_oversized_full_ssc_record_without_changing_the_live_session() {
+        let (mut s, mut ui, cv) = session();
+        let running = ui.m.run;
+        line(&mut s, &mut ui, &cv, ":SIM:PRES \"PCIe 4.0\";:SIM:SSC:FREQ 1000;:SIM:PLAY ON");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
+        assert_eq!(ui.m.run, running);
+        assert!(!ui.record_mode());
+        assert!((0..NREF).all(|slot| ui.ref_volts(slot).is_empty()));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:BUSY?"), "0");
     }
 
     #[test]

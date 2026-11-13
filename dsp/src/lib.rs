@@ -33,6 +33,7 @@ pub mod dpt;
 pub mod edges;
 pub mod expr;
 pub mod eye;
+pub mod hss;
 pub mod identify;
 pub mod interp;
 pub mod linecode;

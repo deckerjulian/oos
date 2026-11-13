@@ -162,6 +162,7 @@ impl Ui {
     }
 
     pub fn return_to_live(&mut self) {
+        self.sim_cancel_generation();
         self.set_offline(false);
         self.session_is_sim = false;
         self.sim_play = false;
@@ -203,6 +204,7 @@ impl Ui {
         if traces.is_empty() || traces.iter().any(|t| t.v.len() < 2 || !t.dt.is_finite() || t.dt <= 0.0 || !t.t0.is_finite()) {
             return Err("The file needs at least two samples and a valid sample interval.".into());
         }
+        self.sim_cancel_generation();
         self.remember_live();
         self.set_offline(true);
         self.session_is_sim = false;
@@ -241,6 +243,7 @@ impl Ui {
     }
 
     pub(crate) fn record_key(&mut self, key_code: u8) -> bool {
+        if matches!(key_code, key::RUNSTOP | key::SINGLE | key::FORCE) { self.sim_cancel_generation(); }
         if !self.record_mode() { return false; }
         if key_code == key::DEFAULT || (0x15..=0x18).contains(&key_code) {
             self.return_to_live();
@@ -377,6 +380,7 @@ impl Ui {
         J::obj(&[
             ("mode", J::s(if self.session_is_sim { "sim" } else if self.record_mode() { "reference" } else { "live" })),
             ("running", J::Bool(self.m.run == RunState::Run)),
+            ("busy", J::Bool(self.sim_generating())),
             ("source", J::s(&if self.record_mode() { format!("R{}", self.active_reference() + 1) } else { format!("CH{}", self.m.active + 1) })),
             ("captures", J::Num(self.replay.captures as f64)),
             ("status", J::s(status)),

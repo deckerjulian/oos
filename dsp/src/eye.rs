@@ -1304,43 +1304,89 @@ pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
     if ratios.is_empty() { f64::NAN } else { ratios.iter().sum::<f64>() / ratios.len() as f64 }
 }
 
-fn same_edge_hz(c: &Clock) -> Vec<f64> {
-    let mut f = Vec::new();
-    let mut i = 0;
-    while i + 2 < c.edges.len() {
-        let dt = c.edges[i + 2] - c.edges[i];
-        if dt > 0.0 {
-            f.push(1.0 / dt);
-        }
-        i += 2;
+/// Local unit rates between equal-polarity transitions, with their midpoint times.
+/// NRZ run lengths are integer UIs: counting them prevents a 3-bit run from being
+/// misread as a third of the clock rate. As with clock recovery, this assumes the
+/// local timing error is small enough to identify the nearest integer UI count.
+fn same_edge_rates(c: &Clock) -> Vec<(f64, f64)> {
+    if !c.period.is_finite() || c.period <= 0.0 {
+        return Vec::new();
     }
-    f
+    let mut series = Vec::new();
+    for i in (0..c.edges.len().saturating_sub(2)).step_by(2) {
+        let (a, b) = (c.edges[i], c.edges[i + 2]);
+        let elapsed = b - a;
+        if a.is_finite() && b.is_finite() && elapsed > 0.0 {
+            let units = (elapsed / c.period).round().max(1.0);
+            let rate = units / elapsed;
+            if rate.is_finite() {
+                series.push((a + 0.5 * elapsed, rate));
+            }
+        }
+    }
+    series
 }
 
-/// Peak-to-peak of the per-cycle frequency deviation, parts per million of the constant-mean rate,
-/// and the per-cycle series in ppm.
+/// Peak-to-peak local frequency deviation, parts per million of its measured
+/// mean, and the per-cycle series in ppm. The recovered UI is used to count NRZ
+/// run lengths; a hinted UI rate twice a clock's cycle rate does not halve depth.
+/// Other per-cycle timing jitter is included in this frequency-deviation span.
 pub fn ssc_deviation(c: &Clock) -> (f64, Vec<f64>) {
-    let f0 = c.rate();
-    let f = same_edge_hz(c);
-    if !(f0 > 0.0) || f.len() < 2 {
+    let series = same_edge_rates(c);
+    if series.len() < 2 {
         return (f64::NAN, Vec::new());
     }
-    let ppm: Vec<f64> = f.iter().map(|x| (x - f0) / f0 * 1e6).collect();
+    let mean = series.iter().map(|(_, f)| f).sum::<f64>() / series.len() as f64;
+    if !mean.is_finite() || mean <= 0.0 {
+        return (f64::NAN, Vec::new());
+    }
+    let ppm: Vec<f64> = series.iter().map(|(_, f)| (f - mean) / mean * 1e6).collect();
     let (lo, hi) = ppm.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
-    ((hi - lo), ppm)
+    (hi - lo, ppm)
 }
 
-/// Strongest non-DC line of the per-cycle frequency series, hertz. The sample interval is the mean period.
+/// Strongest non-DC line of the local frequency series, hertz. Equal-polarity
+/// NRZ intervals are nonuniform in time, so their rates are linearly interpolated
+/// at uniform midpoint times before the FFT. This is an estimate when transitions
+/// are sparse; the UI period is never substituted for the actual elapsed time.
 pub fn ssc_rate(c: &Clock) -> f64 {
-    let f = same_edge_hz(c);
-    if f.len() < 16 {
+    let series = same_edge_rates(c);
+    if series.len() < 16 {
         return f64::NAN;
     }
-    let mean_p = f.iter().map(|x| 1.0 / x).sum::<f64>() / f.len() as f64;
-    if !(mean_p > 0.0) {
+    let mean = series.iter().map(|(_, f)| f).sum::<f64>() / series.len() as f64;
+    let (low, high) = series.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), (_, f)| (low.min(*f), high.max(*f)));
+    // Constant-rate edges still have floating-point subtraction noise. They do
+    // not contain an observable SSC modulation line.
+    if !mean.is_finite() || mean <= 0.0 || high - low <= mean * 1e-10 {
         return f64::NAN;
     }
-    let v: Vec<f32> = f.iter().map(|x| *x as f32).collect();
-    let (df, spec) = crate::math::spectrum(&v, mean_p, crate::math::Window::Hann);
-    crate::math::peaks(&spec, 1).first().map(|(k, _)| *k as f64 * df).filter(|x| *x > 0.0).unwrap_or(f64::NAN)
+    let first = series[0].0;
+    let last = series[series.len() - 1].0;
+    let dt = (last - first) / (series.len() - 1) as f64;
+    if !dt.is_finite() || dt <= 0.0 {
+        return f64::NAN;
+    }
+    let mut v = Vec::with_capacity(series.len());
+    let mut j = 0;
+    for i in 0..series.len() {
+        let t = first + i as f64 * dt;
+        while j + 1 < series.len() - 1 && series[j + 1].0 < t {
+            j += 1;
+        }
+        let (ta, fa) = series[j];
+        let (tb, fb) = series[j + 1];
+        let fraction = ((t - ta) / (tb - ta)).clamp(0.0, 1.0);
+        // Remove the large carrier before f32 conversion so a small FM signal
+        // is not quantized at the much larger nominal unit rate.
+        v.push((fa + fraction * (fb - fa) - mean) as f32);
+    }
+    let dc = v.iter().map(|f| *f as f64).sum::<f64>() / v.len() as f64;
+    for f in &mut v {
+        *f = (*f as f64 - dc) as f32;
+    }
+    let (df, spectrum) = crate::math::spectrum(&v, dt, crate::math::Window::Hann);
+    spectrum.iter().enumerate().skip(1).filter(|(_, magnitude)| **magnitude > 0.0)
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(bin, _)| bin as f64 * df).filter(|f| *f > 0.0).unwrap_or(f64::NAN)
 }

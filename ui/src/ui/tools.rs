@@ -185,7 +185,18 @@ impl Ui {
                 if samples.len() < 2 || !(dt > 0.0) {
                     return None;
                 }
-                Some((self.ref_ana[i].clone(), t0))
+                let analysis = if self.ref_ana_valid[i] {
+                    self.ref_ana[i].clone()
+                } else {
+                    // Hidden references skip idle capture work, but an explicit
+                    // measurement still uses this reference's current gate,
+                    // sample interval and thresholds. Do not infer cache validity
+                    // from NaN results: a valid DC record may lack timing values.
+                    oos_dsp::measure::analyze_refs(samples, dt,
+                        0.4 * self.refs[i].as_ref().unwrap().vpd as f64,
+                        self.m.meas_lpct, self.m.meas_hpct)
+                };
+                Some((analysis, t0))
             }
         }
     }
