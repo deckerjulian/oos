@@ -438,6 +438,32 @@ impl Scpi {
             ui.key(crate::ui::key::CLEAR);
             return None;
         }
+        // A reference capture uses the same acquisition state as the screen.
+        // RUN and STOP are assignments, so repeating either must not toggle it.
+        // Call the shared record handler directly: an open UI dialog must not
+        // consume a remote acquisition command as a dialog-dismissal key.
+        if !query && nodes.len() == 1 && ui.record_mode()
+            && ["RUN", "STOP", "SINGle"].iter().any(|command| kw(nodes[0], command)) {
+            let key = crate::ui::key::RUNSTOP;
+            if kw(nodes[0], "RUN") {
+                if ui.m.trig_mode == TrigMode::Single {
+                    ui.m.trig_mode = TrigMode::Normal;
+                }
+                if ui.m.run != RunState::Run {
+                    ui.record_key(key);
+                }
+            } else if kw(nodes[0], "STOP") {
+                if ui.m.run == RunState::Run {
+                    ui.record_key(key);
+                } else {
+                    ui.sim_play_set(false);
+                }
+            } else {
+                ui.record_key(crate::ui::key::SINGLE);
+            }
+            ui.mark_changed();
+            return None;
+        }
         let m = &mut ui.m;
         let r: Option<Option<Vec<u8>>> = (|| {
             let n0 = nodes.first().copied().unwrap_or("");
@@ -1555,6 +1581,57 @@ mod tests {
 
     fn line(s: &mut Scpi, ui: &mut Ui, cv: &Canvas, cmd: &str) -> String {
         String::from_utf8(s.exec_line(ui, cv, cmd)).unwrap()
+    }
+
+    fn reference_session() -> (Scpi, Ui, Canvas) {
+        let (mut s, mut ui, cv) = session();
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..4000 {
+            let value = if index % 40 < 20 { -0.5 } else { 0.5 };
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, value));
+        }
+        ui.load_waveform_bytes(csv.as_bytes(), "reference.csv").unwrap();
+        line(&mut s, &mut ui, &cv, ":TIM:SCAL 1e-8;:TIM:OFFS 1e-6;:TRIG:EDGE:LEV 0;:TRIG:SWE NORM");
+        (s, ui, cv)
+    }
+
+    fn captures(ui: &Ui) -> f64 {
+        crate::json::parse(&ui.workflow_state()).unwrap().get("captures").unwrap().num().unwrap()
+    }
+
+    #[test]
+    fn reference_run_stop_are_idempotent_and_hold_acquisitions() {
+        let (mut s, mut ui, cv) = reference_session();
+        assert_eq!(line(&mut s, &mut ui, &cv, ":RUN;:SIM:PLAY?"), "1", "RUN updates replay immediately");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":RUN;:SIM:PLAY?"), "1", "repeated RUN must keep running");
+        ui.step(0.2);
+        assert!(captures(&ui) > 0.0, "RUN must capture a reference window");
+        let acquired = captures(&ui);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":STOP;:SIM:PLAY?;:TRIG:STAT?"), "0;STOP");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":STOP;:SIM:PLAY?"), "0", "repeated STOP must keep stopped");
+        ui.step(0.5);
+        assert_eq!(captures(&ui), acquired, "STOP must hold the acquired record");
+        assert_eq!(ui.m.run, RunState::Stop);
+    }
+
+    #[test]
+    fn reference_single_waits_for_a_trigger_and_rearms_with_a_menu_open() {
+        let (mut s, mut ui, cv) = reference_session();
+        ui.workflow_command("settings");
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10;:SING");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:PLAY?;:TRIG:STAT?"), "1;WAIT");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 0.0, "an impossible trigger must wait");
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 1.0);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:PLAY?;:TRIG:STAT?"), "0;STOP");
+        line(&mut s, &mut ui, &cv, ":SING");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 2.0, "a second SINGLE must re-arm and capture once");
+        assert_eq!(ui.m.run, RunState::Stop);
+        ui.step(0.5);
+        assert_eq!(captures(&ui), 2.0);
     }
 
     #[test]

@@ -55,8 +55,8 @@ pub(super) fn addresses() -> Vec<[u8; 4]> {
         }
         break;
     }
-    // GetAdaptersAddresses is ordered by route metric on current Windows. Keep that order so
-    // controllers try the useful LAN address before virtual adapters; deduplication above is stable.
+    // Preserve adapter order here; the shared responder prefers the routed primary
+    // address while retaining this order for the other addresses.
     out
 }
 

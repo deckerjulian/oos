@@ -192,7 +192,7 @@ fn lan(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, 
     let vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
     let hislip = if scope { hislip::Server::closed() } else { hislip::Server::open(port("--hislip-port", hislip::PORT)) };
     let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
-    web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip: hislip.port().is_some() });
+    web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
     let ann = announce::Announcer::open(&services);
     (web, scpi, vxi, hislip, ann)
 }

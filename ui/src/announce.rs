@@ -400,6 +400,30 @@ fn addresses() -> Vec<[u8; 4]> {
     out
 }
 
+/// Prefer the address the OS would use to leave this host. A connected UDP socket
+/// selects a route without sending a packet; disconnected hosts keep adapter order.
+fn primary_address() -> Option<[u8; 4]> {
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(ip) => Some(ip.octets()),
+        _ => None,
+    }
+}
+
+fn prefer_primary(addresses: Vec<[u8; 4]>, primary: Option<[u8; 4]>) -> Vec<[u8; 4]> {
+    let mut ordered = Vec::with_capacity(addresses.len());
+    if let Some(ip) = primary.filter(|ip| addresses.contains(ip)) {
+        ordered.push(ip);
+    }
+    for ip in addresses {
+        if !ordered.contains(&ip) {
+            ordered.push(ip);
+        }
+    }
+    ordered
+}
+
 #[cfg(unix)]
 fn mcast_socket() -> Option<UdpSocket> {
     unsafe {
@@ -485,7 +509,7 @@ impl Announcer {
         // Adapter enumeration is expensive on Windows and Linux; a fresh list once per second is enough.
         let ifs = if Instant::now() >= self.interfaces_next {
             self.interfaces_next = Instant::now() + Duration::from_secs(1);
-            addresses()
+            prefer_primary(addresses(), primary_address())
         } else {
             self.last.clone()
         };
@@ -613,6 +637,22 @@ mod tests {
 
     fn srv_port(data: &[u8]) -> u16 {
         u16::from_be_bytes([data[4], data[5]])
+    }
+
+    #[test]
+    fn announced_addresses_prefer_the_routed_interface_and_preserve_remaining_order() {
+        let vpn = [100, 105, 234, 52];
+        let lan = [192, 168, 1, 148];
+        let virtual_net = [172, 18, 224, 1];
+        let adapters = vec![vpn, lan, virtual_net, vpn];
+        let (mut id, services) = sample();
+        id.addresses = prefer_primary(adapters.clone(), Some(lan));
+        let advertised: Vec<Vec<u8>> = names(&advertisement(&id, &services))
+            .into_iter().filter(|(_, typ, _)| *typ == A).map(|(_, _, data)| data).collect();
+        assert_eq!(advertised, vec![lan.to_vec(), vpn.to_vec(), virtual_net.to_vec()]);
+        // A stale route must never inject an address absent from the adapter list.
+        assert_eq!(prefer_primary(adapters.clone(), Some([10, 0, 0, 1])), vec![vpn, lan, virtual_net]);
+        assert_eq!(prefer_primary(adapters, None), vec![vpn, lan, virtual_net]);
     }
 
     #[test]

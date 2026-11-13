@@ -240,7 +240,7 @@ impl Ui {
         Some((&r.v, r.t0, r.dt))
     }
 
-    pub(super) fn record_key(&mut self, key_code: u8) -> bool {
+    pub(crate) fn record_key(&mut self, key_code: u8) -> bool {
         if !self.record_mode() { return false; }
         if key_code == key::DEFAULT || (0x15..=0x18).contains(&key_code) {
             self.return_to_live();
