@@ -568,6 +568,11 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
 /// The record is centred on the screen (`hz::prep`: it starts half a record before the delay). None with the LA,
 /// which reads its own window of the same record.
 fn screen_window(s: &Settings, p: &hz::Params) -> Option<(u32, i64)> {
+    window_below(s, p, LIVE_READ as i64)
+}
+
+/// `screen_window` for windows of fewer than `cap` points.
+fn window_below(s: &Settings, p: &hz::Params, cap: i64) -> Option<(u32, i64)> {
     if s.la.is_some() || p.rate == 0 {
         return None;
     }
@@ -578,10 +583,24 @@ fn screen_window(s: &Settings, p: &hz::Params) -> Option<(u32, i64)> {
     let lo = ((mid - screen / 2 - margin).min(pre - 4096).max(0)) / 8 * 8;
     let hi = (mid + screen / 2 + margin).max(pre + 4096).min(mem);
     let n = (hi - lo + 7) / 8 * 8;
-    if n >= LIVE_READ as i64 || lo + n > mem {
+    if n >= cap || lo + n > mem {
         return None;
     }
     Some((n as u32, lo - pre))
+}
+
+/// The raw read of a deep record's screen window for the measurements (deepmeas.rs): the batch `b` read the whole
+/// record through the compression (`batch_plan`, above 1 M points), Normal acquisition, no LA; the window of
+/// `screen_window` with the record's edge allowed, at most `deepmeas::MAX_BYTES`. Settings for `seq::read_raw_again`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn deep_raw_settings(b: &Settings, p: &hz::Params) -> Option<Settings> {
+    if b.compress < 2 || b.window.is_some() || p.memsel <= crate::compress::MAX_DEPTH || !matches!(b.mode, oos_hal::dho::acq::Mode::Normal) {
+        return None;
+    }
+    let cap = (crate::deepmeas::MAX_BYTES / (2 * p.ratio.max(1) as usize)) as i64 + 1;
+    // the whole record when the window would reach past it (`window_below` refuses a window beyond the end)
+    let w = window_below(b, p, cap).or_else(|| ((p.memsel as i64) < cap && b.la.is_none()).then(|| (p.memsel, -(p.pre as i64))))?;
+    Some(oos_hal::dho::seq::raw_settings(&Settings { window: Some(w), ..b.clone() }))
 }
 
 /// The FPGA's frequency counter, once per pass of the acquisition loop: (re)started when the UI wants another set-up,
@@ -710,6 +729,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut dma = oos_hal::dho::bus::DmaBuf::new();
         // the raw second read of the newest frame of a compressed batch (compress.rs)
         let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
+        // the last raw read of a deep record's screen window for the measurements (deepmeas.rs)
+        let mut deep_last: Option<std::time::Instant> = None;
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
         // this thread's share of the deposit work while it waits (drawpipe.rs)
@@ -1145,6 +1166,23 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                     } else {
                         None
+                    };
+                    // deep record and mean-type measurements wanted: the screen window of the newest frame raw, at most
+                    // once per deepmeas::PERIOD while running (deepmeas.rs)
+                    let deep_want = out.lock().unwrap().deep_raw;
+                    let deep = deep_want.filter(|w| count > 0 && crate::deepmeas::due(*w, deep_last, std::time::Instant::now())).and_then(|_| deep_raw_settings(&b, &p));
+                    let raw_frame = match deep {
+                        Some(ds) if raw_frame.is_none() => {
+                            deep_last = Some(std::time::Instant::now());
+                            match seq::read_raw_again(&mut state, &ds, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
+                                Ok(()) => Some(decode(raw_dma.data(), &ds, &p, 0)),
+                                Err(e) => {
+                                    status(format!("raw read of the deep window: {}", e));
+                                    None
+                                }
+                            }
+                        }
+                        _ => raw_frame,
                     };
                     // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
                     // arm (prearm below) can record anything
@@ -1655,6 +1693,46 @@ mod tests {
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
+    }
+
+    // Break it catches: a raw deep read of the wrong part of the record (screen or trigger point outside it), one
+    // beyond the budget, one where the batch was already raw or of the live compression, or in Peak.
+    #[test]
+    fn deep_raw_window_for_the_measurements() {
+        let plan = |tdiv: f64, depth: u64, two: bool| {
+            let mut m = Model::default();
+            m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
+            m.mdepth = mdepths().iter().position(|d| d.1 == depth).unwrap();
+            m.ch[1].on = two;
+            let s = settings(&m, false);
+            let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+            let b = batch_plan(&s, &p);
+            (b.clone(), p, deep_raw_settings(&b, &p))
+        };
+        // 10 M at 1 ms/div, CH1: the batch reads pairs, the measurement window raw: the whole record, 20 MB
+        let (b, p, d) = plan(1e-3, 10_000_000, false);
+        assert!(b.compress > 1 && b.window.is_none());
+        let d = d.expect("raw window");
+        assert_eq!(d.compress, 1);
+        let (n, start) = oos_hal::dho::seq::window(&d, &p);
+        let screen = (b.tdiv * 10.0 * p.rate as f64) as u32;
+        assert!(start <= (p.memsel / 2).saturating_sub(screen / 2) && start + n >= (p.memsel / 2 + screen / 2).min(p.memsel), "{} + {} of {}", start, n, p.memsel);
+        assert!(start < p.pre && start + n > p.pre);
+        let bytes = oos_hal::dho::seq::frame_bytes(&d, &p);
+        assert!(bytes <= crate::deepmeas::MAX_BYTES, "{} bytes", bytes);
+        // the decoded frame is raw and knows its trigger point
+        let f = decode(&vec![0u8; bytes], &d, &p, 1);
+        assert!(!f.envelope && f.ch[0].len() == n as usize && f.pre == (p.pre - start) as usize);
+        // 2 channels at 10 M: 40 MB, beyond the budget
+        assert!(plan(1e-3, 10_000_000, true).2.is_none());
+        // 25 M at 2 ms/div: 50 MB
+        assert!(plan(2e-3, 25_000_000, false).2.is_none());
+        // a deep record at a short time base is read raw already (screen window), 1 M is the live path
+        assert!(plan(1e-7, 10_000_000, false).2.is_none());
+        assert!(plan(1e-3, 1_000_000, false).2.is_none());
+        // Peak: the memory holds peak pairs
+        let (b, p, _) = plan(1e-3, 10_000_000, false);
+        assert!(deep_raw_settings(&Settings { mode: oos_hal::dho::acq::Mode::Peak, ..b }, &p).is_none());
     }
 
     #[test]

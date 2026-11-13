@@ -18,6 +18,7 @@ mod cmd;
 mod decode;
 mod ethlink;
 mod compress;
+mod deepmeas;
 mod fastdraw;
 mod font;
 mod gfx;

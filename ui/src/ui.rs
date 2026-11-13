@@ -1897,9 +1897,14 @@ impl Ui {
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
+            // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
+            // measurement stays that of the last raw record
+            let hold = crate::deepmeas::hold(&self.m, self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame));
             if got > 0 {
                 let p0 = std::time::Instant::now();
-                if self.meas_bg.is_some() {
+                if hold {
+                    // the measurement shown stays that of the last raw deep record
+                } else if self.meas_bg.is_some() {
                     // the result for the last record is still good when it comes after this one: `meas_n` only
                     // changes where a result out becomes wrong (a clear, measuring here at once)
                     self.meas_want = true;
@@ -7680,6 +7685,58 @@ mod tests {
             let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
             assert!(row.is_none_or(|x| x.is_nan() == envelope));
         }
+    }
+
+    // Break it catches (deepmeas.rs): with raw deep reads on, a pair record measured between two raw ones (Mean back
+    // to NaN, statistics counting pair records), a raw deep record not measured, the hold active in Stop or Single
+    #[test]
+    fn deep_raw_records_carry_the_measurements_between_pair_records() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0), (Meas::Vmax, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        // raw: mean 0.25; pairs: the min/max of the same signal, other top so the record shown is visible
+        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
+        let pairs = |top: f32| -> Vec<f32> { (0..n).map(|i| if i % 2 == 0 { 0.0 } else { top }).collect() };
+        let push = |seq: u64, envelope: bool, v: Vec<f32>| {
+            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+        };
+        let step = |ui: &mut Ui| {
+            for _ in 0..3 {
+                ui.step(0.02);
+            }
+        };
+        // before the first raw record: nothing measured on pairs
+        push(1, true, pairs(1.0));
+        step(&mut ui);
+        assert!(ui.meas(0, Meas::Vavg).is_nan() && ui.meas(0, Meas::Vmax).is_nan());
+        push(2, false, raw.clone());
+        step(&mut ui);
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
+        let counted = ui.mstat.first().map_or(0, |s| s.n);
+        // pair records keep the raw record's values, the statistics do not count them
+        for seq in 3..6 {
+            push(seq, true, pairs(1.5));
+            step(&mut ui);
+            assert_eq!(ui.meas(0, Meas::Vavg), avg);
+            assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
+        }
+        assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+        // off: pair records are measured (mean-type NaN, max of the pairs)
+        crate::deepmeas::force(Some(false));
+        push(6, true, pairs(1.5));
+        step(&mut ui);
+        assert!(ui.meas(0, Meas::Vavg).is_nan() && (ui.meas(0, Meas::Vmax) - 1.5).abs() < 0.02);
+        crate::deepmeas::force(None);
     }
 
     // Break it catches: the newest frame of a picture drawn another way than the others (record points instead of the
