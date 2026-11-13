@@ -1051,6 +1051,7 @@ pub struct Model {
     pub mask_x: f32,
     pub mask_y: f32,
     pub mask_stop: bool,
+    pub mask_inv: bool,
     /// action of the QUICK key
     pub quick: Quick,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
@@ -1377,6 +1378,7 @@ impl Default for Model {
             mask_x: 0.2,
             mask_y: 0.4,
             mask_stop: false,
+            mask_inv: false,
             quick: Quick::Screenshot,
             la: Default::default(),
         };
