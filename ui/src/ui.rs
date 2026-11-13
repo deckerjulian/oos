@@ -598,6 +598,7 @@ enum Item {
     SysInfo,
     Shot,
     TouchLock,
+    AuxOut,
     Stock,
     Update,
     UpdateRollback,
@@ -4011,7 +4012,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::AuxOut, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -4981,6 +4982,7 @@ impl Ui {
             Item::SysInfo => "System info",
             Item::Shot => "Screenshot",
             Item::TouchLock => "Touch",
+            Item::AuxOut => "AUX out",
             Item::Stock => "Back to stock",
             Item::Update => "Update",
             Item::BootMode => "Boot mode",
@@ -5150,6 +5152,7 @@ impl Ui {
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::Histogram => format!("{:?}", m.hist),
             Item::TouchLock => if m.touch_lock { "Locked".into() } else { "On".into() },
+            Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
             Item::MeasStats => onoff(self.stats_on),
             Item::MeasLabels => onoff(self.m.meas_labels),
@@ -5507,6 +5510,11 @@ impl Ui {
                 m.grid = all[cyc(i, 3, d)];
             }
             Item::TouchLock => m.touch_lock = !m.touch_lock,
+            Item::AuxOut => {
+                let all = AuxOut::choices();
+                let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
+                m.aux_out = all[cyc(i, all.len(), d)];
+            }
             Item::QuickAct => {
                 let i = QUICKS.iter().position(|&q| q == m.quick).unwrap_or(0);
                 m.quick = QUICKS[cyc(i, QUICKS.len(), d)];
@@ -6109,6 +6117,7 @@ impl Ui {
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::TouchLock => &["On", "Locked"],
+            Item::AuxOut => return AuxOut::choices().iter().map(|a| a.name().to_string()).collect(),
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],
             Item::DecSel => &["D1", "D2", "D3", "D4"],
@@ -9165,5 +9174,23 @@ fn seg_ivl_name(x: f32) -> String {
         "None".into()
     } else {
         si(x as f64, "s")
+    }
+}
+
+#[cfg(test)]
+mod aux_out_tests {
+    use super::*;
+
+    #[test]
+    fn aux_out_in_the_system_menu_with_the_offered_choices() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
+        let want: &[&str] = if AUX_PASSFAIL { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
+        assert_eq!(ui.options(Item::AuxOut), want);
+        assert_eq!(ui.value(Item::AuxOut), "Trigger out");
+        ui.select_option(Item::AuxOut, "Off");
+        assert_eq!((ui.m.aux_out, ui.value(Item::AuxOut).as_str()), (AuxOut::Off, "Off"));
+        ui.select_option(Item::AuxOut, "Trigger out");
+        assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
     }
 }

@@ -149,6 +149,43 @@ pub enum TrigCoup {
 
 pub const TRIG_COUPS: [TrigCoup; 4] = [TrigCoup::Dc, TrigCoup::Ac, TrigCoup::LfReject, TrigCoup::HfReject];
 
+/// What the rear AUX OUT BNC carries (System > AUX out, `:SYSTem:AOUTput`, docs/fork/auxout.md).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AuxOut {
+    /// a pulse per trigger: the FPGA's power-up state, so the default
+    TrigOut,
+    /// constant low
+    Off,
+    /// a pulse per failed (or passed) acquisition of the hardware mask test; offered only with `AUX_PASSFAIL`
+    PassFail,
+}
+
+pub const AUX_OUTS: [AuxOut; 3] = [AuxOut::TrigOut, AuxOut::Off, AuxOut::PassFail];
+
+/// The pass/fail source of AUX OUT is the FPGA mask unit, which OOS does not drive yet (the mask test runs in
+/// software). Until it does, pass/fail is not offered in the menu, over SCPI or in setup files.
+pub const AUX_PASSFAIL: bool = cfg!(feature = "aux-passfail");
+
+impl AuxOut {
+    /// the choices the menu, SCPI and setup files take
+    pub fn offered(self) -> bool {
+        self != AuxOut::PassFail || AUX_PASSFAIL
+    }
+
+    /// the offered choices in menu order
+    pub fn choices() -> Vec<AuxOut> {
+        AUX_OUTS.iter().copied().filter(|a| a.offered()).collect()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AuxOut::TrigOut => "Trigger out",
+            AuxOut::Off => "Off",
+            AuxOut::PassFail => "Pass/fail",
+        }
+    }
+}
+
 impl TrigCoup {
     pub fn name(self) -> &'static str {
         match self {
@@ -792,6 +829,7 @@ pub struct Model {
     pub cur_c: f32,
     pub cur_d: f32,
     pub touch_lock: bool,
+    pub aux_out: AuxOut,
     /// fine V/div: the scale knob walks the rows of the calibration table (`Board::vscale_steps_nv`), SCPI
     /// `:CHANnel<n>:SCALe` takes any value; one switch for all channels
     pub fine_v: bool,
@@ -1133,6 +1171,7 @@ impl Default for Model {
             cur_c: 0.3,
             cur_d: 0.7,
             touch_lock: false,
+            aux_out: AuxOut::TrigOut,
             fine_v: false,
             fine_t: false,
             tfine: 1.0,

@@ -11,6 +11,10 @@ libc = "0.2"
 oos-hal = { path = "../hal" }
 oos-dsp = { path = "../dsp" }
 
+[features]
+# AUX OUT pass/fail: needs the FPGA mask unit driven by OOS (docs/fork/auxout.md)
+aux-passfail = []
+
 [profile.release]
 opt-level = 3
 lto = true
