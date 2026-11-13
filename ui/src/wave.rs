@@ -500,6 +500,14 @@ impl Source {
         None
     }
 
+    /// Hardware source with `trig.hw_status = on`: the latest trigger status of a batch (`Shared::trig_fired`).
+    pub fn hw_trig_fired(&self) -> Option<(u64, Option<bool>)> {
+        if let Source::Hw { shared, .. } = self {
+            return shared.lock().unwrap().trig_fired;
+        }
+        None
+    }
+
     /// Hardware source: FPGA version (0 = not reached) and the latest XADC reading (die degC, VCCINT V).
     pub fn hw_board(&self) -> Option<(u32, Option<(f32, f32)>)> {
         if let Source::Hw { shared, .. } = self {

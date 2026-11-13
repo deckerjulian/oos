@@ -163,6 +163,47 @@ Fixes:
 
 Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = frames` needs an oos-ui restart.
 
+## Trigger status from the hardware (FPGA use)
+
+0x4034 bits 6 and 7, traced in the netlist of the 00.01.05.00.01 bitstream (private RE notes
+`docs/re/netlist`: `regmap/read_sim.tsv` gives the source FF of each read bit; the cones were dumped with
+`regmap/nl.py` over the pickled netlist, register FFs named from `regmap/regmap_adc.tsv` and
+`blocks/scu_regs.tsv`):
+
+| Bit | Source FF | Next state | Event |
+|---|---|---|---|
+| 6 | SLICE_X31Y89_A5FF | `event OR (self AND NOT clr)` | SLICE_X38Y85_A5FF = X62Y75_BFF AND NOT X38Y65_A5FF: rising edge of X62Y75_BFF |
+| 7 | SLICE_X34Y90_AFF (FDSE) | set by the event, held until clr | SLICE_X54Y91_AFF = X53Y73_AFF AND NOT X52Y73_C5FF: rising edge of X53Y73_AFF |
+
+- clr = SLICE_X34Y76_AFF, the write FF of 0x4034 bit 31 (regmap: 0x4034 31:30 W, libscope
+  `DevSystemSCU_clrStatus`; partial decode, also listed as 0x4030 bit 31).
+- SLICE_X62Y75_BFF is the TPU trigger into the SCU FSM: in simulation the edge trigger fires it and then
+  X53Y73_AFF (`blocks/datapath.md`, "Trigger path into the SCU FSM"). Its cone reaches no auto-trigger register.
+- SLICE_X53Y73_AFF = self OR (X57Y78_AFF AND (X52Y73_A5FF OR 0x400c[18] OR X62Y75_BFF OR X39Y66_CFF)). X57Y78_AFF
+  is 0x4034 bit 4 (waiting for a trigger). X39Y66_CFF has 0x4060 (t1) at depth 3, 0x4064 (t2) at depth 2 and
+  0x4020 (auto enable) at depth 3 in its cone: the auto-trigger timeout. So X53Y73_AFF is "the FSM accepted a
+  trigger", from the TPU, the auto timeout or another source.
+- So bit 6 = the TPU fired, bit 7 = a trigger was accepted, both sticky until a status clear. Forced by the
+  auto timeout = bit 7 without bit 6. The stock priority (bit 6 first, acquisition-start.md section 2) agrees.
+  The assumed names there (bit 6 = AUTO, bit 7 = TD) are the wrong way round.
+- On the unit (running build, never cleared): 0x11d2 with the level above the signal, 0x11c2 and others while
+  triggering. Bits 6 and 7 set in both: sticky, as traced.
+
+Implementation: `trig.hw_status = on` in system.conf (or OOS_TRIG_HW_STATUS=1). After every batch the
+acquisition thread reads 0x4034, writes the stock clear (`scu::clear_status`: the read value with bits 31:30
+set, then clear) before the next arm, and reports TPU fired / forced only / nothing. The UI shows Trig'd or
+Auto from it whenever frames came. Off by default: the status then comes from the software refinement (fix 4).
+
+Verification on the unit, before turning it on by default:
+1. Add `trig.hw_status = on` to /oos/system.conf, restart oos-ui. CH1 on the probe-comp output, edge rising,
+   AUTO sweep, 500 us/div.
+2. Level 0.15 V (inside the signal): `:TRIGger:STATus?` must read TD, continuously.
+3. Level 0.6 V (above the signal): it must read AUTO, continuously; the frames come at the auto rate.
+4. NORMAL sweep with level 0.6 V: no frames, WAIT.
+5. `oos-fpgad rd 0x4034` a few times in case 2 and 3: bit 6 and 7 must now come and go (cleared after
+   every batch) instead of staying set.
+6. Remove the key afterwards unless all of 2-5 hold; if they hold, make it the default.
+
 ## Status (feat/trigger)
 
 | Fix | State |
@@ -173,7 +214,7 @@ Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = 
 | 7 level from top/base | done, 8f6f7f9 |
 | 4 software comparator = hardware, hysteresis table | done, ed4d03c |
 | 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
-| 5 status from 0x4034 | blocked: bits 6 and 7 are set while triggered and while auto-firing (read with `oos-fpgad rd 0x4034` on the unit), so they are sticky without the stock status clear. Needs a test of the clear on the unit. A software proxy (edge at the hardware point) is wrong for the noisy full-bandwidth frames of section 7 of trigger.md, so it is not used |
+| 5 status from 0x4034 | done behind `trig.hw_status` (default off), bits traced in the netlist (section above); on-unit verification pending |
 | 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
 | F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 

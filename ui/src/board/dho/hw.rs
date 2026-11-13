@@ -302,6 +302,18 @@ fn header_probe() -> bool {
 /// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
 /// Off unless OOS_PREARM is set: the stop of an acquisition armed ahead that is then not read (a settings change, the
 /// generator, self-cal, roll) is not verified on the unit yet (docs/fork/specs/10-transfer-efficiency.md).
+/// `trig.hw_status = on` in system.conf, or OOS_TRIG_HW_STATUS (any value but empty or 0): the trigger status comes
+/// from the SCU status bits, cleared after every batch as the stock UI does (docs/fork/trigger-lockin.md). Off by
+/// default until verified on the unit: the status then comes from the software refinement.
+pub fn hw_status_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let env = std::env::var("OOS_TRIG_HW_STATUS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
+        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        crate::drawpipe::conf_value(env, &conf, "trig.hw_status").as_deref() == Some("on")
+    })
+}
+
 fn prearm_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("OOS_PREARM").is_some())
@@ -936,6 +948,19 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         },
                         _ => None,
                     };
+                    // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
+                    // arm (prearm below) can record anything
+                    if hw_status_on() {
+                        let v = bar.rd(0x4034);
+                        bar.apply(&oos_hal::dho::scu::clear_status(v));
+                        let f = match oos_hal::dho::scu::fired(v) {
+                            oos_hal::dho::scu::Fired::Trigger => Some(true),
+                            oos_hal::dho::scu::Fired::Forced => Some(false),
+                            oos_hal::dho::scu::Fired::None => None,
+                        };
+                        let mut g = out.lock().unwrap();
+                        g.trig_fired = Some((g.trig_fired.map_or(1, |x| x.0 + 1), f));
+                    }
                     // hardware average: one frame, shown or not, the average cleared after a complete hold average
                     let after = avg.as_mut().map(|(tr, _, logged)| {
                         let a = tr.batch(count);

@@ -1799,6 +1799,13 @@ impl Ui {
             // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
             // record intervals (a 125 M record takes ~1 s to read)
             let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
+            // `trig.hw_status = on`: the SCU says whether the TPU fired or the auto timeout forced the batch; it
+            // overrides what the software refinement concluded (docs/fork/trigger-lockin.md)
+            if got > 0 {
+                if let Some((_, Some(tpu))) = self.src.hw_trig_fired() {
+                    self.m.status = if tpu { TrigStatus::Triggered } else { TrigStatus::Auto };
+                }
+            }
             // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
             if persist != 0.0 {
                 self.pic_frames = 0;
@@ -7545,6 +7552,43 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    // Break it catches: Trig'd shown for a batch the auto timeout forced (the software found an edge in it), or the
+    // hardware status ignored when the thread reports it
+    #[test]
+    fn hardware_trigger_status_overrides_the_software_one() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        ui.m.trig_level = 0.5;
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 4000usize;
+        let frame = |seq: u64| crate::board::Frame {
+            seq,
+            dt: window / n as f64 * 1.2,
+            pre: n / 2,
+            ch: [(0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(), Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        };
+        let mut seq = 0;
+        let mut run = |ui: &mut Ui, fired: Option<(u64, Option<bool>)>| {
+            {
+                let mut g = shared.lock().unwrap();
+                for _ in 0..3 {
+                    seq += 1;
+                    g.queue.push_back(frame(seq));
+                }
+                g.trig_fired = fired;
+            }
+            ui.step(0.02);
+            ui.m.status
+        };
+        // off (no reading): the software finds the edge at the hardware point
+        assert_eq!(run(&mut ui, None), TrigStatus::Triggered);
+        assert_eq!(run(&mut ui, Some((1, Some(false)))), TrigStatus::Auto);
+        assert_eq!(run(&mut ui, Some((2, Some(true)))), TrigStatus::Triggered);
+    }
 
     // Break it catches: the trace brightness at minimum persistence following the number of frames per picture (one
     // frame after a batch of several came out dim: the flicker after autoset, docs/fork/trigger-lockin.md)

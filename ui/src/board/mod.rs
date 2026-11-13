@@ -241,6 +241,9 @@ pub struct Shared {
     /// the FPGA's frequency counter: wanted by the UI (None: off), the latest reading
     pub counter_want: Option<CounterWant>,
     pub counter: Option<CounterRead>,
+    /// `trig.hw_status = on`: what triggered the last batch, from the SCU status (number of the reading; Some(true)
+    /// the TPU fired, Some(false) only forced acquisitions (auto timeout), None nothing accepted)
+    pub trig_fired: Option<(u64, Option<bool>)>,
 }
 
 /// Where a hardware segmented recording is.
