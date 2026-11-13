@@ -16,8 +16,10 @@ The SPI and I2C protocol triggers in the TPU's receivers, next to the UART (`hwu
   [14:12]; 0x2190 address min/max/mask; 0x2194..0x21a0 data min/max/mask, big-endian over the first 1..5 bytes after
   the address. Start at the SDA fall; address and data at the 8th SCL rise of the last compared byte; missing ACK at
   the ACK's SCL rise.
-- Each line: the channel's level-A comparator on both inputs of its event, pattern (0, 0, 2, invert) as the UART's R
-  line. The threshold is the trigger level of the protocol trigger (Decode threshold) on every line.
+- Each line as the stock drivers route it (libscope): the channel's level-A comparator on both inputs of its event,
+  pattern (2, invert, 2, invert): SPI data (2, 0, 2, 0), clock and CS with their inversion, I2C SCL and SDA (2, 0, 2, 0).
+  Only bits 23:20 reach the line (bit 23 the inversion); bits 19:16 are the stock values. The threshold is the
+  trigger level of the protocol trigger (Decode threshold) on every line.
 
 ## What OOS does
 
@@ -43,8 +45,6 @@ software point next to the hardware trigger, so the screen agrees; no shift is a
 
 ## Assumptions
 
-- Pattern (0, 0, 2, invert) on events A and B as on R. The stock driver's pattern of A and B for these modes was not
-  read; if a protocol never fires, this is the first suspect.
 - One SPI word per CS frame or a sliding compare inside a long frame: open. With a sliding compare, Data = value can
   fire inside words the software splits differently.
 

@@ -492,12 +492,14 @@ pub fn uart(sh: &mut Shadows, ch: u32, u: &crate::dho::uarttrig::Uart, level: f6
     t.w
 }
 
-/// A protocol line on event `ev`: the channel's level-A comparator on both inputs, pattern (0, 0, 2, invert); bit 23
-/// of the event register inverts the line (docs/fork/hwserial.md).
+/// A protocol line on event `ev` as the stock SPI/I2C drivers route it: the channel's level-A comparator on both
+/// inputs, pattern (2, invert, 2, invert). Only bits 23:20 reach the line (bit 23 inverts it); bits 19:16 are copied
+/// from the stock values (docs/fork/hwserial.md).
 fn line(t: &mut Tpu, ev: Ev, ch: u32, invert: bool) {
     let a = cmp_a(ch);
+    let i = invert as u32;
     t.source(ev, a, 0, a, 0);
-    t.pattern(ev, 0, 0, 2, invert as u32);
+    t.pattern(ev, 2, i, 2, i);
 }
 
 /// Level A of every distinct channel in `chs` at `level` with its hysteresis.
@@ -921,17 +923,18 @@ mod tests {
         let mut sh = Shadows::APP;
         let s = Spi { clk: 2, data: 1, cs: 3, clk_falling: true, cs_high: false, timeout: None, width: 8, rel: Relation::Eq, min: 0x5a, max: 0x5a, mask: 0xff };
         let w = spi(&mut sh, &s, 1.5e9, &vt);
-        // A = CH2 level A (code 2) inverted, R = CH1 (code 0), B = CH3 (code 4) not inverted
-        assert_eq!(last(&w, 0x201c).unwrap() & 0x00ff_ffff, 2 | 2 << 8 | 2 << 20 | 1 << 23);
-        assert_eq!(last(&w, 0x204c).unwrap() & 0x00ff_ffff, 2 << 20);
-        assert_eq!(last(&w, 0x2034).unwrap() & 0x00ff_ffff, 4 | 4 << 8 | 2 << 20);
+        // the stock patterns: A = CH2 level A (code 2) (2, 1, 2, 1) for the falling clock, R = CH1 (code 0) (2, 0, 2, 0),
+        // B = CH3 (code 4) (2, 0, 2, 0) for an active-low CS
+        assert_eq!(last(&w, 0x201c).unwrap() & 0x00ff_ffff, 2 | 2 << 8 | 2 << 16 | 1 << 19 | 2 << 20 | 1 << 23);
+        assert_eq!(last(&w, 0x204c).unwrap() & 0x00ff_ffff, 2 << 16 | 2 << 20);
+        assert_eq!(last(&w, 0x2034).unwrap() & 0x00ff_ffff, 4 | 4 << 8 | 2 << 16 | 2 << 20);
         assert!([0x2004, 0x200c, 0x20b8].iter().all(|r| w.iter().any(|x| x.0 == *r)), "levels of CH1..CH3");
         assert_eq!(*w.last().unwrap(), (0x205c, 12));
         assert_eq!(last(&w, 0x2178), Some(7 << 4));
         let i = I2c { scl: 1, sda: 2, cond: I2cCond::Start, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr: (0, 0, 0), data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) };
         let w = i2c(&mut sh, &i, 1.5e9, &vt);
-        assert_eq!(last(&w, 0x201c).unwrap() & 0x00ff_ffff, 2 << 20);
-        assert_eq!(last(&w, 0x2034).unwrap() & 0x00ff_ffff, 2 | 2 << 8 | 2 << 20);
+        assert_eq!(last(&w, 0x201c).unwrap() & 0x00ff_ffff, 2 << 16 | 2 << 20);
+        assert_eq!(last(&w, 0x2034).unwrap() & 0x00ff_ffff, 2 | 2 << 8 | 2 << 16 | 2 << 20);
         assert_eq!(*w.last().unwrap(), (0x205c, 13));
         assert!(w.iter().all(|x| !(0x2200..=0x2218).contains(&x.0)));
     }
