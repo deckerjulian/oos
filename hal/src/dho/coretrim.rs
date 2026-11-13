@@ -32,8 +32,8 @@ pub trait TrimHw {
 pub const TOL: f64 = 0.6;
 /// Rounds of correction before giving up.
 pub const ROUNDS: usize = 8;
-/// Nudge for `order`, steps; a slot that moves by more than half of it shows the core.
-pub const NUDGE: i32 = 32;
+/// Nudge for `order`, register steps: about 32 ADC steps at the stock's 8 codes per register step.
+pub const NUDGE: i32 = 64;
 /// A channel is matched only with its mean within this many steps of mid-scale: a core gain mismatch of 0.1 %
 /// moves a core's mean by 0.25 step there.
 pub const MID_WINDOW: f64 = 256.0;
@@ -45,41 +45,59 @@ pub const SPREAD_MAX: f64 = 8.0;
 /// Quietness gate. Matching to the channel mean assumes every core sees the same signal on average; a signal that
 /// is not quiet, or that is correlated with the interleave (near a multiple of fs/8), would be trimmed into the
 /// offsets. A channel is matched only when every slot's samples stay within `QUIET_RANGE` steps (max - min of the
-/// 12-bit codes; an open input spans about 40) and every slot's mean stays within `STABLE` steps over `GATE_RUNS`
+/// 12-bit codes; an open input spans 43 to 61 at 100 mV/div, unit round 9) and every slot's mean stays within `STABLE` steps over `GATE_RUNS`
 /// runs `GATE_WAIT_MS` apart: an fs/8-correlated signal that is not locked to the ADC clock moves the core means from
 /// run to run. A signal locked to the ADC clock (the built-in generator) cannot be told from an offset: the caller
 /// does not trim while the generator runs.
-pub const QUIET_RANGE: u16 = 64;
+pub const QUIET_RANGE: u16 = 128;
 pub const STABLE: f64 = 0.5;
 pub const GATE_RUNS: usize = 3;
 pub const GATE_WAIT_MS: u32 = 20;
 /// Mid-scale on the 16-bit measure scale.
 const MID: f64 = 32768.0;
 
-/// Which slot shows core n, for the offsets `cur` now in the registers. None when a core moves no slot or two cores
-/// the same one.
-pub fn order(hw: &mut dyn TrimHw, cur: &[i32; 8], lsb: &[f64; 8]) -> Option<[usize; 8]> {
-    let base = hw.slots()?;
-    let mut out = [usize::MAX; 8];
+/// Where each core shows and how strongly its offset register acts: `slot[n]` = the slot of core n, `codes[n]` =
+/// measure codes per register step of core n (signed).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Order {
+    pub slot: [usize; 8],
+    pub codes: [f64; 8],
+}
+
+/// A nudge must move its slot by at least this many measure codes (4 ADC steps) to count.
+pub const MIN_MOVE: f64 = 64.0;
+
+/// Finds `Order` for the offsets `cur` now in the registers: each core in turn nudged by `NUDGE` register steps; the
+/// slot that moves most is the core's, and no other slot may move by more than a quarter of it. The register step is
+/// measured, not assumed: unit round 9 showed a nudge of 32 moving less than the 16 ADC steps the first version
+/// expected (the stock core-order search uses a threshold of 7936 codes for a nudge of 1023, about 8 codes per
+/// register step, half an ADC step). Err names the core and the deltas when a nudge is not clear.
+pub fn order(hw: &mut dyn TrimHw, cur: &[i32; 8]) -> Result<Order, String> {
+    let base = hw.slots().ok_or("measure unit not answering")?;
+    let mut slot = [usize::MAX; 8];
+    let mut codes = [0.0; 8];
     for n in 0..8 {
         hw.set_offset(n, cur[n] + NUDGE);
         let m = hw.slots();
         hw.set_offset(n, cur[n]);
-        let m = m?;
-        let moved: Vec<usize> = (0..8).filter(|&k| (m[k].mean - base[k].mean).abs() > NUDGE as f64 / 2.0 * lsb[k]).collect();
-        if moved.len() != 1 {
-            return None;
+        let m = m.ok_or("measure unit not answering")?;
+        let d: [f64; 8] = std::array::from_fn(|k| m[k].mean - base[k].mean);
+        let k = (0..8).max_by(|&a, &b| d[a].abs().total_cmp(&d[b].abs())).unwrap_or(0);
+        let clear = d[k].abs() >= MIN_MOVE && (0..8).all(|j| j == k || d[j].abs() <= d[k].abs() / 4.0);
+        if !clear {
+            return Err(format!("core {}: nudge of {} moved the slots by {:?} codes", n, NUDGE, d.map(|x| x.round() as i64)));
         }
-        out[n] = moved[0];
+        slot[n] = k;
+        codes[n] = d[k] / NUDGE as f64;
     }
     let mut seen = [false; 8];
-    for &k in &out {
+    for &k in &slot {
         if seen[k] {
-            return None;
+            return Err(format!("two cores show in one slot: {:?}", slot));
         }
         seen[k] = true;
     }
-    Some(out)
+    Ok(Order { slot, codes })
 }
 
 /// Slot groups and codes per ADC step for channel set `mask` with the channels' digital gains (`State::gain`): the
@@ -114,11 +132,12 @@ pub struct Trimmed {
 }
 
 /// Matches the cores of every channel in `groups` (channel -> its slots, `levels::slots`) to the channel's mean.
-/// `cur`: offsets now in the registers; `order`: slot of core n; `lsb[k]`: codes per ADC step of slot k (16, or 32 with
-/// the ADC x2 of 0x105c). Err when a matched channel does not converge in `ROUNDS`.
-pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8], order: &[usize; 8], lsb: &[f64; 8]) -> Result<Trimmed, String> {
+/// `cur`: offsets now in the registers; `order`: from `order`; `lsb[k]`: codes per ADC step of slot k (16, or 32 with
+/// the ADC x2 of 0x105c), for the tolerance and the gates. Corrections are in register steps through the measured
+/// `order.codes`. Err when a matched channel does not converge in `ROUNDS`.
+pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8], order: &Order, lsb: &[f64; 8]) -> Result<Trimmed, String> {
     let mut o = *cur;
-    let core_of = |slot: usize| order.iter().position(|&k| k == slot);
+    let core_of = |slot: usize| order.slot.iter().position(|&k| k == slot);
     let mut matched = 0u32;
     let mut skipped = 0u32;
     let mut residual: f64 = 0.0;
@@ -165,7 +184,11 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
                 worst = worst.max(e.abs());
                 if e.abs() > TOL {
                     let n = core_of(k).ok_or(format!("slot {} has no core", k))?;
-                    fix.push((n, o[n] - e.round() as i32));
+                    // a correction below half a register step cannot be made: that core is as close as it gets
+                    let step = ((m[k].mean - target) / order.codes[n]).round() as i32;
+                    if step != 0 {
+                        fix.push((n, o[n] - step));
+                    }
                 }
             }
         }
@@ -251,6 +274,8 @@ mod tests {
         perm: [usize; 8],
         level: f64,
         lsb: f64,
+        /// measure codes per register step (the unit: about 8, half an ADC step)
+        reg_codes: f64,
         writes: usize,
     }
 
@@ -258,7 +283,7 @@ mod tests {
         fn slots(&mut self) -> Option<[Slot; 8]> {
             let mut s = [Slot::default(); 8];
             for n in 0..8 {
-                let mean = self.level + (self.err[n] + self.reg[n] as f64) * self.lsb;
+                let mean = self.level + self.err[n] * self.lsb + self.reg[n] as f64 * self.reg_codes;
                 let code = (mean / 16.0).clamp(0.0, 4095.0) as u16;
                 s[self.perm[n]] = Slot { min: code.saturating_sub(20), max: (code + 20).min(4095), mean: mean.round() };
             }
@@ -271,10 +296,16 @@ mod tests {
     }
 
     const PERM: [usize; 8] = [0, 2, 1, 3, 4, 6, 5, 7];
+    const ORD: Order = Order { slot: PERM, codes: [8.0; 8] };
+
+    /// Core n's level in ADC steps with register offset `o` (model units).
+    fn total(m: &Model, n: usize, o: i32) -> f64 {
+        m.err[n] + o as f64 * m.reg_codes / m.lsb
+    }
     const ERR: [f64; 8] = [1.4, -1.3, 0.2, -0.9, 1.1, -1.5, 0.7, 0.0];
 
     fn model(level: f64) -> Model {
-        Model { err: ERR, reg: [3, -2, 0, 1, 0, 4, -1, 0], perm: PERM, level, lsb: 16.0, writes: 0 }
+        Model { err: ERR, reg: [3, -2, 0, 1, 0, 4, -1, 0], perm: PERM, level, lsb: 16.0, reg_codes: 8.0, writes: 0 }
     }
 
     // Break it catches: an overlay that writes modes it does not hold over the cal file, a byte layout that does not
@@ -310,8 +341,13 @@ mod tests {
     fn order_finds_the_slot_of_every_core() {
         let mut m = model(MID);
         let cur = m.reg;
-        assert_eq!(order(&mut m, &cur, &[16.0; 8]), Some(PERM));
+        assert_eq!(order(&mut m, &cur), Ok(ORD));
         assert_eq!(m.reg, cur, "every nudge is taken back");
+        // round 9: a weak register step is measured, not refused; a register that moves nothing is refused
+        m.reg_codes = 2.0;
+        assert_eq!(order(&mut m, &cur).map(|o| o.codes), Ok([2.0; 8]));
+        m.reg_codes = 0.5;
+        assert!(order(&mut m, &cur).unwrap_err().contains("core 0"));
     }
 
     // Break it catches: matching to mid-scale instead of to each other, a sign error in the correction, cores of one
@@ -322,9 +358,9 @@ mod tests {
         let mut m = model(MID + 40.0 * 16.0);
         let cur = m.reg;
         let groups = vec![(0, (0..8).collect::<Vec<_>>())];
-        let t = trim(&mut m, &groups, &cur, &PERM, &[16.0; 8]).unwrap();
+        let t = trim(&mut m, &groups, &cur, &ORD, &[16.0; 8]).unwrap();
         assert_eq!((t.matched, t.skipped), (1, 0));
-        let total: Vec<f64> = (0..8).map(|n| ERR[n] + t.offsets[n] as f64).collect();
+        let total: Vec<f64> = (0..8).map(|n| total(&m, n, t.offsets[n])).collect();
         let mean = total.iter().sum::<f64>() / 8.0;
         assert!(total.iter().all(|x| (x - mean).abs() <= TOL + 1e-9), "{:?}", total);
         assert!(t.residual <= TOL);
@@ -351,10 +387,10 @@ mod tests {
         let mut m = Two(model(MID));
         let cur = m.0.reg;
         let groups = vec![(0, vec![6, 4, 7, 5]), (1, vec![2, 0, 3, 1])];
-        let t = trim(&mut m, &groups, &cur, &PERM, &[16.0; 8]).unwrap();
+        let t = trim(&mut m, &groups, &cur, &ORD, &[16.0; 8]).unwrap();
         assert_eq!(t.matched, 0b11);
         for (_, sl) in &groups {
-            let tot: Vec<f64> = sl.iter().map(|&k| PERM.iter().position(|&p| p == k).unwrap()).map(|n| ERR[n] + t.offsets[n] as f64).collect();
+            let tot: Vec<f64> = sl.iter().map(|&k| PERM.iter().position(|&p| p == k).unwrap()).map(|n| total(&m.0, n, t.offsets[n])).collect();
             let mean = tot.iter().sum::<f64>() / tot.len() as f64;
             assert!(tot.iter().all(|x| (x - mean).abs() <= TOL + 1e-9), "{:?}", tot);
         }
@@ -365,7 +401,7 @@ mod tests {
         for level in [MID + 300.0 * 16.0, 4095.0 * 16.0] {
             let mut m = model(level);
             let cur = m.reg;
-            let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
+            let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ORD, &[16.0; 8]).unwrap();
             assert_eq!((t.offsets, t.matched, t.skipped, m.writes), (cur, 0, 1, 0), "level {}", level);
         }
     }
@@ -377,9 +413,9 @@ mod tests {
         let mut m = model(MID);
         m.err[5] += 12.0;
         let cur = m.reg;
-        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
+        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ORD, &[16.0; 8]).unwrap();
         assert_eq!(t.matched, 1);
-        let total: Vec<f64> = (0..8).map(|n| m.err[n] + t.offsets[n] as f64).collect();
+        let total: Vec<f64> = (0..8).map(|n| total(&m, n, t.offsets[n])).collect();
         let mean = total.iter().sum::<f64>() / 8.0;
         assert!(total.iter().all(|x| (x - mean).abs() <= TOL + 1e-9), "{:?}", total);
         assert!(t.offsets[5] <= cur[5] - 11, "{:?}", t.offsets);
@@ -410,7 +446,7 @@ mod tests {
         }
         let mut f = Fs8 { m: model(MID), run: 0 };
         let cur = f.m.reg;
-        let t = trim(&mut f, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
+        let t = trim(&mut f, &[(0, (0..8).collect())], &cur, &ORD, &[16.0; 8]).unwrap();
         assert_eq!((t.offsets, t.skipped, f.m.writes), (cur, 1, 0));
     }
 
@@ -432,7 +468,7 @@ mod tests {
         }
         let mut m = Sq(model(MID));
         let cur = m.0.reg;
-        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &PERM, &[16.0; 8]).unwrap();
+        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ORD, &[16.0; 8]).unwrap();
         assert_eq!((t.offsets, t.skipped), (cur, 1));
     }
 
@@ -456,7 +492,7 @@ mod tests {
         let cur = m.0.reg;
         // as one of two channels (with one channel every slot is the channel's, and this would be trimmed)
         let groups = vec![(0, (0..8).collect()), (1, vec![])];
-        let t = trim(&mut m, &groups, &cur, &PERM, &[16.0; 8]).unwrap();
+        let t = trim(&mut m, &groups, &cur, &ORD, &[16.0; 8]).unwrap();
         assert_eq!((t.offsets, t.skipped, m.0.writes), (cur, 0b11, 0));
     }
 
@@ -465,8 +501,8 @@ mod tests {
         let mut m = model(MID);
         m.lsb = 32.0;
         let cur = m.reg;
-        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &PERM, &[32.0; 8]).unwrap();
-        let total: Vec<f64> = (0..8).map(|n| ERR[n] + t.offsets[n] as f64).collect();
+        let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ORD, &[32.0; 8]).unwrap();
+        let total: Vec<f64> = (0..8).map(|n| total(&m, n, t.offsets[n])).collect();
         let mean = total.iter().sum::<f64>() / 8.0;
         assert!(total.iter().all(|x| (x - mean).abs() <= TOL + 1e-9), "{:?}", total);
     }
