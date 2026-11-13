@@ -196,6 +196,15 @@ the 5x of the arithmetic alone.
   163 us at 10 us/div; 4 workers 75 k / 116 k / 16 k frames/s. Estimate (not measured; A72 about 4x the host, A53
   about 8x): 4 A53 reach about 10 k frames/s at 100 ns/div, 20 k at 1 us/div, 3 k at 10 us/div; the A72 helper adds up
   to 5 k / 10 k / 1.5 k when its wait is long.
+  Fast interpolation, opt-in `acq.interp = fast` / OOS_INTERP=fast (`sparse::fast_many`): the exact 16-tap sinc
+  on a grid of 24 points per sample (one fixed filter per phase over consecutive samples, vectorised), linear in
+  between, used where the grid has at most 4x the screen's 3600 points (else exact). A 4-lobe kernel at the same
+  points was tried first and rejected: up to 1.3 V (72 px) off at 0.45 fs. Guard over 53 sparse set-ups (sines to
+  0.45 fs at +-3.8 div, noisy square, 1 and 4 channels, 5-200 ns/div): max 0.0087 V = 0.49 px in the points, 1 px on
+  the screen (nearest lit pixel, Chebyshev). Host per sparse frame: 25 -> 15 us at <= 80 samples on screen (5 ns/div
+  1 ch, 20 ns/div 4 ch), 0.86 at 20 ns/div 1 ch, no gain from 50 ns/div (1 ch): there the exact kernel already does
+  under 3 points per sample and `draw_ex` (7.5 us) is a fixed part. Estimate per sparse frame: A72 about 100 us
+  exact / 60 us fast at 5 ns/div, A53 about 200 / 120 us. Default stays exact until a screenshot comparison.
   Measurement statistics over every frame (`framestats.rs`): Max, Min, Pk-pk, Mean, RMS, Std dev / AC RMS of the
   Measure page are made by the workers for every frame, on the samples the record path measures (the record's
   trigger point via `board::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more
