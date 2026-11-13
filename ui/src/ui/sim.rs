@@ -222,6 +222,14 @@ impl Ui {
             offset: 0.0,
             on: true,
         });
+        if self.offline {
+            self.present_record(slot);
+            self.m.eye_rate = lane.bits_per_s;
+            self.sim_i = 0;
+            self.sim_play = true;
+            self.toast(&format!("{} → R{}", lane.name, slot + 1));
+            return;
+        }
         // a stored record, not the live analog path
         for c in 0..NCH {
             self.m.ch[c].on = false;

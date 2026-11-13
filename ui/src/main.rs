@@ -5,6 +5,7 @@
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
 //!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
+//!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
@@ -108,6 +109,9 @@ fn main() {
         None => args,
     };
     let mut ui = Ui::new(source(&args));
+    if args.iter().any(|a| a == "--offline") {
+        ui.set_offline(true);
+    }
     if let Some(m) = &foreign {
         ui.toast(&format!("This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)", m));
     }

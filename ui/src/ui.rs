@@ -20,6 +20,7 @@ mod autoset;
 mod selfcal;
 pub mod bode;
 mod sim;
+mod offline;
 pub mod startup;
 mod afg;
 mod sysinfo;
@@ -646,6 +647,7 @@ enum Item {
     SimPj,
     SimPjHz,
     SimDefaults,
+    Offline,
 }
 
 #[derive(PartialEq)]
@@ -776,6 +778,14 @@ pub struct Ui {
     cal: selfcal::State,
     /// Bode sweep (bode.rs)
     bode: bode::State,
+    /// SIM: walking the loaded serial record on the phosphor
+    sim_play: bool,
+    sim_i: usize,
+    /// Offline mode. Off, the live screen stays as it is.
+    offline: bool,
+    /// Reference named on the card that replaces the trigger card, and read by the DVM and the counter.
+    offline_ref: usize,
+    offline_hold: Option<offline::LiveHold>,
     /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
     /// to cards) is copied here during `render`
     pub hdmi_snap_want: bool,
@@ -967,6 +977,11 @@ impl Ui {
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
+            sim_play: false,
+            sim_i: 0,
+            offline: false,
+            offline_ref: 0,
+            offline_hold: None,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
             trend: Vec::new(),
@@ -1474,10 +1489,21 @@ impl Ui {
         }
         self.was_running = running;
         let persist = PERSIST[self.m.persist].1;
+        // a source started in STOP (replay) still shows its first record, unless the screen was cleared
+        if self.offline {
+            // the record is the session: no demo acquisition on CH1-CH4
+            self.idle_analog();
+            let ready = self.refs.get(self.offline_ref).and_then(|r| r.as_ref()).is_some_and(|r| r.v.len() >= 2);
+            if self.sim_play && !ready {
+                self.sim_play = false;
+            }
+        } else if self.sim_play && self.m.run == RunState::Run {
+            self.sim_play = false;
+        }
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared.
         // analog off and no LA: do not arm the ADC / demo path (SIM Play is a stored ref)
         let live = self.m.n_on() > 0 || self.m.la_on();
-        if live && (self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared)) {
+        if !self.offline && live && (self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared)) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -1644,7 +1670,7 @@ impl Ui {
                     }
                 }
             }
-        } else {
+        } else if !self.offline {
             // stopped: redraw the stored record with the current scale/offset
             self.ph.clear();
             self.phz.clear();
@@ -1713,17 +1739,23 @@ impl Ui {
         let m = &self.m;
         let mut parts: Vec<String> = (0..NCH).filter(|&c| m.ch[c].on).map(|c| format!("CH{} {}/div", c + 1, si_short(m.ch[c].volts_per_div() as f64, "V"))).collect();
         parts.push(format!("{}/div", si_short(m.time_per_div() as f64, "s")));
-        parts.push(match m.trig_line() {
-            Some(n) => format!("Trig D{}", n),
-            None => format!("Trig CH{} {}", m.trig_src + 1, si_short(m.trig_level as f64, "V")),
-        });
-        let st = match m.status {
-            TrigStatus::Triggered => "TRIG'D",
-            TrigStatus::Auto => "AUTO",
-            TrigStatus::Wait => "WAIT",
-            TrigStatus::Stop => "STOP",
-        };
-        parts.push(st.into());
+        if self.offline {
+            let (name, sub) = self.ref_card_lines();
+            parts.push(if sub == "empty" || sub.ends_with("pts") { name } else { format!("{} {}", name, sub) });
+            parts.push(self.run_caption().0.into());
+        } else {
+            parts.push(match m.trig_line() {
+                Some(n) => format!("Trig D{}", n),
+                None => format!("Trig CH{} {}", m.trig_src + 1, si_short(m.trig_level as f64, "V")),
+            });
+            let st = match m.status {
+                TrigStatus::Triggered => "TRIG'D",
+                TrigStatus::Auto => "AUTO",
+                TrigStatus::Wait => "WAIT",
+                TrigStatus::Stop => "STOP",
+            };
+            parts.push(st.into());
+        }
         parts.push(format!("{:.0} wfm/s", self.wfm_rate));
         parts.join("   \u{b7}   ")
     }
@@ -2997,10 +3029,14 @@ impl Ui {
         let g = self.grid;
         let y = g.y + 14;
         // only what makes the picture something else than a live measurement; the rates are on System info
-        let src = match self.src.name() {
-            "DEMO" => "Demo signals",
-            "REPLAY" => "Replay",
-            _ => "",
+        let src = if self.offline {
+            "Offline"
+        } else {
+            match self.src.name() {
+                "DEMO" => "Demo signals",
+                "REPLAY" => "Replay",
+                _ => "",
+            }
         };
         if !src.is_empty() {
             backed_text(cv, &f.s, self.full_btn().0.x - 8 - f.s.width(src), y, src, DIM);
@@ -3228,40 +3264,32 @@ impl Ui {
         let f = &self.fonts;
         cv.fill(TOP, BAR);
         cv.hline(0, W - 1, TOP.h - 1, LINE);
-        // run / trigger state
-        let (txt, col) = match (self.m.run, self.m.status) {
-            _ if self.cal_running() => ("CAL", ACCENT),
-            (RunState::Stop, _) | (_, TrigStatus::Stop) => ("STOP", RED),
-            (_, TrigStatus::Triggered) => ("TRIG'D", GREEN),
-            (_, TrigStatus::Auto) => ("AUTO", GREEN),
-            (_, TrigStatus::Wait) => ("WAIT", AMBER),
-        };
+        // run / trigger state; offline mode reads the record (playing or held) instead of a trigger
+        let (txt, col) = self.run_caption();
         let r = Self::RUN_PILL;
         cv.round(r, 6, mix(BAR, col, 80), 255);
         cv.round(r.inset(1), 5, mix(BAR, col, 36), 255);
         cv.circle(r.x + 16, r.y + 14, 4, col);
         cv.text(&f.mb, r.x + 30, r.y + 19, txt, col);
-        // acquisition: sample rate and depth of the hardware when it runs, else of the model; a loaded SIM
-        // record is stored at its own rate, not the live ADC
-        let (sr, depth) = if self.m.run == RunState::Stop && self.m.n_on() == 0 {
-            self.sim_rate_depth().or_else(|| self.src.hw_rate_depth().map(|(r, n)| (r, n as _))).unwrap_or_else(|| self.m.srate_depth())
-        } else {
-            self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth())
-        };
+        // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode.
+        // Offline mode shows the reference's own rate and length, with no acquire mode.
+        let (caption, live_acq) = self.acq_caption();
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
-        let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
+        let acq_open = self.menu_open && self.menu_root() == if self.offline { MenuId::Ref } else { MenuId::Acquire };
         let tcol = if acq_open { ACCENT } else { TEXT };
-        let x = cv.text(&f.mb, 114, 25, &format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), tcol);
-        let acq = match self.m.acq {
-            AcqMode::Normal => "Normal".to_string(),
-            AcqMode::Peak => "Peak".to_string(),
-            AcqMode::Average => format!("Average {}", self.m.avg_count),
-            AcqMode::HiRes => "High res".to_string(),
-        };
-        let acq = format!(" \u{b7} {}", acq);
-        if x + f.m.width(&acq) <= room {
-            cv.text(&f.m, x, 25, &acq, tcol);
+        let x = cv.text(&f.mb, 114, 25, &caption, tcol);
+        if live_acq {
+            let acq = match self.m.acq {
+                AcqMode::Normal => "Normal".to_string(),
+                AcqMode::Peak => "Peak".to_string(),
+                AcqMode::Average => format!("Average {}", self.m.avg_count),
+                AcqMode::HiRes => "High res".to_string(),
+            };
+            let acq = format!(" \u{b7} {}", acq);
+            if x + f.m.width(&acq) <= room {
+                cv.text(&f.m, x, 25, &acq, tcol);
+            }
         }
         // buttons (the open menu in orange)
         let root = self.menu_root();
@@ -3347,7 +3375,7 @@ impl Ui {
     fn card_layout(&self) -> Cards {
         let (y, h) = (530, 66);
         // 2-channel models: no cards for CH3/CH4 (zero width, never drawn or hit)
-        let n = n_ch();
+        let n = if self.offline { 0 } else { n_ch() };
         // Stored refs with analog off: no CH1..CH4 cards. TIME and trigger keep the bar.
         let hide_analog = (0..n).all(|c| !self.m.ch[c].on) && self.refs.iter().any(|r| r.as_ref().is_some_and(|r| r.on));
         let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
@@ -3504,8 +3532,13 @@ impl Ui {
         } else {
             cv.text(&f.s, r.x + 12, r.y + 58, &format!("delay {}", si_short(self.m.delay as f64, "s")), DIM);
         }
-        // trigger: type, slope / polarity / standard and level; source and sweep buttons
+        // trigger: type, slope / polarity / standard and level; source and sweep buttons.
+        // Offline mode puts the reference name here: no edge, no level, no sweep.
         let r = trg;
+        if self.offline {
+            self.draw_offline_card(cv, r, root == Some(MenuId::Ref));
+            return;
+        }
         let sel = root == Some(MenuId::Trigger);
         cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
@@ -3623,6 +3656,7 @@ impl Ui {
             }
             MenuId::BwTest => vec![ch(m.bw_src)],
             MenuId::Mask => vec![ch(m.mask_src)],
+            MenuId::Dvm if self.offline => Vec::new(),
             MenuId::Dvm => [m.dvm_on.then_some(ch(m.dvm_src)), m.cnt_on.then_some(ch(m.cnt_src))].into_iter().flatten().collect(),
             MenuId::Decode if !m.dec_on_la() => vec![ch(m.dec_src)],
             _ => Vec::new(),
@@ -3703,7 +3737,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskInvert, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskFromRef, Item::MaskReset, Item::MaskClear, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::Offline, Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -4273,7 +4307,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
+        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
             return k;
         }
         match it {
@@ -4294,7 +4328,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
             return l;
         }
         match it {
@@ -4540,7 +4574,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4737,7 +4771,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -5579,7 +5613,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -6708,6 +6742,10 @@ impl Ui {
             return;
         }
         if Self::top_hit(Self::RUN_PILL).contains(x, y) {
+            if self.offline {
+                self.toggle_offline_run();
+                return;
+            }
             return self.key(key::RUNSTOP);
         }
         if Self::top_hit(Self::NET_BOX).contains(x, y) {
@@ -6722,7 +6760,7 @@ impl Ui {
         // sample rate, depth and mode in the top bar: the page that sets them
         let end = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x) - 4;
         if Self::top_hit(Rect::new(Self::RUN_PILL.x + Self::RUN_PILL.w, Self::RUN_PILL.y, end - Self::RUN_PILL.x - Self::RUN_PILL.w, Self::RUN_PILL.h)).contains(x, y) {
-            return self.toggle_menu(MenuId::Acquire);
+            return self.toggle_menu(if self.offline { MenuId::Ref } else { MenuId::Acquire });
         }
         for (b, _, r) in self.top_buttons() {
             if Self::top_hit(r).contains(x, y) {
@@ -6775,6 +6813,9 @@ impl Ui {
             return self.toggle_menu(MenuId::Horizontal);
         }
         if trg.contains(x, y) {
+            if self.offline {
+                return self.toggle_menu(MenuId::Ref);
+            }
             // the buttons are low: each takes its half of the card for the finger
             if x >= Self::trig_parts(trg).0.x - 6 {
                 return self.adjust(if y < trg.y + trg.h / 2 { Item::TrigSrc } else { Item::TrigMode }, 1);

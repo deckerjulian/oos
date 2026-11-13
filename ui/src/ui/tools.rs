@@ -312,9 +312,9 @@ impl Ui {
         self.mstat.clear();
     }
 
-    /// DVM and counter: a new record came in.
+    /// DVM and counter: a new record came in. Offline mode reads the reference directly.
     pub(super) fn counter_update(&mut self) {
-        if !self.m.cnt_on {
+        if self.offline || !self.m.cnt_on {
             return;
         }
         let c = self.m.cnt_src;
@@ -341,17 +341,21 @@ impl Ui {
         self.cnt_stat = MStat::default();
     }
 
-    /// DVM reading of its source, volts.
+    /// DVM reading of its source, volts. Offline mode reads the reference on the card.
     pub fn dvm_value(&self) -> f64 {
+        let mode = match self.m.dvm_mode {
+            0 => Meas::Vavg,
+            1 => Meas::VrmsAc,
+            _ => Meas::Vrms,
+        };
+        if let Some(i) = self.offline_meter() {
+            return self.ref_ana[i].get(mode);
+        }
         let c = self.m.dvm_src;
         if !self.m.ch[c].on {
             return f64::NAN;
         }
-        self.ana[c].get(match self.m.dvm_mode {
-            0 => Meas::Vavg,
-            1 => Meas::VrmsAc,
-            _ => Meas::Vrms,
-        })
+        self.ana[c].get(mode)
     }
 
     /// Counter reading: frequency, period, or the totalised edge count. NaN when that mode has nothing to show.
@@ -374,23 +378,39 @@ impl Ui {
         if self.m.dvm_on {
             let x = self.dvm_value();
             let t = if x.is_finite() { si_digits(x, "V", 4) } else { "----".into() };
-            v.push((format!("DVM CH{} {}", self.m.dvm_src + 1, DVM_MODES[self.m.dvm_mode.min(2)]), t));
+            let who = match self.offline_meter() {
+                Some(i) => format!("R{}", i + 1),
+                None => format!("CH{}", self.m.dvm_src + 1),
+            };
+            v.push((format!("DVM {} {}", who, DVM_MODES[self.m.dvm_mode.min(2)]), t));
         }
         if self.m.cnt_on {
-            let c = self.m.cnt_src;
-            let a = &self.ana[c];
-            let digits = self.m.cnt_digits as usize;
-            let on = self.m.ch[c].on;
-            let t = match self.m.cnt_mode {
-                2 => fmt_count(self.cnt_total as f64),
-                1 if on && a.get(Meas::Period).is_finite() => si_digits(a.get(Meas::Period), "s", digits),
-                0 if on && a.get(Meas::Freq).is_finite() => si_digits(a.get(Meas::Freq), "Hz", digits),
-                _ => "----".into(),
-            };
-            v.push((format!("Counter CH{} {}", c + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
-            let st = self.cnt_stat;
-            if self.m.cnt_mode == 0 && st.n > 1 {
-                v.push(("min / max".into(), format!("{} / {}", si_digits(st.min, "Hz", digits), si_digits(st.max, "Hz", digits))));
+            if let Some(i) = self.offline_meter() {
+                let a = &self.ref_ana[i];
+                let digits = self.m.cnt_digits as usize;
+                let t = match self.m.cnt_mode {
+                    2 => fmt_count(a.rises.len() as f64),
+                    1 if a.get(Meas::Period).is_finite() => si_digits(a.get(Meas::Period), "s", digits),
+                    0 if a.get(Meas::Freq).is_finite() => si_digits(a.get(Meas::Freq), "Hz", digits),
+                    _ => "----".into(),
+                };
+                v.push((format!("Counter R{} {}", i + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
+            } else {
+                let c = self.m.cnt_src;
+                let a = &self.ana[c];
+                let digits = self.m.cnt_digits as usize;
+                let on = self.m.ch[c].on;
+                let t = match self.m.cnt_mode {
+                    2 => fmt_count(self.cnt_total as f64),
+                    1 if on && a.get(Meas::Period).is_finite() => si_digits(a.get(Meas::Period), "s", digits),
+                    0 if on && a.get(Meas::Freq).is_finite() => si_digits(a.get(Meas::Freq), "Hz", digits),
+                    _ => "----".into(),
+                };
+                v.push((format!("Counter CH{} {}", c + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
+                let st = self.cnt_stat;
+                if self.m.cnt_mode == 0 && st.n > 1 {
+                    v.push(("min / max".into(), format!("{} / {}", si_digits(st.min, "Hz", digits), si_digits(st.max, "Hz", digits))));
+                }
             }
         }
         v
@@ -572,6 +592,9 @@ impl Ui {
                 offset: 0.0,
                 on: true,
             });
+        }
+        if self.offline {
+            self.present_record(self.ref_sel);
         }
         self.measure_refs();
         self.analyzer_update();

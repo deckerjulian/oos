@@ -22,6 +22,11 @@ Layout before 2026-11-03: top bar 40 + info row 18, toolbar 38 px over the cards
 fixed 178 px column; the plot was 880 x 384 (700 x 384 with statistics). The toolbar is gone, LIVE and ? as well
 (state pill = run/stop, About in System), the info row and the labels moved into the plot.
 
+Offline mode (System > Offline, or `oos-ui --offline`) hides the CH1–CH4 cards. A session can start in that mode
+with those channels off and no demo on them. Import slot and SIM Play then keep analog off, set TIME from the
+record's own interval and length, and put the reference name (R1–R10 and its label) where the trigger card is.
+The DVM and the counter read that reference. With the mode off, the live screen is unchanged.
+
 **No touch buttons for functions with a front-panel key.** They are on their keys (see Input) and, so that the scope
 works by touch alone, in the **start menu** (Menu button at the bottom left, or Multi 1 with no menu open): a grid in
 groups, each entry 140 x 40 px:
