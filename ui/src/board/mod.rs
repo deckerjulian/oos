@@ -330,6 +330,11 @@ pub struct Shared {
     /// the FPGA's DVM block: wanted by the UI (None: off), the latest reading
     pub dvm_want: Option<DvmWant>,
     pub dvm: Option<DvmRead>,
+    /// STOP (docs/fork/stop-exact.md): the UI is stopped and the thread arms nothing; `final_req` is raised for a STOP
+    /// that wants the newest frame read raw, `final_ack` is the request done (its frame queued before)
+    pub hold: bool,
+    pub final_req: u64,
+    pub final_ack: u64,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
     pub deep_raw: Option<crate::deepmeas::Want>,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading

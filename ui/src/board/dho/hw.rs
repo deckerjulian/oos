@@ -690,6 +690,24 @@ fn window_below(s: &Settings, p: &hz::Params, cap: i64) -> Option<(u32, i64)> {
     Some((n as u32, lo - pre))
 }
 
+/// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch whose newest frame the deep
+/// measurements may read raw (`deep_raw_settings`), since the next batch would write the ring under it. Prearm gains at
+/// short time bases; deep compressed records take most of a batch in the read anyway.
+fn prearm_keeps_replay(b: &Settings, p: &hz::Params, deep: Option<crate::deepmeas::Want>) -> bool {
+    deep.is_none() || deep_raw_settings(b, p).is_none()
+}
+
+/// The raw read at STOP (docs/fork/stop-exact.md) of the newest frame of the batch `b` with `count` frames read just
+/// before: when the deep measurements want samples, the batch was read as pairs and its newest frame not already
+/// raw, and nothing was armed ahead (`ahead`: the ring is being written again).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn final_replay(b: &Settings, p: &hz::Params, count: u32, newest_raw: bool, ahead: bool, deep: Option<crate::deepmeas::Want>) -> Option<Settings> {
+    if count == 0 || newest_raw || ahead || deep.is_none() {
+        return None;
+    }
+    deep_raw_settings(b, p)
+}
+
 /// The raw read of a deep record's screen window for the measurements (deepmeas.rs): the batch `b` read the whole
 /// record through the compression (`batch_plan`, above 1 M points), Normal acquisition, no LA; the window of
 /// `screen_window` with the record's edge allowed, at most `deepmeas::MAX_BYTES`. Settings for `seq::read_raw_again`.
@@ -832,6 +850,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
         // the last raw read of a deep record's screen window for the measurements (deepmeas.rs)
         let mut deep_last: Option<std::time::Instant> = None;
+        // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
+        // raw), and whether arming is paused for a STOP (`Shared::hold`, docs/fork/stop-exact.md)
+        let mut fresh: Option<(Settings, hz::Params, u32, bool)> = None;
+        let mut paused = false;
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
         // this thread's share of the deposit work while it waits (drawpipe.rs)
@@ -853,6 +875,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut levels_done: Option<u64> = None;
         let mut slots_done: Option<u64> = None;
         loop {
+            let last_read = fresh.take();
             counter_tick(&mut bar, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
@@ -1208,6 +1231,41 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
                 continue;
             }
+            // STOP: the batch in progress has been read; the newest frame once more raw where the deep measurements
+            // want it (the record that stays on screen), then no arming until RUN or SINGLE
+            let (hold, final_req, deep_want) = {
+                let g = out.lock().unwrap();
+                (g.hold, g.final_req, g.deep_raw)
+            };
+            if hold {
+                let ahead = armed.is_some();
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                let replay = last_read.as_ref().and_then(|(lb, lp, count, raw)| final_replay(lb, lp, *count, *raw, ahead, deep_want).map(|ds| (ds, *lp, *count)));
+                let last = replay.and_then(|(ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
+                    Ok(()) => {
+                        n += 1;
+                        Some(Frame { stamp, ..decode(raw_dma.data(), &ds, &lp, n) })
+                    }
+                    Err(e) => {
+                        status(format!("raw read of the deep window at STOP: {}", e));
+                        None
+                    }
+                });
+                let mut g = out.lock().unwrap();
+                if let Some(f) = last {
+                    g.frame = f.clone();
+                    g.queue.push_back(f);
+                }
+                g.final_ack = final_req;
+                drop(g);
+                paused = true;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                continue;
+            }
+            if std::mem::take(&mut paused) {
+                // RUN or SINGLE: the frames of the batch before the STOP are not new
+                out.lock().unwrap().queue.clear();
+            }
             let b = batch_plan(&s, &p);
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
             if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
@@ -1285,6 +1343,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         _ => raw_frame,
                     };
+                    fresh = Some((b.clone(), p, count, raw_frame.is_some()));
                     // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
                     // arm (prearm below) can record anything
                     if hw_status_on() {
@@ -1330,8 +1389,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         a
                     });
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
-                    // not in average mode, where a clear may have to come first
-                    if prearm_on() && avg.is_none() {
+                    // not in average mode, where a clear may have to come first, and not where the deep measurements
+                    // read the newest frame raw (its ring must stay for the replay at STOP)
+                    if prearm_on() && avg.is_none() && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -1920,6 +1980,37 @@ mod tests {
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
+    }
+
+    // Break it catches (docs/fork/stop-exact.md): a replay at STOP of a frame already raw, of a ring armed again, without
+    // the deep measurements, or of a batch that was not read through the compression
+    #[test]
+    fn final_replay_at_stop() {
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+        let b = batch_plan(&s, &p);
+        let w = Some(crate::deepmeas::Want { every: false });
+        assert_eq!(final_replay(&b, &p, 3, false, false, w), deep_raw_settings(&b, &p));
+        assert!(final_replay(&b, &p, 3, false, false, w).is_some());
+        assert!(final_replay(&b, &p, 3, true, false, w).is_none(), "newest frame already raw");
+        assert!(final_replay(&b, &p, 3, false, true, w).is_none(), "armed ahead");
+        assert!(final_replay(&b, &p, 3, false, false, None).is_none(), "no deep measurements");
+        assert!(final_replay(&b, &p, 0, false, false, w).is_none());
+        assert!(final_replay(&Settings { compress: 1, ..b.clone() }, &p, 3, false, false, w).is_none(), "read raw");
+        // prearm on (the unit's set-up): no arming ahead for this batch, so the replay at STOP stays possible
+        assert!(!prearm_keeps_replay(&b, &p, w));
+        let ahead = prearm_keeps_replay(&b, &p, w);
+        assert!(final_replay(&b, &p, 3, false, ahead, w).is_some());
+        // prearm stays where no deep replay can come: without the deep measurements, a shallow record
+        assert!(prearm_keeps_replay(&b, &p, None));
+        m.mdepth = 0;
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        assert!(prearm_keeps_replay(&batch_plan(&s, &p), &p, w));
     }
 
     // Break it catches: a raw deep read of the wrong part of the record (screen or trigger point outside it), one
