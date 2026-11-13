@@ -154,6 +154,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         } as f64,
         auto: m.trig_mode == TrigMode::Auto,
         auto_fast: m.auto_fast && m.trig_mode == TrigMode::Auto,
+        single: m.trig_mode == TrigMode::Single,
         play4: true,
         blocks: 7,
         header: header_probe(),
@@ -779,6 +780,11 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     // hardware average: one frame is read whatever the batch holds, so the read size does not limit it
     let by_size = if matches!(s.mode, oos_hal::dho::acq::Mode::Average { .. }) { u32::MAX } else { (4_000_000 / fb) as u32 };
     b.frames = by_size.min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
+    // SINGLE shows the first frame after the press: one frame per batch. A full batch recorded up to 248 more triggers
+    // at 1 us/div (`acquired`, unit 2026-11-13) and waited up to 25 ms longer for the ring before the read
+    if s.single {
+        b.frames = 1;
+    }
     b
 }
 
@@ -1793,6 +1799,22 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 
 #[cfg(test)]
 mod tests {
+
+    // Break it catches: SINGLE armed for a whole batch (248 frames at 1 us/div on the unit, all but the first unseen)
+    #[test]
+    fn single_records_one_frame_per_batch() {
+        for tdiv in [1e-6f32, 1e-3] {
+            let mut m = Model { tscale: tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap(), ..Default::default() };
+            let frames = |m: &Model| {
+                let s = settings(m, false);
+                let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+                batch_plan(&s, &p).frames
+            };
+            assert!(tdiv > 1e-4 || frames(&m) > 1, "{} s/div: RUN reads batches", tdiv);
+            m.trig_mode = TrigMode::Single;
+            assert_eq!(frames(&m), 1, "{} s/div", tdiv);
+        }
+    }
 
     // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
     // inside it) ends before the screen does: 10 us/div with 200 us delay drew 20 us of the screen (unit 2026-11-13)
