@@ -48,7 +48,7 @@ fn unit_levels_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         let env = std::env::var("OOS_AUTOSET_LEVELS").ok();
-        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        let conf = crate::sysconf::fork_text();
         crate::drawpipe::conf_value(env.as_deref(), &conf, "autoset.levels").as_deref() != Some("records")
     })
 }
@@ -131,6 +131,14 @@ impl Ui {
             Some(Some((id, None))) => format!("{};none", id),
             Some(Some((id, Some(s)))) => std::iter::once(id.to_string()).chain(s.iter().map(|x| format!("{},{},{:.1}", x[0], x[1], x[2]))).collect::<Vec<_>>().join(";"),
         }
+    }
+
+    /// The model to keep across a restart (`/tmp/oos-ui.setup`): while an auto set-up runs, the one from before it.
+    /// Its stages set a fixed memory depth (the deep search record), a time base and Peak mode; a restart in the middle
+    /// (an update, a crash, oos-ui restarted by a script) used to bring those back as the user's set-up, e.g. a fixed
+    /// 100 k depth where the user had Auto (unit 2026-11-13).
+    pub fn setup_model(&self) -> &Model {
+        self.auto.as_ref().map_or(&self.m, |a| &a.back)
     }
 
     /// An auto set-up is under way.
@@ -1035,6 +1043,19 @@ mod tests {
         assert!(shared.lock().unwrap().slots_want.unwrap() > id, "each query asks for a new run");
         let mut demo = Ui::new(Source::Demo { t: 0.0 });
         assert_eq!(scpi.exec_line(&mut demo, &cv, ":DEB:SLOT?"), b"no hardware");
+    }
+
+    // Break it catches: the setup kept across a restart taken from the middle of an auto set-up (its fixed search
+    // depth, Peak mode and time base then come back as the user's)
+    #[test]
+    fn a_restart_during_autoset_keeps_the_setup_from_before() {
+        let (mut ui, _shared) = hw_ui();
+        let before = crate::store::setup_text(&ui.m);
+        ui.auto_start();
+        assert!(ui.auto.is_some() && crate::store::setup_text(&ui.m) != before, "the levels stage has its own time base and Peak");
+        assert_eq!(crate::store::setup_text(ui.setup_model()), before);
+        ui.auto = None;
+        assert_eq!(crate::store::setup_text(ui.setup_model()), crate::store::setup_text(&ui.m));
     }
 
     #[test]
