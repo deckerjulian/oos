@@ -7,6 +7,8 @@ From 0.1.1 to 0.1.4: install the package through the web page or `oos-update ins
 
 New:
 
+- Measure > Dock places the measurement strip under the plot (the default), on the left, on the right, or above the
+  trace. The choice is kept in the setup file.
 - Waveform windows: Display > Windows splits the plot into two windows side by side, two stacked, or four. Each
   channel and math channel stands in one window (chosen on the same page; a new split spreads the channels that are
   on), all on the same time base. The LA gets a window too: its lanes stand at the bottom of it (all of it when no

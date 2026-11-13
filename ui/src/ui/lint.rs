@@ -1847,3 +1847,129 @@ fn gallery() {
     u.activate(Item::Update);
     shot(&mut u, "s-update");
 }
+
+/// Measure > Dock: under the plot, left, right, or above the trace. The plot gives that side up and keeps the rest.
+#[test]
+fn the_measurement_strip_docks_on_four_sides() {
+    let mut bare = Ui::new(Source::Demo { t: 0.0 });
+    bare.m.meas.clear();
+    bare.m.meas2.clear();
+    bare.m.cursor = CursorMode::Off;
+    bare.m.dvm_on = false;
+    bare.m.cnt_on = false;
+    bare.relayout();
+    let empty = bare.grid;
+    for side in StripDock::ALL {
+        bare.m.strip_dock = side;
+        bare.relayout();
+        assert_eq!(bare.grid, empty, "an empty strip stays where it is on {:?}", side);
+    }
+
+    let mut u = with_two_channels();
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0)), (Meas::Vrms, WaveId::Ch(1))];
+    u.m.cursor = CursorMode::Time;
+    u.m.strip_dock = StripDock::Under;
+    u.relayout();
+    let under = u.grid;
+    assert_eq!((under.x, under.w, under.y), (0, W, PLOT_Y));
+    let band = u.strip_rect().unwrap();
+    assert!(!overlaps(band, under), "under {:?}", band);
+    assert!(band.y >= under.y + under.h);
+
+    u.m.strip_dock = StripDock::Above;
+    u.relayout();
+    assert_eq!((u.grid.x, u.grid.w, u.grid.h), (0, W, under.h));
+    assert_eq!(u.grid.y, PLOT_Y + u.strip_rows_h());
+    let band = u.strip_rect().unwrap();
+    assert!(!overlaps(band, u.grid), "above {:?}", band);
+    assert!(band.y + band.h <= u.grid.y);
+
+    u.m.strip_dock = StripDock::Left;
+    u.relayout();
+    assert_eq!((u.grid.x, u.grid.w), (STRIP_SIDE, W - STRIP_SIDE));
+    assert!(u.grid.h > under.h, "the plot gets the rows back");
+    assert_eq!(u.grid.y, PLOT_Y);
+    let col = u.strip_rect().unwrap();
+    assert!(!overlaps(col, u.grid), "left {:?}", col);
+    assert_eq!(col.x + col.w, u.grid.x);
+
+    let left_h = u.grid.h;
+    u.m.strip_dock = StripDock::Right;
+    u.relayout();
+    assert_eq!((u.grid.x, u.grid.w, u.grid.h, u.grid.y), (0, W - STRIP_SIDE, left_h, PLOT_Y));
+    let col = u.strip_rect().unwrap();
+    assert!(!overlaps(col, u.grid), "right {:?}", col);
+    assert_eq!(col.x, u.grid.x + u.grid.w);
+
+    // a second pane stays in the plot column (Results is the pane that replaces the strip)
+    u.m.pane = 4;
+    u.relayout();
+    assert!(u.pane_h() > 0 && u.strip_rows() > 0);
+    assert!(!overlaps(u.pane_rect(), u.strip_rect().unwrap()));
+    u.m.pane = 0;
+
+    u.full = true;
+    u.m.strip_dock = StripDock::Above;
+    u.relayout();
+    assert_eq!(u.grid.y, u.strip_rows_h());
+    assert!(u.strip_rect().unwrap().y < u.grid.y);
+    u.full = false;
+
+    // the control on the Measure page picks the side
+    u.m.strip_dock = StripDock::Under;
+    u.open_menu(MenuId::Measure);
+    let hit = |ui: &Ui, k: usize| -> (i32, i32) {
+        let d = ui.dlg_layout().unwrap();
+        let row = d.rows.iter().find(|r| r.it == Item::StripDock).expect("dock row");
+        let Ctl::Seg(opts, sel) = &row.ctl else { panic!("dock is a row of buttons") };
+        assert_eq!(opts.as_slice(), ["Under", "Left", "Right", "Above"]);
+        assert_eq!(*sel, Some(StripDock::ALL.iter().position(|&s| s == ui.m.strip_dock).unwrap()));
+        let n = opts.len() as i32;
+        let sw = (row.ctrl.w - (n - 1) * 4) / n;
+        (row.ctrl.x + k as i32 * (sw + 4) + sw / 2, row.ctrl.y + row.ctrl.h / 2)
+    };
+    for (k, side) in StripDock::ALL.into_iter().enumerate() {
+        let (x, y) = hit(&u, k);
+        u.tap(x, y);
+        assert_eq!(u.m.strip_dock, side);
+        assert!(u.menu_open);
+    }
+    // the ends stay put
+    u.m.strip_dock = StripDock::Under;
+    u.adjust(Item::StripDock, -1);
+    assert_eq!(u.m.strip_dock, StripDock::Under);
+    u.m.strip_dock = StripDock::Above;
+    u.adjust(Item::StripDock, 1);
+    assert_eq!(u.m.strip_dock, StripDock::Above);
+
+    let text = crate::store::setup_text(&u.m);
+    assert!(text.contains("strip_dock = Above"));
+    assert_eq!(crate::store::parse_setup(&text).unwrap().strip_dock, StripDock::Above);
+    let old: String = text.lines().filter(|l| !l.starts_with("strip_dock")).collect::<Vec<_>>().join("\n");
+    assert_eq!(crate::store::parse_setup(&old).unwrap().strip_dock, StripDock::Under);
+    assert!(crate::store::parse_setup("strip_dock = Beside").is_err());
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
+    let _ = std::fs::create_dir_all(&dir);
+    let shot = |u: &mut Ui, n: &str| {
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        let _ = crate::store::write(&dir.join(n), &crate::store::png_of(&cv));
+    };
+    u.close_menu();
+    for (side, name) in [(StripDock::Under, "strip-under.png"), (StripDock::Left, "strip-left.png"), (StripDock::Right, "strip-right.png"), (StripDock::Above, "strip-above.png")] {
+        u.m.strip_dock = side;
+        shot(&mut u, name);
+        let g = u.grid;
+        let s = u.strip_rect().unwrap();
+        assert!(!overlaps(g, s), "{name} plot {g:?} strip {s:?}");
+    }
+    u.m.strip_dock = StripDock::Left;
+    u.open_menu(MenuId::Measure);
+    shot(&mut u, "strip-menu.png");
+    u.close_menu();
+    u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1))];
+    shot(&mut u, "strip-left-pair.png");
+    let s = u.strip_rect().unwrap();
+    assert!(!overlaps(u.grid, s));
+}

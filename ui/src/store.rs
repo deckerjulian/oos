@@ -249,6 +249,7 @@ pub fn setup_text(m: &Model) -> String {
     }
     kv("pane", m.pane.to_string());
     kv("meas_labels", m.meas_labels.to_string());
+    kv("strip_dock", name(m.strip_dock));
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());
     kv("auto_roll", m.auto_roll.to_string());
@@ -496,6 +497,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_sel" => m.dec_sel = p_idx(v, DECODERS)?,
         "pane" => m.pane = p_idx(v, crate::ui::PANES_N)?,
         "meas_labels" => m.meas_labels = p_bool(v)?,
+        "strip_dock" => m.strip_dock = p_enum(v, &StripDock::ALL)?,
         "trend_sel" => {
             let f: Vec<&str> = v.split_whitespace().collect();
             let [a, b] = f[..] else { return Err("trend_sel: two values".into()) };
@@ -1145,6 +1147,7 @@ mod tests {
         m.intensity = 85;
         m.grid = Grid::Light;
         m.meas = vec![(Meas::Rise, WaveId::Ch(3)), (Meas::Vrms, WaveId::Ch(0)), (Meas::PDuty, WaveId::Ch(1))];
+        m.strip_dock = StripDock::Right;
         m.cursor = CursorMode::Volt;
         m.cur_a = 0.125;
         m.cur_b = 0.875;

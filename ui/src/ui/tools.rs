@@ -26,7 +26,7 @@ fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
 
 /// Measurements at once.
 pub(super) const MEAS_MAX: usize = 14;
-/// Rows per channel in the strip under the plot.
+/// Measurements on one row of the strip when it runs across the screen.
 pub(super) const STRIP_PER_ROW: usize = 6;
 
 /// What a channel-pair row measures. The edge flags choose the edges of delay, phase and skew.
