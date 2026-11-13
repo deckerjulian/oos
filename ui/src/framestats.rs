@@ -293,17 +293,16 @@ mod tests {
         let p = oos_dsp::sim::PulseTrain::square(3e5, -0.7, 0.9, 2e-8);
         let mut v = oos_dsp::sim::sample(|t| p.v(t), -(len as f64 / 2.0) * dt, dt, len);
         oos_dsp::sim::add_noise(&mut v, 0.04, 3);
-        let reps = 300;
-        let t = std::time::Instant::now();
-        for _ in 0..reps {
-            std::hint::black_box(values_reference(std::hint::black_box(&v[..])));
-        }
-        let old = t.elapsed() / reps;
-        let t = std::time::Instant::now();
-        for _ in 0..reps {
-            std::hint::black_box(Values::of(std::hint::black_box(&v[..]), true).map(|x| (x.avg, x.rms, x.std, x.vmax, x.vmin)));
-        }
-        let new = t.elapsed() / reps;
+        let (old, new) = crate::perfguard::best_pair(
+            crate::perfguard::ROUNDS,
+            33,
+            || {
+                std::hint::black_box(values_reference(std::hint::black_box(&v[..])));
+            },
+            || {
+                std::hint::black_box(Values::of(std::hint::black_box(&v[..]), true).map(|x| (x.avg, x.rms, x.std, x.vmax, x.vmin)));
+            },
+        );
         let (a, b) = (values_reference(&v).unwrap(), Values::of(&v, true).unwrap());
         assert!(a.3 as f64 == b.vmax && a.4 as f64 == b.vmin && a.0 == b.avg && a.1 == b.rms);
         assert!((a.2 - b.std).abs() <= 1e-12 * a.2);

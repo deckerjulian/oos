@@ -24,6 +24,10 @@ if [ -n "${OOS_UNIT:-}" ]; then
 	for f in "$unit"/*.conf; do
 		[ -f "$f" ] && cp "$f" "$stage/etc-oos/"
 	done
+	# a fixed `eth.mac` of the unit goes into the DTB as the GMAC's address at probe (unit-hook-dtb.sh): resolved by
+	# oos-mac itself, so `cid` and `vendor` (known only on the scope) give nothing here
+	mac=$(OOS_CONF_FILES="$unit/system.conf" OOS_CID_FILE=/nonexistent sh "$root/rootfs/initramfs/bin/oos-mac" 2>/dev/null)
+	[ -n "$mac" ] && echo "$mac" > "$stage/dtb.mac"
 fi
 [ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
 # the LAN-only firewall (net.allow, docs/network.md 6)
@@ -31,3 +35,4 @@ fi
 # the SSH server (docs/network.md 7)
 [ -x "$root/rootfs/out/dropbearmulti" ] || "$root/rootfs/build-dropbear.sh"
 cp "$here/unit-hook-image.sh" "$stage/image.sh"
+cp "$here/unit-hook-dtb.sh" "$stage/dtb.sh"
