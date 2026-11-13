@@ -131,10 +131,19 @@ CH3 alone, input open, 100 mV/div, 1.25 GSa/s, trigger CH3.
   start; else the registers go back to the start values and the file is not touched. The log line shows both
   (`x steps left (kept y)`).
 
+## Round 15 (unit, dho804 8f67310)
+
+- Kept values: a restart in CH3 alone logged "0.29 steps left (kept 0.29)", no file write, slots -0.26..+0.37.
+- First start after the start-up mode switches: mode 5 with the probe square on CH1 passed the gate and nudged
+  once ("order not found"); mode 2 read the same kept offsets 4.4 and 4.0 steps apart (0.29 two restarts later).
+- Both fit a trim that ran right after the configuration, while the front end was still settling: the signal had
+  not reached the ADC yet (looked quiet), the offsets had not settled. Fix: the trim waits until the configuration
+  has stood for 2 s (`TRIM_HOLD`); a new configuration in that time replaces the wait. It then disarms and runs.
+
 ## What the change does
 
-`hal::dho::coretrim`, called from the acquisition thread right after a configuration, with nothing armed, once per
-ADC mode and session:
+`hal::dho::coretrim`, called from the acquisition thread once a configuration has stood for 2 s, with nothing
+armed, once per ADC mode and session:
 
 1. `order`: nudges each core's offset by 64 register steps in turn and notes which measure slot moves. The
    slot-to-core mapping of the normal modes is not known otherwise. The nudged slot must move by at least 64 codes

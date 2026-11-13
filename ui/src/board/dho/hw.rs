@@ -283,6 +283,28 @@ fn core_offset_from(conf: &str) -> bool {
 /// configurations, at most this often.
 const TRIM_TRIES: u8 = 5;
 
+#[cfg(any(target_os = "linux", test))]
+/// A core trim waits until the configuration has stood this long: right after the start-up mode switches the front end
+/// is still settling (unit round 15: the first try read the kept offsets 4.4 steps apart and a probe-comp signal
+/// as quiet; two restarts later the same offsets read 0.29).
+const TRIM_HOLD: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[cfg(any(target_os = "linux", test))]
+/// A core trim waiting for `TRIM_HOLD` after the configuration of ADC mode `mode` with channel set `mask`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TrimPending {
+    mode: usize,
+    mask: u32,
+    since: std::time::Instant,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl TrimPending {
+    fn due(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.since) >= TRIM_HOLD
+    }
+}
+
 /// The unit side of `coretrim`: measure unit runs and ADC core offset writes.
 #[cfg(target_os = "linux")]
 struct UnitTrim<'a> {
@@ -1311,6 +1333,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // `cal.core_offset = tight`: ADC modes whose core offsets were matched this session, and tries per mode
         let mut trim_done = [false; 11];
         let mut trim_tries = [0u8; 11];
+        let mut trim_pending: Option<TrimPending> = None;
         let mut slots_done: Option<u64> = None;
         loop {
             let last_read = fresh.take();
@@ -1443,16 +1466,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         status(format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, p.rate, p.memsel));
                         current = Some((want.clone(), p));
                         configs += 1;
-                        // core offsets of the ADC mode (opt-in), with nothing armed right after the configuration
+                        // core offsets of the ADC mode (opt-in): once this configuration has stood for TRIM_HOLD; a new
+                        // configuration replaces the wait
                         let m = state.mode.min(10);
-                        // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
-                        let gen_on = afg_done.is_some_and(|d| d.0);
-                        if core_offset_tight() && !gen_on && !trim_done[m] && trim_tries[m] < TRIM_TRIES {
-                            trim_tries[m] += 1;
-                            if let Some(c) = cal_adc.as_mut() {
-                                trim_done[m] = core_trim(&mut bar, &mut state, c, &mut trim_overlay, want.mask);
-                            }
-                        }
+                        trim_pending = (core_offset_tight() && !trim_done[m] && trim_tries[m] < TRIM_TRIES)
+                            .then(|| TrimPending { mode: m, mask: want.mask, since: std::time::Instant::now() });
                         // the configuration cleared the average (`seq::State::configure`)
                         avg = match want.mode {
                             oos_hal::dho::acq::Mode::Average { count } => Some((oos_hal::dho::avg::Tracker::new(avg_kind(), count), avg_clear, 0)),
@@ -1504,6 +1522,19 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let v = levels_measure(&mut bar, &s, &state.gain, runs);
                 out.lock().unwrap().levels = Some((id, v));
                 levels_done = Some(id);
+            }
+            // the core trim of the current configuration, with nothing armed
+            if let Some(t) = trim_pending.filter(|t| mode == Slow::Off && t.due(std::time::Instant::now())) {
+                trim_pending = None;
+                // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
+                let gen_on = afg_done.is_some_and(|d| d.0);
+                if !gen_on && t.mode == state.mode.min(10) {
+                    if let Some(c) = cal_adc.as_mut() {
+                        disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                        trim_tries[t.mode] += 1;
+                        trim_done[t.mode] = core_trim(&mut bar, &mut state, c, &mut trim_overlay, t.mask);
+                    }
+                }
             }
             // debug: one raw run of the measure unit for `:DEBug:SLOTs?`
             let sw = out.lock().unwrap().slots_want;
@@ -2590,6 +2621,16 @@ mod tests {
         assert_eq!(overlay_in_use(false, || panic!("read with the key off")), oos_hal::dho::coretrim::Overlay::default());
         assert_eq!(overlay_in_use(true, || Some(file.clone())), file);
         assert_eq!(overlay_in_use(true, || None).modes, 0);
+    }
+
+    // Round 15: a trim right after the start-up mode switches read a settling front end. Break it catches: a trim
+    // that is due before the configuration has stood for TRIM_HOLD.
+    #[test]
+    fn core_trim_waits_for_a_standing_configuration() {
+        let t0 = std::time::Instant::now();
+        let p = TrimPending { mode: 2, mask: 0b100, since: t0 };
+        assert!(!p.due(t0) && !p.due(t0 + TRIM_HOLD - std::time::Duration::from_millis(1)));
+        assert!(p.due(t0 + TRIM_HOLD) && TRIM_HOLD >= std::time::Duration::from_secs(1));
     }
 
     #[test]
