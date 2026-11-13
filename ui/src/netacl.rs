@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Who may control the scope over the network: `net.allow` in `/oos/system.conf`, with the image default from
-//! `/etc/oos/system.conf` (docs/network.md 5). A list of address prefixes, `192.0.2.0/24 fd00::/8`. Empty or
+//! `/etc/oos/system.conf` (docs/network.md 6). A list of address prefixes, `192.0.2.0/24 fd00::/8`. Empty or
 //! absent: everyone, as before. rcS builds the firewall from the same key (`oos-firewall`); this list is the second
 //! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI and VXI-11. The scope itself
 //! (loopback) is always allowed.
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn settings_win_over_the_image() {
-        let image = "# unit\nnet.allow = 192.0.2.0/24\ntelnet = off\n";
+        let image = "# unit\nnet.allow = 192.0.2.0/24\nremote.telnet = off\n";
         let (a, _) = Acl::from_texts(Some(image), Some("ntp = on\n"));
         assert!(a.permits(ip("192.0.2.9")) && !a.permits(ip("192.168.1.9")));
         let (a, _) = Acl::from_texts(Some(image), Some("net.allow = 192.168.1.0/24 # new LAN\n"));

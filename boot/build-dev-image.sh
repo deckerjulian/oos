@@ -21,7 +21,7 @@ out="$here/out"
 board="$root/rootfs/board/${OOS_BOARD:-dho}"
 [ -f "$board/etc/oos-board" ] || { echo "no board $board" >&2; exit 1; }
 . "$board/etc/oos-board"
-# defaults of one unit (docs/models.md 4.2, docs/network.md 5): rootfs/unit/<OOS_UNIT>/ becomes /etc/oos/ in the image
+# defaults of one unit (docs/models.md 4.2, docs/network.md 6): rootfs/unit/<OOS_UNIT>/ becomes /etc/oos/ in the image
 unit="$root/rootfs/unit/${OOS_UNIT:-none}"
 if [ -n "${OOS_UNIT:-}" ]; then
 	[ -d "$unit" ] || { echo "no unit $unit" >&2; exit 1; }
@@ -82,8 +82,13 @@ EOF
 [ -x "$root/rootfs/out/wpa_supplicant" ] && [ -x "$root/rootfs/out/wpa_cli" ] || "$root/rootfs/build-wlan-tools.sh"
 # /oos is checked before it is mounted
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
-# the LAN-only firewall (net.allow, docs/network.md 5)
+# the LAN-only firewall (net.allow, docs/network.md 6)
 [ -x "$root/rootfs/out/nft" ] || "$root/rootfs/build-nft.sh"
+# an update with another device tree is tried by kexec_load with that tree (docs/update.md)
+[ -x "$root/rootfs/out/kexec" ] || "$root/rootfs/build-kexec.sh"
+# Display > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md)
+# (again when the helper's source is newer than the built one: Mesa itself is kept in rootfs/out/mesa)
+{ [ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] && [ ! "$root/gpu/oos-gpu.c" -nt "$root/rootfs/out/gpu/bin/oos-gpu" ]; } || "$root/gpu/build.sh"
 
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$unit:/unit:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
@@ -99,9 +104,11 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /ui/oos-ui $r/bin/oos-ui
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
-	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/nft $r/bin/
-	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck
+	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec /wlan/nft $r/bin/
+	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools
 	cp /wlan/nft.COPYING $r/etc/licenses/nftables
+	# the GPU helper with Mesa and glibc (their own loader; oos-ui and the rest stay static)
+	cp -a /wlan/gpu/. $r/
 	# the unit defaults: /etc/oos/limits.conf (capabilities), /etc/oos/system.conf (network); none without OOS_UNIT
 	if [ -n "$(ls -A /unit)" ]; then mkdir -p $r/etc/oos; cp /unit/*.conf $r/etc/oos/; ls -l $r/etc/oos; fi
 	ln -sf busybox $r/bin/sh

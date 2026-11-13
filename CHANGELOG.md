@@ -1,5 +1,157 @@
 # Changes
 
+## 0.1.11
+
+Install from 0.1.7 or newer as always: the web page, System > Update, or the USB stick; then switch the scope off at
+the mains, wait 30 seconds and switch it on. From 0.1.6 or older: install 0.1.7 first (see 0.1.9).
+
+New:
+
+- Bode with an external generator on the USB-A port of the scope (USBTMC, no PC): Analysers > Bode > Connection = USB
+  takes the first USBTMC instrument, shows its `*IDN?` answer or why there is none; SCPI `:BODE:GENerator "usb"`. A
+  new preset for the UNI-T UTG900 (UTG932, UTG962); Rigol DG and Siglent SDG work over USB as well. Tested on the
+  host with a simulated device only.
+- Trigger > Coupling for the edge trigger: DC, AC, LF reject, HF reject (`:TRIGger:COUPling`). AC and LF reject take
+  the DC out of the trigger path, so a level of 0 V is the zero crossing of the signal whatever its offset; HF reject
+  keeps the DC and suppresses fast signals. The trace itself is not filtered.
+
+Fixed:
+
+- Measurements froze in Run (since 0.1.7): the measurements are made beside the frame loop, and a result was only
+  taken while its record was still the one shown. In Run a new record comes nearly every frame, so every result was
+  dropped; values, statistics, the trend and the counter from the record only changed after STOP. On a DHO924S the
+  device test went from 10 failures to none in the tests that read measurements.
+- NORMAL without a trigger: a changed trigger took up to 2 s to act (the wait for a trigger ran to its end before the
+  new settings were read). The wait now ends as soon as the settings change.
+- Web remote: a PNG screenshot asked for while the live view ran as JPEG could come back as JPEG bytes (11 of 20 on a
+  DHO924S); each request now gets its own format. One error of the video encoder no longer switches JPEG off until a
+  restart; it is tried again after a minute.
+- Display: a late page flip event no longer switches the panel to SETCRTC for the rest of the session. With
+  Graphics = GPU and a monitor whose buffers the GPU could not take, the monitor's picture is fresh every frame instead
+  of twice a second.
+- Deep memory at short time bases: above 1 M points the screen got the whole record compressed to about 625 k
+  min/max points, so at 10 M and 100 ns/div about 80 of them for the screen. A sine showed as a staircase, rise time
+  and other measurements were off, and only about 3 records came per second. Such a record is now read for the screen
+  as a window at every sample: on a DHO924S a clean sine at 10 M and 50 M, 21 to 27 records per second.
+- HDMI with Display > Graphics = GPU: the panel flashed black now and then, mostly with a menu open, and the picture
+  could be broken on both screens. The panel's third display buffer and the monitor's first one shared a place in the
+  GPU's list, and the monitor's frame overwrote the panel's while the GPU still drew it. On a DHO924S with a
+  1920x1080 monitor panel and monitor are now steady in Mirror, Layout and Waveform.
+
+Tests: the script commands `menu`, `set` and `do` reach menus and items by name; the mask script tests the mask again
+(it tapped a top-bar button that no longer exists).
+
+## 0.1.10
+
+Install from 0.1.7, 0.1.8 or 0.1.9 as always: the web page, System > Update, or the USB stick; then switch the scope
+off at the mains, wait 30 seconds and switch it on. From 0.1.6 or older: install 0.1.7 first (see 0.1.9).
+
+Fixed:
+
+- Web remote with Display > Graphics = GPU (the default): the live picture went back and forth between the current
+  screen and an older one, most visibly when a menu opened or closed (and the WLAN box seemed to drop its address).
+  The frame loop swapped the shown screen out to the web page, which only works when the next screen is drawn whole on
+  the CPU; with the GPU the screen comes back from it only now and then. Each picture that comes back now goes to the
+  web page as a copy. On a DHO924S, 120 pictures in a row while menus open and close: 86 older screens before, none
+  after, about 9.5 pictures a second over WLAN.
+
+## 0.1.9
+
+Install from 0.1.7 or 0.1.8 as always: the web page, System > Update, or the USB stick; then switch the scope off at
+the mains, wait 30 seconds and switch it on. From 0.1.6 or older: install 0.1.7 first (the device tree changes from
+0.1.8 on, which only 0.1.7 and later can try before they install it), or use the USB stick. Most of this version comes
+from the reports and wishes in the forum thread.
+
+New:
+
+- The frequency counter (Measure > DVM / counter, also in Menu > Instruments) counts in the FPGA on the unit: a
+  reciprocal counter, so a 1 s gate gives 6 digits and more at any frequency (12345.600 Hz from the built-in generator,
+  where the counter from the record wandered by 0.2 Hz). The gate follows the digits (0.25 s for 3, 0.5 s for 4, 1 s
+  above). Frequency, period and totalize, as in the menu; signals below about 625 Hz from one whole period. SCPI:
+  `:COUNter:ENABle|SOURce|MODE|NDIGits`, `:COUNter:CURRent?`, `:COUNter:TOTalize:CLEar`. docs/protocols/counter.md.
+- Display > Backlight: the brightness of the panel, 10 to 100 % in steps of 5, even to the eye (the PWM goes with the
+  square of the percent). A setting of the scope, `backlight` in `/oos/system.conf`.
+- A channel key held for more than half a second, or a finger held as long on the channel's card, switches the channel
+  between AC and DC coupling. Channel keys now act when they are let go.
+- LAN without DHCP: a link-local address (169.254.x.y, from the MAC, checked on the cable) instead of the fixed
+  192.168.177.64, and no address at all without a cable. A computer connected straight to the scope reaches it without
+  any set-up. The top bar says `LAN · local`.
+- **Experimental, please test:** Analysers > Bode, Generator = Free-running sweep. A Bode plot with a generator that
+  sweeps on its own (start and stop frequency, sweep time, linear or logarithmic) and marks the start of each sweep on
+  a sync output, wired to a channel (CH4 by default). OOS sets the time base and memory for one sweep, triggers once on
+  the sync edge, and reads the gain over frequency from that record: a short window per frequency (about 4 periods), a
+  fit of a sine that follows the sweep (`oos_dsp::bode::sweep_response`). Phase with an input channel, gain against a
+  level in dBV without one. Sweeps above about 0.9 s run in scan mode (min/max data, gain only). Tested on the host
+  with synthetic log and linear sweeps through a first-order low-pass (within 0.1 dB), not yet with a real generator:
+  reports with a sweep generator that has a sync output are very welcome (forum thread or GitHub issue).
+
+Fixed:
+
+- Text size Larger: the sample rate and memory depth in the top bar ran under the Measure button with long values (625
+  MSa/s · 62.5 Mpts); it now takes the smaller font or a shorter form, and the acquisition mode only shows when it fits.
+
+## 0.1.8
+
+Install from 0.1.7 as always: the web page, System > Update, or the USB stick. This update brings a new device tree;
+0.1.7 starts it by kexec with that tree first (a trial start, as for every update), and installs it only when it
+runs. From 0.1.6 or older: install 0.1.7 first, or use the USB stick (Storage > Upgrade in the stock system), which
+writes it directly, without a trial start. Then switch the scope off at the mains, wait 30 seconds and switch it on.
+
+New:
+
+- The GPU (Mali-T860) and the video encoder are switched on in the device tree: Display > Graphics = GPU, the default,
+  now draws on the GPU, and the web page's live picture can be a JPEG from the video encoder (see 0.1.7). Installed
+  on a DHO924S and started cold.
+
+## 0.1.7
+
+Install from 0.1.6 as always: the web page, System > Update, or the USB stick; then switch the scope off at the
+mains, wait 30 seconds and switch it on. The kernel changes, the device tree does not. The GPU drawing and the JPEG
+live picture below are in this build, but the GPU and the video encoder are switched on by the device tree of 0.1.8:
+until then the CPU draws (also with Display > Graphics = GPU) and the live picture stays a PNG.
+
+New:
+
+- Updates that bring another device tree get the trial start by kexec too: `oos-update` starts the new kernel with
+  the new tree through kexec-tools (`kexec_load`, which takes a tree; `kexec_file_load` keeps the running one), with
+  the changes the stock loader makes to the tree at every power-on (reserved memory, command line, the boot logo's
+  display mode) carried over from the running tree (`hal/src/update/fdt.rs`). Before, such an update was refused
+  through the web page and System > Update and needed `--new-dt` without a safety net. 0.1.8 is the first to use it.
+- USB stick (Storage > Upgrade) on a card that holds OOS: a newer build on the stick is written (the builds are read
+  from the images); before, the card's build was kept unless `oos-reinstall.txt` was on the stick. The same or an
+  older build is kept and only selected, as before.
+
+- The screen is laid out from its size instead of fixed positions on the 1024 x 600 panel (`ui/src/layout.rs`): top
+  bar, plot, measurement rows, bottom bar, menus, dialogs, the start-up screen and the on-screen keyboard. On the panel
+  everything stays where it was, pixel for pixel (`ui/tools/layout-check.sh`). On a larger screen the TIME and trigger
+  cards keep their largest useful width and stand at the right edge.
+- Display > HDMI > Layout: the monitor gets the whole screen laid out again at its own size (up to 1920 x 1080, a
+  larger monitor scales that up), sharp, with the traces stretched from the panel's maps. It draws a second picture
+  every monitor frame, about 5 to 10 ms on the unit, so the panel may get fewer frames while it is on. Mirror and
+  Waveform are as before.
+- System > Network > Remote services: a switch for the web remote, SCPI, VXI-11 and telnet, each next to its address
+  or port (they moved there from the Network page). All on by default; a service switched off closes its port at
+  once. `remote.*` in `/oos/system.conf`; rcS reads `remote.telnet` at power-on (docs/network.md, section 4).
+- Display > Graphics: GPU (the new default) or CPU (as before). With GPU the Mali-T860 draws the whole picture: the CPU
+  only records what is to be drawn (rectangles, text, lines, corners, images) and leaves the traces as phosphor maps;
+  the GPU draws both into the display's buffer and scales the picture for a monitor (filtered, without CPU work for
+  Mirror and Waveform). The frame loop takes about a third less of its core than with CPU (35 % against 53 %, four
+  channels running; gpu/README.md). The image has the Panfrost driver and Mesa for it (about 8 MB more, compressed).
+- Web page, Live picture format JPEG: made by the scope's video encoder (the VPU, `ui/src/vpu.rs`), about 75 KB a
+  picture against 115 KB as PNG. The encoder takes the screen as it is and converts the colours itself (a kernel
+  patch, `kernel/patches/0012-…`): the web thread takes 8.6 % of a slow core at 9.4 pictures a second, against 30 %
+  for PNG. PNG stays the default and the format of screenshots.
+- The measurements are made beside the frame loop, each channel on its own core (`Ui::measure_in_background`): four
+  channels of 100 kpts took 27 ms of every frame with a new record, and the screen ran at 27 instead of 30 frames a
+  second. The frame loop and the acquisition keep the two fast cores.
+- Host test runs: `--size WIDTHxHEIGHT`, the script command `textsize`, and `OOS_FIXED_TIME` to stop the clock.
+
+Fixed:
+
+- Downloads of the web page are named by the scope's clock in its time zone (`oos-20261111-143005.png`, as files on
+  the scope), not by the computer's; while the scope's clock is not set, the computer's time stays.
+- Touch on the web page's picture follows the size of the picture instead of a fixed 1024 x 600.
+
 ## 0.1.6
 
 From 0.1.1 to 0.1.5: install the package through the web page or `oos-update install`, the scope restarts by itself

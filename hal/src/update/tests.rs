@@ -18,11 +18,26 @@ fn bootimg(tag: u8) -> Vec<u8> {
 
 /// `bootimg` with the device tree section (`second`) filled with `dt`.
 fn bootimg_dt(tag: u8, dt: u8) -> Vec<u8> {
+    bootimg_second(tag, vec![dt; 300])
+}
+
+/// `bootimg` with this device tree section.
+fn bootimg_second(tag: u8, second: Vec<u8>) -> Vec<u8> {
+    bootimg_parts(tag, vec![tag ^ 0x55; 1000], second)
+}
+
+/// `bootimg` whose initramfs names its build (gzip of a newc archive with etc/oos-build, as a real image).
+fn bootimg_build(tag: u8, build: &str) -> Vec<u8> {
+    let cpio = kexec::newc(&[("etc/oos-build", 0o100644, format!("{}\n", build).as_bytes())]);
+    let mut rd = inflate::tests::gzip_stored(&cpio);
+    rd.resize(rd.len().div_ceil(4) * 4, 0);
+    bootimg_parts(tag, rd, vec![tag ^ 0xaa; 300])
+}
+
+fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
     let page = 2048usize;
     let mut kernel = vec![tag; 4096 + 512];
     kernel[0x38..0x3c].copy_from_slice(b"ARM\x64");
-    let ramdisk = vec![tag ^ 0x55; 1000];
-    let second = vec![dt; 300];
     let mut h = vec![0u8; page];
     h[..8].copy_from_slice(b"ANDROID!");
     let put = |h: &mut Vec<u8>, at: usize, v: u32| h[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -538,6 +553,24 @@ fn the_stick_again_keeps_a_newer_build_and_only_selects_it() {
 }
 
 #[test]
+fn the_stick_updates_an_older_build() {
+    let fk = stock_card("first-update");
+    let pk_of = |tag: u8, b: &str| pkg::build(&SEED, b, "6.12.115+", &bootimg_build(tag, b)).unwrap();
+    run(&fk, &pk_of(1, "20261111-125214 kernel 6.12.115+"), &opt(true)).unwrap();
+    fk.card().disarm_oos().unwrap();
+    // a newer build on the stick goes over the older one, without oos-reinstall.txt
+    let l = run(&fk, &pk_of(2, "20261112-121847 kernel 6.12.115+"), &opt(true)).unwrap();
+    assert!(l.iter().any(|x| x.contains("the stick has the newer 20261112-121847")), "{:?}", l);
+    assert_eq!(fk.card().read(RECOVERY_LBA, bootimg_build(2, "x").len()).unwrap(), bootimg_build(2, "20261112-121847 kernel 6.12.115+"));
+    assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
+    // an older one does not
+    fk.card().disarm_oos().unwrap();
+    let l = run(&fk, &pk_of(1, "20261111-125214 kernel 6.12.115+"), &opt(true)).unwrap();
+    assert!(l.iter().any(|x| x.contains("kept, only selected") && x.contains("20261112-121847")), "{:?}", l);
+    assert_eq!(fk.card().read(RECOVERY_LBA, bootimg_build(2, "x").len()).unwrap(), bootimg_build(2, "20261112-121847 kernel 6.12.115+"));
+}
+
+#[test]
 fn the_stick_again_repairs_a_damaged_recovery_from_the_slot() {
     let fk = stock_card("first-repair");
     run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
@@ -763,7 +796,7 @@ fn tree(dt: u8) -> Vec<u8> {
 }
 
 fn stage(f: &Fake, p: &[u8], booted: Option<&[u8]>, running: Option<&str>) -> Result<(Report, Option<Staged>), String> {
-    kexec_stage(&mut f.card(), &f.state(), p, &[pk()], &RUN, booted, running)
+    kexec_stage(&mut f.card(), &f.state(), p, &[pk()], &RUN, booted, running, None)
 }
 
 #[test]
@@ -856,4 +889,56 @@ fn a_kexec_start_that_did_not_finish_is_reported_once() {
     c.cut = Some(Region::Recovery);
     assert!(install(&mut c, &f.state(), &kexec_package(2, 7), &[pk()], &RUN).is_err());
     assert_eq!(f.st().kexec.as_deref(), Some(KX_BUILD));
+}
+
+/// An RSCE container with `rk-kernel.dtb` (the device tree section of a real image).
+fn rsce(dtb: &[u8]) -> Vec<u8> {
+    let mut b = vec![0u8; 1024];
+    b[..4].copy_from_slice(b"RSCE");
+    b[8..12].copy_from_slice(&[1, 1, 1, 0]);
+    b[12..16].copy_from_slice(&1u32.to_le_bytes());
+    b[512..516].copy_from_slice(b"ENTR");
+    b[516..516 + fdt::TREE.len()].copy_from_slice(fdt::TREE.as_bytes());
+    b[772..776].copy_from_slice(&2u32.to_le_bytes());
+    b[776..780].copy_from_slice(&(dtb.len() as u32).to_le_bytes());
+    b.extend_from_slice(dtb);
+    b.resize(b.len().div_ceil(4) * 4, 0);
+    b
+}
+
+fn dtb(props: &[(&str, &[u8])], kids: Vec<fdt::Node>) -> Vec<u8> {
+    let root = fdt::Node { name: String::new(), props: props.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(), kids };
+    fdt::Fdt { rsv: vec![], boot_cpu: 0, root }.to_bytes()
+}
+
+fn chosen(args: &[u8]) -> fdt::Node {
+    fdt::Node { name: "chosen".into(), props: vec![("bootargs".into(), args.to_vec())], kids: vec![] }
+}
+
+#[test]
+fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
+    let f = Fake::new("kexec-newdt", None);
+    let old = rsce(&dtb(&[("model", b"DHO\0")], vec![chosen(b"a\0")]));
+    f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
+    let new = rsce(&dtb(&[("model", b"DHO\0"), ("gpu", b"okay\0")], vec![chosen(b"a\0")]));
+    let p = pkg::build_with(&SEED, KX_BUILD, "6.12.115+", &bootimg_second(2, new.clone()), &[kexec::LINE]).unwrap();
+    let running = dtb(&[("model", b"DHO\0")], vec![chosen(b"a loader\0")]);
+    // a build without kexec-tools (no running tree given): refused as before
+    let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, None).unwrap_err();
+    assert!(e.contains("device tree"), "{}", e);
+    let (r, staged) = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&running)).unwrap();
+    let staged = staged.expect("a kexec start");
+    assert!(r.lines.iter().any(|l| l.contains("another one")), "{:?}", r.lines);
+    let t = fdt::Fdt::parse(staged.tree.as_deref().expect("the tree to start with")).unwrap();
+    assert_eq!(t.root.prop("gpu"), Some(&b"okay\0"[..]), "the new tree");
+    assert_eq!(t.root.kids[0].prop("bootargs"), Some(&b"a loader\0"[..]), "with the loader's change");
+    // the started image keeps the new tree section as the one it runs with
+    assert!(staged.initrd.windows(new.len()).any(|w| w == &new[..]));
+    // a change of the loader the new tree cannot take: refused, nothing staged
+    let f = Fake::new("kexec-newdt-refused", None);
+    f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
+    let odd = dtb(&[("model", b"DHO\0"), ("phandle", &[0, 0, 0, 9])], vec![chosen(b"a\0")]);
+    let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&odd)).unwrap_err();
+    assert!(e.contains("device tree"), "{}", e);
+    assert_eq!(f.st().kexec, None);
 }

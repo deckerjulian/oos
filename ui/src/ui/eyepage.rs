@@ -595,14 +595,8 @@ impl Ui {
                 cv.text(&f.s, r.x - 4 - f.s.width(&s), ty, &s, AXIS_TEXT);
             }
             if p.img_w == r.w as usize {
-                for (y, row) in p.img.chunks_exact(p.img_w).take(r.h as usize).enumerate() {
-                    let o = ((r.y + y as i32) * cv.w + r.x) as usize;
-                    for (d, &c) in cv.px[o..o + row.len()].iter_mut().zip(row) {
-                        if c != 0 {
-                            *d = c;
-                        }
-                    }
-                }
+                let rows = (p.img.len() / p.img_w).min(r.h as usize);
+                cv.image(Rect::new(r.x, r.y, r.w, rows as i32), &p.img[..rows * p.img_w], true);
             }
             if let Some((one, zero)) = p.levels {
                 let span = (e.v_max - e.v_min) as f64;
@@ -829,7 +823,7 @@ mod tests {
     #[test]
     fn the_page_tiles_the_area_to_its_bottom_edge() {
         for h in [160, 240, 296, 300, 352, 400, 440, 480] {
-            let a = Rect::new(0, 40, W, h);
+            let a = Rect::new(0, 40, PANEL_W, h);
             let l = layout(a);
             let bottom = a.y + a.h;
             assert_eq!(l.charts[2].y + l.charts[2].h + if l.jit_rows > 0 { GAP + l.jit.h } else { 0 }, bottom, "right column, height {}", h);
@@ -896,7 +890,7 @@ mod tests {
     fn eye_page_timing() {
         let s = Sig { rate: 10e6, uis: 8000, prbs: true, spu: 125, rj: 50e-12, pj: 0.0, volt_noise: 0.01 };
         let mut ui = page(s, 3);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         let t = std::time::Instant::now();
         for _ in 0..20 {
             ui.analyzer_update();
@@ -929,7 +923,7 @@ mod tests {
     #[test]
     fn nothing_sits_under_the_overflow_button() {
         for h in [160, 352, 480] {
-            let a = Rect::new(0, 40, W, h);
+            let a = Rect::new(0, 40, PANEL_W, h);
             let l = layout(a);
             let btn = Rect::new(a.x + a.w - 48, a.y, 48, 42);
             for r in [l.eye, l.head, l.fig, l.jit].iter().chain(&l.charts) {
@@ -1011,7 +1005,7 @@ mod tests {
         ui.activate(Item::EyeClear);
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.azr.eye.is_none() && ui.azr.page.pool.is_empty() && ui.azr.page.img.is_empty());
-        ui.render(&mut Canvas::new(W, H));
+        ui.render(&mut Canvas::new(PANEL_W, PANEL_H));
     }
 
     #[test]
@@ -1026,7 +1020,7 @@ mod tests {
     #[test]
     fn it_draws_at_every_height_and_with_the_source_off() {
         let mut ui = page(NOISY, 4);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         for h in [160, 240, 352, 480] {
             ui.area.h = h;
             ui.analyzer_update();
@@ -1056,7 +1050,7 @@ mod tests {
         let few = Sig { uis: 10, ..CLEAN };
         for (name, s, n) in [("eye-clean", CLEAN, 40), ("eye-noisy", NOISY, 60), ("eye-few", few, 6), ("eye-tiny", Sig { uis: 6, ..CLEAN }, 3)] {
             let mut ui = page(s, n);
-            let mut cv = Canvas::new(W, H);
+            let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);
             std::fs::write(format!("{}/{}.png", dir, name), crate::store::png_of(&cv)).unwrap();
             ui.m.run = RunState::Stop;

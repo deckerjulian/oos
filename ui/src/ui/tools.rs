@@ -113,9 +113,35 @@ impl Ui {
         self.mstat.clear();
     }
 
+    /// The hardware counter (on the unit): the set-up for the FPGA's counter, and a new reading into the statistics.
+    /// Off the hardware the counter is worked out from the records (`counter_update`).
+    pub(super) fn counter_poll(&mut self) {
+        let m = &self.m;
+        let want = (m.cnt_on && m.ch[m.cnt_src].on).then_some(crate::board::CounterWant { ch: m.cnt_src, mode: m.cnt_mode.min(2), digits: m.cnt_digits, clear: self.cnt_clear });
+        let Some(r) = self.src.hw_counter(want) else { return };
+        match r {
+            Some(r) if Some(r.n) != self.cnt_hw.map(|x| x.n) => {
+                if let Some(t) = r.period.filter(|_| self.m.cnt_mode == 0) {
+                    let v = 1.0 / t;
+                    let st = &mut self.cnt_stat;
+                    if st.n == 0 {
+                        (st.min, st.max) = (v, v);
+                    }
+                    st.n += 1;
+                    st.sum += v;
+                    st.min = st.min.min(v);
+                    st.max = st.max.max(v);
+                }
+                self.cnt_hw = Some(r);
+            }
+            Some(_) => {}
+            None => self.cnt_hw = None,
+        }
+    }
+
     /// DVM and counter: a new record came in.
     pub(super) fn counter_update(&mut self) {
-        if !self.m.cnt_on {
+        if !self.m.cnt_on || self.src.is_hw() {
             return;
         }
         let c = self.m.cnt_src;
@@ -137,9 +163,39 @@ impl Ui {
         }
     }
 
+    /// The counter's value as the strip shows it (Hz, s or edges); None without one. SCPI :COUNter:CURRent?
+    pub fn counter_value(&self) -> Option<f64> {
+        let c = self.m.cnt_src;
+        if !self.m.cnt_on || !self.m.ch[c].on {
+            return None;
+        }
+        let v = if self.src.is_hw() {
+            let r = self.cnt_hw?;
+            match self.m.cnt_mode {
+                2 => r.total as f64,
+                1 => r.period?,
+                _ => 1.0 / r.period?,
+            }
+        } else {
+            match self.m.cnt_mode {
+                2 => self.cnt_total as f64,
+                1 => self.ana[c].get(Meas::Period),
+                _ => self.ana[c].get(Meas::Freq),
+            }
+        };
+        v.is_finite().then_some(v)
+    }
+
+    /// Clear counter, from SCPI :COUNter:TOTalize:CLEar.
+    pub fn counter_reset(&mut self) {
+        self.counter_clear();
+    }
+
     pub(super) fn counter_clear(&mut self) {
         self.cnt_total = 0;
         self.cnt_stat = MStat::default();
+        self.cnt_clear += 1;
+        self.cnt_hw = None;
     }
 
     /// DVM reading of its source, volts.
@@ -168,7 +224,12 @@ impl Ui {
             let a = &self.ana[c];
             let digits = self.m.cnt_digits as usize;
             let on = self.m.ch[c].on;
+            let hw = self.src.is_hw();
+            let hw_t = self.cnt_hw.and_then(|r| r.period).filter(|_| on);
             let t = match self.m.cnt_mode {
+                2 if hw => self.cnt_hw.map_or("----".into(), |r| fmt_count(r.total as f64)),
+                1 if hw => hw_t.map_or("----".into(), |t| si_digits(t, "s", digits)),
+                0 if hw => hw_t.map_or("----".into(), |t| si_digits(1.0 / t, "Hz", digits)),
                 2 => fmt_count(self.cnt_total as f64),
                 1 if on && a.get(Meas::Period).is_finite() => si_digits(a.get(Meas::Period), "s", digits),
                 0 if on && a.get(Meas::Freq).is_finite() => si_digits(a.get(Meas::Freq), "Hz", digits),
@@ -294,5 +355,30 @@ impl Ui {
     /// Name of a channel on its card: its label, or CHn.
     pub(super) fn ch_name(&self, c: usize) -> String {
         if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
+    }
+}
+
+#[cfg(test)]
+mod counter_tests {
+    use super::*;
+
+    /// The counter through SCPI, off the hardware: set-up, a value from the records, the totalizer's clear.
+    #[test]
+    fn the_counter_by_scpi() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = crate::gfx::Canvas::new(ui.scr.w, ui.scr.h);
+        let mut s = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(s.exec_line(ui, &cv, c)).unwrap().trim().to_string();
+        q(&mut ui, ":COUNter:ENABle 1;:COUNter:SOURce CHAN1;:COUNter:MODE FREQuency;:COUNter:NDIGits 6");
+        assert_eq!(q(&mut ui, ":COUNter:ENABle?;:COUNter:SOURce?;:COUNter:MODE?;:COUNter:NDIGits?"), "1;CHAN1;FREQ;6");
+        for _ in 0..10 {
+            ui.step(0.05);
+        }
+        let f: f64 = q(&mut ui, ":COUNter:CURRent?").parse().unwrap();
+        assert!(f.is_finite() && f > 0.0 && f < 1e9, "{}", f);
+        q(&mut ui, ":COUNter:MODE TOTalize");
+        q(&mut ui, ":COUNter:TOTalize:CLEar");
+        assert_eq!(q(&mut ui, ":COUNter:CURRent?").parse::<f64>().unwrap(), 0.0);
+        assert_eq!(q(&mut ui, ":COUNter:NDIGits 9;:COUNter:NDIGits?"), "6", "out of range: kept");
     }
 }

@@ -711,13 +711,13 @@ mod tests {
         assert_eq!(la.words.len(), DEMO_SAMPLES);
         let at = |t: f64| la.words[((t - la.t0) / la.dt) as usize];
         assert!(at(20e-6) >> 14 & 1 == 1 && at(-20e-6) >> 14 & 1 == 0);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.close_menu();
         ui.render(&mut cv);
         // the band is drawn: the lane of D0 has trace pixels of the pod-1 colour
         let (band, pitch) = ui.la_band(16);
         let y0 = band.y + 14;
-        let lit = (y0..y0 + pitch).flat_map(|y| (band.x + MARK_W..band.x + band.w - MARK_W).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * W + x) as usize] & 0xff_ffff == POD_COLORS[0]).count();
+        let lit = (y0..y0 + pitch).flat_map(|y| (band.x + MARK_W..band.x + band.w - MARK_W).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] & 0xff_ffff == POD_COLORS[0]).count();
         assert!(lit > 500, "{} lit pixels", lit);
         // the LA key again: off and closed
         ui.key(key::LA);
@@ -769,7 +769,7 @@ mod decode_tests {
         assert!(pitch >= 9);
         assert!(row.y >= band.y + LA_HEAD + 16 * pitch, "the row must be under the last lane: {:?} {:?}", row, band);
         assert!(row.y + row.h <= band.y + band.h + 2, "the row must stay in the strip: {:?} {:?}", row, band);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         let _ = crate::store::write(&dir.join("la-decoder-row.png"), &crate::store::png_of(&cv));
         // something is drawn in the row, right of its label
@@ -871,7 +871,7 @@ mod remote_tests {
     #[test]
     fn scpi_and_csv() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        let cv = Canvas::new(W, H);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let mut q = |ui: &mut Ui, c: &str| scpi.exec_line(ui, &cv, c);
         let s = |b: Vec<u8>| String::from_utf8(b).unwrap();
@@ -979,7 +979,7 @@ mod trigger_tests {
     #[test]
     fn scpi_source() {
         let mut ui = ui_la();
-        let cv = Canvas::new(W, H);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         scpi.exec_line(&mut ui, &cv, ":TRIG:EDGE:SOUR D7");
         assert_eq!(ui.m.trig_line(), Some(7));

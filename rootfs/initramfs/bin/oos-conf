@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# oos-conf KEY [DEFAULT]: the value of KEY in the system settings, for the scripts of the image (docs/network.md 5).
+# oos-conf KEY [DEFAULT]: the value of KEY in the system settings, for the scripts of the image (docs/network.md 6).
 # The image default /etc/oos/system.conf first (an image built for one unit, OOS_UNIT), then /oos/system.conf: the
 # last `key = value` line wins, also one with an empty value. `#` at the start of a line or after a space is a comment.
 # Prints DEFAULT (or nothing) when no file has the key.

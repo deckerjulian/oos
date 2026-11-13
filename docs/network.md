@@ -1,9 +1,9 @@
-# Ethernet, date and time
+# Ethernet, date and time, remote services
 
-How OOS brings up Ethernet, what it does about a link that comes up at 10 Mbit/s, and how it sets the clock from the
-network. WLAN through a USB stick is in [wlan.md](wlan.md).
+How OOS brings up Ethernet, what it does about a link that comes up at 10 Mbit/s, how it sets the clock from the
+network, and which services it offers on it. WLAN through a USB stick is in [wlan.md](wlan.md).
 
-The settings of this page live in `/oos/system.conf` (section 4), not in the setups: a saved or recalled setup does not
+The settings of this page live in `/oos/system.conf` (section 5), not in the setups: a saved or recalled setup does not
 change them.
 
 ## 1. Ethernet
@@ -13,8 +13,8 @@ change them.
 | MAC | GMAC of the RK3399 (`fe300000`), RMII, 50 MHz reference clock into the MAC (`clock_in_out = "input"`) |
 | PHY | Motorcomm YT8512 at MDIO address 0, 10/100 Mbit/s, reset line GPIO3_B7 (`snps,reset-gpio`, 10 ms low, then 50 ms) |
 | Kernel | `dwmac-rk` + `stmmac`, PHY driver `motorcomm` (both built in), no PHY interrupt: phylib reads the PHY once a second |
-| MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2, `oos-mac`); `eth.mac` (section 5) names another |
-| Address | DHCP (`udhcpc`, 5 tries), else 192.168.177.64/24; a cable or a server that comes later still gets DHCP |
+| MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2, `oos-mac`); `eth.mac` (section 6) names another |
+| Address | none without a cable; with one DHCP (`udhcpc`, 5 tries), else a link-local address 169.254.x.y/16 (RFC 3927: from the MAC, checked with `arping -D`, another one if it is taken; the top bar says `LAN · local`). A computer on the same cable without DHCP takes such an address itself, so it reaches the scope without any set-up (with `net.allow` only if 169.254.0.0/16 is listed, section 6). A server that comes later still gives DHCP |
 
 System > Network shows the address of eth0 and the speed of the link (`192.168.1.20 · 100 Mbit/s`).
 
@@ -123,13 +123,29 @@ on a FAT stick: those are local time, so a computer shows them right. exFAT and 
 **File names.** Once the clock was set in this boot (by NTP or by hand), new files carry the local date and time:
 `shot-20261111-143005.png`, `wave-20261111-143005.csv`, `la-...`, `log-...`, `events-...`, with `-2`, `-3` for a second
 file in the same second. Before that they are numbered as before (`shot-001.png`). A file `/tmp/oos-clock.set` tells a
-restarted oos-ui that the clock is right.
+restarted oos-ui that the clock is right. The web page names its downloads the same way (`oos-20261111-143005.png`):
+it asks the scope for its local time (`/stamp`), and takes the computer's own time while the scope's clock is not set.
 
 **Not verified on hardware:** setting the clock, the sync over Ethernet and WLAN, DNS through the name server of DHCP,
 the zone for FAT time stamps. Verified on the host: the SNTP packets, an exchange with a local server, the time zone
 rules, the schedule, the settings file, the page.
 
-## 4. `/oos/system.conf`
+## 4. Remote services
+
+System > Network > Remote services has a switch for each service, next to where it is reached:
+
+| service | port | what goes with it |
+|---|---|---|
+| Web remote | 8080 | live picture, keys and touch, downloads, LXI identification, MCP, **the update page** |
+| SCPI | 5555 (TCP) | the SCPI commands |
+| VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
+| telnet | 23 | a shell **without password** (development image) |
+
+All are on by default. A service switched off closes its port at once, with the connections on it. Switching off the
+web remote also takes away the update page: an update then comes from a USB stick. telnet is started by `rcS` at
+power-on, which reads `remote.telnet` from `/oos/system.conf`; oos-ui ends or starts it when the switch changes.
+
+## 5. `/oos/system.conf`
 
 `key = value` lines, written by oos-ui when a setting changes (one step, then a sync: the scope is switched off at the
 mains). Without `/oos` the file is `/tmp/oos-system.conf` and is lost at power-off. A value that does not parse keeps
@@ -141,19 +157,25 @@ ntp = off
 ntp.server = pool.ntp.org
 tz = UTC0
 eth.retry_10m = on
+remote.web = on
+remote.scpi = on
+remote.vxi11 = on
+remote.telnet = on
+graphics = gpu                # Display > Graphics: gpu or cpu (gpu/README.md)
 ```
 
-## 5. Firewall, remote access, telnet and the MAC address
+## 6. Firewall, remote access, telnet and the MAC address
 
-Four keys of the system settings that rcS reads before the network comes up (`oos-conf`). Each one is looked up in
+Three keys of the system settings that rcS reads before the network comes up (`oos-conf`). Each one is looked up in
 `/etc/oos/system.conf` first (the defaults of an image built for one unit: `OOS_UNIT`, docs/models.md 4.2), then in
 `/oos/system.conf`; the last line wins, also one with an empty value. oos-ui keeps these lines when it writes the file.
-Without `/etc/oos/system.conf` and without the keys everything is as before.
+Without `/etc/oos/system.conf` and without the keys everything is as before. The same image default applies to the keys
+of section 5 (oos-ui and rcS read it first), so a unit image can ship `remote.telnet = off`: no telnetd at power-on, and
+oos-ui does not start it either until System > Network > Remote services switches it on.
 
 | Key | Default | What |
 |---|---|---|
 | `net.allow` | (none) | address prefixes, `192.0.2.0/24 fd00::/8`. Firewall: inbound only from them; oos-ui: `POST /update`, `/mcp`, SCPI and VXI-11 only from them |
-| `telnet` | `on` | `off`: no telnetd (the root shell on the serial console and the panel stays) |
 | `eth.mac` | `cid` | `cid`: from the card's CID as before; `vendor`: the LAN MAC in vendor.bin, as the stock system uses it; or an address `02:00:00:00:00:01` |
 
 **Firewall** (`oos-firewall`, nftables, table `inet oos_fw`, before telnetd and oos-ui start). Inbound passes: loopback,
@@ -161,14 +183,15 @@ answers to what the scope sent (DHCP, DNS, NTP; connection tracking), IPv6 neigh
 anything from a listed prefix. The rest is dropped, on Ethernet and WLAN alike. Outbound is not limited. An entry that
 does not parse is left out and logged (`/tmp/oos-net.log`, kernel log); a list of which nothing parses closes everything
 but loopback rather than opening it. `nft` is a static build in the image (`rootfs/build-nft.sh`, nftables 1.1.3).
-The fallback address 192.168.177.64 is only reachable from a listed prefix.
+The link-local fallback address (169.254.x.y) is only reachable from a listed prefix: add `169.254.0.0/16` to
+`net.allow` for a computer on a direct cable.
 
 **oos-ui** reads `net.allow` once at start and applies it a second time per connection: `POST /update` and `/mcp`
 answer 403 to others, SCPI and VXI-11 close the connection. The page, the live picture, `/cmd` and the downloads stay
 open to the firewall's prefixes. Loopback is always allowed.
 
-**Telnet on again** with `telnet = off` in the image: write `telnet = on` into `/oos/system.conf` (root shell on UART2
-at 115200 baud or on the panel), then power-cycle. Or build the image without that line.
+**Telnet on again** with `remote.telnet = off` in the image: System > Network > Remote services > telnet, or
+`remote.telnet = on` in `/oos/system.conf`. Or build the image without that line.
 
 **MAC**: an address that is not unicast or not six colon-separated bytes falls back to `cid` (logged). `vendor` asks the board
 (`oos-board mac`; on the DHO800/DHO900 `oos-fpgad model`, which needs the keys of vendor.bin, docs/models.md 1); without

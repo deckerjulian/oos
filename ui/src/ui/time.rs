@@ -162,6 +162,7 @@ impl Ui {
         self.sys_path = Some(path);
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();
         self.apply_tz();
+        self.apply_backlight();
     }
 
     /// Writes the settings (not in tests: there `sys_path` is none).
@@ -203,11 +204,16 @@ impl Ui {
         }
     }
 
+    /// `YYYYMMDD-HHMMSS` in the time zone of the settings, once the clock is right: file names on the scope and of the
+    /// web page's downloads (`/stamp`).
+    pub fn file_stamp(&self) -> Option<String> {
+        self.clock_known.then(|| self.local_now().stamp())
+    }
+
     /// A new file in the storage directory: `<prefix>-YYYYMMDD-HHMMSS.<ext>` in local time once the clock is right,
     /// else the first free `<prefix>-NNN.<ext>`.
     pub(super) fn new_file(&self, dir: &std::path::Path, prefix: &str, ext: &str) -> std::path::PathBuf {
-        let stamp = self.clock_known.then(|| self.local_now().stamp());
-        crate::store::next_name_at(dir, prefix, ext, stamp.as_deref())
+        crate::store::next_name_at(dir, prefix, ext, self.file_stamp().as_deref())
     }
 
     // ------------------------------------------------------------------------------------------------ NTP

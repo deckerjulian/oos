@@ -1061,7 +1061,9 @@ def uart_from_the_generator_decodes(s, o):
     s.w(":SOUR:VOLT:OFFS 1.5")
     s.w(":SOUR:OUTP ON")
     s.w(f":CHAN{c}:SCAL 1")
-    s.w(":TIM:SCAL 0.0005")  # several frames: the first of a record may begin in the middle of one
+    # about 12 frames per record: the first of a record may begin in the middle of one and read wrong (a data 1 then a
+    # 0 looks like stop and start), with 3 frames per record (0.5 ms/div) that alone came near the 60 %
+    s.w(":TIM:SCAL 0.002")
     s.set(dec_on="true", dec_proto="Uart", dec_src=c - 1, dec_baud=3, dec_thr=1.5, dec_ascii="false")
     s.settle(extra=0.8)
     rows = []
@@ -1216,10 +1218,12 @@ def deep_memory(s, o):
         while s.stat()["frames"] == a and time.time() - t0 < 60:
             time.sleep(0.2)
         got = s.stat()["frames"] > a
-        v = s.meas("VPP", c, 1)
-        rows.append(f"{int(d) // 1000000} M: {time.time() - t0:.1f} s, {v:.2f} V")
+        # Vpp over every sample of millions at 1.25 GSa/s takes the noise peaks with it (about 2.16 V for 2.04 V of
+        # sine on a DHO924S): the RMS (as Vpp of a sine) checks the data, Vpp is only reported
+        v, rms = s.meas("VPP", c, 1), s.meas("VRMS", c, 1)
+        rows.append(f"{int(d) // 1000000} M: {time.time() - t0:.1f} s, {v:.2f} Vpp, {rms:.3f} Vrms")
         assert got, f"no record at {d}: {rows}"
-        near(f"Vpp at {d}", v, 2.0, rel=0.08)
+        near(f"RMS as Vpp at {d}", rms * 2 * 2**0.5, 2.0, rel=0.08)
     s.w(":ACQ:MDEP AUTO")
     return "; ".join(rows)
 

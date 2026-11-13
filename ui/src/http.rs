@@ -5,6 +5,7 @@
 //!   GET /             page            GET /screen.png   current screen (PNG, 60 to 175 KB; the page's live view and saving;
 //!                                     made off the frame loop, with an ETag: If-None-Match gets 304; see `Shots`)
 //!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
+//!   GET /screen.jpg   the live picture as JPEG from the VPU (`vpu.rs`; PNG where there is none), as /screen.png
 //!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
 //!   GET /cmd?c=...    one key, knob or touch command (cmd.rs syntax: "key runstop", "knob vscale +1", "tap 100 200");
 //!                     other commands are refused (`cmd::remote_ok`)
@@ -14,7 +15,7 @@
 //!   GET /update       update state and upload form; POST /update with a signed package (.oosupd) installs it
 //!                     (ui/update.rs: the signature is checked before anything is written)
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
-//! `net.allow` (`netacl`, docs/network.md 5) limits `POST /update` and `/mcp` to the listed address prefixes.
+//! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
 use crate::gfx::Canvas;
 use crate::ui::Ui;
@@ -111,6 +112,47 @@ fn little_cores() -> Vec<usize> {
     .clone()
 }
 
+/// The calling thread onto the slower cores of a big.LITTLE SoC (RK3399: the four A53), at normal priority: the
+/// measurements in the background (`ui::MeasWorker`); the threads it starts after this stay there too.
+pub fn to_little_cores() {
+    #[cfg(target_os = "linux")]
+    {
+        let little = little_cores();
+        if little.is_empty() {
+            return;
+        }
+        // SAFETY: a local CPU set for the calling thread
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            for c in little {
+                libc::CPU_SET(c, &mut set);
+            }
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+        }
+    }
+}
+
+/// The calling thread onto the fastest cores (RK3399: the two A72), and the processes it starts after this with it.
+/// Display > Graphics = GPU: the frame loop and the GPU helper compare and send the layers there (on an A53 a
+/// frame's compare took three times as long).
+#[cfg(target_os = "linux")]
+pub fn pin_to_big_cores() {
+    let little = little_cores();
+    let all: Vec<usize> = (0..64).filter(|c| std::path::Path::new(&format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c)).exists()).collect();
+    let big: Vec<usize> = all.into_iter().filter(|c| !little.contains(c)).collect();
+    if big.is_empty() || little.is_empty() {
+        return;
+    }
+    // SAFETY: a local CPU set for the calling thread
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for c in big {
+            libc::CPU_SET(c, &mut set);
+        }
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+    }
+}
+
 /// The fastest the live picture is made: 20 a second.
 const SHOT_MIN: Duration = Duration::from_millis(50);
 /// The encoder's share of its core at most (half of a slow core, which is idle otherwise): the time between two copies
@@ -126,6 +168,8 @@ const LONG_POLL: Duration = if cfg!(test) { Duration::from_millis(1000) } else {
 const SHOT_FRESH: Duration = Duration::from_millis(300);
 /// Connections waiting for a picture at most (more are answered 503).
 const SHOT_WAITING: usize = 8;
+/// After the VPU failed, JPEG is tried again this much later (PNG meanwhile).
+const VPU_RETRY: Duration = Duration::from_secs(60);
 
 /// The live picture of the web remote.
 ///
@@ -150,8 +194,9 @@ struct ShotState {
     next: Option<(u32, u32, Vec<u32>)>,
     /// the encoder works on a copy
     busy: bool,
-    /// connections waiting for a picture newer than the ETag they have, and since when
-    waiting: Vec<(TcpStream, Option<String>, Instant)>,
+    /// connections waiting for a picture newer than the ETag they have, since when, and in which format (JPEG; PNG
+    /// once the VPU failed)
+    waiting: Vec<(TcpStream, Option<String>, Instant, bool)>,
     /// the last picture: its pixels (taken out by the encoder while it compares), size, PNG, ETag
     px: Vec<u32>,
     size: (u32, u32),
@@ -166,6 +211,13 @@ struct ShotState {
     spare: Vec<u32>,
     /// PNGs made so far
     encodes: u64,
+    /// the live picture as JPEG from the VPU (`/screen.jpg`, `vpu.rs`) rather than PNG: as the last request asked;
+    /// the format of `png`; the VPU failed (PNG until `no_jpeg_at` + `VPU_RETRY`)
+    jpeg: bool,
+    pic_jpeg: bool,
+    no_jpeg: bool,
+    /// when the VPU failed: it is tried again after `VPU_RETRY` (one timeout must not end JPEG for the session)
+    no_jpeg_at: Option<Instant>,
     /// the frame loop hands its screens over (`hand_over`) instead of `tick` copying them
     frames: bool,
     thread: bool,
@@ -182,11 +234,16 @@ impl Shots {
     }
 
     /// The answer to one `GET /screen.png` (`have`: the ETag of If-None-Match); the frame loop never encodes here.
-    fn request(self: &Arc<Self>, s: &TcpStream, have: Option<String>, cv: &Canvas) {
+    fn request(self: &Arc<Self>, s: &TcpStream, have: Option<String>, cv: &Canvas, jpeg: bool) {
         let mut st = self.lock();
         st.asked = Some(Instant::now());
-        // an older picture or none: the newest at once, when it is fresh (a screenshot must not be an old one)
-        let fresh = st.at.is_some_and(|t| t.elapsed() < SHOT_FRESH) && !st.busy && st.next.is_none();
+        if st.no_jpeg && st.no_jpeg_at.is_some_and(|t| t.elapsed() >= VPU_RETRY) {
+            st.no_jpeg = false;
+        }
+        st.jpeg = jpeg && !st.no_jpeg;
+        // an older picture or none: the newest at once, when it is fresh (a screenshot must not be an old one) and in
+        // the format asked for
+        let fresh = st.at.is_some_and(|t| t.elapsed() < SHOT_FRESH) && !st.busy && st.next.is_none() && st.pic_jpeg == st.jpeg;
         if let Some(png) = st.png.clone().filter(|_| fresh && have.as_deref() != Some(st.tag.as_str()) && st.size == (cv.w as u32, cv.h as u32)) {
             let tag = st.tag.clone();
             drop(st);
@@ -206,7 +263,8 @@ impl Shots {
             st.thread = true;
         }
         let Ok(c) = s.try_clone() else { return };
-        st.waiting.push((c, have, Instant::now()));
+        let want = st.jpeg;
+        st.waiting.push((c, have, Instant::now(), want));
         drop(st);
         self.tick(cv);
     }
@@ -224,20 +282,38 @@ impl Shots {
         st.waiting = keep;
         if !old.is_empty() {
             let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
+            let fit = |w: bool| Self::fits(w, st.pic_jpeg, st.no_jpeg);
+            let fits: Vec<bool> = old.iter().map(|w| fit(w.3)).collect();
             drop(st);
-            for (c, have, _) in old {
-                answer_shot(&c, have.as_deref(), png.clone(), &tag);
+            for ((c, have, _, _), ok) in old.into_iter().zip(fits) {
+                // the last picture in the format asked for, else "busy" (the page asks again)
+                if ok {
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
+                } else {
+                    busy_answer(&c);
+                }
             }
             st = self.lock();
         }
         if !st.frames && Self::wanted(&st, now, watched) {
-            let mut px = std::mem::take(&mut st.spare);
-            px.clear();
-            px.extend_from_slice(&cv.px);
-            st.next = Some((cv.w as u32, cv.h as u32, px));
-            st.at = Some(now);
+            Self::give_copy(&mut st, cv, now);
             self.wake.notify_one();
         }
+    }
+
+    /// A copy of the screen for the encoder (the caller wakes it).
+    fn give_copy(st: &mut ShotState, cv: &Canvas, now: Instant) {
+        let mut px = std::mem::take(&mut st.spare);
+        px.clear();
+        px.extend_from_slice(&cv.px);
+        st.next = Some((cv.w as u32, cv.h as u32, px));
+        st.at = Some(now);
+    }
+
+    /// A picture in JPEG (`pic_jpeg`) or PNG answers a request for `want_jpeg`: the same format, or PNG for JPEG once
+    /// the VPU failed. A screenshot asked for as PNG must never get JPEG bytes (it is saved as .png).
+    fn fits(want_jpeg: bool, pic_jpeg: bool, no_jpeg: bool) -> bool {
+        want_jpeg == pic_jpeg || (want_jpeg && no_jpeg && !pic_jpeg)
     }
 
     /// Whether the encoder should get the screen now.
@@ -267,6 +343,8 @@ impl Shots {
 
     fn encoder(&self) {
         lower_priority();
+        let mut vpu: Option<crate::vpu::JpegEnc> = None;
+        let mut vpu_size = (0, 0);
         let boot = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64 & 0xffff_ffff);
         loop {
             let mut st = self.lock();
@@ -279,25 +357,54 @@ impl Shots {
             let Some((w, h, px)) = st.next.take() else { continue };
             st.busy = true;
             let last = std::mem::take(&mut st.px);
-            let known = st.png.is_some() && st.size == (w, h);
+            // the format of the oldest request waiting (one viewer may ask for JPEG, another for a PNG screenshot)
+            let jpeg = st.waiting.first().map_or(st.jpeg, |w| w.3) && !st.no_jpeg;
+            let known = st.png.is_some() && st.size == (w, h) && st.pic_jpeg == jpeg;
             drop(st);
             // the comparison and the encoding without the lock: the frame loop may ask meanwhile
             let t0 = Instant::now();
-            let png: Option<Arc<[u8]>> = (!known || !same_pixels(&last, &px)).then(|| crate::store::png(w, h, &px).into());
+            let mut vpu_failed = false;
+            let png: Option<Arc<[u8]>> = (!known || !same_pixels(&last, &px)).then(|| {
+                if jpeg {
+                    if vpu_size != (w, h) {
+                        vpu = None;
+                    }
+                    if vpu.is_none() {
+                        match crate::vpu::JpegEnc::open(w as usize, h as usize) {
+                            Ok(e) => {
+                                eprintln!("oos-ui: JPEG encoder: VPU, {} in", e.input());
+                                (vpu, vpu_size) = (Some(e), (w, h));
+                            }
+                            Err(e) => eprintln!("oos-ui: JPEG encoder: {}", e),
+                        }
+                    }
+                    match vpu.as_mut().map(|e| e.encode(&px)) {
+                        Some(Ok(j)) => return j.into(),
+                        Some(Err(e)) => eprintln!("oos-ui: JPEG encoder: {}", e),
+                        None => {}
+                    }
+                    (vpu, vpu_failed) = (None, true);
+                }
+                crate::store::png(w, h, &px).into()
+            });
             let took = t0.elapsed();
             let mut st = self.lock();
             st.busy = false;
+            if vpu_failed {
+                (st.no_jpeg, st.jpeg, st.no_jpeg_at) = (true, false, Some(Instant::now()));
+            }
             let Some(png) = png else {
                 // the same screen: who has an older picture gets this one, who has it waits on; the next look later
                 st.gap = SHOT_STILL.max(took * SHOT_DUTY);
                 st.px = last;
                 st.spare = px;
                 let tag = st.tag.clone();
-                let (lack, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| w.1.as_deref() != Some(tag.as_str()));
+                let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
+                let (lack, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| w.1.as_deref() != Some(tag.as_str()) && Self::fits(w.3, pj, nj));
                 st.waiting = keep;
                 let png = st.png.clone().unwrap_or_else(|| Arc::from(&[][..]));
                 drop(st);
-                for (c, have, _) in lack {
+                for (c, have, _, _) in lack {
                     answer_shot(&c, have.as_deref(), png.clone(), &tag);
                 }
                 continue;
@@ -305,14 +412,18 @@ impl Shots {
             st.gap = SHOT_MIN.max(took * SHOT_DUTY);
             st.encodes += 1;
             st.tag = format!("\"{:x}-{}\"", boot, st.encodes);
+            st.pic_jpeg = png.starts_with(&[0xff, 0xd8]);
             st.png = Some(png.clone());
             st.size = (w, h);
             st.px = px;
             st.spare = last;
-            let waiting = std::mem::take(&mut st.waiting);
+            // who asked for the other format waits for the next picture, made in that format
+            let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
+            let (waiting, other): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| Self::fits(w.3, pj, nj));
+            st.waiting = other;
             let tag = st.tag.clone();
             drop(st);
-            for (c, have, _) in waiting {
+            for (c, have, _, _) in waiting {
                 answer_shot(&c, have.as_deref(), png.clone(), &tag);
             }
         }
@@ -339,7 +450,8 @@ fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
         let _ = (&*s).write_all(format!("HTTP/1.1 304 Not Modified\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", etag).as_bytes());
         return;
     }
-    let head = format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", png.len(), etag);
+    let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
+    let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", ctype, png.len(), etag);
     if !send_in_background(s, head, png) {
         busy_answer(s);
     }
@@ -395,22 +507,22 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 <div class="g"><div class="k"><span>Save to this computer</span><div>
 <button onclick="dl('/screen.png','png')">Screenshot (PNG)</button><button onclick="dl('/wave.csv','csv')">Waveform (CSV)</button><button onclick="dl('/wave.bin','bin')">Waveform (binary)</button><button onclick="dl('/la.csv','la.csv')">LA lines (CSV)</button></div></div>
 <div class="k"><span>Picture</span><div><button id="p" onclick="pause()">Pause</button></div></div>
-<div class="k"><span>Live picture format</span><div><button id="fp" onclick="setfmt('png')" title="compressed, about 90 KB per picture">PNG</button><button id="fb" onclick="setfmt('bmp')" title="uncompressed, 1.8 MB per picture">BMP</button></div></div></div>
+<div class="k"><span>Live picture format</span><div><button id="fp" onclick="setfmt('png')" title="compressed, about 90 KB per picture">PNG</button><button id="fb" onclick="setfmt('bmp')" title="uncompressed, 1.8 MB per picture">BMP</button><button id="fj" onclick="setfmt('jpg')" title="made by the scope's video encoder, about 70 KB per picture: up to 20 a second, but text a little less sharp">JPEG</button></div></div></div>
 <script>
-const s=document.getElementById('s'),st=document.getElementById('st'),pb=document.getElementById('p'),fp=document.getElementById('fp'),fb=document.getElementById('fb');
+const s=document.getElementById('s'),st=document.getElementById('st'),pb=document.getElementById('p'),fp=document.getElementById('fp'),fb=document.getElementById('fb'),fj=document.getElementById('fj');
 let paused=false,running=false,n=0,msg='',until=0,fmt='png';
-try{if(localStorage.getItem('fmt')=='bmp')fmt='bmp';}catch(e){}
-function setfmt(f){fmt=f;try{localStorage.setItem('fmt',f);}catch(e){}fp.className=f=='png'?'on':'';fb.className=f=='bmp'?'on':'';}
+try{const f=localStorage.getItem('fmt');if(f=='bmp'||f=='jpg')fmt=f;}catch(e){}
+function setfmt(f){fmt=f;try{localStorage.setItem('fmt',f);}catch(e){}fp.className=f=='png'?'on':'';fb.className=f=='bmp'?'on':'';fj.className=f=='jpg'?'on':'';}
 setfmt(fmt);
 function say(t){msg=t;until=Date.now()+5000;show();}
 function show(bad){st.textContent=Date.now()<until?msg:(paused?'picture paused':bad?'no connection':'connected, '+n+' pictures/s');st.className=bad?'bad':'';}
 function c(x){fetch('/cmd?c='+encodeURIComponent(x)).catch(()=>say('command not sent'));}
-function dl(u,ext){say('saving ...');fetch(u).then(r=>r.ok?r.blob():r.text().then(t=>Promise.reject(t))).then(b=>{
-const a=document.createElement('a'),d=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,19).replace(/[:T]/g,'-');
+function dl(u,ext){say('saving ...');Promise.all([fetch(u).then(r=>r.ok?r.blob():r.text().then(t=>Promise.reject(t))),fetch('/stamp').then(r=>r.ok?r.text():'').catch(()=>'')]).then(([b,t])=>{
+const a=document.createElement('a'),d=t.trim()||new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,19).replace(/-|:/g,'').replace('T','-');
 a.href=URL.createObjectURL(b);a.download='oos-'+d+'.'+ext;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10000);say('saved');
 }).catch(e=>say(typeof e=='string'?e:'not saved: no connection'));}
 function pause(){paused=!paused;pb.textContent=paused?'Resume':'Pause';pb.className=paused?'on':'';show();go();}
-function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*1024/r.width),Math.round((p.clientY-r.top)*600/r.height)];}
+function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*(s.naturalWidth||1024)/r.width),Math.round((p.clientY-r.top)*(s.naturalHeight||600)/r.height)];}
 let d0=null;
 function down(e){e.preventDefault();d0=pt(e);}
 function up(e){if(!d0)return;e.preventDefault();const p=pt(e);if(Math.abs(p[0]-d0[0])+Math.abs(p[1]-d0[1])<8)c('tap '+d0[0]+' '+d0[1]);else c('drag '+d0[0]+' '+d0[1]+' '+p[0]+' '+p[1]);d0=null;}
@@ -421,12 +533,12 @@ let count=0;setInterval(()=>{n=count;count=0;if(!paused&&!document.hidden)show(s
 // a PNG comes with an ETag: sent back, the scope holds the request until its screen has changed (304 after 2 s), so
 // the next request can go at once; a BMP has none, so a pause between them
 let tag='',shown='';
-function next(ok){running=false;show(!ok);setTimeout(go,!ok?1000:fmt=='png'?0:150);}
+function next(ok){running=false;show(!ok);setTimeout(go,!ok?1000:fmt!='bmp'?0:150);}
 function go(){if(running||paused||document.hidden)return;running=true;const f=fmt;
-fetch('/screen.'+f+'?t='+Date.now(),{cache:'no-store',headers:tag&&f=='png'?{'If-None-Match':tag}:{}}).then(r=>{
+fetch('/screen.'+f+'?t='+Date.now(),{cache:'no-store',headers:tag&&f!='bmp'?{'If-None-Match':tag}:{}}).then(r=>{
 if(r.status==304)return next(true);
 if(!r.ok)return next(false);
-const t=f=='png'&&r.headers.get('ETag')||'';
+const t=f!='bmp'&&r.headers.get('ETag')||'';
 return r.blob().then(b=>{const u=URL.createObjectURL(b),i=new Image();
 i.onload=()=>{s.src=u;if(shown)URL.revokeObjectURL(shown);shown=u;tag=t;count++;next(true);};
 i.onerror=()=>{URL.revokeObjectURL(u);next(false);};i.src=u;});
@@ -458,6 +570,10 @@ fn unescape(s: &str) -> String {
 
 impl Http {
     pub fn open(port: u16) -> Http {
+        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new(), acl: crate::netacl::Acl::default() }
+    }
+
+    fn bind(port: u16) -> Option<TcpListener> {
         let l = TcpListener::bind(("0.0.0.0", port)).ok();
         match &l {
             Some(l) => {
@@ -466,13 +582,52 @@ impl Http {
             }
             None => eprintln!("oos-ui: web port {} not available", port),
         }
-        Http { l, pending: Vec::new(), shots: Shots::new(), acl: crate::netacl::Acl::default() }
+        l
+    }
+
+    /// System > Network > Remote services: the port open (`Some`), or closed with the requests waiting on it.
+    pub fn set_open(&mut self, port: Option<u16>) {
+        match port {
+            Some(p) if self.l.is_none() => self.l = Self::bind(p),
+            Some(_) => {}
+            None => {
+                if self.l.take().is_some() {
+                    eprintln!("oos-ui: web remote off");
+                }
+                self.pending.clear();
+            }
+        }
     }
 
     /// Call right before rendering the next screen: hands the shown one to the live picture (`Shots::hand_over`).
     /// `whole`: the render draws every pixel.
     pub fn before_render(&mut self, cv: &mut Canvas, whole: bool) {
         self.shots.hand_over(cv, whole);
+    }
+
+    /// Display > Graphics = GPU: the frame loop hands over the pictures that come back from the GPU
+    /// (`picture_read_back`), `tick` copies none and nothing is swapped. `cv` holds the last picture read back, not
+    /// one drawn every frame: a buffer swapped out of it would stay in it, an older picture, until the next read.
+    pub fn before_gpu_frame(&mut self) {
+        self.shots.lock().frames = true;
+    }
+
+    /// Display > Graphics = GPU: `cv` was just read back whole; a copy goes to the encoder when it wants one.
+    pub fn picture_read_back(&self, cv: &Canvas) {
+        let mut st = self.shots.lock();
+        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
+        let now = Instant::now();
+        if Shots::wanted(&st, now, watched) {
+            Shots::give_copy(&mut st, cv, now);
+            self.shots.wake.notify_one();
+        }
+    }
+
+    /// The live picture would take the next screen (Display > Graphics = GPU: read it back for it).
+    pub fn picture_wanted(&self) -> bool {
+        let st = self.shots.lock();
+        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
+        Shots::wanted(&st, Instant::now(), watched)
     }
 
     /// Accepts connections, answers complete requests; text commands are returned for the caller to run.
@@ -557,12 +712,14 @@ impl Http {
                     "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
                     "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
-                    "/screen.png" => {
+                    "/screen.png" | "/screen.jpg" => {
                         let have = header(&text, "if-none-match").map(str::to_string);
-                        self.shots.request(s, have, cv);
+                        self.shots.request(s, have, cv, route == "/screen.jpg");
                         self.pending.remove(i);
                         continue;
                     }
+                    // the scope's local time for the names of the page's downloads; empty while its clock is not set
+                    "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
                     "/wave.csv" => csv(ui.web_wave_csv()),
                     "/la.csv" => csv(ui.web_la_csv()),
                     "/wave.bin" => match ui.web_wave_bin() {
@@ -805,7 +962,7 @@ mod tests {
         let var = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let end = Instant::now() + Duration::from_secs(var("OOS_WEB_DEMO_S", 300));
         while Instant::now() < end {
@@ -881,7 +1038,7 @@ setTimeout(() => {
     fn page_lets_the_viewer_pick_png_or_bmp() {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let page = get(&mut h, &mut ui, &cv, &mut scpi, "/");
         let script = page.split("<script>").nth(1).and_then(|s| s.split("</script>").next()).expect("script in the page");
@@ -914,7 +1071,7 @@ setTimeout(() => {
     fn pages_and_downloads() {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let r = get(&mut h, &mut ui, &cv, &mut scpi, "/");
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("/screen.png") && r.contains("/update"), "{}", &r[..200]);
@@ -929,6 +1086,16 @@ setTimeout(() => {
         }
         let r = get(&mut h, &mut ui, &cv, &mut scpi, "/wave.csv");
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("text/csv") && r.contains("Time (s),CH1 (V)"), "{}", &r[..300.min(r.len())]);
+        // download names: nothing while the clock is not set (the page takes the browser's time), then the scope's
+        // local time in its own zone
+        let body = |r: &str| r.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+        assert_eq!(body(&get(&mut h, &mut ui, &cv, &mut scpi, "/stamp")), "");
+        ui.clock_known = true;
+        ui.sys.tz = "JST-9".into();
+        let st = body(&get(&mut h, &mut ui, &cv, &mut scpi, "/stamp"));
+        let want = ui.local_now().stamp();
+        // the second may have turned between the two readings
+        assert!(st.len() == 15 && st[..13] == want[..13], "{} {}", st, want);
     }
 
     /// Large answers leave the frame loop: the whole body arrives, also several at once, and the count goes back.
@@ -938,7 +1105,7 @@ setTimeout(() => {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
-        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
         let mut scpi = crate::scpi::Scpi::open(0);
         for path in ["/screen.bmp", "/screen.png"] {
@@ -980,7 +1147,7 @@ setTimeout(() => {
     fn live_picture_from_the_frame_loop_without_a_copy() {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
         let t = std::thread::spawn(move || {
@@ -1013,6 +1180,54 @@ setTimeout(() => {
         assert!(out[e..] == crate::store::png(cv.w as u32, cv.h as u32, &shown), "the PNG of the screen that was shown");
     }
 
+    /// A screenshot asked for as PNG never gets JPEG bytes, a JPEG viewer gets PNG only once the VPU failed.
+    #[test]
+    fn a_picture_answers_only_its_own_format() {
+        assert!(Shots::fits(false, false, false) && Shots::fits(true, true, false));
+        assert!(!Shots::fits(false, true, false) && !Shots::fits(false, true, true), "PNG asked, JPEG made");
+        assert!(!Shots::fits(true, false, false), "JPEG asked, PNG made while the VPU works: wait for the JPEG");
+        assert!(Shots::fits(true, false, true), "the VPU failed: PNG for everyone");
+    }
+
+    /// Display > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
+    /// frame). Nothing is swapped out of it (a swapped-in buffer stayed until the next read: the web page went back
+    /// and forth between the new and an older screen), and the picture is one that came back.
+    #[test]
+    fn live_picture_with_the_gpu_is_a_picture_read_back() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let t = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
+            let mut out = Vec::new();
+            let _ = c.read_to_end(&mut out);
+            out
+        });
+        let mut read_back = Vec::new();
+        let mut frame = 0u32;
+        while !t.is_finished() {
+            h.poll(&mut ui, &cv, &mut scpi);
+            let before = cv.px.clone();
+            h.before_gpu_frame();
+            assert!(cv.px == before, "the canvas keeps the last picture read back");
+            frame += 1;
+            if frame % 3 == 0 {
+                cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+                read_back.push(cv.px.clone());
+                h.picture_read_back(&cv);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let out = t.join().unwrap();
+        let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
+        assert!(read_back.iter().any(|p| out[e..] == crate::store::png(cv.w as u32, cv.h as u32, p)), "the PNG of a picture read back");
+    }
+
     /// The live picture: one encode per screen; a viewer with the newest picture waits (long poll) and gets 304 when
     /// nothing changes, or the new picture as soon as the screen changes; a viewer without it gets it at once.
     #[test]
@@ -1030,7 +1245,7 @@ setTimeout(() => {
         }
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
@@ -1090,7 +1305,7 @@ setTimeout(() => {
     fn update_upload_limits() {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let post = |path: &str, body: &[u8]| {
             let mut r = format!("POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n", path, body.len()).into_bytes();
@@ -1118,7 +1333,7 @@ setTimeout(() => {
     fn cmd_takes_keys_knobs_and_touch_only() {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let get = |c: &str| format!("GET /cmd?c={} HTTP/1.1\r\n\r\n", c).into_bytes();
         for c in ["shot%20/dev/mmcblk1", "storedir%20/", "stat%20/etc/passwd", "quit", "frames%2010", "selfcal%20x", ""] {
@@ -1145,7 +1360,7 @@ setTimeout(() => {
     fn mcp_session() {
         use crate::json::{parse, J};
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let mut call = |b: &str| mcp(b, &mut ui, &cv, &mut scpi).map(|r| parse(&r).unwrap());
         let r = call(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap();
@@ -1165,7 +1380,7 @@ setTimeout(() => {
     #[test]
     fn scpi_extensions() {
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         for _ in 0..3 {
             ui.step(0.05);
@@ -1210,7 +1425,7 @@ setTimeout(() => {
     #[test]
     fn scpi_refuses_what_is_not_a_number() {
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let (delay, offset, probe) = (ui.m.delay, ui.m.ch[0].offset, ui.m.ch[0].probe);
         for c in [":TIM:OFFS nan", ":TIM:OFFS inf", ":TIM:OFFS 1e39", ":CHAN1:OFFS NaN", ":CHAN1:PROB -inf", ":CHAN1:PROB 0", ":CHAN1:PROB -10", ":TRIG:EDGE:LEV nan", ":SOUR:FREQ nan", ":SOUR:VOLT inf"] {
@@ -1232,7 +1447,7 @@ setTimeout(() => {
     #[test]
     fn empty_bode_address_keeps_the_setup_readable() {
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         scpi.exec_line(&mut ui, &cv, ":BODE:GEN \"\"");
         assert_eq!(ui.m.bode_addr, "");
@@ -1243,6 +1458,14 @@ setTimeout(() => {
         scpi.exec_line(&mut ui, &cv, ":BODE:GEN \"a b\"");
         assert_eq!(ui.m.bode_addr, "10.0.0.9:5025");
         assert_eq!(crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().bode_addr, "10.0.0.9:5025");
+        // "usb": the generator on the USB port, the LAN address kept for later
+        scpi.exec_line(&mut ui, &cv, ":BODE:GEN \"usb\"");
+        assert!(ui.m.bode_usb && ui.m.bode_addr == "10.0.0.9:5025");
+        assert_eq!(scpi.exec_line(&mut ui, &cv, ":BODE:GEN?"), b"usb".to_vec());
+        let m = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert!(m.bode_usb && m.bode_addr == "10.0.0.9:5025");
+        scpi.exec_line(&mut ui, &cv, ":BODE:GEN 10.0.0.10");
+        assert!(!ui.m.bode_usb && ui.m.bode_addr == "10.0.0.10");
     }
 
     #[test]

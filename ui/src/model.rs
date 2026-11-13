@@ -136,6 +136,29 @@ impl Coupling {
     }
 }
 
+/// Coupling of the edge trigger: a filter in the trigger path only, the trace stays as the channel's coupling shows it
+/// (trigger.md 2.5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TrigCoup {
+    Dc,
+    Ac,
+    LfReject,
+    HfReject,
+}
+
+pub const TRIG_COUPS: [TrigCoup; 4] = [TrigCoup::Dc, TrigCoup::Ac, TrigCoup::LfReject, TrigCoup::HfReject];
+
+impl TrigCoup {
+    pub fn name(self) -> &'static str {
+        match self {
+            TrigCoup::Dc => "DC",
+            TrigCoup::Ac => "AC",
+            TrigCoup::LfReject => "LF reject",
+            TrigCoup::HfReject => "HF reject",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slope {
     Rise,
@@ -477,6 +500,19 @@ impl Quick {
     }
 }
 
+/// What an HDMI monitor shows. Mirror: the panel picture, scaled. Waveform: a settings line and the waveform area,
+/// scaled. Layout: the whole screen laid out again at the monitor's size, sharp, with the traces stretched; it costs a
+/// second render per monitor frame (about 5 to 10 ms on the unit at 1920 x 1080), so the panel may get fewer frames.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum HdmiMode {
+    Mirror,
+    #[default]
+    Waveform,
+    Layout,
+}
+
+pub const HDMI_MODES: [HdmiMode; 3] = [HdmiMode::Mirror, HdmiMode::Waveform, HdmiMode::Layout];
+
 /// Size of the text on the screen (Display > Text size): Normal is the original look, Large and Larger use fonts 2 and
 /// 4 px bigger with the rows, cards and dialogs grown to match. A preference: Default keeps it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -684,6 +720,8 @@ pub struct Model {
     pub trig_level2: f32,
     /// noise reject: wider comparator hysteresis (0.7 instead of 0.3 div)
     pub trig_nrej: bool,
+    /// coupling of the edge trigger on a channel (`trig_coupling` gives the one in effect)
+    pub trig_coup: TrigCoup,
     /// second source: B (delay), clock (setup/hold)
     pub trig_src2: usize,
     pub trig_slope2: Slope,
@@ -835,8 +873,8 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
-    /// HDMI monitor: false = mirror of the panel, true = own workspace (the waveform area large, settings on top)
-    pub hdmi_wave: bool,
+    /// what an HDMI monitor shows (Display > HDMI)
+    pub hdmi: HdmiMode,
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
@@ -874,6 +912,18 @@ pub struct Model {
     pub bode_out: usize,
     pub bode_gen: usize,
     pub bode_addr: String,
+    /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
+    pub bode_usb: bool,
+    /// Bode with a generator that sweeps on its own (`ui::bode::FREE`, same start/stop): sweep time (s), logarithmic
+    /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
+    /// `bode_ref` dBV)
+    pub bode_sw_time: f64,
+    pub bode_sw_log: bool,
+    pub bode_sync: usize,
+    pub bode_sync_slope: Slope,
+    pub bode_sync_level: f32,
+    pub bode_sw_in: usize,
+    pub bode_ref: f64,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
     /// hardware source: bumped when the hardware average has to start over (CLEAR, RUN, SINGLE); not stored
@@ -1021,6 +1071,7 @@ impl Default for Model {
             trig_type: TrigType::Edge,
             trig_level2: 0.5,
             trig_nrej: false,
+            trig_coup: TrigCoup::Dc,
             trig_src2: 3,
             trig_slope2: Slope::Rise,
             trig_pol: Pol::Pos,
@@ -1121,7 +1172,7 @@ impl Default for Model {
             color_grade: false,
             // samples as dots by default
             dots: true,
-            hdmi_wave: true,
+            hdmi: HdmiMode::Waveform,
             z_src: None,
             hist: Hist::Off,
             view: AView::Scope,
@@ -1152,6 +1203,14 @@ impl Default for Model {
             hw_stamp: 0,
             hw_avg_clear: 0,
             bode_addr: "192.168.1.100:5555".into(),
+            bode_usb: false,
+            bode_sw_time: 1.0,
+            bode_sw_log: true,
+            bode_sync: NCH - 1,
+            bode_sync_slope: Slope::Rise,
+            bode_sync_level: 1.0,
+            bode_sw_in: 1,
+            bode_ref: 0.0,
             bw_src: 0,
             bw_hint: 0.0,
             bw_bins: 2000,
@@ -1584,6 +1643,15 @@ impl Model {
         if n >= NCH {
             return changed;
         }
+        // the Bode sync channel goes to the last input (CH4 by default, CH2 on a 2-channel model), its input to none
+        if self.bode_sync >= n {
+            self.bode_sync = n - 1;
+            changed = true;
+        }
+        if self.bode_sw_in > n {
+            self.bode_sw_in = 0;
+            changed = true;
+        }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
         for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src]
             .into_iter()
@@ -1624,6 +1692,12 @@ impl Model {
     /// Comparator hysteresis of the trigger in divisions (trigger.md 2.3): 0.3, 0.7 with noise reject.
     pub fn trig_hyst_div(&self) -> f32 {
         if self.trig_nrej { 0.7 } else { 0.3 }
+    }
+
+    /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and
+    /// for an LA line.
+    pub fn trig_coupling(&self) -> TrigCoup {
+        if self.trig_type == TrigType::Edge && self.trig_line().is_none() { self.trig_coup } else { TrigCoup::Dc }
     }
 
     pub fn la_on(&self) -> bool {

@@ -4,9 +4,10 @@
 //! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
-//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
+//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
+//! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
 //! :SYSTem:ERRor?, OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
 //! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
@@ -135,6 +136,10 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
+        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new(), acl: crate::netacl::Acl::default() }
+    }
+
+    fn bind(port: u16) -> Option<TcpListener> {
         let l = TcpListener::bind(("0.0.0.0", port)).ok();
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
@@ -142,7 +147,21 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new(), acl: crate::netacl::Acl::default() }
+        l
+    }
+
+    /// System > Network > Remote services: the port open (`Some`), or closed with its connections.
+    pub fn set_open(&mut self, port: Option<u16>) {
+        match port {
+            Some(p) if self.l.is_none() => self.l = Self::bind(p),
+            Some(_) => {}
+            None => {
+                if self.l.take().is_some() {
+                    eprintln!("oos-ui: SCPI off");
+                }
+                self.clients.clear();
+            }
+        }
     }
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
@@ -398,6 +417,25 @@ impl Scpi {
                     };
                     return Some(t(s));
                 }
+                if nodes.len() == 2 && kw(last, "COUPling") {
+                    if query {
+                        return Some(t(match m.trig_coup {
+                            TrigCoup::Dc => "DC",
+                            TrigCoup::Ac => "AC",
+                            TrigCoup::LfReject => "LFR",
+                            TrigCoup::HfReject => "HFR",
+                        }));
+                    }
+                    let a = arg.trim().to_ascii_uppercase();
+                    m.trig_coup = match a.as_str() {
+                        "DC" => TrigCoup::Dc,
+                        "AC" => TrigCoup::Ac,
+                        "LFR" | "LFREJECT" => TrigCoup::LfReject,
+                        "HFR" | "HFREJECT" => TrigCoup::HfReject,
+                        _ => return None,
+                    };
+                    return Some(None);
+                }
                 if nodes.len() == 2 && kw(last, "NREJect") {
                     if query {
                         return Some(t(if m.trig_nrej { "1" } else { "0" }));
@@ -460,6 +498,35 @@ impl Scpi {
                     return Some(None);
                 }
                 return None;
+            }
+            if kw(n0, "COUNter") && nodes.len() == 2 && !kw(nodes[1], "CURRent") {
+                let k = nodes[1];
+                if query {
+                    return Some(t(&if kw(k, "ENABle") {
+                        (m.cnt_on as u8).to_string()
+                    } else if kw(k, "SOURce") {
+                        format!("CHAN{}", m.cnt_src + 1)
+                    } else if kw(k, "MODE") {
+                        ["FREQ", "PER", "TOT"][m.cnt_mode.min(2)].to_string()
+                    } else if kw(k, "NDIGits") {
+                        m.cnt_digits.to_string()
+                    } else {
+                        return None;
+                    }));
+                }
+                let a = arg.trim().to_ascii_uppercase();
+                if kw(k, "ENABle") {
+                    m.cnt_on = parse_bool(arg)?;
+                } else if kw(k, "SOURce") {
+                    m.cnt_src = parse_ch(arg).filter(|&c| c < n_ch())?;
+                } else if kw(k, "MODE") {
+                    m.cnt_mode = ["FREQ", "PER", "TOT"].iter().position(|p| a.starts_with(p))?;
+                } else if kw(k, "NDIGits") {
+                    m.cnt_digits = a.parse::<u32>().ok().filter(|d| (3..=6).contains(d))?;
+                } else {
+                    return None;
+                }
+                return Some(None);
             }
             if kw(n0, "ACQuire") && nodes.len() == 2 && !query && kw(nodes[1], "MDEPth") {
                 // AUTO or one of the depths of the Acquire menu (`mdepths`), e.g. 1000000 or 1M
@@ -542,6 +609,13 @@ impl Scpi {
         }
         // measurement, waveform, display, system (need the record / canvas)
         let n0 = nodes.first().copied().unwrap_or("");
+        if kw(n0, "COUNter") && nodes.len() == 2 && kw(nodes[1], "CURRent") && query {
+            return t(&ui.counter_value().map_or("9.9E37".into(), e));
+        }
+        if kw(n0, "COUNter") && nodes.len() == 3 && kw(nodes[1], "TOTalize") && kw(nodes[2], "CLEar") && !query {
+            ui.counter_reset();
+            return None;
+        }
         if kw(n0, "MEASure") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
             let mut parts = arg.split(',');
             let item = parts.next().unwrap_or("").trim().to_ascii_uppercase();
@@ -653,15 +727,18 @@ impl Scpi {
                 return t(&ui.bode_text());
             }
             if kw(nodes[1], "GENerator") {
+                // "usb": the generator on the USB-A port; anything else is its LAN address (kept while on USB)
                 if query {
-                    return t(&ui.m.bode_addr);
+                    return t(if ui.m.bode_usb { "usb" } else { ui.m.bode_addr.as_str() });
                 }
                 // one word, like the setup file keeps it
                 let a = arg.trim().trim_matches('"');
                 if a.contains(char::is_whitespace) {
                     self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                } else if a.eq_ignore_ascii_case("usb") {
+                    ui.m.bode_usb = true;
                 } else {
-                    ui.m.bode_addr = a.to_string();
+                    (ui.m.bode_addr, ui.m.bode_usb) = (a.to_string(), false);
                 }
                 return None;
             }

@@ -143,6 +143,12 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         blocks: 7,
         header: header_probe(),
         noise_reject: m.trig_nrej,
+        trig_couple: match m.trig_coupling() {
+            TrigCoup::Dc => tpu::Coupling::Dc,
+            TrigCoup::Ac => tpu::Coupling::Ac,
+            TrigCoup::LfReject => tpu::Coupling::LfReject,
+            TrigCoup::HfReject => tpu::Coupling::HfReject,
+        },
         frames: 1,
         compress: 1,
         trigger: hw_trigger(m),
@@ -340,7 +346,10 @@ pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
         let v: &Vec<f32> = &ch[tc];
         log_header(hdr, v, s, p.pre as usize / k, k);
     }
-    Frame { seq, dt: k as f64 / p.rate as f64, pre: p.pre as usize / k, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false }
+    // a window of the record (`batch_plan`): the trigger point counts from its first point
+    let (_, start) = oos_hal::dho::seq::window(s, p);
+    let pre = p.pre.saturating_sub(start) as usize / k;
+    Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false }
 }
 
 /// The LA words of the acquisition `p` (read with `seq::acquire_la`) as a record: word j of the window at
@@ -364,17 +373,83 @@ pub fn bw_code(i: usize) -> u32 {
     }
 }
 
+/// Points of a live frame read from a record above 1 M points (the stock live length at 2.5 M / k = 4).
+const LIVE_READ: u32 = 625_000;
+
 /// Batch settings for a configured acquisition: frames per batch (at most ~4 MB per read, the frame ring, 1000 /
-/// ratio) and, for records above 1 M points, FPGA compression to ~625 k points per frame (the
-/// stock live length at 2.5 M / k = 4).
+/// ratio) and, for records above 1 M points, what of the record is read for the screen:
+/// - the screen holds most of the record: the whole record through the FPGA compression to ~`LIVE_READ` points;
+/// - the screen is a small part of it (a fixed depth at a short time base, at the full rate): the screen window with a
+///   margin, every sample. Compressed, 10 M at 100 ns/div left about 80 min/max points for the screen.
 pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     let mut b = s.clone();
-    b.compress = if p.memsel > 1_000_000 { p.memsel.div_ceil(625_000) } else { 1 };
+    if p.memsel > 1_000_000 {
+        match screen_window(s, p) {
+            Some(w) => b.window = Some(w),
+            None => b.compress = p.memsel.div_ceil(LIVE_READ),
+        }
+    }
     let fb = oos_hal::dho::seq::frame_bytes(&b, p).max(1);
     // hardware average: one frame is read whatever the batch holds, so the read size does not limit it
     let by_size = if matches!(s.mode, oos_hal::dho::acq::Mode::Average { .. }) { u32::MAX } else { (4_000_000 / fb) as u32 };
     b.frames = by_size.min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
     b
+}
+
+/// The part of a deep record the screen shows, as a read-out window (`Settings::window`: points, first point from the
+/// trigger point), when it fits `LIVE_READ` points: the screen and a quarter of a screen on each side (at least 4096
+/// points), widened to the trigger point and 4096 points around it for the software trigger (a delay moves the screen
+/// away from it).
+/// The record is centred on the screen (`hz::prep`: it starts half a record before the delay). None with the LA,
+/// which reads its own window of the same record.
+fn screen_window(s: &Settings, p: &hz::Params) -> Option<(u32, i64)> {
+    if s.la.is_some() || p.rate == 0 {
+        return None;
+    }
+    let screen = (s.tdiv * 10.0 * p.rate as f64).ceil() as i64;
+    let margin = (screen / 4).max(4096);
+    let (mem, pre, mid) = (p.memsel as i64, p.pre as i64, p.memsel as i64 / 2);
+    // a multiple of 8 points like the stock TX length, inside the record
+    let lo = ((mid - screen / 2 - margin).min(pre - 4096).max(0)) / 8 * 8;
+    let hi = (mid + screen / 2 + margin).max(pre + 4096).min(mem);
+    let n = (hi - lo + 7) / 8 * 8;
+    if n >= LIVE_READ as i64 || lo + n > mem {
+        return None;
+    }
+    Some((n as u32, lo - pre))
+}
+
+/// The FPGA's frequency counter, once per pass of the acquisition loop: (re)started when the UI wants another set-up,
+/// read once a gate (and 0.1 s) has passed since the start or the last reading (docs/protocols/counter.md).
+#[cfg(target_os = "linux")]
+fn counter_tick(bar: &mut oos_hal::dho::bus::Bar1, out: &HwShared, counting: &mut Option<(crate::board::CounterWant, std::time::Instant)>, n: &mut u64) {
+    use oos_hal::dho::bus::Bus;
+    use oos_hal::dho::counter;
+    let want = out.lock().unwrap().counter_want;
+    if want != counting.map(|c| c.0) {
+        match want {
+            Some(w) => {
+                let mode = [counter::Mode::Frequency, counter::Mode::Period, counter::Mode::Totalize][w.mode.min(2)];
+                bar.apply(&counter::start(&counter::Config { ch: w.ch, mode, digits: w.digits }));
+                *counting = Some((w, std::time::Instant::now()));
+            }
+            None => {
+                bar.apply(&counter::stop());
+                *counting = None;
+            }
+        }
+        out.lock().unwrap().counter = None;
+        return;
+    }
+    if let Some((w, t)) = *counting {
+        let gate = counter::gate_s(w.digits);
+        if t.elapsed().as_secs_f64() >= gate + 0.1 {
+            let r = counter::read(bar);
+            *n += 1;
+            out.lock().unwrap().counter = Some(crate::board::CounterRead { period: counter::period(&r, gate), total: r.total, n: *n });
+            *counting = Some((w, std::time::Instant::now()));
+        }
+    }
 }
 
 /// Starts the acquisition thread (`app_mask` = channel set the stock system left behind; `program_afe` = OOS sets the
@@ -473,7 +548,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut segrun: Option<SegRun> = None;
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
         let mut avg: Option<(oos_hal::dho::avg::Tracker, u64, u32)> = None;
+        // the frequency counter: what runs since when, and the readings so far
+        let mut counting: Option<(crate::board::CounterWant, std::time::Instant)> = None;
+        let mut count_n = 0u64;
         loop {
+            counter_tick(&mut bar, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
                 xadc_at = Some(std::time::Instant::now());
@@ -558,6 +637,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             };
+            // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
+            let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
@@ -795,7 +876,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
             }
             armed = None;
-            match seq::acquire_batch(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}) {
+            let changed = || {
+                let g = out.lock().unwrap();
+                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1)
+            };
+            match seq::acquire_batch_until(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed) {
                 Ok(count) => {
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
@@ -863,6 +948,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                     drop(g);
                 }
+                // new settings while it waited for a trigger: at once to them
+                Err(e) if e == seq::NEW_SETTINGS => {}
                 Err(e) => {
                     status(format!("acquire: {}", e));
                     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -1100,6 +1187,38 @@ mod tests {
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-9), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre), (1_250_000_000, 80, 40), "depth {}", s.depth);
+    }
+
+    #[test]
+    fn a_deep_record_at_a_short_time_base_reads_the_screen_window() {
+        // 10 M at 100 ns/div, CH1: 1.25 GSa/s, the screen is 1250 of the 10 M points
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-7).abs() < 1e-12).unwrap();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+        let b = batch_plan(&s, &p);
+        assert_eq!(b.compress, 1, "every sample, not ~80 min/max points for the screen");
+        let (n, start) = oos_hal::dho::seq::window(&b, &p);
+        assert!(n < 20_000 && n % 8 == 0, "{}", n);
+        // the screen and the trigger point are inside, and the frame's trigger point counts from the window
+        let screen = (s.tdiv * 10.0 * p.rate as f64) as u32;
+        assert!(start <= p.memsel / 2 - screen / 2 && start + n >= p.memsel / 2 + screen / 2);
+        assert!(start < p.pre && start + n > p.pre);
+        let bytes = vec![0u8; seq_bytes(&b, &p)];
+        let f = decode(&bytes, &b, &p, 1);
+        assert_eq!(f.ch[0].len(), n as usize);
+        assert_eq!(f.pre, (p.pre - start) as usize);
+        // a long time base keeps the compressed whole record
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        let b = batch_plan(&s, &p);
+        assert!(b.compress > 1 && b.window.is_none());
+    }
+
+    fn seq_bytes(b: &Settings, p: &hz::Params) -> usize {
+        oos_hal::dho::seq::frame_bytes(b, p)
     }
 
     #[test]

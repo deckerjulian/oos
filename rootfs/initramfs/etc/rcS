@@ -30,10 +30,12 @@ if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
 fi
 # 1) the board starts what takes long while the rest of rcS runs (oos-board, one per board: rootfs/board/)
 /bin/oos-board early $ST > /tmp/oos-cold.log 2>&1
-# 2) network: DHCP, else the address the scope used under stock; in the background (no cable: up to 15 s). oos-ui
-#    gives a link at 10 Mbit/s one more autonegotiation and sets the clock by NTP if asked to (docs/network.md)
+# 2) network, in the background: no address without a cable; with one DHCP, else a link-local address (RFC 3927,
+#    169.254.x.y), so a computer on the same cable, which takes one of those itself, reaches the scope without any
+#    set-up. oos-ui gives a link at 10 Mbit/s one more autonegotiation and sets the clock by NTP if asked to
+#    (docs/network.md)
 ip link set lo up
-# inbound only from `net.allow` (system settings, docs/network.md 5), before anything listens; none without the key
+# inbound only from `net.allow` (system settings, docs/network.md 6), before anything listens; none without the key
 /bin/oos-firewall >> /tmp/oos-net.log 2>&1
 # a fixed MAC (the kernel picks a random one per boot, which filled the bench DHCP pool on 2026-11-03): by default
 # locally administered from the SD card's CID; `eth.mac` can name the stock one or a fixed address (oos-mac)
@@ -41,19 +43,28 @@ mac=$(/bin/oos-mac 2>> /tmp/oos-net.log)
 [ -n "$mac" ] && ip link set eth0 address "$mac" 2>/dev/null
 ip link set eth0 up 2>/dev/null
 (
+	# the link is up to bring the cable's link up; an address only once there is one
+	until [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = 1 ]; do sleep 2; done
 	if ! udhcpc -i eth0 -n -q -t 5 -s /etc/udhcpc.script >/dev/null 2>&1; then
-		ip addr add 192.168.177.64/24 dev eth0
+		# from the MAC (the same on every start), another one while it is taken on the cable
+		set -- $(tr ':' ' ' < /sys/class/net/eth0/address)
+		a=$((0x$5 % 254 + 1)) b=$((0x$6)) n=0
+		while ! arping -D -q -c 2 -I eth0 169.254.$a.$b && [ $n -lt 8 ]; do
+			a=$((a % 254 + 1)) b=$(((b + 37) % 256)) n=$((n + 1))
+		done
+		ip addr add 169.254.$a.$b/16 dev eth0
 		: > /tmp/oos-net.fallback
-		echo "oos: no DHCP answer, eth0 = 192.168.177.64/24" > /dev/kmsg
-		# a cable or a server that comes later still counts
+		echo "oos: no DHCP answer, eth0 = 169.254.$a.$b/16 (link-local)" > /dev/kmsg
+		# a server that comes later still counts
 		until udhcpc -i eth0 -n -q -t 2 -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &
-# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only); `telnet = off` in the
-#    system settings leaves it out (docs/network.md 5)
-case "$(/bin/oos-conf telnet on)" in
-off|no|0|false) echo "oos: telnet off (system settings)" > /dev/kmsg;;
+# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only); off with
+#    System > Network > Remote services > telnet (remote.telnet = off in /oos/system.conf, mounted in 0b), or by the
+#    image default in /etc/oos/system.conf (oos-conf: an image built for one unit, docs/network.md 6)
+case "$(/bin/oos-conf remote.telnet on)" in
+off|false|0) echo "oos: telnet off (system settings)" > /dev/kmsg;;
 *) telnetd -l /bin/sh;;
 esac
 # 4) banner on the panel and the serial console

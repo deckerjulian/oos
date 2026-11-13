@@ -197,7 +197,7 @@ stays as it is.
 ## Web remote (HTTP 8080)
 
 `http://<scope>:8080/` shows the live screen (about 5 frames/s as BMP), a click on it is a touch tap, buttons below
-act as front-panel keys and knobs. `GET /cmd?c=<text command>` runs one key, knob or touch command, `GET /screen.bmp` returns the screen, `GET /screen.png`, `/wave.csv` and `/la.csv` are the downloads of the page. Answers above 256 KiB go out in a thread of their own (at most two), so a slow link does not stall the frame loop. `cargo test web_demo -- --ignored --nocapture` runs this page with the demo signals on a host.
+act as front-panel keys and knobs. `GET /cmd?c=<text command>` runs one key, knob or touch command, `GET /screen.bmp` returns the screen, `GET /screen.jpg` the live picture as JPEG from the VPU (`src/vpu.rs`, PNG where there is no VPU), `GET /screen.png`, `/wave.csv` and `/la.csv` are the downloads of the page. Answers above 256 KiB go out in a thread of their own (at most two), so a slow link does not stall the frame loop. `cargo test web_demo -- --ignored --nocapture` runs this page with the demo signals on a host.
 Like telnet and SCPI it is unauthenticated: bench network only.
 
 ## Build and test
@@ -219,6 +219,27 @@ overlay, folded), `tests/startmenu.txt` (g0-g3: start menu, history entries, tou
 button) and `tests/axes.txt` (h0-h1: volt labels with a non-round offset, in a short zoom view). Tap coordinates in
 the scripts are those of the layout of 2026-11-03 (second revision: start menu, network box).
 
+**Layout for other screens.** The frame of the screen (top bar, waveform area, bottom bar with the Menu button and
+the cards) comes from the screen size in `src/layout.rs` (`Screen`, `METRICS`, `Frame`, cuts of a `Rect`), not from
+fixed positions. Everything follows it: the plot, the measurement rows, both bars, the menus and dialogs, the
+start-up screen (centred), the on-screen keyboard (a block of its own size in the middle) and System info. Only the
+power-on picture is panel-sized (`PANEL_W` / `PANEL_H`, counted by the test `layout_panel_budget`, which lets that
+number only go down). The layout tests run on the panel, 1280 x 800 and 1920 x 1080 (`ui/lint.rs`, `SCREENS`). On the
+scope the screen is the panel. On the host another size can be tried:
+
+```
+target/release/oos-ui --script tests/basic.txt --size 1920x1080   # taps in the scripts are panel coordinates
+tools/layout-check.sh record     # before a layout change: tests/*.txt at the three text sizes, 276 pictures
+tools/layout-check.sh check      # after it: names every picture that differs, with the box of the change
+```
+
+`OOS_GALLERY=dir OOS_SIZE=1920x1080 cargo test --release gallery -- --ignored` renders every page at that size.
+Display > HDMI > Layout uses the same: `Ui::render_view` draws the screen once more at the monitor's size (at most
+1920 x 1080, `Screen::for_monitor`), with the plot's traces stretched from the panel's phosphor maps; the panel's
+layout and maps stay as they are.
+`layout-check.sh` gives each script an empty storage directory and stops the clock (`OOS_FIXED_TIME`), so the same
+source gives the same pictures; the script command `textsize normal|large|larger` sets Display > Text size.
+
 On the scope (OOS shell): `insmod .../edt-ft5x06.ko` once, then `/tmp/oos-ui &`. SIGTERM restores the previous
 display content and turns the LEDs off. In the OOS image `etc/rcS` loads the touch driver and starts `/bin/oos-ui`
 in a restart loop (`touch /tmp/oos-ui.off` before `killall oos-ui` keeps it stopped).
@@ -232,12 +253,14 @@ render 4 ms, present 1 ms; so the drawing itself has room for 60 fps and more wi
 `tools/mkfont.py OUT normal|large|larger` from Roboto Regular/Medium in `tools/fonts/`, Apache License 2.0; the same
 bytes on every run), `src/model.rs` settings and number formatting, `src/wave.rs` sources, phosphor map,
 measurements, auto set-up, `src/ui.rs` layout, menus, input, colour grade, mask display, `src/store.rs` setup files, CSV, PNG, `src/drm.rs` KMS output, `src/input.rs` touch, front
-panel, FIFO, `src/cmd.rs` text commands, `src/main.rs`.
+panel, FIFO, `src/cmd.rs` text commands, `src/layout.rs` screen size, frame and cuts, `src/main.rs`.
 
 ## Next
 
 Live data from `oos-fpgad` (shared-memory ring), settings persistence across reboots and a storage directory on a
-writable partition (Storage writes to `/tmp/oos` for now), HDMI as a second output, GPU (Mali) path for higher waveform rates, LA (D0-D15) display.
+writable partition (Storage writes to `/tmp/oos` for now), HDMI as a second output, LA (D0-D15) display. Display > Graphics = GPU (the default) puts the picture together on the Mali-T860
+(gpu/README.md): the screen in two layers (`Ui::render_layers`), the traces as jobs, `gpu.rs` and the helper
+`oos-gpu`; on the panel no faster than the CPU path, which skips empty pixels.
 
 ## Protocol trigger (2026-11-03)
 

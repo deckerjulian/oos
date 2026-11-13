@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# oos-firewall: inbound only from the prefixes of `net.allow` (oos-conf, docs/network.md 5), before any service of
+# oos-firewall: inbound only from the prefixes of `net.allow` (oos-conf, docs/network.md 6), before any service of
 # the image listens. Loopback, answers to what the scope sent (DHCP, DNS, NTP) and IPv6 neighbour discovery always
 # pass; everything else that comes in is dropped. Outbound is not limited. No `net.allow` or an empty one: no firewall,
 # as before. A list of which nothing parses closes everything but loopback rather than opening it.
