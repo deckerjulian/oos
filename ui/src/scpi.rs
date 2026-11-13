@@ -9,8 +9,8 @@
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
-//! :SYSTem:ERRor?, OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
-//! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
+//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
+//! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
 //! :MOD:FM|PM:DEViation, :MOD:<type>:INTernal:FREQuency|FUNCtion, :FREQuency <Hz>,
@@ -687,6 +687,24 @@ impl Scpi {
         if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
             return Some(block(&bmp(cv)));
         }
+        // Display > Views (ui/views.rs): :DISPlay:VIEW <n> shows view n, :DISPlay:VIEW:COUNt <1..4> how many there are
+        if kw(n0, "DISPlay") && nodes.len() >= 2 && kw(nodes[1], "VIEW") {
+            let count = nodes.len() == 3 && kw(nodes[2], "COUNt");
+            if nodes.len() > 3 || (nodes.len() == 3 && !count) {
+                self.err.push("-113,\"Undefined header\"".into());
+                return None;
+            }
+            if query {
+                return t(&(if count { ui.m.views } else { ui.m.view_cur + 1 }).to_string());
+            }
+            let n = arg.trim().parse::<usize>().ok();
+            match n {
+                Some(n) if count && (1..=crate::ui::VIEWS_MAX).contains(&n) => ui.views_set(n),
+                Some(n) if !count && (1..=ui.m.views).contains(&n) => ui.view_go(n - 1),
+                _ => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return None;
+        }
         // OOS extensions: analyser view, Identify, self-calibration, Bode
         if kw(n0, "VIEW") && nodes.len() == 1 {
             const VIEWS: [(&str, AView); 5] = [("SCOPe", AView::Scope), ("SPECtrum", AView::Spectrum), ("EYE", AView::Eye), ("POWer", AView::Power), ("BODE", AView::Bode)];
@@ -921,6 +939,18 @@ impl Scpi {
             }
             if kw(nodes[1], "STATe") && query {
                 return t(crate::cmd::stat_text(ui).trim());
+            }
+            // System > Graphics: CPU or GPU (whether the GPU really draws: the `gpu` part of :SYSTem:STATe?)
+            if kw(nodes[1], "GRAPhics") {
+                if query {
+                    return t(if ui.sys.gpu { "GPU" } else { "CPU" });
+                }
+                match arg.trim().to_ascii_uppercase().as_str() {
+                    "GPU" => ui.graphics_set(true),
+                    "CPU" => ui.graphics_set(false),
+                    _ => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
             }
             if kw(nodes[1], "LOG") && !query {
                 match parse_bool(arg) {

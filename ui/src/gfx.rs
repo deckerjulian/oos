@@ -40,7 +40,7 @@ pub struct Canvas {
     /// premultiplied by it, so drawing over a cleared (all zero) layer and then putting the layer over a picture gives
     /// what drawing straight onto the picture gives.
     pub layer: bool,
-    /// Recording (Display > Graphics = GPU, `Canvas::record`): the drawing becomes commands for the GPU instead of
+    /// Recording (System > Graphics = GPU, `Canvas::record`): the drawing becomes commands for the GPU instead of
     /// pixels; `px` stays as it was.
     pub rec: Option<Box<Rec>>,
 }

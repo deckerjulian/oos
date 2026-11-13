@@ -159,8 +159,19 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u.ntp_report(Err("Address family not supported (os error 97)".into()));
     };
     walk(&|| open(Time, &ntp_failed), "Time failed", &mut out);
+    // NTP server = DHCP: the longest failure with the fallback server named
+    let dhcp_failed = |u: &mut Ui| {
+        u.sys.ntp = true;
+        u.ntp_report(Err("Address family not supported (os error 97)".into()));
+        u.ntp_dhcp_asked_for_tests("pool.ntp.org", crate::sysconf::NtpOrigin::NoDhcp);
+    };
+    walk(&|| open(Time, &dhcp_failed), "Time DHCP failed", &mut out);
+    walk(&|| open(Time, &|u| { u.sys.ntp = true; u.ntp_dhcp_asked_for_tests("255.255.255.255", crate::sysconf::NtpOrigin::Dhcp("wlan0")); u.ntp_report(Err("Address family not supported (os error 97)".into())) }), "Time DHCP failed lease", &mut out);
     walk(&|| open(Time, &|u| { u.sys.ntp = true; u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: -12.25, stratum: 1 })) }), "Time synced", &mut out);
     walk(&|| open(Network, &|u| { u.eth_link = true; u.eth.speed = Some(100); u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())] }), "Network 100M", &mut out);
+    // the longest name on the network, and the longest default (DHO924S with six digits)
+    walk(&|| open(Remote, &|u| { u.sys.net_name = "x".repeat(63); u.net = "192.168.177.164".into() }), "Remote long name", &mut out);
+    walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-204527".into()), "Remote default name", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
     for t in TRIG_TYPES {
         walk(&|| open(Trigger, &|u| u.set_trig_type(t)), &format!("Trigger {}", t.name()), &mut out);

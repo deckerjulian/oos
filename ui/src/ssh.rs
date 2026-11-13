@@ -349,6 +349,16 @@ pub fn state() -> String {
     std::fs::read_to_string(STATE).map(|s| s.trim().to_string()).unwrap_or_else(|_| "not started".into())
 }
 
+/// Whether port 22 listens, by the script's state line (`on: ...`): with `remote.ssh = on` it still stays closed
+/// without `net.allow` or the firewall. mDNS announces `_ssh._tcp` only then.
+pub fn listens() -> bool {
+    state_listens(&state())
+}
+
+fn state_listens(state: &str) -> bool {
+    state.starts_with("on")
+}
+
 /// Starts the server again with the current settings (`on`) or stops it with its sessions. The script runs in its
 /// own thread: the first start makes host keys, and the frame loop does not wait.
 pub fn apply(on: bool) {
@@ -508,5 +518,11 @@ mod tests {
         std::fs::write(ssh.join(HOST_KEY_PUB), format!("{}\n", ED)).unwrap();
         assert_eq!(host_fingerprint(&ssh), Some(parse_line(ED).unwrap().fingerprint()));
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn listens_only_when_the_script_says_on() {
+        assert!(state_listens("on: password and keys") && state_listens("on: keys only"));
+        assert!(!state_listens("off: needs net.allow") && !state_listens("not started") && !state_listens(""));
     }
 }

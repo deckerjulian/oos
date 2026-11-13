@@ -11,7 +11,9 @@ sync". Nothing here touches the unit.
 3. SSH instead of telnet (docs/network.md 7): keep the fork's side. rcS step 3 starts `oos-ssh`, never `telnetd`;
    `ui/src/remote.rs` stays deleted (`crate::ssh` replaces it); in `ui/src/ui/remote.rs`, `ui/src/sysconf.rs` and the
    `remote_now` block of `ui/src/main.rs` the telnet item, key and call become the SSH ones. A new upstream use of
-   `remote_telnet` or `remote::telnet` means upstream changed telnet: port the change to SSH or drop it. The SSH page
+   `remote_telnet` or `remote::telnet` means upstream changed telnet: port the change to SSH or drop it. Upstream's
+   `remote::hostname` lives in the fork's `ui/src/hostname.rs` (`hostname::set`). The mDNS services in
+   `Ui::mdns_config` (ui/remote.rs) announce `_ssh._tcp` while `ssh::listens()`, never telnet. The SSH page
    itself (`ui/src/ui/ssh.rs`, `ui/src/ssh.rs`, `oos-ssh`) is fork-only. Check: `grep -rn telnetd rootfs ui/src` finds nothing.
 4. Conflicts in `hal/src/dho/seq.rs` Poll handling: upstream's Poll body lives in the fork's `plain_step`. Port any
    upstream change there; `execute_until` stays a thin wrapper.
@@ -22,9 +24,14 @@ sync". Nothing here touches the unit.
 7. `tools/perf-guard.sh`: allocation counts and the early trigger end (deterministic), then the timing ratios of the
    fork's fast paths against reference copies of the paths they replaced. A failing ratio means the merge brought an
    upstream path back into the fork's loop, or slowed the fork's one: find which before fast-forwarding.
-8. `tools/plan-matrix.sh` with the old and the new `oos-fpgad`, `diff`: the register sequences must not change unless
+8. `gpu/test-host.sh` (since 0.1.12): the GPU picture against the CPU picture for every script in `ui/tests`, and the
+   monitor's cost per pixel. It covers the fork's trace paths (drawpipe, sparse, persistence) on the GPU. It needs an
+   aarch64 musl release `oos-ui` in `ui/target/aarch64-unknown-linux-musl/release/`: build it in the rust:1-alpine
+   container with `cargo build --release --target aarch64-unknown-linux-musl` and copy it there. Upstream's other
+   speed test (`tools/device-test.py`, frame rate by graphics and monitor) needs the unit.
+9. `tools/plan-matrix.sh` with the old and the new `oos-fpgad`, `diff`: the register sequences must not change unless
    the merge meant to.
-9. Record the sync in `docs/fork/unit-dho804.md` and private RE notes `docs/oos-fork.md`; fast-forward `dho804`.
+10. Record the sync in `docs/fork/unit-dho804.md` and private RE notes `docs/oos-fork.md`; fast-forward `dho804`.
 
 ## What the guards protect
 

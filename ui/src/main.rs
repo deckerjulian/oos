@@ -20,9 +20,11 @@ mod ethlink;
 mod fastdraw;
 mod font;
 mod gfx;
+mod hostname;
 mod http;
 mod board;
 mod math;
+mod mdns;
 mod model;
 mod net;
 mod netacl;
@@ -208,7 +210,7 @@ fn serve(mut ui: Ui, args: &[String]) {
     }
 }
 
-/// The layers of a GPU picture (Display > Graphics = GPU): under and over the traces, and the traces as jobs. The
+/// The layers of a GPU picture (System > Graphics = GPU): under and over the traces, and the traces as jobs. The
 /// picture itself is in the display's buffer; it comes back into the caller's canvas only when asked.
 struct GpuLayers {
     under: Canvas,
@@ -370,6 +372,13 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                         std::process::exit(3);
                     }
                     cmd::write_ppm(hc, &p.replace(".ppm", "-hdmi.ppm")).expect("write shot");
+                    // OOS_GPU_TIMES=<file>: the helper's time of the last panel frame and of this monitor frame, a
+                    // line per shot (gpu/test-host.sh: the monitor's cost per pixel against the panel's)
+                    if let Some(f) = std::env::var_os("OOS_GPU_TIMES") {
+                        use std::io::Write;
+                        let line = format!("{:.3} {:.3}\n", g.times.panel, g.times.monitor);
+                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut f| f.write_all(line.as_bytes()));
+                    }
                 }
             }
             cmd::Out::None => {}
@@ -506,6 +515,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
     // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
     // at the start)
     let mut remote_now: Option<[bool; 5]> = None;
+    // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
+    let mut mdns = mdns::Mdns::new(None);
+    let mut mdns_now: Option<mdns::Config> = None;
+    let mut mdns_t: Option<Instant> = None;
     // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
     let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
     let mut hdmi: Option<drm::Display> = None;
@@ -513,7 +526,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut hdmi_cv: Option<Canvas> = None;
     let mut hdmi_t: Option<Instant> = None;
     let mut frame_n = 0u64;
-    // Display > Graphics = GPU: the helper, the layers of the panel and of the monitor's own layout, the monitor's
+    // System > Graphics = GPU: the helper, the layers of the panel and of the monitor's own layout, the monitor's
     // settings line; `gpu_failed`: the GPU did not start or failed, the CPU draws until the setting changes
     let mut gpu: Option<gpu::Gpu> = None;
     let (mut gpu_want, mut gpu_failed) = (false, false);
@@ -569,6 +582,17 @@ fn device_main(mut ui: Ui, args: &[String]) {
             }
             remote_now = Some(want);
         }
+        if mdns_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
+            mdns_t = Some(Instant::now());
+            let c = ui.mdns_config(web_port, scpi_port);
+            if mdns_now.as_ref() != Some(&c) {
+                if mdns_now.as_ref().map_or(true, |o| o.name != c.name) {
+                    hostname::set(&c.name);
+                }
+                mdns.set(c.clone());
+                mdns_now = Some(c);
+            }
+        }
         scpi.poll(&mut ui, &cv);
         vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
         for c in web.poll(&mut ui, &cv, &mut scpi) {
@@ -586,7 +610,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         let t1 = Instant::now();
         let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
         ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi == model::HdmiMode::Waveform;
-        // Display > Graphics: the helper follows the setting
+        // System > Graphics: the helper follows the setting
         if ui.sys.gpu != gpu_want {
             gpu_changed = frame_n > 0;
             (gpu_want, gpu_failed) = (ui.sys.gpu, false);
@@ -692,6 +716,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 }
                 let t = g.times;
                 ui.t_gpu = Some([layers, copy, wait, t.upload, t.draw, t.read]);
+                ui.t_gpu_screens = Some((t.panel, (hdmi.is_some() && hdmi_gpu == Some(true)).then_some(t.monitor)));
                 Ok(())
             })();
             match r {
@@ -704,7 +729,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             }
         }
         if !drawn {
-            ui.t_gpu = None;
+            (ui.t_gpu, ui.t_gpu_screens) = (None, None);
             ui.render(&mut cv);
         }
         let t2 = Instant::now();
@@ -761,6 +786,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 },
             }
         }
+        ui.hdmi_out = hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
         let a = 0.05;
         ui.t_step += a * ((t1 - t0).as_secs_f32() * 1000.0 - ui.t_step);
         ui.t_render += a * ((t2 - t1).as_secs_f32() * 1000.0 - ui.t_render);
@@ -814,6 +840,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
             fps_t = Instant::now();
         }
     }
+    // goodbyes on the network (SIGTERM, quit)
+    mdns.stop();
     inp.set_leds(0);
     if let Some(h) = hdmi {
         h.close();

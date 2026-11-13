@@ -73,12 +73,13 @@ fn opt_src_step_in(i: usize, d: i32, nch: usize) -> usize {
 pub const HDIV: f32 = 10.0;
 pub const VDIV: f32 = 8.0;
 
-/// Channel colours (yellow, sky blue, pink, teal: a colour-blind safe set).
+/// Channel colours (yellow, teal, pink, sky blue: a colour-blind safe set). CH2 teal and CH4 blue as the colour
+/// rings of the scope's own probes and inputs have them (CH2 cyan, CH4 blue); until 0.1.11 the two were the other way.
 const PALETTE: [Rgb; 8] = [
     rgb(0xf0, 0xe4, 0x42),
-    rgb(0x56, 0xb4, 0xe9),
-    rgb(0xe0, 0x8c, 0xc0),
     rgb(0x2e, 0xc4, 0xa0),
+    rgb(0xe0, 0x8c, 0xc0),
+    rgb(0x56, 0xb4, 0xe9),
     rgb(0xf0, 0x90, 0x40),
     rgb(0xa0, 0x90, 0xf0),
     rgb(0xc0, 0xd0, 0x60),
@@ -466,9 +467,11 @@ pub enum Quick {
     Single,
     RunStop,
     Clear,
+    /// the next of Display > Views (ui/views.rs)
+    NextView,
 }
 
-pub const QUICKS: [Quick; 8] = [Quick::Screenshot, Quick::SavePng, Quick::SaveSetup, Quick::SaveCsv, Quick::Autoset, Quick::Single, Quick::RunStop, Quick::Clear];
+pub const QUICKS: [Quick; 9] = [Quick::Screenshot, Quick::SavePng, Quick::SaveSetup, Quick::SaveCsv, Quick::Autoset, Quick::Single, Quick::RunStop, Quick::Clear, Quick::NextView];
 
 impl Quick {
     /// Name in the Utility menu and its picker.
@@ -482,6 +485,7 @@ impl Quick {
             Quick::Single => "Single",
             Quick::RunStop => "Run/Stop",
             Quick::Clear => "Clear",
+            Quick::NextView => "Next view",
         }
     }
 
@@ -496,6 +500,7 @@ impl Quick {
             Quick::Single => "Single",
             Quick::RunStop => "Run/Stop",
             Quick::Clear => "Clear",
+            Quick::NextView => "View",
         }
     }
 }
@@ -877,6 +882,12 @@ pub struct Model {
     pub dots: bool,
     /// what an HDMI monitor shows (Display > HDMI)
     pub hdmi: HdmiMode,
+    /// Display > Views: how many screen arrangements there are to switch between (1: off; ui/views.rs)
+    pub views: usize,
+    /// the one shown (0-based)
+    pub view_cur: usize,
+    /// what each view keeps while another one is shown (ui/views.rs, `Ui::view_snapshot`); empty: not set up yet
+    pub view_slots: [String; crate::ui::VIEWS_MAX],
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
@@ -1178,6 +1189,9 @@ impl Default for Model {
             // samples as dots by default
             dots: true,
             hdmi: HdmiMode::Waveform,
+            views: 1,
+            view_cur: 0,
+            view_slots: Default::default(),
             z_src: None,
             hist: Hist::Off,
             view: AView::Scope,

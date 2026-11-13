@@ -276,6 +276,11 @@ pub fn setup_text(m: &Model) -> String {
     kv("dots", m.dots.to_string());
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
+    // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
+    kv("views", format!("{} {}", m.views, m.view_cur + 1));
+    for (i, v) in m.view_slots.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
+        kv(&format!("view{}", i + 1), v.clone());
+    }
     kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in + 1, m.bode_out + 1, m.bode_gen, m.bode_addr));
     // the generator's connection: lan (the address above) or usb; a line of its own, so older versions skip it
     kv("bode_link", if m.bode_usb { "usb" } else { "lan" }.to_string());
@@ -588,6 +593,17 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "color_grade" => m.color_grade = p_bool(v)?,
         "dots" => m.dots = p_bool(v)?,
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
+        "views" => {
+            let n = p_list(v, 2, |x| x.parse::<usize>().map_err(|e| e.to_string()))?;
+            if !(1..=crate::ui::VIEWS_MAX).contains(&n[0]) || !(1..=n[0]).contains(&n[1]) {
+                return Err(format!("{:?}: count 1 to {}, then the one shown", v, crate::ui::VIEWS_MAX));
+            }
+            (m.views, m.view_cur) = (n[0], n[1] - 1);
+        }
+        k if k.strip_prefix("view").and_then(|i| i.parse::<usize>().ok()).is_some_and(|i| (1..=crate::ui::VIEWS_MAX).contains(&i)) => {
+            let i: usize = k[4..].parse().unwrap_or(1);
+            m.view_slots[i - 1] = crate::ui::views::slot_checked(v)?;
+        }
         // setups before the Layout mode: true = Waveform, false = Mirror
         "hdmi_wave" => m.hdmi = if p_bool(v)? { HdmiMode::Waveform } else { HdmiMode::Mirror },
         "view" => m.view = p_enum(v, &[AView::Scope, AView::Spectrum, AView::Eye, AView::Power, AView::Bode])?,
