@@ -720,6 +720,8 @@ pub struct Model {
     pub trig_level2: f32,
     /// noise reject: wider comparator hysteresis (0.7 instead of 0.3 div)
     pub trig_nrej: bool,
+    /// the auto set-up sets noise reject from the noise on the trigger signal's flat levels (opt-in, off by default)
+    pub auto_nrej: bool,
     /// coupling of the edge trigger on a channel (`trig_coupling` gives the one in effect)
     pub trig_coup: TrigCoup,
     /// second source: B (delay), clock (setup/hold)
@@ -1073,6 +1075,7 @@ impl Default for Model {
             trig_type: TrigType::Edge,
             trig_level2: 0.5,
             trig_nrej: false,
+            auto_nrej: false,
             trig_coup: TrigCoup::Dc,
             trig_src2: 3,
             trig_slope2: Slope::Rise,

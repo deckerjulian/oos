@@ -9,7 +9,7 @@
 //! is off stays off. With no signal on any channel the set-up stays as it was.
 
 use super::*;
-use crate::wave::{mid_level, periodic, place, Stats};
+use crate::wave::{flat_noise, mid_level, periodic, place, Stats};
 
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
 const TBASES: [f32; 5] = [20e-9, 2e-6, 200e-6, 2e-3, 20e-3];
@@ -204,6 +204,16 @@ impl Ui {
         self.mark_changed();
     }
 
+    /// Opt-in (`Model::auto_nrej`): noise reject on when the noise on the trigger signal's two levels, about 6 sigma
+    /// peak to peak, is more than the plain hysteresis of the final scale (0.3 div), else off. A signal without two
+    /// clear levels leaves it as it is.
+    fn auto_noise_reject(&mut self) {
+        let c = self.m.trig_src;
+        if let Some(sigma) = flat_noise(&self.record_volts(c)) {
+            self.m.trig_nrej = 6.0 * sigma > 0.3 * self.m.ch[c].volts_per_div();
+        }
+    }
+
     /// Scale, offset and trigger level of every channel worth a period, from the last record; then the search.
     /// False when no channel is.
     fn auto_fit(&mut self, a: &mut AutoRun) -> bool {
@@ -260,6 +270,9 @@ impl Ui {
                 self.m.ch[c].bw = a.back.ch[c].bw;
             }
             place(&mut self.m, &found);
+            if self.m.auto_nrej {
+                self.auto_noise_reject();
+            }
             if timed {
                 self.toast("Auto set-up");
                 // the views of the signal on a bar in the waveform window
@@ -659,6 +672,30 @@ mod tests {
         run_hw_of(&mut ui, &|_| 0.004);
         assert_eq!(ui.m.ch[0], back.ch[0]);
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("no signal")));
+    }
+
+    // Break it catches: the opt-in noise reject left off on a signal whose noise exceeds the hysteresis (it then
+    // retriggers on the noise), turned on for a clean one, or touched while the option is off
+    #[test]
+    fn opt_in_noise_reject_follows_the_noise_on_the_levels() {
+        let noisy = |t: f64| {
+            // 0..5 V, 1 kHz, +-0.6 V pseudo-random noise (about 0.35 V sigma, more than 0.3 div at 1 or 2 V/div / 6)
+            let k = (t * 1e9) as u64;
+            let r = (k.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 40) as f32 / (1u64 << 24) as f32;
+            (if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { 5.0 } else { 0.0 }) + (r - 0.5) * 1.2
+        };
+        let clean = |t: f64| if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { 5.0 } else { 0.0 };
+        for (opt, sig, want) in [(true, &noisy as &dyn Fn(f64) -> f32, true), (true, &clean, false), (false, &noisy, false)] {
+            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            ui.m.auto_nrej = opt;
+            run_hw_of(&mut ui, sig);
+            assert_eq!(ui.m.trig_nrej, want, "opt-in {} noise {:?}", opt, crate::wave::flat_noise(&ui.record_volts(0)));
+        }
+        // the option is part of the set-up and of the trigger menu
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        assert!(ui.trigger_items().contains(&Item::TrigAutoNoise));
+        ui.select_option(Item::TrigAutoNoise, "On");
+        assert!(crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().auto_nrej);
     }
 
     #[test]

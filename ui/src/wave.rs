@@ -1124,6 +1124,35 @@ pub fn mid_level(s: &Stats) -> f32 {
     }
 }
 
+/// Noise of a two-level signal (square, logic) as a standard deviation: from the median absolute deviation of each
+/// half about its median (split halfway between the extremes), so the samples on the edges do not count. None when the
+/// halves are not clearly apart (6 sigma), as for a sine or a triangle, whose halves spread by the signal itself.
+/// `stats`' histogram top and base are no help here: noise of a fifth of the swing flattens their modes.
+pub fn flat_noise(v: &[f32]) -> Option<f32> {
+    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    let (lo, hi) = f.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    if f.len() < 32 || hi <= lo {
+        return None;
+    }
+    let mid = (lo + hi) / 2.0;
+    let median = |v: &mut Vec<f32>| {
+        v.sort_by(|a, b| a.total_cmp(b));
+        v[v.len() / 2]
+    };
+    let half = |up: bool| -> Option<(f32, f32)> {
+        let mut h: Vec<f32> = f.iter().copied().filter(|&x| (x >= mid) == up).collect();
+        if h.len() < 8 {
+            return None;
+        }
+        let m = median(&mut h);
+        let mut dev: Vec<f32> = h.iter().map(|x| (x - m).abs()).collect();
+        Some((m, 1.4826 * median(&mut dev)))
+    };
+    let ((m1, s1), (m0, s0)) = (half(true)?, half(false)?);
+    let sigma = s1.max(s0);
+    (m1 - m0 > 6.0 * sigma).then_some(sigma)
+}
+
 /// The end of an auto set-up: `found` = channel, levels, period; the rest of the set-up stays.
 pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
     // one horizontal band per channel (8 div / n), signal fills 80 % of its band; in a split plot per window: n and the
@@ -1182,6 +1211,23 @@ mod tests {
         assert!((mid_level(&s) - 2.5).abs() < 0.1, "{}", mid_level(&s));
         let sine: Vec<f32> = (0..4000).map(|k| 1.0 + (k as f32 / 400.0 * std::f32::consts::TAU).sin()).collect();
         assert!((mid_level(&stats(&sine, 1e-6)) - 1.0).abs() < 0.01);
+    }
+
+    // Break it catches: noise reject chosen for a clean sine (its halves spread by the signal) or missed on a noisy square
+    #[test]
+    fn flat_noise_of_two_levels_only() {
+        let mut x = 5u32;
+        let mut r = || {
+            x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+            (x >> 8) as f32 / (1 << 24) as f32 - 0.5
+        };
+        let sq: Vec<f32> = (0..4000).map(|k| if (k / 500) % 2 == 0 { 0.0 } else { 5.0 } + 1.2 * r()).collect();
+        let s = flat_noise(&sq).unwrap();
+        // uniform noise of sigma 0.35; the MAD estimate is exact for normal noise and reads 0.44 here
+        assert!((0.3..0.5).contains(&s), "{}", s);
+        let sine: Vec<f32> = (0..4000).map(|k| (k as f32 / 400.0 * std::f32::consts::TAU).sin()).collect();
+        assert_eq!(flat_noise(&sine), None);
+        assert_eq!(flat_noise(&[1.0; 100]), None);
     }
 
     #[test]
