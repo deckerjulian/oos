@@ -1,5 +1,5 @@
 # OOS: an open operating system for the DHO800/DHO900
-
+OOS Plus: an extension of the features (measuremnts+Offline waveform analyzer+UI enhacements+SCPI)
 OOS replaces the software of a DHO800/DHO900 oscilloscope with a Linux 6.12 kernel and a new scope application
 written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
 
