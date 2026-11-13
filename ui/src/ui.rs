@@ -778,7 +778,7 @@ pub struct Ui {
     cal: selfcal::State,
     /// Bode sweep (bode.rs)
     bode: bode::State,
-    /// SIM: walking the loaded serial record on the phosphor
+    /// SIM: Play is moving the timebase window through the selected record
     sim_play: bool,
     sim_i: usize,
     /// Offline mode. Off, the live screen stays as it is.
@@ -1502,6 +1502,9 @@ impl Ui {
         }
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared.
         // analog off and no LA: do not arm the ADC / demo path (SIM Play is a stored ref)
+        if self.sim_play {
+            self.sim_tick(dt_wall);
+        }
         let live = self.m.n_on() > 0 || self.m.la_on();
         if !self.offline && live && (self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared)) {
             if self.dirty_map {
@@ -2751,38 +2754,47 @@ impl Ui {
         cv.set_clip(area);
         let ppy = area.h as f32 / VDIV;
         let cy = area.y as f32 + area.h as f32 / 2.0;
-        let tdiv = view.0 as f64;
-        let delay = view.1 as f64;
+        let (tdiv, delay) = view;
+        let (tdiv, delay) = (tdiv as f64, delay as f64);
         let ppx = area.w as f64 / HDIV as f64;
-        let xmid = area.x as f64 + area.w as f64 / 2.0;
-        // only the samples that land on this screen (plus a little margin)
-        let t_lo = delay - tdiv * HDIV as f64 * 0.6;
-        let t_hi = delay + tdiv * HDIV as f64 * 0.6;
+        if !(tdiv > 0.0) {
+            cv.no_clip();
+            return;
+        }
+        let half = tdiv * HDIV as f64 / 2.0;
+        let (t_left, t_right) = (delay - half, delay + half);
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
-            if !r.on || r.dt <= 0.0 || r.v.len() < 2 {
+            if !r.on || r.v.is_empty() || !(r.dt > 0.0) {
                 continue;
             }
             let col = REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1;
-            let last = r.v.len() - 1;
-            let k0 = ((t_lo - r.t0) / r.dt).floor().max(0.0) as usize;
-            let k1 = ((t_hi - r.t0) / r.dt).ceil().max(0.0) as usize;
-            let k0 = k0.min(last);
-            let k1 = k1.min(last);
+            // samples inside this window, not a stride of the whole record (that aliases a long record)
+            let n = r.v.len() as isize;
+            let at = |t: f64| -> isize {
+                let x = (t - r.t0) / r.dt;
+                if !x.is_finite() {
+                    return 0;
+                }
+                x.floor().clamp(-1.0, n as f64) as isize
+            };
+            let k0 = (at(t_left) - 1).clamp(0, n) as usize;
+            let k1 = (at(t_right) + 2).clamp(0, n) as usize;
             if k1 <= k0 {
                 continue;
             }
-            let step = ((k1 - k0) / (area.w as usize * 2)).max(1);
+            let cols = (area.w as usize).saturating_mul(2).max(1);
+            let step = ((k1 - k0) / cols).max(1);
             let mut prev: Option<(i32, i32)> = None;
             let mut first = None;
-            for k in (k0..=k1).step_by(step) {
+            for k in (k0..k1).step_by(step).chain(std::iter::once(k1 - 1)) {
                 let v = r.v[k];
                 if !v.is_finite() {
                     prev = None;
                     continue;
                 }
                 let t = r.t0 + k as f64 * r.dt - delay;
-                let x = (xmid + t / tdiv * ppx).round() as i32;
+                let x = (area.x as f64 + area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
                 let y = (cy - (v + r.offset) / r.vpd * ppy).round() as i32;
                 if let Some((x0, y0)) = prev {
                     if (x - x0).abs() < area.w * 2 && (y - y0).abs() < area.h * 4 {
