@@ -78,7 +78,9 @@ impl Ui {
         self.m.eye_src = WaveId::Ref(slot);
         self.ph.clear();
         self.phz.clear();
-        self.measure_refs();
+        // Install the stopped screen gate before touching other references.
+        // A previous full SSC record may be millions of samples long.
+        self.refresh_stopped_reference();
     }
 
     /// Horizontal scale that fits the record, including a factor below the live 1 ns step.
@@ -285,6 +287,7 @@ mod tests {
 
         let mut play = ui();
         play.activate(Item::SimPlay);
+        play.wait_sim_generation();
         assert!(play.m.ch.iter().all(|channel| !channel.on), "SIM plays a stored reference");
         assert!(play.refs[play.m.sim_slot].is_some());
 
@@ -295,6 +298,7 @@ mod tests {
         u.m.sim_slot = 2;
         u.m.sim_preset = oos_dsp::serial::LANES.iter().position(|l| l.name == "PCIe 4.0").unwrap();
         u.activate(Item::SimPlay);
+        u.wait_sim_generation();
         assert!(u.m.ch.iter().all(|c| !c.on));
         assert!(u.sim_play);
         assert!(matches!(u.run_caption().0, "ARMED" | "AUTO" | "TRIG'D"));
@@ -337,6 +341,26 @@ mod tests {
         assert_eq!((u.m.tscale, u.m.tfine, u.m.delay), held);
         assert!(!u.sim_play);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_gates_existing_references_before_the_first_measurement() {
+        let mut u = ui();
+        u.refs[1] = Some(RefWave {
+            src: 0, color: 1, label: "previous capture".into(), t0: 0.0, dt: 1e-9,
+            v: (0..20_000).map(|index| {
+                let amplitude = if index < 1000 { 1.0 } else { 5.0 };
+                if index % 4 < 2 { -amplitude } else { amplitude }
+            }).collect(), vpd: 1.0, offset: 0.0, on: true,
+        });
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..100 {
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, if index % 4 < 2 { -0.5 } else { 0.5 }));
+        }
+        u.load_waveform_bytes(csv.as_bytes(), "new record.csv").unwrap();
+        assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 1e-6,
+            "existing refs use the imported screen gate immediately, not their full record");
+        assert!(u.reference_slice(1).unwrap().0.len() < 1000);
     }
 
     fn assert_timebase(u: &Ui, t0: f64, dt: f64, n: usize) {

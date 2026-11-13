@@ -7,8 +7,55 @@
 
 use super::*;
 use oos_dsp::serial::{self, Lane, LANES};
+use std::sync::mpsc::{self, Receiver, Sender};
 
-const PRBS: [u8; 5] = [7, 9, 15, 23, 31];
+const PRBS: [u8; 6] = [7, 9, 13, 15, 23, 31];
+
+struct Request {
+    id: u64,
+    lane: Lane,
+    slot: usize,
+    continuing: bool,
+    run: bool,
+}
+
+/// One worker per UI. Knob changes replace queued requests, never spawn a
+/// parallel set of multi-million-sample generators. Only the latest reply wins.
+pub(super) struct Generation {
+    requests: Sender<Request>,
+    results: Receiver<(Request, Result<Vec<f32>, String>)>,
+    next: u64,
+    active: Option<u64>,
+    run: bool,
+    #[cfg(test)]
+    completed: u64,
+}
+
+impl Generation {
+    fn new() -> Result<Self, String> {
+        let (requests, input) = mpsc::channel::<Request>();
+        let (output, results) = mpsc::channel();
+        std::thread::Builder::new().name("oos-sim".into()).spawn(move || {
+            while let Ok(mut request) = input.recv() {
+                while let Ok(newer) = input.try_recv() { request = newer; }
+                let generated = serial::try_generate(&request.lane);
+                if output.send((request, generated)).is_err() { break; }
+            }
+        }).map_err(|error| format!("Could not start SIM generator: {error}"))?;
+        Ok(Self { requests, results, next: 0, active: None, run: false, #[cfg(test)] completed: 0 })
+    }
+
+    fn submit(&mut self, mut request: Request) -> Result<(), String> {
+        self.next = self.next.wrapping_add(1);
+        request.id = self.next;
+        self.active = Some(request.id);
+        self.run = request.run;
+        self.requests.send(request).map_err(|_| {
+            self.active = None;
+            "SIM generator stopped; return to Live and try again".into()
+        })
+    }
+}
 
 /// Serial-record strip: levels, bit period, edges, widths. Two rows of six.
 /// First six also have on-trace labels (pk-pk, amp, rise, fall, period, +width).
@@ -44,6 +91,7 @@ impl Ui {
             Item::SimDeemph,
             Item::SimNoise,
             Item::SimSsc,
+            Item::Open(MenuId::SimAdvanced),
             Item::SimRj,
             Item::SimPj,
             Item::SimPjHz,
@@ -54,11 +102,17 @@ impl Ui {
         ]
     }
 
+    pub(super) fn sim_advanced_items(&self) -> Vec<Item> {
+        vec![Item::SimSsc, Item::SimSscCenter, Item::SimSscDeviation, Item::SimSscHz,
+             Item::SimDcd, Item::SimCorrRj, Item::SimCorrHz, Item::SimDefaults]
+    }
+
     pub(super) fn sim_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::SimPlay | Item::SimDefaults => Kind::Action,
-            Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSlot | Item::SimShow => Kind::Choice,
-            Item::SimRate | Item::SimHigh | Item::SimLow | Item::SimRise | Item::SimBw | Item::SimDeemph | Item::SimNoise | Item::SimRj | Item::SimPj | Item::SimPjHz => Kind::Value,
+            Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => Kind::Choice,
+            Item::SimRate | Item::SimHigh | Item::SimLow | Item::SimRise | Item::SimBw | Item::SimDeemph | Item::SimNoise | Item::SimRj | Item::SimPj | Item::SimPjHz
+            | Item::SimSscDeviation | Item::SimSscHz | Item::SimDcd | Item::SimCorrRj | Item::SimCorrHz => Kind::Value,
             _ => return None,
         })
     }
@@ -66,18 +120,25 @@ impl Ui {
     pub(super) fn sim_label(it: Item) -> Option<&'static str> {
         Some(match it {
             Item::Open(MenuId::Sim) => "SIM",
+            Item::Open(MenuId::SimAdvanced) => "Advanced",
             Item::SimPreset => "Preset",
             Item::SimRate => "Rate",
             Item::SimPat => "Pattern",
             Item::SimHigh => "High",
             Item::SimLow => "Low",
-            Item::SimRise => "Rise",
+            Item::SimRise => "Rise 20-80%",
             Item::SimBw => "Bandwidth",
             Item::SimDeemph => "De-emph",
             Item::SimNoise => "Noise",
             Item::SimSsc => "Spread",
-            Item::SimRj => "RJ",
-            Item::SimPj => "PJ",
+            Item::SimSscCenter => "SSC profile",
+            Item::SimSscDeviation => "SSC deviation",
+            Item::SimSscHz => "SSC frequency",
+            Item::SimDcd => "DCD p-p",
+            Item::SimCorrRj => "Corr RJ RMS",
+            Item::SimCorrHz => "Corr RJ corner",
+            Item::SimRj => "RJ RMS",
+            Item::SimPj => "PJ peak",
             Item::SimPjHz => "PJ freq",
             Item::SimSlot => "Slot",
             Item::SimPlay => "Play",
@@ -100,6 +161,12 @@ impl Ui {
             Item::SimDeemph => format!("{:.1} dB", m.sim_deemph),
             Item::SimNoise => si_short(m.sim_noise, "V"),
             Item::SimSsc => if m.sim_ssc { "On".into() } else { "Off".into() },
+            Item::SimSscCenter => if m.sim_ssc_center { "Center".into() } else { "Down, DC removed".into() },
+            Item::SimSscDeviation => format!("{:.2} % {}", 100.0 * m.sim_ssc_deviation, if m.sim_ssc_center { "pk" } else { "p-p" }),
+            Item::SimSscHz => si_short(m.sim_ssc_hz, "Hz"),
+            Item::SimDcd => si_short(m.sim_dcd_pp, "s"),
+            Item::SimCorrRj => si_short(m.sim_corr_rj, "s"),
+            Item::SimCorrHz => si_short(m.sim_corr_hz, "Hz"),
             Item::SimRj => si_short(m.sim_rj, "s"),
             Item::SimPj => si_short(m.sim_pj, "s"),
             Item::SimPjHz => if m.sim_pj > 0.0 { si_short(m.sim_pjhz, "Hz") } else { "off".into() },
@@ -122,6 +189,7 @@ impl Ui {
             Item::SimPreset => serial::names().into_iter().map(|s| s.to_string()).collect(),
             Item::SimPat => PRBS.iter().map(|n| format!("PRBS-{n}")).collect(),
             Item::SimSsc => vec!["Off".into(), "On".into()],
+            Item::SimSscCenter => vec!["Down, DC removed".into(), "Center".into()],
             Item::SimSlot => (0..NREF).map(|i| format!("R{}", i + 1)).collect(),
             Item::SimShow => vec!["Off".into(), "On".into()],
             _ => return None,
@@ -129,7 +197,7 @@ impl Ui {
     }
 
     pub(super) fn sim_adjust(&mut self, it: Item, d: i32) -> bool {
-        let running = self.m.run == RunState::Run;
+        let running = self.sim_requested_running();
         match it {
             Item::SimPreset => {
                 let n = LANES.len() as i32;
@@ -148,6 +216,12 @@ impl Ui {
             Item::SimDeemph => self.m.sim_deemph = (self.m.sim_deemph + 0.5 * d as f64).clamp(0.0, 12.0),
             Item::SimNoise => self.m.sim_noise = eng_ladder(self.m.sim_noise.max(100e-6), d, 100e-6, 50e-3, false),
             Item::SimSsc => self.m.sim_ssc = !self.m.sim_ssc,
+            Item::SimSscCenter => self.m.sim_ssc_center = !self.m.sim_ssc_center,
+            Item::SimSscDeviation => self.m.sim_ssc_deviation = (self.m.sim_ssc_deviation + d as f64 * 0.0005).clamp(0.0, 0.05),
+            Item::SimSscHz => self.m.sim_ssc_hz = eng_ladder(self.m.sim_ssc_hz, d, 1e3, 1e6, false),
+            Item::SimDcd => self.m.sim_dcd_pp = eng_ladder(self.m.sim_dcd_pp, d, 0.5e-12, 100e-12, true),
+            Item::SimCorrRj => self.m.sim_corr_rj = eng_ladder(self.m.sim_corr_rj, d, 0.1e-12, 50e-12, true),
+            Item::SimCorrHz => self.m.sim_corr_hz = eng_ladder(self.m.sim_corr_hz, d, 1e3, 100e6, false),
             Item::SimRj => self.m.sim_rj = eng_ladder(self.m.sim_rj.max(0.1e-12), d, 0.1e-12, 50e-12, false),
             Item::SimPj => self.m.sim_pj = eng_ladder(self.m.sim_pj, d, 0.5e-12, 50e-12, true),
             Item::SimPjHz => self.m.sim_pjhz = eng_ladder(self.m.sim_pjhz.max(1e5), d, 1e5, 50e6, false),
@@ -159,23 +233,26 @@ impl Ui {
             }
             _ => return false,
         }
-        if self.session_is_sim && it != Item::SimShow {
-            self.sim_load();
-            if !running {
-                self.m.run = RunState::Stop;
-                self.sim_play = false;
-            }
+        if (self.session_is_sim || self.sim_generating()) && it != Item::SimShow {
+            self.sim_request_ui(running);
         }
         true
     }
 
     pub(super) fn sim_activate(&mut self, it: Item) -> bool {
         match it {
+            Item::SimPlay if self.sim_generating() => {
+                self.sim_cancel_generation();
+                self.toast("SIM generation cancelled");
+            }
             Item::SimPlay if self.session_is_sim => { self.record_key(key::RUNSTOP); },
-            Item::SimPlay => self.sim_load(),
+            Item::SimPlay => self.sim_request_ui(true),
             Item::SimDefaults => {
+                let regenerate = self.session_is_sim || self.sim_generating();
+                let running = self.sim_requested_running();
                 self.m.apply_sim_preset();
-                self.toast("SIM knobs from the preset");
+                if regenerate { self.sim_request_ui(running); }
+                else { self.toast("SIM knobs from the preset"); }
             }
             _ => return false,
         }
@@ -195,9 +272,15 @@ impl Ui {
             bw: self.m.sim_bw.max(1e6),
             deemph_db: self.m.sim_deemph.max(0.0),
             ssc: self.m.sim_ssc,
+            ssc_center: self.m.sim_ssc_center,
+            ssc_deviation: self.m.sim_ssc_deviation,
+            ssc_hz: self.m.sim_ssc_hz,
             rj_rms: self.m.sim_rj.max(0.0),
             pj_peak: self.m.sim_pj.max(0.0),
             pj_hz: self.m.sim_pjhz.max(0.0),
+            dcd_pp: self.m.sim_dcd_pp,
+            corr_rj_rms: self.m.sim_corr_rj,
+            corr_rj_hz: self.m.sim_corr_hz,
             seed: base.seed,
         }
     }
@@ -211,19 +294,106 @@ impl Ui {
         Some((1.0 / r.dt, r.v.len() as u64))
     }
 
-    /// Writes the current knobs into the selected R slot. Overview is the stored record; zoom is ~eight UI.
-    fn sim_load(&mut self) {
-        let continuing = self.session_is_sim;
+    pub(crate) fn sim_generating(&self) -> bool {
+        self.sim_generation.as_ref().is_some_and(|generation| generation.active.is_some())
+    }
+
+    fn sim_requested_running(&self) -> bool {
+        self.sim_generation.as_ref().filter(|generation| generation.active.is_some())
+            .map_or(self.m.run == RunState::Run, |generation| generation.run)
+    }
+
+    pub(crate) fn sim_cancel_generation(&mut self) {
+        if let Some(generation) = &mut self.sim_generation { generation.active = None; }
+    }
+
+    pub(crate) fn take_sim_error(&mut self) -> Option<String> {
+        self.sim_error.take()
+    }
+
+    fn sim_request_ui(&mut self, run: bool) {
+        if let Err(error) = self.sim_load(run) { self.toast(&format!("SIM: {error}")); }
+    }
+
+    /// Preflight before changing a live session or its working reference. Long
+    /// SSC records are generated off the UI thread; ordinary records stay fast.
+    fn sim_load(&mut self, run: bool) -> Result<(), String> {
+        self.sim_error = None;
+        self.sim_cancel_generation();
+        let lane = self.sim_lane();
+        let count = serial::sample_count(&lane)?;
+        let request = Request { id: 0, lane, slot: self.m.sim_slot, continuing: self.session_is_sim, run };
+        if count <= 65_536 {
+            let generated = serial::try_generate(&lane)?;
+            self.sim_cancel_generation();
+            self.sim_finish(request, generated);
+        } else {
+            if self.sim_generation.is_none() { self.sim_generation = Some(Generation::new()?); }
+            self.sim_generation.as_mut().unwrap().submit(request)?;
+            self.toast(&format!("Generating {} ({:.1} M samples)", lane.name, count as f64 / 1e6));
+        }
+        Ok(())
+    }
+
+    pub(super) fn sim_poll(&mut self) {
+        loop {
+            let Some(generation) = &mut self.sim_generation else { return };
+            match generation.results.try_recv() {
+                Ok((request, result)) => {
+                    #[cfg(test)] { generation.completed = request.id; }
+                    if generation.active != Some(request.id) { continue; }
+                    generation.active = None;
+                    match result {
+                        Ok(generated) => self.sim_finish(request, generated),
+                        Err(error) => {
+                            self.sim_error = Some(error.clone());
+                            self.toast(&format!("SIM: {error}"));
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if generation.active.take().is_some() {
+                        self.sim_error = Some("SIM generator stopped; try again".into());
+                        self.toast("SIM generator stopped; try again");
+                    }
+                    self.sim_generation = None;
+                    return;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_sim_generation(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while self.sim_generating() {
+            self.sim_poll();
+            assert!(std::time::Instant::now() < deadline, "SIM generation timed out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[cfg(test)]
+    fn wait_sim_worker(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while self.sim_generation.as_ref().is_some_and(|generation| generation.completed < generation.next) {
+            self.sim_poll();
+            assert!(std::time::Instant::now() < deadline, "SIM worker did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    /// Commit one successful result. Overview is the stored record; zoom is ~eight UI.
+    fn sim_finish(&mut self, request: Request, v: Vec<f32>) {
+        let Request { lane, slot, continuing, run, .. } = request;
         self.remember_live();
         self.session_is_sim = true;
         self.replay = Default::default();
-        let lane = self.sim_lane();
-        let v = serial::generate(&lane);
         let n = v.len();
         let dt = serial::dt_of(&lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
         let vpd = nearest_vdiv((span / 4.0) as f32);
-        let slot = self.m.sim_slot;
         self.refs[slot] = Some(RefWave {
             src: 0,
             color: 0,
@@ -232,9 +402,10 @@ impl Ui {
             dt,
             v,
             vpd,
-            offset: 0.0,
+            offset: (-0.5 * (lane.v_high + lane.v_low)) as f32,
             on: true,
         });
+        self.invalidate_reference_eye();
         if self.offline { self.offline_ref = slot; }
         // a stored record, not the live analog path
         for c in 0..NCH {
@@ -262,13 +433,14 @@ impl Ui {
         self.meas_src = WaveId::Ref(slot);
         self.m.eye_src = WaveId::Ref(slot);
         self.m.eye_rate = lane.bits_per_s;
-        self.m.run = RunState::Run;
-        self.m.status = TrigStatus::Wait;
-        self.m.trig_level = ((lane.v_high + lane.v_low) * 0.5) as f32;
+        self.m.run = if run { RunState::Run } else { RunState::Stop };
+        self.m.status = if run { TrigStatus::Wait } else { TrigStatus::Stop };
+        if !continuing { self.m.trig_level = ((lane.v_high + lane.v_low) * 0.5) as f32; }
         self.last[0] = None;
         self.cleared = true;
-        self.sim_play = true;
-        self.sim_tick(0.0);
+        self.sim_play = run;
+        if run { self.sim_tick(0.0); }
+        else { self.refresh_stopped_reference(); }
         self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
@@ -284,6 +456,7 @@ impl Ui {
         let name = name.trim().trim_matches('"');
         match serial::LANES.iter().position(|l| l.name.eq_ignore_ascii_case(name)) {
             Some(i) => {
+                self.sim_cancel_generation();
                 self.m.sim_preset = i;
                 self.m.apply_sim_preset();
                 true
@@ -300,6 +473,7 @@ impl Ui {
         if slot >= NREF {
             return false;
         }
+        self.sim_cancel_generation();
         self.m.sim_slot = slot;
         true
     }
@@ -309,14 +483,16 @@ impl Ui {
     }
 
     /// On writes the selected preset into the selected slot, the same as Play. Off stops the walk.
-    pub(crate) fn sim_play_set(&mut self, on: bool) {
+    pub(crate) fn sim_play_set(&mut self, on: bool) -> Result<(), String> {
         if on {
-            self.sim_load();
+            self.sim_load(true)?;
         } else {
+            self.sim_cancel_generation();
             self.sim_play = false;
             self.m.run = RunState::Stop;
             self.m.status = TrigStatus::Stop;
         }
+        Ok(())
     }
 
     pub(crate) fn sim_shown(&self) -> Option<bool> {
@@ -355,16 +531,209 @@ mod tests {
     }
 
     #[test]
+    fn advanced_sim_controls_are_reachable_and_use_explicit_units() {
+        let mut u = ui();
+        u.open_menu(MenuId::Sim);
+        assert!(u.items(MenuId::Sim).contains(&Item::Open(MenuId::SimAdvanced)));
+        u.activate(Item::Open(MenuId::SimAdvanced));
+        assert_eq!(u.menu, MenuId::SimAdvanced);
+        assert_eq!(u.parent, Some(MenuId::Sim));
+        assert_eq!(u.menu_root(), MenuId::Sim);
+        let items = u.items(MenuId::SimAdvanced);
+        for expected in [Item::SimSscCenter, Item::SimSscDeviation, Item::SimSscHz,
+                         Item::SimDcd, Item::SimCorrRj, Item::SimCorrHz] {
+            assert!(items.contains(&expected));
+        }
+        assert!(u.value(Item::SimSscDeviation).contains("p-p"));
+        u.adjust(Item::SimSscCenter, 1);
+        assert!(u.value(Item::SimSscDeviation).contains("pk"));
+        assert!(u.options(Item::SimPat).contains(&"PRBS-13".into()));
+        u.m.sim_prbs = 9;
+        u.adjust(Item::SimPat, 1);
+        assert_eq!(u.sim_lane().prbs, 13);
+        let dialog = u.dlg_layout().unwrap();
+        for row in &dialog.rows {
+            assert!(row.ctrl.x >= dialog.r.x && row.ctrl.x + row.ctrl.w <= dialog.r.x + dialog.r.w);
+            assert!(row.ctrl.y >= dialog.r.y && row.ctrl.y + row.ctrl.h <= dialog.r.y + dialog.r.h);
+        }
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+            let _ = std::fs::write(format!("{dir}/sim-advanced.png"), crate::store::png_of(&cv));
+        }
+        let back = dialog.back.unwrap();
+        u.tap_menu(back.x + back.w / 2, back.y + back.h / 2);
+        assert_eq!(u.menu, MenuId::Sim);
+    }
+
+    #[test]
+    fn defaults_regenerate_a_stopped_sim_and_reset_advanced_knobs() {
+        let mut u = ui();
+        u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 3.2 Gen 2").unwrap();
+        u.m.apply_sim_preset();
+        u.m.sim_dcd_pp = 20e-12;
+        u.m.sim_corr_rj = 4e-12;
+        u.m.sim_ssc_center = true;
+        u.m.sim_ssc_deviation = 0.01;
+        u.sim_play_set(true).unwrap();
+        let altered = u.refs[0].as_ref().unwrap().v.clone();
+        u.sim_play_set(false).unwrap();
+        u.activate(Item::SimDefaults);
+        assert_eq!(u.m.sim_dcd_pp, 0.0);
+        assert_eq!(u.m.sim_corr_rj, 0.0);
+        assert!(!u.m.sim_ssc_center);
+        assert_eq!(u.m.sim_ssc_deviation, 0.005);
+        assert_ne!(u.refs[0].as_ref().unwrap().v, altered);
+        assert_eq!(u.m.run, RunState::Stop);
+        assert!(!u.sim_playing());
+    }
+
+    #[test]
+    fn asymmetric_sim_rails_are_centered_without_changing_signal_volts() {
+        let mut u = ui();
+        u.m.sim_ssc = false;
+        u.m.sim_vlow = 1.0;
+        u.m.sim_vhigh = 2.0;
+        u.m.sim_noise = 0.0;
+        u.m.sim_deemph = 0.0;
+        u.sim_play_set(true).unwrap();
+        let reference = u.refs[0].as_ref().unwrap();
+        assert_eq!(reference.offset, -1.5);
+        let (low, high) = reference.v.iter().copied().fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| (low.min(value), high.max(value)));
+        assert!(low > 0.9 && high > 1.9 && high < 2.1, "samples retain their actual voltage: {low}..{high}");
+        assert!((low + reference.offset).abs() < 4.0 * reference.vpd);
+        assert!((high + reference.offset).abs() < 4.0 * reference.vpd);
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+            let _ = std::fs::write(format!("{dir}/sim-asymmetric-rails.png"), crate::store::png_of(&cv));
+        }
+    }
+
+    #[test]
+    fn generation_error_preserves_the_working_waveform_and_session() {
+        let mut u = ui();
+        u.load_waveform_bytes(b"Time (s),Volts\n0,-1\n1e-9,1\n2e-9,-1\n", "keep.csv").unwrap();
+        let original = u.refs[0].as_ref().unwrap().v.clone();
+        let state = u.workflow_state();
+        u.m.sim_rate = 32e9;
+        u.m.sim_ssc = true;
+        u.m.sim_ssc_hz = 1e3;
+        let error = u.sim_play_set(true).unwrap_err();
+        assert!(error.contains("sample") || error.contains("record"), "{error}");
+        assert_eq!(u.refs[0].as_ref().unwrap().v, original);
+        assert_eq!(u.workflow_state(), state);
+        assert!(!u.session_is_sim && !u.sim_generating());
+        u.activate(Item::SimPlay);
+        assert!(u.toast.as_ref().unwrap().0.contains(&error));
+        assert_eq!(u.refs[0].as_ref().unwrap().v, original);
+    }
+
+    #[test]
+    fn asynchronous_generation_error_preserves_sources_and_is_reported_once() {
+        let mut u = ui();
+        u.load_waveform_bytes(b"Time (s),Volts\n0,-1\n1e-9,1\n2e-9,-1\n", "keep.csv").unwrap();
+        let original = u.refs[0].as_ref().unwrap().v.clone();
+        u.m.sim_ssc_hz = 1e6;
+        u.m.sim_rj = 50e-12; // seeded random edges cross at this amplitude
+        let state = u.workflow_state();
+        u.sim_play_set(true).unwrap();
+        assert!(u.sim_generating());
+        u.wait_sim_generation();
+        assert_eq!(u.refs[0].as_ref().unwrap().v, original);
+        assert!(!u.session_is_sim);
+        assert_eq!(u.workflow_state(), state);
+        let error = u.take_sim_error().expect("the asynchronous error reaches SCPI");
+        assert!(error.contains("jitter"), "{error}");
+        assert!(u.take_sim_error().is_none());
+        assert!(u.toast.as_ref().unwrap().0.contains(&error));
+    }
+
+    #[test]
+    fn live_skips_unrequested_refs_but_keeps_hidden_measurements_and_remote_facts() {
+        let mut u = ui();
+        u.m.sim_ssc = false;
+        u.sim_play_set(true).unwrap();
+        u.return_to_live();
+        assert!(!u.refs[0].as_ref().unwrap().on);
+        u.measure_refs();
+        assert!(u.ref_ana[0].get(Meas::Vpp).is_nan(), "an unused hidden ref has no cached analysis");
+        assert!(!u.ref_ana_valid[0]);
+        assert!(u.meas_at(WaveId::Ref(0), Meas::Vpp) > 0.5, "direct UI measurement also analyzes on demand");
+        assert!(!u.ref_ana_valid[0], "an on-demand read must not enable repeated idle rescans");
+        assert!(u.fact_meas(Meas::Vpp, WaveId::Ref(0)) > 0.5, "explicit SCPI facts still analyze a hidden ref");
+        u.m.meas.push((Meas::Vpp, WaveId::Ref(0)));
+        u.measure_refs();
+        assert!(u.ref_ana[0].get(Meas::Vpp) > 0.5, "a hidden measured source remains current");
+        u.m.meas.clear();
+        u.m.meas2.push((0, WaveId::Ref(0), WaveId::Ch(0)));
+        u.measure_refs();
+        assert!(u.ref_ana[0].get(Meas::Vpp) > 0.5, "pairs retain their hidden reference source");
+        u.m.meas2.clear();
+        u.set_offline(true);
+        u.m.dvm_on = true;
+        u.measure_refs();
+        assert!(u.ref_ana[0].get(Meas::Vpp) > 0.5, "the offline meter retains its source");
+    }
+
+    #[test]
+    fn cancelled_ssc_generation_cannot_replace_live_or_an_imported_record() {
+        for import in [false, true] {
+            let mut u = ui();
+            u.m.sim_ssc_hz = 1e6; // complete SSC period, small enough for a fast worker test
+            u.sim_play_set(true).unwrap();
+            assert!(u.sim_generating());
+            assert!(!u.session_is_sim, "starting generation must not replace the live session");
+            if import {
+                u.load_waveform_bytes(b"Time (s),Volts\n0,-1\n1e-9,1\n2e-9,-1\n", "keep.csv").unwrap();
+            } else {
+                u.return_to_live();
+            }
+            assert!(!u.sim_generating());
+            let state = u.workflow_state();
+            u.wait_sim_worker();
+            assert_eq!(u.workflow_state(), state, "a stale background reply must not start SIM");
+            assert!(!u.session_is_sim);
+            if import { assert_eq!(u.refs[0].as_ref().unwrap().label, "keep.csv"); }
+        }
+    }
+
+    #[test]
+    fn newest_ssc_request_wins_and_stop_cancels_pending_work() {
+        let mut u = ui();
+        u.m.sim_ssc_hz = 1e6;
+        u.sim_play_set(true).unwrap();
+        u.m.sim_slot = 1;
+        u.m.sim_prbs = 13;
+        u.sim_load(false).unwrap();
+        u.wait_sim_generation();
+        assert!(u.session_is_sim);
+        assert!(u.refs[0].is_none(), "superseded request must not populate its old slot");
+        assert!(u.refs[1].is_some());
+        assert_eq!(u.m.run, RunState::Stop);
+        u.sim_load(true).unwrap();
+        assert!(u.sim_generating());
+        u.key(key::SINGLE); // arm the existing reference and cancel a pending replacement
+        assert!(!u.sim_generating());
+        u.key(key::RUNSTOP);
+        let state = u.workflow_state();
+        u.wait_sim_worker();
+        assert_eq!(u.workflow_state(), state);
+        assert_eq!(u.m.run, RunState::Stop);
+    }
+
+    #[test]
     fn sim_play_loads_the_preset_into_the_slot() {
         let mut u = ui();
         u.m.sim_preset = LANES.iter().position(|l| l.name == "PCIe 4.0").unwrap();
         u.m.apply_sim_preset();
         u.m.sim_slot = 2;
         u.activate(Item::SimPlay);
+        u.wait_sim_generation();
         let r = u.refs[2].as_ref().expect("R3");
         assert_eq!(r.label, "PCIe 4.0");
         assert!(r.on);
-        assert_eq!(r.v.len(), 65_536);
+        assert_eq!(r.v.len(), serial::sample_count(&u.sim_lane()).unwrap());
         assert!((r.dt - 1.0 / (8.0 * 16e9)).abs() < 1e-18);
         assert_eq!(u.m.eye_src, WaveId::Ref(2));
         assert!((u.m.eye_rate - 16e9).abs() < 1.0);
@@ -372,10 +741,12 @@ mod tests {
         assert!(u.last[0].is_none());
         assert_eq!(u.meas_src, WaveId::Ref(2));
         assert!(u.m.zoom);
-        // 65_536 samples at 8 UI, 16 Gb/s → 512 ns; first scale that covers the record is 100 ns/div
-        assert!((u.m.time_per_div() as f64 - 100e-9).abs() < 1e-12, "overview tdiv {}", u.m.time_per_div());
+        // The overview fits the complete SSC period; zoom retains the bit scale.
+        let record_span = r.v.len() as f64 * r.dt;
+        let expected_scale = tscales().iter().copied().find(|&scale| scale as f64 * HDIV as f64 >= record_span).unwrap();
+        assert_eq!(u.m.time_per_div(), expected_scale);
         assert!((tscales()[u.m.zscale] as f64 - 50e-12).abs() < 1e-12, "zoom {}", tscales()[u.m.zscale]);
-        assert!((u.m.delay as f64 - 256e-9).abs() < 1e-12);
+        assert!((u.m.delay as f64 - record_span * 0.5).abs() < record_span * 1e-6);
         assert!(u.m.meas.iter().all(|(_, id)| *id == WaveId::Ref(2)));
         assert_eq!(u.m.meas.len(), 12);
         u.render(&mut Canvas::new(W, H));
@@ -392,6 +763,7 @@ mod tests {
         u.m.sim_preset = LANES.iter().position(|l| l.name == "USB 3.2 Gen 2").unwrap();
         u.m.apply_sim_preset();
         u.activate(Item::SimPlay);
+        u.wait_sim_generation();
         let r = u.refs[0].as_ref().expect("R1");
         assert_eq!(r.label, "USB 3.2 Gen 2");
         assert!((r.dt - 1.0 / (8.0 * 10e9)).abs() < 1e-18);
@@ -428,6 +800,7 @@ mod tests {
         u.m.sim_deemph = 3.5;
         u.m.sim_ssc = true;
         u.activate(Item::SimPlay);
+        u.wait_sim_generation();
         let r = u.refs[0].as_ref().unwrap();
         assert!((r.dt - 1.0 / (8.0 * 5e9)).abs() < 1e-18);
         u.activate(Item::SimDefaults);
@@ -436,7 +809,7 @@ mod tests {
         assert!(!u.m.sim_ssc);
         u.open_menu(MenuId::Sim);
         let labels: Vec<_> = u.sim_items().iter().filter_map(|&it| Ui::sim_label(it)).collect();
-        for want in ["Rate", "Pattern", "High", "Low", "Rise", "Bandwidth", "De-emph", "Noise", "Spread", "RJ", "PJ"] {
+        for want in ["Rate", "Pattern", "High", "Low", "Rise 20-80%", "Bandwidth", "De-emph", "Noise", "Spread", "RJ RMS", "PJ peak"] {
             assert!(labels.contains(&want), "missing {want} in {labels:?}");
         }
         u.render(&mut Canvas::new(W, H));
@@ -453,6 +826,7 @@ mod tests {
         u.m.sim_preset = LANES.iter().position(|l| l.name == "PCIe 4.0").unwrap();
         u.m.apply_sim_preset();
         u.activate(Item::SimPlay);
+        u.wait_sim_generation();
         assert!(u.last[0].is_none());
         u.m.run = RunState::Run;
         u.step(1.0 / 60.0);
@@ -471,6 +845,7 @@ mod tests {
     fn sim_show_toggles_the_slot() {
         let mut u = ui();
         u.activate(Item::SimPlay);
+        u.wait_sim_generation();
         assert!(u.refs[0].as_ref().unwrap().on);
         u.adjust(Item::SimShow, 1);
         assert!(!u.refs[0].as_ref().unwrap().on);
@@ -553,6 +928,7 @@ mod tests {
     fn loaded_sim_uses_run_stop_and_returns_to_live_explicitly() {
         let mut u = ui();
         u.activate(Item::SimPlay);
+        u.wait_sim_generation();
         let before = u.replay.captures;
         u.step(0.5);
         assert!(u.replay.captures > before && u.sim_play);

@@ -1133,9 +1133,17 @@ pub struct Model {
     pub sim_bw: f64,
     pub sim_deemph: f64,
     pub sim_ssc: bool,
+    pub sim_ssc_center: bool,
+    /// Spread deviation as a fraction; 0.005 is 0.5%.
+    pub sim_ssc_deviation: f64,
+    pub sim_ssc_hz: f64,
     pub sim_rj: f64,
     pub sim_pj: f64,
     pub sim_pjhz: f64,
+    /// Duty-cycle distortion, seconds peak-to-peak.
+    pub sim_dcd_pp: f64,
+    pub sim_corr_rj: f64,
+    pub sim_corr_hz: f64,
 }
 
 pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
@@ -1477,9 +1485,15 @@ impl Default for Model {
             sim_bw: 0.0,
             sim_deemph: 0.0,
             sim_ssc: false,
+            sim_ssc_center: false,
+            sim_ssc_deviation: 0.005,
+            sim_ssc_hz: 33e3,
             sim_rj: 0.0,
             sim_pj: 0.0,
             sim_pjhz: 0.0,
+            sim_dcd_pp: 0.0,
+            sim_corr_rj: 0.0,
+            sim_corr_hz: 1e6,
         };
         m.apply_sim_preset();
         m.ch[0].offset = -1.5;
@@ -1501,9 +1515,15 @@ impl Model {
         self.sim_bw = l.bw;
         self.sim_deemph = l.deemph_db;
         self.sim_ssc = l.ssc;
+        self.sim_ssc_center = l.ssc_center;
+        self.sim_ssc_deviation = l.ssc_deviation;
+        self.sim_ssc_hz = l.ssc_hz;
         self.sim_rj = l.rj_rms;
         self.sim_pj = l.pj_peak;
         self.sim_pjhz = l.pj_hz;
+        self.sim_dcd_pp = l.dcd_pp;
+        self.sim_corr_rj = l.corr_rj_rms;
+        self.sim_corr_hz = l.corr_rj_hz;
     }
 
     /// The settings of the selected generator.

@@ -308,6 +308,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a.token(), m.inv_b.token(), m.inv_c.token(), m.inv_ang, m.inv_poles, m.inv_an.token(), m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
     kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v.token(), m.dpt_i.token(), m.dpt_g.token(), m.dpt_4th, m.dpt_4ch.token(), m.dpt_pct, m.dpt_zoom));
     kv("sim", format!("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.sim_preset, m.sim_slot, m.sim_rate, m.sim_prbs, m.sim_vhigh, m.sim_vlow, m.sim_rise, m.sim_noise, m.sim_bw, m.sim_deemph, if m.sim_ssc { 1 } else { 0 }, m.sim_rj, m.sim_pj, m.sim_pjhz, 0));
+    kv("sim_extra", format!("{} {} {} {} {} {}", m.sim_ssc_center, m.sim_ssc_deviation, m.sim_ssc_hz, m.sim_dcd_pp, m.sim_corr_rj, m.sim_corr_hz));
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
@@ -794,6 +795,22 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 m.sim_pj = f(w[12])?;
                 m.sim_pjhz = f(w[13])?;
             }
+        }
+        "sim_extra" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            let [center, deviation, hz, dcd, corr, corner] = w[..] else {
+                return Err("sim_extra: center deviation frequency DCD correlated-RJ corner".into());
+            };
+            let bounded = |s: &str, low: f64, high: f64| -> Result<f64, String> {
+                s.parse::<f64>().ok().filter(|value| value.is_finite() && *value >= low && *value <= high)
+                    .ok_or_else(|| format!("{s} must be between {low} and {high}"))
+            };
+            m.sim_ssc_center = p_bool(center)?;
+            m.sim_ssc_deviation = bounded(deviation, 0.0, 0.05)?;
+            m.sim_ssc_hz = bounded(hz, 1e3, 1e6)?;
+            m.sim_dcd_pp = bounded(dcd, 0.0, 100e-12)?;
+            m.sim_corr_rj = bounded(corr, 0.0, 50e-12)?;
+            m.sim_corr_hz = bounded(corner, 1e3, 100e6)?;
         }
         "eye_more" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -1692,6 +1709,33 @@ mod tests {
         assert_eq!(back, m);
         // and the default set-up
         assert_eq!(parse_setup(&setup_text(&Model::default())).unwrap(), Model::default());
+    }
+
+    #[test]
+    fn setup_sim_advanced_round_trip_and_legacy_defaults() {
+        let mut model = Model::default();
+        model.sim_prbs = 13;
+        model.sim_ssc_center = true;
+        model.sim_ssc_deviation = 0.01;
+        model.sim_ssc_hz = 40e3;
+        model.sim_dcd_pp = 8e-12;
+        model.sim_corr_rj = 2e-12;
+        model.sim_corr_hz = 2e6;
+        let setup = setup_text(&model);
+        assert_eq!(parse_setup(&setup).unwrap(), model);
+        let legacy = setup.lines().filter(|line| !line.starts_with("sim_extra =")).collect::<Vec<_>>().join("\n");
+        let old = parse_setup(&legacy).unwrap();
+        assert_eq!(old.sim_prbs, 13);
+        assert!(!old.sim_ssc_center);
+        assert_eq!(old.sim_ssc_deviation, 0.005);
+        assert_eq!(old.sim_ssc_hz, 33e3);
+        assert_eq!(old.sim_dcd_pp, 0.0);
+        assert_eq!(old.sim_corr_rj, 0.0);
+        assert_eq!(old.sim_corr_hz, 1e6);
+        for invalid in ["true NaN 33000 0 0 1e6", "false .005 0 0 0 1e6",
+                        "true .005 33000 -1 0 1e6", "false .005 33000 0 1 1e6"] {
+            assert!(parse_setup(&format!("sim_extra = {invalid}\n")).is_err());
+        }
     }
 
     #[test]

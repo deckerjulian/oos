@@ -10,7 +10,7 @@
 //! The right column (the four plots and the jitter figures) slides off the right edge; the tab on the eye brings it
 //! back. A tap on a plot gives it the whole chart area, and a second tap restores the four.
 
-use super::magnetic::missing_wave;
+use super::magnetic::{missing_wave, WaveSamp};
 use super::*;
 use oos_dsp::eye::{self, Bathtub, EdgeMeans, Jitter, JitterFit};
 
@@ -607,6 +607,73 @@ impl Page {
 }
 
 impl Ui {
+    /// Generated and imported references are immutable records. Eye analysis reads
+    /// the whole record even when ordinary measurements follow the zoom window.
+    fn eye_samples(&self, rec: &Record, id: WaveId) -> Option<WaveSamp> {
+        match id {
+            WaveId::Ref(i) => {
+                let r = self.refs.get(i)?.as_ref()?;
+                (r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0)
+                    .then(|| WaveSamp { v: r.v.clone(), t0: r.t0, dt: r.dt })
+            }
+            WaveId::Ch(_) => self.wave_samples(rec, id),
+        }
+    }
+
+    fn eye_source_ready(&self, rec: &Record, id: WaveId) -> bool {
+        match id {
+            WaveId::Ref(i) => self.refs.get(i).and_then(Option::as_ref)
+                .is_some_and(|r| r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0),
+            WaveId::Ch(i) => i < n_ch() && self.m.ch[i].on && rec.ch[i].len() >= 2 && rec.dt > 0.0,
+        }
+    }
+
+    /// Keep live channel/strobe alignment unchanged. A reference source instead
+    /// puts its full record and reference clock on their finest stored grid.
+    fn eye_pair(&self, rec: &Record, id: WaveId, clock: WaveId) -> Option<(Vec<f32>, Vec<f32>, f64, f64)> {
+        if matches!(id, WaveId::Ch(_)) {
+            let mut t = self.take_waves(rec, &[id, clock], &[]).ok()?;
+            let b = t.v.pop()?;
+            let a = t.v.pop()?;
+            return Some((a, b, t.dt, t.t0));
+        }
+        let a = self.eye_samples(rec, id)?;
+        let b = self.eye_samples(rec, clock)?;
+        let grid = if matches!(clock, WaveId::Ref(_)) &&
+            (b.dt < a.dt || ((b.dt - a.dt).abs() <= a.dt * 1e-9 && b.v.len() > a.v.len())) { &b } else { &a };
+        let (dt, t0, n) = (grid.dt, grid.t0, grid.v.len());
+        Some((eye_on_grid(a, t0, dt, n), eye_on_grid(b, t0, dt, n), dt, t0))
+    }
+
+    /// Called after replacing a generated reference, including a same-grid record.
+    pub(super) fn invalidate_reference_eye(&mut self) {
+        self.azr.eye = None;
+        self.azr.eye_ref = None;
+        self.azr.eye_res = None;
+        self.azr.page = Page::default();
+    }
+
+    /// Hash every reference sample before making copies or computing statistics.
+    /// Live companion waves still accumulate once per live capture as before.
+    fn eye_reference_fingerprint(&self, id: WaveId, clock: Option<WaveId>) -> Option<(usize, u64)> {
+        let WaveId::Ref(slot) = id else { return None };
+        let mut h = 0u64;
+        for source in [Some(id), clock, self.m.eye_rail].into_iter().flatten() {
+            let WaveId::Ref(i) = source else { return None };
+            let Some(r) = self.refs.get(i).and_then(Option::as_ref) else {
+                h = h.rotate_left(13) ^ i as u64 ^ u64::MAX;
+                continue;
+            };
+            h = h.rotate_left(13) ^ ref_fp(&r.v, r.dt, r.t0) ^ i as u64;
+            h = h.rotate_left(13) ^ r.vpd.to_bits() as u64 ^ ((r.offset.to_bits() as u64) << 32);
+        }
+        for setting in [self.m.eye_ber, self.m.eye_pn_lo, self.m.eye_pn_hi, self.m.eye_notch] {
+            h = h.rotate_left(13) ^ setting.to_bits();
+        }
+        h ^= (self.m.eye_npj as u64) | ((self.m.eye_hp as u64) << 1) | ((self.m.eye_from_record as u64) << 2);
+        Some((slot, h))
+    }
+
     fn eye_scale(&self, id: WaveId) -> (f32, f32) {
         match id {
             WaveId::Ch(c) => {
@@ -624,28 +691,16 @@ impl Ui {
     pub(super) fn eye_update(&mut self, rec: &Record) {
         let id = self.m.eye_src;
         let clk_id = self.m.eye_b;
-        if self.wave_samples(rec, id).is_none() {
+        if !self.eye_source_ready(rec, id) {
             self.azr.page.status = [missing_wave(id), "Switch the source on".into()];
             return;
         }
         if let Some(b) = clk_id {
-            if self.wave_samples(rec, b).is_none() {
+            if !self.eye_source_ready(rec, b) {
                 self.azr.page.status = [missing_wave(b), "Switch the clock on".into()];
                 return;
             }
         }
-        let (v, clk_v, dt, t0) = if let Some(b) = clk_id {
-            match self.take_waves(rec, &[id, b], &[]) {
-                Ok(t) => (t.v[0].clone(), Some(t.v[1].clone()), t.dt, t.t0),
-                Err(miss) => {
-                    self.azr.page.status = [missing_wave(miss), "Switch the clock on".into()];
-                    return;
-                }
-            }
-        } else {
-            let s = self.wave_samples(rec, id).unwrap();
-            (s.v, None, s.dt, s.t0)
-        };
         let (vpd, offset) = self.eye_scale(id);
         let lay = layout(self.eye_page_rect(), self.full_on());
         let (pw, ph) = (lay.plot.w.max(64), lay.plot.h.max(64));
@@ -659,6 +714,18 @@ impl Ui {
             Some(WaveId::Ref(i)) => (2, i),
         };
         let key = (tag.0, tag.1, ctag.0, ctag.1, vpd.to_bits(), offset.to_bits(), self.m.eye_rate.to_bits(), pw, ph);
+        let fp = self.eye_reference_fingerprint(id, clk_id);
+        if fp.is_some() && fp == self.azr.eye_ref && self.azr.eye.is_some() && self.azr.eye_key == key {
+            return;
+        }
+        let reference_changed = fp.is_some() && fp != self.azr.eye_ref;
+        let (v, clk_v, dt) = if let Some(b) = clk_id {
+            let Some((v, clock, dt, _)) = self.eye_pair(rec, id, b) else { return };
+            (v, Some(clock), dt)
+        } else {
+            let s = self.eye_samples(rec, id).unwrap();
+            (s.v, None, s.dt)
+        };
         let recov = clk_v.as_deref().unwrap_or(&v);
         let recov_id = clk_id.unwrap_or(id);
         let st = match recov_id {
@@ -676,21 +743,10 @@ impl Ui {
             (thr, 0.1 * clk_vpd)
         };
         let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
-        let fp = match id {
-            WaveId::Ref(i) => {
-                let mut h = ref_fp(&v, dt, t0);
-                if let Some(c) = &clk_v {
-                    h ^= ref_fp(c, dt, t0);
-                }
-                Some((i, h))
-            }
-            WaveId::Ch(_) => None,
-        };
-        if fp.is_some() && fp == self.azr.eye_ref && self.azr.eye.is_some() && self.azr.eye_key == key {
-            return;
-        }
-        // a record without edges changes nothing: an idle bus must not cost the eye its range or its hits
+        // An idle live bus keeps its accumulated eye. A replacement reference
+        // without edges must not display the previous reference's results.
         let Some(clk) = eye::recover_clock(recov, dt, thr, hyst, rate) else {
+            if reference_changed { self.invalidate_reference_eye(); }
             self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(recov_id));
             return;
         };
@@ -700,7 +756,7 @@ impl Ui {
             let (span, swing) = (hi - lo, (data_st.vmax - data_st.vmin) as f64);
             data_st.vmax as f64 > hi + EYE_OUT * span || (data_st.vmin as f64) < lo - EYE_OUT * span || swing < EYE_SHRUNK * span
         });
-        if self.azr.eye.is_none() || self.azr.eye_key != key || left {
+        if self.azr.eye.is_none() || self.azr.eye_key != key || left || reference_changed {
             // the eye fills its plot whatever the scale of the channel; the signal itself sets the range
             let (lo, hi) = v.iter().filter(|x| x.is_finite()).fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x as f64), b.max(x as f64)));
             let (lo, hi, step) = eye_range(lo, hi);
@@ -737,7 +793,7 @@ impl Ui {
         self.azr.eye_ref = fp;
         let tie = eye::tie(&clk.edges, &clk);
         self.azr.page.add(&tie, &clk);
-        if self.now - self.azr.page.t >= REFRESH {
+        if fp.is_some() || self.now - self.azr.page.t >= REFRESH {
             self.azr.page.t = self.now;
             self.eye_refresh(&clk, &tie, dt, &lay, &v, rec);
         }
@@ -754,7 +810,8 @@ impl Ui {
         } else {
             "clock fitted to the edges".into()
         };
-        let title = format!("{} \u{b7} {} \u{b7} {}", self.wave_name(self.m.eye_src), si(1.0 / clk.period, "b/s"), clock);
+        let source = if matches!(self.m.eye_src, WaveId::Ref(_)) { format!("{} · full record", self.wave_name(self.m.eye_src)) } else { self.wave_name(self.m.eye_src) };
+        let title = format!("{} \u{b7} {} \u{b7} {}", source, si(1.0 / clk.period, "b/s"), clock);
         let Some(e) = self.azr.eye.as_ref() else { return };
         let meas = e.measure(clk.period);
         let p = &mut self.azr.page;
@@ -803,12 +860,12 @@ impl Ui {
         let (f2, f4, f8) = (eye::subrate_pp(trend, clk.period, 2), eye::subrate_pp(trend, clk.period, 4), eye::subrate_pp(trend, clk.period, 8));
         let srj = eye::srj_pp(trend, clk.period);
         let pn = eye::phase_noise(trend, clk.period, self.m.eye_pn_lo, self.m.eye_pn_hi);
-        let rail = self.m.eye_rail.and_then(|id| self.wave_samples(rec, id)).map(|s| (s.v, s.dt));
+        let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id)).map(|s| (s.v, s.dt));
         let ps = eye::psij(trend, clk, tie, rail.as_ref().map(|(v, d)| (v.as_slice(), *d)), self.m.eye_notch, meas.height, meas.width, Some((wave, dt)));
         let (dc, ac, cross) = if let Some(b) = self.m.eye_b {
-            match self.take_waves(rec, &[self.m.eye_src, b], &[]) {
-                Ok(t) => (eye::dc_common(&t.v[0], &t.v[1]), eye::ac_common_pp(&t.v[0], Some(&t.v[1]), t.dt, self.m.eye_hp), eye::diff_crossover(&t.v[0], &t.v[1])),
-                Err(_) => (f64::NAN, f64::NAN, f64::NAN),
+            match self.eye_pair(rec, self.m.eye_src, b) {
+                Some((a, b, dt, _)) => (eye::dc_common(&a, &b), eye::ac_common_pp(&a, Some(&b), dt, self.m.eye_hp), eye::diff_crossover(&a, &b)),
+                None => (f64::NAN, f64::NAN, f64::NAN),
             }
         } else {
             (f64::NAN, eye::ac_common_pp(wave, None, dt, self.m.eye_hp), f64::NAN)
@@ -955,8 +1012,8 @@ impl Ui {
         };
         let has = |id: WaveId| -> bool {
             match &self.last[0] {
-                Some(r) => self.wave_samples(r, id).is_some(),
-                None => matches!(id, WaveId::Ref(_)) && self.wave_samples(&Self::blank_record(), id).is_some(),
+                Some(r) => self.eye_source_ready(r, id),
+                None => matches!(id, WaveId::Ref(_)) && self.eye_source_ready(&Self::blank_record(), id),
             }
         };
         let mut fallback = None;
@@ -985,7 +1042,7 @@ impl Ui {
         } else {
             return None;
         };
-        let s = self.wave_samples(rec, id)?;
+        let s = self.eye_samples(rec, id)?;
         let vpd = match id {
             WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].volts_per_div(),
             WaveId::Ref(i) => self.refs.get(i)?.as_ref()?.vpd,
@@ -1335,17 +1392,33 @@ impl Ui {
 /// Room for the label of a figure.
 pub(super) const LABEL_W: i32 = 64;
 
-/// Identity of one stored record: length, interval, start, and three samples.
+/// Content identity of one stored record, independent of the trace viewport.
 fn ref_fp(v: &[f32], dt: f64, t0: f64) -> u64 {
     let mut h = v.len() as u64;
     h = h.wrapping_mul(0x9E37_79B1_85EB_CA87).wrapping_add(dt.to_bits());
     h = h.wrapping_mul(0x9E37_79B1_85EB_CA87).wrapping_add(t0.to_bits());
-    if !v.is_empty() {
-        for x in [v[0], v[v.len() / 2], v[v.len() - 1]] {
-            h = h.wrapping_mul(0x9E37_79B1_85EB_CA87).wrapping_add(x.to_bits() as u64);
-        }
+    for x in v {
+        h = h.wrapping_mul(0x9E37_79B1_85EB_CA87).wrapping_add(x.to_bits() as u64);
     }
     h
+}
+
+/// Reference-only Eye alignment; ordinary analyser measurement gates are unchanged.
+fn eye_on_grid(mut source: WaveSamp, t0: f64, dt: f64, n: usize) -> Vec<f32> {
+    if (source.dt - dt).abs() <= dt.abs() * 1e-9 && (source.t0 - t0).abs() <= dt.abs() * 1e-6 {
+        source.v.resize(n, f32::NAN);
+        return source.v;
+    }
+    (0..n).map(|k| {
+        let x = (t0 + k as f64 * dt - source.t0) / source.dt;
+        if x < 0.0 || x > source.v.len().saturating_sub(1) as f64 { return f32::NAN; }
+        let i = x as usize;
+        let a = source.v[i];
+        let b = source.v[(i + 1).min(source.v.len() - 1)];
+        let fraction = (x - i as f64) as f32;
+        if a.is_finite() && b.is_finite() { a * (1.0 - fraction) + b * fraction }
+        else if a.is_finite() { a } else { b }
+    }).collect()
 }
 
 /// The coloured hits into `r`. Same size is copied; a column that is mid-slide is scaled so the eye stays put.
@@ -1477,6 +1550,73 @@ mod tests {
     const NOISY: Sig = Sig { rate: 100e6, uis: 2000, prbs: true, spu: 12, rj: 0.25e-9, pj: 0.3e-9, volt_noise: 0.04 };
 
     #[test]
+    fn a_tiny_reference_zoom_keeps_full_record_eye_ssc_and_tie_without_duplicate_folds() {
+        let rate = 20e6;
+        let modulation = 20e3;
+        let dt = 1.0 / (64.0 * rate);
+        let edges = oos_dsp::hss::ssc_edge_times(4002, rate, 0.01, modulation, "Down-spread only");
+        let mut at = 0;
+        let samples: Vec<f32> = (0..256_000).map(|i| {
+            let t = i as f64 * dt;
+            while at + 1 < edges.len() && edges[at + 1] <= t { at += 1; }
+            let level = if at % 2 == 0 { 1.0 } else { -1.0 };
+            // A short linear transition, with all edge times coming from the SSC ramp.
+            let fraction = ((t - edges[at]) / (0.1 / rate)).clamp(0.0, 1.0);
+            (-level + 2.0 * level * fraction) as f32
+        }).collect();
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.run = RunState::Stop;
+        ui.session_is_sim = true;
+        ui.m.sim_slot = 0;
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "SSC clock".into(), t0: 0.0, dt, v: samples, vpd: 0.5, offset: 0.0, on: true });
+        ui.m.eye_src = WaveId::Ref(0);
+        ui.m.eye_rate = rate;
+        ui.m.zoom = true;
+        ui.m.zscale = tscales().iter().position(|&scale| scale as f64 >= 0.2 / rate / HDIV as f64).unwrap();
+        ui.m.zdelay = 50e-6;
+        ui.refresh_stopped_reference();
+        assert!(ui.reference_slice(0).unwrap().0.len() < 64, "ordinary measurements still use the tiny view");
+        ui.m.view = AView::Eye;
+        ui.relayout();
+        ui.eye_update(&Ui::blank_record());
+        assert_eq!(ui.azr.page.records, 1);
+        assert_eq!(ui.azr.eye.as_ref().unwrap().records, 1);
+        assert!(ui.azr.page.edges > 3000, "full record TIE: {} edges", ui.azr.page.edges);
+        assert!(ui.azr.page.title.contains("full record"), "{}", ui.azr.page.title);
+        let reading = |ui: &Ui, name| ui.azr.page.readings.iter().find(|(n, _)| *n == name).unwrap().1;
+        let ssc = reading(&ui, "SSCRate");
+        assert!((ssc / modulation - 1.0).abs() < 0.25, "SSC {ssc} Hz, expected {modulation}");
+        // Downspread has a 1% peak-to-peak local rate span. Same-polarity
+        // averaging and interpolation at 64 samples/UI introduce a small error.
+        let ppm = reading(&ui, "SSCPpm");
+        assert!((ppm / 10_000.0 - 1.0).abs() < 0.03, "SSC depth {ppm} ppm, expected 10000 ppm");
+        let hits = ui.azr.eye.as_ref().unwrap().hits.clone();
+        let identity = ui.azr.eye_ref;
+        for delay in [20e-6, 80e-6, 120e-6] {
+            ui.m.zdelay = delay;
+            ui.now += REFRESH;
+            ui.refresh_stopped_reference();
+            assert_eq!(ui.azr.page.records, 1);
+            assert_eq!(ui.azr.eye.as_ref().unwrap().hits, hits);
+            assert_eq!(ui.azr.eye_ref, identity);
+            assert_eq!(reading(&ui, "SSCRate"), ssc);
+        }
+        // A waveform edit away from the old three fingerprint samples is still a new record.
+        ui.refs[0].as_mut().unwrap().v[1000] *= 0.8;
+        ui.eye_update(&Ui::blank_record());
+        assert_ne!(ui.azr.eye_ref, identity);
+        assert_eq!(ui.azr.page.records, 1);
+        let waveform_identity = ui.azr.eye_ref;
+        ui.m.eye_ber = 1e-6;
+        ui.eye_update(&Ui::blank_record());
+        assert_ne!(ui.azr.eye_ref, waveform_identity, "settings refresh the cached figures");
+        assert_eq!(ui.azr.page.records, 1);
+        ui.refs[0].as_mut().unwrap().v.fill(0.0);
+        ui.eye_update(&Ui::blank_record());
+        assert!(ui.azr.eye.is_none() && ui.azr.eye_res.is_none(), "an edgeless replacement cannot keep stale results");
+    }
+
+    #[test]
     fn the_page_tiles_the_area_to_its_bottom_edge() {
         for h in [160, 240, 296, 300, 352, 400, 440, 480] {
             let a = Rect::new(0, 40, W, h);
@@ -1560,6 +1700,25 @@ mod tests {
         ui.analyzer_update();
         assert_eq!((ui.azr.eye.as_ref().unwrap().v_max, ui.azr.page.records), (top, n));
         assert!(ui.azr.page.status[1].contains("Under 3 edges"), "{:?}", ui.azr.page.status);
+    }
+
+    #[test]
+    fn disabled_eye_source_and_clock_ignore_samples_retained_in_the_last_record() {
+        let mut ui = page(CLEAN, 2);
+        let mut rec = ui.last[0].clone().unwrap();
+        assert!(!rec.ch[0].is_empty());
+        let records = ui.azr.page.records;
+        ui.m.ch[0].on = false;
+        ui.eye_update(&rec);
+        assert_eq!(ui.azr.page.status[0], "CH1 is off");
+        assert_eq!(ui.azr.page.records, records);
+        ui.m.ch[0].on = true;
+        rec.ch[1] = rec.ch[0].clone();
+        ui.m.ch[1].on = false;
+        ui.m.eye_b = Some(WaveId::Ch(1));
+        ui.eye_update(&rec);
+        assert_eq!(ui.azr.page.status[0], "CH2 is off");
+        assert_eq!(ui.azr.page.records, records);
     }
 
     /// Every figure the page draws has one number for SCPI, including the ones that came out missing.

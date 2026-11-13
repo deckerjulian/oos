@@ -111,6 +111,14 @@ fn step_ladder(v: f64, d: i32) -> f64 {
 }
 
 impl Ui {
+    /// Remote view changes must refresh stopped references too: there may be no
+    /// next acquisition to build the newly opened analyser's results.
+    pub(crate) fn set_analysis_view(&mut self, view: AView) {
+        self.m.view = view;
+        self.relayout();
+        self.analyzer_update();
+    }
+
     pub(super) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::SpecAcprW | Item::SpecAcprS | Item::EyeRate | Item::EyeBer | Item::EyePnLo | Item::EyePnHi | Item::EyeNotch | Item::PowFline | Item::PowFsw | Item::PowRef => Kind::Value,

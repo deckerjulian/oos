@@ -281,6 +281,32 @@ also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R
 reference is panned. **Measure** opens categorized choices with Source, Settings, and Selected; large readout
 lists have page controls. The Windows app announces its actual SCPI and HiSLIP listeners over mDNS.
 
+**SIM > Advanced** adds SSC profile, deviation and modulation frequency, duty-cycle distortion, and
+correlated random jitter with its corner frequency. PRBS-13 is available alongside the other patterns.
+With SSC enabled, the stored record covers a complete modulation cycle at eight samples per bit.
+Long records generate in the background; cancel or return to Live to keep the previous session.
+Configurations exceeding the generation budget report an error without replacing the current waveform.
+The HSS down-spread profile removes its DC term; centered spread uses plus/minus the configured deviation.
+The Eye analyzes the full stored reference once per changed record or setting, including while the trace is
+zoomed. Ordinary trace measurements continue to follow the captured window.
+
+The same advanced settings are available through OOS SCPI. Values use seconds, hertz and fractional
+deviation (0.005 means 0.5%). Configure them together, then start generation and poll `:SIM:BUSY?`:
+
+```text
+:SIM:PRESET "PCIe 3.0"
+:SIM:SSC:MODE CENTER
+:SIM:SSC:DEVIATION 0.005
+:SIM:SSC:FREQUENCY 33000
+:SIM:JITTER:DCD 4e-12
+:SIM:JITTER:CORRELATED 2e-12
+:SIM:JITTER:CORNER 2e6
+:SIM:PATTERN PRBS13
+:SIM:PLAY ON
+:SIM:BUSY?
+:SYSTEM:ERROR?
+```
+
 OOS builds on macOS and Linux and can run scripted without hardware, with its simulated demo signals. It writes a
 screenshot in PPM format next to the script:
 

@@ -583,6 +583,7 @@ mod tests {
         ui.m.sim_slot = 4;
         ui.m.ch[1].on = true;
         ui.activate(Item::SimPlay);
+        ui.wait_sim_generation();
         assert!(ui.sim_play && ui.m.run == RunState::Run);
         let ch: Vec<(bool, usize, f32)> = ui.m.ch.iter().map(|c| (c.on, c.vscale, c.offset)).collect();
         ui.m.trig_level = 9.0;

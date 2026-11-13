@@ -227,6 +227,7 @@ pub enum MenuId {
     Network,
     Bode,
     Sim,
+    SimAdvanced,
     Afg,
     BwTest,
     /// the overflow menu of an analyser view or XY (viewmore.rs)
@@ -657,6 +658,12 @@ enum Item {
     SimDeemph,
     SimNoise,
     SimSsc,
+    SimSscCenter,
+    SimSscDeviation,
+    SimSscHz,
+    SimDcd,
+    SimCorrRj,
+    SimCorrHz,
     SimRj,
     SimPj,
     SimPjHz,
@@ -782,6 +789,8 @@ pub struct Ui {
     ana: [oos_dsp::measure::Analysis; NCH],
     /// measurements of each ref slot, from the stored samples (no front-end bandwidth)
     ref_ana: [oos_dsp::measure::Analysis; NREF],
+    /// False when a hidden, unrequested reference skipped the capture-time scan.
+    ref_ana_valid: [bool; NREF],
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -818,6 +827,8 @@ pub struct Ui {
     bode: bode::State,
     /// SIM: Play is moving the timebase window through the selected record
     sim_play: bool,
+    sim_generation: Option<sim::Generation>,
+    sim_error: Option<String>,
     sim_i: usize,
     /// Offline mode. Off, the live screen stays as it is.
     offline: bool,
@@ -1001,6 +1012,7 @@ impl Ui {
             stats: [Stats::default(); NCH],
             ana: Default::default(),
             ref_ana: std::array::from_fn(|_| Default::default()),
+            ref_ana_valid: [false; NREF],
             history: std::collections::VecDeque::new(),
             hist_pos: None,
             search_on: false,
@@ -1039,6 +1051,8 @@ impl Ui {
             start_up_last: None,
             bode: Default::default(),
             sim_play: false,
+            sim_generation: None,
+            sim_error: None,
             sim_i: 0,
             offline: false,
             offline_ref: 0,
@@ -1717,6 +1731,7 @@ impl Ui {
     // ------------------------------------------------------------------ acquisition per frame
 
     pub fn step(&mut self, dt_wall: f64) {
+        self.sim_poll();
         self.relayout();
         self.now += dt_wall;
         self.meas_hold_tick();
@@ -3811,6 +3826,8 @@ impl Ui {
         };
         if m == MenuId::MeasAdd || m == MenuId::MeasHold {
             MenuId::Measure
+        } else if m == MenuId::SimAdvanced {
+            MenuId::Sim
         } else {
             m
         }
@@ -4190,6 +4207,7 @@ impl Ui {
             MenuId::Network => vec![Item::NetEth, Item::NetMac, Item::NetWeb, Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
             MenuId::Bode => self.bode_items(),
             MenuId::Sim => self.sim_items(),
+            MenuId::SimAdvanced => self.sim_advanced_items(),
             MenuId::Magnetic => self.magnetic_items(),
             MenuId::Inverter => self.inverter_items(),
             MenuId::Dpt => self.dpt_items(),
@@ -4301,11 +4319,27 @@ impl Ui {
 
     /// Each loaded ref, at the slot's own sample interval. Coupling and the bandwidth limit are not applied.
     fn measure_refs(&mut self) {
+        let meter = if self.m.dvm_on || self.m.cnt_on { self.offline_meter() } else { None };
         for i in 0..NREF {
-            self.ref_ana[i] = match self.reference_slice(i) {
-                Some((samples, _, dt)) if samples.len() >= 2 && dt > 0.0 => oos_dsp::measure::analyze_refs(samples, dt, 0.4 * self.refs[i].as_ref().unwrap().vpd as f64, self.m.meas_lpct, self.m.meas_hpct),
-                _ => Default::default(),
+            let id = WaveId::Ref(i);
+            let requested = self.refs[i].as_ref().is_some_and(|reference| reference.on)
+                || self.m.meas.iter().any(|entry| entry.1 == id)
+                || self.m.meas2.iter().any(|entry| entry.1 == id || entry.2 == id)
+                || meter == Some(i);
+            if !requested {
+                // A hidden multi-million-sample SIM record must not hold up
+                // every live capture. Explicit SCPI facts analyze on demand.
+                self.ref_ana[i] = Default::default();
+                self.ref_ana_valid[i] = false;
+                continue;
+            }
+            let (analysis, valid) = match self.reference_slice(i) {
+                Some((samples, _, dt)) if samples.len() >= 2 && dt.is_finite() && dt > 0.0 =>
+                    (oos_dsp::measure::analyze_refs(samples, dt, 0.4 * self.refs[i].as_ref().unwrap().vpd as f64, self.m.meas_lpct, self.m.meas_hpct), true),
+                _ => (Default::default(), false),
             };
+            self.ref_ana[i] = analysis;
+            self.ref_ana_valid[i] = valid;
         }
     }
 
@@ -4605,6 +4639,7 @@ impl Ui {
     /// Row label, with the trigger rows named after their role in the selected trigger type.
     fn item_label(&self, it: Item) -> &'static str {
         if it == Item::SimPlay {
+            if self.sim_generating() { return "Cancel generation"; }
             return if !self.session_is_sim { "Start simulation" } else if self.m.run == RunState::Run { "Stop simulation" } else { "Run simulation" };
         }
         let t = self.m.trig_type;
@@ -4739,6 +4774,7 @@ impl Ui {
             MenuId::Network => "Network".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Sim => "SIM".into(),
+            MenuId::SimAdvanced => "SIM advanced".into(),
             MenuId::Magnetic => "Magnetic".into(),
             MenuId::Inverter => "Inverter".into(),
             MenuId::Dpt => "Double pulse".into(),
@@ -6716,6 +6752,9 @@ impl Ui {
     pub fn key(&mut self, k: u8) {
         if k == 0 {
             return; // release
+        }
+        if (k == key::RUNSTOP && self.m.run == RunState::Run) || k == key::SINGLE || k == key::DEFAULT || (0x15..=0x18).contains(&k) {
+            self.sim_cancel_generation();
         }
         if k == key::POWER {
             // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
