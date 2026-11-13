@@ -15,6 +15,8 @@ New:
   use one window. A drag in a window moves a channel of that window. Saved in setups.
 - Full screen: the button at the top right of the plot (or Display > Windows > Full screen) gives the plot the whole
   screen without the top bar and the cards; the same button goes back. Not while the touch lock is on.
+- Zoom area: the button under the full-screen button arms one drag. The next drag on the plot draws a box, and the
+  time span of that box is the zoom window. A tap, or a second tap, does not zoom.
 - After an auto set-up a bar at the top of the waveform window, above the signal, offers four views of the trigger
   channel: about three periods, about ten periods, the rising edge, the falling edge (the edge's 10-90 % time across
   about two divisions, slope set to match). Its cross or a tap elsewhere closes it, otherwise it goes after 30 s.

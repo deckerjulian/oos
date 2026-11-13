@@ -592,7 +592,8 @@ periods, many periods, the rising edge or the falling edge of the trigger channe
 same page puts each channel, math channel and the LA into a window; a new split spreads the channels that are on. All
 windows share the time base, and a drag in a window moves a channel of that window. Zoom, XY and the analysers use one
 window. The button with four corners at the top right of the plot gives the plot the whole screen; it shows inward
-corners then and brings the top bar and the cards back.
+corners then and brings the top bar and the cards back. The box button under it arms one drag: the next drag on the
+plot draws a box, and that box is the zoom window. A tap does not zoom.
 
 **Bandwidth and noisy signals.** A channel's bandwidth is Auto by default: the limit follows the sample rate, as on the
 stock system. With Full, the noise of a slow signal can be larger than the trigger hysteresis and the hardware triggers
