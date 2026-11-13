@@ -779,7 +779,22 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     // hardware average: one frame is read whatever the batch holds, so the read size does not limit it
     let by_size = if matches!(s.mode, oos_hal::dho::acq::Mode::Average { .. }) { u32::MAX } else { (4_000_000 / fb) as u32 };
     b.frames = by_size.min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
+    // the zone trigger: the ring gets one qualified frame per arm on the unit (round 3: 29 frames/s, the 25 ms wait
+    // for more frames per batch), so a batch is `zone_batch` frames (docs/fork/hwzone.md "Rate")
+    if s.hwzone.is_some() {
+        b.frames = b.frames.min(zone_batch());
+    }
     b
+}
+
+/// Frames per batch while the zone trigger runs: `zone.batch = <n>` in system.conf, default 1.
+fn zone_batch() -> u32 {
+    static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *N.get_or_init(|| zone_batch_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+fn zone_batch_from(conf: &str) -> u32 {
+    crate::drawpipe::conf_value(None, conf, "zone.batch").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).clamp(1, 1000)
 }
 
 /// The part of a deep record the screen shows, as a read-out window (`Settings::window`: points, first point from the
@@ -1417,7 +1432,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the frame count, so the read waits at most one frame longer
             let pipe = crate::drawpipe::pipe();
             let idle = || pipe.is_some_and(|x| x.help(&mut helper));
+            let t_batch = std::time::Instant::now();
             let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed, idle);
+            let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
             if let Some(x) = pipe {
                 x.help_done(&mut helper);
             }
@@ -1518,7 +1535,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         let n = g.zone.map_or(0, |r| r.n) + 1;
                         g.zone = zr.map(|(ch, slot, ctrl, r)| {
                             let c = r.counters;
-                            crate::board::ZoneRead { ch, slot, ctrl, raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi], frames: c.frames(), armed: r.armed(), pass: r.pass(), n }
+                            crate::board::ZoneRead { ch, slot, ctrl, raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi], frames: c.frames(), armed: r.armed(), pass: r.pass(), n, batch: (count, b.frames, batch_ms) }
                         });
                     }
                     // hardware average: one frame, shown or not, the average cleared after a complete hold average
@@ -1939,6 +1956,18 @@ mod tests {
         assert_eq!(mask_map_from(""), Map::default());
         let m = mask_map_from("mask.hw = on\nmask.map.domain = pregain\nmask.map.cols = stock # sweep\nmask.map.shift = x\n");
         assert_eq!((m.domain, m.layout, m.shift), (Domain::PreGain, Layout::Stock, 8));
+    }
+
+    #[test]
+    fn zone_batches_hold_zone_batch_frames() {
+        assert_eq!((zone_batch_from(""), zone_batch_from("zone.batch = 8\n"), zone_batch_from("zone.batch = 0\n")), (1, 8, 1));
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        assert!(batch_plan(&s, &p).frames > 1);
+        let z = Settings { hwzone: Some(oos_hal::dho::seq::HwZone { ch: 0, zones: vec![], clear: 0, map: oos_hal::dho::mask::Map::default() }), ..s };
+        assert_eq!(batch_plan(&z, &p).frames, zone_batch());
     }
 
     #[test]

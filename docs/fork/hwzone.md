@@ -45,6 +45,19 @@ private RE notes `docs/fpga.md` "Zone trigger" (static analysis).
 The value and column mapping is `mask::Map`, shared with the mask test; sweep it with the mask first
 (`hwmask.md` "Sweep of the mapping"). `:SYSTem:DEBug:MASK:MAP` changes it for both.
 
+## Rate
+
+Round 3 on the unit: qualification right in every case, but 29 passing frames/s against 187/s with the software
+filter (200 us/div, 1 kHz probe-comp, box on the trace). 1 / 29 s is the 25 ms the batch read waits for the ring to
+fill plus about 9 ms of arm and read: with the zone logic armed the ring got one frame per arm, and every batch waited
+out the 25 ms for the rest. A batch is now `zone.batch` frames while the zone trigger runs (system.conf, default 1), so
+the read follows the first qualified frame at once. `:SYSTem:DEBug:ZONE?` reports the last batch as `batch=<read>/
+<planned>,batch_ms=<arm to read>`; with `zone.batch = 8` the bench sees whether the ring holds more than one
+qualified frame per arm after all.
+
+Bench: the round 3 box case with `zone.batch` unset, then 4 and 16; note used/s, `batch` and `batch_ms` for each,
+and the software-filter rate for comparison. Goal: at least the software rate.
+
 ## Assumptions
 
 | assumption | where | bench step |

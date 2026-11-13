@@ -285,6 +285,8 @@ pub struct ZoneRead {
     pub armed: bool,
     pub pass: bool,
     pub n: u64,
+    /// the last batch: frames read, frames planned, milliseconds from arm to read
+    pub batch: (u32, u32, f32),
 }
 
 /// A reading of the mask unit's counters (fork): source channel and slot, the control word, the raw counter registers

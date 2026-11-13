@@ -44,7 +44,7 @@ impl Ui {
             return format!("off,enabled={},active={},{}", board().zone_hw() as u8, self.zone_hw_active() as u8, sw);
         };
         format!(
-            "ch={},slot={},ctrl={:#010x},s4030={:#010x},s4038={:#010x},frames_lo={:#010x},frames_hi={:#010x},fails_lo={:#010x},fails_hi={:#010x},armed={},pass={},frames={},n={},{}",
+            "ch={},slot={},ctrl={:#010x},s4030={:#010x},s4038={:#010x},frames_lo={:#010x},frames_hi={:#010x},fails_lo={:#010x},fails_hi={:#010x},armed={},pass={},frames={},n={},batch={}/{},batch_ms={:.1},{}",
             r.ch + 1,
             r.slot,
             r.ctrl,
@@ -58,6 +58,9 @@ impl Ui {
             r.pass as u8,
             r.frames,
             r.n,
+            r.batch.0,
+            r.batch.1,
+            r.batch.2,
             sw
         )
     }
@@ -86,6 +89,6 @@ mod tests {
         assert!(ui.zone_debug_text().starts_with("off,enabled=0,active=0,sw_drops=0,"));
         ui.zone_hw = Some(crate::board::ZoneRead { ch: 1, slot: 1, armed: true, pass: true, frames: 5, n: 2, ..Default::default() });
         assert!(ui.zone_debug_text().starts_with("ch=2,slot=1,ctrl=0x00000000,"), "{}", ui.zone_debug_text());
-        assert!(ui.zone_debug_text().contains(",armed=1,pass=1,frames=5,n=2,sw_drops=0,"));
+        assert!(ui.zone_debug_text().contains(",armed=1,pass=1,frames=5,n=2,batch=0/0,batch_ms=0.0,sw_drops=0,"));
     }
 }
