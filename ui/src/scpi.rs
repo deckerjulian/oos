@@ -297,6 +297,7 @@ impl Scpi {
             return None;
         }
         let m = &mut ui.m;
+        let src = &ui.src;
         let r: Option<Option<Vec<u8>>> = (|| {
             let n0 = nodes.first().copied().unwrap_or("");
             let (k0, sfx) = suffix(n0);
@@ -592,7 +593,8 @@ impl Scpi {
                 return Some(None);
             }
             if kw(n0, "ACQuire") && nodes.len() == 2 && query {
-                let (sr, depth) = m.srate_depth();
+                // what the top bar shows: the live hardware record, not the model's stock-system choice for Auto
+                let (sr, depth) = src.rate_depth(m);
                 if kw(nodes[1], "SRATe") {
                     return Some(t(&e(sr)));
                 }

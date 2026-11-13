@@ -527,6 +527,11 @@ impl Source {
         None
     }
 
+    /// Sample rate and depth as the top bar shows them: of the hardware when it runs, else the model's choice.
+    pub fn rate_depth(&self, m: &Model) -> (f64, u64) {
+        self.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| m.srate_depth())
+    }
+
     /// Hardware segments: tells the thread the recording number and whether the acquisition runs; returns phase,
     /// segments asked for, recorded and read back, and whether frames are still queued. None without the hardware
     /// source.

@@ -3494,7 +3494,7 @@ impl Ui {
         cv.circle(r.x + 16, r.y + 14, 4, col);
         cv.text_in(&f.mb, Rect::new(r.x + 30, r.y, r.w - 30, r.h), 0, txt, col);
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
+        let (sr, depth) = self.src.rate_depth(&self.m);
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
