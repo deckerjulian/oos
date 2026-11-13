@@ -34,6 +34,14 @@ pub fn avg_clear() -> Vec<Write> {
     vec![(AVG_CLEAR, 1), (AVG_CLEAR, 0)]
 }
 
+/// Debug (B1, docs/fork/b1-b3.md): 0x1004 bit 2 ("AvgSinc") set whatever the rate, written after the configuration.
+/// The stock driver sets it only below max rate / 8; the netlist routes it to the play side only. For the unit test of
+/// zero averaged frames at 625 MSa/s and above.
+pub fn force_avg_sinc(sh: &mut Shadows) -> Write {
+    sh.s1004 |= 4;
+    (0x1004, sh.s1004)
+}
+
 /// Per-lane field (4 bits, lanes 0..3) of a per-channel flag set `chans` (bit n = CH n+1) for channel `mask`:
 /// ratio 1: the channel's flag in all lanes; ratio 2: lanes 0,1 = lower channel, 2,3 = higher; ratio 4: lane n = CH n+1.
 pub fn lanes(mask: u32, chans: u32) -> u32 {
@@ -141,6 +149,13 @@ mod tests {
 
     fn last(w: &[Write], reg: u32) -> u32 {
         w.iter().rev().find(|x| x.0 == reg).unwrap().1
+    }
+
+    #[test]
+    fn avg_sinc_debug_sets_bit_2_only() {
+        let mut sh = Shadows { s1004: 0x0400_0008, ..Shadows::HANDOVER };
+        assert_eq!(force_avg_sinc(&mut sh), (0x1004, 0x0400_000c));
+        assert_eq!(sh.s1004, 0x0400_000c);
     }
 
     #[test]
