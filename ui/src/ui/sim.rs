@@ -108,7 +108,7 @@ impl Ui {
     }
 
     pub(super) fn sim_items(&self) -> Vec<Item> {
-        vec![
+        let mut items = vec![
             Item::SimPreset,
             Item::SimRate,
             Item::SimPat,
@@ -127,7 +127,9 @@ impl Ui {
             Item::SimPlay,
             Item::SimShow,
             Item::SimDefaults,
-        ]
+        ];
+        if self.record_mode() { items.insert(0, Item::SimLive); }
+        items
     }
 
     pub(super) fn sim_advanced_items(&self) -> Vec<Item> {
@@ -137,7 +139,7 @@ impl Ui {
 
     pub(super) fn sim_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SimPlay | Item::SimDefaults => Kind::Action,
+            Item::SimPlay | Item::SimLive | Item::SimDefaults => Kind::Action,
             Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => Kind::Choice,
             Item::SimRate | Item::SimHigh | Item::SimLow | Item::SimRise | Item::SimBw | Item::SimDeemph | Item::SimNoise | Item::SimRj | Item::SimPj | Item::SimPjHz
             | Item::SimSscDeviation | Item::SimSscHz | Item::SimDcd | Item::SimCorrRj | Item::SimCorrHz => Kind::Value,
@@ -170,6 +172,7 @@ impl Ui {
             Item::SimPjHz => "PJ freq",
             Item::SimSlot => "Slot",
             Item::SimPlay => "Play",
+            Item::SimLive => "Live",
             Item::SimShow => "Show",
             Item::SimDefaults => "Defaults",
             _ => return None,
@@ -269,6 +272,7 @@ impl Ui {
 
     pub(super) fn sim_activate(&mut self, it: Item) -> bool {
         match it {
+            Item::SimLive => self.return_to_live(),
             Item::SimPlay if self.sim_generating() => {
                 self.sim_cancel_generation();
                 self.toast("SIM generation cancelled");
@@ -844,12 +848,14 @@ mod tests {
     fn cancelled_ssc_generation_cannot_replace_live_or_an_imported_record() {
         for import in [false, true] {
             let mut u = ui();
+            let live = (u.m.n_on(), u.m.run, u.record_mode());
             u.m.sim_ssc_hz = 1e6; // complete SSC period, small enough for a fast worker test
             u.sim_play_set(true).unwrap();
             assert!(u.sim_generating());
             assert!(!u.session_is_sim, "starting generation must not replace the live session");
             if import {
                 u.load_waveform_bytes(b"Time (s),Volts\n0,-1\n1e-9,1\n2e-9,-1\n", "keep.csv").unwrap();
+                assert_eq!((u.m.n_on(), u.m.run, u.record_mode()), live, "cancelling pending SIM must preserve additive Live import");
             } else {
                 u.return_to_live();
             }

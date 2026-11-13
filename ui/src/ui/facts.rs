@@ -32,7 +32,7 @@ impl Ui {
     }
 
     pub(crate) fn fact_meas(&self, k: Meas, id: WaveId) -> f64 {
-        self.meas_at(id, k)
+        self.meas_number(id, k)
     }
 
     /// Rising-clock edges that miss the configured setup or hold limit.

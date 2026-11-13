@@ -11,7 +11,7 @@ use windows_sys::Win32::UI::Controls::Dialogs::*;
 
 type Parsed = Result<(Vec<crate::store::WaveTrace>, String), String>;
 
-struct Job { id: u64, epoch: u64, path: PathBuf }
+struct Job { id: u64, epoch: u64, slot: usize, path: PathBuf }
 struct Worker { requests: Sender<Job>, results: Receiver<(Job, Parsed)> }
 
 /// One reader/parser worker, with at most one pending choice after the active
@@ -28,7 +28,8 @@ impl Loader {
     pub fn busy(&self) -> bool { self.active.is_some() }
     pub fn cancel(&mut self) { self.active = None; }
 
-    pub fn submit(&mut self, path: PathBuf, epoch: u64) -> Result<String, String> {
+    pub fn submit(&mut self, path: PathBuf, epoch: u64, slot: usize) -> Result<String, String> {
+        if slot >= crate::model::NREF { return Err("Choose a reference slot from R1 to R10".into()); }
         if self.worker.is_none() {
             let (requests, input) = mpsc::channel::<Job>();
             let (output, results) = mpsc::channel();
@@ -44,7 +45,7 @@ impl Loader {
         let name = file_name(&path);
         self.next = self.next.wrapping_add(1);
         self.active = Some(self.next);
-        if self.worker.as_ref().unwrap().requests.send(Job { id: self.next, epoch, path }).is_err() {
+        if self.worker.as_ref().unwrap().requests.send(Job { id: self.next, epoch, slot, path }).is_err() {
             self.active = None;
             self.worker = None;
             return Err("Waveform reader stopped; choose the file again".into());
@@ -52,7 +53,7 @@ impl Loader {
         Ok(name)
     }
 
-    pub fn poll(&mut self, epoch: u64) -> Option<Parsed> {
+    pub fn poll(&mut self, epoch: u64) -> Option<(usize, Parsed)> {
         loop {
             let worker = self.worker.as_ref()?;
             match worker.results.try_recv() {
@@ -60,12 +61,12 @@ impl Loader {
                     if self.active != Some(job.id) { continue; }
                     self.active = None;
                     if job.epoch != epoch { continue; }
-                    return Some(result);
+                    return Some((job.slot, result));
                 }
                 Err(mpsc::TryRecvError::Empty) => return None,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.worker = None;
-                    return self.active.take().map(|_| Err("Waveform reader stopped; choose the file again".into()));
+                    return self.active.take().map(|_| (0, Err("Waveform reader stopped; choose the file again".into())));
                 }
             }
         }
@@ -90,9 +91,9 @@ fn read_waveform(path: &std::path::Path) -> Parsed {
     Ok((traces, name))
 }
 
-pub fn waveform(owner: *mut std::ffi::c_void) -> Result<Option<PathBuf>, String> {
-    let filter: Vec<u16> = "Waveforms (*.csv;*.bin;*.wfm)\0*.csv;*.bin;*.wfm\0All files (*.*)\0*.*\0\0".encode_utf16().collect();
-    let title: Vec<u16> = "Open waveform in the next empty reference\0".encode_utf16().collect();
+pub fn waveform(owner: *mut std::ffi::c_void, slot: usize) -> Result<Option<PathBuf>, String> {
+    let filter: Vec<u16> = "Waveforms (*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx)\0*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx\0All files (*.*)\0*.*\0\0".encode_utf16().collect();
+    let title: Vec<u16> = format!("Open waveform into R{}\0", slot + 1).encode_utf16().collect();
     let mut name = vec![0u16; 32_768];
     let mut options = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
@@ -130,24 +131,24 @@ mod tests {
     fn background_reader_commits_only_the_latest_choice_in_the_same_workflow() {
         let path = fixture();
         let mut loader = Loader::new();
-        loader.submit(path.clone(), 1).unwrap();
-        loader.submit(path.clone(), 2).unwrap();
+        loader.submit(path.clone(), 1, 0).unwrap();
+        loader.submit(path.clone(), 2, 8).unwrap();
         let until = Instant::now() + Duration::from_secs(5);
         let (traces, name) = loop {
-            if let Some(result) = loader.poll(2) { break result.unwrap(); }
+            if let Some((slot, result)) = loader.poll(2) { assert_eq!(slot, 8); break result.unwrap(); }
             assert!(Instant::now() < until);
             std::thread::sleep(Duration::from_millis(2));
         };
         assert_eq!(name, "clock.csv");
         assert_eq!(traces[0].v, [-1.0, 1.0, -1.0]);
         assert!(!loader.busy());
-        loader.submit(path.clone(), 2).unwrap();
+        loader.submit(path.clone(), 2, 1).unwrap();
         while loader.busy() {
             assert!(loader.poll(3).is_none(), "a changed source workflow must reject the late load");
             assert!(Instant::now() < until);
             std::thread::sleep(Duration::from_millis(2));
         }
-        loader.submit(path.clone(), 3).unwrap();
+        loader.submit(path.clone(), 3, 2).unwrap();
         loader.cancel();
         assert!(!loader.busy());
         assert!(loader.poll(3).is_none());

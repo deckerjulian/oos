@@ -926,11 +926,14 @@ impl Ui {
 
     pub(super) fn eye_pane_close(&self) -> Rect {
         let a = self.eye_pane_rect();
-        Rect::new(a.x + a.w - 50, a.y + 1, 48, workspace::HEADER - 2)
+        let full=self.full_btn().0;
+        let right=if full.y<a.y+workspace::HEADER && full.y+full.h>a.y && full.x>a.x && full.x<a.x+a.w {full.x-8} else {a.x+a.w-2};
+        Rect::new(right-48, a.y + 1, 48, workspace::HEADER - 2)
     }
 
     pub(super) fn eye_set_place(&mut self, place: EyePlace) {
         let previous = self.m.eye_place;
+        if place == EyePlace::Full { self.workspace.eye_float = None; self.workspace.eye_left = false; }
         self.m.eye_place = place;
         if place == EyePlace::Under && self.eye_below() == 0 {
             self.m.eye_place = EyePlace::Side;
@@ -1010,7 +1013,17 @@ impl Ui {
         }
     }
 
+    pub(super) fn eye_place_control(&self) -> Rect {
+        let a = self.eye_pane_rect();
+        Rect::new(a.x + 96, a.y + 1, 48, workspace::HEADER - 2)
+    }
+
     pub(super) fn eye_header_tap(&mut self, x: i32, y: i32) {
+        if self.eye_place_control().contains(x, y) {
+            self.open_menu(MenuId::Eye);
+            self.open_picker(Item::EyePlace);
+            return;
+        }
         let source = self.eye_header_source().contains(x, y);
         self.open_menu(MenuId::Eye);
         if source { self.open_picker(Item::EyeSrc); }
@@ -1031,7 +1044,10 @@ impl Ui {
         btn(cv, pick, BTN, BTN_BORDER);
         cv.text(&self.fonts.sb, pick.x + 5, a.y + 18, &format!("Eye {}", source), self.wave_color(self.m.eye_src));
         chevron_down(cv, pick.x + pick.w - 14, pick.y + pick.h / 2 - 2, DIM);
-        let settings = Rect::new(pick.x + pick.w + 4, pick.y, (close.x - pick.x - pick.w - 8).max(1), pick.h);
+        let place = self.eye_place_control();
+        btn(cv, place, BTN, BTN_BORDER);
+        cv.text_in(&self.fonts.s, place, 1, &self.value(Item::EyePlace), TEXT);
+        let settings = Rect::new(place.x + place.w + 4, pick.y, (close.x - place.x - place.w - 8).max(1), pick.h);
         btn(cv, settings, BTN, BTN_BORDER);
         cv.set_clip(Rect::new(settings.x + 5, settings.y, (settings.w - 23).max(1), settings.h));
         cv.text(&self.fonts.s, settings.x + 5, a.y + 18, &format!("{} · {}", self.eye_source_mode_label(), rate), TEXT);
@@ -1897,6 +1913,7 @@ mod tests {
     #[test]
     fn one_press_reads_the_rate_and_keeps_the_trace() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.eye_place = EyePlace::Side;
         ui.m.run = RunState::Stop;
         ui.m.eye_rate = 123.0;
         let mut n = Noise(3);

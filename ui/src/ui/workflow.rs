@@ -4,6 +4,61 @@
 //! Direct file, reference, simulation and acquisition controls shared by the screen and web remote.
 use super::*;
 
+#[cfg(test)]
+mod slot_loading_tests {
+    use super::*;
+    fn trace(label: &str) -> crate::store::WaveTrace {
+        crate::store::WaveTrace { v: (0..64).map(|i| if i % 8 < 4 { -1.0 } else { 1.0 }).collect(),
+            dt: 1e-9, t0: -32e-9, label: label.into() }
+    }
+    fn tap(ui: &mut Ui, r: Rect) {
+        for phase in [Phase::Down, Phase::Up] { ui.handle(Ev::Touch { id: 0, phase, x: r.x + r.w / 2, y: r.y + r.h / 2 }); }
+    }
+    #[test]
+    fn destination_choice_is_modal_and_cancel_changes_no_source_or_model() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas.clear(); ui.ref_sel = 3;
+        let before = ui.m.clone();
+        ui.request_waveform();
+        assert!(ui.load_slot_ask && !ui.open_wave_request);
+        tap(&mut ui, Rect::new(Ui::load_slot_box().x, Ui::load_slot_box().y, 400, 45));
+        assert!(ui.load_slot_ask && !ui.open_wave_request, "the title is not a destination");
+        tap(&mut ui, Ui::load_slot_cancel());
+        assert!(!ui.load_slot_ask && !ui.open_wave_request && ui.waveform_destination().is_none());
+        assert_eq!(ui.m, before); assert_eq!(ui.ref_sel, 3); assert!(ui.refs.iter().all(Option::is_none));
+        ui.request_waveform(); ui.dismiss_context();
+        assert!(!ui.load_slot_ask && !ui.open_wave_request);
+    }
+    #[test]
+    fn chosen_async_destination_is_transactional_and_live_import_is_an_overlay() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
+        ui.m.ch[1].on = true; ui.m.trig_mode = TrigMode::Normal; ui.m.delay = 6e-6;
+        ui.ref_sel = 3;
+        let before = ui.m.clone();
+        ui.request_waveform(); tap(&mut ui, Ui::load_slot_button(9));
+        assert_eq!(ui.waveform_destination(), Some(9));
+        assert!(ui.open_wave_request && !ui.load_slot_ask);
+        assert_eq!(ui.ref_sel, 3, "choosing a destination does not change focus before commit");
+        assert!(ui.commit_waveform_traces_at(vec![trace("A"), trace("B")], "two", 9).is_err());
+        assert_eq!(ui.m, before); assert_eq!(ui.ref_sel, 3);
+        assert!(ui.refs.iter().all(Option::is_none), "overflow validates before replacing any slot");
+        ui.ref_sel = 7; // A different source may be selected while the worker is reading.
+        ui.commit_waveform_traces_at(vec![trace("R10")], "chosen", 9).unwrap();
+        assert_eq!(ui.m, before, "live ADC/run/timebase/trigger/catalog are preserved");
+        assert!(!ui.record_mode() && ui.m.ch[0].on && ui.m.ch[1].on);
+        assert_eq!(ui.ref_sel, 9); assert!(ui.refs[7].is_none() && ui.refs[9].as_ref().unwrap().on);
+        assert_eq!(ui.replay.captures, 0);
+        assert!(ui.set_trigger_source(WaveId::Ref(9), false));
+        assert!(ui.record_mode() && ui.m.ch.iter().all(|ch| !ch.on));
+        assert_eq!(ui.m.trigger_wave(), WaveId::Ref(9));
+        ui.m.trig_level = 0.0;
+        ui.key(key::SINGLE); ui.step(0.2);
+        assert_eq!(ui.replay.captures, 1, "an explicit Ref trigger uses stored acquisition, never ADC arming");
+        assert_eq!(ui.m.run, RunState::Stop);
+    }
+}
+
 pub(super) struct LiveSession {
     model: Model,
     visible: [bool; NREF],
@@ -45,7 +100,8 @@ mod import_measurement_tests {
         }
         let mut untouched = Ui::new(Source::Demo { t: 0.0 });
         untouched.load_waveform_auto(CSV, "default.csv").unwrap();
-        assert!(untouched.m.meas.iter().all(|entry| entry.1 == WaveId::Ref(0)), "fresh defaults follow the first imported source");
+        assert!(untouched.m.meas.iter().any(|entry| entry.1 == WaveId::Ref(0)), "a first live import adds useful reference defaults");
+        assert!(untouched.m.meas.iter().any(|entry| matches!(entry.1, WaveId::Ch(_))), "live channel defaults remain in the overlay workspace");
     }
 }
 
@@ -125,6 +181,63 @@ mod tests {
         let second = u.meas_at(WaveId::Ref(0), Meas::Vpp);
         assert!((first - 1.0).abs() < 0.01 && (second - 2.0).abs() < 0.01, "{first} {second}");
         assert_eq!(u.replay.captures, 0, "panning is analysis, not an acquisition");
+    }
+
+    fn wave(dt: f64, vpd: f32, offset: f32, color: usize) -> RefWave {
+        RefWave {
+            src: 0,
+            color,
+            label: String::new(),
+            t0: 0.0,
+            dt,
+            v: vec![0.0; 64],
+            vpd,
+            offset,
+            on: true,
+        }
+    }
+
+    #[test]
+    fn reference_badge_shows_vertical_scale_and_the_record_sample_rate() {
+        let fast = wave(20e-12, 0.25, 0.0, 0);
+        assert_eq!(Ui::ref_badge_readout(&fast), ("250 mV/div".into(), "50 GSa/s".into()));
+        let slow = wave(1e-9, 1.0, 0.0, 1);
+        assert_eq!(Ui::ref_badge_readout(&slow), ("1 V/div".into(), "1 GSa/s".into()));
+        let (scale, rate) = Ui::ref_badge_readout(&fast);
+        assert!(!scale.contains("s/div") && !rate.contains("/div"));
+    }
+
+    #[test]
+    fn reference_badges_keep_one_horizontal_scale() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        for ch in &mut u.m.ch {
+            ch.on = false;
+        }
+        let time = u.m.time_per_div();
+        u.refs[0] = Some(wave(20e-12, 0.25, 0.0, 1));
+        u.refs[1] = Some(wave(1e-9, 1.0, 2.0, 2));
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        assert_eq!(u.m.time_per_div(), time);
+        assert_eq!(Ui::ref_badge_readout(u.refs[0].as_ref().unwrap()).1, "50 GSa/s");
+        assert_eq!(Ui::ref_badge_readout(u.refs[1].as_ref().unwrap()).1, "1 GSa/s");
+        for color in [REF_COLORS[1].1, REF_COLORS[2].1] {
+            let mut span = 0;
+            for y in 40..520 {
+                let mut run = 0;
+                let mut best = 0;
+                for x in 0..cv.w {
+                    if cv.px[(y * cv.w + x) as usize] == color {
+                        run += 1;
+                        best = best.max(run);
+                    } else {
+                        run = 0;
+                    }
+                }
+                span = span.max(best);
+            }
+            assert!(span >= 48, "badge run {span} for {color:#x}");
+        }
     }
 
     #[test]
@@ -241,7 +354,7 @@ pub(super) struct Replay {
     pub(super) next: f64,
     force: bool,
     frame: Option<(usize, usize, usize)>,
-    viewport: Option<(usize, f32, f32)>,
+    pub(super) viewport: Option<(usize, f32, f32)>,
     pub captures: u64,
     pub(super) trigger_time: Option<f64>,
     pub(super) sim_revision: u64,
@@ -268,7 +381,8 @@ impl Ui {
             (self.m.meas_full_record, self.m.meas_lpct.to_bits(), self.m.meas_hpct.to_bits(), self.m.meas_idle.to_bits(),
                 self.m.meas_n, self.m.meas_data, self.m.meas_out, self.m.meas_tsetup.to_bits(), self.m.meas_thold.to_bits()),
             refs, channels, gate, self.m.trigger(), self.m.trigger_wave(),
-            (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val, self.m.trig_nrej))
+            (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val, self.m.trig_nrej,
+                self.m.deskew_ch.map(f64::to_bits), self.m.deskew_ref.map(f64::to_bits)))
     }
 
     fn add_capture_statistic(stat: &mut MStat, value: f64) {
@@ -353,13 +467,63 @@ impl Ui {
         self.cancel_bus_candidate(true);
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.close_menu();
-        self.open_wave_request = true;
-        self.toast("Choose a CSV, BIN or WFM waveform. In the browser, use Load waveform above the screen.");
+        self.open_wave_request = false;
+        self.load_destination = None;
+        self.load_slot_ask = true;
+        self.power_dlg = false;
+        self.dialog = None;
+        self.cancel_pointer();
+    }
+
+    pub fn waveform_destination(&self) -> Option<usize> { self.load_destination }
+
+    pub(super) fn load_slot_box() -> Rect { Rect::new((W - 560) / 2, (H - 248) / 2, 560, 248) }
+    pub(super) fn load_slot_button(slot: usize) -> Rect {
+        let r = Self::load_slot_box();
+        Rect::new(r.x + 20 + (slot % 5) as i32 * 106, r.y + 78 + (slot / 5) as i32 * 52, 98, 44)
+    }
+    pub(super) fn load_slot_cancel() -> Rect {
+        let r = Self::load_slot_box(); Rect::new(r.x + r.w / 2 - 70, r.y + r.h - 52, 140, 36)
+    }
+    pub(super) fn cancel_load_slot(&mut self) {
+        self.load_slot_ask = false; self.load_destination = None; self.open_wave_request = false;
+    }
+    pub(super) fn load_slot_tap(&mut self, x: i32, y: i32) -> bool {
+        if !self.load_slot_ask { return false; }
+        if let Some(slot) = (0..NREF).find(|&slot| Self::load_slot_button(slot).contains(x, y)) {
+            self.load_slot_ask = false;
+            self.load_destination = Some(slot);
+            self.open_wave_request = true;
+        } else if Self::load_slot_cancel().contains(x, y) || !Self::load_slot_box().contains(x, y) {
+            self.cancel_load_slot();
+        }
+        true
+    }
+    pub(super) fn draw_load_slot(&self, cv: &mut Canvas) {
+        if !self.load_slot_ask { return; }
+        cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 150);
+        let r = Self::load_slot_box();
+        cv.round(r, 8, ACCENT, 255); cv.round(r.inset(2), 7, DLG_BG, 255);
+        cv.text_in(&self.fonts.lb, Rect::new(r.x, r.y + 16, r.w, 28), 1, "Load into", ACCENT);
+        cv.text_in(&self.fonts.m, Rect::new(r.x, r.y + 46, r.w, 22), 1, "Choose a destination before opening the file.", DIM);
+        for slot in 0..NREF {
+            let b = Self::load_slot_button(slot);
+            btn(cv, b, BTN, if self.refs[slot].is_some() { AMBER } else { BTN_BORDER });
+            let label = format!("R{}{}", slot + 1, if self.refs[slot].is_some() { " replace" } else { "" });
+            cv.text_in(&self.fonts.mb, b, 1, &label, TEXT);
+        }
+        let cancel = Self::load_slot_cancel(); btn(cv, cancel, BTN, BTN_BORDER);
+        cv.text_in(&self.fonts.mb, cancel, 1, "Cancel", TEXT);
     }
 
     pub fn load_waveform_bytes(&mut self, data: &[u8], name: &str) -> Result<(), String> {
         let traces = crate::store::parse_wave(data, name)?;
         self.commit_waveform_traces(traces, name, false)
+    }
+
+    pub fn load_waveform_bytes_at(&mut self, data: &[u8], name: &str, slot: usize) -> Result<(), String> {
+        let traces = crate::store::parse_wave(data, name)?;
+        self.commit_waveform_traces_at(traces, name, slot)
     }
 
     /// Native/tool Load adds a file without silently replacing the prior source.
@@ -371,13 +535,23 @@ impl Ui {
     /// Main-thread commit for a native file parsed by the import worker. Validate
     /// before mutating the session; failure leaves the working screen intact.
     pub fn commit_waveform_traces(&mut self, traces: Vec<crate::store::WaveTrace>, name: &str, auto: bool) -> Result<(), String> {
+        let destination = if auto { None } else { Some(self.ref_sel.min(NREF - 1)) };
+        self.commit_waveform_traces_to(traces, name, destination)
+    }
+
+    pub fn commit_waveform_traces_at(&mut self, traces: Vec<crate::store::WaveTrace>, name: &str, slot: usize) -> Result<(), String> {
+        if slot >= NREF { return Err("Choose a reference slot from R1 to R10".into()); }
+        self.commit_waveform_traces_to(traces, name, Some(slot))
+    }
+
+    fn commit_waveform_traces_to(&mut self, traces: Vec<crate::store::WaveTrace>, name: &str, destination: Option<usize>) -> Result<(), String> {
         if traces.is_empty() || traces.iter().any(|t| t.v.len() < 2 || !t.dt.is_finite() || t.dt <= 0.0 || !t.t0.is_finite()) {
             return Err("The file needs at least two samples and a valid sample interval.".into());
         }
-        let first = if auto {
+        let first = if destination.is_none() {
             (0..NREF).find(|&start| start + traces.len() <= NREF && self.refs[start..start + traces.len()].iter().all(Option::is_none))
                 .ok_or("No empty reference slots; select a slot and use Reference > Import to replace it")?
-        } else { self.ref_sel.min(NREF - 1) };
+        } else { destination.unwrap() };
         if first + traces.len() > NREF {
             return Err("The file has more traces than the remaining reference slots".into());
         }
@@ -385,43 +559,57 @@ impl Ui {
         // A fresh, untouched live default gets useful reference readouts on its first import.
         let initialize_measurements = self.refs.iter().all(Option::is_none)
             && self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
+        let reference_session = self.record_mode();
         self.cancel_bus_candidate(true);
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
+        // Initial SIM generation is still in Live until its first result. Any
+        // successful import supersedes that pending request as well.
         self.sim_cancel_generation();
-        self.remember_live();
-        self.set_offline(true);
-        self.session_is_sim = false;
-        self.sim_play = false;
-        self.replay = Replay::default();
-        // A file is a new stopped scope workspace, not the previous LA/Eye/math view.
-        self.reset_workspace_for_import();
-        self.m.la.on = false;
-        self.m.view = AView::Scope;
-        self.xy = false;
-        self.m.eye_b = None;
-        self.m.eye_rail = None;
+        if reference_session {
+            self.set_offline(true);
+            self.session_is_sim = false;
+            self.sim_play = false;
+            self.replay = Replay::default();
+            self.reset_workspace_for_import();
+            self.m.la.on = false;
+            self.m.view = AView::Scope;
+            self.xy = false;
+            self.m.eye_b = None;
+            self.m.eye_rail = None;
+        }
         self.invalidate_reference_eye();
         for (k, trace) in traces.into_iter().enumerate() {
             let slot = first + k;
-            // Min/max only: do not run millions of samples through edge/period
-            // analysis merely to establish a sensible vertical fit.
-            let (lo, hi) = trace.v.iter().copied().filter(|x| x.is_finite())
-                .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)));
+            self.m.deskew_ref[slot] = 0.0;
+            // Bounded native windows, not a synchronous 20M-point scan on commit.
+            let summary = crate::wave::autoset_summary(&trace.v, trace.dt);
+            let (lo, hi) = (summary.vmin, summary.vmax);
             let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo, hi) } else { (0.0, 1.0) };
             self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: trace.v,
                 vpd: ((hi - lo).abs() / 6.0).max(1e-6), offset: -0.5 * (hi + lo), on: true });
         }
         self.ref_sel = first;
-        self.m.set_trigger_wave(WaveId::Ref(first), false);
-        self.m.trig_ref2 = None;
-        if initialize_measurements {
-            self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
+        if reference_session {
+            self.m.set_trigger_wave(WaveId::Ref(first), false);
+            self.m.trig_ref2 = None;
         }
-        self.mstat.clear();
+        if initialize_measurements {
+            let defaults = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first)));
+            if reference_session { self.m.meas = defaults.collect(); }
+            else { self.m.meas.extend(defaults); }
+        }
+        if reference_session { self.mstat.clear(); }
         self.meas_src = WaveId::Ref(first);
+        if self.look == reflook::RefLook::TakeOver { self.solo_reference(first); }
+        self.ensure_meas_own();
         self.close_menu();
-        self.present_record(first);
-        self.fit_reference_trigger_levels();
+        if reference_session {
+            self.present_record(first);
+            self.fit_reference_trigger_levels();
+        } else {
+            self.select_workspace_source(WaveId::Ref(first));
+            self.dirty_map = true;
+        }
         self.relayout();
         self.toast(&format!("Loaded {} into R{}", name, first + 1));
         Ok(())
@@ -429,15 +617,17 @@ impl Ui {
 
     pub(super) fn reference_slice(&self, slot: usize) -> Option<(&[f32], f64, f64)> {
         let r = self.refs.get(slot)?.as_ref()?;
+        let t0 = self.source_time_origin(WaveId::Ref(slot), r.t0);
         if let Some((source, lo, hi)) = self.replay.frame.filter(|_| self.record_mode()) {
             let origin = self.refs.get(source)?.as_ref()?;
-            let start = origin.t0 + lo as f64 * origin.dt;
-            let end = origin.t0 + hi as f64 * origin.dt;
-            let lo = (((start - r.t0) / r.dt).floor().max(0.0) as usize).min(r.v.len());
-            let hi = (((end - r.t0) / r.dt).ceil().max(0.0) as usize).min(r.v.len()).max(lo);
-            return Some((&r.v[lo..hi], r.t0 + lo as f64 * r.dt, r.dt));
+            let origin_t0 = self.source_time_origin(WaveId::Ref(source), origin.t0);
+            let start = origin_t0 + lo as f64 * origin.dt;
+            let end = origin_t0 + hi as f64 * origin.dt;
+            let lo = (((start - t0) / r.dt).floor().max(0.0) as usize).min(r.v.len());
+            let hi = (((end - t0) / r.dt).ceil().max(0.0) as usize).min(r.v.len()).max(lo);
+            return Some((&r.v[lo..hi], t0 + lo as f64 * r.dt, r.dt));
         }
-        Some((&r.v, r.t0, r.dt))
+        Some((&r.v, t0, r.dt))
     }
 
     pub(crate) fn record_key(&mut self, key_code: u8) -> bool {
@@ -497,19 +687,20 @@ impl Ui {
         let slot = self.m.trig_ref.unwrap_or_else(|| self.active_reference());
         let Some(r) = self.refs.get(slot).and_then(Option::as_ref) else { return; };
         if r.v.len() < 8 || r.dt <= 0.0 { return; }
+        let t0 = self.source_time_origin(WaveId::Ref(slot), r.t0);
         let count = ((self.view().0 as f64 * HDIV as f64 / r.dt).ceil() as usize).clamp(8, r.v.len());
         let Some(hits) = self.reference_trigger_hits(slot) else { self.m.status = TrigStatus::Wait; return; };
-        let after = r.t0 + self.replay.cursor * r.dt;
+        let after = t0 + self.replay.cursor * r.dt;
         let next = hits.partition_point(|&time| time <= after);
         let hit = hits.get(next).or_else(|| hits.first()).copied();
         if hit.is_none() && self.m.trig_mode != TrigMode::Auto && !self.replay.force {
             self.m.status = TrigStatus::Wait;
             return;
         }
-        let middle = hit.map(|time| (time - r.t0) / r.dt).unwrap_or((self.replay.cursor + count as f64 * 0.5).min((r.v.len() - 1) as f64));
+        let middle = hit.map(|time| (time - t0) / r.dt).unwrap_or((self.replay.cursor + count as f64 * 0.5).min((r.v.len() - 1) as f64));
         let lo = (middle.max(count as f64 * 0.5) as usize).saturating_sub(count / 2).min(r.v.len() - count);
         let hi = lo + count;
-        let centre = r.t0 + middle * r.dt;
+        let centre = t0 + middle * r.dt;
         self.replay.cursor = (middle + (count / 2).max(1) as f64) % r.v.len() as f64;
         self.replay.frame = Some((slot, lo, hi));
         self.replay.force = false;
@@ -563,9 +754,10 @@ impl Ui {
         self.replay.viewport = Some(viewport);
         let Some(r) = self.refs.get(slot).and_then(Option::as_ref) else { return; };
         if r.dt <= 0.0 || r.v.len() < 2 { return; }
+        let t0 = self.source_time_origin(WaveId::Ref(slot), r.t0);
         let half = scale as f64 * HDIV as f64 * 0.5;
-        let lo = (((delay as f64 - half - r.t0) / r.dt).floor().max(0.0) as usize).min(r.v.len());
-        let hi = (((delay as f64 + half - r.t0) / r.dt).ceil().max(0.0) as usize).min(r.v.len());
+        let lo = (((delay as f64 - half - t0) / r.dt).floor().max(0.0) as usize).min(r.v.len());
+        let hi = (((delay as f64 + half - t0) / r.dt).ceil().max(0.0) as usize).min(r.v.len());
         self.replay.frame = Some((slot, lo, hi.max(lo)));
         self.measure_refs();
         self.analyzer_update();
@@ -617,8 +809,10 @@ impl Ui {
             cv.set_clip(rect.inset(7));
             cv.text(&self.fonts.sb, rect.x + 10, rect.y + 18, &format!("R{}", slot + 1), col);
             cv.text(&self.fonts.s, rect.x + rect.w - 34, rect.y + 18, if r.on { "On" } else { "Off" }, if r.on { col } else { DIM });
-            cv.text(&self.fonts.mb, rect.x + 10, rect.y + 39, if r.label.is_empty() { "Waveform" } else { &r.label }, TEXT);
-            cv.text(&self.fonts.s, rect.x + 10, rect.y + 57, &format!("{}/div", si_short(r.vpd as f64, "V")), DIM);
+            let (scale, rate) = Self::ref_badge_readout(r);
+            cv.text(Self::card_font(&self.fonts, &scale, rect.w - 24), rect.x + 10, rect.y + 42, &scale, TEXT);
+            let sub = if r.label.is_empty() { rate } else { format!("{}  \u{b7}  {}", rate, r.label) };
+            cv.text(&self.fonts.s, rect.x + 10, rect.y + 58, &sub, DIM);
             cv.no_clip();
         }
     }

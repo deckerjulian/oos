@@ -46,12 +46,13 @@ pub(super) struct SimTrigger {
     secondary: Option<super::magnetic::WaveSamp>,
     secondary_generated: bool,
     hyst: [f32; NCH],
+    generated_t0: f64,
 }
 
 impl SimTrigger {
     pub(super) fn evaluate(&self, generated: &[f32], generated_dt: f64) -> Arc<Vec<f64>> {
-        let (primary, t0, dt) = self.primary.as_ref().map_or((generated, 0.0, generated_dt), |wave| (wave.v.as_slice(), wave.t0, wave.dt));
-        let secondary = if self.secondary_generated { Some((generated, 0.0, generated_dt)) }
+        let (primary, t0, dt) = self.primary.as_ref().map_or((generated, self.generated_t0, generated_dt), |wave| (wave.v.as_slice(), wave.t0, wave.dt));
+        let secondary = if self.secondary_generated { Some((generated, self.generated_t0, generated_dt)) }
             else { self.secondary.as_ref().map(|wave| (wave.v.as_slice(), wave.t0, wave.dt)) };
         scan_condition(&self.model, primary, dt, t0, secondary, self.hyst)
     }
@@ -103,9 +104,9 @@ impl Ui {
     }
     fn source_stamp(&self, id: WaveId, candidate: Option<(usize, f32)>) -> Option<(usize, usize, u64, u64)> {
         match id {
-            WaveId::Ref(i) if candidate.is_some_and(|(slot, _)| slot == i) => Some((0, 0, 0, 0)),
-            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| (r.v.as_ptr() as usize, r.v.len(), r.dt.to_bits(), r.t0.to_bits())),
-            WaveId::Ch(c) => self.last[0].as_ref().map(|r| (r.ch[c].as_ptr() as usize, r.ch[c].len(), r.dt.to_bits(), r.t0.to_bits())),
+            WaveId::Ref(i) if candidate.is_some_and(|(slot, _)| slot == i) => Some((0, 0, 0, self.source_time_shift(WaveId::Ref(i)).to_bits())),
+            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| (r.v.as_ptr() as usize, r.v.len(), r.dt.to_bits(), self.source_time_origin(id, r.t0).to_bits())),
+            WaveId::Ch(c) => self.last[0].as_ref().map(|r| (r.ch[c].as_ptr() as usize, r.ch[c].len(), r.dt.to_bits(), self.source_time_origin(id, r.t0).to_bits())),
         }
     }
     fn source_vpd(&self, id: WaveId, candidate: Option<(usize, f32)>) -> f32 {
@@ -135,7 +136,7 @@ impl Ui {
         if matches!(model.trig_type, TrigType::Pattern | TrigType::Duration)
             || (model.trig_type == TrigType::Bus && (model.bus_on_la() || model.dec_proto.roles()[1].is_some() || model.dec_diff.is_some())) { return None; }
         let sample = |id| match id {
-            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.clone(), t0: r.t0, dt: r.dt }),
+            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt }),
             WaveId::Ch(_) => self.last[0].as_ref().and_then(|record| self.wave_samples(record, id)),
         };
         let primary = if primary_slot == slot { None } else { Some(sample(WaveId::Ref(primary_slot))?) };
@@ -144,7 +145,8 @@ impl Ui {
         let primary_hyst = self.source_vpd(WaveId::Ref(primary_slot), Some((slot, vpd))) * model.trig_hyst_div();
         let secondary_hyst = self.source_vpd(second, Some((slot, vpd))) * model.trig_hyst_div();
         Some(SimTrigger { primary_slot, model: Self::normalized_reference_model(model), primary, secondary,
-            secondary_generated, hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst] })
+            secondary_generated, hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst],
+            generated_t0: self.source_time_origin(WaveId::Ref(slot), 0.0) })
     }
     pub(super) fn install_reference_trigger_hits(&self, slot: usize, times: Arc<Vec<f64>>) {
         let key = self.reference_trigger_fingerprint(&self.m, slot, None);
@@ -192,11 +194,11 @@ impl Ui {
         if cache.worker.as_ref().is_some_and(|worker| worker.busy) { return None; }
         let auxiliary = if paired {
             match second {
-                WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.clone(), t0: r.t0, dt: r.dt }),
+                WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.clone(), t0: self.source_time_origin(second, r.t0), dt: r.dt }),
                 WaveId::Ch(_) => self.last[0].as_ref().and_then(|rec| self.wave_samples(rec, second)),
             }
         } else { None };
-        let job = Job { key, model, primary: r.v.clone(), secondary: auxiliary, dt: r.dt, t0: r.t0,
+        let job = Job { key, model, primary: r.v.clone(), secondary: auxiliary, dt: r.dt, t0: self.source_time_origin(WaveId::Ref(slot), r.t0),
             hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst] };
         cache.scans += 1;
         if r.v.len() > BACKGROUND_POINTS {

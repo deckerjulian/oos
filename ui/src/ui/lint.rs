@@ -161,8 +161,9 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Load file", "SIM", "Measure", "Cursor", "Display", "Storage", "System"]);
     let (_, _, load) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Load).unwrap();
     u.tap(load.x + 5, load.y + 5);
-    assert!(u.open_wave_request && !u.menu_open);
-    u.open_wave_request = false;
+    assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
+    u.dismiss_context();
+    assert!(!u.load_slot_ask && !u.open_wave_request);
     // Measurement choices remain one tap away, without going through acquisition or another menu.
     let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
     u.tap(r.x + 5, r.y + 5);
@@ -602,7 +603,7 @@ fn random_input_on_the_new_pages() {
         x ^= x << 17;
         x
     };
-    let pages = [MenuId::Logger, MenuId::ChMore(0), MenuId::Measure, MenuId::MeasPair, MenuId::Dvm, MenuId::Cursor, MenuId::Math, MenuId::Ref, MenuId::Sim, MenuId::Mask, MenuId::Decode, MenuId::Trigger, MenuId::Display, MenuId::Storage, MenuId::Bode];
+    let pages = [MenuId::Logger, MenuId::ChMore(0), MenuId::Measure, MenuId::MeasPair, MenuId::Dvm, MenuId::Cursor, MenuId::Math, MenuId::Ref, MenuId::Sim, MenuId::Mask, MenuId::Decode, MenuId::Bus, MenuId::Trigger, MenuId::Display, MenuId::Storage, MenuId::Bode];
     u.store_dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
     for i in 0..3_000 {
         if i % 40 == 0 {

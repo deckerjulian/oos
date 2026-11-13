@@ -65,8 +65,8 @@ impl Ui {
 
     fn reference_trigger_range(&self) -> Option<(f32, f32)> {
         let r = self.refs.get(self.m.trig_ref?)?.as_ref()?;
-        let (lo, hi) = r.v.iter().copied().filter(|v| v.is_finite())
-            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        let summary = crate::wave::autoset_summary(&r.v, r.dt);
+        let (lo, hi) = (summary.vmin, summary.vmax);
         (lo.is_finite() && hi.is_finite() && hi > lo).then_some((lo, hi))
     }
 

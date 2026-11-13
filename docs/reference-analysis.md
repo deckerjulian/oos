@@ -1,6 +1,8 @@
 # Loaded waveforms, zoom and automatic analysis
 
-Load file adds a reference without replacing existing configured measurements.
+Load file adds a reference alongside live channels without replacing measurements,
+run state or the timebase. Take over and Offline waveforms enter explicit stored-
+record sessions; Live restores acquisition.
 Select the reference pill to focus the vertical controls, cursors and automatic
 Eye action. Run, Stop and Single remain the acquisition/replay controls.
 
@@ -80,7 +82,7 @@ meaningful absolute level regardless of an unrelated channel's AC setting.
 
 Choose Auto Eye/Jitter in the analysis menu/settings. The action
 uses the selected source, clears stale companion/notch settings, estimates NRZ
-rate/threshold/hysteresis, opens the existing Eye with TIE trend, histogram,
+rate/threshold/hysteresis, opens the full Eye page with optional Side/Under panes, TIE trend, histogram,
 spectrum and bathtub plots, and closes setup. Long immutable records run in a
 background worker. Fresh accepted live/SIM captures accumulate; panning a stopped
 record does not manufacture new captures.

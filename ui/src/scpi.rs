@@ -1735,7 +1735,7 @@ impl Scpi {
 fn meas_strip(ui: &Ui) -> String {
     let mut p = Vec::new();
     for &(k, id) in &ui.m.meas {
-        p.push(format!("{},{},{}", meas_token(k), wave_tok(id), e(ui.meas_at(id, k))));
+        p.push(format!("{},{},{}", meas_token(k), wave_tok(id), e(ui.fact_meas(k, id))));
     }
     for &(k, a, b) in &ui.m.meas2 {
         p.push(format!("{},{},{},{}", pair_token(k), wave_tok(a), wave_tok(b), e(ui.pair_at(k, a, b))));
@@ -1820,6 +1820,9 @@ mod tests {
 
     fn reference_session() -> (Scpi, Ui, Canvas) {
         let (mut s, mut ui, cv) = session();
+        // Import is additive in Live. These tests explicitly exercise stored
+        // acquisition, rather than changing the live-import policy implicitly.
+        ui.set_offline(true);
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..4000 {
             let value = if index % 40 < 20 { -0.5 } else { 0.5 };
@@ -1911,6 +1914,7 @@ mod tests {
     }
 
     fn decoded_reference_fixture(ui: &mut Ui, points: usize) {
+        ui.set_offline(true);
         let mut values = vec![3.3; points];
         let bits = std::iter::once(false).chain((0..8).map(|bit| 0xa5u8 >> bit & 1 != 0)).chain(std::iter::once(true));
         for (bit, high) in bits.enumerate() { values[100 + bit * 20..100 + (bit + 1) * 20].fill(if high { 3.3 } else { 0.0 }); }
@@ -2046,8 +2050,36 @@ mod tests {
     }
 
     #[test]
+    fn strip_and_readout_export_the_configured_row_levels_and_physical_time() {
+        let (mut s, mut ui, cv) = session();
+        let mut csv = String::from("Time (s),Volts\n");
+        for i in 0..800 {
+            let k = i % 400;
+            let v = match k { 0..=99 => -0.5, 100..=199 => -0.5 + (k - 100) as f64 / 99.0,
+                200..=299 => 0.5, _ => 0.5 - (k - 300) as f64 / 99.0 };
+            csv.push_str(&format!("{:.12e},{v}\n", 0.001 + i as f64 * 1e-9));
+        }
+        ui.load_waveform_bytes(csv.as_bytes(), "row-levels.csv").unwrap();
+        ui.m.run = RunState::Stop; ui.m.meas_full_record = true;
+        let id = WaveId::Ref(0);
+        ui.m.meas = vec![(Meas::Rise, id), (Meas::TVmax, id)]; ui.m.meas2.clear();
+        ui.set_meas_refs(0, 0.2, 0.8); ui.set_meas_refs(1, 0.2, 0.8);
+        let shared = ui.meas_at(id, Meas::Rise);
+        let own = ui.fact_meas(Meas::Rise, id);
+        assert!(own < shared * 0.85, "row {own}, shared {shared}");
+        let time = ui.fact_meas(Meas::TVmax, id);
+        assert!((time - (0.001 + 199e-9)).abs() < 1e-13, "{time}");
+        let expected = format!("{},R1,{};{},R1,{}", meas_token(Meas::Rise), e(own), meas_token(Meas::TVmax), e(time));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STRIP?"), expected);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:READOUT?"), expected);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+        assert_eq!(captures(&ui), 0.0);
+    }
+
+    #[test]
     fn measurement_gating_screen_tracks_pan_while_none_measures_the_full_record() {
         let (mut s, mut ui, cv) = session();
+        ui.set_offline(true);
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..4000 {
             let amplitude = if index < 2000 { 0.25 } else { 0.75 };

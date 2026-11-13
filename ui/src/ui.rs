@@ -12,6 +12,7 @@ use crate::board::{board, Board};
 
 mod analysis;
 mod measure_pairs;
+mod bus;
 mod magnetic;
 mod motor;
 mod dpt;
@@ -22,7 +23,9 @@ mod selfcal;
 pub mod bode;
 mod sim;
 mod offline;
+mod reflook;
 mod workflow;
+mod deskew;
 pub mod startup;
 mod afg;
 mod sysinfo;
@@ -223,6 +226,8 @@ pub enum MenuId {
     Math,
     Ref,
     Decode,
+    /// one bus drawn on the plot
+    Bus,
     Storage,
     Mask,
     Zone,
@@ -259,6 +264,7 @@ enum TopBtn {
     Menu(MenuId),
     System,
     Load,
+    Live,
 }
 
 /// An open picker: the choice item, and the menu (with its Back target and focus) to return to.
@@ -324,6 +330,14 @@ enum Item {
     DecMode,
     DecBits,
     DecParity,
+    BusOn,
+    BusLabel,
+    BusPos,
+    BusClk,
+    BusClkThr,
+    BusData,
+    BusDataThr,
+    BusRw,
     Zoom,
     AutoRoll,
     ZScale,
@@ -359,6 +373,8 @@ enum Item {
     HScale,
     HDelay,
     HZero,
+    AutoDeskew,
+    ClearDeskew,
     TrigSrc,
     TrigSlope,
     TrigMode,
@@ -391,6 +407,8 @@ enum Item {
     MeasAdd(Meas),
     /// shortcut on the press-and-hold menu: the next usual measurement
     AddMeas,
+    /// settings of one added measurement, index into `m.meas`
+    MeasCfg(u16),
     MeasPair(usize),
     MeasSrcB,
     DvmOn,
@@ -660,6 +678,7 @@ enum Item {
     SimPreset,
     SimSlot,
     SimPlay,
+    SimLive,
     SimShow,
     SimRate,
     SimPat,
@@ -713,6 +732,8 @@ enum Drag {
     Zone(usize),
     /// draw-a-box is armed: draw repeated zoom boxes until a tap/menu cancels
     ZoomBox,
+    /// the corner button: its drawn origin when the finger went down, and where it sat before this gesture
+    FullBtn { ox: i32, oy: i32, prev: Option<(i32, i32)> },
     Offset(usize),
     RefOffset(usize),
     Delay,
@@ -726,6 +747,8 @@ enum Drag {
     CursorB,
     CursorC,
     CursorD,
+    /// the bus, by its vertical position
+    Bus,
 }
 
 struct Pinch {
@@ -774,6 +797,8 @@ pub struct Ui {
     workflow_epoch: u64,
     bus_candidate: bus_candidate::State,
     pub open_wave_request: bool,
+    load_slot_ask: bool,
+    load_destination: Option<usize>,
     pub lan_status: String,
     pub lan_web_port: Option<u16>,
     pub m: Model,
@@ -798,8 +823,11 @@ pub struct Ui {
     /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
     /// shows the waveform, so the panel keeps the controls.
     full: bool,
+    /// Top left of the corner button after a drag. None keeps it at the top right of the plot.
+    full_at: Option<(i32, i32)>,
     vmaxz: [u32; NCH],
     rng: Rng,
+    trace_bus: std::cell::RefCell<bus::Cache>,
     menu: MenuId,
     menu_open: bool,
     /// menu that opened the current one (Back button)
@@ -867,6 +895,12 @@ pub struct Ui {
     sim_i: usize,
     /// Offline mode. Off, the live screen stays as it is.
     offline: bool,
+    /// Take over, offline waveforms, or the live scope.
+    look: reflook::RefLook,
+    /// Settings of each added measurement. Missing keys follow the shared measure menu.
+    meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
+    /// Settings dialog open on this index of `m.meas`.
+    meas_cfg: Option<u16>,
     /// Reference named on the card that replaces the trigger card, and read by the DVM and the counter.
     offline_ref: usize,
     offline_hold: Option<offline::LiveHold>,
@@ -1026,6 +1060,8 @@ impl Ui {
             workflow_epoch: 0,
             bus_candidate: Default::default(),
             open_wave_request: false,
+            load_slot_ask: false,
+            load_destination: None,
             lan_status: String::new(),
             lan_web_port: None,
             m,
@@ -1043,7 +1079,9 @@ impl Ui {
             wins: Vec::new(),
             cur_win: 0,
             full: false,
+            full_at: None,
             vmaxz: [1; NCH],
+            trace_bus: Default::default(),
             rng: Rng::new(0x9e3779b97f4a7c15),
             menu: MenuId::Main,
             menu_open: false,
@@ -1101,6 +1139,9 @@ impl Ui {
             sim_error: None,
             sim_i: 0,
             offline: false,
+            look: reflook::RefLook::Live,
+            meas_own: std::collections::HashMap::new(),
+            meas_cfg: None,
             offline_ref: 0,
             offline_hold: None,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, t0: 0.0, held: false, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
@@ -1169,6 +1210,7 @@ impl Ui {
             shot_request: None,
             quit: false,
         };
+        ui.ensure_meas_own();
         ui.relayout();
         ui
     }
@@ -1231,7 +1273,7 @@ impl Ui {
     }
 
     pub(super) fn eye_side(&self) -> bool {
-        self.m.eye_place == EyePlace::Side || self.eye_below() == 0
+        self.m.eye_place == EyePlace::Side || (self.m.eye_place == EyePlace::Under && self.eye_below() == 0)
     }
 
     /// Height taken under the trace when the eye is stacked there.
@@ -1251,6 +1293,7 @@ impl Ui {
     pub(super) fn eye_pane_rect(&self) -> Rect {
         if let Some(rect) = self.workspace.eye_float { return rect; }
         let wave = self.plot_rect();
+        if self.m.eye_place == EyePlace::Full { return wave; }
         if self.eye_side() {
             if self.workspace.eye_left { return Rect::new(self.plot_span().0, wave.y, (wave.x - self.plot_span().0 - 4).max(1), wave.h); }
             let x = wave.x + wave.w + 4;
@@ -1403,13 +1446,34 @@ impl Ui {
         self.m.la_win = if self.m.la_on() { i % n } else { 0 };
     }
 
-    /// The expand button at the top right of the plot, the shortcut between Scope and Full: (drawn, touch area).
-    fn full_btn(&self) -> (Rect, Rect) {
+    /// The corner the expand button keeps until it is dragged: (drawn, touch area).
+    fn full_home(&self) -> (Rect, Rect) {
         let g = self.grid;
         // left of the view button while an analysis view has the plot
         let right = if self.view_on() { self.view_btn().x - 6 } else { g.x + g.w - 4 };
         let r = Rect::new(right - 36, g.y + 3, 36, 28);
-        (r, Rect::new(r.x - 8, g.y, r.w + 16, 44))
+        Self::full_pair(r)
+    }
+
+    /// Touch area around a drawn corner button. At the home corner this is the same rectangle as before.
+    fn full_pair(r: Rect) -> (Rect, Rect) {
+        (r, Rect::new(r.x - 8, r.y - 3, r.w + 16, 44))
+    }
+
+    /// The expand button, at the top right of the plot or where it was dropped: (drawn, touch area).
+    fn full_btn(&self) -> (Rect, Rect) {
+        let (home, _) = self.full_home();
+        let r = match self.full_at {
+            Some((x, y)) => Rect::new(x, y, home.w, home.h),
+            None => home,
+        };
+        Self::full_pair(r)
+    }
+
+    /// Keeps the drawn corner button on the screen.
+    fn clamp_full(&self, x: i32, y: i32) -> (i32, i32) {
+        let (home, _) = self.full_home();
+        (x.clamp(0, (W - home.w).max(0)), y.clamp(0, (H - home.h).max(0)))
     }
 
     fn draw_full_btn(&self, cv: &mut Canvas) {
@@ -1436,7 +1500,7 @@ impl Ui {
 
     /// Corner magnifier toggles the zoom display. Draw-a-box is a separate tool.
     fn zoom_btn(&self) -> (Rect, Rect) {
-        let (full, hit) = self.full_btn();
+        let (full, hit) = self.full_home();
         // below the full-screen touch target, so the two buttons do not share a tap
         let r = Rect::new(full.x, hit.y + hit.h + 2, full.w, full.h);
         (r, Rect::new(r.x - 5, r.y, r.w + 10, 40))
@@ -1552,7 +1616,8 @@ impl Ui {
 
     /// Plain wheel pans time. Ctrl-wheel scales the pointed trace, or display V zoom in detail.
     pub fn pointer_wheel(&mut self, x: i32, y: i32, steps: i32, vertical: bool) -> bool {
-        if self.menu_open || self.dialog.is_some() || self.power_dlg || self.m.touch_lock || self.view_on() || !self.grid.contains(x, y) { return false; }
+        if self.eye_open() && self.eye_pane_rect().contains(x,y) { return false; }
+        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.m.touch_lock || self.view_on() || !self.grid.contains(x, y) { return false; }
         let lane = self.wins.iter().position(|area| area.contains(x, y));
         let detail = self.m.zoom && lane.is_some();
         if self.m.zoom && lane.is_none() && !Self::split_zoom(self.grid).0.contains(x, y) { return false; }
@@ -2067,10 +2132,13 @@ impl Ui {
                         let zw = self.z_weights(&rec);
                         for c in 0..NCH {
                             if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref());
+                                let shifted_main = self.deskew_channel_view(&rec, c, mainv);
+                                let main = shifted_main.as_deref().unwrap_or(&rec);
+                                self.ph.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24, if shifted_main.is_some() { None } else { zw.as_deref() });
                                 if self.m.zoom {
-                                    let z = detail.as_deref().unwrap_or(&rec);
-                                    self.phz.draw_ex(c, &zoom_model, zv, z.t0, z.dt, &z.ch[c], 24, if detail.is_some() { None } else { zw.as_deref() });
+                                    let shifted = self.deskew_channel_view(&rec, c, zv);
+                                    let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
+                                    self.phz.draw_ex(c, &zoom_model, zv, z.t0 - self.m.deskew_ch[c], z.dt, &z.ch[c], 24, if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() });
                                 }
                             }
                         }
@@ -2162,10 +2230,13 @@ impl Ui {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                        self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
+                        let shifted_main = self.deskew_channel_view(&rec, c, mainv);
+                        let main = shifted_main.as_deref().unwrap_or(&rec);
+                        self.ph.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24 * 6, if shifted_main.is_some() { None } else { zw.as_deref() });
                         if self.m.zoom {
-                            let z = detail.as_deref().unwrap_or(&rec);
-                            self.phz.draw_ex(c, &zoom_model, zv, z.t0, z.dt, &z.ch[c], 24 * 6, if detail.is_some() { None } else { zw.as_deref() });
+                            let shifted = self.deskew_channel_view(&rec, c, zv);
+                            let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
+                            self.phz.draw_ex(c, &zoom_model, zv, z.t0 - self.m.deskew_ch[c], z.dt, &z.ch[c], 24 * 6, if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() });
                         }
                     }
                 }
@@ -2274,7 +2345,7 @@ impl Ui {
             let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
             for c in 0..NCH {
                 if self.m.persist != 0 && self.m.ch[c].on && !rec.ch[c].is_empty() {
-                    self.ph.draw_ex(c, &self.m, (self.m.time_per_div(), self.m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None);
+                    self.ph.draw_ex(c, &self.m, (self.m.time_per_div(), self.m.delay), rec.t0 - self.m.deskew_ch[c], rec.dt, &rec.ch[c], 24, None);
                 }
             }
             self.accumulate_record_basic(&rec);
@@ -2317,7 +2388,7 @@ impl Ui {
             }
             let vpd = ch.volts_per_div();
             let sign = -1.0;
-            let xm = crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
+            let xm = crate::fastdraw::Map { ti: ti + m.deskew_ch[c] / f.dt, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
             if m.dots {
                 crate::fastdraw::deposit_dots(&mut self.ph.map[c], w, h, &f.ch[c], &xm, 24);
             } else {
@@ -2388,13 +2459,18 @@ impl Ui {
                 self.draw_hist(cv);
                 self.draw_zones(cv);
                 if i == 0 || self.stacked() {
-                    self.draw_refs(cv);
+                    if self.waves_on() {
+                        self.draw_refs_at(cv, self.waves_plot(self.area), self.view(), false);
+                    } else { self.draw_refs(cv); }
                 }
                 self.draw_math(cv);
                 if i == self.la_win_of() {
                     self.draw_la(cv);
                 }
                 self.draw_decode(cv);
+                if i == 0 {
+                    self.draw_bus(cv);
+                }
                 self.draw_meas_labels(cv);
                 self.draw_cursors(cv);
                 self.draw_search(cv);
@@ -2402,6 +2478,9 @@ impl Ui {
                 self.draw_markers(cv);
                 self.draw_axes(cv);
                 self.draw_mask_pill(cv);
+                if i == 0 {
+                    self.draw_waves_board(cv);
+                }
             }
             self.cur_win = 0;
             self.area = self.wave_area();
@@ -2417,7 +2496,9 @@ impl Ui {
         self.draw_info(cv);
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
-        self.draw_zoom_btn(cv);
+        if !(self.eye_open() && self.m.eye_place==EyePlace::Full && self.workspace.eye_float.is_none()) {
+            self.draw_zoom_btn(cv);
+        }
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
         // Full on the external display is the plot and the strip. The statistics card and a lower pane stay on the panel.
@@ -2439,6 +2520,7 @@ impl Ui {
             self.draw_bottom(cv);
         }
         self.draw_menu(cv);
+        self.draw_meas_cfg(cv);
         self.draw_toast(cv);
         self.draw_overlay(cv);
         self.workspace_draw(cv);
@@ -3089,7 +3171,7 @@ impl Ui {
     /// The same for the decoder that m is the view of; cached per record and settings, up to four decoders run every frame.
     fn decode_packets_of(&self, m: &Model) -> Result<std::sync::Arc<Vec<oos_dsp::decode::Packet>>, &'static str> {
         use std::hash::{Hash, Hasher};
-        if Self::decoder_uses_refs(m) { return self.reference_decode_packets(m); }
+        if Self::decoder_uses_refs(m) || (!m.dec_on_la() && m.deskew_ch.iter().any(|&shift| shift != 0.0)) { return self.reference_decode_packets(m); }
         let Some(rec) = &self.last[0] else { return Ok(std::sync::Arc::new(Vec::new())) };
         if m.dec_on_la() {
             return self.la_packets(m, rec).map(std::sync::Arc::new);
@@ -3231,12 +3313,43 @@ impl Ui {
         cv.no_clip();
     }
 
+    /// Vertical scale and the sample rate of this record. Time per division stays the one horizontal scale.
+    fn ref_badge_readout(r: &RefWave) -> (String, String) {
+        let scale = format!("{}/div", si_short(r.vpd as f64, "V"));
+        let rate = if r.dt.is_finite() && r.dt > 0.0 {
+            si_short(1.0 / r.dt, "Sa/s")
+        } else {
+            "\u{2014}".into()
+        };
+        (scale, rate)
+    }
+
+    /// Name, volts per division, and the record's sample rate, beside the trace.
+    fn draw_ref_badge(&self, cv: &mut Canvas, area: Rect, y: i32, col: Rgb, slot: usize, r: &RefWave) {
+        let f = &self.fonts;
+        let name = if r.label.is_empty() { format!("R{}", slot + 1) } else { r.label.clone() };
+        let (scale, rate) = Self::ref_badge_readout(r);
+        let text_w = f.sb.width(&name).max(f.s.width(&scale)).max(f.s.width(&rate));
+        let bw = (text_w + 12).clamp(36, (area.w - 16).max(36));
+        let bh = 46;
+        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - 2).max(area.y + 2));
+        let x0 = (area.x + 80).min((area.x + area.w - bw - 4).max(area.x + 2));
+        let b = Rect::new(x0, y0, bw, bh);
+        cv.round(b, 3, col, 255);
+        cv.set_clip(b);
+        let ink = rgb(0, 0, 0);
+        let row = b.h / 3;
+        cv.text_in(&f.sb, Rect::new(b.x, b.y + 1, b.w, row), 1, &name, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &scale, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + 2 * row, b.w, row), 1, &rate, ink);
+        cv.set_clip(area);
+    }
+
     fn draw_refs(&self, cv: &mut Canvas) {
         self.draw_refs_at(cv, self.area, self.view(), false);
     }
 
     fn draw_refs_at(&self, cv: &mut Canvas, area: Rect, view: (f32, f32), all_sources: bool) {
-        let f = &self.fonts;
         cv.set_clip(area);
         let (tdiv, delay) = view;
         let (tdiv, delay) = (tdiv as f64, delay as f64);
@@ -3249,6 +3362,7 @@ impl Ui {
         let (t_left, t_right) = (delay - half, delay + half);
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
+            let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
             if !all_sources && self.stacked() && self.trace_sources().get(self.cur_win) != Some(&workspace::Trace::Reference(i)) { continue; }
             if !r.on || r.v.is_empty() || !(r.dt > 0.0) {
                 continue;
@@ -3257,7 +3371,7 @@ impl Ui {
             // samples inside this window, not a stride of the whole record (that aliases a long record)
             let n = r.v.len() as isize;
             let at = |t: f64| -> isize {
-                let x = (t - r.t0) / r.dt;
+                let x = (t - t0) / r.dt;
                 if !x.is_finite() {
                     return 0;
                 }
@@ -3278,7 +3392,7 @@ impl Ui {
                     prev = None;
                     continue;
                 }
-                let t = r.t0 + k as f64 * r.dt - delay;
+                let t = t0 + k as f64 * r.dt - delay;
                 let x = (area.x as f64 + area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
                 let y = self.zoom_y_of_divs(area, (v + r.offset) / r.vpd).round() as i32;
                 if let Some((x0, y0)) = prev {
@@ -3292,12 +3406,7 @@ impl Ui {
                 prev = Some((x, y));
             }
             if let Some(y) = first {
-                let yy = y.clamp(area.y + (area.h / 2).min(10), area.y + area.h - (area.h / 2).min(10));
-                // right of the volt labels
-                let name = if r.label.is_empty() { format!("R{}", i + 1) } else { r.label.clone() };
-                let b = Rect::new(area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
-                cv.round(b, 3, col, 255);
-                cv.text_in(&f.s, b, 1, &name, rgb(0, 0, 0));
+                self.draw_ref_badge(cv, area, y, col, i, r);
             }
         }
         cv.no_clip();
@@ -3537,7 +3646,7 @@ impl Ui {
             }
         };
         if !src.is_empty() {
-            backed_text(cv, &f.s, self.full_btn().0.x - 8 - f.s.width(src), y, src, DIM);
+            backed_text(cv, &f.s, self.full_home().0.x - 8 - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
         if self.m.touch_lock {
@@ -3898,7 +4007,7 @@ impl Ui {
     /// (Display, Storage, System). Everything else is in the start menu.
     fn top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let f = &self.fonts;
-        let all: [(TopBtn, &'static str); 7] = [
+        let mut all = vec![
             (TopBtn::Load, "Load file"),
             (TopBtn::Menu(MenuId::Sim), "SIM"),
             (TopBtn::Menu(MenuId::Measure), "Measure"),
@@ -3907,6 +4016,7 @@ impl Ui {
             (TopBtn::Menu(MenuId::Storage), "Storage"),
             (TopBtn::System, "System"),
         ];
+        if self.record_mode() { all.insert(0, (TopBtn::Live, "Live")); }
         let mut x = self.top_right() - 8;
         let mut out = Vec::new();
         for &(b, l) in all.iter().rev() {
@@ -3997,6 +4107,7 @@ impl Ui {
                     TopBtn::Menu(m) => root == m,
                     TopBtn::System => root == MenuId::Utility,
                     TopBtn::Load => false,
+                    TopBtn::Live => true,
                 };
             btn(cv, r, BTN, if hl { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, l, if hl { ACCENT } else { TEXT });
@@ -4226,9 +4337,9 @@ impl Ui {
             MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::ChExpand],
             MenuId::Horizontal => {
                 if self.m.zoom {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]
+                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::ClearDeskew, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]
                 } else {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::Zoom, Item::AutoRoll]
+                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::ClearDeskew, Item::Zoom, Item::AutoRoll]
                 }
             }
             MenuId::Trigger => self.trigger_items(),
@@ -4246,6 +4357,7 @@ impl Ui {
             MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
+            MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
             MenuId::MeasAdd => self.measurement_catalog(),
@@ -4345,7 +4457,7 @@ impl Ui {
         let mut g = vec![
             ("Acquisition", vec![RunStop, SingleAct, AutosetAct, ClearDisp, DefaultAct, Open(MenuId::Acquire)]),
             ("Trigger", vec![Open(MenuId::Trigger), SlopeAct, ForceAct, Open(MenuId::Zone)]),
-            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Sim), Open(MenuId::Decode), Open(MenuId::Mask)]),
+            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Sim), Open(MenuId::Decode), Open(MenuId::Bus), Open(MenuId::Mask)]),
             ("Analysers", ana),
             ("Instruments", ins),
             ("Display", disp),
@@ -4401,7 +4513,8 @@ impl Ui {
 
     /// Search: times (s, relative to the trigger) of all events of the trigger condition in the record shown.
     fn search_events(&self) -> std::sync::Arc<Vec<f64>> {
-        if self.m.trig_type == TrigType::Bus && Self::decoder_uses_refs(&self.m) {
+        if self.m.trig_type == TrigType::Bus && (Self::decoder_uses_refs(&self.m)
+            || self.m.deskew_ch.iter().any(|&shift| shift != 0.0)) {
             return self.decoder_trigger_hits(&self.m).unwrap_or_default();
         }
         if let Some(slot) = self.m.trig_ref {
@@ -4414,7 +4527,8 @@ impl Ui {
         let refs: [&[f32]; NCH] = std::array::from_fn(|c| &rec.ch[c][..]);
         let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * self.m.ch[c].volts_per_div());
         let inp = oos_dsp::trigger::Input { ch: refs, dt: rec.dt, hyst };
-        let mut times: Vec<_> = crate::trig::find_all(&self.m, &inp).into_iter().map(|i| rec.t0 + i * rec.dt).collect();
+        let t0 = self.source_time_origin(self.m.trigger_wave(), rec.t0);
+        let mut times: Vec<_> = crate::trig::find_all(&self.m, &inp).into_iter().map(|i| t0 + i * rec.dt).collect();
         times.sort_by(f64::total_cmp);
         std::sync::Arc::new(times)
     }
@@ -4872,6 +4986,7 @@ impl Ui {
             MenuId::Ref => self.refs[self.ref_sel].as_ref().map_or(format!("Reference R{} · empty", self.ref_sel + 1),
                 |r| format!("Reference R{}{}{}", self.ref_sel + 1, if r.label.is_empty() { "" } else { " · " }, r.label)),
             MenuId::Decode => "Decode".into(),
+            MenuId::Bus => "Bus · I2C".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
                 Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
@@ -4882,7 +4997,8 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
+        if matches!(it, Item::AutoDeskew | Item::ClearDeskew) { return Kind::Action; }
+        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::bus_kind(it)) {
             return k;
         }
         match it {
@@ -4894,7 +5010,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -4903,7 +5019,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::bus_label(it)) {
             return l;
         }
         match it {
@@ -5014,6 +5130,8 @@ impl Ui {
             Item::HScale => "Time/div",
             Item::HDelay => "Delay",
             Item::HZero => "Delay to 0",
+            Item::AutoDeskew => "Auto deskew",
+            Item::ClearDeskew => "Clear deskew",
             Item::TrigSrc => "Source",
             Item::TrigSlope => "Slope",
             Item::TrigMode => "Sweep",
@@ -5083,6 +5201,7 @@ impl Ui {
             Item::MathLinA => "A",
             Item::MathLinB => "B",
             Item::MeasAdd(k) => k.name(),
+            Item::MeasCfg(_) => "Set",
             Item::MeasClear => "Clear all",
             Item::CurMode => "Mode",
             Item::CurA => "Cursor A",
@@ -5151,7 +5270,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -5361,7 +5480,7 @@ impl Ui {
             }
             return;
         }
-        if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.bus_adjust(it, d) || self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         if matches!(it, Item::TrigSrc | Item::TrigSrc2) {
@@ -5896,6 +6015,8 @@ impl Ui {
                     self.m.delay = 0.0;
                     self.settings_changed();
                 }
+                Item::AutoDeskew => self.auto_deskew(),
+                Item::ClearDeskew => self.clear_deskew(),
                 Item::Trig50 => self.level_50(),
                 Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::TrigBusVal) => {
                     // keypad: digits edit the entry, OK sets the value and goes back
@@ -5947,10 +6068,17 @@ impl Ui {
                         self.activate(Item::MeasAdd(k));
                     }
                 }
+                Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
                 Item::MeasAdd(k) => {
                     let e = (k, self.meas_src);
                     if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
                         self.m.meas.remove(index);
+                        self.meas_own.remove(&e);
+                        if self.meas_cfg == Some(index as u16) {
+                            self.meas_cfg = None;
+                        } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
+                            self.meas_cfg = self.meas_cfg.map(|n| n - 1);
+                        }
                         self.mstat.clear();
                         self.toast(&format!("{} {} removed", k.name(), self.wave_name(self.meas_src)));
                         return;
@@ -5967,6 +6095,7 @@ impl Ui {
                             }
                         }
                     }
+                    self.ensure_meas_own();
                     self.toast(&format!("{} {} added", k.name(), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
@@ -5988,6 +6117,7 @@ impl Ui {
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
                 Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
+                Item::BusLabel => self.wlan.osk = Some(wlan::Osk::for_bus(&self.m.bus.label)),
                 Item::RefLabel => match &self.refs[self.ref_sel] {
                     Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_sel, &r.label)),
                     None => self.toast("That slot is empty"),
@@ -5997,6 +6127,8 @@ impl Ui {
                 Item::MeasClear => {
                     self.m.meas.clear();
                     self.m.meas2.clear();
+                    self.meas_own.clear();
+                    self.meas_cfg = None;
                     self.mstat.clear();
                 }
                 Item::RefSave => {
@@ -6010,6 +6142,7 @@ impl Ui {
                     match saved {
                         Some(w) => {
                             let slot = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
+                            self.m.deskew_ref[slot] = self.m.deskew_ch[c];
                             self.refs[slot] = Some(w);
                             self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));
                             self.measure_refs();
@@ -6295,6 +6428,7 @@ impl Ui {
 
     /// A tap on Measure opens the measurement list. Press again to close it.
     fn open_meas_list(&mut self) {
+        self.ensure_meas_own();
         if self.menu_open && self.menu == MenuId::MeasAdd {
             self.close_menu();
         } else {
@@ -6346,7 +6480,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.bus_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -6825,6 +6959,7 @@ impl Ui {
     const PWR_CANCEL: Rect = Rect::new(W / 2 + 90, H / 2 - 10, 140, 64);
 
     fn draw_overlay(&self, cv: &mut Canvas) {
+        self.draw_load_slot(cv);
         let f = &self.fonts;
         self.draw_osk(cv);
         if self.power_dlg {
@@ -6894,6 +7029,7 @@ impl Ui {
         if k == 0 {
             return; // release
         }
+        if self.load_slot_ask { self.cancel_load_slot(); return; }
         if (k == key::RUNSTOP && self.m.run == RunState::Run) || k == key::SINGLE || k == key::DEFAULT || (0x15..=0x18).contains(&k) {
             self.sim_cancel_generation();
         }
@@ -6979,6 +7115,9 @@ impl Ui {
                 self.m.meas = meas;
                 self.m.quick = quick;
                 self.select_workspace_source(WaveId::Ch(self.m.active));
+                self.meas_own.clear();
+                self.meas_cfg = None;
+                self.ensure_meas_own();
                 self.stats_on = false;
                 self.xy = false;
                 self.mask = None;
@@ -7158,6 +7297,14 @@ impl Ui {
 
     /// Two fingers in the grid: horizontal spread = time/div, vertical spread = V/div of the active channel.
     fn multi_touch(&mut self, id: i32, ph: Phase, x: i32, y: i32) {
+        if self.load_slot_ask {
+            if id == 0 && ph == Phase::Up { self.load_slot_tap(x, y); }
+            return;
+        }
+        if self.eye_open() && self.eye_pane_rect().contains(x,y) {
+            if id == 0 { self.touch_ev(ph,x,y); }
+            return;
+        }
         if self.m.touch_lock {
             if id == 0 {
                 self.touch_ev(ph, x, y);
@@ -7165,7 +7312,7 @@ impl Ui {
             return;
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
-        let modal = self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
+        let modal = self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
         let p = &mut self.pinch;
         if id == 1 {
             match ph {
@@ -7265,11 +7412,21 @@ impl Ui {
     }
 
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
-        let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        let covered = self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !covered
+            && !(self.eye_open() && self.eye_pane_rect().contains(x,y));
+        // a press on the corner button moves that button; it is not a drag of the trace
+        let on_full = ph == Phase::Down && !covered && self.full_btn().1.contains(x, y);
         // the plot buttons are taps; a zoom box starts on the waveform, not on them
         let on_chrome = ph == Phase::Down
-            && (self.full_btn().1.contains(x, y) || self.zoom_btn().1.contains(x, y) || (self.m.zoom && self.zoom_readout().contains(x, y)) || (self.view_on() && self.view_btn().contains(x, y)));
+            && (on_full || self.zoom_btn().1.contains(x, y) || (self.m.zoom && self.zoom_readout().contains(x, y)) || (self.view_on() && self.view_btn().contains(x, y)));
         let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
+        let full_from = if on_full {
+            let (r, _) = self.full_btn();
+            Some((r.x, r.y, self.full_at))
+        } else {
+            None
+        };
         let t = &mut self.touch;
         match ph {
             Phase::Down => {
@@ -7278,7 +7435,9 @@ impl Ui {
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
                     return;
                 }
-                if in_plot {
+                if let Some((ox, oy, prev)) = full_from {
+                    t.drag = Drag::FullBtn { ox, oy, prev };
+                } else if in_plot {
                     t.drag = Drag::Pending;
                     if let Some(map) = zmap {
                         t.drag = Drag::ZoomBox;
@@ -7352,8 +7511,8 @@ impl Ui {
                         // nearest enabled channel marker when starting at the left edge, else the active channel (in a
                         // split plot: of this window)
                         let mut c = if self.shows(m.active) { m.active } else { (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active) };
+                        let mut best = i32::MAX;
                         if near_left {
-                            let mut best = i32::MAX;
                             for i in 0..NCH {
                                 if m.ch[i].on && self.shows(i) {
                                     let d = (self.y_of_volts(i, 0.0) - ty0).abs();
@@ -7364,7 +7523,8 @@ impl Ui {
                                 }
                             }
                         }
-                        Drag::Offset(c)
+                        let bus_d = (self.bus_y() - ty0).abs();
+                        if m.bus.on && bus_d <= 18 && bus_d < best { Drag::Bus } else { Drag::Offset(c) }
                     } else {
                         Drag::Delay
                     };
@@ -7373,6 +7533,7 @@ impl Ui {
                         Drag::RefOffset(i) => self.refs[i].as_ref().map_or(0.0, |reference| reference.offset),
                         Drag::ZoomLeft | Drag::ZoomRight => tscales()[self.m.zscale],
                         Drag::ZoomVertical => self.zoom_vcenter,
+                        Drag::Bus => self.m.bus.pos,
                         _ => 0.0,
                     };
                     let start_cur = match drag {
@@ -7453,6 +7614,10 @@ impl Ui {
                         if lower { self.m.trig_level2 = level; } else { self.m.trig_level = level; }
                         self.settings_changed();
                     }
+                    Drag::Bus => {
+                        self.m.bus.pos = (t.start_offset - dy as f32 / ppy).clamp(BUS_POS_MIN, BUS_POS_MAX);
+                        self.settings_changed();
+                    }
                     Drag::Zone(_) => {
                         let shape = self.zone_arm.map_or(false, |a| a.1);
                         let last = self.zone_path.last().copied().unwrap_or((x, y));
@@ -7466,6 +7631,15 @@ impl Ui {
                     Drag::ZoomBox => {
                         if let Some(p) = self.zoom_path.last_mut() {
                             *p = (x, y);
+                        }
+                    }
+                    Drag::FullBtn { ox, oy, prev } => {
+                        // past the tap slop the button follows the finger; a shorter move is still a tap
+                        if dx.abs() >= 16 || dy.abs() >= 16 {
+                            let (px, py) = self.clamp_full(ox + dx, oy + dy);
+                            self.full_at = Some((px, py));
+                        } else {
+                            self.full_at = prev;
                         }
                     }
                     Drag::CursorA | Drag::CursorB | Drag::CursorC | Drag::CursorD => {
@@ -7506,6 +7680,17 @@ impl Ui {
                 }
                 if was.1 == Drag::ZoomBox {
                     self.finish_zoom_box();
+                    return;
+                }
+                if let Drag::FullBtn { ox, oy, prev } = was.1 {
+                    let (dx, dy) = (x - was.2, y - was.3);
+                    if dx.abs() < 16 && dy.abs() < 16 {
+                        self.full_at = prev;
+                        self.tap(was.2, was.3);
+                    } else {
+                        let (px, py) = self.clamp_full(ox + dx, oy + dy);
+                        self.full_at = Some((px, py));
+                    }
                     return;
                 }
                 if self.dialog.is_some() {
@@ -7657,6 +7842,7 @@ impl Ui {
     }
 
     pub fn tap(&mut self, x: i32, y: i32) {
+        if self.load_slot_tap(x, y) { return; }
         let box_button = self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
         if !box_button { self.zoom_arm = false; }
         if self.workspace_popup_tap(x, y) { return; }
@@ -7679,11 +7865,17 @@ impl Ui {
         if self.wlan.osk.is_some() {
             return self.osk_tap(x, y);
         }
+        if self.meas_cfg_tap(x, y) {
+            return;
+        }
         if self.dialog.is_some() {
             self.dialog = None;
             return;
         }
         if self.tap_menu(x, y) {
+            return;
+        }
+        if self.waves_board_tap(x, y) {
             return;
         }
         if !self.menu_open && self.measurement_navigation_tap(x, y) { return; }
@@ -7692,6 +7884,12 @@ impl Ui {
         }
         if self.full_btn().1.contains(x, y) {
             self.toggle_expand();
+            return;
+        }
+        if !self.menu_open && self.eye_open() && self.eye_pane_rect().contains(x,y) {
+            if self.eye_tap(x,y) || self.eye_column_tap(x,y) { return; }
+            let a=self.eye_pane_rect();
+            if y<a.y+workspace::HEADER { self.eye_header_tap(x,y); }
             return;
         }
         if self.zoom_btn().1.contains(x, y) {
@@ -7750,6 +7948,7 @@ impl Ui {
                     TopBtn::Menu(id) => self.toggle_menu(id),
                     TopBtn::System => self.toggle_menu(MenuId::Utility),
                     TopBtn::Load => self.request_waveform(),
+                    TopBtn::Live => self.return_to_live(),
                 };
             }
         }
@@ -8710,8 +8909,23 @@ mod tests {
             ui.render(&mut cv);
             let pal = heat_palette();
             let a = ui.area;
+            let ph = if zoom { &ui.phz } else { &ui.ph };
+            let mut direct = Canvas::new(W, H);
+            ui.draw_graded(&mut direct, a, ph, if zoom { ui.vmaxz_cg } else { ui.vmax_cg }, false);
+            let mut active = 0;
+            for y in 0..ph.h {
+                for x in 0..ph.w {
+                    let expected = (0..NCH).any(|c| ui.m.ch[c].on && ui.shows(c) && ph.map[c][y * ph.w + x] != 0);
+                    let graded = pal.contains(&direct.px[((a.y + y as i32) * W + a.x + x as i32) as usize]);
+                    assert_eq!(graded, expected, "zoom {zoom}: map pixel {x},{y}");
+                    active += usize::from(expected);
+                }
+            }
+            assert!(active > 0, "the fixture must deposit trace samples");
             let hits = (a.y..a.y + a.h).flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y))).filter(|&(x, y)| pal.contains(&cv.px[(y * W + x) as usize])).count();
-            assert!(hits > 1000, "zoom {}: {} graded pixels", zoom, hits);
+            // Axes and measurement labels cover a few trace pixels. The zoom
+            // map can contain fewer than 1000 active pixels at this timebase.
+            assert!(hits * 2 > active, "zoom {zoom}: {hits} of {active} graded pixels remain visible");
         }
     }
 

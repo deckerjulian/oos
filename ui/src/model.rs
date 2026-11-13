@@ -66,7 +66,7 @@ pub fn src_ok(s: usize) -> bool {
 
 /// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
 /// that record's sample interval. Refs are not packed into the channel/math index.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum WaveId {
     Ch(usize),
     Ref(usize),
@@ -258,6 +258,8 @@ pub enum AView {
 /// Where the eye is drawn while the trace stays on screen.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EyePlace {
+    /// Eye, figures and jitter charts occupy the whole plot.
+    Full,
     /// A pane to the right of the trace. The default.
     Side,
     /// A pane under the trace.
@@ -809,9 +811,67 @@ impl Channel {
     }
 }
 
+/// How far a bus may sit from the middle of the grid, in divisions. Positive is up.
+pub const BUS_POS_MIN: f32 = -3.6;
+pub const BUS_POS_MAX: f32 = 3.6;
+
+/// The bus drawn on the plot. Only I2C is defined.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BusKind {
+    I2c,
+}
+
+impl BusKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            BusKind::I2c => "I2C",
+        }
+    }
+}
+
+/// One bus on the waveform: on or off, a label, and a vertical position in divisions.
+#[derive(Clone, PartialEq, Debug)]
+pub struct TraceBus {
+    pub on: bool,
+    pub label: String,
+    /// divisions from the center of the grid, positive up
+    pub pos: f32,
+    pub kind: BusKind,
+    /// clock (SCL) and data (SDA)
+    pub clk: WaveId,
+    pub data: WaveId,
+    pub clk_thr: f32,
+    pub data_thr: f32,
+    /// the address word includes the read/write bit as its least significant bit
+    pub addr_rw: bool,
+}
+
+impl Default for TraceBus {
+    fn default() -> Self {
+        Self { on: false, label: "I2C".into(), pos: -3.0, kind: BusKind::I2c, clk: WaveId::Ch(0), data: WaveId::Ch(1), clk_thr: 1.65, data_thr: 1.65, addr_rw: false }
+    }
+}
+
+impl TraceBus {
+    /// The name drawn on the plot. An empty label falls back to the type.
+    pub fn shown_label(&self) -> String {
+        let t = self.label.trim();
+        if t.is_empty() { self.kind.name().to_string() } else { t.to_string() }
+    }
+}
+
+/// Keeps a bus label to the length of a channel name, without control characters.
+pub fn bus_label(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(10).collect::<String>().trim().to_string()
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct Model {
     pub ch: [Channel; NCH],
+    /// Post-capture time correction in seconds, subtracted from native source time.
+    /// Independent of the hardware channel's sampling deskew; samples are never rewritten.
+    pub deskew_ch: [f64; NCH],
+    pub deskew_ref: [f64; NREF],
     pub active: usize, // channel the vertical knobs act on
     pub tscale: usize,
     pub delay: f32, // s, horizontal position of the trigger point relative to the centre
@@ -974,6 +1034,8 @@ pub struct Model {
     /// data bits: UART 5..9, SPI 4..32
     pub dec_bits: u32,
     pub dec_parity: oos_dsp::decode::Parity,
+    /// one bus on the plot
+    pub bus: TraceBus,
     pub zoom: bool,
     /// slow time bases on the hardware: roll from 50 ms/div (on), scan from 200 ms/div (off), like stock "Auto Roll"
     pub auto_roll: bool,
@@ -1264,6 +1326,8 @@ impl Default for Model {
         let t200u = ts.iter().position(|&t| (t - 200e-6).abs() < 1e-9).unwrap_or(ts.len() / 2);
         let mut m = Model {
             ch: std::array::from_fn(|i| c(i == 0)),
+            deskew_ch: [0.0; NCH],
+            deskew_ref: [0.0; NREF],
             active: 0,
             tscale: t200u,
             delay: 0.0,
@@ -1371,6 +1435,7 @@ impl Default for Model {
             dec_mode: 0,
             dec_bits: 8,
             dec_parity: oos_dsp::decode::Parity::None,
+            bus: TraceBus::default(),
             zoom: false,
             auto_roll: true,
             zscale: 0,
@@ -1397,7 +1462,7 @@ impl Default for Model {
             eye_src: WaveId::Ch(0),
             eye_rate: 0.0,
             eye_from_record: false,
-            eye_place: EyePlace::Side,
+            eye_place: EyePlace::Full,
             eye_ber: 1e-12,
             eye_pn_lo: 1e3,
             eye_pn_hi: 1e6,

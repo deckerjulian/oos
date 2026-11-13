@@ -417,6 +417,8 @@ pub(super) enum OskFor {
     Label(usize),
     /// the name of a reference
     RefLabel(usize),
+    /// the name drawn on the bus
+    BusLabel,
     /// the formula of a math channel
     MathExpr(usize),
 }
@@ -498,6 +500,14 @@ impl Osk {
         o
     }
 
+    /// The keyboard for the name drawn on the bus.
+    pub(super) fn for_bus(now: &str) -> Osk {
+        let mut o = Osk::new(OskFor::BusLabel);
+        o.text = now.to_string();
+        o.cursor = o.text.chars().count();
+        o
+    }
+
     /// The keyboard for the name of reference `i`.
     pub(super) fn for_ref(i: usize, now: &str) -> Osk {
         let mut o = Osk::new(OskFor::RefLabel(i));
@@ -515,7 +525,7 @@ impl Osk {
         match self.what {
             OskFor::Name => wlan::SSID_MAX,
             OskFor::Pass(_) => wlan::PASS_LEN.1,
-            OskFor::Label(_) | OskFor::RefLabel(_) => LABEL_MAX,
+            OskFor::Label(_) | OskFor::RefLabel(_) | OskFor::BusLabel => LABEL_MAX,
             OskFor::MathExpr(_) => oos_dsp::expr::EXPR_MAX,
         }
     }
@@ -650,6 +660,10 @@ impl Ui {
                 }
                 self.wlan.osk = None;
             }
+            OskFor::BusLabel => {
+                self.m.bus.label = crate::model::bus_label(&o.text);
+                self.wlan.osk = None;
+            }
             OskFor::Name if o.text.is_empty() => self.toast("Enter the name of the network"),
             OskFor::Name => {
                 let ssid = o.text.clone().into_bytes();
@@ -737,6 +751,7 @@ impl Ui {
             OskFor::Name => "Name of the network".to_string(),
             OskFor::Label(c) => format!("Name of CH{} (empty: CH{})", c + 1, c + 1),
             OskFor::RefLabel(i) => format!("Name of R{} (empty: R{})", i + 1, i + 1),
+            OskFor::BusLabel => "Name of the bus (empty: I2C)".to_string(),
             OskFor::MathExpr(k) => format!("Formula of M{}: CH1-4, t, pi, sin cos tan sqrt abs ln log exp min max", k + 1),
             OskFor::Pass(s) if self.wlan.nets.iter().any(|n| n.ssid == *s) => format!("Password for {}", wlan::name(s)),
             OskFor::Pass(s) => format!("Password for {} (empty: open network)", wlan::name(s)),

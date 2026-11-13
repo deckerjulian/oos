@@ -12,6 +12,8 @@ use oos_dsp::{eye, identify, power, spectrum};
 use std::{cell::{Cell, RefCell}, sync::{Arc, mpsc}};
 
 const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
+#[path = "measure_own.rs"]
+mod own;
 #[cfg(test)]
 #[path = "channel_measurement_tests.rs"]
 mod channel_measurement_tests;
@@ -55,6 +57,8 @@ struct RefMeasureJob {
     min_amp: f64,
     low: f64,
     high: f64,
+    own: bool,
+    analysis: Option<Arc<oos_dsp::measure::Analysis>>,
 }
 
 enum MeasureSamples {
@@ -86,7 +90,7 @@ fn scalar_readings(analysis: &oos_dsp::measure::Analysis, key: RefMeasureKey) ->
     }).collect()
 }
 
-struct RefMeasureResult { source: WaveId, key: RefMeasureKey, analysis: Arc<oos_dsp::measure::Analysis>, readings: Vec<f64> }
+struct RefMeasureResult { source: WaveId, key: RefMeasureKey, analysis: Arc<oos_dsp::measure::Analysis>, readings: Vec<f64>, own: bool }
 
 /// One worker, one in-flight input copy. Waiting sources keep metadata only.
 struct RefMeasureWorker {
@@ -94,6 +98,7 @@ struct RefMeasureWorker {
     output: mpsc::Receiver<RefMeasureResult>,
     busy: bool,
     submitted: usize,
+    own_turn: bool,
 }
 
 impl RefMeasureWorker {
@@ -102,13 +107,13 @@ impl RefMeasureWorker {
         let (results, output) = mpsc::channel();
         std::thread::Builder::new().name("reference-measurements".into()).spawn(move || {
             while let Ok(job) = requests.recv() {
-                let analysis = Arc::new(if job.key.basic { basic_analysis(crate::board::BasicStats::of(job.samples.slice())) }
-                    else { oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high) });
+                let analysis = job.analysis.unwrap_or_else(|| Arc::new(if job.key.basic { basic_analysis(crate::board::BasicStats::of(job.samples.slice())) }
+                    else { oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high) }));
                 let readings = scalar_readings(&analysis, job.key);
-                if results.send(RefMeasureResult { source: job.source, key: job.key, analysis, readings }).is_err() { break; }
+                if results.send(RefMeasureResult { source: job.source, key: job.key, analysis, readings, own: job.own }).is_err() { break; }
             }
         }).expect("start bounded reference measurement worker");
-        Self { input, output, busy: false, submitted: 0 }
+        Self { input, output, busy: false, submitted: 0, own_turn: true }
     }
 }
 
@@ -125,6 +130,7 @@ pub struct State {
     ch_measure: [RefCell<Option<RefMeasureCache>>; NCH],
     ch_measure_pending: [Cell<Option<RefMeasureKey>>; NCH],
     ref_measure_worker: RefCell<Option<RefMeasureWorker>>,
+    own_measure: RefCell<own::State>,
     measure_view: Option<(u32, u32, bool)>,
     pub spec: Option<spectrum::Spectrum>,
     pub spec_avg: Option<spectrum::Avg>,
@@ -266,6 +272,7 @@ impl Ui {
             && !raw.frame.envelope && raw.frame.ch.get(c).is_some_and(|v| v.len() >= 2)) {
             (raw.frame.ch.get(c)?.as_slice(), raw.t0 - raw.i0 as f64 * raw.frame.dt, raw.frame.dt)
         } else { (screen.as_slice(), rec.t0, rec.dt) };
+        let t0 = self.source_time_origin(WaveId::Ch(c), t0);
         if samples.len() < 2 || !dt.is_finite() || dt <= 0.0 { return None; }
         let (lo, hi) = self.measurement_bounds(samples.len(), t0, dt);
         (hi >= lo + 2).then_some((&samples[lo..hi], t0 + lo as f64 * dt, dt))
@@ -274,15 +281,16 @@ impl Ui {
     fn reference_measurement_key(&self, slot: usize) -> Option<(RefMeasureKey, f64)> {
         let r = self.refs.get(slot)?.as_ref()?;
         if r.v.len() < 2 || !r.dt.is_finite() || r.dt <= 0.0 { return None; }
-        let (lo, hi) = self.measurement_bounds(r.v.len(), r.t0, r.dt);
+        let t0 = self.source_time_origin(WaveId::Ref(slot), r.t0);
+        let (lo, hi) = self.measurement_bounds(r.v.len(), t0, r.dt);
         if hi < lo + 2 { return None; }
         let key = RefMeasureKey { samples: r.v.as_ptr() as usize, len: r.v.len(), lo, hi,
-            dt: r.dt.to_bits(), t0: r.t0.to_bits(), vpd: r.vpd.to_bits(),
+            dt: r.dt.to_bits(), t0: t0.to_bits(), vpd: r.vpd.to_bits(),
             low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), epoch: self.workflow_epoch,
             revision: if self.session_is_sim && self.m.sim_slot == slot { self.replay.sim_revision } else { 0 }, full: self.m.meas_full_record, basic: false,
             idle: self.m.meas_idle.to_bits(), outside: self.m.meas_out as u8, periods: self.m.meas_n, data: self.m.meas_data,
             conditioning: (0, false, 0), capture: 0 };
-        Some((key, r.t0 + lo as f64 * r.dt))
+        Some((key, t0 + lo as f64 * r.dt))
     }
 
     pub(super) fn reference_measurement(&self, slot: usize) -> Option<(Arc<oos_dsp::measure::Analysis>, f64)> {
@@ -297,7 +305,7 @@ impl Ui {
             let worker = worker.get_or_insert_with(RefMeasureWorker::open);
             if !worker.busy {
                 let job = RefMeasureJob { source: WaveId::Ref(slot), key, samples: MeasureSamples::Owned(r.v[key.lo..key.hi].to_vec()), dt: r.dt,
-                    min_amp: 0.4 * r.vpd as f64, low: self.m.meas_lpct, high: self.m.meas_hpct };
+                    min_amp: 0.4 * r.vpd as f64, low: self.m.meas_lpct, high: self.m.meas_hpct, own: false, analysis: None };
                 if worker.input.try_send(job).is_ok() { worker.busy = true; worker.submitted += 1; }
             }
             return None;
@@ -395,7 +403,7 @@ impl Ui {
                     MeasureSamples::Native { frame: Arc::clone(&raw.frame), channel, lo, hi: lo + samples.len() }
                 } else { MeasureSamples::Owned(samples.to_vec()) };
                 let job = RefMeasureJob { source: WaveId::Ch(channel), key, samples: input, dt,
-                    min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64, low: self.m.meas_lpct, high: self.m.meas_hpct };
+                    min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64, low: self.m.meas_lpct, high: self.m.meas_hpct, own: false, analysis: None };
                 if worker.input.try_send(job).is_ok() { worker.busy = true; worker.submitted += 1; }
             }
             return None;
@@ -455,7 +463,7 @@ impl Ui {
     }
 
     pub(crate) fn measurement_busy(&self) -> bool {
-        self.azr.ch_measure_pending.iter().enumerate().any(|(channel, pending)| pending.get().is_some_and(|key|
+        self.own_measurement_busy() || self.azr.ch_measure_pending.iter().enumerate().any(|(channel, pending)| pending.get().is_some_and(|key|
             self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key)))
         || self.pair_measurement_busy()
         || self.azr.ref_measure_pending.iter().enumerate().any(|(slot, pending)|
@@ -465,10 +473,14 @@ impl Ui {
     pub(super) fn poll_reference_measurements(&mut self) {
         let mut completed = Vec::new();
         if let Some(worker) = self.azr.ref_measure_worker.borrow_mut().as_mut() {
-            while let Ok(result) = worker.output.try_recv() { worker.busy = false; completed.push(result); }
+            while let Ok(result) = worker.output.try_recv() { worker.busy = false; worker.own_turn = !result.own; completed.push(result); }
         }
         let mut changed = false;
         for result in completed {
+            if result.own {
+                changed |= self.commit_own_measurement(result);
+                continue;
+            }
             let (pending, cache, current) = match result.source {
                 WaveId::Ref(slot) => (&self.azr.ref_measure_pending[slot], &self.azr.ref_measure[slot], self.reference_measurement_key(slot)),
                 WaveId::Ch(channel) => (&self.azr.ch_measure_pending[channel], &self.azr.ch_measure[channel], self.channel_measurement_key(channel, result.key.basic)),
@@ -481,6 +493,8 @@ impl Ui {
                 }
             }
         }
+        let own_turn = self.azr.ref_measure_worker.borrow().as_ref().is_some_and(|worker| worker.own_turn);
+        if own_turn { self.schedule_own_measurement(); }
         for channel in 0..NCH {
             if let Some(key) = self.azr.ch_measure_pending[channel].get() {
                 if self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key) {
@@ -495,6 +509,7 @@ impl Ui {
                 } else { self.azr.ref_measure_pending[slot].set(None); }
             }
         }
+        self.schedule_own_measurement();
         if changed {
             self.measure_channel_sources();
             self.measure_refs();
@@ -604,6 +619,7 @@ impl Ui {
             Item::ProtoWatch => onoff(self.azr.watch),
             Item::EyeOn => onoff(m.view == AView::Eye),
             Item::EyePlace => match m.eye_place {
+                EyePlace::Full => "Full".into(),
                 EyePlace::Side => "Side".into(),
                 EyePlace::Under => "Under".into(),
             },
@@ -668,7 +684,7 @@ impl Ui {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
             Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::EyeHp | Item::EyeNpj | Item::ProtoWatch => v(&["Off", "On"]),
-            Item::EyePlace => v(&["Side", "Under"]),
+            Item::EyePlace => v(&["Full", "Side", "Under"]),
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
             Item::SpecHarm => panes::harm_names(),
@@ -769,7 +785,7 @@ impl Ui {
                 m.eye_from_record = false;
             }
             Item::EyePlace => {
-                let all = [EyePlace::Side, EyePlace::Under];
+                let all = [EyePlace::Full, EyePlace::Side, EyePlace::Under];
                 let i = all.iter().position(|&p| p == m.eye_place).unwrap_or(0);
                 m.eye_place = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
             }

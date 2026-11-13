@@ -118,15 +118,15 @@ impl Ui {
         let (v, dt, t0, vpd) = match decode_wave(id).ok_or("Invalid decoder source")? {
             WaveId::Ref(i) => {
                 let r = self.refs[i].as_ref().ok_or("Reference source empty")?;
-                (r.v.as_slice(), r.dt, r.t0, r.vpd)
+                (r.v.as_slice(), r.dt, self.source_time_origin(WaveId::Ref(i), r.t0), r.vpd)
             }
             WaveId::Ch(c) => {
                 let r = candidate.or(self.last[0].as_ref()).ok_or("Live decoder source has no record")?;
                 if let Some(raw) = r.raw.as_ref().filter(|raw| !raw.frame.envelope && raw.frame.ch[c].len() >= 2) {
                     if !raw.frame.dt.is_finite() || raw.frame.dt <= 0.0 || !raw.t0.is_finite() { return Err("Invalid decoder record"); }
-                    return Ok((&raw.frame.ch[c], raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt, self.m.ch[c].volts_per_div()));
+                    return Ok((&raw.frame.ch[c], raw.frame.dt, self.source_time_origin(WaveId::Ch(c), raw.t0 - raw.i0 as f64 * raw.frame.dt), self.m.ch[c].volts_per_div()));
                 }
-                (r.ch[c].as_slice(), r.dt, r.t0, self.m.ch[c].volts_per_div())
+                (r.ch[c].as_slice(), r.dt, self.source_time_origin(WaveId::Ch(c), r.t0), self.m.ch[c].volts_per_div())
             }
         };
         if v.len() < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {

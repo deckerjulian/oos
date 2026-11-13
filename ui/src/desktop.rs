@@ -76,9 +76,10 @@ fn dispatch(ui: &mut Ui, command: &str) {
 
 fn open_waveform(ui: &mut Ui, win: &Window, loader: &mut picker::Loader) {
     loader.cancel();
-    match picker::waveform(win.get_window_handle()) {
+    let Some(slot) = ui.waveform_destination() else { return; };
+    match picker::waveform(win.get_window_handle(), slot) {
         Ok(Some(path)) => {
-            match loader.submit(path, ui.waveform_epoch()) {
+            match loader.submit(path, ui.waveform_epoch(), slot) {
                 Ok(name) => ui.toast(&format!("Loading {name}…")),
                 Err(error) => ui.toast(&error),
             }
@@ -217,9 +218,9 @@ pub fn run(mut ui: Ui, args: &[String]) {
             if let Some((x, y)) = at { ui.handle(Ev::Wheel { x, y, steps, ctrl, shift, alt }); }
         }
         services.poll(&mut ui, &cv);
-        if let Some(result) = loader.poll(ui.waveform_epoch()) {
+        if let Some((slot, result)) = loader.poll(ui.waveform_epoch()) {
             match result {
-                Ok((traces, name)) => if let Err(error) = ui.commit_waveform_traces(traces, &name, true) { ui.toast(&error); },
+                Ok((traces, name)) => if let Err(error) = ui.commit_waveform_traces_at(traces, &name, slot) { ui.toast(&error); },
                 Err(error) => ui.toast(&error),
             }
         }

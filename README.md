@@ -287,7 +287,7 @@ With SSC enabled, the stored record covers a complete modulation cycle at eight 
 Long records generate in the background; cancel or return to Live to keep the previous session.
 Configurations exceeding the generation budget report an error without replacing the current waveform.
 The HSS down-spread profile removes its DC term; centered spread uses plus/minus the configured deviation.
-Tap **Eye/Jitter** on the trace, or **Auto Eye/Jitter** in its settings, to analyze the selected live or reference
+Choose **Auto Eye/Jitter** in the analysis menu/settings to analyze the selected live or reference
 source. Automatic setup recovers an NRZ clock/rate, chooses voltage thresholds from the signal and opens the eye
 with its TIE trend, histogram, spectrum and bathtub. The source/rate header keeps manual rate and explicit-clock
 settings accessible. Flat, insufficient or sparsely sampled data shows its limit; model estimates are labeled.
@@ -663,7 +663,7 @@ move the insertion point, a tap into the entry puts it there; typing and Delete 
 + buttons step it. Changes inside one amplitude range take effect at once and keep the output running.
 
 **Analysers.** Menu > Analysers holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. Eye/Jitter
-opens beside or under the waveform and has source/rate settings and Close in its pane header. Other analyser views
+opens as a full analysis page with optional side or lower panes and has source/rate settings and Close in its pane header. Other analyser views
 use the button with three dots at the top right for Exit and Settings.
 
 **Panes.** Display > Pane puts a second view under the waveform: Spectrum with a peak list, Results with statistics, cursors

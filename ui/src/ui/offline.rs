@@ -1,16 +1,17 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Offline mode. Off, the live screen is unchanged. On, the analog cards are hidden, a session can
-//! start with no demo on those channels, and Import does what Play does: analog stays off, TIME
-//! comes from the record's own interval and length, and the reference name sits where the trigger
-//! card would be. The DVM and the counter read that reference.
+//! Stored-reference session. Off, the live screen is unchanged. On, the analog cards are hidden.
+//! Take over shows one reference. Offline waveforms keeps several on screen together. Import does
+//! what Play does: analog stays off, TIME comes from the record's own interval and length, and the
+//! reference name sits where the trigger card would be. The DVM and the counter read that reference.
 
 use super::*;
 
 /// Live settings put back when the mode is turned off.
 pub(super) struct LiveHold {
     on: [bool; NCH],
+    ref_on: [bool; NREF],
     run: RunState,
     status: TrigStatus,
     tscale: usize,
@@ -26,6 +27,7 @@ impl Ui {
         if on {
             self.offline_hold = Some(LiveHold {
                 on: std::array::from_fn(|c| self.m.ch[c].on),
+                ref_on: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)),
                 run: self.m.run,
                 status: self.m.status,
                 tscale: self.m.tscale,
@@ -33,15 +35,24 @@ impl Ui {
                 delay: self.m.delay,
             });
             self.offline = true;
+            if self.look == reflook::RefLook::Live {
+                self.look = reflook::RefLook::TakeOver;
+            }
             self.idle_analog();
             self.ph.clear();
             self.phz.clear();
         } else {
             self.offline = false;
+            self.look = reflook::RefLook::Live;
             self.sim_play = false;
             if let Some(h) = self.offline_hold.take() {
                 for (c, on) in h.on.into_iter().enumerate() {
                     self.m.ch[c].on = on && c < n_ch();
+                }
+                for (i, r) in self.refs.iter_mut().enumerate() {
+                    if let Some(r) = r {
+                        r.on = h.ref_on[i];
+                    }
                 }
                 self.m.run = h.run;
                 self.m.status = h.status;
@@ -73,6 +84,7 @@ impl Ui {
             (r.t0, r.dt, r.v.len())
         });
         if let Some((t0, dt, n)) = spec {
+            let t0 = self.source_time_origin(WaveId::Ref(slot), t0);
             self.apply_record_timebase(t0, dt, n);
             self.m.zoom = n > 8192 && !self.zoom_user_closed;
             if self.m.zoom {
@@ -129,11 +141,12 @@ impl Ui {
     /// Sample rate and depth for the top line. The bool is the live acquire mode that follows it.
     pub(super) fn acq_caption(&self) -> (String, bool) {
         if self.record_mode() {
+            let kind = if self.session_is_sim { "SIM" } else { "REF" };
             if let Some(r) = self.refs.get(self.active_reference()).and_then(|r| r.as_ref()).filter(|r| r.v.len() >= 2 && r.dt > 0.0) {
                 let sr = 1.0 / r.dt;
-                return (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
+                return (format!("{kind} \u{b7} {} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
             }
-            return ("\u{2014}".into(), false);
+            return (format!("{kind} \u{b7} \u{2014}"), false);
         }
         let captured = self.last[0].as_ref().and_then(|r| {
             if let Some(raw) = r.raw.as_ref() {
@@ -198,14 +211,18 @@ impl Ui {
 
     pub(super) fn offline_label(it: Item) -> Option<&'static str> {
         match it {
-            Item::Offline => Some("Offline"),
+            Item::Offline => Some("Record"),
             _ => None,
         }
     }
 
     pub(super) fn offline_value(&self, it: Item) -> Option<String> {
         match it {
-            Item::Offline => Some(if self.offline { "On".into() } else { "Off".into() }),
+            Item::Offline => Some(match self.look {
+                reflook::RefLook::Live => "Off".into(),
+                reflook::RefLook::TakeOver => "Take over".into(),
+                reflook::RefLook::Waves => "Offline".into(),
+            }),
             Item::DvmSrc | Item::CntSrc if self.offline => Some(format!("R{}", self.offline_ref.min(NREF - 1) + 1)),
             _ => None,
         }
@@ -213,7 +230,7 @@ impl Ui {
 
     pub(super) fn offline_options(&self, it: Item) -> Option<Vec<String>> {
         match it {
-            Item::Offline => Some(vec!["Off".into(), "On".into()]),
+            Item::Offline => Some(vec!["Off".into(), "Take over".into(), "Offline".into()]),
             Item::DvmSrc | Item::CntSrc if self.offline => Some((0..NREF).map(|i| format!("R{}", i + 1)).collect()),
             _ => None,
         }
@@ -223,7 +240,10 @@ impl Ui {
         match it {
             Item::Offline => {
                 if d != 0 {
-                    self.set_offline(!self.offline);
+                    let order = [reflook::RefLook::Live, reflook::RefLook::TakeOver, reflook::RefLook::Waves];
+                    let i = order.iter().position(|x| *x == self.look).unwrap_or(0);
+                    let n = (i as i32 + d).rem_euclid(order.len() as i32) as usize;
+                    self.set_look(order[n]);
                 }
                 true
             }
@@ -299,9 +319,11 @@ mod tests {
         let sine: Vec<f32> = (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
         write_csv(&dir, 1, 0.0, dt, &sine);
         live.activate(Item::RefImport);
-        assert!(!live.m.ch[0].on && live.offline, "import enters an explicit stored-waveform session");
-        assert!(live.cards().0.iter().all(|card| card.w == 0));
-        let _ = scale;
+        assert!(live.m.ch[0].on && !live.offline, "a live import adds an overlay without taking over acquisition");
+        assert_eq!(live.m.tscale, scale, "import cannot silently change the ADC timebase");
+        assert!(live.cards().0.iter().any(|card| card.w > 0));
+        live.set_look(reflook::RefLook::TakeOver);
+        assert!(live.m.ch.iter().all(|channel| !channel.on) && live.offline, "Take over explicitly enters a stored-waveform session");
 
         let mut play = ui();
         play.activate(Item::SimPlay);
@@ -364,6 +386,7 @@ mod tests {
     #[test]
     fn import_gates_existing_references_before_the_first_measurement() {
         let mut u = ui();
+        u.set_offline(true);
         u.refs[1] = Some(RefWave {
             src: 0, color: 1, label: "previous capture".into(), t0: 0.0, dt: 1e-9,
             v: (0..20_000).map(|index| {

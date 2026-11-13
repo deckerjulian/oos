@@ -276,7 +276,7 @@ fn fit_record_exposes_native_capture_extent_without_copying_or_reconfiguring_the
     ui.last[0]=Some(record);ui.m.delay=-100.0;ui.set_zoom(true);
     let channels=ui.m.ch.clone();let trigger=ui.m.trigger();let pointer=frame.ch[0].as_ptr();
     assert!(ui.fit_selected_record());let (n,dt,t0)=ui.raw_info(0).unwrap();
-    assert_eq!((n,dt,t0),(100_000,1e-9,0.001));assert_eq!(pointer,frame.ch[0].as_ptr());
+    assert_eq!((n,dt),(100_000,1e-9));assert!((t0-0.001).abs()<1e-15);assert_eq!(pointer,frame.ch[0].as_ptr());
     let half=ui.m.time_per_div() as f64*HDIV as f64*0.5;let center=ui.m.delay as f64;
     assert!(center-half<=t0 && center+half>=t0+(n-1) as f64*dt);
     assert_eq!(ui.m.ch,channels);assert_eq!(ui.m.trigger(),trigger);assert!(!ui.m.zoom);

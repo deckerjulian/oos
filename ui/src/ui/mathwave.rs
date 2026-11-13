@@ -109,6 +109,8 @@ impl Ui {
             c.lin.0.to_bits(), c.lin.1.to_bits(), &self.m.math_expr[k]).hash(&mut h);
         for id in self.math_inputs(k)? {
             id.hash(&mut h);
+            if id < NCH { self.source_time_shift(WaveId::Ch(id)).to_bits().hash(&mut h); }
+            else if id >= MATH_REF_BASE { self.source_time_shift(WaveId::Ref(id - MATH_REF_BASE)).to_bits().hash(&mut h); }
             if id < NCH {
                 let r = self.last[0].as_ref().ok_or("No acquired record")?;
                 if let Some(raw) = r.raw.as_ref().filter(|r| !r.frame.envelope) {
@@ -139,15 +141,15 @@ impl Ui {
         if id < NCH {
             let r = self.last[0].as_ref()?;
             if let Some(raw) = r.raw.as_ref().filter(|r| !r.frame.envelope) {
-                return Some(Arc::new(Signal { t0: raw.t0 - raw.i0 as f64 * raw.frame.dt, dt: raw.frame.dt, v: Arc::new(raw.frame.ch[id].clone()) }));
+                return Some(Arc::new(Signal { t0: self.source_time_origin(WaveId::Ch(id), raw.t0 - raw.i0 as f64 * raw.frame.dt), dt: raw.frame.dt, v: Arc::new(raw.frame.ch[id].clone()) }));
             }
-            return Some(Arc::new(Signal { t0: r.t0, dt: r.dt, v: Arc::new(r.ch[id].clone()) }));
+            return Some(Arc::new(Signal { t0: self.source_time_origin(WaveId::Ch(id), r.t0), dt: r.dt, v: Arc::new(r.ch[id].clone()) }));
         }
         if id < MATH_REF_BASE {
             return (id - NCH < below).then(|| self.math_record(id - NCH).ok().flatten()).flatten();
         }
         let r = self.refs.get(id - MATH_REF_BASE)?.as_ref()?;
-        Some(Arc::new(Signal { t0: r.t0, dt: r.dt, v: Arc::new(r.v.clone()) }))
+        Some(Arc::new(Signal { t0: self.source_time_origin(WaveId::Ref(id - MATH_REF_BASE), r.t0), dt: r.dt, v: Arc::new(r.v.clone()) }))
     }
 
     pub(super) fn math_record(&self, k: usize) -> Result<Option<Arc<Signal>>, &'static str> {

@@ -133,7 +133,7 @@ impl Ui {
             WaveId::Ch(c) => {
                 let rec = self.last[0].as_ref()?;
                 let v = rec.ch.get(c)?;
-                (!v.is_empty()).then_some((v.as_slice(), rec.t0, rec.dt))
+                (!v.is_empty()).then_some((v.as_slice(), self.source_time_origin(id, rec.t0), rec.dt))
             }
             WaveId::Ref(i) => {
                 let (v, t0, dt) = self.reference_slice(i)?;
@@ -164,20 +164,17 @@ impl Ui {
                 continue;
             }
             let Some((samp, wave_t0, dt)) = self.label_wave(id) else { continue };
-            let ana = match id {
-                WaveId::Ch(c) => &self.ana[c],
-                WaveId::Ref(i) => &self.ref_ana[i],
-            };
+            let Some((ana, analysis_t0)) = self.meas_number_analysis(id, k) else { continue };
             if !ana.valid {
                 continue;
             }
-            let v = self.meas_at(id, k);
+            let v = self.meas_number(id, k);
             if !v.is_finite() {
                 continue;
             }
             let col = self.label_col(id);
             let text = format!("{} {}", k.name(), si(v, k.unit()));
-            let left = t_lo - wave_t0;
+            let left = t_lo - analysis_t0;
             match mark(k, &ana, left) {
                 Some(Mark::Level(l)) => {
                     let y = self.y_of_id(id, l as f32);
@@ -200,7 +197,7 @@ impl Ui {
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
-                    let (x0, x1) = (self.x_of_time((wave_t0 + t0) as f32), self.x_of_time((wave_t0 + t1) as f32));
+                    let (x0, x1) = (self.x_of_time((analysis_t0 + t0) as f32), self.x_of_time((analysis_t0 + t1) as f32));
                     if x1 <= x0 + 1 || x1 < a.x || x0 > a.x + a.w {
                         continue;
                     }

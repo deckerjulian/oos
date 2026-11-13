@@ -112,8 +112,8 @@ impl Ui {
             .meas
             .iter()
             .map(|&(k, id)| {
-                let val = self.meas_at(id, k);
-                MeasRow { name: k.name().to_string(), src: id, v: val, unit: self.meas_unit(id, k), computing: !val.is_finite() && self.measurement_computing(id) }
+                let val = self.meas_number(id, k);
+                MeasRow { name: k.name().to_string(), src: id, v: val, unit: self.meas_unit(id, k), computing: !val.is_finite() && self.meas_number_computing(id, k) }
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
@@ -399,10 +399,7 @@ impl Ui {
 
     /// The selected source at a physical record time, independent of view offset.
     pub(super) fn wave_at(&self, t: f64) -> Option<f32> {
-        let (w, t0, dt) = match self.selected_workspace_source()? {
-            WaveId::Ch(c) => { let r = self.last[0].as_ref()?; (r.ch[c].as_slice(), r.t0, r.dt) },
-            WaveId::Ref(i) => { let r = self.refs[i].as_ref()?; (r.v.as_slice(), r.t0, r.dt) },
-        };
+        let (w, dt, t0) = self.deskew_samples(self.selected_workspace_source()?)?;
         if w.is_empty() || !dt.is_finite() || dt <= 0.0 { return None; }
         let index = (t - t0) / dt;
         if !index.is_finite() || index < 0.0 || index > w.len().saturating_sub(1) as f64 { return None; }
@@ -499,7 +496,7 @@ impl Ui {
             }
         };
         if let Some(dir) = self.setup_path().parent() {
-            for ext in ["csv", "bin", "wfm"] {
+            for ext in crate::store::WAVE_EXTS {
                 add(dir.join(format!("ref{}.{ext}", slot)));
             }
         }
@@ -508,7 +505,7 @@ impl Ui {
             files.sort();
             for p in files {
                 let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-                if matches!(ext.as_str(), "csv" | "bin" | "wfm") {
+                if crate::store::WAVE_EXTS.iter().any(|e| *e == ext) {
                     add(p);
                 }
             }
@@ -532,7 +529,7 @@ impl Ui {
     pub(super) fn ref_import(&mut self) {
         let slot = self.ref_sel + 1;
         if let Some(dir) = self.setup_path().parent() {
-            for ext in ["wfm", "bin", "csv"] {
+            for ext in crate::store::WAVE_EXTS {
                 let p = dir.join(format!("ref{}.{ext}", slot));
                 if p.is_file() {
                     return self.ref_load_path(&p);
@@ -541,7 +538,7 @@ impl Ui {
         }
         self.ref_files = self.ref_wave_candidates();
         match self.ref_files.len() {
-            0 => self.toast("No CSV, BIN or WFM in storage"),
+            0 => self.toast("No CSV, BIN, WFM, TRC, ISF, TR0 or WFMX in storage"),
             1 => {
                 let p = self.ref_files[0].clone();
                 self.ref_load_path(&p);
@@ -611,6 +608,7 @@ impl Ui {
             offset: self.m.ch[c].offset,
             on: true,
         });
+        self.m.deskew_ref[self.ref_sel] = self.m.deskew_ch[c];
         self.measure_refs();
         self.analyzer_update();
         Ok(())
@@ -622,13 +620,13 @@ impl Ui {
         let Some(dir) = self.setup_path().parent().map(|d| d.to_path_buf()) else {
             return Err(format!("missing ref{slot}"));
         };
-        for ext in ["wfm", "bin", "csv"] {
+        for ext in crate::store::WAVE_EXTS {
             let p = dir.join(format!("ref{slot}.{ext}"));
             if p.is_file() {
                 return self.ref_load_file(&p);
             }
         }
-        Err(format!("missing ref{slot}.wfm, ref{slot}.bin or ref{slot}.csv"))
+        Err(format!("missing ref{slot} waveform"))
     }
 
     /// Loads a csv, an OOS `.bin`, or a `.wfm` (`:WFM#002` or `:WFM#003`) into the selected slot.

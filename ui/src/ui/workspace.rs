@@ -378,8 +378,17 @@ mod tests {
         assert_eq!(ui.m.eye_src, WaveId::Ref(2));
         assert_eq!(ui.menu, MenuId::Eye);
         ui.close_menu();
+        let placement = ui.eye_place_control();
+        pointer_tap(&mut ui, placement);
+        assert_eq!(ui.menu, MenuId::Pick);
+        assert_eq!(ui.pick.unwrap().it, Item::EyePlace, "the separate placement target opens its own picker");
+        ui.select_option(Item::EyePlace, "Side");
+        ui.close_picker();
+        assert_eq!(ui.m.eye_place, EyePlace::Side);
+        ui.close_menu();
         let pane = ui.eye_pane_rect();
-        let settings = Rect::new(source.x + source.w + 8, pane.y + 1, 30, HEADER - 2);
+        let place = ui.eye_place_control();
+        let settings = Rect::new(place.x + place.w + 8, pane.y + 1, 30, HEADER - 2);
         pointer_tap(&mut ui, settings);
         assert_eq!(ui.menu, MenuId::Eye);
         ui.close_menu();
@@ -837,7 +846,7 @@ impl Ui {
     pub(super) fn workspace_touch(&mut self, phase: Phase, x: i32, y: i32) -> bool {
         // Menus and dialogs own the pointer before anything behind them can
         // fold, drag or open a context menu on a panel header.
-        if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
             self.workspace.gesture = None;
             return false;
         }
@@ -911,6 +920,7 @@ impl Ui {
     }
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
     pub fn dismiss_context(&mut self) {
+        if self.load_slot_ask { self.cancel_load_slot(); return; }
         let was_drawing = self.zoom_arm;
         self.workspace.popup = None; self.workspace.gesture = None;
         self.zoom_arm = false; self.zoom_path.clear(); self.zoom_map = None;
@@ -927,8 +937,9 @@ impl Ui {
     pub(super) fn fit_selected_record(&mut self) -> bool {
         let Some(source) = self.selected_workspace_source() else { self.toast("No retained waveform to fit"); return false };
         let metadata = match source {
-            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| (r.v.len(), r.dt, r.t0)),
-            WaveId::Ch(c) => self.raw_info(c).or_else(|| self.last[0].as_ref().map(|r| (r.ch[c].len(), r.dt, r.t0))),
+            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| (r.v.len(), r.dt, self.source_time_origin(source, r.t0))),
+            WaveId::Ch(c) => self.raw_info(c).or_else(|| self.last[0].as_ref().map(|r| (r.ch[c].len(), r.dt, r.t0)))
+                .map(|(n, dt, t0)| (n, dt, self.source_time_origin(source, t0))),
         };
         let Some((points, dt, t0)) = metadata.filter(|&(n, dt, t0)| n >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite()) else {
             self.toast("No retained waveform to fit"); return false;

@@ -20,6 +20,8 @@ fn actual_gen7_reference_math_zoom_and_automatic_eye_backend() {
         let bytes = std::fs::read(Path::new("D:/").join(name)).unwrap();
         ui.load_waveform_auto(&bytes, name).unwrap();
     }
+    ui.set_offline(true);
+    ui.m.run = RunState::Stop;
     ui.m.math = MathOp::Sub;
     ui.m.math_a = MATH_REF_BASE + 1;
     ui.m.math_b = MATH_REF_BASE;
@@ -79,6 +81,8 @@ fn actual_cphy_reference_trio_decode_backend() {
         let bytes = std::fs::read(Path::new("D:/WFMs/WFMs").join(name)).unwrap();
         ui.load_waveform_auto(&bytes, name).unwrap();
     }
+    ui.set_offline(true);
+    ui.m.run = RunState::Stop;
     ui.m.dec_proto = Proto::Cphy;
     ui.m.dec_on = true;
     ui.m.dec_src = DEC_REF_BASE;
@@ -113,4 +117,48 @@ fn actual_cphy_reference_trio_decode_backend() {
     output(&mut ui, "04-cphy-reference-trio-decode.png");
     let report = format!("# Actual C-PHY trio backend\n\nVA/VB/VC original native dt/t0 retained; known symbol-rate override2.25Gsym/s. {} electrical fields, {words} aligned16-bit words, {syncs} qualified SYNCs, {errors} error fields. Frame-trigger predicate hit={expected_hit}; Single matched that actual predicate, otherwise stayedWAIT until explicitForce accepted once and stopped. A record without qualified alignment exposes symbols without inventing words. This is six-wirestate, single-trio decoding; no CSI/DSI packet interpretation, multi-trio merging or18-wirestate claim. Final STOP/captures: {:?}/{}. No native window or TekScope commands were used.\n", packets.len(), ui.m.run, ui.replay.captures);
     std::fs::write(Path::new(env!("CARGO_MANIFEST_DIR")).join("../local/ref-integration/actual-backend/cphy.md"), report).unwrap();
+}
+
+#[test]
+fn full_eye_has_optional_panes_compact_placement_picker_and_live_return() {
+    let mut ui=Ui::new(Source::Demo{t:0.0});
+    assert_eq!(ui.m.eye_place,EyePlace::Full);
+    ui.m.mdepth=0;ui.step(0.02);ui.m.run=RunState::Stop;
+    ui.activate(Item::EyeAct);ui.render(&mut Canvas::new(W,H));
+    assert!(ui.eye_open());let full=ui.eye_page_rect();
+    assert!(full.w>=700 && full.h>=300,"{full:?}");
+    let layout=eyepage::layout(full,false);assert!(layout.fig_rows>0 && layout.jit_rows>0);
+    let place=ui.eye_place_control();ui.eye_header_tap(place.x+2,place.y+2);
+    assert!(ui.pick.as_ref().is_some_and(|picker|picker.it==Item::EyePlace));
+    ui.close_menu();
+    for where_ in [EyePlace::Side,EyePlace::Under,EyePlace::Full] {
+        ui.eye_set_place(where_);ui.render(&mut Canvas::new(W,H));
+        assert_eq!(ui.m.eye_place,where_);assert!(ui.eye_page_rect().w>200);
+    }
+    let close=ui.eye_pane_close();assert!(ui.eye_tap(close.x+2,close.y+2));assert!(!ui.eye_open());
+    ui.refs[0]=Some(RefWave{src:0,color:0,label:"test".into(),t0:0.0,dt:1e-9,v:vec![0.0,1.0,0.0],vpd:0.2,offset:0.0,on:true});
+    ui.set_offline(true);
+    let live=ui.top_buttons().into_iter().find(|b|b.0==TopBtn::Live).expect("Live return");
+    ui.tap(live.2.x+4,live.2.y+4);assert!(!ui.record_mode());
+    assert!(!ui.top_buttons().iter().any(|b|b.0==TopBtn::Live));
+    ui.set_offline(true);assert_eq!(ui.sim_items()[0],Item::SimLive);
+    ui.activate(Item::SimLive);assert!(!ui.record_mode());
+    for value in ["Full","Side","Under"] {
+        crate::store::set(&mut ui.m,"eye_place",value).unwrap();
+        let encoded=crate::store::setup_text(&ui.m);let m=crate::store::parse_setup(&encoded).unwrap();assert_eq!(m.eye_place,ui.m.eye_place);
+    }
+}
+
+#[test]
+fn full_eye_owns_plot_input_and_keeps_close_clear_of_the_corner_button() {
+    let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.mdepth=0;ui.step(0.02);
+    ui.set_zoom(true);ui.m.view=AView::Eye;ui.m.eye_place=EyePlace::Full;ui.relayout();
+    let before=(ui.m.tscale,ui.m.delay,ui.m.zscale,ui.m.zdelay,ui.zoom_vfactor,ui.m.zoom);
+    let a=ui.eye_page_rect();assert!(!ui.pointer_wheel(a.x+a.w/2,a.y+a.h/2,1,false));
+    assert!(!ui.pointer_wheel(a.x+a.w/2,a.y+a.h/2,1,true));
+    let hidden=ui.zoom_controls().iter().find(|(_,name)|*name=="H+").unwrap().0;
+    ui.tap(hidden.x+2,hidden.y+2);
+    assert_eq!((ui.m.tscale,ui.m.delay,ui.m.zscale,ui.m.zdelay,ui.zoom_vfactor,ui.m.zoom),before);
+    let close=ui.eye_pane_close();assert!(!overlaps(close,ui.full_btn().1));
+    ui.tap(close.x+4,close.y+4);assert!(!ui.eye_open());assert!(ui.m.zoom);
 }
