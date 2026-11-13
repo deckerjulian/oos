@@ -30,9 +30,15 @@ if [ -n "${OOS_UNIT:-}" ]; then
 	[ -n "$mac" ] && echo "$mac" > "$stage/dtb.mac"
 fi
 [ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
+# the fork's own builds from rootfs/deps.lock (docs/fork/deps.md): built again when missing, or when the manifest line
+# or the build script changed since (deps.sh stamps)
+DEPS_LOCK="$root/rootfs/deps.lock"
+. "$root/rootfs/deps.sh"
+o="$root/rootfs/out"
 # the LAN-only firewall (net.allow, docs/network.md 6)
-[ -x "$root/rootfs/out/nft" ] || "$root/rootfs/build-nft.sh"
-# the SSH server (docs/network.md 7)
-[ -x "$root/rootfs/out/dropbearmulti" ] || "$root/rootfs/build-dropbear.sh"
+if dep_stale "$o/nft" "$root/rootfs/build-nft.sh" libmnl libnftnl nftables; then "$root/rootfs/build-nft.sh"; fi
+# the SSH server and its SFTP subsystem (docs/network.md 7)
+if dep_stale "$o/dropbearmulti" "$root/rootfs/build-dropbear.sh" dropbear; then "$root/rootfs/build-dropbear.sh"; fi
+if dep_stale "$o/sftp-server" "$root/rootfs/build-sftp-server.sh" openssh; then "$root/rootfs/build-sftp-server.sh"; fi
 cp "$here/unit-hook-image.sh" "$stage/image.sh"
 cp "$here/unit-hook-dtb.sh" "$stage/dtb.sh"

@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # ssh-sim.sh - tests /bin/oos-ssh (docs/network.md 7) without a scope: an arm64 container whose busybox is the image's
 # busybox, with the image's oos-conf, oos-firewall, nft and Dropbear. An OpenSSH client logs in over loopback with the
-# password and with a key, copies a key with ssh-copy-id and a file with scp -O, and checks the guards: no listener
+# password and with a key, copies a key with ssh-copy-id and files with scp -O, with scp over SFTP (OpenSSH's default
+# since 9.0) and with sftp, and checks the guards: no listener
 # without remote.ssh, net.allow or the loaded firewall; password login only off while a trusted key exists; password
 # and host key the same after a "power cycle". Needs Docker and one finished image build (its busybox), and
-# rootfs/out/nft and rootfs/out/dropbearmulti (rootfs/build-nft.sh, rootfs/build-dropbear.sh).
+# rootfs/out/nft, rootfs/out/dropbearmulti and rootfs/out/sftp-server (rootfs/build-nft.sh, rootfs/build-dropbear.sh,
+# rootfs/build-sftp-server.sh).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
@@ -14,7 +16,7 @@ out="$root/rootfs/out"
 w="${TMPDIR:-/tmp}/oos-ssh-sim"
 rm -rf "$w"; mkdir -p "$w"
 docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-for f in nft dropbearmulti; do [ -x "$out/$f" ] || { echo "no $out/$f" >&2; exit 1; }; done
+for f in nft dropbearmulti sftp-server; do [ -x "$out/$f" ] || { echo "no $out/$f" >&2; exit 1; }; done
 docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
@@ -77,6 +79,17 @@ echo payload > /c/f
 scp -O $H -o PasswordAuthentication=no -i /c/id /c/f root@127.0.0.1:/tmp/f >/dev/null || fail "scp -O to the scope"
 [ "$(cat /tmp/f 2>/dev/null)" = payload ] || fail "scp content"
 
+echo "== SFTP: scp without -O, sftp put and get"
+head -c 300000 /dev/urandom > /c/big
+scp $H -o PasswordAuthentication=no -i /c/id /c/big root@127.0.0.1:/tmp/big >/c/scp.log 2>&1 || { cat /c/scp.log; fail "scp (SFTP) to the scope"; }
+cmp -s /c/big /tmp/big || fail "scp (SFTP) content"
+scp $H -o PasswordAuthentication=no -i /c/id root@127.0.0.1:/tmp/big /c/big.back >/c/scp.log 2>&1 || { cat /c/scp.log; fail "scp (SFTP) from the scope"; }
+cmp -s /c/big /c/big.back || fail "scp (SFTP) content back"
+printf 'put /c/f /tmp/f2\nget /tmp/big /c/big.sftp\nls -l /tmp/f2\n' > /c/batch
+sftp $H -o PasswordAuthentication=no -i /c/id -b /c/batch root@127.0.0.1 >/c/sftp.log 2>&1 || { cat /c/sftp.log; fail "sftp session"; }
+[ "$(cat /tmp/f2 2>/dev/null)" = payload ] || fail "sftp put"
+cmp -s /c/big /c/big.sftp || fail "sftp get"
+
 echo "== keys only"
 conf "remote.ssh = on" "ssh.password = off"
 run restart; [ "$(st)" = "on: keys only" ] || fail "keys only: $(st)"
@@ -127,7 +140,7 @@ docker run --rm --platform linux/arm64 --cap-add NET_ADMIN \
 	# the image busybox runs every applet from here on (the OpenSSH client and sshpass are the computer side)
 	cp /w/busybox /bin/busybox
 	for f in oos-ssh oos-conf oos-firewall; do cp /src/$f /bin/; done
-	cp /out/nft /out/dropbearmulti /bin/
+	cp /out/nft /out/dropbearmulti /out/sftp-server /bin/
 	for p in dropbear dropbearkey scp; do ln -sf dropbearmulti /bin/$p; done
 	rm -f /etc/passwd /etc/shadow /etc/group
 	sh /w/test

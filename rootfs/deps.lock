@@ -1,0 +1,17 @@
+# deps.lock - every source tarball the image builds from, with its pinned version and SHA-256 (docs/fork/deps.md).
+# Columns: name, owner, version, sha256, url, and optionally a page that lists the releases where the url's directory
+# has no listing (netfilter.org answers 403 there). The fork's build scripts read their lines (rootfs/deps.sh); `upstream:`
+# lines are the values upstream's own scripts carry, listed so tools/deps-check.sh covers them too and warns when the
+# script and this file differ (those scripts stay untouched for cheap upstream syncs). The url holds the version
+# literally: deps-check.sh finds newer releases in its directory listing.
+#
+# name           owner                            version  sha256                                                            url
+dropbear         fork                             2026.94  e098034a843699200c8c977a991fff73159735bf795d5f72ef672c41a6b1ae81  https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.94.tar.bz2
+openssh          fork                             10.6p2   9ae44872090cf2f06b3cf9ff147e7f16f309671340763ed2f99248398ae29d5b  https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.6p2.tar.gz
+libmnl           fork                             1.0.5    274b9b919ef3152bfb3da3a13c950dd60d6e2bcd54230ffeca298d03b40d0525  https://www.netfilter.org/projects/libmnl/files/libmnl-1.0.5.tar.bz2  https://www.netfilter.org/projects/libmnl/downloads.html
+libnftnl         fork                             1.2.9    e8c216255e129f26270639fee7775265665a31b11aa920253c3e5d5d62dfc4b8  https://www.netfilter.org/projects/libnftnl/files/libnftnl-1.2.9.tar.xz  https://www.netfilter.org/projects/libnftnl/downloads.html
+nftables         fork                             1.1.3    9c8a64b59c90b0825e540a9b8fcb9d2d942c636f81ba50199f068fde44f34ed8  https://www.netfilter.org/projects/nftables/files/nftables-1.1.3.tar.xz  https://www.netfilter.org/projects/nftables/downloads.html
+kexec-tools      upstream:rootfs/build-kexec.sh   2.0.32   8f81422a5fd2362cf6cb001b511e535565ed0f32c2f4451fb5eb68fed6710a5d  https://mirrors.edge.kernel.org/pub/linux/utils/kernel/kexec/kexec-tools-2.0.32.tar.xz
+e2fsprogs        upstream:rootfs/build-fsck.sh    1.47.2   08242e64ca0e8194d9c1caad49762b19209a06318199b63ce74ae4ef2d74e63c  https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.2/e2fsprogs-1.47.2.tar.xz
+wpa_supplicant   upstream:rootfs/build-wlan-tools.sh 2.11  912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a  https://w1.fi/releases/wpa_supplicant-2.11.tar.gz
+mesa             upstream:gpu/build.sh            26.0.8   caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc  https://archive.mesa3d.org/mesa-26.0.8.tar.xz
