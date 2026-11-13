@@ -1711,6 +1711,25 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     let n = oos_dsp::eye::tie(&clk.edges, &clk).len();
     assert_eq!(u.azr.page.status[0], format!("Jitter of {} edges, 1 records", n));
 
+    // DQS on R2 folds DQ on R1: the UI is the strobe's edge spacing, not a CDR from the data.
+    let ui = 1e-9;
+    let dt = ui / 16.0;
+    let n = 1600usize;
+    let dq: Vec<f32> = (0..n).map(|k| if ((k as f64 * dt + 0.5 * ui) / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
+    let dqs: Vec<f32> = (0..n).map(|k| if (k as f64 * dt / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
+    put_ref(&mut u, 0, 0.0, dt, dq);
+    put_ref(&mut u, 1, 0.0, dt, dqs);
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(1));
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let (_, _, period) = u.azr.eye_res.clone().expect("strobe eye");
+    assert!((period - ui).abs() < ui * 1e-3, "period {period}");
+    assert!(u.azr.page.title.contains("clock from R2"), "{}", u.azr.page.title);
+
     let (pdt, pn) = (1e-5, 2000usize);
     let tone = |amp: f64, shift: f64| -> Vec<f32> {
         (0..pn).map(|k| (amp * (2.0 * std::f64::consts::PI * 1000.0 * k as f64 * pdt + shift).sin()) as f32).collect()
@@ -1869,4 +1888,81 @@ fn gallery() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.activate(Item::Update);
     shot(&mut u, "s-update");
+}
+
+fn load_dq_dqs(u: &mut Ui) -> bool {
+    let dq = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads/ch3-dq_67a5.wfm");
+    let dqs = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads/ch1-dqs_a0b1.wfm");
+    if !dq.is_file() || !dqs.is_file() {
+        return false;
+    }
+    for c in 0..NCH {
+        u.m.ch[c].on = false;
+    }
+    u.m.la.on = false;
+    u.m.run = RunState::Stop;
+    u.last[0] = None;
+    u.ref_sel = 0;
+    u.ref_load_path(dq);
+    u.ref_sel = 1;
+    u.ref_load_path(dqs);
+    true
+}
+
+#[test]
+fn dq_and_dqs_refs_make_a_strobe_eye() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    if !load_dq_dqs(&mut u) {
+        return;
+    }
+    let r1 = u.refs[0].as_ref().unwrap();
+    let r2 = u.refs[1].as_ref().unwrap();
+    assert_eq!(r1.v.len(), 1_000_000);
+    assert_eq!(r2.v.len(), 1_000_000);
+    assert!((r1.dt - 2e-11).abs() < 1e-18 && (r2.dt - 2e-11).abs() < 1e-18);
+    assert!((r1.t0 - r2.t0).abs() < 1e-18);
+    u.m.meas = [
+        (Meas::Vpp, WaveId::Ref(0)),
+        (Meas::Vmax, WaveId::Ref(0)),
+        (Meas::Vmin, WaveId::Ref(0)),
+        (Meas::Freq, WaveId::Ref(0)),
+        (Meas::Vpp, WaveId::Ref(1)),
+        (Meas::Vmax, WaveId::Ref(1)),
+        (Meas::Period, WaveId::Ref(1)),
+        (Meas::Freq, WaveId::Ref(1)),
+    ]
+    .into();
+    u.m.meas_labels = true;
+    u.meas_src = WaveId::Ref(0);
+    u.measure_refs();
+    if let Some(r) = u.refs[1].as_mut() {
+        r.color = 1;
+    }
+    u.m.tscale = tscales().iter().position(|&t| (t - 2e-6).abs() < 1e-12).unwrap();
+    u.m.tfine = 1.0;
+    u.m.delay = -1.06e-6;
+    u.set_zoom(true);
+    u.m.zscale = tscales().iter().position(|&t| (t - 1e-9).abs() < 1e-12).unwrap();
+    u.m.zdelay = -1.06e-6;
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/ddr-dq-dqs-scope.png", dir), crate::store::png_of(&cv));
+    }
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(1));
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let (meas, _, period) = u.azr.eye_res.clone().expect("DQ vs DQS eye");
+    eprintln!("DQS UI {} s ({:.3} GT/s) height {} V width {} s title {}", period, 1e-9 / period, meas.height, meas.width, u.azr.page.title);
+    assert!(period > 1e-10 && period < 2e-9, "UI {period}");
+    assert!(u.azr.page.title.contains("clock from R2"), "{}", u.azr.page.title);
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/ddr-dq-dqs-eye.png", dir), crate::store::png_of(&cv));
+    }
 }

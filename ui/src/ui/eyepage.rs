@@ -450,15 +450,8 @@ impl Page {
 }
 
 impl Ui {
-    /// Eye page, per record.
-    pub(super) fn eye_update(&mut self, rec: &Record) {
-        let id = self.m.eye_src;
-        let Some(s) = self.wave_samples(rec, id) else {
-            self.azr.page.status = [missing_wave(id), "Switch the source on".into()];
-            return;
-        };
-        let (v, dt) = (s.v, s.dt);
-        let (vpd, offset) = match id {
+    fn eye_scale(&self, id: WaveId) -> (f32, f32) {
+        match id {
             WaveId::Ch(c) => {
                 let ch = &self.m.ch[c.min(NCH - 1)];
                 (ch.volts_per_div(), ch.offset)
@@ -467,36 +460,88 @@ impl Ui {
                 let r = self.refs[i].as_ref().unwrap();
                 (r.vpd, r.offset)
             }
+        }
+    }
+
+    /// Eye page, per record. Clock, when set, is the strobe: its edges fold the source (DQ vs DQS).
+    pub(super) fn eye_update(&mut self, rec: &Record) {
+        let id = self.m.eye_src;
+        let clk_id = self.m.eye_b;
+        if self.wave_samples(rec, id).is_none() {
+            self.azr.page.status = [missing_wave(id), "Switch the source on".into()];
+            return;
+        }
+        if let Some(b) = clk_id {
+            if self.wave_samples(rec, b).is_none() {
+                self.azr.page.status = [missing_wave(b), "Switch the clock on".into()];
+                return;
+            }
+        }
+        let (v, clk_v, dt, t0) = if let Some(b) = clk_id {
+            match self.take_waves(rec, &[id, b], &[]) {
+                Ok(t) => (t.v[0].clone(), Some(t.v[1].clone()), t.dt, t.t0),
+                Err(miss) => {
+                    self.azr.page.status = [missing_wave(miss), "Switch the clock on".into()];
+                    return;
+                }
+            }
+        } else {
+            let s = self.wave_samples(rec, id).unwrap();
+            (s.v, None, s.dt, s.t0)
         };
+        let (vpd, offset) = self.eye_scale(id);
         let lay = layout(self.area);
         let (pw, ph) = (lay.plot.w.max(64), lay.plot.h.max(64));
         let tag = match id {
             WaveId::Ch(c) => (0u8, c),
             WaveId::Ref(i) => (1, i),
         };
-        let key = (tag.0, tag.1, vpd.to_bits(), offset.to_bits(), self.m.eye_rate.to_bits(), pw, ph);
-        let st = match id {
-            WaveId::Ch(c) => self.stats[c],
-            WaveId::Ref(_) => stats(&v, dt),
+        let ctag = match clk_id {
+            None => (0u8, 0usize),
+            Some(WaveId::Ch(c)) => (1, c),
+            Some(WaveId::Ref(i)) => (2, i),
         };
-        let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
+        let key = (tag.0, tag.1, ctag.0, ctag.1, vpd.to_bits(), offset.to_bits(), self.m.eye_rate.to_bits(), pw, ph);
+        let recov = clk_v.as_deref().unwrap_or(&v);
+        let recov_id = clk_id.unwrap_or(id);
+        let st = match recov_id {
+            WaveId::Ch(c) if clk_id.is_none() => self.stats[c],
+            _ => stats(recov, dt),
+        };
+        let (clk_vpd, _) = self.eye_scale(recov_id);
+        // A strobe idles near one rail between bursts; histogram top/base sit on that rail and the
+        // comparator chatters. Peak-to-peak with a wide hysteresis keeps the burst edges.
+        let (thr, hyst) = if clk_id.is_some() {
+            let (lo, hi) = (st.vmin, st.vmax);
+            (0.5 * (lo + hi), (0.2 * (hi - lo)).max(0.1 * clk_vpd))
+        } else {
+            let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
+            (thr, 0.1 * clk_vpd)
+        };
         let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
         let fp = match id {
-            WaveId::Ref(i) => Some((i, ref_fp(&v, dt, s.t0))),
+            WaveId::Ref(i) => {
+                let mut h = ref_fp(&v, dt, t0);
+                if let Some(c) = &clk_v {
+                    h ^= ref_fp(c, dt, t0);
+                }
+                Some((i, h))
+            }
             WaveId::Ch(_) => None,
         };
         if fp.is_some() && fp == self.azr.eye_ref && self.azr.eye.is_some() && self.azr.eye_key == key {
             return;
         }
         // a record without edges changes nothing: an idle bus must not cost the eye its range or its hits
-        let Some(clk) = eye::recover_clock(&v, dt, thr, 0.1 * vpd, rate) else {
-            self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(id));
+        let Some(clk) = eye::recover_clock(recov, dt, thr, hyst, rate) else {
+            self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(recov_id));
             return;
         };
+        let data_st = stats(&v, dt);
         let left = self.azr.eye.as_ref().is_some_and(|e| {
             let (lo, hi) = (e.v_min as f64, e.v_max as f64);
-            let (span, swing) = (hi - lo, (st.vmax - st.vmin) as f64);
-            st.vmax as f64 > hi + EYE_OUT * span || (st.vmin as f64) < lo - EYE_OUT * span || swing < EYE_SHRUNK * span
+            let (span, swing) = (hi - lo, (data_st.vmax - data_st.vmin) as f64);
+            data_st.vmax as f64 > hi + EYE_OUT * span || (data_st.vmin as f64) < lo - EYE_OUT * span || swing < EYE_SHRUNK * span
         });
         if self.azr.eye.is_none() || self.azr.eye_key != key || left {
             // the eye fills its plot whatever the scale of the channel; the signal itself sets the range
@@ -512,7 +557,26 @@ impl Ui {
             self.azr.eye.as_mut().unwrap().clear();
             self.azr.page = Page { vstep: self.azr.page.vstep, ..Page::default() };
         }
-        self.azr.eye.as_mut().unwrap().accumulate(&v, dt, &clk);
+        let (fold, data) = if clk_id.is_some() {
+            let gated = eye::gate_around_clock(&v, dt, &clk, 1.5);
+            let e = self.azr.eye.as_ref().unwrap();
+            let height = |c: &eye::Clock| {
+                let mut t = eye::Eye::new(48, 48, 2, e.v_min, e.v_max);
+                t.accumulate(&gated, dt, c);
+                let h = t.measure(c.period).height;
+                if h.is_finite() {
+                    h
+                } else {
+                    f64::NEG_INFINITY
+                }
+            };
+            let shifted = eye::center_strobe(&clk);
+            let fold = if height(&shifted) > height(&clk) { shifted } else { clk.clone() };
+            (fold, gated)
+        } else {
+            (clk.clone(), v.clone())
+        };
+        self.azr.eye.as_mut().unwrap().accumulate(&data, dt, &fold);
         self.azr.eye_ref = fp;
         let tie = eye::tie(&clk.edges, &clk);
         self.azr.page.add(&tie, &clk);
@@ -524,7 +588,13 @@ impl Ui {
 
     /// The heavy part of the page, from the pool and the last record.
     fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, lay: &Layout, wave: &[f32], rec: &Record) {
-        let clock = if self.m.eye_rate > 0.0 { "clock fitted near the set rate" } else { "clock fitted to the edges" };
+        let clock = if let Some(b) = self.m.eye_b {
+            format!("clock from {}", self.wave_name(b))
+        } else if self.m.eye_rate > 0.0 {
+            "clock fitted near the set rate".into()
+        } else {
+            "clock fitted to the edges".into()
+        };
         let title = format!("{} \u{b7} {} \u{b7} {}", self.wave_name(self.m.eye_src), si(1.0 / clk.period, "b/s"), clock);
         let Some(e) = self.azr.eye.as_ref() else { return };
         let meas = e.measure(clk.period);

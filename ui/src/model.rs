@@ -925,7 +925,7 @@ pub struct Model {
     pub eye_pn_hi: f64,
     /// NPJ stays off until this is set
     pub eye_npj: bool,
-    /// optional second source for common mode, and the rail for PSIJ
+    /// optional clock / other rail: its edges fold the eye (DQS, recovered clock). Common-mode figures also use it.
     pub eye_b: Option<WaveId>,
     pub eye_rail: Option<WaveId>,
     /// Hz removed from the TIE as a sine; 0 = none
