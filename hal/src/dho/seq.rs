@@ -580,14 +580,8 @@ pub fn deinterleave(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
 /// `deinterleave` and `volts` in one pass, straight from the read-out bytes: `cal[c]` = (scale, offset) of CH c+1.
 /// The same numbers as the two passes (the same f64 expression per sample), without the per-channel `u16` vectors.
 pub fn decode_volts(bytes: &[u8], mask: u32, cal: [(f64, f64); 4]) -> [Vec<f32>; 4] {
-    let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
     let ratio = hz::ratio(mask) as usize;
-    // slot k of a group of `ratio` words goes to channel slot[k] (deinterleave's mapping)
-    let slot: [Option<usize>; 4] = match ratio {
-        1 => [on.first().copied(), None, None, None],
-        2 => [Some(on[0]), Some(on[1]), None, None],
-        _ => [0, 1, 2, 3].map(|c| on.contains(&c).then_some(c)),
-    };
+    let slot = slots(mask, ratio);
     let group = 2 * ratio;
     let tail = &bytes[bytes.len() / group * group..];
     let mut out: [Vec<f32>; 4] = Default::default();
@@ -607,6 +601,22 @@ pub fn decode_volts(bytes: &[u8], mask: u32, cal: [(f64, f64); 4]) -> [Vec<f32>;
         out[c] = o;
     }
     out
+}
+
+/// Slot k of a group of `ratio` words goes to channel `slot[k]` (deinterleave's mapping): ratio 1 and 2 = the enabled
+/// channels in order, ratio 4 = word k is CH k+1 when it is enabled. A fixed table: no allocation per frame.
+fn slots(mask: u32, ratio: usize) -> [Option<usize>; 4] {
+    let mut slot = [None; 4];
+    let mut k = 0;
+    for c in (0..4).filter(|c| mask & (1 << c) != 0) {
+        if ratio == 4 {
+            slot[c] = Some(c);
+        } else if k < ratio {
+            slot[k] = Some(c);
+            k += 1;
+        }
+    }
+    slot
 }
 
 /// Volts of word `k` of every whole group of `G` bytes (`decode_volts`).
