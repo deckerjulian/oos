@@ -339,6 +339,16 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
     for (n, &o) in cur.iter().enumerate() {
         coretrim::TrimHw::set_offset(&mut hw, n, o);
     }
+    // gates first: a mode whose input carries a signal is left alone without a nudge or a log line, and tried again
+    // at a later configuration
+    let g = match coretrim::gate(&mut hw, &groups, &lsb) {
+        Ok(g) if g.matched != 0 => g,
+        Ok(_) => return false,
+        Err(e) => {
+            eprintln!("oos-ui hw: core offsets of ADC mode {}: {}", mode, e);
+            return false;
+        }
+    };
     let order = match coretrim::order(&mut hw, &cur) {
         Ok(o) => o,
         Err(e) => {
@@ -346,7 +356,7 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
             return false;
         }
     };
-    match coretrim::trim(&mut hw, &groups, &cur, &order, &lsb) {
+    match coretrim::trim_gated(&mut hw, &groups, &cur, &order, &lsb, &g) {
         Ok(t) => {
             eprintln!("oos-ui hw: core offsets of ADC mode {}: {:?} -> {:?}, order {:?}, {:.2} steps left, matched {:#x} skipped {:#x}", mode, cur, t.offsets, order, t.residual, t.matched, t.skipped);
             if t.offsets != cur {

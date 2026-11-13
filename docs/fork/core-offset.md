@@ -116,7 +116,8 @@ CH3 alone, input open, 100 mV/div, 1.25 GSa/s, trigger CH3.
 - A first try during the start-up mode switches did not converge: the worst slot cycled 6, 7, 5 every round, which
   fits a channel set that changed under the trim. It kept nothing and the next configuration succeeded.
 - Modes 0 and 5 (CH1 with the probe-comp square) refuse the order every start: the signal moves the slots between
-  runs. Harmless, but the order search should come after the quietness gate so these modes are skipped quietly.
+  runs. Harmless. Since then the gates run before the order search: such a mode is skipped without a nudge or a
+  log line and tried again at a later configuration.
 
 `cal.core_offset = tight` stays opt-in.
 

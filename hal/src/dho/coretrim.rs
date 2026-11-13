@@ -152,11 +152,23 @@ pub struct Trimmed {
 /// the ADC x2 of 0x105c), for the tolerance and the gates. Corrections are in register steps through the measured
 /// `order.codes`. Err when a matched channel does not converge in `ROUNDS`.
 pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8], order: &Order, lsb: &[f64; 8]) -> Result<Trimmed, String> {
-    let mut o = *cur;
-    let core_of = |slot: usize| order.slot.iter().position(|&k| k == slot);
-    let mut matched = 0u32;
-    let mut skipped = 0u32;
-    let mut residual: f64 = 0.0;
+    let g = gate(hw, groups, lsb)?;
+    trim_gated(hw, groups, cur, order, lsb, &g)
+}
+
+/// The quietness and level gates over `GATE_RUNS` runs: which channels of `groups` may be matched. Run before
+/// `order`, so a mode whose input carries a signal is skipped without nudging any core (unit round 13: modes with the
+/// probe-comp square on CH1 logged "order not found" at every start).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gate {
+    /// channels matched / skipped (bit c = CH c+1)
+    pub matched: u32,
+    pub skipped: u32,
+    /// slot means and ranges averaged over the gate's runs
+    pub start: [Slot; 8],
+}
+
+pub fn gate(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], lsb: &[f64; 8]) -> Result<Gate, String> {
     let mut runs = Vec::with_capacity(GATE_RUNS);
     for i in 0..GATE_RUNS {
         if i > 0 {
@@ -170,26 +182,32 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
         let (lo, hi) = runs.iter().fold((f64::MAX, f64::MIN), |(a, b), r| (a.min(r[k].mean), b.max(r[k].mean)));
         hi - lo <= STABLE * lsb[k]
     };
-    let usable: Vec<&(usize, Vec<usize>)> = groups
-        .iter()
-        .filter(|(c, sl)| {
-            let mean = sl.iter().map(|&k| first[k].mean).sum::<f64>() / sl.len().max(1) as f64;
-            let clipped = sl.iter().any(|&k| first[k].min == 0 || first[k].max >= 4095);
-            let near = sl.iter().all(|&k| (mean - MID).abs() <= MID_WINDOW * lsb[k]);
-            let alike = groups.len() == 1 || sl.iter().all(|&k| (first[k].mean - mean).abs() <= SPREAD_MAX * lsb[k]);
-            let ok = sl.len() > 1 && !clipped && near && alike && sl.iter().all(|&k| quiet(k) && stable(k));
-            if ok {
-                matched |= 1 << c;
-            } else {
-                skipped |= 1 << c;
-            }
-            ok
-        })
-        .collect();
+    let (mut matched, mut skipped) = (0u32, 0u32);
+    for (c, sl) in groups {
+        let mean = sl.iter().map(|&k| first[k].mean).sum::<f64>() / sl.len().max(1) as f64;
+        let clipped = sl.iter().any(|&k| first[k].min == 0 || first[k].max >= 4095);
+        let near = sl.iter().all(|&k| (mean - MID).abs() <= MID_WINDOW * lsb[k]);
+        let alike = groups.len() == 1 || sl.iter().all(|&k| (first[k].mean - mean).abs() <= SPREAD_MAX * lsb[k]);
+        if sl.len() > 1 && !clipped && near && alike && sl.iter().all(|&k| quiet(k) && stable(k)) {
+            matched |= 1 << c;
+        } else {
+            skipped |= 1 << c;
+        }
+    }
+    Ok(Gate { matched, skipped, start: average(&runs) })
+}
+
+/// `trim` after `gate` (and `order`) ran: matches the channels `g` let through, starting from its readings.
+pub fn trim_gated(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8], order: &Order, lsb: &[f64; 8], g: &Gate) -> Result<Trimmed, String> {
+    let mut o = *cur;
+    let core_of = |slot: usize| order.slot.iter().position(|&k| k == slot);
+    let (matched, skipped) = (g.matched, g.skipped);
+    let mut residual: f64 = 0.0;
+    let usable: Vec<&(usize, Vec<usize>)> = groups.iter().filter(|(c, _)| matched & (1 << c) != 0).collect();
     if usable.is_empty() {
         return Ok(Trimmed { offsets: o, residual: 0.0, matched, skipped });
     }
-    let mut m = average(&runs);
+    let mut m = g.start;
     // the round with the smallest worst core: noise can keep one core above TOL in every round
     let mut best = (f64::MAX, o);
     // per round the worst core and its error, for the failure log
@@ -494,6 +512,31 @@ mod tests {
             let mean = tot.iter().sum::<f64>() / 8.0;
             assert!(tot.iter().all(|x| (x - mean).abs() <= ACCEPT + 0.2), "seed {}: {:?}", seed, tot);
         }
+    }
+
+    // Round 13: a mode with the probe-comp square on its channel. Break it catches: the gate letting a signal through,
+    // or touching a register before the order search would.
+    #[test]
+    fn gate_refuses_a_signal_without_writes() {
+        struct Signal(Model);
+        impl TrimHw for Signal {
+            fn slots(&mut self) -> Option<[Slot; 8]> {
+                let mut s = self.0.slots()?;
+                for x in s.iter_mut() {
+                    (x.min, x.max) = (x.min.saturating_sub(200), x.max + 200);
+                }
+                Some(s)
+            }
+            fn set_offset(&mut self, core: usize, o: i32) {
+                self.0.set_offset(core, o)
+            }
+        }
+        let mut m = Signal(model(MID));
+        let g = gate(&mut m, &[(0, (0..8).collect())], &[16.0; 8]).unwrap();
+        assert_eq!((g.matched, g.skipped, m.0.writes), (0, 1, 0));
+        let mut q = model(MID);
+        let g = gate(&mut q, &[(0, (0..8).collect())], &[16.0; 8]).unwrap();
+        assert_eq!((g.matched, q.writes), (1, 0));
     }
 
     // Round 6: one core about 12 steps above the other seven (1.25 GSa/s, one channel). Break it catches: the
