@@ -9014,7 +9014,7 @@ mod tests {
         use oos_hal::dho::acq::Mode;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-        // 100 us/div, Auto depth: 62.5 MSa/s, the second divider, where the FPGA averages (B1)
+        // 100 us/div, Auto depth: 62.5 MSa/s
         ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
         (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
         ui.m.run = RunState::Run;
@@ -9064,9 +9064,9 @@ mod tests {
         ui.m.avg_hw = true;
         ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
         assert!(!board().avg_hw(&ui.m));
-        // 1 us/div at 1.25 GSa/s: averaged frames were zero on the unit (B1), software average
+        // 1 us/div at 1.25 GSa/s: the FPGA averages at every rate (0x1004 bit 2, B1)
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
-        assert!(!board().avg_hw(&ui.m));
+        assert!(board().avg_hw(&ui.m));
     }
 
     #[test]

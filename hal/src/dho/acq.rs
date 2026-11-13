@@ -34,14 +34,6 @@ pub fn avg_clear() -> Vec<Write> {
     vec![(AVG_CLEAR, 1), (AVG_CLEAR, 0)]
 }
 
-/// Debug (B1, docs/fork/b1-b3.md): 0x1004 bit 2 ("AvgSinc") set whatever the rate, written after the configuration.
-/// The stock driver sets it only below max rate / 8; the netlist routes it to the play side only. For the unit test of
-/// zero averaged frames at 625 MSa/s and above.
-pub fn force_avg_sinc(sh: &mut Shadows) -> Write {
-    sh.s1004 |= 4;
-    (0x1004, sh.s1004)
-}
-
 /// Per-lane field (4 bits, lanes 0..3) of a per-channel flag set `chans` (bit n = CH n+1) for channel `mask`:
 /// ratio 1: the channel's flag in all lanes; ratio 2: lanes 0,1 = lower channel, 2,3 = higher; ratio 4: lane n = CH n+1.
 pub fn lanes(mask: u32, chans: u32) -> u32 {
@@ -89,8 +81,11 @@ pub fn configure_la(sh: &mut Shadows, p: &Params, mask: u32, invert: u32, bwl: u
     w.push((0x4008, sh.s4008));
     sh.s4008 &= !(1 << 24);
     w.push((0x4008, sh.s4008));
-    // bit2 = rate < max rate / 8
-    sh.s1004 = (sh.s1004 & !4) | if p.rate < max_rate / 8 { 4 } else { 0 };
+    // bit2 ("AvgSinc"): rate < max rate / 8 as the stock driver sets it, and always in average mode. Unit 2026-11-13
+    // (B1, spec 01 section 8): without it every averaged frame above 62.5 MSa/s was zero; with it every rate up to
+    // 1.25 GSa/s averaged. The netlist routes the bit to the play side only.
+    let avg = matches!(mode, Mode::Average { .. });
+    sh.s1004 = (sh.s1004 & !4) | if avg || p.rate < max_rate / 8 { 4 } else { 0 };
     w.push((0x1004, sh.s1004));
     // sample delays (cold-boot.md 3.10): base 480 / 240 / 120 plus d / (ratio T)
     let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
@@ -152,13 +147,6 @@ mod tests {
     }
 
     #[test]
-    fn avg_sinc_debug_sets_bit_2_only() {
-        let mut sh = Shadows { s1004: 0x0400_0008, ..Shadows::HANDOVER };
-        assert_eq!(force_avg_sinc(&mut sh), (0x1004, 0x0400_000c));
-        assert_eq!(sh.s1004, 0x0400_000c);
-    }
-
-    #[test]
     fn example1_ch1_200us() {
         let mut sh = Shadows::HANDOVER;
         let w = configure(&mut sh, &prep(1, 200 * US, 0, 0), 1, 0, 0, Mode::Normal);
@@ -195,7 +183,8 @@ mod tests {
     }
 
     // Break it catches: the peak bit or bit 12 left set in average mode, 0x10b0 = count instead of count - 1, the
-    // normal pre-sample compensation, the normal segment size. Values by hand from spec 01, 1.1 and 1.3.
+    // normal pre-sample compensation, the normal segment size, bit 2 missing in average mode (B1: zero frames above
+    // 62.5 MSa/s). Values by hand from spec 01, 1.1 and 1.3.
     #[test]
     fn average_mode_writes() {
         for (tdiv, mask) in [(200 * US, 1), (US, 1), (US, 3)] {
@@ -204,19 +193,21 @@ mod tests {
             let a = configure(&mut sh, &p, mask, 0, 0, Mode::Average { count: 16 });
             let mut sh = Shadows { s1004: 0x0400_100a, ..Shadows::HANDOVER };
             let n = configure(&mut sh, &p, mask, 0, 0, Mode::Normal);
-            assert_eq!(last(&a, 0x1004) & 0x100b, 8);
-            assert_eq!(last(&a, 0x1004) & !0x100b, last(&n, 0x1004) & !0x100b);
+            assert_eq!(last(&a, 0x1004) & 0x100f, 0xc);
+            assert_eq!(last(&a, 0x1004) & !0x100f, last(&n, 0x1004) & !0x100f);
             assert_eq!((last(&a, 0x10b0), last(&a, 0x404c)), (15, 10));
             assert_eq!((last(&n, 0x10b0), last(&n, 0x404c)), (1, 5));
             assert_eq!(last(&a, 0x10e0) as i128, crate::dho::hz::mem_size_avg(p.memsel as i128 * p.ratio as i128));
-            // the same registers in the same order, only the four values differ
+            // the same registers in the same order, only these values differ (0x1004 by bit 2 from its write on)
             assert_eq!(a.iter().map(|x| x.0).collect::<Vec<_>>(), n.iter().map(|x| x.0).collect::<Vec<_>>());
-            let diff: Vec<u32> = a.iter().zip(&n).filter(|(x, y)| x != y).map(|(x, _)| x.0).collect();
+            let mut diff: Vec<u32> = a.iter().zip(&n).filter(|(x, y)| x != y).map(|(x, _)| x.0).collect();
+            diff.dedup();
             assert_eq!(diff, [0x1004, 0x10b0, 0x404c, 0x10e0]);
+            assert!(a.iter().filter(|x| x.0 == 0x1004).skip(1).all(|x| x.1 & 4 != 0));
         }
         // 200 us/div CH1 Auto: 2.5 M points -> (2,500,383 / 320 + 2) x 64 = 500,160 -> 524,288 bursts (normal 0x40000)
         let w = configure(&mut Shadows::HANDOVER.clone(), &prep(1, 200 * US, 0, 0), 1, 0, 0, Mode::Average { count: 16 });
-        assert_eq!((last(&w, 0x10e0), last(&w, 0x1004)), (0x8_0000, 0x0400_0008));
+        assert_eq!((last(&w, 0x10e0), last(&w, 0x1004)), (0x8_0000, 0x0400_000c));
         // counts 1 and 2 both give 1; 1024 gives 1023
         assert_eq!([1, 2, 3, 1024].map(avg_count_reg), [1, 1, 2, 1023]);
         assert_eq!(avg_clear(), [(0x10b4, 1), (0x10b4, 0)]);
