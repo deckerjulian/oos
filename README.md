@@ -155,7 +155,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Full screen: one tap at the top right of the plot hides the top bar and the cards, one more brings them back
 - Text size Normal, Large or Larger for the bars, cards, measurement rows, menus and dialogs; backlight brightness
 - HDMI output as a mirror, as a separate waveform workspace, or laid out again at the monitor's size
-- the picture drawn on the GPU (Mali-T860, Panfrost; Display > Graphics, CPU as before is the other choice): a third
+- the picture drawn on the GPU (Mali-T860, Panfrost; System > Graphics, CPU as before is the other choice): a third
   less load on the frame loop, a monitor scaled without CPU work ([gpu/README.md](gpu/README.md)); the web picture as
   JPEG from the video encoder (VPU)
 
@@ -165,6 +165,8 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Second pane under the plot, as high as its content: spectrum with a peak list, results table with statistics, cursors
   and peaks, decoder events, or the trends of two measurements
 - Measurements labelled on the trace: level lines and arrows with their values
+- Up to four views to switch between (Display > Views): each keeps its windows, second pane, measurements, cursors
+  and zoom; a swipe from the edge of the plot or the numbers in the top bar switch
 - Data logger: measurements as CSV at an interval from 1 s to 1 h, to the stick or the card
 - 8 math channels, also on each other, with free formulas (`sqrt(CH1^2+CH2^2)`): add, subtract, multiply, divide, integrate, differentiate, abs, sqrt, log, ln, exp, Ax+B,
   low/high/band-pass and band-stop filters, FFT
@@ -208,6 +210,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 | LXI identification | 8080 | `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([docs/network.md](docs/network.md) 7) |
+| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-204527.local:8080`, and its services for browsing ([docs/network.md](docs/network.md)) |
 
 None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
 the slow cores with spare time only (on a DHO924S the screen stays at 30 frames a second with two web viewers). All of
@@ -246,7 +249,7 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 | Boot, cold boot, acquisition, trigger, roll and scan, touch, front panel, generator (sine, built-in Bode), self-calibration | run on a DHO924S |
 | Signed updates from the web page and the shell, kexec trial start, trial and confirmation, install over ADB | run on a DHO924S |
 | An update with another device tree, tried by kexec first (kexec-tools, from 0.1.7) | run on a DHO924S: 0.1.6 to 0.1.7 to 0.1.8 through the web page, with cold starts |
-| Display > Graphics = GPU, JPEG live picture from the video encoder | run on a DHO924S on the panel; the GPU picture on a monitor (HDMI) not tried yet |
+| System > Graphics = GPU, JPEG live picture from the video encoder | run on a DHO924S, on the panel and with a 1920x1080 monitor in Mirror, Waveform and Layout |
 | Frequency counter in the FPGA, backlight, AC/DC by a long press | run on a DHO924S (the counter with the built-in generator, 1.5 Hz to 9.9 MHz) |
 | Logic analyser with a PLA2216: lines, pulse widths, edge, pulse, pattern, duration and protocol trigger, UART, SPI and I2C on the lines, roll, scan, whole deep records, CSV | run on a DHO924S, three lines (D0 to D2) driven; thresholds have no effect here, under stock neither |
 | Generator modulation (AM, FM, PM), deep memory, limits, web, MCP, VXI-11 | run on a DHO924S |
@@ -622,6 +625,14 @@ same page puts each channel, math channel and the LA into a window; a new split 
 windows share the time base, and a drag in a window moves a channel of that window. Zoom, XY and the analysers use one
 window. The button with four corners at the top right of the plot gives the plot the whole screen; it shows inward
 corners then and brings the top bar and the cards back.
+
+**Views.** Instead of one screen with everything on it, Display > Views (2, 3 or 4) gives screens to switch between.
+Each view keeps what is shown and where: the windows, the second pane, the measurements and their bar, DVM and
+counter, the cursors, the zoom, the histogram, the analyser page, XY and full screen. The channels, the time base,
+the trigger and the acquisition are the same in all of them; what changes while a view is shown stays with it, and a
+view not used yet starts with the plot alone. To switch: the numbers left of the top bar's buttons, a swipe from the
+left or right edge of the plot inwards (a vertical drag there still moves a channel or the trigger level), the Quick
+key set to Next view, or SCPI `:DISPlay:VIEW <n>` (`:DISPlay:VIEW:COUNt <1..4>`). The views are saved with a setup.
 
 **Text size.** Display > Text size makes the text larger: Normal is the original look, Large and Larger use fonts 2 and 4
 pixels bigger in the top bar, the cards, the measurement and cursor rows, the menus, the keyboard and the dialogs. The rows

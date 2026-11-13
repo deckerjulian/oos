@@ -1,5 +1,53 @@
 # Changes
 
+## 0.1.12
+
+Install from 0.1.7 or newer as always: the web page, System > Update, or the USB stick; then switch the scope off at
+the mains, wait 30 seconds and switch it on. From 0.1.6 or older: install 0.1.7 first (see 0.1.9).
+
+New:
+
+- Display > Views: up to four arrangements of the screen to switch between, instead of one busy screen (asked for in
+  the forum). Each keeps its windows, second pane, measurements, DVM and counter, cursors, zoom, histogram, analyser
+  page, XY and full screen; channels, time base, trigger and acquisition are shared. Switch with the numbers in the
+  top bar, a swipe from the left or right edge of the plot inwards, the Quick key (Next view) or
+  `:DISPlay:VIEW <n>`; `:DISPlay:VIEW:COUNt`. Saved with a setup.
+- System > Date and time > NTP server = DHCP: the scope asks the NTP server its DHCP lease names (option 42), on eth0
+  first, else on WLAN, and `pool.ntp.org` when the lease names none. The NTP state line says which server was asked
+  and where it came from, e.g. `Synced 14:30:05, 192.168.1.1 (DHCP)` or `pool.ntp.org (no DHCP)`. DHCP is the first
+  entry of the picker and the default of a new settings file; a server chosen before stays. Time from NTP stays off
+  by default.
+- The scope by name: `http://dho924s-204527.local:8080` reaches the web remote, also with only a link-local address
+  (a cable straight to a computer). oos-ui answers mDNS (RFC 6762) for `<name>.local` and announces the web remote,
+  SCPI and VXI-11 for browsing (DNS-SD, RFC 6763: `_http._tcp`, `_scpi-raw._tcp`, `_vxi-11._tcp`), only the services
+  that are switched on. System > Network > Remote services has two new rows: mDNS (on by default) and Name, which
+  shows `<name>.local`. The name comes from the model and the serial number and can be changed in the Name picker
+  (Other: the keyboard); it is also the host name the scope sends to DHCP, so a router lists it. When another host
+  already has the name, the scope takes `<name>-2`. Tested on the host (macOS finds the name and the services), not yet
+  on a scope.
+
+Changed:
+
+- Graphics (CPU or GPU) moved from Display to System: it is a setting of the scope, not of the picture.
+- CH2 is teal and CH4 sky blue now (the other way round until 0.1.11), as on the colour rings of the scope's inputs
+  and probes: CH1 yellow, CH2 cyan, CH3 magenta, CH4 blue. Asked for in the forum.
+
+Fixed:
+
+- Display > Graphics = GPU with a monitor was slower than the CPU (reported in the forum: 16 to 19 frames a second
+  with four channels and HDMI Layout, the CPU 22 to 23). The GPU mixed the counts of the stretched traces itself, 16
+  reads of integer textures per pixel: 36 to 41 ms for the traces of a 1920x1080 monitor alone. Now the helper first
+  works out each map's LUT indices at the map's size and the monitor takes them through the GPU's own filter, one
+  read per pixel: 8 to 9 ms. Panel and monitor also keep their own textures in the helper, so a monitor frame no
+  longer makes the panel upload its maps whole and draw its layers again. On a DHO924S, four channels, 1920x1080:
+  30 frames a second in Mirror, Waveform and Layout (were 29, 25, 25; the CPU gives 30, 30, 26), the frame loop at
+  22 to 29 % of its core (CPU: 51 to 70 %). The panel's pixels are the same as before; the monitor's traces differ
+  from before only at their edges.
+- Tests that would have caught it: the device test measures the frame rate, the frame loop's load and the GPU's time
+  per frame with Graphics = CPU and = GPU and, with a monitor, in each HDMI mode (`frame_rate_by_graphics_and_monitor`,
+  run against 0.1.11's helper it fails); `gpu/test-host.sh` checks a monitor frame's cost per pixel. New for it:
+  `:SYSTem:GRAPhics CPU|GPU`, and `:SYSTem:STATe?` names the graphics, the monitor and the GPU time per screen.
+
 ## 0.1.11
 
 Install from 0.1.7 or newer as always: the web page, System > Update, or the USB stick; then switch the scope off at

@@ -350,7 +350,7 @@ impl Display {
 
     fn alloc(&mut self) -> io::Result<()> {
         let (fd, w, h) = (self.fd, self.width as u32, self.height as u32);
-        // three: the GPU fills the third while one is shown and the next waits for its flip (Display > Graphics)
+        // three: the GPU fills the third while one is shown and the next waits for its flip (System > Graphics)
         for _ in 0..3 {
             let mut cd = CreateDumb { width: w, height: h, bpp: 32, ..Default::default() };
             ioc(fd, CREATE_DUMB, &mut cd)?;
@@ -418,7 +418,7 @@ impl Display {
         self.flip(back);
     }
 
-    /// Scan-out buffer `i` as a dma-buf for the GPU (Display > Graphics = GPU), with its row pitch in bytes.
+    /// Scan-out buffer `i` as a dma-buf for the GPU (System > Graphics = GPU), with its row pitch in bytes.
     pub fn export(&self, i: usize) -> io::Result<(std::os::fd::OwnedFd, i32)> {
         use std::os::fd::FromRawFd;
         let b = self.bufs.get(i).ok_or_else(|| io::Error::other("no such buffer"))?;

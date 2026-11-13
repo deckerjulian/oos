@@ -231,3 +231,18 @@ What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
 - Not verified on hardware: all of the above. The counter is polled in every pass of the acquisition loop, also during
   a hardware segment recording or a hardware average; check that it does not disturb them.
 
+
+## Upstream sync 0.1.12 (2026-11-13)
+
+- mDNS and DNS-SD (`ui/src/mdns.rs`): taken. The services announce `_ssh._tcp` (port 22) while `ssh::listens()`,
+  never telnet. LAN questions pass the firewall by `net.allow` like every other service; IPv6 questions from fe80::
+  are dropped. The unit is at `http://dho924s-<serial tail>.local:8080`; the web rebinding guard takes `.local`.
+- Host name: rcS sets it from `net.name` through `oos-conf` (so an image default applies too); upstream's
+  `remote::hostname` is `hostname::set` in the fork, since `remote.rs` stays deleted.
+- NTP server from DHCP option 42 (`ntp.server = dhcp`, the new default): `udhcpc -O ntpsrv`, the answers return
+  through the firewall's established rule. The unit's `system.conf` sets no NTP server, so it follows the lease.
+- GPU traces in two steps and own textures per screen: the Rust interface is unchanged. `gpu/test-host.sh` shows 92
+  pictures equal to the CPU picture within rounding, so drawpipe, the sparse path and persistence draw the same.
+- `stat` and `:SYSTem:STATe?`: the fork's pipeline counters now stand before upstream's graphics and HDMI fields,
+  which upstream's test expects at the end.
+- Not verified on hardware: the responder on the unit, the host name in the DHCP request, option 42 from the DHCP server.

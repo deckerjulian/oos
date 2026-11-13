@@ -34,6 +34,8 @@ mod remote;
 mod ssh;
 mod backlight;
 mod graphics;
+pub mod views;
+pub use views::VIEWS_MAX;
 mod script;
 #[cfg(test)]
 mod lint;
@@ -49,7 +51,7 @@ pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
 
-/// Where a picture is drawn: everything on `under`, or with `over` (Display > Graphics = GPU) the layer over the
+/// Where a picture is drawn: everything on `under`, or with `over` (System > Graphics = GPU) the layer over the
 /// traces, and the traces as `jobs` for the GPU (`Ui::render_layers`, `crate::gpu`).
 pub struct Layers<'a> {
     pub under: &'a mut Canvas,
@@ -625,8 +627,13 @@ enum Item {
     SshImport,
     SshRemove,
     SshRemoveKey,
-    /// Display > Graphics: CPU or GPU (ui/graphics.rs)
+    /// the mDNS switch, and the scope's name on the network (`<name>.local`, a picker with Other on the keyboard)
+    RemMdns,
+    RemName,
+    /// System > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
+    /// Display > Views (ui/views.rs)
+    Views,
     /// Display > Backlight, percent (ui/backlight.rs)
     Backlight,
     WlanInfo,
@@ -698,6 +705,9 @@ pub enum Phase {
 enum Drag {
     None,
     Pending,
+    /// went down in an edge strip of the plot with more than one view: a horizontal swipe switches views, a vertical
+    /// drag becomes `Pending` (ui/views.rs)
+    ViewEdge,
     /// drawing zone k (box: from the touch-down point to the finger; shape: the finger's path)
     Zone(usize),
     Offset(usize),
@@ -884,6 +894,8 @@ pub struct Ui {
     pub hdmi_snap: Vec<u32>,
     /// the same for the GPU: the layer over the traces at that point (the monitor's workspace has no menus)
     pub hdmi_over: Option<Canvas>,
+    /// the monitor's size while one is driven (main.rs), for `:SYSTem:STATe?`
+    pub hdmi_out: Option<(u32, u32)>,
     /// start-up screen (startup.rs) and the last start-up's result (About)
     pub start_up: Option<startup::StartScreen>,
     start_up_last: Option<oos_hal::bootstatus::View>,
@@ -961,8 +973,10 @@ pub struct Ui {
     pub t_draw: f32,
     pub t_render: f32,
     pub t_present: f32,
-    /// Display > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
+    /// System > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
     pub t_gpu: Option<[f32; 6]>,
+    /// the helper's time of the last panel frame and, while the GPU draws for a monitor, of the last monitor frame (ms)
+    pub t_gpu_screens: Option<(f32, Option<f32>)>,
     /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
     pub t_parts: [f32; 4],
     pub info: String,
@@ -1105,6 +1119,7 @@ impl Ui {
             hdmi_snap_want: false,
             hdmi_snap: Vec::new(),
             hdmi_over: None,
+            hdmi_out: None,
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
@@ -1156,6 +1171,7 @@ impl Ui {
             t_render: 0.0,
             t_present: 0.0,
             t_gpu: None,
+            t_gpu_screens: None,
             t_parts: [0.0; 4],
             info: String::new(),
             dirty_map: true,
@@ -1592,6 +1608,12 @@ impl Ui {
             Quick::Single => self.key(key::SINGLE),
             Quick::RunStop => self.key(key::RUNSTOP),
             Quick::Clear => self.clear_display(),
+            Quick::NextView => {
+                if self.m.views < 2 {
+                    return self.toast("Set Display > Views first");
+                }
+                self.view_step(1)
+            }
         }
     }
 
@@ -1966,7 +1988,7 @@ impl Ui {
         self.render_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
     }
 
-    /// The screen into `l`: with one canvas everything is drawn on it; with two (Display > Graphics = GPU) the
+    /// The screen into `l`: with one canvas everything is drawn on it; with two (System > Graphics = GPU) the
     /// background, graticule and masks go under the traces, everything else over them, and the traces become jobs
     /// for the GPU (`gpu.rs`). The order of the drawing is the same either way.
     pub fn render_layers(&mut self, l: &mut Layers) {
@@ -2128,7 +2150,7 @@ impl Ui {
         self.render_view_layers(&mut Layers { under: cv, over: None, jobs: Vec::new() });
     }
 
-    /// `render_view` into layers (Display > Graphics = GPU): the traces become jobs at the monitor's size.
+    /// `render_view` into layers (System > Graphics = GPU): the traces become jobs at the monitor's size.
     pub fn render_view_layers(&mut self, l: &mut Layers) {
         let keep = (self.scr, self.grid, std::mem::take(&mut self.wins), self.area, self.cur_win, self.frames, self.hdmi_snap_want);
         self.scr = Screen { w: l.under.w, h: l.under.h };
@@ -3497,7 +3519,11 @@ impl Ui {
         } else if x + f.m.width(&full) <= room {
             (false, full)
         } else {
-            (false, format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', "")))
+            // tighter, then the rate alone (large text with the view buttons, a USB stick, a WLAN stick)
+            let tight = format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', ""));
+            let alone = rate.replace(' ', "");
+            let main = [tight, alone].into_iter().find(|t| x + f.m.width(t) <= room).unwrap_or_default();
+            (false, main)
         };
         let end = x + if bold { f.mb.width(&main) } else { f.m.width(&main) };
         let mode = format!(" \u{b7} {}", mode);
@@ -3526,7 +3552,7 @@ impl Ui {
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
         let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
         let buttons = self.top_buttons();
-        let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
+        let room = self.view_box().map_or(buttons.first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
         let tcol = if acq_open { ACCENT } else { TEXT };
         let (bold, main, mode) = Self::top_acq(f, r.x + r.w + 14, room, sr, depth as f64, self.acq_name());
@@ -3534,6 +3560,7 @@ impl Ui {
         if let Some(m) = mode {
             cv.text(&f.m, x, 25, &m, tcol);
         }
+        self.draw_view_box(cv);
         // buttons (the open menu in orange)
         let root = self.menu_root();
         for (b, l, r) in buttons {
@@ -3941,7 +3968,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Graphics, Item::Backlight, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::Views, Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Backlight, Item::TextSize, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -3967,7 +3994,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -4712,7 +4739,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::backlight_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
             return k;
         }
         match it {
@@ -4733,7 +4760,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::backlight_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
             return l;
         }
         match it {
@@ -4975,7 +5002,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.backlight_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -5203,7 +5230,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.backlight_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
             return;
         }
         if self.seg_adjust(it, d) {
@@ -5702,7 +5729,7 @@ impl Ui {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone)) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName)) => {
                     let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
                     self.close_picker();
                     self.time_pick(it, k);
@@ -6002,7 +6029,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)) {
+        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -6105,8 +6132,8 @@ impl Ui {
     /// Control of a menu row whose control rectangle is `w` px wide: segmented buttons when all options fit, a
     /// picker (- value +, the value opens the list of all options) for longer option lists, else - value +.
     fn ctl(&self, it: Item, w: i32) -> Ctl {
-        // - and + step, the value opens the keypad (`open_picker`)
-        if it == Item::AfgFreq {
+        // - and + step, the value opens the keypad (`open_picker`); the name's value opens its list even when short
+        if matches!(it, Item::AfgFreq | Item::RemName) {
             return Ctl::Pick;
         }
         if let Item::RefShow(_) = it {
@@ -6918,7 +6945,9 @@ impl Ui {
                     return;
                 }
                 if in_plot {
-                    t.drag = Drag::Pending;
+                    let edge = self.view_edge(x);
+                    let t = &mut self.touch;
+                    t.drag = if edge { Drag::ViewEdge } else { Drag::Pending };
                     if let Some((k, _)) = self.zone_arm {
                         t.drag = Drag::Zone(k);
                         self.zone_path = vec![(x, y)];
@@ -6931,6 +6960,15 @@ impl Ui {
                 }
                 t.x = x;
                 t.y = y;
+                if t.drag == Drag::ViewEdge {
+                    let (x0, dx, dy) = (t.x0, x - t.x0, y - t.y0);
+                    match self.view_swipe(x0, dx, dy) {
+                        Some(true) => self.touch.drag = Drag::None,
+                        Some(false) => return,
+                        None => self.touch.drag = Drag::Pending,
+                    }
+                }
+                let t = &mut self.touch;
                 let (tx0, ty0, tdrag) = (t.x0, t.y0, t.drag);
                 let (dx, dy) = (x - tx0, y - ty0);
                 if tdrag == Drag::Pending && (dx.abs() > 10 || dy.abs() > 10) {
@@ -7068,7 +7106,7 @@ impl Ui {
                     }
                     return;
                 }
-                if was.1 == Drag::None || was.1 == Drag::Pending {
+                if was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge {
                     if (x - was.2).abs() < 16 && (y - was.3).abs() < 16 {
                         self.tap(was.2, was.3);
                     } else {
@@ -7215,8 +7253,11 @@ impl Ui {
         if self.usb && self.top_hit(self.usb_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Storage);
         }
+        if self.view_box_tap(x, y) {
+            return;
+        }
         // sample rate, depth and mode in the top bar: the page that sets them
-        let end = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x) - 4;
+        let end = self.view_box().map_or(self.top_buttons().first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 4;
         if self.top_hit(Rect::new(pill.x + pill.w, pill.y, end - pill.x - pill.w, pill.h)).contains(x, y) {
             return self.toggle_menu(MenuId::Acquire);
         }
@@ -8069,7 +8110,7 @@ mod tests {
         shot(&mut ui, "main_menu");
     }
 
-    /// Display > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
+    /// System > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
     /// directly, on every kind of screen.
     #[test]
     fn recorded_layers_replay_to_the_same_pixels() {
