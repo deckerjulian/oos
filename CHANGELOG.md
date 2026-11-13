@@ -1,6 +1,9 @@
 # Changes
 
-## Unreleased
+## 0.1.12
+
+Install from 0.1.7 or newer as always: the web page, System > Update, or the USB stick; then switch the scope off at
+the mains, wait 30 seconds and switch it on. From 0.1.6 or older: install 0.1.7 first (see 0.1.9).
 
 New:
 
