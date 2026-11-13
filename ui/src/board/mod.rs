@@ -284,6 +284,9 @@ pub struct ZoneRead {
     pub frames: u64,
     pub armed: bool,
     pub pass: bool,
+    /// the status was read inside an acquisition cycle (else armed and pass read 0), and the FSM state
+    pub in_cycle: bool,
+    pub state: u32,
     pub n: u64,
     /// the last batch: frames read, frames planned, milliseconds from arm to read
     pub batch: (u32, u32, f32),

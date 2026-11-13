@@ -1535,7 +1535,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         let n = g.zone.map_or(0, |r| r.n) + 1;
                         g.zone = zr.map(|(ch, slot, ctrl, r)| {
                             let c = r.counters;
-                            crate::board::ZoneRead { ch, slot, ctrl, raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi], frames: c.frames(), armed: r.armed(), pass: r.pass(), n, batch: (count, b.frames, batch_ms) }
+                            crate::board::ZoneRead { ch, slot, ctrl, raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi], frames: c.frames(), armed: r.armed(), pass: r.pass(), in_cycle: r.in_cycle(), state: r.state(), n, batch: (count, b.frames, batch_ms) }
                         });
                     }
                     // hardware average: one frame, shown or not, the average cleared after a complete hold average

@@ -55,6 +55,18 @@ the read follows the first qualified frame at once. `:SYSTem:DEBug:ZONE?` report
 <planned>,batch_ms=<arm to read>`; with `zone.batch = 8` the bench sees whether the ring holds more than one
 qualified frame per arm after all.
 
+Readback (regmap, netlist): the arm bit (0x4030[28]) and the pass flag (0x4038[19]) are right but clear whenever no
+acquisition cycle runs (0x4030 bit 8 = 0, FSM state 0), which is when OOS reads them, after the batch. The debug line
+now shows `cycle` and `state`: `armed` and `pass` mean something only with `cycle=1`. The FSM decides in state 5 once
+the record is complete: pass goes on to completion, fail re-arms in hardware (14, 15, 0). A rejected frame costs a
+whole acquisition. 0x11a0 is a snapshot of qualified frames (latch 0x1190 bit 28, clear bit 30); its strobe likely
+needs the mask column strobe, so it depends on the column layout of `mask::Map` too.
+
+regmap reads the 29/s as most frames being rejected rather than lost in re-arm. Both are checked on the bench: with
+the box on the trace, latch `frames` over 10 s in mode intersect, then not intersect. If the two counts do not add up
+to the triggers in that time, the table limits or columns are off (sweep with `hwmask.md` "Sweep of the mapping");
+if they add up and used/s stays low, the batch wait is the cause.
+
 Bench: the round 3 box case with `zone.batch` unset, then 4 and 16; note used/s, `batch` and `batch_ms` for each,
 and the software-filter rate for comparison. Goal: at least the software rate.
 
@@ -74,7 +86,7 @@ Probe on CH1 at the probe-comp output (1 kHz square). `zone.hw = on` in system.c
 `:SYSTem:DEBug:ZONE?` and `:SYSTem:STATe?` after each step. Hardware mask test off.
 
 1. CH1 only, 1 V/div, 200 us/div, edge CH1 rising at 50 %, Normal sweep. Draw zone 1 as a box on the high level
-   right after the trigger, mode "intersect". The debug line shows `slot=0`, `armed=1`, frames rising, `pass=1`.
+   right after the trigger, mode "intersect". The debug line shows `slot=0`; `armed=1` and `pass=1` only on readings with `cycle=1`.
    The picture keeps updating at the normal rate.
 2. Move the box above the trace (no touch). Expect no new frames: the status stays WAIT and `frames` stops while
    `:SYSTem:STATe?` shows no new acquisitions accepted. If frames keep arriving and `pass=0`, the zone only flags:
