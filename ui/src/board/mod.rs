@@ -274,7 +274,14 @@ pub struct Shared {
     /// they need, runs of 1.7 ms) and the answer (request number, per channel; None where the unit gave nothing usable)
     pub levels_want: Option<(u64, u64, u32)>,
     pub levels: Option<(u64, [Option<ChLevels>; 4])>,
+    /// debug (`:DEBug:SLOTs?`): one raw run of the measure unit, wanted (request number) and the answer (request
+    /// number, per slot 0..7: 12-bit min, 12-bit max, mean on the 16-bit scale; None when the unit gave nothing)
+    pub slots_want: Option<u64>,
+    pub slots: Option<SlotDump>,
 }
+
+/// A raw measure-unit run for `:DEBug:SLOTs?`: request number, per slot 12-bit min, 12-bit max, 16-bit mean.
+pub type SlotDump = (u64, Option<[[f32; 3]; 8]>);
 
 /// Levels of one channel from the measure unit, in volts as the records show them.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

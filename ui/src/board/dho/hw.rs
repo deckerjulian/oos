@@ -710,6 +710,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut configs = 0u64;
         // the last request of the measure-unit levels answered
         let mut levels_done: Option<u64> = None;
+        let mut slots_done: Option<u64> = None;
         loop {
             counter_tick(&mut bar, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
@@ -871,6 +872,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let v = levels_measure(&mut bar, &s, &state.gain, runs);
                 out.lock().unwrap().levels = Some((id, v));
                 levels_done = Some(id);
+            }
+            // debug: one raw run of the measure unit for `:DEBug:SLOTs?`
+            let sw = out.lock().unwrap().slots_want;
+            if let Some(id) = sw.filter(|&id| mode == Slow::Off && slots_done != Some(id)) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                let r = oos_hal::dho::levels::run(&mut bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64)));
+                out.lock().unwrap().slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
+                slots_done = Some(id);
             }
             if mode != Slow::Off {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
