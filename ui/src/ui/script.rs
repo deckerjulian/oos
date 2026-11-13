@@ -71,6 +71,16 @@ impl Ui {
         Ok(())
     }
 
+    /// Opens the picker of the item `label` of the open menu (the grid of all its options, as a tap on its value).
+    pub fn script_pick(&mut self, label: &str) -> Result<(), String> {
+        let it = self.script_item(label)?;
+        if self.options(it).is_empty() {
+            return Err(format!("{} has no options to pick from", label.trim()));
+        }
+        self.open_picker(it);
+        Ok(())
+    }
+
     /// Presses the item `label` of the open menu (an action, or a sub-menu).
     pub fn script_do(&mut self, label: &str) -> Result<(), String> {
         let it = self.script_item(label)?;
@@ -94,6 +104,9 @@ mod tests {
         assert!(!u.sys.gpu);
         assert!(u.script_set("Graphics", "Purple").is_err());
         assert!(u.script_do("No such item").is_err());
+        u.script_menu("Trigger").unwrap();
+        u.script_pick("Type").unwrap();
+        assert_eq!(u.menu, MenuId::Pick);
         // a value item, down and up
         u.script_menu("Mask").unwrap();
         u.script_set("Tolerance X", "0.04 div").unwrap();

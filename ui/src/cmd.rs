@@ -13,6 +13,7 @@
 //!   menu <name>              opens a menu by its title or the entry that opens it (ui/script.rs)
 //!   set <label> = <value>    an item of the open menu by its label, to the option shown as <value>
 //!   do <label>               presses an item of the open menu (an action or a sub-menu)
+//!   pick <label>             opens the grid of all options of an item of the open menu (as a tap on its value)
 //!   stat [path]              write fps / frame count / state to /tmp/oos-ui.stat
 //!   quit
 
@@ -93,11 +94,12 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
         }
         "release" => ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: 0, y: 0 }),
         // by name: the rest of the line (labels have spaces)
-        "menu" | "set" | "do" => {
+        "menu" | "set" | "do" | "pick" => {
             let rest = line.trim_start()[w[0].len()..].trim();
             let r = match w[0] {
                 "menu" => ui.script_menu(rest),
                 "do" => ui.script_do(rest),
+                "pick" => ui.script_pick(rest),
                 _ => match rest.split_once(" = ") {
                     Some((l, v)) => ui.script_set(l, v),
                     None => Err("set <label> = <value>".into()),
