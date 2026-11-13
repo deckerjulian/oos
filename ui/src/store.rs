@@ -536,7 +536,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "cur_c" => m.cur_c = p_f32(v)?,
         "cur_d" => m.cur_d = p_f32(v)?,
         "touch_lock" => m.touch_lock = p_bool(v)?,
-        "aux_out" => m.aux_out = Some(p_enum(v, &AUX_OUTS)?).filter(|a| a.offered()).ok_or_else(|| format!("aux_out {} needs the hardware mask unit", v))?,
+        "aux_out" => m.aux_out = p_enum(v, &AUX_OUTS)?,
         "fine_v" => m.fine_v = p_bool(v)?,
         "fine_t" => m.fine_t = p_bool(v)?,
         "tfine" => m.tfine = p_f32(v)?.clamp(0.1, 1.0),
@@ -1288,15 +1288,14 @@ mod tests {
         assert!(parse_setup("delay").is_err());
     }
 
-    /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state), pass/fail only with the
-    /// hardware mask unit.
+    /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state).
     #[test]
     fn setup_aux_out() {
         assert_eq!(parse_setup("ch2.on = true").unwrap().aux_out, AuxOut::TrigOut);
         assert!(setup_text(&Model::default()).contains("aux_out = TrigOut\n"));
         assert_eq!(parse_setup("aux_out = Off").unwrap().aux_out, AuxOut::Off);
         assert!(parse_setup("aux_out = Blink").is_err());
-        assert_eq!(parse_setup("aux_out = PassFail").is_ok(), AUX_PASSFAIL);
+        assert_eq!(parse_setup("aux_out = PassFail").unwrap().aux_out, AuxOut::PassFail);
     }
 
     /// The Quick key action: written by name, read back, unknown names rejected, missing key = Screenshot.

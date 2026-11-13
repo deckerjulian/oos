@@ -151,6 +151,13 @@ the 5x of the arithmetic alone.
   vectors (a pool the UI thread returns dropped frames' `ch` vectors to) and calls `decode_volts_into`. Until then
   every frame of >= 32 k samples per channel is a fresh musl mmap.
 
+## Status of item 7 (branch feat/compress)
+
+Done, opt-in `acq.compress = on` (`docs/fork/compress.md`): FPGA compression at k = floor(samples per column / 4) for
+records up to 1 M points where the dense fast path applies; the newest frame of each batch is read again raw
+(`seq::read_raw_again`) for the record; pairs drawn by `compress::deposit_pairs`. Host: 10 us/div 1 ch 20 -> 299
+frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in compress.md, not run.
+
 ## Status of the UI items (branch perf/ui)
 
 - 2 reverted (every acquired frame is to be used, see the deposit pipeline).

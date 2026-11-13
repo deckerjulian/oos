@@ -68,11 +68,16 @@
 //!   --la               logic analyser on (la.md, UNTESTED): LA set-up and a second, raw LA read after the analog one
 //!                      (run writes the bytes of that last read, the LA words); --la-thr 1.4 threshold of both pods in V
 //!                      (--la-alone: no analog channel shown, the analog rate is not halved)
+//!   --raw-too          with --compress k > 1: read the newest frame once more, raw (seq::read_raw_again), to --out.raw
 //!   --out /tmp/frame.bin
+//!   oos-fpgad compress-check <raw.bin> <compressed.bin> --k K [--mask 1]
+//!                                          offline (runs anywhere): which min/max pair layout explains the compressed
+//!                                          read of the same record (oos_hal::dho::pairs, docs/fork/compress.md)
 //! A channel set different from --app-mask switches the ADC mode; --afe and a mode switch read the calibration from
 //! OOS_CAL_DIR (default /rigol/data).
 
 mod board;
+mod compcheck;
 
 use oos_hal::dho::seq::{self, Settings, Step};
 use oos_hal::dho::{adc, afe, tpu};
@@ -86,11 +91,13 @@ struct Opt {
     out: String,
     execute: bool,
     no_read: bool,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    raw_too: bool,
 }
 
 fn parse(args: &[String]) -> Result<Opt, String> {
     let mut s = Settings::default();
-    let (mut app_mask, mut out, mut execute, mut no_read) = (1u32, "/tmp/frame.bin".to_string(), false, false);
+    let (mut app_mask, mut out, mut execute, mut no_read, mut raw_too) = (1u32, "/tmp/frame.bin".to_string(), false, false, false);
     let (mut scale, mut offset, mut bw) = (1.0, 0.0, afe::bw::OFF);
     let (mut n, mut at, mut all) = (4000u32, -2000i64, false);
     let mut i = 0;
@@ -157,6 +164,7 @@ fn parse(args: &[String]) -> Result<Opt, String> {
                     "--la-alone" => s.la = Some(oos_hal::dho::la::Set { analog_shown: false, ..s.la.unwrap_or_default() }),
                     "--all" => all = true,
                     "--execute" => execute = true,
+                    "--raw-too" => raw_too = true,
                     _ => return Err(format!("unknown option {}", a)),
                 }
             }
@@ -168,7 +176,10 @@ fn parse(args: &[String]) -> Result<Opt, String> {
     if !(1..=15).contains(&app_mask) {
         return Err("--app-mask 1..0xf".into());
     }
-    Ok(Opt { s, app_mask, out, execute, no_read })
+    if raw_too && s.compress < 2 {
+        return Err("--raw-too needs --compress k > 1".into());
+    }
+    Ok(Opt { s, app_mask, out, execute, no_read, raw_too })
 }
 
 fn print(st: &[Step]) {
@@ -257,6 +268,16 @@ fn main() {
         }
         return;
     }
+    if cmd == "compress-check" {
+        match compcheck::run(&args[2..]) {
+            Ok(text) => print!("{}", text),
+            Err(e) => {
+                eprintln!("oos-fpgad: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if matches!(cmd, "status" | "rd" | "wr" | "cold-boot" | "fpga-boot" | "pll" | "gpio") {
         if let Err(e) = tool(cmd, &args[2..]) {
             eprintln!("oos-fpgad: {}", e);
@@ -281,18 +302,20 @@ fn main() {
     let cal = if o.s.afe { afe::Cal::load(&dir).ok() } else { None };
     let cal_adc = adc::CalAdc::load(&dir).ok();
     let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
-    let st = match seq::plan(&mut state, &o.s, cal.as_ref(), cal_adc.as_ref()) {
-        Ok((mut st, _)) => {
+    let (st, plan_p) = match seq::plan(&mut state, &o.s, cal.as_ref(), cal_adc.as_ref()) {
+        Ok((mut st, p)) => {
             if o.no_read {
                 st.retain(|x| !matches!(x, Step::Read { .. }));
             }
-            st
+            (st, p)
         }
         Err(e) => {
             eprintln!("oos-fpgad: {}", e);
             std::process::exit(2);
         }
     };
+    #[cfg(not(target_os = "linux"))]
+    let _ = plan_p;
     if cmd == "plan" || !o.execute {
         print(&st);
         if cmd == "run" {
@@ -303,7 +326,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
-        let run = || -> Result<(), String> {
+        let mut run = || -> Result<(), String> {
             let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
             let v = bar.rd(0x4000);
             if v != FPGA_VERSION {
@@ -313,6 +336,7 @@ fn main() {
             let mut c2h = std::fs::File::open("/dev/xdma0_c2h_0").map_err(|e| format!("/dev/xdma0_c2h_0: {}", e))?;
             let t0 = std::time::Instant::now();
             let log = |m: String| eprintln!("{:8.1} ms  {}", t0.elapsed().as_secs_f64() * 1e3, m);
+            let mut raw = oos_hal::dho::bus::DmaBuf::new();
             let bytes = if o.s.frames > 1 {
                 // batch: configuration, then arm / wait for the ring / read the recorded frames (max 30 ms extra)
                 let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
@@ -321,10 +345,22 @@ fn main() {
                 let mut dma = oos_hal::dho::bus::DmaBuf::new();
                 let n = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut dma, false, 30, log)?;
                 eprintln!("{:8.1} ms  {} frames of {} bytes", t0.elapsed().as_secs_f64() * 1e3, n, seq::frame_bytes(&o.s, &p));
+                if o.raw_too {
+                    seq::read_raw_again(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut raw, n.max(1) - 1, log)?;
+                }
                 dma.into_vec()
             } else {
-                seq::execute(&st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?
+                let b = seq::execute(&st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
+                if o.raw_too {
+                    seq::read_raw_again(&mut state, &o.s, &plan_p, &mut bar, &mut c2h, &mut raw, 0, log)?;
+                }
+                b
             };
+            if o.raw_too {
+                let path = format!("{}.raw", o.out);
+                std::fs::write(&path, raw.data()).map_err(|e| format!("{}: {}", path, e))?;
+                eprintln!("{:8.1} ms  {} raw bytes of the same record -> {}", t0.elapsed().as_secs_f64() * 1e3, raw.data().len(), path);
+            }
             std::fs::write(&o.out, &bytes).map_err(|e| format!("{}: {}", o.out, e))?;
             eprintln!("{:8.1} ms  {} bytes -> {}", t0.elapsed().as_secs_f64() * 1e3, bytes.len(), o.out);
             Ok(())

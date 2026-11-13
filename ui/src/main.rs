@@ -17,6 +17,7 @@ mod clock;
 mod cmd;
 mod decode;
 mod ethlink;
+mod compress;
 mod fastdraw;
 mod font;
 mod gfx;

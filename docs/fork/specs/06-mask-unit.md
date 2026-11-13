@@ -1,6 +1,6 @@
 # Pass/fail mask unit (0x1190..0x11dc, 0x4020)
 
-Status: specification from static analysis. Short form.
+Status: specification from static analysis. Short form. Implemented opt-in (`mask.hw = on`), see `../hwmask.md`.
 
 ## 1. What the stock firmware does
 

@@ -157,11 +157,33 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         la,
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m)).then(|| Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
         aux: aux_out(m.aux_out),
+        // the mask test comes from the UI's mask (`Shared::mask_want`), merged in the acquisition thread
+        hwmask: None,
     };
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
+    if crate::compress::enabled() {
+        live_compress(m, &mut s);
+    }
     s
+}
+
+/// The live compression for the model (compress.rs): the factor of `compress::k_for` for the record of `s` where the
+/// model allows it (not in roll or scan), else none.
+fn live_compress(m: &Model, s: &mut Settings) {
+    if slow_mode(m) != Slow::Off || !crate::compress::allowed(m) || s.la.is_some() || s.segments.is_some() || !matches!(s.mode, oos_hal::dho::acq::Mode::Normal) {
+        return;
+    }
+    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+    s.compress = crate::compress::k_for(p.rate, s.tdiv, p.memsel);
+}
+
+/// The batch was read with the live compression (`live_compress`): its newest frame is read again raw
+/// (`seq::read_raw_again`) for the record the UI keeps.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn raw_newest(b: &Settings, p: &hz::Params) -> bool {
+    b.compress > 1 && p.memsel <= crate::compress::MAX_DEPTH
 }
 
 /// The AUX OUT set-up of the menu choice. Pass/fail takes the default pulse of `auxout::PassFail` (docs/fork/auxout.md).
@@ -347,6 +369,23 @@ pub fn dvm_hw_on() -> bool {
 /// The `dvm.hw` line of system.conf; off unless `on`.
 fn dvm_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
+}
+
+/// `mask.hw = on` in system.conf: the mask test runs in the FPGA's mask unit (docs/fork/hwmask.md) and the software
+/// test only where it cannot. Off by default until the sample scale and the slots are verified on the unit.
+pub fn mask_hw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| mask_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `mask.hw` line of system.conf; off unless `on`.
+fn mask_hw_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "mask.hw").as_deref() == Some("on")
+}
+
+/// The mask test of the acquisition settings from the UI's wish.
+fn hw_mask(w: &crate::board::MaskWant) -> oos_hal::dho::seq::HwMask {
+    oos_hal::dho::seq::HwMask { ch: w.ch, lo: w.lo.clone(), hi: w.hi.clone(), stop_on_fail: w.stop, clear: w.clear }
 }
 
 /// Seconds between two readings of the DVM block, and from its (re)start to the first one. The window of 2^28 samples
@@ -669,6 +708,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut la_fails = 0u32;
         // the read buffer of the batches, kept (bus::DmaBuf)
         let mut dma = oos_hal::dho::bus::DmaBuf::new();
+        // the raw second read of the newest frame of a compressed batch (compress.rs)
+        let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
         // this thread's share of the deposit work while it waits (drawpipe.rs)
@@ -766,9 +807,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
-            let (want, want_mode, avg_clear) = {
+            let (want, want_mode, avg_clear, mask_want) = {
                 let g = out.lock().unwrap();
-                (g.want.clone(), g.slow, g.avg_clear)
+                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.as_ref().map(hw_mask))
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -778,6 +819,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
+            want.hwmask = mask_want;
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
@@ -1092,6 +1134,18 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         },
                         _ => None,
                     };
+                    // live compression: the newest frame once more, raw, before anything arms the FPGA again
+                    let raw_frame = if raw_newest(&b, &p) && count > 0 {
+                        match seq::read_raw_again(&mut state, &b, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
+                            Ok(()) => Some(decode(raw_dma.data(), &seq::raw_settings(&b), &p, 0)),
+                            Err(e) => {
+                                status(format!("raw read of the newest frame: {}", e));
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
                     // arm (prearm below) can record anything
                     if hw_status_on() {
@@ -1104,6 +1158,16 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         };
                         let mut g = out.lock().unwrap();
                         g.trig_fired = Some((g.trig_fired.map_or(1, |x| x.0 + 1), f));
+                    }
+                    // the mask unit's counters after every batch (docs/fork/hwmask.md)
+                    let mr = state.mask_ctrl().zip(b.hwmask.as_ref()).zip(state.mask_run).map(|((ctrl, m), run)| {
+                        let raw = oos_hal::dho::mask::read(&mut bar, ctrl);
+                        (m.ch, run.0, ctrl, raw)
+                    });
+                    {
+                        let mut g = out.lock().unwrap();
+                        let n = g.mask.map_or(0, |r| r.n) + 1;
+                        g.mask = mr.map(|(ch, slot, ctrl, raw)| crate::board::MaskRead { ch, slot, ctrl, raw: [raw.frames_lo, raw.frames_hi, raw.fails_lo, raw.fails_hi], frames: raw.frames(), fails: raw.fails(), n });
                     }
                     // hardware average: one frame, shown or not, the average cleared after a complete hold average
                     let after = avg.as_mut().map(|(tr, _, logged)| {
@@ -1132,9 +1196,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back
                     let pipe = crate::drawpipe::pipe().filter(|x| after.is_none() && avail > 1 && x.accepting());
+                    // the raw newest frame stands for the newest compressed one (same record)
+                    let raw_frame = raw_frame.filter(|_| avail as u32 == count);
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
-                        let newest = Frame { stamp, ..decode(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n) };
+                        let newest = match raw_frame {
+                            Some(f) => Frame { stamp, seq: n, ..f },
+                            None => Frame { stamp, ..decode(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n) },
+                        };
                         let next = pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
                         let next = next.or_else(|| (pool_made < POOL).then(|| {
                             pool_made += 1;
@@ -1150,14 +1219,19 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         vec![newest]
                     } else {
-                        dma.data()
+                        let mut all: Vec<Frame> = dma
+                            .data()
                             .chunks_exact(fb.max(1))
                             .take(avail)
                             .map(|chunk| {
                                 n += 1;
                                 Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
                             })
-                            .collect()
+                            .collect();
+                        if let (Some(r), Some(last)) = (raw_frame, all.last_mut()) {
+                            *last = Frame { stamp, seq: last.seq, ..r };
+                        }
+                        all
                     };
                     if after.is_some_and(|a| a.clear) {
                         if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
@@ -1363,6 +1437,71 @@ mod tests {
     }
 
     #[test]
+    fn mask_columns_of_the_board() {
+        assert_eq!(crate::board::MASK_COLUMNS, oos_hal::dho::mask::COLUMNS);
+    }
+
+    /// Live compression and the mask test never run together: a mask (in software or in the FPGA, which needs
+    /// `mask_on` too) keeps every frame raw, so the fast path the hardware mask keeps on draws uncompressed frames.
+    #[test]
+    fn a_mask_keeps_live_compression_off() {
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        let mut s = settings(&m, false);
+        live_compress(&m, &mut s);
+        assert!(s.compress > 1, "compression applies at 10 us/div without a mask");
+        m.mask_on = true;
+        let mut s = settings(&m, false);
+        live_compress(&m, &mut s);
+        assert_eq!(s.compress, 1);
+    }
+
+    #[test]
+    fn mask_hw_from_conf() {
+        assert!(!mask_hw_from(""));
+        assert!(mask_hw_from("mask.hw = on\n"));
+        assert!(!mask_hw_from("mask.hw = 1\n"));
+    }
+
+    /// The software mask in the hardware table, and the comparator modelled on the read-out words (the assumed sample
+    /// scale, `mask::code`): what the software passes the table passes, a runt fails both.
+    #[test]
+    fn hardware_table_agrees_with_the_software_mask() {
+        use oos_hal::dho::mask;
+        let (scale, offset) = (1.0, -1.5);
+        let n = 20_000;
+        // 5 periods of a 0..3 V square with a little noise, and a runt in period 3
+        let wave = |runt: bool, seed: u32| -> Vec<f32> {
+            (0..n)
+                .map(|k| {
+                    let ph = k % 4000;
+                    let hi = if runt && k / 4000 == 3 { 1.2 } else { 3.0 };
+                    let noise = (((k as u32).wrapping_mul(2_654_435_761).wrapping_add(seed) >> 16) as f32 / 65536.0 - 0.5) * 0.04;
+                    (if ph < 2000 { hi } else { 0.0 }) + noise
+                })
+                .collect()
+        };
+        let m = oos_dsp::mask::build(&wave(false, 1), 20, 0.2);
+        let (lo, hi) = m.columns(mask::COLUMNS);
+        let cols = mask::table(&lo, &hi, scale, offset);
+        // the read-out word of a sample (inverse of `seq::decode_volts`), and the 8-bit comparator on it
+        let fails = |v: &[f32]| -> bool {
+            v.iter().enumerate().any(|(k, &x)| {
+                let w = (32768.0 + (x as f64 + offset) / scale * 7500.0).round().clamp(0.0, 65535.0) as u32;
+                let c = (w >> mask::SHIFT) as u8;
+                let col = cols[k * mask::COLUMNS / n];
+                (col.lo_en && c < col.lo) || (col.hi_en && c > col.hi)
+            })
+        };
+        for seed in 2..8 {
+            let v = wave(false, seed);
+            assert!(m.test(&v).pass && !fails(&v), "seed {}", seed);
+        }
+        let v = wave(true, 9);
+        assert!(!m.test(&v).pass && fails(&v));
+    }
+
+    #[test]
     fn dvm_hw_from_conf() {
         assert!(!dvm_hw_from(""));
         assert!(dvm_hw_from("dvm.hw = on # FPGA DVM\n"));
@@ -1468,6 +1607,54 @@ mod tests {
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-9), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre), (1_250_000_000, 80, 40), "depth {}", s.depth);
+    }
+
+    // Break it catches: live compression where the model needs every sample, a factor that leaves fewer than two
+    // pairs per column, compression above 1 M points (the deep-memory read), a batch that does not grow with it.
+    #[test]
+    fn live_compression_plan_by_time_base() {
+        let plan = |tdiv: f64, two: bool| {
+            let mut m = Model::default();
+            m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
+            m.ch[1].on = two;
+            let mut s = settings(&m, false);
+            let raw = s.clone();
+            live_compress(&m, &mut s);
+            let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+            let (b, r) = (batch_plan(&s, &p), batch_plan(&raw, &p));
+            (b.compress, oos_hal::dho::seq::frame_bytes(&b, &p), b.frames, r.frames, p)
+        };
+        // every sample at 100 ns/div
+        assert_eq!(plan(100e-9, false).0, 1);
+        for (tdiv, two) in [(1e-6, false), (2e-6, false), (10e-6, false), (100e-6, false), (10e-6, true), (1e-3, false)] {
+            let (k, fb, frames, raw_frames, p) = plan(tdiv, two);
+            let per_column = p.rate as f64 * tdiv * 10.0 / crate::compress::SCREEN_COLUMNS;
+            assert!(k >= crate::compress::K_MIN, "{} s/div: k {}", tdiv, k);
+            // at least POINTS_PER_COLUMN points per column, less than twice that
+            let points = per_column / k as f64;
+            assert!((crate::compress::POINTS_PER_COLUMN..2.0 * crate::compress::POINTS_PER_COLUMN).contains(&points), "{} s/div: {} points per column", tdiv, points);
+            assert_eq!(fb, 2 * p.ratio as usize * oos_hal::dho::seq::compressed_len(&Settings { compress: k, ..Settings::default() }, &p) as usize);
+            assert!(frames >= raw_frames, "{} s/div: {} vs {} frames", tdiv, frames, raw_frames);
+            assert!(raw_newest(&Settings { compress: k, ..Settings::default() }, &p));
+        }
+        // 10 us/div, one channel: 100 k points at 625 MSa/s (the Auto depth cap), 200 kB raw per frame become 13 kB,
+        // 20 frames per batch become 299 (then the frame ring, 448, is the limit)
+        let (k, fb, frames, raw_frames, p) = plan(10e-6, false);
+        assert_eq!((p.rate, p.memsel, k, raw_frames), (625_000_000, 100_000, 15, 20), "{:?}", p);
+        assert_eq!((fb, frames), (13_344, 299));
+        // the model needs every sample
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        m.trig_mode = TrigMode::Single;
+        let mut s = settings(&m, false);
+        live_compress(&m, &mut s);
+        assert_eq!(s.compress, 1);
+        // deep records keep the deep-memory read
+        m.trig_mode = TrigMode::Auto;
+        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let mut s = settings(&m, false);
+        live_compress(&m, &mut s);
+        assert_eq!(s.compress, 1);
     }
 
     #[test]
