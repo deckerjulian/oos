@@ -105,11 +105,116 @@ pub struct Map {
 /// Adds `w` to every pixel of `map` (w x h, row-major) the trace covers: per column the span of its samples, joined
 /// to the last sample of the column before (so steep edges stay connected). Needs at least one sample per column
 /// (`x_per_sample <= 1`).
+///
+/// The spans are worked out first (`spans`) and then added in one of two ways with the same result: column by column
+/// (one scattered read-modify-write per pixel, a row apart in memory) when the spans are short, or row by row over the
+/// rows the frame touches (a vectorised pass that adds `wgt` where the row lies in a column's span) when they are long:
+/// a noisy or fast signal at 100 samples per column covers tens of rows in every column, and the scattered writes
+/// were three quarters of the time.
 pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
+    SPANS.with(|sp| {
+        let sp = &mut *sp.borrow_mut();
+        let Some((c0, c1, rmin, rmax, pixels)) = spans(v, m, w, h, sp) else { return };
+        let (lo, hi) = (&sp.lo[..], &sp.hi[..]);
+        if pixels > sweep_cost(rmax - rmin + 1, c1 - c0) {
+            for r in rmin..=rmax {
+                let row = &mut map[r * w + c0..r * w + c1];
+                let r = r as i16;
+                for ((px, &a), &b) in row.iter_mut().zip(&lo[c0..c1]).zip(&hi[c0..c1]) {
+                    // wgt where a <= r <= b, else 0: no branch per pixel
+                    let inside = ((a <= r) & (r <= b)) as u16;
+                    *px = px.saturating_add(wgt & 0u16.wrapping_sub(inside));
+                }
+            }
+        } else {
+            for c in c0..c1 {
+                let (a, b) = (lo[c], hi[c]);
+                let mut i = a.max(0) as usize * w + c;
+                for _ in a..=b {
+                    map[i] = map[i].saturating_add(wgt);
+                    i += w;
+                }
+            }
+        }
+    });
+}
+
+/// Per column the rows of `deposit` (`lo`..=`hi`, empty when lo > hi), kept per thread so a frame allocates nothing.
+#[derive(Default)]
+pub struct Spans {
+    lo: Vec<i16>,
+    hi: Vec<i16>,
+}
+
+thread_local! {
+    static SPANS: std::cell::RefCell<Spans> = std::cell::RefCell::new(Spans::default());
+}
+
+/// Scattered pixel writes the row sweep of `rows` x `cols` pixels is worth: about one scattered read-modify-write per
+/// eight pixels of the sweep (eight u16 lanes per vector step, a compare and an add each). Only the speed depends on it.
+fn sweep_cost(rows: usize, cols: usize) -> usize {
+    rows * cols / 8
+}
+
+/// The spans of `deposit` into `sp`: columns `c0..c1`, the rows used (`rmin..=rmax`) and the pixel count; None when
+/// nothing is drawn.
+fn spans(v: &[f32], m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usize, usize, usize, usize, usize)> {
+    if v.is_empty() || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
+        return None;
+    }
+    // first sample of column c: ceil(k_of(c)); per column one min/max over a slice (no per-sample screen math)
+    let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
+    let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
+    let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
+    let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
+    if c1 <= c0 {
+        return None;
+    }
+    if sp.lo.len() < w {
+        sp.lo.resize(w, i16::MAX);
+        sp.hi.resize(w, i16::MIN);
+    }
+    let hh = h as i32;
+    let (mut rmin, mut rmax, mut pixels) = (usize::MAX, 0usize, 0usize);
+    let mut ka = first(c0);
+    for c in c0..c1 {
+        let (lo, hi) = (&mut sp.lo[c as usize], &mut sp.hi[c as usize]);
+        (*lo, *hi) = (i16::MAX, i16::MIN);
+        let kb = first(c + 1);
+        if kb <= ka {
+            continue;
+        }
+        let (mut mn, mut mx) = min_max(&v[ka..kb]);
+        // the join to the previous column's last sample
+        if ka > 0 && v[ka - 1].is_finite() {
+            mn = mn.min(v[ka - 1]);
+            mx = mx.max(v[ka - 1]);
+        }
+        ka = kb;
+        if !(mn <= mx) {
+            continue;
+        }
+        let (ya, yb) = (mn * m.y_per_volt + m.y0, mx * m.y_per_volt + m.y0);
+        let r0 = (ya.min(yb).round() as i32).max(0);
+        let r1 = (ya.max(yb).round() as i32).min(hh - 1);
+        if r0 > r1 {
+            continue;
+        }
+        (*lo, *hi) = (r0 as i16, r1 as i16);
+        rmin = rmin.min(r0 as usize);
+        rmax = rmax.max(r1 as usize);
+        pixels += (r1 - r0 + 1) as usize;
+    }
+    (pixels > 0).then_some((c0 as usize, c1 as usize, rmin, rmax, pixels))
+}
+
+/// `deposit` as it was before the span pass (one scattered write per pixel, one compare chain per sample): the
+/// reference of the equality test and of the timing guard.
+#[cfg(test)]
+pub fn deposit_reference(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
     if v.is_empty() || m.x_per_sample <= 0.0 {
         return;
     }
-    // first sample of column c: ceil(k_of(c)); per column one min/max over a slice (no per-sample screen math)
     let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
     let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
     let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
@@ -121,13 +226,7 @@ pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16
         if kb <= ka {
             continue;
         }
-        let (mut mn, mut mx) = (f32::INFINITY, f32::NEG_INFINITY);
-        for &x in &v[ka..kb] {
-            // f32::min/max skip NaN (gaps)
-            mn = mn.min(x);
-            mx = mx.max(x);
-        }
-        // the join to the previous column's last sample
+        let (mut mn, mut mx) = min_max_scalar(&v[ka..kb]);
         if ka > 0 && v[ka - 1].is_finite() {
             mn = mn.min(v[ka - 1]);
             mx = mx.max(v[ka - 1]);
@@ -145,6 +244,63 @@ pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16
             i += w;
         }
     }
+}
+
+/// Minimum and maximum of `s`, NaN skipped (`f32::min`/`max`: fminnm/fmaxnm on aarch64); (inf, -inf) when empty or
+/// all NaN. On aarch64 four NEON accumulators of four lanes each (16 samples per step) instead of one compare chain
+/// per sample, which bound the loop by the compare latency. The same values give the same extremes in any order, so
+/// the result equals the one-chain loop (a zero may come back as -0.0 where the chain gave +0.0 or the other way;
+/// both map to the same pixel row).
+#[inline]
+pub fn min_max(s: &[f32]) -> (f32, f32) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON is part of the aarch64 baseline; loads stay inside `s` (chunks of 16)
+        unsafe { min_max_neon(s) }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        min_max_scalar(s)
+    }
+}
+
+/// `min_max` as one chain: the reference, and the code on other targets.
+#[cfg_attr(all(target_arch = "aarch64", not(test)), allow(dead_code))]
+pub fn min_max_scalar(s: &[f32]) -> (f32, f32) {
+    let (mut a, mut b) = (f32::INFINITY, f32::NEG_INFINITY);
+    for &x in s {
+        a = a.min(x);
+        b = b.max(x);
+    }
+    (a, b)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn min_max_neon(s: &[f32]) -> (f32, f32) {
+    use core::arch::aarch64::*;
+    let mut it = s.chunks_exact(16);
+    let (mut n0, mut n1, mut n2, mut n3) = (vdupq_n_f32(f32::INFINITY), vdupq_n_f32(f32::INFINITY), vdupq_n_f32(f32::INFINITY), vdupq_n_f32(f32::INFINITY));
+    let (mut x0, mut x1, mut x2, mut x3) = (vdupq_n_f32(f32::NEG_INFINITY), vdupq_n_f32(f32::NEG_INFINITY), vdupq_n_f32(f32::NEG_INFINITY), vdupq_n_f32(f32::NEG_INFINITY));
+    for c in &mut it {
+        let p = c.as_ptr();
+        let (a, b, d, e) = (vld1q_f32(p), vld1q_f32(p.add(4)), vld1q_f32(p.add(8)), vld1q_f32(p.add(12)));
+        n0 = vminnmq_f32(n0, a);
+        n1 = vminnmq_f32(n1, b);
+        n2 = vminnmq_f32(n2, d);
+        n3 = vminnmq_f32(n3, e);
+        x0 = vmaxnmq_f32(x0, a);
+        x1 = vmaxnmq_f32(x1, b);
+        x2 = vmaxnmq_f32(x2, d);
+        x3 = vmaxnmq_f32(x3, e);
+    }
+    let mut a = vminnmvq_f32(vminnmq_f32(vminnmq_f32(n0, n1), vminnmq_f32(n2, n3)));
+    let mut b = vmaxnmvq_f32(vmaxnmq_f32(vmaxnmq_f32(x0, x1), vmaxnmq_f32(x2, x3)));
+    for &x in it.remainder() {
+        a = a.min(x);
+        b = b.max(x);
+    }
+    (a, b)
 }
 
 /// Dots display (`Model::dots`): every sample as one pixel, no spans and no joins; the brightness of a column follows
@@ -175,6 +331,103 @@ pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Signals for the deposit equality: sine, noisy square, noise, a ramp, clipped beyond the map, NaN gaps, flat.
+    fn signals(n: usize) -> Vec<Vec<f32>> {
+        let mut x = 12345u32;
+        let mut rnd = move || {
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            ((x >> 8) & 0xffff) as f32 / 65536.0 - 0.5
+        };
+        let mut out = vec![
+            (0..n).map(|i| 0.9 * (i as f32 / 400.0 * std::f32::consts::TAU).sin()).collect::<Vec<f32>>(),
+            (0..n).map(|i| 0.7 * (i as f32 / 37.0).sin() + 0.3 * (i as f32 / 5.3).sin()).collect(),
+            (0..n).map(|i| if (i / 900) % 2 == 0 { 1.5 } else { -1.5 } + 0.0).collect(),
+            (0..n).map(|i| i as f32 / n as f32 * 10.0 - 5.0).collect(),
+            (0..n).map(|i| 6.0 * (i as f32 / 300.0).sin()).collect(),
+            vec![0.25; n],
+        ];
+        out.push((0..n).map(|_| rnd()).collect());
+        out.push((0..n).map(|i| if (i / 700) % 2 == 0 { 1.0 } else { -1.0 } + 0.05 * rnd()).collect());
+        let mut gaps: Vec<f32> = (0..n).map(|i| (i as f32 / 90.0).sin()).collect();
+        for i in (0..n).step_by(97) {
+            gaps[i..(i + 13).min(n)].fill(f32::NAN);
+        }
+        out.push(gaps);
+        out
+    }
+
+    // Break it catches: a span pass that draws other pixels than one scattered write per pixel did (rows, columns,
+    // joins, clipping, NaN gaps, saturation), whichever of the two ways it adds them.
+    #[test]
+    fn deposit_is_bit_identical_to_the_scattered_writes() {
+        let (w, h) = (970usize, 448usize);
+        let mut cases = 0;
+        let mut sweeps = 0;
+        for n in [1_408usize, 12_512, 100_000] {
+            for v in signals(n) {
+                for (xps, ti, x0) in [(1.0 / 100.0, n as f64 / 2.0, 485.0), (0.00776, n as f64 / 2.0 + 0.37, 485.0), (0.7, 3.3, 10.0), (970.0 / n as f64, 0.0, 0.0), (0.0123, n as f64 * 0.9, 120.5), (0.25, -40.0, 0.0)] {
+                    for (ypv, y0) in [(-56.0f32, 224.0f32), (-560.0, 224.0), (37.0, 10.0), (-5.0, 447.6)] {
+                        for (wgt, pre) in [(24u16, 0u16), (1, 0), (60_000, 30_000)] {
+                            let m = Map { ti, x_per_sample: xps, x0, y_per_volt: ypv, y0 };
+                            let (mut a, mut b) = (vec![pre; w * h], vec![pre; w * h]);
+                            deposit_reference(&mut a, w, h, &v, &m, wgt);
+                            deposit(&mut b, w, h, &v, &m, wgt);
+                            assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
+                            let mut sp = Spans::default();
+                            if let Some((c0, c1, r0, r1, px)) = spans(&v, &m, w, h, &mut sp) {
+                                sweeps += (px > sweep_cost(r1 - r0 + 1, c1 - c0)) as usize;
+                            }
+                            cases += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // both ways of adding were compared
+        assert!(sweeps > 20 && sweeps < cases - 20, "{} of {} cases swept", sweeps, cases);
+    }
+
+    // Timing guard (tools/perf-guard.sh): the span pass against one scattered write per pixel, per signal, at 100 k and
+    // 12.5 k points over 970 columns. Never slower on short spans (square), faster on long ones (sine, noise).
+    #[test]
+    #[ignore]
+    fn perf_guard_deposit_spans() {
+        let (w, h) = (970usize, 448usize);
+        let names = ["sine", "two sines", "square", "ramp", "clipped", "flat", "noise", "noisy square", "gaps"];
+        let mut worst: f64 = 0.0;
+        for n in [100_000usize, 12_512] {
+            for (name, v) in names.iter().zip(signals(n)) {
+                let m = Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
+                let mut map = vec![0u16; w * h];
+                let reps = 300;
+                let time = |f: fn(&mut [u16], usize, usize, &[f32], &Map, u16), map: &mut Vec<u16>| {
+                    let t = std::time::Instant::now();
+                    for _ in 0..reps {
+                        f(map, w, h, &v, &m, 1);
+                    }
+                    t.elapsed() / reps
+                };
+                let (old, new) = (time(deposit_reference, &mut map), time(deposit, &mut map));
+                let r = new.as_secs_f64() / old.as_secs_f64();
+                worst = worst.max(r);
+                println!("deposit {} pt {}: one write per pixel {:?}, span pass {:?} (ratio {:.2})", n, name, old, new, r);
+            }
+        }
+        assert!(worst <= 1.25, "the span pass must not be slower: worst ratio {:.2}", worst);
+    }
+
+    #[test]
+    fn min_max_equals_the_chain() {
+        for v in signals(1000) {
+            for (a, b) in [(0usize, 0usize), (0, 1), (3, 19), (0, 1000), (17, 500), (999, 1000)] {
+                let (x, y) = (min_max(&v[a..b]), min_max_scalar(&v[a..b]));
+                assert!(x.0 == y.0 && x.1 == y.1 || (x.0.is_nan() && y.0.is_nan()), "{:?} {:?}", x, y);
+            }
+        }
+        assert_eq!(min_max(&[]), (f32::INFINITY, f32::NEG_INFINITY));
+        assert_eq!(min_max(&[f32::NAN; 40]), (f32::INFINITY, f32::NEG_INFINITY));
+    }
 
     #[test]
     fn edge_is_refined_near_pre() {
@@ -279,4 +532,5 @@ mod tests {
         assert_eq!((col3(5), map3[5 * w + 5], col3(4)), (vec![5], 4, vec![15]));
     }
 }
+
 

@@ -151,6 +151,40 @@ the 5x of the arithmetic alone.
   vectors (a pool the UI thread returns dropped frames' `ch` vectors to) and calls `decode_volts_into`. Until then
   every frame of >= 32 k samples per channel is a fresh musl mmap.
 
+## Status of the raw deposit (branch perf/deposit)
+
+The unit's four A53 workers ran at ~90 % at 10 us/div, 100 k points (unitlab), where compression is not allowed
+(mask, zones, zoom, Peak, non-DC). Host profile of one worker frame (M3, release, 100 k points, sine fixture of the
+drawpipe tests): decode 17 us, trigger refinement 11 us, deposit 43 us per channel, of which 30 us were the vertical
+spans: one read-modify-write per pixel, each a row (1940 bytes) from the last.
+
+- `fastdraw::deposit` works out the spans of a frame first (`spans`, per column rows lo..hi into a per-thread array),
+  then adds them column by column as before when they are short, or row by row over the rows the frame touches when
+  they are long: a branchless pass per row that adds `wgt` where the row lies in the column's span (NEON: cmge.8h,
+  and, uqadd.8h, eight pixels per step; checked in the release asm). Threshold `sweep_cost`: pixels > rows x
+  columns / 8 (host-tuned; on the A53, where a scattered pixel costs more against a vector step, the sweep would pay
+  off earlier).
+- Column min/max: `fastdraw::min_max`, NEON with four min and four max accumulators (fminnm/fmaxnm .4s, 16 samples
+  per step) instead of one compare chain per sample.
+- Output bit-identical: `deposit_is_bit_identical_to_the_scattered_writes` compares with the old function
+  (`deposit_reference`) over 9 signals (incl. NaN gaps, clipping, flat), 3 lengths, 6 mappings, 4 vertical scales and
+  saturation; both ways of adding occur in the corpus. `min_max_equals_the_chain`.
+
+Host results: deposit per channel 0.37-0.98 of the old (sine 0.49, noise 0.37, square 0.87, clipped full-height
+0.98; `perf_guard_deposit_spans`, guard <= 1.25). Worker frame decode + draw at 10 us/div: 1 ch 114 -> 72 us, 2 ch
+181 -> 81 us; `perf_guard_deposit_worker_per_frame` at 125 k points: frames mode 130 -> 85 us, one pipeline core 155
+-> 113 us. Not measured on the A53.
+
+Not changed, for the next step:
+- Dots (`deposit_dots`, the default display): 130 us per channel at 100 k points, one scattered write per sample.
+  Counting rows per column first (lanes against store forwarding) was slower on the host for steep signals (each
+  sample on its own row); not kept.
+- Memory traffic: decode writes 400 kB of f32 per channel and the deposit reads it back; on the A53 (512 kB L2) that
+  is likely the larger cost. A fused decode + deposit from the 16-bit codes (the volt mapping is monotone, so the
+  column extremes come from the code extremes exactly) with only the trigger window decoded would cut it about 5x,
+  but needs a board hook in drawpipe (codes are board-specific).
+- Per-frame statistics (`framestats`, measurements on): +160 us per frame at 125 k points, more than the deposit.
+
 ## Status of item 7 (branch feat/compress)
 
 Done, opt-in `acq.compress = on` (`docs/fork/compress.md`): FPGA compression at k = floor(samples per column / 4) for
