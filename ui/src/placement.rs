@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Thread placement on a big.LITTLE SoC (fork, docs/fork/perf-plan.md item 6). Without it the frame loop, the GPU
-//! helper and the acquisition thread share both A72 of the RK3399 (`http::pin_to_big_cores`). With OOS_PLACE set:
+//! helper and the acquisition thread share both A72 of the RK3399 (`http::pin_to_big_cores`). With `perf.place = on`:
 //! the frame loop (and the GPU helper it starts) on the first big core, the acquisition thread on the second. Workers
 //! already go to the little cores (`http::to_little_cores`). Opt-in until measured on the unit; Linux only, a no-op elsewhere and on SoCs whose cores are
 //! all alike. The xdma interrupt goes to a little core from the rootfs (`/proc/irq/<n>/smp_affinity`), not from here.
@@ -62,13 +62,18 @@ fn little_of(cap: &[(usize, u32)]) -> Option<usize> {
     Some(cap.iter().filter(|x| x.1 < max).count()).filter(|&n| n > 0)
 }
 
-/// OOS_PLACE set (any value but empty or 0).
+/// `perf.place = on` in system.conf (it also moves the xdma interrupts: rootfs `oos-irq-place`), or OOS_PLACE set
+/// (any value but empty or 0; off with those).
 fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OOS_PLACE").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *ON.get_or_init(|| {
+        let env = std::env::var("OOS_PLACE").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
+        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        crate::drawpipe::conf_value(env, &conf, "perf.place").as_deref() == Some("on")
+    })
 }
 
-/// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when OOS_PLACE is set.
+/// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when placement is on.
 pub fn place(r: Role) {
     if !enabled() {
         return;

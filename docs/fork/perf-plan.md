@@ -158,11 +158,15 @@ the 5x of the arithmetic alone.
   the comparator state proves it equals the wide search (module comment), else the wide search runs. Guards: equality
   over a synthetic corpus (42 k cases, half answered near), two adversarial fallback frames; ignored timing test, host
   ratio 0.04-0.05 (30 -> 1.4 us at 12.5 k points, 231 -> 8.5 us at 100 k).
-- 6 done, opt-in `OOS_PLACE=1`: `placement::place` puts the frame loop and GPU helper on cpu4, the hw thread on cpu5.
-  Workers stay on the A53s through the existing `http::to_little_cores`. Guard: plan from a fake sysfs tree.
-  Not in ui/: the xdma interrupt to an A53 belongs in the rootfs (`oos-fpga-up`: `echo 1 > /proc/irq/<xdma>/
-  smp_affinity`, IRQ number from `/proc/interrupts`, 241 on this unit). Unit check: `top -H -d 1` per core,
-  `/proc/interrupts`, UI frame time with and without `OOS_PLACE`.
+- 6 done, opt-in `perf.place = on` in system.conf (or OOS_PLACE=1 for oos-ui alone): `placement::place` puts the
+  frame loop and GPU helper on cpu4, the hw thread on cpu5; workers run on the A53s. Guard: plan from a fake sysfs
+  tree. xdma interrupts: `rootfs/board/dho/bin/oos-irq-place`, run by `oos-board bring-up` after the cold boot (one
+  fork line in `oos-board`), writes the little-core mask (0xf on the RK3399, from `cpu_capacity`) to
+  `/proc/irq/<n>/smp_affinity` of every `xdma` line in `/proc/interrupts`; a no-op without `perf.place = on`, never
+  fails the bring-up. Checked on the host with a fake /proc and /sys under busybox sh. With poll_mode=1 (the default)
+  there is no xdma interrupt: the completions run in xdma's own per-CPU kernel threads, which the script cannot move
+  (they are bound per CPU); the IRQ step matters with `xdma.params = poll_mode=0` (item 5). Unit check: `top -H -d 1`
+  per core, `/proc/interrupts`, UI frame time with and without the setting.
 - 4 done, default on, bit-identical: `sparse::draw` replaces `Frame::clone` + `to_record` + `draw_ex` for sparse
   frames with an edge trigger found on a channel (else `to_record` as before). Most of the cost is `lanczos8`
   (30 of 40 us per channel at 3600 points), not the clone (5 %). `sparse::lanczos8_many` sums eight points at a time,
@@ -189,11 +193,11 @@ the 5x of the arithmetic alone.
   the acquisition: the sparse interpolation dominates (polyphase kernel, item 4, needs the unit's screenshot check),
   and the A72 hw thread may take a share.
   Work sharing: one worker per little core (`placement::little_count`, 4 on the RK3399, 2 where all cores are alike).
-  Workers claim 4 frames at a time from the batch; with OOS_PREARM the hw thread claims single frames while the next
-  batch records, polling 0x4010 between frames, so the read waits at most one frame. Without prearm the hw thread
-  does not help (the arm is inside `acquire_batch_until`, which has no hook during the ring fill; that needs a hal
-  change). Host per frame on one core (M3, perf_guard): 50 us at 100 ns/div (1408 pt, sparse), 25 us at 1 us/div,
-  163 us at 10 us/div; 4 workers 75 k / 116 k / 16 k frames/s. Estimate (not measured; A72 about 4x the host, A53
+  Workers claim 4 frames at a time from the batch. The hw thread claims single frames while the ring fills, with or
+  without prearm, through `seq::acquire_batch_idle` (hal: an idle hook called instead of the 200 us sleep, the frame
+  count read after every call, so the read waits at most one frame; no change when unset; hal test
+  `idle_during_ring_fill`). Host per frame on one core (M3, perf_guard): 50 us at 100 ns/div (1408 pt, sparse), 25 us
+  at 1 us/div, 163 us at 10 us/div; 4 workers 75 k / 116 k / 16 k frames/s. Estimate (not measured; A72 about 4x the host, A53
   about 8x): 4 A53 reach about 10 k frames/s at 100 ns/div, 20 k at 1 us/div, 3 k at 10 us/div; the A72 helper adds up
   to 5 k / 10 k / 1.5 k when its wait is long.
   Fast interpolation, opt-in `acq.interp = fast` / OOS_INTERP=fast (`sparse::fast_many`): the exact 16-tap sinc
