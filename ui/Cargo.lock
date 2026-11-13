@@ -319,6 +319,7 @@ dependencies = [
  "minifb",
  "oos-dsp",
  "oos-hal",
+ "windows-sys",
 ]
 
 [[package]]

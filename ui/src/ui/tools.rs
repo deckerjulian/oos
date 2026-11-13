@@ -564,41 +564,11 @@ impl Ui {
         }
     }
 
-    pub(super) fn ref_load_path(&mut self, p: &std::path::Path) {
-        let bytes = match std::fs::read(p) {
-            Ok(b) => b,
-            Err(_) => return self.toast(&format!("No {}", crate::store::file_name(p))),
-        };
-        let traces = match crate::store::parse_wave(&bytes, &crate::store::file_name(p)) {
-            Ok(t) => t,
-            Err(e) => return self.toast(&e),
-        };
-        if traces.is_empty() {
-            return self.toast("That file holds no waveform");
+    pub(super) fn ref_load_path(&mut self, path: &std::path::Path) {
+        match self.ref_load_file(path) {
+            Ok(()) => self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(path))),
+            Err(error) => self.toast(&error),
         }
-        let c = self.ref_src;
-        let n = traces.len().min(NREF);
-        for (k, tr) in traces.into_iter().take(n).enumerate() {
-            let slot = (self.ref_sel + k) % NREF;
-            let span = tr.v.iter().copied().fold(0.0_f32, |m, x| m.max(x.abs())).max(0.1);
-            self.refs[slot] = Some(RefWave {
-                src: c,
-                color: 0,
-                label: tr.label,
-                t0: tr.t0,
-                dt: tr.dt,
-                v: tr.v,
-                vpd: nearest_ref_vdiv(span / 4.0),
-                offset: 0.0,
-                on: true,
-            });
-        }
-        if self.offline {
-            self.present_record(self.ref_sel);
-        }
-        self.measure_refs();
-        self.analyzer_update();
-        self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(p)));
     }
 
     /// The Slot row: R1 is 0.
@@ -669,7 +639,7 @@ impl Ui {
         for ext in ["wfm", "bin", "csv"] {
             let p = dir.join(format!("ref{slot}.{ext}"));
             if p.is_file() {
-                return self.ref_load_path(&p);
+                return self.ref_load_file(&p);
             }
         }
         Err(format!("missing ref{slot}.wfm, ref{slot}.bin or ref{slot}.csv"))
@@ -688,10 +658,10 @@ impl Ui {
         } else {
             self.setup_path().parent().map(|d| d.join(p)).unwrap_or_else(|| p.to_path_buf())
         };
-        self.ref_load_path(&p)
+        self.ref_load_file(&p)
     }
 
-    fn ref_load_path(&mut self, p: &std::path::Path) -> Result<(), String> {
+    fn ref_load_file(&mut self, p: &std::path::Path) -> Result<(), String> {
         if !p.is_file() {
             return Err(format!("missing {}", crate::store::file_name(p)));
         }
@@ -719,6 +689,9 @@ impl Ui {
                 offset: 0.0,
                 on: true,
             });
+        }
+        if self.offline {
+            self.present_record(self.ref_sel);
         }
         self.measure_refs();
         self.analyzer_update();

@@ -6,7 +6,9 @@
 use super::Ui;
 use crate::board::{board, Board};
 use oos_hal::model::with_adc_clock;
-use std::{fs, io::Write, path::Path};
+use std::{fs, io::Write};
+#[cfg(unix)]
+use std::path::Path;
 
 /// Text of a clock step; the top step gives wrong samples (docs/models.md 4.1).
 pub(super) fn label(hz: f64) -> String {

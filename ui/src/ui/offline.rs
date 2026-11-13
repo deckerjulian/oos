@@ -280,7 +280,8 @@ mod tests {
 
         let mut play = ui();
         play.activate(Item::SimPlay);
-        assert!(play.m.ch[0].on, "play with the mode off still uses the channel");
+        assert!(play.m.ch.iter().all(|channel| !channel.on), "SIM plays a stored reference");
+        assert!(play.refs[play.m.sim_slot].is_some());
 
         let mut u = ui();
         u.store_dir = dir.clone();

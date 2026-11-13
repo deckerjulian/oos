@@ -275,6 +275,7 @@ impl Ui {
         match serial::LANES.iter().position(|l| l.name.eq_ignore_ascii_case(name)) {
             Some(i) => {
                 self.m.sim_preset = i;
+                self.m.apply_sim_preset();
                 true
             }
             None => false,
@@ -321,7 +322,7 @@ impl Ui {
     /// The window travels its own width each second, then returns to the start of the record.
     /// A record that already fits is placed fully on screen and held, so the picture stays still.
     pub(super) fn sim_tick(&mut self, dt_wall: f64) {
-        let slot = self.m.sim_slot;
+        let slot = if self.offline { self.offline_ref } else { self.m.sim_slot };
         let Some(r) = self.refs[slot].as_ref() else {
             self.sim_play = false;
             return;
@@ -333,21 +334,26 @@ impl Ui {
         let start = r.t0;
         let end = r.t0 + (r.v.len() - 1) as f64 * r.dt;
         let span = end - start;
-        let window = self.m.time_per_div() as f64 * HDIV as f64;
+        let (tdiv, delay) = self.view();
+        let window = tdiv as f64 * HDIV as f64;
         if !(window > 0.0) {
             return;
         }
         if span <= window {
-            let left = self.m.delay as f64 - window * 0.5;
+            let left = delay as f64 - window * 0.5;
             if left > start || left + window < end {
-                self.m.delay = ((start + end) * 0.5) as f32;
+                if self.m.zoom {
+                    self.m.zdelay = ((start + end) * 0.5) as f32;
+                } else {
+                    self.m.delay = ((start + end) * 0.5) as f32;
+                }
             }
             return;
         }
         let lo = start + window * 0.5;
         let hi = end - window * 0.5;
         let travel = hi - lo;
-        let mut d = self.m.delay as f64;
+        let mut d = delay as f64;
         // a fraction of the window keeps a rounded delay from snapping back to the start
         let slop = window * 1e-4;
         if d < lo - slop || d > hi + slop {
@@ -359,7 +365,11 @@ impl Ui {
             let advance = (window * dt_wall) % travel;
             d = lo + (d - lo + advance) % travel;
         }
-        self.m.delay = d as f32;
+        if self.m.zoom {
+            self.m.zdelay = d as f32;
+        } else {
+            self.m.delay = d as f32;
+        }
     }
 }
 
@@ -521,7 +531,7 @@ mod tests {
     }
 
     fn window_of(u: &Ui) -> f64 {
-        u.m.time_per_div() as f64 * HDIV as f64
+        u.view().0 as f64 * HDIV as f64
     }
 
     #[test]
@@ -584,11 +594,13 @@ mod tests {
         let span = (r.v.len() - 1) as f64 * r.dt;
         let window = window_of(&u);
         assert!(span > window, "span {span} window {window}");
-        let d0 = u.m.delay;
+        let d0 = u.view().1;
         u.step(0.5);
-        assert!(u.m.delay > d0);
+        assert!(u.view().1 > d0);
         assert!(u.sim_play);
         assert!(u.ph.map.iter().all(|m| m.iter().all(|&p| p == 0)));
+        u.m.ch[0].on = true;
+        u.m.floor_live_tdiv();
         u.m.run = RunState::Run;
         u.step(0.02);
         assert!(!u.sim_play);

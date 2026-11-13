@@ -9,8 +9,15 @@
 //! up is announced: the SCPI socket (`_scpi-raw._tcp`), VXI-11 (`_vxi-11._tcp`, on the scope, where port
 //! 111 is free) and HiSLIP (`_hislip._tcp`, on a computer).
 
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, UdpSocket};
+#[cfg(unix)]
+use std::net::SocketAddrV4;
 use std::time::{Duration, Instant};
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows::{addresses, host_label, join, mcast_socket, send_mcast};
 
 const MDNS_PORT: u16 = 5353;
 const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -91,6 +98,7 @@ fn clip(s: &str, n: usize) -> String {
     o
 }
 
+#[cfg(unix)]
 fn host_label() -> String {
     let mut b = [0u8; 256];
     let rc = unsafe { libc::gethostname(b.as_mut_ptr() as *mut libc::c_char, b.len()) };
@@ -369,6 +377,7 @@ pub fn answer(query: &[u8], id: &Identity, services: &[Svc]) -> Option<(Vec<u8>,
 }
 
 /// Non-loopback IPv4 addresses that are up.
+#[cfg(unix)]
 fn addresses() -> Vec<[u8; 4]> {
     let mut out = Vec::new();
     unsafe {
@@ -391,6 +400,7 @@ fn addresses() -> Vec<[u8; 4]> {
     out
 }
 
+#[cfg(unix)]
 fn mcast_socket() -> Option<UdpSocket> {
     unsafe {
         let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0);
@@ -416,6 +426,7 @@ fn mcast_socket() -> Option<UdpSocket> {
     }
 }
 
+#[cfg(unix)]
 fn join(sock: &UdpSocket, addr: [u8; 4]) {
     let mreq = libc::ip_mreq {
         imr_multiaddr: libc::in_addr { s_addr: u32::from(GROUP).to_be() },
@@ -426,6 +437,7 @@ fn join(sock: &UdpSocket, addr: [u8; 4]) {
     }
 }
 
+#[cfg(unix)]
 fn send_mcast(sock: &UdpSocket, pkt: &[u8], iface: Option<[u8; 4]>) {
     if let Some(a) = iface {
         let ip = libc::in_addr { s_addr: u32::from(Ipv4Addr::from(a)).to_be() };
@@ -541,6 +553,7 @@ impl Drop for Announcer {
     }
 }
 
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 
 #[cfg(test)]
@@ -654,9 +667,11 @@ mod tests {
     fn a_query_to_the_socket_is_answered() {
         let services = listening(Some(8080), Some(5555), None, Some(4880));
         let mut a = Announcer::open(&services);
-        if a.sock.is_none() {
-            return;
-        }
+        // Give this responder its own port so another mDNS service cannot consume the test query.
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let destination = socket.local_addr().unwrap();
+        a.sock = Some(socket);
         let mut q = Vec::new();
         put_u16(&mut q, 9);
         put_u16(&mut q, 0);
@@ -668,11 +683,18 @@ mod tests {
         put_u16(&mut q, PTR);
         put_u16(&mut q, IN | 0x8000);
         let c = UdpSocket::bind("127.0.0.1:0").unwrap();
-        c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        c.send_to(&q, "127.0.0.1:5353").unwrap();
-        a.poll();
+        c.set_nonblocking(true).unwrap();
+        c.send_to(&q, destination).unwrap();
         let mut buf = [0u8; 2048];
-        let (n, _) = c.recv_from(&mut buf).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let n = loop {
+            a.poll();
+            match c.recv_from(&mut buf) {
+                Ok((n, _)) => break n,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+                Err(error) => panic!("no discovery response: {error}"),
+            }
+        };
         let recs = names(&buf[..n]);
         assert!(recs.iter().any(|r| r.1 == SRV && srv_port(&r.2) == 5555), "{recs:?}");
     }

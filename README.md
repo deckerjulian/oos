@@ -257,6 +257,16 @@ Known limits:
 
 ## Try it without a scope
 
+On Windows, with Rust installed, build and open the desktop window from PowerShell:
+
+```powershell
+.\build-windows.ps1 -Run
+```
+
+The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop,
+and the mouse wheel changes the timebase. F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
+with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
+
 OOS builds on macOS and Linux and can run scripted without hardware, with its simulated demo signals. It writes a
 screenshot in PPM format next to the script:
 

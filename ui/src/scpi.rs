@@ -1407,6 +1407,24 @@ impl Scpi {
             self.err.push("-224,\"Illegal parameter value\"".into());
             return t("9.9E37");
         }
+        if kw(item, "SETHold") || item.eq_ignore_ascii_case("SHOLD") {
+            let waves = match self.waves(&parts.collect::<Vec<_>>().join(",")) {
+                Ok(waves) => waves,
+                Err(error) => {
+                    self.err.push(error);
+                    return t("9.9E37");
+                }
+            };
+            let (clock, data) = match waves.as_slice() {
+                [] => ui.meas_pair_sources(),
+                [clock, data] => (*clock, *data),
+                _ => {
+                    self.err.push("-224,\"Illegal parameter value\"".into());
+                    return t("9.9E37");
+                }
+            };
+            return t(&shown(ui.fact_setup_hold(clock, data)));
+        }
         // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
         let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
             None => WaveId::Ch(0),
@@ -1416,7 +1434,7 @@ impl Scpi {
             },
         };
         if let Some(k) = meas_kind(item) {
-            return t(&e(ui.meas_at(src, k)));
+            return t(&shown(ui.fact_meas(k, src)));
         }
         if let Some(k) = pair_kind(item) {
             let Some(word) = parts.next().map(str::trim).filter(|s| !s.is_empty()) else {
