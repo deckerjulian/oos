@@ -278,7 +278,12 @@ fn hss_pcie4_nominal_opens_an_eye() {
         assert!(g.is_finite(), "pcie4 {m:?} {g}");
     }
     assert!(m.amplitude > 0.55, "amp {}", m.amplitude);
-    assert!(m.height > 0.15, "height {}", m.height);
+    // the opening is the de-emphasised rail, not the average of that rail and the transition bits
+    assert!(close(m.one, settled, 0.12), "eye one {}", m.one);
+    assert!(close(m.zero, -settled, 0.12), "eye zero {}", m.zero);
+    assert!(m.height > 0.35, "height {}", m.height);
+    let hber = m.height_at(1e-12);
+    assert!(hber > 0.25, "height at 1e-12 {}", hber);
     assert!(m.width > 0.6 * c.period, "width {}", m.width);
     assert!((m.crossing_pct - 50.0).abs() < 5.0, "cross {}", m.crossing_pct);
     assert!(j.rj_rms > 0.8e-12 && j.rj_rms < 2.5e-12, "rj {}", j.rj_rms);

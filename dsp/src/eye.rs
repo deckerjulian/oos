@@ -744,16 +744,74 @@ impl Eye {
         c
     }
 
-    /// (one, zero, σ1, σ0): the hits in the central 20 % of the eye split at their mean voltage.
+    /// (one, zero, σ1, σ0): the hits in the central 20 % of the eye, split at their mean voltage.
+    /// One rail on a side uses every hit there. Two rails (a transition bit and a de-emphasised bit)
+    /// use the rail nearer the decision level: that is the opening. Averaging the two puts the level
+    /// in the empty gap and treats the split as noise, which closes the eye at a low BER.
     pub fn levels(&self) -> (f64, f64, f64, f64) {
         let cols = self.cols_within(self.span() / 2.0, 0.1);
         let (mid, _, n) = self.stats(0..self.h, &cols);
         if n == 0.0 {
             return (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
         }
-        let (one, s1, _) = self.stats((0..self.h).filter(|&y| self.row_v(y) >= mid), &cols);
-        let (zero, s0, _) = self.stats((0..self.h).filter(|&y| self.row_v(y) < mid), &cols);
+        let (one, s1) = self.side_level(&cols, mid, true);
+        let (zero, s0) = self.side_level(&cols, mid, false);
         (one, zero, s1, s0)
+    }
+
+    /// Mean and sigma on one side of `mid`. A second rail beyond a valley is left out.
+    fn side_level(&self, cols: &[usize], mid: f64, upper: bool) -> (f64, f64) {
+        let mut rows: Vec<usize> = (0..self.h).filter(|&y| (self.row_v(y) >= mid) == upper).collect();
+        rows.sort_by(|&a, &b| (self.row_v(a) - mid).abs().total_cmp(&(self.row_v(b) - mid).abs()));
+        let counts: Vec<f64> = rows.iter().map(|&y| cols.iter().map(|&x| self.at(x, y) as f64).sum()).collect();
+        let (mean, sigma, n) = self.stats(rows.iter().copied(), cols);
+        if n == 0.0 || counts.is_empty() {
+            return (mean, sigma);
+        }
+        let sm: Vec<f64> = (0..counts.len())
+            .map(|i| {
+                let a = if i > 0 { counts[i - 1] } else { counts[i] };
+                let c = if i + 1 < counts.len() { counts[i + 1] } else { counts[i] };
+                (a + counts[i] + c) / 3.0
+            })
+            .collect();
+        let sm_max = sm.iter().copied().fold(0.0, f64::max);
+        if !(sm_max > 0.0) {
+            return (mean, sigma);
+        }
+        let mut peak = None;
+        for i in 1..sm.len().saturating_sub(1) {
+            if sm[i] >= sm[i - 1] && sm[i] >= sm[i + 1] && sm[i] >= 0.2 * sm_max {
+                peak = Some(i);
+                break;
+            }
+        }
+        let Some(p) = peak else { return (mean, sigma) };
+        let mut valley: Option<usize> = None;
+        let mut dropped = false;
+        for i in (p + 1)..counts.len() {
+            let local = sm[i] >= sm[i - 1] && (i + 1 >= sm.len() || sm[i] >= sm[i + 1]);
+            if dropped && local && sm[i] >= 0.15 * sm_max && valley.is_some_and(|v| counts[i] > 3.0 * counts[v]) {
+                let end = valley.unwrap_or(i);
+                let floor = 0.15 * counts[p];
+                let mut lo = p;
+                while lo > 0 && counts[lo - 1] >= floor {
+                    lo -= 1;
+                }
+                let (m, s, bn) = self.stats(rows[lo..end].iter().copied(), cols);
+                if bn > 0.0 {
+                    return (m, s);
+                }
+                break;
+            }
+            if counts[i] < 0.4 * counts[p] {
+                dropped = true;
+                if valley.map_or(true, |v| counts[i] < counts[v]) {
+                    valley = Some(i);
+                }
+            }
+        }
+        (mean, sigma)
     }
     pub fn eye_amplitude(&self) -> f64 {
         let (one, zero, _, _) = self.levels();
