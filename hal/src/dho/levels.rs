@@ -11,9 +11,10 @@
 //!
 //! The slots of a channel follow the core order of the DDR words (fpga.md "Block map and data paths"): 4 channels
 //! 6, 4, 2, 0, 7, 5, 3, 1 (CH1 = 6/7, CH2 = 4/5, CH3 = 2/3, CH4 = 0/1), 2 channels 6, 2, 4, 0, 7, 3, 5, 1 (the lower
-//! channel 6/4/7/5, the higher 2/0/3/1), 1 channel all eight. That the measure unit numbers the cores like the DDR
-//! words is assumed, not verified on the unit: `channel_levels` refuses a channel whose slots disagree, and the auto
-//! set-up then measures from records.
+//! channel 6/4/7/5, the higher 2/0/3/1), 1 channel all eight. On the unit (2026-11-13) the measure unit does not number
+//! the cores like the DDR words: with CH1 and CH2 on the same signal and CH3 open, 4-channel mode, CH3's slots 2/3 showed
+//! the signal and CH1's and CH2's disagreed. So only the 1-channel case is known; the auto set-up uses the unit there
+//! only. `channel_levels` refuses a channel whose slots disagree.
 
 use crate::dho::bus::Bus;
 

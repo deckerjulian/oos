@@ -47,7 +47,7 @@ Sequences:
 
 | register | bits | content |
 |---|---|---|
-| 0x2244 | 0 | enable (set at init, sticky in the shadow) |
+| 0x2244 | 0 | restart pulse: written 1, then 0 with the new fields (not a level enable; the stock shadow clears it) |
 | 0x2244 | 5:1 | log2 of the sample count (stock default 28: 2^28 samples, about 0.21 s at 1.25 GSa/s) |
 | 0x2244 | 9:8 | lane: 0 = the source's own lane; 2 = the other lane pair in 2-channel mode |
 | 0x2248 | 0 | read latch: write 1 then 0 |
@@ -91,6 +91,8 @@ edge interpolation gives about 1e-9 relative resolution independent of the time 
 5. DVM on a DC level: mean in codes vs `seq::volts`; second result vs a sine of known RMS (is it RMS, mean square, or
    AC RMS?).
 6. 0x221c after a UART trigger set-up (`07`): counter offset still valid?
+
+Implementation and unit procedure: `docs/fork/dvm.md` (opt-in `dvm.hw = on`).
 
 ## 6. Confidence and open questions
 

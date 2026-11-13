@@ -21,6 +21,10 @@ const FAST_TBASE: f32 = 2e-6;
 const DEEP: (f32, u64) = (2e-3, 1_000_000);
 const SLOW_TBASE: f32 = 20e-3;
 const HW_PLAN: [(f32, u64); 3] = [(FAST_TBASE, 0), DEEP, (SLOW_TBASE, 0)];
+/// The deep record with more than one channel on: 100 k points (4.2 MSa/s at 2 ms/div, still 33 samples a period at
+/// 125 kHz). 1 M points of 3 or 4 channels is an 8 MB read in one piece; with it on the unit, 2026-11-13, the scope
+/// rebooted twice (docs/fork/trigger-lockin.md).
+const DEEP_MULTI: u64 = 100_000;
 /// Time base of the levels: long enough for a whole period of a slow signal. Full bandwidth, because Auto closes the
 /// filter at slow time bases and a fast signal would look small.
 const LEVELS_TBASE: f32 = 20e-3;
@@ -153,7 +157,10 @@ impl Ui {
         m.run = RunState::Run;
         m.hw_stamp += 1;
         let stamp = m.hw_stamp;
-        let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some()).then_some(Unit { id: stamp, tries: 1, since: self.now });
+        // one channel only: then all eight cores sample it. With more, the slots of a channel are not known (the DDR core
+        // order did not match on the unit: with CH1 and CH2 on a signal, CH3's slots showed it)
+        let single = (0..n_ch()).filter(|&c| back.ch[c].on).count() == 1;
+        let unit = (single && unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some()).then_some(Unit { id: stamp, tries: 1, since: self.now });
         self.auto = Some(AutoRun { back, stamp, unit, plan: Vec::new(), deep: false, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
         self.mark_changed();
         self.toast("Auto set-up...");
@@ -397,6 +404,9 @@ impl Ui {
         // the hardware search starts with one deep record; other sources go through the time bases from fast to slow
         a.deep = self.src.is_hw();
         a.plan = if a.deep { HW_PLAN.to_vec() } else { TBASES.iter().map(|&t| (t, 0)).collect() };
+        if a.deep && (0..n_ch()).filter(|&c| a.back.ch[c].on).count() > 1 {
+            a.plan[1].1 = DEEP_MULTI;
+        }
         self.set_search(&a.plan, 0);
         self.m.acq = a.back.acq;
         // the search needs records that trigger at the new level
@@ -964,6 +974,32 @@ mod tests {
             let period = ui.m.time_per_div() as f64 * HDIV as f64;
             assert!(period > 1.0 / f && period < 30.0 / f, "{} Hz: {} s on the screen", f, period);
         }
+    }
+
+    // Break it catches: the deep search record at 1 M points with several channels on (an 8 MB read: the unit rebooted),
+    // or measure-unit levels asked for with several channels on (their slots are not known)
+    #[test]
+    fn several_channels_keep_the_deep_record_small_and_skip_the_measure_unit() {
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        for c in 0..NCH {
+            ui.m.ch[c].on = c < 3;
+        }
+        ui.auto_start();
+        assert!(ui.auto.as_ref().unwrap().unit.is_none());
+        assert_eq!(shared.lock().unwrap().levels_want, None);
+        let mut a = ui.auto.take().unwrap();
+        a.want[0] = true;
+        let levels = [(0.0f32, 3.0f32); NCH];
+        assert!(ui.auto_fit(&mut a, Some(levels)));
+        assert_eq!(a.plan[1], (DEEP.0, DEEP_MULTI));
+        // one channel: the deep record and the measure unit
+        let (mut ui, shared) = hw_ui();
+        ui.auto_start();
+        assert!(ui.auto.as_ref().unwrap().unit.is_some() && shared.lock().unwrap().levels_want.is_some());
+        let mut a = ui.auto.take().unwrap();
+        assert!(ui.auto_fit(&mut a, Some(levels)));
+        assert_eq!(a.plan[1], DEEP);
     }
 
     #[test]

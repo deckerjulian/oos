@@ -502,6 +502,17 @@ impl Source {
         None
     }
 
+    /// Hardware source: hands the DVM set-up the UI wants to the acquisition thread (None: off) and returns the latest
+    /// reading; None off the hardware.
+    pub fn hw_dvm(&self, want: Option<crate::board::DvmWant>) -> Option<Option<crate::board::DvmRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.dvm_want = want;
+            return Some(g.dvm);
+        }
+        None
+    }
+
     /// Hardware source: asks for measure-unit levels (`Shared::levels_want`) and returns the latest answer; None for
     /// other sources.
     pub fn hw_levels(&self, want: Option<(u64, u64, u32)>) -> Option<Option<(u64, [Option<crate::board::ChLevels>; 4])>> {

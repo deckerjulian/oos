@@ -923,6 +923,8 @@ pub struct Ui {
     /// the hardware counter (tools.rs): latest reading, and a number raised by Clear counter
     cnt_hw: Option<crate::board::CounterRead>,
     cnt_clear: u64,
+    /// the FPGA's DVM block (tools.rs, `dvm.hw = on`): latest reading
+    dvm_hw: Option<crate::board::DvmRead>,
     /// channel B of delay and phase
     meas_src_b: usize,
     /// the reference the Slot rows work on
@@ -1138,6 +1140,7 @@ impl Ui {
             cnt_stat: MStat::default(),
             cnt_hw: None,
             cnt_clear: 0,
+            dvm_hw: None,
             meas_src_b: 1,
             ref_sel: 0,
             ref_src: 0,
@@ -1630,6 +1633,7 @@ impl Ui {
         self.usb_poll();
         self.ch_hold_poll();
         self.counter_poll();
+        self.dvm_poll();
         self.la_probe_poll();
         self.log_tick();
         self.m.clamp_offsets();

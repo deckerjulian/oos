@@ -198,8 +198,25 @@ impl Ui {
         self.cnt_hw = None;
     }
 
-    /// DVM reading of its source, volts.
-    pub(super) fn dvm_value(&self) -> f64 {
+    /// The FPGA's DVM block (on the unit with `dvm.hw = on`, docs/fork/dvm.md): the channel it should measure, and its
+    /// latest reading.
+    pub(super) fn dvm_poll(&mut self) {
+        let m = &self.m;
+        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw()).then_some(crate::board::DvmWant { ch: m.dvm_src });
+        if let Some(r) = self.src.hw_dvm(want) {
+            self.dvm_hw = r;
+        }
+    }
+
+    /// The DVM block's value of the source in the current mode, volts; None without a reading of this channel that the
+    /// decode took.
+    pub(super) fn dvm_hw_value(&self) -> Option<f64> {
+        let r = self.dvm_hw.filter(|r| r.ch == self.m.dvm_src && self.m.ch[r.ch].on)?;
+        Some(r.volts?[self.m.dvm_mode.min(2)])
+    }
+
+    /// The software DVM: the measurement of the records.
+    pub(super) fn dvm_sw_value(&self) -> f64 {
         let c = self.m.dvm_src;
         if !self.m.ch[c].on {
             return f64::NAN;
@@ -209,6 +226,36 @@ impl Ui {
             1 => Meas::VrmsAc,
             _ => Meas::Vrms,
         })
+    }
+
+    /// DVM reading of its source, volts: the DVM block's when it has one, else the software DVM.
+    pub(super) fn dvm_value(&self) -> f64 {
+        self.dvm_hw_value().unwrap_or_else(|| self.dvm_sw_value())
+    }
+
+    /// `:SYSTem:DEBug:DVM?` (fork): the DVM block's latest reading, raw, for the unit session (docs/fork/dvm.md), next to
+    /// the software DVM of the same source and mode. `off` without a reading.
+    pub fn dvm_debug_text(&self) -> String {
+        let sw = self.dvm_sw_value();
+        let Some(r) = self.dvm_hw else {
+            return format!("off,sw={:.6e}", sw);
+        };
+        let v = r.volts.map_or("none".to_string(), |v| format!("{:.6e};{:.6e};{:.6e}", v[0], v[1], v[2]));
+        format!(
+            "ch={},lane={},exp={},n={},cfg={:#010x},sum_lo={:#010x},sum_hi={:#010x},sq_lo={:#010x},sq_hi={:#010x},hw={},mode={},sw={:.6e}",
+            r.ch + 1,
+            r.lane,
+            r.exp,
+            r.n,
+            r.raw[0],
+            r.raw[1],
+            r.raw[2],
+            r.raw[3],
+            r.raw[4],
+            v,
+            self.m.dvm_mode.min(2),
+            sw
+        )
     }
 
     /// The strip row of DVM and counter: (label, value) pairs.
