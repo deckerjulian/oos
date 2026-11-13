@@ -129,6 +129,57 @@ impl Ui {
         self.toast(&format!("{} → R{}", lane.name, slot + 1));
     }
 
+    pub(crate) fn sim_preset_name(&self) -> &'static str {
+        self.sim_lane().name
+    }
+
+    /// Selects a preset by the name on the SIM menu.
+    pub(crate) fn sim_preset_set(&mut self, name: &str) -> bool {
+        let name = name.trim().trim_matches('"');
+        match serial::LANES.iter().position(|l| l.name.eq_ignore_ascii_case(name)) {
+            Some(i) => {
+                self.m.sim_preset = i;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub(crate) fn sim_slot(&self) -> usize {
+        self.m.sim_slot
+    }
+
+    pub(crate) fn sim_slot_set(&mut self, slot: usize) -> bool {
+        if slot >= NREF {
+            return false;
+        }
+        self.m.sim_slot = slot;
+        true
+    }
+
+    pub(crate) fn sim_playing(&self) -> bool {
+        self.sim_play
+    }
+
+    /// On writes the selected preset into the selected slot, the same as Play. Off stops the walk.
+    pub(crate) fn sim_play_set(&mut self, on: bool) {
+        if on {
+            self.sim_load();
+        } else {
+            self.sim_play = false;
+        }
+    }
+
+    pub(crate) fn sim_shown(&self) -> Option<bool> {
+        self.refs.get(self.m.sim_slot).and_then(|r| r.as_ref()).map(|r| r.on)
+    }
+
+    pub(crate) fn sim_show_set(&mut self, on: bool) -> bool {
+        let Some(r) = self.refs.get_mut(self.m.sim_slot).and_then(|r| r.as_mut()) else { return false };
+        r.on = on;
+        true
+    }
+
     /// Walks rising edges of the loaded slot and folds each window into the CH1 phosphor.
     pub(super) fn sim_tick(&mut self, dt_wall: f64) {
         let slot = self.m.sim_slot;

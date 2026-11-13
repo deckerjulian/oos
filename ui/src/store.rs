@@ -855,6 +855,184 @@ pub fn wave_bin(rec: &Record, m: &Model) -> Vec<u8> {
     b
 }
 
+/// One trace taken from a file: volts, the sample step, and the time of the first sample.
+#[derive(Clone, Debug)]
+pub struct WaveTrace {
+    pub t0: f64,
+    pub dt: f64,
+    pub v: Vec<f32>,
+    pub label: String,
+}
+
+/// CSV (`Time (s),Volts` or Storage `Time (s),CH1 (V),...`), an OOS `OOSW` `.bin`, or a `.wfm` whose header is `:WFM#002` or `:WFM#003`.
+pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
+    if bytes.starts_with(b"OOSW") {
+        return parse_oosw(bytes);
+    }
+    if bytes.len() >= 10 && (bytes[2..].starts_with(b":WFM#") || bytes[2..].starts_with(b"WFM#") || bytes.starts_with(b":WFM#")) {
+        return parse_wfm(bytes).map(|t| vec![t]);
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "that file is not a waveform".to_string())?;
+    parse_wave_csv(text, name)
+}
+
+fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
+    if b.len() < 36 || &b[..4] != b"OOSW" {
+        return Err("not an OOS waveform".into());
+    }
+    let ver = u32::from_le_bytes(b[4..8].try_into().unwrap());
+    if ver != 1 {
+        return Err(format!("OOS waveform version {ver}"));
+    }
+    let nch = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+    let n = u64::from_le_bytes(b[12..20].try_into().unwrap()) as usize;
+    let dt = f64::from_le_bytes(b[20..28].try_into().unwrap());
+    let t0 = f64::from_le_bytes(b[28..36].try_into().unwrap());
+    if nch == 0 || nch > 8 || n < 2 || !(dt > 0.0) {
+        return Err("that file holds no waveform".into());
+    }
+    let need = 36 + nch * (4 + 4 * n);
+    if b.len() < need {
+        return Err("truncated OOS waveform".into());
+    }
+    let mut out = Vec::with_capacity(nch);
+    let mut p = 36;
+    for _ in 0..nch {
+        let ch = u32::from_le_bytes(b[p..p + 4].try_into().unwrap());
+        p += 4;
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            v.push(f32::from_le_bytes(b[p..p + 4].try_into().unwrap()));
+            p += 4;
+        }
+        out.push(WaveTrace { t0, dt, v, label: format!("CH{ch}") });
+    }
+    Ok(out)
+}
+
+fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
+    let mut rows: Vec<(f64, Vec<f64>)> = Vec::new();
+    for line in text.lines() {
+        let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
+        let Some(Some(t)) = cols.next() else { continue };
+        let rest: Vec<f64> = cols.map(|x| x.unwrap_or(f64::NAN)).collect();
+        if rest.is_empty() {
+            continue;
+        }
+        rows.push((t, rest));
+    }
+    let dt = match rows.as_slice() {
+        [a, b, ..] if b.0 > a.0 => b.0 - a.0,
+        _ => return Err("that file holds no waveform".into()),
+    };
+    let ntrace = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(1);
+    let mut traces = Vec::with_capacity(ntrace);
+    for k in 0..ntrace {
+        let v: Vec<f32> = rows.iter().map(|r| r.1.get(k).copied().unwrap_or(f64::NAN) as f32).collect();
+        let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
+        traces.push(WaveTrace { t0: rows[0].0, dt, v, label });
+    }
+    Ok(traces)
+}
+
+/// Reference waveform whose header is `:WFM#002` or `:WFM#003`, YT vector, first frame.
+fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
+    if b.len() < 78 {
+        return Err("truncated WFM".into());
+    }
+    let le = match u16::from_le_bytes(b[0..2].try_into().unwrap()) {
+        0x0F0F => true,
+        0xF0F0 => false,
+        _ => return Err("header is not :WFM#002 or :WFM#003".into()),
+    };
+    let get_u32 = |o| {
+        let v = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        if le { v } else { v.swap_bytes() }
+    };
+    let get_i32 = |o| get_u32(o) as i32;
+    let get_f64 = |o| {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&b[o..o + 8]);
+        if !le {
+            raw.reverse();
+        }
+        f64::from_le_bytes(raw)
+    };
+    let ver = &b[2..10];
+    if ver != b":WFM#002" && ver != b":WFM#003" {
+        return Err("header is not :WFM#002 or :WFM#003".into());
+    }
+    let bpp = b[15] as usize;
+    if bpp == 0 || bpp > 8 {
+        return Err("WFM sample size".into());
+    }
+    let curve = get_i32(16) as usize;
+    let label = b[40..72].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string();
+    // :WFM#002 / :WFM#003: packed header after the 78-byte static block
+    let mut i = 78usize;
+    let need = |n: usize| -> Result<(), String> { if b.len() < n { Err("truncated WFM".into()) } else { Ok(()) } };
+    need(i + 90)?;
+    i += 90;
+    need(i + 160)?;
+    let vscale = get_f64(i);
+    let voff = get_f64(i + 8);
+    let fmt = get_u32(i + 72);
+    i += 160;
+    need(i + 160)?;
+    i += 160;
+    need(i + 136)?;
+    let dt = get_f64(i);
+    let t0 = get_f64(i + 8);
+    i += 136;
+    need(i + 136 + 12 + 12 + 24 + 30)?;
+    i += 136 + 12 + 12 + 24;
+    let data_start = get_u32(i + 14) as usize;
+    let post_start = get_u32(i + 18) as usize;
+    if !(dt > 0.0) {
+        return Err("WFM has no time step".into());
+    }
+    if curve > b.len() || data_start > post_start {
+        return Err("WFM curve is empty".into());
+    }
+    let start = curve.saturating_add(data_start);
+    let stop = curve.saturating_add(post_start).min(b.len().saturating_sub(8));
+    if stop <= start + bpp {
+        return Err("WFM curve is empty".into());
+    }
+    let n = (stop - start) / bpp;
+    if n < 2 {
+        return Err("WFM curve is empty".into());
+    }
+    let mut v = Vec::with_capacity(n);
+    for k in 0..n {
+        let o = start + k * bpp;
+        let code = match fmt {
+            0 if bpp >= 2 => {
+                let s = i16::from_le_bytes(b[o..o + 2].try_into().unwrap());
+                (if le { s } else { s.swap_bytes() }) as f64
+            }
+            1 if bpp >= 4 => {
+                let s = i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+                (if le { s } else { s.swap_bytes() }) as f64
+            }
+            4 if bpp >= 4 => {
+                let mut raw = [0u8; 4];
+                raw.copy_from_slice(&b[o..o + 4]);
+                if !le {
+                    raw.reverse();
+                }
+                f32::from_le_bytes(raw) as f64
+            }
+            5 if bpp >= 8 => get_f64(o),
+            6 if bpp >= 1 => b[o] as f64,
+            7 if bpp >= 1 => b[o] as i8 as f64,
+            _ => return Err("WFM sample format".into()),
+        };
+        v.push((code * vscale + voff) as f32);
+    }
+    Ok(WaveTrace { t0, dt, v, label })
+}
+
 // ---------------------------------------------------------------------------------------------- PNG
 
 fn crc_table() -> &'static [u32; 256] {
@@ -1306,6 +1484,75 @@ mod tests {
         assert_eq!(lines[1], "-1.000000000e-3,0.5,-1");
         assert_eq!(lines[3], "-9.980000000e-4,,3.3");
         assert_eq!(lines.len(), 4);
+        let back = parse_wave(csv.as_bytes(), "wave.csv").unwrap();
+        assert_eq!(back.len(), 2);
+        assert!((back[0].dt - 1e-6).abs() < 1e-18);
+        assert_eq!(back[0].v[0], 0.5);
+        assert_eq!(back[1].v[2], 3.3);
+    }
+
+    #[test]
+    fn oos_bin_and_wfm_round_trip() {
+        let mut m = Model::default();
+        m.ch[0].on = true;
+        let rec = Record {
+            t0: -2e-6,
+            dt: 5e-9,
+            ch: {
+                let mut c: [Vec<f32>; NCH] = Default::default();
+                c[0] = vec![0.1, 0.2, -0.3, 0.4];
+                c
+            },
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+        };
+        let bin = wave_bin(&rec, &m);
+        let t = &parse_wave(&bin, "wave.bin").unwrap()[0];
+        assert_eq!(t.v, rec.ch[0]);
+        assert!((t.dt - rec.dt).abs() < 1e-18);
+        assert!((t.t0 - rec.t0).abs() < 1e-18);
+
+        let v = [0.0_f32, 0.5, 1.0, -0.25];
+        let wfm = wfm_f32(b":WFM#003", -1e-6, 1e-9, &v, "lane");
+        let g = parse_wave(&wfm, "x.wfm").unwrap();
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].label, "lane");
+        assert!((g[0].dt - 1e-9).abs() < 1e-18);
+        assert!((g[0].t0 + 1e-6).abs() < 1e-18);
+        for (a, b) in g[0].v.iter().zip(v) {
+            assert!((a - b).abs() < 1e-6, "{a} {b}");
+        }
+        let old = wfm_f32(b":WFM#001", -1e-6, 1e-9, &v, "lane");
+        assert_eq!(parse_wave(&old, "old.wfm").unwrap_err(), "header is not :WFM#002 or :WFM#003");
+        let two = wfm_f32(b":WFM#002", 0.0, 2e-9, &v, "two");
+        assert_eq!(parse_wave(&two, "two.wfm").unwrap()[0].label, "two");
+    }
+
+    /// A short `:WFM#002` or `:WFM#003` curve of f32 samples, little endian.
+    fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+        const CURVE: usize = 838;
+        let mut b = vec![0u8; CURVE + v.len() * 4 + 8];
+        b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
+        b[2..10].copy_from_slice(magic);
+        b[15] = 4;
+        b[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
+        let lab = label.as_bytes();
+        b[40..40 + lab.len()].copy_from_slice(lab);
+        let put_f64 = |b: &mut [u8], o: usize, x: f64| b[o..o + 8].copy_from_slice(&x.to_le_bytes());
+        let put_u32 = |b: &mut [u8], o: usize, x: u32| b[o..o + 4].copy_from_slice(&x.to_le_bytes());
+        put_f64(&mut b, 168, 1.0);
+        put_f64(&mut b, 176, 0.0);
+        put_u32(&mut b, 168 + 72, 4);
+        put_f64(&mut b, 488, dt);
+        put_f64(&mut b, 496, t0);
+        put_u32(&mut b, 808 + 14, 0);
+        put_u32(&mut b, 808 + 18, (v.len() * 4) as u32);
+        for (k, &x) in v.iter().enumerate() {
+            b[CURVE + k * 4..CURVE + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
+        }
+        b
     }
 
     #[test]

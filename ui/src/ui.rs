@@ -1348,6 +1348,21 @@ impl Ui {
         self.last[0].as_ref().map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect()).unwrap_or_default()
     }
 
+    /// Samples of a reference slot, finite volts. Empty when that slot holds nothing.
+    pub(crate) fn ref_volts(&self, slot: usize) -> Vec<f32> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.v.iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect()).unwrap_or_default()
+    }
+
+    /// (points, dt, t0, volts per division, offset) of a slot that has a record.
+    pub(crate) fn ref_info(&self, slot: usize) -> Option<(usize, f64, f64, f64, f64)> {
+        let r = self.refs.get(slot)?.as_ref()?;
+        if r.v.len() < 2 || !(r.dt > 0.0) {
+            return None;
+        }
+        let vpd = if r.vpd > 0.0 { r.vpd as f64 } else { 1.0 };
+        Some((r.v.len(), r.dt, r.t0, vpd, r.offset as f64))
+    }
+
     pub fn toast(&mut self, s: &str) {
         self.toast = Some((s.to_string(), self.now + 2.5));
     }
