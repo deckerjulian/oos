@@ -11,6 +11,7 @@ use crate::wave::*;
 use crate::board::{board, Board};
 
 mod analysis;
+mod bus;
 mod magnetic;
 mod motor;
 mod dpt;
@@ -212,6 +213,8 @@ pub enum MenuId {
     Math,
     Ref,
     Decode,
+    /// one bus drawn on the plot
+    Bus,
     Storage,
     Mask,
     Zone,
@@ -313,6 +316,14 @@ enum Item {
     DecMode,
     DecBits,
     DecParity,
+    BusOn,
+    BusLabel,
+    BusPos,
+    BusClk,
+    BusClkThr,
+    BusData,
+    BusDataThr,
+    BusRw,
     Zoom,
     AutoRoll,
     ZScale,
@@ -703,6 +714,8 @@ enum Drag {
     Level,
     CursorA,
     CursorB,
+    /// the bus, by its vertical position
+    Bus,
 }
 
 struct Pinch {
@@ -2186,6 +2199,9 @@ impl Ui {
                     self.draw_la(cv);
                 }
                 self.draw_decode(cv);
+                if i == 0 {
+                    self.draw_bus(cv);
+                }
                 self.draw_meas_labels(cv);
                 self.draw_cursors(cv);
                 self.draw_search(cv);
@@ -4177,6 +4193,7 @@ impl Ui {
             MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
+            MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
             MenuId::MeasAdd => self.measurement_catalog(),
@@ -4276,7 +4293,7 @@ impl Ui {
         let mut g = vec![
             ("Acquisition", vec![RunStop, SingleAct, AutosetAct, ClearDisp, DefaultAct, Open(MenuId::Acquire)]),
             ("Trigger", vec![Open(MenuId::Trigger), SlopeAct, ForceAct, Open(MenuId::Zone)]),
-            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Sim), Open(MenuId::Decode), Open(MenuId::Mask)]),
+            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Sim), Open(MenuId::Decode), Open(MenuId::Bus), Open(MenuId::Mask)]),
             ("Analysers", ana),
             ("Instruments", ins),
             ("Display", disp),
@@ -4803,6 +4820,7 @@ impl Ui {
             MenuId::Math => "Math".into(),
             MenuId::Ref => "Reference".into(),
             MenuId::Decode => "Decode".into(),
+            MenuId::Bus => "Bus · I2C".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
                 Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
@@ -4813,7 +4831,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
+        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::bus_kind(it)) {
             return k;
         }
         match it {
@@ -4834,7 +4852,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::bus_label(it)) {
             return l;
         }
         match it {
@@ -5081,7 +5099,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -5280,7 +5298,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.bus_adjust(it, d) || self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         if it == Item::TrigSrc && self.record_mode() {
@@ -5894,6 +5912,7 @@ impl Ui {
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
                 Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
+                Item::BusLabel => self.wlan.osk = Some(wlan::Osk::for_bus(&self.m.bus.label)),
                 Item::RefLabel => match &self.refs[self.ref_sel] {
                     Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_sel, &r.label)),
                     None => self.toast("That slot is empty"),
@@ -6239,7 +6258,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.bus_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -7145,8 +7164,8 @@ impl Ui {
                         // nearest enabled channel marker when starting at the left edge, else the active channel (in a
                         // split plot: of this window)
                         let mut c = if self.shows(m.active) { m.active } else { (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active) };
+                        let mut best = i32::MAX;
                         if near_left {
-                            let mut best = i32::MAX;
                             for i in 0..NCH {
                                 if m.ch[i].on && self.shows(i) {
                                     let d = (self.y_of_volts(i, 0.0) - ty0).abs();
@@ -7157,12 +7176,14 @@ impl Ui {
                                 }
                             }
                         }
-                        Drag::Offset(c)
+                        let bus_d = (self.bus_y() - ty0).abs();
+                        if m.bus.on && bus_d <= 18 && bus_d < best { Drag::Bus } else { Drag::Offset(c) }
                     } else {
                         Drag::Delay
                     };
                     let start_offset = match drag {
                         Drag::Offset(c) => self.m.ch[c].offset,
+                        Drag::Bus => self.m.bus.pos,
                         _ => 0.0,
                     };
                     let start_cur = match drag {
@@ -7201,6 +7222,10 @@ impl Ui {
                     Drag::Level => {
                         let vpd = self.m.ch[self.m.trig_src].volts_per_div();
                         self.m.trig_level = t.start_level - dy as f32 / ppy * vpd;
+                        self.settings_changed();
+                    }
+                    Drag::Bus => {
+                        self.m.bus.pos = (t.start_offset - dy as f32 / ppy).clamp(BUS_POS_MIN, BUS_POS_MAX);
                         self.settings_changed();
                     }
                     Drag::Zone(_) => {
