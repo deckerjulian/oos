@@ -43,6 +43,7 @@ fn compressed_batch_then_the_newest_frame_raw() {
     assert!(got.iter().enumerate().all(|(i, &w)| w == Engine::word(n - 1, i)), "not frame {} raw", n - 1);
     // compression off again, and the compressed read below it still matches the raw samples
     assert_eq!(eng.borrow().regs.get(&0x1170).copied(), Some(0x4000_0001));
-    let whole = p.memsel as usize / (k as usize * pairs::BLOCK_K) * pairs::PAIR;
-    assert_eq!(comp[..whole], pairs::model(&got, k as usize, pairs::LAYOUT)[..whole]);
+    // every compressed point stands for samples inside the record (`compressed_len`): all of them match
+    assert!(len * k as usize <= p.memsel as usize);
+    assert_eq!(comp, pairs::model(&got, k as usize, pairs::LAYOUT)[..len]);
 }

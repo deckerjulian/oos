@@ -25,9 +25,12 @@ pub const POINTS_PER_COLUMN: f64 = 4.0;
 pub const SCREEN_COLUMNS: f64 = 1000.0;
 /// Smallest factor worth a compressed read; below it every sample is read.
 pub const K_MIN: u32 = 2;
-/// Largest factor the register takes (0x1170 bits 27:0). The FPGA may stop earlier: the unit test in compress.md
-/// covers k up to 256.
-pub const K_MAX: u32 = 0x0fff_ffff;
+/// Largest factor: 0x1170 holds k in bits 13:0 (`seq::COMPRESS_K_MAX`; the netlist simulation shows larger values wrap).
+pub const K_MAX: u32 = 16383;
+/// Least time between two raw reads of a compressed batch's newest frame (`seq::read_raw_again`). A read after every
+/// batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab round 2); between the raw records the UI
+/// keeps the measurement of the last one (`hold`), so measurements follow at up to 5 a second.
+pub const RAW_PERIOD: std::time::Duration = std::time::Duration::from_millis(200);
 /// Deepest record compressed this way. Deeper records keep the deep-memory read of `hw::batch_plan` (a screen window
 /// raw, or the whole record compressed to ~625 k points).
 pub const MAX_DEPTH: u32 = 1_000_000;
@@ -46,6 +49,13 @@ pub fn enabled() -> bool {
 /// `env` if set, else the `acq.compress` line of `conf`; off unless `on`.
 pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
     crate::drawpipe::conf_value(env, conf, "acq.compress").as_deref() == Some("on")
+}
+
+/// Whether the UI leaves the newest record unmeasured: running (not Single), and the record is of live-compression
+/// pairs. Its batch's newest frame is read raw only every `RAW_PERIOD`; the measurement shown stays that of the last
+/// raw record, so every value belongs to one record and the statistics count it once.
+pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
+    m.run == RunState::Run && m.trig_mode != TrigMode::Single && f.is_some_and(live)
 }
 
 /// The model allows compressed frames: the frames of a batch are only drawn, and drawn by the dense fast path
@@ -436,7 +446,7 @@ mod tests {
 
     #[test]
     fn pairs_of_the_board() {
-        assert_eq!((PAIR, pairs::LAYOUT.shift), (pairs::PAIR, 0));
+        assert_eq!((PAIR, pairs::LAYOUT.shift, K_MAX), (pairs::PAIR, 0, oos_hal::dho::seq::COMPRESS_K_MAX));
     }
 
     #[test]
@@ -445,6 +455,20 @@ mod tests {
         assert_eq!(smooth_len(0.2), 4);
         assert_eq!(smooth_len(0.9), 2);
         assert_eq!(smooth_len(1e-6), 256);
+    }
+
+    #[test]
+    fn hold_only_running_on_live_pairs() {
+        let mut m = Model::default();
+        let f = |envelope: bool, depth: usize| Frame { envelope, acq: (625e6, depth), ..Default::default() };
+        assert!(hold(&m, Some(&f(true, 100_000))));
+        assert!(!hold(&m, Some(&f(false, 100_000))), "a raw record is measured");
+        assert!(!hold(&m, Some(&f(true, 10_000_000))), "deep pairs: deepmeas.rs");
+        assert!(!hold(&m, None));
+        m.run = RunState::Stop;
+        assert!(!hold(&m, Some(&f(true, 100_000))));
+        (m.run, m.trig_mode) = (RunState::Run, TrigMode::Single);
+        assert!(!hold(&m, Some(&f(true, 100_000))));
     }
 
     #[test]

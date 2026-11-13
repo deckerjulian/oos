@@ -176,7 +176,7 @@ Fork commits f31707b (HAL), d48794a (oos-ui). Host-tested only. Nothing ran on t
 | memory layout | done | `hz::mem_size_avg`, `hz::max_frames_avg`, `hz::avg_params` (applied in `seq::State::configure`); `tools/hzmodel.py avg` writes `hal/testdata/avg-memsize.txt`, the Rust test compares | - |
 | window word | done | `scu::avg_offset`, written as 0x1110 right after 0x1108 when `Window::avg` | - |
 | clear | done | `acq::avg_clear` (0x10b4 1, 0); in `configure` after the stop poll, before the acquisition writes; `seq::State::avg_clear_steps` (stop poll, pulse) for CLEAR, RUN, SINGLE and a complete hold average | - |
-| read | done | every recorded frame is played, the newest shown (option B, as stock; unit 2026-11-13 B1, `docs/fork/b1-b3.md`) | - |
+| read | done | every recorded frame is played, the newest shown (option B, as stock; unit 2026-11-13 B1, section 8) | - |
 | semantics | both | `avg::Kind::Running` (show every batch) and `avg::Kind::Hold` (show when `count` triggers are in, then clear), `avg::Tracker`; oos-ui picks Running unless `OOS_HWAVG=hold` | Running |
 | progress | diagnostic | `avg::progress` reads 0x10b0; oos-ui logs it with the first words of the first 32 batches after each clear | - |
 | model | done | `seg::sim::Engine` averages `Engine::raw` per trigger in average mode (running or hold, cleared by the 0x10b4 pulse); `acquire_batch` is generic over the bus and runs against it | - |
@@ -224,7 +224,36 @@ Proof that the live path without averaging is unchanged: `tools/plan-matrix.sh` 
 Not done: zoom window word 0x1114 (OOS has no zoom read-out), a status-line progress from 0x10b0 (waits for 5.2),
 counts above 1024.
 
-## 8. Unit 2026-11-13 (B1)
+## 8. Unit results 2026-11-13 (B1)
 
-Averaged frames were zero above 62.5 MSa/s and the noise levelled off near 0.5 mV. Causes, fixes and the re-test:
-`docs/fork/b1-b3.md`. Hardware averaging is limited to the second divider (62.5 MSa/s and below) until the re-test.
+Unit log: private RE notes `docs/logs/oos_unitlab_20261113.md` (B1 in rounds 1 and 4), dumps in
+`docs/logs/unitlab_b1/`.
+
+| finding | cause | state |
+|---|---|---|
+| averaged frames all zero above 62.5 MSa/s | 0x1004 bit 2 ("AvgSinc") clear. With bit 2 set every rate averages (312.5 MSa/s: 1.08 -> 0.46 mV at N = 16; 1.25 GSa/s 100k: 3.24 -> 1.2 mV); without it every rate above 62.5 MSa/s is zero (156, 312, 625, 1250 tested) | fixed: `acq::configure_la` sets bit 2 in average mode at every rate |
+| noise levelled off near 0.5 mV (100 mV/div) | the newest frame alone was played; the netlist couples averaging to the play-out | fixed: every recorded frame is played (750 frames/s at 62.5 MSa/s, 31/s before) |
+| HW 16 still above SW 16 (0.42 vs 0.34 mV at 100 mV/div), floor in proportion to V/div | not found yet; not truncation and not an ADC core offset (dump analysis below) | open |
+| 0x10b0 reads N - 1 | read-back of the written register | none |
+
+Stock: `ConfigAcquire` sets bit 2 only for rate < max / 8, in every mode. With that rule stock average mode above
+62.5 MSa/s would show the same zero frames, unless the stock play path differs there. The netlist routes bit 2 to the
+play side only (play gain/zoom, sinc interpolation, trigger), and the stock driver keeps the sinc interpolation chain
+running at fast time bases where OOS sets it to pass-through (`scu::passthrough`). Inference, not verified: bit 2
+selects whether the averaged data bypasses the sinc chain; stock reaches the play output through the sinc chain with
+bit 2 clear, OOS with the chain bypassed needs bit 2 set.
+
+Dump analysis (62.5 MSa/s, 1 channel, 10k points, N = 2 and 16; `avg.debug_raw` of the b1-raw build, since removed):
+
+- `seq` (0x1004 bit 3 cleared, fields in order): even and odd words both carry the signal; no field with low bits.
+- Both debug reads show an even/odd offset between neighbouring words: a steady -180 codes (16-bit scale) in `seq`,
+  and in `wide` constant within a dump but different between dumps (-124 to -179, once +56). It is not an ADC core
+  offset: a core offset would be fixed, and the frames the UI shows have no such pattern (at 100 mV/div it would be
+  2.4 mV, measuring at least 1.7 mV point-to-point; Normal measured 1.07 mV, HW 16 0.42 mV). Most likely the two
+  parities are the two stored fields of one averaged point. Per parity the noise is 16-19 codes at N = 16 and 50-53 at
+  N = 2 against 89-91 raw, close to 1 / sqrt(N): the averaging itself works.
+- `wide` (average mode, twice the window): the words from 10240 on are bit-identical in all eight dumps of both runs
+  (N = 2 and 16): stale memory behind the frame, not an accumulator or an earlier average. No extra precision there.
+
+Open: the gap between HW 16 and SW 16 as displayed. Unit check queued (round 6): even/odd mean difference and
+per-parity noise of a Normal and a HW 16 frame (`:WAV:DATA?`, 62.5 MSa/s, 100 mV/div, input open).

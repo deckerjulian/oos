@@ -29,6 +29,7 @@ mod math;
 mod mdns;
 mod model;
 mod net;
+mod net6;
 mod netacl;
 mod protocols;
 mod scpi;
