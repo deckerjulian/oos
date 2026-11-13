@@ -170,13 +170,21 @@ the 5x of the arithmetic alone.
   plan's 4x needs a polyphase kernel over the screen window only, which changes pixels: not done, it needs a
   screenshot comparison on the unit. Guards: pixel equality over 612 set-ups (450 answered by the new path), bitwise
   kernel equality incl. record ends and NaN samples, ignored timing ratio <= 0.8.
-- 1 done as a first cut, opt-in `OOS_DRAWPIPE=1`: `drawpipe.rs`. The hw thread copies the bytes of the frames the
-  queue does not keep (up to ~900 per batch) to a worker on the A53s, which decodes and draws them with
-  `draw_frame` (now also the body of `Ui::fast_draw`, one source of truth) into its own maps. The UI publishes its
-  mapping each screen frame and adds the worker's maps once per screen frame; a mapping change or an older settings
-  stamp drops the work, a busy worker drops the batch. Guards: worker maps equal `draw_frame` over the same frames
-  (dense, sparse, dots, 1 and 2 channels), frame and trigger counts, stale batches and maps dropped. Host: 20 k
-  frames/s at 1408 points, 40 k at 12.5 k points on one core (ignored test `worker_throughput`). Not yet: the
-  `fast_edges` statistics leave out the worker's frames; one worker only; the copy is up to 4 MB per batch on the
-  hw thread. Unit checks: wfm/s at 100 ns and 1 us/div with and without it, `top -H` for the worker's core, UI frame
-  time (the merge adds 4 x 970 x 448 saturating adds per screen frame).
+- 1, batch pipeline (`drawpipe.rs`), selectable: `acq.pipeline = batch` in system.conf or `OOS_PIPELINE=batch`;
+  `frames` (default) is the old path. Every frame is used: the hw thread decodes only the newest frame of a batch for
+  the queue and lends the read-out buffer itself (a pool of 3 `DmaBuf`, no copy; `DmaBuf` is a plain heap buffer, the
+  xdma read can target any of them) with the other frames to 2 deposit workers on the A53s. Each decodes its share
+  into kept vectors (`hw::decode_into`, `decode_volts_into`), refines the trigger and draws with `draw_frame` (the body
+  of `Ui::fast_draw`) into its own maps, counting the trigger statistics. Once per refresh the UI adds the maps and
+  the statistics (`fast_edges`, `fast_off` cover every frame). Busy workers, older settings and an older mapping drop
+  work, counted. Where the fast path does not apply the hw thread queues every frame as before.
+  Counters acquired / used / dropped (both modes): `:SYSTem:STATe?` and `stat` (`pipeline ... acquired .. used ..
+  dropped ..` at the end of the line), System info "Frames used".
+  Guards: batch picture == frames mode over the same frames (dense, sparse, dots, 1-2 channels, split over 2 workers),
+  trigger statistics equal, buffers come back, stale/busy work dropped and counted with dropped = fed - taken.
+  `perf_guard_deposit_worker_per_frame` (host M3): one worker costs 0.99-1.09 x the frames mode per frame; 2 workers
+  40 k frames/s at 100 ns/div (1408 pt, sparse: 3600 interpolated points per frame), 83 k at 1 us/div, 13.5 k at
+  10 us/div. A53 estimate (not measured): about 8x the host per frame (A72 about 4x, A53 about 2x an A72), so 2 A53
+  workers reach about 5 k frames/s at 100 ns/div and 10 k at 1 us/div. At short time bases they will not keep up with
+  the acquisition: the sparse interpolation dominates (polyphase kernel, item 4, needs the unit's screenshot check),
+  and the A72 hw thread may take a share. Next: per-channel running statistics, averaging (phase 2).

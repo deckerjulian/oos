@@ -1666,10 +1666,10 @@ impl Ui {
                     }
                 }
                 got += frames.len();
-                // the older frames of the batches, drawn by the deposit worker (opt-in)
+                // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
                 if let Some(p) = crate::drawpipe::pipe() {
                     p.set_view(Some(&self.m), self.ph.w, self.ph.h);
-                    let d = p.merge(&mut self.ph, &mut clear_pending);
+                    let d = p.merge(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
                     if d.triggered > 0 {
                         self.m.status = TrigStatus::Triggered;
                     }
@@ -1783,6 +1783,7 @@ impl Ui {
             let rate = got as f32 / dt_wall.max(1e-3) as f32;
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
+            crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if self.meas_bg.is_some() {

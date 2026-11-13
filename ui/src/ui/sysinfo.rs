@@ -226,6 +226,10 @@ impl Ui {
         d.push(kv("Record", si_short(depth as f64, "pts")));
         d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));
         d.push(kv("Waveforms", fmt_count(self.wfm_total as f64)));
+        let (acq, used, dropped) = crate::drawpipe::counters().read();
+        if acq > 0 {
+            d.push(kv("Frames used", format!("{} of {} ({} dropped, {:?} pipeline)", fmt_count(used as f64), fmt_count(acq as f64), fmt_count(dropped as f64), crate::drawpipe::mode())));
+        }
         d.push(kv("Screen", format!("{:.0} fps", self.fps)));
         if p.experimental() {
             d.push(Row::Head("Experimental limits".into()));

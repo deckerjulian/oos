@@ -132,6 +132,8 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = ui.t_gpu.map_or(String::new(), |t| format!(" gpu layers {:.1} copy {:.1} wait {:.1} (upload {:.1} draw {:.1} read {:.1}) ms", t[0], t[1], t[2], t[3], t[4], t[5]));
     let p = ui.t_parts;
     let gpu = format!(" parts meas {:.1} analyse {:.1} pane {:.1} max {:.1} ms{}", p[0], p[1], p[2], p[3], gpu);
+    let (acq, used, dropped) = crate::drawpipe::counters().read();
+    let gpu = format!("{} pipeline {:?} acquired {} used {} dropped {}", gpu, crate::drawpipe::mode(), acq, used, dropped);
     format!(
         "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}{}\n",
         ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1, gpu

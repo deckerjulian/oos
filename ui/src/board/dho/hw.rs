@@ -337,19 +337,42 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
 
 /// Decodes a read-out of the whole record into a frame.
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
+    let mut f = Frame::default();
+    decode_into(bytes, s, p, seq, &mut f);
+    f
+}
+
+/// `decode` into a kept frame: its channel vectors are refilled (no allocation once they have room), every other
+/// field is set as `decode` sets it.
+pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
     let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
-    let ch = oos_hal::dho::seq::decode_volts(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)));
+    oos_hal::dho::seq::decode_volts_into(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)), &mut f.ch);
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = s.compress.max(1) as usize;
     if !hdr.is_empty() && header_probe() {
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
-        let v: &Vec<f32> = &ch[tc];
-        log_header(hdr, v, s, p.pre as usize / k, k);
+        log_header(hdr, &f.ch[tc], s, p.pre as usize / k, k);
     }
     // a window of the record (`batch_plan`): the trigger point counts from its first point
     let (_, start) = oos_hal::dho::seq::window(s, p);
     let pre = p.pre.saturating_sub(start) as usize / k;
-    Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false }
+    let ch = std::mem::take(&mut f.ch);
+    *f = Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false };
+}
+
+/// Read-out buffers of the batch mode: one being read, two with the deposit workers (each holds one share and has room
+/// for one more).
+#[cfg(target_os = "linux")]
+const POOL: usize = 3;
+
+/// The read-out buffer lent to the deposit workers as it is (drawpipe.rs).
+impl crate::drawpipe::RawBatch for oos_hal::dho::bus::DmaBuf {
+    fn bytes(&self) -> &[u8] {
+        self.data()
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+        self
+    }
 }
 
 /// The LA words of the acquisition `p` (read with `seq::acquire_la`) as a record: word j of the window at
@@ -543,6 +566,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut la_fails = 0u32;
         // the read buffer of the batches, kept (bus::DmaBuf)
         let mut dma = oos_hal::dho::bus::DmaBuf::new();
+        // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
+        let mut pool_made = 1usize;
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
         // the hardware segmented recording in progress or read back
@@ -922,23 +947,38 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let fb = seq::frame_bytes(&b, &p);
                     // decode before taking the lock: the UI must not wait for 100 k-point conversions
                     let shown = if after.is_some_and(|a| !a.show) { 0 } else { seq::batch_read(&b, count).1 };
-                    // the frames the queue does not keep: to the deposit worker when it is on (drawpipe.rs)
-                    if let Some(pipe) = crate::drawpipe::pipe().filter(|_| after.is_none() && fb > 0) {
-                        let older = (shown as usize).min(dma.data().len() / fb).saturating_sub(QUEUE_MAX);
-                        if older > 0 {
-                            let (bs, ps) = (b.clone(), p);
-                            pipe.feed(&dma.data()[..older * fb], fb, stamp, Box::new(move |c| decode(c, &bs, &ps, 0)));
+                    let avail = if fb == 0 { 0 } else { (shown as usize).min(dma.data().len() / fb) };
+                    crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
+                    // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
+                    // deposit workers, the next batch read into a buffer they gave back
+                    let pipe = crate::drawpipe::pipe().filter(|x| after.is_none() && avail > 1 && x.accepting());
+                    let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
+                        n += avail as u64;
+                        let newest = Frame { stamp, ..decode(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n) };
+                        let next = pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
+                        let next = next.or_else(|| (pool_made < POOL).then(|| {
+                            pool_made += 1;
+                            oos_hal::dho::bus::DmaBuf::new()
+                        }));
+                        match next {
+                            Some(next) => {
+                                let full = std::mem::replace(&mut dma, next);
+                                let (bs, ps) = (b.clone(), p);
+                                pipe.feed(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)));
+                            }
+                            None => crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1),
                         }
-                    }
-                    let mut frames: Vec<Frame> = dma
-                        .data()
-                        .chunks_exact(fb)
-                        .take(shown as usize)
-                        .map(|chunk| {
-                            n += 1;
-                            Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
-                        })
-                        .collect();
+                        vec![newest]
+                    } else {
+                        dma.data()
+                            .chunks_exact(fb.max(1))
+                            .take(avail)
+                            .map(|chunk| {
+                                n += 1;
+                                Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
+                            })
+                            .collect()
+                    };
                     if after.is_some_and(|a| a.clear) {
                         if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
                             status(format!("average clear: {}", e));
@@ -949,9 +989,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                     let mut g = out.lock().unwrap();
                     g.queue.extend(frames);
-                    while g.queue.len() > QUEUE_MAX {
-                        g.queue.pop_front();
-                    }
+                    let over = g.queue.len().saturating_sub(QUEUE_MAX);
+                    g.queue.drain(..over);
+                    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, over as u64);
                     if let Some(f) = g.queue.back() {
                         g.frame = f.clone();
                     }
