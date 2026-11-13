@@ -119,6 +119,20 @@ fn tscale_for(t: f32) -> usize {
 }
 
 impl Ui {
+    /// `:DEBug:SLOTs?` (fork): asks the acquisition thread for one raw run of the measure unit and returns the answer
+    /// to the previous query: `<request>` then per slot 0..7 `;<min>,<max>,<mean>` (12-bit min and max, mean on the
+    /// 16-bit scale), `<request>;none` when the unit gave nothing, `pending` before the first answer, `no hardware`
+    /// on other sources. Ask twice, about 0.3 s apart (docs/fork/trigger-lockin.md, slot map procedure).
+    pub fn debug_slots(&mut self) -> String {
+        self.slot_req += 1;
+        match self.src.hw_slots(self.slot_req) {
+            None => "no hardware".into(),
+            Some(None) => "pending".into(),
+            Some(Some((id, None))) => format!("{};none", id),
+            Some(Some((id, Some(s)))) => std::iter::once(id.to_string()).chain(s.iter().map(|x| format!("{},{},{:.1}", x[0], x[1], x[2]))).collect::<Vec<_>>().join(";"),
+        }
+    }
+
     /// An auto set-up is under way.
     pub fn auto_running(&self) -> bool {
         self.auto.is_some()
@@ -1000,6 +1014,27 @@ mod tests {
         let mut a = ui.auto.take().unwrap();
         assert!(ui.auto_fit(&mut a, Some(levels)));
         assert_eq!(a.plan[1], DEEP);
+    }
+
+    // Break it catches: the slot dump that does not reach the thread, answers with another request's slots, or loses
+    // a slot (the procedure for the slot map relies on all eight in order)
+    #[test]
+    fn debug_slots_dump_all_eight_over_scpi() {
+        let (mut ui, shared) = hw_ui();
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
+        assert_eq!(scpi.exec_line(&mut ui, &cv, ":DEB:SLOT?"), b"pending");
+        let id = shared.lock().unwrap().slots_want.unwrap();
+        let s: [[f32; 3]; 8] = std::array::from_fn(|k| [k as f32, 4000.0 + k as f32, 32768.5]);
+        shared.lock().unwrap().slots = Some((id, Some(s)));
+        let r = String::from_utf8(scpi.exec_line(&mut ui, &cv, ":DEBug:SLOTs?")).unwrap();
+        let parts: Vec<&str> = r.split(';').collect();
+        assert_eq!(parts.len(), 9, "{}", r);
+        assert_eq!(parts[0], id.to_string());
+        assert_eq!(parts[8], "7,4007,32768.5");
+        assert!(shared.lock().unwrap().slots_want.unwrap() > id, "each query asks for a new run");
+        let mut demo = Ui::new(Source::Demo { t: 0.0 });
+        assert_eq!(scpi.exec_line(&mut demo, &cv, ":DEB:SLOT?"), b"no hardware");
     }
 
     #[test]

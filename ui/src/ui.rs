@@ -937,6 +937,8 @@ pub struct Ui {
     auto: Option<autoset::AutoRun>,
     /// when the bar of views after an auto set-up came up (ui/autoset.rs)
     auto_bar: Option<f64>,
+    /// request number of the last `:DEBug:SLOTs?`
+    slot_req: u64,
     pub fps: f32,
     /// acquisitions per second (smoothed)
     pub wfm_rate: f32,
@@ -1148,6 +1150,7 @@ impl Ui {
             records: 0,
             auto: None,
             auto_bar: None,
+            slot_req: 0,
             fps: 0.0,
             wfm_rate: 0.0,
             wfm_total: 0,

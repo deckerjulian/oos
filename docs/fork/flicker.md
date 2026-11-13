@@ -33,5 +33,8 @@ frames per picture; every picture's brightness within 3 of 255 of the first. Wit
 
 ## Verification on the unit
 
+Build 20261113-165356 (dho804 6223967): the user confirmed by eye that the flicker is gone at the reported settings
+(2026-11-13).
+
 At the reported settings: screenshots in a row (`:DISPlay:DATA?`, only the changed ones count), the number of trace
 pixels and their mean red must stay within a few percent; by eye the trace is steady.

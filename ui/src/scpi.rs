@@ -297,6 +297,10 @@ impl Scpi {
         if nodes.len() >= 2 && kw(nodes[0], "LA") {
             return self.la_cmd(ui, &nodes[1..], query, arg);
         }
+        // fork debug: raw measure-unit slots (the slot map of the auto set-up's levels)
+        if nodes.len() == 2 && kw(nodes[0], "DEBug") && kw(nodes[1], "SLOTs") && query {
+            return t(&ui.debug_slots());
+        }
         if nodes.len() == 1 && kw(nodes[0], "AUToscale") && query {
             return t(if ui.auto_running() { "1" } else { "0" });
         }
