@@ -1771,3 +1771,23 @@ fn the_hdmi_layout_leaves_the_panel_alone() {
         }
     }
 }
+
+#[test]
+fn trigger_coupling_by_menu_scpi_and_setup() {
+    let mut u = with_two_channels();
+    let cv = Canvas::new(PANEL_W, PANEL_H);
+    let mut s = crate::scpi::Scpi::open(0);
+    assert!(u.trigger_items().contains(&Item::TrigCoup));
+    s.exec_line(&mut u, &cv, ":TRIG:COUP AC");
+    assert_eq!(u.m.trig_coup, TrigCoup::Ac);
+    assert_eq!(String::from_utf8_lossy(&s.exec_line(&mut u, &cv, ":TRIG:COUP?")).trim(), "AC");
+    u.select_option(Item::TrigCoup, "HF reject");
+    assert_eq!(u.m.trig_coup, TrigCoup::HfReject);
+    let back = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
+    assert_eq!(back.trig_coup, TrigCoup::HfReject);
+    // only the edge trigger on a channel is filtered; the hardware gets it
+    assert_eq!(board().want(&u.m).trig_couple, oos_hal::dho::tpu::Coupling::HfReject);
+    u.m.trig_type = TrigType::Pulse;
+    assert_eq!(u.m.trig_coupling(), TrigCoup::Dc);
+    assert!(!u.trigger_items().contains(&Item::TrigCoup));
+}

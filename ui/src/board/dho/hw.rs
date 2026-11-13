@@ -143,6 +143,12 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         blocks: 7,
         header: header_probe(),
         noise_reject: m.trig_nrej,
+        trig_couple: match m.trig_coupling() {
+            TrigCoup::Dc => tpu::Coupling::Dc,
+            TrigCoup::Ac => tpu::Coupling::Ac,
+            TrigCoup::LfReject => tpu::Coupling::LfReject,
+            TrigCoup::HfReject => tpu::Coupling::HfReject,
+        },
         frames: 1,
         compress: 1,
         trigger: hw_trigger(m),

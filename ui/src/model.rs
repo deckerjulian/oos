@@ -136,6 +136,29 @@ impl Coupling {
     }
 }
 
+/// Coupling of the edge trigger: a filter in the trigger path only, the trace stays as the channel's coupling shows it
+/// (trigger.md 2.5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TrigCoup {
+    Dc,
+    Ac,
+    LfReject,
+    HfReject,
+}
+
+pub const TRIG_COUPS: [TrigCoup; 4] = [TrigCoup::Dc, TrigCoup::Ac, TrigCoup::LfReject, TrigCoup::HfReject];
+
+impl TrigCoup {
+    pub fn name(self) -> &'static str {
+        match self {
+            TrigCoup::Dc => "DC",
+            TrigCoup::Ac => "AC",
+            TrigCoup::LfReject => "LF reject",
+            TrigCoup::HfReject => "HF reject",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slope {
     Rise,
@@ -697,6 +720,8 @@ pub struct Model {
     pub trig_level2: f32,
     /// noise reject: wider comparator hysteresis (0.7 instead of 0.3 div)
     pub trig_nrej: bool,
+    /// coupling of the edge trigger on a channel (`trig_coupling` gives the one in effect)
+    pub trig_coup: TrigCoup,
     /// second source: B (delay), clock (setup/hold)
     pub trig_src2: usize,
     pub trig_slope2: Slope,
@@ -1034,6 +1059,7 @@ impl Default for Model {
             trig_type: TrigType::Edge,
             trig_level2: 0.5,
             trig_nrej: false,
+            trig_coup: TrigCoup::Dc,
             trig_src2: 3,
             trig_slope2: Slope::Rise,
             trig_pol: Pol::Pos,
@@ -1649,6 +1675,12 @@ impl Model {
     /// Comparator hysteresis of the trigger in divisions (trigger.md 2.3): 0.3, 0.7 with noise reject.
     pub fn trig_hyst_div(&self) -> f32 {
         if self.trig_nrej { 0.7 } else { 0.3 }
+    }
+
+    /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and
+    /// for an LA line.
+    pub fn trig_coupling(&self) -> TrigCoup {
+        if self.trig_type == TrigType::Edge && self.trig_line().is_none() { self.trig_coup } else { TrigCoup::Dc }
     }
 
     pub fn la_on(&self) -> bool {

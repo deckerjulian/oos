@@ -106,6 +106,8 @@ pub struct Settings {
     pub header: bool,
     /// noise reject: 0.7 instead of 0.3 div comparator hysteresis (trigger.md 2.3, 2.7)
     pub noise_reject: bool,
+    /// coupling of the edge trigger (trigger.md 2.5); the other types are always DC
+    pub trig_couple: tpu::Coupling,
     /// frames per batch: one arm records this many triggered frames, one type-4 play and one read return them all
     /// (limited to `Params::max_frames`; needs `play4`)
     pub frames: u32,
@@ -123,7 +125,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, frames: 1, compress: 1, la: None }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None }
     }
 }
 
@@ -263,7 +265,7 @@ impl State {
         let vt: [tpu::Vert; 4] = [0, 1, 2, 3].map(|c| tpu::Vert { scale: nv(s.ch[c].scale), offset: nv(s.ch[c].offset), g: self.gain[c], noise });
         let edge = if s.slope == tpu::Slope::Falling { tpu::Edge::Falling } else { tpu::Edge::Rising };
         let mut w = match &s.trigger {
-            Trig::Edge => tpu::edge(ts, src, s.slope, nv(s.level), vt[tc].offset, vt[tc].scale, vt[tc].g, noise, 8_000_000),
+            Trig::Edge => tpu::edge_coupled(ts, src, s.slope, s.trig_couple, nv(s.level), vt[tc].offset, vt[tc].scale, vt[tc].g, noise, 8_000_000),
             Trig::Pulse { pol, when, lower, upper } => tpu::pulse(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), &vt),
             Trig::Slope { when, lower, upper, lo } => tpu::slope(ts, src, edge, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt),
             Trig::Runt { pol, when, lower, upper, lo } => tpu::runt(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt, true),

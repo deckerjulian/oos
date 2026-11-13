@@ -49,6 +49,29 @@ pub enum Slope {
     Either,
 }
 
+/// Coupling of the edge trigger (trigger.md 2.5): a filter of the TPU on the samples of the source, code in
+/// 0x208c[1:0]. GND is not a trigger coupling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Coupling {
+    #[default]
+    Dc,
+    Ac,
+    LfReject,
+    HfReject,
+}
+
+impl Coupling {
+    /// 0x208c[1:0]: DC 0, HF reject 1, LF reject 2, AC 3.
+    pub fn code(self) -> u32 {
+        match self {
+            Coupling::Dc => 0,
+            Coupling::HfReject => 1,
+            Coupling::LfReject => 2,
+            Coupling::Ac => 3,
+        }
+    }
+}
+
 /// Single edge of the types with a two-way choice (slope, delay, setup/hold clock, Nth edge): 0 rising, 1 falling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
@@ -325,7 +348,12 @@ impl Tpu<'_> {
 
     /// `iir(0, src, 0x800)` (DC): 0x208c = (s & 0xfffc0000) | ((src-1)&3) << 2 | 0x800 << 4.
     fn iir(&mut self, src: u32) {
-        self.sh.s208c = (self.sh.s208c & 0xfffc_0000) | (src.wrapping_sub(1) & 3) << 2 | 0x800 << 4;
+        self.iir_code(0, src);
+    }
+
+    /// `iir(code, src, 0x800)`: 0x208c = (s & 0xfffc0000) | code | ((src-1)&3) << 2 | 0x800 << 4.
+    fn iir_code(&mut self, code: u32, src: u32) {
+        self.sh.s208c = (self.sh.s208c & 0xfffc_0000) | code & 3 | (src.wrapping_sub(1) & 3) << 2 | 0x800 << 4;
         self.w.push((0x208c, self.sh.s208c));
     }
 
@@ -382,13 +410,22 @@ impl Tpu<'_> {
 /// writes source and pattern of A and B). `level`/`offset` in nV at the BNC,
 /// `scale` nV/div, `g` the channel's digital gain (1.0 if unknown), `holdoff_fs` in femtoseconds (8 ns minimum).
 pub fn edge(sh: &mut Shadows, ch: u32, slope: Slope, level: f64, offset: f64, scale: f64, g: f64, noise: f64, holdoff_fs: u64) -> Vec<Write> {
+    edge_coupled(sh, ch, slope, Coupling::Dc, level, offset, scale, g, noise, holdoff_fs)
+}
+
+/// `edge` with a coupling (trigger.md 2.5, 6.1 "Other choices"): AC, LF and HF reject set the bypass (write 9, bit12)
+/// and the filter 0x208c after the mode, and AC and LF reject leave the channel offset out of the level. 0x208c is written when the
+/// code changes (back to DC too), so DC on a DC unit writes exactly the list of 6.1. LA lines stay DC.
+#[allow(clippy::too_many_arguments)]
+pub fn edge_coupled(sh: &mut Shadows, ch: u32, slope: Slope, coupling: Coupling, level: f64, offset: f64, scale: f64, g: f64, noise: f64, holdoff_fs: u64) -> Vec<Write> {
+    let coupling = if ch > 8 { Coupling::Dc } else { coupling };
     let mut t = Tpu { sh, w: Vec::new() };
     let (a, b) = (cmp_a(ch), cmp_b(ch));
     // trigger(A; 0,0,0), trigger(B; 0,0,0): time condition off, limits 0
     t.trigger(Ev::A, 0, 0, 0);
     t.trigger(Ev::B, 0, 0, 0);
     // bypass(src > 8 || coupling != DC): 0 for CH1..CH4 in DC
-    t.bypass(ch > 8);
+    t.bypass(ch > 8 || coupling != Coupling::Dc);
     if (9..=24).contains(&ch) {
         // LA line (src 9..24): the sources do not depend on the slope, only the patterns do
         t.source(Ev::A, a, 0, a, 0);
@@ -424,6 +461,15 @@ pub fn edge(sh: &mut Shadows, ch: u32, slope: Slope, level: f64, offset: f64, sc
         }
     }
     t.mode(if slope == Slope::Either { 1 } else { 0 });
+    // the filter on a new code, and on a new source while filtering (its channel field, 0x208c[3:2])
+    let (code, on) = (t.sh.s208c & 3, (t.sh.s208c >> 2) & 3);
+    if coupling.code() != code || (code != 0 && on != (ch.wrapping_sub(1) & 3)) {
+        t.iir_code(coupling.code(), ch);
+    }
+    // AC and LF reject: the filter takes the mean out and its output sits at the middle code, so the level is around 0
+    // whatever the offset (trigger.md 2.3 for AC; LF reject the same on a DHO924S, 2026-11-13: 1 Vpp at 1 MHz on 1 V DC
+    // with -1 V offset fired at a level of 0.8..1.2 V with the offset in the level, which reads as the screen position)
+    let offset = if matches!(coupling, Coupling::Ac | Coupling::LfReject) { 0.0 } else { offset };
     let vt = [Vert { scale, offset, g, noise }; 4];
     t.levels(ch, level, level, true, false, &vt);
     t.holdoff(holdoff_fs as i128);
@@ -822,6 +868,36 @@ mod tests {
         let mut sh = Shadows::APP;
         edge(&mut sh, 1, Slope::Falling, 0.0, 0.0, 5e8, 1.0, noise_div(false), 8_000_000);
         assert_eq!(sh.s201c, 0x0022_0041);
+    }
+
+    #[test]
+    fn edge_coupling_sets_bypass_filter_and_ac_level() {
+        let last = |w: &[Write], r: u32| w.iter().rev().find(|x| x.0 == r).map(|x| x.1);
+        // CH1 AC: bypass, 0x208c = 3 | (1-1) << 2 | 0x8000, the level without the offset (+1 V offset, level 0)
+        let mut sh = Shadows::APP;
+        let w = edge_coupled(&mut sh, 1, Slope::Rising, Coupling::Ac, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
+        assert_eq!(last(&w, 0x205c).unwrap() & 0x1000, 0x1000);
+        assert_eq!(last(&w, 0x208c), Some(0x8003));
+        assert_eq!(last(&w, 0x2008).unwrap() & 0xffff, 0x8000 + 2250, "level B upper: code(0 + hyst)");
+        // the same again writes no filter; another source does; HF reject keeps the offset
+        let w = edge_coupled(&mut sh, 1, Slope::Rising, Coupling::Ac, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
+        assert_eq!(last(&w, 0x208c), None);
+        let w = edge_coupled(&mut sh, 3, Slope::Rising, Coupling::Ac, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
+        assert_eq!(last(&w, 0x208c), Some(0x800b));
+        let w = edge_coupled(&mut sh, 1, Slope::Rising, Coupling::HfReject, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
+        assert_eq!(last(&w, 0x208c), Some(0x8001));
+        assert_eq!(last(&w, 0x2008).unwrap() & 0xffff, 0x8000 + 2 * 7500 + 2250);
+        let w = edge_coupled(&mut sh, 1, Slope::Rising, Coupling::LfReject, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
+        assert_eq!(last(&w, 0x208c), Some(0x8002));
+        assert_eq!(last(&w, 0x2008).unwrap() & 0xffff, 0x8000 + 2250, "LF reject: no offset either");
+        // back to DC: no bypass, filter code 0
+        let w = edge_coupled(&mut sh, 1, Slope::Rising, Coupling::Dc, 0.0, 0.0, 5e8, 1.0, noise_div(false), 8_000_000);
+        assert_eq!(last(&w, 0x205c).unwrap() & 0x1000, 0);
+        assert_eq!(sh.s208c & 3, 0);
+        // an LA line stays DC
+        let mut sh = Shadows::APP;
+        let w = edge_coupled(&mut sh, 9, Slope::Rising, Coupling::Ac, 0.0, 0.0, 5e8, 1.0, noise_div(false), 8_000_000);
+        assert_eq!(last(&w, 0x208c), None);
     }
 
     #[test]

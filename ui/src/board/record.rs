@@ -8,6 +8,22 @@ use super::Frame;
 use crate::model::*;
 use std::sync::Arc;
 
+/// The level the software trigger looks for on the samples of the source: the set level, and with AC or LF-reject
+/// trigger coupling the level around the mean of the frame (the TPU filters the mean out before its comparators,
+/// trigger.md 2.5; the frame holds the signal as the channel's own coupling gives it). At most 4096 samples of the
+/// frame enter the mean.
+pub fn sw_trig_level(m: &Model, f: &Frame) -> f32 {
+    match m.trig_coupling() {
+        TrigCoup::Ac | TrigCoup::LfReject => {
+            let v = &f.ch[m.trig_src.min(NCH - 1)];
+            let step = (v.len() / 4096).max(1);
+            let (sum, n) = v.iter().step_by(step).filter(|y| y.is_finite()).fold((0.0f64, 0u32), |(s, n), &y| (s + y as f64, n + 1));
+            m.trig_level + if n > 0 { (sum / n as f64) as f32 } else { 0.0 }
+        }
+        TrigCoup::Dc | TrigCoup::HfReject => m.trig_level,
+    }
+}
+
 /// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,
 /// then the screen window (`n` points over `window` s from `t_first` relative to the trigger) by linear interpolation.
 pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64) -> crate::wave::Record {
@@ -40,7 +56,10 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
             // the screen window stays inside the frame where it can
             let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
             let fits = |t: f64| first > last || (first..=last).contains(&t);
-            crate::fastdraw::edge_smooth(&f.ch[m.trig_src], f.pre, m.trig_level, hyst[m.trig_src], rising, either, screen / 2, col, fits).0
+            let found = crate::fastdraw::edge_smooth(&f.ch[m.trig_src], f.pre, sw_trig_level(m, f), hyst[m.trig_src], rising, either, screen / 2, col, fits).0;
+            // a filtered trigger path (coupling) can fire where the samples show no crossing of that level: the
+            // hardware point stands
+            found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
         })
         .flatten();
     let found = if f.roll || f.scan {

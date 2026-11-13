@@ -4,7 +4,7 @@
 //! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
-//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
+//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
@@ -409,6 +409,25 @@ impl Scpi {
                         _ => "STOP",
                     };
                     return Some(t(s));
+                }
+                if nodes.len() == 2 && kw(last, "COUPling") {
+                    if query {
+                        return Some(t(match m.trig_coup {
+                            TrigCoup::Dc => "DC",
+                            TrigCoup::Ac => "AC",
+                            TrigCoup::LfReject => "LFR",
+                            TrigCoup::HfReject => "HFR",
+                        }));
+                    }
+                    let a = arg.trim().to_ascii_uppercase();
+                    m.trig_coup = match a.as_str() {
+                        "DC" => TrigCoup::Dc,
+                        "AC" => TrigCoup::Ac,
+                        "LFR" | "LFREJECT" => TrigCoup::LfReject,
+                        "HFR" | "HFREJECT" => TrigCoup::HfReject,
+                        _ => return None,
+                    };
+                    return Some(None);
                 }
                 if nodes.len() == 2 && kw(last, "NREJect") {
                     if query {

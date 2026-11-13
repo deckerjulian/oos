@@ -516,6 +516,8 @@ enum Item {
     GridFrame,
     /// noise reject of the trigger comparators
     TrigNoise,
+    /// coupling of the edge trigger
+    TrigCoup,
     LaOn,
     DecIn,
     LaShow,
@@ -1895,7 +1897,7 @@ impl Ui {
         let edge = if on_la {
             None
         } else {
-            let (e, any) = crate::fastdraw::edge_smooth(src, f.pre, m.trig_level, hyst, rising, either, half, col, |_| true);
+            let (e, any) = crate::fastdraw::edge_smooth(src, f.pre, crate::board::sw_trig_level(m, f), hyst, rising, either, half, col, |_| true);
             let k = match (e, any) {
                 (None, _) => 3,
                 (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => 0,
@@ -1927,7 +1929,8 @@ impl Ui {
                 crate::fastdraw::deposit(&mut self.ph.map[c], w, h, &f.ch[c], &xm, 24);
             }
         }
-        edge.is_some() || on_la
+        // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
+        edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc
     }
 
     // ------------------------------------------------------------------ rendering
@@ -4281,7 +4284,7 @@ impl Ui {
         match m.trig_type {
             // an LA line has no level of its own (LA page: pod threshold)
             TT::Edge if m.trig_line().is_some() => v.extend([TrigSrc, TrigSlope]),
-            TT::Edge => v.extend([TrigSrc, TrigSlope, TrigLevel, Trig50]),
+            TT::Edge => v.extend([TrigSrc, TrigSlope, TrigLevel, Trig50, TrigCoup]),
             // the protocol and its sources come from the Decode menu
             TT::Bus => {
                 v.extend([DecProto, TrigBusWhat]);
@@ -4728,6 +4731,7 @@ impl Ui {
             Item::GridBright => "Grid bright.",
             Item::GridFrame => "Grid frame",
             Item::TrigNoise => "Noise reject",
+            Item::TrigCoup => "Coupling",
             Item::ClearDisp => "Clear",
             Item::Dots => "Dots",
             Item::Hdmi => "HDMI",
@@ -4899,6 +4903,7 @@ impl Ui {
             Item::GridBright => format!("{} %", m.grid_bright),
             Item::GridFrame => onoff(m.grid_frame),
             Item::TrigNoise => onoff(m.trig_nrej),
+            Item::TrigCoup => m.trig_coup.name().into(),
             Item::Dots => onoff(m.dots),
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
@@ -5226,6 +5231,10 @@ impl Ui {
             Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(10, 100) as u32,
             Item::GridFrame => m.grid_frame = !m.grid_frame,
             Item::TrigNoise => m.trig_nrej = !m.trig_nrej,
+            Item::TrigCoup => {
+                let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
+                m.trig_coup = TRIG_COUPS[cyc(i, TRIG_COUPS.len(), d)];
+            }
             Item::GridStyle => {
                 let all = [Grid::Full, Grid::Light, Grid::None];
                 let i = all.iter().position(|&x| x == m.grid).unwrap();
@@ -5781,6 +5790,7 @@ impl Ui {
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
             Item::TrigSlope => &["Rising", "Falling", "Either"],
             Item::TrigMode => &["Auto", "Normal", "Single"],
+            Item::TrigCoup => return TRIG_COUPS.iter().map(|c| c.name().to_string()).collect(),
             Item::TrigSrc2 => return ch_names(),
             Item::TrigSlope2 => &["Rising", "Falling", "Either"],
             Item::TrigPol => &["Positive", "Negative"],
@@ -8256,6 +8266,7 @@ mod tests {
         let items = [
             Item::TrigType, Item::MathOpI, Item::FftWin, Item::VidSync, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct,
             Item::AcqMode, Item::TrigWhen, Item::Pat(1), Item::DecCs, Item::DecProto, Item::GridStyle, Item::ChProbe(0), Item::TrigMode,
+            Item::TrigCoup,
         ];
         for it in items {
             let opts = ui.options(it);
