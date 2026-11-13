@@ -110,6 +110,14 @@ impl Ui {
             offset: 0.0,
             on: true,
         });
+        if self.offline {
+            self.present_record(slot);
+            self.m.eye_rate = lane.bits_per_s;
+            self.sim_i = 0;
+            self.sim_play = true;
+            self.toast(&format!("{} → R{}", lane.name, slot + 1));
+            return;
+        }
         self.m.ch[0].on = true;
         self.m.ch[0].vscale = VSCALES.iter().position(|&s| (s - vpd).abs() <= s * 1e-3).unwrap_or(11);
         self.m.ch[0].offset = 0.0;
@@ -131,6 +139,9 @@ impl Ui {
 
     /// Walks rising edges of the loaded slot and folds each window into the CH1 phosphor.
     pub(super) fn sim_tick(&mut self, dt_wall: f64) {
+        if self.offline {
+            return;
+        }
         let slot = self.m.sim_slot;
         let Some(r) = self.refs[slot].as_ref() else {
             self.sim_play = false;
