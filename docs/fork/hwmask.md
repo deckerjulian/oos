@@ -102,6 +102,15 @@ the screen (1.6 screens at 10k points from 20 us/div). With a flat signal around
   came from counts whose columns ran past the record. Records above 1.02 M points have their first 1.02 M tested.
 - The slot is the stream slot (regmap from libscope): CH2 alone is slot 0, CH2 of CH1+CH2 slot 1.
 
+## Stall guard (round 8)
+
+At 200 µs/div with 100k and Auto depth the unit stopped the acquisition: every arm ended with "no acquisition
+(0x4080 bit30 not set)". The acquisition thread now counts arms that find no acquisition while the mask or zone unit
+runs. After two in a row it drops the unit for the current settings (time base, depth, channel set, `mask.map`) and
+publishes the reason in `Shared::unit_blocked`. The UI then runs the software test and filter and shows a toast once.
+`:SYSTem:DEBug:MASK?` reports `blocked=1`. Changing any of those settings tries the hardware again. The cause of the
+stall is open.
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output. Optional: BNC cable from AUX OUT to CH2 (step 7). Start from a known state:

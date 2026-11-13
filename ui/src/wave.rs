@@ -527,6 +527,14 @@ impl Source {
         None
     }
 
+    /// Hardware source: why the mask/zone unit is off for the current settings (`Shared::unit_blocked`).
+    pub fn hw_unit_blocked(&self) -> Option<String> {
+        if let Source::Hw { shared, .. } = self {
+            return shared.lock().unwrap().unit_blocked.clone();
+        }
+        None
+    }
+
     /// Hardware source: the mask table last loaded (`Shared::mask_table`).
     pub fn hw_mask_table(&self) -> Option<std::sync::Arc<Vec<[u8; 4]>>> {
         if let Source::Hw { shared, .. } = self {

@@ -366,6 +366,8 @@ pub struct Shared {
     pub mask: Option<MaskRead>,
     /// the mask table last loaded: (lower, upper, lower enabled, upper enabled) per column
     pub mask_table: Option<std::sync::Arc<Vec<[u8; 4]>>>,
+    /// the mask or zone unit stalled the acquisition with the current settings: why; the UI tests in software
+    pub unit_blocked: Option<String>,
     /// the FPGA's zone trigger: wanted by the UI (None: off), the latest reading
     pub zone_want: Option<ZoneWant>,
     pub zone: Option<ZoneRead>,

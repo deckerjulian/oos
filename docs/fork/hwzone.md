@@ -80,6 +80,15 @@ and the software-filter rate for comparison. Goal: at least the software rate.
 | A failing frame is not accepted; the FSM re-arms | | 2, 3 |
 | Slot = stream slot, as the mask test (CH2 alone 0, CH2 of CH1+CH2 1) | `mask::slot` | 5 |
 
+## Stall guard (round 8)
+
+At 200 µs/div with 100k and Auto depth the unit stopped the acquisition: every arm ended with "no acquisition
+(0x4080 bit30 not set)". The acquisition thread now counts arms that find no acquisition while the mask or zone unit
+runs. After two in a row it drops the unit for the current settings (time base, depth, channel set, `mask.map`) and
+publishes the reason in `Shared::unit_blocked`. The UI then runs the software test and filter and shows a toast once.
+`:SYSTem:DEBug:MASK?` reports `blocked=1`. Changing any of those settings tries the hardware again. The cause of the
+stall is open.
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output (1 kHz square). `zone.hw = on` in system.conf, restart oos-ui. Note

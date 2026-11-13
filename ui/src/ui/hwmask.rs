@@ -13,7 +13,16 @@ impl Ui {
     /// The mask test runs in the hardware: enabled on this board, live hardware frames, the mask on and built, its
     /// channel acquired. The fast display path then stays on.
     pub(super) fn mask_hw_active(&self) -> bool {
-        board().mask_hw() && self.src.is_hw() && self.m.mask_on && self.mask.is_some() && self.mask_cols.is_some() && self.m.ch[self.m.mask_src].on
+        board().mask_hw() && self.src.is_hw() && self.m.mask_on && self.mask.is_some() && self.mask_cols.is_some() && self.m.ch[self.m.mask_src].on && self.unit_blocked.is_none()
+    }
+
+    /// Takes the stall guard's verdict (`Shared::unit_blocked`); a new block is shown once.
+    pub(super) fn unit_blocked_poll(&mut self) {
+        let b = self.src.hw_unit_blocked();
+        if b.is_some() && self.unit_blocked.is_none() {
+            self.toast("Mask/zone hardware stalled the acquisition: software test");
+        }
+        self.unit_blocked = b;
     }
 
     /// The table columns of the mask (`Mask::columns`), after every new mask.
@@ -24,6 +33,7 @@ impl Ui {
     /// Hands the mask test to the acquisition thread and takes its latest counters; a new failure stops the
     /// acquisition when "stop on fail" is set.
     pub(super) fn mask_hw_poll(&mut self) {
+        self.unit_blocked_poll();
         let want = if self.mask_hw_active() {
             self.mask_cols.as_ref().map(|(lo, hi)| MaskWant { ch: self.m.mask_src, lo: lo.clone(), hi: hi.clone(), stop: self.m.mask_stop, clear: self.mask_hw_clear })
         } else {
@@ -59,7 +69,7 @@ impl Ui {
         let (acq, used, _) = crate::drawpipe::counters().read();
         let sw = format!("sw_pass={},sw_fail={},acquired={},used={},records={}", self.mask_pass, self.mask_fail, acq, used, self.records);
         let Some(r) = self.mask_hw else {
-            return format!("off,enabled={},active={},{}", board().mask_hw() as u8, self.mask_hw_active() as u8, sw);
+            return format!("off,enabled={},active={},blocked={},{}", board().mask_hw() as u8, self.mask_hw_active() as u8, self.unit_blocked.is_some() as u8, sw);
         };
         format!(
             "ch={},slot={},ctrl={:#010x},frames_lo={:#010x},frames_hi={:#010x},fails_lo={:#010x},fails_hi={:#010x},frames={},fails={},n={},{}",
@@ -176,6 +186,6 @@ mod tests {
         assert_eq!((ui.mask_counts(), ui.mask_hw_clear), ((0, 0), 1));
         assert!(ui.mask_debug_text().starts_with("ch=1,slot=0,ctrl=0x00000000,"), "{}", ui.mask_debug_text());
         ui.mask_hw = None;
-        assert!(ui.mask_debug_text().starts_with("off,enabled=0,active=0,sw_pass=0"));
+        assert!(ui.mask_debug_text().starts_with("off,enabled=0,active=0,blocked=0,sw_pass=0"));
     }
 }
