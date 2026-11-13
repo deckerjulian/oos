@@ -293,7 +293,7 @@ to the horizontal rows except 0x1130/0x1134/0x1154../0x1170/0x1174, which the pa
 
 | block | registers | values for a raw read-out (proposal) | reference |
 |---|---|---|---|
-| WPU read-path gain/offset | 0x14c8/0x14d4/0x14e0/0x14ec (Q10 gain), 0x14d0/0x14dc/0x14e8/0x14f4 (offset), zoom 0x1508..0x1514 / 0x14f8..0x1504 | gain = digital gain x 1024, offset = 32768 - 32768 x gain, replicated per lane like the invert bits | `afe-settings.md` 4.1 |
+| WPU read-path gain/offset | 0x14c8/0x14d4/0x14e0/0x14ec (Q10 gain), 0x14d0/0x14dc/0x14e8/0x14f4 (offset), zoom 0x1508..0x1514 / 0x14f8..0x1504 | gain = digital gain x 1024, offset = 32768 - 32768 x gain, per lane: one channel all four, two channels lanes 0, 2 lower and 1, 3 higher (not like the invert bits), four channels lane n = CH n+1 | `afe-settings.md` 4.1 |
 | WPU ADC gain | 0x105c (0x5555 for x1) | 0x5555 | `adc-mode.md` 4.3 |
 | horizontal: interpolation off | 0x1130 = 0x00010101, 0x1134 (zoom, disabled), 0x1118/0x111c = points + 40, 0x1138 = 0x00c8c8c8, 0x1154 bit 0 = 1 (linear off) and bits 8/9 = 0, 0x1158 = 0, 0x115c = 0xffffffff, same for zoom 0x1160/0x1164 | as listed | `horizontal-config.md` 4.1 |
 | horizontal: compression / TX | 0x1170 = 0x40000001 (k = 1) or the k of 3.1 there, 0x1174, 0x11fc = 1000, 0x11f0 (OOS window) | | `horizontal-config.md` 3.1/4.1 |

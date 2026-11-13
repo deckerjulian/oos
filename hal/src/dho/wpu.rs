@@ -10,8 +10,9 @@
 use crate::dho::Write;
 
 /// The read-path writes for channel `mask` and the digital gain of each channel (cal_vertical record `gain`, 1.0 for
-/// unknown). Lanes like the invert bits: 1 channel -> all four lanes, 2 -> lanes 0/1 lower and 2/3 higher channel,
-/// 4 -> lane n = CH n+1.
+/// unknown). Lanes as the stock firmware writes them: 1 channel -> all four lanes, 2 -> lanes 0/2 lower and 1/3
+/// higher channel, 4 -> lane n = CH n+1. With two channels this differs from the invert and filter bits of 0x1004
+/// (`acq::lanes`: 0/1 lower, 2/3 higher): those follow the ADC core groups, the read path the interleaved words.
 pub fn analog(mask: u32, dgain: [f64; 4]) -> Vec<Write> {
     analog_gnd(mask, dgain, [None; 4])
 }
@@ -28,7 +29,7 @@ pub fn analog_gnd(mask: u32, dgain: [f64; 4], gnd: [Option<u32>; 4]) -> Vec<Writ
     let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
     let lane_ch: [usize; 4] = match crate::dho::hz::ratio(mask) {
         1 => [on[0]; 4],
-        2 => [on[0], on[0], on[1], on[1]],
+        2 => [on[0], on[1], on[0], on[1]],
         _ => [0, 1, 2, 3],
     };
     let gain = |c: usize| if gnd[c].is_some() { 0 } else { (dg[c].min(508.0) * 1024.0) as i32 as u32 };
@@ -59,9 +60,21 @@ mod tests {
         assert_eq!(w[0], (0x105c, 0x5555));
         assert_eq!(&w[1..5], &[(0x14c8, 1104), (0x14d4, 1104), (0x14e0, 1104), (0x14ec, 1104)]);
         assert_eq!(w[5], (0x14d0, (-2584i32) as u32));
-        // two channels: lanes 0/1 = CH2, 2/3 = CH4
+        // two channels (as stock: gains lo, hi, lo, hi): lanes 0/2 = CH2, 1/3 = CH4, gains and offsets, main and
+        // zoom. Break it catches the lane order of the invert bits (0/1, 2/3), which put every other word of each
+        // channel through the other channel's gain and offset (unit 2026-11-13: CH3 open at +2 V offset read +143 mV
+        // with CH1 acquired at another V/div, -30 mV alone)
         let w = analog(0b1010, [1.0, 1.5, 1.0, 1.25]);
-        assert_eq!(w.iter().filter(|x| x.0 == 0x14c8 || x.0 == 0x14e0).map(|x| x.1).collect::<Vec<_>>(), [1536, 1280]);
+        let at = |r: u32| w.iter().find(|x| x.0 == r).unwrap().1;
+        assert_eq!([0x14c8, 0x14d4, 0x14e0, 0x14ec].map(at), [1536, 1280, 1536, 1280]);
+        assert_eq!([0x1508, 0x150c, 0x1510, 0x1514].map(at), [1536, 1280, 1536, 1280]);
+        let off = |g: f64| (32768.0 - 32768.0 * g) as i32 as u32;
+        assert_eq!([0x14d0, 0x14dc, 0x14e8, 0x14f4].map(at), [off(1.5), off(1.25), off(1.5), off(1.25)]);
+        assert_eq!([0x14f8, 0x14fc, 0x1500, 0x1504].map(at), [off(1.5), off(1.25), off(1.5), off(1.25)]);
+        // four channels: lane n = CH n+1
+        let w = analog(0b1111, [1.0, 1.25, 1.5, 2.5]);
+        let at = |r: u32| w.iter().find(|x| x.0 == r).unwrap().1;
+        assert_eq!([0x14c8, 0x14d4, 0x14e0, 0x14ec].map(at), [1024, 1280, 1536, 1280]);
         // gain 3 -> ADC x2 (0xaa bytes) and 1.5 in the Q10 gain
         let w = analog(1, [3.0, 1.0, 1.0, 1.0]);
         assert_eq!(w[0], (0x105c, 0xaaaa));

@@ -185,6 +185,8 @@ Examples: 1 ch 1.25 G -> 0x8001; 2 ch 625 M -> 0x8001; 1 ch 312.5 M -> 0x8004; 1
 - The SPU has 4 lanes. The per-lane bit fields in 0x1004 (invert [19:16], BW filter [23:20]) and the sample delays use
   this assignment: ratio 1: the channel's bit in all 4 lanes; ratio 2: lanes 0,1 = lower channel, lanes 2,3 = higher
   channel (pairs 12, 13, 14, 23, 24, 34 for masks 3, 5, 9, 6, A, C); ratio 4: lane n = CH n+1.
+- The read-path gain and offset of the WPU (0x14c8.., `wpu.rs`) use another order with two channels: lanes 0, 2 =
+  lower channel, 1, 3 = higher (as the stock firmware writes them), the order of the interleaved words. Ratio 1 and 4 as above.
 
 ### 2.2 Multi-channel frame layout
 
