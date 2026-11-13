@@ -698,6 +698,8 @@ enum Drag {
     Zone(usize),
     /// zoom-area button is armed: the finger draws the box that becomes the zoom
     ZoomBox,
+    /// the corner button: its drawn origin when the finger went down, and where it sat before this gesture
+    FullBtn { ox: i32, oy: i32, prev: Option<(i32, i32)> },
     Offset(usize),
     Delay,
     Level,
@@ -767,6 +769,8 @@ pub struct Ui {
     /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
     /// shows the waveform, so the panel keeps the controls.
     full: bool,
+    /// Top left of the corner button after a drag. None keeps it at the top right of the plot.
+    full_at: Option<(i32, i32)>,
     vmaxz: [u32; NCH],
     rng: Rng,
     menu: MenuId,
@@ -1000,6 +1004,7 @@ impl Ui {
             wins: Vec::new(),
             cur_win: 0,
             full: false,
+            full_at: None,
             vmaxz: [1; NCH],
             rng: Rng::new(0x9e3779b97f4a7c15),
             menu: MenuId::Main,
@@ -1346,13 +1351,34 @@ impl Ui {
         self.m.la_win = if self.m.la_on() { i % n } else { 0 };
     }
 
-    /// The expand button at the top right of the plot, the shortcut between Scope and Full: (drawn, touch area).
-    fn full_btn(&self) -> (Rect, Rect) {
+    /// The corner the expand button keeps until it is dragged: (drawn, touch area).
+    fn full_home(&self) -> (Rect, Rect) {
         let g = self.grid;
         // left of the view button while an analysis view has the plot
         let right = if self.view_on() { self.view_btn().x - 6 } else { g.x + g.w - 4 };
         let r = Rect::new(right - 36, g.y + 3, 36, 28);
-        (r, Rect::new(r.x - 8, g.y, r.w + 16, 44))
+        Self::full_pair(r)
+    }
+
+    /// Touch area around a drawn corner button. At the home corner this is the same rectangle as before.
+    fn full_pair(r: Rect) -> (Rect, Rect) {
+        (r, Rect::new(r.x - 8, r.y - 3, r.w + 16, 44))
+    }
+
+    /// The expand button, at the top right of the plot or where it was dropped: (drawn, touch area).
+    fn full_btn(&self) -> (Rect, Rect) {
+        let (home, _) = self.full_home();
+        let r = match self.full_at {
+            Some((x, y)) => Rect::new(x, y, home.w, home.h),
+            None => home,
+        };
+        Self::full_pair(r)
+    }
+
+    /// Keeps the drawn corner button on the screen.
+    fn clamp_full(&self, x: i32, y: i32) -> (i32, i32) {
+        let (home, _) = self.full_home();
+        (x.clamp(0, (W - home.w).max(0)), y.clamp(0, (H - home.h).max(0)))
     }
 
     fn draw_full_btn(&self, cv: &mut Canvas) {
@@ -1379,7 +1405,7 @@ impl Ui {
 
     /// The zoom-area button under the full-screen button: (drawn, touch area). One press arms the next drag.
     fn zoom_btn(&self) -> (Rect, Rect) {
-        let (full, hit) = self.full_btn();
+        let (full, hit) = self.full_home();
         // below the full-screen touch target, so the two buttons do not share a tap
         let r = Rect::new(full.x, hit.y + hit.h + 2, full.w, full.h);
         (r, Rect::new(r.x - 5, r.y, r.w + 10, 40))
@@ -3341,7 +3367,7 @@ impl Ui {
             }
         };
         if !src.is_empty() {
-            backed_text(cv, &f.s, self.full_btn().0.x - 8 - f.s.width(src), y, src, DIM);
+            backed_text(cv, &f.s, self.full_home().0.x - 8 - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
         if self.m.touch_lock {
@@ -7084,11 +7110,20 @@ impl Ui {
     }
 
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
-        let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        let covered = self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !covered;
+        // a press on the corner button moves that button; it is not a drag of the trace
+        let on_full = ph == Phase::Down && !covered && self.full_btn().1.contains(x, y);
         // the plot buttons are taps; a zoom box starts on the waveform, not on them
         let on_chrome = ph == Phase::Down
-            && (self.full_btn().1.contains(x, y) || self.zoom_btn().1.contains(x, y) || (self.view_on() && self.view_btn().contains(x, y)));
+            && (on_full || self.zoom_btn().1.contains(x, y) || (self.view_on() && self.view_btn().contains(x, y)));
         let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
+        let full_from = if on_full {
+            let (r, _) = self.full_btn();
+            Some((r.x, r.y, self.full_at))
+        } else {
+            None
+        };
         let t = &mut self.touch;
         match ph {
             Phase::Down => {
@@ -7097,7 +7132,9 @@ impl Ui {
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
                     return;
                 }
-                if in_plot {
+                if let Some((ox, oy, prev)) = full_from {
+                    t.drag = Drag::FullBtn { ox, oy, prev };
+                } else if in_plot {
                     t.drag = Drag::Pending;
                     if let Some(map) = zmap {
                         t.drag = Drag::ZoomBox;
@@ -7218,6 +7255,15 @@ impl Ui {
                             *p = (x, y);
                         }
                     }
+                    Drag::FullBtn { ox, oy, prev } => {
+                        // past the tap slop the button follows the finger; a shorter move is still a tap
+                        if dx.abs() >= 16 || dy.abs() >= 16 {
+                            let (px, py) = self.clamp_full(ox + dx, oy + dy);
+                            self.full_at = Some((px, py));
+                        } else {
+                            self.full_at = prev;
+                        }
+                    }
                     Drag::CursorA | Drag::CursorB => {
                         let v = if self.m.cursor == CursorMode::Time {
                             t.start_cur + dx as f32 / self.area.w as f32
@@ -7254,6 +7300,17 @@ impl Ui {
                 }
                 if was.1 == Drag::ZoomBox {
                     self.finish_zoom_box();
+                    return;
+                }
+                if let Drag::FullBtn { ox, oy, prev } = was.1 {
+                    let (dx, dy) = (x - was.2, y - was.3);
+                    if dx.abs() < 16 && dy.abs() < 16 {
+                        self.full_at = prev;
+                        self.tap(was.2, was.3);
+                    } else {
+                        let (px, py) = self.clamp_full(ox + dx, oy + dy);
+                        self.full_at = Some((px, py));
+                    }
                     return;
                 }
                 if self.dialog.is_some() {
