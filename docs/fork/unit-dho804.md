@@ -289,6 +289,20 @@ Details and the raw dumps: private RE notes `docs/logs/oos_unitlab_20261113.md` 
 | B1 fast rates | bit 2 needed | `avg.hw_fast` alone: zero frames from 156.25 MSa/s up (1 and 2 ch). With `avg.debug_sinc` (0x1004 bit 2): averages at 156.25, 312.5, 625, 1250 MSa/s (312.5: 1.08 -> 0.46 mV at N 16) |
 | B1 raw fields | no hidden low field | `seq`: odd word = next sample; `wide`: words from 10240 on are a quieter region (51 vs 125 codes), not a repeat |
 
+### Round 5 on dho804 da8e2a0 (build 20261113-193501)
+
+Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 5".
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| Compression (`acq.compress`) | default on | `compress-check` PASS at k 4/16/64/256 and 2 ch; k 256 at 1 M no time-out. On vs off: 1 ch 10 us/div 451 -> 504, 2 ch 10 us/div 346 -> 430 (drops 18 -> 0), 1 us/div -1 %, A53 load ~92 % -> ~17 % |
+| NEON deposit | no system-level change | compression off, 10 us/div 2 ch: dots 346/s (25 dropped), lines 354/s (0 dropped); deposit threads 70-82 % |
+| Deep measurements live | partly | 1 ms/div 10 M updates every second; 2 and 5 ms/div repeat one value (not updated) |
+| SINGLE count | not 1 | `acquired` +10 at 1 us/div, +3 at 1 ms/div per SINGLE |
+| B3 | pass | as round 4 |
+| DVM decoded | pass at CH1 | within 2.1 % (DC 500 mV/div), 0.2 % at 100 mV/div, no factor 2. Open CH3 at +2 V offset reads -34 mV; `sw` there shows CH1's value |
+| Hardware mask | pass below 100 us/div | readout domain: 0 fails clean, all fail with a 2 us shift, 1/2/4 ch, agrees with software. Fails every frame at >= 100 us/div at any depth and `cols`; `cols=400` stalls the acquisition |
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
