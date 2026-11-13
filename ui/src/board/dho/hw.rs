@@ -219,13 +219,32 @@ fn aux_out(a: AuxOut) -> auxout::AuxOut {
 /// The count of a hardware average for the model and its settings `s`, None for the software average
 /// (docs/fork/specs/01-hw-averaging.md): Average mode with `Model::avg_hw`, a power-of-two count, ordinary triggered
 /// records (not roll or scan, which average in software as in stock), no LA, no hardware segments (they record raw
-/// frames), and a record whose average segment fits the frame ring.
+/// frames), a record whose average segment fits the frame ring, and a sample rate on the second divider
+/// (`avg_rate_ok`).
 fn hw_avg_count(m: &Model, s: &Settings) -> Option<u32> {
     if m.acq != AcqMode::Average || !m.avg_hw || slow_mode(m) != Slow::Off || s.la.is_some() || s.segments.is_some() {
         return None;
     }
     let p = hz::avg_params(hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0));
-    oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0)
+    oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0 && avg_rate_ok(p.rate, avg_fast_on()))
+}
+
+/// The FPGA averages at sample rate `rate`: 62.5 MSa/s and below (the second divider, 0x10d0 = 0), or any rate with
+/// `avg.hw_fast = on`. Unit 2026-11-13 (B1): above it (625 MSa/s, 1.25 GSa/s) every averaged frame was zero, at
+/// 62.5 MSa/s the average was right; the software average takes the fast rates until the unit shows them working.
+fn avg_rate_ok(rate: u64, fast: bool) -> bool {
+    fast || oos_hal::dho::spu::slow_path(rate)
+}
+
+/// `avg.hw_fast = on` in system.conf: hardware averaging above 62.5 MSa/s too, for the unit test of B1.
+fn avg_fast_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| avg_fast_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `avg.hw_fast` line of system.conf; off unless `on`.
+fn avg_fast_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "avg.hw_fast").as_deref() == Some("on")
 }
 
 /// The model's set-up averages in the FPGA (`Board::avg_hw`).
@@ -1397,7 +1416,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         if *logged < 32 {
                             // hardware check: 0x10b0 progress and the first words next to the triggers counted here
                             *logged += 1;
-                            let w: Vec<String> = dma.data().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
+                            // the newest frame's first words (every recorded frame was played)
+                            let at = (count.max(1) as usize - 1) * seq::frame_bytes(&b, &p);
+                            let w: Vec<String> = dma.data().get(at..).unwrap_or_default().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
                             eprintln!("oos-ui hw: average {:?} batch {} of {} triggers, {} in, show {}, 0x10b0 = {}, words {}", tr.kind, *logged, count, a.triggers, a.show, oos_hal::dho::avg::progress(&mut bar), w.join(" "));
                         }
                         a
@@ -1413,7 +1434,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                     let fb = seq::frame_bytes(&b, &p);
                     // decode before taking the lock: the UI must not wait for 100 k-point conversions
-                    let shown = if after.is_some_and(|a| !a.show) { 0 } else { seq::batch_read(&b, count).1 };
+                    // every recorded frame was read; in average mode only the newest goes to the screen
+                    let shown = match after {
+                        Some(a) if !a.show => 0,
+                        _ => count,
+                    };
                     let avail = if fb == 0 { 0 } else { (shown as usize).min(dma.data().len() / fb) };
                     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
@@ -1446,6 +1471,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             .data()
                             .chunks_exact(fb.max(1))
                             .take(avail)
+                            .skip(if after.is_some() { avail.saturating_sub(1) } else { 0 })
                             .map(|chunk| {
                                 n += 1;
                                 Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
@@ -1552,7 +1578,7 @@ fn seg_step(run: &mut Option<SegRun>, s: &Settings, p: &hz::Params, state: &mut 
         let tag = seg::first_trigger(bar);
         seg::stop(state, bar, c2h)?;
         (r.recording, r.count, r.next, r.deliver, r.tl) = (false, x.recorded, 0, running, seg::Timeline::new(tag));
-        eprintln!("oos-ui hw: segments: {} of {} recorded, first-trigger stamp {:?}", x.recorded, r.n, tag);
+        eprintln!("oos-ui hw: segments: {} of {} recorded, 0x4034 {:#x}, first-trigger stamp {:?}", x.recorded, r.n, x.fsm, tag);
         out.lock().unwrap().seg.phase = if r.count == 0 { SegPhase::Done } else { SegPhase::Reading };
         return Ok(());
     }
@@ -1890,6 +1916,29 @@ mod tests {
         ];
         for (want, mask, config, running, el, step, after) in cases {
             assert_eq!(dvm_step(want, mask, config, running, el), (step, after), "{:?} {:#b} {} {:?} {}", want, mask, config, running, el);
+        }
+    }
+
+    #[test]
+    fn avg_fast_from_conf() {
+        assert!(!avg_fast_from(""));
+        assert!(avg_fast_from("avg.hw_fast = on\n"));
+        assert!(!avg_fast_from("avg.hw_fast = yes\n"));
+    }
+
+    // Break it catches: the fast path (zero frames on the unit) averaged in hardware by default, the slow path refused.
+    #[test]
+    fn hardware_average_only_on_the_second_divider() {
+        let cases: [(u64, bool, bool); 6] = [
+            (1_250_000_000, false, false),
+            (625_000_000, false, false),
+            (125_000_000, false, false),
+            (62_500_000, false, true),
+            (1_000_000, false, true),
+            (1_250_000_000, true, true),
+        ];
+        for (rate, fast, ok) in cases {
+            assert_eq!(avg_rate_ok(rate, fast), ok, "{} fast {}", rate, fast);
         }
     }
 

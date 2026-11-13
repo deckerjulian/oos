@@ -533,11 +533,13 @@ impl State {
         st
     }
 
-    /// Read-out of the frames a batch of `count` recorded frames delivers (`batch_read`): pass-through, window, stop
-    /// sequence, type-4 play, one read.
+    /// Read-out of the `count` frames a batch recorded, all of them in every mode: pass-through, window, stop sequence,
+    /// type-4 play, one read. In average mode too, as the stock driver does: the FPGA's averaging sits on the play
+    /// side (netlist: the next frame waits for the play-out of the one before), so a frame that is not played does not
+    /// reach the average (B1, unit 2026-11-13: reading the newest frame alone left the noise near 0.5 mV at any
+    /// count). The caller shows the newest.
     pub fn read_steps(&mut self, s: &Settings, p: &hz::Params, count: u32) -> Vec<Step> {
-        let (first, n) = batch_read(s, count);
-        self.read_steps_at(s, p, first, n)
+        self.read_steps_at(s, p, 0, count)
     }
 
     /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record).
@@ -631,15 +633,6 @@ pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
     // at least the record itself, twice over: slow time bases with the rate halved by the LA take seconds
     let record_ms = p.memsel as u64 * 1000 / p.rate.max(1);
     vec![Step::Poll { reg: 0x4080, bit: scu::PLAYINFO_DONE, ms: 2000.max(2 * record_ms + 500), what: "acquisition done" }, Step::Peek(&[0x4034, 0x4010, 0x4014])]
-}
-
-/// (first frame, frames) a batch of `count` recorded frames reads: all of them; in hardware average mode only the
-/// newest, which holds the average of every trigger since the last clear (spec 01, 3.2 option A).
-pub fn batch_read(s: &Settings, count: u32) -> (u32, u32) {
-    match s.mode {
-        acq::Mode::Average { .. } => (count.max(1) - 1, 1),
-        _ => (0, count),
-    }
 }
 
 /// Frames of one batch: `Settings::frames`, at least 1, at most the frame ring (`max_frames`); 1 for play-last.
@@ -856,7 +849,7 @@ pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Optio
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
 /// `0x4010 - first + 1`), then play and read exactly those frames into `dma`.
 /// `armed`: `prearm` already armed this batch with the same `s` and `p`; only the wait is left.
-/// Returns the count; the bytes (`batch_read(s, count).1` x `frame_bytes`: in average mode one frame) are `dma.data()`.
+/// Returns the count; the bytes (`count` x `frame_bytes`) are `dma.data()`.
 /// Generic over the bus, so the host model (`seg::sim::Engine`) runs it too.
 #[allow(clippy::too_many_arguments)]
 pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, log: impl FnMut(String)) -> Result<u32, String> {
