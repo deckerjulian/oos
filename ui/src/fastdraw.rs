@@ -112,6 +112,162 @@ pub struct Map {
 /// a noisy or fast signal at 100 samples per column covers tens of rows in every column, and the scattered writes
 /// were three quarters of the time.
 pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
+    deposit_from(map, w, h, v, m, wgt);
+}
+
+/// `deposit` straight from a frame's read-out words (`Codes`): the same picture, without the f32 copy of the channel.
+pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) {
+    deposit_from(map, w, h, v, m, wgt);
+}
+
+/// The samples of one channel as `deposit` needs them: their number, the extremes of a range and one sample.
+pub trait Samples {
+    fn len(&self) -> usize;
+    /// (min, max) of samples `a..b` (`min_max`: NaN skipped; (inf, -inf) when none)
+    fn extremes(&self, a: usize, b: usize) -> (f32, f32);
+    fn at(&self, i: usize) -> f32;
+}
+
+impl Samples for [f32] {
+    fn len(&self) -> usize {
+        <[f32]>::len(self)
+    }
+    #[inline]
+    fn extremes(&self, a: usize, b: usize) -> (f32, f32) {
+        min_max(&self[a..b])
+    }
+    #[inline]
+    fn at(&self, i: usize) -> f32 {
+        self[i]
+    }
+}
+
+/// One channel of a read-out (16-bit little-endian words, `stride` words per group, this channel's at `word`) with the
+/// board's word-to-volt mapping. The mapping is monotone (a multiply by `scale` and a subtraction, each rounded
+/// monotonically), so the extremes of the volts are the volts of the extreme words: exact, without converting every word.
+pub struct Codes<'a> {
+    pub bytes: &'a [u8],
+    /// the same bytes as words when they are 2-byte aligned (the read-out buffers are): the vector loops
+    pub words: Option<&'a [u16]>,
+    pub stride: usize,
+    pub word: usize,
+    pub n: usize,
+    pub affine: (f32, f32),
+    pub volt: fn(u16, (f32, f32)) -> f32,
+}
+
+impl Codes<'_> {
+    /// Word `i` of the channel.
+    #[inline]
+    pub fn code(&self, i: usize) -> u16 {
+        let j = 2 * (i * self.stride + self.word);
+        u16::from_le_bytes([self.bytes[j], self.bytes[j + 1]])
+    }
+}
+
+impl Samples for Codes<'_> {
+    fn len(&self) -> usize {
+        self.n
+    }
+    #[inline]
+    fn extremes(&self, a: usize, b: usize) -> (f32, f32) {
+        if a >= b {
+            return (f32::INFINITY, f32::NEG_INFINITY);
+        }
+        let (lo, hi) = match (self.words, self.stride) {
+            (Some(w), s) => word_extremes(w, s, self.word, a, b),
+            (None, 1) => code_extremes::<2>(&self.bytes[2 * a..2 * b], 0),
+            (None, 2) => code_extremes::<4>(&self.bytes[4 * a..(4 * b).min(self.bytes.len())], self.word),
+            (None, _) => code_extremes::<8>(&self.bytes[8 * a..(8 * b).min(self.bytes.len())], self.word),
+        };
+        let (x, y) = ((self.volt)(lo, self.affine), (self.volt)(hi, self.affine));
+        // a negative scale turns the order around
+        if x <= y { (x, y) } else { (y, x) }
+    }
+    #[inline]
+    fn at(&self, i: usize) -> f32 {
+        (self.volt)(self.code(i), self.affine)
+    }
+}
+
+/// Smallest and largest of samples `a..b` (not empty) of the channel at `word` of every group of `stride` words.
+/// On aarch64 NEON: whole groups of 8 samples through the de-interleaving loads (ld1/ld2/ld4), the rest one by one.
+#[inline]
+fn word_extremes(w: &[u16], stride: usize, word: usize, a: usize, b: usize) -> (u16, u16) {
+    let (mut lo, mut hi) = (u16::MAX, u16::MIN);
+    #[allow(unused_mut)]
+    let mut i = a;
+    #[cfg(target_arch = "aarch64")]
+    {
+        use core::arch::aarch64::*;
+        // SAFETY: NEON is aarch64 baseline; every load reads 8 groups that lie inside `w` (checked by `end`)
+        unsafe {
+            let (mut vl, mut vh) = (vdupq_n_u16(u16::MAX), vdupq_n_u16(0));
+            let end = |i: usize| (i + 8) * stride <= w.len() && i + 8 <= b;
+            match stride {
+                1 => {
+                    while end(i) {
+                        let x = vld1q_u16(w.as_ptr().add(i));
+                        (vl, vh) = (vminq_u16(vl, x), vmaxq_u16(vh, x));
+                        i += 8;
+                    }
+                }
+                2 => {
+                    while end(i) {
+                        let g = vld2q_u16(w.as_ptr().add(2 * i));
+                        let x = if word == 0 { g.0 } else { g.1 };
+                        (vl, vh) = (vminq_u16(vl, x), vmaxq_u16(vh, x));
+                        i += 8;
+                    }
+                }
+                4 => {
+                    while end(i) {
+                        let g = vld4q_u16(w.as_ptr().add(4 * i));
+                        let x = match word {
+                            0 => g.0,
+                            1 => g.1,
+                            2 => g.2,
+                            _ => g.3,
+                        };
+                        (vl, vh) = (vminq_u16(vl, x), vmaxq_u16(vh, x));
+                        i += 8;
+                    }
+                }
+                _ => {}
+            }
+            (lo, hi) = (lo.min(vminvq_u16(vl)), hi.max(vmaxvq_u16(vh)));
+        }
+    }
+    while i < b {
+        let x = w[i * stride + word];
+        lo = lo.min(x);
+        hi = hi.max(x);
+        i += 1;
+    }
+    (lo, hi)
+}
+
+/// Smallest and largest word `k` of every group of `G` bytes in `b` (the groups of one range of samples; the last
+/// group may be short when its word is still inside).
+#[inline]
+fn code_extremes<const G: usize>(b: &[u8], k: usize) -> (u16, u16) {
+    let (mut lo, mut hi) = (u16::MAX, u16::MIN);
+    let mut it = b.chunks_exact(G);
+    for g in &mut it {
+        let x = u16::from_le_bytes([g[2 * k], g[2 * k + 1]]);
+        lo = lo.min(x);
+        hi = hi.max(x);
+    }
+    let r = it.remainder();
+    if r.len() >= 2 * k + 2 {
+        let x = u16::from_le_bytes([r[2 * k], r[2 * k + 1]]);
+        lo = lo.min(x);
+        hi = hi.max(x);
+    }
+    (lo, hi)
+}
+
+fn deposit_from<S: Samples + ?Sized>(map: &mut [u16], w: usize, h: usize, v: &S, m: &Map, wgt: u16) {
     SPANS.with(|sp| {
         let sp = &mut *sp.borrow_mut();
         let Some((c0, c1, rmin, rmax, pixels)) = spans(v, m, w, h, sp) else { return };
@@ -158,8 +314,8 @@ fn sweep_cost(rows: usize, cols: usize) -> usize {
 
 /// The spans of `deposit` into `sp`: columns `c0..c1`, the rows used (`rmin..=rmax`) and the pixel count; None when
 /// nothing is drawn.
-fn spans(v: &[f32], m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usize, usize, usize, usize, usize)> {
-    if v.is_empty() || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
+fn spans<S: Samples + ?Sized>(v: &S, m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usize, usize, usize, usize, usize)> {
+    if v.len() == 0 || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
         return None;
     }
     // first sample of column c: ceil(k_of(c)); per column one min/max over a slice (no per-sample screen math)
@@ -184,11 +340,14 @@ fn spans(v: &[f32], m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usiz
         if kb <= ka {
             continue;
         }
-        let (mut mn, mut mx) = min_max(&v[ka..kb]);
+        let (mut mn, mut mx) = v.extremes(ka, kb);
         // the join to the previous column's last sample
-        if ka > 0 && v[ka - 1].is_finite() {
-            mn = mn.min(v[ka - 1]);
-            mx = mx.max(v[ka - 1]);
+        if ka > 0 {
+            let j = v.at(ka - 1);
+            if j.is_finite() {
+                mn = mn.min(j);
+                mx = mx.max(j);
+            }
         }
         ka = kb;
         if !(mn <= mx) {
@@ -305,7 +464,96 @@ unsafe fn min_max_neon(s: &[f32]) -> (f32, f32) {
 
 /// Dots display (`Model::dots`): every sample as one pixel, no spans and no joins; the brightness of a column follows
 /// where its samples dwell. Same mapping and column walk as `deposit`.
+///
+/// Where samples repeat the row before (flat or slow parts), one add per sample makes a chain of read-modify-writes on
+/// one pixel, each waiting for the last; there each run of samples on one row adds `run x wgt` at once (saturating as
+/// the single adds did: min(pixel + run x wgt, 65535)). On fast or noisy parts the run test would mispredict, so one
+/// add per sample stays. Which of the two a column takes follows how many samples of the column before repeated their
+/// row (signals change slowly from column to column); both give the same picture.
 pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
+    let mut runs = false;
+    dots_walk(w, v.len(), m, |c, a, b| dots_column(map, w, h, c, &v[a..b], m, wgt, &mut runs));
+}
+
+/// The column walk of `deposit_dots` over `n` samples: `col(c, a, b)` for each column c with samples a..b.
+fn dots_walk(w: usize, n: usize, m: &Map, mut col: impl FnMut(usize, usize, usize)) {
+    if n == 0 || m.x_per_sample <= 0.0 {
+        return;
+    }
+    let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
+    let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(n);
+    let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
+    let c1 = ((((n as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
+    let mut ka = first(c0);
+    for c in c0..c1 {
+        let kb = first(c + 1).max(ka);
+        if kb > ka {
+            col(c as usize, ka, kb);
+        }
+        ka = kb;
+    }
+}
+
+/// The dots of column `c` (samples `s`); `runs`: add in runs (in: this column, out: the next).
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn dots_column(map: &mut [u16], w: usize, h: usize, c: usize, s: &[f32], m: &Map, wgt: u16, runs: &mut bool) {
+    let hf = h as f32;
+    // the row of a sample, None off the map (NaN fails both comparisons)
+    let row = |x: f32| {
+        let r = (x * m.y_per_volt + m.y0).round();
+        (r >= 0.0 && r < hf).then_some(r as usize)
+    };
+    let mut repeats = 0usize;
+    if *runs {
+        let mut run: (Option<usize>, u32) = (None, 0);
+        for &x in s {
+            let r = row(x);
+            if r == run.0 {
+                run.1 += 1;
+                repeats += 1;
+                continue;
+            }
+            if let Some(r0) = run.0 {
+                let i = r0 * w + c;
+                map[i] = (map[i] as u32 + run.1 * wgt as u32).min(u16::MAX as u32) as u16;
+            }
+            run = (r, 1);
+        }
+        if let Some(r0) = run.0 {
+            let i = r0 * w + c;
+            map[i] = (map[i] as u32 + run.1 * wgt as u32).min(u16::MAX as u32) as u16;
+        }
+        *runs = 2 * repeats > s.len();
+    } else {
+        // the repeats of the first `PROBE` samples decide the next column (counting all cost more than it saved)
+        let (head, tail) = s.split_at(s.len().min(PROBE));
+        let mut prev = None;
+        for &x in head {
+            let r = row(x);
+            repeats += (r == prev) as usize;
+            prev = r;
+            if let Some(r) = r {
+                let i = r * w + c;
+                map[i] = map[i].saturating_add(wgt);
+            }
+        }
+        for &x in tail {
+            if let Some(r) = row(x) {
+                let i = r * w + c;
+                map[i] = map[i].saturating_add(wgt);
+            }
+        }
+        *runs = 2 * repeats > head.len();
+    }
+}
+
+/// Samples of a column whose row repeats decide whether the next column adds in runs (`dots_column`).
+const PROBE: usize = 32;
+
+/// `deposit_dots` as it was (one scattered write per sample): the reference of the equality test and timing guard.
+#[cfg(test)]
+pub fn deposit_dots_reference(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
     if v.is_empty() || m.x_per_sample <= 0.0 {
         return;
     }
@@ -318,7 +566,6 @@ pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt
         let kb = first(c + 1);
         for &x in &v[ka..kb.max(ka)] {
             let r = (x * m.y_per_volt + m.y0).round();
-            // NaN fails both comparisons
             if r >= 0.0 && r < h as f32 {
                 let i = r as usize * w + c as usize;
                 map[i] = map[i].saturating_add(wgt);
@@ -375,7 +622,7 @@ mod tests {
                             deposit(&mut b, w, h, &v, &m, wgt);
                             assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
                             let mut sp = Spans::default();
-                            if let Some((c0, c1, r0, r1, px)) = spans(&v, &m, w, h, &mut sp) {
+                            if let Some((c0, c1, r0, r1, px)) = spans(&v[..], &m, w, h, &mut sp) {
                                 sweeps += (px > sweep_cost(r1 - r0 + 1, c1 - c0)) as usize;
                             }
                             cases += 1;
@@ -399,22 +646,55 @@ mod tests {
         for n in [100_000usize, 12_512] {
             for (name, v) in names.iter().zip(signals(n)) {
                 let m = Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
-                let mut map = vec![0u16; w * h];
-                let reps = 300;
-                let time = |f: fn(&mut [u16], usize, usize, &[f32], &Map, u16), map: &mut Vec<u16>| {
-                    let t = std::time::Instant::now();
-                    for _ in 0..reps {
-                        f(map, w, h, &v, &m, 1);
-                    }
-                    t.elapsed() / reps
-                };
-                let (old, new) = (time(deposit_reference, &mut map), time(deposit, &mut map));
+                let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
+                let (old, new) = crate::perfguard::best_pair(crate::perfguard::ROUNDS, 33, || deposit_reference(&mut ma, w, h, &v, &m, 1), || deposit(&mut mb, w, h, &v, &m, 1));
                 let r = new.as_secs_f64() / old.as_secs_f64();
                 worst = worst.max(r);
                 println!("deposit {} pt {}: one write per pixel {:?}, span pass {:?} (ratio {:.2})", n, name, old, new, r);
             }
         }
         assert!(worst <= 1.25, "the span pass must not be slower: worst ratio {:.2}", worst);
+    }
+
+    // Break it catches: dots counted in runs drawing other pixels or other weights than one add per sample (runs
+    // across columns, off-map samples, NaN gaps, saturation, a run cut by an off-map sample)
+    #[test]
+    fn dots_are_bit_identical_to_one_add_per_sample() {
+        let (w, h) = (970usize, 448usize);
+        for n in [1_408usize, 12_512, 100_000] {
+            for v in signals(n) {
+                for (xps, ti, x0) in [(1.0 / 100.0, n as f64 / 2.0, 485.0), (0.00776, n as f64 / 2.0 + 0.37, 485.0), (0.7, 3.3, 10.0), (0.0123, n as f64 * 0.9, 120.5)] {
+                    for (ypv, y0) in [(-56.0f32, 224.0f32), (-560.0, 224.0), (37.0, 10.0), (-5.0, 447.6)] {
+                        for (wgt, pre) in [(24u16, 0u16), (60_000, 30_000), (1, 65_534)] {
+                            let m = Map { ti, x_per_sample: xps, x0, y_per_volt: ypv, y0 };
+                            let (mut a, mut b) = (vec![pre; w * h], vec![pre; w * h]);
+                            deposit_dots_reference(&mut a, w, h, &v, &m, wgt);
+                            deposit_dots(&mut b, w, h, &v, &m, wgt);
+                            assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Timing guard (tools/perf-guard.sh): dots in runs against one add per sample, per signal at 100 k points.
+    #[test]
+    #[ignore]
+    fn perf_guard_dots() {
+        let (w, h) = (970usize, 448usize);
+        let names = ["sine", "two sines", "square", "ramp", "clipped", "flat", "noise", "noisy square", "gaps"];
+        let n = 100_000usize;
+        let mut worst: f64 = 0.0;
+        for (name, v) in names.iter().zip(signals(n)) {
+            let m = Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
+            let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
+            let (old, new) = crate::perfguard::best_pair(crate::perfguard::ROUNDS, 22, || deposit_dots_reference(&mut ma, w, h, &v, &m, 1), || deposit_dots(&mut mb, w, h, &v, &m, 1));
+            let r = new.as_secs_f64() / old.as_secs_f64();
+            worst = worst.max(r);
+            println!("dots {} pt {}: one add per sample {:?}, runs {:?} (ratio {:.2})", n, name, old, new, r);
+        }
+        assert!(worst <= 1.25, "dots in runs must not be slower: worst ratio {:.2}", worst);
     }
 
     #[test]

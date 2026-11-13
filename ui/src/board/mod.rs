@@ -357,6 +357,8 @@ pub struct Shared {
     pub hold: bool,
     pub final_req: u64,
     pub final_ack: u64,
+    /// the UI reads records the model does not tell the board about (protocol watch, XY): no live compression
+    pub needs_raw: bool,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
     pub deep_raw: Option<crate::deepmeas::Want>,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading

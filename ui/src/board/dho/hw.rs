@@ -219,6 +219,14 @@ fn live_compress(m: &Model, s: &mut Settings) {
     s.compress = crate::compress::k_for(p.rate, s.tdiv, p.memsel);
 }
 
+/// A reader of every frame in the UI that the model does not show (protocol watch, XY: `Shared::needs_raw`) switches
+/// the live compression off.
+fn raw_for_ui(s: &mut Settings, needs_raw: bool) {
+    if needs_raw {
+        s.compress = 1;
+    }
+}
+
 /// The batch was read with the live compression (`live_compress`): its newest frame is read again raw
 /// (`seq::read_raw_again`) for the record the UI keeps.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -747,11 +755,32 @@ pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
         log_header(hdr, &f.ch[tc], s, p.pre as usize / k, k);
     }
+    set_meta(s, p, seq, f);
+}
+
+/// Every field of a decoded frame but the channel vectors (kept as they are).
+fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
+    let k = oos_hal::dho::seq::compress_k(s, p) as usize;
     // a window of the record (`batch_plan`): the trigger point counts from its first point
     let (_, start) = oos_hal::dho::seq::window(s, p);
     let pre = p.pre.saturating_sub(start) as usize / k;
     let ch = std::mem::take(&mut f.ch);
     *f = Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false };
+}
+
+/// `decode_into` without the decode (drawpipe::draw_frame_codes): the frame's fields as the decode sets them, the
+/// channel vectors emptied, and where the read-out holds each channel. None with compression or a frame header (the
+/// decode only).
+pub fn codes_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) -> Option<crate::drawpipe::CodeLayout> {
+    if s.header || oos_hal::dho::seq::compress_k(s, p) > 1 || bytes.is_empty() {
+        return None;
+    }
+    for v in f.ch.iter_mut() {
+        v.clear();
+    }
+    set_meta(s, p, seq, f);
+    let m = oos_hal::dho::seq::code_map(s.mask, s.ch.map(|k| (k.scale, k.offset)));
+    Some(crate::drawpipe::CodeLayout { stride: m.ratio, word: m.word, affine: m.affine, volt: oos_hal::dho::seq::volt_code, volts: oos_hal::dho::seq::lane_volts_into })
 }
 
 /// Read-out buffers of the batch mode: one being read, two with the deposit workers (each holds one share and has room
@@ -1132,9 +1161,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
-            let (want, want_mode, avg_clear, mask_want, zone_want) = {
+            let (want, want_mode, avg_clear, mask_want, zone_want, needs_raw) = {
                 let g = out.lock().unwrap();
-                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone())
+                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone(), g.needs_raw)
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -1144,6 +1173,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
+            raw_for_ui(&mut want, needs_raw);
             hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), mask_map());
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
@@ -1638,7 +1668,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             Some(next) => {
                                 let full = std::mem::replace(&mut dma, next);
                                 let (bs, ps) = (b.clone(), p);
-                                pipe.feed(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)));
+                                let (cs, cp) = (b.clone(), p);
+                                let codes: crate::drawpipe::CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
+                                pipe.feed_codes(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes));
                             }
                             None => crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1),
                         }
@@ -2348,6 +2380,76 @@ mod tests {
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
+    }
+
+    // Break it catches: with compression the unit default, a mode that must see every sample (or the records as raw
+    // samples) getting min/max pairs. Every row must leave the frames raw; the base set-up must compress, so the table
+    // tests something. STOP: the record left on screen is a raw final frame (`ui::tests::
+    // live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame`); measurements and cursors get raw
+    // records (`compress::hold`).
+    #[test]
+    fn modes_that_need_raw_frames_never_compress() {
+        use crate::math::MathOp;
+        let base = || {
+            let mut m = Model::default();
+            m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+            m
+        };
+        let k = |m: &Model, needs_raw: bool| {
+            let mut s = settings(m, false);
+            live_compress(m, &mut s);
+            raw_for_ui(&mut s, needs_raw);
+            s.compress
+        };
+        assert!(k(&base(), false) > 1, "the base set-up compresses");
+        let zone = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0), (2e-6, 0.0)] };
+        let rows: Vec<(&str, Box<dyn Fn(&mut Model)>)> = vec![
+            ("Single", Box::new(|m| m.trig_mode = TrigMode::Single)),
+            ("zoom", Box::new(|m| m.zoom = true)),
+            ("FFT math channel", Box::new(|m| m.maths[0].op = MathOp::Fft)),
+            ("math channel", Box::new(|m| m.maths[1].op = MathOp::Add)),
+            ("math (first page)", Box::new(|m| m.math = MathOp::Sub)),
+            ("protocol decode", Box::new(|m| m.dec_on = true)),
+            ("spectrum view", Box::new(|m| m.view = AView::Spectrum)),
+            ("eye view", Box::new(|m| m.view = AView::Eye)),
+            ("power view", Box::new(|m| m.view = AView::Power)),
+            ("Bode view", Box::new(|m| m.view = AView::Bode)),
+            ("step view", Box::new(|m| m.view = AView::Step)),
+            ("mask", Box::new(|m| m.mask_on = true)),
+            ("zone", Box::new(move |m| m.zones[0] = zone.clone())),
+            ("Peak", Box::new(|m| m.acq = AcqMode::Peak)),
+            ("Average", Box::new(|m| m.acq = AcqMode::Average)),
+            ("High res", Box::new(|m| m.acq = AcqMode::HiRes)),
+            ("channel AC", Box::new(|m| m.ch[0].coupling = Coupling::Ac)),
+            ("20 MHz limit", Box::new(|m| m.ch[0].bw = BW_20M)),
+            ("trigger AC", Box::new(|m| m.trig_coup = TrigCoup::Ac)),
+            ("trigger LF reject", Box::new(|m| m.trig_coup = TrigCoup::LfReject)),
+            ("trigger HF reject", Box::new(|m| m.trig_coup = TrigCoup::HfReject)),
+            ("pulse trigger", Box::new(|m| m.trig_type = TrigType::Pulse)),
+            ("segments", Box::new(|m| m.segments = 8)),
+            ("roll", Box::new(|m| {
+                m.tscale = tscales().iter().position(|&t| t as f64 >= ROLL_TDIV).unwrap();
+                m.auto_roll = true;
+            })),
+            ("scan", Box::new(|m| {
+                m.tscale = tscales().iter().position(|&t| t as f64 >= SCAN_TDIV).unwrap();
+                m.auto_roll = false;
+            })),
+            ("Z input", Box::new(|m| m.z_src = Some(1))),
+        ];
+        for (name, f) in &rows {
+            let mut m = base();
+            f(&mut m);
+            assert_eq!(k(&m, false), 1, "{}", name);
+        }
+        // the readers only the UI knows of (protocol watch, XY): `Shared::needs_raw`
+        assert_eq!(k(&base(), true), 1, "protocol watch / XY");
+        // the LA reads its own raw window of the record (only where the platform has one)
+        let mut m = base();
+        m.la.on = true;
+        if m.la_on() {
+            assert_eq!(k(&m, false), 1, "LA");
+        }
     }
 
     // Break it catches (docs/fork/stop-exact.md): a replay at STOP of a frame already raw, of a ring armed again, without

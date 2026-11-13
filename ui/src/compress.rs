@@ -73,6 +73,19 @@ pub fn allowed(m: &Model) -> bool {
         && !m.zones.iter().any(|z| z.usable())
         && !m.la_on()
         && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
+        && raw_consumers_off(m)
+}
+
+/// Nothing reads the record on screen beyond the picture and the measurements (which get raw records, `hold`): no
+/// protocol decoder, no math channel or FFT, the scope view (not spectrum, eye, power, Bode or step), and a DC trigger
+/// path (the software trigger level of AC, LF and HF reject comes from the frame's samples). The UI-only readers
+/// (protocol watch, XY) ask for raw frames through `Shared::needs_raw` instead.
+pub fn raw_consumers_off(m: &Model) -> bool {
+    (0..DECODERS).all(|k| !m.dec_is_on(k))
+        && m.math == crate::math::MathOp::Off
+        && m.maths.iter().all(|x| x.op == crate::math::MathOp::Off)
+        && m.view == AView::Scope
+        && m.trig_coupling() == TrigCoup::Dc
 }
 
 /// The compression factor for a record of `memsel` points at `rate` samples/s per channel and `tdiv` s/div:
@@ -416,16 +429,17 @@ mod tests {
     #[ignore]
     fn perf_guard_compressed_frame() {
         let (m, p, (raw_bytes, raw_s), (comp_bytes, comp_s)) = square_10us(2.0);
-        let mut ph = crate::wave::Phosphor::new(970, 448);
-        let time = |b: &[u8], s: &oos_hal::dho::seq::Settings, ph: &mut crate::wave::Phosphor| {
-            let n = 200;
-            let t0 = std::time::Instant::now();
-            for _ in 0..n {
-                std::hint::black_box(crate::drawpipe::draw_frame(ph, &m, &crate::board::dho::hw::decode(b, s, &p, 0), None));
-            }
-            t0.elapsed() / n
-        };
-        let (raw, comp) = (time(&raw_bytes, &raw_s, &mut ph), time(&comp_bytes, &comp_s, &mut ph));
+        let (mut pa, mut pb) = (crate::wave::Phosphor::new(970, 448), crate::wave::Phosphor::new(970, 448));
+        let (raw, comp) = crate::perfguard::best_pair(
+            crate::perfguard::ROUNDS,
+            25,
+            || {
+                std::hint::black_box(crate::drawpipe::draw_frame(&mut pa, &m, &crate::board::dho::hw::decode(&raw_bytes, &raw_s, &p, 0), None));
+            },
+            || {
+                std::hint::black_box(crate::drawpipe::draw_frame(&mut pb, &m, &crate::board::dho::hw::decode(&comp_bytes, &comp_s, &p, 0), None));
+            },
+        );
         let r = comp.as_secs_f64() / raw.as_secs_f64();
         println!("10 us/div 100 k pt, k = 15: raw {:?}/frame, compressed {:?}/frame (ratio {:.3}); read {} -> {} bytes", raw, comp, r, raw_bytes.len(), comp_bytes.len());
         assert!(r <= 0.25, "a compressed frame must cost far less than its raw frame: {:.3}", r);

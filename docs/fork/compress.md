@@ -33,10 +33,18 @@ All of these (`compress::allowed`, `hw::live_compress`):
 - plain edge trigger, Normal acquisition, not Single, no segments, no mask, no zones, no zoom, no Z input, no LA, every
   shown channel DC (or DC 50 ohm) without the 20 MHz limit: the conditions of the dense fast path (`Ui::fast_ok`) plus
   Single, segments and LA;
+- nothing else reads the record on screen (`compress::raw_consumers_off`): no protocol decoder, no math channel or
+  FFT, the scope view (not spectrum, eye, power, Bode or step), DC trigger coupling (AC, LF and HF reject take the
+  software trigger level from the frame's samples);
+- the UI's own readers are off: protocol watch and XY publish `Shared::needs_raw`, which the acquisition thread
+  honours (`hw::raw_for_ui`);
 - at least `K_MIN` = 2 (8 samples per column), record at most `MAX_DEPTH` = 1 M points. Deeper records keep the
   deep-memory read of `hw::batch_plan` (screen window raw, or the whole record compressed to ~625 k points).
 
-Otherwise every sample is read, as before.
+Otherwise every sample is read, as before. `hw::tests::modes_that_need_raw_frames_never_compress` checks every mode
+that must stay raw (Single, zoom, FFT, math, decode, analyzer views, mask, zones, Peak, Average, High res, AC channel,
+20 MHz, trigger AC/LF/HF reject, non-edge trigger, segments, roll, scan, Z input, LA, protocol watch / XY); STOP keeps a
+raw final frame (docs/fork/stop-exact.md).
 
 ## What stays raw
 
