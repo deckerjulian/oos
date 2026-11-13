@@ -3,7 +3,7 @@
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
-//! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
+//! :CHANnel<n>:DISPlay|SCALe|VERNier|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
@@ -107,6 +107,18 @@ fn parse_bool(s: &str) -> Option<bool> {
 /// A finite number ("nan", "inf" and overflows are refused: they would end up in the model and in saved setups).
 fn num(s: &str) -> Option<f32> {
     s.trim().parse::<f32>().ok().filter(|v| v.is_finite())
+}
+
+/// Fine scale (`:CHANnel<n>:VERNier ON`): the first row of the calibrated scale ladder at or above `want` (V/div at the
+/// BNC), so the range never cuts the signal off, as `vscale` step and factor on it.
+fn fine_scale(want: f32) -> (usize, f32) {
+    let rows = board().vscale_steps_nv();
+    let nv = want as f64 * 1e9 * (1.0 - 1e-6);
+    let row = rows.iter().copied().find(|&k| k as f64 >= nv).unwrap_or(rows[rows.len() - 1]);
+    let row = (row as f64 * 1e-9) as f32;
+    let i = VSCALES.iter().rposition(|&s| s <= row * 1.000001).unwrap_or(0);
+    let f = row / VSCALES[i];
+    (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f })
 }
 
 fn nearest(ladder: &[f32], v: f32) -> usize {
@@ -322,6 +334,7 @@ impl Scpi {
             if kw(k0, "CHANnel") && nodes.len() == 2 {
                 let c = sfx?.checked_sub(1).filter(|&c| c < NCH)?;
                 let n1 = nodes[1];
+                let fine = m.fine_v;
                 let ch = &mut m.ch[c];
                 if kw(n1, "DISPlay") {
                     if query {
@@ -332,8 +345,14 @@ impl Scpi {
                     if query {
                         return Some(t(&e(ch.volts_per_div() as f64)));
                     }
-                    ch.vscale = nearest(&VSCALES, num(arg)? / ch.probe);
-                    ch.vfine = 1.0;
+                    let want = num(arg).filter(|&v| v > 0.0)? / ch.probe;
+                    (ch.vscale, ch.vfine) = if fine { fine_scale(want) } else { (nearest(&VSCALES, want), 1.0) };
+                } else if kw(n1, "VERNier") {
+                    // fork: one Fine scale switch for all channels, as the Channel menu has it
+                    if query {
+                        return Some(t(if m.fine_v { "1" } else { "0" }));
+                    }
+                    m.fine_v = parse_bool(arg)?;
                 } else if kw(n1, "OFFSet") {
                     if query {
                         return Some(t(&e(ch.offset as f64)));
@@ -1118,4 +1137,46 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
         b.resize(b.len() + row - w * 3, 0);
     }
     b
+}
+
+#[cfg(test)]
+mod vernier_tests {
+    use super::*;
+
+    #[test]
+    fn vernier_takes_any_scale_at_or_above_a_calibrated_row() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0);
+        let mut q = |c: &str| String::from_utf8(scpi.exec_line(&mut ui, &cv, c)).unwrap();
+        // coarse: the nearest 1-2-5 step
+        assert_eq!(q(":CHAN1:VERN?"), "0");
+        q(":CHAN1:SCAL 0.37");
+        assert_eq!(q(":CHAN1:SCAL?"), "5.000000E-01");
+        // fine: a row of the ladder is kept, between rows the next one up
+        q(":CHAN1:VERN ON");
+        assert_eq!(q(":CHAN1:VERN?"), "1");
+        q(":CHAN1:SCAL 0.37");
+        assert_eq!(q(":CHAN1:SCAL?"), "3.700000E-01");
+        q(":CHAN1:SCAL 0.371");
+        assert_eq!(q(":CHAN1:SCAL?"), "3.750000E-01");
+        q(":CHAN2:PROB 10");
+        q(":CHAN2:SCAL 1.234");
+        assert_eq!(q(":CHAN2:SCAL?"), "1.240000E+00");
+        // the ends of the ladder hold, nonsense changes nothing
+        q(":CHAN1:SCAL 1e-9");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E-04");
+        q(":CHAN1:SCAL 1e9");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E+01");
+        q(":CHAN1:SCAL -1");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E+01");
+        // off keeps the scale until the next coarse step
+        q(":CHAN1:SCAL 0.37");
+        q(":CHAN1:VERN OFF");
+        assert_eq!((q(":CHAN1:VERN?"), q(":CHAN1:SCAL?")), ("0".to_string(), "3.700000E-01".to_string()));
+        drop(q);
+        // a saved setup keeps both
+        let b = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert_eq!(b.ch[0].volts_per_div(), ui.m.ch[0].volts_per_div());
+    }
 }

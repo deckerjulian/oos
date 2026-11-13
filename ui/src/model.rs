@@ -792,7 +792,8 @@ pub struct Model {
     pub cur_c: f32,
     pub cur_d: f32,
     pub touch_lock: bool,
-    #[allow(dead_code)] // fine V/div steps: not implemented yet
+    /// fine V/div: the scale knob walks the rows of the calibration table (`Board::vscale_steps_nv`), SCPI
+    /// `:CHANnel<n>:SCALe` takes any value; one switch for all channels
     pub fine_v: bool,
     /// fine time base on the knob
     pub fine_t: bool,

@@ -23,6 +23,7 @@ this unit uses, how to build its image, and what is still unverified.
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
 | Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24 169.254.0.0/16`, `remote.ssh = on`, `eth.mac = 02:00:00:00:00:01`), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
+| Fine V/div | upstream's Fine scale already walks the 801 rows of `cal_vertical` (the AFE is set per row, `afe::scale_index`); the fork adds `:CHANnel<n>:VERNier ON\|OFF` (one switch for all channels, as the menu) and `:CHANnel<n>:SCALe` taking any value with vernier on: the first row at or above it | `ui/src/scpi.rs` (`fine_scale`) |
 | Image build | the fork's part of `boot/build-dev-image.sh` (unit dir, `build.env`, DTB check, `nft`, unit `*.conf`, `OOS_BOOTARGS_EXTRA`) lives in two sourced hooks; upstream's script carries two lines. The hook stages its container part in `rootfs/out/unit-hook/` (mounted as `/wlan`). A bad `OOS_UNIT` now fails after the Rust builds | `boot/unit-hook.sh`, `boot/unit-hook-image.sh`, docs/fork/sync-checklist.md |
 
 Without `OOS_UNIT` the image behaves like upstream's apart from carrying `nft` (about 1 MB) and Dropbear (450 KB), and
@@ -100,7 +101,8 @@ with the baseline of spec 10 section 5 step 1 first.
 1. Buffer reuse and fused decode (default build): 10 MHz sine at 100 ns/div, 1 and 4 channels, 10 minutes. No two
    traces, no broken edges, no `c2h` errors in `/tmp/oos-ui.log`, oos-ui does not restart (`/tmp/oos-ui.log` has one
    start). Repeat at 200 us/div with 1 M depth. Compare CPU of `oos-ui` in `top -d 1` with the baseline.
-2. Arm ahead: `touch /tmp/oos-ui.off`, stop oos-ui, run `OOS_PREARM=1 /bin/oos-ui $(cat /tmp/oos-ui.args)`.
+2. Arm ahead: `acq.prearm = on` in /oos/system.conf and restart oos-ui, or `touch /tmp/oos-ui.off`, stop oos-ui,
+   run `OOS_PREARM=1 /bin/oos-ui $(cat /tmp/oos-ui.args)`.
    - Waveform rate at 100 ns/div and 1 us/div, 1 and 4 channels, against step 1.
    - Change time base, channel set, trigger level and V/div while running: the picture follows within one batch, no
      `disarm` or `acquire` errors, no 30 ms stall per change (`configure` takes as long as without `OOS_PREARM`).
