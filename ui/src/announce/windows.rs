@@ -43,7 +43,7 @@ pub(super) fn addresses() -> Vec<[u8; 4]> {
                         let addr = u.Address.lpSockaddr;
                         if !addr.is_null() && u.Address.iSockaddrLength as usize >= std::mem::size_of::<ws::SOCKADDR_IN>() && (*addr).sa_family == ws::AF_INET {
                             let ip = Ipv4Addr::from((*addr.cast::<ws::SOCKADDR_IN>()).sin_addr.S_un.S_addr.to_ne_bytes());
-                            if !ip.is_loopback() && !ip.is_unspecified() {
+                            if !ip.is_loopback() && !ip.is_unspecified() && !out.contains(&ip.octets()) {
                                 out.push(ip.octets());
                             }
                         }
@@ -55,8 +55,8 @@ pub(super) fn addresses() -> Vec<[u8; 4]> {
         }
         break;
     }
-    out.sort_unstable();
-    out.dedup();
+    // GetAdaptersAddresses is ordered by route metric on current Windows. Keep that order so
+    // controllers try the useful LAN address before virtual adapters; deduplication above is stable.
     out
 }
 

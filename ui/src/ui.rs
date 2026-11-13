@@ -462,6 +462,9 @@ enum Item {
     /// what a chart of the Trend pane shows
     TrendSel(usize),
     EyeOn,
+    /// one press: measure the bit rate from the record and open the eye
+    EyeAct,
+    EyePlace,
     EyeSrc,
     EyeRate,
     EyeClear,
@@ -748,6 +751,8 @@ pub struct Ui {
     /// plot rectangle (10 x 8 div) of the current layout
     grid: Rect,
     layout_zoom: bool,
+    /// main time base (scale index, fine factor, delay) from before zoom was opened
+    zoom_saved: Option<(usize, f32, f32)>,
     /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
     wins: Vec<Rect>,
     /// the window being drawn
@@ -980,6 +985,7 @@ impl Ui {
             area: Rect::new(0, 0, 0, 0),
             grid: Rect::new(0, 0, 0, 0),
             layout_zoom: false,
+            zoom_saved: None,
             wins: Vec::new(),
             cur_win: 0,
             full: false,
@@ -1140,13 +1146,69 @@ impl Ui {
         self.visible_measurement_rows(meas) + (self.m.cursor != CursorMode::Off) as i32 + dvm
     }
 
-    /// The plot: 10 x 8 divisions between the top bar and the cards. A strip under the plot or above the trace
-    /// shortens it; a strip on the left or the right narrows it. The results panel is an overlay and takes no room.
+    /// The plot: 10 x 8 divisions between the top bar and the cards; it gets shorter for strip rows (the results
+    /// panel is an overlay and takes no room). With the eye open the trace keeps the left part, or the top.
     fn plot_rect(&self) -> Rect {
         // the logic analyser lanes have their own strip under the graticule: the analog picture shrinks with it
         let avail = self.plot_base() - self.la_strip_h() - self.pane_h();
-        let (x, w) = self.plot_span();
-        Rect::new(x, self.plot_top(), w, (avail / 8 * 8).max(160))
+        let top = self.plot_top();
+        let (plot_x, plot_w) = self.plot_span();
+        if self.eye_open() && self.eye_side() {
+            let wave_w = (plot_w * 58 / 100).clamp(360, plot_w - 300);
+            let h = (avail / 8 * 8).max(160);
+            return Rect::new(plot_x, top, wave_w, h);
+        }
+        let h = ((avail - self.eye_below()) / 8 * 8).max(160);
+        Rect::new(plot_x, top, plot_w, h)
+    }
+
+    /// The eye is showing next to the trace (it does not replace the waveform).
+    pub(super) fn eye_open(&self) -> bool {
+        self.m.view == AView::Eye && !self.xy
+    }
+
+    pub(super) fn eye_side(&self) -> bool {
+        self.m.eye_place == EyePlace::Side || self.eye_below() == 0
+    }
+
+    /// Height taken under the trace when the eye is stacked there.
+    pub(super) fn eye_below(&self) -> i32 {
+        if !(self.eye_open() && self.m.eye_place == EyePlace::Under) {
+            return 0;
+        }
+        let avail = self.plot_base() - self.la_strip_h() - self.pane_h();
+        let room = avail - 160;
+        if room < 140 {
+            return 0;
+        }
+        (avail * 42 / 100).clamp(180, 260).min(room)
+    }
+
+    /// The eye's rectangle: to the right of the trace, or under it.
+    pub(super) fn eye_pane_rect(&self) -> Rect {
+        let wave = self.plot_rect();
+        if self.eye_side() {
+            let x = wave.x + wave.w + 4;
+            Rect::new(x, wave.y, (self.plot_span().0 + self.plot_span().1 - x).max(1), wave.h)
+        } else {
+            Rect::new(wave.x, wave.y + wave.h + 2, wave.w, (self.eye_below() - 4).max(1))
+        }
+    }
+
+    /// Where the eye page itself is drawn: the pane, under a bar of buttons.
+    fn eye_page_rect(&self) -> Rect {
+        if !self.eye_open() {
+            return self.area;
+        }
+        let a = self.eye_pane_rect();
+        const BAR: i32 = 36;
+        Rect::new(a.x, a.y + BAR, a.w, (a.h - BAR).max(1))
+    }
+
+    /// The Eye button on the trace. One press measures the bit rate and opens the eye.
+    pub(super) fn eye_btn(&self) -> Rect {
+        let g = if self.m.zoom { Self::split_zoom(self.grid).0 } else { self.grid };
+        Rect::new(g.x + MARK_W + 6, g.y + 22, 72, 28)
     }
 
     /// Height for the graticule and the LA strip together (above a strip that sits under the plot).
@@ -1173,7 +1235,7 @@ impl Ui {
 
     /// Waveform windows in use: one while zoom, XY or an analysis view has the plot.
     fn n_wins(&self) -> usize {
-        if self.m.zoom || self.view_on() { 1 } else { self.m.win_layout.count() }
+        if self.m.zoom || self.view_on() || self.eye_open() { 1 } else { self.m.win_layout.count() }
     }
 
     /// The windows in the plot `g`, all of the same size (they share the phosphor size), in reading order.
@@ -1368,9 +1430,23 @@ impl Ui {
         }
     }
 
-    /// Zoom: overview on top, label row, zoomed view below.
+    /// Zoom: overview on top, a readout row (with Close), zoomed view below.
     fn split_zoom(g: Rect) -> (Rect, Rect) {
-        (Rect::new(g.x, g.y, g.w, 104), Rect::new(g.x, g.y + 128, g.w, (g.h - 128) / 8 * 8))
+        let top = 96;
+        let gap = 32;
+        (Rect::new(g.x, g.y, g.w, top), Rect::new(g.x, g.y + top + gap, g.w, (g.h - top - gap) / 8 * 8))
+    }
+
+    /// The strip between the overview and the zoomed view.
+    fn zoom_readout(&self) -> Rect {
+        let (o, z) = Self::split_zoom(self.grid);
+        Rect::new(o.x, o.y + o.h, o.w, (z.y - o.y - o.h).max(1))
+    }
+
+    /// Close on the zoom readout. Closing zoom restores the time base from before zoom was opened.
+    pub(super) fn zoom_close(&self) -> Rect {
+        let r = self.zoom_readout();
+        Rect::new(r.x + r.w - 78, r.y + 4, 70, (r.h - 8).max(22))
     }
 
     /// The main waveform area (the zoomed view when zoom is on, the first window when the plot is split).
@@ -1450,12 +1526,68 @@ impl Ui {
     }
 
     fn set_zoom(&mut self, on: bool) {
-        self.m.zoom = on;
+        if on == self.m.zoom {
+            self.relayout();
+            return;
+        }
         if on {
+            self.zoom_saved = Some((self.m.tscale, self.m.tfine, self.m.delay));
             self.m.zscale = self.m.tscale.saturating_sub(3);
             self.m.zdelay = self.m.delay;
+        } else if let Some((ts, tf, d)) = self.zoom_saved.take() {
+            // back to the time base that was on screen before zoom
+            self.m.tscale = ts;
+            self.m.tfine = tf;
+            self.m.delay = d;
         }
+        self.m.zoom = on;
         self.relayout();
+    }
+
+    /// Bit rate and delay of the zoom window, and Close. Close restores the time base from before zoom.
+    fn draw_zoom_readout(&self, cv: &mut Canvas, tz: f32, dz: f32) {
+        let f = &self.fonts;
+        let row = self.zoom_readout();
+        let close = self.zoom_close();
+        let lbl = format!("Zoom \u{b7} {}/div \u{b7} delay {}", si_short(tz as f64, "s"), si(dz as f64, "s"));
+        let lab = Rect::new(row.x + 4, row.y, (close.x - row.x - 10).max(1), row.h);
+        cv.set_clip(lab);
+        cv.text_in(&f.sb, lab, 0, &lbl, ACCENT);
+        cv.no_clip();
+        btn(cv, close, BTN, ACCENT);
+        cv.text_in(&f.sb, close, 1, "Close", ACCENT);
+    }
+
+    fn zoom_close_tap(&mut self, x: i32, y: i32) -> bool {
+        if self.m.zoom && !self.xy && !self.view_on() && self.zoom_close().contains(x, y) {
+            self.set_zoom(false);
+            return true;
+        }
+        false
+    }
+
+    fn eye_tap(&mut self, x: i32, y: i32) -> bool {
+        if self.eye_open() {
+            let (side, under) = self.eye_place_btns();
+            if side.contains(x, y) {
+                self.eye_set_place(EyePlace::Side);
+                return true;
+            }
+            if under.contains(x, y) {
+                self.eye_set_place(EyePlace::Under);
+                return true;
+            }
+            if self.eye_pane_close().contains(x, y) {
+                self.view_exit();
+                self.relayout();
+                return true;
+            }
+        }
+        if !self.view_on() && self.eye_btn().contains(x, y) {
+            self.eye_make();
+            return true;
+        }
+        false
     }
 
     /// Logic analyser record of the last acquisition (SCPI).
@@ -2004,9 +2136,6 @@ impl Ui {
             cv.blend(Rect::new(xb, o.y, (o.x + o.w - xb).max(0), o.h), BG, 170);
             cv.rect(Rect::new(xa, o.y, (xb - xa).max(2), o.h), ACCENT);
             cv.no_clip();
-            let f = &self.fonts;
-            let lbl = format!("Zoom \u{b7} {}/div \u{b7} delay {}", si_short(tz as f64, "s"), si(dz as f64, "s"));
-            cv.text(&f.sb, o.x, o.y + o.h + 17, &lbl, ACCENT);
             self.draw_refs_at(cv, o, (self.m.time_per_div(), self.m.delay));
             self.draw_grid(cv, z);
             self.draw_traces(cv, z, &self.phz, &self.vmaxz, self.vmaxz_cg);
@@ -2052,11 +2181,19 @@ impl Ui {
             self.cur_win = 0;
             self.area = self.wave_area();
         }
+        if self.m.zoom && !self.xy && !self.view_on() {
+            let (tz, dz) = self.view();
+            self.draw_zoom_readout(cv, tz, dz);
+        }
+        if self.eye_open() {
+            self.draw_eye_pane(cv);
+        }
         self.draw_cal_banner(cv);
         self.draw_info(cv);
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
         self.draw_zoom_btn(cv);
+        self.draw_eye_btn(cv);
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
         // Full on the external display is the plot and the strip. The statistics card and a lower pane stay on the panel.
@@ -2157,6 +2294,9 @@ impl Ui {
             let vpd = ch.volts_per_div();
             let span = (VDIV / 2.0 * vpd).abs() + ch.offset.abs();
             let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
+            if self.cur_win == 0 && !self.view_on() {
+                taken.push(self.eye_btn());
+            }
             if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
@@ -3242,7 +3382,7 @@ impl Ui {
         }
         let g = self.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
-        (self.plot_bottom() + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h())
+        (self.plot_bottom() + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.eye_below() + self.la_strip_h() + self.pane_h())
     }
 
     /// The column a side dock reserves, from the graticule down to the cards.
@@ -3634,6 +3774,16 @@ impl Ui {
         let f = &self.fonts;
         let tw = f.mb.width(s) + 44;
         let mut r = Rect::new(W / 2 - tw / 2, PLOT_Y + 4, tw, 28);
+        if self.eye_open() {
+            let pane = self.eye_pane_rect();
+            if overlaps(pane, r) {
+                let wave = self.grid;
+                let room = pane.x - wave.x - 12;
+                if room >= tw {
+                    r.x = wave.x + (room - tw) / 2;
+                }
+            }
+        }
         let dlg = self.dlg_layout().map(|d| d.r).filter(|d| overlaps(*d, r));
         if let Some(d) = dlg {
             let (left, right) = (d.x - 6, W - 6 - (d.x + d.w));
@@ -4025,7 +4175,7 @@ impl Ui {
             }
             MenuId::Storage => vec![Item::StoreDest, Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StoreFfSave, Item::StoreFfLoad, Item::StorePng],
             MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecAcprW, Item::SpecAcprS, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
-            MenuId::Eye => vec![Item::EyeOn, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyeClear],
+            MenuId::Eye => vec![Item::EyeAct, Item::EyeOn, Item::EyePlace, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyeClear],
             MenuId::Power => {
                 let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
                 match self.m.pw_mode {
@@ -5677,6 +5827,7 @@ impl Ui {
                     } else {
                         if !self.meas_make_room() { return; }
                         self.m.meas.push(e);
+                        self.mstat.clear();
                     }
                     if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
                         if let Some((a, _)) = self.meas_analysis(self.meas_src) {
@@ -7243,10 +7394,13 @@ impl Ui {
         if self.view_on() && self.view_btn().contains(x, y) {
             return self.toggle_menu(MenuId::ViewMore);
         }
-        if !self.menu_open && self.m.view == AView::Eye && !self.xy && self.eye_tap(x, y) {
+        if !self.menu_open && self.m.view == AView::Eye && !self.xy && (self.eye_tap(x, y) || self.eye_column_tap(x, y)) {
             return;
         }
         if self.table_tap(x, y) || self.pane_tap(x, y) {
+            return;
+        }
+        if self.eye_tap(x, y) || self.zoom_close_tap(x, y) {
             return;
         }
         if self.full_on() {
@@ -8250,6 +8404,32 @@ mod tests {
             let hits = (a.y..a.y + a.h).flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y))).filter(|&(x, y)| pal.contains(&cv.px[(y * W + x) as usize])).count();
             assert!(hits > 1000, "zoom {}: {} graded pixels", zoom, hits);
         }
+    }
+
+    /// Close sits on the zoom readout. It turns zoom off and puts the previous time base back.
+    #[test]
+    fn zoom_close_restores_the_time_base() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.step(0.02);
+        let (ts, tf, d) = (ui.m.tscale, ui.m.tfine, ui.m.delay);
+        ui.set_zoom(true);
+        ui.m.tscale = if ts > 3 { ts - 3 } else { ts + 3 };
+        ui.m.tfine = 0.97;
+        ui.m.delay = d + 2.5e-4;
+        let mut cv = Canvas::new(W, H);
+        ui.render(&mut cv);
+        let row = ui.zoom_readout();
+        let c = ui.zoom_close();
+        assert!(c.x >= row.x && c.x + c.w <= row.x + row.w && c.y >= row.y && c.y + c.h <= row.y + row.h, "close {:?} readout {:?}", c, row);
+        let (o, z) = Ui::split_zoom(ui.grid);
+        assert!(c.y >= o.y + o.h && c.y + c.h <= z.y, "close {:?} between {:?} and {:?}", c, o, z);
+        assert_ne!(cv.px[((c.y + c.h / 2) * W + c.x + c.w / 2) as usize], BG);
+        ui.tap(c.x + c.w / 2, c.y + c.h / 2);
+        assert!(!ui.m.zoom);
+        assert_eq!(ui.m.tscale, ts);
+        assert_eq!(ui.m.tfine, tf);
+        assert!((ui.m.delay - d).abs() < 1e-9, "delay {}", ui.m.delay);
     }
 
     /// Mask from CH1 (square): passes; from CH4 (PWM with sweeping duty) with a tight X tolerance: fails, and stops.

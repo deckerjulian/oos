@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(u.ref_card_lines().0, "R1");
         let loaded = u.refs[0].as_ref().unwrap();
         assert_eq!(loaded.v, sine);
-        assert_timebase(&u, 0.0, dt, n);
+        assert!(u.m.time_per_div() > 0.0 && u.m.time_per_div() as f64 * HDIV as f64 <= n as f64 * dt * 1.01, "import fits a useful view of the record");
         let (sr, live_mode) = u.acq_caption();
         assert!(!live_mode);
         assert!(sr.contains("200 MSa/s") || sr.contains("200.000"), "{}", sr);

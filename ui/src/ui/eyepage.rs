@@ -84,7 +84,7 @@ pub(super) struct Layout {
 pub(super) fn layout(a: Rect, fill: bool) -> Layout {
     if fill {
         let empty = Rect::new(a.x, a.y, 0, 0);
-        let plot = Rect::new(a.x + EYE_GUTTER, a.y + EYE_TITLE, (a.w - EYE_GUTTER - 16).max(64), (a.h - EYE_TITLE - EYE_FOOT).max(64));
+        let plot = Rect::new(a.x + EYE_GUTTER, a.y + EYE_TITLE, (a.w - EYE_GUTTER - 16).max(1), (a.h - EYE_TITLE - EYE_FOOT).max(1));
         return Layout {
             eye: a,
             plot,
@@ -96,6 +96,10 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
             fig_rows: 0,
             jit_rows: 0,
         };
+    }
+    // Narrow side panes put the chart column under the eye.
+    if a.w < 700 {
+        return layout_stacked(a);
     }
     let lw = a.w * 57 / 100;
     let (rx, rw) = (a.x + lw + GAP, a.w - lw - GAP);
@@ -128,6 +132,21 @@ fn placed(a: Rect, open: f32) -> Layout {
     let open = open.clamp(0.0, 1.0);
     if open >= 0.999 {
         return home;
+    }
+    if a.w < 700 {
+        // In a narrow side pane the charts are below the eye. Slide them out sideways,
+        // and return their vertical space to the eye instead of widening an already full-width eye.
+        let shift = ((1.0 - open) * a.w as f32).round() as i32;
+        let grow = ((1.0 - open) * (a.y + a.h - home.eye.y - home.eye.h).max(0) as f32).round() as i32;
+        let slide = |r: Rect| Rect::new(r.x + shift, r.y, r.w, r.h);
+        return Layout {
+            eye: Rect::new(home.eye.x, home.eye.y, home.eye.w, home.eye.h + grow),
+            plot: Rect::new(home.plot.x, home.plot.y, home.plot.w, home.plot.h + grow),
+            head: slide(home.head),
+            charts: home.charts.map(slide),
+            plots: home.plots.map(slide),
+            ..home
+        };
     }
     let edge = a.x + a.w;
     let travel = (edge - home.charts[0].x).max(0);
@@ -169,6 +188,44 @@ fn eye_tab_at(a: Rect, l: &Layout) -> Rect {
     let (y0, y1) = (l.charts[0].y, l.charts[2].y + l.charts[2].h);
     let y = (y0 + (y1 - y0 - TAB_H) / 2).clamp(a.y + HEAD_H, (a.y + a.h - TAB_H).max(a.y + HEAD_H));
     Rect::new(x, y, TAB_W, TAB_H)
+}
+
+/// Eye across the pane, charts in a block under it. The figure tables stay on the wide page.
+fn layout_stacked(a: Rect) -> Layout {
+    let bottom = a.y + a.h;
+    let charts_on = a.w >= 280 && a.h >= 240;
+    let ch = if charts_on { (a.h * 42 / 100).clamp(120, 200) } else { 0 };
+    let eye = Rect::new(a.x, a.y, a.w, (a.h - ch - if ch > 0 { GAP } else { 0 }).max(1));
+    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, (eye.w - EYE_GUTTER - 10).max(1), (eye.h - EYE_TITLE - EYE_FOOT).max(1));
+    let gy = eye.y + eye.h + if ch > 0 { GAP } else { 0 };
+    let (cw, rh) = if ch > 0 { ((a.w - GAP) / 2, (ch - GAP) / 2) } else { (0, 0) };
+    let cell = |c: i32, r: i32| {
+        if ch == 0 {
+            return Rect::new(a.x, bottom, 0, 0);
+        }
+        let (x, y) = (a.x + c * (cw + GAP), gy + r * (rh + GAP));
+        let w = if c == 0 { cw } else { a.x + a.w - x };
+        let h = if r == 0 { rh } else { bottom - y };
+        Rect::new(x, y, w.max(1), h.max(1))
+    };
+    let charts = [cell(0, 0), cell(1, 0), cell(0, 1), cell(1, 1)];
+    let plots = charts.map(|c| {
+        if c.w < 40 {
+            return Rect::new(c.x, c.y, 0, 0);
+        }
+        Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, (c.w - CHART_GUTTER - 6).max(1), (c.h - CHART_TITLE - CHART_FOOT).max(1))
+    });
+    Layout {
+        eye,
+        plot,
+        head: Rect::new(a.x, a.y, 0, 0),
+        charts,
+        plots,
+        fig: Rect::new(a.x, bottom, 0, 0),
+        jit: Rect::new(a.x, bottom, 0, 0),
+        fig_rows: 0,
+        jit_rows: 0,
+    }
 }
 
 /// Voltage range for a signal between `lo` and `hi`: whole steps of 1, 2 or 5, about six of them. (low, high, step)
@@ -590,7 +647,7 @@ impl Ui {
             (s.v, None, s.dt, s.t0)
         };
         let (vpd, offset) = self.eye_scale(id);
-        let lay = layout(self.area, self.full_on());
+        let lay = layout(self.eye_page_rect(), self.full_on());
         let (pw, ph) = (lay.plot.w.max(64), lay.plot.h.max(64));
         let tag = match id {
             WaveId::Ch(c) => (0u8, c),
@@ -690,6 +747,8 @@ impl Ui {
     fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, lay: &Layout, wave: &[f32], rec: &Record) {
         let clock = if let Some(b) = self.m.eye_b {
             format!("clock from {}", self.wave_name(b))
+        } else if self.m.eye_from_record {
+            "bit rate from the record".into()
         } else if self.m.eye_rate > 0.0 {
             "clock fitted near the set rate".into()
         } else {
@@ -795,36 +854,37 @@ impl Ui {
     }
 
     /// Where the column sits this frame: 0 has left the screen, 1 is home.
-    fn eye_open(&self) -> f32 {
+    fn eye_column_open(&self) -> f32 {
         let u = ((self.now - self.eye_t) / SLIDE).clamp(0.0, 1.0) as f32;
         let e = u * u * (3.0 - 2.0 * u);
         self.eye_from + (self.eye_to - self.eye_from) * e
     }
 
     fn eye_tab(&self) -> Rect {
-        eye_tab_at(self.area, &placed(self.area, self.eye_open()))
+        eye_tab_at(self.eye_page_rect(), &placed(self.eye_page_rect(), self.eye_column_open()))
     }
 
     /// Slide the column the other way. A tap in the middle of a move reverses it.
     fn eye_slide(&mut self) {
-        self.eye_from = self.eye_open();
+        self.eye_from = self.eye_column_open();
         self.eye_to = if self.eye_to > 0.5 { 0.0 } else { 1.0 };
         self.eye_t = self.now;
     }
 
     /// The column tab, or a plot. A plot that is already open goes back to the four. Full screen has neither.
-    pub(super) fn eye_tap(&mut self, x: i32, y: i32) -> bool {
-        if self.full_on() {
+    pub(super) fn eye_column_tap(&mut self, x: i32, y: i32) -> bool {
+        let area = self.eye_page_rect();
+        if self.full_on() || !area.contains(x, y) || layout(area, false).charts[0].w == 0 {
             return false;
         }
         if self.eye_tab().contains(x, y) {
             self.eye_slide();
             return true;
         }
-        if self.eye_open() < 0.5 {
+        if self.eye_column_open() < 0.5 {
             return false;
         }
-        let l = placed(self.area, self.eye_open());
+        let l = placed(self.eye_page_rect(), self.eye_column_open());
         let (charts, _) = charts_shown(&l, self.eye_big);
         if let Some(k) = self.eye_big {
             if charts[k as usize].contains(x, y) {
@@ -844,8 +904,176 @@ impl Ui {
         false
     }
 
+    /// Side and Under, then Close, on the bar above the eye.
+    pub(super) fn eye_place_btns(&self) -> (Rect, Rect) {
+        let a = self.eye_pane_rect();
+        let side = Rect::new(a.x + 6, a.y + 4, 52, 28);
+        (side, Rect::new(side.x + 56, side.y, 58, 28))
+    }
+
+    pub(super) fn eye_pane_close(&self) -> Rect {
+        let a = self.eye_pane_rect();
+        Rect::new(a.x + a.w - 46, a.y + 2, 42, 32)
+    }
+
+    pub(super) fn eye_set_place(&mut self, place: EyePlace) {
+        let previous = self.m.eye_place;
+        self.m.eye_place = place;
+        if place == EyePlace::Under && self.eye_below() == 0 {
+            self.m.eye_place = EyePlace::Side;
+            self.toast("Eye stays beside the trace: not enough room below. Hide the logic lanes or measurements to use Under.");
+        }
+        if self.m.eye_place == previous { return; }
+        self.azr.eye = None;
+        self.relayout();
+        self.analyzer_update();
+    }
+
+    /// The waveform on screen, and the bit rate measured from it.
+    fn eye_from_waveform(&self) -> Option<(WaveId, Option<f64>)> {
+        let ids = {
+            let mut ids = Vec::new();
+            let mut push = |id: WaveId| {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            };
+            if self.m.active < NCH && self.m.ch[self.m.active].on {
+                push(WaveId::Ch(self.m.active));
+            }
+            for c in 0..NCH {
+                if self.m.ch[c].on {
+                    push(WaveId::Ch(c));
+                }
+            }
+            for i in 0..self.refs.len() {
+                if self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 2) {
+                    push(WaveId::Ref(i));
+                }
+            }
+            ids
+        };
+        let has = |id: WaveId| -> bool {
+            match &self.last[0] {
+                Some(r) => self.wave_samples(r, id).is_some(),
+                None => matches!(id, WaveId::Ref(_)) && self.wave_samples(&Self::blank_record(), id).is_some(),
+            }
+        };
+        let mut fallback = None;
+        for id in ids {
+            if !has(id) {
+                continue;
+            }
+            if fallback.is_none() {
+                fallback = Some(id);
+            }
+            if let Some(rate) = self.waveform_bit_rate(id) {
+                return Some((id, Some(rate)));
+            }
+        }
+        fallback.map(|id| (id, None))
+    }
+
+    /// Bit rate of `id` from its edges. Nothing was typed.
+    fn waveform_bit_rate(&self, id: WaveId) -> Option<f64> {
+        let owned;
+        let rec = if let Some(r) = self.last[0].as_ref() {
+            r
+        } else if matches!(id, WaveId::Ref(_)) {
+            owned = Self::blank_record();
+            &owned
+        } else {
+            return None;
+        };
+        let s = self.wave_samples(rec, id)?;
+        let vpd = match id {
+            WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].volts_per_div(),
+            WaveId::Ref(i) => self.refs.get(i)?.as_ref()?.vpd,
+        };
+        let st = match id {
+            WaveId::Ch(c) if self.stats[c.min(NCH - 1)].valid => self.stats[c.min(NCH - 1)],
+            _ => stats(&s.v, s.dt),
+        };
+        let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
+        eye::recover_clock(&s.v, s.dt, thr, 0.1 * vpd, None).filter(|c| c.period.is_finite() && c.period > 0.0).map(|c| c.rate())
+    }
+
+    /// One press: look at the waveform, take the bit rate from that record, and open the eye.
+    pub(super) fn eye_make(&mut self) {
+        self.measure_last();
+        let Some((id, rate)) = self.eye_from_waveform() else {
+            self.toast("No waveform in this record");
+            return;
+        };
+        self.m.eye_src = id;
+        self.m.eye_from_record = true;
+        self.m.eye_rate = rate.unwrap_or(0.0);
+        self.m.view = AView::Eye;
+        self.azr.eye = None;
+        self.azr.eye_res = None;
+        self.azr.eye_ref = None;
+        self.azr.page = Page::default();
+        self.relayout();
+        self.analyzer_update();
+        match rate {
+            Some(r) => self.toast(&format!("Eye · {}", si(r, "b/s"))),
+            None => self.toast("No bit rate in this record"),
+        }
+    }
+
+    pub(super) fn draw_eye_btn(&self, cv: &mut Canvas) {
+        if self.view_on() {
+            return;
+        }
+        let r = self.eye_btn();
+        let on = self.eye_open();
+        btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
+        cv.text_in(&self.fonts.sb, r, 1, "Eye", if on { ACCENT } else { TEXT });
+    }
+
+    /// The eye in its pane, with Side / Under and Close on the bar. The trace stays in the plot.
+    pub(super) fn draw_eye_pane(&self, cv: &mut Canvas) {
+        if !self.eye_open() {
+            return;
+        }
+        let a = self.eye_pane_rect();
+        cv.fill(a, BG);
+        cv.rect(a, CARD_BORDER);
+        self.draw_eye_bar(cv, a);
+        self.draw_eye(cv);
+    }
+
+    fn draw_eye_bar(&self, cv: &mut Canvas, a: Rect) {
+        let f = &self.fonts;
+        let (side, under) = self.eye_place_btns();
+        for (r, name, place) in [(side, "Side", EyePlace::Side), (under, "Under", EyePlace::Under)] {
+            let on = self.m.eye_place == place;
+            btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
+            cv.text_in(&f.s, r, 1, name, if on { ACCENT } else { TEXT });
+        }
+        let close = self.eye_pane_close();
+        btn(cv, close, BTN, BTN_BORDER);
+        cv.text_in(&f.mb, close, 1, "\u{d7}", TEXT);
+        let rate = if self.m.eye_rate > 0.0 { si(self.m.eye_rate, "b/s") } else { "no bit rate".into() };
+        let note = if self.m.eye_from_record {
+            "from the record"
+        } else if self.m.eye_rate > 0.0 {
+            "set"
+        } else {
+            ""
+        };
+        let t = if note.is_empty() { rate } else { format!("{rate} · {note}") };
+        let x = under.x + under.w + 8;
+        let lab = Rect::new(x, a.y + 4, (close.x - 8 - x).max(0), 28);
+        if lab.w > 8 {
+            cv.set_clip(lab);
+            cv.text_in(&f.s, lab, 0, &t, TEXT);
+            cv.no_clip();
+        }
+    }
+
     pub(super) fn draw_eye(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.eye_page_rect();
         let p = &self.azr.page;
         // full screen drops the column: the eye is the whole plot, and the plot button still goes back
         if self.full_on() {
@@ -854,7 +1082,7 @@ impl Ui {
             self.eye_plot(cv, &l);
             return;
         }
-        let l = placed(a, self.eye_open());
+        let l = placed(a, self.eye_column_open());
         cv.fill(a, BG);
         self.eye_plot(cv, &l);
         if l.fig_rows > 0 {
@@ -867,6 +1095,9 @@ impl Ui {
             let col = self.wave_color(self.m.eye_src);
             for k in 0..4 {
                 if self.eye_big.is_some_and(|b| b as usize != k) {
+                    continue;
+                }
+                if charts[k].w < 40 || charts[k].h < 36 {
                     continue;
                 }
                 self.chart_frame(cv, charts[k], plots[k], &p.charts[k]);
@@ -897,11 +1128,20 @@ impl Ui {
         };
         let info = if src.is_empty() { 0 } else { self.fonts.s.width(src) + 16 };
         let end = 68 + self.fonts.s.width("dense") + 4;
-        let limit = self.full_btn().0.x - 8 - info;
-        (r.x + r.w - 128).min(limit - end).max(r.x)
+        let button = self.full_btn().0;
+        let candidate = r.x + r.w - 128;
+        if button.x >= r.x && button.x < r.x + r.w {
+            let limit = button.x - 8 - info;
+            candidate.min(limit - end).max(r.x)
+        } else {
+            candidate.max(r.x)
+        }
     }
 
     fn draw_eye_tab(&self, cv: &mut Canvas) {
+        if layout(self.eye_page_rect(), false).charts[0].w == 0 {
+            return;
+        }
         let r = self.eye_tab();
         cv.round(r, 6, PANEL_BG, 235);
         cv.round_outline(r, 6, BTN_BORDER);
@@ -909,10 +1149,15 @@ impl Ui {
     }
 
     fn eye_head(&self, cv: &mut Canvas, l: &Layout) {
+        if l.head.w < 40 || l.head.h < 16 {
+            return;
+        }
         let f = &self.fonts;
         let p = &self.azr.page;
+        cv.set_clip(l.head);
         cv.text(&f.sb, l.head.x + 2, l.head.y + 15, &p.status[0], TEXT);
         cv.text(&f.s, l.head.x + 2, l.head.y + 33, &p.status[1], MODELLED);
+        cv.no_clip();
     }
 
     /// The eye: frame, axes in volts and UI, the coloured hits and the two levels.
@@ -920,15 +1165,22 @@ impl Ui {
         let f = &self.fonts;
         let p = &self.azr.page;
         let r = l.plot;
-        cv.text(&f.sb, l.eye.x + 6, l.eye.y + 14, if p.title.is_empty() { "Eye" } else { &p.title }, TEXT);
-        // the density scale, kept clear of the buttons at the top right once the eye is the full width
-        let (kx, ky) = (self.heat_x(r), l.eye.y + 5);
-        let pal = heat_palette();
-        cv.text(&f.s, kx - 28, ky + 10, "rare", DIM);
-        for i in 0..64 {
-            cv.fill(Rect::new(kx + i, ky, 1, 10), pal[(i * 4) as usize]);
+        let title = if p.title.is_empty() { "Eye" } else { p.title.as_str() };
+        // a narrow pane keeps the title and drops the scale when the two would meet
+        let scale = l.eye.w >= f.sb.width(title) + 210;
+        let title_w = if scale { l.eye.w - 200 } else { l.eye.w };
+        cv.set_clip(Rect::new(l.eye.x, l.eye.y, title_w.max(1), EYE_TITLE + 2));
+        cv.text(&f.sb, l.eye.x + 6, l.eye.y + 14, title, TEXT);
+        cv.no_clip();
+        if scale {
+            let pal = heat_palette();
+            let (kx, ky) = (self.heat_x(r), l.eye.y + 5);
+            cv.text(&f.s, kx - 28, ky + 10, "rare", DIM);
+            for i in 0..64 {
+                cv.fill(Rect::new(kx + i, ky, 1, 10), pal[(i * 4) as usize]);
+            }
+            cv.text(&f.s, kx + 68, ky + 10, "dense", DIM);
         }
-        cv.text(&f.s, kx + 68, ky + 10, "dense", DIM);
         cv.fill(r, BAR);
         // half a UI per time line, the crossings stand out
         for k in 0..=4 {
@@ -1208,6 +1460,7 @@ mod tests {
         ui.step(0.05);
         ui.m.run = RunState::Stop;
         ui.m.view = AView::Eye;
+        ui.relayout();
         ui.azr.eye = None;
         ui.azr.page = Page::default();
         let mut n = Noise(0x2545_f491_4f6c_dd1d);
@@ -1245,6 +1498,19 @@ mod tests {
         assert_eq!((l.fig_rows, l.jit_rows), (0, 0));
         assert!(l.plot.w > 900 && l.plot.h > 500, "{:?}", l.plot);
         assert!(l.charts.iter().all(|c| c.w == 0));
+    }
+
+    #[test]
+    fn narrow_pane_stacks_the_charts_and_hiding_them_gives_the_eye_its_height() {
+        let area = Rect::new(600, 80, 400, 400);
+        let home = layout(area, false);
+        assert_eq!((home.eye.x, home.eye.w), (area.x, area.w));
+        assert!(home.charts.iter().all(|chart| chart.y >= home.eye.y + home.eye.h));
+        let hidden = placed(area, 0.0);
+        assert_eq!((hidden.eye.y, hidden.eye.h), (area.y, area.h));
+        assert!(hidden.charts.iter().all(|chart| chart.x >= area.x + area.w));
+        let short = layout(Rect::new(0, 350, 900, 160), false);
+        assert!(short.eye.h > 0 && short.plot.h > 0);
     }
 
     #[test]
@@ -1365,7 +1631,7 @@ mod tests {
         for s in [CLEAN, NOISY, Sig { uis: 6, ..CLEAN }] {
             let ui = page(s, 8);
             let (f, p) = (&ui.fonts, &ui.azr.page);
-            let l = layout(ui.area, false);
+            let l = layout(Rect::new(0, 40, W, 400), false);
             for (k, c) in p.charts.iter().enumerate() {
                 assert!(f.sb.width(&c.title) + 12 <= l.charts[k].w, "'{}'", c.title);
                 assert!(f.s.width(&c.empty) <= l.plots[k].w, "'{}'", c.empty);
@@ -1461,6 +1727,44 @@ mod tests {
         ui.draw_eye(&mut cv);
     }
 
+    fn separated(a: Rect, b: Rect) -> bool {
+        a.w > 0 && b.w > 0 && a.h > 0 && b.h > 0 && !(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h)
+    }
+
+    /// One press reads the bit rate from the record. The eye starts beside the trace; Under stacks it below.
+    #[test]
+    fn one_press_reads_the_rate_and_keeps_the_trace() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.run = RunState::Stop;
+        ui.m.eye_rate = 123.0;
+        let mut n = Noise(3);
+        ui.last[0] = Some(record(CLEAN, &mut n));
+        ui.render(&mut Canvas::new(W, H));
+        let b = ui.eye_btn();
+        ui.tap(b.x + 8, b.y + 8);
+        assert_eq!(ui.m.view, AView::Eye);
+        assert!(ui.m.eye_from_record);
+        assert_eq!(ui.m.eye_place, EyePlace::Side);
+        assert!((ui.m.eye_rate - CLEAN.rate).abs() / CLEAN.rate < 0.02, "rate {}", ui.m.eye_rate);
+        ui.render(&mut Canvas::new(W, H));
+        let (wave, eye) = (ui.grid, ui.eye_pane_rect());
+        assert!(separated(wave, eye), "wave {:?} eye {:?}", wave, eye);
+        assert!(eye.x >= wave.x + wave.w);
+        assert!(wave.w > eye.w && eye.w > 250, "wave {:?} eye {:?}", wave, eye);
+        let (_, under) = ui.eye_place_btns();
+        ui.tap(under.x + 4, under.y + 4);
+        ui.render(&mut Canvas::new(W, H));
+        let (wave, eye) = (ui.grid, ui.eye_pane_rect());
+        assert_eq!(ui.m.eye_place, EyePlace::Under);
+        assert!(separated(wave, eye), "wave {:?} eye {:?}", wave, eye);
+        assert!(eye.y >= wave.y + wave.h - 1);
+        assert!(eye.w + 2 >= wave.w);
+        let c = ui.eye_pane_close();
+        ui.tap(c.x + 4, c.y + 4);
+        assert_eq!(ui.m.view, AView::Scope);
+        assert!(!ui.eye_open());
+    }
+
     /// The colours come from the names in ui.rs, so a new look reaches this page.
     #[test]
     fn no_hard_coded_colours() {
@@ -1472,28 +1776,30 @@ mod tests {
     #[test]
     fn the_column_slides_off_and_the_eye_takes_its_room() {
         let mut ui = page(CLEAN, 2);
-        let home = layout(ui.area, false);
-        assert_eq!(placed(ui.area, 1.0), home);
+        let home = layout(ui.eye_page_rect(), false);
+        assert_eq!(placed(ui.eye_page_rect(), 1.0), home);
         let tab = ui.eye_tab();
         ui.tap(tab.x + 8, tab.y + 8);
         assert_eq!(ui.eye_to, 0.0);
-        assert!(ui.eye_open() > 0.9, "{}", ui.eye_open());
+        assert!(ui.eye_column_open() > 0.9, "{}", ui.eye_column_open());
         ui.now += SLIDE * 0.5;
-        let mid = ui.eye_open();
+        let mid = ui.eye_column_open();
         assert!(mid > 0.35 && mid < 0.65, "{}", mid);
-        let l = placed(ui.area, mid);
-        assert!(l.charts[0].x > home.charts[0].x && l.eye.w > home.eye.w, "{:?}", l);
+        let l = placed(ui.eye_page_rect(), mid);
+        assert!(l.charts[0].x > home.charts[0].x && (l.eye.w > home.eye.w || l.eye.h > home.eye.h), "{:?}", l);
         ui.now += SLIDE;
-        assert!(ui.eye_open() < 0.001, "{}", ui.eye_open());
-        let shut = placed(ui.area, 0.0);
-        assert_eq!(shut.eye.x + shut.eye.w, ui.area.x + ui.area.w);
-        assert!(shut.charts[0].x >= ui.area.x + ui.area.w);
-        assert_eq!((shut.fig.x, shut.fig.w), (shut.eye.x, shut.eye.w));
+        assert!(ui.eye_column_open() < 0.001, "{}", ui.eye_column_open());
+        let shut = placed(ui.eye_page_rect(), 0.0);
+        assert_eq!(shut.eye.x + shut.eye.w, ui.eye_page_rect().x + ui.eye_page_rect().w);
+        assert!(shut.charts[0].x >= ui.eye_page_rect().x + ui.eye_page_rect().w);
+        if home.fig_rows > 0 {
+            assert_eq!((shut.fig.x, shut.fig.w), (shut.eye.x, shut.eye.w));
+        }
         let tab = ui.eye_tab();
         ui.tap(tab.x + 8, tab.y + 8);
         ui.now += SLIDE;
-        assert!((ui.eye_open() - 1.0).abs() < 0.001, "{}", ui.eye_open());
-        assert_eq!(placed(ui.area, ui.eye_open()), home);
+        assert!((ui.eye_column_open() - 1.0).abs() < 0.001, "{}", ui.eye_column_open());
+        assert_eq!(placed(ui.eye_page_rect(), ui.eye_column_open()), home);
     }
 
     /// Hiding the column must not throw away the eye or the pooled edges.
@@ -1508,7 +1814,7 @@ mod tests {
         ui.analyzer_update();
         assert!(ui.azr.page.records > 1 && ui.azr.page.pool.len() >= pool, "{} {}", ui.azr.page.records, ui.azr.page.pool.len());
         assert_eq!(ui.azr.page.img_w, w);
-        assert!(ui.eye_open() < 0.01);
+        assert!(ui.eye_column_open() < 0.01);
     }
 
     #[test]
@@ -1521,14 +1827,14 @@ mod tests {
             let tab = ui.eye_tab();
             assert!(!overlaps(tab, ui.view_btn()), "open {} tab {:?} btn {:?}", open, tab, ui.view_btn());
             assert!(tab.w >= 40 && tab.h >= 40, "{:?}", tab);
-            assert!(ui.area.contains(tab.x + 1, tab.y + 1) && ui.area.contains(tab.x + tab.w - 2, tab.y + tab.h - 2), "{:?}", tab);
+            assert!(ui.eye_page_rect().contains(tab.x + 1, tab.y + 1) && ui.eye_page_rect().contains(tab.x + tab.w - 2, tab.y + tab.h - 2), "{:?}", tab);
         }
     }
 
     #[test]
     fn a_tap_on_a_plot_fills_the_chart_area_and_a_second_tap_restores_the_four() {
         let mut ui = page(NOISY, 4);
-        let home = layout(ui.area, false);
+        let home = layout(ui.eye_page_rect(), false);
         for k in 0..4 {
             let r = home.charts[k];
             ui.tap(r.x + r.w / 2, r.y + r.h / 2);
@@ -1546,7 +1852,7 @@ mod tests {
     #[test]
     fn a_hidden_column_has_no_plot_to_open() {
         let mut ui = page(CLEAN, 2);
-        let home = layout(ui.area, false);
+        let home = layout(ui.eye_page_rect(), false);
         ui.eye_from = 0.0;
         ui.eye_to = 0.0;
         ui.eye_t = ui.now;
@@ -1558,15 +1864,17 @@ mod tests {
     #[test]
     fn the_heat_scale_stays_clear_of_the_top_buttons() {
         let mut ui = page(CLEAN, 2);
-        let home = layout(ui.area, false);
+        let home = layout(ui.eye_page_rect(), false);
         assert_eq!(ui.heat_x(home.plot), home.plot.x + home.plot.w - 128);
         ui.eye_from = 0.0;
         ui.eye_to = 0.0;
         ui.eye_t = ui.now;
-        let r = placed(ui.area, 0.0).plot;
+        let r = placed(ui.eye_page_rect(), 0.0).plot;
         let kx = ui.heat_x(r);
-        let scale = Rect::new(kx - 30, ui.area.y, 68 + ui.fonts.s.width("dense") + 34, 18);
-        assert!(scale.x + scale.w <= ui.full_btn().0.x - 8, "{:?} {:?}", scale, ui.full_btn().0);
+        let scale = Rect::new(kx - 30, ui.eye_page_rect().y, 68 + ui.fonts.s.width("dense") + 34, 18);
+        if ui.full_btn().0.x >= r.x {
+            assert!(scale.x + scale.w <= ui.full_btn().0.x - 8, "{:?} {:?}", scale, ui.full_btn().0);
+        }
         assert!(!overlaps(scale, ui.full_btn().0) && !overlaps(scale, ui.view_btn()), "{:?}", scale);
     }
 
@@ -1606,7 +1914,7 @@ mod tests {
         shown.now += SLIDE;
         save(&mut shown, "eye-column-hidden");
         let mut open = page(NOISY, 40);
-        let r = layout(open.area, false).charts[3];
+        let r = layout(open.eye_page_rect(), false).charts[3];
         open.tap(r.x + r.w / 2, r.y + r.h / 2);
         open.now += REFRESH;
         open.analyzer_update();

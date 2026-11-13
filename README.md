@@ -267,6 +267,20 @@ The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; 
 and the mouse wheel changes the timebase. F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
 with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
 
+For development, run the checkout and automatically restart after saving source changes:
+
+```powershell
+.\run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880
+```
+
+Rust compiles changed code automatically. The window includes front-panel buttons and knob controls.
+Use **Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
+also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R10** cards.
+**SIM** starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.
+**Live** restores the live session. Measurements follow each captured window and recompute when a stopped
+reference is panned. **Measure** opens categorized choices with Source, Settings, and Selected; large readout
+lists have page controls. The Windows app announces its actual SCPI and HiSLIP listeners over mDNS.
+
 OOS builds on macOS and Linux and can run scripted without hardware, with its simulated demo signals. It writes a
 screenshot in PPM format next to the script:
 

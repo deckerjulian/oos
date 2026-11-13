@@ -45,20 +45,20 @@ impl Ui {
     }
 
     fn measurement_group_rect(group: usize) -> Rect {
-        Rect::new(26, 170 + group as i32 * 43, 164, 38)
+        Rect::new(26, 170 + group as i32 * 43, 164, 40)
     }
 
     pub(super) fn measurement_chooser_layout(&self) -> Dlg {
         let r = Rect::new(14, 70, W - 28, 402);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
-        let source = Row { it: Item::MeasSrc, label: Rect::new(26, 122, 66, 36), ctrl: Rect::new(94, 122, 190, 36), ctl: Ctl::Pick };
-        let settings = Row { it: Item::Open(MenuId::Measure), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(298, 122, 142, 36), ctl: Ctl::Button };
-        let pairs = Row { it: Item::Open(MenuId::MeasPair), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(452, 122, 164, 36), ctl: Ctl::Button };
+        let source = Row { it: Item::MeasSrc, label: Rect::new(26, 122, 66, 40), ctrl: Rect::new(94, 122, 190, 40), ctl: Ctl::Pick };
+        let settings = Row { it: Item::Open(MenuId::Measure), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(298, 122, 142, 40), ctl: Ctl::Button };
+        let pairs = Row { it: Item::Open(MenuId::MeasPair), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(452, 122, 164, 40), ctl: Ctl::Button };
         let mut rows = vec![source, settings, pairs];
         for (i, item) in self.measurement_catalog().into_iter().enumerate() {
             let x = 208 + i as i32 % 4 * 195;
             let y = 170 + i as i32 / 4 * 43;
-            rows.push(Row { it: item, label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(x, y, 183, 38), ctl: Ctl::Button });
+            rows.push(Row { it: item, label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(x, y, 183, 40), ctl: Ctl::Button });
         }
         Dlg { r, close, back: None, rows, heads: Vec::new() }
     }
@@ -396,5 +396,49 @@ mod tests {
         let row = ui.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasAdd(last)).unwrap();
         ui.tap(row.ctrl.x + row.ctrl.w / 2, row.ctrl.y + row.ctrl.h / 2);
         assert!(!ui.m.meas.contains(&(last, WaveId::Ch(0))), "selected measurement can be removed");
+    }
+
+    #[test]
+    fn eye_panes_leave_every_measurement_dock_and_page_accessible() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        let samples: Vec<f32> = (0..4000).map(|i| if (i / 50) % 2 == 0 { 0.5 } else { -0.5 }).collect();
+        for slot in 0..2 {
+            ui.refs[slot] = Some(RefWave { src: 0, color: slot, label: format!("R{} clock", slot + 1), t0: 0.0, dt: 1e-9, v: samples.clone(), vpd: 0.2, offset: 0.0, on: true });
+        }
+        ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(0))).collect();
+        ui.m.meas2 = (0..13).map(|kind| (kind, WaveId::Ref(0), WaveId::Ref(1))).collect();
+        ui.m.view = AView::Eye;
+        ui.m.eye_src = WaveId::Ref(0);
+        ui.m.eye_rate = 10e6;
+        ui.m.zoom = false;
+        for placement in [EyePlace::Side, EyePlace::Under] {
+            ui.m.eye_place = placement;
+            for dock in StripDock::ALL {
+                ui.m.strip_dock = dock;
+                ui.meas_page = 0;
+                ui.relayout();
+                let (wave, eye) = (ui.grid, ui.eye_pane_rect());
+                let strip = ui.strip_rect().expect("73 readouts have a strip");
+                assert!(!overlaps(wave, eye), "{placement:?}/{dock:?}: wave {wave:?} eye {eye:?}");
+                assert!(!overlaps(strip, wave), "{placement:?}/{dock:?}: strip {strip:?} wave {wave:?}");
+                assert!(!overlaps(strip, eye), "{placement:?}/{dock:?}: strip {strip:?} eye {eye:?}");
+                for rect in [wave, eye, strip] {
+                    assert!(rect.x >= 0 && rect.x + rect.w <= W && rect.y >= TOP.h && rect.y + rect.h <= Ui::MENU_BTN.y, "{placement:?}/{dock:?}: {rect:?}");
+                }
+                let close = ui.eye_pane_close();
+                assert!(eye.contains(close.x, close.y) && eye.contains(close.x + close.w - 1, close.y + close.h - 1));
+                let (previous, next) = ui.page_buttons().expect("all selected readouts remain paged");
+                assert!(!overlaps(next, eye) && !overlaps(previous, eye));
+                ui.tap(next.x + next.w / 2, next.y + next.h / 2);
+                assert_eq!(ui.meas_page, 1, "{placement:?}/{dock:?}: Next remains operable");
+                let mut canvas = Canvas::new(W, H);
+                ui.render(&mut canvas);
+                assert_eq!(ui.meas_rows().len(), 73);
+                if let Ok(directory) = std::env::var("OOS_SHOT_DIR") {
+                    let _ = std::fs::write(std::path::Path::new(&directory).join(format!("eye-{placement:?}-measurements-{dock:?}.png")), crate::store::png_of(&canvas));
+                }
+            }
+        }
     }
 }

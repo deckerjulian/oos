@@ -86,6 +86,21 @@ mod tests {
     }
 
     #[test]
+    fn every_reference_uses_the_same_time_window_at_its_own_sample_interval() {
+        let mut u = replay();
+        let values = (0..2500).map(|i| if i < 1250 { if i % 20 < 10 { -1.0 } else { 1.0 } } else if i % 20 < 10 { -3.0 } else { 3.0 }).collect();
+        u.refs[1] = Some(RefWave { src: 0, color: 1, label: "Second source".into(), t0: 0.0, dt: 2e-9, v: values, vpd: 1.0, offset: 0.0, on: false });
+        u.m.delay = 1e-6;
+        u.step(0.01);
+        assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 0.01);
+        u.m.delay = 4e-6;
+        u.step(0.01);
+        assert!((u.meas_at(WaveId::Ref(0), Meas::Vpp) - 2.0).abs() < 0.01);
+        assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 6.0).abs() < 0.01);
+        assert_eq!(u.reference_slice(1).unwrap().2, 2e-9);
+    }
+
+    #[test]
     fn leaving_sim_restores_live_settings_and_keeps_the_saved_record() {
         let mut u = replay();
         u.return_to_live();
@@ -214,9 +229,13 @@ impl Ui {
 
     pub(super) fn reference_slice(&self, slot: usize) -> Option<(&[f32], f64, f64)> {
         let r = self.refs.get(slot)?.as_ref()?;
-        if let Some((source, lo, hi)) = self.replay.frame.filter(|f| self.record_mode() && f.0 == slot) {
-            let _ = source;
-            return Some((&r.v[lo.min(r.v.len())..hi.min(r.v.len())], r.t0 + lo as f64 * r.dt, r.dt));
+        if let Some((source, lo, hi)) = self.replay.frame.filter(|_| self.record_mode()) {
+            let origin = self.refs.get(source)?.as_ref()?;
+            let start = origin.t0 + lo as f64 * origin.dt;
+            let end = origin.t0 + hi as f64 * origin.dt;
+            let lo = (((start - r.t0) / r.dt).floor().max(0.0) as usize).min(r.v.len());
+            let hi = (((end - r.t0) / r.dt).ceil().max(0.0) as usize).min(r.v.len()).max(lo);
+            return Some((&r.v[lo..hi], r.t0 + lo as f64 * r.dt, r.dt));
         }
         Some((&r.v, r.t0, r.dt))
     }
@@ -347,7 +366,7 @@ impl Ui {
 
     pub(super) fn record_caption(&self) -> String {
         let slot = self.active_reference();
-        format!("{} R{} · capture {}", if self.session_is_sim { "SIM" } else { "Reference" }, slot + 1, self.replay.captures)
+        format!("{} R{} · view window · #{}", if self.session_is_sim { "SIM" } else { "Reference" }, slot + 1, self.replay.captures)
     }
 
     pub fn workflow_state(&self) -> String {
@@ -361,6 +380,7 @@ impl Ui {
             ("source", J::s(&if self.record_mode() { format!("R{}", self.active_reference() + 1) } else { format!("CH{}", self.m.active + 1) })),
             ("captures", J::Num(self.replay.captures as f64)),
             ("status", J::s(status)),
+            ("gate", J::s(if self.record_mode() { "screen" } else { "record" })),
             ("loadRect", self.top_buttons().iter().find(|button| button.0 == TopBtn::Load).map_or(J::Null, |button| {
                 let r = button.2;
                 J::Arr(vec![J::Num(r.x as f64), J::Num(r.y as f64), J::Num(r.w as f64), J::Num(r.h as f64)])

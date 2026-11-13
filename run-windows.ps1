@@ -9,6 +9,7 @@ param(
 
 # Run the current checkout. Watch rebuilds and replaces only the app process started by this script.
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 $savedPath = $env:PATH
 $appProcess = $null
 $projectDir = $PSScriptRoot
@@ -50,6 +51,12 @@ function Stop-OwnedApp {
     $script:appProcess = $null
 }
 
+function Quote-AppArgument([string]$value) {
+    if ($value.Length -gt 0 -and $value -notmatch '[\s"]') { return $value }
+    # Start-Process joins ArgumentList with spaces; preserve spaces, quotes and trailing backslashes.
+    return '"' + ($value -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+}
+
 try {
     $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
     $env:PATH = "$cargoBin;$savedPath"
@@ -79,7 +86,7 @@ try {
             Get-Content -LiteralPath $buildLog -Tail 20
             if ($buildCode -eq 0) {
                 $launch = @{ FilePath = $executable; WorkingDirectory = $projectDir; WindowStyle = 'Normal'; PassThru = $true }
-                if ($AppArgs.Count -gt 0) { $launch.ArgumentList = $AppArgs }
+                if ($AppArgs.Count -gt 0) { $launch.ArgumentList = @($AppArgs | ForEach-Object { Quote-AppArgument $_ }) }
                 $script:appProcess = Start-Process @launch
                 Write-Output "Running the current source (PID $($script:appProcess.Id))."
             } else {
