@@ -293,7 +293,7 @@ fn hdmi_gpu_frame(ui: &mut Ui, g: &mut gpu::Gpu, panel: &GpuLayers, view: &mut G
 /// Background of the HDMI workspace.
 const HDMI_BG: u32 = 0x0d1117;
 
-/// The GPU helper with the panel's scan-out buffers as targets 0 and 1.
+/// The GPU helper with the panel's scan-out buffers as targets 0 to 2 (the monitor's follow them, up to the helper's 8).
 #[cfg(target_os = "linux")]
 fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
     http::pin_to_big_cores();
@@ -302,6 +302,7 @@ fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
         let (fd, pitch) = disp.export(i).map_err(|e| format!("export: {}", e))?;
         g.target_dmabuf(i, disp.width, disp.height, pitch, fd)?;
     }
+    g.monitor_targets_from(disp.buffers());
     Ok(g)
 }
 
@@ -502,7 +503,11 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut gl = GpuLayers::new(ui.scr.w, ui.scr.h);
     let mut gl_view = GpuLayers::new(1, 1);
     let mut gl_head: Option<Canvas> = None;
-    // the monitor's buffers are targets 2 to 4: None not yet, Some(false) they could not be taken
+    // the monitor's buffers are the targets after the panel's (`start_gpu`: one per panel buffer, three). They were
+    // 2 to 4 while the panel had two: the monitor's first buffer took the place of the panel's third, the GPU drew the
+    // panel's picture into it, and the panel showed an old picture in its turn (both screens flickered with HDMI and
+    // Graphics = GPU). None not yet, Some(false) they could not be taken
+    let hdmi_base = disp.buffers();
     let mut hdmi_gpu: Option<bool> = None;
     // the frame in the GPU's work: its ticket, the panel buffer it fills, and the monitor's frame with its buffer
     let mut gpu_pending: Option<(gpu::Ticket, usize, Option<(gpu::Ticket, usize)>)> = None;
@@ -635,7 +640,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                     let mut ok = true;
                     for i in 0..h.buffers() {
                         let (fd, pitch) = h.export(i).map_err(|e| format!("HDMI export: {}", e))?;
-                        ok &= g.target_dmabuf(2 + i, h.width, h.height, pitch, fd).map_err(|e| eprintln!("oos-ui: GPU HDMI: {}", e)).is_ok();
+                        ok &= g.target_dmabuf(hdmi_base + i, h.width, h.height, pitch, fd).map_err(|e| eprintln!("oos-ui: GPU HDMI: {}", e)).is_ok();
                     }
                     hdmi_gpu = Some(ok);
                 }
@@ -648,7 +653,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 let th = match (hdmi.as_ref(), hdmi_gpu, hdmi_frame) {
                     (Some(h), Some(true), true) => {
                         let b2 = h.free();
-                        Some((hdmi_gpu_frame(&mut ui, g, &gl, &mut gl_view, &mut gl_head, h.width, h.height, 2 + b2, false)?, b2))
+                        Some((hdmi_gpu_frame(&mut ui, g, &gl, &mut gl_view, &mut gl_head, h.width, h.height, hdmi_base + b2, false)?, b2))
                     }
                     _ => None,
                 };

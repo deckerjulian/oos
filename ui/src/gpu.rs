@@ -220,6 +220,8 @@ mod imp {
         /// the blocks of the last frame in each half of the arena (the panel's, the monitor's): while a frame has
         /// the same blocks, only the rows that changed are copied and uploaded
         blocks: [Vec<(usize, usize)>; 2],
+        /// the first of the monitor's targets: the panel's are below it (`monitor_targets_from`)
+        monitor_from: usize,
         /// the fonts in the helper's glyph atlas (their alpha bytes, the byte of the atlas they start at) and its
         /// first free row
         atlas: Vec<(usize, u32)>,
@@ -281,7 +283,7 @@ mod imp {
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| format!("{}: {}", helper, e))?;
-            let mut g = Gpu { child, sock: ours, arena: arena as *mut u8, targets: [None; 8], blocks: [Vec::new(), Vec::new()], atlas: Vec::new(), atlas_rows: 0, times: Times::default() };
+            let mut g = Gpu { child, sock: ours, arena: arena as *mut u8, targets: [None; 8], blocks: [Vec::new(), Vec::new()], monitor_from: 2, atlas: Vec::new(), atlas_rows: 0, times: Times::default() };
             clock_floor(true);
             let h = Hello { magic: MAGIC, version: VERSION, kind: K_HELLO, pad: 0, arena_size: ARENA as u64 };
             send_fd(&g.sock, bytes(&h), Some(mem.as_raw_fd())).map_err(|e| format!("hello: {}", e))?;
@@ -289,6 +291,14 @@ mod imp {
             // the helper opens Mesa and the GPU first
             g.wait(Duration::from_secs(10)).map_err(|e| format!("start: {}", e))?;
             Ok(g)
+        }
+
+        /// Targets from `n` on are the monitor's (2 unless set: the script's memory targets). The panel has three
+        /// scan-out buffers: with the old fixed 2, a panel frame into its third buffer took the monitor's half of the
+        /// arena, and the monitor's frame sent right after it overwrote its layers while the GPU still drew them (black
+        /// flashes on the panel with HDMI and Graphics = GPU, mostly with a menu open).
+        pub fn monitor_targets_from(&mut self, n: usize) {
+            self.monitor_from = n;
         }
 
         fn wait(&mut self, t: Duration) -> Result<DoneMsg, String> {
@@ -355,7 +365,7 @@ mod imp {
                 j: [JobMsg::default(); MAX_JOBS],
             };
             // the panel's frames use the first half of the arena, the monitor's the second: each keeps its blocks
-            let half = (index >= 2) as usize;
+            let half = (index >= self.monitor_from) as usize;
             let base = self.arena;
             let mut at = half * ARENA / 2;
             if quads.len() > MAX_QUADS {
