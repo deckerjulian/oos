@@ -254,6 +254,28 @@ cannot fold a fast signal into a period that is not there. On the probe-comp out
 The probe-comp output needs two records. Other sources (demo, replay) keep the five time bases. The hardware peak
 detect was not used: its window semantics above divider 8 are open (fpga.md).
 
+## On the unit, build d9800d9 (2026-11-13)
+
+Autoset, CH1 alone on the probe-comp output, 6 runs: 0.58, 0.64, 0.73, 0.60, 0.64, 0.74 s (was 1.18-1.57 s with
+fixes 1-3, 2.5-5.4 s before them). Search: 2 us/div, then the deep record, sometimes 500 us/div for the final view.
+Measure-unit levels -0.05..0.35 V at 1 V/div in the first request, -0.013..0.311 V after the rescale; the records of
+the search -0.011..0.312 V. At 1 V/div the unit sees the front end's noise (about +-40 mV) at the full rate; the fit
+is the same. The final scale flips between 50 and 100 mV/div because 0.32 Vpp sits on the boundary of `place`.
+
+Several channels:
+- CH1 + CH3 (2-channel mode, CH3 open): 2.4 s, trigger level 1.37 V (wrong). The log line was lost in the reboot
+  below.
+- CH1, CH2 on the probe-comp output, CH3 open (4-channel mode): the measure unit gave CH3 the signal
+  (-0.05..0.33 V) and refused CH1 and CH2; the records took over correctly. So the slot map from the DDR core order
+  is wrong for 2 and 4 channels (`hal::dho::levels`).
+- With 3 and 4 channels the unit rebooted, twice. Both times an autoset ran with mask 0x7 or 0xf. The deep search
+  record (1 M points) is then one read of 8 MB (`batch_plan` reads at least one frame whatever its size). That
+  read is the suspect; not reproduced on purpose.
+
+Fix (branch fix/autoset-multich): the measure unit only with one channel on; the deep record at 100 k points with
+more than one channel (0.8 MB at 4 channels, 33 samples a period at 125 kHz). Open: whether an 8 MB read itself
+crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read), and the real slot map.
+
 ## Status (feat/trigger)
 
 | Fix | State |
