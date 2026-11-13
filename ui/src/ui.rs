@@ -162,6 +162,7 @@ const REF_COLORS: [(&str, Rgb); 5] = [("White", rgb(0xd8, 0xd8, 0xd8)), ("Red", 
 /// Kinds of delay and phase measurement and of second panes, for the setups.
 pub const PAIRS_N: usize = tools::PAIRS.len();
 pub const PANES_N: usize = tables::PANES.len();
+pub use eyepage::EYE_ITEMS;
 pub use panes::{PANE_HARMS, TREND_SEL_N};
 pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 
@@ -622,6 +623,19 @@ enum Item {
     SimSlot,
     SimPlay,
     SimShow,
+    SimRate,
+    SimPat,
+    SimHigh,
+    SimLow,
+    SimRise,
+    SimBw,
+    SimDeemph,
+    SimNoise,
+    SimSsc,
+    SimRj,
+    SimPj,
+    SimPjHz,
+    SimDefaults,
 }
 
 #[derive(PartialEq)]
@@ -752,9 +766,6 @@ pub struct Ui {
     cal: selfcal::State,
     /// Bode sweep (bode.rs)
     bode: bode::State,
-    /// SIM: walking the loaded serial record on the phosphor
-    sim_play: bool,
-    sim_i: usize,
     /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
     /// to cards) is copied here during `render`
     pub hdmi_snap_want: bool,
@@ -776,6 +787,12 @@ pub struct Ui {
     stats_on: bool,
     /// measurement results overlay folded to its header
     results_min: bool,
+    /// Eye page: the right column slides from `eye_from` to `eye_to` (0 hidden, 1 shown), starting at `eye_t`.
+    eye_from: f32,
+    eye_to: f32,
+    eye_t: f64,
+    /// Which of the four eye-page plots fills the chart area.
+    eye_big: Option<u8>,
     /// Clear pressed: the screen stays empty (also in STOP) until the next record
     cleared: bool,
     refs: [Option<RefWave>; NREF],
@@ -787,6 +804,8 @@ pub struct Ui {
     /// the reference the Slot rows work on
     ref_sel: usize,
     ref_src: usize,
+    /// files the Import slot picker is showing
+    ref_files: Vec<std::path::PathBuf>,
     xy: bool,
     knob_t: [f64; 16],
     pub now: f64,
@@ -934,8 +953,6 @@ impl Ui {
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
-            sim_play: false,
-            sim_i: 0,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
             trend: Vec::new(),
@@ -944,6 +961,10 @@ impl Ui {
             single_armed: false,
             stats_on: false,
             results_min: false,
+            eye_from: 1.0,
+            eye_to: 1.0,
+            eye_t: 0.0,
+            eye_big: None,
             cleared: false,
             refs: std::array::from_fn(|_| None),
             cnt_total: 0,
@@ -951,6 +972,7 @@ impl Ui {
             meas_src_b: WaveId::Ch(1),
             ref_sel: 0,
             ref_src: 0,
+            ref_files: Vec::new(),
             xy: false,
             pinch: Pinch { active: false, p0: (0, 0), p1: (0, 0), ref_dx: 0, ref_dy: 0 },
             knob_t: [0.0; 16],
@@ -1289,11 +1311,12 @@ impl Ui {
 
     /// Measurement `k` of channel `c` (NaN when off or not measurable).
     pub fn meas(&self, c: usize, k: Meas) -> f64 {
-        if c < self.m.ch.len() && self.m.ch[c].on {
-            self.meas_of(&self.ana[c], k)
-        } else {
-            f64::NAN
-        }
+        self.meas_at(WaveId::Ch(c), k)
+    }
+
+    /// Eye figures from the last refresh, in the order the page stores them. Empty until the eye has run.
+    pub fn eye_readings(&self) -> &[(&'static str, f64)] {
+        &self.azr.page.readings
     }
 
     #[allow(dead_code)]
@@ -1432,13 +1455,10 @@ impl Ui {
         }
         self.was_running = running;
         let persist = PERSIST[self.m.persist].1;
-        // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if self.sim_play && self.m.run == RunState::Run {
-            self.sim_play = false;
-        }
-        if self.sim_play {
-            self.sim_tick(dt_wall);
-        } else if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
+        // a source started in STOP (replay) still shows its first record, unless the screen was cleared.
+        // analog off and no LA: do not arm the ADC / demo path (SIM Play is a stored ref)
+        let live = self.m.n_on() > 0 || self.m.la_on();
+        if live && (self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared)) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -1712,7 +1732,7 @@ impl Ui {
     fn fast_draw(&mut self, f: &crate::board::Frame) -> bool {
         let m = &self.m;
         let (w, h) = (self.ph.w, self.ph.h);
-        let tdiv = m.time_per_div() as f64;
+        let tdiv = m.hw_time_per_div() as f64;
         let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
         if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
             let fr = std::sync::Arc::new(f.clone());
@@ -1803,6 +1823,7 @@ impl Ui {
             let f = &self.fonts;
             let lbl = format!("Zoom \u{b7} {}/div \u{b7} delay {}", si_short(tz as f64, "s"), si(dz as f64, "s"));
             cv.text(&f.sb, o.x, o.y + o.h + 17, &lbl, ACCENT);
+            self.draw_refs_at(cv, o, (self.m.time_per_div(), self.m.delay));
             self.draw_grid(cv, z);
             self.draw_traces(cv, z, &self.phz, &self.vmaxz, self.vmaxz_cg);
         } else {
@@ -2433,6 +2454,20 @@ impl Ui {
         (a.y as f32 + a.h as f32 / 2.0 - (v + ch.offset) / ch.volts_per_div() * ppd).round() as i32
     }
 
+    fn y_of_wave(&self, id: WaveId, v: f32) -> i32 {
+        match id {
+            WaveId::Ch(c) => self.y_of_volts(c, v),
+            WaveId::Ref(i) => {
+                let a = self.area;
+                let Some(r) = self.refs.get(i).and_then(|x| x.as_ref()) else {
+                    return a.y;
+                };
+                let ppd = a.h as f32 / VDIV;
+                (a.y as f32 + a.h as f32 / 2.0 - (v + r.offset) / r.vpd.max(1e-12) * ppd).round() as i32
+            }
+        }
+    }
+
     fn x_of_time(&self, t: f32) -> i32 {
         let a = self.area;
         let (tdiv, delay) = self.view();
@@ -2589,43 +2624,62 @@ impl Ui {
     }
 
     fn draw_refs(&self, cv: &mut Canvas) {
+        self.draw_refs_at(cv, self.area, self.view());
+    }
+
+    fn draw_refs_at(&self, cv: &mut Canvas, area: Rect, view: (f32, f32)) {
         let f = &self.fonts;
-        cv.set_clip(self.area);
-        let ppy = self.area.h as f32 / VDIV;
-        let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
-        let tdiv = self.view().0 as f64;
-        let ppx = self.area.w as f64 / HDIV as f64;
+        cv.set_clip(area);
+        let ppy = area.h as f32 / VDIV;
+        let cy = area.y as f32 + area.h as f32 / 2.0;
+        let tdiv = view.0 as f64;
+        let delay = view.1 as f64;
+        let ppx = area.w as f64 / HDIV as f64;
+        let xmid = area.x as f64 + area.w as f64 / 2.0;
+        // only the samples that land on this screen (plus a little margin)
+        let t_lo = delay - tdiv * HDIV as f64 * 0.6;
+        let t_hi = delay + tdiv * HDIV as f64 * 0.6;
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
-            if !r.on {
+            if !r.on || r.dt <= 0.0 || r.v.len() < 2 {
                 continue;
             }
             let col = REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1;
-            let step = (r.v.len() / (self.area.w as usize * 2)).max(1);
+            let last = r.v.len() - 1;
+            let k0 = ((t_lo - r.t0) / r.dt).floor().max(0.0) as usize;
+            let k1 = ((t_hi - r.t0) / r.dt).ceil().max(0.0) as usize;
+            let k0 = k0.min(last);
+            let k1 = k1.min(last);
+            if k1 <= k0 {
+                continue;
+            }
+            let step = ((k1 - k0) / (area.w as usize * 2)).max(1);
             let mut prev: Option<(i32, i32)> = None;
             let mut first = None;
-            for k in (0..r.v.len()).step_by(step) {
+            for k in (k0..=k1).step_by(step) {
                 let v = r.v[k];
                 if !v.is_finite() {
                     prev = None;
                     continue;
                 }
-                let t = r.t0 + k as f64 * r.dt - self.view().1 as f64;
-                let x = (self.area.x as f64 + self.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
+                let t = r.t0 + k as f64 * r.dt - delay;
+                let x = (xmid + t / tdiv * ppx).round() as i32;
                 let y = (cy - (v + r.offset) / r.vpd * ppy).round() as i32;
                 if let Some((x0, y0)) = prev {
-                    cv.line(x0, y0, x, y, col);
+                    if (x - x0).abs() < area.w * 2 && (y - y0).abs() < area.h * 4 {
+                        cv.line(x0, y0, x, y, col);
+                    }
                 }
-                if first.is_none() && x >= self.area.x {
+                if first.is_none() && x >= area.x && x < area.x + area.w {
                     first = Some(y);
                 }
                 prev = Some((x, y));
             }
             if let Some(y) = first {
-                let yy = y.clamp(self.area.y + 10, self.area.y + self.area.h - 10);
+                let yy = y.clamp(area.y + 10, area.y + area.h - 10);
                 // right of the volt labels
                 let name = if r.label.is_empty() { format!("R{}", i + 1) } else { r.label.clone() };
-                let b = Rect::new(self.area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
+                let b = Rect::new(area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
                 cv.round(b, 3, col, 255);
                 cv.text_in(&f.s, b, 1, &name, rgb(0, 0, 0));
             }
@@ -3100,8 +3154,13 @@ impl Ui {
         cv.round(r.inset(1), 5, mix(BAR, col, 36), 255);
         cv.circle(r.x + 16, r.y + 14, 4, col);
         cv.text(&f.mb, r.x + 30, r.y + 19, txt, col);
-        // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
+        // acquisition: sample rate and depth of the hardware when it runs, else of the model; a loaded SIM
+        // record is stored at its own rate, not the live ADC
+        let (sr, depth) = if self.m.run == RunState::Stop && self.m.n_on() == 0 {
+            self.sim_rate_depth().or_else(|| self.src.hw_rate_depth().map(|(r, n)| (r, n as _))).unwrap_or_else(|| self.m.srate_depth())
+        } else {
+            self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth())
+        };
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
@@ -3202,8 +3261,10 @@ impl Ui {
         let (y, h) = (530, 66);
         // 2-channel models: no cards for CH3/CH4 (zero width, never drawn or hit)
         let n = n_ch();
+        // Stored refs with analog off: no CH1..CH4 cards. TIME and trigger keep the bar.
+        let hide_analog = (0..n).all(|c| !self.m.ch[c].on) && self.refs.iter().any(|r| r.as_ref().is_some_and(|r| r.on));
         let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
-        let n_off = n as i32 - n_on;
+        let n_off = if hide_analog { 0 } else { n as i32 - n_on };
         let caps = &oos_hal::model::platform().caps;
         let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
         let start = Self::MENU_BTN.x + Self::MENU_BTN.w + 7;
@@ -3216,7 +3277,7 @@ impl Ui {
         let mut x = start;
         let mut ch = [Rect::new(0, 0, 0, 0); NCH];
         for (c, r) in ch.iter_mut().enumerate() {
-            if c >= n {
+            if c >= n || hide_analog {
                 *r = Rect::new(x, y, 0, h);
                 continue;
             }
@@ -4552,7 +4613,10 @@ impl Ui {
             Item::RefSrc => format!("CH{}", self.ref_src + 1),
             Item::RefShow(i) => match &self.refs[i] {
                 None => "empty".into(),
-                Some(r) => format!("CH{} {}", r.src + 1, if r.on { "on" } else { "off" }),
+                Some(r) => {
+                    let src = if r.label.is_empty() { format!("CH{}", r.src + 1) } else { r.label.clone() };
+                    format!("{} {}", src, if r.on { "on" } else { "off" })
+                }
             },
             Item::MathA => src_name(m.math_a),
             Item::MathB => src_name(m.math_b),
@@ -4582,7 +4646,12 @@ impl Ui {
         let step = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).clamp(0, n as i32 - 1) as usize };
         let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
         match it {
-            Item::ChOn(c) => m.ch[c].on = !m.ch[c].on && c < n_ch(),
+            Item::ChOn(c) => {
+                m.ch[c].on = !m.ch[c].on && c < n_ch();
+                if m.ch[c].on && m.run == RunState::Run {
+                    m.floor_live_tdiv();
+                }
+            }
             Item::ChCoupling(c) => {
                 let all = board().couplings();
                 let i = all.iter().position(|&x| x == m.ch[c].coupling).unwrap_or(0);
@@ -5066,6 +5135,13 @@ impl Ui {
                     self.close_picker();
                     self.wlan_forget_pick(k);
                 }
+                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::RefImport) => {
+                    let p = self.ref_files.get(k).cloned();
+                    self.close_picker();
+                    if let Some(p) = p {
+                        self.ref_load_path(&p);
+                    }
+                }
                 Item::PickOpt(k) => {
                     if let Some(p) = self.pick {
                         let opts = self.options(p.it);
@@ -5106,11 +5182,7 @@ impl Ui {
                     None => self.toast("No waveform to save"),
                 },
                 Item::RefExport => self.ref_export(),
-                Item::RefImport => {
-                    self.ref_import();
-                    self.measure_refs();
-                    self.analyzer_update();
-                },
+                Item::RefImport => self.ref_import(),
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
                 Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
@@ -5447,6 +5519,7 @@ impl Ui {
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
+            Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
             Item::QuickAct => return QUICKS.iter().map(|q| q.name().to_string()).collect(),
             Item::Overclock => return board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
             _ => &[],
@@ -5887,6 +5960,9 @@ impl Ui {
                 if !m.ch[c].on {
                     m.ch[c].on = true;
                     m.active = c;
+                    if m.run == RunState::Run {
+                        m.floor_live_tdiv();
+                    }
                     self.open_menu(MenuId::Channel(c));
                 } else if self.menu_open && self.menu == MenuId::Channel(c) {
                     m.ch[c].on = false;
@@ -5905,11 +5981,17 @@ impl Ui {
                 if m.run == RunState::Run && m.trig_mode == TrigMode::Single {
                     m.trig_mode = TrigMode::Auto;
                 }
+                if m.run == RunState::Run && (m.n_on() > 0 || m.la_on()) {
+                    m.floor_live_tdiv();
+                }
             }
             key::SINGLE => {
                 m.trig_mode = TrigMode::Single;
                 m.run = RunState::Run;
                 self.dirty_map = true;
+                if m.n_on() > 0 || m.la_on() {
+                    m.floor_live_tdiv();
+                }
             }
             key::AUTO => {
                 if self.src.is_hw() {
@@ -6447,6 +6529,9 @@ impl Ui {
         if self.view_on() && self.view_btn().contains(x, y) {
             return self.toggle_menu(MenuId::ViewMore);
         }
+        if !self.menu_open && self.m.view == AView::Eye && !self.xy && self.eye_tap(x, y) {
+            return;
+        }
         if self.table_tap(x, y) || self.pane_tap(x, y) {
             return;
         }
@@ -6522,6 +6607,12 @@ impl Ui {
             return self.toggle_menu(MenuId::Afg);
         }
         if tr.contains(x, y) {
+            // the zoom/delay line: tap it to toggle zoom without opening Horizontal
+            if y >= tr.y + tr.h / 2 {
+                let on = !self.m.zoom;
+                self.set_zoom(on);
+                return;
+            }
             return self.toggle_menu(MenuId::Horizontal);
         }
         if trg.contains(x, y) {
@@ -7564,6 +7655,26 @@ mod tests {
             // two buttons in a card: the finger gets half of its height each
             assert!(trg.h / 2 >= 32 && sb.w >= 60 && mb.y > sb.y + sb.h, "{:?} {:?}", sb, mb);
         }
+        // analog off, a ref on: the CH1..CH4 cards go, TIME stays; its lower half toggles zoom
+        for c in 0..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "DQ".into(), t0: 0.0, dt: 1e-9, v: vec![0.0, 1.0], vpd: 0.2, offset: 0.0, on: true });
+        let (chs, tr, trg) = ui.cards();
+        assert!(chs.iter().all(|r| r.w == 0), "{:?}", chs);
+        assert!(tr.w >= 130 && trg.w >= 222);
+        assert!(!ui.m.zoom);
+        ui.tap(tr.x + 10, tr.y + tr.h - 8);
+        assert!(ui.m.zoom && !ui.menu_open);
+        ui.tap(tr.x + 10, tr.y + tr.h - 8);
+        assert!(!ui.m.zoom);
+        ui.tap(tr.x + 10, tr.y + 10);
+        assert!(ui.menu_open && ui.menu_root() == MenuId::Horizontal);
+        ui.refs[0] = None;
+        for c in 0..n_ch() {
+            ui.m.ch[c].on = true;
+        }
+
         for m in [MenuId::Main, MenuId::Trigger, MenuId::Math, MenuId::MeasAdd, MenuId::Utility, MenuId::Channel(0), MenuId::Display, MenuId::Acquire] {
             ui.open_menu(m);
             let d = ui.dlg_layout().unwrap();

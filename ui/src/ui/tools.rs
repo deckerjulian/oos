@@ -97,6 +97,33 @@ impl MeasRow {
 }
 
 impl Ui {
+    /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
+    pub fn meas_at(&self, id: WaveId, k: Meas) -> f64 {
+        match self.meas_analysis(id) {
+            Some((a, _)) => self.meas_of(&a, k),
+            None => f64::NAN,
+        }
+    }
+
+    /// One channel-pair row. `k` is an entry of `PAIRS`.
+    pub fn pair_at(&self, k: usize, a: WaveId, b: WaveId) -> f64 {
+        let (_, kind, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
+        let p = Pair(ea, eb);
+        match (self.meas_analysis(a), self.meas_analysis(b)) {
+            (Some((aa, ta)), Some((bb, tb))) => {
+                let (aa, bb) = (shift_edges(&aa, ta), shift_edges(&bb, tb));
+                match kind {
+                    PairKind::Phase => phase(&aa, &bb, p),
+                    PairKind::Delay => delay(&aa, &bb, p),
+                    PairKind::Skew => skew(&aa, &bb, p),
+                    PairKind::Setup => setup_time(&aa, &bb),
+                    PairKind::Hold => hold_time(&aa, &bb),
+                }
+            }
+            _ => f64::NAN,
+        }
+    }
+
     /// All measurements, in the order of the statistics.
     pub(super) fn meas_rows(&self) -> Vec<MeasRow> {
         let mut v: Vec<MeasRow> = self
@@ -112,21 +139,8 @@ impl Ui {
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
-            let (name, kind, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
-            let p = Pair(ea, eb);
-            let val = match (self.meas_analysis(a), self.meas_analysis(b)) {
-                (Some((aa, ta)), Some((bb, tb))) => {
-                    let (aa, bb) = (shift_edges(&aa, ta), shift_edges(&bb, tb));
-                    match kind {
-                        PairKind::Phase => phase(&aa, &bb, p),
-                        PairKind::Delay => delay(&aa, &bb, p),
-                        PairKind::Skew => skew(&aa, &bb, p),
-                        PairKind::Setup => setup_time(&aa, &bb),
-                        PairKind::Hold => hold_time(&aa, &bb),
-                    }
-                }
-                _ => f64::NAN,
-            };
+            let (name, kind, _, _) = PAIRS[k.min(PAIRS.len() - 1)];
+            let val = self.pair_at(k, a, b);
             let tag = |id: WaveId| match id {
                 WaveId::Ch(c) => (c + 1).to_string(),
                 WaveId::Ref(i) => format!("R{}", i + 1),
@@ -291,7 +305,7 @@ impl Ui {
     }
 
     /// DVM reading of its source, volts.
-    pub(super) fn dvm_value(&self) -> f64 {
+    pub fn dvm_value(&self) -> f64 {
         let c = self.m.dvm_src;
         if !self.m.ch[c].on {
             return f64::NAN;
@@ -301,6 +315,20 @@ impl Ui {
             1 => Meas::VrmsAc,
             _ => Meas::Vrms,
         })
+    }
+
+    /// Counter reading: frequency, period, or the totalised edge count. NaN when that mode has nothing to show.
+    pub fn counter_value(&self) -> f64 {
+        if !self.m.cnt_on {
+            return f64::NAN;
+        }
+        let c = self.m.cnt_src.min(NCH - 1);
+        match self.m.cnt_mode {
+            2 => self.cnt_total as f64,
+            1 if self.m.ch[c].on => self.ana[c].get(Meas::Period),
+            0 if self.m.ch[c].on => self.ana[c].get(Meas::Freq),
+            _ => f64::NAN,
+        }
     }
 
     /// The strip row of DVM and counter: (label, value) pairs.
@@ -397,6 +425,33 @@ impl Ui {
         self.setup_path().with_file_name(format!("ref{}.csv", self.ref_sel + 1))
     }
 
+    /// CSV / OOS `.bin` / Tek `.wfm` that Import slot can open: the slot's own files, then Storage.
+    fn ref_wave_candidates(&self) -> Vec<std::path::PathBuf> {
+        let slot = self.ref_sel + 1;
+        let mut v = Vec::new();
+        let mut add = |p: std::path::PathBuf| {
+            if p.is_file() && !v.iter().any(|q| q == &p) {
+                v.push(p);
+            }
+        };
+        if let Some(dir) = self.setup_path().parent() {
+            for ext in ["csv", "bin", "wfm"] {
+                add(dir.join(format!("ref{}.{ext}", slot)));
+            }
+        }
+        if let Ok(rd) = std::fs::read_dir(self.save_dir()) {
+            let mut files: Vec<_> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+            files.sort();
+            for p in files {
+                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if matches!(ext.as_str(), "csv" | "bin" | "wfm") {
+                    add(p);
+                }
+            }
+        }
+        v
+    }
+
     /// The reference of the Slot row as CSV: Time (s),Volts.
     pub(super) fn ref_export(&mut self) {
         let Some(r) = &self.refs[self.ref_sel] else { return self.toast("That slot is empty") };
@@ -409,38 +464,68 @@ impl Ui {
         self.toast_saved(&p, res);
     }
 
-    /// A CSV of that form into the slot of the Slot row: at least two rows, even time steps taken from the first two.
+    /// Opens a captured waveform into the selected R slot: CSV, OOS `.bin`, or Tek `.wfm`.
     pub(super) fn ref_import(&mut self) {
-        let p = self.ref_path();
-        let Ok(t) = std::fs::read_to_string(&p) else { return self.toast(&format!("No {}", crate::store::file_name(&p))) };
-        let rows: Vec<(f64, f32)> = t
-            .lines()
-            .filter_map(|l| {
-                let (a, b) = l.split_once(',')?;
-                Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
-            })
-            .collect();
-        let dt = match rows[..] {
-            [a, b, ..] if b.0 > a.0 => b.0 - a.0,
-            _ => return self.toast("That file holds no waveform"),
+        let slot = self.ref_sel + 1;
+        if let Some(dir) = self.setup_path().parent() {
+            for ext in ["wfm", "bin", "csv"] {
+                let p = dir.join(format!("ref{}.{ext}", slot));
+                if p.is_file() {
+                    return self.ref_load_path(&p);
+                }
+            }
+        }
+        self.ref_files = self.ref_wave_candidates();
+        match self.ref_files.len() {
+            0 => self.toast("No CSV, BIN or WFM in storage"),
+            1 => {
+                let p = self.ref_files[0].clone();
+                self.ref_load_path(&p);
+            }
+            _ => self.open_picker(Item::RefImport),
+        }
+    }
+
+    pub(super) fn ref_load_path(&mut self, p: &std::path::Path) {
+        let bytes = match std::fs::read(p) {
+            Ok(b) => b,
+            Err(_) => return self.toast(&format!("No {}", crate::store::file_name(p))),
         };
+        let traces = match crate::store::parse_wave(&bytes, &crate::store::file_name(p)) {
+            Ok(t) => t,
+            Err(e) => return self.toast(&e),
+        };
+        if traces.is_empty() {
+            return self.toast("That file holds no waveform");
+        }
         let c = self.ref_src;
-        self.refs[self.ref_sel] = Some(RefWave {
-            src: c,
-            color: 0,
-            label: String::new(),
-            t0: rows[0].0,
-            dt,
-            v: rows.iter().map(|r| r.1).collect(),
-            vpd: self.m.ch[c].volts_per_div(),
-            offset: self.m.ch[c].offset,
-            on: true,
-        });
-        self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(&p)));
+        let n = traces.len().min(NREF);
+        for (k, tr) in traces.into_iter().take(n).enumerate() {
+            let slot = (self.ref_sel + k) % NREF;
+            let span = tr.v.iter().copied().fold(0.0_f32, |m, x| m.max(x.abs())).max(0.1);
+            self.refs[slot] = Some(RefWave {
+                src: c,
+                color: 0,
+                label: tr.label,
+                t0: tr.t0,
+                dt: tr.dt,
+                v: tr.v,
+                vpd: nearest_ref_vdiv(span / 4.0),
+                offset: 0.0,
+                on: true,
+            });
+        }
+        self.measure_refs();
+        self.analyzer_update();
+        self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(p)));
     }
 
     /// Name of a channel on its card: its label, or CHn.
     pub(super) fn ch_name(&self, c: usize) -> String {
         if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
     }
+}
+
+fn nearest_ref_vdiv(want: f32) -> f32 {
+    VSCALES.iter().copied().min_by(|a, b| (a - want).abs().partial_cmp(&(b - want).abs()).unwrap()).unwrap_or(0.2)
 }

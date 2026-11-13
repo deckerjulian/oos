@@ -516,7 +516,7 @@ impl Source {
 
     /// One acquisition for the current settings, or None if Normal/Single mode found no trigger.
     pub fn acquire(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng) -> Option<Record> {
-        let tdiv = m.time_per_div() as f64;
+        let tdiv = m.hw_time_per_div() as f64;
         let window = tdiv * HDIV as f64;
         let n = 3600usize;
         let dt = window / n as f64;

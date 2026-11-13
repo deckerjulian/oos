@@ -166,16 +166,20 @@ pub const CH_COLORS: [Rgb; NCH] = {
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
 /// scales digitally (cal_vertical digital gain 2.15 / 5.38 / 10.76 at 500 / 200 / 100 uV, no forced 20 MHz).
 pub const VSCALES: [f32; 16] = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
-/// s/div: 5 ns .. 1000 s.
+/// Fastest time/div the ADC acquisition uses. Stored refs (SIM) may display faster than this.
+pub const HW_MIN_TDIV: f32 = 1e-9;
+
+/// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
+/// `HW_MIN_TDIV` (`hw_time_per_div`).
 pub fn tscales() -> Vec<f32> {
     let mut v = Vec::new();
-    let mut d = 1e-9_f64;
+    let mut d = 1e-11_f64;
     while d < 2000.0 {
         for m in [1.0, 2.0, 5.0] {
             let x = d * m;
-            // from 1 ns/div (stock 5 ns): below 5 ns/div the screen holds 12..62 samples, drawn with the
-            // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
-            if x >= 0.99e-9 && x <= 1000.1 {
+            // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn
+            // with the windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
+            if x >= 0.49e-10 && x <= 1000.1 {
                 v.push(x as f32);
             }
         }
@@ -921,7 +925,7 @@ pub struct Model {
     pub eye_pn_hi: f64,
     /// NPJ stays off until this is set
     pub eye_npj: bool,
-    /// optional second source for common mode, and the rail for PSIJ
+    /// optional clock / other rail: its edges fold the eye (DQS, recovered clock). Common-mode figures also use it.
     pub eye_b: Option<WaveId>,
     pub eye_rail: Option<WaveId>,
     /// Hz removed from the TIE as a sine; 0 = none
@@ -1044,9 +1048,21 @@ pub struct Model {
     pub quick: Quick,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
     pub la: crate::ui::la::LaSet,
-    /// SIM menu: which serial preset and which R slot Play writes
+    /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
     pub sim_preset: usize,
     pub sim_slot: usize,
+    pub sim_rate: f64,
+    pub sim_prbs: u8,
+    pub sim_vhigh: f64,
+    pub sim_vlow: f64,
+    pub sim_rise: f64,
+    pub sim_noise: f64,
+    pub sim_bw: f64,
+    pub sim_deemph: f64,
+    pub sim_ssc: bool,
+    pub sim_rj: f64,
+    pub sim_pj: f64,
+    pub sim_pjhz: f64,
 }
 
 pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
@@ -1369,7 +1385,20 @@ impl Default for Model {
             la: Default::default(),
             sim_preset: 3,
             sim_slot: 0,
+            sim_rate: 0.0,
+            sim_prbs: 31,
+            sim_vhigh: 0.0,
+            sim_vlow: 0.0,
+            sim_rise: 0.0,
+            sim_noise: 0.0,
+            sim_bw: 0.0,
+            sim_deemph: 0.0,
+            sim_ssc: false,
+            sim_rj: 0.0,
+            sim_pj: 0.0,
+            sim_pjhz: 0.0,
         };
+        m.apply_sim_preset();
         m.ch[0].offset = -1.5;
         m.trig_level = 1.5;
         m
@@ -1377,6 +1406,23 @@ impl Default for Model {
 }
 
 impl Model {
+    /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
+    pub fn apply_sim_preset(&mut self) {
+        let l = oos_dsp::serial::LANES[self.sim_preset.min(oos_dsp::serial::LANES.len() - 1)];
+        self.sim_rate = l.bits_per_s;
+        self.sim_prbs = l.prbs;
+        self.sim_vhigh = l.v_high;
+        self.sim_vlow = l.v_low;
+        self.sim_rise = l.rise;
+        self.sim_noise = l.noise_rms;
+        self.sim_bw = l.bw;
+        self.sim_deemph = l.deemph_db;
+        self.sim_ssc = l.ssc;
+        self.sim_rj = l.rj_rms;
+        self.sim_pj = l.pj_peak;
+        self.sim_pjhz = l.pj_hz;
+    }
+
     /// The settings of the selected generator.
     pub fn gen_read(&self) -> GenCh {
         GenCh {
@@ -1613,9 +1659,18 @@ impl Model {
         tscales()[self.tscale] * self.tfine
     }
 
-    /// The time base the acquisition runs at: the step, which covers at least the screen.
+    /// The time base the acquisition runs at: the step, which covers at least the screen. Display scales below
+    /// 1 ns/div stay on the plot; the ADC still takes a 1 ns/div window.
     pub fn hw_time_per_div(&self) -> f32 {
-        tscales()[self.tscale]
+        tscales()[self.tscale].max(HW_MIN_TDIV)
+    }
+
+    /// Live analog / LA cannot display below 1 ns/div; the ADC window is that floor.
+    pub fn floor_live_tdiv(&mut self) {
+        if tscales()[self.tscale] < HW_MIN_TDIV {
+            self.tscale = tscales().iter().position(|&t| t >= HW_MIN_TDIV).unwrap_or(0);
+            self.tfine = 1.0;
+        }
     }
 
     /// Keeps every offset within what the AFE of its scale can do.

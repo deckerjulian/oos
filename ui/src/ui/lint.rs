@@ -1431,6 +1431,29 @@ fn a_reference_travels_through_a_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
+    let dir = std::env::temp_dir().join(format!("oos-refbin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = with_two_channels();
+    u.store_dir = dir.clone();
+    let rec = u.last[0].as_ref().unwrap().clone();
+    let want = rec.ch[0].clone();
+    let dt = rec.dt;
+    std::fs::write(dir.join("wave-001.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.activate(Item::RefImport);
+    let r = u.refs[0].as_ref().expect("R1");
+    assert_eq!(r.v, want);
+    assert!((r.dt - dt).abs() < 1e-18);
+    std::fs::remove_file(dir.join("wave-001.bin")).unwrap();
+    u.refs[0] = None;
+    std::fs::write(dir.join("cap.wfm"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.activate(Item::RefImport);
+    assert_eq!(u.refs[0].as_ref().unwrap().v, want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A CSV in a ref slot is measured at the file's sample interval. The 20 MHz front-end limit
 /// does not touch it. CH1 still reads the hardware frame, and the live source is left alone.
 #[test]
@@ -1688,6 +1711,25 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     let n = oos_dsp::eye::tie(&clk.edges, &clk).len();
     assert_eq!(u.azr.page.status[0], format!("Jitter of {} edges, 1 records", n));
 
+    // DQS on R2 folds DQ on R1: the UI is the strobe's edge spacing, not a CDR from the data.
+    let ui = 1e-9;
+    let dt = ui / 16.0;
+    let n = 1600usize;
+    let dq: Vec<f32> = (0..n).map(|k| if ((k as f64 * dt + 0.5 * ui) / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
+    let dqs: Vec<f32> = (0..n).map(|k| if (k as f64 * dt / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
+    put_ref(&mut u, 0, 0.0, dt, dq);
+    put_ref(&mut u, 1, 0.0, dt, dqs);
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(1));
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let (_, _, period) = u.azr.eye_res.clone().expect("strobe eye");
+    assert!((period - ui).abs() < ui * 1e-3, "period {period}");
+    assert!(u.azr.page.title.contains("clock from R2"), "{}", u.azr.page.title);
+
     let (pdt, pn) = (1e-5, 2000usize);
     let tone = |amp: f64, shift: f64| -> Vec<f32> {
         (0..pn).map(|k| (amp * (2.0 * std::f64::consts::PI * 1000.0 * k as f64 * pdt + shift).sin()) as f32).collect()
@@ -1846,4 +1888,208 @@ fn gallery() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.activate(Item::Update);
     shot(&mut u, "s-update");
+}
+
+fn load_dq_dqs(u: &mut Ui) -> bool {
+    let dq = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads/ch3-dq_67a5.wfm");
+    let dqs = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads/ch1-dqs_a0b1.wfm");
+    if !dq.is_file() || !dqs.is_file() {
+        return false;
+    }
+    for c in 0..NCH {
+        u.m.ch[c].on = false;
+    }
+    u.m.la.on = false;
+    u.m.run = RunState::Stop;
+    u.last[0] = None;
+    u.ref_sel = 0;
+    u.ref_load_path(dq);
+    u.ref_sel = 1;
+    u.ref_load_path(dqs);
+    true
+}
+
+#[test]
+fn dq_and_dqs_refs_make_a_strobe_eye() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    if !load_dq_dqs(&mut u) {
+        return;
+    }
+    let r1 = u.refs[0].as_ref().unwrap();
+    let r2 = u.refs[1].as_ref().unwrap();
+    assert_eq!(r1.v.len(), 1_000_000);
+    assert_eq!(r2.v.len(), 1_000_000);
+    assert!((r1.dt - 2e-11).abs() < 1e-18 && (r2.dt - 2e-11).abs() < 1e-18);
+    assert!((r1.t0 - r2.t0).abs() < 1e-18);
+    u.m.meas = [
+        (Meas::Vpp, WaveId::Ref(0)),
+        (Meas::Vmax, WaveId::Ref(0)),
+        (Meas::Vmin, WaveId::Ref(0)),
+        (Meas::Freq, WaveId::Ref(0)),
+        (Meas::Vpp, WaveId::Ref(1)),
+        (Meas::Vmax, WaveId::Ref(1)),
+        (Meas::Period, WaveId::Ref(1)),
+        (Meas::Freq, WaveId::Ref(1)),
+    ]
+    .into();
+    u.m.meas_labels = true;
+    u.meas_src = WaveId::Ref(0);
+    u.measure_refs();
+    if let Some(r) = u.refs[1].as_mut() {
+        r.color = 1;
+    }
+    u.m.tscale = tscales().iter().position(|&t| (t - 2e-6).abs() < 1e-12).unwrap();
+    u.m.tfine = 1.0;
+    u.m.delay = -1.06e-6;
+    u.set_zoom(true);
+    u.m.zscale = tscales().iter().position(|&t| (t - 1e-9).abs() < 1e-12).unwrap();
+    u.m.zdelay = -1.06e-6;
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/ddr-dq-dqs-scope.png", dir), crate::store::png_of(&cv));
+    }
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(1));
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let (meas, _, period) = u.azr.eye_res.clone().expect("DQ vs DQS eye");
+    eprintln!("DQS UI {} s ({:.3} GT/s) height {} V width {} s title {}", period, 1e-9 / period, meas.height, meas.width, u.azr.page.title);
+    assert!(period > 1e-10 && period < 2e-9, "UI {period}");
+    assert!(u.azr.page.title.contains("clock from R2"), "{}", u.azr.page.title);
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/ddr-dq-dqs-eye.png", dir), crate::store::png_of(&cv));
+    }
+}
+
+#[test]
+fn cphy_eye_full_screen_shot() {
+    let dir = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads");
+    let va = dir.join("VA_SE_f764.wfm");
+    let clk = dir.join("ClockRecovery_b5e0.wfm");
+    if !va.is_file() || !clk.is_file() {
+        return;
+    }
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    for c in 0..NCH {
+        u.m.ch[c].on = false;
+    }
+    u.m.la.on = false;
+    u.m.run = RunState::Stop;
+    u.last[0] = None;
+    u.m.meas.clear();
+    u.ref_sel = 0;
+    u.ref_load_path(&va);
+    if let Some(r) = u.refs[0].as_mut() {
+        r.label = "VA".into();
+    }
+    let b = std::fs::read(&clk).unwrap();
+    let n = (b.len() - 8 - 820) / 4;
+    let mut v = Vec::with_capacity(n);
+    for k in 0..n {
+        let o = 820 + k * 4;
+        v.push(f32::from_le_bytes(b[o..o + 4].try_into().unwrap()));
+    }
+    let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
+    let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
+    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v, vpd: 0.5, offset: 0.0, on: true });
+    u.full = true;
+    u.relayout();
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(3));
+    u.m.eye_rate = 2.27e9;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    assert!(u.azr.eye.is_some());
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/cphy-va-eye-full.png", dir), crate::store::png_of(&cv));
+    }
+}
+
+/// R1–R10 answer `:MEASure:ITEM?`. The strip, the eye figures, and one readout of everything on screen.
+#[test]
+fn scpi_reads_a_ref_the_strip_and_the_eye() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let cv = Canvas::new(W, H);
+    let mut scpi = crate::scpi::Scpi::open(0);
+    for _ in 0..4 {
+        u.step(0.05);
+    }
+    let q = |scpi: &mut crate::scpi::Scpi, u: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(u, &cv, c)).unwrap();
+
+    let ch = q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,CHAN1");
+    assert!(ch.contains('E') && ch != "9.9E37", "{ch}");
+    for item in ["FREQUENCY", "PERIOD", "RTIME", "VBASE", "CYCAMP", "CYCPP", "HTIME", "BWIDTH"] {
+        let r = q(&mut scpi, &mut u, &format!(":MEAS:ITEM? {item}"));
+        assert!(r.contains('E'), "{item} {r}");
+    }
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("0,"), "a known item must not be an error");
+
+    let (dt, n) = (5e-9, 800usize);
+    let sine: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 1e6 * k as f64 * dt).sin() as f32).collect();
+    put_ref(&mut u, 0, 0.0, dt, sine.clone());
+    u.measure_refs();
+    let want = oos_dsp::measure::analyze_min(&sine, dt, 0.4 * 0.2).get(Meas::Vpp);
+    let got: f64 = q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R1").parse().unwrap();
+    assert!((got - want).abs() < 1e-4, "{got} vs {want}");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R2"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("0,"), "an empty slot is not an error");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,R11"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? NOPE,R1"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+
+    put_ref(&mut u, 1, 25e-9, dt, sine);
+    u.measure_refs();
+    let delay: f64 = q(&mut scpi, &mut u, ":MEAS:ITEM? RRDELAY,R1,R2").parse().unwrap();
+    assert!((delay - 25e-9).abs() < 2e-9, "delay {delay}");
+    assert_eq!(q(&mut scpi, &mut u, ":MEAS:ITEM? SETUP,R1"), "9.9E37");
+    assert!(q(&mut scpi, &mut u, ":SYST:ERR?").starts_with("-224"));
+
+    u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0)), (Meas::Freq, WaveId::Ch(0))];
+    u.m.meas2 = vec![(0, WaveId::Ref(0), WaveId::Ref(1))];
+    u.m.dvm_on = true;
+    let strip = q(&mut scpi, &mut u, ":MEAS:STR?");
+    assert!(strip.contains("VPP,R1,"), "{strip}");
+    assert!(strip.contains("FREQUENCY,CHAN1,"), "{strip}");
+    assert!(strip.contains("RRDELAY,R1,R2,"), "{strip}");
+    assert!(strip.contains("DVM,DC,CHAN1,"), "{strip}");
+
+    u.m.view = AView::Scope;
+    let screen = q(&mut scpi, &mut u, ":MEAS:READ?");
+    assert!(screen.contains("VPP,R1,"), "{screen}");
+    assert!(!screen.contains("HEIGHT"), "{screen}");
+
+    let sq: Vec<f32> = (0..8000).map(|k| if (k / 20) % 2 == 0 { 0.5 } else { -0.5 }).collect();
+    put_ref(&mut u, 2, 0.0, 1e-9, sq);
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(2);
+    u.m.eye_b = None;
+    u.m.eye_rate = 0.0;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    let height: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? HEIGHT").parse().unwrap();
+    let width: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? WIDT").parse().unwrap();
+    let ui_s: f64 = q(&mut scpi, &mut u, ":EYE:ITEM? UI").parse().unwrap();
+    let tj = q(&mut scpi, &mut u, ":EYE:ITEM? TJ");
+    assert!(height > 0.5 && height < 1.2, "height {height}");
+    assert!(width > 0.0 && width < 40e-9, "width {width}");
+    assert!((ui_s - 20e-9).abs() < 2e-9, "ui {ui_s}");
+    assert!(tj.contains('E'), "{tj}");
+    assert_eq!(q(&mut scpi, &mut u, ":EYE:ITEM? NOPE"), "9.9E37");
+    let screen = q(&mut scpi, &mut u, ":MEAS:READ?");
+    for token in ["VPP,R1,", "HEIGHT,", "WIDTH,", "UI,", "TJ,", "AMPLITUDE,", "DVM,DC,CHAN1,"] {
+        assert!(screen.contains(token), "{token} missing in {screen}");
+    }
+    assert_eq!(screen.matches(';').count() + 1, strip.matches(';').count() + 1 + EYE_ITEMS.len(), "{screen}");
 }

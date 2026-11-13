@@ -28,8 +28,8 @@ pub struct State {
     pub limit_over: u64,
     pub limit_worst: Option<(f64, f32)>,
     pub eye: Option<eye::Eye>,
-    /// what the eye was built for (source tag, source index, scale, offset, rate, raster size)
-    pub eye_key: (u8, usize, u32, u32, u64, i32, i32),
+    /// what the eye was built for (source, clock, scale, offset, rate, raster size)
+    pub eye_key: (u8, usize, u8, usize, u32, u32, u64, i32, i32),
     /// the ref record already folded in, so a second pass does not count it again
     pub eye_ref: Option<(usize, u64)>,
     pub eye_res: Option<(eye::EyeMeas, eye::Jitter, f64)>,
@@ -148,7 +148,7 @@ impl Ui {
             Item::SpecMargin => "Limit margin",
             Item::EyeRate => "Bit rate",
             Item::EyeBer => "BER",
-            Item::EyeB => "Source B",
+            Item::EyeB => "Clock",
             Item::EyeHp => "Highpass",
             Item::EyePnLo => "Pn low",
             Item::EyePnHi => "Pn high",

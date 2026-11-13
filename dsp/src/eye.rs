@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Eye diagram and jitter: clock recovery from data edges (constant-rate least-squares fit or a 1st/2nd-order PLL),
+//! Eye diagram and jitter: clock recovery from data or from a strobe (DQS), constant-rate least-squares fit or a 1st/2nd-order PLL,
 //! eye accumulation with linear interpolation between samples, eye measurements, time interval error (TIE), RJ/DJ
 //! separation with a dual-Dirac tail fit, DCD and DDJ from conditional means, periodic jitter from the TIE spectrum
 //! and the bathtub curve.
@@ -178,6 +178,34 @@ pub fn clock_from_edges(e: Vec<f64>, nominal_rate: Option<f64>) -> Option<Clock>
         return None;
     }
     Some(Clock { period, phase, edges: e, ticks: Vec::new(), first_rising: false })
+}
+
+/// Samples more than `uis` unit intervals from every clock edge become NaN, so idle time between strobe
+/// bursts is not folded into the eye.
+pub fn gate_around_clock(v: &[f32], dt: f64, c: &Clock, uis: f64) -> Vec<f32> {
+    if !(dt > 0.0) || !(c.period > 0.0) || c.edges.is_empty() {
+        return v.to_vec();
+    }
+    let n = v.len();
+    let w = ((uis * c.period / dt).ceil() as usize).max(1);
+    let mut keep = vec![false; n];
+    for &te in &c.edges {
+        let i = (te / dt).round().clamp(0.0, (n.saturating_sub(1)) as f64) as usize;
+        let a = i.saturating_sub(w);
+        let b = (i + w).min(n.saturating_sub(1));
+        keep[a..=b].fill(true);
+    }
+    v.iter().zip(keep).map(|(&x, k)| if k { x } else { f32::NAN }).collect()
+}
+
+/// Half a UI earlier: a source-synchronous strobe samples the middle of the bit, which this page draws at 0.5 UI.
+pub fn center_strobe(c: &Clock) -> Clock {
+    let mut o = c.clone();
+    o.phase -= 0.5 * o.period;
+    for t in &mut o.ticks {
+        *t -= 0.5 * c.period;
+    }
+    o
 }
 
 /// PLL clock: starts locked on the constant-rate fit, then a digital PLL corrects the tick nearest to every data edge

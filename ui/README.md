@@ -144,7 +144,11 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
 A Rigol-compatible subset, enough for scripts and the openSciLab bridge: `*IDN? *RST *OPC? *CLS`, `:RUN :STOP :SINGle
 :AUToscale :CLEar`, `:CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert`, `:TIMebase[:MAIN]:SCALe|OFFSet`,
 `:TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe :TRIGger:SWEep :TRIGger:STATus?`, `:ACQuire:SRATe?|MDEPth?`,
-`:MEASure:ITEM? <item>,CHANn`, `:WAVeform:SOURce|MODE|FORMat(BYTE/WORD/ASCii)|POINts?|PREamble?|DATA?` (the displayed
+`:MEASure:ITEM? <item>[,CHANn|Rn]` and `:MEASure:ITEM? <pair>,<src>,<src>` (R1–R10 as well as CHANn),
+`:MEASure:STRip?` (the rows under the plot, plus the DVM and counter when they are on),
+`:MEASure:READout?` (those rows, and the eye figures when the eye page is up),
+`:EYE:ITEM? <figure>` (height, width, unit interval, total jitter, and the other figures on that page),
+`:WAVeform:SOURce|MODE|FORMat(BYTE/WORD/ASCii)|POINts?|PREamble?|DATA?` (the displayed
 record, volts = (code - yorigin - yref) * yinc), `:DISPlay:DATA?` (24-bit BMP of the screen), `:SYSTem:ERRor?`.
 Remote changes go through the same model as the screen. Tested from the Mac against the unit on 2026-11-02.
 

@@ -5,7 +5,8 @@
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
+//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
+//! :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
@@ -89,6 +90,113 @@ fn parse_ch(s: &str) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// A measurement source: CHANn or Rn (R1–R10).
+fn parse_wave(s: &str) -> Option<WaveId> {
+    let s = s.trim();
+    if let Some(c) = parse_ch(s) {
+        return Some(WaveId::Ch(c));
+    }
+    let (k, n) = suffix(s);
+    if k.eq_ignore_ascii_case("R") {
+        return n.filter(|&n| (1..=NREF).contains(&n)).map(|n| WaveId::Ref(n - 1));
+    }
+    None
+}
+
+fn wave_tok(id: WaveId) -> String {
+    match id {
+        WaveId::Ch(c) => format!("CHAN{}", c + 1),
+        WaveId::Ref(i) => format!("R{}", i + 1),
+    }
+}
+
+/// Single-channel items the strip can show. The first spelling of a measurement is the one `STRip` and `READout` print.
+/// A second spelling is only another way to ask.
+const MEAS_ITEMS: &[(&str, &str, Meas)] = &[
+    ("VPP", "VPP", Meas::Vpp),
+    ("VMAX", "VMAX", Meas::Vmax),
+    ("VMIN", "VMIN", Meas::Vmin),
+    ("VAVG", "VAVG", Meas::Vavg),
+    ("VRMS", "VRMS", Meas::Vrms),
+    ("VAMP", "VAMP", Meas::Vamp),
+    ("FREQuency", "FREQUENCY", Meas::Freq),
+    ("PERiod", "PERIOD", Meas::Period),
+    ("RTIMe", "RTIME", Meas::Rise),
+    ("FTIMe", "FTIME", Meas::Fall),
+    ("PWIDth", "PWIDTH", Meas::PWidth),
+    ("PDUTy", "PDUTY", Meas::PDuty),
+    ("NDUTy", "NDUTY", Meas::NDuty),
+    ("NWIDth", "NWIDTH", Meas::NWidth),
+    ("VTOP", "VTOP", Meas::Vtop),
+    ("VBASe", "VBASE", Meas::Vbase),
+    ("OVERshoot", "OVERSHOOT", Meas::Overshoot),
+    ("PREShoot", "PRESHOOT", Meas::Preshoot),
+    ("HTIMe", "HTIME", Meas::HighTime),
+    ("LTIMe", "LTIME", Meas::LowTime),
+    ("BWIDth", "BWIDTH", Meas::Burst),
+    ("TOUTside", "TOUTSIDE", Meas::Outside),
+    ("NPERiods", "NPERIODS", Meas::NPeriods),
+    ("CAMP", "CAMP", Meas::CycAmp),
+    ("CYCAmp", "CAMP", Meas::CycAmp),
+    ("CTOP", "CTOP", Meas::CycTop),
+    ("CBASe", "CBASE", Meas::CycBase),
+    ("CPP", "CPP", Meas::CycPp),
+    ("CYCPP", "CPP", Meas::CycPp),
+    ("CMAX", "CMAX", Meas::CycMax),
+    ("CMIN", "CMIN", Meas::CycMin),
+    ("VUPPer", "VUPPER", Meas::Vupper),
+    ("VMID", "VMID", Meas::Vmid),
+    ("VLOWer", "VLOWER", Meas::Vlower),
+    ("CAVG", "CAVG", Meas::VavgCyc),
+    ("CRMS", "CRMS", Meas::VrmsCyc),
+    ("ACRms", "ACRMS", Meas::VrmsAc),
+    ("SDEViation", "SDEVIATION", Meas::StdDev),
+    ("AREA", "AREA", Meas::Area),
+    ("CARea", "CAREA", Meas::AreaCyc),
+    ("PPULses", "PPULSES", Meas::PPulses),
+    ("NPULses", "NPULSES", Meas::NPulses),
+    ("PEDGes", "PEDGES", Meas::PEdges),
+    ("NEDGes", "NEDGES", Meas::NEdges),
+    ("TVMAX", "TVMAX", Meas::TVmax),
+    ("TVMIN", "TVMIN", Meas::TVmin),
+    ("PSLew", "PSLEW", Meas::PSlew),
+    ("NSLew", "NSLEW", Meas::NSlew),
+];
+
+/// Channel-pair rows, in the same order as the Measure menu (`PAIRS`).
+const PAIR_ITEMS: &[(&str, &str, usize)] = &[
+    ("RRDelay", "RRDELAY", 0),
+    ("FFDelay", "FFDELAY", 1),
+    ("RFDelay", "RFDELAY", 2),
+    ("FRDelay", "FRDELAY", 3),
+    ("RRPHase", "RRPHASE", 4),
+    ("FFPHase", "FFPHASE", 5),
+    ("RFPHase", "RFPHASE", 6),
+    ("FRPHase", "FRPHASE", 7),
+    ("RRSkew", "RRSKEW", 8),
+    ("FFSkew", "FFSKEW", 9),
+    ("RFSkew", "RFSKEW", 10),
+    ("FRSkew", "FRSKEW", 11),
+    ("SETup", "SETUP", 12),
+    ("HOLD", "HOLD", 13),
+];
+
+fn meas_kind(item: &str) -> Option<Meas> {
+    MEAS_ITEMS.iter().find(|it| kw(item, it.0)).map(|it| it.2)
+}
+
+fn meas_token(k: Meas) -> &'static str {
+    MEAS_ITEMS.iter().find(|it| it.2 == k).map(|it| it.1).unwrap_or("ITEM")
+}
+
+fn pair_kind(item: &str) -> Option<usize> {
+    PAIR_ITEMS.iter().find(|it| kw(item, it.0)).map(|it| it.2)
+}
+
+fn pair_token(k: usize) -> &'static str {
+    PAIR_ITEMS.get(k.min(PAIR_ITEMS.len() - 1)).map(|it| it.1).unwrap_or("PAIR")
 }
 
 fn parse_bool(s: &str) -> Option<bool> {
@@ -489,47 +597,20 @@ impl Scpi {
         }
         // measurement, waveform, display, system (need the record / canvas)
         let n0 = nodes.first().copied().unwrap_or("");
-        if kw(n0, "MEASure") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            let mut parts = arg.split(',');
-            let item = parts.next().unwrap_or("").trim().to_ascii_uppercase();
-            let c = parts.next().and_then(parse_ch).unwrap_or(0);
-            let k = match item.as_str() {
-                "VPP" => Meas::Vpp,
-                "VMAX" => Meas::Vmax,
-                "VMIN" => Meas::Vmin,
-                "VAVG" => Meas::Vavg,
-                "VRMS" => Meas::Vrms,
-                "VAMP" => Meas::Vamp,
-                "FREQ" | "FREQUENCY" => Meas::Freq,
-                "PER" | "PERIOD" => Meas::Period,
-                "RTIM" | "RTIME" => Meas::Rise,
-                "FTIM" | "FTIME" => Meas::Fall,
-                "PWID" | "PWIDTH" => Meas::PWidth,
-                "PDUT" | "PDUTY" => Meas::PDuty,
-                "NDUT" | "NDUTY" => Meas::NDuty,
-                "NWID" | "NWIDTH" => Meas::NWidth,
-                "VTOP" => Meas::Vtop,
-                "VBAS" | "VBASE" => Meas::Vbase,
-                "OVER" | "OVERSHOOT" => Meas::Overshoot,
-                "PRES" | "PRESHOOT" => Meas::Preshoot,
-                "HTIM" | "HTIME" => Meas::HighTime,
-                "LTIM" | "LTIME" => Meas::LowTime,
-                "BWID" | "BWIDTH" => Meas::Burst,
-                "TOUT" | "TOUTSIDE" => Meas::Outside,
-                "NPER" | "NPERIODS" => Meas::NPeriods,
-                "CAMP" | "CYCAMP" => Meas::CycAmp,
-                "CTOP" => Meas::CycTop,
-                "CBAS" | "CBASE" => Meas::CycBase,
-                "CPP" | "CYCPP" => Meas::CycPp,
-                "CMAX" => Meas::CycMax,
-                "CMIN" => Meas::CycMin,
-                _ => {
-                    self.err.push("-224,\"Illegal parameter value\"".into());
-                    return t("9.9E37");
-                }
-            };
-            let v = ui.meas(c, k);
-            return t(&if v.is_finite() { e(v) } else { "9.9E37".into() });
+        if kw(n0, "MEASure") && nodes.len() == 2 && query {
+            if kw(nodes[1], "ITEM") {
+                return self.meas_item(ui, arg);
+            }
+            if kw(nodes[1], "STRip") {
+                return t(&meas_strip(ui));
+            }
+            // every measurement on the screen: the strip, and the eye figures when that page is up
+            if kw(nodes[1], "READout") {
+                return t(&meas_readout(ui));
+            }
+        }
+        if kw(n0, "EYE") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.eye_item(ui, arg);
         }
         if kw(n0, "WAVeform") && nodes.len() == 2 {
             let n1 = nodes[1];
@@ -931,6 +1012,100 @@ impl Scpi {
             }
         }
     }
+
+    /// :MEASure:ITEM? <item>[,CHANn|Rn[,src]]
+    fn meas_item(&mut self, ui: &Ui, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let mut parts = arg.split(',');
+        let item = parts.next().unwrap_or("").trim();
+        if item.is_empty() {
+            self.err.push("-224,\"Illegal parameter value\"".into());
+            return t("9.9E37");
+        }
+        // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
+        let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
+            None => WaveId::Ch(0),
+            Some(s) => match self.named_source(s) {
+                Some(id) => id,
+                None => return t("9.9E37"),
+            },
+        };
+        if let Some(k) = meas_kind(item) {
+            return t(&e(ui.meas_at(src, k)));
+        }
+        if let Some(k) = pair_kind(item) {
+            let Some(word) = parts.next().map(str::trim).filter(|s| !s.is_empty()) else {
+                self.err.push("-224,\"Illegal parameter value\"".into());
+                return t("9.9E37");
+            };
+            let Some(b) = self.named_source(word) else { return t("9.9E37") };
+            return t(&e(ui.pair_at(k, src, b)));
+        }
+        self.err.push("-224,\"Illegal parameter value\"".into());
+        t("9.9E37")
+    }
+
+    fn named_source(&mut self, s: &str) -> Option<WaveId> {
+        match parse_wave(s) {
+            Some(id) => Some(id),
+            None => {
+                self.err.push(format!("-224,\"Illegal parameter value\" {}", s));
+                None
+            }
+        }
+    }
+
+    /// :EYE:ITEM? <figure> — height, width, unit interval, total jitter, and the other figures on the eye page.
+    fn eye_item(&mut self, ui: &Ui, arg: &str) -> Option<Vec<u8>> {
+        let item = arg.split(',').next().unwrap_or("").trim();
+        let Some(name) = crate::ui::EYE_ITEMS.iter().find(|n| kw(item, n)) else {
+            self.err.push("-224,\"Illegal parameter value\"".into());
+            return Some(b"9.9E37".to_vec());
+        };
+        let v = ui.eye_readings().iter().find(|(n, _)| n == name).map(|(_, v)| *v).unwrap_or(f64::NAN);
+        Some(e(v).into_bytes())
+    }
+}
+
+/// The measurement strip: each row, then the DVM and the counter when they are on.
+fn meas_strip(ui: &Ui) -> String {
+    let mut p = Vec::new();
+    for &(k, id) in &ui.m.meas {
+        p.push(format!("{},{},{}", meas_token(k), wave_tok(id), e(ui.meas_at(id, k))));
+    }
+    for &(k, a, b) in &ui.m.meas2 {
+        p.push(format!("{},{},{},{}", pair_token(k), wave_tok(a), wave_tok(b), e(ui.pair_at(k, a, b))));
+    }
+    if ui.m.dvm_on {
+        let mode = ["DC", "ACRMS", "ACDC"][ui.m.dvm_mode.min(2)];
+        p.push(format!("DVM,{},{},{}", mode, wave_tok(WaveId::Ch(ui.m.dvm_src.min(NCH - 1))), e(ui.dvm_value())));
+    }
+    if ui.m.cnt_on {
+        let mode = ["FREQUENCY", "PERIOD", "TOTALIZE"][ui.m.cnt_mode.min(2)];
+        p.push(format!("COUNTER,{},{},{}", mode, wave_tok(WaveId::Ch(ui.m.cnt_src.min(NCH - 1))), e(ui.counter_value())));
+    }
+    p.join(";")
+}
+
+/// Strip rows, and the eye figures when the eye page is the one on screen.
+fn meas_readout(ui: &Ui) -> String {
+    let mut parts = Vec::new();
+    let strip = meas_strip(ui);
+    if !strip.is_empty() {
+        parts.push(strip);
+    }
+    if ui.m.view == AView::Eye {
+        let eye = crate::ui::EYE_ITEMS
+            .iter()
+            .map(|name| {
+                let v = ui.eye_readings().iter().find(|(n, _)| n == name).map(|(_, v)| *v).unwrap_or(f64::NAN);
+                format!("{},{}", name.to_ascii_uppercase(), e(v))
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        parts.push(eye);
+    }
+    parts.join(";")
 }
 
 /// IEEE 488.2 definite-length block: #9 + 9 digits + data.
