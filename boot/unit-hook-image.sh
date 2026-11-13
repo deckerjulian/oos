@@ -11,6 +11,9 @@ cp /wlan/nft.COPYING $r/etc/licenses/nftables
 cp /wlan/dropbearmulti $r/bin/
 for p in dropbear dropbearkey scp; do ln -sf dropbearmulti $r/bin/$p; done
 cp /wlan/dropbear.COPYING $r/etc/licenses/dropbear
+# its SFTP subsystem: Dropbear runs /bin/sftp-server (sftp, and scp without -O)
+cp /wlan/sftp-server $r/bin/
+cp /wlan/sftp-server.COPYING $r/etc/licenses/openssh-sftp-server
 # the unit defaults: /etc/oos/limits.conf (capabilities), /etc/oos/system.conf (network); none without OOS_UNIT
 if [ -n "$(ls -A $d/etc-oos)" ]; then mkdir -p $r/etc/oos; cp $d/etc-oos/*.conf $r/etc/oos/; ls -l $r/etc/oos; fi
 # extra kernel arguments of the unit (build.env), e.g. pci=pcie_bus_perf for MaxPayload 256 (docs/fork/unit-dho804.md)

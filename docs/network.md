@@ -294,8 +294,10 @@ static `nft` (arm64 container), `oos-conf` and `oos-mac` under busybox, the addr
 
 ## 7. SSH
 
-Dropbear 2026.94 (`rootfs/build-dropbear.sh`: static, arm64, built in Docker, the tarball checked against a pinned
-SHA-256 that matches Alpine's SHA-512; no sftp-server, no X11 or agent forwarding). `/bin/oos-ssh` starts it from rcS
+Dropbear (`rootfs/build-dropbear.sh`: static, arm64, built in Docker; no X11 or agent forwarding) with OpenSSH's
+`sftp-server` for the SFTP subsystem (`rootfs/build-sftp-server.sh`: that program alone, static, without OpenSSL and
+zlib, installed as `/bin/sftp-server`, the path Dropbear is built with). Versions and checksums: `rootfs/deps.lock`
+(docs/fork/deps.md). `/bin/oos-ssh` starts it from rcS
 after the firewall, in the background, and oos-ui restarts or stops it when a setting changes. Log: `/tmp/oos-ssh.log`.
 
 **When it listens.** Only with `remote.ssh = on`, a non-empty `net.allow` (section 6) and the firewall table loaded.
@@ -341,7 +343,8 @@ listener: sessions stay. SSH off ends the listener and every session.
 ssh root@192.0.2.10
 ssh-copy-id root@192.0.2.10            # adds ~/.ssh/id_*.pub to /oos/ssh/authorized_keys (through /root/.ssh)
 ssh root@192.0.2.10 sync               # ext2 without a journal: flush before the scope is switched off
-scp -O file root@192.0.2.10:/tmp/      # -O: the scp protocol; there is no sftp-server
+scp file root@192.0.2.10:/tmp/         # over SFTP (OpenSSH 9.0 and later); scp -O still works
+sftp root@192.0.2.10                     # interactive file transfer
 ```
 
 Then Password login > Off, if keys only is wanted.
@@ -354,7 +357,8 @@ clients then warn about a changed host key.
 
 Not verified on hardware: all of this section. Verified on the host (`tools/ssh-sim.sh`, arm64 container with the
 image's busybox, `nft` and Dropbear, an OpenSSH client): the guards (off, no `net.allow`, no firewall), the files and
-their modes, password and key login, a wrong or empty password refused, `ssh-copy-id`, `scp -O`, keys only, the
+their modes, password and key login, a wrong or empty password refused, `ssh-copy-id`, `scp -O`, `scp` over SFTP
+both ways and an `sftp` put and get (300 kB, compared byte for byte), keys only, the
 lockout guard of the script, password and host key unchanged after a restart, restart keeping sessions and stop ending
 them. The rules and the page in `ui` tests (`ssh::tests`, `ui::ssh::tests`).
 
