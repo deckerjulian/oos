@@ -328,6 +328,15 @@ Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 8".
 | Hardware zone | partly | qualifies; 147/s at 20 us/div 10k, 94/s at 200 us/div 10k; stops the acquisition at 100 k; latch frames stay 0 |
 | Measure-unit slots | pass | all six cases as the table; AUTO case 2 uses the unit, cases 5/6 fall back to records (CH3 None) |
 
+### Round 9 (build 20261113-210854): core offsets, 2-channel lanes
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| `oos-fpgad adc slots/offset` | broken | `adc` is missing from the register-command list in `main.rs` (line 307), so it prints nothing and exits 0 |
+| Far core | seen by the measure unit | `:DEBug:SLOTs?`, CH3 alone open, 1.25 GSa/s: slot 6 +8.7 steps from the average, the rest within -4.2..+2.7 |
+| `cal.core_offset = tight` | does not trim | log `core offsets of ADC mode 2: core order not found`; no overlay file; slots unchanged; cal_adc.hex sha256 unchanged |
+| 2-channel lane fix | pass | CH3 open at +2 V reads -26..-27 mV with CH1 on or off and either trigger source (was +143 mV); residual about -13 mV per volt of offset in every state |
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
