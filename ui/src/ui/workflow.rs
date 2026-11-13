@@ -63,7 +63,7 @@ mod slot_loading_tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.commit_waveform_traces_at(vec![trace("overlay")], "overlay", 2).unwrap();
         ui.m.deskew_ref[2] = 2e-9;
-        ui.m.delay = 1e-3;
+        ui.m.delay = 10e-3;
         let native = ui.ref_info(2).unwrap();
         let pointer = ui.refs[2].as_ref().unwrap().v.as_ptr();
         let adc = ui.m.ch.clone(); let trigger = ui.m.trigger(); let run = ui.m.run;
@@ -362,6 +362,78 @@ mod tests {
         header[12..20].copy_from_slice(&u64::MAX.to_le_bytes());
         header[20..28].copy_from_slice(&1e-9f64.to_le_bytes());
         assert!(u.load_waveform_bytes(&header, "oversize.bin").is_err());
+    }
+
+    #[test]
+    fn a_file_waits_for_a_slot_and_lands_on_the_one_chosen() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let kept: Vec<f32> = (0..40).map(|i| if i < 20 { -0.2 } else { 0.2 }).collect();
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "keep".into(), t0: 0.0, dt: 1e-9, v: kept.clone(), vpd: 0.2, offset: 0.0, on: true });
+        u.request_waveform();
+        assert!(u.load_slot_ask && !u.open_wave_request);
+        let title = Ui::load_slot_box();
+        u.tap(title.x + 30, title.y + 24);
+        assert!(u.load_slot_ask && !u.open_wave_request, "a tap on the title loads nothing");
+        u.tap(Ui::load_slot_cancel().x + 4, Ui::load_slot_cancel().y + 4);
+        assert!(!u.load_slot_ask && !u.open_wave_request);
+        assert_eq!(u.refs[0].as_ref().unwrap().v, kept);
+        u.request_waveform();
+        u.tap(Ui::load_slot_button(9).x + 4, Ui::load_slot_button(9).y + 4);
+        assert_eq!(u.waveform_destination(), Some(9));
+        assert_eq!(u.ref_slot(), 0, "slot choice does not redirect the current source before commit");
+        assert!(u.open_wave_request);
+        let mut csv = String::from("Time (s),Volts\n");
+        for k in 0..80 {
+            csv.push_str(&format!("{},{}\n", k as f64 * 1e-9, if k < 40 { -0.4 } else { 0.4 }));
+        }
+        u.load_waveform_bytes_at(csv.as_bytes(), "lane.csv", u.waveform_destination().unwrap()).unwrap();
+        assert_eq!(u.refs[0].as_ref().unwrap().v, kept);
+        assert!(u.refs[9].is_some() && u.refs[1].is_none());
+        assert_eq!(u.ref_slot(), 9);
+        assert_eq!(u.m.deskew_ref[9], 0.0);
+    }
+
+    fn square(delay: usize) -> Vec<f32> {
+        (0..1600).map(|i| if ((i + 8000 - delay) / 80) % 2 == 0 { -0.5 } else { 0.5 }).collect()
+    }
+
+    #[test]
+    fn auto_deskew_lines_up_the_shown_traces() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.run = RunState::Stop;
+        for ch in &mut u.m.ch { ch.on = false; }
+        u.m.ch[0].on = true;
+        u.m.ch[1].on = true;
+        let mut samples = std::array::from_fn(|_| Vec::new());
+        samples[0] = square(0);
+        samples[1] = square(40);
+        u.last[0] = Some(Record { t0: 0.0, dt: 1e-9, ch: samples, triggered: true, partial: false, raw: None, la: None });
+        u.refs[3] = Some(RefWave { src: 0, color: 1, label: String::new(), t0: 0.0, dt: 1e-9, v: square(80), vpd: 0.2, offset: 0.0, on: true });
+        u.refs[4] = Some(RefWave { src: 0, color: 2, label: String::new(), t0: 0.0, dt: 1e-9, v: square(200), vpd: 0.2, offset: 0.0, on: false });
+        u.measure_last();
+        let before = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
+        assert!((before - 40e-9).abs() < 2e-9, "{before}");
+        assert!(u.items(MenuId::Horizontal).contains(&Item::AutoDeskew));
+        assert!(u.items(MenuId::ChMore(0)).contains(&Item::AutoDeskew));
+        u.activate(Item::AutoDeskew);
+        let after = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
+        assert!(after.abs() < 2e-9, "{after}");
+        let edge = |id| {
+            let (a, t0) = u.meas_analysis(id).unwrap();
+            a.rises[0] + t0
+        };
+        let (ch, rf) = (edge(WaveId::Ch(0)), edge(WaveId::Ref(3)));
+        assert!((ch - rf).abs() < 2e-9, "channel {ch} reference {rf}");
+        assert_eq!(u.m.deskew_ref[4], 0.0, "a hidden reference is left where it is");
+        u.activate(Item::AutoDeskew);
+        assert!(u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1)).abs() < 2e-9, "running it again does not walk the traces");
+        u.m.ch[1].on = false;
+        u.refs[3].as_mut().unwrap().on = false;
+        u.m.deskew_ch = [0.0; NCH];
+        u.m.deskew_ref = [0.0; NREF];
+        u.activate(Item::AutoDeskew);
+        assert_eq!(u.m.deskew_ch, [0.0; NCH]);
+        assert_eq!(u.m.deskew_ref, [0.0; NREF]);
     }
 }
 

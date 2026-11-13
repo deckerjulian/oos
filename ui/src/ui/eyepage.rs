@@ -1919,7 +1919,11 @@ mod tests {
         let mut n = Noise(3);
         ui.last[0] = Some(record(CLEAN, &mut n));
         ui.render(&mut Canvas::new(W, H));
+        let g = ui.grid;
+        ui.tap(g.x + 40, g.y + 30);
+        assert_ne!(ui.m.view, AView::Eye, "the waveform has no Eye shortcut");
         ui.open_menu(MenuId::Eye);
+        assert!(ui.items(MenuId::Eye).contains(&Item::EyeAct));
         let b = ui.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::EyeAct).unwrap().ctrl;
         for phase in [Phase::Down, Phase::Up] { ui.handle(Ev::Touch { id: 0, phase, x: b.x+b.w/2, y: b.y+b.h/2 }); }
         assert_eq!(ui.m.view, AView::Eye);

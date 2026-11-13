@@ -4348,7 +4348,7 @@ impl Ui {
         match menu {
             MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
             MenuId::Channel(c) => vec![Item::ChOn(c), Item::ChScale(c), Item::ChOffset(c), Item::ChCoupling(c), Item::ChBw(c), Item::ChProbe(c), Item::ChInvert(c), Item::ChFine, Item::ChLabel(c), Item::Open(MenuId::ChMore(c))],
-            MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::ChExpand],
+            MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::AutoDeskew, Item::ChExpand],
             MenuId::Horizontal => {
                 if self.m.zoom {
                     vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::ClearDeskew, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]

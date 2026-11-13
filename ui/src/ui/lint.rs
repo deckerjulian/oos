@@ -164,6 +164,17 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
     u.dismiss_context();
     assert!(!u.load_slot_ask && !u.open_wave_request);
+    assert!(u.refs.iter().all(Option::is_none));
+    u.tap(load.x + 5, load.y + 5);
+    u.tap(8, 8);
+    assert!(!u.load_slot_ask && !u.open_wave_request, "an outside tap cancels without loading");
+    u.tap(load.x + 5, load.y + 5);
+    let r3 = Ui::load_slot_button(2);
+    u.tap(r3.x + 4, r3.y + 4);
+    assert!(!u.load_slot_ask && u.open_wave_request);
+    assert_eq!(u.waveform_destination(), Some(2));
+    assert_eq!(u.ref_slot(), 0, "destination selection is separate from the current reference");
+    u.open_wave_request = false;
     // Measurement choices remain one tap away, without going through acquisition or another menu.
     let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
     u.tap(r.x + 5, r.y + 5);
