@@ -581,6 +581,48 @@ pub fn mask_map_set(kv: Option<&str>) -> Result<String, String> {
     Ok(m.text())
 }
 
+/// What a stall of the mask/zone unit is kept for: time base, depth, channel set and comparator mapping. Another of
+/// any of them tries the hardware again.
+type UnitKey = (u64, i128, u32, oos_hal::dho::mask::Map);
+
+fn unit_key(s: &Settings, map: oos_hal::dho::mask::Map) -> UnitKey {
+    (s.tdiv.to_bits(), s.depth, s.mask, map)
+}
+
+/// Consecutive failed arms ("no acquisition") with the mask/zone unit running after which it is dropped for these
+/// settings (round 8: 200 us/div at 100k and Auto stopped the acquisition for good).
+const UNIT_STALLS: u32 = 2;
+
+/// The stall guard of the mask/zone unit: counts arms that found no acquisition while the unit ran, and blocks it
+/// for the settings it stalled with.
+#[derive(Default)]
+struct UnitGuard {
+    stalls: u32,
+    blocked: Option<UnitKey>,
+}
+
+impl UnitGuard {
+    /// A batch ended: `stalled` = no acquisition, `unit` = the mask or zone unit was running. Returns true when the
+    /// unit is now blocked for `key`.
+    fn batch(&mut self, stalled: bool, unit: bool, key: UnitKey) -> bool {
+        if !(stalled && unit) {
+            self.stalls = 0;
+            return false;
+        }
+        self.stalls += 1;
+        if self.stalls >= UNIT_STALLS {
+            self.blocked = Some(key);
+            self.stalls = 0;
+            return true;
+        }
+        false
+    }
+
+    fn blocks(&self, key: &UnitKey) -> bool {
+        self.blocked.as_ref() == Some(key)
+    }
+}
+
 /// The UI's mask test and zone trigger into the acquisition settings. The mask unit runs one of them: the mask test
 /// wins. AUX OUT pass/fail follows the zone result while the zone trigger runs (0x119c source bit).
 fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Option<&crate::board::ZoneWant>, map: oos_hal::dho::mask::Map) {
@@ -1251,6 +1293,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut dvm_run: Option<(DvmKey, std::time::Instant)> = None;
         let mut dvm_n = 0u64;
         let mut configs = 0u64;
+        // the mask/zone unit's stall guard
+        let mut guard = UnitGuard::default();
         // the last request of the measure-unit levels answered
         let mut levels_done: Option<u64> = None;
         // `cal.core_offset = tight`: ADC modes whose core offsets were matched this session, and tries per mode
@@ -1353,7 +1397,20 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
             raw_for_ui(&mut want, needs_raw);
-            hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), mask_map());
+            let map = mask_map();
+            let key = unit_key(&want, map);
+            if guard.blocks(&key) {
+                hw_merge(&mut want, None, None, map);
+            } else {
+                hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), map);
+            }
+            {
+                let mut g = out.lock().unwrap();
+                let why = guard.blocks(&key).then(|| "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string());
+                if g.unit_blocked != why {
+                    g.unit_blocked = why;
+                }
+            }
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
@@ -1705,6 +1762,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             match got {
                 Ok(count) => {
+                    guard.batch(false, false, unit_key(&b, mask_map()));
                     crate::compress::note_batch_k(if raw_newest(&b, &p) { b.compress } else { 1 });
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
@@ -1905,6 +1963,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 Err(e) if e == seq::NEW_SETTINGS => {}
                 Err(e) => {
                     status(format!("acquire: {}", e));
+                    // the mask/zone unit stalled the arm: drop it for these settings (the next loop reconfigures)
+                    let unit = state.mask_ctrl().is_some() || state.zone_ctrl().is_some();
+                    if guard.batch(e.contains("no acquisition"), unit, unit_key(&b, mask_map())) {
+                        status("mask/zone unit: no acquisition twice, software fallback for these settings".into());
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
             }
@@ -2383,6 +2446,24 @@ mod tests {
         assert!(fails(&by_time, &wave(-10e-6)), "-10 us shift");
         let over_record = mask::Timing { screen: (-(pre as f64) * dt, n as f64 * dt), ..by_time };
         assert!(fails(&over_record, &wave(0.0)), "the old mapping fails the clean signal");
+    }
+
+    #[test]
+    fn a_stalling_unit_is_dropped_for_its_settings() {
+        let map = oos_hal::dho::mask::Map::default();
+        let s = Settings::default();
+        let k = unit_key(&s, map);
+        let other = unit_key(&Settings { depth: 100_000, ..s.clone() }, map);
+        let mut g = UnitGuard::default();
+        // a stall without the unit, or a good batch in between, does not count
+        assert!(!g.batch(true, false, k) && !g.batch(true, true, k) && !g.batch(false, true, k) && !g.batch(true, true, k));
+        assert!(!g.blocks(&k));
+        // two in a row with the unit running: blocked for these settings only
+        assert!(g.batch(true, true, k));
+        assert!(g.blocks(&k) && !g.blocks(&other));
+        // another mapping tries again
+        let swept = unit_key(&s, oos_hal::dho::mask::Map { layout: oos_hal::dho::mask::Layout::Clocks, ..map });
+        assert!(!g.blocks(&swept));
     }
 
     #[test]

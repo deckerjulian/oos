@@ -1283,7 +1283,7 @@ mod aux_out_tests {
         q(&mut ui, ":SYST:AOUT blink");
         assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
         // fork: the mask unit's debug line, off without the hardware test
-        assert!(q(&mut ui, ":SYSTem:DEBug:MASK?").starts_with("off,enabled=0,active=0,sw_pass=0,sw_fail=0,"));
+        assert!(q(&mut ui, ":SYSTem:DEBug:MASK?").starts_with("off,enabled=0,active=0,blocked=0,sw_pass=0,sw_fail=0,"));
         assert!(q(&mut ui, ":SYSTem:DEBug:ZONE?").starts_with("off,enabled=0,active=0,sw_drops=0,"));
         assert_eq!(q(&mut ui, ":SYSTem:DEBug:UART?"), "off,enabled=0");
         assert_eq!(q(&mut ui, ":SYSTem:DEBug:SERial?"), "off,enabled=0");

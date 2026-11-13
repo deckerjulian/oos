@@ -102,6 +102,34 @@ the screen (1.6 screens at 10k points from 20 us/div). With a flat signal around
   came from counts whose columns ran past the record. Records above 1.02 M points have their first 1.02 M tested.
 - The slot is the stream slot (regmap from libscope): CH2 alone is slot 0, CH2 of CH1+CH2 slot 1.
 
+## Stall guard (round 8)
+
+At 200 µs/div with 100k and Auto depth the unit stopped the acquisition: every arm ended with "no acquisition
+(0x4080 bit30 not set)". The acquisition thread now counts arms that find no acquisition while the mask or zone unit
+runs. After two in a row it drops the unit for the current settings (time base, depth, channel set, `mask.map`) and
+publishes the reason in `Shared::unit_blocked`. The UI then runs the software test and filter and shows a toast once.
+`:SYSTem:DEBug:MASK?` reports `blocked=1`. Changing any of those settings tries the hardware again. The cause of the
+stall is open.
+
+## Strobe sweep (round 8)
+
+regmap: the column strobe comes from a read-back state machine (0x4030 bit 20), not from the ADC stream. A 10-bit
+counter of strobes ends the window. With fewer than 1000 x count strobes per record the window never ends and the
+FSM waits in state 5: the stall. The strobe unit and the terminal count are open.
+
+`cols=raw:<count>:<samples per strobe>` writes `count` to 0x1184 as is (up to 1023, not kept to the record) and
+maps the table by `count x samples per strobe` samples per column. The stall message in /tmp/oos-ui.log carries
+0x4030, the read-back bit and the state. A stalled point drops to software for that map; the next value retries.
+
+Grid, one channel, clean probe-comp square, then the +10 µs shift:
+
+- 200 µs/div at 10k, 100k and Auto, and 1 ms/div at 10k.
+- count 1, 2, 3, 5, 10, 25, 40, 100, 1023; samples per strobe 1 and 4.
+- Per point: stall or not (read-back bit, state), hw and sw fail counts, `:SYSTem:DEBug:MASK:COLumns? 250,750`.
+
+The largest count without a stall gives the strobes per record (count x 1000). The samples per strobe that makes hw
+and sw agree on the shift gives the unit.
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output. Optional: BNC cable from AUX OUT to CH2 (step 7). Start from a known state:

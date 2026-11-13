@@ -13,7 +13,7 @@ impl Ui {
     /// The zone trigger runs in the hardware: enabled on this board, live hardware frames, at least one usable zone,
     /// all of them on one acquired channel, and the mask unit not taken by the hardware mask test.
     pub(super) fn zone_hw_active(&self) -> bool {
-        board().zone_hw() && self.src.is_hw() && self.zone_hw_src().is_some_and(|c| self.m.ch[c].on) && !self.mask_hw_active()
+        board().zone_hw() && self.src.is_hw() && self.zone_hw_src().is_some_and(|c| self.m.ch[c].on) && !self.mask_hw_active() && self.unit_blocked.is_none()
     }
 
     /// The one source channel of the usable zones; None without usable zones or with zones on different channels.

@@ -1060,6 +1060,9 @@ pub struct Ui {
     mask_cols: Option<(Vec<f32>, Vec<f32>)>,
     mask_hw: Option<crate::board::MaskRead>,
     mask_hw_clear: u64,
+    /// the acquisition thread dropped the mask/zone unit for the current settings after it stalled the acquisition:
+    /// why (hwmask.rs); the software test and filter take over
+    unit_blocked: Option<String>,
     pub shot_request: Option<String>,
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)
@@ -1254,6 +1257,7 @@ impl Ui {
             mask_cols: None,
             mask_hw: None,
             mask_hw_clear: 0,
+            unit_blocked: None,
             shot_request: None,
             quit: false,
         };
