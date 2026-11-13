@@ -224,6 +224,7 @@ impl Ui {
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
         let vpd = nearest_vdiv((span / 4.0) as f32);
         let slot = self.m.sim_slot;
+        self.deskew_ref[slot] = 0.0;
         self.refs[slot] = Some(RefWave {
             src: 0,
             color: 0,

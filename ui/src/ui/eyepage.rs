@@ -1021,16 +1021,6 @@ impl Ui {
         }
     }
 
-    pub(super) fn draw_eye_btn(&self, cv: &mut Canvas) {
-        if self.view_on() {
-            return;
-        }
-        let r = self.eye_btn();
-        let on = self.eye_open();
-        btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
-        cv.text_in(&self.fonts.sb, r, 1, "Eye", if on { ACCENT } else { TEXT });
-    }
-
     /// The eye in its pane, with Side / Under and Close on the bar. The trace stays in the plot.
     pub(super) fn draw_eye_pane(&self, cv: &mut Canvas) {
         if !self.eye_open() {
@@ -1740,8 +1730,12 @@ mod tests {
         let mut n = Noise(3);
         ui.last[0] = Some(record(CLEAN, &mut n));
         ui.render(&mut Canvas::new(W, H));
-        let b = ui.eye_btn();
-        ui.tap(b.x + 8, b.y + 8);
+        let g = ui.grid;
+        ui.tap(g.x + 40, g.y + 30);
+        assert_ne!(ui.m.view, AView::Eye, "the main screen has no Eye button");
+        ui.open_menu(MenuId::Eye);
+        assert!(ui.items(MenuId::Eye).contains(&Item::EyeAct));
+        ui.activate(Item::EyeAct);
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.m.eye_from_record);
         assert_eq!(ui.m.eye_place, EyePlace::Side);

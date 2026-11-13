@@ -178,14 +178,14 @@ impl Ui {
                 }
                 let rec = self.last[0].as_ref()?;
                 let s = self.wave_samples(rec, id)?;
-                Some((self.ana[c].clone(), s.t0))
+                Some((self.ana[c].clone(), s.t0 - self.deskew_ch[c.min(NCH - 1)]))
             }
             WaveId::Ref(i) => {
                 let (samples, t0, dt) = self.reference_slice(i)?;
                 if samples.len() < 2 || !(dt > 0.0) {
                     return None;
                 }
-                Some((self.ref_ana[i].clone(), t0))
+                Some((self.ref_ana[i].clone(), t0 - self.deskew_ref.get(i).copied().unwrap_or(0.0)))
             }
         }
     }
@@ -611,6 +611,7 @@ impl Ui {
             return Err("source channel has no data".into());
         }
         let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
+        self.deskew_ref[self.ref_sel] = 0.0;
         self.refs[self.ref_sel] = Some(RefWave {
             src: c,
             color: 0,

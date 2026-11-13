@@ -134,11 +134,11 @@ impl Ui {
             WaveId::Ch(c) => {
                 let rec = self.last[0].as_ref()?;
                 let v = rec.ch.get(c)?;
-                (!v.is_empty()).then_some((v.as_slice(), rec.t0, rec.dt))
+                (!v.is_empty()).then_some((v.as_slice(), rec.t0 - self.deskew_ch[c.min(self.deskew_ch.len() - 1)], rec.dt))
             }
             WaveId::Ref(i) => {
                 let (v, t0, dt) = self.reference_slice(i)?;
-                (v.len() >= 2 && dt > 0.0).then_some((v, t0, dt))
+                (v.len() >= 2 && dt > 0.0).then_some((v, t0 - self.deskew_ref.get(i).copied().unwrap_or(0.0), dt))
             }
         }
     }

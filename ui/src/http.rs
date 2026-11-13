@@ -102,13 +102,13 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 .workflow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px}.workflow label{display:flex;align-items:center;gap:6px;color:#b8c0ca;font-size:13px}.workflow .primary{border-color:#f0a93b;color:#f0a93b}.session{margin-left:auto;color:#b8c0ca;font-size:13px;font-variant-numeric:tabular-nums}.file-hint{min-height:20px;margin:0 0 8px;color:#b8c0ca;font-size:13px}.file-hint.bad{color:#ffab91}header{flex-wrap:wrap}@media(max-width:620px){.session{margin-left:0;flex-basis:100%}.workflow{gap:6px}button{min-height:40px}}</style></head>
 <body><header><b>OOS remote</b><span id="st">connecting ...</span><nav><a href="/update">Update</a></nav></header>
 <div class="workflow" aria-label="Waveform and source actions">
-<button id="load-wave" class="primary" onclick="document.getElementById('wave-file').click()">Load waveform</button>
+<button id="load-wave" class="primary" onclick="askFile()">Load waveform</button>
 <input id="wave-file" type="file" accept=".csv,.bin,.wfm" hidden>
-<label>Into <select id="wave-slot" aria-label="Reference slot"><option value="1">R1</option><option value="2">R2</option><option value="3">R3</option><option value="4">R4</option><option value="5">R5</option><option value="6">R6</option><option value="7">R7</option><option value="8">R8</option><option value="9">R9</option><option value="10">R10</option></select></label>
+<label>Into <select id="wave-slot" aria-label="Reference slot"><option value="" selected>Choose slot</option><option value="1">R1</option><option value="2">R2</option><option value="3">R3</option><option value="4">R4</option><option value="5">R5</option><option value="6">R6</option><option value="7">R7</option><option value="8">R8</option><option value="9">R9</option><option value="10">R10</option></select></label>
 <button id="sim-mode" onclick="c('workflow sim')">SIM</button><button id="return-live" onclick="c('workflow live')" hidden>Return to live</button>
 <button id="acquire-toggle" onclick="c('key runstop')" aria-label="Run or stop acquisition">Run/Stop</button><button onclick="c('key single')">Single</button>
 <button onclick="c('workflow measure')">Add measurement</button><span id="session-state" class="session" aria-live="polite">Reading source...</span></div>
-<p id="wave-status" class="file-hint" role="status">CSV, OOS BIN or WFM · up to 64 MiB. You can also drop a file on the waveform.</p>
+<p id="wave-status" class="file-hint" role="status">Choose a slot from R1 to R10, then a CSV, BIN or WFM. Up to 64 MiB. You can also drop a file on the waveform.</p>
 <img id="s" width="1024" height="600" alt="scope screen" src="/screen.png">
 <div class="g"><div class="k"><span>Acquisition</span><div>
 <button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Autoset</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
@@ -145,7 +145,9 @@ document.getElementById('session-state').textContent=[mode,v.source,v.status,(v.
 document.getElementById('sim-mode').className=v.mode==='sim'?'on':'';document.getElementById('return-live').hidden=v.mode==='live';
 document.getElementById('acquire-toggle').textContent=v.running?'Stop':'Run';
 }).catch(()=>{}).finally(()=>{statePending=false;});}
+function askFile(){const slot=document.getElementById('wave-slot'),status=document.getElementById('wave-status');if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';return;}document.getElementById('wave-file').click();}
 async function uploadWave(file){if(!file||uploading)return;const status=document.getElementById('wave-status'),button=document.getElementById('load-wave'),slot=document.getElementById('wave-slot');
+if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';document.getElementById('wave-file').value='';return;}
 if(file.size>64*1024*1024){status.textContent='That file is larger than 64 MiB. Export a shorter waveform and try again.';status.className='file-hint bad';return;}
 uploading=true;button.disabled=true;slot.disabled=true;button.textContent='Loading...';status.className='file-hint';status.textContent='Loading '+file.name+' into R'+slot.value+'...';
 try{const response=await fetch('/waveform?name='+encodeURIComponent(file.name)+'&slot='+encodeURIComponent(slot.value),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});const text=await response.text();if(!response.ok)throw Error(text);status.textContent=text;refreshState();}
@@ -154,7 +156,7 @@ finally{uploading=false;button.disabled=false;slot.disabled=false;button.textCon
 document.getElementById('wave-file').addEventListener('change',event=>uploadWave(event.target.files[0]));
 s.addEventListener('dragover',event=>{if(Array.from(event.dataTransfer?.types||[]).includes('Files'))event.preventDefault();});
 s.addEventListener('drop',event=>{event.preventDefault();uploadWave(event.dataTransfer.files[0]);});
-document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='o'){event.preventDefault();document.getElementById('wave-file').click();}});
+document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='o'){event.preventDefault();askFile();}});
 refreshState();
 function dl(u,ext){say('saving ...');fetch(u).then(r=>r.ok?r.blob():r.text().then(t=>Promise.reject(t))).then(b=>{
 const a=document.createElement('a'),d=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,19).replace(/[:T]/g,'-');
@@ -164,7 +166,7 @@ function pause(){paused=!paused;pb.textContent=paused?'Resume picture':'Pause pi
 function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*1024/r.width),Math.round((p.clientY-r.top)*600/r.height)];}
 let d0=null;
 function down(e){e.preventDefault();d0=pt(e);}
-function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){const r=workflowState?.loadRect;if(Array.isArray(r)&&r.length===4&&start[0]>=r[0]&&start[0]<r[0]+r[2]&&start[1]>=r[1]&&start[1]<r[1]+r[3])document.getElementById('wave-file').click();else c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
+function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){const r=workflowState?.loadRect;if(Array.isArray(r)&&r.length===4&&start[0]>=r[0]&&start[0]<r[0]+r[2]&&start[1]>=r[1]&&start[1]<r[1]+r[3])askFile();else c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
 s.addEventListener('mousedown',down);s.addEventListener('mouseup',up);s.addEventListener('touchstart',down,{passive:false});s.addEventListener('touchend',up,{passive:false});
 s.ondragstart=()=>false;
 let count=0;setInterval(()=>{n=count;count=0;if(!document.hidden){refreshState();if(!paused)show(st.className=='bad');}},1000);
@@ -310,11 +312,10 @@ impl Http {
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
                     "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
                     "/waveform" if post => {
-                        let requested_slot = query.split('&').find_map(|part| part.strip_prefix("slot="));
-                        let slot = requested_slot.and_then(|value| value.parse::<usize>().ok());
+                        let slot = query.split('&').find_map(|part| part.strip_prefix("slot=")).and_then(|value| value.parse::<usize>().ok());
                         let name = waveform_name(query);
                         let previous = ui.ref_slot();
-                        let valid_slot = match (requested_slot, slot) { (_, Some(slot)) if (1..=10).contains(&slot) => ui.ref_slot_set(slot - 1), (None, None) => true, _ => false };
+                        let valid_slot = matches!(slot, Some(slot) if (1..=10).contains(&slot) && ui.ref_slot_set(slot - 1));
                         let result = if valid_slot { ui.load_waveform_bytes(req_body, &name) } else { Err("Choose a reference slot from R1 to R10.".into()) };
                         match result {
                             Ok(()) => ("text/plain; charset=utf-8", format!("Loaded {} into R{}. Use Run/Stop or Single to acquire from this record; Return to live restores the live source.", name, ui.ref_slot() + 1).into_bytes()),
@@ -629,6 +630,11 @@ mod tests {
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.bin&slot=4", &malformed));
         assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("too large"), "{reply}");
         assert_eq!(ui.ref_slot(), 2);
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=clock.csv", csv.as_bytes()));
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+        assert_eq!(ui.ref_slot(), 2, "a file with no slot does not replace R1");
+        assert!(ui.meas_at(crate::model::WaveId::Ref(0), oos_dsp::measure::Meas::Vpp).is_nan());
+        assert!(ui.meas_at(crate::model::WaveId::Ref(2), oos_dsp::measure::Meas::Vpp).is_finite());
         for slot in ["0", "11", "nope", ""] {
             let reply = request(&mut h, &mut ui, &cv, &mut scpi, post(&format!("/waveform?slot={slot}"), csv.as_bytes()));
             assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");

@@ -126,6 +126,77 @@ mod tests {
         header[20..28].copy_from_slice(&1e-9f64.to_le_bytes());
         assert!(u.load_waveform_bytes(&header, "oversize.bin").is_err());
     }
+
+    #[test]
+    fn a_file_waits_for_a_slot_and_lands_on_the_one_chosen() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let kept: Vec<f32> = (0..40).map(|i| if i < 20 { -0.2 } else { 0.2 }).collect();
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "keep".into(), t0: 0.0, dt: 1e-9, v: kept.clone(), vpd: 0.2, offset: 0.0, on: true });
+        u.request_waveform();
+        assert!(u.load_slot_ask && !u.open_wave_request);
+        let title = Ui::load_slot_box();
+        u.tap(title.x + 30, title.y + 24);
+        assert!(u.load_slot_ask && !u.open_wave_request, "a tap on the title loads nothing");
+        u.tap(Ui::load_slot_cancel().x + 4, Ui::load_slot_cancel().y + 4);
+        assert!(!u.load_slot_ask && !u.open_wave_request);
+        assert_eq!(u.refs[0].as_ref().unwrap().v, kept);
+        u.request_waveform();
+        u.tap(Ui::load_slot_button(9).x + 4, Ui::load_slot_button(9).y + 4);
+        assert_eq!(u.ref_slot(), 9);
+        assert!(u.open_wave_request);
+        let mut csv = String::from("Time (s),Volts\n");
+        for k in 0..80 {
+            csv.push_str(&format!("{},{}\n", k as f64 * 1e-9, if k < 40 { -0.4 } else { 0.4 }));
+        }
+        u.load_waveform_bytes(csv.as_bytes(), "lane.csv").unwrap();
+        assert_eq!(u.refs[0].as_ref().unwrap().v, kept);
+        assert!(u.refs[9].is_some() && u.refs[1].is_none());
+        assert_eq!(u.ref_slot(), 9);
+        assert_eq!(u.deskew_ref[9], 0.0);
+    }
+
+    fn square(delay: usize) -> Vec<f32> {
+        (0..1600).map(|i| if ((i + 8000 - delay) / 80) % 2 == 0 { -0.5 } else { 0.5 }).collect()
+    }
+
+    #[test]
+    fn auto_deskew_lines_up_the_shown_traces() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.run = RunState::Stop;
+        for ch in &mut u.m.ch { ch.on = false; }
+        u.m.ch[0].on = true;
+        u.m.ch[1].on = true;
+        let mut samples = std::array::from_fn(|_| Vec::new());
+        samples[0] = square(0);
+        samples[1] = square(40);
+        u.last[0] = Some(Record { t0: 0.0, dt: 1e-9, ch: samples, triggered: true, partial: false, raw: None, la: None });
+        u.refs[3] = Some(RefWave { src: 0, color: 1, label: String::new(), t0: 0.0, dt: 1e-9, v: square(80), vpd: 0.2, offset: 0.0, on: true });
+        u.refs[4] = Some(RefWave { src: 0, color: 2, label: String::new(), t0: 0.0, dt: 1e-9, v: square(200), vpd: 0.2, offset: 0.0, on: false });
+        u.measure_last();
+        let before = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
+        assert!((before - 40e-9).abs() < 2e-9, "{before}");
+        assert!(u.items(MenuId::Horizontal).contains(&Item::AutoDeskew));
+        assert!(u.items(MenuId::ChMore(0)).contains(&Item::AutoDeskew));
+        u.activate(Item::AutoDeskew);
+        let after = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
+        assert!(after.abs() < 2e-9, "{after}");
+        let edge = |id| {
+            let (a, t0) = u.meas_analysis(id).unwrap();
+            a.rises[0] + t0
+        };
+        let (ch, rf) = (edge(WaveId::Ch(0)), edge(WaveId::Ref(3)));
+        assert!((ch - rf).abs() < 2e-9, "channel {ch} reference {rf}");
+        assert_eq!(u.deskew_ref[4], 0.0, "a hidden reference is left where it is");
+        u.activate(Item::AutoDeskew);
+        assert!(u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1)).abs() < 2e-9, "running it again does not walk the traces");
+        u.m.ch[1].on = false;
+        u.refs[3].as_mut().unwrap().on = false;
+        u.deskew_ch = [0.0; NCH];
+        u.deskew_ref = [0.0; NREF];
+        u.activate(Item::AutoDeskew);
+        assert_eq!(u.deskew_ch, [0.0; NCH]);
+        assert_eq!(u.deskew_ref, [0.0; NREF]);
+    }
 }
 
 #[derive(Default)]
@@ -193,8 +264,121 @@ impl Ui {
 
     pub fn request_waveform(&mut self) {
         self.close_menu();
+        self.power_dlg = false;
+        self.dialog = None;
+        self.open_wave_request = false;
+        self.load_slot_ask = true;
+    }
+
+    /// The slot list. R1 is the top left.
+    pub(crate) fn load_slot_box() -> Rect {
+        Rect::new((W - 560) / 2, (H - 248) / 2, 560, 248)
+    }
+
+    pub(crate) fn load_slot_button(slot: usize) -> Rect {
+        let b = Self::load_slot_box();
+        let col = (slot % 5) as i32;
+        let row = (slot / 5) as i32;
+        Rect::new(b.x + 20 + col * 106, b.y + 78 + row * 52, 98, 44)
+    }
+
+    pub(crate) fn load_slot_cancel() -> Rect {
+        let b = Self::load_slot_box();
+        Rect::new(b.x + b.w / 2 - 70, b.y + b.h - 52, 140, 36)
+    }
+
+    pub(super) fn load_slot_at(&self, x: i32, y: i32) -> Option<usize> {
+        (0..NREF).find(|&slot| Self::load_slot_button(slot).contains(x, y))
+    }
+
+    pub(super) fn choose_load_slot(&mut self, slot: usize) {
+        if slot >= NREF {
+            return;
+        }
+        self.ref_sel = slot;
+        self.load_slot_ask = false;
         self.open_wave_request = true;
-        self.toast("Choose a CSV, BIN or WFM waveform. In the browser, use Load waveform above the screen.");
+        self.toast(&format!("R{} — choose a CSV, BIN or WFM. In the browser, use Load waveform above the screen.", slot + 1));
+    }
+
+    pub(super) fn cancel_load_slot(&mut self) {
+        self.load_slot_ask = false;
+        self.open_wave_request = false;
+        self.toast("Load canceled");
+    }
+
+    pub(super) fn draw_load_slot(&self, cv: &mut Canvas) {
+        if !self.load_slot_ask {
+            return;
+        }
+        let f = &self.fonts;
+        cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 150);
+        let r = Self::load_slot_box();
+        cv.round(r, 8, ACCENT, 255);
+        cv.round(r.inset(2), 7, DLG_BG, 255);
+        cv.text_in(&f.lb, Rect::new(r.x, r.y + 16, r.w, 28), 1, "Load into", ACCENT);
+        cv.text_in(&f.m, Rect::new(r.x, r.y + 46, r.w, 22), 1, "Choose a slot. The file is not loaded until you do.", DIM);
+        for slot in 0..NREF {
+            let b = Self::load_slot_button(slot);
+            let occupied = self.refs[slot].is_some();
+            btn(cv, b, BTN, if occupied { AMBER } else { BTN_BORDER });
+            cv.text_in(&f.mb, b, 1, &format!("R{}", slot + 1), TEXT);
+        }
+        let cancel = Self::load_slot_cancel();
+        btn(cv, cancel, BTN, BTN_BORDER);
+        cv.text_in(&f.mb, cancel, 1, "Cancel", TEXT);
+    }
+
+    /// Lines the shown channels, and a shown reference, up on one edge. One action; the traces keep their samples.
+    pub(super) fn auto_deskew(&mut self) {
+        let mut parts: Vec<(bool, usize, Option<f64>, Option<f64>)> = Vec::new();
+        if let Some(rec) = self.last[0].as_ref() {
+            for c in 0..NCH {
+                if !self.m.ch[c].on || rec.ch[c].len() < 4 {
+                    continue;
+                }
+                let (rise, fall) = edge_times(&rec.ch[c], rec.dt, rec.t0);
+                if rise.is_some() || fall.is_some() {
+                    parts.push((false, c, rise, fall));
+                }
+            }
+        }
+        for i in 0..NREF {
+            let Some(r) = self.refs[i].as_ref() else { continue };
+            if !r.on || r.v.len() < 4 {
+                continue;
+            }
+            let (rise, fall) = edge_times(&r.v, r.dt, r.t0);
+            if rise.is_some() || fall.is_some() {
+                parts.push((true, i, rise, fall));
+            }
+        }
+        let rises = parts.iter().filter(|p| p.2.is_some()).count();
+        let falls = parts.iter().filter(|p| p.3.is_some()).count();
+        if rises < 2 && falls < 2 {
+            self.toast("Need two traces with an edge");
+            return;
+        }
+        let rising = rises >= falls;
+        let mut times: Vec<f64> = parts.iter().filter_map(|p| if rising { p.2 } else { p.3 }).collect();
+        times.sort_by(|a, b| a.total_cmp(b));
+        let anchor = times[times.len() / 2];
+        self.deskew_ch = [0.0; NCH];
+        self.deskew_ref = [0.0; NREF];
+        let mut n = 0;
+        for (is_ref, i, rise, fall) in parts {
+            let Some(t) = (if rising { rise } else { fall }) else { continue };
+            if is_ref {
+                self.deskew_ref[i] = t - anchor;
+            } else {
+                self.deskew_ch[i] = t - anchor;
+            }
+            n += 1;
+        }
+        self.ph.clear();
+        self.phz.clear();
+        self.dirty_map = true;
+        self.toast(&format!("Deskewed {n} traces"));
     }
 
     pub fn load_waveform_bytes(&mut self, data: &[u8], name: &str) -> Result<(), String> {
@@ -212,6 +396,7 @@ impl Ui {
             let slot = first + k;
             let span = trace.v.iter().copied().filter(|x| x.is_finite()).fold(0.1f32, |a, b| a.max(b.abs()));
             self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: trace.v, vpd: (span / 3.0).max(1e-6), offset: 0.0, on: true });
+            self.deskew_ref[slot] = 0.0;
         }
         self.m.zoom = false;
         self.present_record(first);
@@ -428,4 +613,24 @@ impl Ui {
         btn(cv, exit, BTN, BTN_BORDER);
         cv.text_in(&self.fonts.sb, exit, 1, "Live", TEXT);
     }
+}
+
+/// First rising and falling mid-level edges, as absolute time. Empty when the trace has no edge.
+fn edge_times(v: &[f32], dt: f64, t0: f64) -> (Option<f64>, Option<f64>) {
+    if v.len() < 4 || !(dt > 0.0) {
+        return (None, None);
+    }
+    let st = stats(v, dt);
+    if !st.valid {
+        return (None, None);
+    }
+    let amp = st.top - st.base;
+    if !(amp > 1e-6) {
+        return (None, None);
+    }
+    let level = 0.5 * (st.top + st.base);
+    let hyst = (0.08 * amp).max(1e-4);
+    let edges = oos_dsp::edges::edges(v, level, hyst);
+    let at = |rising: bool| edges.iter().find(|e| e.rising == rising).map(|e| t0 + e.t * dt);
+    (at(true), at(false))
 }

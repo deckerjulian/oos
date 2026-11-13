@@ -404,6 +404,8 @@ enum Item {
     ChBias(usize),
     ChBiasZero(usize),
     ChSkew(usize),
+    /// One action: line up every shown channel, and a shown reference, on an edge.
+    AutoDeskew,
     ChExpand,
     HFine,
     HExpandI,
@@ -740,6 +742,12 @@ pub struct Ui {
     session_is_sim: bool,
     replay: workflow::Replay,
     pub open_wave_request: bool,
+    /// Slot list shown before a file is read. Nothing is written until a slot is chosen.
+    load_slot_ask: bool,
+    /// Seconds removed from each channel's time so its edge meets the others.
+    deskew_ch: [f64; NCH],
+    /// Seconds removed from each reference slot's time.
+    deskew_ref: [f64; NREF],
     pub lan_status: String,
     pub lan_web_port: Option<u16>,
     pub m: Model,
@@ -975,6 +983,9 @@ impl Ui {
             session_is_sim: false,
             replay: workflow::Replay::default(),
             open_wave_request: false,
+            load_slot_ask: false,
+            deskew_ch: [0.0; NCH],
+            deskew_ref: [0.0; NREF],
             lan_status: String::new(),
             lan_web_port: None,
             m,
@@ -1203,12 +1214,6 @@ impl Ui {
         let a = self.eye_pane_rect();
         const BAR: i32 = 36;
         Rect::new(a.x, a.y + BAR, a.w, (a.h - BAR).max(1))
-    }
-
-    /// The Eye button on the trace. One press measures the bit rate and opens the eye.
-    pub(super) fn eye_btn(&self) -> Rect {
-        let g = if self.m.zoom { Self::split_zoom(self.grid).0 } else { self.grid };
-        Rect::new(g.x + MARK_W + 6, g.y + 22, 72, 28)
     }
 
     /// Height for the graticule and the LA strip together (above a strip that sits under the plot).
@@ -1482,6 +1487,11 @@ impl Ui {
         self.area = self.wave_area();
     }
 
+    /// Time origin of channel `c` after auto deskew. Drawing and pair measurements share it.
+    fn shown_t0(&self, c: usize, t0: f64) -> f64 {
+        t0 - self.deskew_ch[c.min(NCH - 1)]
+    }
+
     /// Time base of the main waveform area: (s/div, delay).
     fn view(&self) -> (f32, f32) {
         if self.m.zoom {
@@ -1582,10 +1592,6 @@ impl Ui {
                 self.relayout();
                 return true;
             }
-        }
-        if !self.view_on() && self.eye_btn().contains(x, y) {
-            self.eye_make();
-            return true;
         }
         false
     }
@@ -1855,9 +1861,9 @@ impl Ui {
                         let zw = self.z_weights(&rec);
                         for c in 0..NCH {
                             if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref());
+                                self.ph.draw_ex(c, &self.m, mainv, self.shown_t0(c, rec.t0), rec.dt, &rec.ch[c], 24, zw.as_deref());
                                 if self.m.zoom {
-                                    self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref());
+                                    self.phz.draw_ex(c, &self.m, zv, self.shown_t0(c, rec.t0), rec.dt, &rec.ch[c], 24, zw.as_deref());
                                 }
                             }
                         }
@@ -1945,9 +1951,9 @@ impl Ui {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                        self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
+                        self.ph.draw_ex(c, &self.m, mainv, self.shown_t0(c, rec.t0), rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
                         if self.m.zoom {
-                            self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
+                            self.phz.draw_ex(c, &self.m, zv, self.shown_t0(c, rec.t0), rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
                         }
                     }
                 }
@@ -2056,7 +2062,7 @@ impl Ui {
             let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
             for c in 0..NCH {
                 if self.m.ch[c].on && !rec.ch[c].is_empty() {
-                    self.ph.draw_ex(c, &self.m, (self.m.time_per_div(), self.m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None);
+                    self.ph.draw_ex(c, &self.m, (self.m.time_per_div(), self.m.delay), self.shown_t0(c, rec.t0), rec.dt, &rec.ch[c], 24, None);
                 }
             }
             return rec.triggered;
@@ -2098,7 +2104,7 @@ impl Ui {
             }
             let vpd = ch.volts_per_div();
             let sign = -1.0;
-            let xm = crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
+            let xm = crate::fastdraw::Map { ti: ti + self.deskew_ch[c] / f.dt, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
             if m.dots {
                 crate::fastdraw::deposit_dots(&mut self.ph.map[c], w, h, &f.ch[c], &xm, 24);
             } else {
@@ -2193,7 +2199,6 @@ impl Ui {
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
         self.draw_zoom_btn(cv);
-        self.draw_eye_btn(cv);
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
         // Full on the external display is the plot and the strip. The statistics card and a lower pane stay on the panel.
@@ -2294,9 +2299,6 @@ impl Ui {
             let vpd = ch.volts_per_div();
             let span = (VDIV / 2.0 * vpd).abs() + ch.offset.abs();
             let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
-            if self.cur_win == 0 && !self.view_on() {
-                taken.push(self.eye_btn());
-            }
             if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
@@ -2969,7 +2971,8 @@ impl Ui {
         };
         let (tdiv, delay) = self.view();
         let ppx = a.w as f64 / HDIV as f64;
-        let xt = |t: f64| (a.x as f64 + a.w as f64 / 2.0 + (t - delay as f64) / tdiv as f64 * ppx).round() as i32;
+        let shift = if m.dec_on_la() { 0.0 } else { self.deskew_ch[m.dec_src.min(NCH - 1)] };
+        let xt = |t: f64| (a.x as f64 + a.w as f64 / 2.0 + (t - shift - delay as f64) / tdiv as f64 * ppx).round() as i32;
         let left = a.x + 10 + f.sb.width(&name);
         let mut x_prev_end = left;
         for p in &packets {
@@ -3067,7 +3070,7 @@ impl Ui {
                     prev = None;
                     continue;
                 }
-                let t = r.t0 + k as f64 * r.dt - delay;
+                let t = r.t0 - self.deskew_ref[i] + k as f64 * r.dt - delay;
                 let x = (area.x as f64 + area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
                 let y = (cy - (v + r.offset) / r.vpd * ppy).round() as i32;
                 if let Some((x0, y0)) = prev {
@@ -4137,12 +4140,12 @@ impl Ui {
         match menu {
             MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
             MenuId::Channel(c) => vec![Item::ChOn(c), Item::ChScale(c), Item::ChOffset(c), Item::ChCoupling(c), Item::ChBw(c), Item::ChProbe(c), Item::ChInvert(c), Item::ChFine, Item::ChLabel(c), Item::Open(MenuId::ChMore(c))],
-            MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::ChExpand],
+            MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::AutoDeskew, Item::ChExpand],
             MenuId::Horizontal => {
                 if self.m.zoom {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]
+                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]
                 } else {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::Zoom, Item::AutoRoll]
+                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::Zoom, Item::AutoRoll]
                 }
             }
             MenuId::Trigger => self.trigger_items(),
@@ -4789,7 +4792,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::AutoDeskew | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -4962,6 +4965,7 @@ impl Ui {
             Item::ChBias(_) => "Zero bias",
             Item::ChBiasZero(_) => "Zero this input",
             Item::ChSkew(_) => "Deskew",
+            Item::AutoDeskew => "Auto deskew",
             Item::ChExpand => "Expand around",
             Item::HFine => "Fine time base",
             Item::HExpandI => "Expand around",
@@ -5766,6 +5770,7 @@ impl Ui {
                     self.m.delay = 0.0;
                     self.settings_changed();
                 }
+                Item::AutoDeskew => self.auto_deskew(),
                 Item::Trig50 => self.level_50(),
                 Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::TrigBusVal) => {
                     // keypad: digits edit the entry, OK sets the value and goes back
@@ -6655,6 +6660,7 @@ impl Ui {
     fn draw_overlay(&self, cv: &mut Canvas) {
         let f = &self.fonts;
         self.draw_osk(cv);
+        self.draw_load_slot(cv);
         if self.power_dlg {
             cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 160);
             let r = Self::PWR_BOX;
@@ -6734,6 +6740,10 @@ impl Ui {
         }
         if self.wlan.osk.is_some() {
             return self.osk_key(k);
+        }
+        if self.load_slot_ask {
+            self.cancel_load_slot();
+            return;
         }
         if self.dialog.is_some() {
             self.dialog = None;
@@ -7366,6 +7376,14 @@ impl Ui {
             } else if Self::PWR_RESTART.contains(x, y) {
                 self.power_action = Some(PowerAction::Restart);
                 self.toast("Restarting ...");
+            }
+            return;
+        }
+        if self.load_slot_ask {
+            if let Some(slot) = self.load_slot_at(x, y) {
+                self.choose_load_slot(slot);
+            } else if Self::load_slot_cancel().contains(x, y) || !Self::load_slot_box().contains(x, y) {
+                self.cancel_load_slot();
             }
             return;
         }
