@@ -90,7 +90,7 @@ Threads:
 | input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
-| scpi, http | SCPI server on 5555, web remote on 8080 |
+| scpi, http, hislip, announce | SCPI on 5555, web remote on 8080, HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),

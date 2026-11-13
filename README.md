@@ -83,8 +83,8 @@ Installing OOS means that you accept in particular the following risks:
   safety instructions and ratings. The open instrument contains a mains power supply with dangerous voltages. Disconnect
   the mains and all probes before you open it, and close it again before you connect mains. Only open it if you know
   how to do this safely.
-- **Network security.** OOS has no authentication: a root shell on telnet without a password, SCPI, VXI-11, the web
-  remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
+- **Network security.** OOS has no authentication: a root shell on telnet without a password, SCPI, VXI-11, HiSLIP, the web
+  remote, the LAN announcement and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
   network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network only,
   never directly to the internet.**
 - **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can
@@ -192,9 +192,11 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 | Interface | Port | Purpose |
 |---|---|---|
 | SCPI over TCP | 5555 | stock-style command subset, see [ui/src/scpi.rs](ui/src/scpi.rs); `:WAVeform:MODE RAW` reads every sample of the record in the screen window |
-| VXI-11 | 111, 9009 | VISA `TCPIP::<ip>::INSTR` |
+| VXI-11 | 111, 9009 | on the scope, where port 111 is free: `TCPIP::<ip>::INSTR` |
+| HiSLIP | 4880 | on a computer: the payload is the same SCPI interpreter; `TCPIP::<ip>::hislip0::INSTR` |
 | Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
 | LXI identification | 8080 | `/lxi/identification` |
+| LAN announcement | 5353 | mDNS of the SCPI socket, VXI-11 and HiSLIP; the HTTP record's path is `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | Telnet | 23 | root shell, no password |
 
@@ -690,7 +692,7 @@ OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and `par
 |---|---|
 | `hal/` | Hardware layer: FPGA register sequences, front ends, ADC, PLL, cold boot, models, updates |
 | `dsp/` | Signal processing: triggers, measurements, maths, decoders, analysers |
-| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, web remote |
+| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, HiSLIP, web remote, LAN announcement |
 | `fpgad/` | `oos-fpgad` bring-up tool and `oos-update` |
 | `boot/` | Boot image packer, image build, card installer, USB installer, stock/OOS switch |
 | `rootfs/initramfs/` | Init scripts and firmware of the image |

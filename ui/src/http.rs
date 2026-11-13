@@ -58,10 +58,25 @@ fn send_in_background(s: &TcpStream, head: String, body: Vec<u8>) -> bool {
     true
 }
 
+/// Which instrument addresses the identification page lists. The default is the scope: VXI-11 and the SCPI socket.
+#[derive(Clone, Debug)]
+pub struct Offer {
+    pub scpi_port: Option<u16>,
+    pub vxi11: bool,
+    pub hislip: bool,
+}
+
+impl Default for Offer {
+    fn default() -> Offer {
+        Offer { scpi_port: Some(5555), vxi11: true, hislip: false }
+    }
+}
+
 pub struct Http {
     l: Option<TcpListener>,
     /// connection, request so far, last data, accepted
     pending: Vec<(TcpStream, Vec<u8>, std::time::Instant, std::time::Instant)>,
+    offer: Offer,
 }
 
 /// Style of both pages (the update page uses it too).
@@ -159,7 +174,16 @@ impl Http {
             }
             None => eprintln!("oos-ui: web port {} not available", port),
         }
-        Http { l, pending: Vec::new() }
+        Http { l, pending: Vec::new(), offer: Offer::default() }
+    }
+
+    pub fn port(&self) -> Option<u16> {
+        self.l.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
+    }
+
+    /// The addresses the identification page names. Set from the listeners that actually came up.
+    pub fn offer(&mut self, o: Offer) {
+        self.offer = o;
     }
 
     /// Accepts connections, answers complete requests; text commands are returned for the caller to run.
@@ -256,7 +280,7 @@ impl Http {
                         Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
                     },
                     "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
-                    "/lxi/identification" => ("text/xml", lxi_identification().into_bytes()),
+                    "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
                     "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
                         Some(r) => ("application/json", r.into_bytes()),
                         None => ("", Vec::new()),
@@ -305,7 +329,17 @@ impl Http {
     }
 }
 
-fn lxi_identification() -> String {
+fn lxi_identification(o: &Offer) -> String {
+    let mut addrs = String::new();
+    if o.vxi11 {
+        addrs.push_str("<InstrumentAddressString>TCPIP::INSTR</InstrumentAddressString>\n");
+    }
+    if let Some(p) = o.scpi_port {
+        addrs.push_str(&format!("<InstrumentAddressString>TCPIP::{p}::SOCKET</InstrumentAddressString>\n"));
+    }
+    if o.hislip {
+        addrs.push_str("<InstrumentAddressString>TCPIP::hislip0::INSTR</InstrumentAddressString>\n");
+    }
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <LXIDevice xmlns="http://www.lxistandard.org/InstrumentIdentification/1.0">
@@ -315,9 +349,7 @@ fn lxi_identification() -> String {
 <UserDescription>OOS</UserDescription>
 <IdentificationURL>/lxi/identification</IdentificationURL>
 <Interface InterfaceType="LXI" IPType="IPv4" xsi:type="NetworkInformation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-<InstrumentAddressString>TCPIP::INSTR</InstrumentAddressString>
-<InstrumentAddressString>TCPIP::5555::SOCKET</InstrumentAddressString>
-</Interface>
+{addrs}</Interface>
 <LXIVersion>1.5</LXIVersion>
 </LXIDevice>
 "#,
@@ -657,6 +689,21 @@ setTimeout(() => {
         // ordinary requests still work
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("<Manufacturer>OOS"), "{}", r);
+        assert!(r.contains("TCPIP::INSTR") && r.contains("TCPIP::5555::SOCKET"), "{}", r);
+    }
+
+    #[test]
+    fn identification_names_the_listeners() {
+        let mut h = Http::open(0);
+        h.offer(Offer { scpi_port: Some(5555), vxi11: false, hislip: true });
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.contains("TCPIP::hislip0::INSTR"), "{}", r);
+        assert!(r.contains("TCPIP::5555::SOCKET"), "{}", r);
+        assert!(!r.contains("TCPIP::INSTR<"), "{}", r);
+        assert!(r.contains("<IdentificationURL>/lxi/identification</IdentificationURL>"), "{}", r);
     }
 
     #[test]
