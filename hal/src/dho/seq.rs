@@ -620,6 +620,51 @@ impl State {
     }
 }
 
+/// How the debug read of an averaged frame plays it (B1, docs/fork/b1-b3.md). In average mode the play takes every
+/// second stored 12-bit field (netlist, play stub): one averaged point occupies two fields, and the played word shows
+/// only one of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AvgRaw {
+    /// 0x1004 bit 3 cleared for the play, which then takes every field in order: twice the points from twice the start,
+    /// so field pairs come out side by side. Bit 3 is set again after the read.
+    Seq,
+    /// average mode kept, twice the points from the same start: what the play does with a longer window
+    Wide,
+}
+
+impl State {
+    /// Debug read of frame `frame` of an average-mode batch at twice the length (`AvgRaw`), after the batch's own read:
+    /// stop poll, pass-through, window, type-4 play of that frame, one read of `avg_raw_bytes` bytes. Changes nothing
+    /// the next arm depends on: `Seq` restores 0x1004.
+    pub fn avg_raw_steps(&mut self, s: &Settings, p: &hz::Params, frame: u32, how: AvgRaw) -> Vec<Step> {
+        let (n, start) = window(s, p);
+        let start2 = if how == AvgRaw::Seq { 2 * start } else { start };
+        let win = scu::Window { n: 2 * n * p.ratio, start: start2 * p.ratio, ratio: p.ratio, fsm: s.mask, la: false, avg: how == AvgRaw::Wide };
+        let mut st = vec![
+            Step::Note(format!("average raw read {:?}: frame {}, {} points from {}", how, frame, 2 * n, start2)),
+            Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 10, what: "FSM stopped before the average raw read" },
+        ];
+        if how == AvgRaw::Seq {
+            self.sh.s1004 &= !8;
+            st.push(Step::Wr((0x1004, self.sh.s1004)));
+        }
+        let mut w = scu::passthrough();
+        w.extend(scu::readout_play4(&win, &mut self.sh, frame, 1));
+        st.extend(w.into_iter().map(Step::Wr));
+        st.push(Step::Read { frames: 1, frame: avg_raw_bytes(s, p) });
+        if how == AvgRaw::Seq {
+            self.sh.s1004 |= 8;
+            st.push(Step::Wr((0x1004, self.sh.s1004)));
+        }
+        st
+    }
+}
+
+/// Bytes of the debug read `State::avg_raw_steps`: twice the points of the frame, no header.
+pub fn avg_raw_bytes(s: &Settings, p: &hz::Params) -> usize {
+    4 * (p.ratio * window(s, p).0) as usize
+}
+
 /// Words (all channels) of the stamp play: 128, the smallest window of the stock raw export (record-play.md 7.1: a
 /// TX length of 8 points becomes 128 / ratio).
 pub const STAMP_WORDS: u32 = 128;
@@ -1568,6 +1613,41 @@ mod tests {
 
     // Break it catches: a segmented record that is not stamp clear + the batch arm with N and the interval, a count
     // beyond the whole-memory limit, segments that leak into the live batch path.
+    #[test]
+    fn average_raw_read_doubles_the_window() {
+        let s = Settings { mode: acq::Mode::Average { count: 16 }, tdiv: 100e-9, depth: 1000, window: None, frames: 10, ..Settings::default() };
+        let mut st = State::handover(1, None);
+        let p = st.configure(&s, None, None).unwrap().1;
+        let s1004 = st.sh.s1004;
+        assert_eq!(s1004 & 8, 8);
+        for how in [AvgRaw::Seq, AvgRaw::Wide] {
+            let steps = st.avg_raw_steps(&s, &p, 3, how);
+            let w = writes(&steps);
+            let at = |r: u32| w.iter().position(|x| x.0 == r);
+            // window of 2000 points (0x1100 = n + 0x48 | 1 << 9), TX length 2000, frame 3 alone
+            assert_eq!(w[at(0x1100).unwrap()].1, 2000 + 0x248, "{:?}", how);
+            assert_eq!(w[at(0x11f0).unwrap()].1, 2000);
+            assert_eq!((w[at(0x4010).unwrap()].1, w[at(0x4018).unwrap()].1), (3, 3));
+            assert!(steps.iter().any(|x| matches!(x, Step::Read { frames: 1, frame: 4000 })));
+            assert_eq!(avg_raw_bytes(&s, &p), 4000);
+            let w1004: Vec<u32> = w.iter().filter(|x| x.0 == 0x1004).map(|x| x.1).collect();
+            match how {
+                // bit 3 off for the play (before the run), on again after the read
+                AvgRaw::Seq => {
+                    assert_eq!(w1004, [s1004 & !8, s1004]);
+                    assert!(at(0x1004).unwrap() < at(0x4004).unwrap());
+                    assert!(matches!(steps.last(), Some(Step::Wr((0x1004, v))) if *v == s1004));
+                    assert_eq!(at(0x1110), None);
+                }
+                AvgRaw::Wide => {
+                    assert!(w1004.is_empty());
+                    assert!(at(0x1110).is_some());
+                }
+            }
+            assert_eq!(st.sh.s1004, s1004);
+        }
+    }
+
     #[test]
     fn record_steps_clear_the_stamp_and_arm_n_frames() {
         let seg = |n: u32, interval: f64| Settings { tdiv: 1e-6, depth: 1000, window: None, segments: Some(Segments { n, interval }), ..Settings::default() };

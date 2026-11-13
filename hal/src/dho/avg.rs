@@ -89,6 +89,19 @@ pub fn mean_words(frames: &[&[u16]]) -> Vec<u16> {
     (0..len).map(|i| (frames.iter().map(|f| f[i] as u64).sum::<u64>() / n) as u16).collect()
 }
 
+/// Per-parity summary of the words of a debug raw read (`seq::State::avg_raw_steps`): for the even and the odd
+/// words, the smallest, largest and mean word and the count of words equal to 0. Shows which of the two stored fields
+/// per averaged point carries the signal and which the low bits or nothing (B1, docs/fork/b1-b3.md).
+pub fn field_summary(words: &[u16]) -> String {
+    let part = |odd: usize| {
+        let v: Vec<u16> = words.iter().skip(odd).step_by(2).copied().collect();
+        let (lo, hi) = (v.iter().min().copied().unwrap_or(0), v.iter().max().copied().unwrap_or(0));
+        let mean = v.iter().fold(0.0, |a, &x| a + x as f64) / v.len().max(1) as f64;
+        format!("min {:04x} max {:04x} mean {:.1} zero {}/{}", lo, hi, mean, v.iter().filter(|&&x| x == 0).count(), v.len())
+    };
+    format!("even: {}; odd: {}", part(0), part(1))
+}
+
 /// Bits the accumulator of `n` frames of 16-bit words needs.
 pub fn acc_bits(n: u32) -> u32 {
     16 + n.max(1).next_power_of_two().trailing_zeros()
@@ -219,6 +232,12 @@ mod tests {
         assert!(st.configure(&Settings { segments: Some(seq::Segments { n: 10, interval: 0.0 }), ..s.clone() }, None, None).is_err());
         // 125 M points do not fit the average ring
         assert!(st.configure(&Settings { depth: 125_000_000, tdiv: 1.0, ..s }, None, None).is_err());
+    }
+
+    #[test]
+    fn field_summary_by_parity() {
+        assert_eq!(field_summary(&[0x8000, 0, 0x8010, 0x0003]), "even: min 8000 max 8010 mean 32776.0 zero 0/2; odd: min 0000 max 0003 mean 1.5 zero 1/2");
+        assert_eq!(field_summary(&[]), "even: min 0000 max 0000 mean 0.0 zero 0/0; odd: min 0000 max 0000 mean 0.0 zero 0/0");
     }
 
     #[test]
