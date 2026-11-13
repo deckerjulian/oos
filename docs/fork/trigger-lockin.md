@@ -241,6 +241,19 @@ Verification on the unit:
    four on (4-channel mapping). A refused channel logs `measure unit [..], records`.
 4. A 5 V signal: the first answer clips at 1 V/div, the second at 5 V/div fits.
 
+## Autoset search in fewer records
+
+The search went through five time bases (20 ns to 20 ms/div), a record each, from fast to slow so that a coarse rate
+cannot fold a fast signal into a period that is not there. On the probe-comp output it took four records, about
+0.5-0.6 s. The hardware source now takes three at most (`HW_PLAN` in autoset.rs), on the samples of the acquisition
+(the frame behind the record), not the 3600-point screen record:
+1. 2 us/div at the full rate: periods up to 8 us (125 kHz and up). It also rules out folding for the next one.
+2. One deep record, 1 M points at 2 ms/div (41.7 MSa/s): periods from 0.2 us to 8 ms, so 125 Hz to 125 kHz
+   with at least 300 samples per period.
+3. 20 ms/div only for a channel the deep record shows fewer than three rises of (or less than 70 % of its height).
+The probe-comp output needs two records. Other sources (demo, replay) keep the five time bases. The hardware peak
+detect was not used: its window semantics above divider 8 are open (fpga.md).
+
 ## Status (feat/trigger)
 
 | Fix | State |
@@ -254,6 +267,7 @@ Verification on the unit:
 | 5 status from 0x4034 | done behind `trig.hw_status` (default off), bits traced in the netlist (section above); on-unit verification pending |
 | 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
 | (a) autoset levels from the measure unit | done, on by default with the record stages as fallback; on-unit verification pending |
+| autoset search in at most three records | done; on-unit timing pending |
 | F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 
 Not yet measured on the unit: autoset time with these changes, and the noisy 5 V signal before and after.

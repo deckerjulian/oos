@@ -13,6 +13,14 @@ use crate::wave::{flat_noise, mid_level, periodic, place, Stats};
 
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
 const TBASES: [f32; 5] = [20e-9, 2e-6, 200e-6, 2e-3, 20e-3];
+/// Hardware source: three records at most instead of five. 2 us/div at the full rate holds periods up to 8 us (125 kHz
+/// and faster), and rules out what a slower rate would fold. Then one deep record (1 M points at 2 ms/div, 41.7 MSa/s)
+/// holds periods from 0.2 us to 8 ms: 125 Hz to 125 kHz, what the first one did not show. 20 ms/div only for a signal
+/// it shows fewer than three rises of. Depth per record (0 = Auto).
+const FAST_TBASE: f32 = 2e-6;
+const DEEP: (f32, u64) = (2e-3, 1_000_000);
+const SLOW_TBASE: f32 = 20e-3;
+const HW_PLAN: [(f32, u64); 3] = [(FAST_TBASE, 0), DEEP, (SLOW_TBASE, 0)];
 /// Time base of the levels: long enough for a whole period of a slow signal. Full bandwidth, because Auto closes the
 /// filter at slow time bases and a fast signal would look small.
 const LEVELS_TBASE: f32 = 20e-3;
@@ -89,6 +97,9 @@ pub struct AutoRun {
     best: [Option<(f32, usize)>; NCH],
     /// `Model::hw_stamp` of the current stage: hardware records with an older one are from before it
     stamp: u64,
+    /// the time bases of the search and their memory depths (points, 0 = Auto); `deep` = the hardware plan
+    plan: Vec<(f32, u64)>,
+    deep: bool,
     /// the levels come from the measure unit (hardware source) until it answers, fails or takes too long
     unit: Option<Unit>,
 }
@@ -143,7 +154,7 @@ impl Ui {
         m.hw_stamp += 1;
         let stamp = m.hw_stamp;
         let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some()).then_some(Unit { id: stamp, tries: 1, since: self.now });
-        self.auto = Some(AutoRun { back, stamp, unit, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
+        self.auto = Some(AutoRun { back, stamp, unit, plan: Vec::new(), deep: false, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
         self.mark_changed();
         self.toast("Auto set-up...");
     }
@@ -223,10 +234,17 @@ impl Ui {
             }
             Stage::Search(i) => {
                 let dt = self.last[0].as_ref().map_or(0.0, |r| r.dt);
+                // the samples of the acquisition where the source has them (all of a deep record), else the record
+                let raw = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.clone());
+                let mut slow = false;
                 for c in 0..n_ch() {
                     if dt == 0.0 || !a.want[c] {
                         continue;
                     }
+                    let (v, vdt) = match &raw {
+                        Some(f) if f.ch[c].len() > 1 && !f.envelope => (f.ch[c].clone(), f.dt),
+                        _ => (self.record_volts(c), dt),
+                    };
                     // a slow signal is flat here, and what rides on it looks regular: a window counts with most of the
                     // height, and one with clearly more height beats it. Not all of it: hum at a slow time base can
                     // stand higher than a weak fast signal
@@ -235,22 +253,41 @@ impl Ui {
                     if a.best[c].is_none_or(|b| swing > b.0) {
                         a.best[c] = Some((swing, self.m.tscale));
                     }
-                    if swing >= 0.4 * a.full[c] && swing >= 1.5 * a.swing[c] {
-                        if let Some(p) = periodic(&self.record_volts(c), dt) {
-                            (a.period[c], a.swing[c], a.lv[c]) = (Some(p), swing, (lo, hi));
-                            a.st[c] = crate::wave::stats(&self.record_volts(c), dt);
+                    let found = swing >= 0.4 * a.full[c] && swing >= 1.5 * a.swing[c] && {
+                        match periodic(&v, vdt) {
+                            Some(p) => {
+                                (a.period[c], a.swing[c], a.lv[c]) = (Some(p), swing, (lo, hi));
+                                a.st[c] = crate::wave::stats(&v, vdt);
+                                true
+                            }
+                            None => false,
                         }
+                    };
+                    // the deep record missed it: fewer than three rises (or less than its height) is a slower signal;
+                    // more without a steady period an irregular one, which no slower record times either
+                    if a.deep && i == 1 && !found && a.period[c].is_none() {
+                        let rises = oos_dsp::edges::edges(&v, (lo + hi) / 2.0, 0.4 * swing).iter().filter(|e| e.rising).count();
+                        slow |= rises < 3 || swing < 0.7 * a.full[c];
                     }
                 }
+                if a.deep && i == 1 && !slow {
+                    a.plan.truncate(2);
+                }
                 // done at the last time base, or when each channel has its period with nearly the full height
-                if i + 1 == TBASES.len() || (0..n_ch()).all(|c| !a.want[c] || (a.period[c].is_some() && a.swing[c] >= 0.7 * a.full[c])) {
+                if i + 1 >= a.plan.len() || (0..n_ch()).all(|c| !a.want[c] || (a.period[c].is_some() && a.swing[c] >= 0.7 * a.full[c])) {
                     return self.auto_end(a);
                 }
-                self.m.tscale = tscale_for(TBASES[i + 1]);
+                self.set_search(&a.plan, i + 1);
                 a.stage = Stage::Search(i + 1);
             }
         }
         self.auto_next(a)
+    }
+
+    /// Time base and depth of search record `i`.
+    fn set_search(&mut self, plan: &[(f32, u64)], i: usize) {
+        self.m.tscale = tscale_for(plan[i].0);
+        self.m.mdepth = mdepths().iter().position(|d| d.1 == plan[i].1).unwrap_or(0);
     }
 
     /// A new stage: records taken from here on carry a new stamp.
@@ -357,7 +394,10 @@ impl Ui {
         }
         self.m.trig_src = first;
         self.m.trig_level = mid_level(&a.st[first]);
-        self.m.tscale = tscale_for(TBASES[0]);
+        // the hardware search starts with one deep record; other sources go through the time bases from fast to slow
+        a.deep = self.src.is_hw();
+        a.plan = if a.deep { HW_PLAN.to_vec() } else { TBASES.iter().map(|&t| (t, 0)).collect() };
+        self.set_search(&a.plan, 0);
         self.m.acq = a.back.acq;
         // the search needs records that trigger at the new level
         self.m.auto_fast = false;
@@ -367,6 +407,8 @@ impl Ui {
 
     fn auto_end(&mut self, a: AutoRun) {
         self.m.auto_fast = false;
+        // the deep record was for the search: Auto depth, as the auto set-up leaves it
+        self.m.mdepth = 0;
         let _ = self.src.hw_levels(None);
         eprintln!("oos-ui auto: levels {:?}, periods {:?}", a.lv, a.period);
         let stats = |c: usize| Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..a.st[c] };
@@ -886,6 +928,42 @@ mod tests {
         let a = ui.auto.as_ref().unwrap();
         assert!(a.unit.is_none() && matches!(a.stage, Stage::Fit));
         assert_eq!(ui.m.ch[0].volts_per_div(), 5.0);
+    }
+
+    // Break it catches: the hardware search going through the five time bases again (a record each), a deep record
+    // left behind, a 20 ms/div record for a signal the deep one timed, or a fast signal timed from a folded record
+    #[test]
+    fn one_deep_record_finds_the_period() {
+        let square = |f: f64| move |t: f64| if (t * f + 0.3) % 1.0 < 0.5 { 3.0f32 } else { 0.0 };
+        for (f, want) in [(1e3, vec![FAST_TBASE, DEEP.0]), (50.0, vec![FAST_TBASE, DEEP.0, SLOW_TBASE]), (2e7, vec![FAST_TBASE])] {
+            let (mut ui, shared) = hw_ui();
+            ui.auto_start();
+            answer(&shared, &ui, Some((0.0, 3.0, false)));
+            ui.auto_step();
+            assert!(matches!(ui.auto.as_ref().unwrap().stage, Stage::Search(0)));
+            assert_eq!(tscales()[ui.m.tscale], tscales()[tscale_for(FAST_TBASE)], "the full rate first");
+            let sig = square(f);
+            let mut seen = Vec::new();
+            for _ in 0..6 {
+                let Some(a) = ui.auto.as_ref() else { break };
+                seen.push(tscales()[ui.m.tscale]);
+                // the samples of the record at the rate of the time base (deep: 1 M points over 12 div)
+                let window = ui.m.time_per_div() as f64 * HDIV as f64;
+                let n = if mdepths()[ui.m.mdepth].1 == DEEP.1 { 200_000 } else { 20_000 };
+                let dt = window / n as f64;
+                let v: Vec<f32> = (0..n).map(|k| sig(k as f64 * dt)).collect();
+                let fr = std::sync::Arc::new(crate::board::Frame { seq: 1, dt, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], stamp: a.stamp, ..Default::default() });
+                ui.last[0] = Some(crate::board::to_record(&fr, &ui.m, 3600, window, -window / 2.0));
+                ui.auto_step();
+            }
+            assert!(ui.auto.is_none(), "{} Hz: {:?}", f, seen);
+            let want: Vec<f32> = want.iter().map(|&t| tscales()[tscale_for(t)]).collect();
+            assert_eq!(seen, want, "{} Hz", f);
+            assert!(ui.m.ch[0].on);
+            assert_eq!(mdepths()[ui.m.mdepth].1, 0, "Auto depth after the search");
+            let period = ui.m.time_per_div() as f64 * HDIV as f64;
+            assert!(period > 1.0 / f && period < 30.0 / f, "{} Hz: {} s on the screen", f, period);
+        }
     }
 
     #[test]
