@@ -57,6 +57,29 @@ mod slot_loading_tests {
         assert_eq!(ui.replay.captures, 1, "an explicit Ref trigger uses stored acquisition, never ADC arming");
         assert_eq!(ui.m.run, RunState::Stop);
     }
+
+    #[test]
+    fn live_overlay_fit_reuses_bounded_selected_record_fit_and_keeps_adc_acquisition() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.commit_waveform_traces_at(vec![trace("overlay")], "overlay", 2).unwrap();
+        ui.m.deskew_ref[2] = 2e-9;
+        ui.m.delay = 1e-3;
+        let native = ui.ref_info(2).unwrap();
+        let pointer = ui.refs[2].as_ref().unwrap().v.as_ptr();
+        let adc = ui.m.ch.clone(); let trigger = ui.m.trigger(); let run = ui.m.run;
+        assert!(ui.live_ref_note().contains("outside this window"));
+        ui.fit_shown_reference();
+        assert_eq!((ui.m.ch.clone(), ui.m.trigger(), ui.m.run), (adc, trigger, run));
+        assert!(!ui.record_mode() && !ui.m.zoom);
+        let (scale, delay) = ui.view(); let half = scale as f64 * HDIV as f64 * 0.5;
+        let first = native.2 - 2e-9; let last = first + (native.0 - 1) as f64 * native.1;
+        assert!(delay as f64 - half <= first && delay as f64 + half >= last);
+        assert_eq!(ui.ref_info(2).unwrap().2, native.2);
+        assert_eq!(ui.refs[2].as_ref().unwrap().v.as_ptr(), pointer);
+        assert!(!ui.live_ref_note().contains("outside this window"));
+        for ch in &mut ui.m.ch { ch.on = false; }
+        assert!(!ui.record_mode(), "reference visibility alone cannot silently choose stored acquisition");
+    }
 }
 
 pub(super) struct LiveSession {
@@ -408,7 +431,8 @@ impl Ui {
         if !pending.rows.is_empty() { self.replay.deferred_statistics = Some(pending); }
     }
     pub fn record_mode(&self) -> bool {
-        self.offline || self.session_is_sim || (self.m.n_on() == 0 && self.refs.iter().any(Option::is_some))
+        // A reference drawn with the live channels is not a session. Take over, Offline waveforms, and SIM are.
+        self.offline || self.session_is_sim || self.sim_play
     }
 
     pub(super) fn active_reference(&self) -> usize {
@@ -613,6 +637,59 @@ impl Ui {
         self.relayout();
         self.toast(&format!("Loaded {} into R{}", name, first + 1));
         Ok(())
+    }
+
+    /// Sample rate and length of the references drawn on the live screen, and whether each one meets the current time window.
+    pub(super) fn live_ref_note(&self) -> String {
+        if self.record_mode() {
+            return String::new();
+        }
+        let (tdiv, delay) = self.view();
+        let half = tdiv as f64 * HDIV as f64 / 2.0;
+        let (left, right) = (delay as f64 - half, delay as f64 + half);
+        let mut parts = Vec::new();
+        for (i, r) in self.refs.iter().enumerate() {
+            let Some(r) = r.as_ref() else { continue };
+            if !r.on || r.v.len() < 2 || !(r.dt > 0.0) {
+                continue;
+            }
+            let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
+            let end = t0 + r.v.len().saturating_sub(1) as f64 * r.dt;
+            let outside = end < left || t0 > right;
+            let where_ = if outside { " · outside this window" } else { "" };
+            parts.push(format!("R{} {} · {}{}", i + 1, si_digits(1.0 / r.dt, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3), where_));
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("With live · {}", parts.join("   "))
+        }
+    }
+
+    /// Move the live time base onto the first shown reference. The channels stay on.
+    pub(super) fn fit_shown_reference(&mut self) {
+        if self.record_mode() {
+            return;
+        }
+        let slot = if self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).is_some_and(|r| r.on && r.v.len() >= 2) {
+            self.ref_sel
+        } else {
+            match (0..NREF).find(|&i| self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 2 && r.dt > 0.0)) {
+                Some(i) => i,
+                None => return,
+            }
+        };
+        self.select_workspace_source(WaveId::Ref(slot));
+        self.fit_selected_record();
+    }
+
+    pub(super) fn live_ref_fit_rect(&self) -> Option<Rect> {
+        let note = self.live_ref_note();
+        if note.is_empty() || self.view_on() || self.eye_open() {
+            return None;
+        }
+        let g = self.grid;
+        Some(Rect::new(g.x + 8, g.y + g.h - 28, 52, 22))
     }
 
     pub(super) fn reference_slice(&self, slot: usize) -> Option<(&[f32], f64, f64)> {

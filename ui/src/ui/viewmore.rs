@@ -1,13 +1,13 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The overflow menu of the views that replace the waveform (analysers, XY): a button in the plot leads to what they
-//! need most, and above all out of them. The eye does not use this: it keeps the trace and has its own pane.
+//! need most, and above all out of them. The eye keeps its own bar: Full is the page, and Side and Under are extra.
 
 use super::{AView, Item, MenuId, Rect, Ui, BTN_BORDER, PANEL_BG, TEXT};
 use crate::gfx::Canvas;
 
 impl Ui {
-    /// A view other than the waveform fills the plot. The eye keeps the trace and sits in its own pane.
+    /// A view other than the waveform fills the plot. The eye has its own bar and is not one of these.
     pub(super) fn view_on(&self) -> bool {
         self.xy || !matches!(self.m.view, AView::Scope | AView::Eye)
     }

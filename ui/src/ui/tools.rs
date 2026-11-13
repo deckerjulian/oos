@@ -486,7 +486,7 @@ impl Ui {
         self.setup_path().with_file_name(format!("ref{}.csv", self.ref_sel + 1))
     }
 
-    /// CSV / OOS `.bin` / `.wfm` (`:WFM#002` or `:WFM#003`) that Import slot can open: the slot's own files, then Storage.
+    /// Waveforms Import slot can open: the slot's own files, then Storage. Same extensions as `load`.
     fn ref_wave_candidates(&self) -> Vec<std::path::PathBuf> {
         let slot = self.ref_sel + 1;
         let mut v = Vec::new();
@@ -525,7 +525,7 @@ impl Ui {
         self.toast_saved(&p, res);
     }
 
-    /// Opens a captured waveform into the selected R slot: CSV, OOS `.bin`, or `.wfm` (`:WFM#002` or `:WFM#003`).
+    /// Opens a captured waveform into the selected R slot.
     pub(super) fn ref_import(&mut self) {
         let slot = self.ref_sel + 1;
         if let Some(dir) = self.setup_path().parent() {
@@ -614,7 +614,7 @@ impl Ui {
         Ok(())
     }
 
-    /// `refN.wfm`, then `refN.bin`, then `refN.csv`, beside the setups. The first file that is there is the one loaded.
+    /// `refN` beside the setups, in `WAVE_EXTS` order. The first file that is there is the one loaded.
     pub(crate) fn ref_import_slot(&mut self) -> Result<(), String> {
         let slot = self.ref_sel + 1;
         let Some(dir) = self.setup_path().parent().map(|d| d.to_path_buf()) else {
@@ -629,7 +629,7 @@ impl Ui {
         Err(format!("missing ref{slot} waveform"))
     }
 
-    /// Loads a csv, an OOS `.bin`, or a `.wfm` (`:WFM#002` or `:WFM#003`) into the selected slot.
+    /// Loads a waveform into the selected slot.
     /// A relative path is beside the setups. A missing file starts with `missing `.
     pub(crate) fn ref_load_named(&mut self, path: &str) -> Result<(), String> {
         let raw = path.trim().trim_matches('"');

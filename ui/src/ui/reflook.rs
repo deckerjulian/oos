@@ -75,7 +75,7 @@ impl Ui {
         }
         self.apply_look(look);
         self.toast(match look {
-            RefLook::Live => "Live",
+            RefLook::Live => "With live",
             RefLook::TakeOver => "Take over",
             RefLook::Waves => "Offline waveforms",
         });
@@ -708,7 +708,8 @@ mod tests {
         u.ref_sel = 0;
         u.activate(Item::RefImport);
         assert_eq!(u.look, RefLook::Live, "import adds a reference without changing the live acquisition");
-        assert!(!u.offline);
+        assert!(!u.offline && u.m.ch[0].on, "import keeps the live channels");
+        assert!(u.refs[0].as_ref().unwrap().on && u.refs[1].as_ref().unwrap().on);
         u.set_look(RefLook::TakeOver);
         assert_eq!(u.look, RefLook::TakeOver);
         assert!(u.offline);

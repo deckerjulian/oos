@@ -1,10 +1,10 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Stored-reference session. Off, the live screen is unchanged. On, the analog cards are hidden.
-//! Take over shows one reference. Offline waveforms keeps several on screen together. Import does
-//! what Play does: analog stays off, TIME comes from the record's own interval and length, and the
-//! reference name sits where the trigger card would be. The DVM and the counter read that reference.
+//! Stored-reference session. A loaded reference stays on the live screen, with its own sample rate
+//! and length, until Take over or Offline waveforms is chosen. Those hide the analog cards. Take
+//! over shows one reference on the record's own time base. Offline waveforms keeps several together.
+//! A SIM session is separate: its readout starts with SIM, and Live returns to acquisition.
 
 use super::*;
 
@@ -103,7 +103,7 @@ impl Ui {
     }
 
     /// Horizontal scale that fits the record, including a factor below the live 1 ns step.
-    fn apply_record_timebase(&mut self, t0: f64, dt: f64, n: usize) {
+    pub(super) fn apply_record_timebase(&mut self, t0: f64, dt: f64, n: usize) {
         if n < 2 || !(dt > 0.0) {
             return;
         }
@@ -219,7 +219,7 @@ impl Ui {
     pub(super) fn offline_value(&self, it: Item) -> Option<String> {
         match it {
             Item::Offline => Some(match self.look {
-                reflook::RefLook::Live => "Off".into(),
+                reflook::RefLook::Live => "With live".into(),
                 reflook::RefLook::TakeOver => "Take over".into(),
                 reflook::RefLook::Waves => "Offline".into(),
             }),
@@ -230,7 +230,7 @@ impl Ui {
 
     pub(super) fn offline_options(&self, it: Item) -> Option<Vec<String>> {
         match it {
-            Item::Offline => Some(vec!["Off".into(), "Take over".into(), "Offline".into()]),
+            Item::Offline => Some(vec!["With live".into(), "Take over".into(), "Offline".into()]),
             Item::DvmSrc | Item::CntSrc if self.offline => Some((0..NREF).map(|i| format!("R{}", i + 1)).collect()),
             _ => None,
         }
@@ -322,6 +322,7 @@ mod tests {
         assert!(live.m.ch[0].on && !live.offline, "a live import adds an overlay without taking over acquisition");
         assert_eq!(live.m.tscale, scale, "import cannot silently change the ADC timebase");
         assert!(live.cards().0.iter().any(|card| card.w > 0));
+        assert!(live.refs[0].as_ref().unwrap().on);
         live.set_look(reflook::RefLook::TakeOver);
         assert!(live.m.ch.iter().all(|channel| !channel.on) && live.offline, "Take over explicitly enters a stored-waveform session");
 
@@ -402,6 +403,47 @@ mod tests {
         assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 1e-6,
             "existing refs use the imported screen gate immediately, not their full record");
         assert!(u.reference_slice(1).unwrap().0.len() < 1000);
+    }
+
+    #[test]
+    fn import_keeps_the_live_window_until_take_over() {
+        let mut u = ui();
+        u.refs[1] = Some(RefWave { src: 0, color: 1, label: "existing".into(), t0: 0.0, dt: 1e-9,
+            v: vec![0.0, 1.0, 0.0], vpd: 0.2, offset: 0.0, on: true });
+        let held = (u.m.tscale, u.m.tfine, u.m.delay);
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..100 {
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, if index % 4 < 2 { -0.5 } else { 0.5 }));
+        }
+        u.load_waveform_bytes(csv.as_bytes(), "new record.csv").unwrap();
+        assert_eq!((u.m.tscale, u.m.tfine, u.m.delay), held);
+        assert!(u.m.ch[0].on && !u.offline);
+        assert!(u.refs[0].is_some() && u.refs[1].as_ref().unwrap().on);
+        u.set_look(reflook::RefLook::TakeOver);
+        assert_timebase(&u, 0.0, 1e-9, 100);
+        assert!(u.m.ch.iter().all(|c| !c.on));
+    }
+
+    #[test]
+    fn a_fast_record_stays_with_the_live_channels() {
+        let mut u = ui();
+        let live = u.m.time_per_div();
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..400 {
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-12, if index % 2 == 0 { -0.2 } else { 0.2 }));
+        }
+        u.load_waveform_bytes(csv.as_bytes(), "fast.csv").unwrap();
+        let (acq, live_mode) = u.acq_caption();
+        assert!(live_mode, "{}", acq);
+        assert_eq!(u.m.time_per_div(), live);
+        assert!(u.m.ch[0].on && !u.offline && !u.session_is_sim);
+        let note = u.live_ref_note();
+        assert!(note.contains("R1") && note.contains("Sa/s"), "{note}");
+        assert!(u.fit_selected_record(), "Fit record is explicit and separate from ADC Autoset");
+        assert!(u.m.ch[0].on && !u.offline);
+        assert!(u.m.time_per_div() < live);
+        u.session_is_sim = true;
+        assert!(u.acq_caption().0.starts_with("SIM"), "{}", u.acq_caption().0);
     }
 
     fn assert_timebase(u: &Ui, t0: f64, dt: f64, n: usize) {

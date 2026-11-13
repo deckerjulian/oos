@@ -1829,6 +1829,7 @@ mod tests {
             csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, value));
         }
         ui.load_waveform_bytes(csv.as_bytes(), "reference.csv").unwrap();
+        ui.set_offline(true);
         line(&mut s, &mut ui, &cv, ":TIM:SCAL 1e-8;:TIM:OFFS 1e-6;:TRIG:EDGE:LEV 0;:TRIG:SWE NORM");
         (s, ui, cv)
     }

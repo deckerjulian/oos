@@ -917,6 +917,23 @@ mod tests {
     }
 
     #[test]
+    fn live_is_on_the_top_bar_and_in_the_sim_menu() {
+        let mut u = ui();
+        assert!(u.m.ch[0].on);
+        assert!(!u.top_buttons().iter().any(|b| b.0 == TopBtn::Live));
+        u.session_is_sim = true;
+        u.m.ch[0].on = false;
+        assert!(u.sim_items().first() == Some(&Item::SimLive));
+        let live = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Live).expect("Live");
+        u.tap(live.2.x + 4, 10);
+        assert!(!u.session_is_sim);
+        assert!(u.m.ch[0].on);
+        u.session_is_sim = true;
+        u.activate(Item::SimLive);
+        assert!(!u.session_is_sim && u.m.ch[0].on);
+    }
+
+    #[test]
     fn sim_play_loads_the_preset_into_the_slot() {
         let mut u = ui();
         u.m.sim_preset = LANES.iter().position(|l| l.name == "PCIe 4.0").unwrap();

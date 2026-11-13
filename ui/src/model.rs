@@ -255,12 +255,12 @@ pub enum AView {
     Dpt,
 }
 
-/// Where the eye is drawn while the trace stays on screen.
+/// Where the eye is drawn. The full page is the default. Side and Under are extra panes and leave that page available.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EyePlace {
-    /// Eye, figures and jitter charts occupy the whole plot.
+    /// The eye fills the plot: the figures, the jitter column and the charts.
     Full,
-    /// A pane to the right of the trace. The default.
+    /// A pane to the right of the trace.
     Side,
     /// A pane under the trace.
     Under,

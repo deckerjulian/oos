@@ -264,6 +264,7 @@ enum TopBtn {
     Menu(MenuId),
     System,
     Load,
+    /// Back to live acquisition from a simulation or a stored waveform.
     Live,
 }
 
@@ -1303,7 +1304,7 @@ impl Ui {
         }
     }
 
-    /// Where the eye page itself is drawn: the pane, under a bar of buttons.
+    /// Where the eye page itself is drawn: under the placement bar, on the whole plot or in the pane.
     fn eye_page_rect(&self) -> Rect {
         if !self.eye_open() {
             return self.area;
@@ -2490,6 +2491,7 @@ impl Ui {
             self.draw_zoom_readout(cv, tz, dz);
         }
         if self.eye_open() {
+            // eye_pane_rect maps Full to the plot while retaining floating panes.
             self.draw_eye_pane(cv);
         }
         self.draw_cal_banner(cv);
@@ -3666,6 +3668,17 @@ impl Ui {
             };
             backed_text(cv, &f.sb, x, y, &label, AMBER);
         }
+        let note = self.live_ref_note();
+        if !note.is_empty() && !self.view_on() && !self.eye_open() {
+            let y = g.y + g.h - 16;
+            let fit = Rect::new(g.x + 8, y - 12, 52, 22);
+            btn(cv, fit, BTN, ACCENT);
+            cv.text_in(&f.s, fit, 1, "Fit", TEXT);
+            let lab = Rect::new(fit.x + fit.w + 8, y - 12, (g.x + g.w - fit.x - fit.w - 16).max(1), 22);
+            cv.set_clip(lab);
+            cv.text_in(&f.s, lab, 0, &note, LABEL);
+            cv.no_clip();
+        }
     }
 
     /// Search markers: an amber tick at the top of the plot for every event of the trigger condition.
@@ -4016,7 +4029,9 @@ impl Ui {
             (TopBtn::Menu(MenuId::Storage), "Storage"),
             (TopBtn::System, "System"),
         ];
-        if self.record_mode() { all.insert(0, (TopBtn::Live, "Live")); }
+        if self.record_mode() {
+            all.insert(0, (TopBtn::Live, "Live"));
+        }
         let mut x = self.top_right() - 8;
         let mut out = Vec::new();
         for &(b, l) in all.iter().rev() {
@@ -4102,13 +4117,12 @@ impl Ui {
         // buttons (the open menu in orange)
         let root = self.menu_root();
         for (b, l, r) in buttons {
-            let hl = self.menu_open
-                && match b {
-                    TopBtn::Menu(m) => root == m,
-                    TopBtn::System => root == MenuId::Utility,
-                    TopBtn::Load => false,
-                    TopBtn::Live => true,
-                };
+            let hl = match b {
+                TopBtn::Live => true,
+                TopBtn::Menu(m) => self.menu_open && root == m,
+                TopBtn::System => self.menu_open && root == MenuId::Utility,
+                TopBtn::Load => false,
+            };
             btn(cv, r, BTN, if hl { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, l, if hl { ACCENT } else { TEXT });
         }
@@ -7877,6 +7891,12 @@ impl Ui {
         }
         if self.waves_board_tap(x, y) {
             return;
+        }
+        if let Some(r) = self.live_ref_fit_rect() {
+            if r.contains(x, y) {
+                self.fit_shown_reference();
+                return;
+            }
         }
         if !self.menu_open && self.measurement_navigation_tap(x, y) { return; }
         if self.auto_bar_tap(x, y) {

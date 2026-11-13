@@ -320,7 +320,11 @@ impl Http {
                             ui.load_waveform_bytes_at(req_body, &name, slot - 1)
                         } else { Err("Choose a reference slot from R1 to R10.".into()) };
                         match result {
-                            Ok(()) => ("text/plain; charset=utf-8", format!("Loaded {} into R{}. Use Run/Stop or Single to acquire from this record; Return to live restores the live source.", name, ui.ref_slot() + 1).into_bytes()),
+                            Ok(()) => {
+                                let hint = if ui.record_mode() { "Use Run/Stop or Single to acquire from this record; Return to live restores the live source." }
+                                    else { "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition." };
+                                ("text/plain; charset=utf-8", format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint).into_bytes())
+                            }
                             Err(error) => {
                                 ui.ref_slot_set(previous);
                                 failed = true;
