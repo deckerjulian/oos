@@ -34,6 +34,20 @@ pub fn slow_mode(m: &Model) -> Slow {
     }
 }
 
+/// SINGLE ends with the first frame after the press (`Settings::single`): one frame per batch and no batch after it
+/// until the next press. Not when the UI may refuse that frame and wait for another: a protocol trigger (the decoder
+/// decides) or a zone trigger.
+fn single_takes_first(m: &Model) -> bool {
+    m.trig_mode == TrigMode::Single && m.trig_type != TrigType::Bus && !m.zones.iter().any(|z| z.usable())
+}
+
+/// Whether the thread acquires another batch for SINGLE: not once a batch brought frames under this press's `stamp`
+/// (`done`). The UI's STOP reached the thread only a few UI steps later, and each batch in between counted:
+/// `acquired` +10 at 1 us/div, +3 at 1 ms/div per press (unit 2026-11-13).
+fn single_wants_more(b: &Settings, done: Option<u64>, stamp: u64) -> bool {
+    !b.single || done != Some(stamp)
+}
+
 /// Live record length for Auto depth (keeps the read short enough for a fluid display).
 const LIVE_DEPTH: i128 = 100_000;
 
@@ -154,7 +168,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         } as f64,
         auto: m.trig_mode == TrigMode::Auto,
         auto_fast: m.auto_fast && m.trig_mode == TrigMode::Auto,
-        single: m.trig_mode == TrigMode::Single,
+        single: single_takes_first(m),
         play4: true,
         blocks: 7,
         header: header_probe(),
@@ -924,6 +938,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut helper = crate::drawpipe::Helper::default();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
+        // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
+        let mut single_done: Option<u64> = None;
         // the hardware segmented recording in progress or read back
         let mut segrun: Option<SegRun> = None;
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
@@ -1331,6 +1347,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 out.lock().unwrap().queue.clear();
             }
             let b = batch_plan(&s, &p);
+            if !single_wants_more(&b, single_done, stamp) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
             if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -1477,7 +1498,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
                     // not in average mode, where a clear may have to come first, and not where the deep measurements
                     // read the newest frame raw (its ring must stay for the replay at STOP)
-                    if prearm_on() && avg.is_none() && prearm_keeps_replay(&b, &p, deep_want) {
+                    if count > 0 && b.single {
+                        single_done = Some(stamp);
+                    }
+                    if prearm_on() && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -1735,6 +1759,27 @@ mod tests {
             m.trig_mode = TrigMode::Single;
             assert_eq!(frames(&m), 1, "{} s/div", tdiv);
         }
+    }
+
+    // Break it catches: batches after the SINGLE frame until the UI's STOP reached the thread (`acquired` +10 at
+    // 1 us/div, +3 at 1 ms/div per press on the unit); or a SINGLE that waits for good where the UI refuses frames
+    #[test]
+    fn single_stops_after_the_batch_with_its_frame() {
+        let mut m = Model { trig_mode: TrigMode::Single, ..Default::default() };
+        let b = settings(&m, false);
+        assert!(b.single);
+        assert!(single_wants_more(&b, None, 4), "the first batch after the press");
+        assert!(!single_wants_more(&b, Some(4), 4), "its frame came: no more for this press");
+        assert!(single_wants_more(&b, Some(4), 5), "the next press");
+        m.trig_mode = TrigMode::Normal;
+        assert!(single_wants_more(&settings(&m, false), Some(4), 4), "RUN is not limited");
+        // the UI may refuse the frame: protocol trigger, zone trigger
+        m.trig_mode = TrigMode::Single;
+        m.trig_type = TrigType::Bus;
+        assert!(!settings(&m, false).single);
+        m.trig_type = TrigType::Edge;
+        m.zones[0] = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0)] };
+        assert!(m.zones[0].usable() && !settings(&m, false).single);
     }
 
     // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
