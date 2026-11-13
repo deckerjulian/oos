@@ -72,9 +72,12 @@ Reading:
   the AFE offset accuracy, which the records share. The 428 codes per division of round 2 came from this same reading
   (it assumed the offset was exactly 2 div), so it is not evidence of a scale error either.
 - STOP and RUN: no zero reading reached the strip.
+- Lane 2 for CH2 alone (round 2): the trigger was on CH1, which OOS acquires even when hidden, so the set was CH1 +
+  CH2 and lane 2 is right (Rigol's rule, confirmed by the regmap reading of `DrvDvm_SetSource`).
 
 Per-lane check (needs this branch): `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` forces the lane with one channel acquired
-(every lane carries the channel then). CH1 alone, input open, 500 mV/div and 100 mV/div, offset 0; for each lane 0..3
+(every lane carries the channel then). CH1 alone with the trigger on CH1 (OOS also acquires a hidden trigger
+channel, which makes it a two-channel set), input open, 500 mV/div and 100 mV/div, offset 0; for each lane 0..3
 five `:SYSTem:DEBug:DVM?` dumps, then `AUTO`. Expect the four lane DC values to spread by a few ADC steps, with the
 software value near their mean. That spread is the per-core-pair offset map, also the input for the core offset fix.
 
