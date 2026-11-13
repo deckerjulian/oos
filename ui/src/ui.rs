@@ -1776,6 +1776,11 @@ impl Ui {
             };
             let mut got = 0;
             let (mut ta, mut td) = (0f32, 0f32);
+            // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
+            // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
+            // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
+            let deep_raw = crate::deepmeas::want(&self.m).is_some();
+            let mut raw_rec: Option<Record> = None;
             if !self.fast_ok() {
                 if let Some(p) = crate::drawpipe::pipe() {
                     p.set_view(None, 0, 0);
@@ -1793,6 +1798,9 @@ impl Ui {
                     if self.fast_draw(f) {
                         self.m.status = TrigStatus::Triggered;
                     }
+                }
+                if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
+                    raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
                 }
                 got += frames.len();
                 // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
@@ -1882,6 +1890,9 @@ impl Ui {
                         self.history.push_back(Record { raw: None, la, ..rec.clone() });
                         self.hist_pos = None;
                         self.mask_test(&rec);
+                        if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
+                            raw_rec = Some(rec.clone());
+                        }
                         self.last[0] = Some(rec);
                         self.cleared = false;
                         got += 1;
@@ -1944,7 +1955,16 @@ impl Ui {
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if hold {
-                    // the measurement shown stays that of the last raw deep record
+                    // the measurement shown stays that of the last raw deep record, or of this step's
+                    if let Some(r) = raw_rec.take() {
+                        if self.meas_bg.is_some() {
+                            self.meas_want = true;
+                            self.meas_pending = Some(r);
+                        } else {
+                            self.measure_rec(&r);
+                            self.meas_new = true;
+                        }
+                    }
                 } else if self.meas_bg.is_some() {
                     // the result for the last record is still good when it comes after this one: `meas_n` only
                     // changes where a result out becomes wrong (a clear, measuring here at once)
@@ -4271,7 +4291,13 @@ impl Ui {
     /// Recomputes the measurements of the record shown, at once (a result from the background for an older record
     /// is dropped). The samples are read where they are, not copied.
     fn measure_last(&mut self) {
-        let Some(rec) = self.last[0].as_ref() else { return };
+        if let Some(rec) = self.last[0].clone() {
+            self.measure_rec(&rec);
+        }
+    }
+
+    /// The measurements of `rec` now, on this thread.
+    fn measure_rec(&mut self, rec: &Record) {
         let work: Vec<(usize, &[f32], f64, f64)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
@@ -7720,6 +7746,12 @@ mod tests {
     // measured a pair record: Mean stayed NaN live. The raw record waiting for the worker is the one measured.
     #[test]
     fn live_raw_deep_records_are_measured_while_the_worker_is_busy() {
+        for tdiv in [1e-3, 2e-3, 5e-3] {
+            live_raw_at(tdiv);
+        }
+    }
+
+    fn live_raw_at(tdiv: f64) {
         use super::*;
         crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
@@ -7730,19 +7762,26 @@ mod tests {
             ui.m.ch[c].on = false;
         }
         ui.m.meas = vec![(Meas::Vavg, 0)];
-        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
         ui.m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() };
-        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 2.0 } else { 0.0 }).collect();
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e7 / (tdiv * 16.0), 10_000_000), ..Default::default() };
+        let raw = |high: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { high } else { 0.0 }).collect() };
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
         let mut seq = 0;
-        for _ in 0..3 {
+        for round in 0..3 {
+            // a new value each round: a measurement that stays at the last one is caught too
+            let high = 2.0 + round as f32;
             // the worker is still on the previous record when the raw one comes, and pair records follow
             ui.meas_bg.as_mut().unwrap().busy = true;
             seq += 1;
-            shared.lock().unwrap().queue.push_back(frame(seq, false, raw.clone()));
+            shared.lock().unwrap().queue.push_back(frame(seq, false, raw(high)));
+            // one batch of one frame each at 2 and 5 ms/div: the next pair record is queued before the UI looks
+            if tdiv > 1.5e-3 {
+                seq += 1;
+                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+            }
             ui.step(0.02);
             for _ in 0..3 {
                 seq += 1;
@@ -7755,7 +7794,7 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
             let avg = ui.meas(0, Meas::Vavg);
-            assert!((avg - 0.5).abs() < 0.03, "Mean live: {}", avg);
+            assert!((avg - high as f64 / 4.0).abs() < 0.03, "Mean live at {} s/div, round {}: {}", tdiv, round, avg);
         }
         crate::deepmeas::force(None);
     }

@@ -28,6 +28,10 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
   does not measure the pair records in between. Every value shown belongs to one raw record, at most about 1 s old,
   and the Measure statistics count each raw record once. Max, Min and Pk-pk then update once a second instead of per
   record.
+- The raw record measured is the newest raw one of the UI step, not the newest record: at 2 ms/div and up (10 M) a
+  batch is one frame, so the next pair frame is often queued behind the raw one. The UI drew the raw frame on the fast
+  path (or replaced it as the record) and the value stayed at the last raw record's for good (unit round 5). A raw
+  record that comes while the background worker is busy waits for it (`meas_pending`).
 - Off, in Peak (the memory holds peak pairs), above the budget, or with the deep screen-window read (short time base,
   already raw): as before.
 
@@ -65,6 +69,10 @@ belong to it. With `acq.prearm = on` such batches are not armed ahead, so the re
 - `ui/src/ui.rs` `deep_raw_records_carry_the_measurements_between_pair_records`: nothing on pairs before the first
   raw record, the raw record's Mean, then three pair records keep it and are not counted in the statistics; off: pair
   records measured with Mean NaN. Mutation check: without the hold the test fails.
+- `ui/src/ui.rs` `live_raw_deep_records_are_measured_while_the_worker_is_busy`: at 1, 2 and 5 ms/div, a new value
+  each round, the worker busy when the raw record comes, pair records after it (at 2 and 5 ms/div one already queued
+  behind it in the same step). Fails without `meas_pending` (Mean NaN) and without the step's raw record (NaN at
+  2 ms/div).
 
 ## On-unit verification
 
