@@ -204,6 +204,10 @@ fn print(st: &[Step]) {
     println!("# {} hardware writes", st.iter().filter(|s| matches!(s, Step::Wr(_) | Step::Afe(_))).count());
 }
 
+/// The commands `tool` runs (register, board and ADC access). A command missing here falls through to the usage text
+/// without a word (unit round 9: `adc` did).
+const TOOL_CMDS: [&str; 8] = ["status", "rd", "wr", "cold-boot", "fpga-boot", "pll", "gpio", "adc"];
+
 /// An oos-ui process is running (/proc/<pid>/comm).
 #[cfg(target_os = "linux")]
 fn ui_running() -> bool {
@@ -304,7 +308,7 @@ fn main() {
         }
         return;
     }
-    if matches!(cmd, "status" | "rd" | "wr" | "cold-boot" | "fpga-boot" | "pll" | "gpio") {
+    if TOOL_CMDS.contains(&cmd) {
         if let Err(e) = tool(cmd, &args[2..]) {
             eprintln!("oos-fpgad: {}", e);
             std::process::exit(1);
@@ -963,6 +967,18 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_tool_command_is_routed() {
+        let src = include_str!("main.rs");
+        let body = &src[src.find("fn tool(cmd: &str").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let arms: Vec<&str> = body.lines().filter_map(|l| l.strip_prefix("            \"")?.split_once("\" => {").map(|(c, _)| c)).collect();
+        assert!(arms.len() >= 6, "{:?}", arms);
+        for c in arms {
+            assert!(TOOL_CMDS.contains(&c), "tool arm {} missing from TOOL_CMDS", c);
+        }
+    }
 
     #[test]
     fn status_interpretation() {

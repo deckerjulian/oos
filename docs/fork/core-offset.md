@@ -58,23 +58,42 @@ alone at 1 us/div, input open):
 1. `oos-fpgad adc slots --runs 8`: one slot about +11 steps from the slot average means the measure unit sees the
    error, and both the self-cal and the run-time match can fix it. All slots within 1.5 steps means it does not: the
    data path has an offset the calibration cannot see, and the fix moves to a per-phase correction.
-2. With a slot far off: for n = 0..7, `oos-fpgad adc offset n <stored - 8> --execute`, `adc slots`, then
-   `adc offset n <stored> --execute`. The slot that drops by 8 steps is core n. Stored values: mode 2 above (CH3
-   alone). This also gives the core order of mode 2.
-3. Start oos-ui with `cal.core_offset = tight`; the log line of mode 2 must show core n's offset lowered by about 11.
+2. With a slot far off: for n = 0..7, `oos-fpgad adc offset n <stored - 16> --execute`, `adc slots`, then
+   `adc offset n <stored> --execute`. The slot that drops is core n; the size of the drop gives the measure codes per
+   register step (16 if one register step is one ADC step, 8 if it is half a step, see round 9). Stored values: mode
+   2 above (CH3 alone). This also gives the core order of mode 2.
+3. Start oos-ui with `cal.core_offset = tight`; the log line of mode 2 must show core n's offset lowered by the far
+   slot's distance divided by the measured step.
+
+## Round 9 (unit, build 20261113-210854)
+
+- `oos-fpgad adc slots` printed nothing and exited 0: the command dispatch did not route `adc` to the register tool,
+  so it fell through to the usage path silently. Fixed: the routed commands are one list (`TOOL_CMDS`) and a test
+  checks that every command the tool handles is in it.
+- `:SYSTem:DEBug:SLOTs?` (CH3 alone, input open) showed slot 6 at +8.7 to +8.9 steps; the other slots within 1.2
+  steps. The measure unit sees the error.
+- `cal.core_offset = tight` logged "core order not found" for mode 2 and saved nothing; `/rigol/data/cal_adc.hex` was
+  unchanged (sha256 checked). The order search nudged by 32 register steps and expected a move of at least 16 steps.
+  The stock firmware's own order search uses a nudge of 1023 and a threshold of 7936 codes, which is about 8 codes
+  (half an ADC step) per register step. A 32-step nudge then moves the slot by about 16 steps minus noise, at the
+  threshold, so the search failed.
+- The open input spans 43 to 61 codes (max - min) at 100 mV/div, so the quietness gate of 64 left almost no margin.
 
 ## What the change does
 
 `hal::dho::coretrim`, called from the acquisition thread right after a configuration, with nothing armed, once per
 ADC mode and session:
 
-1. `order`: nudges each core's offset by 32 steps in turn and notes which measure slot moves. The slot-to-core mapping
-   of the normal modes is not known otherwise. Every nudge is taken back.
+1. `order`: nudges each core's offset by 64 register steps in turn and notes which measure slot moves. The
+   slot-to-core mapping of the normal modes is not known otherwise. The nudged slot must move by at least 64 codes
+   and every other slot by at most a quarter of that, or the search fails with the deltas in the log. The move
+   divided by 64 is that core's measure codes per register step; `trim` uses it instead of an assumed size. Every
+   nudge is taken back.
 2. `trim`: per acquired channel, its slots (`levels::slots`) are matched to the channel's mean, not to mid-scale.
-   Correction = rounded difference in steps; up to 8 rounds; tolerance 0.6 steps (the register has 1-step resolution;
-   the mean of 2^18 samples per core is good to about 0.05 step). Codes per step: 16, or 32 where a digital gain of 2
-   or more puts the ADC x2 of 0x105c before the measure unit.
-3. Quietness gate: a channel is matched only when every slot's samples stay within 64 steps (max - min) and every
+   Correction = difference divided by the measured codes per register step, rounded; up to 8 rounds; tolerance 0.6
+   steps (the mean of 2^18 samples per core is good to about 0.05 step). Codes per ADC step for the tolerance: 16, or
+   32 where a digital gain of 2 or more puts the ADC x2 of 0x105c before the measure unit.
+3. Quietness gate: a channel is matched only when every slot's samples stay within 128 steps (max - min) and every
    slot's mean moves by at most 0.5 step over three runs 20 ms apart. Matching to the channel mean assumes each core
    sees the same signal on average; a signal near a multiple of fs/8 would otherwise be trimmed into the offsets.
    One that is not locked to the ADC clock moves the core means from run to run and is refused; one that is locked

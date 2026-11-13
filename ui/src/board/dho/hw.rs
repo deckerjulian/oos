@@ -339,9 +339,12 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
     for (n, &o) in cur.iter().enumerate() {
         coretrim::TrimHw::set_offset(&mut hw, n, o);
     }
-    let Some(order) = coretrim::order(&mut hw, &cur, &lsb) else {
-        eprintln!("oos-ui hw: core offsets of ADC mode {}: core order not found", mode);
-        return false;
+    let order = match coretrim::order(&mut hw, &cur) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("oos-ui hw: core offsets of ADC mode {}: core order not found: {}", mode, e);
+            return false;
+        }
     };
     match coretrim::trim(&mut hw, &groups, &cur, &order, &lsb) {
         Ok(t) => {
