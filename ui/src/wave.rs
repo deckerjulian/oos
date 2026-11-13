@@ -446,6 +446,17 @@ impl Source {
     }
 
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
+    /// STOP for the hardware thread (`Shared::hold`): whether it may arm, and the newest final-frame request. True when
+    /// that request is done and every frame before it was taken (always for other sources).
+    pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            (g.hold, g.final_req) = (hold, req);
+            return g.final_ack >= req && g.queue.is_empty();
+        }
+        true
+    }
+
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();

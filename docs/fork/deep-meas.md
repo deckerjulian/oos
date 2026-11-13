@@ -33,10 +33,9 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
 
 ## What STOP shows
 
-STOP does not reach the acquisition thread: it keeps recording with the same settings, so the memory behind the
-frozen record is overwritten and cannot be read again. After STOP the measurements are those of the last raw deep
-record (up to about 1 s before the stop), not of the pair record on screen. For an exact measurement of one record use
-Single: every Single batch is read raw.
+Since `fix/stop-exact` (docs/fork/stop-exact.md): STOP holds the acquisition thread, which reads the newest frame of
+its last batch raw when the record shown is of pairs; that frame becomes the record on screen, so the measurements
+belong to it. With `acq.prearm = on` such batches are not armed ahead, so the replay works there too.
 
 ## Constants
 
@@ -83,7 +82,7 @@ Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first without the
    before it (no shift of the window: trigger point check).
 5. Budget: 2 channels at 10 M (40 MB) and 1 channel at 25 M: mean-type stay NaN, Max/Min update per record, no raw
    reads in the log.
-6. STOP while running at 10 M: the values stay those of the last raw record (no NaN); then RUN again.
+6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3; then RUN again.
 7. Peak mode, roll, zoom: no raw deep reads (log), as before.
 
 Record the results here and in `docs/fork/unit-dho804.md`.
@@ -95,4 +94,3 @@ Record the results here and in `docs/fork/unit-dho804.md`.
 - A 12 M-point raw frame is copied once into `Shared::frame` (48 MB) and run through `to_record` and the measurement
   threads: about once a second; the measurement of 12 M samples on the little cores may take longer than the period,
   then results come less often.
-- After STOP the measurement is of the last raw record, not of the frozen pair record (see above).

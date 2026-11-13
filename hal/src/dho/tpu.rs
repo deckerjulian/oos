@@ -476,6 +476,22 @@ pub fn edge_coupled(sh: &mut Shadows, ch: u32, slope: Slope, coupling: Coupling,
     t.w
 }
 
+/// UART trigger (docs/fork/hwuart.md): the source's comparator (level A, the trigger level with its hysteresis) on
+/// event R, the line inverted for idle-low signals (R pattern bit 23), the DC filter of the source, the receiver words
+/// (`uarttrig::words`), then the mux on the UART event. Channels only.
+pub fn uart(sh: &mut Shadows, ch: u32, u: &crate::dho::uarttrig::Uart, level: f64, vt: &[Vert; 4]) -> Vec<Write> {
+    let mut t = Tpu { sh, w: Vec::new() };
+    let a = cmp_a(ch);
+    t.bypass(false);
+    t.levels(ch, level, level, true, false, vt);
+    t.iir(ch);
+    t.source(Ev::R, a, 0, a, 0);
+    t.pattern(Ev::R, 0, 0, 2, u.invert as u32);
+    t.w.extend(crate::dho::uarttrig::words(u));
+    t.mode(crate::dho::uarttrig::MUX);
+    t.w
+}
+
 /// Holdoff on its own (trigger.md 2.6): holdoff type 4 (time), 6.4 ns ticks, 48 bit.
 pub fn holdoff(sh: &mut Shadows, t_fs: i128) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
@@ -846,6 +862,27 @@ pub fn force(sh: &Shadows) -> Vec<Write> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn uart_routes_the_line_and_selects_the_receiver() {
+        use crate::dho::uarttrig::{Cond, Parity, Stop, Uart};
+        let mut sh = Shadows::APP;
+        let vt = [Vert { scale: 1e9, offset: 0.0, g: 1.0, noise: 0.0 }; 4];
+        let u = Uart { baud: 9600.0, bits: 8, parity: Parity::None, stop: Stop::One, cond: Cond::Start, invert: true };
+        let w = uart(&mut sh, 2, &u, 1.5e9, &vt);
+        // event R: comparator level A of CH2 (code 2) on both inputs, pattern (0, 0, 2) with the inversion bit
+        let r: Vec<u32> = w.iter().filter(|x| x.0 == 0x204c).map(|x| x.1).collect();
+        assert_eq!(*r.last().unwrap(), 2 | 2 << 8 | 2 << 20 | 1 << 23);
+        assert!(w.contains(&(0x2100, 16276)) && w.contains(&(0x2104, 7)) && w.contains(&(0x221c, 0)));
+        assert_eq!(*w.last().unwrap(), (0x205c, 4));
+        assert!(w.iter().any(|x| x.0 == 0x200c), "CH2 level A");
+        assert_eq!(w.iter().find(|x| x.0 == 0x208c).unwrap().1 >> 2 & 3, 1);
+        // the counter's write registers stay untouched
+        assert!(w.iter().all(|x| !(0x2200..=0x2218).contains(&x.0)));
+        // not inverted: bit 23 clear
+        let w = uart(&mut sh, 2, &Uart { invert: false, ..u }, 1.5e9, &vt);
+        assert_eq!(w.iter().filter(|x| x.0 == 0x204c).last().unwrap().1 & 1 << 23, 0);
+    }
 
     #[test]
     fn level_codes_from_the_doc_example() {
