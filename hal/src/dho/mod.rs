@@ -9,6 +9,7 @@ pub mod acq;
 pub mod adc;
 pub mod avg;
 pub mod afe;
+pub mod auxout;
 pub mod afg;
 pub mod board;
 pub mod boot;
