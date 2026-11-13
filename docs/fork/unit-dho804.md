@@ -264,6 +264,19 @@ Details: private RE notes `docs/logs/oos_unitlab_20261113.md`, "Round 2".
 Not done, needs a cable moved: hwmask step 7 (AUX OUT to CH2), the AUX OUT check, the slot map with separate signals
 on CH1 and CH2, DVM with a DC reference or a signal on CH3/CH4.
 
+### Round 3 on dho804 69b3d43 (build 20261113-184600)
+
+Details: private RE notes `docs/logs/oos_unitlab_20261113.md`, "Round 3". `oos-irq-place` fix confirmed (`irq 78 ->
+cpus 0xf`); rates equal round 1.
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| STOP exact | pass | STOP freezes `acquired` and the picture; oos-ui 12 % CPU stopped (38 % before); settings in STOP acquire nothing; Normal without signal stops in 0.34 s. With `meas.deep_raw` at 10 M, Vavg 2.3 s after STOP equals the host mean of the RAW window to 1e-6 V (4 of 4); at 0.8 s still NaN or an older value. One SINGLE adds 248 to `acquired` at 1 us/div |
+| Deep measurements (`meas.deep_raw`) | broken live | 1 ch 10 M at 1 ms/div: Vavg/Vrms stay NaN for 20 s (only after STOP correct); acquired/s 11.2 -> 9.0. At 2 and 5 ms/div one carried value; 500 us and 20 ms/div NaN. Suspect `deep_raw_settings` returns None when the screen window is set |
+| Hardware zone (`zone.hw`) | keep opt-in | qualification right in all cases of steps 1-4 and 6 (box on/above the trace, intersect/not, narrow box on the edge, last division, two zones): blocked cases stop acquisitions at the trigger. Debug line dead (`armed=0`, all counters 0). Pass rate 29 frames/s against 187 with the software filter |
+| C2H chunks | pass | 4 ch 1 M live, no error |
+| MPS256 | already in effect | 6.12 kernel: DevCtl 0x2830 (MPS 256 B) on endpoint (cap 0x60, DevCap 512 B) and root port (cap 0xc0, DevCap 256 B) without `pci=pcie_bus_perf` |
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
