@@ -383,7 +383,12 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
         Ok(t) => {
             eprintln!("oos-ui hw: core offsets of ADC mode {}: {:?} -> {:?}, order {:?}, {:.2} steps left (kept {:.2}), matched {:#x} skipped {:#x}", mode, cur, t.offsets, order, t.residual, t.kept, t.matched, t.skipped);
             if t.offsets != cur {
+                // this session uses the result; the file only takes a move beyond the per-boot scatter
                 cal.set_offsets(mode, &t.offsets);
+                if !coretrim::worth_saving(&cur, &t.offsets) {
+                    eprintln!("oos-ui hw: core offsets of ADC mode {}: within {} register steps of the kept values, not saved", mode, coretrim::SAVE_MIN_STEPS);
+                    return t.matched != 0 && t.skipped == 0;
+                }
                 overlay.set(mode, &t.offsets);
                 if let Err(e) = calfile::save(calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, &overlay.to_bytes(), calfile::now()) {
                     eprintln!("oos-ui hw: core offsets: {}/{} not saved: {}", calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, e);

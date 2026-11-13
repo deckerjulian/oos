@@ -302,6 +302,19 @@ pub fn trim_gated(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i3
     Ok(Trimmed { offsets: *cur, residual: kept, kept, matched, skipped })
 }
 
+/// A trim result goes into `OVERLAY_FILE` only when some core moved by more than this many register steps from the
+/// values the trim started from. The cold boot runs the ADC's internal trim at every power-up, which scatters some
+/// core offsets by about 2 to 3 ADC steps (4 to 5 register steps) from boot to boot (unit rounds 11 to 16: cores 0 and
+/// 2 moved 25 -> 30 -> 26 and 38 -> 33 -> 34 over three boots; within one boot the values held). No stored value covers
+/// that part; each session matches it again. What the file keeps is the part that stays: a core the stored cal_adc
+/// offsets no longer cover (core 5 at about +9 steps against the others; the first trim moved it 85 -> 79).
+pub const SAVE_MIN_STEPS: i32 = 4;
+
+/// Whether a trim from `start` to `new` is worth writing to `OVERLAY_FILE` (`SAVE_MIN_STEPS`).
+pub fn worth_saving(start: &[i32; 8], new: &[i32; 8]) -> bool {
+    start.iter().zip(new).any(|(a, b)| (a - b).abs() > SAVE_MIN_STEPS)
+}
+
 /// `AVG_RUNS` runs of the measure unit averaged per slot (means averaged, min and max over all runs).
 fn measure(hw: &mut dyn TrimHw) -> Result<[Slot; 8], String> {
     let mut runs = Vec::with_capacity(AVG_RUNS);
@@ -632,6 +645,19 @@ mod tests {
         let t = trim(&mut h, &[(0, (0..8).collect())], &[0; 8], &ORD, &[16.0; 8]).unwrap();
         assert_eq!((t.offsets, h.m.reg), ([0; 8], [0; 8]), "{:?}", t);
         assert!(t.kept > TOL && t.residual == t.kept, "{:?}", t);
+    }
+
+    // Round 16: each boot moved some cores by up to 5 register steps; a file rewritten every boot keeps nothing
+    // lasting. Break it catches: saving a per-boot move, or not saving the lasting correction of the far core.
+    #[test]
+    fn only_moves_beyond_the_boot_scatter_are_saved() {
+        let r15 = [30, 67, 33, 76, 57, 79, -28, 59];
+        // round 16's re-match: per-boot moves of 4, 1, 3, 2, 3
+        assert!(!worth_saving(&r15, &[26, 67, 34, 76, 60, 81, -31, 59]));
+        assert!(!worth_saving(&r15, &r15));
+        // no file yet: the stored cal_adc offsets of round 9 to the first trim, core 5 by 6, core 0 by 7
+        assert!(worth_saving(&[32, 66, 33, 73, 53, 85, -32, 62], &[25, 66, 38, 77, 57, 79, -31, 59]));
+        assert!(worth_saving(&r15, &[30, 67, 33, 76, 57, 79 - SAVE_MIN_STEPS - 1, -28, 59]));
     }
 
     // Round 6: one core about 12 steps above the other seven (1.25 GSa/s, one channel). Break it catches: the

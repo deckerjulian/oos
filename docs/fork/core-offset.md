@@ -140,6 +140,26 @@ CH3 alone, input open, 100 mV/div, 1.25 GSa/s, trigger CH3.
   not reached the ADC yet (looked quiet), the offsets had not settled. Fix: the trim waits until the configuration
   has stood for 2 s (`TRIM_HOLD`); a new configuration in that time replaces the wait. It then disarms and runs.
 
+## Round 16 and the two components (unit, dho804 39e5ca6)
+
+The 2 s hold works: no order search in the probe-signal modes, acquisition resumes after the trim. The kept values
+read 2.86 steps at the first session after a reboot (0.29 at the end of the previous boot), as in rounds 14 and 15.
+Within one boot they hold across oos-ui restarts (round 13: 0.46, round 15: 0.29).
+
+The core offsets have two components:
+
+- A lasting one: a core that the stored cal_adc offsets no longer cover. Core 5 sits about +9 steps above the
+  others at every boot (untrimmed slot 6: +8.5 in round 11, +9.3 in round 12).
+- A per-boot one: the cold boot runs the ADC's internal trim at every power-up (oos-fpgad step 14). With the same
+  stored offsets, untrimmed slots 0 and 1 (cores 0 and 2) differ by about 3 steps between boots (round 11: +2.1 and
+  -4.2, round 12: -0.8 and -1.2). The trims follow it: core 0 25 -> 30 -> 26, core 2 38 -> 33 -> 34 over three boots.
+  No stored value covers this part. It is also why the stock calibration's offsets do not match this unit.
+
+So the trim runs every session, and the file only takes a result where some core moved by more than 4 register
+steps (`SAVE_MIN_STEPS`, about the per-boot scatter): the lasting part, without rewriting the card at every boot.
+The session uses every confirmed result. Hardware averaging and the DVM lanes depend on the trim for this reason;
+`cal.core_offset = tight` stays opt-in for now.
+
 ## What the change does
 
 `hal::dho::coretrim`, called from the acquisition thread once a configuration has stood for 2 s, with nothing
@@ -166,8 +186,8 @@ armed, once per ADC mode and session:
    differences would then move the core means by more than 0.25 step), or, with two or more channels, when their
    cores start more than 8 steps apart (a slot grouping that mixes channels). The mode is then tried again at a later configuration, at most 5
    times per session.
-5. The new offsets go into the in-memory cal_adc payload, so later switches back to the mode apply them, and into
-   `/oos/cal/core_offsets.hex` (the trimmed modes only, a `calfile` container). That file is read only while the key
+5. The new offsets go into the in-memory cal_adc payload, so later switches back to the mode apply them, and, when
+   some core moved by more than 4 register steps, into `/oos/cal/core_offsets.hex` (the trimmed modes only, a `calfile` container). That file is read only while the key
    is on and is laid over the cal_adc.hex in use (Rigol's, or the self-cal's `/oos/cal/cal_adc.hex`). At the first
    configuration of a mode the kept values are written to the ADC before the match starts.
 
