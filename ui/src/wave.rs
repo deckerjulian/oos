@@ -446,6 +446,17 @@ impl Source {
     }
 
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
+    /// STOP for the hardware thread (`Shared::hold`): whether it may arm, and the newest final-frame request. True when
+    /// that request is done and every frame before it was taken (always for other sources).
+    pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            (g.hold, g.final_req) = (hold, req);
+            return g.final_ack >= req && g.queue.is_empty();
+        }
+        true
+    }
+
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
@@ -498,6 +509,32 @@ impl Source {
             let mut g = shared.lock().unwrap();
             g.counter_want = want;
             return Some(g.counter);
+        }
+        None
+    }
+
+    /// Hardware source: hands the zone trigger the UI wants to the acquisition thread (None: off) and returns the latest
+    /// reading; None off the hardware.
+    pub fn hw_zone(&self, want: Option<crate::board::ZoneWant>) -> Option<Option<crate::board::ZoneRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            if g.zone_want != want {
+                g.zone_want = want;
+            }
+            return Some(g.zone);
+        }
+        None
+    }
+
+    /// Hardware source: hands the mask test the UI wants to the acquisition thread (None: off) and returns the latest
+    /// counter reading; None off the hardware.
+    pub fn hw_mask(&self, want: Option<crate::board::MaskWant>) -> Option<Option<crate::board::MaskRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            if g.mask_want != want {
+                g.mask_want = want;
+            }
+            return Some(g.mask);
         }
         None
     }
@@ -630,6 +667,7 @@ impl Source {
         if let Source::Hw { shared, seen } = self {
             let mut g = shared.lock().unwrap();
             g.want = Some(board().want(m));
+            g.deep_raw = crate::deepmeas::want(m);
             g.slow = board().slow_mode(m);
             g.stamp = m.hw_stamp;
             g.avg_clear = m.hw_avg_clear;

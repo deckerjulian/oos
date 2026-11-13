@@ -106,6 +106,12 @@ impl Mask {
         (lo, hi)
     }
 
+    /// The mask in `n` equal columns over the window (a hardware mask table): the band of each is the union of the
+    /// bands it covers, so whatever passes this mask passes the columns.
+    pub fn columns(&self, n: usize) -> (Vec<f32>, Vec<f32>) {
+        (0..n).map(|c| self.band(c as f64 / n as f64, (c + 1) as f64 / n as f64)).unzip()
+    }
+
     /// Tests the waveform `v` (same time window as the reference) against the mask. NaN samples are skipped.
     pub fn test(&self, v: &[f32]) -> Verdict {
         let mut violations = 0;
@@ -183,6 +189,22 @@ mod tests {
         v[1250] += 0.5;
         let r = m.test(&v);
         assert_eq!((r.pass, r.violations, r.first), (false, 1, Some(1250)));
+    }
+
+    #[test]
+    fn columns_cover_the_bands() {
+        let v: Vec<f32> = (0..100).map(|i| if i < 50 { 0.0 } else { 1.0 }).collect();
+        let m = build(&v, 3, 0.1);
+        // 10 columns of 10 samples: column 4 (40..50) reaches the step widened by 3 samples
+        let (lo, hi) = m.columns(10);
+        assert_eq!(lo.len(), 10);
+        assert_eq!((lo[0], hi[0]), (-0.1, 0.1));
+        assert_eq!((lo[4], hi[4]), (-0.1, 1.1));
+        assert_eq!((lo[9], hi[9]), (0.9, 1.1));
+        // more columns than reference samples: every column takes its sample's band
+        let (lo, hi) = m.columns(1000);
+        assert_eq!((lo[999], hi[999]), (0.9, 1.1));
+        assert!(lo.iter().zip(&hi).all(|(l, h)| l < h));
     }
 
     #[test]

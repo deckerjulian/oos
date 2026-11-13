@@ -111,6 +111,18 @@ pub trait Board: Sync + 'static {
     /// not enabled.
     fn dvm_hw(&self) -> bool;
 
+    /// The mask test runs in the board's hardware (`MaskWant`) instead of on the records; off where the board has none
+    /// or it is not enabled.
+    fn mask_hw(&self) -> bool;
+
+    /// The zone trigger qualifies frames in the board's hardware (`ZoneWant`) instead of the records being filtered;
+    /// off where the board has none or it is not enabled.
+    fn zone_hw(&self) -> bool;
+
+    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:UART?`); "none" where
+    /// the board has none.
+    fn uart_debug(&self, m: &Model) -> String;
+
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
 
@@ -227,6 +239,57 @@ pub struct DvmRead {
     pub n: u64,
 }
 
+/// Columns of a hardware mask table (`MaskWant::lo`/`hi`).
+pub const MASK_COLUMNS: usize = 1000;
+
+/// The FPGA mask test as the UI wants it (`mask.hw = on`, docs/fork/hwmask.md): source channel, the volt band of each
+/// table column, stop on a failure, and a number raised to clear the counters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaskWant {
+    pub ch: usize,
+    pub lo: Vec<f32>,
+    pub hi: Vec<f32>,
+    pub stop: bool,
+    pub clear: u64,
+}
+
+/// The FPGA zone trigger as the UI wants it (`zone.hw = on`, docs/fork/hwzone.md): source channel, up to two zones
+/// (outline in time relative to the trigger and volts; true = the trace must touch it), and a number raised to clear
+/// the counter.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ZoneWant {
+    pub ch: usize,
+    pub zones: Vec<(Vec<(f64, f64)>, bool)>,
+    pub clear: u64,
+}
+
+/// A reading of the zone unit (fork): source channel and slot, the 0x1190 control word, the raw words (0x4030, 0x4038,
+/// frames low/high, fails low/high), qualified frames (48 bits), armed and pass flags, and the number of the reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ZoneRead {
+    pub ch: usize,
+    pub slot: u32,
+    pub ctrl: u32,
+    pub raw: [u32; 6],
+    pub frames: u64,
+    pub armed: bool,
+    pub pass: bool,
+    pub n: u64,
+}
+
+/// A reading of the mask unit's counters (fork): source channel and slot, the control word, the raw counter registers
+/// (frames low/high, fails low/high), the 48-bit counts, and the number of the reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MaskRead {
+    pub ch: usize,
+    pub slot: u32,
+    pub ctrl: u32,
+    pub raw: [u32; 4],
+    pub frames: u64,
+    pub fails: u64,
+    pub n: u64,
+}
+
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
 pub struct Shared {
@@ -267,6 +330,19 @@ pub struct Shared {
     /// the FPGA's DVM block: wanted by the UI (None: off), the latest reading
     pub dvm_want: Option<DvmWant>,
     pub dvm: Option<DvmRead>,
+    /// STOP (docs/fork/stop-exact.md): the UI is stopped and the thread arms nothing; `final_req` is raised for a STOP
+    /// that wants the newest frame read raw, `final_ack` is the request done (its frame queued before)
+    pub hold: bool,
+    pub final_req: u64,
+    pub final_ack: u64,
+    /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
+    pub deep_raw: Option<crate::deepmeas::Want>,
+    /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
+    pub mask_want: Option<MaskWant>,
+    pub mask: Option<MaskRead>,
+    /// the FPGA's zone trigger: wanted by the UI (None: off), the latest reading
+    pub zone_want: Option<ZoneWant>,
+    pub zone: Option<ZoneRead>,
     /// `trig.hw_status = on`: what triggered the last batch, from the SCU status (number of the reading; Some(true)
     /// the TPU fired, Some(false) only forced acquisitions (auto timeout), None nothing accepted)
     pub trig_fired: Option<(u64, Option<bool>)>,

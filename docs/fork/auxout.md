@@ -45,24 +45,17 @@ to the idle level when the acquisition ends. That a comparator hit means "fail" 
 - SCPI: `:SYSTem:AOUTput TOUT|OFF`, query returns `TOUT` or `OFF`. `TOUT` and `PFAil` are the stock names; `OFF` is
   an OOS addition (stock offers only trigger out and pass/fail).
 
-## Pass/fail: not offered yet
+## Pass/fail
 
-The pass/fail source is the FPGA mask comparator (0x1190..0x11dc, `specs/06-mask-unit.md`). OOS runs the mask test in
-software and does not load the comparator tables, so the hardware never produces a result and sel 3 would stay idle.
-A software mask result cannot reach the pin: there is no register that pulses it directly.
+The pass/fail source is the FPGA mask comparator. A software mask result cannot reach the pin: no register pulses it
+directly. So pass/fail works only with the hardware mask test (`mask.hw = on`, `hwmask.md`) or the hardware
+zone trigger (`zone.hw = on`, `hwzone.md`, 0x119c bit 29 set).
 
-Prepared behind the ui cargo feature `aux-passfail` (`model::AUX_PASSFAIL`):
 - hal: `auxout::PassFail { width, source, event, idle_high }`, `PassFail::word()`, field constants in `auxout::pf`,
-  `PassFail::DEFAULT` (1 us high pulse on a mask failure, an OOS choice). Always compiled and tested.
-- ui: the `Pass/fail` menu choice, `:SYSTem:AOUTput PFAil` and the setup value `PassFail` are refused unless the
-  feature is on.
-
-Missing before the feature can be switched on:
-1. The hardware mask unit driven by OOS: table load, channel select in 0x1190, latch and clear per acquisition
-   (`specs/06-mask-unit.md`).
-2. The mask test menu choosing between the software and hardware comparator, and the hardware fail counts shown.
-3. Menu items for width, event and polarity (the fields exist in `PassFail`, the menu uses the default).
-4. On-unit check of the pulse (below, step 5).
+  `PassFail::DEFAULT` (1 us high pulse on a mask failure, an OOS choice).
+- ui: the `Pass/fail` menu choice and `:SYSTem:AOUTput PFAil` are offered only with `mask.hw = on` or
+  `zone.hw = on`. A setup file takes the value either way; without a hardware test the output then stays low.
+- Width, event and polarity have no menu items yet; the menu uses the default.
 
 ## On-unit check
 
@@ -77,7 +70,7 @@ Needs a probe on CH1 (probe compensation output) and a BNC cable from AUX OUT to
    Stop: no further pulses. At 1 ms/div with Normal sweep the pulse rate equals the trigger rate on the status bar.
 4. `:SYSTem:AOUTput OFF`: CH2 flat at 0 V. `:SYSTem:AOUTput TOUT`: pulses return. Restart oos-ui: the setting comes
    back from the setup and is written once at the first set-up.
-5. Later, with the hardware mask unit: set `aux-passfail`, choose Pass/fail, use a mask the signal violates. Expect one
+5. With the hardware mask test (`hwmask.md`): choose Pass/fail, use a mask the signal violates. Expect one
    1 us high pulse per failed acquisition, none for passed ones. Then check `idle_high` and `event = Pass`.
 
 Record the results in `docs/fork/unit-dho804.md`. If step 3 shows nothing, check with a second scope whether the BNC

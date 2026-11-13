@@ -17,6 +17,8 @@ mod clock;
 mod cmd;
 mod decode;
 mod ethlink;
+mod compress;
+mod deepmeas;
 mod fastdraw;
 mod font;
 mod gfx;
@@ -809,7 +811,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         }
         if setup_t.elapsed().as_secs() >= 2 {
             setup_t = Instant::now();
-            let t = store::setup_text(&ui.m);
+            let t = store::setup_text(ui.setup_model());
             if t != setup_last {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {

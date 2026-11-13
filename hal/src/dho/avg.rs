@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Hardware averaging (docs/fork/specs/01-hw-averaging.md): the FPGA averages every trigger, the host reads only the
-//! newest frame of a batch (`seq::batch_read`). The register side is in `acq` (mode, count, clear), `hz` (segment
+//! Hardware averaging (docs/fork/specs/01-hw-averaging.md): the FPGA averages every trigger, the host plays every
+//! frame of a batch (the averaging sits on the play side) and shows the newest (`seq::State::read_steps`). The register side is in `acq` (mode, count, clear), `hz` (segment
 //! layout) and `scu` (window word). NOT VERIFIED ON THE UNIT: what the frames hold in average mode is not visible in the
 //! stock library (spec 01, 6.1). Two readings are supported, chosen by `Kind`:
 //!
@@ -124,8 +124,9 @@ mod tests {
 
     // The fixture hal/testdata/avg-writes.txt (Average 16, CH1, 100 ns/div, 1000 points, a batch of 10 with 4
     // recorded), checked by hand against spec 01: clear pulse after the stop poll and before the configuration, 0x1004
-    // bit3, 0x10b0 = 15, 0x404c = 10, 0x10e0 = 512 bursts, 0x1110 after 0x1108 (window from 0: 0), play of frame 3
-    // alone. Break it catches: any change of the average sequence, and any difference to normal mode beyond these.
+    // bit3, 0x10b0 = 15, 0x404c = 10, 0x10e0 = 512 bursts, 0x1110 after 0x1108 (window from 0: 0), play of frames 0..3
+    // as in normal mode. Break it catches: any change of the average sequence, any difference to normal mode beyond
+    // these, a play of the newest frame alone (B1: the frames not played never reach the average).
     #[test]
     fn average_writes_match_the_fixture() {
         let a = plan(Mode::Average { count: 16 });
@@ -148,25 +149,24 @@ mod tests {
                 ("0x10b0 0xf", "0x10b0 0x1"),
                 ("0x404c 0xa", "0x404c 0x5"),
                 ("0x10e0 0x200", "0x10e0 0x100"),
-                // the batch of 10 with 4 recorded: frame 3 alone (normal: frames 0..3)
-                ("0x4010 0x3", "0x4010 0x0"),
-                ("0x4014 0x3", "0x4014 0x0"),
             ]
         );
     }
 
-    /// One batch against the model; returns (triggers recorded, the step word of point 0 of the frame read).
+    /// One batch against the model; returns (triggers recorded, the step word of point 0 of the newest frame).
     fn batch(st: &mut State, s: &Settings, p: &crate::dho::hz::Params, bar: &mut crate::dho::seg::sim::SimBus, c2h: &mut crate::dho::seg::sim::SimC2h, dma: &mut DmaBuf) -> (u32, u16) {
         let count = seq::acquire_batch(st, s, p, bar, c2h, dma, false, 0, |_| {}).unwrap();
-        // one frame of 1000 words, whatever the batch held
-        assert_eq!(dma.data().len(), seq::frame_bytes(s, p));
-        let w = u16::from_le_bytes([dma.data()[0], dma.data()[1]]);
+        // every recorded frame is played, 1000 words each; the newest is the last
+        let fb = seq::frame_bytes(s, p);
+        assert_eq!(dma.data().len(), count as usize * fb);
+        let at = (count as usize - 1) * fb;
+        let w = u16::from_le_bytes([dma.data()[at], dma.data()[at + 1]]);
         (count, w - Engine::raw(0, 0))
     }
 
-    // End to end against the model: configure (clear), batches of 4 triggers, one frame read per batch, the hold
-    // tracker's clear. Break it catches: reading frame 0 instead of the newest, reading every frame, no clear after a
-    // configuration or a complete hold average, the software path seeing raw frames.
+    // End to end against the model: configure (clear), batches of 4 triggers, every frame played, the newest shown, the
+    // hold tracker's clear. Break it catches: showing frame 0 instead of the newest, a play of fewer frames than
+    // recorded, no clear after a configuration or a complete hold average, the software path seeing raw frames.
     #[test]
     fn averaged_batches_against_the_model() {
         for kind in [Kind::Running, Kind::Hold] {

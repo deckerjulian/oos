@@ -127,6 +127,18 @@ impl Board for Dho {
         hw::dvm_hw_on()
     }
 
+    fn mask_hw(&self) -> bool {
+        hw::mask_hw_on()
+    }
+
+    fn zone_hw(&self) -> bool {
+        hw::zone_hw_on()
+    }
+
+    fn uart_debug(&self, m: &Model) -> String {
+        hw::uart_debug(m)
+    }
+
     fn avg_hw(&self, m: &Model) -> bool {
         hw::avg_hw_ok(m)
     }

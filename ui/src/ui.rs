@@ -25,6 +25,8 @@ mod logger;
 mod measlabels;
 mod overclock;
 mod tools;
+mod hwmask;
+mod hwzone;
 mod update;
 mod viewmore;
 mod wlan;
@@ -112,6 +114,9 @@ const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
 /// records kept for history playback
 const HISTORY: usize = 200;
+/// Longest wait of a STOP for the hardware's final frame (`Ui::stop_final`): a batch in progress, its read and the raw
+/// read of the newest frame.
+const STOP_FINAL_WAIT: f64 = 3.0;
 /// LA words a history entry keeps: above this only the newest record has its LA (200 x 1 M words = 400 MB at most).
 const HISTORY_LA_WORDS: usize = 1_000_000;
 /// Segment counts of the segmented recording (0 = off); the menu offers those within the limit of the set-up
@@ -855,6 +860,13 @@ pub struct Ui {
     meas_want: bool,
     meas_n: u64,
     meas_new: bool,
+    /// per channel: the measurement sent (`meas_env_sent`) and the one shown (`meas_env`) ran on min/max pairs
+    /// (`framestats::needs_samples` are then not available)
+    meas_env_sent: [bool; NCH],
+    meas_env: [bool; NCH],
+    /// STOP waiting for the hardware's final frame (docs/fork/stop-exact.md): the request number and until when
+    final_req: u64,
+    stop_final: Option<f64>,
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -868,6 +880,9 @@ pub struct Ui {
     zone_path: Vec<(i32, i32)>,
     /// records dropped by the zone condition
     zone_drops: u64,
+    /// the zone unit (hwzone.rs): latest reading, and a number raised to clear its counter
+    zone_hw: Option<crate::board::ZoneRead>,
+    zone_hw_clear: u64,
     /// fast path frames by where the edge of the set direction was: at the hardware trigger point; further away with
     /// an edge of the other direction at the point (the hardware fired on the wrong edge); further away with no edge at
     /// the point (the point is off); none found. And the offsets of the last kind in samples: sum, largest
@@ -1019,6 +1034,11 @@ pub struct Ui {
     mask: Option<oos_dsp::mask::Mask>,
     mask_pass: u64,
     mask_fail: u64,
+    /// the mask in the columns of the hardware table (hwmask.rs), the latest counters of the mask unit, and a number
+    /// raised to clear them
+    mask_cols: Option<(Vec<f32>, Vec<f32>)>,
+    mask_hw: Option<crate::board::MaskRead>,
+    mask_hw_clear: u64,
     pub shot_request: Option<String>,
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)
@@ -1087,6 +1107,10 @@ impl Ui {
             meas_bg: None,
             meas_want: false,
             meas_n: 0,
+            meas_env_sent: [false; NCH],
+            meas_env: [false; NCH],
+            final_req: 0,
+            stop_final: None,
             meas_new: false,
             history: std::collections::VecDeque::new(),
             hist_pos: None,
@@ -1111,6 +1135,8 @@ impl Ui {
             zone_arm: None,
             zone_path: Vec::new(),
             zone_drops: 0,
+            zone_hw: None,
+            zone_hw_clear: 0,
             fast_edges: [0; 4],
             fast_off: (0.0, 0.0),
             seg_n: 0,
@@ -1202,6 +1228,9 @@ impl Ui {
             mask: None,
             mask_pass: 0,
             mask_fail: 0,
+            mask_cols: None,
+            mask_hw: None,
+            mask_hw_clear: 0,
             shot_request: None,
             quit: false,
         };
@@ -1512,9 +1541,39 @@ impl Ui {
     /// Measurement `k` of channel `c` (NaN when off or not measurable).
     pub fn meas(&self, c: usize, k: Meas) -> f64 {
         if self.m.ch[c].on {
-            self.ana[c].get(k)
+            self.ana_get(c, k)
         } else {
             f64::NAN
+        }
+    }
+
+    /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
+    /// stop or a history view) while raw deep measurements are on and the record shown is of min/max pairs.
+    fn stop_wants_final(&self) -> bool {
+        let m = &self.m;
+        m.trig_mode != TrigMode::Single
+            && m.segments == 0
+            && !(m.mask_on && m.mask_stop)
+            && self.hist_pos.is_none()
+            && self.seg_pos.is_none()
+            && crate::deepmeas::want(m).is_some()
+            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::deepmeas::deep_pairs(&r.frame))
+    }
+
+    /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
+    pub(crate) fn ana_get(&self, c: usize, k: Meas) -> f64 {
+        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+            f64::NAN
+        } else {
+            self.ana[c].get(k)
+        }
+    }
+
+    /// Whether channel `c` of record `rec` is measured on min/max pairs (`meas_slice`).
+    fn meas_on_pairs(&self, rec: &Record, c: usize) -> bool {
+        match self.meas_frame(rec, c) {
+            Some((f, _, _)) => f.envelope,
+            None => rec.pairs || rec.raw.as_ref().is_some_and(|r| r.frame.envelope),
         }
     }
 
@@ -1591,8 +1650,8 @@ impl Ui {
         (self.meas_n, self.meas_want) = (self.meas_n + 1, false);
         self.ana = Default::default();
         self.mstat.clear();
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
+        (self.zone_drops, self.zone_hw_clear) = (0, self.zone_hw_clear + 1);
         self.hw_avg_restart();
         self.toast("Display cleared");
     }
@@ -1637,6 +1696,8 @@ impl Ui {
         self.ch_hold_poll();
         self.counter_poll();
         self.dvm_poll();
+        self.mask_hw_poll();
+        self.zone_hw_poll();
         self.la_probe_poll();
         self.log_tick();
         self.m.clamp_offsets();
@@ -1675,13 +1736,20 @@ impl Ui {
                 self.seg_times.clear();
             }
         }
+        // STOP of a deep record on pairs with raw deep measurements: the hardware reads the newest frame raw and
+        // stops arming; until it is here the records go on (docs/fork/stop-exact.md)
+        if !running && self.was_running && self.stop_wants_final() {
+            self.final_req += 1;
+            self.stop_final = Some(self.now + STOP_FINAL_WAIT);
+        }
+        let final_done = self.src.hw_hold(!running && self.last[0].is_some(), self.final_req);
         self.was_running = running;
         if hw_seg {
             self.seg_poll(running);
         }
         let persist = PERSIST[self.m.persist].1;
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
+        if self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -1829,7 +1897,7 @@ impl Ui {
                     }
                     None => {}
                 }
-                if self.m.run == RunState::Stop {
+                if self.m.run == RunState::Stop && self.stop_final.is_none() {
                     break;
                 }
             }
@@ -1865,9 +1933,14 @@ impl Ui {
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
+            // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
+            // measurement stays that of the last raw record
+            let hold = crate::deepmeas::hold(&self.m, self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame));
             if got > 0 {
                 let p0 = std::time::Instant::now();
-                if self.meas_bg.is_some() {
+                if hold {
+                    // the measurement shown stays that of the last raw deep record
+                } else if self.meas_bg.is_some() {
                     // the result for the last record is still good when it comes after this one: `meas_n` only
                     // changes where a result out becomes wrong (a clear, measuring here at once)
                     self.meas_want = true;
@@ -1924,6 +1997,10 @@ impl Ui {
                 }
             }
         }
+        // the final frame was taken (or did not come in time): stopped
+        if self.stop_final.is_some_and(|t| final_done || self.now > t) {
+            self.stop_final = None;
+        }
         if self.m.run == RunState::Stop {
             self.m.status = TrigStatus::Stop;
             self.wfm_rate = 0.0;
@@ -1976,7 +2053,7 @@ impl Ui {
     }
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
-    /// as a full record (averaging, mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
+    /// as a full record (averaging, a software mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
     fn fast_ok(&self) -> bool {
         let m = &self.m;
         matches!(self.src, Source::Hw { .. })
@@ -1984,11 +2061,11 @@ impl Ui {
             && m.acq == AcqMode::Normal
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
-            && !m.mask_on
+            && (!m.mask_on || self.mask_hw_active())
             && !m.zoom
             && !self.xy
             && m.z_src.is_none()
-            && !m.zones.iter().any(|z| z.usable())
+            && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())
             && board().slow_mode(m) == crate::board::Slow::Off
             && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
     }
@@ -2475,7 +2552,8 @@ impl Ui {
             self.mask_pass += 1;
         } else {
             self.mask_fail += 1;
-            if self.m.mask_stop && self.m.run == RunState::Run {
+            // with the hardware test the counters decide (hwmask.rs)
+            if self.m.mask_stop && self.m.run == RunState::Run && !self.mask_hw_active() {
                 self.m.run = RunState::Stop;
                 self.toast("Mask failed: stopped");
             }
@@ -2489,6 +2567,7 @@ impl Ui {
         let tol_x = (self.m.mask_x / HDIV * r.len() as f32).round() as usize;
         let tol_y = self.m.mask_y * self.m.ch[self.m.mask_src].volts_per_div();
         self.mask = Some(oos_dsp::mask::build(r, tol_x, tol_y));
+        self.mask_cols_update();
     }
 
     /// Creates the mask from the source channel of the record shown and starts the test.
@@ -2500,8 +2579,7 @@ impl Ui {
         self.mask_ref = Some(v);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
         self.toast(&format!("Mask created from CH{}", c + 1));
     }
 
@@ -2540,18 +2618,19 @@ impl Ui {
         }
         let f = self.fonts();
         let c = self.m.mask_src;
+        let (pass, fail) = self.mask_counts();
         let parts: [(String, Rgb); 6] = [
-            ("Mask ".into(), TEXT),
+            (if self.mask_hw_active() { "Mask (HW) ".into() } else { "Mask ".into() }, TEXT),
             (format!("CH{}", c + 1), CH_COLORS[c]),
             ("  \u{b7}  Passed ".into(), DIM),
-            (fmt_count(self.mask_pass as f64), GREEN),
+            (fmt_count(pass as f64), GREEN),
             ("  \u{b7}  Failed ".into(), DIM),
-            (fmt_count(self.mask_fail as f64), if self.mask_fail > 0 { RED } else { TEXT }),
+            (fmt_count(fail as f64), if fail > 0 { RED } else { TEXT }),
         ];
         let w: i32 = parts.iter().map(|(s, _)| f.sb.width(s)).sum::<i32>() + 24;
         let a = self.area;
         let r = Rect::new(a.x + 8, a.y + 24, w, 24);
-        let col = if self.mask_fail > 0 { RED } else { GREEN };
+        let col = if fail > 0 { RED } else { GREEN };
         cv.round(r, 12, mix(BAR, col, 110), 255);
         cv.round(r.inset(1), 11, mix(BAR, col, 26), 255);
         let mut x = r.x + 12;
@@ -4191,6 +4270,7 @@ impl Ui {
             })
             .collect();
         let done = measure_channels(&work);
+        self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
         self.meas_n += 1;
         self.meas_want = false;
@@ -4218,6 +4298,7 @@ impl Ui {
     }
 
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
+        self.meas_env = self.meas_env_sent;
         for c in 0..NCH {
             (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
         }
@@ -4248,6 +4329,7 @@ impl Ui {
         }
         self.meas_want = false;
         let Some(rec) = self.last[0].as_ref() else { return };
+        let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         let job: Vec<(usize, MeasSrc, f64, f64)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
@@ -4264,6 +4346,7 @@ impl Ui {
         let w = self.meas_bg.as_mut().expect("worker");
         if w.tx.send((self.meas_n, job)).is_ok() {
             w.busy = true;
+            self.meas_env_sent = env;
         } else {
             // the thread is gone: measure here again
             self.meas_bg = None;
@@ -5511,7 +5594,7 @@ impl Ui {
             }
             Item::TouchLock => m.touch_lock = !m.touch_lock,
             Item::AuxOut => {
-                let all = AuxOut::choices();
+                let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
                 m.aux_out = all[cyc(i, all.len(), d)];
             }
@@ -5918,10 +6001,7 @@ impl Ui {
                     self.shot_request = Some(p.to_string_lossy().into_owned());
                 }
                 Item::MaskCreate => self.create_mask(),
-                Item::MaskReset => {
-                    self.mask_pass = 0;
-                    self.mask_fail = 0;
-                }
+                Item::MaskReset => self.mask_counts_reset(),
                 Item::Stock => self.stock_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
                 Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
@@ -6117,7 +6197,7 @@ impl Ui {
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::TouchLock => &["On", "Locked"],
-            Item::AuxOut => return AuxOut::choices().iter().map(|a| a.name().to_string()).collect(),
+            Item::AuxOut => return AuxOut::choices(board().mask_hw() || board().zone_hw()).iter().map(|a| a.name().to_string()).collect(),
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],
             Item::DecSel => &["D1", "D2", "D3", "D4"],
@@ -7620,6 +7700,164 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 mod tests {
     use super::axis_label;
 
+    // Break it catches: Mean, RMS and Std dev shown from min/max pairs (a deep record read through the FPGA
+    // compression), or Max/Min/Pk-pk lost with them
+    #[test]
+    fn measurements_on_min_max_pairs_leave_out_the_mean_type() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let v: Vec<f32> = (0..n).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
+        for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
+            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope, ..Default::default() });
+            for _ in 0..3 {
+                ui.step(0.02);
+            }
+            let (avg, rms, max, pp) = (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
+            assert_eq!(avg.is_nan() && rms.is_nan(), envelope, "envelope {}: mean {} rms {}", envelope, avg, rms);
+            assert!((max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05, "envelope {}: max {} pk-pk {}", envelope, max, pp);
+            let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
+            assert!(row.is_none_or(|x| x.is_nan() == envelope));
+        }
+    }
+
+    // Break it catches (docs/fork/stop-exact.md): a STOP that keeps the pair record on screen while the measurements
+    // show an older raw record, a final frame not taken or taken after the stop, frames after it taken, the hardware
+    // left arming in STOP or held in RUN, a STOP waiting forever, a plain STOP of a shallow record waiting at all
+    #[test]
+    fn stop_shows_the_final_raw_frame_of_a_deep_record() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, acq), ..Default::default() };
+        let raw = |top: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { top } else { 0.0 }).collect() };
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
+        let steps = |ui: &mut Ui, k: usize| {
+            for _ in 0..k {
+                ui.step(0.02);
+            }
+        };
+        shared.lock().unwrap().queue.push_back(frame(1, true, 10_000_000, pairs.clone()));
+        steps(&mut ui, 3);
+        assert!(!shared.lock().unwrap().hold);
+        // STOP on a pair record: the thread is held and asked for the final frame, the UI waits for it
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 2);
+        {
+            let g = shared.lock().unwrap();
+            assert!(g.hold && g.final_req == 1);
+        }
+        assert!(ui.stop_final.is_some() && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope)));
+        // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
+        {
+            let mut g = shared.lock().unwrap();
+            g.queue.push_back(frame(2, true, 10_000_000, pairs.clone()));
+            g.queue.push_back(frame(3, false, 10_000_000, raw(2.0)));
+            g.final_ack = 1;
+        }
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_none());
+        let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
+        assert_eq!(shown, Some((3, false)), "the final raw frame is the record shown");
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.5).abs() < 0.03, "mean of the record shown: {}", avg);
+        assert_eq!(ui.m.status, TrigStatus::Stop);
+        // frames after it stay unseen in STOP
+        shared.lock().unwrap().queue.push_back(frame(4, false, 10_000_000, raw(4.0)));
+        steps(&mut ui, 2);
+        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
+        assert!(shared.lock().unwrap().hold);
+        // RUN: armed again
+        ui.m.run = RunState::Run;
+        steps(&mut ui, 1);
+        assert!(!shared.lock().unwrap().hold);
+        // no answer: the STOP ends after STOP_FINAL_WAIT anyway
+        shared.lock().unwrap().queue.clear();
+        shared.lock().unwrap().queue.push_back(frame(5, true, 10_000_000, pairs.clone()));
+        steps(&mut ui, 2);
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_some());
+        steps(&mut ui, (STOP_FINAL_WAIT / 0.02) as usize + 2);
+        assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
+        // a shallow record: STOP holds the thread at once, without a final frame
+        ui.m.run = RunState::Run;
+        steps(&mut ui, 1);
+        shared.lock().unwrap().queue.push_back(frame(6, false, 100_000, raw(1.0)));
+        steps(&mut ui, 2);
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 1);
+        assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches (deepmeas.rs): with raw deep reads on, a pair record measured between two raw ones (Mean back
+    // to NaN, statistics counting pair records), a raw deep record not measured, the hold active in Stop or Single
+    #[test]
+    fn deep_raw_records_carry_the_measurements_between_pair_records() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0), (Meas::Vmax, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        // raw: mean 0.25; pairs: the min/max of the same signal, other top so the record shown is visible
+        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
+        let pairs = |top: f32| -> Vec<f32> { (0..n).map(|i| if i % 2 == 0 { 0.0 } else { top }).collect() };
+        let push = |seq: u64, envelope: bool, v: Vec<f32>| {
+            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+        };
+        let step = |ui: &mut Ui| {
+            for _ in 0..3 {
+                ui.step(0.02);
+            }
+        };
+        // before the first raw record: nothing measured on pairs
+        push(1, true, pairs(1.0));
+        step(&mut ui);
+        assert!(ui.meas(0, Meas::Vavg).is_nan() && ui.meas(0, Meas::Vmax).is_nan());
+        push(2, false, raw.clone());
+        step(&mut ui);
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
+        let counted = ui.mstat.first().map_or(0, |s| s.n);
+        // pair records keep the raw record's values, the statistics do not count them
+        for seq in 3..6 {
+            push(seq, true, pairs(1.5));
+            step(&mut ui);
+            assert_eq!(ui.meas(0, Meas::Vavg), avg);
+            assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
+        }
+        assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+        // off: pair records are measured (mean-type NaN, max of the pairs)
+        crate::deepmeas::force(Some(false));
+        push(6, true, pairs(1.5));
+        step(&mut ui);
+        assert!(ui.meas(0, Meas::Vavg).is_nan() && (ui.meas(0, Meas::Vmax) - 1.5).abs() < 0.02);
+        crate::deepmeas::force(None);
+    }
+
     // Break it catches: the newest frame of a picture drawn another way than the others (record points instead of the
     // frame's samples), so the grade follows the mix of the two in each picture: the flicker at 500 us/div on the
     // probe-comp output (docs/fork/flicker.md). Equal frames, 1 to 5 of them per picture, must look the same.
@@ -8717,7 +8955,8 @@ mod tests {
         use oos_hal::dho::acq::Mode;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        // 100 us/div, Auto depth: 62.5 MSa/s, the second divider, where the FPGA averages (B1)
+        ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
         (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
         ui.m.run = RunState::Run;
         let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame { seq, dt: 0.8e-9, pre: 6250, ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()], acq: (1.25e9, 12_500), hw_avg, ..Default::default() };
@@ -8765,6 +9004,9 @@ mod tests {
         assert!(!board().avg_hw(&ui.m));
         ui.m.avg_hw = true;
         ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+        assert!(!board().avg_hw(&ui.m));
+        // 1 us/div at 1.25 GSa/s: averaged frames were zero on the unit (B1), software average
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         assert!(!board().avg_hw(&ui.m));
     }
 
@@ -9185,12 +9427,15 @@ mod aux_out_tests {
     fn aux_out_in_the_system_menu_with_the_offered_choices() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
-        let want: &[&str] = if AUX_PASSFAIL { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
+        let want: &[&str] = if board().mask_hw() || board().zone_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
         assert_eq!(ui.options(Item::AuxOut), want);
         assert_eq!(ui.value(Item::AuxOut), "Trigger out");
         ui.select_option(Item::AuxOut, "Off");
         assert_eq!((ui.m.aux_out, ui.value(Item::AuxOut).as_str()), (AuxOut::Off, "Off"));
         ui.select_option(Item::AuxOut, "Trigger out");
         assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
+        // pass/fail where the mask test runs in hardware
+        assert_eq!(AuxOut::choices(true), AUX_OUTS);
+        assert_eq!(AuxOut::choices(false), [AuxOut::TrigOut, AuxOut::Off]);
     }
 }

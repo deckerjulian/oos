@@ -23,6 +23,8 @@ pub mod hz;
 pub mod la;
 pub mod levels;
 pub mod lmx2582;
+pub mod mask;
+pub mod pairs;
 pub mod panel;
 pub mod roll;
 pub mod scu;
@@ -32,7 +34,10 @@ pub mod seq;
 pub mod spu;
 pub mod target;
 pub mod tpu;
+pub mod uarttrig;
 pub mod wpu;
+pub mod zone;
+pub mod zonegeom;
 
 /// One register write: (BAR1 offset, value).
 pub type Write = (u32, u32);

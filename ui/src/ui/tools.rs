@@ -70,7 +70,7 @@ impl Ui {
             .m
             .meas
             .iter()
-            .map(|&(k, c)| MeasRow { name: k.name().to_string(), ch: c, v: if self.m.ch[c].on { self.ana[c].get(k) } else { f64::NAN }, unit: self.m.ch[c].unit.of(k.unit()) })
+            .map(|&(k, c)| MeasRow { name: k.name().to_string(), ch: c, v: if self.m.ch[c].on { self.ana_get(c, k) } else { f64::NAN }, unit: self.m.ch[c].unit.of(k.unit()) })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
             let (name, is_phase, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
@@ -221,7 +221,7 @@ impl Ui {
         if !self.m.ch[c].on {
             return f64::NAN;
         }
-        self.ana[c].get(match self.m.dvm_mode {
+        self.ana_get(c, match self.m.dvm_mode {
             0 => Meas::Vavg,
             1 => Meas::VrmsAc,
             _ => Meas::Vrms,
@@ -335,8 +335,7 @@ impl Ui {
         self.mask_ref = Some(v);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
         self.toast(&format!("Mask loaded from {}", crate::store::file_name(&p)));
     }
 

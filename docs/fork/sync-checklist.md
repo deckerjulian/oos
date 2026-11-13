@@ -39,6 +39,8 @@ sync". Nothing here touches the unit.
 |---|---|---|
 | no allocation per read, one vector per channel per decode, none with kept vectors | `hal/tests/alloc_batch.rs` | `read_dma` or `deinterleave` + `volts` return to the batch loop; the decode allocates scratch space |
 | early trigger end for new settings on the generic path | `hal/tests/early_trigger_end.rs` | an upstream Poll edit does not reach `plain_step` |
+| compressed batch, then the newest frame raw | `hal/tests/compress_raw_again.rs` | `read_steps_at` stops resetting 0x1170 (pass-through) or the play index / length changes |
+| pairs drawn like the raw fast path, glitches kept | `ui/src/compress.rs` tests | `draw_frame`, `fastdraw::deposit` or the trigger refinement change for envelope frames |
 | fused f32 decode >= 2x upstream's two-pass decode; f32 <= 0.8x the f64 fused decode | `hal/tests/perf_ratio.rs` (ignored) | the decode stops vectorising, goes back to f64, or upstream's path returns |
 | bit-level or bounded equivalence of the fast paths | `seq.rs`, `bus.rs` unit tests | a fast path computes something else than the path it replaced |
 | oos-ui timing ratios | ignored tests named `perf_guard*` in `ui` | see the tests |

@@ -6,7 +6,7 @@
 //! and the hardware source of `oos-ui`. Order (docs/protocols): [ADC mode] -> [AFE] -> TPU edge trigger -> wait FSM
 //! stopped -> acquisition configuration -> SCU auto/normal trigger -> arm -> wait done -> play-last read-out -> read.
 
-use crate::dho::{acq, adc, afe, auxout, hz, la, scu, tpu, Write};
+use crate::dho::{acq, adc, afe, auxout, hz, la, mask, scu, tpu, zone, Write};
 
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -68,6 +68,8 @@ pub enum Trig {
     SetupHold { clk: u32, clk_edge: tpu::Edge, setup: f64, hold: f64, levelc: f64 },
     Nth { count: u32, idle: f64 },
     Video { std: tpu::VideoStd, sync: tpu::VideoSync, line: u32 },
+    /// the TPU's UART receiver on the main source at the main level (docs/fork/hwuart.md)
+    Uart(crate::dho::uarttrig::Uart),
 }
 
 /// The holdoff of a trigger set-up without one.
@@ -126,6 +128,34 @@ pub struct Settings {
     pub segments: Option<Segments>,
     /// what the rear AUX OUT BNC carries (docs/fork/auxout.md); written with the acquisition block when it changed
     pub aux: auxout::AuxOut,
+    /// the FPGA mask test (docs/fork/hwmask.md); None = off
+    pub hwmask: Option<HwMask>,
+    /// the FPGA zone trigger (docs/fork/hwzone.md); None = off. It shares the mask unit's slot and strobe, so it stays
+    /// off while `hwmask` is set
+    pub hwzone: Option<HwZone>,
+}
+
+/// Zone qualification in the FPGA: up to two zones on channel `ch`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HwZone {
+    pub ch: usize,
+    pub zones: Vec<zone::Zone>,
+    /// raised to clear the qualified-frame counter
+    pub clear: u64,
+}
+
+/// A mask test in the FPGA: the volt band of each of the `mask::COLUMNS` columns on channel `ch`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HwMask {
+    /// source channel 0..3; the test is off while it is not acquired
+    pub ch: usize,
+    /// lower and upper limit per column, volts at the probe tip (infinite = no limit)
+    pub lo: Vec<f32>,
+    pub hi: Vec<f32>,
+    /// the FSM stops on a failed frame
+    pub stop_on_fail: bool,
+    /// raised to clear the counters
+    pub clear: u64,
 }
 
 /// A hardware segmented recording.
@@ -142,7 +172,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut, hwmask: None, hwzone: None }
     }
 }
 
@@ -161,6 +191,15 @@ pub struct State {
     pub holdoff_set: bool,
     /// the AUX OUT set-up last written; None = not written since the hand-over, so the first set-up writes it
     pub aux: Option<auxout::AuxOut>,
+    /// the mask unit: table last loaded, (slot, samples per column, clear, stop on fail) of the running test (None =
+    /// off), and the control shadow 0x1190
+    pub mask_cols: Option<Vec<mask::Column>>,
+    pub mask_run: Option<(u32, u32, u64, bool)>,
+    pub s1190: u32,
+    /// the zone unit: tables last loaded, and (slot, samples per column, control word, clear) of the running zone
+    /// qualification (None = off)
+    pub zone_tabs: [Option<Vec<zone::Column>>; 2],
+    pub zone_run: Option<(u32, u32, u32, u64)>,
 }
 
 impl State {
@@ -174,7 +213,7 @@ impl State {
                 a.channel_mode(c, mode);
             }
         }
-        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None }
+        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0, zone_tabs: [None, None], zone_run: None }
     }
 
     /// Configuration steps for `s` (ADC mode if the channel set changed, AFEs, trigger, acquisition registers).
@@ -281,6 +320,8 @@ impl State {
                 st.extend(auxout::writes(&s.aux).into_iter().map(Step::Wr));
                 self.aux = Some(s.aux);
             }
+            st.extend(self.zone_steps(s, &p));
+            st.extend(self.mask_steps(s, &p));
         }
         if let Some(l) = &s.la {
             // thresholds with every set-up (la.md 8.1: on change and once after the start)
@@ -293,6 +334,103 @@ impl State {
             st.extend(scu::auto_trigger(&mut self.sh, s.auto, tb, time_fs(s.holdoff)).into_iter().map(Step::Wr));
         }
         Ok((st, p))
+    }
+
+    /// The mask unit for `s` (docs/fork/hwmask.md): nothing while it runs as wanted; else off, the table when it
+    /// changed, compression, slot (counters cleared on a new slot, a new start or a clear request) and on again; off
+    /// when it is not wanted or its channel is not acquired. Called in the acquisition block with the FSM stopped.
+    fn mask_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        let want = s.hwmask.as_ref().and_then(|m| mask::slot(s.mask, m.ch).map(|sl| (m, sl)));
+        let Some((m, slot)) = want else {
+            if self.mask_run.take().is_none() {
+                return vec![];
+            }
+            self.sh.s4020 = mask::scu_bits(self.sh.s4020, false, false);
+            let mut w = vec![Step::Note("mask test off".into()), Step::Wr((0x4020, self.sh.s4020))];
+            // the zone trigger keeps the slot and the strobe it set up
+            if self.zone_run.is_none() {
+                self.s1190 &= !mask::ctrl::SLOT_MASK;
+                w.extend([Step::Wr((mask::COMPRESS, mask::compress::OFF)), Step::Wr((mask::CTRL, self.s1190))]);
+            }
+            return w;
+        };
+        let k = &s.ch[m.ch];
+        let cols = mask::table(&m.lo, &m.hi, k.scale, k.offset);
+        let run = (slot, mask::per_column(p.memsel as u64), m.clear, m.stop_on_fail);
+        if self.mask_run == Some(run) && self.mask_cols.as_ref() == Some(&cols) {
+            return vec![];
+        }
+        let clear = self.mask_run.map_or(true, |r| r.0 != run.0 || r.2 != run.2);
+        let mut w = vec![];
+        self.sh.s4020 = mask::scu_bits(self.sh.s4020, false, false);
+        w.push((0x4020, self.sh.s4020));
+        if self.mask_cols.as_ref() != Some(&cols) {
+            w.extend(mask::load(&cols));
+            self.mask_cols = Some(cols);
+        }
+        w.push((mask::COMPRESS, mask::compress_word(run.1)));
+        w.extend(mask::select(&mut self.s1190, slot, clear));
+        self.sh.s4020 = mask::scu_bits(self.sh.s4020, true, m.stop_on_fail);
+        w.push((0x4020, self.sh.s4020));
+        self.mask_run = Some(run);
+        let mut st = vec![Step::Note(format!("mask test CH{} slot {}, {} samples per column{}", m.ch + 1, slot, run.1, if clear { ", counters cleared" } else { "" }))];
+        st.extend(w.into_iter().map(Step::Wr));
+        st
+    }
+
+    /// The zone unit for `s` (docs/fork/hwzone.md), like `mask_steps`: nothing while it runs as wanted; else off, the
+    /// tables that changed, control, compression, slot (the counter cleared on a new slot, a new start or a clear
+    /// request) and armed; off when it is not wanted, the mask test is wanted, or its channel is not acquired.
+    fn zone_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        let want = s.hwzone.as_ref().filter(|z| s.hwmask.is_none() && !z.zones.is_empty()).and_then(|z| mask::slot(s.mask, z.ch).map(|sl| (z, sl)));
+        let Some((z, slot)) = want else {
+            if self.zone_run.take().is_none() {
+                return vec![];
+            }
+            self.sh.s4020 = zone::scu_bit(self.sh.s4020, false);
+            let mut w = vec![Step::Note("zone trigger off".into()), Step::Wr((0x4020, self.sh.s4020)), Step::Wr((zone::CTRL, 0))];
+            if self.mask_run.is_none() {
+                self.s1190 &= !mask::ctrl::SLOT_MASK;
+                w.extend([Step::Wr((mask::COMPRESS, mask::compress::OFF)), Step::Wr((mask::CTRL, self.s1190))]);
+            }
+            return w;
+        };
+        let k = &s.ch[z.ch];
+        let tabs: Vec<Vec<zone::Column>> = z.zones.iter().take(2).map(|x| zone::table(x, p.memsel, p.rate, p.pre, k.scale, k.offset)).collect();
+        let n = zone::columns(p.memsel).1;
+        let run = (slot, n, zone::ctrl_word(&z.zones), z.clear);
+        if self.zone_run == Some(run) && tabs.iter().enumerate().all(|(i, t)| self.zone_tabs[i].as_ref() == Some(t)) {
+            return vec![];
+        }
+        let clear = self.zone_run.map_or(true, |r| r.0 != run.0 || r.3 != run.3);
+        let mut w = vec![];
+        self.sh.s4020 = zone::scu_bit(self.sh.s4020, false);
+        w.push((0x4020, self.sh.s4020));
+        for (i, t) in tabs.into_iter().enumerate() {
+            if self.zone_tabs[i].as_ref() != Some(&t) {
+                w.extend(zone::load(i, &t));
+                self.zone_tabs[i] = Some(t);
+            }
+        }
+        w.push((zone::CTRL, run.2));
+        w.push((mask::COMPRESS, mask::compress_word(n)));
+        w.extend(mask::select(&mut self.s1190, slot, clear));
+        self.sh.s4020 = zone::scu_bit(self.sh.s4020, true);
+        w.push((0x4020, self.sh.s4020));
+        self.zone_run = Some(run);
+        let mut st = vec![Step::Note(format!("zone trigger CH{} slot {}, control {:#x}{}", z.ch + 1, slot, run.2, if clear { ", counter cleared" } else { "" }))];
+        st.extend(w.into_iter().map(Step::Wr));
+        st
+    }
+
+    /// The control shadow while the zone trigger runs (for `zone::read`), None when it is off.
+    pub fn zone_ctrl(&self) -> Option<u32> {
+        self.zone_run.map(|_| self.s1190)
+    }
+
+    /// The control shadow while the mask test runs (for `mask::read`), None when it is off.
+    pub fn mask_ctrl(&self) -> Option<u32> {
+        self.mask_run.map(|_| self.s1190)
     }
 
     /// TPU writes of the trigger in `s` (trigger.md: section 6 edge, section 10 the other types).
@@ -321,6 +459,7 @@ impl State {
             }
             Trig::Nth { count, idle } => tpu::nth(ts, src, edge, *count, fs(*idle), nv(s.level), &vt),
             Trig::Video { std, sync, line } => tpu::video(ts, src, *std, true, *sync, *line, nv(s.level), &vt, tpu::VideoClk::Fast),
+            Trig::Uart(u) => tpu::uart(ts, src, u, nv(s.level), &vt),
         };
         // the shortest holdoff is what every trigger type leaves behind; once changed, it is written until it is back
         let set = (s.holdoff - HOLDOFF_MIN).abs() > 1e-12;
@@ -394,11 +533,13 @@ impl State {
         st
     }
 
-    /// Read-out of the frames a batch of `count` recorded frames delivers (`batch_read`): pass-through, window, stop
-    /// sequence, type-4 play, one read.
+    /// Read-out of the `count` frames a batch recorded, all of them in every mode: pass-through, window, stop sequence,
+    /// type-4 play, one read. In average mode too, as the stock driver does: the FPGA's averaging sits on the play
+    /// side (netlist: the next frame waits for the play-out of the one before), so a frame that is not played does not
+    /// reach the average (B1, unit 2026-11-13: reading the newest frame alone left the noise near 0.5 mV at any
+    /// count). The caller shows the newest.
     pub fn read_steps(&mut self, s: &Settings, p: &hz::Params, count: u32) -> Vec<Step> {
-        let (first, n) = batch_read(s, count);
-        self.read_steps_at(s, p, first, n)
+        self.read_steps_at(s, p, 0, count)
     }
 
     /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record).
@@ -492,15 +633,6 @@ pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
     // at least the record itself, twice over: slow time bases with the rate halved by the LA take seconds
     let record_ms = p.memsel as u64 * 1000 / p.rate.max(1);
     vec![Step::Poll { reg: 0x4080, bit: scu::PLAYINFO_DONE, ms: 2000.max(2 * record_ms + 500), what: "acquisition done" }, Step::Peek(&[0x4034, 0x4010, 0x4014])]
-}
-
-/// (first frame, frames) a batch of `count` recorded frames reads: all of them; in hardware average mode only the
-/// newest, which holds the average of every trigger since the last clear (spec 01, 3.2 option A).
-pub fn batch_read(s: &Settings, count: u32) -> (u32, u32) {
-    match s.mode {
-        acq::Mode::Average { .. } => (count.max(1) - 1, 1),
-        _ => (0, count),
-    }
 }
 
 /// Frames of one batch: `Settings::frames`, at least 1, at most the frame ring (`max_frames`); 1 for play-last.
@@ -717,7 +849,7 @@ pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Optio
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
 /// `0x4010 - first + 1`), then play and read exactly those frames into `dma`.
 /// `armed`: `prearm` already armed this batch with the same `s` and `p`; only the wait is left.
-/// Returns the count; the bytes (`batch_read(s, count).1` x `frame_bytes`: in average mode one frame) are `dma.data()`.
+/// Returns the count; the bytes (`count` x `frame_bytes`) are `dma.data()`.
 /// Generic over the bus, so the host model (`seg::sim::Engine`) runs it too.
 #[allow(clippy::too_many_arguments)]
 pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, log: impl FnMut(String)) -> Result<u32, String> {
@@ -750,6 +882,20 @@ pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut St
     log(format!("{} of {} frames after {:.1} ms", count, nf, t.elapsed().as_secs_f64() * 1e3));
     execute_bus(&st.read_steps(s, p, count), bar, c2h, dma, &mut log)?;
     Ok(count)
+}
+
+/// A second read of frame `index` of the batch just read with FPGA compression (`s.compress` > 1), this time raw: the
+/// same record, every sample (fork, docs/fork/compress.md). The ring is played again as for the LA read and the stamp
+/// plays of hardware segments; nothing may arm or write the FPGA in between. The frame lands in `dma`
+/// (`frame_bytes` of `raw_settings(s)`).
+#[allow(clippy::too_many_arguments)]
+pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, index: u32, log: impl FnMut(String)) -> Result<(), String> {
+    execute_bus(&st.read_steps_at(&raw_settings(s), p, index, 1), bar, c2h, dma, log)
+}
+
+/// `s` without the FPGA compression: what `read_raw_again` reads with.
+pub fn raw_settings(s: &Settings) -> Settings {
+    Settings { compress: 1, frames: 1, ..s.clone() }
 }
 
 /// Arms the next batch right after a read (and the LA read of the same record), so the FPGA records while the host
@@ -1044,6 +1190,103 @@ mod tests {
         // the diagnostic arm without the acquisition block leaves AUX OUT alone
         let mut st = State::handover(1, None);
         assert_eq!(aux(&mut st, &Settings { blocks: 5, ..off }), vec![]);
+    }
+
+    #[test]
+    fn hardware_mask_starts_reloads_clears_and_stops() {
+        let only = |st: &mut State, s: &Settings| -> Vec<Write> {
+            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194) || w.0 == 0x4020).collect()
+        };
+        let band = |h: f32| HwMask { ch: 0, lo: vec![-h; mask::COLUMNS], hi: vec![h; mask::COLUMNS], stop_on_fail: false, clear: 0 };
+        let mut st = State::handover(1, None);
+        let base = Settings { window: None, ..Settings::default() };
+        let on = Settings { hwmask: Some(band(1.0)), ..base.clone() };
+        let w = only(&mut st, &on);
+        // off, 1000 columns + write enable dropped, compression for 2.5 Mpts, slot 0 with the counter clear, on; then
+        // the auto-trigger block writes 0x4020 from the same shadow
+        assert_eq!(w.len(), 1 + 1001 + 1 + 2 + 1 + 1, "{:x?}", &w[..4]);
+        assert_eq!(w[0], (0x4020, 0x2001));
+        assert_eq!(w[1], (0x1194, 0x1c00_0000 | 158 << 8 | 98));
+        assert_eq!(w[1001], (0x1194, 0));
+        assert_eq!(w[1002..1006], [(0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001)]);
+        assert_eq!(*w.last().unwrap(), (0x4020, 0xe001), "auto trigger keeps the mask bits");
+        assert_eq!(st.mask_ctrl(), Some(0x0010_0000));
+        // unchanged: nothing but the auto-trigger write
+        assert_eq!(only(&mut st, &on), vec![(0x4020, 0xe001)]);
+        // a tighter band: the table again, the counters keep counting
+        let w = only(&mut st, &Settings { hwmask: Some(band(0.5)), ..base.clone() });
+        assert_eq!(w.len(), 1 + 1001 + 1 + 1 + 1 + 1);
+        assert_eq!(w[1003], (0x1190, 0x0010_0000));
+        // a clear request: no table, the counters cleared
+        let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, ..band(0.5) }), ..base.clone() });
+        assert_eq!(w, vec![(0x4020, 0x6001), (0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001), (0x4020, 0xe001)]);
+        // stop on fail sets bit 12
+        let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, stop_on_fail: true, ..band(0.5) }), ..base.clone() });
+        assert_eq!(*w.last().unwrap(), (0x4020, 0xf001));
+        // off: enable and stop cleared, compression back, slot dropped
+        let w = only(&mut st, &base);
+        assert_eq!(w, vec![(0x4020, 0x6001), (0x1184, 0x4000_0001), (0x1190, 0), (0x4020, 0x6001)]);
+        assert_eq!(st.mask_ctrl(), None);
+        assert_eq!(only(&mut st, &base), vec![(0x4020, 0x6001)]);
+        // a source that is not acquired leaves the test off
+        let w = only(&mut st, &Settings { hwmask: Some(HwMask { ch: 1, ..band(1.0) }), ..base.clone() });
+        assert_eq!(w, vec![(0x4020, 0x6001)]);
+        // CH2 of CH1+CH2: slot 2
+        let two = Settings { mask: 0b11, hwmask: Some(HwMask { ch: 1, ..band(1.0) }), ..base.clone() };
+        let mut st = State::handover(0b11, None);
+        assert!(only(&mut st, &two).contains(&(0x1190, 0x0040_0000)));
+    }
+
+    #[test]
+    fn hardware_zone_starts_hands_over_to_the_mask_and_stops() {
+        let only = |st: &mut State, s: &Settings| -> Vec<Write> {
+            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194 | 0x11d0 | 0x11d8 | 0x11dc | 0x4020)).collect()
+        };
+        let bx = |inside| zone::Zone { poly: vec![(-1e-4, 0.5), (1e-4, 1.5)], inside };
+        let z1 = HwZone { ch: 0, zones: vec![bx(true)], clear: 0 };
+        let base = Settings { window: None, ..Settings::default() };
+        let on = Settings { hwzone: Some(z1.clone()), ..base.clone() };
+        let mut st = State::handover(1, None);
+        let w = only(&mut st, &on);
+        // off, table 1 (1000 + 1), control, compression, slot with clear, armed; then the auto-trigger write
+        assert_eq!(w.len(), 1 + 1001 + 1 + 1 + 2 + 1 + 1);
+        assert_eq!(w[0], (0x4020, 0x2001));
+        assert!(w[1..1001].iter().all(|x| x.0 == 0x11d8));
+        assert_eq!(w[1002..1008], [(0x11d0, 0x0500_0000), (0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0x2003), (0x4020, 0x2003)]);
+        assert_eq!(st.zone_ctrl(), Some(0x0010_0000));
+        assert_eq!(only(&mut st, &on), vec![(0x4020, 0x2003)]);
+        // a second zone that must not be touched: its table, the new control word, no clear
+        let two = Settings { hwzone: Some(HwZone { zones: vec![bx(true), bx(false)], ..z1.clone() }), ..base.clone() };
+        let w = only(&mut st, &two);
+        assert!(w.iter().filter(|x| x.0 == 0x11dc).count() == 1001 && w.contains(&(0x11d0, 0x0700_0000)) && w.contains(&(0x1190, 0x0010_0000)) && !w.contains(&(0x1190, 0x6010_0000)));
+        // the mask test wins: the zone logic off, the mask keeps the slot it sets
+        let mut m = Settings { hwmask: Some(HwMask { ch: 0, lo: vec![-1.0; mask::COLUMNS], hi: vec![1.0; mask::COLUMNS], stop_on_fail: false, clear: 0 }), ..two.clone() };
+        let w = only(&mut st, &m);
+        assert_eq!(&w[..2], [(0x4020, 0x2001), (0x11d0, 0)]);
+        assert_eq!(st.zone_ctrl(), None);
+        assert!(st.mask_ctrl().is_some() && *w.last().unwrap() == (0x4020, 0xe001));
+        // back to the zone: the mask goes off without taking the zone's slot and strobe
+        m.hwmask = None;
+        let w = only(&mut st, &m);
+        assert_eq!(st.zone_ctrl(), Some(0x0010_0000));
+        assert!(!w.contains(&(0x1184, 0x4000_0001)), "{:x?}", w);
+        assert_eq!(*w.last().unwrap(), (0x4020, 0x6003));
+        // off
+        let w = only(&mut st, &base);
+        assert_eq!(w, vec![(0x4020, 0x6001), (0x11d0, 0), (0x1184, 0x4000_0001), (0x1190, 0), (0x4020, 0x6001)]);
+    }
+
+    #[test]
+    fn uart_trigger_is_written_with_the_trigger_block() {
+        use crate::dho::uarttrig::{Cond, Parity, Stop, Uart};
+        let u = Uart { baud: 115_200.0, bits: 8, parity: Parity::None, stop: Stop::One, cond: Cond::Start, invert: false };
+        let s = Settings { trig_src: 2, mask: 0b11, slope: tpu::Slope::Falling, trigger: Trig::Uart(u), ..Settings::default() };
+        let mut st = State::handover(0b11, None);
+        let w = writes(&st.configure(&s, None, None).unwrap().0);
+        let k = w.iter().position(|x| *x == (0x205c, 4)).expect("mux on the UART event");
+        assert!(w[..k].contains(&(0x2100, 1356)) && w[..k].contains(&(0x2104, 7)));
+        // the trigger block comes before the FSM stop poll and the acquisition block, like every trigger type
+        assert!(k < w.iter().position(|x| x.0 == 0x4020).unwrap());
     }
 
     #[test]
