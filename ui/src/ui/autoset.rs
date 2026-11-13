@@ -9,7 +9,7 @@
 //! is off stays off. With no signal on any channel the set-up stays as it was.
 
 use super::*;
-use crate::wave::{periodic, place, Stats};
+use crate::wave::{mid_level, periodic, place, Stats};
 
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
 const TBASES: [f32; 5] = [20e-9, 2e-6, 200e-6, 2e-3, 20e-3];
@@ -39,6 +39,8 @@ pub struct AutoRun {
     fits: bool,
     /// levels and period per channel; `want` = a signal worth a period
     lv: [(f32, f32); NCH],
+    /// the statistics of the record behind `lv` (top and base for the trigger level)
+    st: [Stats; NCH],
     want: [bool; NCH],
     period: [Option<f64>; NCH],
     /// the height of the levels stage, and of the window that gave the period
@@ -99,7 +101,7 @@ impl Ui {
         m.run = RunState::Run;
         m.hw_stamp += 1;
         let stamp = m.hw_stamp;
-        self.auto = Some(AutoRun { back, stamp, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
+        self.auto = Some(AutoRun { back, stamp, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
         self.mark_changed();
         self.toast("Auto set-up...");
     }
@@ -182,6 +184,7 @@ impl Ui {
                     if swing >= 0.4 * a.full[c] && swing >= 1.5 * a.swing[c] {
                         if let Some(p) = periodic(&self.record_volts(c), dt) {
                             (a.period[c], a.swing[c], a.lv[c]) = (Some(p), swing, (lo, hi));
+                            a.st[c] = crate::wave::stats(&self.record_volts(c), dt);
                         }
                     }
                 }
@@ -207,6 +210,7 @@ impl Ui {
         for c in (0..n_ch()).filter(|&c| a.back.ch[c].on) {
             let (lo, hi) = self.auto_levels(c);
             a.lv[c] = (lo, hi);
+            a.st[c] = crate::wave::stats(&self.record_volts(c), self.last[0].as_ref().map_or(1.0, |r| r.dt));
             let vpp = hi - lo;
             a.full[c] = vpp;
             a.want[c] = vpp.is_finite() && vpp >= MIN_VPP * self.m.ch[c].probe && vpp >= 0.3 * self.m.ch[c].volts_per_div();
@@ -219,7 +223,7 @@ impl Ui {
             ch.offset = -(hi + lo) / 2.0;
         }
         self.m.trig_src = first;
-        self.m.trig_level = (a.lv[first].0 + a.lv[first].1) / 2.0;
+        self.m.trig_level = mid_level(&a.st[first]);
         self.m.tscale = tscale_for(TBASES[0]);
         self.m.acq = a.back.acq;
         // the search needs records that trigger at the new level
@@ -231,7 +235,7 @@ impl Ui {
     fn auto_end(&mut self, a: AutoRun) {
         self.m.auto_fast = false;
         eprintln!("oos-ui auto: levels {:?}, periods {:?}", a.lv, a.period);
-        let stats = |c: usize| Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..Stats::default() };
+        let stats = |c: usize| Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..a.st[c] };
         // the channels with a period first (the trigger goes to the first), then those with a signal but no steady
         // period (noise, glitches, an irregular bus): they keep the fitted scale and level, the time base comes from the
         // window that showed most of their height
