@@ -10,7 +10,7 @@ use crate::board::{Frame, Slow};
 use crate::board::{HwShared, Shared, QUEUE_MAX};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
-use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
+use oos_hal::dho::{afe, auxout, hz, serialtrig, tpu, uarttrig};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -32,6 +32,20 @@ pub fn slow_mode(m: &Model) -> Slow {
     } else {
         Slow::Off
     }
+}
+
+/// SINGLE ends with the first frame after the press (`Settings::single`): one frame per batch and no batch after it
+/// until the next press. Not when the UI may refuse that frame and wait for another: a protocol trigger (the decoder
+/// decides) or a zone trigger.
+fn single_takes_first(m: &Model) -> bool {
+    m.trig_mode == TrigMode::Single && m.trig_type != TrigType::Bus && !m.zones.iter().any(|z| z.usable())
+}
+
+/// Whether the thread acquires another batch for SINGLE: not once a batch brought frames under this press's `stamp`
+/// (`done`). The UI's STOP reached the thread only a few UI steps later, and each batch in between counted:
+/// `acquired` +10 at 1 us/div, +3 at 1 ms/div per press (unit 2026-11-13).
+fn single_wants_more(b: &Settings, done: Option<u64>, stamp: u64) -> bool {
+    !b.single || done != Some(stamp)
 }
 
 /// Live record length for Auto depth (keeps the read short enough for a fluid display).
@@ -154,7 +168,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         } as f64,
         auto: m.trig_mode == TrigMode::Auto,
         auto_fast: m.auto_fast && m.trig_mode == TrigMode::Auto,
-        single: m.trig_mode == TrigMode::Single,
+        single: single_takes_first(m),
         play4: true,
         blocks: 7,
         header: header_probe(),
@@ -181,6 +195,10 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     // centred on the software point (docs/fork/hwuart.md)
     if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(m)) {
         s.delay += uarttrig::sw_offset_s(u);
+    }
+    // the SPI and I2C receivers need every line they use among the acquired channels; else the edge trigger
+    if !serial_lines_acquired(&s.trigger, s.mask) {
+        s.trigger = Trig::Edge;
     }
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
@@ -329,9 +347,9 @@ fn hw_trigger(m: &Model) -> Trig {
         TrigType::Duration => Trig::Duration { pats, la, when, lower, upper, levels },
         TrigType::SetupHold => Trig::SetupHold { clk: m.trig_src2 as u32 + 1, clk_edge: edge2, setup: m.setup as f64, hold: m.hold as f64, levelc: m.trig_level2 as f64 },
         TrigType::NthEdge => Trig::Nth { count: m.nth_n, idle: m.nth_idle as f64 },
-        // protocol trigger: the TPU's UART receiver where it can (`trig.serial_hw = on`, `hw_uart`); else the TPU fires
+        // protocol trigger: the TPU's UART, SPI or I2C receiver where it can (`trig.serial_hw = on`, `hw_serial`); else the TPU fires
         // on edges of the decoder's line (see `settings`) and the software picks the matching frame out of the record
-        TrigType::Bus => hw_uart(m).map_or(Trig::Edge, Trig::Uart),
+        TrigType::Bus => hw_serial(m).unwrap_or(Trig::Edge),
         TrigType::Video => Trig::Video {
             std: if m.video_std == VideoStd::Pal { HStd::Pal } else { HStd::Ntsc },
             // the TPU has no "all fields": odd field triggers once per frame [A]
@@ -480,17 +498,9 @@ fn serial_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
 }
 
-/// The UART protocol trigger of the model in the TPU's receiver, when it is enabled and can do it: a UART decoder on a
+/// The UART protocol trigger of the model in the TPU's receiver, where it can do it: a UART decoder on a
 /// channel (not the LA, not differential), 1..8 data bits, and a condition it has (frame start, a data byte, an error).
 /// The ID condition and wider values stay with the software trigger.
-pub fn hw_uart(m: &Model) -> Option<uarttrig::Uart> {
-    if !serial_hw_on() {
-        return None;
-    }
-    uart_of(m)
-}
-
-/// `hw_uart` without the system.conf switch.
 fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
     use uarttrig::{Cond, ErrKind, Parity, Relation, Stop, Uart};
     if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Uart || m.dec_on_la() || m.dec_diff.is_some() || !(1..=8).contains(&m.dec_bits) {
@@ -536,6 +546,95 @@ pub fn uart_debug(m: &Model) -> String {
     )
 }
 
+/// The protocol trigger in the TPU's receivers (`trig.serial_hw = on`): UART (`uart_of`), SPI or I2C (`spi_of`,
+/// `i2c_of`); None keeps the edge trigger and the software decoder.
+pub fn hw_serial(m: &Model) -> Option<Trig> {
+    if !serial_hw_on() {
+        return None;
+    }
+    serial_of(m)
+}
+
+/// `hw_serial` without the system.conf switch.
+fn serial_of(m: &Model) -> Option<Trig> {
+    uart_of(m).map(Trig::Uart).or_else(|| spi_of(m).map(Trig::Spi)).or_else(|| i2c_of(m).map(Trig::I2c))
+}
+
+/// The SPI protocol trigger in the receiver: an SPI decoder on channels with chip select (the software's clock-pause
+/// framing has no fixed time), 1..32 bits, and Frame (every word) or Data = value. CS active low, MSB first, the clock
+/// edge of the decoder's mode, as the software decoder.
+fn spi_of(m: &Model) -> Option<serialtrig::Spi> {
+    use oos_hal::dho::uarttrig::Relation;
+    let cs = m.dec_cs?;
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Spi || m.dec_on_la() || !(1..=32).contains(&m.dec_bits) {
+        return None;
+    }
+    let full = serialtrig::word_mask(m.dec_bits);
+    let (v, mask) = match m.trig_bus {
+        BusWhat::Frame => (0, 0),
+        BusWhat::Data if m.trig_bus_val & !full == 0 => (m.trig_bus_val, full),
+        _ => return None,
+    };
+    Some(serialtrig::Spi {
+        clk: m.dec_src2 as u32 + 1,
+        data: m.dec_src as u32 + 1,
+        cs: cs as u32 + 1,
+        clk_falling: !matches!(m.dec_mode, 0 | 3),
+        cs_high: false,
+        timeout: None,
+        width: m.dec_bits,
+        rel: Relation::Eq,
+        min: v,
+        max: v,
+        mask,
+    })
+}
+
+/// The I2C protocol trigger in the receiver: Frame (start), ID/Addr = a 7-bit address (either direction) and Error
+/// (missing ACK). Data stays with the software: it matches any byte of a frame, the receiver only the first ones.
+fn i2c_of(m: &Model) -> Option<serialtrig::I2c> {
+    use oos_hal::dho::uarttrig::Relation;
+    use serialtrig::{Dir, I2cCond};
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::I2c || m.dec_on_la() {
+        return None;
+    }
+    let (cond, addr) = match m.trig_bus {
+        BusWhat::Frame => (I2cCond::Start, (0, 0, 0)),
+        BusWhat::Id if m.trig_bus_val <= 0x7f => (I2cCond::Address, (m.trig_bus_val, m.trig_bus_val, 0x7f)),
+        BusWhat::Error => (I2cCond::MissingAck, (0, 0, 0)),
+        _ => return None,
+    };
+    Some(serialtrig::I2c { scl: m.dec_src2 as u32 + 1, sda: m.dec_src as u32 + 1, cond, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr, data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) })
+}
+
+/// Every comparator line of an SPI or I2C receiver is an acquired channel (`mask`, bit 0 = CH1); other triggers pass.
+fn serial_lines_acquired(t: &Trig, mask: u32) -> bool {
+    let lines: Vec<u32> = match t {
+        Trig::Spi(x) => vec![x.clk, x.data, x.cs],
+        Trig::I2c(x) => vec![x.scl, x.sda],
+        _ => return true,
+    };
+    lines.iter().all(|&c| (1..=4).contains(&c) && mask & 1 << (c - 1) != 0)
+}
+
+/// Fork, `:SYSTem:DEBug:SERial?`: the receiver and its words for the model (UART: `uart_debug`), `off,...` where the
+/// software trigger stays in charge.
+pub fn serial_debug(m: &Model) -> String {
+    let on = if serial_hw_on() { "on" } else { "off" };
+    match serial_of(m) {
+        Some(Trig::Uart(_)) => uart_debug(m),
+        Some(Trig::Spi(s)) => {
+            let w: Vec<String> = serialtrig::spi_words(&s).iter().map(|(r, v)| format!("r{:04x}={:#010x}", r, v)).collect();
+            format!("{},proto=SPI,clk=CH{},data=CH{},cs=CH{},clk_falling={},width={},{},mux={}", on, s.clk, s.data, s.cs, s.clk_falling as u8, s.width, w.join(","), serialtrig::MUX_SPI)
+        }
+        Some(Trig::I2c(i)) => {
+            let w: Vec<String> = serialtrig::i2c_words(&i).iter().map(|(r, v)| format!("r{:04x}={:#010x}", r, v)).collect();
+            format!("{},proto=I2C,scl=CH{},sda=CH{},cond={:?},{},mux={}", on, i.scl, i.sda, i.cond, w.join(","), serialtrig::MUX_I2C)
+        }
+        _ => format!("off,enabled={}", serial_hw_on() as u8),
+    }
+}
+
 /// The mask test of the acquisition settings from the UI's wish.
 fn hw_mask(w: &crate::board::MaskWant) -> oos_hal::dho::seq::HwMask {
     oos_hal::dho::seq::HwMask { ch: w.ch, lo: w.lo.clone(), hi: w.hi.clone(), stop_on_fail: w.stop, clear: w.clear, map: oos_hal::dho::mask::Map::default() }
@@ -561,8 +660,8 @@ enum DvmStep {
 /// The DVM block's next step: (re)started when the wanted channel, its lane in the acquired set `mask` or the
 /// acquisition configuration (`config`, raised on every configuration) changed; stopped when nothing is wanted or the
 /// channel is not acquired; read `DVM_READ_S` after the start or the last reading.
-fn dvm_step(want: Option<usize>, mask: u32, config: u64, running: Option<DvmKey>, elapsed_s: f64) -> (DvmStep, Option<DvmKey>) {
-    let target = want.and_then(|ch| oos_hal::dho::dvm::lane(mask, ch).map(|l| (ch, l, config)));
+fn dvm_step(want: Option<crate::board::DvmWant>, mask: u32, config: u64, running: Option<DvmKey>, elapsed_s: f64) -> (DvmStep, Option<DvmKey>) {
+    let target = want.and_then(|w| oos_hal::dho::dvm::lane_forced(mask, w.ch, w.lane).map(|l| (w.ch, l, config)));
     if target != running {
         let step = match (target, running) {
             (Some((_, l, _)), _) => DvmStep::Start(l),
@@ -939,6 +1038,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut helper = crate::drawpipe::Helper::default();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
+        // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
+        let mut single_done: Option<u64> = None;
         // the hardware segmented recording in progress or read back
         let mut segrun: Option<SegRun> = None;
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
@@ -1082,7 +1183,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
             {
                 use oos_hal::dho::dvm;
-                let want = out.lock().unwrap().dvm_want.map(|w| w.ch);
+                let want = out.lock().unwrap().dvm_want;
                 let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
                 let (step, key) = dvm_step(want, s.mask, configs, dvm_run.map(|r| r.0), elapsed);
                 match step {
@@ -1346,6 +1447,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 out.lock().unwrap().queue.clear();
             }
             let b = batch_plan(&s, &p);
+            if !single_wants_more(&b, single_done, stamp) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
             if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -1494,7 +1600,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
                     // not in average mode, where a clear may have to come first, and not where the deep measurements
                     // read the newest frame raw (its ring must stay for the replay at STOP)
-                    if prearm_on() && avg.is_none() && prearm_keeps_replay(&b, &p, deep_want) {
+                    if count > 0 && b.single {
+                        single_done = Some(stamp);
+                    }
+                    if prearm_on() && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -1754,6 +1863,27 @@ mod tests {
         }
     }
 
+    // Break it catches: batches after the SINGLE frame until the UI's STOP reached the thread (`acquired` +10 at
+    // 1 us/div, +3 at 1 ms/div per press on the unit); or a SINGLE that waits for good where the UI refuses frames
+    #[test]
+    fn single_stops_after_the_batch_with_its_frame() {
+        let mut m = Model { trig_mode: TrigMode::Single, ..Default::default() };
+        let b = settings(&m, false);
+        assert!(b.single);
+        assert!(single_wants_more(&b, None, 4), "the first batch after the press");
+        assert!(!single_wants_more(&b, Some(4), 4), "its frame came: no more for this press");
+        assert!(single_wants_more(&b, Some(4), 5), "the next press");
+        m.trig_mode = TrigMode::Normal;
+        assert!(single_wants_more(&settings(&m, false), Some(4), 4), "RUN is not limited");
+        // the UI may refuse the frame: protocol trigger, zone trigger
+        m.trig_mode = TrigMode::Single;
+        m.trig_type = TrigType::Bus;
+        assert!(!settings(&m, false).single);
+        m.trig_type = TrigType::Edge;
+        m.zones[0] = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0)] };
+        assert!(m.zones[0].usable() && !settings(&m, false).single);
+    }
+
     // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
     // inside it) ends before the screen does: 10 us/div with 200 us delay drew 20 us of the screen (unit 2026-11-13)
     #[test]
@@ -1884,6 +2014,41 @@ mod tests {
         }
         assert!(!serial_hw_from("") && serial_hw_from("trig.serial_hw = on\n"));
         assert!(uart_debug(&m).starts_with("off,src=CH2,"), "{}", uart_debug(&m));
+    }
+
+    #[test]
+    fn spi_and_i2c_from_the_decoder_settings() {
+        use oos_hal::dho::serialtrig::I2cCond;
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2, m.dec_cs, m.dec_bits, m.dec_mode) = (TrigType::Bus, Proto::Spi, 0, 1, Some(2), 8, 0);
+        // (condition, value) -> (value, mask) of the SPI compare; None = software
+        let cases = [(BusWhat::Frame, 0, Some((0, 0))), (BusWhat::Data, 0x5a, Some((0x5a, 0xff))), (BusWhat::Data, 0x15a, None), (BusWhat::Error, 0, None), (BusWhat::Id, 1, None)];
+        for (what, v, want) in cases {
+            (m.trig_bus, m.trig_bus_val) = (what, v);
+            assert_eq!(spi_of(&m).map(|s| (s.min, s.mask)), want, "{:?}", what);
+        }
+        (m.trig_bus, m.trig_bus_val) = (BusWhat::Data, 0x5a);
+        let s = spi_of(&m).unwrap();
+        assert_eq!((s.clk, s.data, s.cs, s.clk_falling, s.width), (2, 1, 3, false, 8));
+        m.dec_mode = 1;
+        assert!(spi_of(&m).unwrap().clk_falling);
+        m.dec_cs = None;
+        assert_eq!(spi_of(&m), None, "no chip select: software");
+        // I2C: SDA on dec_src, SCL on dec_src2
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2) = (TrigType::Bus, Proto::I2c, 0, 1);
+        let cases = [(BusWhat::Frame, 0, Some(I2cCond::Start)), (BusWhat::Id, 0x50, Some(I2cCond::Address)), (BusWhat::Id, 0x150, None), (BusWhat::Error, 0, Some(I2cCond::MissingAck)), (BusWhat::Data, 0x12, None)];
+        for (what, v, want) in cases {
+            (m.trig_bus, m.trig_bus_val) = (what, v);
+            assert_eq!(i2c_of(&m).map(|i| i.cond), want, "{:?}", what);
+        }
+        (m.trig_bus, m.trig_bus_val) = (BusWhat::Id, 0x50);
+        let i = i2c_of(&m).unwrap();
+        assert_eq!((i.scl, i.sda, i.addr), (2, 1, (0x50, 0x50, 0x7f)));
+        assert!(serial_debug(&m).starts_with("off,proto=I2C,scl=CH2,sda=CH1,cond=Address,r2190="), "{}", serial_debug(&m));
+        // lines that are not acquired fall back to the edge trigger
+        assert!(serial_lines_acquired(&Trig::I2c(i), 0b11) && !serial_lines_acquired(&Trig::I2c(i), 0b01));
+        assert!(serial_lines_acquired(&Trig::Edge, 0));
     }
 
     #[test]
@@ -2037,19 +2202,21 @@ mod tests {
     #[test]
     fn dvm_steps() {
         let t0 = Some((1, 2, 7));
+        let ch = |c: usize| Some(crate::board::DvmWant { ch: c, lane: None });
         // (want, mask, config, running, elapsed) -> (step, running after)
-        let cases: [(Option<usize>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 8] = [
+        let cases: [(Option<crate::board::DvmWant>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 9] = [
             (None, 0b11, 7, None, 0.0, DvmStep::Idle, None),
             // CH2 of CH1+CH2: lane 2
-            (Some(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
-            (Some(1), 0b11, 7, t0, 0.1, DvmStep::Idle, t0),
-            (Some(1), 0b11, 7, t0, 0.6, DvmStep::Read, t0),
+            (ch(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
+            (ch(1), 0b11, 7, t0, 0.1, DvmStep::Idle, t0),
+            (ch(1), 0b11, 7, t0, 0.6, DvmStep::Read, t0),
             // a new configuration restarts it
-            (Some(1), 0b11, 8, t0, 0.1, DvmStep::Start(2), Some((1, 2, 8))),
-            // CH2 alone: lane 1
-            (Some(1), 0b10, 7, t0, 0.6, DvmStep::Start(1), Some((1, 1, 7))),
+            (ch(1), 0b11, 8, t0, 0.1, DvmStep::Start(2), Some((1, 2, 8))),
+            // CH2 alone: lane 1; with lane 3 forced: lane 3
+            (ch(1), 0b10, 7, t0, 0.6, DvmStep::Start(1), Some((1, 1, 7))),
+            (Some(crate::board::DvmWant { ch: 1, lane: Some(3) }), 0b10, 7, Some((1, 1, 7)), 0.6, DvmStep::Start(3), Some((1, 3, 7))),
             // the channel left the acquired set, or the DVM was switched off
-            (Some(1), 0b01, 7, t0, 0.6, DvmStep::Stop, None),
+            (ch(1), 0b01, 7, t0, 0.6, DvmStep::Stop, None),
             (None, 0b11, 7, t0, 0.6, DvmStep::Stop, None),
         ];
         for (want, mask, config, running, el, step, after) in cases {

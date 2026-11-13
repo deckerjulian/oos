@@ -368,7 +368,10 @@ fe80::/10 onlink6`.
 in). With `net.ipv6 = on`, `oos-net6` sets before eth0 comes up: stable-privacy interface identifiers (RFC 7217,
 `addr_gen_mode = 2`) from a 128-bit secret made once and kept in `/oos/net/ipv6.secret`, no temporary addresses
 (`use_tempaddr = 0`), and `bindv6only = 0`. The address for a prefix is the same at every start and does not carry the
-MAC, so it can go into DNS. A new card or `rm /oos/net/ipv6.secret` gives a new one. A WLAN stick gets the same mode.
+MAC, so it can go into DNS. A new card or `rm /oos/net/ipv6.secret` gives a new one. The secret is synced to the card
+as soon as it is made: `/oos` is ext2 without a journal, and the first version left it in the page cache, so a reboot
+soon after the first start lost it and every start made new addresses. `/tmp/oos-net.log` says `secret made` or
+`secret kept`. A WLAN stick gets the same mode.
 There is no DHCPv6. `udhcpc.script` flushes only the IPv4 addresses of an interface: it used to flush all, which took
 the IPv6 link-local address with it (the kernel makes that one only when the link comes up), so the scope had no IPv6
 at all after its first DHCP lease.

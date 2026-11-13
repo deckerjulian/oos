@@ -179,10 +179,9 @@ impl Ui {
         m.run = RunState::Run;
         m.hw_stamp += 1;
         let stamp = m.hw_stamp;
-        // one channel only: then all eight cores sample it. With more, the slots of a channel are not known (the DDR core
-        // order did not match on the unit: with CH1 and CH2 on a signal, CH3's slots showed it)
-        let single = (0..n_ch()).filter(|&c| back.ch[c].on).count() == 1;
-        let unit = (single && unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some()).then_some(Unit { id: stamp, tries: 1, since: self.now });
+        // any channel set: the slots per channel follow libscope's core table (`levels::slots`); a channel whose slots
+        // disagree falls back to the records (`auto_unit`)
+        let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some()).then_some(Unit { id: stamp, tries: 1, since: self.now });
         self.auto = Some(AutoRun { back, stamp, unit, plan: Vec::new(), deep: false, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
         self.mark_changed();
         self.toast("Auto set-up...");
@@ -998,19 +997,25 @@ mod tests {
         }
     }
 
-    // Break it catches: the deep search record at 1 M points with several channels on (an 8 MB read: the unit rebooted),
-    // or measure-unit levels asked for with several channels on (their slots are not known)
+    // Break it catches: the deep search record at 1 M points with several channels on (an 8 MB read: the unit rebooted);
+    // the measure unit left out with several channels (their slots are known now, `levels::slots`), or a channel the
+    // unit has no usable reading for kept instead of falling back to the records
     #[test]
-    fn several_channels_keep_the_deep_record_small_and_skip_the_measure_unit() {
+    fn several_channels_keep_the_deep_record_small_and_use_the_measure_unit() {
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
         for c in 0..NCH {
             ui.m.ch[c].on = c < 3;
         }
         ui.auto_start();
-        assert!(ui.auto.as_ref().unwrap().unit.is_none());
-        assert_eq!(shared.lock().unwrap().levels_want, None);
+        let id = ui.auto.as_ref().unwrap().unit.expect("the measure unit with three channels").id;
+        assert!(shared.lock().unwrap().levels_want.is_some());
+        // CH2's slots disagreed (`levels::channel_levels` refused it): the records take over
+        let lv = crate::board::ChLevels { lo: 0.0, hi: 0.3, mean: 0.15, clipped: false };
+        shared.lock().unwrap().levels = Some((id, [Some(lv), None, Some(lv), None]));
         let mut a = ui.auto.take().unwrap();
+        assert!(matches!(ui.auto_unit(&mut a), UnitStep::Records));
+        assert!(a.unit.is_none() && shared.lock().unwrap().levels_want.is_none());
         a.want[0] = true;
         let levels = [(0.0f32, 3.0f32); NCH];
         assert!(ui.auto_fit(&mut a, Some(levels)));

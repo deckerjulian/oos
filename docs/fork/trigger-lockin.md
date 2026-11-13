@@ -215,9 +215,9 @@ The FPGA's ADC measure unit (private RE notes docs/fpga.md "Measure unit", self-
 - A run: 0x1040 = (0x1040 & 0x77fff0e0) | 18, then with bit 31; done (bit 30) after 2^18 samples = 1.68 ms;
   per slot 0..7 select 0x1040[10:8], read 0x1044 and 0x1048. The same register handling as the self-cal's
   `adc::measure`, with the shorter exponent and the peaks.
-- Slots per channel from the DDR core order (fpga.md): 1 channel all eight, 2 channels 6/4/7/5 (lower) and
-  2/0/3/1 (higher), 4 channels CH1 6/7, CH2 4/5, CH3 2/3, CH4 0/1. Assumed to be the measure unit's numbering
-  too: not verified on the unit.
+- Slots per channel from libscope's core table (private RE notes docs/fpga.md "Channel to core/slot mapping",
+  `DrvAuto_GetMaxMin`): 1 channel all eight; 2 channels the lower-numbered channel 0-3, the higher 4-7; 4 channels
+  (also three) CH1 0/2, CH2 1/3, CH3 4/6, CH4 5/7. The DDR core order assumed first (CH1 6/7 ...) was wrong (below).
 - Codes to volts: the unit reads after the ADC x2 of 0x105c and before the Q10 read-path gain (self-cal.md 13:
   about 6970 codes per volt at 1 V/div, x1.077 = the 7500 per division of the records). So a 16-bit code c is the
   read-out word 32768 + (c - 32768) x dg (dg = the cal record's digital gain without the x2), and its volts follow
@@ -275,7 +275,7 @@ Several channels:
   mounted read-only for the check, then unmounted) holds no `dmesg-ramoops` panic record, only the console of the
   last boot, which ends in a regular kexec start. So no crash evidence for the 8 MB read.
 - The CH1 + CH3 trigger level of 1.37 V was not reproduced; its log line went with the restart. It ran the
-  measure-unit path with two channels, which is now off (one channel only).
+  measure-unit path with two channels and the wrong slot table: CH1's levels came from the cores of CH3 (open).
 
 Trigger status from the SCU (`trig.hw_status = on`, oos-ui restarted, CH1 probe-comp, 500 us/div, 10 reads of
 `:TRIGger:STATus?` each): Auto sweep level 0.15 V TD 10/10 (74 frames/s); level 0.6 V AUTO 10/10 (6 frames/s);
@@ -286,31 +286,36 @@ restored afterwards.
 
 Fix (branch fix/autoset-multich): the measure unit only with one channel on; the deep record at 100 k points with
 more than one channel (0.8 MB at 4 channels, 33 samples a period at 125 kHz). Open: whether an 8 MB read itself
-crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read), and the real slot map.
+crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read). The slot map came later from libscope
+(branch fix/meas-slots): the unit's observation fits it, and the measure unit is used with several channels again.
 
-## Slot map procedure (for unitlab)
+## Slot map cross-check (for unitlab)
 
-The measure unit's numbering of the ADC cores per channel mode is unknown for 2 and 4 channels (the DDR core order
-did not match). `:DEBug:SLOTs?` (fork, needs a build with branch fix/c2h-chunks) runs the unit once (2^18 samples
-per core) and answers the previous query: `<request>;min,max,mean;...` for slots 0..7 (12-bit min and max, mean on
-the 16-bit scale). Send it twice about 0.3 s apart and use the second answer; repeat 3 times per case.
+The slot table is libscope's (fpga.md "Channel to core/slot mapping"); since branch fix/meas-slots
+`hal::dho::levels::slots` follows it and the auto set-up uses the measure unit with any channel set again (a channel
+whose slots disagree still falls back to the records). This check confirms it on the unit without moving a cable.
+`:DEBug:SLOTs?` runs the unit once (2^18 samples per core) and answers the previous query: `<request>;min,max,mean;...`
+for slots 0..7 (12-bit min and max, mean on the 16-bit scale). Send it twice about 0.3 s apart and use the second
+answer; repeat 3 times per case.
 
-Set-up: probe-comp (1 kHz, 0.3 V) on exactly one input at a time, the other inputs open. Every channel 100 mV/div,
-offset 0, DC, Auto bandwidth, 500 us/div, Auto sweep, Normal acquisition. Restore the user's settings afterwards.
+Set-up: probe-comp (1 kHz, 0.3 V) on CH1 and CH2, CH3 and CH4 open (as the unit is cabled). Every channel 100 mV/div,
+DC, Auto bandwidth, 500 us/div, Auto sweep, Normal acquisition. The measure unit reads after the front end, so a
+channel's offset moves its slots' mean: CH2 at offset +200 mV (2 div) tells its slots from CH1's (offset 0) though both
+carry the square. Restore the user's settings afterwards.
 
-| Case | Channels on | Signal on | Expect |
-|---|---|---|---|
-| 1 | CH1 | CH1 | all 8 slots swing |
-| 2 | CH1, CH2 | CH1 | 4 slots swing, 4 flat: CH1's slots in 2-channel mode |
-| 3 | CH1, CH2 | CH2 | the other 4 |
-| 4 | CH1, CH3 | CH1 | as case 2 or not: whether the pair matters |
-| 5 | CH2, CH4 | CH2 | the higher/lower split for another pair |
-| 6 | CH1-CH4 | CH1 | 2 slots swing: CH1's slots in 4-channel mode |
-| 7-9 | CH1-CH4 | CH2, CH3, CH4 in turn | their slots |
+| Case | Channels on | Expect (s = square at offset 0, s+ = square 2 div higher, f = flat) |
+|---|---|---|
+| 1 | CH1 | slots 0-7 s |
+| 2 | CH1, CH2 | 0-3 s, 4-7 s+ (lower channel 0-3, higher 4-7) |
+| 3 | CH1, CH3 | 0-3 s, 4-7 f |
+| 4 | CH2, CH3 | 0-3 s+, 4-7 f (CH2 is the lower channel now) |
+| 5 | CH1, CH2, CH3 | 0, 2 s; 1, 3 s+; 4, 6 f (4-channel mode; 5 and 7 are CH4's, off) |
+| 6 | CH1-CH4 | 0, 2 s; 1, 3 s+; 4-7 f |
 
-A slot swings when max - min is well above the flat slots' (open input: a few codes). Write the table of slots per
-channel and mode into this section; `hal::dho::levels::slots` then takes it, and autoset may use the unit with
-several channels again.
+Then `:AUToscale` once per case 2, 5 and 6: the log line `oos-ui auto: measure-unit levels` (not `measure unit
+[..], records`), about 0..0.3 V for CH1 and CH2, flat for the open channels, and the same final scales as with
+`autoset.levels = records`. A case that differs: note the slots that swing, and set `autoset.levels = records` until
+the table is fixed.
 
 ## Status (feat/trigger)
 
