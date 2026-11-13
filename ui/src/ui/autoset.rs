@@ -79,6 +79,9 @@ impl Ui {
         m.trig_type = TrigType::Edge;
         m.trig_la = None;
         m.trig_mode = TrigMode::Auto;
+        // the levels need no trigger, and the old level may not cross the signal at the wide scale: without this each
+        // record waits the auto time of 20 ms/div (400 ms)
+        m.auto_fast = true;
         m.trig_src = first;
         m.tscale = tscale_for(LEVELS_TBASE);
         // a fixed deep memory would make every step of the search take seconds, and an auto set-up has no use for it
@@ -153,6 +156,8 @@ impl Ui {
                 self.m.trig_level = (a.lv[first].0 + a.lv[first].1) / 2.0;
                 self.m.tscale = tscale_for(TBASES[0]);
                 self.m.acq = a.back.acq;
+                // the search needs records that trigger at the new level
+                self.m.auto_fast = false;
                 a.stage = Stage::Search(0);
             }
             Stage::Search(i) => {
@@ -186,6 +191,7 @@ impl Ui {
     }
 
     fn auto_end(&mut self, a: AutoRun) {
+        self.m.auto_fast = false;
         eprintln!("oos-ui auto: levels {:?}, periods {:?}", a.lv, a.period);
         let found: Vec<(usize, Stats, f64)> = (0..n_ch())
             .filter_map(|c| a.period[c].map(|p| (c, Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..Stats::default() }, p)))
@@ -469,6 +475,36 @@ mod tests {
         scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ ON");
         assert_eq!(scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ?"), b"1");
         assert!(ui.m.trig_nrej);
+    }
+
+    // Break it catches: the levels stages waiting the full auto time per record, or the fast auto trigger staying on
+    // after the auto set-up (docs/fork/trigger-lockin.md)
+    #[test]
+    fn levels_stages_use_the_fast_auto_trigger_only() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        assert!(!crate::board::dho::hw::settings(&ui.m, false).auto_fast);
+        ui.auto_start();
+        assert!(crate::board::dho::hw::settings(&ui.m, false).auto_fast);
+        let mut seen_search = false;
+        for _ in 0..4000 {
+            ui.step(0.02);
+            match ui.auto.as_ref().map(|a| matches!(a.stage, Stage::Search(_))) {
+                Some(true) => {
+                    seen_search = true;
+                    assert!(!ui.m.auto_fast, "the search triggers at the new level");
+                }
+                Some(false) => assert!(ui.m.auto_fast),
+                None => break,
+            }
+        }
+        assert!(seen_search && ui.auto.is_none() && !ui.m.auto_fast);
+        // a failed run (no channel worth a period) ends without it too
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        for c in 0..NCH {
+            ui.m.ch[c].on = c == 3;
+        }
+        run(&mut ui);
+        assert!(!ui.m.auto_fast);
     }
 
     #[test]

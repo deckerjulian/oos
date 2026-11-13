@@ -92,6 +92,9 @@ pub struct Settings {
     pub slope: tpu::Slope,
     pub level: f64,
     pub auto: bool,
+    /// AUTO sweep with the shortest auto-trigger time (10 ms) whatever the time base: the auto set-up reads the
+    /// levels of a signal its trigger level may not cross yet, and must not wait 20 time/div per record for it
+    pub auto_fast: bool,
     pub trigger: Trig,
     /// points per channel to read, from memory point pre + `at` (None = the whole record)
     pub window: Option<(u32, i64)>,
@@ -137,7 +140,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None }
     }
 }
 
@@ -276,7 +279,9 @@ impl State {
         }
         if s.blocks & 4 != 0 {
             st.push(Step::Note(format!("SCU {} trigger", if s.auto { "auto" } else { "normal" })));
-            st.extend(scu::auto_trigger(&mut self.sh, s.auto, tdiv_fs(s.tdiv), time_fs(s.holdoff)).into_iter().map(Step::Wr));
+            // a time base of 0 gives the shortest auto times (t1 10 ms, t2 100 ms)
+            let tb = if s.auto_fast { 0 } else { tdiv_fs(s.tdiv) };
+            st.extend(scu::auto_trigger(&mut self.sh, s.auto, tb, time_fs(s.holdoff)).into_iter().map(Step::Wr));
         }
         Ok((st, p))
     }
@@ -956,6 +961,21 @@ mod tests {
             writes(&State::handover(1, None).configure(&s, None, None).unwrap().0).iter().rev().find(|w| w.0 == 0x4064).unwrap().1
         };
         assert_eq!((t2(HOLDOFF_MIN), t2(1.0)), (25_000_000, 250_000_000));
+    }
+
+    // Break it catches: the auto set-up's fast auto trigger not reaching the SCU, so at 20 ms/div every record of a
+    // signal the level does not cross waits 400 ms (docs/fork/trigger-lockin.md)
+    #[test]
+    fn fast_auto_trigger_takes_the_shortest_times() {
+        let t = |auto_fast: bool| {
+            let s = Settings { tdiv: 20e-3, auto_fast, ..Settings::default() };
+            let w = writes(&State::handover(1, None).configure(&s, None, None).unwrap().0);
+            let last = |r: u32| w.iter().rev().find(|x| x.0 == r).unwrap().1;
+            (last(0x4060), last(0x4064))
+        };
+        // 4 ns ticks: 400 ms / 200 ms at 20 ms/div, 10 ms / 100 ms fast
+        assert_eq!(t(false), (100_000_000, 50_000_000));
+        assert_eq!(t(true), (2_500_000, 25_000_000));
     }
 
     #[test]

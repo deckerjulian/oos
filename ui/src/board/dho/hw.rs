@@ -139,6 +139,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
             _ => m.trig_level,
         } as f64,
         auto: m.trig_mode == TrigMode::Auto,
+        auto_fast: m.auto_fast && m.trig_mode == TrigMode::Auto,
         play4: true,
         blocks: 7,
         header: header_probe(),
