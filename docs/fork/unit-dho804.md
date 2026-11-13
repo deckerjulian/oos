@@ -277,6 +277,18 @@ cpus 0xf`); rates equal round 1.
 | C2H chunks | pass | 4 ch 1 M live, no error |
 | MPS256 | already in effect | 6.12 kernel: DevCtl 0x2830 (MPS 256 B) on endpoint (cap 0x60, DevCap 512 B) and root port (cap 0xc0, DevCap 256 B) without `pci=pcie_bus_perf` |
 
+### Round 4 (builds 20261113-184600 and -190733): image defaults, B3, B1
+
+Details and the raw dumps: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 4", `docs/logs/unitlab_b1/`.
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| Image defaults | pass | without `/oos/system.conf`: batch, placement, prearm, MSI all in force; the fresh file carries them |
+| B3 segments | fixed | N = 10/100/1000 complete (`0x4034 0x31c0`), steps 1.000 ms +-0.06 us; early STOP keeps 1303 of 3000 / 2108 of 5000; interval 5 ms gives 6.000 ms steps; header(k) = latch(k-1) |
+| B1 at 62.5 MSa/s | works, floor | all frames played (760 frames/s). Noise 1.07 mV -> 0.72 / 0.53 / 0.42 / 0.40 at N 2/4/16/256 (100 mV/div), SW 16 0.34. Floor scales with V/div (0.14 / 0.40 / 2.0 mV at 50 / 100 / 500 mV/div) |
+| B1 fast rates | bit 2 needed | `avg.hw_fast` alone: zero frames from 156.25 MSa/s up (1 and 2 ch). With `avg.debug_sinc` (0x1004 bit 2): averages at 156.25, 312.5, 625, 1250 MSa/s (312.5: 1.08 -> 0.46 mV at N 16) |
+| B1 raw fields | no hidden low field | `seq`: odd word = next sample; `wide`: words from 10240 on are a quieter region (51 vs 125 codes), not a repeat |
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
