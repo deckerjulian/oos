@@ -35,6 +35,8 @@ pub mod spu;
 pub mod target;
 pub mod tpu;
 pub mod wpu;
+pub mod zone;
+pub mod zonegeom;
 
 /// One register write: (BAR1 offset, value).
 pub type Write = (u32, u32);
