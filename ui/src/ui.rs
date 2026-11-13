@@ -3097,12 +3097,43 @@ impl Ui {
         cv.no_clip();
     }
 
+    /// Vertical scale and the sample rate of this record. Time per division stays the one horizontal scale.
+    fn ref_badge_readout(r: &RefWave) -> (String, String) {
+        let scale = format!("{}/div", si_short(r.vpd as f64, "V"));
+        let rate = if r.dt.is_finite() && r.dt > 0.0 {
+            si_short(1.0 / r.dt, "Sa/s")
+        } else {
+            "\u{2014}".into()
+        };
+        (scale, rate)
+    }
+
+    /// Name, volts per division, and the record's sample rate, beside the trace.
+    fn draw_ref_badge(&self, cv: &mut Canvas, area: Rect, y: i32, col: Rgb, slot: usize, r: &RefWave) {
+        let f = &self.fonts;
+        let name = if r.label.is_empty() { format!("R{}", slot + 1) } else { r.label.clone() };
+        let (scale, rate) = Self::ref_badge_readout(r);
+        let text_w = f.sb.width(&name).max(f.s.width(&scale)).max(f.s.width(&rate));
+        let bw = (text_w + 12).clamp(36, (area.w - 16).max(36));
+        let bh = 46;
+        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - 2).max(area.y + 2));
+        let x0 = (area.x + 80).min((area.x + area.w - bw - 4).max(area.x + 2));
+        let b = Rect::new(x0, y0, bw, bh);
+        cv.round(b, 3, col, 255);
+        cv.set_clip(b);
+        let ink = rgb(0, 0, 0);
+        let row = b.h / 3;
+        cv.text_in(&f.sb, Rect::new(b.x, b.y + 1, b.w, row), 1, &name, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &scale, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + 2 * row, b.w, row), 1, &rate, ink);
+        cv.set_clip(area);
+    }
+
     fn draw_refs(&self, cv: &mut Canvas) {
         self.draw_refs_at(cv, self.area, self.view());
     }
 
     fn draw_refs_at(&self, cv: &mut Canvas, area: Rect, view: (f32, f32)) {
-        let f = &self.fonts;
         cv.set_clip(area);
         let ppy = area.h as f32 / VDIV;
         let cy = area.y as f32 + area.h as f32 / 2.0;
@@ -3159,12 +3190,7 @@ impl Ui {
                 prev = Some((x, y));
             }
             if let Some(y) = first {
-                let yy = y.clamp(area.y + 10, area.y + area.h - 10);
-                // right of the volt labels
-                let name = if r.label.is_empty() { format!("R{}", i + 1) } else { r.label.clone() };
-                let b = Rect::new(area.x + 80, yy - 8, (f.s.width(&name) + 8).max(24), 17);
-                cv.round(b, 3, col, 255);
-                cv.text_in(&f.s, b, 1, &name, rgb(0, 0, 0));
+                self.draw_ref_badge(cv, area, y, col, i, r);
             }
         }
         cv.no_clip();
