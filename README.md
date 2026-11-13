@@ -165,6 +165,8 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Second pane under the plot, as high as its content: spectrum with a peak list, results table with statistics, cursors
   and peaks, decoder events, or the trends of two measurements
 - Measurements labelled on the trace: level lines and arrows with their values
+- Up to four views to switch between (Display > Views): each keeps its windows, second pane, measurements, cursors
+  and zoom; a swipe from the edge of the plot or the numbers in the top bar switch
 - Data logger: measurements as CSV at an interval from 1 s to 1 h, to the stick or the card
 - 8 math channels, also on each other, with free formulas (`sqrt(CH1^2+CH2^2)`): add, subtract, multiply, divide, integrate, differentiate, abs, sqrt, log, ln, exp, Ax+B,
   low/high/band-pass and band-stop filters, FFT
@@ -622,6 +624,14 @@ same page puts each channel, math channel and the LA into a window; a new split 
 windows share the time base, and a drag in a window moves a channel of that window. Zoom, XY and the analysers use one
 window. The button with four corners at the top right of the plot gives the plot the whole screen; it shows inward
 corners then and brings the top bar and the cards back.
+
+**Views.** Instead of one screen with everything on it, Display > Views (2, 3 or 4) gives screens to switch between.
+Each view keeps what is shown and where: the windows, the second pane, the measurements and their bar, DVM and
+counter, the cursors, the zoom, the histogram, the analyser page, XY and full screen. The channels, the time base,
+the trigger and the acquisition are the same in all of them; what changes while a view is shown stays with it, and a
+view not used yet starts with the plot alone. To switch: the numbers left of the top bar's buttons, a swipe from the
+left or right edge of the plot inwards (a vertical drag there still moves a channel or the trigger level), the Quick
+key set to Next view, or SCPI `:DISPlay:VIEW <n>` (`:DISPlay:VIEW:COUNt <1..4>`). The views are saved with a setup.
 
 **Text size.** Display > Text size makes the text larger: Normal is the original look, Large and Larger use fonts 2 and 4
 pixels bigger in the top bar, the cards, the measurement and cursor rows, the menus, the keyboard and the dialogs. The rows

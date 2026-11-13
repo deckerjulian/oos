@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+New:
+
+- Display > Views: up to four arrangements of the screen to switch between, instead of one busy screen (asked for in
+  the forum). Each keeps its windows, second pane, measurements, DVM and counter, cursors, zoom, histogram, analyser
+  page, XY and full screen; channels, time base, trigger and acquisition are shared. Switch with the numbers in the
+  top bar, a swipe from the left or right edge of the plot inwards, the Quick key (Next view) or
+  `:DISPlay:VIEW <n>`; `:DISPlay:VIEW:COUNt`. Saved with a setup.
+
 Changed:
 
 - Graphics (CPU or GPU) moved from Display to System: it is a setting of the scope, not of the picture.

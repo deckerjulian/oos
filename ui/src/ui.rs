@@ -33,6 +33,8 @@ mod time;
 mod remote;
 mod backlight;
 mod graphics;
+pub mod views;
+pub use views::VIEWS_MAX;
 mod script;
 #[cfg(test)]
 mod lint;
@@ -599,6 +601,8 @@ enum Item {
     RemTelnetInfo,
     /// System > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
+    /// Display > Views (ui/views.rs)
+    Views,
     /// Display > Backlight, percent (ui/backlight.rs)
     Backlight,
     WlanInfo,
@@ -670,6 +674,9 @@ pub enum Phase {
 enum Drag {
     None,
     Pending,
+    /// went down in an edge strip of the plot with more than one view: a horizontal swipe switches views, a vertical
+    /// drag becomes `Pending` (ui/views.rs)
+    ViewEdge,
     /// drawing zone k (box: from the touch-down point to the finger; shape: the finger's path)
     Zone(usize),
     Offset(usize),
@@ -1534,6 +1541,12 @@ impl Ui {
             Quick::Single => self.key(key::SINGLE),
             Quick::RunStop => self.key(key::RUNSTOP),
             Quick::Clear => self.clear_display(),
+            Quick::NextView => {
+                if self.m.views < 2 {
+                    return self.toast("Set Display > Views first");
+                }
+                self.view_step(1)
+            }
         }
     }
 
@@ -3435,7 +3448,11 @@ impl Ui {
         } else if x + f.m.width(&full) <= room {
             (false, full)
         } else {
-            (false, format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', "")))
+            // tighter, then the rate alone (large text with the view buttons, a USB stick, a WLAN stick)
+            let tight = format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', ""));
+            let alone = rate.replace(' ', "");
+            let main = [tight, alone].into_iter().find(|t| x + f.m.width(t) <= room).unwrap_or_default();
+            (false, main)
         };
         let end = x + if bold { f.mb.width(&main) } else { f.m.width(&main) };
         let mode = format!(" \u{b7} {}", mode);
@@ -3464,7 +3481,7 @@ impl Ui {
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
         let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
         let buttons = self.top_buttons();
-        let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
+        let room = self.view_box().map_or(buttons.first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
         let tcol = if acq_open { ACCENT } else { TEXT };
         let (bold, main, mode) = Self::top_acq(f, r.x + r.w + 14, room, sr, depth as f64, self.acq_name());
@@ -3472,6 +3489,7 @@ impl Ui {
         if let Some(m) = mode {
             cv.text(&f.m, x, 25, &m, tcol);
         }
+        self.draw_view_box(cv);
         // buttons (the open menu in orange)
         let root = self.menu_root();
         for (b, l, r) in buttons {
@@ -3869,7 +3887,7 @@ impl Ui {
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Backlight, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![Item::Open(MenuId::Windows), Item::Views, Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Backlight, Item::TextSize, Item::ClearDisp];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
@@ -4530,7 +4548,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::backlight_kind(it)) {
+        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
             return k;
         }
         match it {
@@ -4551,7 +4569,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::backlight_label(it)) {
+        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
             return l;
         }
         match it {
@@ -4788,7 +4806,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.backlight_value(it)) {
+        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4982,7 +5000,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.backlight_adjust(it, d) {
+        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -5776,7 +5794,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)) {
+        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -6691,7 +6709,9 @@ impl Ui {
                     return;
                 }
                 if in_plot {
-                    t.drag = Drag::Pending;
+                    let edge = self.view_edge(x);
+                    let t = &mut self.touch;
+                    t.drag = if edge { Drag::ViewEdge } else { Drag::Pending };
                     if let Some((k, _)) = self.zone_arm {
                         t.drag = Drag::Zone(k);
                         self.zone_path = vec![(x, y)];
@@ -6704,6 +6724,15 @@ impl Ui {
                 }
                 t.x = x;
                 t.y = y;
+                if t.drag == Drag::ViewEdge {
+                    let (x0, dx, dy) = (t.x0, x - t.x0, y - t.y0);
+                    match self.view_swipe(x0, dx, dy) {
+                        Some(true) => self.touch.drag = Drag::None,
+                        Some(false) => return,
+                        None => self.touch.drag = Drag::Pending,
+                    }
+                }
+                let t = &mut self.touch;
                 let (tx0, ty0, tdrag) = (t.x0, t.y0, t.drag);
                 let (dx, dy) = (x - tx0, y - ty0);
                 if tdrag == Drag::Pending && (dx.abs() > 10 || dy.abs() > 10) {
@@ -6841,7 +6870,7 @@ impl Ui {
                     }
                     return;
                 }
-                if was.1 == Drag::None || was.1 == Drag::Pending {
+                if was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge {
                     if (x - was.2).abs() < 16 && (y - was.3).abs() < 16 {
                         self.tap(was.2, was.3);
                     } else {
@@ -6988,8 +7017,11 @@ impl Ui {
         if self.usb && self.top_hit(self.usb_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Storage);
         }
+        if self.view_box_tap(x, y) {
+            return;
+        }
         // sample rate, depth and mode in the top bar: the page that sets them
-        let end = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x) - 4;
+        let end = self.view_box().map_or(self.top_buttons().first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 4;
         if self.top_hit(Rect::new(pill.x + pill.w, pill.y, end - pill.x - pill.w, pill.h)).contains(x, y) {
             return self.toggle_menu(MenuId::Acquire);
         }
