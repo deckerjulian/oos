@@ -10,7 +10,7 @@ use crate::board::{Frame, Slow};
 use crate::board::{HwShared, Shared, QUEUE_MAX};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
-use oos_hal::dho::{afe, auxout, hz, tpu};
+use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -162,6 +162,11 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         hwmask: None,
         hwzone: None,
     };
+    // the hardware UART fires inside the frame, the software trigger point is the end of its stop bit: the record is
+    // centred on the software point (docs/fork/hwuart.md)
+    if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(m)) {
+        s.delay += uarttrig::sw_offset_s(u);
+    }
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
@@ -328,9 +333,9 @@ fn hw_trigger(m: &Model) -> Trig {
         TrigType::Duration => Trig::Duration { pats, la, when, lower, upper, levels },
         TrigType::SetupHold => Trig::SetupHold { clk: m.trig_src2 as u32 + 1, clk_edge: edge2, setup: m.setup as f64, hold: m.hold as f64, levelc: m.trig_level2 as f64 },
         TrigType::NthEdge => Trig::Nth { count: m.nth_n, idle: m.nth_idle as f64 },
-        // protocol trigger: the TPU fires on edges of the decoder's line (see `settings`), the software picks the
-        // matching frame out of the record
-        TrigType::Bus => Trig::Edge,
+        // protocol trigger: the TPU's UART receiver where it can (`trig.serial_hw = on`, `hw_uart`); else the TPU fires
+        // on edges of the decoder's line (see `settings`) and the software picks the matching frame out of the record
+        TrigType::Bus => hw_uart(m).map_or(Trig::Edge, Trig::Uart),
         TrigType::Video => Trig::Video {
             std: if m.video_std == VideoStd::Pal { HStd::Pal } else { HStd::Ntsc },
             // the TPU has no "all fields": odd field triggers once per frame [A]
@@ -428,6 +433,74 @@ fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Op
     if let (auxout::AuxOut::PassFail(p), Some(_)) = (&mut want.aux, &want.hwzone) {
         p.source = auxout::Source::Zone;
     }
+}
+
+/// `trig.serial_hw = on` in system.conf: the UART protocol trigger runs in the TPU's receiver (docs/fork/hwuart.md).
+/// Off by default until it is verified on the unit.
+pub fn serial_hw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| serial_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `trig.serial_hw` line of system.conf; off unless `on`.
+fn serial_hw_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
+}
+
+/// The UART protocol trigger of the model in the TPU's receiver, when it is enabled and can do it: a UART decoder on a
+/// channel (not the LA, not differential), 1..8 data bits, and a condition it has (frame start, a data byte, an error).
+/// The ID condition and wider values stay with the software trigger.
+pub fn hw_uart(m: &Model) -> Option<uarttrig::Uart> {
+    if !serial_hw_on() {
+        return None;
+    }
+    uart_of(m)
+}
+
+/// `hw_uart` without the system.conf switch.
+fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
+    use uarttrig::{Cond, ErrKind, Parity, Relation, Stop, Uart};
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Uart || m.dec_on_la() || m.dec_diff.is_some() || !(1..=8).contains(&m.dec_bits) {
+        return None;
+    }
+    let cond = match m.trig_bus {
+        BusWhat::Frame => Cond::Start,
+        BusWhat::Data if m.trig_bus_val <= 0xff && m.trig_bus_val >> m.dec_bits == 0 => Cond::Data(Relation::Eq, m.trig_bus_val as u8, m.trig_bus_val as u8),
+        BusWhat::Error => Cond::Error(ErrKind::Either),
+        _ => return None,
+    };
+    let parity = match m.dec_parity {
+        oos_dsp::decode::Parity::None => Parity::None,
+        oos_dsp::decode::Parity::Odd => Parity::Odd,
+        oos_dsp::decode::Parity::Even => Parity::Even,
+    };
+    Some(Uart { baud: crate::decode::BAUDS[m.dec_baud], bits: m.dec_bits, parity, stop: Stop::One, cond, invert: false })
+}
+
+/// Fork, `:SYSTem:DEBug:UART?`: what the TPU's UART receiver gets for the model (`off,...` when the software trigger
+/// stays in charge), the words, the event time and the record shift.
+pub fn uart_debug(m: &Model) -> String {
+    let Some(u) = uart_of(m) else {
+        return format!("off,enabled={}", serial_hw_on() as u8);
+    };
+    let w = uarttrig::words(&u);
+    format!(
+        "{},src=CH{},baud={},bits={},parity={:?},cond={:?},invert={},clocks={},r2100={:#010x},r2104={:#010x},r221c={:#010x},mux={},event_s={:.4e},shift_s={:.4e}",
+        if serial_hw_on() { "on" } else { "off" },
+        m.dec_src + 1,
+        u.baud,
+        u.bits,
+        u.parity,
+        u.cond,
+        u.invert as u8,
+        uarttrig::bit_clocks(u.baud),
+        w[1].1,
+        w[2].1,
+        w[0].1,
+        uarttrig::MUX,
+        uarttrig::event_s(&u),
+        uarttrig::sw_offset_s(&u)
+    )
 }
 
 /// The mask test of the acquisition settings from the UI's wish.
@@ -636,6 +709,24 @@ fn window_below(s: &Settings, p: &hz::Params, cap: i64) -> Option<(u32, i64)> {
     Some((n as u32, lo - pre))
 }
 
+/// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch whose newest frame the deep
+/// measurements may read raw (`deep_raw_settings`), since the next batch would write the ring under it. Prearm gains at
+/// short time bases; deep compressed records take most of a batch in the read anyway.
+fn prearm_keeps_replay(b: &Settings, p: &hz::Params, deep: Option<crate::deepmeas::Want>) -> bool {
+    deep.is_none() || deep_raw_settings(b, p).is_none()
+}
+
+/// The raw read at STOP (docs/fork/stop-exact.md) of the newest frame of the batch `b` with `count` frames read just
+/// before: when the deep measurements want samples, the batch was read as pairs and its newest frame not already
+/// raw, and nothing was armed ahead (`ahead`: the ring is being written again).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn final_replay(b: &Settings, p: &hz::Params, count: u32, newest_raw: bool, ahead: bool, deep: Option<crate::deepmeas::Want>) -> Option<Settings> {
+    if count == 0 || newest_raw || ahead || deep.is_none() {
+        return None;
+    }
+    deep_raw_settings(b, p)
+}
+
 /// The raw read of a deep record's screen window for the measurements (deepmeas.rs): the batch `b` read the whole
 /// record through the compression (`batch_plan`, above 1 M points), Normal acquisition, no LA; the window of
 /// `screen_window` with the record's edge allowed, at most `deepmeas::MAX_BYTES`. Settings for `seq::read_raw_again`.
@@ -778,6 +869,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
         // the last raw read of a deep record's screen window for the measurements (deepmeas.rs)
         let mut deep_last: Option<std::time::Instant> = None;
+        // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
+        // raw), and whether arming is paused for a STOP (`Shared::hold`, docs/fork/stop-exact.md)
+        let mut fresh: Option<(Settings, hz::Params, u32, bool)> = None;
+        let mut paused = false;
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
         // this thread's share of the deposit work while it waits (drawpipe.rs)
@@ -799,6 +894,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut levels_done: Option<u64> = None;
         let mut slots_done: Option<u64> = None;
         loop {
+            let last_read = fresh.take();
             counter_tick(&mut bar, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
@@ -1154,6 +1250,41 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
                 continue;
             }
+            // STOP: the batch in progress has been read; the newest frame once more raw where the deep measurements
+            // want it (the record that stays on screen), then no arming until RUN or SINGLE
+            let (hold, final_req, deep_want) = {
+                let g = out.lock().unwrap();
+                (g.hold, g.final_req, g.deep_raw)
+            };
+            if hold {
+                let ahead = armed.is_some();
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                let replay = last_read.as_ref().and_then(|(lb, lp, count, raw)| final_replay(lb, lp, *count, *raw, ahead, deep_want).map(|ds| (ds, *lp, *count)));
+                let last = replay.and_then(|(ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
+                    Ok(()) => {
+                        n += 1;
+                        Some(Frame { stamp, ..decode(raw_dma.data(), &ds, &lp, n) })
+                    }
+                    Err(e) => {
+                        status(format!("raw read of the deep window at STOP: {}", e));
+                        None
+                    }
+                });
+                let mut g = out.lock().unwrap();
+                if let Some(f) = last {
+                    g.frame = f.clone();
+                    g.queue.push_back(f);
+                }
+                g.final_ack = final_req;
+                drop(g);
+                paused = true;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                continue;
+            }
+            if std::mem::take(&mut paused) {
+                // RUN or SINGLE: the frames of the batch before the STOP are not new
+                out.lock().unwrap().queue.clear();
+            }
             let b = batch_plan(&s, &p);
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
             if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
@@ -1231,6 +1362,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         _ => raw_frame,
                     };
+                    fresh = Some((b.clone(), p, count, raw_frame.is_some()));
                     // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
                     // arm (prearm below) can record anything
                     if hw_status_on() {
@@ -1278,8 +1410,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         a
                     });
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
-                    // not in average mode, where a clear may have to come first
-                    if prearm_on() && avg.is_none() {
+                    // not in average mode, where a clear may have to come first, and not where the deep measurements
+                    // read the newest frame raw (its ring must stay for the replay at STOP)
+                    if prearm_on() && avg.is_none() && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -1598,6 +1731,57 @@ mod tests {
     }
 
     #[test]
+    fn uart_from_the_decoder_settings() {
+        use oos_hal::dho::uarttrig::{Cond, ErrKind, Parity, Relation};
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_bits, m.dec_baud) = (TrigType::Bus, Proto::Uart, 1, 8, 7);
+        // (condition, value) -> receiver condition (None = the software trigger)
+        let cases = [
+            (BusWhat::Frame, 0, Some(Cond::Start)),
+            (BusWhat::Data, 0x41, Some(Cond::Data(Relation::Eq, 0x41, 0x41))),
+            (BusWhat::Data, 0x141, None),
+            (BusWhat::Error, 0, Some(Cond::Error(ErrKind::Either))),
+            (BusWhat::Id, 0x41, None),
+        ];
+        for (what, v, want) in cases {
+            (m.trig_bus, m.trig_bus_val) = (what, v);
+            assert_eq!(uart_of(&m).map(|u| u.cond), want, "{:?} {:#x}", what, v);
+        }
+        m.trig_bus = BusWhat::Frame;
+        m.dec_parity = oos_dsp::decode::Parity::Even;
+        let u = uart_of(&m).unwrap();
+        assert_eq!((u.parity, u.baud, u.bits, u.invert), (Parity::Even, crate::decode::BAUDS[7], 8, false));
+        // 7 data bits: a value with bit 7 set cannot match
+        (m.dec_bits, m.trig_bus, m.trig_bus_val) = (7, BusWhat::Data, 0x80);
+        assert_eq!(uart_of(&m), None);
+        // other protocols, the LA as input, RS-485: the software trigger
+        (m.dec_bits, m.trig_bus) = (8, BusWhat::Frame);
+        for f in [|m: &mut Model| m.dec_proto = Proto::Spi, |m: &mut Model| m.dec_proto = Proto::Uart9, |m: &mut Model| m.dec_diff = Some(2), |m: &mut Model| m.trig_type = TrigType::Edge] {
+            let mut x = m.clone();
+            f(&mut x);
+            assert_eq!(uart_of(&x), None);
+        }
+        assert!(!serial_hw_from("") && serial_hw_from("trig.serial_hw = on\n"));
+        assert!(uart_debug(&m).starts_with("off,src=CH2,"), "{}", uart_debug(&m));
+    }
+
+    #[test]
+    fn uart_shifts_the_record_to_the_software_point() {
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.trig_bus) = (TrigType::Bus, Proto::Uart, 0, BusWhat::Frame);
+        let u = uart_of(&m).unwrap();
+        let mut s = settings(&m, false);
+        let d0 = s.delay;
+        s.trigger = Trig::Uart(u);
+        // `settings` applies the shift only with the switch on; the same arithmetic here
+        if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(&m)) {
+            s.delay += uarttrig::sw_offset_s(u);
+        }
+        let bit = 1.0 / crate::decode::BAUDS[m.dec_baud];
+        assert!((s.delay - d0 - (9.4 * bit - 4.0 / 156.25e6)).abs() < 1e-12);
+    }
+
+    #[test]
     fn zone_hw_from_conf() {
         assert!(!zone_hw_from(""));
         assert!(zone_hw_from("zone.hw = on\n"));
@@ -1845,6 +2029,37 @@ mod tests {
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
+    }
+
+    // Break it catches (docs/fork/stop-exact.md): a replay at STOP of a frame already raw, of a ring armed again, without
+    // the deep measurements, or of a batch that was not read through the compression
+    #[test]
+    fn final_replay_at_stop() {
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+        let b = batch_plan(&s, &p);
+        let w = Some(crate::deepmeas::Want { every: false });
+        assert_eq!(final_replay(&b, &p, 3, false, false, w), deep_raw_settings(&b, &p));
+        assert!(final_replay(&b, &p, 3, false, false, w).is_some());
+        assert!(final_replay(&b, &p, 3, true, false, w).is_none(), "newest frame already raw");
+        assert!(final_replay(&b, &p, 3, false, true, w).is_none(), "armed ahead");
+        assert!(final_replay(&b, &p, 3, false, false, None).is_none(), "no deep measurements");
+        assert!(final_replay(&b, &p, 0, false, false, w).is_none());
+        assert!(final_replay(&Settings { compress: 1, ..b.clone() }, &p, 3, false, false, w).is_none(), "read raw");
+        // prearm on (the unit's set-up): no arming ahead for this batch, so the replay at STOP stays possible
+        assert!(!prearm_keeps_replay(&b, &p, w));
+        let ahead = prearm_keeps_replay(&b, &p, w);
+        assert!(final_replay(&b, &p, 3, false, ahead, w).is_some());
+        // prearm stays where no deep replay can come: without the deep measurements, a shallow record
+        assert!(prearm_keeps_replay(&b, &p, None));
+        m.mdepth = 0;
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        assert!(prearm_keeps_replay(&batch_plan(&s, &p), &p, w));
     }
 
     // Break it catches: a raw deep read of the wrong part of the record (screen or trigger point outside it), one

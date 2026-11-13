@@ -119,6 +119,10 @@ pub trait Board: Sync + 'static {
     /// off where the board has none or it is not enabled.
     fn zone_hw(&self) -> bool;
 
+    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:UART?`); "none" where
+    /// the board has none.
+    fn uart_debug(&self, m: &Model) -> String;
+
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
 
@@ -326,6 +330,11 @@ pub struct Shared {
     /// the FPGA's DVM block: wanted by the UI (None: off), the latest reading
     pub dvm_want: Option<DvmWant>,
     pub dvm: Option<DvmRead>,
+    /// STOP (docs/fork/stop-exact.md): the UI is stopped and the thread arms nothing; `final_req` is raised for a STOP
+    /// that wants the newest frame read raw, `final_ack` is the request done (its frame queued before)
+    pub hold: bool,
+    pub final_req: u64,
+    pub final_ack: u64,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
     pub deep_raw: Option<crate::deepmeas::Want>,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
