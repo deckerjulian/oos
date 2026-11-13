@@ -452,6 +452,14 @@ impl Source {
     }
 
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
+    /// Readers of the records that only the UI knows of (protocol watch, XY) for the hardware thread
+    /// (`Shared::needs_raw`: no live compression).
+    pub fn hw_needs_raw(&self, on: bool) {
+        if let Source::Hw { shared, .. } = self {
+            shared.lock().unwrap().needs_raw = on;
+        }
+    }
+
     /// STOP for the hardware thread (`Shared::hold`): whether it may arm, and the newest final-frame request. True when
     /// that request is done and every frame before it was taken (always for other sources).
     pub fn hw_hold(&self, hold: bool, req: u64) -> bool {

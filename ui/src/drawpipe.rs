@@ -55,6 +55,26 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
         return rec.triggered;
     }
     let src = &f.ch[m.trig_src];
+    let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
+    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| crate::trignear::edge_smooth_near(src, f.pre, level, hyst, rising, either, half, col, |_| true);
+    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
+        if pairs {
+            crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots);
+        } else if m.dots {
+            crate::fastdraw::deposit_dots(map, w, h, &f.ch[c], xm, 24);
+        } else {
+            crate::fastdraw::deposit(map, w, h, &f.ch[c], xm, 24);
+        }
+    };
+    dense(ph, m, f, x_per_sample, pairs, present, stats, refine, deposit)
+}
+
+/// The dense fast path of `draw_frame` for the frame `f` (its samples reached only through `refine`, the trigger
+/// refinement on the source channel, and `deposit`, one channel into its map): trigger statistics, mapping, channels.
+#[allow(clippy::too_many_arguments)]
+fn dense(ph: &mut Phosphor, m: &Model, f: &Frame, x_per_sample: f64, pairs: bool, present: [bool; NCH], stats: Option<Stats>, refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>), mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map)) -> bool {
+    let (w, h) = (ph.w, ph.h);
+    let tdiv = m.time_per_div() as f64;
     // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
     let on_la = m.trig_on_la();
     // the edge of the set direction nearest the hardware trigger point, up to half a screen away, on the signal smoothed
@@ -66,7 +86,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     let edge = if on_la {
         None
     } else {
-        let (e, any) = crate::trignear::edge_smooth_near(src, f.pre, crate::board::sw_trig_level(m, f), hyst, rising, either, half, col, |_| true);
+        let (e, any) = refine(crate::board::sw_trig_level(m, f), hyst, rising, either, half, col);
         if let Some(s) = stats {
             let k = match (e, any) {
                 (None, _) => 3,
@@ -87,24 +107,99 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     let ppd_y = h as f32 / VDIV;
     for c in 0..NCH {
         let ch = &m.ch[c];
-        if !ch.on || f.ch[c].is_empty() {
+        if !ch.on || !present[c] {
             continue;
         }
         let vpd = ch.volts_per_div();
         let sign = -1.0;
         let xm = crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
-        if pairs {
-            crate::compress::deposit_pairs(&mut ph.map[c], w, h, &f.ch[c], &xm, 24, m.dots);
-        } else if m.dots {
-            crate::fastdraw::deposit_dots(&mut ph.map[c], w, h, &f.ch[c], &xm, 24);
-        } else {
-            crate::fastdraw::deposit(&mut ph.map[c], w, h, &f.ch[c], &xm, 24);
-        }
+        deposit(c, &mut ph.map[c], &xm);
     }
     // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
     edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc
 }
 
+/// Smallest read-out the workers draw from its words (`draw_frame_codes`): 64 kB. Below it the f32 copy stays in the
+/// caches and decoding first was as fast or faster on the host (12.5 k points, 1 channel: 1.08x the time from the words).
+pub const CODES_MIN_BYTES: usize = 64 << 10;
+
+/// Most words per group the workers draw from the words: each channel's deposit reads every group, so with four
+/// channels the read-out is read four times; on the host that was 0.95x the decode path, too little to rely on.
+pub const CODES_MAX_STRIDE: usize = 2;
+
+/// Where a frame's read-out holds each channel (`fastdraw::Codes`), as the board gives it (`CodesInto`).
+#[derive(Clone, Copy)]
+pub struct CodeLayout {
+    pub stride: usize,
+    pub word: [Option<usize>; NCH],
+    pub affine: [(f32, f32); NCH],
+    pub volt: fn(u16, (f32, f32)) -> f32,
+    /// volts of samples a..b of one channel (bytes, stride, word, a, b, affine, out): the board's decode loop
+    pub volts: fn(&[u8], usize, usize, usize, usize, (f32, f32), &mut Vec<f32>),
+}
+
+impl CodeLayout {
+    /// Channel `c` of the read-out `bytes` (empty when not in it).
+    pub fn channel<'a>(&self, bytes: &'a [u8], c: usize) -> crate::fastdraw::Codes<'a> {
+        let words = bytes.len() / 2;
+        let (word, n) = match self.word[c] {
+            Some(k) if k < words => (k, (words - k).div_ceil(self.stride)),
+            _ => (0, 0),
+        };
+        // SAFETY: u16 has no invalid bit patterns; align_to only hands out the aligned middle part
+        let (pre, words, _) = unsafe { bytes.align_to::<u16>() };
+        let words = (pre.is_empty() && cfg!(target_endian = "little")).then_some(words);
+        crate::fastdraw::Codes { bytes, words, stride: self.stride, word, n, affine: self.affine[c], volt: self.volt }
+    }
+}
+
+/// The board's view of a frame without decoding it: sets every field of the frame but the channel vectors (left
+/// empty) as the decode would, and says where the channels are; None where only the decode will do (compressed or
+/// with a header).
+pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
+
+#[cfg(test)]
+thread_local! {
+    /// wide searches of the codes path (tests)
+    static WIDE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// the trigger source's volts that the codes path decodes (the near window, or all of them for the wide search)
+    static TRIG: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `draw_frame` straight from the read-out `bytes` of a frame (`lay`, meta data in `f`, whose channel vectors stay
+/// empty): the same picture and statistics without the f32 copy of every channel. The trigger source is decoded only
+/// around the hardware trigger point (the near search, `trignear::edge_near_window`), all of it only when the wide
+/// search is needed. None where this path does not apply (sparse, pairs, roll or scan, dots, a coupling that needs the
+/// frame mean): then decode and call `draw_frame`.
+pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], lay: &CodeLayout, stats: Option<Stats>) -> Option<bool> {
+    let (w, h) = (ph.w, ph.h);
+    let tdiv = m.time_per_div() as f64;
+    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
+    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots || !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) {
+        return None;
+    }
+    let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
+    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
+        let src = lay.channel(bytes, m.trig_src);
+        TRIG.with(|t| {
+            let v = &mut *t.borrow_mut();
+            let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
+            (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
+            if let Some(r) = crate::trignear::edge_near_window(v, a, src.n, f.pre, level, hyst, rising, either, half, col, |_| true) {
+                return r;
+            }
+            #[cfg(test)]
+            WIDE.with(|n| n.set(n.get() + 1));
+            (lay.volts)(bytes, src.stride, src.word, 0, src.n, src.affine, v);
+            crate::trignear::edge_smooth_near(v, f.pre, level, hyst, rising, either, half, col, |_| true)
+        })
+    };
+    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24);
+    Some(dense(ph, m, f, x_per_sample, false, present, stats, refine, deposit))
+}
 
 /// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
 #[derive(Default)]
@@ -184,6 +279,8 @@ struct Batch {
     fb: usize,
     frames: usize,
     decode: DecodeInto,
+    /// the board's view without decoding (`draw_frame_codes`), where it has one
+    codes: Option<CodesInto>,
     stamp: u64,
     next: AtomicUsize,
     counters: &'static Counters,
@@ -371,17 +468,24 @@ impl Pipe {
         self.pool.lock().unwrap().try_recv().ok().map(|r| r.into_any())
     }
 
-    /// From the acquisition thread: the first `frames` frames of `fb` bytes in `raw`, recorded under settings stamp
-    /// `stamp`, for the workers (and the helper) to claim. The buffer comes back through `take_buffer` when the batch
-    /// is done. Frames nobody claims are counted as dropped.
+    /// `feed_codes` without the board's view of the read-out words (tests).
+    #[cfg(test)]
     pub fn feed(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto) {
-        self.feed_batch(raw, fb, frames, stamp, decode);
+        self.feed_batch(raw, fb, frames, stamp, decode, None);
+    }
+
+    /// From the acquisition thread: the first `frames` frames of `fb` bytes in `raw`, recorded under settings stamp
+    /// `stamp`, for the workers (and the helper) to claim, decoded with `decode` or, without per-frame measurements,
+    /// drawn from their words with `codes` (`draw_frame_codes`). The buffer comes back through `take_buffer` when the
+    /// batch is done. Frames nobody claims are counted as dropped.
+    pub fn feed_codes(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) {
+        self.feed_batch(raw, fb, frames, stamp, decode, codes);
     }
 
     /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
-    fn feed_batch(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto) -> Arc<Batch> {
+    fn feed_batch(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) -> Arc<Batch> {
         let frames = if fb == 0 { 0 } else { frames.min(raw.bytes().len() / fb) };
-        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, stamp, next: AtomicUsize::new(0), counters: self.counters, live: self.live.clone() });
+        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next: AtomicUsize::new(0), counters: self.counters, live: self.live.clone() });
         self.live.fetch_add(1, Ordering::Acquire);
         {
             let mut open = self.open.lock().unwrap();
@@ -499,7 +603,18 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
 fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
     let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
     for i in r {
-        (b.decode)(&bytes[i * b.fb..(i + 1) * b.fb], f);
+        let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
+        // without per-frame measurements a large frame is drawn from its read-out words where the board has a view of them
+        if a.folds.is_empty() && chunk.len() >= CODES_MIN_BYTES {
+            let lay = b.codes.as_ref().and_then(|c| c(chunk, f)).filter(|l| l.stride <= CODES_MAX_STRIDE);
+            let st = Stats { edges: &mut a.edges, off: &mut a.off };
+            if let Some(t) = lay.and_then(|l| draw_frame_codes(&mut a.ph, &v.m, f, chunk, &l, Some(st))) {
+                a.triggered += t as u64;
+                a.frames += 1;
+                continue;
+            }
+        }
+        (b.decode)(chunk, f);
         let st = Stats { edges: &mut a.edges, off: &mut a.off };
         a.triggered += draw_frame(&mut a.ph, &v.m, f, Some(st)) as u64;
         if crate::framestats::fold_frame(f, &v.m, &mut a.folds) {
@@ -643,6 +758,160 @@ mod tests {
         m
     }
 
+    /// Frames of channels `mask` (ratio from the mask), `n` points each: per channel a signal from `sig(frame, channel,
+    /// point)` in volts at 1 V/div (7500 codes per volt).
+    fn frames_of(mask: u32, n: u32, frames: usize, sig: &dyn Fn(usize, usize, usize) -> f64) -> (Vec<u8>, usize, Settings, hz::Params) {
+        let r = hz::ratio(mask);
+        let p = hz::Params { ratio: r, rate: 1_250_000_000 / r as u64, memsel: n, dot_fs: 800_000 * r as u64, seg: 0, max_frames: 1000, pre: n / 2, post: n / 2 };
+        let s = Settings { mask, window: None, compress: 1, header: false, ..Settings::default() };
+        let fb = oos_hal::dho::seq::frame_bytes(&s, &p);
+        let map = oos_hal::dho::seq::code_map(mask, s.ch.map(|k| (k.scale, k.offset)));
+        let mut bytes = vec![0u8; frames * fb];
+        for k in 0..frames {
+            for i in 0..n as usize {
+                for c in 0..NCH {
+                    if let Some(wd) = map.word[c] {
+                        let x = (32768.0 + sig(k, c, i) * 7500.0).round().clamp(0.0, 65535.0) as u16;
+                        let j = k * fb + 2 * (i * r as usize + wd);
+                        bytes[j..j + 2].copy_from_slice(&x.to_le_bytes());
+                    }
+                }
+            }
+        }
+        (bytes, fb, s, p)
+    }
+
+    // Break it catches: the workers' codes path (large frames, no per-frame measurements) drawing another picture or
+    // other trigger statistics than the frames mode, or frames lost on it
+    #[test]
+    fn batch_picture_from_the_codes_equals_the_frames_mode() {
+        let (w, h) = (970, 448);
+        let sig = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 + (k % 7) as f64 * 0.13 - 35_000.0) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin() + if k % 5 == 0 { 0.05 } else { 0.0 };
+        for (mask, n) in [(1u32, 100_000u32), (3, 70_312)] {
+            let mut m = model(1e-5, mask == 3, false);
+            m.meas = Vec::new();
+            let (bytes, fb, s, p) = frames_of(mask, n, 9, &sig);
+            assert!(fb >= CODES_MIN_BYTES);
+            let pipe = Pipe::start(2, false, fresh());
+            pipe.set_view(Some(&m), w, h);
+            let (cs, cp) = (s.clone(), p);
+            let codes: CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
+            pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 9, 0, dec(&s, &p), Some(codes));
+            settle(&pipe);
+            let mut got = Phosphor::new(w, h);
+            let (mut clear, mut edges, mut off) = (false, [0u64; 4], (0.0, 0.0));
+            let n_got = pipe.merge(&mut got, &mut clear, &mut edges, &mut off);
+            let (want, trig, wedges, woff, _) = reference(&bytes, fb, &s, &p, &m, w, h);
+            assert_eq!((n_got.frames, n_got.triggered, edges), (9, trig, wedges), "mask {}", mask);
+            assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
+            for c in 0..NCH {
+                assert!(got.map[c] == want.map[c], "mask {}: CH{} differs", mask, c + 1);
+            }
+        }
+    }
+
+    // Break it catches (`draw_frame_codes`): a picture or trigger statistics from the read-out words that differ from
+    // decoding the frame first (column extremes, join, interleaved channels, the near window, the wide fallback),
+    // or the codes path taken where it must not be.
+    #[test]
+    fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
+        let (w, h) = (970, 448);
+        let sine = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 - 50_000.0 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin();
+        let square = |k: usize, c: usize, i: usize| {
+            let x = i as f64 + 37.0 * k as f64 + 101.0 * c as f64;
+            (if (x / 9_000.0).fract() < 0.5 { 1.2 } else { -1.2 }) + 0.03 * ((i * 7919 + k * 31) % 101) as f64 / 101.0
+        };
+        let flat = |_k: usize, c: usize, i: usize| 0.2 + 0.001 * (i % 3) as f64 + c as f64 * 0.1;
+        let mut taken = 0;
+        let mut cases = 0;
+        for (mask, n, tdiv) in [(1u32, 100_000u32, 1e-5), (1, 12_512, 1e-6), (3, 70_312, 1e-5), (3, 12_512, 1e-6), (15, 30_000, 1e-5), (5, 25_000, 1e-5), (1, 1408, 1e-7)] {
+            for (name, sig) in [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)] {
+                for (src, dots, coup) in [(0usize, false, TrigCoup::Dc), (1, false, TrigCoup::Dc), (0, true, TrigCoup::Dc), (0, false, TrigCoup::Ac)] {
+                    let mut m = model(tdiv, false, dots);
+                    for c in 0..NCH {
+                        m.ch[c].on = mask & (1 << c) != 0;
+                    }
+                    m.trig_src = src;
+                    m.trig_coup = coup;
+                    let (bytes, fb, s, p) = frames_of(mask, n, 6, sig);
+                    let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
+                    let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
+                    let (mut ta, mut tb) = (0, 0);
+                    for chunk in bytes.chunks_exact(fb) {
+                        let f = crate::board::dho::hw::decode(chunk, &s, &p, 0);
+                        ta += draw_frame(&mut a, &m, &f, Some(Stats { edges: &mut sa.0, off: &mut sa.1 })) as u32;
+                        let mut g = Frame::default();
+                        let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut g).expect("raw frame");
+                        assert!(g.ch.iter().all(|v| v.is_empty()) && (g.dt, g.pre, g.acq) == (f.dt, f.pre, f.acq));
+                        match draw_frame_codes(&mut b, &m, &g, chunk, &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) {
+                            Some(t) => {
+                                tb += t as u32;
+                                taken += 1;
+                            }
+                            None => {
+                                assert!(dots || coup != TrigCoup::Dc || f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64 > 0.5, "{} {} codes path refused", name, mask);
+                                tb += draw_frame(&mut b, &m, &f, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) as u32;
+                            }
+                        }
+                    }
+                    let what = format!("{} mask {} n {} src {} dots {} {:?}", name, mask, n, src, dots, coup);
+                    assert_eq!((ta, sa.0), (tb, sb.0), "{}", what);
+                    assert!(sa.1 == sb.1, "{}: {:?} vs {:?}", what, sa.1, sb.1);
+                    for c in 0..NCH {
+                        assert!(a.map[c] == b.map[c], "{}: CH{} differs", what, c + 1);
+                    }
+                    cases += 1;
+                }
+            }
+        }
+        assert!(taken > 150, "codes path taken {} times in {} cases", taken, cases);
+        // the wide fallback was compared too
+        assert!(WIDE.with(|n| n.get()) > 5, "{} wide searches", WIDE.with(|n| n.get()));
+    }
+
+    // Timing guard (tools/perf-guard.sh): a worker frame drawn from the read-out words against decode + draw, lines,
+    // no per-frame measurements. The A53 gains more than the host (the f32 copy is 2x the read-out per channel).
+    #[test]
+    #[ignore]
+    fn perf_guard_codes_per_frame() {
+        let (w, h) = (970, 448);
+        let sig = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin();
+        let mut worst: f64 = 0.0;
+        for (mask, n, tdiv) in [(1u32, 100_000u32, 1e-5), (3, 70_312, 1e-5), (5, 50_000, 1e-5), (1, 40_000, 2e-6)] {
+            let mut m = model(tdiv, false, false);
+            for c in 0..NCH {
+                m.ch[c].on = mask & (1 << c) != 0;
+            }
+            let frames = (2_000_000 / (n as usize * 2 * hz::ratio(mask) as usize)).clamp(4, 100);
+            let (bytes, fb, s, p) = frames_of(mask, n, frames, &sig);
+            let (mut pa, mut pb) = (Phosphor::new(w, h), Phosphor::new(w, h));
+            let (mut fa, mut fbm) = (Frame::default(), Frame::default());
+            // one round: every frame once (each round's time divided by the frames below)
+            let (old, new) = crate::perfguard::best_pair(
+                crate::perfguard::ROUNDS,
+                1,
+                || {
+                    for chunk in bytes.chunks_exact(fb) {
+                        crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut fa);
+                        std::hint::black_box(draw_frame(&mut pa, &m, &fa, None));
+                    }
+                },
+                || {
+                    for chunk in bytes.chunks_exact(fb) {
+                        let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut fbm).unwrap();
+                        std::hint::black_box(draw_frame_codes(&mut pb, &m, &fbm, chunk, &lay, None).unwrap());
+                    }
+                },
+            );
+            let (old, new) = (old / frames as u32, new / frames as u32);
+            let r = new.as_secs_f64() / old.as_secs_f64();
+            worst = worst.max(r);
+            assert!(fb >= CODES_MIN_BYTES && hz::ratio(mask) as usize <= CODES_MAX_STRIDE);
+            println!("codes mask {:#x} {} pt: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})", mask, n, old, new, r);
+        }
+        assert!(worst <= 0.9, "drawing from the codes must be cheaper: worst ratio {:.2}", worst);
+    }
+
     /// Until every batch fed is done (drawn and handed on, or dropped).
     fn settle(p: &Pipe) {
         let t0 = std::time::Instant::now();
@@ -729,7 +998,7 @@ mod tests {
             let (bytes, fb, s, p) = batch(20, memsel, false);
             let pipe = Pipe::start(0, false, fresh());
             pipe.set_view(Some(&m), w, h);
-            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 20, 0, dec(&s, &p));
+            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 20, 0, dec(&s, &p), None);
             let mut hp = Helper::default();
             let mut k = 0;
             while pipe.help(&mut hp) {
@@ -816,17 +1085,30 @@ mod tests {
             let mut m = model(tdiv, false, false);
             // the measurements made on every frame cost on top (reported, not guarded): the worst case, all of them on
             m.meas = if meas { crate::framestats::CHEAP.iter().map(|&k| (k, 0)).collect() } else { Vec::new() };
-            let frames = (4_000_000 / (memsel as usize * 2)).min(1000);
+            let frames = (2_000_000 / (memsel as usize * 2)).clamp(8, 500);
             let (bytes, fb, s, p) = batch(frames, memsel, false);
-            // the frames mode: decode + fast_draw on one thread (its measurements: a few records a second)
+            // the frames mode: decode + fast_draw on one thread (its measurements: a few records a second), against
+            // one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are reported only
             let mut ph = Phosphor::new(w, h);
-            let t0 = std::time::Instant::now();
-            for chunk in bytes.chunks_exact(fb) {
-                std::hint::black_box(draw_frame(&mut ph, &m, &crate::board::dho::hw::decode(chunk, &s, &p, 0), None));
-            }
-            let old = t0.elapsed() / frames as u32;
-            let mut per = Vec::new();
-            for n in [1usize, 2, 4] {
+            let one = Pipe::start(1, false, fresh());
+            one.set_view(Some(&m), w, h);
+            // the buffers fed are copied before, outside the timing (the copy is not the pipeline's work)
+            let mut copies: Vec<Bytes> = (0..crate::perfguard::ROUNDS).map(|_| Bytes(bytes.clone())).collect();
+            let (old, one_t) = crate::perfguard::best_pair(
+                crate::perfguard::ROUNDS,
+                1,
+                || {
+                    for chunk in bytes.chunks_exact(fb) {
+                        std::hint::black_box(draw_frame(&mut ph, &m, &crate::board::dho::hw::decode(chunk, &s, &p, 0), None));
+                    }
+                },
+                || {
+                    one.feed(Box::new(copies.pop().expect("a copy per round")), fb, frames, 0, dec(&s, &p));
+                    settle(&one);
+                },
+            );
+            let (old, mut per) = (old / frames as u32, vec![one_t / frames as u32]);
+            for n in [2usize, 4] {
                 let pipe = Pipe::start(n, false, fresh());
                 pipe.set_view(Some(&m), w, h);
                 let t0 = std::time::Instant::now();

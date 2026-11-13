@@ -39,6 +39,8 @@ mod sysconf;
 mod trig;
 mod trignear;
 mod placement;
+#[cfg(test)]
+mod perfguard;
 mod sparse;
 mod drawpipe;
 mod framestats;

@@ -1554,6 +1554,11 @@ impl Ui {
         }
     }
 
+    /// Records read by the UI beyond what the model shows the board (`Shared::needs_raw`): the protocol watch and XY.
+    fn needs_raw(&self) -> bool {
+        self.azr.watch || self.xy
+    }
+
     /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
     /// stop or a history view) while the record shown is of live-compression pairs, or of a deep record's pairs with raw
     /// deep measurements on.
@@ -1750,6 +1755,8 @@ impl Ui {
             self.stop_final = Some(self.now + STOP_FINAL_WAIT);
         }
         let final_done = self.src.hw_hold(!running && self.last[0].is_some(), self.final_req);
+        // the protocol watch and XY read every record: no live compression for them (compress.rs)
+        self.src.hw_needs_raw(self.needs_raw());
         self.was_running = running;
         if hw_seg {
             self.seg_poll(running);
@@ -7879,6 +7886,25 @@ mod tests {
         assert!(ui.stop_final.is_none());
         assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)), Some((5, false)));
         assert!((ui.meas(0, Meas::Vavg) - 0.5).abs() < 0.03);
+    }
+
+    // Break it catches: the protocol watch or XY reading pair records (the hardware thread is not told)
+    #[test]
+    fn protocol_watch_and_xy_ask_for_raw_frames() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.step(0.02);
+        assert!(!shared.lock().unwrap().needs_raw);
+        ui.azr.watch = true;
+        ui.step(0.02);
+        assert!(shared.lock().unwrap().needs_raw);
+        (ui.azr.watch, ui.xy) = (false, true);
+        ui.step(0.02);
+        assert!(shared.lock().unwrap().needs_raw);
+        ui.xy = false;
+        ui.step(0.02);
+        assert!(!shared.lock().unwrap().needs_raw);
     }
 
     // Break it catches (docs/fork/stop-exact.md): a STOP that keeps the pair record on screen while the measurements

@@ -523,15 +523,17 @@ mod tests {
             let f = Frame { seq: 1, dt, pre: len / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
             let mut ph = Phosphor::new(w, h);
             assert_eq!(draw_with(&mut ph, &m, &f, 24, Interp::Fast), Some(true), "{} s/div", tdiv);
-            let mut time = |mode: Interp| {
-                let reps = 3000;
-                let t0 = std::time::Instant::now();
-                for _ in 0..reps {
-                    std::hint::black_box(draw_with(&mut ph, &m, std::hint::black_box(&f), 24, mode));
-                }
-                t0.elapsed() / reps
-            };
-            let (e, fa) = (time(Interp::Exact), time(Interp::Fast));
+            let mut pf = Phosphor::new(w, h);
+            let (e, fa) = crate::perfguard::best_pair(
+                crate::perfguard::ROUNDS,
+                330,
+                || {
+                    std::hint::black_box(draw_with(&mut ph, &m, std::hint::black_box(&f), 24, Interp::Exact));
+                },
+                || {
+                    std::hint::black_box(draw_with(&mut pf, &m, std::hint::black_box(&f), 24, Interp::Fast));
+                },
+            );
             let r = fa.as_secs_f64() / e.as_secs_f64();
             println!("{} s/div {} ch ({} samples on screen): exact {:?}, fast {:?} per frame, ratio {:.2}", tdiv, chans, (tdiv * HDIV as f64 / dt) as usize, e, fa, r);
             assert!(r <= 1.1, "fast must never cost more: {:.2}", r);
