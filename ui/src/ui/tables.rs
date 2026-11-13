@@ -193,7 +193,7 @@ impl Ui {
     /// The second pane: under the plot and the lanes.
     pub(super) fn pane_rect(&self) -> Rect {
         let g = self.grid;
-        Rect::new(g.x, g.y + g.h + 2 + self.la_strip_h(), g.w, self.pane_h() - 4)
+        Rect::new(g.x, g.y + g.h + 2 + self.eye_below() + self.la_strip_h(), g.w, self.pane_h() - 4)
     }
 
     /// The close button of the pane.

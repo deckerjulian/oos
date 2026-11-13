@@ -233,6 +233,15 @@ pub enum AView {
     Dpt,
 }
 
+/// Where the eye is drawn while the trace stays on screen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EyePlace {
+    /// A pane to the right of the trace. The default.
+    Side,
+    /// A pane under the trace.
+    Under,
+}
+
 /// Power analysis page.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PowerMode {
@@ -914,6 +923,10 @@ pub struct Model {
     /// eye diagram: source, bit rate (0 = recovered from the edges)
     pub eye_src: WaveId,
     pub eye_rate: f64,
+    /// the bit rate was measured from the record, not entered on the control
+    pub eye_from_record: bool,
+    /// beside the trace, or under it
+    pub eye_place: EyePlace,
     /// BER for TJ, eye width and eye height. J2 and J9 ignore it.
     pub eye_ber: f64,
     /// phase-noise integration offsets, Hz
@@ -1263,6 +1276,8 @@ impl Default for Model {
             spec_dist: false,
             eye_src: WaveId::Ch(0),
             eye_rate: 0.0,
+            eye_from_record: false,
+            eye_place: EyePlace::Side,
             eye_ber: 1e-12,
             eye_pn_lo: 1e3,
             eye_pn_hi: 1e6,

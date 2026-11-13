@@ -114,12 +114,12 @@ impl Ui {
     pub(super) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::SpecAcprW | Item::SpecAcprS | Item::EyeRate | Item::EyeBer | Item::EyePnLo | Item::EyePnHi | Item::EyeNotch | Item::PowFline | Item::PowFsw | Item::PowRef => Kind::Value,
-            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::IdentifyAct => Kind::Action,
+            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct | Item::IdentifyAct => Kind::Action,
             Item::SpecMargin => Kind::Value,
             Item::ProtoWatch => Kind::Choice,
             // a finding is a row with its summary as the only option: tapping it applies it
             Item::IdFind(_) => Kind::Choice,
-            Item::SpecOn | Item::SpecSrc | Item::SpecHarm | Item::SpecWin | Item::SpecTrace | Item::SpecWf | Item::SpecDist | Item::EyeOn | Item::EyeSrc | Item::EyeB | Item::EyeHp | Item::EyeNpj | Item::EyeRail | Item::PowOn | Item::PowV | Item::PowI | Item::PowMode | Item::PowVin | Item::PowClk => Kind::Choice,
+            Item::SpecOn | Item::SpecSrc | Item::SpecHarm | Item::SpecWin | Item::SpecTrace | Item::SpecWf | Item::SpecDist | Item::EyeOn | Item::EyePlace | Item::EyeSrc | Item::EyeB | Item::EyeHp | Item::EyeNpj | Item::EyeRail | Item::PowOn | Item::PowV | Item::PowI | Item::PowMode | Item::PowVin | Item::PowClk => Kind::Choice,
             _ => return None,
         })
     }
@@ -146,6 +146,8 @@ impl Ui {
             Item::SpecLimitSet => "Limit from trace",
             Item::SpecLimitClear => "Clear limit",
             Item::SpecMargin => "Limit margin",
+            Item::EyeAct => "Make eye",
+            Item::EyePlace => "Place",
             Item::EyeRate => "Bit rate",
             Item::EyeBer => "BER",
             Item::EyeB => "Source B",
@@ -178,6 +180,10 @@ impl Ui {
             Item::SpecOn => onoff(m.view == AView::Spectrum),
             Item::ProtoWatch => onoff(self.azr.watch),
             Item::EyeOn => onoff(m.view == AView::Eye),
+            Item::EyePlace => match m.eye_place {
+                EyePlace::Side => "Side".into(),
+                EyePlace::Under => "Under".into(),
+            },
             Item::PowOn => onoff(m.view == AView::Power),
             Item::SpecSrc => self.wave_name(m.spec_src),
             Item::EyeSrc => self.wave_name(m.eye_src),
@@ -198,7 +204,13 @@ impl Ui {
             Item::SpecRef => format!("{:.0} dBV", m.spec_ref),
             Item::SpecWf => onoff(m.spec_wf),
             Item::SpecDist => onoff(m.spec_dist),
-            Item::EyeRate => if m.eye_rate == 0.0 { "Auto".into() } else { si_short(m.eye_rate, "b/s") },
+            Item::EyeRate => if m.eye_from_record && m.eye_rate > 0.0 {
+                format!("{} from record", si_short(m.eye_rate, "b/s"))
+            } else if m.eye_rate == 0.0 {
+                "Auto".into()
+            } else {
+                si_short(m.eye_rate, "b/s")
+            },
             Item::EyeBer => format!("{:.0e}", m.eye_ber),
             Item::EyeB => m.eye_b.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::EyeHp => onoff(m.eye_hp),
@@ -223,7 +235,7 @@ impl Ui {
                 }
                 s
             }),
-            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::IdentifyAct => String::new(),
+            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct | Item::IdentifyAct => String::new(),
             Item::SpecMargin => format!("{:.0} dB", self.m.spec_margin),
             _ => return None,
         })
@@ -233,6 +245,7 @@ impl Ui {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
             Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::EyeHp | Item::EyeNpj | Item::ProtoWatch => v(&["Off", "On"]),
+            Item::EyePlace => v(&["Side", "Under"]),
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
             Item::SpecHarm => panes::harm_names(),
@@ -321,7 +334,15 @@ impl Ui {
             Item::SpecRef => m.spec_ref += 5.0 * d as f32,
             Item::SpecWf => m.spec_wf = !m.spec_wf,
             Item::SpecDist => m.spec_dist = !m.spec_dist,
-            Item::EyeRate => m.eye_rate = step_ladder(m.eye_rate, d),
+            Item::EyeRate => {
+                m.eye_rate = step_ladder(m.eye_rate, d);
+                m.eye_from_record = false;
+            }
+            Item::EyePlace => {
+                let all = [EyePlace::Side, EyePlace::Under];
+                let i = all.iter().position(|&p| p == m.eye_place).unwrap_or(0);
+                m.eye_place = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
+            }
             Item::EyeBer => {
                 const BERS: [f64; 5] = [1e-3, 1e-6, 1e-9, 1e-12, 1e-15];
                 let i = BERS.iter().position(|&x| (x - m.eye_ber).abs() < x * 0.01).unwrap_or(3);
@@ -382,6 +403,10 @@ impl Ui {
                 self.azr.eye = None;
                 self.azr.eye_res = None;
                 self.azr.page = Default::default();
+            }
+            Item::EyeAct => {
+                self.eye_make();
+                return true;
             }
             Item::IdentifyAct => {
                 self.identify_now();

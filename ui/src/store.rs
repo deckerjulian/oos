@@ -261,7 +261,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in.token(), m.bode_out.token(), m.bode_gen, m.bode_addr));
     kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src.token(), m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
-    kv("eye", format!("{} {}", m.eye_src.token(), m.eye_rate));
+    kv("eye", format!("{} {} {}", m.eye_src.token(), m.eye_rate, if m.eye_from_record { 1 } else { 0 }));
+    kv("eye_place", name(m.eye_place));
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
     kv("meas_cfg", format!("{} {:?} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }));
@@ -600,7 +601,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let w: Vec<&str> = v.split_whitespace().collect();
             m.eye_src = WaveId::parse(w.first().ok_or("eye: source")?)?;
             m.eye_rate = w.get(1).ok_or("eye: rate")?.parse::<f64>().map_err(|e| e.to_string())?;
+            // older files have no third field: the rate was entered, not measured
+            m.eye_from_record = w.get(2).is_some_and(|s| *s != "0");
         }
+        "eye_place" => m.eye_place = p_enum(v, &[EyePlace::Side, EyePlace::Under])?,
         "power" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 3 {

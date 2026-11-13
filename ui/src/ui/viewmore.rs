@@ -1,15 +1,15 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The overflow menu of the views that replace the waveform (analysers, XY): a button in the plot leads to what they
-//! need most, and above all out of them.
+//! need most, and above all out of them. The eye does not use this: it keeps the trace and has its own pane.
 
 use super::{AView, Item, MenuId, Rect, Ui, BTN_BORDER, PANEL_BG, TEXT};
 use crate::gfx::Canvas;
 
 impl Ui {
-    /// A view other than the waveform fills the plot.
+    /// A view other than the waveform fills the plot. The eye keeps the trace and sits in its own pane.
     pub(super) fn view_on(&self) -> bool {
-        self.xy || self.m.view != AView::Scope
+        self.xy || !matches!(self.m.view, AView::Scope | AView::Eye)
     }
 
     pub(super) fn view_name(&self) -> &'static str {
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn the_button_opens_the_menu_and_exit_ends_the_view() {
-        for view in [AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt] {
+        for view in [AView::Spectrum, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt] {
             let mut ui = at(view);
             let r = ui.view_btn();
             ui.tap(r.x + 5, r.y + 5);

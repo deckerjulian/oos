@@ -487,14 +487,14 @@ impl Ui {
         }
         let (h, pitch) = self.la_fit(n);
         let g = self.grid;
-        (Rect::new(g.x, g.y + g.h + 2, g.w, h - 2), pitch)
+        (Rect::new(g.x, g.y + g.h + 2 + self.eye_below(), g.w, h - 2), pitch)
     }
 
     /// Height the lane strip takes from the plot (0 when no lanes are drawn: analysers, XY, LA off; and in a split plot,
     /// where the lanes are in a window).
     pub(super) fn la_strip_h(&self) -> i32 {
         let n = self.m.la.lines().len();
-        if self.m.la_on() && n > 0 && self.m.view == AView::Scope && !self.xy && self.n_wins() == 1 {
+        if self.m.la_on() && n > 0 && matches!(self.m.view, AView::Scope | AView::Eye) && !self.xy && self.n_wins() == 1 {
             self.la_fit(n).0
         } else {
             0
