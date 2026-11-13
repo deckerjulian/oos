@@ -1674,6 +1674,7 @@ impl Ui {
                         self.m.status = TrigStatus::Triggered;
                     }
                     got += d.frames as usize;
+                    self.mstat_fold(&d.folds);
                 }
                 td += t0.elapsed().as_secs_f32() * 1000.0;
             }
@@ -4100,6 +4101,27 @@ impl Ui {
         self.meas_set(done);
         self.meas_n += 1;
         self.meas_want = false;
+    }
+
+    /// Statistics of measurements made on every frame by the deposit workers (framestats.rs) into the Measure page's
+    /// statistics, once these exist (the first measured record starts them).
+    fn mstat_fold(&mut self, folds: &crate::framestats::Folds) {
+        if self.mstat.len() < self.m.meas.len() {
+            return;
+        }
+        for (key, f) in folds.iter().filter(|x| x.1.n > 0) {
+            if let Some(i) = self.m.meas.iter().position(|e| e == key) {
+                let st = &mut self.mstat[i];
+                if st.n == 0 {
+                    (st.min, st.max) = (f.min, f.max);
+                }
+                st.n += f.n;
+                st.sum += f.sum;
+                st.sumsq += f.sumsq;
+                st.min = st.min.min(f.min);
+                st.max = st.max.max(f.max);
+            }
+        }
     }
 
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {

@@ -13,7 +13,7 @@ use crate::wave::Phosphor;
 use std::cell::RefCell;
 
 /// Points of the screen record, as in `Source::acquire` and `Ui::fast_draw`.
-const POINTS: usize = 3600;
+pub const POINTS: usize = 3600;
 
 thread_local! {
     static BUF: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };

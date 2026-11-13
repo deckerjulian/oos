@@ -24,9 +24,9 @@ pub fn sw_trig_level(m: &Model, f: &Frame) -> f32 {
     }
 }
 
-/// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,
-/// then the screen window (`n` points over `window` s from `t_first` relative to the trigger) by linear interpolation.
-pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64) -> crate::wave::Record {
+/// The software trigger of `to_record`: the event nearest the hardware trigger point as a fractional sample index
+/// of `f`, None without one (or in roll and scan).
+pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> Option<f64> {
     // the software trigger looks only around the hardware trigger point: searching whole 100 k-point frames for
     // every record cost most of the frame time; the video trigger counts fields and keeps the whole frame
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
@@ -102,6 +102,14 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
     } else {
         None
     };
+    found
+}
+
+/// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,
+/// then the screen window (`n` points over `window` s from `t_first` relative to the trigger) by linear interpolation.
+pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64) -> crate::wave::Record {
+    let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
+    let found = trigger_point(f, m, n, window, t_first);
     // roll: right-aligned like a chart recorder, the start of the stream may be left of the buffer (blank)
     let ti = if f.roll {
         let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0) as f64;

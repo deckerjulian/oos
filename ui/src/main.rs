@@ -36,6 +36,7 @@ mod trignear;
 mod placement;
 mod sparse;
 mod drawpipe;
+mod framestats;
 mod ui;
 mod usbtmc;
 mod vxi11;

@@ -187,4 +187,13 @@ the 5x of the arithmetic alone.
   10 us/div. A53 estimate (not measured): about 8x the host per frame (A72 about 4x, A53 about 2x an A72), so 2 A53
   workers reach about 5 k frames/s at 100 ns/div and 10 k at 1 us/div. At short time bases they will not keep up with
   the acquisition: the sparse interpolation dominates (polyphase kernel, item 4, needs the unit's screenshot check),
-  and the A72 hw thread may take a share. Next: per-channel running statistics, averaging (phase 2).
+  and the A72 hw thread may take a share.
+  Measurement statistics over every frame (`framestats.rs`): Max, Min, Pk-pk, Mean, RMS, Std dev / AC RMS of the
+  Measure page are made by the workers for every frame, on the samples the record path measures (the record's
+  trigger point via `board::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more
+  than 3600 samples) and folded into the page's statistics (`Ui::mstat_fold`); other measurements keep counting the
+  measured records. Frames whose record is measured on interpolated points (short time bases) are not counted.
+  Guard: per-frame values identical to `to_record` + `analyze_min` (bitwise, sums in the same order). Cost: the
+  sequential f64 sums the identity needs are latency bound: +31 us per frame at 12.5 k points, +290 us at 125 k on
+  the host with all of them on (2 workers: 36 k and 4.5 k frames/s). A lane-split sum would be 4-8x cheaper with
+  values equal to about 1e-15 relative: not done, it breaks the bitwise guard. Averaging: phase 2.

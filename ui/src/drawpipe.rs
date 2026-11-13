@@ -203,6 +203,8 @@ impl Key {
 struct Acc {
     gen: u64,
     ph: Phosphor,
+    /// statistics of the cheap measurements over the frames (framestats.rs)
+    folds: crate::framestats::Folds,
     frames: u64,
     triggered: u64,
     edges: [u64; 4],
@@ -211,15 +213,17 @@ struct Acc {
 
 impl Acc {
     fn new(gen: u64, w: usize, h: usize) -> Acc {
-        Acc { gen, ph: Phosphor::new(w, h), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0) }
+        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0) }
     }
     /// Empty again, keeping the maps' memory.
     fn reset(&mut self, gen: u64) {
         self.ph.clear();
+        self.folds.clear();
         (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
     }
     fn add(&mut self, o: &Acc) {
         add(&mut self.ph, &o.ph);
+        crate::framestats::add_folds(&mut self.folds, &o.folds);
         self.frames += o.frames;
         self.triggered += o.triggered;
         for (a, b) in self.edges.iter_mut().zip(o.edges) {
@@ -260,11 +264,12 @@ pub struct Pipe {
     pool: Mutex<Receiver<Box<dyn RawBatch>>>,
 }
 
-/// Merged frames: how many, how many found their trigger.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// Merged frames: how many, how many found their trigger, the statistics of the cheap measurements over them.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Merged {
     pub frames: u64,
     pub triggered: u64,
+    pub folds: crate::framestats::Folds,
 }
 
 impl Pipe {
@@ -363,6 +368,7 @@ impl Pipe {
                 *off = (off.0 + a.off.0, off.1.max(a.off.1));
                 got.frames += a.frames;
                 got.triggered += a.triggered;
+                crate::framestats::add_folds(&mut got.folds, &a.folds);
             } else {
                 Counters::add(&self.counters.dropped, a.frames);
             }
@@ -400,11 +406,13 @@ fn work(rx: Receiver<Job>, view: &Mutex<ViewState>, mail: &Mutex<Mail>, counters
             }
             _ => Acc::new(v.gen, v.w, v.h),
         };
+        a.folds = crate::framestats::folds_for(&v.m);
         if let Some(bytes) = job.lease.raw.as_ref().map(|r| r.bytes()) {
             for i in job.range.clone() {
                 (job.decode)(&bytes[i * job.fb..(i + 1) * job.fb], &mut f);
                 let st = Stats { edges: &mut a.edges, off: &mut a.off };
                 a.triggered += draw_frame(&mut a.ph, &v.m, &f, Some(st)) as u64;
+                crate::framestats::fold_frame(&f, &v.m, &mut a.folds);
                 a.frames += 1;
             }
         }
@@ -530,7 +538,8 @@ mod tests {
     fn batch_picture_equals_the_frames_mode() {
         let (w, h) = (970, 448);
         for (tdiv, memsel, two, dots) in [(1e-6, 12_512u32, false, false), (1e-6, 12_512, true, true), (1e-7, 1408, false, false), (2e-8, 400, true, false)] {
-            let m = model(tdiv, two, dots);
+            let mut m = model(tdiv, two, dots);
+            m.meas = vec![(Meas::Vpp, 0), (Meas::Vavg, 0), (Meas::Vrms, 1)];
             let (bytes, fb, s, p) = batch(41, memsel, two);
             let c = fresh();
             let pipe = Pipe::start(2, false, c);
@@ -548,11 +557,21 @@ mod tests {
             // the frames mode: `Ui::fast_draw` on every frame
             let mut want = Phosphor::new(w, h);
             let (mut trig, mut wedges, mut woff) = (0, [0u64; 4], (0.0, 0.0));
+            let mut folds = crate::framestats::folds_for(&m);
             for chunk in bytes.chunks_exact(fb) {
                 let st = Stats { edges: &mut wedges, off: &mut woff };
-                trig += draw_frame(&mut want, &m, &crate::board::dho::hw::decode(chunk, &s, &p, 0), Some(st)) as u64;
+                let f = crate::board::dho::hw::decode(chunk, &s, &p, 0);
+                trig += draw_frame(&mut want, &m, &f, Some(st)) as u64;
+                crate::framestats::fold_frame(&f, &m, &mut folds);
             }
-            assert_eq!(n, Merged { frames: 41, triggered: trig }, "{} s/div", tdiv);
+            // per-frame statistics: the same frames counted, sums in another order (shares of two workers)
+            assert_eq!(n.folds.len(), folds.len());
+            for ((k, a), (k2, b)) in n.folds.iter().zip(&folds) {
+                assert_eq!((k, a.n, a.min, a.max), (k2, b.n, b.min, b.max), "{} s/div", tdiv);
+                assert!((a.sum - b.sum).abs() <= 1e-12 * b.sum.abs().max(1.0) && (a.sumsq - b.sumsq).abs() <= 1e-12 * b.sumsq.abs().max(1.0));
+            }
+            assert!(tdiv < 1e-6 || folds.iter().all(|x| x.1.n > 30), "{} s/div: {:?}", tdiv, folds);
+            assert_eq!((n.frames, n.triggered), (41, trig), "{} s/div", tdiv);
             assert!(!clear && trig > 30 && trig < 41, "{} s/div: {} triggered", tdiv, trig);
             assert_eq!(edges, wedges, "{} s/div", tdiv);
             assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
@@ -636,11 +655,13 @@ mod tests {
     #[ignore]
     fn perf_guard_deposit_worker_per_frame() {
         let (w, h) = (970, 448);
-        for (tdiv, memsel) in [(1e-7, 1408u32), (1e-6, 12_512), (1e-5, 125_000)] {
-            let m = model(tdiv, false, false);
+        for (tdiv, memsel, meas) in [(1e-7, 1408u32, false), (1e-6, 12_512, false), (1e-6, 12_512, true), (1e-5, 125_000, false), (1e-5, 125_000, true)] {
+            let mut m = model(tdiv, false, false);
+            // the measurements made on every frame cost on top (reported, not guarded): the worst case, all of them on
+            m.meas = if meas { crate::framestats::CHEAP.iter().map(|&k| (k, 0)).collect() } else { Vec::new() };
             let frames = (4_000_000 / (memsel as usize * 2)).min(1000);
             let (bytes, fb, s, p) = batch(frames, memsel, false);
-            // the frames mode: decode + fast_draw on one thread
+            // the frames mode: decode + fast_draw on one thread (its measurements: a few records a second, not counted)
             let mut ph = Phosphor::new(w, h);
             let t0 = std::time::Instant::now();
             for chunk in bytes.chunks_exact(fb) {
@@ -668,8 +689,8 @@ mod tests {
                 per.push(el / (3 * frames) as u32);
             }
             let r = per[0].as_secs_f64() / old.as_secs_f64();
-            println!("{} s/div {} pt: frames mode {:?}/frame, 1 worker {:?}/frame (ratio {:.2}), 2 workers {:?}/frame -> {:.0} frames/s", tdiv, memsel, old, per[0], r, per[1], 1.0 / per[1].as_secs_f64());
-            assert!(r <= 1.3, "a worker must not cost more per frame than the frames mode: {:.2}", r);
+            println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame, 1 worker {:?}/frame (ratio {:.2}), 2 workers {:?}/frame -> {:.0} frames/s", tdiv, memsel, meas, old, per[0], r, per[1], 1.0 / per[1].as_secs_f64());
+            assert!(meas || r <= 1.3, "a worker must not cost more per frame than the frames mode: {:.2}", r);
         }
     }
 }
