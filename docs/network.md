@@ -94,8 +94,8 @@ System > Date and time sets it from an NTP server or by hand.
 |---|---|---|
 | Now | | local date and time, and the zone; "(not set)" until NTP or a hand entry set the clock in this boot |
 | Time from NTP | **Off** | On: the clock is set from the server once a network link is up |
-| NTP server | `pool.ntp.org` | the picker lists a few public servers; Other takes a name or an address on the keyboard |
-| NTP state | | Off / Waiting for a network link / Asking the server / Synced at 14:30:05 (+0.03 s) / the last failure and the last sync |
+| NTP server | **DHCP** | DHCP: the server the DHCP lease names (see below); the picker also lists a few public servers; Other takes a name or an address on the keyboard |
+| NTP state | | Off / Waiting for a network link / Asking the server / Synced at 14:30:05 (+0.03 s) / the last failure and the last sync. With DHCP: the server asked and where it came from, `Synced 14:30:05, 192.168.1.1 (DHCP)` or `no answer, pool.ntp.org (no DHCP)` |
 | Sync now | | asks the server at once |
 | Time zone | UTC | 22 common zones with their daylight saving rules; Other takes a POSIX time zone string |
 | Set the clock | | the local date and time on the keyboard, `2026-11-11 14:30` |
@@ -103,6 +103,14 @@ System > Date and time sets it from an NTP server or by hand.
 **Off by default.** With Time from NTP off, OOS sends nothing to the outside. On, it sends one UDP packet of 48 bytes to
 port 123 of the server per sync (and a DNS request for its name to the server from DHCP), once after a link came up and
 then every hour.
+
+**NTP server = DHCP.** The DHCP client asks for option 42 (NTP servers, RFC 2132) on eth0 and wlan0 (`udhcpc -O
+ntpsrv`); `udhcpc.script` writes the servers of a lease, space separated, to `/tmp/oos-dhcp-ntp.eth0` or
+`/tmp/oos-dhcp-ntp.wlan0` and removes the file when the lease ends or names none. Each request takes the first server of
+eth0's file, else of wlan0's, and `pool.ntp.org` when there is neither; the files are read at the request, so a new
+lease counts from the next one. This is the default for a new settings file (`ntp.server = dhcp`); a file that names a
+server keeps it. Time from NTP stays off by default. In a lab whose DHCP server hands out its own NTP server the scope
+then asks that one and nothing outside. (A server whose name is the single word `dhcp` cannot be chosen.)
 
 **How a sync works.** oos-ui has its own SNTP client (`ui/src/sntp.rs`, RFC 4330: version 4, client mode, one request and
 one answer, the originate time checked, kiss-o'-death and unsynchronised servers refused); the busybox of the image has
@@ -154,7 +162,7 @@ its default and is named in `/tmp/oos-ui.log`; lines of other keys stay in the f
 ```
 # OOS system settings: key = value (oos-ui, System menu)
 ntp = off
-ntp.server = pool.ntp.org
+ntp.server = dhcp             # or a server name or address
 tz = UTC0
 eth.retry_10m = on
 remote.web = on

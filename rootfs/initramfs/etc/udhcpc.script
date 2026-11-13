@@ -4,11 +4,20 @@
 # wlan0 stays behind eth0 when both have a default route
 metric=
 [ "$interface" = wlan0 ] && metric="metric 20"
+# the NTP servers of the lease (DHCP option 42, asked for with `-O ntpsrv`), space separated, for System > Date and
+# time > NTP server = DHCP (oos-ui reads the file at each request); no file while there are none
+ntpf=/tmp/oos-dhcp-ntp.$interface
 case "$1" in
 deconfig)
 	[ "$interface" = wlan0 ] && ip addr flush dev "$interface"
+	rm -f "$ntpf"
 	;;
 bound|renew)
+	if [ -n "$ntpsrv" ]; then
+		echo "$ntpsrv" > "$ntpf.new" && mv "$ntpf.new" "$ntpf"
+	else
+		rm -f "$ntpf"
+	fi
 	# a renewal of the same address changes nothing (a flush would cut the connections for a moment)
 	[ "$1" = renew ] && ip -4 addr show dev "$interface" | grep -q "inet $ip/" && exit 0
 	ip addr flush dev "$interface"

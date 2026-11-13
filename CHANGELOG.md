@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+New:
+
+- System > Date and time > NTP server = DHCP: the scope asks the NTP server its DHCP lease names (option 42), on eth0
+  first, else on WLAN, and `pool.ntp.org` when the lease names none. The NTP state line says which server was asked
+  and where it came from, e.g. `Synced 14:30:05, 192.168.1.1 (DHCP)` or `pool.ntp.org (no DHCP)`. DHCP is the first
+  entry of the picker and the default of a new settings file; a server chosen before stays. Time from NTP stays off
+  by default.
+
 Fixed:
 
 - Display > Graphics = GPU with a monitor was slower than the CPU (reported in the forum: 16 to 19 frames a second

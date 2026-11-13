@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! ntp = off                 # System > Date and time > Time from NTP
-//! ntp.server = pool.ntp.org
+//! ntp.server = dhcp        # dhcp: the server of the DHCP lease (option 42), else pool.ntp.org
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet)
@@ -22,7 +22,15 @@ use std::path::{Path, PathBuf};
 pub const PATH: &str = "/oos/system.conf";
 /// Without the data partition: in RAM, lost at power-off.
 pub const TMP_PATH: &str = "/tmp/oos-system.conf";
-pub const DEFAULT_SERVER: &str = "pool.ntp.org";
+/// `ntp.server = dhcp`: the NTP server the DHCP lease names (option 42, RFC 2132), else `FALLBACK_SERVER`.
+pub const DHCP: &str = "dhcp";
+pub const DEFAULT_SERVER: &str = DHCP;
+/// Asked with `ntp.server = dhcp` while no lease names a server.
+pub const FALLBACK_SERVER: &str = "pool.ntp.org";
+/// The servers of a lease, space separated, one file per interface (`udhcpc.script`): `<this><interface>`.
+pub const DHCP_NTP_FILE: &str = "/tmp/oos-dhcp-ntp.";
+/// The interfaces whose lease counts, in this order.
+pub const DHCP_IFACES: [&str; 2] = ["eth0", "wlan0"];
 pub const DEFAULT_TZ: &str = "UTC0";
 /// Longest server name taken.
 pub const SERVER_MAX: usize = 63;
@@ -74,6 +82,32 @@ pub fn server_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= SERVER_MAX && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c)) && !s.starts_with(['-', '.'])
 }
 
+/// Where the server asked came from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NtpOrigin {
+    /// the setting names it
+    Set,
+    /// `dhcp`: the lease of this interface
+    Dhcp(&'static str),
+    /// `dhcp`, but no lease names a server: `FALLBACK_SERVER`
+    NoDhcp,
+}
+
+/// The server to ask for the setting `ntp.server`: the setting itself, or with `dhcp` the first good server of the
+/// lease on eth0, else on wlan0, else `FALLBACK_SERVER`. `lease` gives the text of an interface's file
+/// (`DHCP_NTP_FILE`), None without one. Called at each request: a lease can change at any time.
+pub fn ntp_server(setting: &str, lease: impl Fn(&str) -> Option<String>) -> (String, NtpOrigin) {
+    if setting != DHCP {
+        return (setting.to_string(), NtpOrigin::Set);
+    }
+    for i in DHCP_IFACES {
+        if let Some(s) = lease(i).and_then(|t| t.split_whitespace().find(|s| server_ok(s)).map(str::to_string)) {
+            return (s, NtpOrigin::Dhcp(i));
+        }
+    }
+    (FALLBACK_SERVER.to_string(), NtpOrigin::NoDhcp)
+}
+
 fn on_off(v: &str) -> Option<bool> {
     match v {
         "on" | "true" | "1" => Some(true),
@@ -107,6 +141,10 @@ impl SysConf {
             let (k, v) = (k.trim(), v.split(" #").next().unwrap_or("").trim());
             let ok = match k {
                 "ntp" => on_off(v).map(|b| c.ntp = b).is_some(),
+                "ntp.server" if v.eq_ignore_ascii_case(DHCP) => {
+                    c.ntp_server = DHCP.into();
+                    true
+                }
                 "ntp.server" => server_ok(v).then(|| c.ntp_server = v.into()).is_some(),
                 "tz" => Tz::parse(v).is_ok().then(|| c.tz = v.into()).is_some(),
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
@@ -206,7 +244,7 @@ mod tests {
     fn defaults_send_nothing_out() {
         let c = SysConf::default();
         assert!(!c.ntp);
-        assert_eq!(c.ntp_server, "pool.ntp.org");
+        assert_eq!(c.ntp_server, "dhcp");
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
         assert_eq!(SysConf::parse("").0, c);
@@ -240,6 +278,37 @@ mod tests {
         for s in ["", "-x", ".x", "a/b", "a b", &"x".repeat(64)] {
             assert!(!server_ok(s), "{}", s);
         }
+    }
+
+    #[test]
+    fn dhcp_server_round_trip() {
+        let mut c = SysConf::default();
+        c.ntp = true;
+        assert!(c.text().contains("\nntp.server = dhcp\n"));
+        assert_eq!(SysConf::parse(&c.text()).0, c);
+        // a file of an older version keeps its server; DHCP by hand in any case
+        assert_eq!(SysConf::parse("ntp.server = pool.ntp.org\n").0.ntp_server, "pool.ntp.org");
+        let (d, bad) = SysConf::parse("ntp.server = DHCP\n");
+        assert!(bad.is_empty());
+        assert_eq!(d.ntp_server, DHCP);
+        assert!(d.text().contains("\nntp.server = dhcp\n"));
+    }
+
+    #[test]
+    fn dhcp_server_resolves_from_the_lease() {
+        let none = |_: &str| None;
+        assert_eq!(ntp_server("ptbtime1.ptb.de", |_| Some("10.0.0.1".into())), ("ptbtime1.ptb.de".into(), NtpOrigin::Set));
+        assert_eq!(ntp_server(DHCP, none), ("pool.ntp.org".into(), NtpOrigin::NoDhcp));
+        // eth0 first, the first server of the list
+        let both = |i: &str| Some(if i == "eth0" { "192.168.1.1 192.168.1.2\n" } else { "10.0.0.1" }.to_string());
+        assert_eq!(ntp_server(DHCP, both), ("192.168.1.1".into(), NtpOrigin::Dhcp("eth0")));
+        let wlan = |i: &str| (i == "wlan0").then(|| "10.0.0.1\n".to_string());
+        assert_eq!(ntp_server(DHCP, wlan), ("10.0.0.1".into(), NtpOrigin::Dhcp("wlan0")));
+        // an empty file or one with nothing usable counts as none
+        let junk = |i: &str| Some(if i == "eth0" { "" } else { "a;b -x" }.to_string());
+        assert_eq!(ntp_server(DHCP, junk), ("pool.ntp.org".into(), NtpOrigin::NoDhcp));
+        let skip = |_: &str| Some("bad/one 172.16.0.9".to_string());
+        assert_eq!(ntp_server(DHCP, skip).0, "172.16.0.9");
     }
 
     #[test]
