@@ -1264,6 +1264,15 @@ pub fn png_of(cv: &Canvas) -> Vec<u8> {
     png(cv.w as u32, cv.h as u32, &cv.px)
 }
 
+/// Writes everything cached to the disks (a stick can be pulled, the scope switched off at the mains). Nothing to do
+/// on hosts without `sync(2)`; their files reach the disk on their own.
+pub fn sync_disks() {
+    #[cfg(unix)]
+    unsafe {
+        libc::sync()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1271,6 +1280,7 @@ mod tests {
     use crate::math::{MathOp, Window};
 
     #[test]
+    #[cfg(unix)]
     fn a_save_does_not_follow_links_or_write_to_devices() {
         let d = std::env::temp_dir().join(format!("oos-link-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();

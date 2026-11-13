@@ -4,6 +4,7 @@
 //! oos-ui: the OOS oscilloscope screen.
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
+//!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
@@ -34,6 +35,8 @@ mod zone;
 mod drm;
 #[cfg(target_os = "linux")]
 mod input;
+#[cfg(windows)]
+mod desktop;
 
 use gfx::Canvas;
 use ui::Ui;
@@ -125,6 +128,11 @@ fn main() {
     }
     if let Some(d) = arg(&args, "--store-dir") {
         ui.store_dir = d.into();
+    } else if cfg!(windows) {
+        // no /tmp on Windows: setups, CSV and screenshots go to Documents\OOS
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            ui.store_dir = std::path::Path::new(&home).join("Documents").join("OOS");
+        }
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);
@@ -133,7 +141,11 @@ fn main() {
     {
         device_main(ui, &args);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        desktop::run(ui);
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = ui;
         eprintln!("oos-ui: no display backend on this OS; use --script FILE");

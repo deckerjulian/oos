@@ -115,7 +115,7 @@ fn scan() -> Result<Vec<Net>, String> {
 fn saved_to_card(c: &Ctrl) -> Result<(), String> {
     c.save()?;
     // the scope is usually switched off at the mains
-    unsafe { libc::sync() };
+    crate::store::sync_disks();
     Ok(())
 }
 

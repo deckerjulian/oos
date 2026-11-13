@@ -526,9 +526,9 @@ setTimeout(() => {
         let dir = std::env::temp_dir().join(format!("oos-ui-page-{}-{}", std::process::id(), preset.len() + storage_throws as usize));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("page.js"), script).unwrap();
-        std::fs::write(dir.join("run.js"), HARNESS).unwrap();
+        std::fs::write(dir.join("run.cjs"), HARNESS).unwrap();
         let mut cmd = std::process::Command::new("node");
-        cmd.arg(dir.join("run.js")).arg(dir.join("page.js")).env("PRESET", preset);
+        cmd.arg(dir.join("run.cjs")).arg(dir.join("page.js")).env("PRESET", preset);
         if storage_throws {
             cmd.env("THROWS", "1");
         }

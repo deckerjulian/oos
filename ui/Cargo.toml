@@ -11,6 +11,10 @@ libc = "0.2"
 oos-hal = { path = "../hal" }
 oos-dsp = { path = "../dsp" }
 
+# a desktop window for the host build (src/desktop.rs); the scope build does not use it
+[target.'cfg(windows)'.dependencies]
+minifb = "0.27"
+
 [profile.release]
 opt-level = 3
 lto = true

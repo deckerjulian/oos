@@ -5356,7 +5356,7 @@ impl Ui {
     /// After a file: on the stick for real, so that it can be pulled. Not in the frame loop, a stick can take its time.
     pub fn flush_stick(&self) {
         if self.usb_used() {
-            let _ = std::thread::Builder::new().name("sync".into()).spawn(|| unsafe { libc::sync() });
+            let _ = std::thread::Builder::new().name("sync".into()).spawn(crate::store::sync_disks);
         }
     }
 
@@ -5908,6 +5908,11 @@ impl Ui {
     }
 
     // ------------------------------------------------------------------ input
+
+    /// A menu is on the screen (the desktop window turns Multi 1 with the wheel only then).
+    pub fn menu_is_open(&self) -> bool {
+        self.menu_open
+    }
 
     pub fn handle(&mut self, ev: Ev) {
         if self.start_up_input(&ev) {

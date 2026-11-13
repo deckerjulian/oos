@@ -14,6 +14,7 @@ pub mod boot;
 pub mod bus;
 pub mod calfile;
 pub mod clock;
+#[cfg_attr(not(unix), path = "gpio_none.rs")]
 pub mod gpio;
 pub mod hz;
 pub mod la;
