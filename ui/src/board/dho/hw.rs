@@ -34,6 +34,20 @@ pub fn slow_mode(m: &Model) -> Slow {
     }
 }
 
+/// SINGLE ends with the first frame after the press (`Settings::single`): one frame per batch and no batch after it
+/// until the next press. Not when the UI may refuse that frame and wait for another: a protocol trigger (the decoder
+/// decides) or a zone trigger.
+fn single_takes_first(m: &Model) -> bool {
+    m.trig_mode == TrigMode::Single && m.trig_type != TrigType::Bus && !m.zones.iter().any(|z| z.usable())
+}
+
+/// Whether the thread acquires another batch for SINGLE: not once a batch brought frames under this press's `stamp`
+/// (`done`). The UI's STOP reached the thread only a few UI steps later, and each batch in between counted:
+/// `acquired` +10 at 1 us/div, +3 at 1 ms/div per press (unit 2026-11-13).
+fn single_wants_more(b: &Settings, done: Option<u64>, stamp: u64) -> bool {
+    !b.single || done != Some(stamp)
+}
+
 /// Live record length for Auto depth (keeps the read short enough for a fluid display).
 const LIVE_DEPTH: i128 = 100_000;
 
@@ -154,7 +168,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         } as f64,
         auto: m.trig_mode == TrigMode::Auto,
         auto_fast: m.auto_fast && m.trig_mode == TrigMode::Auto,
-        single: m.trig_mode == TrigMode::Single,
+        single: single_takes_first(m),
         play4: true,
         blocks: 7,
         header: header_probe(),
@@ -646,8 +660,8 @@ enum DvmStep {
 /// The DVM block's next step: (re)started when the wanted channel, its lane in the acquired set `mask` or the
 /// acquisition configuration (`config`, raised on every configuration) changed; stopped when nothing is wanted or the
 /// channel is not acquired; read `DVM_READ_S` after the start or the last reading.
-fn dvm_step(want: Option<usize>, mask: u32, config: u64, running: Option<DvmKey>, elapsed_s: f64) -> (DvmStep, Option<DvmKey>) {
-    let target = want.and_then(|ch| oos_hal::dho::dvm::lane(mask, ch).map(|l| (ch, l, config)));
+fn dvm_step(want: Option<crate::board::DvmWant>, mask: u32, config: u64, running: Option<DvmKey>, elapsed_s: f64) -> (DvmStep, Option<DvmKey>) {
+    let target = want.and_then(|w| oos_hal::dho::dvm::lane_forced(mask, w.ch, w.lane).map(|l| (w.ch, l, config)));
     if target != running {
         let step = match (target, running) {
             (Some((_, l, _)), _) => DvmStep::Start(l),
@@ -1009,6 +1023,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut helper = crate::drawpipe::Helper::default();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
+        // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
+        let mut single_done: Option<u64> = None;
         // the hardware segmented recording in progress or read back
         let mut segrun: Option<SegRun> = None;
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
@@ -1152,7 +1168,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
             {
                 use oos_hal::dho::dvm;
-                let want = out.lock().unwrap().dvm_want.map(|w| w.ch);
+                let want = out.lock().unwrap().dvm_want;
                 let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
                 let (step, key) = dvm_step(want, s.mask, configs, dvm_run.map(|r| r.0), elapsed);
                 match step {
@@ -1416,6 +1432,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 out.lock().unwrap().queue.clear();
             }
             let b = batch_plan(&s, &p);
+            if !single_wants_more(&b, single_done, stamp) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
             if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -1562,7 +1583,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
                     // not in average mode, where a clear may have to come first, and not where the deep measurements
                     // read the newest frame raw (its ring must stay for the replay at STOP)
-                    if prearm_on() && avg.is_none() && prearm_keeps_replay(&b, &p, deep_want) {
+                    if count > 0 && b.single {
+                        single_done = Some(stamp);
+                    }
+                    if prearm_on() && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -1820,6 +1844,27 @@ mod tests {
             m.trig_mode = TrigMode::Single;
             assert_eq!(frames(&m), 1, "{} s/div", tdiv);
         }
+    }
+
+    // Break it catches: batches after the SINGLE frame until the UI's STOP reached the thread (`acquired` +10 at
+    // 1 us/div, +3 at 1 ms/div per press on the unit); or a SINGLE that waits for good where the UI refuses frames
+    #[test]
+    fn single_stops_after_the_batch_with_its_frame() {
+        let mut m = Model { trig_mode: TrigMode::Single, ..Default::default() };
+        let b = settings(&m, false);
+        assert!(b.single);
+        assert!(single_wants_more(&b, None, 4), "the first batch after the press");
+        assert!(!single_wants_more(&b, Some(4), 4), "its frame came: no more for this press");
+        assert!(single_wants_more(&b, Some(4), 5), "the next press");
+        m.trig_mode = TrigMode::Normal;
+        assert!(single_wants_more(&settings(&m, false), Some(4), 4), "RUN is not limited");
+        // the UI may refuse the frame: protocol trigger, zone trigger
+        m.trig_mode = TrigMode::Single;
+        m.trig_type = TrigType::Bus;
+        assert!(!settings(&m, false).single);
+        m.trig_type = TrigType::Edge;
+        m.zones[0] = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0)] };
+        assert!(m.zones[0].usable() && !settings(&m, false).single);
     }
 
     // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
@@ -2094,19 +2139,21 @@ mod tests {
     #[test]
     fn dvm_steps() {
         let t0 = Some((1, 2, 7));
+        let ch = |c: usize| Some(crate::board::DvmWant { ch: c, lane: None });
         // (want, mask, config, running, elapsed) -> (step, running after)
-        let cases: [(Option<usize>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 8] = [
+        let cases: [(Option<crate::board::DvmWant>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 9] = [
             (None, 0b11, 7, None, 0.0, DvmStep::Idle, None),
             // CH2 of CH1+CH2: lane 2
-            (Some(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
-            (Some(1), 0b11, 7, t0, 0.1, DvmStep::Idle, t0),
-            (Some(1), 0b11, 7, t0, 0.6, DvmStep::Read, t0),
+            (ch(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
+            (ch(1), 0b11, 7, t0, 0.1, DvmStep::Idle, t0),
+            (ch(1), 0b11, 7, t0, 0.6, DvmStep::Read, t0),
             // a new configuration restarts it
-            (Some(1), 0b11, 8, t0, 0.1, DvmStep::Start(2), Some((1, 2, 8))),
-            // CH2 alone: lane 1
-            (Some(1), 0b10, 7, t0, 0.6, DvmStep::Start(1), Some((1, 1, 7))),
+            (ch(1), 0b11, 8, t0, 0.1, DvmStep::Start(2), Some((1, 2, 8))),
+            // CH2 alone: lane 1; with lane 3 forced: lane 3
+            (ch(1), 0b10, 7, t0, 0.6, DvmStep::Start(1), Some((1, 1, 7))),
+            (Some(crate::board::DvmWant { ch: 1, lane: Some(3) }), 0b10, 7, Some((1, 1, 7)), 0.6, DvmStep::Start(3), Some((1, 3, 7))),
             // the channel left the acquired set, or the DVM was switched off
-            (Some(1), 0b01, 7, t0, 0.6, DvmStep::Stop, None),
+            (ch(1), 0b01, 7, t0, 0.6, DvmStep::Stop, None),
             (None, 0b11, 7, t0, 0.6, DvmStep::Stop, None),
         ];
         for (want, mask, config, running, el, step, after) in cases {

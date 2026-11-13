@@ -41,8 +41,12 @@ ip link set lo up
 # date while it runs
 name=$(/bin/oos-conf net.name | sed -n 's/^\([A-Za-z0-9-]*\).*/\1/p')
 echo "${name:-oos}" > /proc/sys/kernel/hostname
-# inbound only from `net.allow` (system settings, docs/network.md 6), before anything listens; none without the key
+# inbound only from `net.allow` (system settings, docs/network.md 6), before anything listens; none without the key.
+# With `onlink6` in it a watcher keeps the IPv6 prefixes on the link in the firewall (they change with the provider)
 /bin/oos-firewall >> /tmp/oos-net.log 2>&1
+(setsid sh -c '/bin/oos-firewall watch >> /tmp/oos-net.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+# `net.ipv6 = on`: stable SLAAC addresses and the services on IPv6 too (oos-net6, docs/network.md 8), before eth0 is up
+[ "$(/bin/oos-conf net.ipv6)" = on ] && /bin/oos-net6 >> /tmp/oos-net.log 2>&1
 # a fixed MAC (the kernel picks a random one per boot, which filled the bench DHCP pool on 2026-11-03): by default
 # locally administered from the SD card's CID; `eth.mac` can name the stock one or a fixed address (oos-mac)
 mac=$(/bin/oos-mac 2>> /tmp/oos-net.log)
@@ -51,8 +55,9 @@ ip link set eth0 up 2>/dev/null
 (
 	# the link is up to bring the cable's link up; an address only once there is one
 	until [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = 1 ]; do sleep 2; done
-	# -O ntpsrv: the NTP servers of the lease too (DHCP option 42, udhcpc.script); -x hostname: the scope's name
-	if ! udhcpc -i eth0 -n -q -t 5 -O ntpsrv -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; then
+	# -O ntpsrv -O tzstr: the NTP servers and the time zone of the lease too (DHCP options 42 and 100, udhcpc.script);
+	# -x hostname: the scope's name
+	if ! udhcpc -i eth0 -n -q -t 5 -O ntpsrv -O tzstr -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; then
 		# from the MAC (the same on every start), another one while it is taken on the cable
 		set -- $(tr ':' ' ' < /sys/class/net/eth0/address)
 		a=$((0x$5 % 254 + 1)) b=$((0x$6)) n=0
@@ -63,7 +68,7 @@ ip link set eth0 up 2>/dev/null
 		: > /tmp/oos-net.fallback
 		echo "oos: no DHCP answer, eth0 = 169.254.$a.$b/16 (link-local)" > /dev/kmsg
 		# a server that comes later still counts
-		until udhcpc -i eth0 -n -q -t 2 -O ntpsrv -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
+		until udhcpc -i eth0 -n -q -t 2 -O ntpsrv -O tzstr -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &

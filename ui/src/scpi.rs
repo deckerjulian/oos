@@ -152,10 +152,10 @@ impl Scpi {
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = TcpListener::bind(("0.0.0.0", port)).ok();
+        let l = crate::net6::tcp(port);
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
-            eprintln!("oos-ui: SCPI on port {}", port);
+            eprintln!("oos-ui: SCPI on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
@@ -1048,6 +1048,20 @@ impl Scpi {
         // fork: the DVM block's raw registers next to the software DVM (docs/fork/dvm.md)
         if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && query {
             return t(&ui.dvm_debug_text());
+        }
+        // fork, unit debug: force the DVM block's lane with one channel (each lane = one pair of ADC cores)
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && kw(nodes[3], "LANE") {
+            if query {
+                return t(&ui.dvm_lane_text());
+            }
+            match arg.trim().to_ascii_uppercase().as_str() {
+                "AUTO" => ui.dvm_lane_set(None),
+                a => match a.parse::<u32>() {
+                    Ok(l) if l < 4 => ui.dvm_lane_set(Some(l)),
+                    _ => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                },
+            }
+            return None;
         }
         if kw(n0, "SYSTem") && nodes.len() == 2 && kw(nodes[1], "ERRor") && query {
             return t(&if self.err.is_empty() { "0,\"No error\"".to_string() } else { self.err.remove(0) });

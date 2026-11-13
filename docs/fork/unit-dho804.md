@@ -22,7 +22,7 @@ this unit uses, how to build its image, and what is still unverified.
 | SSH, no telnet | Dropbear on port 22 replaces telnet: rcS starts `oos-ssh` instead of `telnetd`, the telnet switch and `crate::remote` are gone. Generated root password and host keys in `/oos/ssh`, trusted keys from a USB stick, password login off only with a key. Listens only with `net.allow` and the firewall loaded. Keys `remote.ssh` (default off, unit image on), `ssh.password` (docs/network.md 7) | `rootfs/initramfs/bin/oos-ssh`, `rootfs/build-dropbear.sh`, rcS, `ui/src/ssh.rs`, `ui/src/ui/ssh.rs`, `ui/src/ui/remote.rs`, `tools/ssh-sim.sh` |
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
-| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24 169.254.0.0/16`, `remote.ssh = on`, `eth.mac = 02:00:00:00:00:01`, `ntp = on`, `tz = CET-1CEST,M3.5.0,M10.5.0/3`, acquisition keys), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
+| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24 169.254.0.0/16 fe80::/10 onlink6`, `net.ipv6 = on`, `remote.ssh = on`, `eth.mac = 02:00:00:00:00:01`, `ntp = on`, `tz = dhcp`, `tz.fallback = CET-1CEST,M3.5.0,M10.5.0/3`, acquisition keys), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
 | Fine V/div | upstream's Fine scale already walks the 801 rows of `cal_vertical` (the AFE is set per row, `afe::scale_index`); the fork adds `:CHANnel<n>:VERNier ON\|OFF` (one switch for all channels, as the menu) and `:CHANnel<n>:SCALe` taking any value with vernier on: the first row at or above it | `ui/src/scpi.rs` (`fine_scale`) |
 | Image build | the fork's part of `boot/build-dev-image.sh` (unit dir, `build.env`, DTB check, `nft`, unit `*.conf`, `OOS_BOOTARGS_EXTRA`) lives in two sourced hooks; upstream's script carries two lines. The hook stages its container part in `rootfs/out/unit-hook/` (mounted as `/wlan`). A bad `OOS_UNIT` now fails after the Rust builds | `boot/unit-hook.sh`, `boot/unit-hook-image.sh`, docs/fork/sync-checklist.md |
 
@@ -289,6 +289,20 @@ Details and the raw dumps: private RE notes `docs/logs/oos_unitlab_20261113.md` 
 | B1 fast rates | bit 2 needed | `avg.hw_fast` alone: zero frames from 156.25 MSa/s up (1 and 2 ch). With `avg.debug_sinc` (0x1004 bit 2): averages at 156.25, 312.5, 625, 1250 MSa/s (312.5: 1.08 -> 0.46 mV at N 16) |
 | B1 raw fields | no hidden low field | `seq`: odd word = next sample; `wide`: words from 10240 on are a quieter region (51 vs 125 codes), not a repeat |
 
+### Round 5 on dho804 da8e2a0 (build 20261113-193501)
+
+Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 5".
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| Compression (`acq.compress`) | default on | `compress-check` PASS at k 4/16/64/256 and 2 ch; k 256 at 1 M no time-out. On vs off: 1 ch 10 us/div 451 -> 504, 2 ch 10 us/div 346 -> 430 (drops 18 -> 0), 1 us/div -1 %, A53 load ~92 % -> ~17 % |
+| NEON deposit | no system-level change | compression off, 10 us/div 2 ch: dots 346/s (25 dropped), lines 354/s (0 dropped); deposit threads 70-82 % |
+| Deep measurements live | partly | 1 ms/div 10 M updates every second; 2 and 5 ms/div repeat one value (not updated) |
+| SINGLE count | not 1 | `acquired` +10 at 1 us/div, +3 at 1 ms/div per SINGLE |
+| B3 | pass | as round 4 |
+| DVM decoded | pass at CH1 | within 2.1 % (DC 500 mV/div), 0.2 % at 100 mV/div, no factor 2. Open CH3 at +2 V offset reads -34 mV; `sw` there shows CH1's value |
+| Hardware mask | pass below 100 us/div | readout domain: 0 fails clean, all fail with a 2 us shift, 1/2/4 ch, agrees with software. Fails every frame at >= 100 us/div at any depth and `cols`; `cols=400` stalls the acquisition |
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
@@ -317,12 +331,17 @@ What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
   `remote::hostname` is `hostname::set` in the fork, since `remote.rs` stays deleted.
 - NTP server from DHCP option 42 (`ntp.server = dhcp`, the new default): `udhcpc -O ntpsrv`, the answers return
   through the firewall's established rule. The unit's `system.conf` sets no NTP server, so it follows the lease.
-  It does set `ntp = on` and the CET zone: without them a fresh `/oos/system.conf` got `ntp = off` and `tz = UTC0`.
-  Image defaults only fill keys `/oos/system.conf` lacks, and oos-ui writes every known key on its first save, so a
-  file written before keeps its values. The unit's current file has `ntp.server = pool.ntp.org`, which names a fixed
-  server and overrides the lease (`sysconf::ntp_server`, origin `Set`); System > Date and time > NTP server = DHCP,
-  or deleting the line, returns it to the lease. Its `remote.telnet = on` is a leftover: the fork has no telnet, the
-  line stays in the file and starts nothing. The fork leaves the user's file alone.
+  It does set `ntp = on` and `tz = dhcp` with `tz.fallback` CET (zone from DHCP option 100, docs/network.md 3):
+  without them a fresh `/oos/system.conf` got `ntp = off` and `tz = UTC0`. Image defaults only fill keys
+  `/oos/system.conf` lacks, and oos-ui writes every known key on its first save, so a file written before keeps its
+  values. An `ntp.server` line names a fixed server and overrides the lease (`sysconf::ntp_server`, origin `Set`);
+  NTP server = DHCP, or deleting the line, returns it to the lease. The unit's file has `tz =
+  CET-1CEST,M3.5.0,M10.5.0/3` written in it: once a build with `tz = dhcp` is installed, unitlab sets `tz = dhcp`
+  there (System > Date and time > Time zone > DHCP does the same); `tz.fallback` then comes from the image. Its
+  `remote.telnet = on` is a leftover: the fork has no telnet, the line stays in the file and starts nothing. The fork
+  leaves the user's file alone. `net.allow` and `net.ipv6` are not in that file, so the image's values apply.
+- IPv6 (docs/network.md 8): `net.ipv6 = on` and `onlink6` in `net.allow`. Before this the unit had no IPv6 address at
+  all: `udhcpc.script` flushed every family, link-local included (fixed, IPv4 only now).
 - GPU traces in two steps and own textures per screen: the Rust interface is unchanged. `gpu/test-host.sh` shows 92
   pictures equal to the CPU picture within rounding, so drawpipe, the sparse path and persistence draw the same.
 - `stat` and `:SYSTem:STATe?`: the fork's pipeline counters now stand before upstream's graphics and HDMI fields,

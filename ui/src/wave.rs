@@ -439,6 +439,12 @@ fn demo_la(t: f64) -> u16 {
     w
 }
 
+/// The record `Source::acquire` makes of a hardware frame: 3600 points across the screen.
+pub fn hw_record(m: &Model, f: crate::board::Frame) -> Record {
+    let window = m.time_per_div() as f64 * HDIV as f64;
+    crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)
+}
+
 impl Source {
     /// The hardware applies inversion, coupling and bandwidth itself; the other sources get them from `condition`.
     pub fn is_hw(&self) -> bool {
@@ -696,7 +702,7 @@ impl Source {
             };
             *seen = f.seq;
             drop(g);
-            return Some(crate::board::to_record(&std::sync::Arc::new(f), m, n, window, t_first));
+            return Some(hw_record(m, f));
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
             let g = shared.lock().unwrap();

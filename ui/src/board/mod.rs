@@ -229,10 +229,12 @@ pub struct CounterRead {
     pub n: u64,
 }
 
-/// The FPGA's DVM block as the UI wants it (`dvm.hw = on`): the channel it measures.
+/// The FPGA's DVM block as the UI wants it (`dvm.hw = on`): the channel it measures, and a lane forced by
+/// `:SYSTem:DEBug:DVM:LANE` (one channel only; None = the channel's own).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DvmWant {
     pub ch: usize,
+    pub lane: Option<u32>,
 }
 
 /// A reading of the DVM block (fork, docs/fork/dvm.md): the channel, lane and window exponent it was taken with, the

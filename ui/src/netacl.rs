@@ -5,7 +5,8 @@
 //! `/etc/oos/system.conf` (docs/network.md 6). A list of address prefixes, `192.0.2.0/24 fd00::/8`. Empty or
 //! absent: everyone, as before. rcS builds the firewall from the same key (`oos-firewall`); this list is the second
 //! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI and VXI-11. The scope itself
-//! (loopback) is always allowed.
+//! (loopback) is always allowed. `onlink6` stands for the IPv6 prefixes on the link (from the router's advertisements,
+//! `net6::PREFIX_FILE`), which change with the provider.
 
 use std::net::IpAddr;
 use std::path::Path;
@@ -16,7 +17,12 @@ pub const IMAGE_CONF: &str = "/etc/oos/system.conf";
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Acl {
     nets: Vec<(IpAddr, u8)>,
+    /// `onlink6`: the IPv6 prefixes on the link too, read at each check
+    onlink6: bool,
 }
+
+/// The `net.allow` word for the IPv6 prefixes on the link (`oos-firewall` has it too).
+pub const ONLINK6: &str = "onlink6";
 
 /// The value of `key` in the text of a `key = value` file: the last line wins, `#` starts a comment.
 pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
@@ -53,6 +59,10 @@ impl Acl {
         let mut acl = Acl::default();
         let mut bad = Vec::new();
         for w in s.split([' ', ',', '\t']).filter(|w| !w.is_empty()) {
+            if w == ONLINK6 {
+                acl.onlink6 = true;
+                continue;
+            }
             let (a, b) = w.split_once('/').unwrap_or((w, ""));
             let Ok(ip) = a.parse::<IpAddr>() else {
                 bad.push(w.to_string());
@@ -70,15 +80,24 @@ impl Acl {
 
     /// No list: everyone is allowed.
     pub fn is_open(&self) -> bool {
-        self.nets.is_empty()
+        self.nets.is_empty() && !self.onlink6
     }
 
     pub fn permits(&self, ip: IpAddr) -> bool {
+        self.permits_with(ip, crate::net6::onlink)
+    }
+
+    /// `permits` with the prefixes on the link from `onlink` (asked only when `onlink6` is in the list and the address
+    /// is IPv6).
+    pub fn permits_with(&self, ip: IpAddr, onlink: impl FnOnce() -> Vec<(std::net::Ipv6Addr, u8)>) -> bool {
         let ip = match ip {
             IpAddr::V6(a) => a.to_ipv4_mapped().map_or(ip, IpAddr::V4),
             v4 => v4,
         };
-        self.is_open() || ip.is_loopback() || self.nets.iter().any(|&(net, n)| net.is_ipv4() == ip.is_ipv4() && masked(ip, n) == net)
+        if self.is_open() || ip.is_loopback() || self.nets.iter().any(|&(net, n)| net.is_ipv4() == ip.is_ipv4() && masked(ip, n) == net) {
+            return true;
+        }
+        self.onlink6 && ip.is_ipv6() && onlink().into_iter().any(|(net, n)| masked(ip, n) == masked(IpAddr::V6(net), n))
     }
 
     /// From the image default and the settings file (the file wins, also with an empty value). A list that names
@@ -109,7 +128,10 @@ impl Acl {
 
 impl std::fmt::Display for Acl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let v: Vec<String> = self.nets.iter().map(|(a, n)| format!("{}/{}", a, n)).collect();
+        let mut v: Vec<String> = self.nets.iter().map(|(a, n)| format!("{}/{}", a, n)).collect();
+        if self.onlink6 {
+            v.push(ONLINK6.into());
+        }
         f.write_str(&v.join(" "))
     }
 }
@@ -138,6 +160,25 @@ mod tests {
         assert_eq!(Acl::parse("192.0.2.145/24").0, Acl::parse("192.0.2.0/24").0);
         let (a, _) = Acl::parse("0.0.0.0/0");
         assert!(a.permits(ip("8.8.8.8")) && !a.permits(ip("2001:db8::1")));
+    }
+
+    #[test]
+    fn prefixes_on_the_link() {
+        let (a, bad) = Acl::parse("192.0.2.0/24 fe80::/10 onlink6");
+        assert!(bad.is_empty() && !a.is_open(), "{:?}", bad);
+        assert_eq!(a.to_string(), "192.0.2.0/24 fe80::/10 onlink6");
+        let link = || crate::net6::parse_prefixes("2001:db8:5:7::/64 fd12:3456::/48");
+        assert!(a.permits_with(ip("2001:db8:5:7::abcd"), link) && a.permits_with(ip("fd12:3456:0:9::1"), link));
+        assert!(!a.permits_with(ip("2001:db8:5:8::1"), link) && !a.permits_with(ip("2a00:1450::1"), link));
+        assert!(a.permits_with(ip("fe80::1"), link) && a.permits_with(ip("::ffff:192.0.2.3"), link));
+        assert!(!a.permits_with(ip("::ffff:8.8.8.8"), link));
+        // no prefixes yet (or no router): only the fixed list
+        assert!(!a.permits_with(ip("2001:db8:5:7::abcd"), Vec::new) && a.permits_with(ip("fe80::1"), Vec::new));
+        // IPv4 never asks for the prefixes
+        assert!(!a.permits_with(ip("10.0.0.1"), || panic!("asked")));
+        // onlink6 alone closes what is not on the link
+        let (a, _) = Acl::parse("onlink6");
+        assert!(!a.is_open() && !a.permits_with(ip("192.0.2.3"), link) && a.permits_with(ip("2001:db8:5:7::1"), link));
     }
 
     #[test]
