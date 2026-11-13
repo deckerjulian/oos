@@ -5,7 +5,7 @@
 //!   GET /             page            GET /screen.png   current screen (PNG, 60 to 175 KB; the page's live view and saving)
 //!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
 //!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
-//!   POST /waveform?name=...&slot=1   load a CSV, OOS BIN or WFM directly into a reference (no file written)
+//!   POST /waveform?name=...&slot=1   load a waveform into the chosen reference (no file written)
 //!   GET /ui-state     source, acquisition state and capture count for the remote controls
 //!   GET /cmd?c=...    one key, knob or touch command (cmd.rs syntax: "key runstop", "knob vscale +1", "tap 100 200");
 //!                     other commands are refused (`cmd::remote_ok`)
@@ -103,12 +103,12 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 <body><header><b>OOS remote</b><span id="st">connecting ...</span><nav><a href="/update">Update</a></nav></header>
 <div class="workflow" aria-label="Waveform and source actions">
 <button id="load-wave" class="primary" onclick="document.getElementById('wave-file').click()">Load waveform</button>
-<input id="wave-file" type="file" accept=".csv,.bin,.wfm" hidden>
+<input id="wave-file" type="file" accept=".csv,.bin,.wfm,.trc,.isf,.tr0,.wfmx" hidden>
 <label>Into <select id="wave-slot" aria-label="Reference slot"><option value="1">R1</option><option value="2">R2</option><option value="3">R3</option><option value="4">R4</option><option value="5">R5</option><option value="6">R6</option><option value="7">R7</option><option value="8">R8</option><option value="9">R9</option><option value="10">R10</option></select></label>
 <button id="sim-mode" onclick="c('workflow sim')">SIM</button><button id="return-live" onclick="c('workflow live')" hidden>Return to live</button>
 <button id="acquire-toggle" onclick="c('key runstop')" aria-label="Run or stop acquisition">Run/Stop</button><button onclick="c('key single')">Single</button>
 <button onclick="c('workflow measure')">Add measurement</button><span id="session-state" class="session" aria-live="polite">Reading source...</span></div>
-<p id="wave-status" class="file-hint" role="status">CSV, OOS BIN or WFM · up to 64 MiB. You can also drop a file on the waveform.</p>
+<p id="wave-status" class="file-hint" role="status">CSV, BIN, WFM, TRC, ISF, TR0 or WFMX · up to 64 MiB. You can also drop a file on the waveform.</p>
 <img id="s" width="1024" height="600" alt="scope screen" src="/screen.png">
 <div class="g"><div class="k"><span>Acquisition</span><div>
 <button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Autoset</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
