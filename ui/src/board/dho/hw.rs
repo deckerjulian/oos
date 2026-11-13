@@ -2096,7 +2096,7 @@ mod tests {
         let (n, pre, rate) = (10_000usize, 5_000u32, 6_250_000u64);
         let dt = 1.0 / rate as f64;
         // 0 / 3 V, 1 kHz, rising edge at the trigger; `shift` seconds later
-        let wave = |shift: f64| -> Vec<f32> { (0..n).map(|k| ((k as f64 - pre as f64) * dt - shift)).map(|t| if (t * 1e3).rem_euclid(1.0) < 0.5 { 3.0 } else { 0.0 }).collect() };
+        let wave = |shift: f64| -> Vec<f32> { (0..n).map(|k| (k as f64 - pre as f64) * dt - shift).map(|t| if (t * 1e3).rem_euclid(1.0) < 0.5 { 3.0 } else { 0.0 }).collect() };
         // the screen: -0.5..0.5 ms = samples 1875..8125; the mask from it
         let (s0, s1) = (1875, 8125);
         let m = oos_dsp::mask::build(&wave(0.0)[s0..s1], 20, 0.3);
@@ -2107,7 +2107,7 @@ mod tests {
             let per = map.layout(t.points, 1).2;
             v.iter().enumerate().any(|(k, &x)| {
                 let c = (k as f64 / per) as usize;
-                let code = (map.code(x as f64, 1.0, -1.5, 1.0).floor()) as i32;
+                let code = map.code(x as f64, 1.0, -1.5, 1.0).floor() as i32;
                 c < cols.len() && ((cols[c].lo_en && code < cols[c].lo as i32) || (cols[c].hi_en && code > cols[c].hi as i32))
             })
         };
