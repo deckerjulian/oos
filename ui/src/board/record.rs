@@ -121,6 +121,8 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
         found.unwrap_or(f.pre as f64)
     };
     let dt = window / n as f64;
+    // several samples per point and no averaging: the points become min/max pairs (the peak-detect branch below)
+    let pairs = dt / f.dt >= 2.0 && m.acq != AcqMode::HiRes;
     let mut ch: [Vec<f32>; NCH] = Default::default();
     for c in 0..NCH {
         let v = &f.ch[c];
@@ -144,7 +146,7 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
                 .collect();
             continue;
         }
-        if per >= 2.0 {
+        if pairs {
             // dense views (several samples per screen point): peak detect. Points 2j and 2j+1 share one span (two
             // output points wide); 2j gets its minimum, 2j+1 its maximum, so noise and one-sample spikes stay
             // visible like on the stock display. One pass per pair.
@@ -187,7 +189,7 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
     let raw = (i1 > i0 + 1).then(|| crate::wave::Raw { frame: f.clone(), i0, i1, t0: (i0 as f64 - ti) * f.dt });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
     let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
-    crate::wave::Record { t0: t_first, dt, ch, triggered: found.is_some(), partial: f.partial, raw, la }
+    crate::wave::Record { t0: t_first, dt, ch, triggered: found.is_some(), partial: f.partial, raw, la, pairs }
 }
 
 #[cfg(test)]
@@ -259,6 +261,73 @@ mod peak_detect {
 }
 
 #[cfg(test)]
+mod dots {
+    use super::*;
+
+    /// The probe square (1 kHz, 0 / 0.3 V) at `tdiv`, 100 k samples over the window, drawn with dots; returns the
+    /// columns that hold a period's edge and how many of them are lit from the low to the high level.
+    fn edge_columns(tdiv: f64, pairs: bool) -> (usize, usize) {
+        let mut m = Model { dots: true, slope: Slope::Rise, trig_level: 0.15, ..Model::default() };
+        m.tscale = tscales().iter().position(|&x| (x as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
+        m.ch[0].offset = -0.15;
+        m.ch[0].vscale = VSCALES.iter().position(|&x| (x - 0.1).abs() < 1e-6).unwrap();
+        (m.ch[0].vfine, m.ch[0].probe) = (1.0, 1.0);
+        let window = tdiv * HDIV as f64;
+        let n = 100_000usize;
+        let dt = window / n as f64;
+        // 3 us edges, the trigger at the middle on a rising one
+        let sig = |t: f64| {
+            let ph = (t + 1.0).rem_euclid(1e-3);
+            (if ph < 3e-6 { ph / 3e-6 } else if ph < 0.5e-3 { 1.0 } else if ph < 0.5e-3 + 3e-6 { 1.0 - (ph - 0.5e-3) / 3e-6 } else { 0.0 }) as f32 * 0.3
+        };
+        let v: Vec<f32> = (0..n).map(|k| sig((k as f64 - (n / 2) as f64) * dt)).collect();
+        let f = Arc::new(Frame { seq: 1, dt, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], ..Default::default() });
+        let mut rec = to_record(&f, &m, 3600, window, -window / 2.0);
+        assert!(rec.pairs);
+        rec.pairs = pairs;
+        let mut ph = crate::wave::Phosphor::new(1000, 480);
+        ph.draw_ex(0, &m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
+        let (w, h) = (ph.w, ph.h);
+        let rows = |c: usize| (0..h).filter(|&r| ph.map[0][r * w + c] > 0).collect::<Vec<_>>();
+        // the levels' rows from a column on a plateau: the first of the screen lies on the low level
+        let (y_lo, y_hi) = (240.0 + 0.15 / 0.1 * 60.0, 240.0 - 0.15 / 0.1 * 60.0);
+        let cols_per_s = w as f64 / window;
+        let mut edges = 0;
+        let mut lit = 0;
+        for p in 0.. {
+            let t = -window / 2.0 + p as f64 * 0.5e-3;
+            if t > window / 2.0 {
+                break;
+            }
+            // an edge at every half period; the column it falls in
+            let c = ((t + window / 2.0) * cols_per_s).floor() as usize;
+            if c == 0 || c + 1 >= w {
+                continue;
+            }
+            edges += 1;
+            let r: Vec<usize> = [c - 1, c, c + 1].iter().flat_map(|&c| rows(c)).collect();
+            let span = |y: f64| r.iter().any(|&x| (x as f64 - y).abs() <= 2.0);
+            if span(y_lo) && span(y_hi) && (y_hi as usize..y_lo as usize).all(|y| r.contains(&y)) {
+                lit += 1;
+            }
+        }
+        (edges, lit)
+    }
+
+    /// Dots on a peak-detect record: each min/max pair is drawn as one span, so the edges of a slow time base stay on
+    /// the screen (docs/fork/zoomout.md). Two dots per pair left the edges blank from 2 ms/div on.
+    #[test]
+    fn dots_draw_min_max_pairs_as_spans() {
+        for tdiv in [2e-3, 50e-3] {
+            let (edges, lit) = edge_columns(tdiv, true);
+            assert!(edges >= 20 && lit == edges, "{} s/div: {} of {} edges drawn", tdiv, lit, edges);
+            let (_, lit_dots) = edge_columns(tdiv, false);
+            assert!(lit_dots == 0, "{} s/div: the old dots drew {} edges", tdiv, lit_dots);
+        }
+    }
+}
+
+#[cfg(test)]
 mod bench {
     use super::*;
 
@@ -283,7 +352,7 @@ mod bench {
                 let t0 = std::time::Instant::now();
                 let rec = to_record(&fr, &m, 3600, window, -window / 2.0);
                 let t1 = std::time::Instant::now();
-                ph.draw_ex(0, &m, (tdiv as f32, 0.0), rec.t0, rec.dt, &rec.ch[0], 24, None);
+                ph.draw_ex(0, &m, (tdiv as f32, 0.0), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
                 let t2 = std::time::Instant::now();
                 let h = crate::wave::Record { raw: None, ..rec.clone() };
                 std::hint::black_box(&h);

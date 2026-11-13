@@ -1745,9 +1745,9 @@ impl Ui {
                         let zw = self.z_weights(&rec);
                         for c in 0..NCH {
                             if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref());
+                                self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
                                 if self.m.zoom {
-                                    self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref());
+                                    self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
                                 }
                             }
                         }
@@ -1830,9 +1830,9 @@ impl Ui {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                        self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
+                        self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref(), rec.pairs);
                         if self.m.zoom {
-                            self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
+                            self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref(), rec.pairs);
                         }
                     }
                 }

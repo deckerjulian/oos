@@ -59,7 +59,7 @@ pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp
             } else {
                 out.extend(xs.map(|x| oos_dsp::interp::linear(v, x).unwrap_or(f32::NAN)));
             }
-            ph.draw_ex(c, m, (m.time_per_div(), m.delay), t_first, dt, &out, wgt, None);
+            ph.draw_ex(c, m, (m.time_per_div(), m.delay), t_first, dt, &out, wgt, None, false);
         }
     });
     Some(true)
@@ -302,7 +302,7 @@ mod tests {
         let rec = crate::board::to_record(&fr, m, POINTS, window, m.delay as f64 - window / 2.0);
         for c in 0..NCH {
             if m.ch[c].on && !rec.ch[c].is_empty() {
-                ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None);
+                ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs);
             }
         }
         rec.triggered

@@ -1318,7 +1318,7 @@ mod tests {
     fn csv_of_a_record() {
         let mut m = Model::default();
         m.ch[2].on = true;
-        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
         rec.ch[0] = vec![0.5, 1.25, f32::NAN];
         rec.ch[2] = vec![-1.0, 0.0, 3.3];
         let csv = wave_csv(&rec, &m);

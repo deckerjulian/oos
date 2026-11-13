@@ -833,7 +833,7 @@ mod tests {
             })
             .collect();
         let sync: Vec<f32> = (0..n).map(|k| if (0.0..1e-3).contains(&(t0 + k as f64 * dt)) { 3.3 } else { 0.0 }).collect();
-        ui.last[0] = Some(Record { t0, dt, ch: [x, out, Vec::new(), sync], triggered: true, partial: false, raw: None, la: None });
+        ui.last[0] = Some(Record { t0, dt, ch: [x, out, Vec::new(), sync], triggered: true, partial: false, raw: None, la: None, pairs: false });
         ui.m.run = RunState::Stop;
         ui.bode_update();
         assert!(!ui.bode.running && !ui.bode.free);

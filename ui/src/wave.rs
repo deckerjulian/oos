@@ -44,6 +44,8 @@ pub struct Record {
     pub raw: Option<Raw>,
     /// logic analyser lines D0..D15 of the same acquisition (LA on)
     pub la: Option<crate::ui::la::LaRec>,
+    /// the points are min/max pairs (`to_record` peak detect: point 2j the minimum, 2j+1 the maximum of one span)
+    pub pairs: bool,
 }
 
 #[derive(Clone)]
@@ -722,7 +724,7 @@ impl Source {
                     let words = (0..nl).map(|k| demo_la(ttrig + jitter + t_first + k as f64 * dl)).collect();
                     crate::ui::la::LaRec { words: std::sync::Arc::new(words), t0: t_first, dt: dl }
                 });
-                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la })
+                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la, pairs: false })
             }
             Source::Replay { words, xinc, yinc, yorg, yref } => {
                 let volts: Vec<f32> = words.iter().map(|&w| ((w as f64 - *yorg - *yref) * *yinc) as f32).collect();
@@ -752,7 +754,7 @@ impl Source {
                 }
                 let mut chs: [Vec<f32>; NCH] = Default::default();
                 chs[0] = v;
-                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la: None })
+                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la: None, pairs: false })
             }
             Source::Live { .. } | Source::Hw { .. } => None, // handled above
         }
@@ -854,8 +856,10 @@ impl Phosphor {
     /// Draws a record channel into the map: every segment between two samples adds `w` to the pixels it covers,
     /// so the brightness follows the dwell time of the trace like on an analog/digital-phosphor screen. Display
     /// options: dots (`Model::dots`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
+    /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
+    /// between its extremes; two dots would drop the edges of a slow time base.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_ex(&mut self, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>) {
+    pub fn draw_ex(&mut self, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>, pairs: bool) {
         let (wd, ht) = (self.w as f32, self.h as f32);
         let tdiv = view.0 as f64;
         let vdelay = view.1 as f64;
@@ -868,17 +872,40 @@ impl Phosphor {
         let y_of = |val: f32| -> f32 { cy - (val + ch.offset) / vpd * ppd_y };
         let map = &mut self.map[c];
         let (wi, hi) = (self.w as i32, self.h as i32);
+        let wt = |k: usize| match z {
+            Some(z) => (w as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
+            None => w,
+        };
+        if m.dots && pairs {
+            for (j, p) in v.chunks(2).enumerate() {
+                let fin = p.iter().copied().filter(|y| y.is_finite());
+                let (lo, hi_) = fin.fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), y| (a.min(y), b.max(y)));
+                if lo > hi_ {
+                    continue;
+                }
+                // the pair covers points 2j and 2j+1: every column it touches, from the minimum to the maximum
+                let k = 2 * j;
+                let (x0, x1) = (x_of(k).floor() as i32, x_of(k + p.len() - 1).floor() as i32);
+                let (ya, yb) = (y_of(lo), y_of(hi_));
+                let r0 = (ya.min(yb).round() as i32).max(0);
+                let r1 = (ya.max(yb).round() as i32).min(hi - 1);
+                let wk = wt(k);
+                for x in x0.max(0)..=x1.min(wi - 1) {
+                    for r in r0..=r1 {
+                        let idx = (r * wi + x) as usize;
+                        map[idx] = map[idx].saturating_add(wk);
+                    }
+                }
+            }
+            return;
+        }
         let mut prev: Option<(f32, f32)> = None;
-        let w0 = w;
         for (k, &val) in v.iter().enumerate() {
             if !val.is_finite() {
                 prev = None;
                 continue;
             }
-            let w = match z {
-                Some(z) => (w0 as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
-                None => w0,
-            };
+            let w = wt(k);
             let p = (x_of(k), y_of(val));
             if m.dots {
                 let (x, y) = (p.0.floor() as i32, p.1.round() as i32);

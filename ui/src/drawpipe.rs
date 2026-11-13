@@ -47,7 +47,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
         let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
         for c in 0..NCH {
             if m.ch[c].on && !rec.ch[c].is_empty() {
-                ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None);
+                ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs);
             }
         }
         return rec.triggered;

@@ -797,7 +797,7 @@ mod tests {
         }
         let mut ch: [Vec<f32>; NCH] = Default::default();
         ch[0] = v;
-        Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None }
+        Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false }
     }
 
     fn page(s: Sig, records: usize) -> Ui {
