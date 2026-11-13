@@ -171,7 +171,7 @@ section "Transfer efficiency".
 
 | item | state | where | default |
 |---|---|---|---|
-| 3.3 buffer reuse | done | `bus::DmaBuf` (page-aligned region of its own, grows to the largest read, no zero fill, no front move); `seq::execute_into`, `seq::unpad_in`; `acquire_batch` reads into a `DmaBuf` the oos-ui thread keeps. `read_dma` is a one-off `DmaBuf` with the old semantics | on |
+| 3.3 buffer reuse | done | `bus::DmaBuf` (page-aligned region of its own, grows to the largest read, no zero fill, no front move); `seq::execute_into_until`, `seq::unpad_in`; `acquire_batch` reads into a `DmaBuf` the oos-ui thread keeps. `read_dma` is a one-off `DmaBuf` with the old semantics | on |
 | 3.2 no padding | not changed, not needed | survey test `hw::tests::live_batches_need_no_stream_padding`: 8250 oos-ui set-ups (all channel sets, time bases below roll, depths, LA on/off) give frames of a multiple of 8 bytes, since `screen_margin` rounds Auto depths to 8 and the fixed depths and the compressed length are multiples of 8. `unpad` returns at once for them. Widening explicit windows (`oos-fpgad --n`) would hand callers more points than asked for and change the verified fixture sequences, for a diagnostic path | - |
 | 3.5 re-arm before decode | done, opt-in | `seq::prearm`, `seq::disarm`, `State::arm_only_steps`, `wait_steps`, `disarm_steps`, `acquire_batch(.., armed, ..)`; oos-ui with `OOS_PREARM` set | off |
 | 3.1 interrupt completion | configurable | `xdma.params` in `/etc/oos/system.conf` or `/oos/system.conf` (`oos-fpgad` `xdma_params`, `oos-fpga-up`): only `poll_mode=0\|1`, `interrupt_mode=0..3` | `poll_mode=1` |

@@ -733,7 +733,7 @@ pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate:
 }
 
 /// Runs steps that need only the register window and the C2H stream (no AFE step) on any `Bus`: the unit, or a model
-/// of it in the tests. The Read step goes into `dma` like `execute_into`.
+/// of it in the tests. The Read step goes into `dma` like `execute_into_until`.
 pub fn execute_bus<B: crate::dho::bus::Bus, R: std::io::Read>(steps: &[Step], bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, mut log: impl FnMut(String)) -> Result<(), String> {
     execute_bus_until(steps, bar, c2h, dma, &mut log, &|| false)
 }
@@ -746,7 +746,7 @@ pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(steps: &[Ste
     Ok(())
 }
 
-/// One step of `execute_bus` / `execute_into` other than the AFE steps.
+/// One step of `execute_bus` / `execute_into_until` other than the AFE steps.
 fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(s: &Step, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, log: &mut impl FnMut(String), stop: &impl Fn() -> bool) -> Result<(), String> {
     match s {
         Step::Wr((off, v)) => bar.wr(*off, *v),
@@ -804,13 +804,8 @@ pub fn execute_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: O
     Ok(dma.into_vec())
 }
 
-/// `execute` with the Read step into `dma` (kept across batches): the bytes are `dma.data()`, without padding.
-#[cfg(target_os = "linux")]
-pub fn execute_into(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, dma: &mut crate::dho::bus::DmaBuf, log: impl FnMut(String)) -> Result<(), String> {
-    execute_into_until(steps, bar, afe_bus, c2h, dma, log, || false)
-}
-
-/// `execute_into` whose polls end early like `execute_until`.
+/// `execute` with the Read step into `dma` (kept across batches): the bytes are `dma.data()`, without padding. Polls
+/// end early like `execute_until`.
 #[cfg(target_os = "linux")]
 pub fn execute_into_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, dma: &mut crate::dho::bus::DmaBuf, mut log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<(), String> {
     use crate::dho::bus::Bus;

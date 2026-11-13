@@ -190,7 +190,7 @@ Fork commits 45dc87b (HAL), d925518 (oos-ui). Host-tested only. Nothing ran on t
 Decisions against the proposal:
 
 - No `Step::ReadPair`. The stamp pair is read by `seg::read_pair` on the `Bus` after the steps, low word first. The
-  generic executor `seq::execute_bus` runs the segment steps on any `Bus` and C2H reader; `execute_into` uses the same
+  generic executor `seq::execute_bus` runs the segment steps on any `Bus` and C2H reader; `execute_into_until` uses the same
   per-step code, so the verified write order of the live path is unchanged (`tools/plan-matrix.sh` output identical
   before and after).
 - The stamp play does not use an 8-point TX length. The stock raw export never writes 8; it turns it into 128 / ratio
