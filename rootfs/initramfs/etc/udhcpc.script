@@ -7,16 +7,24 @@ metric=
 # the NTP servers of the lease (DHCP option 42, asked for with `-O ntpsrv`), space separated, for System > Date and
 # time > NTP server = DHCP (oos-ui reads the file at each request); no file while there are none
 ntpf=/tmp/oos-dhcp-ntp.$interface
+# the POSIX time zone of the lease (DHCP option 100, RFC 4833, asked for with `-O tzstr`) for `tz = dhcp`; written as
+# it came, never run: oos-ui takes it only when it is a valid zone (sysconf::tz_of)
+tzf=/tmp/oos-dhcp-tz.$interface
 case "$1" in
 deconfig)
 	[ "$interface" = wlan0 ] && ip addr flush dev "$interface"
-	rm -f "$ntpf"
+	rm -f "$ntpf" "$tzf"
 	;;
 bound|renew)
 	if [ -n "$ntpsrv" ]; then
 		echo "$ntpsrv" > "$ntpf.new" && mv "$ntpf.new" "$ntpf"
 	else
 		rm -f "$ntpf"
+	fi
+	if [ -n "$tzstr" ]; then
+		printf '%s\n' "$tzstr" | head -c 256 > "$tzf.new" && mv "$tzf.new" "$tzf"
+	else
+		rm -f "$tzf"
 	fi
 	# a renewal of the same address changes nothing (a flush would cut the connections for a moment)
 	[ "$1" = renew ] && ip -4 addr show dev "$interface" | grep -q "inet $ip/" && exit 0

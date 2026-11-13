@@ -71,9 +71,9 @@ while :; do
 			if [ -n "$now" ]; then
 				echo "oos-wlan: joined $now"
 				# in the background by hand: without an answer `udhcpc -b -t 0` would stay in front and stop this loop
-				# -O ntpsrv: the NTP servers of the lease too (DHCP option 42, udhcpc.script); -x hostname: the
-				# scope's name (net.name: set by rcS, kept up to date by oos-ui)
-				udhcpc -i wlan0 -f -R -t 0 -T 3 -A 5 -O ntpsrv -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1 &
+				# -O ntpsrv -O tzstr: the NTP servers and the time zone of the lease too (DHCP options 42 and 100,
+				# udhcpc.script); -x hostname: the scope's name (net.name: set by rcS, kept up to date by oos-ui)
+				udhcpc -i wlan0 -f -R -t 0 -T 3 -A 5 -O ntpsrv -O tzstr -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1 &
 				echo $! > $DHCP
 			else
 				echo "oos-wlan: link lost"

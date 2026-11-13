@@ -51,8 +51,9 @@ ip link set eth0 up 2>/dev/null
 (
 	# the link is up to bring the cable's link up; an address only once there is one
 	until [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = 1 ]; do sleep 2; done
-	# -O ntpsrv: the NTP servers of the lease too (DHCP option 42, udhcpc.script); -x hostname: the scope's name
-	if ! udhcpc -i eth0 -n -q -t 5 -O ntpsrv -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; then
+	# -O ntpsrv -O tzstr: the NTP servers and the time zone of the lease too (DHCP options 42 and 100, udhcpc.script);
+	# -x hostname: the scope's name
+	if ! udhcpc -i eth0 -n -q -t 5 -O ntpsrv -O tzstr -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; then
 		# from the MAC (the same on every start), another one while it is taken on the cable
 		set -- $(tr ':' ' ' < /sys/class/net/eth0/address)
 		a=$((0x$5 % 254 + 1)) b=$((0x$6)) n=0
@@ -63,7 +64,7 @@ ip link set eth0 up 2>/dev/null
 		: > /tmp/oos-net.fallback
 		echo "oos: no DHCP answer, eth0 = 169.254.$a.$b/16 (link-local)" > /dev/kmsg
 		# a server that comes later still counts
-		until udhcpc -i eth0 -n -q -t 2 -O ntpsrv -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
+		until udhcpc -i eth0 -n -q -t 2 -O ntpsrv -O tzstr -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &
