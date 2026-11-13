@@ -62,7 +62,8 @@ fn actual_gen7_reference_math_zoom_and_automatic_eye_backend() {
     while ui.azr.eye_auto.applied_results == 0 && ui.azr.eye_auto.summary.is_none() {
         ui.step(0.02);
         if ui.azr.page.title.contains("No eye") { break; }
-        assert!(Instant::now() < eye_deadline, "Auto Eye did not settle");
+        assert!(Instant::now() < eye_deadline, "Auto Eye did not settle: submitted={} applied={} place={:?} page={:?} status={:?}",
+            ui.azr.eye_auto.submitted, ui.azr.eye_auto.applied_results, ui.m.eye_place, ui.eye_page_rect(), ui.azr.page.status);
         std::thread::sleep(Duration::from_millis(3));
     }
     output(&mut ui, "03-gen7-auto-eye.png");

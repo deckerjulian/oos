@@ -1349,6 +1349,8 @@ mod measurement_gate_tests {
         drop(bytes);
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.commit_waveform_traces(traces, &path, true).unwrap();
+        ui.set_offline(true);
+        ui.m.run = RunState::Stop;
         let points = ui.refs[0].as_ref().unwrap().v.len();
         assert!(points <= crate::store::MAX_WAVEFORM_SAMPLES);
         let loaded = load.elapsed();

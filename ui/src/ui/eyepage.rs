@@ -615,7 +615,7 @@ impl Ui {
             WaveId::Ref(i) => {
                 let r = self.refs.get(i)?.as_ref()?;
                 (r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0)
-                    .then(|| WaveSamp { v: r.v.as_ref().clone(), t0: r.t0, dt: r.dt })
+                    .then(|| WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt })
             }
             WaveId::Ch(_) => self.wave_samples(rec, id),
         }
@@ -640,9 +640,7 @@ impl Ui {
         }
         let a = self.eye_samples(rec, id)?;
         let b = self.eye_samples(rec, clock)?;
-        let grid = if matches!(clock, WaveId::Ref(_)) &&
-            (b.dt < a.dt || ((b.dt - a.dt).abs() <= a.dt * 1e-9 && b.v.len() > a.v.len())) { &b } else { &a };
-        let (dt, t0, n) = (grid.dt, grid.t0, grid.v.len());
+        let (dt, t0, n) = eye_common_grid(&a, &b)?;
         Some((eye_on_grid(a, t0, dt, n), eye_on_grid(b, t0, dt, n), dt, t0))
     }
 
@@ -667,9 +665,10 @@ impl Ui {
                 h = h.rotate_left(13) ^ i as u64 ^ u64::MAX;
                 continue;
             };
+            let t0 = self.source_time_origin(source, r.t0);
             let data_identity = if self.session_is_sim && i == self.m.sim_slot {
-                self.replay.sim_revision ^ r.dt.to_bits() ^ r.t0.to_bits()
-            } else { ref_fp(&r.v, r.dt, r.t0) };
+                self.replay.sim_revision ^ r.dt.to_bits() ^ t0.to_bits()
+            } else { ref_fp(&r.v, r.dt, t0) };
             h = h.rotate_left(13) ^ data_identity ^ i as u64;
             h = h.rotate_left(13) ^ r.vpd.to_bits() as u64 ^ ((r.offset.to_bits() as u64) << 32);
         }
@@ -727,12 +726,16 @@ impl Ui {
         }
         let sim_capture = self.session_is_sim && id == WaveId::Ref(self.m.sim_slot) && self.replay.sim_revision > 0;
         let reference_changed = fp.is_some() && fp != self.azr.eye_ref && !sim_capture;
-        let (v, clk_v, dt) = if let Some(b) = clk_id {
-            let Some((v, clock, dt, _)) = self.eye_pair(rec, id, b) else { return };
-            (v, Some(clock), dt)
+        let (v, clk_v, dt, t0) = if let Some(b) = clk_id {
+            let Some((v, clock, dt, t0)) = self.eye_pair(rec, id, b) else {
+                self.azr.eye = None; self.azr.eye_res = None; self.azr.page = Page::default();
+                self.azr.page.status = ["No overlapping Eye data/clock interval".into(), "Check source timing and deskew".into()];
+                return;
+            };
+            (v, Some(clock), dt, t0)
         } else {
             let s = self.eye_samples(rec, id).unwrap();
-            (s.v, None, s.dt)
+            (s.v, None, s.dt, s.t0)
         };
         let recov = clk_v.as_deref().unwrap_or(&v);
         let recov_id = clk_id.unwrap_or(id);
@@ -806,7 +809,7 @@ impl Ui {
         if sim_capture && self.azr.eye_sim_revision == Some((self.m.sim_slot, self.replay.sim_revision)) {
             let tie = eye::tie(&clk.edges, &clk);
             self.azr.eye_ref = fp;
-            self.eye_refresh(&clk, &tie, dt, &lay, &v, rec);
+            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
             return;
         }
         if sim_capture { self.azr.eye_sim_revision = Some((self.m.sim_slot, self.replay.sim_revision)); }
@@ -816,12 +819,12 @@ impl Ui {
         self.azr.page.add(&tie, &clk);
         if fp.is_some() || self.now - self.azr.page.t >= REFRESH {
             self.azr.page.t = self.now;
-            self.eye_refresh(&clk, &tie, dt, &lay, &v, rec);
+            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
         }
     }
 
     /// The heavy part of the page, from the pool and the last record.
-    fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, lay: &Layout, wave: &[f32], rec: &Record) {
+    fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, t0: f64, lay: &Layout, wave: &[f32], rec: &Record) {
         let clock = if let Some(b) = self.m.eye_b {
             format!("clock from {}", self.wave_name(b))
         } else if self.m.eye_from_record {
@@ -855,7 +858,7 @@ impl Ui {
         p.text_status(&j);
         p.title = title;
         let means = self.azr.page.means.clone();
-        let (measured, model, eye_model) = self.eye_facts(clk, tie, &trend, &j, &meas, wave, dt, rec, &means);
+        let (measured, model, eye_model) = self.eye_facts(clk, tie, &trend, &j, &meas, wave, dt, t0, rec, &means);
         self.azr.page.measured.extend(measured);
         self.azr.page.model.extend(model);
         self.azr.page.eye_model.extend(eye_model);
@@ -864,12 +867,12 @@ impl Ui {
     }
 
     /// Gather optional companions; the DSP/figure builder is also used off-thread.
-    fn eye_facts(&mut self, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, rec: &Record, means: &EdgeMeans) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+    fn eye_facts(&mut self, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, t0: f64, rec: &Record, means: &EdgeMeans) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
         let settings = FactSettings::from(&self.m);
-        let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id)).map(|s| (s.v, s.dt));
+        let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id)).map(|s| eye_on_grid(s, t0, dt, wave.len()));
         let companion = self.m.eye_b.and_then(|id| self.eye_pair(rec, self.m.eye_src, id));
         populate_eye_facts(&mut self.azr.page, settings, clk, tie, trend, j, meas, wave, dt, means,
-            rail.as_ref().map(|(v, dt)| (v.as_slice(), *dt)),
+            rail.as_ref().map(|v| (v.as_slice(), dt)),
             companion.as_ref().map(|(a, b, dt, _)| (a.as_slice(), b.as_slice(), *dt)))
     }
 
@@ -940,7 +943,7 @@ impl Ui {
             self.toast("Eye stays beside the trace: not enough room below. Hide the logic lanes or measurements to use Under.");
         }
         if self.m.eye_place == previous { return; }
-        self.azr.eye = None;
+        if !self.azr.eye_auto.enabled { self.azr.eye = None; }
         self.relayout();
         self.analyzer_update();
     }
@@ -1388,6 +1391,19 @@ fn ref_fp(v: &[f32], dt: f64, t0: f64) -> u64 {
 }
 
 /// Reference-only Eye alignment; ordinary analyser measurement gates are unchanged.
+fn eye_common_grid(a: &WaveSamp, b: &WaveSamp) -> Option<(f64, f64, usize)> {
+    if a.v.len() < 2 || b.v.len() < 2 || !a.dt.is_finite() || !b.dt.is_finite() || a.dt <= 0.0 || b.dt <= 0.0
+        || !a.t0.is_finite() || !b.t0.is_finite() { return None; }
+    let grid = if a.dt <= b.dt { a } else { b };
+    let start = a.t0.max(b.t0);
+    let stop = (a.t0 + (a.v.len() - 1) as f64 * a.dt).min(b.t0 + (b.v.len() - 1) as f64 * b.dt);
+    let snap = |x: f64| if (x - x.round()).abs() <= 1e-7 { x.round() } else { x };
+    let first = snap((start - grid.t0) / grid.dt).ceil().max(0.0);
+    let last = snap((stop - grid.t0) / grid.dt).floor().min((grid.v.len() - 1) as f64);
+    if last < first + 1.0 { return None; }
+    Some((grid.dt, grid.t0 + first * grid.dt, (last - first + 1.0) as usize))
+}
+
 fn eye_on_grid(mut source: WaveSamp, t0: f64, dt: f64, n: usize) -> Vec<f32> {
     if (source.dt - dt).abs() <= dt.abs() * 1e-9 && (source.t0 - t0).abs() <= dt.abs() * 1e-6 {
         source.v.resize(n, f32::NAN);
