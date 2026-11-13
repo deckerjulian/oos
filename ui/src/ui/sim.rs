@@ -1,8 +1,9 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! SIM: load a nominal serial record into a reference slot and walk it on the phosphor.
-//! Live analog at 16 Gb/s is not the path; this is the offline record.
+//! SIM: load a nominal serial record into a reference slot.
+//! Play moves the timebase window through a record that is longer than the window.
+//! A record that already fits stays one picture. Live acquisition is unchanged.
 
 use super::*;
 use oos_dsp::serial::{self, Lane, LANES};
@@ -91,7 +92,7 @@ impl Ui {
         &LANES[self.m.sim_preset.min(LANES.len() - 1)]
     }
 
-    /// Writes the selected preset into the selected R slot and starts the phosphor walk.
+    /// Writes the selected preset into the selected R slot and starts Play.
     fn sim_load(&mut self) {
         let lane = self.sim_lane();
         let v = serial::generate(lane);
@@ -117,52 +118,61 @@ impl Ui {
         let want = 8.0 / lane.bits_per_s / HDIV as f64;
         let ts = tscales();
         self.m.tscale = ts.iter().position(|&t| t as f64 >= want).unwrap_or(ts.len() - 1);
-        self.m.delay = 0.0;
         self.m.eye_src = WaveId::Ref(slot);
         self.m.eye_rate = lane.bits_per_s;
         self.m.run = RunState::Stop;
-        self.sim_i = 0;
         self.sim_play = true;
+        self.sim_tick(0.0);
         self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
         self.toast(&format!("{} → R{}", lane.name, slot + 1));
     }
 
-    /// Walks rising edges of the loaded slot and folds each window into the CH1 phosphor.
+    /// Moves the timebase window through the selected record.
+    ///
+    /// The window travels its own width each second, then returns to the start of the record.
+    /// A record that already fits is placed fully on screen and held, so the picture stays still.
     pub(super) fn sim_tick(&mut self, dt_wall: f64) {
         let slot = self.m.sim_slot;
         let Some(r) = self.refs[slot].as_ref() else {
             self.sim_play = false;
             return;
         };
-        if r.v.len() < 64 {
+        if r.v.is_empty() || !(r.dt > 0.0) {
             self.sim_play = false;
             return;
         }
-        let persist = PERSIST[self.m.persist.min(PERSIST.len() - 1)].1;
-        if persist > 0.0 {
-            let f = (-dt_wall / persist as f64).exp() as f32;
-            self.ph.decay(f);
-        }
-        let (lo, hi) = r.v.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |s, &x| (s.0.min(x), s.1.max(x)));
-        let mid = 0.5 * (lo + hi);
-        let hyst = 0.08 * (hi - lo).max(0.05);
-        let rising: Vec<f64> = oos_dsp::edges::edges(&r.v, mid, hyst).into_iter().filter(|e| e.rising).map(|e| e.t).collect();
-        if rising.is_empty() {
+        let start = r.t0;
+        let end = r.t0 + (r.v.len() - 1) as f64 * r.dt;
+        let span = end - start;
+        let window = self.m.time_per_div() as f64 * HDIV as f64;
+        if !(window > 0.0) {
             return;
         }
-        let view = (self.m.time_per_div(), self.m.delay);
-        let v = r.v.clone();
-        let dt = r.dt;
-        let n = 8.min(rising.len());
-        for _ in 0..n {
-            let t = rising[self.sim_i % rising.len()];
-            self.sim_i += 1;
-            self.ph.draw_ex(0, &self.m, view, -t * dt, dt, &v, 24, None);
+        if span <= window {
+            let left = self.m.delay as f64 - window * 0.5;
+            if left > start || left + window < end {
+                self.m.delay = ((start + end) * 0.5) as f32;
+            }
+            return;
         }
-        self.m.status = TrigStatus::Stop;
-        self.wfm_rate = n as f32 / dt_wall.max(1e-3) as f32;
+        let lo = start + window * 0.5;
+        let hi = end - window * 0.5;
+        let travel = hi - lo;
+        let mut d = self.m.delay as f64;
+        // a fraction of the window keeps a rounded delay from snapping back to the start
+        let slop = window * 1e-4;
+        if d < lo - slop || d > hi + slop {
+            d = lo;
+        } else {
+            d = d.clamp(lo, hi);
+        }
+        if dt_wall > 0.0 && travel > 0.0 {
+            let advance = (window * dt_wall) % travel;
+            d = lo + (d - lo + advance) % travel;
+        }
+        self.m.delay = d as f32;
     }
 }
 
@@ -205,5 +215,127 @@ mod tests {
         assert!(u.refs[0].as_ref().unwrap().on);
         u.adjust(Item::SimShow, 1);
         assert!(!u.refs[0].as_ref().unwrap().on);
+    }
+
+    fn set_tdiv(u: &mut Ui, tdiv: f32) {
+        let ts = tscales();
+        u.m.tscale = ts.iter().position(|&t| (t - tdiv).abs() <= tdiv * 1e-4).expect("timebase");
+        u.m.tfine = 1.0;
+    }
+
+    /// A step in the record, low then high, so the edge on screen has a place to move.
+    fn put_step(u: &mut Ui, n: usize, dt: f64, tdiv: f32) {
+        let v: Vec<f32> = (0..n).map(|i| if i < n / 5 { -0.5 } else { 0.5 }).collect();
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "rec".into(), t0: 0.0, dt, v, vpd: 0.2, offset: 0.0, on: true });
+        u.m.sim_slot = 0;
+        u.m.ch[0].on = false;
+        u.m.run = RunState::Stop;
+        u.m.delay = 0.0;
+        set_tdiv(u, tdiv);
+        u.sim_play = true;
+    }
+
+    fn window_of(u: &Ui) -> f64 {
+        u.m.time_per_div() as f64 * HDIV as f64
+    }
+
+    #[test]
+    fn play_walks_a_record_longer_than_the_window() {
+        let mut u = ui();
+        put_step(&mut u, 5_000, 1e-9, 100e-9);
+        let r = u.refs[0].as_ref().unwrap();
+        let span = (r.v.len() - 1) as f64 * r.dt;
+        let window = window_of(&u);
+        assert!(span > window);
+        u.step(0.25);
+        let lo = window * 0.5;
+        let got = u.m.delay as f64;
+        assert!((got - (lo + 0.25 * window)).abs() / window < 1e-3, "delay {got} window {window}");
+        assert!(u.ph.map.iter().all(|m| m.iter().all(|&p| p == 0)), "play must not paint the live trace");
+        let x0 = high_edge(&picture(&mut u));
+        u.step(0.25);
+        let x1 = high_edge(&picture(&mut u));
+        assert!(x1 < x0 - 20, "window moved left from {x0} to {x1}");
+    }
+
+    #[test]
+    fn play_returns_to_the_start_after_the_record() {
+        let mut u = ui();
+        put_step(&mut u, 5_000, 1e-9, 100e-9);
+        let r = u.refs[0].as_ref().unwrap();
+        let end = (r.v.len() - 1) as f64 * r.dt;
+        let window = window_of(&u);
+        let travel = (end - window * 0.5) - window * 0.5;
+        u.step(travel / window + 0.25);
+        let got = u.m.delay as f64;
+        let expect = window * 0.5 + 0.25 * window;
+        assert!((got - expect).abs() / window < 1e-3, "delay {got} expect {expect}");
+    }
+
+    #[test]
+    fn play_holds_a_record_that_fits() {
+        let mut u = ui();
+        put_step(&mut u, 200, 1e-9, 100e-9);
+        let r = u.refs[0].as_ref().unwrap();
+        let end = (r.v.len() - 1) as f64 * r.dt;
+        let window = window_of(&u);
+        assert!(end <= window);
+        u.step(0.0);
+        let delay = u.m.delay;
+        let left = delay as f64 - window * 0.5;
+        assert!(left <= 0.0 && left + window >= end);
+        let first = picture(&mut u);
+        u.step(1.0);
+        assert_eq!(u.m.delay, delay);
+        let second = picture(&mut u);
+        assert_eq!(first.px, second.px);
+    }
+
+    #[test]
+    fn play_walks_the_loaded_preset() {
+        let mut u = ui();
+        u.activate(Item::SimPlay);
+        let r = u.refs[0].as_ref().unwrap();
+        let span = (r.v.len() - 1) as f64 * r.dt;
+        let window = window_of(&u);
+        assert!(span > window, "span {span} window {window}");
+        let d0 = u.m.delay;
+        u.step(0.5);
+        assert!(u.m.delay > d0);
+        assert!(u.sim_play);
+        assert!(u.ph.map.iter().all(|m| m.iter().all(|&p| p == 0)));
+        u.m.run = RunState::Run;
+        u.step(0.02);
+        assert!(!u.sim_play);
+        assert!(u.last[0].is_some());
+    }
+
+    fn picture(u: &mut Ui) -> crate::gfx::Canvas {
+        let mut cv = crate::gfx::Canvas::new(W, H);
+        u.render(&mut cv);
+        cv
+    }
+
+    /// Left edge of the level that starts furthest right: the step in the record.
+    fn high_edge(cv: &crate::gfx::Canvas) -> i32 {
+        let col = super::super::REF_COLORS[0].1;
+        let mut best = -1;
+        for y in 0..cv.h {
+            let mut n = 0i32;
+            let mut minx = cv.w;
+            for x in 0..cv.w {
+                if cv.px[(y * cv.w + x) as usize] == col {
+                    n += 1;
+                    if x < minx {
+                        minx = x;
+                    }
+                }
+            }
+            if n > 80 && minx > best {
+                best = minx;
+            }
+        }
+        assert!(best >= 0, "no reference trace");
+        best
     }
 }

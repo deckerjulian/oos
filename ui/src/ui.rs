@@ -752,9 +752,8 @@ pub struct Ui {
     cal: selfcal::State,
     /// Bode sweep (bode.rs)
     bode: bode::State,
-    /// SIM: walking the loaded serial record on the phosphor
+    /// SIM: Play is moving the timebase window through the selected record
     sim_play: bool,
-    sim_i: usize,
     /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
     /// to cards) is copied here during `render`
     pub hdmi_snap_want: bool,
@@ -935,7 +934,6 @@ impl Ui {
             start_up_last: None,
             bode: Default::default(),
             sim_play: false,
-            sim_i: 0,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
             trend: Vec::new(),
@@ -2593,24 +2591,46 @@ impl Ui {
         cv.set_clip(self.area);
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
-        let tdiv = self.view().0 as f64;
+        let (tdiv, delay) = self.view();
+        let (tdiv, delay) = (tdiv as f64, delay as f64);
         let ppx = self.area.w as f64 / HDIV as f64;
+        if !(tdiv > 0.0) {
+            cv.no_clip();
+            return;
+        }
+        let half = tdiv * HDIV as f64 / 2.0;
+        let (t_left, t_right) = (delay - half, delay + half);
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
-            if !r.on {
+            if !r.on || r.v.is_empty() || !(r.dt > 0.0) {
                 continue;
             }
             let col = REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1;
-            let step = (r.v.len() / (self.area.w as usize * 2)).max(1);
+            // samples inside this window, not a stride of the whole record (that aliases a long record)
+            let n = r.v.len() as isize;
+            let at = |t: f64| -> isize {
+                let x = (t - r.t0) / r.dt;
+                if !x.is_finite() {
+                    return 0;
+                }
+                x.floor().clamp(-1.0, n as f64) as isize
+            };
+            let k0 = (at(t_left) - 1).clamp(0, n) as usize;
+            let k1 = (at(t_right) + 2).clamp(0, n) as usize;
+            if k1 <= k0 {
+                continue;
+            }
+            let cols = (self.area.w as usize).saturating_mul(2).max(1);
+            let step = ((k1 - k0) / cols).max(1);
             let mut prev: Option<(i32, i32)> = None;
             let mut first = None;
-            for k in (0..r.v.len()).step_by(step) {
+            for k in (k0..k1).step_by(step).chain(std::iter::once(k1 - 1)) {
                 let v = r.v[k];
                 if !v.is_finite() {
                     prev = None;
                     continue;
                 }
-                let t = r.t0 + k as f64 * r.dt - self.view().1 as f64;
+                let t = r.t0 + k as f64 * r.dt - delay;
                 let x = (self.area.x as f64 + self.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
                 let y = (cy - (v + r.offset) / r.vpd * ppy).round() as i32;
                 if let Some((x0, y0)) = prev {
