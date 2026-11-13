@@ -8,6 +8,9 @@ New:
   takes the first USBTMC instrument, shows its `*IDN?` answer or why there is none; SCPI `:BODE:GENerator "usb"`. A
   new preset for the UNI-T UTG900 (UTG932, UTG962); Rigol DG and Siglent SDG work over USB as well. Tested on the
   host with a simulated device only.
+- Trigger > Coupling for the edge trigger: DC, AC, LF reject, HF reject (`:TRIGger:COUPling`). AC and LF reject take
+  the DC out of the trigger path, so a level of 0 V is the zero crossing of the signal whatever its offset; HF reject
+  keeps the DC and suppresses fast signals. The trace itself is not filtered.
 
 Fixed:
 
@@ -23,6 +26,14 @@ Fixed:
 - Display: a late page flip event no longer switches the panel to SETCRTC for the rest of the session. With
   Graphics = GPU and a monitor whose buffers the GPU could not take, the monitor's picture is fresh every frame instead
   of twice a second.
+- Deep memory at short time bases: above 1 M points the screen got the whole record compressed to about 625 k
+  min/max points, so at 10 M and 100 ns/div about 80 of them for the screen. A sine showed as a staircase, rise time
+  and other measurements were off, and only about 3 records came per second. Such a record is now read for the screen
+  as a window at every sample: on a DHO924S a clean sine at 10 M and 50 M, 21 to 27 records per second.
+- HDMI with Display > Graphics = GPU: the panel flashed black now and then, mostly with a menu open, and the picture
+  could be broken on both screens. The panel's third display buffer and the monitor's first one shared a place in the
+  GPU's list, and the monitor's frame overwrote the panel's while the GPU still drew it. On a DHO924S with a
+  1920x1080 monitor panel and monitor are now steady in Mirror, Layout and Waveform.
 
 Tests: the script commands `menu`, `set` and `do` reach menus and items by name; the mask script tests the mask again
 (it tapped a top-bar button that no longer exists).
