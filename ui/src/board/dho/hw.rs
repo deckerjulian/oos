@@ -589,6 +589,13 @@ fn window_below(s: &Settings, p: &hz::Params, cap: i64) -> Option<(u32, i64)> {
     Some((n as u32, lo - pre))
 }
 
+/// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch whose newest frame the deep
+/// measurements may read raw (`deep_raw_settings`), since the next batch would write the ring under it. Prearm gains at
+/// short time bases; deep compressed records take most of a batch in the read anyway.
+fn prearm_keeps_replay(b: &Settings, p: &hz::Params, deep: Option<crate::deepmeas::Want>) -> bool {
+    deep.is_none() || deep_raw_settings(b, p).is_none()
+}
+
 /// The raw read at STOP (docs/fork/stop-exact.md) of the newest frame of the batch `b` with `count` frames read just
 /// before: when the deep measurements want samples, the batch was read as pairs and its newest frame not already
 /// raw, and nothing was armed ahead (`ahead`: the ring is being written again).
@@ -1271,8 +1278,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         a
                     });
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
-                    // not in average mode, where a clear may have to come first
-                    if prearm_on() && avg.is_none() {
+                    // not in average mode, where a clear may have to come first, and not where the deep measurements
+                    // read the newest frame raw (its ring must stay for the replay at STOP)
+                    if prearm_on() && avg.is_none() && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -1764,7 +1772,18 @@ mod tests {
         assert!(final_replay(&b, &p, 3, false, true, w).is_none(), "armed ahead");
         assert!(final_replay(&b, &p, 3, false, false, None).is_none(), "no deep measurements");
         assert!(final_replay(&b, &p, 0, false, false, w).is_none());
-        assert!(final_replay(&Settings { compress: 1, ..b }, &p, 3, false, false, w).is_none(), "read raw");
+        assert!(final_replay(&Settings { compress: 1, ..b.clone() }, &p, 3, false, false, w).is_none(), "read raw");
+        // prearm on (the unit's set-up): no arming ahead for this batch, so the replay at STOP stays possible
+        assert!(!prearm_keeps_replay(&b, &p, w));
+        let ahead = prearm_keeps_replay(&b, &p, w);
+        assert!(final_replay(&b, &p, 3, false, ahead, w).is_some());
+        // prearm stays where no deep replay can come: without the deep measurements, a shallow record
+        assert!(prearm_keeps_replay(&b, &p, None));
+        m.mdepth = 0;
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        assert!(prearm_keeps_replay(&batch_plan(&s, &p), &p, w));
     }
 
     // Break it catches: a raw deep read of the wrong part of the record (screen or trigger point outside it), one

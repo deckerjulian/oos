@@ -25,9 +25,12 @@ Single scan only).
   `STOP_FINAL_WAIT` = 3 s. The thread reads the newest frame of the batch it read last once more, raw
   (`final_replay`: deep window, `seq::read_raw_again`), queues it, then answers. That frame is the record on screen;
   its measurements are made from its samples.
+- Arming ahead (`acq.prearm = on`, the unit's set-up) is skipped for batches the deep measurements may replay
+  (`prearm_keeps_replay`: a compressed deep record with deep measurements on), so the ring of the last batch stays for
+  the replay. Prearm's gain is at short time bases; at deep records the read takes most of the batch anyway.
 - No replay when the newest frame was already raw (rate-limited deep read, live compression), when the next batch was
-  armed ahead (`acq.prearm`: the ring is being written), or when anything else ran on the FPGA since the read (the
-  read is only remembered for one pass). Then the record shown is the newest one already queued, measured as it is.
+  armed ahead anyway, or when anything else ran on the FPGA since the read (the read is only remembered for one
+  pass). Then the record shown is the newest one already queued, measured as it is.
 
 ## Host tests
 
@@ -37,7 +40,8 @@ Single scan only).
   the STOP ends after 3 s; a shallow record's STOP holds without a request. Mutation check: without taking records
   while waiting the test fails.
 - `ui/src/board/dho/hw.rs` `final_replay_at_stop`: replay only for a compressed deep batch whose newest frame is not
-  raw, nothing armed ahead, deep measurements on.
+  raw, nothing armed ahead, deep measurements on; with prearm on, such a batch is not armed ahead, so the replay
+  stays possible; prearm stays for shallow records and without deep measurements.
 
 ## On-unit verification
 
@@ -49,5 +53,6 @@ Single scan only).
    the values belong to the record shown: `:WAV:MODE RAW;:WAV:DATA?` over the screen, mean computed on the host,
    equal to Vavg. Repeat 10 times at different moments.
 4. Normal trigger without a signal, STOP: the STOP completes within 3 s (log: no error), RUN works again.
-5. `acq.prearm = on`: STOP keeps the record shown (no replay, Mean-type values NaN on pairs); no `disarm` errors.
+5. `acq.prearm = on` (the unit's set-up): step 3 again, same result; wfm/s at 1 us/div unchanged against prearm without
+   the deep measurements (prearm stays on there); no `disarm` errors.
 6. Auto set-up, self-cal, generator changes while stopped: work as before.
