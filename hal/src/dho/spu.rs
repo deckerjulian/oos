@@ -11,9 +11,18 @@ use crate::dho::Write;
 pub fn sample_rate(rate: u64, max_rate: u64) -> Vec<Write> {
     // the dividers count ADC clocks: real rates back to the 1.25 GHz domain (identity there), where the second
     // divider's base is 62.5 MHz (ADC / 20)
-    let (rate, max_rate) = (crate::dho::clock::to_nominal_rate(rate as i128) as u64, crate::dho::clock::to_nominal_rate(max_rate as i128) as u64);
-    let (r10d0, r10d8) = if rate > 62_500_000 { (0x8000 | ((max_rate / rate) as u32 & 0xff), 1) } else { (0, (62_500_000 / rate) as u32) };
+    let max_nominal = crate::dho::clock::to_nominal_rate(max_rate as i128) as u64;
+    let nominal = crate::dho::clock::to_nominal_rate(rate as i128) as u64;
+    let (r10d0, r10d8) = if slow_path(rate) { (0, (SLOW_BASE / nominal) as u32) } else { (0x8000 | ((max_nominal / nominal) as u32 & 0xff), 1) };
     vec![(0x10d0, r10d0), (0x10d8, r10d8), (0x10d4, 0)]
+}
+
+/// Base of the second divider (0x10d8): 62.5 MHz nominal, the ADC clock / 20.
+const SLOW_BASE: u64 = 62_500_000;
+
+/// The (real) rate `rate` runs on the second divider (0x10d0 = 0): 62.5 MSa/s nominal and below.
+pub fn slow_path(rate: u64) -> bool {
+    crate::dho::clock::to_nominal_rate(rate as i128) as u64 <= SLOW_BASE
 }
 
 #[cfg(test)]
@@ -26,5 +35,6 @@ mod tests {
         assert_eq!(sample_rate(312_500_000, 1_250_000_000)[0], (0x10d0, 0x8004));
         assert_eq!(sample_rate(62_500_000, 1_250_000_000)[..2], [(0x10d0, 0), (0x10d8, 1)]);
         assert_eq!(sample_rate(31_250_000, 1_250_000_000)[1], (0x10d8, 2));
+        assert_eq!([1_250_000_000, 625_000_000, 125_000_000, 62_500_000, 1_000].map(slow_path), [false, false, false, true, true]);
     }
 }

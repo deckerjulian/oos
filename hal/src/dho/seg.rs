@@ -4,28 +4,30 @@
 //! Hardware segmented memory with trigger timestamps (docs/fork/specs/03-segmented-timestamps.md). One arm records N
 //! frames into the frame ring, the FPGA re-arms itself between them; the host transfers nothing until the end. Then
 //! every segment is played on its own for its stamp (latch 0x40b0/0x40b4 and header words 5..7), and read in batches
-//! like the live frames. NOT VERIFIED ON THE UNIT: the record arm is the verified batch arm, the stamp registers, their
-//! unit and the header stamp are from static analysis (spec 03, section 6).
+//! like the live frames. Unit 2026-11-13 (private RE notes docs/logs/oos_unitlab_20261113.md, B3): the latch counts
+//! 0.8 ns, the header of segment k carries the latch value of segment k - 1, and 0x4034 shows bits of 0x2320 while
+//! the FPGA still records.
 //!
 //! Generic over `Bus` and the C2H reader, so the whole sequence runs against `sim::Engine` on the host.
 
 use crate::dho::bus::{Bus, DmaBuf};
 use crate::dho::{hz, scu, seq};
 
-/// One LSB of the latched and first-trigger stamps (0x40b0, 0x40c0) in femtoseconds: the stock API scales tick
-/// differences by 250,000 fs (spec 03, 1.1). Not measured.
-pub const LATCH_TICK_FS: i128 = 250_000;
-/// One LSB of the 48-bit stamp in header words 5..7: 1.6 ns as assumed in trigger.md 7. Not measured.
-pub const HEADER_TICK_FS: i128 = 1_600_000;
-/// Width of the header stamp.
-pub const HEADER_BITS: u32 = 48;
+/// One LSB of the latched and first-trigger stamps (0x40b0, 0x40c0) in femtoseconds: 0.8 ns, one sample at 1.25 GSa/s.
+/// Unit 2026-11-13: a 1.000 kHz trigger gave latch steps of 1,250,000. (The stock API's 250,000 fs per tick, spec 03
+/// 1.1, made every interval 3.2 times too short.)
+pub const LATCH_TICK_FS: i128 = 800_000;
+/// One LSB of the 48-bit stamp in header words 5..7: the latch's tick (unit 2026-11-13: the header value equals a
+/// latch value, no scaling).
+pub const HEADER_TICK_FS: i128 = LATCH_TICK_FS;
 
 /// The stamps of one segment, raw ticks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stamp {
-    /// 0x40b0/0x40b4 latched after the segment's own play
+    /// 0x40b0/0x40b4 latched after the segment's own play: the segment's trigger time
     pub latch: Option<u64>,
-    /// header words 5..7 of the segment's frame
+    /// header words 5..7 of the segment's frame: the latch value of the segment before it (unit 2026-11-13; segment
+    /// 0's header is an older trigger), so it is logged only, not used for the time
     pub header: Option<u64>,
 }
 
@@ -40,52 +42,30 @@ pub fn header_stamp(hdr: &[u8]) -> Option<u64> {
     Some(w(5)? << 32 | w(6)? << 16 | w(7)?)
 }
 
-/// Ticks from `a` to `b` on a counter of `bits` bits that may have wrapped once in between.
-pub fn ticks_between(a: u64, b: u64, bits: u32) -> u64 {
-    let m = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
-    b.wrapping_sub(a) & m
-}
-
 /// Seconds of `ticks` ticks of `tick_fs`.
 pub fn ticks_to_s(ticks: i128, tick_fs: i128) -> f64 {
     (ticks * tick_fs) as f64 * 1e-15
 }
 
-/// Trigger times of the segments in seconds since the first trigger, from their raw stamps in segment order.
-/// Latched stamps count from the first-trigger stamp (0x40c0) when it is valid, else from the first latched stamp;
-/// 64 bits do not wrap. Header stamps count from the first header and are unwrapped segment by segment (48 bits of
-/// 1.6 ns wrap after 5.2 days, of 250 ps after 70 s). A segment without a latched stamp takes its header time.
+/// Trigger times of the segments in seconds since the first trigger, from their latched stamps in segment order.
+/// They count from the first-trigger stamp (0x40c0) when it is valid, else from the first latched stamp; 64 bits do
+/// not wrap. The header stamp lags one segment behind and is not used.
 #[derive(Clone, Debug, Default)]
 pub struct Timeline {
     start: Option<u64>,
-    hdr_first: Option<u64>,
-    hdr_last: u64,
-    hdr_acc: u64,
 }
 
 impl Timeline {
     /// `first_trigger`: 0x40c0/0x40c4 read at the end of the recording, if 0x40b8 bit1 said valid.
     pub fn new(first_trigger: Option<u64>) -> Timeline {
-        Timeline { start: first_trigger, ..Timeline::default() }
+        Timeline { start: first_trigger }
     }
 
-    /// Time of the next segment (call in segment order).
+    /// Time of the next segment (call in segment order); None without a latched stamp.
     pub fn push(&mut self, st: Stamp) -> Option<f64> {
-        let hdr = st.header.map(|h| {
-            match self.hdr_first {
-                None => self.hdr_first = Some(h),
-                Some(_) => self.hdr_acc += ticks_between(self.hdr_last, h, HEADER_BITS),
-            }
-            self.hdr_last = h;
-            ticks_to_s(self.hdr_acc as i128, HEADER_TICK_FS)
-        });
-        match st.latch {
-            Some(l) => {
-                let s0 = *self.start.get_or_insert(l);
-                Some(ticks_to_s(l as i128 - s0 as i128, LATCH_TICK_FS))
-            }
-            None => hdr,
-        }
+        let l = st.latch?;
+        let s0 = *self.start.get_or_insert(l);
+        Some(ticks_to_s(l as i128 - s0 as i128, LATCH_TICK_FS))
     }
 }
 
@@ -94,14 +74,17 @@ impl Timeline {
 pub struct Status {
     /// frames recorded so far
     pub recorded: u32,
-    /// the FSM still records (stock: `(0x4034 & 0x2320) == 0` in record mode, acquisition-start.md r4)
-    pub running: bool,
+    /// 0x4034 as read, for the log
+    pub fsm: u32,
 }
 
 impl Status {
-    /// The recording is over: all `n` frames are in, or the FSM stopped by itself after at least one.
+    /// The recording is over: all `n` frames are in. Only the count decides, as in the stock record state (0xb), which
+    /// keeps polling the count and never reads 0x4034 for it. Bits of 0x2320 in 0x4034 do not mean "stopped": on the
+    /// unit they were set after the first frames of every recording, and taking them as the end cut every recording at
+    /// the frames of the first 10 ms poll (B3, 2026-11-13). A recording that never reaches `n` ends with STOP.
     pub fn complete(&self, n: u32) -> bool {
-        self.recorded >= n || (self.recorded > 0 && !self.running)
+        self.recorded >= n
     }
 }
 
@@ -109,7 +92,7 @@ impl Status {
 /// 0x4010 (last recorded frame) - 0x4014 (first) + 1, at most `n`.
 pub fn status<B: Bus>(bar: &mut B, n: u32) -> Status {
     let recorded = if bar.rd(0x4080) & scu::PLAYINFO_DONE == 0 { 0 } else { bar.rd(0x4010).wrapping_sub(bar.rd(0x4014)).wrapping_add(1).min(n) };
-    Status { recorded, running: bar.rd(0x4034) & 0x2320 == 0 }
+    Status { recorded, fsm: bar.rd(0x4034) }
 }
 
 /// The first-trigger stamp if 0x40b8 bit1 says it is valid.
@@ -162,10 +145,10 @@ pub fn read<B: Bus, R: std::io::Read>(st: &mut seq::State, s: &seq::Settings, p:
 }
 
 /// A model of the record engine and the play path for host runs of the whole sequence: what the steps of
-/// `State::record_steps`, `read_steps_at`, `segment_stamp_steps` and `disarm_steps` do, as spec 03 describes it. The
-/// open questions are answered one way here and are not facts about the unit: the latch holds the stamp of the last
-/// frame of the last play (6.1), header words 5..7 hold the trigger time in 1.6 ns ticks (6.2), the latch counts 250
-/// ps (6.3).
+/// `State::record_steps`, `read_steps_at`, `segment_stamp_steps` and `disarm_steps` do, as spec 03 describes it, with
+/// what the unit showed on 2026-11-13: the latch holds the trigger time of the last frame played in 0.8 ns ticks, the
+/// header of frame k holds the trigger time of frame k - 1 in the same ticks (frame 0 an older trigger), and 0x4034
+/// shows bit 5 (in the stock 0x2320 mask) while frames are still to come.
 ///
 /// Average mode (0x1004 bit3, docs/fork/specs/01-hw-averaging.md): the played words are the average of `Engine::raw`
 /// over the triggers since the last 0x10b4 pulse, of the last 0x10b0 + 1 of them (`avg_hold` false: running) or of the
@@ -256,6 +239,11 @@ pub mod sim {
             self.t0_fs + k as i128 * self.period_fs
         }
 
+        /// The time in the header of frame `k`: the trigger before it (for frame 0 one from before the recording).
+        pub fn header_fs(&self, k: u32) -> i128 {
+            self.t0_fs + (k as i128 - 1) * self.period_fs
+        }
+
         fn reg(&self, r: u32) -> u32 {
             self.regs.get(&r).copied().unwrap_or(0)
         }
@@ -273,7 +261,7 @@ pub mod sim {
                 let words = (self.reg(0x11f0) * self.ratio) as usize;
                 for k in first..=last {
                     if self.reg(0x1010) & 1 << 31 == 0 {
-                        let h = (self.trig_fs(k) / HEADER_TICK_FS) as u64 & ((1 << HEADER_BITS) - 1);
+                        let h = (self.header_fs(k) / HEADER_TICK_FS) as u64 & ((1 << 48) - 1);
                         for w in [0xfa05, 0, 0x7b, 0, k as u16, (h >> 32) as u16, (h >> 16) as u16, h as u16] {
                             self.stream.extend(u16::to_le_bytes(w));
                         }
@@ -363,9 +351,10 @@ pub mod sim {
                     Some((first, _, n)) => first + n.max(1) - 1,
                     None => self.reg(0x4014) + self.recorded.max(1) - 1,
                 },
-                // still recording: waiting for a trigger (bit4); else stopped (bit13)
+                // still recording: waiting for a trigger (bit4), with bit5 once a frame is in (as the unit shows); else
+                // stopped (bit13)
                 0x4034 => match self.rec {
-                    Some((first, last, n)) if n < last - first + 1 => scu::status::WAIT_TRIG,
+                    Some((first, last, n)) if n < last - first + 1 => scu::status::WAIT_TRIG | if n > 0 { 0x20 } else { 0 },
                     _ => scu::status::STOPPED,
                 },
                 0x40b8 => self.prev_40b8 | if self.first_valid { scu::stamp::FIRST_VALID } else { 0 },
@@ -428,48 +417,51 @@ mod tests {
         assert_eq!(header_stamp(&h[..14]), None);
     }
 
-    // Break it catches: differences across a 32-bit carry taken from one word only, a header wrap read as a 70 s step
-    // backwards, the wrong tick for either source.
+    // Break it catches: differences across a 32-bit carry taken from one word only, the stock API's 250 ps tick
+    // (every interval 3.2 times too short on the unit), the header's lagging stamp used as a time.
     #[test]
-    fn timeline_scales_and_unwraps() {
-        // latched: 250 ps, from the first-trigger stamp, across a carry of the low word
+    fn timeline_scales_latches_only() {
+        // across a carry of the low word: 32 ticks of 0.8 ns
         let mut t = Timeline::new(Some(0xffff_fff0));
         assert_eq!(t.push(Stamp { latch: Some(0xffff_fff0), header: None }), Some(0.0));
         let d = t.push(Stamp { latch: Some(0x1_0000_0010), header: None }).unwrap();
-        assert!((d - 32.0 * 250e-12).abs() < 1e-18, "{}", d);
-        // 1 ms = 4,000,000 ticks
+        assert!((d - 32.0 * 0.8e-9).abs() < 1e-18, "{}", d);
+        // unit 2026-11-13: a 1.000 kHz trigger, latch steps of 1,250,000 = 1 ms
         let mut t = Timeline::new(None);
         t.push(Stamp { latch: Some(1000), header: None });
-        assert!((t.push(Stamp { latch: Some(4_001_000), header: None }).unwrap() - 1e-3).abs() < 1e-15);
-        // header: 1.6 ns, unwrapped over the 48-bit edge
-        let top = (1u64 << 48) - 10;
-        let mut t = Timeline::new(None);
-        assert_eq!(t.push(Stamp { latch: None, header: Some(top) }), Some(0.0));
-        let a = t.push(Stamp { latch: None, header: Some(5) }).unwrap();
-        let b = t.push(Stamp { latch: None, header: Some(25) }).unwrap();
-        assert!((a - 15.0 * 1.6e-9).abs() < 1e-18 && (b - 35.0 * 1.6e-9).abs() < 1e-18, "{} {}", a, b);
-        assert_eq!(ticks_between(10, 5, 48), (1 << 48) - 5);
-        assert_eq!(ticks_between(5, 10, 64), 5);
-        // the latch wins over the header when both are there
+        assert!((t.push(Stamp { latch: Some(1_251_000), header: None }).unwrap() - 1e-3).abs() < 1e-15);
+        // the header is never the time: without a latch nothing, with one the latch alone
+        assert_eq!(t.push(Stamp { latch: None, header: Some(5) }), None);
         let mut t = Timeline::new(Some(0));
-        assert_eq!(t.push(Stamp { latch: Some(4), header: Some(1_000_000) }), Some(1e-9));
+        assert_eq!(t.push(Stamp { latch: Some(5), header: Some(1_000_000) }), Some(4e-9));
     }
 
+    // Break it catches: 0x4034 bits read as the end of the recording (B3: every recording cut at the frames of the
+    // first poll), a count that runs past N.
     #[test]
     fn status_counts_from_the_done_flag() {
         let mut r = crate::dho::bus::Recorder::default();
         r.regs.insert(0x4010, 7);
         r.regs.insert(0x4014, 0);
         r.regs.insert(0x4034, scu::status::WAIT_TRIG);
-        // not done yet: nothing recorded, whatever 0x4010 says
-        assert_eq!(status(&mut r, 100), Status { recorded: 0, running: true });
-        r.regs.insert(0x4080, scu::PLAYINFO_DONE);
-        assert_eq!(status(&mut r, 100), Status { recorded: 8, running: true });
-        assert_eq!(status(&mut r, 5).recorded, 5);
-        r.regs.insert(0x4034, scu::status::STOPPED | scu::status::WAIT_TRIG);
-        let s = status(&mut r, 100);
-        assert!(!s.running && s.complete(100) && !Status { recorded: 0, running: false }.complete(100));
-        assert!(Status { recorded: 100, running: true }.complete(100));
+        // (done flag, 0x4034, n) -> (recorded, complete)
+        let cases: [(bool, u32, u32, u32, bool); 6] = [
+            // not done yet: nothing recorded, whatever 0x4010 says
+            (false, scu::status::WAIT_TRIG, 100, 0, false),
+            (true, scu::status::WAIT_TRIG, 100, 8, false),
+            // the unit's status during a recording (bit 5 of 0x2320): not the end
+            (true, scu::status::WAIT_TRIG | 0x20, 100, 8, false),
+            (true, 0x2320, 100, 8, false),
+            // all frames in
+            (true, scu::status::WAIT_TRIG, 8, 8, true),
+            (true, scu::status::STOPPED, 5, 5, true),
+        ];
+        for (done, fsm, n, rec, complete) in cases {
+            r.regs.insert(0x4080, if done { scu::PLAYINFO_DONE } else { 0 });
+            r.regs.insert(0x4034, fsm);
+            let x = status(&mut r, n);
+            assert_eq!((x.recorded, x.complete(n), x.fsm), (rec, complete, fsm), "done {} 0x4034 {:#x} n {}", done, fsm, n);
+        }
     }
 
     fn settings(n: u32) -> Settings {
@@ -488,6 +480,7 @@ mod tests {
         let n = start(&mut st, &s, &p, &mut bar, &mut c2h).unwrap();
         assert_eq!(n, 100);
         let mut polls = 0;
+        // the model shows the unit's 0x4034 bit 5 from the first frame on; the recording must still run to N
         let end = loop {
             let x = status(&mut bar, n);
             polls += 1;
@@ -506,8 +499,10 @@ mod tests {
         for (k, t) in times.iter().enumerate() {
             assert!((t - k as f64 * 1e-3).abs() < 1e-12, "segment {}: {}", k, t);
         }
-        // the header stamps agree with the latch in the model (hardware check 5.3)
-        assert_eq!(sts[10].header, Some((15 * MS / HEADER_TICK_FS) as u64));
+        // the header of segment k holds the latch of segment k - 1 (unit 2026-11-13)
+        for k in 1..sts.len() {
+            assert_eq!(sts[k].header, sts[k - 1].latch, "segment {}", k);
+        }
         // read back: 60 + 40 frames, header first, every word from its own frame
         let rs = read_settings(&s, 60);
         let fb = seq::frame_bytes(&rs, &p);
@@ -518,7 +513,7 @@ mod tests {
             assert_eq!(dma.data().len(), count as usize * fb);
             for (j, f) in dma.data().chunks_exact(fb).enumerate() {
                 let k = first + j as u32;
-                assert_eq!(header_stamp(&f[..16]), Some(((5 + k as i128) * MS / HEADER_TICK_FS) as u64));
+                assert_eq!(header_stamp(&f[..16]), Some(((4 + k as i128) * MS / HEADER_TICK_FS) as u64));
                 assert_eq!(u16::from_le_bytes([f[16 + 2 * 999], f[17 + 2 * 999]]), Engine::word(k, 999));
             }
         }
@@ -537,7 +532,7 @@ mod tests {
         for _ in 0..4 {
             x = status(&mut bar, n);
         }
-        assert!(x.running && !x.complete(n) && x.recorded > 0 && x.recorded < n);
+        assert!(!x.complete(n) && x.recorded > 0 && x.recorded < n);
         stop(&mut st, &mut bar, &mut c2h).unwrap();
         assert_eq!(eng.borrow().recorded, x.recorded);
         let sts = stamps(&mut st, &s, &p, &mut bar, &mut c2h, 0, x.recorded).unwrap();
