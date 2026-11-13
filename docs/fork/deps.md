@@ -37,3 +37,9 @@ listing pages.
 
 For an `upstream:` line: change it only to follow upstream's script after a sync, or bump the script in an upstream
 contribution.
+
+## Pending updates (2026-11-13)
+
+`tools/deps-check.sh` found newer releases that were not taken in this round: libnftnl 1.2.9 -> 1.3.2, nftables
+1.1.3 -> 1.1.7 (fork, `rootfs/build-nft.sh`); e2fsprogs 1.47.2 -> 1.47.4, wpa_supplicant 2.11 -> 2.12, Mesa 26.0.8 ->
+26.3.0 (upstream's scripts: follow upstream). Dropbear, OpenSSH, libmnl and kexec-tools are current.
