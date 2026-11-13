@@ -75,6 +75,15 @@ impl CalAdc {
     pub fn fine_at(ch: usize, slot: usize) -> usize {
         FINE + 64 * ch + 4 * slot
     }
+    /// The eight core offsets stored for ADC mode `mode`.
+    pub fn offsets(&self, mode: usize) -> [i32; 8] {
+        std::array::from_fn(|n| self.s16(CalAdc::off_at(mode, n)))
+    }
+    pub fn set_offsets(&mut self, mode: usize, o: &[i32; 8]) {
+        for (n, &v) in o.iter().enumerate() {
+            self.set16(CalAdc::off_at(mode, n), v);
+        }
+    }
     pub fn get16(&self, o: usize) -> i32 {
         self.s16(o)
     }
@@ -304,6 +313,15 @@ pub fn measure(bus: &mut dyn crate::dho::bus::Bus, sleep_ms: &mut dyn FnMut(u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_offsets_round_trip() {
+        let mut c = CalAdc::from_payload(vec![0; 0x738]).unwrap();
+        let o = [3, -2, 0, 1023, -1024, 7, -7, 1];
+        c.set_offsets(5, &o);
+        assert_eq!((c.offsets(5), c.offsets(4)), (o, [0; 8]));
+        assert_eq!(c.get16(CalAdc::off_at(5, 3)), 1023);
+    }
 
     const CAL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal");
 

@@ -255,6 +255,80 @@ fn avg_kind() -> oos_hal::dho::avg::Kind {
     *K.get_or_init(|| if std::env::var("OOS_HWAVG").is_ok_and(|v| v == "hold") { oos_hal::dho::avg::Kind::Hold } else { oos_hal::dho::avg::Kind::Running })
 }
 
+/// `cal.core_offset = tight` in system.conf (docs/fork/core-offset.md): the core offsets of every ADC mode used are
+/// matched to each other at its first configuration, and kept in OOS's own cal_adc.hex. Off by default.
+fn core_offset_tight() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| core_offset_from(&crate::sysconf::fork_text()))
+}
+
+/// The `cal.core_offset` line; `tight` or not.
+fn core_offset_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "cal.core_offset").as_deref() == Some("tight")
+}
+
+/// Tries per ADC mode and session: a mode whose channels sit far from mid-scale or clip is tried again at the next
+/// configurations, at most this often.
+const TRIM_TRIES: u8 = 5;
+
+/// The unit side of `coretrim`: measure unit runs and ADC core offset writes.
+#[cfg(target_os = "linux")]
+struct UnitTrim<'a> {
+    bar: &'a mut oos_hal::dho::bus::Bar1,
+    adc: &'a mut oos_hal::dho::adc::Adc,
+}
+
+#[cfg(target_os = "linux")]
+impl oos_hal::dho::coretrim::TrimHw for UnitTrim<'_> {
+    fn slots(&mut self) -> Option<[oos_hal::dho::levels::Slot; 8]> {
+        oos_hal::dho::levels::run(self.bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64)))
+    }
+    fn set_offset(&mut self, core: usize, o: i32) {
+        use oos_hal::dho::bus::Bus;
+        for w in self.adc.core_offset(core, o) {
+            std::thread::sleep(std::time::Duration::from_micros(w.pre_us as u64));
+            self.bar.wr(w.reg, w.val);
+            std::thread::sleep(std::time::Duration::from_micros(w.post_us as u64));
+        }
+    }
+}
+
+/// Matches the core offsets of the active ADC mode (`coretrim`), keeps them in `cal` and saves `cal` to OOS's own
+/// cal directory when they changed (never to the Rigol files). True when the mode is done (matched, or nothing to
+/// change); false to try again at a later configuration.
+#[cfg(target_os = "linux")]
+fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::State, cal: &mut oos_hal::dho::adc::CalAdc, mask: u32) -> bool {
+    use oos_hal::dho::{calfile, coretrim};
+    let mode = state.mode;
+    let cur = cal.offsets(mode);
+    let (groups, lsb) = coretrim::plan(mask, &state.gain);
+    let mut hw = UnitTrim { bar, adc: &mut state.adc };
+    let Some(order) = coretrim::order(&mut hw, &cur, &lsb) else {
+        eprintln!("oos-ui hw: core offsets of ADC mode {}: core order not found", mode);
+        return false;
+    };
+    match coretrim::trim(&mut hw, &groups, &cur, &order, &lsb) {
+        Ok(t) => {
+            eprintln!("oos-ui hw: core offsets of ADC mode {}: {:?} -> {:?}, order {:?}, {:.2} steps left, matched {:#x} skipped {:#x}", mode, cur, t.offsets, order, t.residual, t.matched, t.skipped);
+            if t.offsets != cur {
+                cal.set_offsets(mode, &t.offsets);
+                if let Err(e) = calfile::save(calfile::OOS_CAL_DIR, "cal_adc.hex", cal.payload(), calfile::now()) {
+                    eprintln!("oos-ui hw: core offsets: {}/cal_adc.hex not saved: {}", calfile::OOS_CAL_DIR, e);
+                }
+            }
+            t.matched != 0 && t.skipped == 0
+        }
+        Err(e) => {
+            // the registers hold the last round's values; the stored ones go back
+            for (n, &o) in cur.iter().enumerate() {
+                coretrim::TrimHw::set_offset(&mut hw, n, o);
+            }
+            eprintln!("oos-ui hw: core offsets of ADC mode {}: {}", mode, e);
+            false
+        }
+    }
+}
+
 /// Hardware segments record ordinary triggered frames: not in roll or scan, not with the LA (its record layout and
 /// read are not worked out for them, spec 03 5.9).
 fn hw_segments_ok(m: &Model) -> bool {
@@ -953,6 +1027,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut configs = 0u64;
         // the last request of the measure-unit levels answered
         let mut levels_done: Option<u64> = None;
+        // `cal.core_offset = tight`: ADC modes whose core offsets were matched this session, and tries per mode
+        let mut trim_done = [false; 11];
+        let mut trim_tries = [0u8; 11];
         let mut slots_done: Option<u64> = None;
         loop {
             let last_read = fresh.take();
@@ -1066,6 +1143,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         status(format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, p.rate, p.memsel));
                         current = Some((want.clone(), p));
                         configs += 1;
+                        // core offsets of the ADC mode (opt-in), with nothing armed right after the configuration
+                        let m = state.mode.min(10);
+                        if core_offset_tight() && !trim_done[m] && trim_tries[m] < TRIM_TRIES {
+                            trim_tries[m] += 1;
+                            if let Some(c) = cal_adc.as_mut() {
+                                trim_done[m] = core_trim(&mut bar, &mut state, c, want.mask);
+                            }
+                        }
                         // the configuration cleared the average (`seq::State::configure`)
                         avg = match want.mode {
                             oos_hal::dho::acq::Mode::Average { count } => Some((oos_hal::dho::avg::Tracker::new(avg_kind(), count), avg_clear, 0)),
@@ -2039,6 +2124,13 @@ mod tests {
         for (want, mask, config, running, el, step, after) in cases {
             assert_eq!(dvm_step(want, mask, config, running, el), (step, after), "{:?} {:#b} {} {:?} {}", want, mask, config, running, el);
         }
+    }
+
+    #[test]
+    fn core_offset_from_conf() {
+        assert!(!core_offset_from(""));
+        assert!(core_offset_from("cal.core_offset = tight\n"));
+        assert!(!core_offset_from("cal.core_offset = on\n"));
     }
 
     #[test]

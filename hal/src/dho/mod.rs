@@ -17,6 +17,7 @@ pub mod bus;
 pub mod calfile;
 pub mod clock;
 pub mod counter;
+pub mod coretrim;
 pub mod dvm;
 pub mod gpio;
 pub mod hz;
