@@ -362,7 +362,9 @@ impl State {
             return w;
         };
         let k = &s.ch[m.ch];
-        let cols = mask::table_map(&m.lo, &m.hi, p.memsel, s.mask, k.scale, k.offset, self.gain[m.ch], &m.map);
+        // the software mask spreads over the screen: 10 divisions around the delay
+        let t = mask::Timing { points: p.memsel, pre: p.pre, rate: p.rate, mask: s.mask, screen: (s.delay - 5.0 * s.tdiv, 10.0 * s.tdiv) };
+        let cols = mask::table_map(&m.lo, &m.hi, &t, k.scale, k.offset, self.gain[m.ch], &m.map);
         let run = (slot, m.map.layout(p.memsel, s.mask).1, m.clear, m.stop_on_fail);
         if self.mask_run == Some(run) && self.mask_cols.as_ref() == Some(&cols) {
             return vec![];
@@ -1263,7 +1265,7 @@ mod tests {
         assert_eq!(w[0], (0x4020, 0x2001));
         assert_eq!(w[1], (0x1194, 0x1c00_0000 | 158 << 8 | 98));
         assert_eq!(w[1001], (0x1194, 0));
-        assert_eq!(w[1002..1006], [(0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001)]);
+        assert_eq!(w[1002..1006], [(0x1184, 0xc000_03ff), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001)]);
         assert_eq!(*w.last().unwrap(), (0x4020, 0xe001), "auto trigger keeps the mask bits");
         assert_eq!(st.mask_ctrl(), Some(0x0010_0000));
         // unchanged: nothing but the auto-trigger write
@@ -1274,7 +1276,7 @@ mod tests {
         assert_eq!(w[1003], (0x1190, 0x0010_0000));
         // a clear request: no table, the counters cleared
         let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, ..band(0.5) }), ..base.clone() });
-        assert_eq!(w, vec![(0x4020, 0x6001), (0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001), (0x4020, 0xe001)]);
+        assert_eq!(w, vec![(0x4020, 0x6001), (0x1184, 0xc000_03ff), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001), (0x4020, 0xe001)]);
         // stop on fail sets bit 12
         let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, stop_on_fail: true, ..band(0.5) }), ..base.clone() });
         assert_eq!(*w.last().unwrap(), (0x4020, 0xf001));
@@ -1286,10 +1288,10 @@ mod tests {
         // a source that is not acquired leaves the test off
         let w = only(&mut st, &Settings { hwmask: Some(HwMask { ch: 1, ..band(1.0) }), ..base.clone() });
         assert_eq!(w, vec![(0x4020, 0x6001)]);
-        // CH2 of CH1+CH2: slot 2
+        // CH2 of CH1+CH2: slot 1 (stream slot)
         let two = Settings { mask: 0b11, hwmask: Some(HwMask { ch: 1, ..band(1.0) }), ..base.clone() };
         let mut st = State::handover(0b11, None);
-        assert!(only(&mut st, &two).contains(&(0x1190, 0x0040_0000)));
+        assert!(only(&mut st, &two).contains(&(0x1190, 0x0020_0000)));
     }
 
     #[test]
@@ -1307,7 +1309,7 @@ mod tests {
         assert_eq!(w.len(), 1 + 1001 + 1 + 1 + 2 + 1 + 1);
         assert_eq!(w[0], (0x4020, 0x2001));
         assert!(w[1..1001].iter().all(|x| x.0 == 0x11d8));
-        assert_eq!(w[1002..1008], [(0x11d0, 0x0500_0000), (0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0x2003), (0x4020, 0x2003)]);
+        assert_eq!(w[1002..1008], [(0x11d0, 0x0500_0000), (0x1184, 0xc000_03ff), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0x2003), (0x4020, 0x2003)]);
         assert_eq!(st.zone_ctrl(), Some(0x0010_0000));
         assert_eq!(only(&mut st, &on), vec![(0x4020, 0x2003)]);
         // a second zone that must not be touched: its table, the new control word, no clear

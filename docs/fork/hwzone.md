@@ -78,7 +78,7 @@ and the software-filter rate for comparison. Goal: at least the software rate.
 | 1000 columns of points / 1000 samples over the record | `zone::columns` | 4 |
 | Column times relative to the trigger at sample `pre` | `zone::table` | 4 |
 | A failing frame is not accepted; the FSM re-arms | | 2, 3 |
-| Slot = ADC lane, as the mask test | `mask::slot` | 5 |
+| Slot = stream slot, as the mask test (CH2 alone 0, CH2 of CH1+CH2 1) | `mask::slot` | 5 |
 
 ## On-unit procedure
 
@@ -99,7 +99,7 @@ Probe on CH1 at the probe-comp output (1 kHz square). `zone.hw = on` in system.c
    40 % and 60 %: no frames. Move it to the last division of the screen across a falling edge: frames pass again
    (columns reach the end of the record). If a box only works when shifted, record the shift: it gives the column
    layout or the time origin.
-5. Slot mapping: probe on CH2, zone on CH2, CH1 off: `slot=1`. CH1 and CH2 on, zone on CH2: `slot=2`; the zone must
+5. Slot mapping: probe on CH2, zone on CH2, CH1 off: `slot=0`. CH1 and CH2 on, zone on CH2: `slot=1`; the zone must
    follow CH2, not CH1 (offset CH1 by 2 div: no effect on qualification).
 6. Two zones: zone 1 intersect on the high level, zone 2 not intersect above the trace: frames pass. Zone 2 moved onto
    the trace: no frames.

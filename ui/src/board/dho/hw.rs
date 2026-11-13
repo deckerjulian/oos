@@ -1922,6 +1922,38 @@ mod tests {
         assert_eq!(batch_plan(&z, &p).frames, zone_batch());
     }
 
+    /// Unit round 5: at 100 us/div with 10k points the record is 1.6 screens long, and a table spread over the record
+    /// failed every frame of a clean 1 kHz square. Mapped by time, the clean signal passes and a 10 us shift fails;
+    /// spread over the record (the old mapping) the clean signal fails.
+    #[test]
+    fn mask_table_follows_the_screen_when_the_record_is_longer() {
+        use oos_hal::dho::mask;
+        let (n, pre, rate) = (10_000usize, 5_000u32, 6_250_000u64);
+        let dt = 1.0 / rate as f64;
+        // 0 / 3 V, 1 kHz, rising edge at the trigger; `shift` seconds later
+        let wave = |shift: f64| -> Vec<f32> { (0..n).map(|k| ((k as f64 - pre as f64) * dt - shift)).map(|t| if (t * 1e3).rem_euclid(1.0) < 0.5 { 3.0 } else { 0.0 }).collect() };
+        // the screen: -0.5..0.5 ms = samples 1875..8125; the mask from it
+        let (s0, s1) = (1875, 8125);
+        let m = oos_dsp::mask::build(&wave(0.0)[s0..s1], 20, 0.3);
+        let (lo, hi) = m.columns(mask::COLUMNS);
+        let fails = |t: &mask::Timing, v: &[f32]| -> bool {
+            let map = mask::Map::default();
+            let cols = mask::table_map(&lo, &hi, t, 1.0, -1.5, 1.0, &map);
+            let per = map.layout(t.points, 1).2;
+            v.iter().enumerate().any(|(k, &x)| {
+                let c = (k as f64 / per) as usize;
+                let code = (map.code(x as f64, 1.0, -1.5, 1.0).floor()) as i32;
+                c < cols.len() && ((cols[c].lo_en && code < cols[c].lo as i32) || (cols[c].hi_en && code > cols[c].hi as i32))
+            })
+        };
+        let by_time = mask::Timing { points: n as u32, pre, rate, mask: 1, screen: (-0.5e-3, 1e-3) };
+        assert!(!fails(&by_time, &wave(0.0)), "clean signal");
+        assert!(fails(&by_time, &wave(10e-6)), "10 us shift");
+        assert!(fails(&by_time, &wave(-10e-6)), "-10 us shift");
+        let over_record = mask::Timing { screen: (-(pre as f64) * dt, n as f64 * dt), ..by_time };
+        assert!(fails(&over_record, &wave(0.0)), "the old mapping fails the clean signal");
+    }
+
     #[test]
     fn zone_hw_from_conf() {
         assert!(!zone_hw_from(""));
@@ -1975,7 +2007,9 @@ mod tests {
         };
         let m = oos_dsp::mask::build(&wave(false, 1), 20, 0.2);
         let (lo, hi) = m.columns(mask::COLUMNS);
-        let cols = mask::table_map(&lo, &hi, n as u32, 1, scale, offset, 1.0, &mask::Map::default());
+        // the record is the screen here: 20,000 samples at 10 MSa/s around the trigger
+        let t = mask::Timing { points: n as u32, pre: n as u32 / 2, rate: 10_000_000, mask: 1, screen: (-1e-3, 2e-3) };
+        let cols = mask::table_map(&lo, &hi, &t, scale, offset, 1.0, &mask::Map::default());
         // the read-out word of a sample (inverse of `seq::decode_volts`), and the 8-bit comparator on it
         let fails = |v: &[f32]| -> bool {
             v.iter().enumerate().any(|(k, &x)| {

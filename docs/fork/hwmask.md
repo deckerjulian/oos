@@ -32,7 +32,7 @@ default until the steps below confirm the assumptions. Register description: `sp
 | assumption | where | how the bench checks it |
 |---|---|---|
 | The comparator sees the read-out word >> 8 (32768 at the offset, 7500 codes per division) | `mask::MID`, `CODES_PER_DIV`, `SHIFT` | step 3 and 4 |
-| Slot = ADC lane: the channel with 1, 3 or 4 channels; lower of two = 0, higher = 2 | `mask::slot` | step 5 |
+| Slot = stream slot (libscope): 0 with one channel; lower of two 0, higher 1; the channel with 3 or 4 | `mask::slot` | step 5 |
 | 1000 columns spread over the whole record, n = points / 1000 per column | `mask::per_column` | step 4, a failure late in the record |
 | One counted frame per acquired frame | | step 2 |
 | Stop on fail (0x4020 bit 12) stops the FSM without hanging the acquisition thread | | step 6 |
@@ -86,33 +86,44 @@ Procedure (probe-comp on CH1, 1 V/div, hardware mask on, Reset between steps, 20
 5. Write the winning map into this file and make it the default in `mask::Map::default()`; the zone trigger takes the
    same map (`hwzone.md`).
 
+## Round 5 and the fix
+
+Round 5 (`mask.map` sweep): `domain=readout` is right (pregain fails). At 20 and 50 us/div with 10k points the mask
+works exactly at 1, 2 and 4 channels: 0 fails in about 1800 clean frames, every frame fails with the delay shifted by
+2 or 10 us. At 100 and 200 us/div every frame failed with every column layout, and `cols=400`, 452, 1023 and 33220
+stalled the acquisition for 15-25 s.
+
+Cause: the software mask spreads over the screen, the table columns over the record, and the record is longer than
+the screen (1.6 screens at 10k points from 20 us/div). With a flat signal around the trigger (20 and 50 us/div on a
+1 kHz square) the stretch did not show; from 100 us/div the edges at +-0.5 ms landed in the wrong columns. Fixes:
+- The table maps by time (`mask::Timing`): column c covers record samples c n .. (c + 1) n at (k - pre) / rate, which
+  is placed on the screen (10 divisions around the delay). Columns not wholly on the screen test nothing.
+- The strobe count stays within 1023 and within what the record holds for 1000 columns (`Map::layout`); the stalls
+  came from counts whose columns ran past the record. Records above 1.02 M points have their first 1.02 M tested.
+- The slot is the stream slot (regmap from libscope): CH2 alone is slot 0, CH2 of CH1+CH2 slot 1.
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output. Optional: BNC cable from AUX OUT to CH2 (step 7). Start from a known state:
-`mask.hw = on` in system.conf, restart oos-ui. Note `:SYSTem:DEBug:MASK?` and `:SYSTem:STATe?` after every step.
+`mask.hw = on` in system.conf, default `mask.map`, restart oos-ui. Note `:SYSTem:DEBug:MASK?` and `:SYSTem:STATe?`
+after every step. The mask is in volts, so an offset change moves mask and trace together: test with delay shifts.
 
-1. CH1 only, 1 V/div, 200 us/div, edge CH1 rising at 50 %, Normal sweep, Auto depth. Mask > Create mask with the
-   default tolerances. The pill reads `Mask (HW) CH1`. `:SYSTem:DEBug:MASK?` shows `slot=0`, `ctrl=0x00100000`.
-2. Frames counter against acquisition: let it run 30 s. `frames` rises steadily. Compare its rate with the `acquired`
-   counter of `:SYSTem:STATe?` over the same interval. Record the ratio (expected 1: one tested frame per acquired
-   frame; batches may make `acquired` count frames the FPGA tested before the read).
-3. Clean signal: `fails` stays 0 for at least 10,000 frames. A non-zero count means the code scale or the column
-   spread is off. Compare with `mask.hw = off` (software test) on the same signal.
-4. Tighten: Y tolerance to the minimum, then move the CH1 offset by 0.2 div. `fails` must rise, and the software
-   counts must agree in direction. Undo the offset, Reset: `fails` back to 0 and stays there. Then Create mask at
-   1 V/div and switch to 500 mV/div: the table is reloaded for the new scale and `fails` stays 0 while the trace fits
-   on screen.
-5. Slot mapping: probe on CH2, CH1 off, mask on CH2: expect `slot=1`, `ctrl=0x00200000`, frames rising, fails 0.
-   Then CH1 and CH2 on (2-channel mode), mask on CH2: expect `slot=2`, `ctrl=0x00400000`. With the probe on CH2 and
-   CH1 open, `fails` stays 0 and a 0.2 div offset change on CH2 makes it rise. If CH1's offset change makes it rise
-   instead, the slot is wrong: record which slot follows CH2 and fix `mask::slot`. Repeat with mask on CH1 in the
-   2-channel mode (slot 0).
-6. Stop on fail: Mask > Stop on fail on, tight mask, offset nudge. The acquisition stops with "Mask failed: stopped".
-   Then Run: frames continue without a restart of oos-ui. If the acquisition thread hangs (status line stops, no new
-   frames after Run), record it: bit 12 then has to stay off and the stop stays in software.
+1. CH1 only, 1 V/div, edge CH1 rising at 50 %, Normal sweep. Mask > Create mask with the default tolerances. The pill
+   reads `Mask (HW) CH1`; the debug line shows `slot=0`, `ctrl=0x00100000`.
+2. Regression grid (round 5): for each of 20, 50, 100, 200 us/div and 1 ms/div at depth 10k, and 200 us/div at 100k
+   and Auto: Create mask, Reset, 1000 frames: `fails` 0; delay +10 us: every frame fails; delay back, Reset: 0 again.
+   The software counts (`mask.hw = off`) give the same verdicts.
+3. Frames counter against acquisition: 30 s, `frames` rate equals the `acquired` rate of `:SYSTem:STATe?`.
+4. Scale: Create mask at 1 V/div, switch to 500 mV/div: the table is reloaded and `fails` stays 0 while the trace fits
+   on screen; Y tolerance to the minimum and delay +2 us: fails rise.
+5. Slot mapping: probe on CH2, CH1 off, mask on CH2: `slot=0`, `ctrl=0x00100000`, 0 fails, delay shift fails. Then
+   CH1 and CH2 on (CH1 open), mask on CH2: `slot=1`, `ctrl=0x00200000`, the same results. A wrong slot shows as
+   every frame failing (CH1's flat line against CH2's square mask). Four channels, mask on CH3: `slot=2`.
+6. Stop on fail: Mask > Stop on fail on, tight mask, delay shift. The acquisition stops with "Mask failed: stopped".
+   Then Run: frames continue without a restart of oos-ui. If the acquisition thread hangs, record it: bit 12 then has
+   to stay off and the stop stays in software.
 7. AUX OUT (cable to CH2, CH2 1 V/div, its own trigger off): System > AUX out = Pass/fail. Clean signal: CH2 flat.
-   Tight mask: one 1 us high pulse per failed frame on CH2 (single-shot on CH2 to catch it). AUX out = Trigger out
-   afterwards.
+   Delay-shifted: one 1 us high pulse per failed frame on CH2. AUX out = Trigger out afterwards.
 8. `mask.hw = off`, restart: the pill reads `Mask CH1`, the software counts run, and the debug line starts with `off`.
 
 Record the results in `docs/fork/unit-dho804.md`.

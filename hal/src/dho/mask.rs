@@ -61,6 +61,8 @@ pub mod scu {
 
 /// Columns of the table; the stock system always fills all of them and spreads them over the whole record.
 pub const COLUMNS: usize = 1000;
+/// Largest strobe count the comparator takes (0x1184 bits 9:0).
+pub const MAX_COUNT: u32 = 1023;
 
 /// The sample scale assumed for the comparator: the read-out word (16 bits, `MID` at the channel's offset,
 /// `CODES_PER_DIV` per division, `seq::decode_volts`) shifted right by `SHIFT`. The stock system builds the limits as
@@ -138,23 +140,27 @@ impl Map {
 
     /// The column layout for `points` per channel with the channel set `mask`: (columns, strobe count, samples per
     /// column).
+    /// The strobe count is kept to `MAX_COUNT` (only bits 9:0 reach the comparator) and to what the record holds for
+    /// all columns: a count whose columns run past the end of the record stalled the acquisition on the unit (round 5,
+    /// 15-25 s without frames). Columns past `MAX_COUNT` cover the start of a long record only.
     pub fn layout(&self, points: u32, mask: u32) -> (usize, u32, f64) {
         let per_clock = (4 / crate::dho::hz::ratio(mask)).max(1) as u64;
         let pts = points.max(1) as u64;
+        let fit = |n: u64, unit: u64| n.min(MAX_COUNT as u64).min((pts / COLUMNS as u64 / unit).max(1)).max(1) as u32;
         match self.layout {
             Layout::Record => {
-                let n = per_column(pts);
+                let n = fit(pts / COLUMNS as u64, 1);
                 (COLUMNS, n, n as f64)
             }
             Layout::Clocks => {
-                let n = (pts / COLUMNS as u64 / per_clock).max(1) as u32;
+                let n = fit(pts / COLUMNS as u64 / per_clock, per_clock);
                 (COLUMNS, n, (n as u64 * per_clock) as f64)
             }
-            Layout::Stock => {
-                let cols = COLUMNS / per_clock as usize;
-                (cols, 1, pts as f64 / cols as f64)
+            Layout::Stock => (COLUMNS / per_clock as usize, 1, per_clock as f64),
+            Layout::Count(n) => {
+                let n = fit(n as u64, 1);
+                (COLUMNS, n, n as f64)
             }
-            Layout::Count(n) => (COLUMNS, n.max(1), pts as f64 / COLUMNS as f64),
         }
     }
 
@@ -220,15 +226,38 @@ pub fn rebin(lo: &[f32], hi: &[f32], f0: f64, f1: f64) -> (f32, f32) {
     (lo[a..b].iter().copied().fold(f32::INFINITY, f32::min), hi[a..b].iter().copied().fold(f32::NEG_INFINITY, f32::max))
 }
 
-/// The table for the volt bands `lo`/`hi` (spread over the whole record) under `map`: one column per hardware column of
-/// `map.layout`, each the union of the bands it covers; columns outside `map.range` and beyond the record test nothing.
-pub fn table_map(lo: &[f32], hi: &[f32], points: u32, mask: u32, scale: f64, offset: f64, gain: f64, map: &Map) -> Vec<Column> {
-    let (cols, _, per) = map.layout(points, mask);
-    let pts = points.max(1) as f64;
+/// Where the record and the screen lie in time: the record has `points` samples at `rate` with the trigger at sample
+/// `pre` (channel set `mask`); the screen (and the software mask, which spreads over it) starts `screen.0` seconds
+/// from the trigger and is `screen.1` seconds wide.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing {
+    pub points: u32,
+    pub pre: u32,
+    pub rate: u64,
+    pub mask: u32,
+    pub screen: (f64, f64),
+}
+
+impl Timing {
+    /// The screen fraction (0 = left edge, 1 = right edge) at sample `k` of the record.
+    pub fn screen_at(&self, k: f64) -> f64 {
+        ((k - self.pre as f64) / self.rate.max(1) as f64 - self.screen.0) / self.screen.1.max(1e-15)
+    }
+}
+
+/// The table for the volt bands `lo`/`hi` (spread over the screen, as the software mask) under `map`: one column per
+/// hardware column of `map.layout`, each the union of the bands its samples cover on the screen; columns outside
+/// `map.range`, beyond the record or not wholly on the screen test nothing. The record is longer than the screen (1.6 times at
+/// 10k points from 20 us/div, unit round 5), so the columns map by time, not by fraction of the record.
+pub fn table_map(lo: &[f32], hi: &[f32], t: &Timing, scale: f64, offset: f64, gain: f64, map: &Map) -> Vec<Column> {
+    let (cols, _, per) = map.layout(t.points, t.mask);
+    let pts = t.points.max(1) as f64;
     (0..cols)
         .map(|c| {
-            let (f0, f1) = (c as f64 * per / pts, (c + 1) as f64 * per / pts);
-            if f0 >= 1.0 || c < map.range.0 as usize || c > map.range.1 as usize {
+            let (k0, k1) = (c as f64 * per, (c + 1) as f64 * per);
+            let (f0, f1) = (t.screen_at(k0), t.screen_at(k1));
+            // a column reaching past a screen edge holds samples the software mask never sees: it tests nothing
+            if k0 >= pts || f0 < 0.0 || f1 > 1.0 || c < map.range.0 as usize || c > map.range.1 as usize {
                 return Column { lo: 0, hi: CODE_MAX as u8, lo_en: false, hi_en: false };
             }
             let (l, h) = rebin(lo, hi, f0, f1);
@@ -286,11 +315,18 @@ pub fn load(cols: &[Column]) -> Vec<Write> {
     w
 }
 
-/// The source slot of channel `ch` (0..3) with the channel set `mask`: assumed to follow the ADC lane layout
-/// (`dvm::lane`): the channel itself with one, three or four channels; with two channels the lower one is slot 0 and the
-/// higher slot 2. None when the channel is not acquired. Unverified (docs/fork/hwmask.md).
+/// The source slot of channel `ch` (0..3) with the channel set `mask`: a stream slot, not an ADC lane (libscope
+/// `SetMaskChanEn`, regmap): slot 0 with one channel; with two the lower channel 0, the higher 1; with three or four
+/// the channel itself. None when the channel is not acquired.
 pub fn slot(mask: u32, ch: usize) -> Option<u32> {
-    crate::dho::dvm::lane(mask, ch)
+    if ch > 3 || mask & (1 << ch) == 0 {
+        return None;
+    }
+    Some(match crate::dho::hz::ratio(mask) {
+        1 => 0,
+        2 => (0..ch).any(|c| mask & (1 << c) != 0) as u32,
+        _ => ch as u32,
+    })
 }
 
 /// Samples per column for a record of `points` per channel.
@@ -410,14 +446,18 @@ mod tests {
     #[test]
     fn layouts() {
         // (layout, points, channel set) -> (columns, strobe count, samples per column)
-        let cases: [(Layout, u32, u32, (usize, u32, f64)); 7] = [
-            (Layout::Record, 2_500_000, 1, (1000, 2500, 2500.0)),
+        let cases: [(Layout, u32, u32, (usize, u32, f64)); 9] = [
+            // 2.5 Mpts would need 2500: kept to 1023, the columns cover the first 1.02 M samples
+            (Layout::Record, 2_500_000, 1, (1000, 1023, 1023.0)),
             (Layout::Record, 10_000, 1, (1000, 10, 10.0)),
+            (Layout::Record, 500, 1, (1000, 1, 1.0)),
             (Layout::Clocks, 2_500_000, 1, (1000, 625, 2500.0)),
-            (Layout::Clocks, 2_500_000, 0b11, (1000, 1250, 2500.0)),
-            (Layout::Stock, 10_000, 1, (250, 1, 40.0)),
-            (Layout::Stock, 10_000, 0b1111, (1000, 1, 10.0)),
-            (Layout::Count(7), 10_000, 1, (1000, 7, 10.0)),
+            (Layout::Clocks, 10_000, 0b11, (1000, 5, 10.0)),
+            (Layout::Stock, 10_000, 1, (250, 1, 4.0)),
+            (Layout::Stock, 10_000, 0b1111, (1000, 1, 1.0)),
+            (Layout::Count(7), 10_000, 1, (1000, 7, 7.0)),
+            // a count that runs past the record (round 5: 400 at 10k stalled the acquisition): kept to the record
+            (Layout::Count(400), 10_000, 1, (1000, 10, 10.0)),
         ];
         for (l, pts, m, want) in cases {
             assert_eq!(Map { layout: l, ..Map::default() }.layout(pts, m), want, "{:?} {} {:#b}", l, pts, m);
@@ -443,28 +483,47 @@ mod tests {
 
     #[test]
     fn table_map_rebins_limits_the_range_and_inverts() {
-        // 1000 source bands: -1..1 V, column 500 reaches +2 V
+        // 1000 source bands over the screen: -1..1 V, band 500 (the screen centre) reaches +2 V
         let (mut lo, mut hi) = (vec![-1.0f32; 1000], vec![1.0f32; 1000]);
         hi[500] = 2.0;
         let d = Map::default();
-        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &d);
+        // a record that is the screen: 10,000 samples at 10 MSa/s, trigger in the middle, screen -0.5..0.5 ms
+        let same = Timing { points: 10_000, pre: 5000, rate: 10_000_000, mask: 1, screen: (-0.5e-3, 1e-3) };
+        let t = table_map(&lo, &hi, &same, 1.0, 0.0, 1.0, &d);
         assert_eq!(t.len(), 1000);
         assert_eq!(t[0], Column::of_band(-1.0, 1.0, 1.0, 0.0));
         assert_eq!(t[500], Column::of_band(-1.0, 2.0, 1.0, 0.0));
-        // stock layout: 250 columns of 4 source columns; column 125 holds source 500
-        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &Map { layout: Layout::Stock, ..d });
-        assert_eq!((t.len(), t[125], t[124]), (250, Column::of_band(-1.0, 2.0, 1.0, 0.0), Column::of_band(-1.0, 1.0, 1.0, 0.0)));
+        // stock layout: 250 columns of 4 samples at the start of the record
+        let t = table_map(&lo, &hi, &same, 1.0, 0.0, 1.0, &Map { layout: Layout::Stock, ..d });
+        assert_eq!((t.len(), t[0]), (250, Column::of_band(-1.0, 1.0, 1.0, 0.0)));
         // only columns 10..=20 test
-        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &Map { range: (10, 20), ..d });
+        let t = table_map(&lo, &hi, &same, 1.0, 0.0, 1.0, &Map { range: (10, 20), ..d });
         assert!(t.iter().enumerate().all(|(c, k)| (k.lo_en && k.hi_en) == (10..=20).contains(&c)));
         // inverted: the volt band maps to the mirrored codes, lower limit below the upper
-        let t = table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &Map { invert: true, ..d });
+        let t = table_map(&lo, &hi, &same, 1.0, 0.0, 1.0, &Map { invert: true, ..d });
         assert_eq!(t[0], Column::of_codes(128.0 - 7500.0 / 256.0, 128.0 + 7500.0 / 256.0));
         assert!(t[500].lo < t[0].lo);
         // a band without data stays open
         lo[3] = f32::NEG_INFINITY;
         hi[3] = f32::INFINITY;
-        assert!(!table_map(&lo, &hi, 10_000, 1, 1.0, 0.0, 1.0, &d)[3].lo_en);
+        assert!(!table_map(&lo, &hi, &same, 1.0, 0.0, 1.0, &d)[3].lo_en);
+    }
+
+    /// Round 5: the record is 1.6 screens long (10k points at 6.25 MSa/s, 100 us/div). The columns map by time: the
+    /// screen centre band lands in the record's centre column, the record's ends off the screen test nothing.
+    #[test]
+    fn a_record_longer_than_the_screen_maps_by_time() {
+        let (lo, mut hi) = (vec![-1.0f32; 1000], vec![1.0f32; 1000]);
+        hi[500] = 2.0;
+        let t = Timing { points: 10_000, pre: 5000, rate: 6_250_000, mask: 1, screen: (-0.5e-3, 1e-3) };
+        let tab = table_map(&lo, &hi, &t, 1.0, 0.0, 1.0, &Map::default());
+        // column 500 holds samples 5000..5010, t = 0..1.6 us: screen fraction 0.5..0.5016, band 500
+        assert_eq!(tab[500], Column::of_band(-1.0, 2.0, 1.0, 0.0));
+        // the screen spans samples 1875..8125: columns 187..812; outside, nothing is tested
+        assert!(!tab[100].lo_en && !tab[100].hi_en && !tab[900].hi_en);
+        assert!(tab[200].lo_en && tab[800].hi_en);
+        assert_eq!(t.screen_at(5000.0), 0.5);
+        assert!((t.screen_at(1875.0)).abs() < 1e-9 && (t.screen_at(8125.0) - 1.0).abs() < 1e-9);
     }
 
     #[test]
@@ -480,9 +539,9 @@ mod tests {
     }
 
     #[test]
-    fn slots_follow_the_lanes() {
+    fn slots_are_stream_slots() {
         // (mask, channel) -> slot
-        let cases = [(0b0001, 0, Some(0)), (0b0010, 1, Some(1)), (0b0011, 0, Some(0)), (0b0011, 1, Some(2)), (0b1100, 2, Some(0)), (0b1100, 3, Some(2)), (0b1111, 3, Some(3)), (0b0111, 2, Some(2)), (0b0001, 1, None)];
+        let cases = [(0b0001, 0, Some(0)), (0b0010, 1, Some(0)), (0b1000, 3, Some(0)), (0b0011, 0, Some(0)), (0b0011, 1, Some(1)), (0b1100, 2, Some(0)), (0b1100, 3, Some(1)), (0b1111, 3, Some(3)), (0b0111, 2, Some(2)), (0b0001, 1, None)];
         for (m, c, want) in cases {
             assert_eq!(slot(m, c), want, "{:#b} CH{}", m, c + 1);
         }
