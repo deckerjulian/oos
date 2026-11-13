@@ -279,7 +279,10 @@ mod tests {
         let v: Vec<f32> = (0..len).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
         let dt = 1.0 / 1.25e9;
         let mut folds = folds_for(&m);
-        let env = Frame { seq: 1, dt, pre: len / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope: true, ..Default::default() };
+        // a deep record read through the compression (deeper than the live compression, whose pair frames do not
+        // count at all: compress.rs)
+        let deep = (1.25e9, crate::compress::MAX_DEPTH as usize * 10);
+        let env = Frame { seq: 1, dt, pre: len / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope: true, acq: deep, ..Default::default() };
         assert!(fold_frame(&env, &m, &mut folds));
         for ((k, _), f) in &folds {
             assert_eq!(f.n, if needs_samples(*k) { 0 } else { 1 }, "{:?}", k);
@@ -289,6 +292,10 @@ mod tests {
         let raw = Frame { envelope: false, ..env };
         assert!(fold_frame(&raw, &m, &mut folds));
         assert!(folds.iter().all(|(_, f)| f.n == 1));
+        // live compression pairs: none
+        let mut folds = folds_for(&m);
+        let live = Frame { envelope: true, acq: (1.25e9, 100_000), ..raw };
+        assert!(!fold_frame(&live, &m, &mut folds));
     }
 
 }
