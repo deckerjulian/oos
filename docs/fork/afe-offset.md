@@ -38,29 +38,27 @@ offset-proportional term alone (1.0 %, 20 mV at 2 V) is of the same size as the 
 Decision rule: close the item when the sweep stays inside the limit at every point and shows no channel or path far
 from the others. An OOS lsb trim only for a clean per-path error well outside the limit.
 
-## Measurement (unitlab)
+## Sweep (unit round 11, closed)
 
-CH3, input terminated with 50 Ohm (open if no terminator), Normal acquisition, Auto trigger, VAVG over the screen
-averaged over 5 reads. For every scale: offset 0 first, then the listed offsets. Skip an offset the UI clamps and
-note the clamped value.
+Build 20261113-220242. CH3 open, Normal, Auto, 500 us/div, `:MEAS:ITEM? VAVG` mean of 5 reads, mV. Limit = the
+data sheet bound at the largest offset of the row.
 
-| path | scale | offsets |
-|---|---|---|
-| ig2 | 500 mV/div | -2, -1, +1, +2 V |
-| ig2 | 1 V/div | -4, -2, -1, +1, +2, +4 V |
-| ig2 | 2 V/div | -4, -2, +2, +4 V |
-| ig1 | 100 mV/div | -1, -0.5, +0.5, +1 V |
-| ig1 | 200 mV/div | -1, -0.5, +0.5, +1 V |
-| ig0 | 20 mV/div | -0.5, -0.2, +0.2, +0.5 V |
-| ig3 | 5 V/div | -20, -10, +10, +20 V |
+| scale | path | readings at the offsets | slope | limit at max offset | worst |
+|---|---|---|---|---|---|
+| 200 mV/div | ig1 | 0: -1.4; -0.5 V: +3.6; +0.5 V: -5.5 | -9.0 mV/V | 29.5 | 5.5 |
+| 500 mV/div | ig2 | 0: -3.7; -2: +15.1; -1: +3.9; +1: -11.4; +2: -22.8 | -9.5 mV/V | 72 | 22.8 |
+| 1 V/div | ig2 | 0: -8.4; -4: +23.5; -2: +10.5; -1: +0.4; +1: -16.9; +2: -26.4; +4: -43.2 | -8.3 mV/V | 142 | 43.2 |
+| 2 V/div | ig2 | 0: -4.6; -4: +30.6; -2: +19.7; +2: -22.2; +4: -38.9 | -8.7 mV/V | 242 | 38.9 |
+| 5 V/div | ig3 | 0: -25.1; -20: +135.9; -10: +41.3; +10: -99.8; +20: -204.6 | -8.5 mV/V | 702 | 204.6 |
 
-Plus CH1 at 1 V/div with the same offsets, to see whether the shape is CH3's own.
+- At 100 mV/div with +-0.5 V and above, and at 20 mV/div with +-0.2 V and above, the open input lands off screen
+  and clips. Only their offset-0 points are valid (-0.4 and -0.1 mV). ig0 has no slope measurement.
+- CH3: about -9 mV/V on every path measured, slightly steeper for positive offsets. Equal across scales of one
+  path and across paths, so it sits in the offset path (DAC and its scaling), not in the record gains.
+- CH1 at 1 V/div (probe square, mean about 149 mV): -4 V: 129.8; -2: 137.0; -1: 144.2; 0: 149.4; +1: 149.8;
+  +2: 151.5; +4: 154.0. About +3 mV/V, steep on the negative side (-4.9) and shallow on the positive (+1.2). The
+  shape is per channel.
 
-Reading:
-
-- Error per volt equal across the scales of one path: DAC lsb (or DAC nonlinearity). Fix candidate: an OOS-owned
-  lsb trim per channel and path, measured with the input terminated (an overlay like core_offsets.hex; Rigol files
-  stay read-only).
-- Error per volt scaling with the record gain: signal-path gain error. That is a vertical gain item, not offset.
-- Different slope for + and -: DAC or offset-path nonlinearity. A two-slope trim per path, or accept it if it is
-  inside the stock specification.
+Result: every point is inside the data sheet bound, at most about a third of it. Item closed without a code change.
+An OOS lsb trim would remove about 1 % of the offset on CH3 but needs a reference input the unit does not have
+(an open input is not a voltage reference for the gain), and the stock firmware has the same behaviour.
