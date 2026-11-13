@@ -163,6 +163,22 @@ Fixes:
 
 Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = frames` needs an oos-ui restart.
 
+## Status (feat/trigger)
+
+| Fix | State |
+|---|---|
+| 1 fast auto trigger in the levels stages | done, 22e1504 |
+| 2 one stamped record per stage, Wide+Fit merged | done, a5a827c |
+| 3 keep the fit without a period | done, d0d90f8 |
+| 7 level from top/base | done, 8f6f7f9 |
+| 4 software comparator = hardware, hysteresis table | done, ed4d03c |
+| 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
+| 5 status from 0x4034 | blocked: bits 6 and 7 are set while triggered and while auto-firing (read with `oos-fpgad rd 0x4034` on the unit), so they are sticky without the stock status clear. Needs a test of the clear on the unit. A software proxy (edge at the hardware point) is wrong for the noisy full-bandwidth frames of section 7 of trigger.md, so it is not used |
+| 6 counter for the time base | not done: after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
+| F1, F2 flicker | not started |
+
+Not yet measured on the unit: autoset time with these changes, and the noisy 5 V signal before and after.
+
 ## Open
 
 - Measurement on the user's noisy 5 V signal is pending. It should confirm fix 3 (autoset restore) and fix 4 (false
