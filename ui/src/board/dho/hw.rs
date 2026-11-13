@@ -1700,6 +1700,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             match got {
                 Ok(count) => {
+                    crate::compress::note_batch_k(if raw_newest(&b, &p) { b.compress } else { 1 });
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
                     // its time-out, and the analog frames must not wait with it
