@@ -64,6 +64,10 @@ impl Fold {
     }
 }
 
+/// Largest avg^2 / variance for which `Values::of` takes the standard deviation from its one pass (sum of squares minus
+/// the squared mean): the relative error is about 1.1e-16 x (1 + avg^2 / var), under 3e-14 here.
+const ONE_PASS: f64 = 256.0;
+
 /// Per (measurement, channel) of the Measure page that is made per frame: its statistics.
 pub type Folds = Vec<((Meas, usize), Fold)>;
 
@@ -94,55 +98,66 @@ struct Values {
 
 impl Values {
     fn of(v: &[f32], std: bool) -> Option<Values> {
-        if v.len() < 4 || !v.iter().all(|x| x.is_finite()) {
+        if v.len() < 4 {
             return None;
         }
-        // one pass, the sums split over `L` lanes (vectorised): the same values as `analyze_min` to about 1e-15
-        // relative, the extremes exact
+        // the extremes (`fastdraw::min_max`, NEON), then the sums split over `L` lanes (vectorised): the same values as
+        // `analyze_min` to about 1e-15 relative, the extremes exact. A NaN or infinity anywhere makes the sums not
+        // finite (f32 samples cannot overflow an f64 sum): then None.
+        let (vmin, vmax) = crate::fastdraw::min_max(v);
         const L: usize = 8;
-        let (mut hi, mut lo) = ([v[0]; L], [v[0]; L]);
         let (mut sum, mut sumsq) = ([0.0f64; L], [0.0f64; L]);
         let mut chunks = v.chunks_exact(L);
         for c in &mut chunks {
             let c: &[f32; L] = c.try_into().expect("L samples");
             for j in 0..L {
-                let x = c[j];
-                hi[j] = if x > hi[j] { x } else { hi[j] };
-                lo[j] = if x < lo[j] { x } else { lo[j] };
-                let y = x as f64;
+                let y = c[j] as f64;
                 sum[j] += y;
                 sumsq[j] += y * y;
             }
         }
         for (j, &x) in chunks.remainder().iter().enumerate() {
-            hi[j] = if x > hi[j] { x } else { hi[j] };
-            lo[j] = if x < lo[j] { x } else { lo[j] };
             sum[j] += x as f64;
             sumsq[j] += x as f64 * x as f64;
         }
-        let vmax = hi.iter().copied().fold(hi[0], |a, b| if b > a { b } else { a });
-        let vmin = lo.iter().copied().fold(lo[0], |a, b| if b < a { b } else { a });
         let n = v.len() as f64;
         let avg = sum.iter().sum::<f64>() / n;
-        let rms = (sumsq.iter().sum::<f64>() / n).sqrt();
-        let std = if std {
-            let mut d = [0.0f64; L];
-            let mut chunks = v.chunks_exact(L);
-            for c in &mut chunks {
-                let c: &[f32; L] = c.try_into().expect("L samples");
-                for j in 0..L {
-                    let e = c[j] as f64 - avg;
-                    d[j] += e * e;
-                }
-            }
-            for (j, &x) in chunks.remainder().iter().enumerate() {
-                d[j] += (x as f64 - avg) * (x as f64 - avg);
-            }
-            (d.iter().sum::<f64>() / n).sqrt()
-        } else {
+        let ms = sumsq.iter().sum::<f64>() / n;
+        if !(avg.is_finite() && ms.is_finite()) {
+            return None;
+        }
+        let rms = ms.sqrt();
+        let std = if !std {
             f64::NAN
+        } else {
+            // from the sums of the pass above where that is accurate: the subtraction loses about avg^2 / var of
+            // the f64 precision, so with avg^2 <= ONE_PASS x var the error stays near 1e-14; else the second pass
+            let var = ms - avg * avg;
+            if var > 0.0 && avg * avg <= ONE_PASS * var {
+                var.sqrt()
+            } else {
+                Self::std_two_pass(v, avg)
+            }
         };
         Some(Values { vmax: vmax as f64, vmin: vmin as f64, avg, rms, std })
+    }
+
+    /// The standard deviation around `avg` in a second pass (`analyze_min`'s way).
+    fn std_two_pass(v: &[f32], avg: f64) -> f64 {
+        const L: usize = 8;
+        let mut d = [0.0f64; L];
+        let mut chunks = v.chunks_exact(L);
+        for c in &mut chunks {
+            let c: &[f32; L] = c.try_into().expect("L samples");
+            for j in 0..L {
+                let e = c[j] as f64 - avg;
+                d[j] += e * e;
+            }
+        }
+        for (j, &x) in chunks.remainder().iter().enumerate() {
+            d[j] += (x as f64 - avg) * (x as f64 - avg);
+        }
+        (d.iter().sum::<f64>() / v.len() as f64).sqrt()
     }
 
     fn get(&self, k: Meas) -> f64 {
@@ -202,6 +217,100 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: a standard deviation from the one pass where the subtraction is inaccurate (a DC level with a
+    // little noise), or one that differs from the two-pass value beyond 1e-12 relative; a NaN that is not refused
+    #[test]
+    fn std_from_one_pass_stays_within_1e_12_of_two_passes() {
+        let mut x = 1u32;
+        let mut rnd = move || {
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            ((x >> 8) & 0xffff) as f32 / 65536.0 - 0.5
+        };
+        let n = 100_000;
+        let cases: Vec<Vec<f32>> = vec![
+            (0..n).map(|i| if (i / 900) % 2 == 0 { 3.0 } else { 0.0 } + 0.01 * rnd()).collect(),
+            (0..n).map(|_| 1.0 + 0.0002 * rnd()).collect(),
+            (0..n).map(|_| -2.5 + 0.03 * rnd()).collect(),
+            (0..n).map(|i| if i % 5000 == 0 { 3.0 } else { 0.0 } + 0.001 * rnd()).collect(),
+            (0..n).map(|i| 0.9 * (i as f32 / 400.0).sin()).collect(),
+            vec![0.7; n],
+        ];
+        for (k, v) in cases.iter().enumerate() {
+            let a = Values::of(v, true).unwrap();
+            let b = Values::std_two_pass(v, a.avg);
+            assert!((a.std - b).abs() <= 1e-12 * b.max(1e-12), "case {}: {} vs {}", k, a.std, b);
+        }
+        let mut v = cases[0].clone();
+        v[777] = f32::NAN;
+        assert!(Values::of(&v, true).is_none());
+        v[777] = f32::INFINITY;
+        assert!(Values::of(&v, false).is_none());
+    }
+
+    /// `Values::of` as it was (finite check, compare-select extremes and sums in one pass, std always in a second
+    /// pass): the reference of the timing guard. (avg, rms, std, max, min)
+    fn values_reference(v: &[f32]) -> Option<(f64, f64, f64, f32, f32)> {
+        if v.len() < 4 || !v.iter().all(|x| x.is_finite()) {
+            return None;
+        }
+        const L: usize = 8;
+        let (mut hi, mut lo) = ([v[0]; L], [v[0]; L]);
+        let (mut sum, mut sumsq) = ([0.0f64; L], [0.0f64; L]);
+        let mut chunks = v.chunks_exact(L);
+        for c in &mut chunks {
+            let c: &[f32; L] = c.try_into().expect("L samples");
+            for j in 0..L {
+                let x = c[j];
+                hi[j] = if x > hi[j] { x } else { hi[j] };
+                lo[j] = if x < lo[j] { x } else { lo[j] };
+                let y = x as f64;
+                sum[j] += y;
+                sumsq[j] += y * y;
+            }
+        }
+        for (j, &x) in chunks.remainder().iter().enumerate() {
+            hi[j] = if x > hi[j] { x } else { hi[j] };
+            lo[j] = if x < lo[j] { x } else { lo[j] };
+            sum[j] += x as f64;
+            sumsq[j] += x as f64 * x as f64;
+        }
+        let vmax = hi.iter().copied().fold(hi[0], |a, b| if b > a { b } else { a });
+        let vmin = lo.iter().copied().fold(lo[0], |a, b| if b < a { b } else { a });
+        let n = v.len() as f64;
+        let avg = sum.iter().sum::<f64>() / n;
+        let rms = (sumsq.iter().sum::<f64>() / n).sqrt();
+        Some((avg, rms, Values::std_two_pass(v, avg), vmax, vmin))
+    }
+
+    // Timing guard (tools/perf-guard.sh): the per-frame statistics of a 125 k-point screen window with every cheap
+    // measurement on, against the old one-pass-plus-second-pass computation; the values must agree.
+    #[test]
+    #[ignore]
+    fn perf_guard_framestats() {
+        let len = 125_000usize;
+        let dt = 1.0 / 1.25e9;
+        let p = oos_dsp::sim::PulseTrain::square(3e5, -0.7, 0.9, 2e-8);
+        let mut v = oos_dsp::sim::sample(|t| p.v(t), -(len as f64 / 2.0) * dt, dt, len);
+        oos_dsp::sim::add_noise(&mut v, 0.04, 3);
+        let reps = 300;
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            std::hint::black_box(values_reference(std::hint::black_box(&v[..])));
+        }
+        let old = t.elapsed() / reps;
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            std::hint::black_box(Values::of(std::hint::black_box(&v[..]), true).map(|x| (x.avg, x.rms, x.std, x.vmax, x.vmin)));
+        }
+        let new = t.elapsed() / reps;
+        let (a, b) = (values_reference(&v).unwrap(), Values::of(&v, true).unwrap());
+        assert!(a.3 as f64 == b.vmax && a.4 as f64 == b.vmin && a.0 == b.avg && a.1 == b.rms);
+        assert!((a.2 - b.std).abs() <= 1e-12 * a.2);
+        let r = new.as_secs_f64() / old.as_secs_f64();
+        println!("framestats 125 k pt, all cheap measurements: old {:?}, new {:?} (ratio {:.2})", old, new, r);
+        assert!(r <= 0.7, "the per-frame statistics must stay faster: ratio {:.2}", r);
+    }
     use std::sync::Arc;
 
     /// What the record path gives for frame `f`: `to_record`, the samples `Ui::meas_slice` takes, `analyze_min`.

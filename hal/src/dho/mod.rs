@@ -29,6 +29,7 @@ pub mod pairs;
 pub mod panel;
 pub mod roll;
 pub mod scu;
+pub mod serialtrig;
 pub mod selfcal;
 pub mod seg;
 pub mod seq;

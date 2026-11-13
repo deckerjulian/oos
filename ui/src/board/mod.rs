@@ -119,8 +119,7 @@ pub trait Board: Sync + 'static {
     /// off where the board has none or it is not enabled.
     fn zone_hw(&self) -> bool;
 
-    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:UART?`); "none" where
-    /// the board has none.
+    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:SERial?`, `UART?`).
     fn uart_debug(&self, m: &Model) -> String;
 
     /// Fork, the mask/zone comparator mapping under test (docs/fork/hwmask.md "Sweep"): with `kv` one `key=value` set,
@@ -353,6 +352,8 @@ pub struct Shared {
     pub hold: bool,
     pub final_req: u64,
     pub final_ack: u64,
+    /// the UI reads records the model does not tell the board about (protocol watch, XY): no live compression
+    pub needs_raw: bool,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
     pub deep_raw: Option<crate::deepmeas::Want>,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading

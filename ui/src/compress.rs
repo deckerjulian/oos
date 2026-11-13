@@ -73,6 +73,19 @@ pub fn allowed(m: &Model) -> bool {
         && !m.zones.iter().any(|z| z.usable())
         && !m.la_on()
         && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
+        && raw_consumers_off(m)
+}
+
+/// Nothing reads the record on screen beyond the picture and the measurements (which get raw records, `hold`): no
+/// protocol decoder, no math channel or FFT, the scope view (not spectrum, eye, power, Bode or step), and a DC trigger
+/// path (the software trigger level of AC, LF and HF reject comes from the frame's samples). The UI-only readers
+/// (protocol watch, XY) ask for raw frames through `Shared::needs_raw` instead.
+pub fn raw_consumers_off(m: &Model) -> bool {
+    (0..DECODERS).all(|k| !m.dec_is_on(k))
+        && m.math == crate::math::MathOp::Off
+        && m.maths.iter().all(|x| x.op == crate::math::MathOp::Off)
+        && m.view == AView::Scope
+        && m.trig_coupling() == TrigCoup::Dc
 }
 
 /// The compression factor for a record of `memsel` points at `rate` samples/s per channel and `tdiv` s/div:

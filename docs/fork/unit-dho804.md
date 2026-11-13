@@ -303,6 +303,17 @@ Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 5".
 | DVM decoded | pass at CH1 | within 2.1 % (DC 500 mV/div), 0.2 % at 100 mV/div, no factor 2. Open CH3 at +2 V offset reads -34 mV; `sw` there shows CH1's value |
 | Hardware mask | pass below 100 us/div | readout domain: 0 fails clean, all fail with a 2 us shift, 1/2/4 ch, agrees with software. Fails every frame at >= 100 us/div at any depth and `cols`; `cols=400` stalls the acquisition |
 
+### Rounds 6 and 7 (builds 20261113-193501 and -201611)
+
+Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 6", "Round 7".
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| Core offsets, open input | as modelled | 62.5 MSa/s Normal even-odd +-11..25 codes, sign changing per frame; HW 16 fixed -15..-19. 1.25 GSa/s Normal: one of 8 phases +185 codes, moving; HW 16: p2 and p6 +67..87 fixed |
+| HW 16 floor by rate, open input | one-core rates best | p2p 0.12 (31.25), 0.18-0.23 (62.5), 0.144 (156.25), 0.19 (312.5), 0.75 mV (1.25 GSa/s); even-odd ~0 at 31.25 and 156.25 |
+| Time zone from DHCP | pass | option 100 present; `CET (DHCP)` in Date and time |
+| IPv6 | pass, address not stable | SLAAC global + link-local, `onlink6` = the RA prefix, web/SCPI/SSH over IPv6 from the LAN, mDNS AAAA. Both addresses change at every boot (stable-privacy secret not kept) |
+
 ## Upstream sync 0.1.11 (2026-11-13)
 
 What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:

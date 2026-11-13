@@ -110,10 +110,19 @@ interface=d0 sh /etc/udhcpc.script deconfig
 cp /c/resolv /etc/resolv.conf
 
 echo "== IPv6 secret"
-s1=$(/bin/oos-net6 --secret /c/net/ipv6.secret); s2=$(/bin/oos-net6 --secret /c/net/ipv6.secret)
+# a new secret is logged as made only after `sync` (ext2 without a journal: it must reach the card at once); the
+# image's busybox runs its applets before PATH, so the call itself cannot be counted here
+s1=$(/bin/oos-net6 --secret /c/net/ipv6.secret 2> /c/net6.log)
+grep -q 'secret made' /c/net6.log || fail "no 'made' log: $(cat /c/net6.log)"
+s2=$(/bin/oos-net6 --secret /c/net/ipv6.secret 2> /c/net6.log)
+grep -q 'secret kept' /c/net6.log || fail "no 'kept' log: $(cat /c/net6.log)"
 echo "$s1" | grep -Eqx '([0-9a-f]{4}:){7}[0-9a-f]{4}' || fail "secret format: $s1"
 [ "$s1" = "$s2" ] || fail "secret not kept"
 [ "$(stat -c %a /c/net/ipv6.secret)" = 600 ] || fail "secret mode $(stat -c %a /c/net/ipv6.secret)"
+# what an unsynced reboot left: an empty file. A new secret is made (and synced), never an empty one used
+: > /c/net/ipv6.secret
+s3=$(/bin/oos-net6 --secret /c/net/ipv6.secret 2> /dev/null)
+echo "$s3" | grep -Eqx '([0-9a-f]{4}:){7}[0-9a-f]{4}' && [ "$(cat /c/net/ipv6.secret)" = "$s3" ] || fail "empty file: $s3"
 
 [ $ok = 1 ] && echo "fw-sim: all passed" || { echo "fw-sim: FAILED"; exit 1; }
 TEST
@@ -122,7 +131,7 @@ docker run --rm --platform linux/arm64 --cap-add NET_ADMIN --sysctl net.ipv6.con
 	--sysctl net.ipv6.conf.default.disable_ipv6=0 \
 	-v "$w:/w:ro" -v "$root/rootfs/initramfs:/src:ro" -v "$out:/out:ro" alpine:3.22 sh -euc '
 	cp /w/busybox /bin/busybox
-	for a in sh ip awk sed grep sort cat od tr mv mkdir chmod dirname sleep timeout stat cp; do ln -sf busybox /bin/$a; done
+	for a in sh ip awk sed grep sort cat od tr mv mkdir chmod dirname sleep timeout stat cp sync; do ln -sf busybox /bin/$a; done
 	for f in oos-conf oos-firewall oos-net6; do cp /src/bin/$f /bin/; done
 	cp /src/etc/udhcpc.script /etc/udhcpc.script
 	cp /out/nft /bin/

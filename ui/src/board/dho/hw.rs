@@ -10,7 +10,7 @@ use crate::board::{Frame, Slow};
 use crate::board::{HwShared, Shared, QUEUE_MAX};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
-use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
+use oos_hal::dho::{afe, auxout, hz, serialtrig, tpu, uarttrig};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -196,6 +196,10 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     if let (Trig::Uart(u), Slow::Off) = (&s.trigger, slow_mode(m)) {
         s.delay += uarttrig::sw_offset_s(u);
     }
+    // the SPI and I2C receivers need every line they use among the acquired channels; else the edge trigger
+    if !serial_lines_acquired(&s.trigger, s.mask) {
+        s.trigger = Trig::Edge;
+    }
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
@@ -213,6 +217,14 @@ fn live_compress(m: &Model, s: &mut Settings) {
     }
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
     s.compress = crate::compress::k_for(p.rate, s.tdiv, p.memsel);
+}
+
+/// A reader of every frame in the UI that the model does not show (protocol watch, XY: `Shared::needs_raw`) switches
+/// the live compression off.
+fn raw_for_ui(s: &mut Settings, needs_raw: bool) {
+    if needs_raw {
+        s.compress = 1;
+    }
 }
 
 /// The batch was read with the live compression (`live_compress`): its newest frame is read again raw
@@ -442,9 +454,9 @@ fn hw_trigger(m: &Model) -> Trig {
         TrigType::Duration => Trig::Duration { pats, la, when, lower, upper, levels },
         TrigType::SetupHold => Trig::SetupHold { clk: m.trig_src2 as u32 + 1, clk_edge: edge2, setup: m.setup as f64, hold: m.hold as f64, levelc: m.trig_level2 as f64 },
         TrigType::NthEdge => Trig::Nth { count: m.nth_n, idle: m.nth_idle as f64 },
-        // protocol trigger: the TPU's UART receiver where it can (`trig.serial_hw = on`, `hw_uart`); else the TPU fires
+        // protocol trigger: the TPU's UART, SPI or I2C receiver where it can (`trig.serial_hw = on`, `hw_serial`); else the TPU fires
         // on edges of the decoder's line (see `settings`) and the software picks the matching frame out of the record
-        TrigType::Bus => hw_uart(m).map_or(Trig::Edge, Trig::Uart),
+        TrigType::Bus => hw_serial(m).unwrap_or(Trig::Edge),
         TrigType::Video => Trig::Video {
             std: if m.video_std == VideoStd::Pal { HStd::Pal } else { HStd::Ntsc },
             // the TPU has no "all fields": odd field triggers once per frame [A]
@@ -593,17 +605,9 @@ fn serial_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
 }
 
-/// The UART protocol trigger of the model in the TPU's receiver, when it is enabled and can do it: a UART decoder on a
+/// The UART protocol trigger of the model in the TPU's receiver, where it can do it: a UART decoder on a
 /// channel (not the LA, not differential), 1..8 data bits, and a condition it has (frame start, a data byte, an error).
 /// The ID condition and wider values stay with the software trigger.
-pub fn hw_uart(m: &Model) -> Option<uarttrig::Uart> {
-    if !serial_hw_on() {
-        return None;
-    }
-    uart_of(m)
-}
-
-/// `hw_uart` without the system.conf switch.
 fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
     use uarttrig::{Cond, ErrKind, Parity, Relation, Stop, Uart};
     if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Uart || m.dec_on_la() || m.dec_diff.is_some() || !(1..=8).contains(&m.dec_bits) {
@@ -647,6 +651,95 @@ pub fn uart_debug(m: &Model) -> String {
         uarttrig::event_s(&u),
         uarttrig::sw_offset_s(&u)
     )
+}
+
+/// The protocol trigger in the TPU's receivers (`trig.serial_hw = on`): UART (`uart_of`), SPI or I2C (`spi_of`,
+/// `i2c_of`); None keeps the edge trigger and the software decoder.
+pub fn hw_serial(m: &Model) -> Option<Trig> {
+    if !serial_hw_on() {
+        return None;
+    }
+    serial_of(m)
+}
+
+/// `hw_serial` without the system.conf switch.
+fn serial_of(m: &Model) -> Option<Trig> {
+    uart_of(m).map(Trig::Uart).or_else(|| spi_of(m).map(Trig::Spi)).or_else(|| i2c_of(m).map(Trig::I2c))
+}
+
+/// The SPI protocol trigger in the receiver: an SPI decoder on channels with chip select (the software's clock-pause
+/// framing has no fixed time), 1..32 bits, and Frame (every word) or Data = value. CS active low, MSB first, the clock
+/// edge of the decoder's mode, as the software decoder.
+fn spi_of(m: &Model) -> Option<serialtrig::Spi> {
+    use oos_hal::dho::uarttrig::Relation;
+    let cs = m.dec_cs?;
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Spi || m.dec_on_la() || !(1..=32).contains(&m.dec_bits) {
+        return None;
+    }
+    let full = serialtrig::word_mask(m.dec_bits);
+    let (v, mask) = match m.trig_bus {
+        BusWhat::Frame => (0, 0),
+        BusWhat::Data if m.trig_bus_val & !full == 0 => (m.trig_bus_val, full),
+        _ => return None,
+    };
+    Some(serialtrig::Spi {
+        clk: m.dec_src2 as u32 + 1,
+        data: m.dec_src as u32 + 1,
+        cs: cs as u32 + 1,
+        clk_falling: !matches!(m.dec_mode, 0 | 3),
+        cs_high: false,
+        timeout: None,
+        width: m.dec_bits,
+        rel: Relation::Eq,
+        min: v,
+        max: v,
+        mask,
+    })
+}
+
+/// The I2C protocol trigger in the receiver: Frame (start), ID/Addr = a 7-bit address (either direction) and Error
+/// (missing ACK). Data stays with the software: it matches any byte of a frame, the receiver only the first ones.
+fn i2c_of(m: &Model) -> Option<serialtrig::I2c> {
+    use oos_hal::dho::uarttrig::Relation;
+    use serialtrig::{Dir, I2cCond};
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::I2c || m.dec_on_la() {
+        return None;
+    }
+    let (cond, addr) = match m.trig_bus {
+        BusWhat::Frame => (I2cCond::Start, (0, 0, 0)),
+        BusWhat::Id if m.trig_bus_val <= 0x7f => (I2cCond::Address, (m.trig_bus_val, m.trig_bus_val, 0x7f)),
+        BusWhat::Error => (I2cCond::MissingAck, (0, 0, 0)),
+        _ => return None,
+    };
+    Some(serialtrig::I2c { scl: m.dec_src2 as u32 + 1, sda: m.dec_src as u32 + 1, cond, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr, data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) })
+}
+
+/// Every comparator line of an SPI or I2C receiver is an acquired channel (`mask`, bit 0 = CH1); other triggers pass.
+fn serial_lines_acquired(t: &Trig, mask: u32) -> bool {
+    let lines: Vec<u32> = match t {
+        Trig::Spi(x) => vec![x.clk, x.data, x.cs],
+        Trig::I2c(x) => vec![x.scl, x.sda],
+        _ => return true,
+    };
+    lines.iter().all(|&c| (1..=4).contains(&c) && mask & 1 << (c - 1) != 0)
+}
+
+/// Fork, `:SYSTem:DEBug:SERial?`: the receiver and its words for the model (UART: `uart_debug`), `off,...` where the
+/// software trigger stays in charge.
+pub fn serial_debug(m: &Model) -> String {
+    let on = if serial_hw_on() { "on" } else { "off" };
+    match serial_of(m) {
+        Some(Trig::Uart(_)) => uart_debug(m),
+        Some(Trig::Spi(s)) => {
+            let w: Vec<String> = serialtrig::spi_words(&s).iter().map(|(r, v)| format!("r{:04x}={:#010x}", r, v)).collect();
+            format!("{},proto=SPI,clk=CH{},data=CH{},cs=CH{},clk_falling={},width={},{},mux={}", on, s.clk, s.data, s.cs, s.clk_falling as u8, s.width, w.join(","), serialtrig::MUX_SPI)
+        }
+        Some(Trig::I2c(i)) => {
+            let w: Vec<String> = serialtrig::i2c_words(&i).iter().map(|(r, v)| format!("r{:04x}={:#010x}", r, v)).collect();
+            format!("{},proto=I2C,scl=CH{},sda=CH{},cond={:?},{},mux={}", on, i.scl, i.sda, i.cond, w.join(","), serialtrig::MUX_I2C)
+        }
+        _ => format!("off,enabled={}", serial_hw_on() as u8),
+    }
 }
 
 /// The mask test of the acquisition settings from the UI's wish.
@@ -761,11 +854,32 @@ pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
         log_header(hdr, &f.ch[tc], s, p.pre as usize / k, k);
     }
+    set_meta(s, p, seq, f);
+}
+
+/// Every field of a decoded frame but the channel vectors (kept as they are).
+fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
+    let k = oos_hal::dho::seq::compress_k(s, p) as usize;
     // a window of the record (`batch_plan`): the trigger point counts from its first point
     let (_, start) = oos_hal::dho::seq::window(s, p);
     let pre = p.pre.saturating_sub(start) as usize / k;
     let ch = std::mem::take(&mut f.ch);
     *f = Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false };
+}
+
+/// `decode_into` without the decode (drawpipe::draw_frame_codes): the frame's fields as the decode sets them, the
+/// channel vectors emptied, and where the read-out holds each channel. None with compression or a frame header (the
+/// decode only).
+pub fn codes_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) -> Option<crate::drawpipe::CodeLayout> {
+    if s.header || oos_hal::dho::seq::compress_k(s, p) > 1 || bytes.is_empty() {
+        return None;
+    }
+    for v in f.ch.iter_mut() {
+        v.clear();
+    }
+    set_meta(s, p, seq, f);
+    let m = oos_hal::dho::seq::code_map(s.mask, s.ch.map(|k| (k.scale, k.offset)));
+    Some(crate::drawpipe::CodeLayout { stride: m.ratio, word: m.word, affine: m.affine, volt: oos_hal::dho::seq::volt_code, volts: oos_hal::dho::seq::lane_volts_into })
 }
 
 /// Read-out buffers of the batch mode: one being read, two with the deposit workers (each holds one share and has room
@@ -1144,9 +1258,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
-            let (want, want_mode, avg_clear, mask_want, zone_want) = {
+            let (want, want_mode, avg_clear, mask_want, zone_want, needs_raw) = {
                 let g = out.lock().unwrap();
-                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone())
+                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone(), g.needs_raw)
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -1156,6 +1270,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
+            raw_for_ui(&mut want, needs_raw);
             hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), mask_map());
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
@@ -1658,7 +1773,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             Some(next) => {
                                 let full = std::mem::replace(&mut dma, next);
                                 let (bs, ps) = (b.clone(), p);
-                                pipe.feed(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)));
+                                let (cs, cp) = (b.clone(), p);
+                                let codes: crate::drawpipe::CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
+                                pipe.feed_codes(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes));
                             }
                             None => crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1),
                         }
@@ -2037,6 +2154,41 @@ mod tests {
     }
 
     #[test]
+    fn spi_and_i2c_from_the_decoder_settings() {
+        use oos_hal::dho::serialtrig::I2cCond;
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2, m.dec_cs, m.dec_bits, m.dec_mode) = (TrigType::Bus, Proto::Spi, 0, 1, Some(2), 8, 0);
+        // (condition, value) -> (value, mask) of the SPI compare; None = software
+        let cases = [(BusWhat::Frame, 0, Some((0, 0))), (BusWhat::Data, 0x5a, Some((0x5a, 0xff))), (BusWhat::Data, 0x15a, None), (BusWhat::Error, 0, None), (BusWhat::Id, 1, None)];
+        for (what, v, want) in cases {
+            (m.trig_bus, m.trig_bus_val) = (what, v);
+            assert_eq!(spi_of(&m).map(|s| (s.min, s.mask)), want, "{:?}", what);
+        }
+        (m.trig_bus, m.trig_bus_val) = (BusWhat::Data, 0x5a);
+        let s = spi_of(&m).unwrap();
+        assert_eq!((s.clk, s.data, s.cs, s.clk_falling, s.width), (2, 1, 3, false, 8));
+        m.dec_mode = 1;
+        assert!(spi_of(&m).unwrap().clk_falling);
+        m.dec_cs = None;
+        assert_eq!(spi_of(&m), None, "no chip select: software");
+        // I2C: SDA on dec_src, SCL on dec_src2
+        let mut m = Model::default();
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2) = (TrigType::Bus, Proto::I2c, 0, 1);
+        let cases = [(BusWhat::Frame, 0, Some(I2cCond::Start)), (BusWhat::Id, 0x50, Some(I2cCond::Address)), (BusWhat::Id, 0x150, None), (BusWhat::Error, 0, Some(I2cCond::MissingAck)), (BusWhat::Data, 0x12, None)];
+        for (what, v, want) in cases {
+            (m.trig_bus, m.trig_bus_val) = (what, v);
+            assert_eq!(i2c_of(&m).map(|i| i.cond), want, "{:?}", what);
+        }
+        (m.trig_bus, m.trig_bus_val) = (BusWhat::Id, 0x50);
+        let i = i2c_of(&m).unwrap();
+        assert_eq!((i.scl, i.sda, i.addr), (2, 1, (0x50, 0x50, 0x7f)));
+        assert!(serial_debug(&m).starts_with("off,proto=I2C,scl=CH2,sda=CH1,cond=Address,r2190="), "{}", serial_debug(&m));
+        // lines that are not acquired fall back to the edge trigger
+        assert!(serial_lines_acquired(&Trig::I2c(i), 0b11) && !serial_lines_acquired(&Trig::I2c(i), 0b01));
+        assert!(serial_lines_acquired(&Trig::Edge, 0));
+    }
+
+    #[test]
     fn uart_shifts_the_record_to_the_software_point() {
         let mut m = Model::default();
         (m.trig_type, m.dec_proto, m.dec_src, m.trig_bus) = (TrigType::Bus, Proto::Uart, 0, BusWhat::Frame);
@@ -2304,6 +2456,76 @@ mod tests {
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
+    }
+
+    // Break it catches: with compression the unit default, a mode that must see every sample (or the records as raw
+    // samples) getting min/max pairs. Every row must leave the frames raw; the base set-up must compress, so the table
+    // tests something. STOP: the record left on screen is a raw final frame (`ui::tests::
+    // live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame`); measurements and cursors get raw
+    // records (`compress::hold`).
+    #[test]
+    fn modes_that_need_raw_frames_never_compress() {
+        use crate::math::MathOp;
+        let base = || {
+            let mut m = Model::default();
+            m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+            m
+        };
+        let k = |m: &Model, needs_raw: bool| {
+            let mut s = settings(m, false);
+            live_compress(m, &mut s);
+            raw_for_ui(&mut s, needs_raw);
+            s.compress
+        };
+        assert!(k(&base(), false) > 1, "the base set-up compresses");
+        let zone = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0), (2e-6, 0.0)] };
+        let rows: Vec<(&str, Box<dyn Fn(&mut Model)>)> = vec![
+            ("Single", Box::new(|m| m.trig_mode = TrigMode::Single)),
+            ("zoom", Box::new(|m| m.zoom = true)),
+            ("FFT math channel", Box::new(|m| m.maths[0].op = MathOp::Fft)),
+            ("math channel", Box::new(|m| m.maths[1].op = MathOp::Add)),
+            ("math (first page)", Box::new(|m| m.math = MathOp::Sub)),
+            ("protocol decode", Box::new(|m| m.dec_on = true)),
+            ("spectrum view", Box::new(|m| m.view = AView::Spectrum)),
+            ("eye view", Box::new(|m| m.view = AView::Eye)),
+            ("power view", Box::new(|m| m.view = AView::Power)),
+            ("Bode view", Box::new(|m| m.view = AView::Bode)),
+            ("step view", Box::new(|m| m.view = AView::Step)),
+            ("mask", Box::new(|m| m.mask_on = true)),
+            ("zone", Box::new(move |m| m.zones[0] = zone.clone())),
+            ("Peak", Box::new(|m| m.acq = AcqMode::Peak)),
+            ("Average", Box::new(|m| m.acq = AcqMode::Average)),
+            ("High res", Box::new(|m| m.acq = AcqMode::HiRes)),
+            ("channel AC", Box::new(|m| m.ch[0].coupling = Coupling::Ac)),
+            ("20 MHz limit", Box::new(|m| m.ch[0].bw = BW_20M)),
+            ("trigger AC", Box::new(|m| m.trig_coup = TrigCoup::Ac)),
+            ("trigger LF reject", Box::new(|m| m.trig_coup = TrigCoup::LfReject)),
+            ("trigger HF reject", Box::new(|m| m.trig_coup = TrigCoup::HfReject)),
+            ("pulse trigger", Box::new(|m| m.trig_type = TrigType::Pulse)),
+            ("segments", Box::new(|m| m.segments = 8)),
+            ("roll", Box::new(|m| {
+                m.tscale = tscales().iter().position(|&t| t as f64 >= ROLL_TDIV).unwrap();
+                m.auto_roll = true;
+            })),
+            ("scan", Box::new(|m| {
+                m.tscale = tscales().iter().position(|&t| t as f64 >= SCAN_TDIV).unwrap();
+                m.auto_roll = false;
+            })),
+            ("Z input", Box::new(|m| m.z_src = Some(1))),
+        ];
+        for (name, f) in &rows {
+            let mut m = base();
+            f(&mut m);
+            assert_eq!(k(&m, false), 1, "{}", name);
+        }
+        // the readers only the UI knows of (protocol watch, XY): `Shared::needs_raw`
+        assert_eq!(k(&base(), true), 1, "protocol watch / XY");
+        // the LA reads its own raw window of the record (only where the platform has one)
+        let mut m = base();
+        m.la.on = true;
+        if m.la_on() {
+            assert_eq!(k(&m, false), 1, "LA");
+        }
     }
 
     // Break it catches (docs/fork/stop-exact.md): a replay at STOP of a frame already raw, of a ring armed again, without
