@@ -42,6 +42,11 @@
 //!                                          cal_afg.hex (dc: level = --offset); dry run prints the writes
 //!   oos-fpgad la status | la thr <pod1 V> <pod2 V> [--execute]
 //!                                          logic analyser (la.md): probe, line states 0x12dc, thresholds 0x12d4
+//!   oos-fpgad adc slots [--runs 4]         ADC measure unit (0x1040..0x1048): mean, min, max per slot and each slot's
+//!                                          mean against the slot average in ADC steps (docs/fork/core-offset.md)
+//!   oos-fpgad adc offset <core 0..7> <steps> [--execute]
+//!                                          one RT8847 core offset register (0x14 + 8n) over 0x1034; dry run prints
+//!                                          the word. Both refused while oos-ui runs (it owns the ADC and the measure unit)
 //!   oos-fpgad temp                         read only: SoC thermal zones, FPGA die temperature and VCCINT (XADC 0x1438)
 //!   oos-fpgad beep [once|long]             beeper (pwm-gpio, 2 kHz): 20 ms click or 4 s alarm
 //!   oos-fpgad guard [--period 1] [--power-off]
@@ -197,6 +202,27 @@ fn print(st: &[Step]) {
         }
     }
     println!("# {} hardware writes", st.iter().filter(|s| matches!(s, Step::Wr(_) | Step::Afe(_))).count());
+}
+
+/// An oos-ui process is running (/proc/<pid>/comm).
+#[cfg(target_os = "linux")]
+fn ui_running() -> bool {
+    std::fs::read_dir("/proc").map(|d| d.flatten().any(|e| std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim() == "oos-ui"))).unwrap_or(true)
+}
+
+/// The lines of `adc slots`: per slot the mean over all runs (16-bit measure scale), the lowest min and highest max
+/// (12-bit), and the mean's distance from the average of all slots in ADC steps (16 codes).
+fn slot_lines(runs: &[[oos_hal::dho::levels::Slot; 8]]) -> Vec<String> {
+    let n = runs.len().max(1) as f64;
+    let mean: [f64; 8] = std::array::from_fn(|k| runs.iter().map(|r| r[k].mean).sum::<f64>() / n);
+    let all = mean.iter().sum::<f64>() / 8.0;
+    (0..8)
+        .map(|k| {
+            let lo = runs.iter().map(|r| r[k].min).min().unwrap_or(0);
+            let hi = runs.iter().map(|r| r[k].max).max().unwrap_or(0);
+            format!("slot {}: mean {:.1}  min {}  max {}  {:+.2} steps", k, mean[k], lo, hi, (mean[k] - all) / 16.0)
+        })
+        .collect()
 }
 
 fn main() {
@@ -781,6 +807,39 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                     println!("{:#06x} = {:#010x}", o, bar.rd(o));
                 }
             }
+            "adc" => {
+                if ui_running() {
+                    return Err("oos-ui is running: stop it first (it owns the ADC and the measure unit)".into());
+                }
+                match a.first().map(String::as_str) {
+                    Some("slots") => {
+                        let runs = a.iter().position(|x| x == "--runs").and_then(|i| a.get(i + 1)).map(|x| x.parse::<u32>().map_err(|e| e.to_string())).transpose()?.unwrap_or(4).max(1);
+                        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                        let mut got = Vec::new();
+                        for _ in 0..runs {
+                            got.push(oos_hal::dho::levels::run(&mut bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64))).ok_or("measure unit did not finish")?);
+                        }
+                        for l in slot_lines(&got) {
+                            println!("{}", l);
+                        }
+                    }
+                    Some("offset") => {
+                        let usage = "adc offset <core 0..7> <steps -1024..1023> [--execute]";
+                        let core = a.get(1).ok_or(usage)?.parse::<usize>().map_err(|e| e.to_string())?;
+                        let o = a.get(2).ok_or(usage)?.parse::<i32>().map_err(|e| e.to_string())?;
+                        let w = oos_hal::dho::adc::Adc::core_offset_word(core, o)?;
+                        if !has("--execute") {
+                            println!("dry run: would write 0x1034 <- {:#010x} (core {} offset {} steps); add --execute", w, core, o);
+                            return Ok(());
+                        }
+                        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                        bar.wr(0x1034, w);
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                        println!("0x1034 <- {:#010x} (core {} offset {} steps)", w, core, o);
+                    }
+                    _ => return Err("adc slots [--runs n] | adc offset <core> <steps> [--execute]".into()),
+                }
+            }
             "wr" => {
                 let (off, v) = (num(a.first().ok_or("wr <offset> <value> --execute")?)?, num(a.get(1).ok_or("wr <offset> <value> --execute")?)?);
                 if off == 0x1008 {
@@ -910,6 +969,16 @@ mod tests {
         let mut regs = std::collections::HashMap::from([(0x4000u32, 0xe207_2115u32), (0x4034, 0x2000), (0x1008, 1 << 29), (0x1210, 62500)]);
         let l = status_lines(&mut |o| *regs.entry(o).or_insert(0));
         assert!(l[0].contains("expected") && l[1].contains("stopped") && l[2].contains("pass") && l[3].contains("locked"));
+    }
+
+    #[test]
+    fn slot_lines_show_each_slot_against_the_average() {
+        use oos_hal::dho::levels::Slot;
+        let mut r = [Slot { min: 2040, max: 2056, mean: 32768.0 }; 8];
+        r[5].mean = 32768.0 + 7.0 * 16.0;
+        let l = slot_lines(&[r, r]);
+        assert!(l[5].ends_with("+6.12 steps"), "{}", l[5]);
+        assert!(l[0].ends_with("-0.88 steps") && l[0].contains("min 2040  max 2056"), "{}", l[0]);
         let mut bad = std::collections::HashMap::from([(0x1210u32, 0u32)]);
         assert!(status_lines(&mut |o| *bad.entry(o).or_insert(0))[3].contains("NOT locked"));
     }
