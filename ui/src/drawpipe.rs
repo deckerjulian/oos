@@ -882,22 +882,28 @@ mod tests {
             for c in 0..NCH {
                 m.ch[c].on = mask & (1 << c) != 0;
             }
-            let frames = (8_000_000 / (n as usize * 2 * hz::ratio(mask) as usize)).clamp(10, 400);
+            let frames = (2_000_000 / (n as usize * 2 * hz::ratio(mask) as usize)).clamp(4, 100);
             let (bytes, fb, s, p) = frames_of(mask, n, frames, &sig);
-            let mut ph = Phosphor::new(w, h);
-            let mut f = Frame::default();
-            let t0 = std::time::Instant::now();
-            for chunk in bytes.chunks_exact(fb) {
-                crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut f);
-                std::hint::black_box(draw_frame(&mut ph, &m, &f, None));
-            }
-            let old = t0.elapsed() / frames as u32;
-            let t0 = std::time::Instant::now();
-            for chunk in bytes.chunks_exact(fb) {
-                let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut f).unwrap();
-                std::hint::black_box(draw_frame_codes(&mut ph, &m, &f, chunk, &lay, None).unwrap());
-            }
-            let new = t0.elapsed() / frames as u32;
+            let (mut pa, mut pb) = (Phosphor::new(w, h), Phosphor::new(w, h));
+            let (mut fa, mut fbm) = (Frame::default(), Frame::default());
+            // one round: every frame once (each round's time divided by the frames below)
+            let (old, new) = crate::perfguard::best_pair(
+                crate::perfguard::ROUNDS,
+                1,
+                || {
+                    for chunk in bytes.chunks_exact(fb) {
+                        crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut fa);
+                        std::hint::black_box(draw_frame(&mut pa, &m, &fa, None));
+                    }
+                },
+                || {
+                    for chunk in bytes.chunks_exact(fb) {
+                        let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut fbm).unwrap();
+                        std::hint::black_box(draw_frame_codes(&mut pb, &m, &fbm, chunk, &lay, None).unwrap());
+                    }
+                },
+            );
+            let (old, new) = (old / frames as u32, new / frames as u32);
             let r = new.as_secs_f64() / old.as_secs_f64();
             worst = worst.max(r);
             assert!(fb >= CODES_MIN_BYTES && hz::ratio(mask) as usize <= CODES_MAX_STRIDE);
@@ -1079,17 +1085,30 @@ mod tests {
             let mut m = model(tdiv, false, false);
             // the measurements made on every frame cost on top (reported, not guarded): the worst case, all of them on
             m.meas = if meas { crate::framestats::CHEAP.iter().map(|&k| (k, 0)).collect() } else { Vec::new() };
-            let frames = (4_000_000 / (memsel as usize * 2)).min(1000);
+            let frames = (2_000_000 / (memsel as usize * 2)).clamp(8, 500);
             let (bytes, fb, s, p) = batch(frames, memsel, false);
-            // the frames mode: decode + fast_draw on one thread (its measurements: a few records a second)
+            // the frames mode: decode + fast_draw on one thread (its measurements: a few records a second), against
+            // one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are reported only
             let mut ph = Phosphor::new(w, h);
-            let t0 = std::time::Instant::now();
-            for chunk in bytes.chunks_exact(fb) {
-                std::hint::black_box(draw_frame(&mut ph, &m, &crate::board::dho::hw::decode(chunk, &s, &p, 0), None));
-            }
-            let old = t0.elapsed() / frames as u32;
-            let mut per = Vec::new();
-            for n in [1usize, 2, 4] {
+            let one = Pipe::start(1, false, fresh());
+            one.set_view(Some(&m), w, h);
+            // the buffers fed are copied before, outside the timing (the copy is not the pipeline's work)
+            let mut copies: Vec<Bytes> = (0..crate::perfguard::ROUNDS).map(|_| Bytes(bytes.clone())).collect();
+            let (old, one_t) = crate::perfguard::best_pair(
+                crate::perfguard::ROUNDS,
+                1,
+                || {
+                    for chunk in bytes.chunks_exact(fb) {
+                        std::hint::black_box(draw_frame(&mut ph, &m, &crate::board::dho::hw::decode(chunk, &s, &p, 0), None));
+                    }
+                },
+                || {
+                    one.feed(Box::new(copies.pop().expect("a copy per round")), fb, frames, 0, dec(&s, &p));
+                    settle(&one);
+                },
+            );
+            let (old, mut per) = (old / frames as u32, vec![one_t / frames as u32]);
+            for n in [2usize, 4] {
                 let pipe = Pipe::start(n, false, fresh());
                 pipe.set_view(Some(&m), w, h);
                 let t0 = std::time::Instant::now();

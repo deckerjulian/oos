@@ -114,18 +114,33 @@ fn noise(n: usize, seed: u32) -> Vec<u8> {
         .collect()
 }
 
-/// Best of `rounds` timings of `runs` calls of `f`, ms per call: the minimum is the least disturbed by the host.
-fn best_ms(rounds: usize, runs: usize, mut f: impl FnMut()) -> f64 {
-    (0..rounds)
-        .map(|_| {
-            let t = std::time::Instant::now();
-            for _ in 0..runs {
-                f();
-            }
-            t.elapsed().as_secs_f64() * 1e3 / runs as f64
-        })
-        .fold(f64::INFINITY, f64::min)
+/// ms per call of `old` and of `new`: `rounds` rounds of `runs` calls each, the two sides alternating (and which one
+/// starts), the fastest round of each. Other load on the host hits both sides alike, and the fastest round is the
+/// least disturbed (timing each side in one block gave ratios from 1.1 to 1.9 on an unchanged tree under load).
+fn best_pair_ms(rounds: usize, runs: usize, mut old: impl FnMut(), mut new: impl FnMut()) -> (f64, f64) {
+    let time = |f: &mut dyn FnMut()| {
+        let t = std::time::Instant::now();
+        for _ in 0..runs {
+            f();
+        }
+        t.elapsed().as_secs_f64() * 1e3 / runs as f64
+    };
+    let (mut a, mut b) = (f64::INFINITY, f64::INFINITY);
+    for r in 0..rounds {
+        if r % 2 == 0 {
+            a = a.min(time(&mut old));
+            b = b.min(time(&mut new));
+        } else {
+            b = b.min(time(&mut new));
+            a = a.min(time(&mut old));
+        }
+    }
+    (a, b)
 }
+
+/// Rounds and calls per round of every comparison (as many calls as the earlier 5 x 10, in more, shorter rounds).
+const ROUNDS: usize = 10;
+const RUNS: usize = 5;
 
 const CAL: [(f64, f64); 4] = [(1.0, 0.0), (0.5, 0.1), (2.0, -0.3), (1.0, 0.0)];
 
@@ -140,28 +155,36 @@ const CASES: [(u32, usize, usize); 5] = [(1, 2816, 1420), (1, 2500, 1600), (1, 2
 fn bench_batch_decode() {
     for (mask, frame, frames) in CASES {
         let data = noise(frames * frame, 1);
-        let read_old = best_ms(5, 10, || {
-            let mut v = reference::read_dma(&mut Mem(&data, 0), data.len()).unwrap();
-            reference::unpad(&mut v, frame);
-            std::hint::black_box(v);
-        });
         let mut dma = DmaBuf::new();
-        let read_new = best_ms(5, 10, || {
-            let b = dma.read(&mut Mem(&data, 0), data.len(), |_, _| {}).unwrap();
-            let n = unpad_in(b, frame);
-            dma.truncate(n);
-            std::hint::black_box(dma.data());
-        });
-        let dec_old = best_ms(5, 10, || {
-            for f in data.chunks_exact(frame) {
-                std::hint::black_box(reference::two_pass(f, mask, CAL));
-            }
-        });
-        let dec_new = best_ms(5, 10, || {
-            for f in data.chunks_exact(frame) {
-                std::hint::black_box(decode_volts(f, mask, CAL));
-            }
-        });
+        let (read_old, read_new) = best_pair_ms(
+            ROUNDS,
+            RUNS,
+            || {
+                let mut v = reference::read_dma(&mut Mem(&data, 0), data.len()).unwrap();
+                reference::unpad(&mut v, frame);
+                std::hint::black_box(v);
+            },
+            || {
+                let b = dma.read(&mut Mem(&data, 0), data.len(), |_, _| {}).unwrap();
+                let n = unpad_in(b, frame);
+                dma.truncate(n);
+                std::hint::black_box(dma.data());
+            },
+        );
+        let (dec_old, dec_new) = best_pair_ms(
+            ROUNDS,
+            RUNS,
+            || {
+                for f in data.chunks_exact(frame) {
+                    std::hint::black_box(reference::two_pass(f, mask, CAL));
+                }
+            },
+            || {
+                for f in data.chunks_exact(frame) {
+                    std::hint::black_box(decode_volts(f, mask, CAL));
+                }
+            },
+        );
         let ratio = dec_old / dec_new;
         eprintln!("mask {:#x}, {} frames of {} bytes: read {:.2} -> {:.2} ms, decode {:.2} -> {:.2} ms ({:.2}x)", mask, frames, frame, read_old, read_new, dec_old, dec_new, ratio);
         assert!(ratio >= 2.0, "mask {:#x}: fused decode only {:.2}x the two-pass one", mask, ratio);
@@ -177,23 +200,37 @@ fn bench_batch_decode() {
 fn bench_decode_f32_vs_f64() {
     for (mask, frame, frames) in CASES {
         let data = noise(frames * frame, 2);
-        let f64_ms = best_ms(5, 10, || {
-            for f in data.chunks_exact(frame) {
-                std::hint::black_box(reference::fused_f64(f, mask, CAL));
-            }
-        });
-        let f32_ms = best_ms(5, 10, || {
-            for f in data.chunks_exact(frame) {
-                std::hint::black_box(decode_volts(f, mask, CAL));
-            }
-        });
+        let (f64_ms, f32_ms) = best_pair_ms(
+            ROUNDS,
+            RUNS,
+            || {
+                for f in data.chunks_exact(frame) {
+                    std::hint::black_box(reference::fused_f64(f, mask, CAL));
+                }
+            },
+            || {
+                for f in data.chunks_exact(frame) {
+                    std::hint::black_box(decode_volts(f, mask, CAL));
+                }
+            },
+        );
         let mut out: [Vec<f32>; 4] = Default::default();
-        let into_ms = best_ms(5, 10, || {
-            for f in data.chunks_exact(frame) {
-                oos_hal::dho::seq::decode_volts_into(f, mask, CAL, &mut out);
-                std::hint::black_box(&out);
-            }
-        });
+        // reported only: the same comparison partner keeps its timing honest under load
+        let (_, into_ms) = best_pair_ms(
+            ROUNDS,
+            RUNS,
+            || {
+                for f in data.chunks_exact(frame) {
+                    std::hint::black_box(decode_volts(f, mask, CAL));
+                }
+            },
+            || {
+                for f in data.chunks_exact(frame) {
+                    oos_hal::dho::seq::decode_volts_into(f, mask, CAL, &mut out);
+                    std::hint::black_box(&out);
+                }
+            },
+        );
         eprintln!("mask {:#x}, {} frames of {} bytes: decode f64 {:.2} ms, f32 {:.2} ms ({:.2}x), f32 into kept vectors {:.2} ms", mask, frames, frame, f64_ms, f32_ms, f64_ms / f32_ms, into_ms);
         assert!(f32_ms <= 0.8 * f64_ms, "mask {:#x}: f32 decode {:.2} ms vs f64 {:.2} ms", mask, f32_ms, f64_ms);
     }

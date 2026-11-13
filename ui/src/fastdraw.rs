@@ -646,16 +646,8 @@ mod tests {
         for n in [100_000usize, 12_512] {
             for (name, v) in names.iter().zip(signals(n)) {
                 let m = Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
-                let mut map = vec![0u16; w * h];
-                let reps = 300;
-                let time = |f: fn(&mut [u16], usize, usize, &[f32], &Map, u16), map: &mut Vec<u16>| {
-                    let t = std::time::Instant::now();
-                    for _ in 0..reps {
-                        f(map, w, h, &v, &m, 1);
-                    }
-                    t.elapsed() / reps
-                };
-                let (old, new) = (time(deposit_reference, &mut map), time(deposit, &mut map));
+                let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
+                let (old, new) = crate::perfguard::best_pair(crate::perfguard::ROUNDS, 33, || deposit_reference(&mut ma, w, h, &v, &m, 1), || deposit(&mut mb, w, h, &v, &m, 1));
                 let r = new.as_secs_f64() / old.as_secs_f64();
                 worst = worst.max(r);
                 println!("deposit {} pt {}: one write per pixel {:?}, span pass {:?} (ratio {:.2})", n, name, old, new, r);
@@ -696,16 +688,8 @@ mod tests {
         let mut worst: f64 = 0.0;
         for (name, v) in names.iter().zip(signals(n)) {
             let m = Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
-            let mut map = vec![0u16; w * h];
-            let reps = 200;
-            let time = |f: fn(&mut [u16], usize, usize, &[f32], &Map, u16), map: &mut Vec<u16>| {
-                let t = std::time::Instant::now();
-                for _ in 0..reps {
-                    f(map, w, h, &v, &m, 1);
-                }
-                t.elapsed() / reps
-            };
-            let (old, new) = (time(deposit_dots_reference, &mut map), time(deposit_dots, &mut map));
+            let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
+            let (old, new) = crate::perfguard::best_pair(crate::perfguard::ROUNDS, 22, || deposit_dots_reference(&mut ma, w, h, &v, &m, 1), || deposit_dots(&mut mb, w, h, &v, &m, 1));
             let r = new.as_secs_f64() / old.as_secs_f64();
             worst = worst.max(r);
             println!("dots {} pt {}: one add per sample {:?}, runs {:?} (ratio {:.2})", n, name, old, new, r);
