@@ -139,11 +139,15 @@ System > Network > Remote services has a switch for each service, next to where 
 | Web remote | 8080 | live picture, keys and touch, downloads, LXI identification, MCP, **the update page** |
 | SCPI | 5555 (TCP) | the SCPI commands |
 | VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
-| telnet | 23 | a shell **without password** (development image) |
+| SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
-All are on by default. A service switched off closes its port at once, with the connections on it. Switching off the
-web remote also takes away the update page: an update then comes from a USB stick. telnet is started by `rcS` at
-power-on, which reads `remote.telnet` from `/oos/system.conf`; oos-ui ends or starts it when the switch changes.
+Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on. A service
+switched off closes its port at once, with the connections on it. Switching off the web remote also takes away the
+update page: an update then comes from a USB stick. SSH is started by `rcS` at power-on (`/bin/oos-ssh`), which reads
+`remote.ssh` from `/oos/system.conf`; oos-ui starts or stops it when the switch changes.
+
+This fork ships no telnet: rcS does not start `telnetd`, the switch is gone, and a `remote.telnet` line in
+`/oos/system.conf` is kept but starts nothing. The serial console (UART2) keeps its shell without a login.
 
 ## 5. `/oos/system.conf`
 
@@ -160,25 +164,26 @@ eth.retry_10m = on
 remote.web = on
 remote.scpi = on
 remote.vxi11 = on
-remote.telnet = on
+remote.ssh = off
+ssh.password = on
 graphics = gpu                # Display > Graphics: gpu or cpu (gpu/README.md)
 ```
 
-## 6. Firewall, remote access, telnet and the MAC address
+## 6. Firewall, remote access and the MAC address
 
 Three keys of the system settings that rcS reads before the network comes up (`oos-conf`). Each one is looked up in
 `/etc/oos/system.conf` first (the defaults of an image built for one unit: `OOS_UNIT`, docs/models.md 4.2), then in
 `/oos/system.conf`; the last line wins, also one with an empty value. oos-ui keeps these lines when it writes the file.
 Without `/etc/oos/system.conf` and without the keys everything is as before. The same image default applies to the keys
-of section 5 (oos-ui and rcS read it first), so a unit image can ship `remote.telnet = off`: no telnetd at power-on, and
-oos-ui does not start it either until System > Network > Remote services switches it on.
+of section 5 (oos-ui and rcS read it first), so a unit image can ship `remote.ssh = on`: SSH at power-on without a
+setting on the scope.
 
 | Key | Default | What |
 |---|---|---|
 | `net.allow` | (none) | address prefixes, `192.0.2.0/24 fd00::/8`. Firewall: inbound only from them; oos-ui: `POST /update`, `/mcp`, SCPI and VXI-11 only from them |
 | `eth.mac` | `cid` | `cid`: from the card's CID as before; `vendor`: the LAN MAC in vendor.bin, as the stock system uses it; or an address `02:00:00:00:00:01` |
 
-**Firewall** (`oos-firewall`, nftables, table `inet oos_fw`, before telnetd and oos-ui start). Inbound passes: loopback,
+**Firewall** (`oos-firewall`, nftables, table `inet oos_fw`, before SSH and oos-ui start). Inbound passes: loopback,
 answers to what the scope sent (DHCP, DNS, NTP; connection tracking), IPv6 neighbour discovery, DHCP replies, and
 anything from a listed prefix. The rest is dropped, on Ethernet and WLAN alike. Outbound is not limited. An entry that
 does not parse is left out and logged (`/tmp/oos-net.log`, kernel log); a list of which nothing parses closes everything
@@ -190,12 +195,75 @@ The link-local fallback address (169.254.x.y) is only reachable from a listed pr
 answer 403 to others, SCPI and VXI-11 close the connection. The page, the live picture, `/cmd` and the downloads stay
 open to the firewall's prefixes. Loopback is always allowed.
 
-**Telnet on again** with `remote.telnet = off` in the image: System > Network > Remote services > telnet, or
-`remote.telnet = on` in `/oos/system.conf`. Or build the image without that line.
-
 **MAC**: an address that is not unicast or not six colon-separated bytes falls back to `cid` (logged). `vendor` asks the board
 (`oos-board mac`; on the DHO800/DHO900 `oos-fpgad model`, which needs the keys of vendor.bin, docs/models.md 1); without
 them it falls back to `cid` as well.
 
 Not verified on hardware: all of this section. Verified on the host: the ruleset loads into a Linux kernel with the
 static `nft` (arm64 container), `oos-conf` and `oos-mac` under busybox, the address lists of oos-ui (`netacl` tests).
+
+## 7. SSH
+
+Dropbear 2026.94 (`rootfs/build-dropbear.sh`: static, arm64, built in Docker, the tarball checked against a pinned
+SHA-256 that matches Alpine's SHA-512; no sftp-server, no X11 or agent forwarding). `/bin/oos-ssh` starts it from rcS
+after the firewall, in the background, and oos-ui restarts or stops it when a setting changes. Log: `/tmp/oos-ssh.log`.
+
+**When it listens.** Only with `remote.ssh = on`, a non-empty `net.allow` (section 6) and the firewall table loaded.
+Without `net.allow`, or when `nft` refused the ruleset, port 22 stays closed (state `off: needs net.allow`,
+`off: firewall not loaded`), so SSH never opens to a network that was not named. Built-in default: off. The DHO804 unit
+image sets `remote.ssh = on` together with its `net.allow`, so that unit has SSH from its first start: on a LAN that is
+already limited to one prefix, a random password is an acceptable first login, and it is what lets `ssh-copy-id` add the
+first key.
+
+**First start.** The scope makes, once, in `/oos/ssh` on the data partition (kept over updates and power-offs; without
+the partition in `/tmp/oos-ssh`, made again at every start):
+
+| file | what |
+|---|---|
+| `password` | the root password: 16 characters from 31 that cannot be mixed up (no i, l, o, 0, 1), about 79 bits, from `/dev/random`, in four groups: `k7m2-p9xq-4tnv-hc8w` |
+| `dropbear_ed25519_host_key`, `dropbear_ecdsa_host_key` (and `.pub`) | the host keys |
+| `authorized_keys` | the trusted keys, empty at first |
+
+The folder is `0700`, the files `0600`. At every start oos-ssh writes `/etc/passwd`, `/etc/shadow` (SHA-512 crypt of the
+password) and `/etc/shells` into the RAM root, and links `/root/.ssh` to the SSH folder. Root is the only user: the
+image has no other accounts, and every OOS program runs as root.
+
+**System > Network > Remote services.** The SSH switch stands with the other services; **SSH settings** next to it
+opens:
+
+| row | what |
+|---|---|
+| State | what oos-ssh did: `on: password and keys`, `on: keys only`, `on: password kept, no key`, `off: ...` |
+| Password login | On: password or key. Off: keys only. **Refused while no trusted key is there** ("Import a trusted key first: password login off without one locks root out"). oos-ssh checks the same at every start: with `ssh.password = off` and no key line in the file it keeps password login on |
+| Show password | a dialog with `ssh root@<address>`, the password and the host key fingerprint; closed by a tap. The password is never on the page itself. The web remote mirrors the screen, so a viewer of the web remote sees the dialog while it is open |
+| Host key | the start of the ed25519 host key's SHA-256 fingerprint, the same that `ssh` shows at the first connection |
+| Trusted keys | how many |
+| List keys | comment and fingerprint of each key |
+| Import keys from USB | every `*.pub` file and `authorized_keys` in the stick's top folder and in `OOS/`: plain keys (ed25519, ECDSA, RSA from 2048 bits, FIDO `sk-` keys), each once, at most 100. Lines with options (`from=`, `command=`) and private keys are not taken; the toast says how many were added, already trusted, or refused and why |
+| Remove a key | a picker of the keys. **The last key cannot go while password login is off** |
+
+Changes to the keys apply to the next login; Dropbear reads the file at every one. Password login on or off restarts the
+listener: sessions stay. SSH off ends the listener and every session.
+
+**From a computer**, with the password from Show password:
+
+```sh
+ssh root@192.0.2.10
+ssh-copy-id root@192.0.2.10            # adds ~/.ssh/id_*.pub to /oos/ssh/authorized_keys (through /root/.ssh)
+ssh root@192.0.2.10 sync               # ext2 without a journal: flush before the scope is switched off
+scp -O file root@192.0.2.10:/tmp/      # -O: the scp protocol; there is no sftp-server
+```
+
+Then Password login > Off, if keys only is wanted.
+
+**Not over the web remote.** Key management stays on the scope's screen and the stick. The web remote has no login: a
+key page on port 8080 would let anyone in `net.allow` add a key and get a root shell without the password.
+
+**A new password**: `rm /oos/ssh/password` and power-cycle. New host keys: remove `/oos/ssh/dropbear_*` the same way;
+clients then warn about a changed host key.
+
+Not verified on hardware: all of this section. Verified on the host (`tools/ssh-sim.sh`, arm64 container with the
+image's busybox, `nft` and Dropbear, an OpenSSH client): the guards (off, no `net.allow`, no firewall), the files and
+their modes, password and key login, a wrong or empty password refused, `ssh-copy-id`, `scp -O`, keys only, the
+lockout guard of the script, password and host key unchanged after a restart, restart keeping sessions and stop ending
+them. The rules and the page in `ui` tests (`ssh::tests`, `ui::ssh::tests`).

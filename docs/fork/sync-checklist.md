@@ -8,18 +8,23 @@ sync". Nothing here touches the unit.
    `. "$here/unit-hook.sh"` (before `build_id=`) and the one line `. /wlan/unit-hook/image.sh` in the container script
    (before `ln -sf busybox`). Everything else of the unit build lives in `boot/unit-hook.sh` and
    `boot/unit-hook-image.sh`. If upstream renamed the `rootfs/out:/wlan` mount, move the staging path in the hook.
-3. Conflicts in `hal/src/dho/seq.rs` Poll handling: upstream's Poll body lives in the fork's `plain_step`. Port any
+3. SSH instead of telnet (docs/network.md 7): keep the fork's side. rcS step 3 starts `oos-ssh`, never `telnetd`;
+   `ui/src/remote.rs` stays deleted (`crate::ssh` replaces it); in `ui/src/ui/remote.rs`, `ui/src/sysconf.rs` and the
+   `remote_now` block of `ui/src/main.rs` the telnet item, key and call become the SSH ones. A new upstream use of
+   `remote_telnet` or `remote::telnet` means upstream changed telnet: port the change to SSH or drop it. The SSH page
+   itself (`ui/src/ui/ssh.rs`, `ui/src/ssh.rs`, `oos-ssh`) is fork-only. Check: `grep -rn telnetd rootfs ui/src` finds nothing.
+4. Conflicts in `hal/src/dho/seq.rs` Poll handling: upstream's Poll body lives in the fork's `plain_step`. Port any
    upstream change there; `execute_until` stays a thin wrapper.
-4. Host tests, all must pass: `cargo test` in `hal`, `dsp`, `ui`, `fpgad`.
-5. `cargo check --all-targets` of `hal`, `ui`, `fpgad` on linux/arm64 (container), so the `target_os = "linux"` paths
+5. Host tests, all must pass: `cargo test` in `hal`, `dsp`, `ui`, `fpgad`; `tools/ssh-sim.sh`.
+6. `cargo check --all-targets` of `hal`, `ui`, `fpgad` on linux/arm64 (container), so the `target_os = "linux"` paths
    compile:
    `docker run --rm -v "$PWD:/src" -v oos-target:/tgt -e CARGO_TARGET_DIR=/tgt -w /src/<crate> rust:1-alpine cargo check --all-targets`
-6. `tools/perf-guard.sh`: allocation counts and the early trigger end (deterministic), then the timing ratios of the
+7. `tools/perf-guard.sh`: allocation counts and the early trigger end (deterministic), then the timing ratios of the
    fork's fast paths against reference copies of the paths they replaced. A failing ratio means the merge brought an
    upstream path back into the fork's loop, or slowed the fork's one: find which before fast-forwarding.
-7. `tools/plan-matrix.sh` with the old and the new `oos-fpgad`, `diff`: the register sequences must not change unless
+8. `tools/plan-matrix.sh` with the old and the new `oos-fpgad`, `diff`: the register sequences must not change unless
    the merge meant to.
-8. Record the sync in `docs/fork/unit-dho804.md` and private RE notes `docs/oos-fork.md`; fast-forward `dho804`.
+9. Record the sync in `docs/fork/unit-dho804.md` and private RE notes `docs/oos-fork.md`; fast-forward `dho804`.
 
 ## What the guards protect
 
