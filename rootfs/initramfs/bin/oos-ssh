@@ -1,0 +1,115 @@
+#!/bin/sh
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-ssh: the SSH server of the image (Dropbear, docs/network.md 7). Root logs in with a key from the trusted keys or
+# with the password the scope made for itself at the first start. Both live in the SSH folder: /oos/ssh on the data
+# partition (kept over updates and power-offs), /tmp/oos-ssh without one (lost at power-off).
+#
+#   oos-ssh start     rcS, in the background: make what is missing (password, host keys), then listen on port 22
+#   oos-ssh restart   oos-ui after a change of `remote.ssh` or `ssh.password`: a new listener, sessions stay
+#   oos-ssh stop      oos-ui when SSH is switched off: the listener and every session end
+#
+# Keys (oos-conf): `remote.ssh` (off by default), `ssh.password` (on by default). It only listens when `net.allow` names
+# who may connect and the firewall (oos-firewall) is loaded: port 22 never opens to anyone else. Password login is
+# only switched off while at least one trusted key is there, so a key file emptied by hand cannot lock root out.
+# One line of state for System > Network > Remote services > SSH settings in /tmp/oos-ssh.state.
+bin=$(dirname "$0")
+conf() { "$bin/oos-conf" "$@"; }
+if [ -n "${OOS_SSH_DIR:-}" ]; then dir=$OOS_SSH_DIR
+elif [ -d /oos/setups ]; then dir=/oos/ssh
+else dir=/tmp/oos-ssh; fi
+state_file=${OOS_SSH_STATE:-/tmp/oos-ssh.state}
+pidfile=/run/dropbear.pid
+log() { echo "oos-ssh: $*" >&2; }
+state() { echo "$*" > "$state_file"; log "$*"; }
+
+# the listener of the pid file, if it is still the one
+listener() {
+	[ -f $pidfile ] || return 1
+	p=$(cat $pidfile)
+	[ "$(cat /proc/"$p"/comm 2>/dev/null)" = dropbear ] && echo "$p"
+}
+
+stop_listener() {
+	p=$(listener) && kill "$p"
+	rm -f $pidfile 2>/dev/null
+}
+
+# 16 characters from 31 that cannot be mixed up on the screen (no i l o 0 1): 79 bits, read as four groups of four.
+# /dev/random waits until the kernel's generator is seeded, at a start that is a moment at most.
+new_password() {
+	p=$(tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' < /dev/random | head -c 16)
+	[ ${#p} = 16 ] || return 1
+	echo "$p" | sed 's/..../&-/g; s/-$//'
+}
+
+# what the first start makes, kept in $dir; each file appears whole (written beside it, then renamed)
+prepare() {
+	umask 077
+	mkdir -p "$dir" && chmod 700 "$dir" || return 1
+	if [ ! -s "$dir/password" ]; then
+		new_password > "$dir/password.new" && [ -s "$dir/password.new" ] || { rm -f "$dir/password.new"; log "no password made"; return 1; }
+		mv "$dir/password.new" "$dir/password"
+		log "a new password for root (System > Network > Remote services > SSH settings > Show password)"
+	fi
+	for t in ed25519 ecdsa; do
+		k="$dir/dropbear_${t}_host_key"
+		if [ ! -s "$k" ]; then
+			rm -f "$k.new" "$k.pub"
+			"$bin/dropbearkey" -t $t -f "$k.new" > /dev/null 2>&1 && mv "$k.new" "$k" || { rm -f "$k.new"; log "no $t host key made"; return 1; }
+		fi
+		[ -s "$k.pub" ] || "$bin/dropbearkey" -y -f "$k" 2>/dev/null | grep -E '^(ssh-|ecdsa-)' > "$k.pub"
+	done
+	[ -f "$dir/authorized_keys" ] || : > "$dir/authorized_keys"
+	chmod 600 "$dir/authorized_keys"
+	sync
+	# root only, in RAM: the image has no user database of its own. The serial console's shell asks for nothing.
+	hash=$(mkpasswd -m sha512 -P 0 < "$dir/password") && [ -n "$hash" ] || { log "no password hash"; return 1; }
+	umask 022
+	echo "root:x:0:0:root:/root:/bin/sh" > /etc/passwd
+	echo "root:x:0:" > /etc/group
+	echo "/bin/sh" > /etc/shells
+	(umask 077; echo "root:$hash::0:99999:7:::" > /etc/shadow)
+	# `ssh-copy-id` writes ~/.ssh/authorized_keys: the same file Dropbear reads (-D)
+	mkdir -p /root
+	[ -L /root/.ssh ] || [ ! -e /root/.ssh ] && ln -sfn "$dir" /root/.ssh
+	return 0
+}
+
+start() {
+	listener > /dev/null && { log "already listening"; return 0; }
+	case "$(conf remote.ssh off)" in
+	on|true|1) ;;
+	*) state "off"; return 0;;
+	esac
+	[ -n "$(conf net.allow)" ] || { state "off: needs net.allow"; return 0; }
+	"$bin/nft" list table inet oos_fw > /dev/null 2>&1 || { state "off: firewall not loaded"; return 1; }
+	prepare || { state "off: failed, see /tmp/oos-ssh.log"; return 1; }
+	set -- -F -E -p 22 -P $pidfile -D "$dir" -r "$dir/dropbear_ed25519_host_key" -r "$dir/dropbear_ecdsa_host_key"
+	# lines that carry a key of a type Dropbear takes (a comment or a stray line is no way in)
+	keys=$(grep -cE '^([^#].*[[:space:]])?(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]]+AAAA' "$dir/authorized_keys")
+	how="password and keys"
+	case "$(conf ssh.password on)" in
+	off|false|0)
+		if [ "$keys" -gt 0 ]; then set -- "$@" -s; how="keys only"
+		else how="password kept, no key"; fi;;
+	esac
+	setsid "$bin/dropbear" "$@" < /dev/null >> /tmp/oos-ssh.log 2>&1 &
+	n=0
+	until listener > /dev/null; do
+		n=$((n + 1))
+		[ $n -le 20 ] || { log "dropbear did not start"; state "off: failed, see /tmp/oos-ssh.log"; return 1; }
+		sleep 0.2
+	done
+	state "on: $how"
+}
+
+case "${1:-}" in
+start) start;;
+restart) stop_listener; start;;
+stop)
+	stop_listener
+	for p in $(pidof dropbear); do kill "$p"; done
+	state "off";;
+*) echo "usage: oos-ssh start|restart|stop" >&2; exit 2;;
+esac

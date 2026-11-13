@@ -3,7 +3,8 @@
 
 //! System > Network > Remote services: which of the network services run, each switch next to the line that says
 //! where to reach it. The choice is a setting of the scope (`/oos/system.conf`, `remote.*`); `main.rs` opens and closes
-//! the ports from it, `crate::remote` the telnet shell. All are on by default.
+//! the ports from it, `crate::ssh` the SSH server, whose page is ui/ssh.rs. Web, SCPI and VXI-11 are on by default,
+//! SSH is off unless the image or the user switches it on. This fork has no telnet.
 //!
 //! The last row: the mDNS responder (`crate::mdns`, on by default: it answers on the local link only) next to the
 //! scope's name on the network, `dho924s-204527.local` (`net.name`). The name is also the kernel's host name, which
@@ -30,20 +31,20 @@ impl Ui {
             Item::RemWeb,
             Item::RemScpi,
             Item::RemVxi,
-            Item::RemTelnet,
+            Item::RemSsh,
             Item::RemMdns,
             Item::NetWeb,
             Item::RemScpiInfo,
             Item::RemVxiInfo,
-            Item::RemTelnetInfo,
+            Item::Open(MenuId::Ssh),
             Item::RemName,
         ]
     }
 
     pub(super) fn remote_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemTelnet | Item::RemMdns | Item::RemName => Some(Kind::Choice),
-            _ => None,
+            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemSsh | Item::RemMdns | Item::RemName => Some(Kind::Choice),
+            _ => Self::ssh_kind(it),
         }
     }
 
@@ -86,7 +87,9 @@ impl Ui {
         add(s.remote_web, "_http._tcp", web_port, &["path=/"]);
         add(s.remote_scpi, "_scpi-raw._tcp", scpi_port, &[]);
         add(s.remote_vxi11, "_vxi-11._tcp", 111, &[]);
-        mdns::Config { on: s.remote_mdns, instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name), name, services }
+        // the fork's SSH (docs/network.md 7): announced only while oos-ssh would listen (it needs `net.allow` as well)
+        add(s.remote_ssh && crate::ssh::listens(), "_ssh._tcp", 22, &[]);
+        mdns::Config { on: s.remote_mdns, instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name), name, services, v6: crate::net6::enabled() }
     }
 
     /// The name's row: `<name>.local` while mDNS is on (the one in use: `-2` after a conflict), else the name.
@@ -157,7 +160,7 @@ impl Ui {
 
     /// Rows that are only text.
     pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo)
+        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo) || Self::ssh_text(it)
     }
 
     pub(super) fn remote_label(it: Item) -> Option<&'static str> {
@@ -166,12 +169,12 @@ impl Ui {
             Item::RemWeb => "Web remote",
             Item::RemScpi => "SCPI",
             Item::RemVxi => "VXI-11",
-            Item::RemTelnet => "telnet",
+            Item::RemSsh => "SSH",
             Item::RemMdns => "mDNS",
             Item::RemName => "Name",
             Item::NetWeb => "Address",
-            Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo => "Port",
-            _ => return None,
+            Item::RemScpiInfo | Item::RemVxiInfo => "Port",
+            _ => return Self::ssh_label(it),
         })
     }
 
@@ -183,7 +186,7 @@ impl Ui {
             Item::RemWeb => onoff(s.remote_web),
             Item::RemScpi => onoff(s.remote_scpi),
             Item::RemVxi => onoff(s.remote_vxi11),
-            Item::RemTelnet => onoff(s.remote_telnet),
+            Item::RemSsh => onoff(s.remote_ssh),
             Item::RemMdns => onoff(s.remote_mdns),
             Item::RemName => self.name_value(),
             Item::NetWeb if !s.remote_web => "off".into(),
@@ -191,29 +194,31 @@ impl Ui {
             Item::NetWeb => format!("http://{}:8080", self.net),
             Item::RemScpiInfo => port(s.remote_scpi, "5555 (TCP)".into()),
             Item::RemVxiInfo => port(s.remote_vxi11, format!("111 and {} (LXI)", crate::vxi11::CORE_PORT)),
-            Item::RemTelnetInfo => port(s.remote_telnet, "23, a shell without password".into()),
-            _ => return None,
+            _ => return self.ssh_value(it),
         })
     }
 
     pub(super) fn remote_options(&self, it: Item) -> Option<Vec<String>> {
+        if let Some(o) = self.ssh_options(it) {
+            return Some(o);
+        }
         match it {
             Item::RemName => Some(self.name_options()),
-            _ => Self::remote_kind(it).map(|_| vec!["Off".into(), "On".into()]),
+            _ => Self::remote_kind(it).filter(|k| *k == Kind::Choice).map(|_| vec!["Off".into(), "On".into()]),
         }
     }
 
-    pub(super) fn remote_adjust(&mut self, it: Item, _d: i32) -> bool {
+    pub(super) fn remote_adjust(&mut self, it: Item, d: i32) -> bool {
         let s = &mut self.sys;
         let (on, what) = match it {
             Item::RemWeb => (&mut s.remote_web, "Web remote"),
             Item::RemScpi => (&mut s.remote_scpi, "SCPI"),
             Item::RemVxi => (&mut s.remote_vxi11, "VXI-11"),
-            Item::RemTelnet => (&mut s.remote_telnet, "telnet"),
+            Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
             // the name changes in its picker only
             Item::RemName => return true,
-            _ => return false,
+            _ => return self.ssh_adjust(it, d),
         };
         *on = !*on;
         let now_on = *on;
@@ -221,7 +226,7 @@ impl Ui {
         // what is lost with it
         match (it, now_on) {
             (Item::RemWeb, false) => self.toast("Web remote off: updates then come from a USB stick"),
-            (Item::RemTelnet, false) => self.toast("telnet off: no remote shell for service"),
+            (Item::RemSsh, false) => self.toast("SSH off: its sessions end"),
             _ => self.toast(&format!("{} {}", what, if now_on { "on" } else { "off" })),
         }
         true
@@ -237,8 +242,8 @@ mod tests {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of five: each switch has its address, port or name on the same row
-        for (sw, info) in [(Item::RemWeb, Item::NetWeb), (Item::RemScpi, Item::RemScpiInfo), (Item::RemVxi, Item::RemVxiInfo), (Item::RemTelnet, Item::RemTelnetInfo), (Item::RemMdns, Item::RemName)] {
+        // two columns of five: each switch has its address, port, settings or name on the same row
+        for (sw, info) in [(Item::RemWeb, Item::NetWeb), (Item::RemScpi, Item::RemScpiInfo), (Item::RemVxi, Item::RemVxiInfo), (Item::RemSsh, Item::Open(MenuId::Ssh)), (Item::RemMdns, Item::RemName)] {
             let a = d.rows.iter().find(|r| r.it == sw).unwrap().ctrl;
             let b = d.rows.iter().find(|r| r.it == info).unwrap().ctrl;
             assert!(a.y == b.y && a.x < b.x, "{:?} {:?}", sw, info);
@@ -248,7 +253,8 @@ mod tests {
     #[test]
     fn a_service_switched_off_says_so() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
-        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11 && u.sys.remote_telnet, "all on by default");
+        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11, "on by default");
+        assert!(!u.sys.remote_ssh, "SSH off by default");
         u.net = "192.168.1.9".into();
         assert_eq!(u.value(Item::NetWeb), "http://192.168.1.9:8080");
         u.select_option(Item::RemWeb, "Off");

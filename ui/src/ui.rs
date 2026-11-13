@@ -25,12 +25,16 @@ mod logger;
 mod measlabels;
 mod overclock;
 mod tools;
+mod hwmask;
+mod hwzone;
+mod sertrig;
 mod update;
 mod viewmore;
 mod wlan;
 mod windows;
 mod time;
 mod remote;
+mod ssh;
 mod backlight;
 mod graphics;
 pub mod views;
@@ -111,11 +115,21 @@ const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
 /// records kept for history playback
 const HISTORY: usize = 200;
+/// Longest wait of a STOP for the hardware's final frame (`Ui::stop_final`): a batch in progress, its read and the raw
+/// read of the newest frame.
+const STOP_FINAL_WAIT: f64 = 3.0;
 /// LA words a history entry keeps: above this only the newest record has its LA (200 x 1 M words = 400 MB at most).
 const HISTORY_LA_WORDS: usize = 1_000_000;
-/// Segment counts of the segmented recording (0 = off).
-pub const SEGMENTS: [usize; 7] = [0, 10, 50, 100, 200, 500, 1000];
+/// Segment counts of the segmented recording (0 = off); the menu offers those within the limit of the set-up
+/// (`Ui::seg_limit`).
+pub const SEGMENTS: [usize; 12] = [0, 10, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 20_000, 50_000];
+/// Most segments of the software recording (history RAM).
 pub const SEG_MAX: usize = 1000;
+/// Most hardware segments (the stock UI limit; the frame memory holds up to 491,520 of the smallest).
+pub const SEG_HW_MAX: usize = 100_000;
+/// Hardware segments: intervals after each segment (0x4068, at most 2^32 x 6.4 ns = 27 s).
+pub const SEG_IVLS: [f32; 8] = [0.0, 1e-6, 10e-6, 100e-6, 1e-3, 10e-3, 100e-3, 1.0];
+pub const SEG_IVL_MAX: f32 = 10.0;
 
 // dark theme
 const BG: Rgb = rgb(0x0a, 0x0a, 0x0b);
@@ -152,7 +166,7 @@ const GRID_FRAME: Rgb = rgb(0x64, 0x64, 0x67);
 /// Averaging counts of Acquire > Averages.
 /// Stops of the density scale, rare to frequent (`heat_palette`).
 const HEAT_STOPS: [(f32, f32, f32); 5] = [(40.0, 70.0, 255.0), (0.0, 220.0, 255.0), (40.0, 240.0, 70.0), (255.0, 235.0, 30.0), (255.0, 40.0, 30.0)];
-const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+pub const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 /// Front-panel key codes (data byte of the MCU frame, see docs/protocols/frontpanel.md).
 #[allow(dead_code)] // the full code table, not every code is matched by name
@@ -222,6 +236,9 @@ pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 /// Keys of the frequency keypad: the unit ends the entry.
 const FREQ_KEYS: [&str; 18] = ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "2", "3", "kHz", "0", ".", "Del", "MHz", "Clear", "Cancel"];
 /// Keys of the hex keypad picker.
+/// Largest protocol trigger value: 40 bits (five I2C data bytes).
+pub const BUS_VAL_MAX: u64 = 0xff_ffff_ffff;
+
 const KEYPAD: [&str; 19] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
 
 /// A channel key on the front panel held this many seconds: AC/DC (`Ui::panel_key`).
@@ -272,6 +289,8 @@ pub enum MenuId {
     Network,
     /// which network services run (ui/remote.rs)
     Remote,
+    /// the SSH server: password, host key, trusted keys (ui/ssh.rs)
+    Ssh,
     /// clock, NTP and time zone (ui/time.rs)
     Time,
     Bode,
@@ -353,6 +372,18 @@ enum Item {
     DecDiff,
     TrigBusWhat,
     TrigBusVal,
+    /// protocol trigger settings beyond condition and value (`SerialTrig`)
+    SerRel,
+    SerMax,
+    SerMask,
+    UartPol,
+    UartStop,
+    UartErr,
+    SpiCs,
+    SpiTimeout,
+    I2cDir,
+    I2cAddrBits,
+    I2cBytes,
     DecThr,
     DecFmt,
     DecProto,
@@ -421,6 +452,13 @@ enum Item {
     AcqAvg,
     AcqDepth,
     AcqSeg,
+    /// segments recorded by the FPGA (`Model::seg_hw`)
+    AcqSegHw,
+    /// Average mode: the FPGA averages (`Model::avg_hw`)
+    AcqAvgHw,
+    AcqSegIvl,
+    /// the trigger times of the hardware segments
+    AcqSegTable,
     MeasSrc,
     MeasAdd(Meas),
     MeasPair(usize),
@@ -518,6 +556,8 @@ enum Item {
     GridFrame,
     /// noise reject of the trigger comparators
     TrigNoise,
+    /// the auto set-up turns noise reject on for a noisy trigger signal (opt-in)
+    TrigAutoNoise,
     /// coupling of the edge trigger
     TrigCoup,
     LaOn,
@@ -579,6 +619,7 @@ enum Item {
     SysInfo,
     Shot,
     TouchLock,
+    AuxOut,
     Stock,
     Update,
     UpdateRollback,
@@ -595,10 +636,19 @@ enum Item {
     RemWeb,
     RemScpi,
     RemVxi,
-    RemTelnet,
+    RemSsh,
     RemScpiInfo,
     RemVxiInfo,
-    RemTelnetInfo,
+    /// System > Network > Remote services > SSH settings (ui/ssh.rs); `SshRemoveKey` is its picker
+    SshState,
+    SshPassword,
+    SshShowPass,
+    SshHostKey,
+    SshKeys,
+    SshKeyList,
+    SshImport,
+    SshRemove,
+    SshRemoveKey,
     /// the mDNS switch, and the scope's name on the network (`<name>.local`, a picker with Other on the keyboard)
     RemMdns,
     RemName,
@@ -826,6 +876,19 @@ pub struct Ui {
     meas_want: bool,
     meas_n: u64,
     meas_new: bool,
+    /// per channel: the measurement sent (`meas_env_sent`) and the one shown (`meas_env`) ran on min/max pairs
+    /// (`framestats::needs_samples` are then not available)
+    meas_env_sent: [bool; NCH],
+    meas_env: [bool; NCH],
+    /// the record a background measurement is wanted of (`meas_want`), when it must not be the newest at the time the
+    /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
+    meas_pending: Option<Record>,
+    /// what choosing the Bus trigger switched on by itself (`set_trig_type`): the channels and whether the decoder; leaving
+    /// Bus switches exactly those off again, what the user had on stays
+    bus_auto: Option<([bool; NCH], bool)>,
+    /// STOP waiting for the hardware's final frame (docs/fork/stop-exact.md): the request number and until when
+    final_req: u64,
+    stop_final: Option<f64>,
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -839,6 +902,9 @@ pub struct Ui {
     zone_path: Vec<(i32, i32)>,
     /// records dropped by the zone condition
     zone_drops: u64,
+    /// the zone unit (hwzone.rs): latest reading, and a number raised to clear its counter
+    zone_hw: Option<crate::board::ZoneRead>,
+    zone_hw_clear: u64,
     /// fast path frames by where the edge of the set direction was: at the hardware trigger point; further away with
     /// an edge of the other direction at the point (the hardware fired on the wrong edge); further away with no edge at
     /// the point (the point is off); none found. And the offsets of the last kind in samples: sum, largest
@@ -847,6 +913,12 @@ pub struct Ui {
     pub fast_off: (f64, f64),
     /// segmented recording: records since the acquisition started, and whether it ran in the last frame
     seg_n: usize,
+    /// hardware segments: recording number told to the thread, its state, the segment shown (browsing), the trigger
+    /// times read back
+    seg_run: u64,
+    seg_view: Option<crate::wave::SegView>,
+    seg_pos: Option<usize>,
+    seg_times: Vec<Option<f64>>,
     was_running: bool,
     /// analysers (analysis.rs)
     azr: analysis::State,
@@ -888,6 +960,10 @@ pub struct Ui {
     /// the hardware counter (tools.rs): latest reading, and a number raised by Clear counter
     cnt_hw: Option<crate::board::CounterRead>,
     cnt_clear: u64,
+    /// the FPGA's DVM block (tools.rs, `dvm.hw = on`): latest reading
+    dvm_hw: Option<crate::board::DvmRead>,
+    /// `:SYSTem:DEBug:DVM:LANE`: a lane forced for the DVM block (one channel only)
+    dvm_lane: Option<u32>,
     /// channel B of delay and phase
     meas_src_b: usize,
     /// the reference the Slot rows work on
@@ -903,6 +979,8 @@ pub struct Ui {
     auto: Option<autoset::AutoRun>,
     /// when the bar of views after an auto set-up came up (ui/autoset.rs)
     auto_bar: Option<f64>,
+    /// request number of the last `:DEBug:SLOTs?`
+    slot_req: u64,
     pub fps: f32,
     /// acquisitions per second (smoothed)
     pub wfm_rate: f32,
@@ -930,6 +1008,7 @@ pub struct Ui {
     pub sys_path: Option<std::path::PathBuf>,
     /// NTP worker and schedule (ui/time.rs)
     ntp: time::NtpUi,
+    ssh: ssh::SshUi,
     /// the system clock was set in this boot (NTP or by hand): file names carry the date
     pub clock_known: bool,
     pub t_step: f32,
@@ -950,6 +1029,12 @@ pub struct Ui {
     /// brightest pixel of the merged maps (colour grade), main / zoom view
     vmax_cg: u32,
     vmaxz_cg: u32,
+    /// minimum persistence: frames in the picture on screen, and the brightest pixel per frame behind `vmax`, `vmaxz`,
+    /// `vmax_cg`, `vmaxz_cg` (`picture_ref`)
+    pic_frames: u32,
+    per_frame: [u32; NCH],
+    per_framez: [u32; NCH],
+    per_frame_cg: [u32; 2],
     /// storage directory (setups, CSV, PNG), created when missing
     pub store_dir: std::path::PathBuf,
     /// the screen the layout is made for: the panel, or another size in host test runs (`--size`)
@@ -973,6 +1058,14 @@ pub struct Ui {
     mask: Option<oos_dsp::mask::Mask>,
     mask_pass: u64,
     mask_fail: u64,
+    /// the mask in the columns of the hardware table (hwmask.rs), the latest counters of the mask unit, and a number
+    /// raised to clear them
+    mask_cols: Option<(Vec<f32>, Vec<f32>)>,
+    mask_hw: Option<crate::board::MaskRead>,
+    mask_hw_clear: u64,
+    /// the acquisition thread dropped the mask/zone unit for the current settings after it stalled the acquisition:
+    /// why (hwmask.rs); the software test and filter take over
+    unit_blocked: Option<String>,
     pub shot_request: Option<String>,
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)
@@ -1041,6 +1134,12 @@ impl Ui {
             meas_bg: None,
             meas_want: false,
             meas_n: 0,
+            meas_env_sent: [false; NCH],
+            meas_env: [false; NCH],
+            meas_pending: None,
+            bus_auto: None,
+            final_req: 0,
+            stop_final: None,
             meas_new: false,
             history: std::collections::VecDeque::new(),
             hist_pos: None,
@@ -1065,9 +1164,15 @@ impl Ui {
             zone_arm: None,
             zone_path: Vec::new(),
             zone_drops: 0,
+            zone_hw: None,
+            zone_hw_clear: 0,
             fast_edges: [0; 4],
             fast_off: (0.0, 0.0),
             seg_n: 0,
+            seg_run: 0,
+            seg_view: None,
+            seg_pos: None,
+            seg_times: Vec::new(),
             was_running: false,
             azr: Default::default(),
             cal: Default::default(),
@@ -1092,6 +1197,8 @@ impl Ui {
             cnt_stat: MStat::default(),
             cnt_hw: None,
             cnt_clear: 0,
+            dvm_hw: None,
+            dvm_lane: None,
             meas_src_b: 1,
             ref_sel: 0,
             ref_src: 0,
@@ -1103,6 +1210,7 @@ impl Ui {
             records: 0,
             auto: None,
             auto_bar: None,
+            slot_req: 0,
             fps: 0.0,
             wfm_rate: 0.0,
             wfm_total: 0,
@@ -1118,6 +1226,7 @@ impl Ui {
             sys: Default::default(),
             sys_path: None,
             ntp: Default::default(),
+            ssh: Default::default(),
             clock_known: false,
             t_step: 0.0,
             t_acq: 0.0,
@@ -1132,6 +1241,10 @@ impl Ui {
             vmax: [1; NCH],
             vmax_cg: 1,
             vmaxz_cg: 1,
+            pic_frames: 0,
+            per_frame: [1; NCH],
+            per_framez: [1; NCH],
+            per_frame_cg: [1; 2],
             store_dir: std::path::PathBuf::from(crate::store::DEFAULT_DIR),
             scr: Screen::PANEL,
             view_pass: false,
@@ -1145,6 +1258,10 @@ impl Ui {
             mask: None,
             mask_pass: 0,
             mask_fail: 0,
+            mask_cols: None,
+            mask_hw: None,
+            mask_hw_clear: 0,
+            unit_blocked: None,
             shot_request: None,
             quit: false,
         };
@@ -1455,9 +1572,44 @@ impl Ui {
     /// Measurement `k` of channel `c` (NaN when off or not measurable).
     pub fn meas(&self, c: usize, k: Meas) -> f64 {
         if self.m.ch[c].on {
-            self.ana[c].get(k)
+            self.ana_get(c, k)
         } else {
             f64::NAN
+        }
+    }
+
+    /// Records read by the UI beyond what the model shows the board (`Shared::needs_raw`): the protocol watch and XY.
+    fn needs_raw(&self) -> bool {
+        self.azr.watch || self.xy
+    }
+
+    /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
+    /// stop or a history view) while the record shown is of live-compression pairs, or of a deep record's pairs with raw
+    /// deep measurements on.
+    fn stop_wants_final(&self) -> bool {
+        let m = &self.m;
+        m.trig_mode != TrigMode::Single
+            && m.segments == 0
+            && !(m.mask_on && m.mask_stop)
+            && self.hist_pos.is_none()
+            && self.seg_pos.is_none()
+            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::compress::live(&r.frame) || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame)))
+    }
+
+    /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
+    pub(crate) fn ana_get(&self, c: usize, k: Meas) -> f64 {
+        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+            f64::NAN
+        } else {
+            self.ana[c].get(k)
+        }
+    }
+
+    /// Whether channel `c` of record `rec` is measured on min/max pairs (`meas_slice`).
+    fn meas_on_pairs(&self, rec: &Record, c: usize) -> bool {
+        match self.meas_frame(rec, c) {
+            Some((f, _, _)) => f.envelope,
+            None => rec.pairs || rec.raw.as_ref().is_some_and(|r| r.frame.envelope),
         }
     }
 
@@ -1534,9 +1686,17 @@ impl Ui {
         (self.meas_n, self.meas_want) = (self.meas_n + 1, false);
         self.ana = Default::default();
         self.mstat.clear();
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
+        (self.zone_drops, self.zone_hw_clear) = (0, self.zone_hw_clear + 1);
+        self.hw_avg_restart();
         self.toast("Display cleared");
+    }
+
+    /// The hardware average starts over (`Model::hw_avg_clear`); nothing changes for the other sources.
+    fn hw_avg_restart(&mut self) {
+        if self.src.is_hw() {
+            self.m.hw_avg_clear += 1;
+        }
     }
 
     /// QUICK key and the Quick button of the top bar: the action chosen in System > Quick key.
@@ -1567,9 +1727,13 @@ impl Ui {
         self.update_poll();
         self.wlan_poll();
         self.ntp_poll();
+        self.ssh_poll();
         self.usb_poll();
         self.ch_hold_poll();
         self.counter_poll();
+        self.dvm_poll();
+        self.mask_hw_poll();
+        self.zone_hw_poll();
         self.la_probe_poll();
         self.log_tick();
         self.m.clamp_offsets();
@@ -1578,6 +1742,7 @@ impl Ui {
         let single = self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run;
         if single && !self.single_armed {
             self.m.hw_stamp += 1;
+            self.hw_avg_restart();
         }
         self.single_armed = single;
         // 2-channel models: CH3/CH4 stay off whatever switched them on (setups, autoset, demos, SCPI)
@@ -1592,15 +1757,37 @@ impl Ui {
         self.cal_poll();
         // segmented recording: a new RUN/SINGLE starts a new set of segments
         let running = self.m.run == RunState::Run;
+        let hw_seg = self.seg_hw_on();
+        // RUN after STOP: the hardware average starts over (stock clears it on every state change)
+        if running && !self.was_running {
+            self.hw_avg_restart();
+        }
         if running && !self.was_running && self.m.segments > 0 {
             self.seg_n = 0;
             self.history.clear();
             self.hist_pos = None;
+            if hw_seg {
+                self.seg_run += 1;
+                (self.seg_pos, self.seg_view) = (None, None);
+                self.seg_times.clear();
+            }
         }
+        // STOP of a deep record on pairs with raw deep measurements: the hardware reads the newest frame raw and
+        // stops arming; until it is here the records go on (docs/fork/stop-exact.md)
+        if !running && self.was_running && self.stop_wants_final() {
+            self.final_req += 1;
+            self.stop_final = Some(self.now + STOP_FINAL_WAIT);
+        }
+        let final_done = self.src.hw_hold(!running && self.last[0].is_some(), self.final_req);
+        // the protocol watch and XY read every record: no live compression for them (compress.rs)
+        self.src.hw_needs_raw(self.needs_raw());
         self.was_running = running;
+        if hw_seg {
+            self.seg_poll(running);
+        }
         let persist = PERSIST[self.m.persist].1;
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
+        if self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -1623,6 +1810,16 @@ impl Ui {
             };
             let mut got = 0;
             let (mut ta, mut td) = (0f32, 0f32);
+            // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
+            // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
+            // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
+            let deep_raw = crate::deepmeas::want(&self.m).is_some();
+            let mut raw_rec: Option<Record> = None;
+            if !self.fast_ok() {
+                if let Some(p) = crate::drawpipe::pipe() {
+                    p.set_view(None, 0, 0);
+                }
+            }
             // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
             if self.fast_ok() {
                 let t0 = std::time::Instant::now();
@@ -1636,7 +1833,20 @@ impl Ui {
                         self.m.status = TrigStatus::Triggered;
                     }
                 }
+                if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
+                    raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
+                }
                 got += frames.len();
+                // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
+                if let Some(p) = crate::drawpipe::pipe() {
+                    p.set_view(Some(&self.m), self.ph.w, self.ph.h);
+                    let d = p.merge(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
+                    if d.triggered > 0 {
+                        self.m.status = TrigStatus::Triggered;
+                    }
+                    got += d.frames as usize;
+                    self.mstat_fold(&d.folds);
+                }
                 td += t0.elapsed().as_secs_f32() * 1000.0;
             }
             for _ in 0..k {
@@ -1662,7 +1872,9 @@ impl Ui {
                                 condition(&self.m, c, &mut rec.ch[c], dt);
                             }
                         }
-                        if self.m.acq == AcqMode::Average {
+                        // the FPGA averaged the frame already: blending would average the average
+                        let hw_avg = rec.raw.as_ref().is_some_and(|r| r.frame.hw_avg);
+                        if self.m.acq == AcqMode::Average && !hw_avg {
                             if let Some(prev) = &self.last[0] {
                                 let a = 1.0 / self.m.avg_count as f32;
                                 for c in 0..NCH {
@@ -1685,16 +1897,26 @@ impl Ui {
                         let zv = (tscales()[self.m.zscale], self.m.zdelay);
                         let t1 = std::time::Instant::now();
                         let zw = self.z_weights(&rec);
-                        for c in 0..NCH {
-                            if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref());
-                                if self.m.zoom {
-                                    self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref());
+                        // the fast path draws the other frames of the picture from their samples (`draw_frame`): the
+                        // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
+                        // against one span per column) and the grading of the picture follows how many of each it holds:
+                        // the trace flickered with the batch sizes (docs/fork/flicker.md)
+                        let frame = rec.raw.as_ref().filter(|_| self.fast_ok()).map(|r| r.frame.clone());
+                        if let Some(f) = frame {
+                            let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
+                            crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
+                        } else {
+                            for c in 0..NCH {
+                                if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
+                                    self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
+                                    if self.m.zoom {
+                                        self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
+                                    }
                                 }
                             }
                         }
                         td += t1.elapsed().as_secs_f32() * 1000.0;
-                        if self.history.len() >= HISTORY.max(self.m.segments) {
+                        if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
                             self.history.pop_front();
                         }
                         // a deep LA record is tens of MB: the history keeps the LA of short records only
@@ -1702,13 +1924,17 @@ impl Ui {
                         self.history.push_back(Record { raw: None, la, ..rec.clone() });
                         self.hist_pos = None;
                         self.mask_test(&rec);
+                        if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
+                            raw_rec = Some(rec.clone());
+                        }
                         self.last[0] = Some(rec);
                         self.cleared = false;
                         got += 1;
                         self.records += 1;
                         if self.m.segments > 0 {
                             self.seg_n += 1;
-                            if self.seg_n >= self.m.segments {
+                            // hardware segments end when the thread has read them all back (`seg_poll`)
+                            if !hw_seg && self.seg_n >= self.seg_count() {
                                 self.m.run = RunState::Stop;
                                 self.toast(&format!("{} segments recorded", self.seg_n));
                                 break;
@@ -1720,7 +1946,7 @@ impl Ui {
                     }
                     None => {}
                 }
-                if self.m.run == RunState::Stop {
+                if self.m.run == RunState::Stop && self.stop_final.is_none() {
                     break;
                 }
             }
@@ -1730,6 +1956,19 @@ impl Ui {
             // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
             // record intervals (a 125 M record takes ~1 s to read)
             let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
+            // `trig.hw_status = on`: the SCU says whether the TPU fired or the auto timeout forced the batch; it
+            // overrides what the software refinement concluded (docs/fork/trigger-lockin.md)
+            if got > 0 {
+                if let Some((_, Some(tpu))) = self.src.hw_trig_fired() {
+                    self.m.status = if tpu { TrigStatus::Triggered } else { TrigStatus::Auto };
+                }
+            }
+            // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
+            if persist != 0.0 {
+                self.pic_frames = 0;
+            } else if got > 0 {
+                self.pic_frames = got as u32;
+            }
             if got > 0 {
                 let iv = (self.now - self.last_rec_t).min(2.0);
                 self.rec_iv += 0.3 * (iv - self.rec_iv);
@@ -1742,12 +1981,33 @@ impl Ui {
             let rate = got as f32 / dt_wall.max(1e-3) as f32;
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
+            crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
+            // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
+            // measurement stays that of the last raw record
+            let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
+            let hold = crate::deepmeas::hold(&self.m, shown) || crate::compress::hold(&self.m, shown);
             if got > 0 {
                 let p0 = std::time::Instant::now();
-                if self.meas_bg.is_some() {
+                if hold {
+                    // the measurement shown stays that of the last raw deep record, or of this step's
+                    if let Some(r) = raw_rec.take() {
+                        if self.meas_bg.is_some() {
+                            self.meas_want = true;
+                            self.meas_pending = Some(r);
+                        } else {
+                            self.measure_rec(&r);
+                            self.meas_new = true;
+                        }
+                    }
+                } else if self.meas_bg.is_some() {
                     // the result for the last record is still good when it comes after this one: `meas_n` only
                     // changes where a result out becomes wrong (a clear, measuring here at once)
                     self.meas_want = true;
+                    // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
+                    // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
+                    if crate::deepmeas::want(&self.m).is_some() {
+                        self.meas_pending = self.last[0].clone();
+                    }
                 } else {
                     self.measure_last();
                     self.meas_new = true;
@@ -1770,9 +2030,9 @@ impl Ui {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                        self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
+                        self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref(), rec.pairs);
                         if self.m.zoom {
-                            self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref());
+                            self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref(), rec.pairs);
                         }
                     }
                 }
@@ -1801,6 +2061,10 @@ impl Ui {
                 }
             }
         }
+        // the final frame was taken (or did not come in time): stopped
+        if self.stop_final.is_some_and(|t| final_done || self.now > t) {
+            self.stop_final = None;
+        }
         if self.m.run == RunState::Stop {
             self.m.status = TrigStatus::Stop;
             self.wfm_rate = 0.0;
@@ -1812,28 +2076,8 @@ impl Ui {
         let p5 = std::time::Instant::now();
         // brightest pixel per channel: the trace brightness is graded relative to it
         // (follow upwards at once, downwards slowly: no flicker)
-        let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
-        let (mut full, mut fullz) = (false, false);
-        for c in 0..NCH {
-            if self.m.ch[c].on {
-                let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
-                self.vmax[c] = follow(self.vmax[c], mx);
-                full |= mx > 0xc000;
-                if self.m.zoom {
-                    let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
-                    self.vmaxz[c] = follow(self.vmaxz[c], mz);
-                    fullz |= mz > 0xc000;
-                }
-            }
-        }
+        let (full, fullz) = self.grade_refs();
         self.prof_add(3, p5.elapsed());
-        if self.m.color_grade {
-            let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
-            self.vmax_cg = follow(self.vmax_cg, self.ph.merged_max(on));
-            if self.m.zoom {
-                self.vmaxz_cg = follow(self.vmaxz_cg, self.phz.merged_max(on));
-            }
-        }
         // long or infinite persistence: halve the maps before the counts saturate (keeps the density ratios)
         if full {
             self.ph.halve();
@@ -1873,7 +2117,7 @@ impl Ui {
     }
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
-    /// as a full record (averaging, mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
+    /// as a full record (averaging, a software mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
     fn fast_ok(&self) -> bool {
         let m = &self.m;
         matches!(self.src, Source::Hw { .. })
@@ -1881,11 +2125,11 @@ impl Ui {
             && m.acq == AcqMode::Normal
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
-            && !m.mask_on
+            && (!m.mask_on || self.mask_hw_active())
             && !m.zoom
             && !self.xy
             && m.z_src.is_none()
-            && !m.zones.iter().any(|z| z.usable())
+            && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())
             && board().slow_mode(m) == crate::board::Slow::Off
             && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
     }
@@ -1893,67 +2137,8 @@ impl Ui {
     /// One frame of the fast path into the main phosphor map; false if its trigger edge was not found near the
     /// hardware trigger point. Sparse frames (fewer than 2 samples per column) take the record path instead.
     fn fast_draw(&mut self, f: &crate::board::Frame) -> bool {
-        let m = &self.m;
-        let (w, h) = (self.ph.w, self.ph.h);
-        let tdiv = m.time_per_div() as f64;
-        let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-        if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
-            let fr = std::sync::Arc::new(f.clone());
-            let window = tdiv * HDIV as f64;
-            let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
-            for c in 0..NCH {
-                if self.m.ch[c].on && !rec.ch[c].is_empty() {
-                    self.ph.draw_ex(c, &self.m, (self.m.time_per_div(), self.m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None);
-                }
-            }
-            return rec.triggered;
-        }
-        let src = &f.ch[m.trig_src];
-        // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
-        let on_la = m.trig_on_la();
-        // the edge of the set direction nearest the hardware trigger point, up to half a screen away, on the signal smoothed
-        // to one screen column: at decimated rates the hardware point lands near the level on either edge (trigger.md 8)
-        let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
-        let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-        let half = (tdiv * HDIV as f64 / 2.0 / f.dt) as usize;
-        let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
-        let edge = if on_la {
-            None
-        } else {
-            let (e, any) = crate::fastdraw::edge_smooth(src, f.pre, crate::board::sw_trig_level(m, f), hyst, rising, either, half, col, |_| true);
-            let k = match (e, any) {
-                (None, _) => 3,
-                (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => 0,
-                (Some(_), Some(n)) if !either && n.rising != rising => 1,
-                (Some(t), _) => {
-                    let d = (t - f.pre as f64).abs();
-                    self.fast_off = (self.fast_off.0 + d, self.fast_off.1.max(d));
-                    2
-                }
-            };
-            self.fast_edges[k] += 1;
-            e
-        };
-        let m = &self.m;
-        let ti = edge.unwrap_or(f.pre as f64);
-        let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
-        let ppd_y = h as f32 / VDIV;
-        for c in 0..NCH {
-            let ch = &m.ch[c];
-            if !ch.on || f.ch[c].is_empty() {
-                continue;
-            }
-            let vpd = ch.volts_per_div();
-            let sign = -1.0;
-            let xm = crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
-            if m.dots {
-                crate::fastdraw::deposit_dots(&mut self.ph.map[c], w, h, &f.ch[c], &xm, 24);
-            } else {
-                crate::fastdraw::deposit(&mut self.ph.map[c], w, h, &f.ch[c], &xm, 24);
-            }
-        }
-        // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
-        edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc
+        let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
+        crate::drawpipe::draw_frame(&mut self.ph, &self.m, f, Some(stats))
     }
 
     // ------------------------------------------------------------------ rendering
@@ -2310,6 +2495,33 @@ impl Ui {
     /// Brightness of a trace pixel by its count (`draw_traces`): floor + sqrt(hits / brightest), the intensity
     /// setting raises floor and gain. The count shifted right by the second value indexes the table; a pixel that
     /// was hit at all gets at least the third.
+    /// The counts the picture is graded against (`picture_ref`), per channel and for colour grade; whether the main and
+    /// the zoom map are near saturation.
+    fn grade_refs(&mut self) -> (bool, bool) {
+        let n = self.pic_frames;
+        let (mut full, mut fullz) = (false, false);
+        for c in 0..NCH {
+            if self.m.ch[c].on {
+                let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
+                self.vmax[c] = picture_ref(self.vmax[c], &mut self.per_frame[c], mx, n);
+                full |= mx > 0xc000;
+                if self.m.zoom {
+                    let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
+                    self.vmaxz[c] = picture_ref(self.vmaxz[c], &mut self.per_framez[c], mz, n);
+                    fullz |= mz > 0xc000;
+                }
+            }
+        }
+        if self.m.color_grade {
+            let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
+            self.vmax_cg = picture_ref(self.vmax_cg, &mut self.per_frame_cg[0], self.ph.merged_max(on), n);
+            if self.m.zoom {
+                self.vmaxz_cg = picture_ref(self.vmaxz_cg, &mut self.per_frame_cg[1], self.phz.merged_max(on), n);
+            }
+        }
+        (full, fullz)
+    }
+
     fn trace_lut(&self, vmax: u32) -> ([u32; 1024], u32, u32) {
         let inten = self.m.intensity as f32 / 100.0;
         let floor = 30.0 + 140.0 * inten;
@@ -2404,7 +2616,8 @@ impl Ui {
             self.mask_pass += 1;
         } else {
             self.mask_fail += 1;
-            if self.m.mask_stop && self.m.run == RunState::Run {
+            // with the hardware test the counters decide (hwmask.rs)
+            if self.m.mask_stop && self.m.run == RunState::Run && !self.mask_hw_active() {
                 self.m.run = RunState::Stop;
                 self.toast("Mask failed: stopped");
             }
@@ -2418,6 +2631,7 @@ impl Ui {
         let tol_x = (self.m.mask_x / HDIV * r.len() as f32).round() as usize;
         let tol_y = self.m.mask_y * self.m.ch[self.m.mask_src].volts_per_div();
         self.mask = Some(oos_dsp::mask::build(r, tol_x, tol_y));
+        self.mask_cols_update();
     }
 
     /// Creates the mask from the source channel of the record shown and starts the test.
@@ -2429,8 +2643,7 @@ impl Ui {
         self.mask_ref = Some(v);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
         self.toast(&format!("Mask created from CH{}", c + 1));
     }
 
@@ -2469,18 +2682,19 @@ impl Ui {
         }
         let f = self.fonts();
         let c = self.m.mask_src;
+        let (pass, fail) = self.mask_counts();
         let parts: [(String, Rgb); 6] = [
-            ("Mask ".into(), TEXT),
+            (if self.mask_hw_active() { "Mask (HW) ".into() } else { "Mask ".into() }, TEXT),
             (format!("CH{}", c + 1), CH_COLORS[c]),
             ("  \u{b7}  Passed ".into(), DIM),
-            (fmt_count(self.mask_pass as f64), GREEN),
+            (fmt_count(pass as f64), GREEN),
             ("  \u{b7}  Failed ".into(), DIM),
-            (fmt_count(self.mask_fail as f64), if self.mask_fail > 0 { RED } else { TEXT }),
+            (fmt_count(fail as f64), if fail > 0 { RED } else { TEXT }),
         ];
         let w: i32 = parts.iter().map(|(s, _)| f.sb.width(s)).sum::<i32>() + 24;
         let a = self.area;
         let r = Rect::new(a.x + 8, a.y + 24, w, 24);
-        let col = if self.mask_fail > 0 { RED } else { GREEN };
+        let col = if fail > 0 { RED } else { GREEN };
         cv.round(r, 12, mix(BAR, col, 110), 255);
         cv.round(r.inset(1), 11, mix(BAR, col, 26), 255);
         let mut x = r.x + 12;
@@ -3186,7 +3400,15 @@ impl Ui {
         if self.m.touch_lock {
             x = backed_text(cv, &f.sb, x, y, "Touch locked \u{b7} tap Menu to unlock", AMBER) + 16;
         }
-        if let Some(i) = self.hist_pos {
+        let seg = self.seg_view.filter(|_| self.seg_hw_on()).and_then(|v| match (v.phase, self.seg_pos) {
+            (crate::board::SegPhase::Recording, _) => Some(format!("Recording {}/{}", v.recorded, v.total)),
+            (crate::board::SegPhase::Reading, _) => Some(format!("Reading {}/{}", v.read, v.recorded)),
+            (crate::board::SegPhase::Done, Some(i)) => Some(self.seg_label(i)),
+            _ => None,
+        });
+        if let Some(t) = seg {
+            x = backed_text(cv, &f.sb, x, y, &t, BLUE) + 16;
+        } else if let Some(i) = self.hist_pos {
             x = backed_text(cv, &f.sb, x, y, &format!("History {}/{}", i + 1, self.history.len()), BLUE) + 16;
         }
         if self.search_on {
@@ -3441,6 +3663,7 @@ impl Ui {
         match self.m.acq {
             AcqMode::Normal => "Normal".to_string(),
             AcqMode::Peak => "Peak".to_string(),
+            AcqMode::Average if self.src.is_hw() && board().avg_hw(&self.m) => format!("Average {} HW", self.m.avg_count),
             AcqMode::Average => format!("Average {}", self.m.avg_count),
             AcqMode::HiRes => "High res".to_string(),
         }
@@ -3488,7 +3711,7 @@ impl Ui {
         cv.circle(r.x + 16, r.y + 14, 4, col);
         cv.text_in(&f.mb, Rect::new(r.x + 30, r.y, r.w - 30, r.h), 0, txt, col);
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
+        let (sr, depth) = self.src.rate_depth(&self.m);
         let buttons = self.top_buttons();
         let room = self.view_box().map_or(buttons.first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
@@ -3881,8 +4104,18 @@ impl Ui {
                 let mut v = vec![Item::AcqMode];
                 if self.m.acq == AcqMode::Average {
                     v.push(Item::AcqAvg);
+                    if self.src.is_hw() {
+                        v.push(Item::AcqAvgHw);
+                    }
                 }
-                v.extend([Item::AcqDepth, Item::AcqSeg, Item::Open(MenuId::Horizontal)]);
+                v.extend([Item::AcqDepth, Item::AcqSeg]);
+                if self.m.segments > 0 {
+                    v.push(Item::AcqSegHw);
+                }
+                if self.seg_hw_on() {
+                    v.extend([Item::AcqSegIvl, Item::AcqSegTable]);
+                }
+                v.push(Item::Open(MenuId::Horizontal));
                 v
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
@@ -3910,6 +4143,7 @@ impl Ui {
             MenuId::SelfCal => self.cal_items(),
             MenuId::Network => vec![Item::NetEth, Item::NetRetry10, Item::NetMac, Item::Open(MenuId::Remote), Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
             MenuId::Remote => self.remote_items(),
+            MenuId::Ssh => self.ssh_items(),
             MenuId::Time => self.time_items(),
             MenuId::Bode => self.bode_items(),
             MenuId::Afg => self.afg_items(),
@@ -3921,7 +4155,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::AuxOut, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -3987,8 +4221,94 @@ impl Ui {
         g
     }
 
+    /// Hardware segments are recorded for the current set-up (else the software history records them).
+    fn seg_hw_on(&self) -> bool {
+        self.src.is_hw() && self.m.seg_hw && self.m.segments > 0 && board().seg_max(&self.m).is_some()
+    }
+
+    /// Most segments for the current set-up: the hardware limit with hardware segments, else the history limit.
+    fn seg_limit(&self) -> usize {
+        match board().seg_max(&self.m) {
+            Some(x) if self.m.seg_hw && self.src.is_hw() => x.min(SEG_HW_MAX),
+            _ => SEG_MAX,
+        }
+    }
+
+    /// Segments one recording takes.
+    fn seg_count(&self) -> usize {
+        self.m.segments.min(self.seg_limit())
+    }
+
+    /// The segment counts of the menu: the steps within the limit, and the limit itself.
+    fn seg_options(&self) -> Vec<usize> {
+        let lim = self.seg_limit();
+        let mut v: Vec<usize> = SEGMENTS.iter().copied().filter(|&n| n <= lim).collect();
+        if v.last() != Some(&lim) {
+            v.push(lim);
+        }
+        v
+    }
+
+    /// Hardware segments: tells the thread about RUN/STOP, takes the times when the read-back is done, stops when every
+    /// segment is on the screen, shows a segment asked for.
+    fn seg_poll(&mut self, running: bool) {
+        let Some(v) = self.src.seg_sync(self.seg_run, running) else { return };
+        let was = self.seg_view.map(|x| x.phase);
+        self.seg_view = Some(v);
+        if v.phase == crate::board::SegPhase::Done && was != Some(crate::board::SegPhase::Done) {
+            self.seg_times = self.src.seg_times();
+            if running && !v.queued {
+                self.m.run = RunState::Stop;
+                self.toast(&format!("{} segments recorded", v.recorded));
+            }
+        } else if running && v.phase == crate::board::SegPhase::Done && !v.queued {
+            self.m.run = RunState::Stop;
+            self.toast(&format!("{} segments recorded", v.recorded));
+        }
+        if let Some((k, rec)) = self.src.seg_shown(&self.m) {
+            self.seg_pos = Some(k as usize);
+            self.last[0] = Some(rec);
+            self.cleared = false;
+            self.measure_last();
+        }
+    }
+
+    /// "Segment k/N", the trigger time since the first trigger and the step from the previous segment.
+    fn seg_label(&self, i: usize) -> String {
+        let n = self.seg_view.map_or(0, |v| v.recorded);
+        let t = |k: usize| self.seg_times.get(k).copied().flatten();
+        let mut s = format!("Segment {}/{}", i + 1, n);
+        if let Some(x) = t(i) {
+            s += &format!(" \u{b7} {}", si(x, "s"));
+            if let Some(p) = i.checked_sub(1).and_then(t) {
+                s += &format!(" \u{b7} \u{394}t {}", si(x - p, "s"));
+            }
+        }
+        s
+    }
+
+    /// Hardware segments: the trigger times since the first trigger, comma separated, in seconds (9.9E37: no stamp).
+    pub fn seg_times_text(&self) -> String {
+        self.seg_times.iter().map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x))).collect::<Vec<_>>().join(",")
+    }
+
+    /// Hardware segments: shows segment `i` (played from the FPGA memory), stopping the acquisition.
+    pub(super) fn seg_show(&mut self, i: usize) {
+        self.m.run = RunState::Stop;
+        self.seg_pos = Some(i);
+        self.src.seg_request(i as u32);
+        self.toast(&self.seg_label(i));
+    }
+
     /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
     fn history_step(&mut self, d: i32) {
+        // hardware segments: any of them, played on demand
+        if let Some(v) = self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0) {
+            let n = v.recorded as i32;
+            let cur = self.seg_pos.unwrap_or(n as usize - 1) as i32;
+            let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
+            return self.seg_show(i as usize);
+        }
         let n = self.history.len();
         if n == 0 {
             return self.toast("History empty");
@@ -4005,7 +4325,13 @@ impl Ui {
     /// Recomputes the measurements of the record shown, at once (a result from the background for an older record
     /// is dropped). The samples are read where they are, not copied.
     fn measure_last(&mut self) {
-        let Some(rec) = self.last[0].as_ref() else { return };
+        if let Some(rec) = self.last[0].clone() {
+            self.measure_rec(&rec);
+        }
+    }
+
+    /// The measurements of `rec` now, on this thread.
+    fn measure_rec(&mut self, rec: &Record) {
         let work: Vec<(usize, &[f32], f64, f64)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
@@ -4014,12 +4340,35 @@ impl Ui {
             })
             .collect();
         let done = measure_channels(&work);
+        self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
         self.meas_n += 1;
         self.meas_want = false;
     }
 
+    /// Statistics of measurements made on every frame by the deposit workers (framestats.rs) into the Measure page's
+    /// statistics, once these exist (the first measured record starts them).
+    fn mstat_fold(&mut self, folds: &crate::framestats::Folds) {
+        if self.mstat.len() < self.m.meas.len() {
+            return;
+        }
+        for (key, f) in folds.iter().filter(|x| x.1.n > 0) {
+            if let Some(i) = self.m.meas.iter().position(|e| e == key) {
+                let st = &mut self.mstat[i];
+                if st.n == 0 {
+                    (st.min, st.max) = (f.min, f.max);
+                }
+                st.n += f.n;
+                st.sum += f.sum;
+                st.sumsq += f.sumsq;
+                st.min = st.min.min(f.min);
+                st.max = st.max.max(f.max);
+            }
+        }
+    }
+
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
+        self.meas_env = self.meas_env_sent;
         for c in 0..NCH {
             (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
         }
@@ -4049,7 +4398,13 @@ impl Ui {
             return;
         }
         self.meas_want = false;
-        let Some(rec) = self.last[0].as_ref() else { return };
+        let pending = self.meas_pending.take();
+        let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
+        // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
+        if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame)) {
+            return;
+        }
+        let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         let job: Vec<(usize, MeasSrc, f64, f64)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
@@ -4066,6 +4421,7 @@ impl Ui {
         let w = self.meas_bg.as_mut().expect("worker");
         if w.tx.send((self.meas_n, job)).is_ok() {
             w.busy = true;
+            self.meas_env_sent = env;
         } else {
             // the thread is gone: measure here again
             self.meas_bg = None;
@@ -4319,6 +4675,7 @@ impl Ui {
                 if matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
                     v.push(TrigBusVal);
                 }
+                v.extend(self.serial_items());
             }
             TT::Pulse => {
                 v.extend([TrigSrc, TrigPol]);
@@ -4376,6 +4733,7 @@ impl Ui {
         if m.trig_type != TT::Bus && m.trig_line().is_none() {
             v.push(TrigNoise);
         }
+        v.push(TrigAutoNoise);
         v.push(TrigMode);
         v.push(SearchOn);
         if self.search_on {
@@ -4419,14 +4777,32 @@ impl Ui {
 
     /// Switches the trigger type and sets starting values that trigger on the demo signals.
     fn set_trig_type(&mut self, t: TrigType) {
+        let was_bus = self.m.trig_type == TrigType::Bus;
+        // leaving Bus: off again what entering it switched on (the decoder kept the live picture raw, its demo sources
+        // stayed on); a type set elsewhere since leaves nothing to undo
+        let undo = if t != TrigType::Bus { self.bus_auto.take().filter(|_| was_bus) } else { None };
+        if let Some((chans, dec)) = undo {
+            for c in (0..NCH).filter(|&c| chans[c]) {
+                self.m.ch[c].on = false;
+            }
+            if dec {
+                self.m.dec_on = false;
+            }
+        }
         if t == TrigType::Bus {
             // the decoder defines the protocol: switch it on with its demo sources and a value its traffic contains
+            let before: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
+            let dec_before = self.m.dec_on;
             self.m.dec_on = true;
             let p = self.m.dec_proto;
             self.set_dec_proto(p);
+            // Bus chosen again keeps what the first choice switched on
+            if !was_bus {
+                self.bus_auto = Some((std::array::from_fn(|c| self.m.ch[c].on && !before[c]), !dec_before));
+            }
             let m = &mut self.m;
             m.trig_type = t;
-            (m.trig_bus, m.trig_bus_val) = match p {
+            let (what, val) = match p {
                 Proto::Can => (BusWhat::Id, 0x123),
                 Proto::Lin => (BusWhat::Id, 0x21),
                 Proto::I2c => (BusWhat::Id, 0x50),
@@ -4441,6 +4817,7 @@ impl Ui {
                 Proto::Module(i) => crate::protocols::get(i).trigger_default(),
                 _ => (BusWhat::Frame, 0x40),
             };
+            (m.trig_bus, m.trig_bus_val, m.ser) = (what, val as u64, SerialTrig::default());
             self.dirty_map = true;
             return;
         }
@@ -4521,6 +4898,7 @@ impl Ui {
             MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Network => "Network".into(),
             MenuId::Remote => "Remote services".into(),
+            MenuId::Ssh => "SSH".into(),
             MenuId::Time => "Date and time".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Afg => "Generator (GI/GO)".into(),
@@ -4548,7 +4926,7 @@ impl Ui {
             MenuId::Ref => "Reference".into(),
             MenuId::Decode => "Decode".into(),
             MenuId::Pick => match self.pick {
-                Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
+                Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
                 Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
@@ -4569,8 +4947,9 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::MaskCreate | Item::MaskReset => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::AcqSegTable | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
+            Item::SpiTimeout => Kind::Value,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
             _ => Kind::Choice,
@@ -4633,6 +5012,17 @@ impl Ui {
             Item::DecCanRate => "Bit rate",
             Item::TrigBusWhat => "Match",
             Item::TrigBusVal => "Value",
+            Item::SerRel => "Relation",
+            Item::SerMax => "Max",
+            Item::SerMask => "Mask",
+            Item::UartPol => "Polarity",
+            Item::UartStop => "Stop bits",
+            Item::UartErr => "Error type",
+            Item::SpiCs => "CS",
+            Item::SpiTimeout => "Timeout",
+            Item::I2cDir => "Direction",
+            Item::I2cAddrBits => "Address",
+            Item::I2cBytes => "Bytes",
             Item::DecCanH => "Signal",
             Item::DecFdRate => "Data rate",
             Item::DecArate => "Bit rate",
@@ -4708,6 +5098,10 @@ impl Ui {
             Item::AcqMode => "Mode",
             Item::AcqAvg => "Averages",
             Item::AcqSeg => "Segments",
+            Item::AcqSegHw => "HW segments",
+            Item::AcqAvgHw => "HW average",
+            Item::AcqSegIvl => "Seg. interval",
+            Item::AcqSegTable => "Segment times",
             Item::AcqDepth => "Memory",
             Item::MeasSrc => "Source A",
             Item::MeasSrcB => "Source B",
@@ -4759,6 +5153,7 @@ impl Ui {
             Item::GridBright => "Grid bright.",
             Item::GridFrame => "Grid frame",
             Item::TrigNoise => "Noise reject",
+            Item::TrigAutoNoise => "Auto noise rej.",
             Item::TrigCoup => "Coupling",
             Item::ClearDisp => "Clear",
             Item::Dots => "Dots",
@@ -4777,6 +5172,7 @@ impl Ui {
             Item::SysInfo => "System info",
             Item::Shot => "Screenshot",
             Item::TouchLock => "Touch",
+            Item::AuxOut => "AUX out",
             Item::Stock => "Back to stock",
             Item::Update => "Update",
             Item::BootMode => "Boot mode",
@@ -4897,7 +5293,10 @@ impl Ui {
                 AcqMode::HiRes => "High res".into(),
             },
             Item::AcqAvg => format!("{}", m.avg_count),
-            Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
+            Item::AcqSeg => if m.segments == 0 { "Off".into() } else { self.seg_count().to_string() },
+            Item::AcqSegHw => onoff(m.seg_hw),
+            Item::AcqAvgHw => onoff(m.avg_hw),
+            Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => format!("CH{}", self.meas_src + 1),
             Item::MeasSrcB => format!("CH{}", self.meas_src_b + 1),
@@ -4931,6 +5330,7 @@ impl Ui {
             Item::GridBright => format!("{} %", m.grid_bright),
             Item::GridFrame => onoff(m.grid_frame),
             Item::TrigNoise => onoff(m.trig_nrej),
+            Item::TrigAutoNoise => onoff(m.auto_nrej),
             Item::TrigCoup => m.trig_coup.name().into(),
             Item::Dots => onoff(m.dots),
             Item::Hdmi => format!("{:?}", m.hdmi),
@@ -4942,6 +5342,7 @@ impl Ui {
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::Histogram => format!("{:?}", m.hist),
             Item::TouchLock => if m.touch_lock { "Locked".into() } else { "On".into() },
+            Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
             Item::MeasStats => onoff(self.stats_on),
             Item::MeasLabels => onoff(self.m.meas_labels),
@@ -4956,6 +5357,7 @@ impl Ui {
             Item::DecCanRate => si(crate::decode::CAN_RATES[m.dec_canrate], "bit/s"),
             Item::TrigBusWhat => m.trig_bus.name().into(),
             Item::TrigBusVal => format!("0x{:X}", m.trig_bus_val),
+            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_value(it),
             Item::DecCanH => if m.dec_canh { "CAN_H".into() } else { "RX/TX".into() },
             Item::DecFdRate => format!("{} M", crate::decode::FD_RATES[m.dec_fdrate] / 1e6),
             Item::DecArate => ARATE_NAMES[m.dec_arate].into(),
@@ -5008,8 +5410,41 @@ impl Ui {
         }
     }
 
+    /// The segment items of the Acquire menu; false for any other item.
+    fn seg_adjust(&mut self, it: Item, d: i32) -> bool {
+        let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
+        match it {
+            Item::AcqSeg => {
+                let o = self.seg_options();
+                let cur = if self.m.segments == 0 { 0 } else { self.seg_count() };
+                let i = o.iter().position(|&n| n >= cur).unwrap_or(0);
+                self.m.segments = o[cyc(i, o.len(), d)];
+            }
+            Item::AcqAvgHw => {
+                self.m.avg_hw = !self.m.avg_hw;
+                if self.m.avg_hw && !board().avg_hw(&self.m) {
+                    self.toast("HW average needs a count of 2..1024 and ordinary records: software average");
+                }
+            }
+            Item::AcqSegHw => {
+                self.m.seg_hw = !self.m.seg_hw;
+                // the other limit applies from now on
+                self.m.segments = self.seg_count();
+            }
+            Item::AcqSegIvl => {
+                let i = SEG_IVLS.iter().position(|&x| x >= self.m.seg_ivl).unwrap_or(0);
+                self.m.seg_ivl = SEG_IVLS[cyc(i, SEG_IVLS.len(), d)];
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn adjust(&mut self, it: Item, d: i32) {
         if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
+            return;
+        }
+        if self.seg_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -5165,10 +5600,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.acq).unwrap();
                 m.acq = all[cyc(i, 4, d)];
             }
-            Item::AcqSeg => {
-                let i = SEGMENTS.iter().position(|&n| n >= m.segments).unwrap_or(0);
-                m.segments = SEGMENTS[cyc(i, SEGMENTS.len(), d)];
-            }
             Item::AcqAvg => {
                 let i = AVERAGES.iter().position(|&x| x == m.avg_count).unwrap_or(3);
                 m.avg_count = AVERAGES[step(i, AVERAGES.len(), d)];
@@ -5259,6 +5690,7 @@ impl Ui {
             Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(10, 100) as u32,
             Item::GridFrame => m.grid_frame = !m.grid_frame,
             Item::TrigNoise => m.trig_nrej = !m.trig_nrej,
+            Item::TrigAutoNoise => m.auto_nrej = !m.auto_nrej,
             Item::TrigCoup => {
                 let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
                 m.trig_coup = TRIG_COUPS[cyc(i, TRIG_COUPS.len(), d)];
@@ -5269,6 +5701,11 @@ impl Ui {
                 m.grid = all[cyc(i, 3, d)];
             }
             Item::TouchLock => m.touch_lock = !m.touch_lock,
+            Item::AuxOut => {
+                let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
+                let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
+                m.aux_out = all[cyc(i, all.len(), d)];
+            }
             Item::QuickAct => {
                 let i = QUICKS.iter().position(|&q| q == m.quick).unwrap_or(0);
                 m.quick = QUICKS[cyc(i, QUICKS.len(), d)];
@@ -5331,7 +5768,8 @@ impl Ui {
                 let i = BUS_WHATS.iter().position(|&x| x == self.m.trig_bus).unwrap_or(0);
                 self.m.trig_bus = BUS_WHATS[cyc(i, BUS_WHATS.len(), d)];
             }
-            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, 0x1fff_ffff) as u32,
+            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64,
+            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_adjust(it, d),
             Item::DecCanH => self.m.dec_canh = !self.m.dec_canh,
             Item::DecThr => self.m.dec_thr += d as f32 * self.m.ch[self.m.dec_src].volts_per_div() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
@@ -5435,7 +5873,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
-        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it) || self.time_activate(it)) {
+        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it) || self.time_activate(it) || self.ssh_activate(it)) {
             return;
         }
         match Self::kind(it) {
@@ -5483,18 +5921,21 @@ impl Ui {
                     self.settings_changed();
                 }
                 Item::Trig50 => self.level_50(),
-                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::TrigBusVal) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::hex_item(p.it)) => {
                     // keypad: digits edit the entry, OK sets the value and goes back
                     match KEYPAD.get(k).copied() {
                         Some("OK") => {
-                            self.m.trig_bus_val = u32::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16).unwrap_or(0).min(0x1fff_ffff);
+                            let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16).unwrap_or(0).min(BUS_VAL_MAX);
+                            if let Some(p) = self.pick {
+                                self.set_hex(p.it, v);
+                            }
                             self.close_picker();
                         }
                         Some("Clear") => self.keypad.clear(),
                         Some("Del") => {
                             self.keypad.pop();
                         }
-                        Some(d) if self.keypad.len() < 8 => {
+                        Some(d) if self.keypad.len() < 10 => {
                             if self.keypad == "0" {
                                 self.keypad.clear();
                             }
@@ -5516,6 +5957,10 @@ impl Ui {
                 Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::WlanForgetNet) => {
                     self.close_picker();
                     self.wlan_forget_pick(k);
+                }
+                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::SshRemoveKey) => {
+                    self.close_picker();
+                    self.ssh_remove_pick(k);
                 }
                 Item::PickOpt(k) => {
                     if let Some(p) = self.pick {
@@ -5668,12 +6113,10 @@ impl Ui {
                     self.shot_request = Some(p.to_string_lossy().into_owned());
                 }
                 Item::MaskCreate => self.create_mask(),
-                Item::MaskReset => {
-                    self.mask_pass = 0;
-                    self.mask_fail = 0;
-                }
+                Item::MaskReset => self.mask_counts_reset(),
                 Item::Stock => self.stock_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
+                Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
                 Item::SrcOn => {
                     let v = self.off_sources(self.menu);
                     for &c in &v {
@@ -5780,7 +6223,7 @@ impl Ui {
     fn level_50(&mut self) {
         let s = self.stats[self.m.trig_src];
         if s.valid {
-            self.m.trig_level = (s.vmax + s.vmin) / 2.0;
+            self.m.trig_level = crate::wave::mid_level(&s);
             self.settings_changed();
         }
     }
@@ -5856,7 +6299,7 @@ impl Ui {
             Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
             Item::GridStyle => &["Full", "Light", "None"],
-            Item::GridFrame | Item::TrigNoise => &["Off", "On"],
+            Item::GridFrame | Item::TrigNoise | Item::TrigAutoNoise => &["Off", "On"],
             Item::Dots | Item::ZoneOn => &["Off", "On"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
@@ -5866,13 +6309,14 @@ impl Ui {
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::TouchLock => &["On", "Locked"],
+            Item::AuxOut => return AuxOut::choices(board().mask_hw() || board().zone_hw()).iter().map(|a| a.name().to_string()).collect(),
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],
             Item::DecSel => &["D1", "D2", "D3", "D4"],
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
             Item::MeasSrcB | Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
+            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw | Item::AcqAvgHw => &["Off", "On"],
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
@@ -5887,11 +6331,13 @@ impl Ui {
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
             Item::Persist => return PERSIST.iter().map(|p| p.0.to_string()).collect(),
             Item::AcqAvg => return AVERAGES.iter().map(|n| n.to_string()).collect(),
-            Item::AcqSeg => return SEGMENTS.iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect(),
+            Item::AcqSeg => return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect(),
+            Item::AcqSegIvl => return SEG_IVLS.iter().map(|&x| seg_ivl_name(x)).collect(),
             Item::DecBaud => return crate::decode::BAUDS.iter().map(|b| b.to_string()).collect(),
             Item::DecCanRate => return crate::decode::CAN_RATES.iter().map(|&b| si(b, "bit/s")).collect(),
             // the value picker is a hex keypad
-            Item::TrigBusVal => return KEYPAD.iter().map(|k| k.to_string()).collect(),
+            Item::TrigBusVal | Item::SerMax | Item::SerMask => return KEYPAD.iter().map(|k| k.to_string()).collect(),
+            Item::SerRel | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => return Self::serial_options(it),
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
@@ -5937,8 +6383,8 @@ impl Ui {
     /// Opens the picker of a choice item of the current menu; picking an option returns to this menu.
     fn open_picker(&mut self, it: Item) {
         let it = if it == Item::AfgFreq { Item::AfgFreqEntry } else { it };
-        if it == Item::TrigBusVal {
-            self.keypad = format!("{:X}", self.m.trig_bus_val);
+        if Self::hex_item(it) {
+            self.keypad = format!("{:X}", self.hex_value(it));
         }
         if it == Item::AfgFreqEntry {
             self.keypad.clear();
@@ -5986,7 +6432,7 @@ impl Ui {
             MenuId::Horizontal => (tr.x + tr.w / 2, false),
             MenuId::Trigger => (trg.x + trg.w / 2, false),
             MenuId::Main => (self.menu_btn().x, false),
-            MenuId::Network | MenuId::Remote => (self.net_box().x + self.net_box().w / 2, true),
+            MenuId::Network | MenuId::Remote | MenuId::Ssh => (self.net_box().x + self.net_box().w / 2, true),
             MenuId::ViewMore => (self.scr.w, true),
             MenuId::La | MenuId::LaLines | MenuId::LaPat => self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
             MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
@@ -6006,7 +6452,7 @@ impl Ui {
         let items = self.items(self.menu);
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
-        let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet));
+        let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet | Item::SshRemoveKey));
         let l = self.lay();
         let (cols, cw, rh, gap) = if wide { (2, l.dlg_col, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, l.grid_col + 40, DLG_ROW + 2, 8) } else if grid { (4, l.grid_col, DLG_ROW + 2, 8) } else if n > 5 { (2, l.dlg_col, DLG_ROW, 16) } else { (1, l.dlg_col, DLG_ROW, 16) };
         let nrows = (n + cols - 1) / cols;
@@ -7348,9 +7794,445 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
     }
 }
 
+/// The count a trace pixel is graded against (full brightness), from the brightest pixel `mx` of the picture. It
+/// follows a higher `mx` at once and a lower one slowly (`prev`, no flicker). Minimum persistence (`frames` > 0, the
+/// frames in the picture): the picture holds as many frames as arrived since the last screen refresh, in batches, so
+/// its counts rise and fall with that number. Graded against the per-frame maximum (`per_frame`, followed the same
+/// way) times `frames`, equal frames give equal brightness whatever their number. Without this a refresh with one
+/// frame after one with several came out dim: the trace pumped at the batch rate (docs/fork/trigger-lockin.md).
+fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
+    let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
+    if frames == 0 {
+        return follow(prev, mx);
+    }
+    *per_frame = follow(*per_frame, mx.div_ceil(frames));
+    per_frame.saturating_mul(frames).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    // Break it catches (unit 2026-11-13, 1 ms/div 10 M, meas.deep_raw = on): the background measurement measuring the
+    // newest record when the worker gets free. Raw deep records come once a second between pair records (held), so it
+    // measured a pair record: Mean stayed NaN live. The raw record waiting for the worker is the one measured.
+    #[test]
+    fn live_raw_deep_records_are_measured_while_the_worker_is_busy() {
+        for tdiv in [1e-3, 2e-3, 5e-3] {
+            live_raw_at(tdiv);
+        }
+    }
+
+    fn live_raw_at(tdiv: f64) {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.measure_in_background();
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
+        ui.m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e7 / (tdiv * 16.0), 10_000_000), ..Default::default() };
+        let raw = |high: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { high } else { 0.0 }).collect() };
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
+        let mut seq = 0;
+        for round in 0..3 {
+            // a new value each round: a measurement that stays at the last one is caught too
+            let high = 2.0 + round as f32;
+            // the worker is still on the previous record when the raw one comes, and pair records follow
+            ui.meas_bg.as_mut().unwrap().busy = true;
+            seq += 1;
+            shared.lock().unwrap().queue.push_back(frame(seq, false, raw(high)));
+            // one batch of one frame each at 2 and 5 ms/div: the next pair record is queued before the UI looks
+            if tdiv > 1.5e-3 {
+                seq += 1;
+                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+            }
+            ui.step(0.02);
+            for _ in 0..3 {
+                seq += 1;
+                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+                ui.step(0.02);
+            }
+            ui.meas_bg.as_mut().unwrap().busy = false;
+            for _ in 0..50 {
+                ui.step(0.02);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let avg = ui.meas(0, Meas::Vavg);
+            assert!((avg - high as f64 / 4.0).abs() < 0.03, "Mean live at {} s/div, round {}: {}", tdiv, round, avg);
+        }
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches: Mean, RMS and Std dev shown from min/max pairs (a deep record read through the FPGA
+    // compression), or Max/Min/Pk-pk lost with them
+    #[test]
+    fn measurements_on_min_max_pairs_leave_out_the_mean_type() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let v: Vec<f32> = (0..n).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
+        for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
+            // a deep record (above 1 M points): pairs of the live compression are held instead (compress::hold)
+            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+            for _ in 0..3 {
+                ui.step(0.02);
+            }
+            let (avg, rms, max, pp) = (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
+            assert_eq!(avg.is_nan() && rms.is_nan(), envelope, "envelope {}: mean {} rms {}", envelope, avg, rms);
+            assert!((max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05, "envelope {}: max {} pk-pk {}", envelope, max, pp);
+            let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
+            assert!(row.is_none_or(|x| x.is_nan() == envelope));
+        }
+    }
+
+    // Break it catches (compress.rs, raw newest frame every RAW_PERIOD): live-compression pair records measured between
+    // two raw ones (mean-type NaN flicker, statistics counting pairs), a raw record not measured, a STOP that keeps a
+    // pair record instead of asking for the final raw frame
+    #[test]
+    fn live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0), (Meas::Vmax, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (625e6, 100_000), ..Default::default() };
+        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.5 }).collect();
+        let steps = |ui: &mut Ui, k: usize| {
+            for _ in 0..k {
+                ui.step(0.02);
+            }
+        };
+        shared.lock().unwrap().queue.push_back(frame(1, false, raw.clone()));
+        steps(&mut ui, 2);
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
+        let counted = ui.mstat.first().map_or(0, |s| s.n);
+        for seq in 2..5 {
+            shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+            steps(&mut ui, 2);
+            assert_eq!(ui.meas(0, Meas::Vavg), avg);
+            assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
+        }
+        assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+        // STOP on a pair record: the final raw frame is asked for and shown
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 1);
+        assert!(ui.stop_final.is_some() && shared.lock().unwrap().final_req == 1);
+        {
+            let mut g = shared.lock().unwrap();
+            g.queue.push_back(frame(5, false, raw.iter().map(|x| 2.0 * x).collect()));
+            g.final_ack = 1;
+        }
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_none());
+        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)), Some((5, false)));
+        assert!((ui.meas(0, Meas::Vavg) - 0.5).abs() < 0.03);
+    }
+
+    // Break it catches: the protocol watch or XY reading pair records (the hardware thread is not told)
+    #[test]
+    fn protocol_watch_and_xy_ask_for_raw_frames() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.step(0.02);
+        assert!(!shared.lock().unwrap().needs_raw);
+        ui.azr.watch = true;
+        ui.step(0.02);
+        assert!(shared.lock().unwrap().needs_raw);
+        (ui.azr.watch, ui.xy) = (false, true);
+        ui.step(0.02);
+        assert!(shared.lock().unwrap().needs_raw);
+        ui.xy = false;
+        ui.step(0.02);
+        assert!(!shared.lock().unwrap().needs_raw);
+    }
+
+    // Break it catches (docs/fork/stop-exact.md): a STOP that keeps the pair record on screen while the measurements
+    // show an older raw record, a final frame not taken or taken after the stop, frames after it taken, the hardware
+    // left arming in STOP or held in RUN, a STOP waiting forever, a plain STOP of a shallow record waiting at all
+    #[test]
+    fn stop_shows_the_final_raw_frame_of_a_deep_record() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, acq), ..Default::default() };
+        let raw = |top: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { top } else { 0.0 }).collect() };
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
+        let steps = |ui: &mut Ui, k: usize| {
+            for _ in 0..k {
+                ui.step(0.02);
+            }
+        };
+        shared.lock().unwrap().queue.push_back(frame(1, true, 10_000_000, pairs.clone()));
+        steps(&mut ui, 3);
+        assert!(!shared.lock().unwrap().hold);
+        // STOP on a pair record: the thread is held and asked for the final frame, the UI waits for it
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 2);
+        {
+            let g = shared.lock().unwrap();
+            assert!(g.hold && g.final_req == 1);
+        }
+        assert!(ui.stop_final.is_some() && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope)));
+        // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
+        {
+            let mut g = shared.lock().unwrap();
+            g.queue.push_back(frame(2, true, 10_000_000, pairs.clone()));
+            g.queue.push_back(frame(3, false, 10_000_000, raw(2.0)));
+            g.final_ack = 1;
+        }
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_none());
+        let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
+        assert_eq!(shown, Some((3, false)), "the final raw frame is the record shown");
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.5).abs() < 0.03, "mean of the record shown: {}", avg);
+        assert_eq!(ui.m.status, TrigStatus::Stop);
+        // frames after it stay unseen in STOP
+        shared.lock().unwrap().queue.push_back(frame(4, false, 10_000_000, raw(4.0)));
+        steps(&mut ui, 2);
+        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
+        assert!(shared.lock().unwrap().hold);
+        // RUN: armed again
+        ui.m.run = RunState::Run;
+        steps(&mut ui, 1);
+        assert!(!shared.lock().unwrap().hold);
+        // no answer: the STOP ends after STOP_FINAL_WAIT anyway
+        shared.lock().unwrap().queue.clear();
+        shared.lock().unwrap().queue.push_back(frame(5, true, 10_000_000, pairs.clone()));
+        steps(&mut ui, 2);
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_some());
+        steps(&mut ui, (STOP_FINAL_WAIT / 0.02) as usize + 2);
+        assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
+        // a shallow record: STOP holds the thread at once, without a final frame
+        ui.m.run = RunState::Run;
+        steps(&mut ui, 1);
+        shared.lock().unwrap().queue.push_back(frame(6, false, 100_000, raw(1.0)));
+        steps(&mut ui, 2);
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 1);
+        assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches (deepmeas.rs): with raw deep reads on, a pair record measured between two raw ones (Mean back
+    // to NaN, statistics counting pair records), a raw deep record not measured, the hold active in Stop or Single
+    #[test]
+    fn deep_raw_records_carry_the_measurements_between_pair_records() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0), (Meas::Vmax, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        // raw: mean 0.25; pairs: the min/max of the same signal, other top so the record shown is visible
+        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
+        let pairs = |top: f32| -> Vec<f32> { (0..n).map(|i| if i % 2 == 0 { 0.0 } else { top }).collect() };
+        let push = |seq: u64, envelope: bool, v: Vec<f32>| {
+            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+        };
+        let step = |ui: &mut Ui| {
+            for _ in 0..3 {
+                ui.step(0.02);
+            }
+        };
+        // before the first raw record: nothing measured on pairs
+        push(1, true, pairs(1.0));
+        step(&mut ui);
+        assert!(ui.meas(0, Meas::Vavg).is_nan() && ui.meas(0, Meas::Vmax).is_nan());
+        push(2, false, raw.clone());
+        step(&mut ui);
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
+        let counted = ui.mstat.first().map_or(0, |s| s.n);
+        // pair records keep the raw record's values, the statistics do not count them
+        for seq in 3..6 {
+            push(seq, true, pairs(1.5));
+            step(&mut ui);
+            assert_eq!(ui.meas(0, Meas::Vavg), avg);
+            assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
+        }
+        assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+        // off: pair records are measured (mean-type NaN, max of the pairs)
+        crate::deepmeas::force(Some(false));
+        push(6, true, pairs(1.5));
+        step(&mut ui);
+        assert!(ui.meas(0, Meas::Vavg).is_nan() && (ui.meas(0, Meas::Vmax) - 1.5).abs() < 0.02);
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches: the newest frame of a picture drawn another way than the others (record points instead of the
+    // frame's samples), so the grade follows the mix of the two in each picture: the flicker at 500 us/div on the
+    // probe-comp output (docs/fork/flicker.md). Equal frames, 1 to 5 of them per picture, must look the same.
+    #[test]
+    fn hardware_pictures_look_the_same_whatever_the_frames_per_picture() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        ui.m.persist = 0;
+        ui.m.trig_level = 0.15;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        assert!(ui.fast_ok());
+        // 100 k samples over 1.2 screens: a 0.3 V square with a little noise
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 100_000usize;
+        let mut x = 9u32;
+        let v: Vec<f32> = (0..n)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                (if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+            })
+            .collect();
+        let frame = |seq: u64| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+        let mut seq = 0;
+        let mut picture = |ui: &mut Ui, k: usize| -> Vec<u32> {
+            {
+                let mut g = shared.lock().unwrap();
+                for _ in 0..k {
+                    seq += 1;
+                    g.queue.push_back(frame(seq));
+                }
+            }
+            ui.step(0.033);
+            let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+            ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
+        };
+        let first = picture(&mut ui, 3);
+        for k in [1, 2, 3, 1, 5, 1, 2] {
+            let p = picture(&mut ui, k);
+            let worst = first.iter().zip(&p).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 3, "{} frames: brightness off by {}", k, worst);
+        }
+    }
+
+    // Break it catches: Trig'd shown for a batch the auto timeout forced (the software found an edge in it), or the
+    // hardware status ignored when the thread reports it
+    #[test]
+    fn hardware_trigger_status_overrides_the_software_one() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        ui.m.trig_level = 0.5;
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 4000usize;
+        let frame = |seq: u64| crate::board::Frame {
+            seq,
+            dt: window / n as f64 * 1.2,
+            pre: n / 2,
+            ch: [(0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(), Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        };
+        let mut seq = 0;
+        let mut run = |ui: &mut Ui, fired: Option<(u64, Option<bool>)>| {
+            {
+                let mut g = shared.lock().unwrap();
+                for _ in 0..3 {
+                    seq += 1;
+                    g.queue.push_back(frame(seq));
+                }
+                g.trig_fired = fired;
+            }
+            ui.step(0.02);
+            ui.m.status
+        };
+        // off (no reading): the software finds the edge at the hardware point
+        assert_eq!(run(&mut ui, None), TrigStatus::Triggered);
+        assert_eq!(run(&mut ui, Some((1, Some(false)))), TrigStatus::Auto);
+        assert_eq!(run(&mut ui, Some((2, Some(true)))), TrigStatus::Triggered);
+    }
+
+    // Break it catches: the trace brightness at minimum persistence following the number of frames per picture (one
+    // frame after a batch of several came out dim: the flicker after autoset, docs/fork/trigger-lockin.md)
+    #[test]
+    fn equal_frames_give_equal_brightness_whatever_their_number() {
+        let mut ui = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        ui.m.persist = 0;
+        for c in 1..super::NCH {
+            ui.m.ch[c].on = false;
+        }
+        // one frame: a 1 kHz square with a little noise, 3600 points over the screen
+        let mut x = 3u32;
+        let v: Vec<f32> = (0..3600)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                (if (k / 360) % 2 == 0 { 0.0 } else { 0.3 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+            })
+            .collect();
+        let (tdiv, window) = (ui.m.time_per_div(), ui.m.time_per_div() as f64 * super::HDIV as f64);
+        let picture = |ui: &mut super::Ui, n: u32| -> Vec<u32> {
+            ui.ph.clear();
+            for _ in 0..n {
+                ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
+            }
+            ui.pic_frames = n;
+            ui.grade_refs();
+            let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+            // as `draw_traces`: an empty pixel stays dark
+            ui.ph.map[0].iter().map(|&k| if k == 0 { 0 } else { lut[((k as u32) >> sh).min(1023) as usize] }).collect()
+        };
+        let first = picture(&mut ui, 4);
+        for n in [1, 7, 1, 2, 16, 1, 4] {
+            let p = picture(&mut ui, n);
+            let worst = first.iter().zip(&p).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 3, "{} frames: brightness off by {}", n, worst);
+        }
+        // the plain grade (longer persistence) is what pumped: one frame after sixteen is graded against 16 times its
+        // counts
+        ui.pic_frames = 0;
+        ui.m.persist = 1;
+        let _ = picture(&mut ui, 16);
+        ui.pic_frames = 0;
+        ui.grade_refs();
+        let bright = |ui: &super::Ui| ui.vmax[0];
+        let before = bright(&ui);
+        ui.ph.clear();
+        ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
+        ui.grade_refs();
+        assert!(bright(&ui) > ui.ph.map[0].iter().copied().max().unwrap() as u32 * 8, "{}", before);
+    }
 
     /// Measurements in the background (the frame loop on the unit) while a new record comes every frame: their results
     /// still arrive (0.1.7 to 0.1.10 dropped each one as older than the record shown, and the values froze in Run).
@@ -7370,6 +8252,7 @@ mod tests {
     #[test]
     fn add_item_toggles_a_measurement() {
         use super::*;
+
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.meas.clear();
         ui.meas_src = 0;
@@ -7416,6 +8299,36 @@ mod tests {
         }
     }
 
+    // Break it catches: the Bus trigger's own switches staying after going back to Edge (decoder on: the live picture
+    // stayed raw; its demo source channels stayed on), or switching off what the user had on before Bus
+    #[test]
+    fn leaving_the_bus_trigger_undoes_only_what_it_switched_on() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        for c in 0..NCH {
+            ui.m.ch[c].on = c == 0;
+        }
+        ui.m.dec_on = false;
+        ui.m.dec_proto = Proto::I2c;
+        ui.set_trig_type(TrigType::Bus);
+        assert!(ui.m.dec_on && ui.m.ch[2].on && ui.m.ch[3].on, "Bus: the decoder and its sources (I2C on CH3/CH4)");
+        // Bus again: nothing new recorded, still undone once
+        ui.set_trig_type(TrigType::Bus);
+        ui.set_trig_type(TrigType::Edge);
+        assert!(!ui.m.dec_on, "the decoder Bus switched on is off again");
+        let on: Vec<bool> = (0..NCH).map(|c| ui.m.ch[c].on).collect();
+        assert_eq!(on, vec![true, false, false, false], "only the user's CH1 stays");
+        // what the user had on before stays on: the decoder and CH3
+        ui.m.dec_on = true;
+        ui.m.ch[2].on = true;
+        ui.set_trig_type(TrigType::Bus);
+        ui.set_trig_type(TrigType::Edge);
+        assert!(ui.m.dec_on && ui.m.ch[2].on && !ui.m.ch[3].on, "user's decoder and CH3 kept, CH4 off again");
+        // another type in between that is not Bus: nothing to undo twice
+        ui.set_trig_type(TrigType::Slope);
+        assert!(ui.m.dec_on && ui.m.ch[2].on);
+    }
+
     /// Protocol trigger: the end of the matching CAN identifier sits at the trigger point; "Error" never fires on clean
     /// traffic in Normal mode.
     #[test]
@@ -7426,7 +8339,7 @@ mod tests {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
             ui.m.dec_proto = Proto::Can;
             ui.set_trig_type(TrigType::Bus);
-            ui.m.trig_bus_val = id;
+            ui.m.trig_bus_val = id as u64;
             ui.m.tscale = tscales().iter().position(|&t| (t - 50e-6).abs() < 1e-9).unwrap();
             for _ in 0..10 {
                 ui.step(1.0 / 30.0);
@@ -7493,11 +8406,11 @@ mod tests {
                 }
                 assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "{:?} {:?}: not triggered", proto, what);
                 let p = ui.decode_packets().unwrap();
-                assert!(p.iter().any(|x| crate::trig::matches(&ui.m, x) && x.t1.abs() < tol), "{:?} {:?}: no matching field ends at 0: {:?}", proto, what, p);
+                assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "{:?} {:?}: no matching field ends at 0: {:?}", proto, what, p);
                 if what == BusWhat::Id && proto != Proto::Sent {
                     let want = if proto == Proto::Arinc429 { 0o310 } else { 0x2a };
                     assert_eq!(id_default, want);
-                    assert!(p.iter().any(|x| matches!(x.kind, Kind::Id { .. }) && x.value == want && x.t1.abs() < tol));
+                    assert!(p.iter().any(|x| matches!(x.kind, Kind::Id { .. }) && x.value as u64 == want && x.t1.abs() < tol));
                 }
                 if what == BusWhat::Id {
                     let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -7541,10 +8454,10 @@ mod tests {
             }
             assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "USB {:?} {:?}: not triggered", what, val);
             let p = ui.decode_packets().unwrap();
-            assert!(p.iter().any(|x| crate::trig::matches(&ui.m, x) && x.t1.abs() < tol), "USB {:?}: no matching field ends at 0: {:?}", what, p);
+            assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "USB {:?}: no matching field ends at 0: {:?}", what, p);
             match (what, val) {
                 (BusWhat::Id, None) => assert!(p.iter().any(|x| x.kind == Kind::Field("ADDR") && x.value == 5 && x.t1.abs() < tol)),
-                (BusWhat::Id, Some(v)) => assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value == v && x.t1.abs() < tol)),
+                (BusWhat::Id, Some(v)) => assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value as u64 == v && x.t1.abs() < tol)),
                 (BusWhat::Frame, _) => assert!(p.iter().any(|x| x.kind == Kind::Field("SYNC") && x.t1.abs() < tol)),
                 _ => {}
             }
@@ -7963,7 +8876,10 @@ mod tests {
         for d in ["1", "8", "D", "A", "F", "1", "1", "0"] {
             key(&mut ui, d);
         }
-        key(&mut ui, "9"); // a ninth digit is ignored
+        // up to ten digits (40 bits): the eleventh is ignored
+        for d in ["9", "9", "9"] {
+            key(&mut ui, d);
+        }
         key(&mut ui, "Del");
         key(&mut ui, "0");
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -7972,7 +8888,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let _ = crate::store::write(&dir.join("j-keypad.png"), &crate::store::png_of(&cv));
         key(&mut ui, "OK");
-        assert_eq!(ui.m.trig_bus_val, 0x18da_f110);
+        assert_eq!(ui.m.trig_bus_val, 0x18_daf1_1090);
         assert_eq!(ui.menu, MenuId::Trigger);
     }
 
@@ -8152,6 +9068,124 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // Break it catches: a hardware recording that starts without a new number for the thread, stops on the count of
+    // records that reached the screen instead of the thread's read-back, browses the RAM history instead of playing
+    // the segment from the FPGA, or loses the stamps in the status line and the table. The thread is played by hand.
+    #[test]
+    fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
+        use super::*;
+        use crate::board::SegPhase;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
+        (ui.m.segments, ui.m.seg_hw, ui.m.seg_ivl) = (100, true, 1e-3);
+        ui.m.run = RunState::Run;
+        ui.step(0.02);
+        {
+            let g = shared.lock().unwrap();
+            assert_eq!((g.seg.run, g.seg.running), (1, true));
+            let w = g.want.as_ref().unwrap();
+            assert_eq!(w.segments, Some(oos_hal::dho::seq::Segments { n: 100, interval: 1e-3f32 as f64 }));
+        }
+        // the thread records: no frame, the scope keeps running and shows the progress
+        {
+            let mut g = shared.lock().unwrap();
+            (g.seg.done_run, g.seg.phase, g.seg.total, g.seg.recorded) = (1, SegPhase::Recording, 100, 40);
+        }
+        for _ in 0..30 {
+            ui.step(0.02);
+        }
+        assert_eq!(ui.m.run, RunState::Run);
+        assert_eq!(ui.seg_view.unwrap().recorded, 40);
+        // read back: 100 stamps 10 us apart, the frames went through the queue; done once the queue is empty
+        {
+            let mut g = shared.lock().unwrap();
+            (g.seg.phase, g.seg.recorded, g.seg.read) = (SegPhase::Done, 100, 100);
+            g.seg.times = (0..100).map(|k| Some(k as f64 * 10e-6)).collect();
+        }
+        ui.step(0.02);
+        assert_eq!(ui.m.run, RunState::Stop);
+        assert_eq!(ui.toast.as_ref().unwrap().0, "100 segments recorded");
+        // browse: back from the newest asks the thread for segment 99, then 98
+        ui.history_step(-1);
+        assert_eq!(shared.lock().unwrap().seg.want, Some(98));
+        assert_eq!(ui.seg_label(98), "Segment 99/100 \u{b7} 980 \u{b5}s \u{b7} \u{394}t 10.0 \u{b5}s");
+        let v: Vec<f32> = (0..1000).map(|k| ((k as f32) * 0.1).sin()).collect();
+        let f = crate::board::Frame { seq: 1, dt: 1e-9, pre: 500, ch: [v, Vec::new(), Vec::new(), Vec::new()], acq: (1e9, 1000), ..Default::default() };
+        shared.lock().unwrap().seg.shown = Some((98, f));
+        ui.step(0.02);
+        assert_eq!(ui.seg_pos, Some(98));
+        assert!(ui.last[0].is_some());
+        assert!(shared.lock().unwrap().seg.shown.is_none());
+        // the table and SCPI have every stamp
+        let rows = ui.table_rows(tables::TableKind::Segments);
+        assert_eq!(rows.len(), 100);
+        assert_eq!((rows[0].text.as_str(), rows[3].ok), ("", true));
+        assert!(rows[3].text.starts_with("\u{394}t 10"));
+        assert!(ui.seg_times_text().starts_with("0e0,1e-5,2e-5"));
+        // RUN again: a new recording number
+        ui.m.run = RunState::Run;
+        ui.step(0.02);
+        assert_eq!(shared.lock().unwrap().seg.run, 2);
+        assert!(ui.seg_times.is_empty());
+    }
+
+    // Break it catches: the software limit applied to hardware segments, or the hardware limit to the software history.
+    #[test]
+    fn segment_counts_follow_the_limit_of_the_set_up() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared, seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
+        ui.m.segments = 10;
+        assert_eq!(*ui.seg_options().last().unwrap(), SEG_MAX);
+        ui.adjust(Item::AcqSegHw, 1);
+        // 100 ns/div, 1 channel: 1408 points -> 256 bursts -> 61,440 segments
+        let lim = board().seg_max(&ui.m).unwrap();
+        assert_eq!(lim, 61_440);
+        let o = ui.seg_options();
+        assert_eq!(&o[o.len() - 2..], &[50_000, 61_440]);
+        for want in ["61440", "Off", "20000", "10"] {
+            ui.select_option(Item::AcqSeg, want);
+            assert_eq!(ui.value(Item::AcqSeg), want);
+        }
+        ui.select_option(Item::AcqSeg, "61440");
+        // back to software: the history limit
+        ui.adjust(Item::AcqSegHw, 1);
+        assert_eq!((ui.m.segments, ui.value(Item::AcqSeg)), (SEG_MAX, "1000".to_string()));
+        let o = ui.options(Item::AcqSegIvl);
+        assert_eq!(o.len(), SEG_IVLS.len());
+        for want in o.iter().rev().chain(o.iter()) {
+            ui.select_option(Item::AcqSegIvl, want);
+            assert_eq!(&ui.value(Item::AcqSegIvl), want);
+        }
+        assert_eq!(ui.m.seg_ivl, 1.0);
+        // roll: no hardware segments
+        ui.m.seg_hw = true;
+        ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+        assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
+    }
+
+    #[test]
+    fn segment_scpi() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(PANEL_W, PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        q(&mut ui, ":ACQ:SEGM 5000");
+        q(&mut ui, ":ACQ:SEGM:HARD ON");
+        q(&mut ui, ":ACQuire:SEGMents:INTerval 1e-4");
+        assert_eq!((ui.m.segments, ui.m.seg_hw, ui.m.seg_ivl), (5000, true, 1e-4));
+        assert_eq!((q(&mut ui, ":ACQ:SEGM?"), q(&mut ui, ":ACQ:SEGM:HARD?")), ("5000".into(), "1".into()));
+        assert!(q(&mut ui, ":ACQ:SEGM:INT?").starts_with("1.000000E-04"));
+        q(&mut ui, ":ACQ:SEGM:INT -3");
+        q(&mut ui, ":ACQ:SEGM OFF");
+        assert_eq!((ui.m.segments, ui.m.seg_ivl), (0, 0.0));
+        ui.seg_times = vec![Some(0.0), None, Some(2e-3)];
+        assert_eq!(q(&mut ui, ":ACQ:SEGM:TIM?"), "0e0,9.9E37,2e-3");
+    }
+
     /// Centre of a rectangle (for taps).
     fn mid(r: super::Rect) -> (i32, i32) {
         (r.x + r.w / 2, r.y + r.h / 2)
@@ -8166,7 +9200,7 @@ mod tests {
         let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
         let frame = |seq: u64| {
             let v: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32).collect();
-            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None }
+            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, hw_avg: false }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
@@ -8185,6 +9219,109 @@ mod tests {
         // averaging needs every record: back to the record path
         ui.m.acq = AcqMode::Average;
         assert!(!ui.fast_ok());
+    }
+
+    // Break it catches: an FPGA-averaged frame blended once more in software, the software average lost for frames
+    // the FPGA did not average, no clear request on CLEAR / RUN / SINGLE, hardware averaging where the board falls back
+    // (roll, a count the FPGA does not take, the switch off).
+    #[test]
+    fn hardware_average_bypasses_the_blend_and_restarts() {
+        use super::*;
+        use oos_hal::dho::acq::Mode;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        // 100 us/div, Auto depth: 62.5 MSa/s
+        ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
+        (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
+        ui.m.run = RunState::Run;
+        let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame { seq, dt: 0.8e-9, pre: 6250, ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()], acq: (1.25e9, 12_500), hw_avg, ..Default::default() };
+        let mid = |ui: &Ui| {
+            let c = &ui.last[0].as_ref().unwrap().ch[0];
+            c[c.len() / 2]
+        };
+        ui.step(0.02);
+        let c0 = {
+            let g = shared.lock().unwrap();
+            assert_eq!(g.want.as_ref().unwrap().mode, Mode::Average { count: 16 });
+            g.avg_clear
+        };
+        assert!(board().avg_hw(&ui.m));
+        assert!(ui.items(MenuId::Acquire).contains(&Item::AcqAvgHw));
+        for (k, v) in [1.0, 0.0].into_iter().enumerate() {
+            shared.lock().unwrap().queue.push_back(flat(k as u64 + 1, v, true));
+            ui.step(0.02);
+        }
+        assert_eq!(mid(&ui), 0.0);
+        // a frame the FPGA did not average is blended: 0 + (1 - 0) / 16
+        shared.lock().unwrap().queue.push_back(flat(3, 1.0, false));
+        ui.step(0.02);
+        assert!((mid(&ui) - 1.0 / 16.0).abs() < 1e-6, "{}", mid(&ui));
+        // CLEAR, then STOP and RUN, then SINGLE: each a new clear request
+        ui.clear_display();
+        ui.step(0.02);
+        let c1 = shared.lock().unwrap().avg_clear;
+        assert!(c1 > c0);
+        ui.m.run = RunState::Stop;
+        ui.step(0.02);
+        ui.m.run = RunState::Run;
+        ui.step(0.02);
+        let c2 = shared.lock().unwrap().avg_clear;
+        assert!(c2 > c1);
+        ui.m.trig_mode = TrigMode::Single;
+        ui.step(0.02);
+        assert!(shared.lock().unwrap().avg_clear > c2);
+        ui.m.trig_mode = TrigMode::Auto;
+        // fall-backs to the software average
+        ui.m.avg_count = 24;
+        assert!(!board().avg_hw(&ui.m));
+        ui.m.avg_count = 16;
+        ui.m.avg_hw = false;
+        assert!(!board().avg_hw(&ui.m));
+        ui.m.avg_hw = true;
+        ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+        assert!(!board().avg_hw(&ui.m));
+        // 1 us/div at 1.25 GSa/s: the FPGA averages at every rate (0x1004 bit 2, B1)
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        assert!(board().avg_hw(&ui.m));
+    }
+
+    #[test]
+    fn dvm_lane_scpi() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(PANEL_W, PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":SYST:DEB:DVM:LANE?"), "AUTO");
+        q(&mut ui, ":SYSTem:DEBug:DVM:LANE 3");
+        assert_eq!((q(&mut ui, ":SYST:DEB:DVM:LANE?"), ui.dvm_lane), ("3".into(), Some(3)));
+        q(&mut ui, ":SYST:DEB:DVM:LANE 4");
+        assert_eq!(ui.dvm_lane, Some(3));
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+        q(&mut ui, ":SYST:DEB:DVM:LANE auto");
+        assert_eq!(ui.dvm_lane, None);
+    }
+
+    #[test]
+    fn average_scpi() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(PANEL_W, PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":ACQ:TYPE?"), "NORM");
+        q(&mut ui, ":ACQuire:TYPE AVERages");
+        q(&mut ui, ":ACQ:AVER 256");
+        q(&mut ui, ":ACQ:AVER:HARD ON");
+        assert_eq!((ui.m.acq, ui.m.avg_count, ui.m.avg_hw), (AcqMode::Average, 256, true));
+        assert_eq!((q(&mut ui, ":ACQ:TYPE?"), q(&mut ui, ":ACQ:AVER?"), q(&mut ui, ":ACQ:AVER:HARD?")), ("AVER".into(), "256".into(), "1".into()));
+        // counts the menu does not offer are refused and leave the count alone
+        q(&mut ui, ":ACQ:AVER 100");
+        q(&mut ui, ":ACQ:TYPE BOGUS");
+        assert_eq!((ui.m.acq, ui.m.avg_count), (AcqMode::Average, 256));
+        q(&mut ui, ":ACQ:AVER:HARD OFF");
+        q(&mut ui, ":ACQ:TYPE PEAK");
+        assert_eq!((ui.m.acq, ui.m.avg_hw), (AcqMode::Peak, false));
     }
 
     /// The row of item `it` in the open menu dialog.
@@ -8563,4 +9700,34 @@ fn ladder_step(x: f32, d: i32) -> f32 {
     let l = time_ladder();
     let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
     l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+}
+
+/// Menu text of a hardware segment interval.
+fn seg_ivl_name(x: f32) -> String {
+    if x <= 0.0 {
+        "None".into()
+    } else {
+        si(x as f64, "s")
+    }
+}
+
+#[cfg(test)]
+mod aux_out_tests {
+    use super::*;
+
+    #[test]
+    fn aux_out_in_the_system_menu_with_the_offered_choices() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
+        let want: &[&str] = if board().mask_hw() || board().zone_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
+        assert_eq!(ui.options(Item::AuxOut), want);
+        assert_eq!(ui.value(Item::AuxOut), "Trigger out");
+        ui.select_option(Item::AuxOut, "Off");
+        assert_eq!((ui.m.aux_out, ui.value(Item::AuxOut).as_str()), (AuxOut::Off, "Off"));
+        ui.select_option(Item::AuxOut, "Trigger out");
+        assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
+        // pass/fail where the mask test runs in hardware
+        assert_eq!(AuxOut::choices(true), AUX_OUTS);
+        assert_eq!(AuxOut::choices(false), [AuxOut::TrigOut, AuxOut::Off]);
+    }
 }

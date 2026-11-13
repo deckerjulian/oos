@@ -17,21 +17,33 @@ mod clock;
 mod cmd;
 mod decode;
 mod ethlink;
+mod compress;
+mod deepmeas;
 mod fastdraw;
 mod font;
 mod gfx;
+mod hostname;
 mod http;
 mod board;
 mod math;
 mod mdns;
 mod model;
 mod net;
+mod net6;
+mod netacl;
 mod protocols;
 mod scpi;
 mod sntp;
 mod store;
 mod sysconf;
 mod trig;
+mod trignear;
+mod placement;
+#[cfg(test)]
+mod perfguard;
+mod sparse;
+mod drawpipe;
+mod framestats;
 mod ui;
 mod usbtmc;
 mod vxi11;
@@ -39,7 +51,7 @@ mod json;
 mod gpu;
 mod vpu;
 mod layout;
-mod remote;
+mod ssh;
 mod wave;
 mod zone;
 #[cfg(target_os = "linux")]
@@ -102,6 +114,9 @@ fn main() {
         arg(&args, "--model").as_deref(),
     );
     eprintln!("oos-ui: {} ({})", p.ident(), p.caps_line());
+    for u in &p.unit {
+        eprintln!("oos-ui: unit default {} ({})", u, oos_hal::model::UNIT_CONF);
+    }
     for o in &p.overrides {
         eprintln!("oos-ui: EXPERIMENTAL limit {}", o);
     }
@@ -120,6 +135,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--hw") {
         http::pin_to_big_cores();
+        placement::place(placement::Role::Ui);
     }
     let mut ui = Ui::new(source(&args));
     if let Some(m) = &foreign {
@@ -299,6 +315,7 @@ const HDMI_BG: u32 = 0x0d1117;
 #[cfg(target_os = "linux")]
 fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
     http::pin_to_big_cores();
+    placement::place(placement::Role::Ui);
     let mut g = gpu::Gpu::start(gpu::HELPER)?;
     for i in 0..disp.buffers() {
         let (fd, pitch) = disp.export(i).map_err(|e| format!("export: {}", e))?;
@@ -475,6 +492,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     }
     // settings of the scope itself: NTP, time zone, Ethernet (/oos/system.conf)
     ui.load_system(sysconf::default_path());
+    ui.set_ssh_dir(ssh::dir());
     let mut setup_last = store::setup_text(&ui.m);
     let mut setup_t = Instant::now();
     ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease").map(|s| format!("Linux {}", s.trim())).unwrap_or_default();
@@ -494,8 +512,14 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut web = http::Http::open(web_port);
     let mut scpi = scpi::Scpi::open(scpi_port);
     let mut vxi = vxi11::Server::open();
-    // System > Network > Remote services, as applied: web, SCPI, VXI-11, telnet (None: not yet, at the start)
-    let mut remote_now: Option<[bool; 4]> = None;
+    // who may update or control the scope over the network: net.allow (docs/network.md 6); read once per start
+    let acl = netacl::Acl::load(&sysconf::default_path());
+    web.acl = acl.clone();
+    scpi.acl = acl.clone();
+    vxi.acl = acl;
+    // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
+    // at the start)
+    let mut remote_now: Option<[bool; 5]> = None;
     // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
     let mut mdns = mdns::Mdns::new(None);
     let mut mdns_now: Option<mdns::Config> = None;
@@ -545,10 +569,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 },
             }
         }
-        // the services follow their switches: the ports were opened above, telnet is started by rcS
-        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_telnet];
+        // the services follow their switches: the ports were opened above, SSH is started by rcS (oos-ssh)
+        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
         if remote_now != Some(want) {
-            let was = remote_now.unwrap_or([true, true, true, !want[3]]);
+            let was = remote_now.unwrap_or([true, true, true, want[3], want[4]]);
             if want[0] != was[0] {
                 web.set_open(want[0].then_some(web_port));
             }
@@ -558,8 +582,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
             if want[2] != was[2] {
                 vxi.set_open(want[2]);
             }
-            if want[3] != was[3] {
-                remote::telnet(want[3]);
+            if want[3] != was[3] || want[4] != was[4] {
+                ssh::apply(want[3]);
             }
             remote_now = Some(want);
         }
@@ -568,7 +592,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             let c = ui.mdns_config(web_port, scpi_port);
             if mdns_now.as_ref() != Some(&c) {
                 if mdns_now.as_ref().map_or(true, |o| o.name != c.name) {
-                    remote::hostname(&c.name);
+                    hostname::set(&c.name);
                 }
                 mdns.set(c.clone());
                 mdns_now = Some(c);
@@ -790,7 +814,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         }
         if setup_t.elapsed().as_secs() >= 2 {
             setup_t = Instant::now();
-            let t = store::setup_text(&ui.m);
+            let t = store::setup_text(ui.setup_model());
             if t != setup_last {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {

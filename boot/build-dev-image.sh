@@ -76,6 +76,8 @@ EOF
 # (again when the helper's source is newer than the built one: Mesa itself is kept in rootfs/out/mesa)
 { [ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] && [ ! "$root/gpu/oos-gpu.c" -nt "$root/rootfs/out/gpu/bin/oos-gpu" ]; } || "$root/gpu/build.sh"
 
+# the fork's unit defaults, firewall and build choices (docs/fork/sync-checklist.md)
+. "$here/unit-hook.sh"
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
@@ -93,6 +95,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools
 	# the GPU helper with Mesa and glibc (their own loader; oos-ui and the rest stay static)
 	cp -a /wlan/gpu/. $r/
+	. /wlan/unit-hook/image.sh
 	ln -sf busybox $r/bin/sh
 	echo "$BUILD_ID" > $r/etc/oos-build
 	# rcS brings the acquisition hardware up at boot (cold boot + oos-ui --hw --afe); OOS_NO_AUTOACQ=1 leaves it out
@@ -112,6 +115,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
 	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
+	. /wlan/unit-hook/dtb.sh
 	# the busybox package in the image: its source goes with a release
 	dpkg-query -W -f "\${Package} \${Version}\n" busybox-static > /out/busybox.version
 	chown -R "$OUT_OWNER" /out

@@ -3,12 +3,14 @@
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
-//! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
-//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
+//! :CHANnel<n>:DISPlay|SCALe|VERNier|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
+//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:RS232|SPI|IIC:* (protocol trigger, scpi/ser.rs), :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
-//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
+//! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
+//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, :SYSTem:AOUTput TOUT|OFF (rear AUX OUT; OFF is OOS), fork: :SYSTem:DEBug:DVM? (DVM block raw), :SYSTem:DEBug:MASK? (mask unit raw), :SYSTem:DEBug:MASK:MAP[?] key=value, :SYSTem:DEBug:MASK:COLumns? a,b, :SYSTem:DEBug:ZONE? (zone unit raw), :SYSTem:DEBug:SERial? / UART? (TPU UART, SPI, I2C words), OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
+//! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
 //! :MOD:FM|PM:DEViation, :MOD:<type>:INTernal:FREQuency|FUNCtion, :FREQuency <Hz>,
@@ -19,6 +21,8 @@ use crate::gfx::Canvas;
 use crate::board::{board, Board};
 use crate::model::*;
 use crate::ui::Ui;
+
+mod ser;
 use std::io::{ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -68,6 +72,8 @@ pub struct Scpi {
     /// :WAVeform:MODE: false = the screen record, true = every sample of the record in the screen window (RAW)
     wav_raw: bool,
     err: Vec<String>,
+    /// who may connect (`netacl`, net.allow; empty: everyone)
+    pub acl: crate::netacl::Acl,
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
@@ -105,6 +111,18 @@ fn num(s: &str) -> Option<f32> {
     s.trim().parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
+/// Fine scale (`:CHANnel<n>:VERNier ON`): the first row of the calibrated scale ladder at or above `want` (V/div at the
+/// BNC), so the range never cuts the signal off, as `vscale` step and factor on it.
+fn fine_scale(want: f32) -> (usize, f32) {
+    let rows = board().vscale_steps_nv();
+    let nv = want as f64 * 1e9 * (1.0 - 1e-6);
+    let row = rows.iter().copied().find(|&k| k as f64 >= nv).unwrap_or(rows[rows.len() - 1]);
+    let row = (row as f64 * 1e-9) as f32;
+    let i = VSCALES.iter().rposition(|&s| s <= row * 1.000001).unwrap_or(0);
+    let f = row / VSCALES[i];
+    (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f })
+}
+
 fn nearest(ladder: &[f32], v: f32) -> usize {
     let mut best = 0;
     for (i, &x) in ladder.iter().enumerate() {
@@ -132,14 +150,14 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
-        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
+        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new(), acl: crate::netacl::Acl::default() }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = TcpListener::bind(("0.0.0.0", port)).ok();
+        let l = crate::net6::tcp(port);
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
-            eprintln!("oos-ui: SCPI on port {}", port);
+            eprintln!("oos-ui: SCPI on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
@@ -162,7 +180,10 @@ impl Scpi {
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
-            while let Ok((s, _)) = l.accept() {
+            while let Ok((s, peer)) = l.accept() {
+                if !self.acl.permits(peer.ip()) {
+                    continue; // dropped: closes the connection
+                }
                 let _ = s.set_nonblocking(false);
                 let _ = s.set_nodelay(true);
                 // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_now`)
@@ -278,6 +299,10 @@ impl Scpi {
         if nodes.len() >= 2 && kw(nodes[0], "LA") {
             return self.la_cmd(ui, &nodes[1..], query, arg);
         }
+        // fork debug: raw measure-unit slots (the slot map of the auto set-up's levels)
+        if nodes.len() == 2 && kw(nodes[0], "DEBug") && kw(nodes[1], "SLOTs") && query {
+            return t(&ui.debug_slots());
+        }
         if nodes.len() == 1 && kw(nodes[0], "AUToscale") && query {
             return t(if ui.auto_running() { "1" } else { "0" });
         }
@@ -290,6 +315,7 @@ impl Scpi {
             return None;
         }
         let m = &mut ui.m;
+        let src = &ui.src;
         let r: Option<Option<Vec<u8>>> = (|| {
             let n0 = nodes.first().copied().unwrap_or("");
             let (k0, sfx) = suffix(n0);
@@ -314,6 +340,7 @@ impl Scpi {
             if kw(k0, "CHANnel") && nodes.len() == 2 {
                 let c = sfx?.checked_sub(1).filter(|&c| c < NCH)?;
                 let n1 = nodes[1];
+                let fine = m.fine_v;
                 let ch = &mut m.ch[c];
                 if kw(n1, "DISPlay") {
                     if query {
@@ -324,8 +351,14 @@ impl Scpi {
                     if query {
                         return Some(t(&e(ch.volts_per_div() as f64)));
                     }
-                    ch.vscale = nearest(&VSCALES, num(arg)? / ch.probe);
-                    ch.vfine = 1.0;
+                    let want = num(arg).filter(|&v| v > 0.0)? / ch.probe;
+                    (ch.vscale, ch.vfine) = if fine { fine_scale(want) } else { (nearest(&VSCALES, want), 1.0) };
+                } else if kw(n1, "VERNier") {
+                    // fork: one Fine scale switch for all channels, as the Channel menu has it
+                    if query {
+                        return Some(t(if m.fine_v { "1" } else { "0" }));
+                    }
+                    m.fine_v = parse_bool(arg)?;
                 } else if kw(n1, "OFFSet") {
                     if query {
                         return Some(t(&e(ch.offset as f64)));
@@ -394,6 +427,9 @@ impl Scpi {
                     return Some(None);
                 }
                 return None;
+            }
+            if kw(n0, "TRIGger") && nodes.len() == 3 && ["RS232", "SPI", "IIC"].iter().any(|b| kw(nodes[1], b)) {
+                return ser::trig(m, nodes[1], nodes[2], arg, query);
             }
             if kw(n0, "TRIGger") {
                 let last = *nodes.last()?;
@@ -537,8 +573,56 @@ impl Scpi {
                 m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
                 return Some(None);
             }
+            // segmented recording (OOS): :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>
+            if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "SEGMents") {
+                match (nodes.get(2).copied(), query) {
+                    (None, true) => return Some(t(&m.segments.to_string())),
+                    (None, false) => m.segments = if parse_bool(arg) == Some(false) { 0 } else { (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX) },
+                    (Some(x), true) if kw(x, "HARDware") => return Some(t(if m.seg_hw { "1" } else { "0" })),
+                    (Some(x), false) if kw(x, "HARDware") => m.seg_hw = parse_bool(arg)?,
+                    (Some(x), true) if kw(x, "INTerval") => return Some(t(&e(m.seg_ivl as f64))),
+                    (Some(x), false) if kw(x, "INTerval") => m.seg_ivl = num(arg)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
+                    _ => return None,
+                }
+                return Some(None);
+            }
+            // acquire mode and averaging; OOS: :ACQuire:AVERages:HARDware ON|OFF (docs/fork/specs/01-hw-averaging.md)
+            if kw(n0, "ACQuire") && nodes.len() == 2 && kw(nodes[1], "TYPE") {
+                if query {
+                    return Some(t(match m.acq {
+                        AcqMode::Normal => "NORM",
+                        AcqMode::Peak => "PEAK",
+                        AcqMode::Average => "AVER",
+                        AcqMode::HiRes => "HRES",
+                    }));
+                }
+                let a = arg.trim().to_ascii_uppercase();
+                m.acq = if a.starts_with("NORM") {
+                    AcqMode::Normal
+                } else if a.starts_with("PEAK") {
+                    AcqMode::Peak
+                } else if a.starts_with("AVER") {
+                    AcqMode::Average
+                } else if a.starts_with("HRES") {
+                    AcqMode::HiRes
+                } else {
+                    return None;
+                };
+                return Some(None);
+            }
+            if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "AVERages") {
+                match (nodes.get(2).copied(), query) {
+                    (None, true) => return Some(t(&m.avg_count.to_string())),
+                    (None, false) => m.avg_count = arg.trim().parse::<u32>().ok().filter(|n| crate::ui::AVERAGES.contains(n))?,
+                    (Some(x), true) if kw(x, "HARDware") => return Some(t(if m.avg_hw { "1" } else { "0" })),
+                    (Some(x), false) if kw(x, "HARDware") => m.avg_hw = parse_bool(arg)?,
+                    _ => return None,
+                }
+                return Some(None);
+            }
             if kw(n0, "ACQuire") && nodes.len() == 2 && query {
-                let (sr, depth) = m.srate_depth();
+                // what the top bar shows: the live hardware record, not the model's stock-system choice for Auto
+                let (sr, depth) = src.rate_depth(m);
                 if kw(nodes[1], "SRATe") {
                     return Some(t(&e(sr)));
                 }
@@ -898,6 +982,30 @@ impl Scpi {
                 }
                 return None;
             }
+            // rear AUX OUT, stock names TOUT and PFAil; OFF is OOS's (constant low)
+            if kw(nodes[1], "AOUTput") {
+                if query {
+                    return t(match ui.m.aux_out {
+                        AuxOut::TrigOut => "TOUT",
+                        AuxOut::Off => "OFF",
+                        AuxOut::PassFail => "PFA",
+                    });
+                }
+                let want = match arg.trim().to_ascii_uppercase().as_str() {
+                    "TOUT" => Some(AuxOut::TrigOut),
+                    "OFF" => Some(AuxOut::Off),
+                    "PFA" | "PFAIL" => Some(AuxOut::PassFail),
+                    _ => None,
+                };
+                match want.filter(|a| a.offered(board().mask_hw() || board().zone_hw())) {
+                    Some(a) => {
+                        ui.m.aux_out = a;
+                        ui.mark_changed();
+                    }
+                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
+            }
             if kw(nodes[1], "LOG") && !query {
                 match parse_bool(arg) {
                     Some(on) => ui.log_set(on),
@@ -906,8 +1014,59 @@ impl Scpi {
                 return None;
             }
         }
+        if kw(n0, "ACQuire") && nodes.len() == 3 && kw(nodes[1], "SEGMents") && kw(nodes[2], "TIMes") && query {
+            return t(&ui.seg_times_text());
+        }
         if kw(n0, "DECode") && nodes.len() == 2 && kw(nodes[1], "EVENts") && query {
             return t(&ui.events_text());
+        }
+        // fork: the TPU UART receiver's words for the current settings (docs/fork/hwuart.md)
+        if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && (kw(nodes[2], "UART") || kw(nodes[2], "SERial")) && query {
+            return t(&board().uart_debug(&ui.m));
+        }
+        // fork: the zone unit's raw status and counter next to the software filter (docs/fork/hwzone.md)
+        if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "ZONE") && query {
+            return t(&ui.zone_debug_text());
+        }
+        // fork: the comparator mapping of the mask test and zone trigger, and the per-column view (docs/fork/hwmask.md)
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && kw(nodes[3], "MAP") {
+            match board().mask_map(if query { None } else { Some(arg.trim()) }) {
+                Ok(s) if query => return t(&s),
+                Ok(_) => ui.mark_changed(),
+                Err(e) => self.err.push(format!("-224,\"Illegal parameter value\" {}", e)),
+            }
+            return None;
+        }
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && kw(nodes[3], "COLumns") && query {
+            let mut it = arg.split(',').map(|x| x.trim().parse::<usize>());
+            let (a, b) = match (it.next(), it.next()) {
+                (Some(Ok(a)), Some(Ok(b))) => (a.min(b), a.max(b)),
+                (Some(Ok(a)), None) => (a, a),
+                _ => (0, 9),
+            };
+            return t(&ui.mask_columns_text(a, b));
+        }
+        // fork: the mask unit's raw counters and slot next to the software test (docs/fork/hwmask.md)
+        if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && query {
+            return t(&ui.mask_debug_text());
+        }
+        // fork: the DVM block's raw registers next to the software DVM (docs/fork/dvm.md)
+        if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && query {
+            return t(&ui.dvm_debug_text());
+        }
+        // fork, unit debug: force the DVM block's lane with one channel (each lane = one pair of ADC cores)
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && kw(nodes[3], "LANE") {
+            if query {
+                return t(&ui.dvm_lane_text());
+            }
+            match arg.trim().to_ascii_uppercase().as_str() {
+                "AUTO" => ui.dvm_lane_set(None),
+                a => match a.parse::<u32>() {
+                    Ok(l) if l < 4 => ui.dvm_lane_set(Some(l)),
+                    _ => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                },
+            }
+            return None;
         }
         if kw(n0, "SYSTem") && nodes.len() == 2 && kw(nodes[1], "ERRor") && query {
             return t(&if self.err.is_empty() { "0,\"No error\"".to_string() } else { self.err.remove(0) });
@@ -1059,4 +1218,95 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
         b.resize(b.len() + row - w * 3, 0);
     }
     b
+}
+
+#[cfg(test)]
+mod vernier_tests {
+    use super::*;
+
+    #[test]
+    fn vernier_takes_any_scale_at_or_above_a_calibrated_row() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0);
+        let mut q = |c: &str| String::from_utf8(scpi.exec_line(&mut ui, &cv, c)).unwrap();
+        // coarse: the nearest 1-2-5 step
+        assert_eq!(q(":CHAN1:VERN?"), "0");
+        q(":CHAN1:SCAL 0.37");
+        assert_eq!(q(":CHAN1:SCAL?"), "5.000000E-01");
+        // fine: a row of the ladder is kept, between rows the next one up
+        q(":CHAN1:VERN ON");
+        assert_eq!(q(":CHAN1:VERN?"), "1");
+        q(":CHAN1:SCAL 0.37");
+        assert_eq!(q(":CHAN1:SCAL?"), "3.700000E-01");
+        q(":CHAN1:SCAL 0.371");
+        assert_eq!(q(":CHAN1:SCAL?"), "3.750000E-01");
+        q(":CHAN2:PROB 10");
+        q(":CHAN2:SCAL 1.234");
+        assert_eq!(q(":CHAN2:SCAL?"), "1.240000E+00");
+        // the ends of the ladder hold, nonsense changes nothing
+        q(":CHAN1:SCAL 1e-9");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E-04");
+        q(":CHAN1:SCAL 1e9");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E+01");
+        q(":CHAN1:SCAL -1");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E+01");
+        // off keeps the scale until the next coarse step
+        q(":CHAN1:SCAL 0.37");
+        q(":CHAN1:VERN OFF");
+        assert_eq!((q(":CHAN1:VERN?"), q(":CHAN1:SCAL?")), ("0".to_string(), "3.700000E-01".to_string()));
+        drop(q);
+        // a saved setup keeps both
+        let b = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert_eq!(b.ch[0].volts_per_div(), ui.m.ch[0].volts_per_div());
+    }
+}
+#[cfg(test)]
+mod aux_out_tests {
+    use super::*;
+
+    #[test]
+    fn aux_out_over_scpi_and_in_the_setup() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":SYST:AOUT?"), "TOUT", "trigger out by default, as the FPGA powers up");
+        q(&mut ui, ":SYSTem:AOUTput off");
+        assert_eq!((q(&mut ui, ":SYSTem:AOUTput?"), ui.m.aux_out), ("OFF".to_string(), AuxOut::Off));
+        assert!(crate::store::setup_text(&ui.m).contains("aux_out = Off\n"));
+        q(&mut ui, ":SYST:AOUT TOUT");
+        assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
+        q(&mut ui, ":SYST:AOUT PFAil");
+        assert_eq!(ui.m.aux_out == AuxOut::PassFail, board().mask_hw() || board().zone_hw());
+        q(&mut ui, ":SYST:AOUT TOUT");
+        q(&mut ui, ":SYST:AOUT blink");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+        // fork: the mask unit's debug line, off without the hardware test
+        assert!(q(&mut ui, ":SYSTem:DEBug:MASK?").starts_with("off,enabled=0,active=0,blocked=0,sw_pass=0,sw_fail=0,"));
+        assert!(q(&mut ui, ":SYSTem:DEBug:ZONE?").starts_with("off,enabled=0,active=0,sw_drops=0,"));
+        assert_eq!(q(&mut ui, ":SYSTem:DEBug:UART?"), "off,enabled=0");
+        assert_eq!(q(&mut ui, ":SYSTem:DEBug:SERial?"), "off,enabled=0");
+        // the protocol trigger's settings through the dispatcher, into the setup
+        q(&mut ui, ":TRIGger:RS232:WHEN DATA");
+        q(&mut ui, ":TRIG:RS232:RELation OUT");
+        q(&mut ui, ":TRIG:RS232:DMAX 0x7e");
+        assert_eq!((q(&mut ui, ":TRIGger:RS232:RELation?"), ui.m.ser.max, ui.m.trig_bus), ("OUT".to_string(), 0x7e, BusWhat::Data));
+        assert!(crate::store::setup_text(&ui.m).contains("ser.rel = Out\n"));
+        q(&mut ui, ":TRIG:IIC:AWIDth 8");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-"));
+        while !q(&mut ui, ":SYST:ERR?").starts_with("0,") {}
+        // the comparator mapping: set one key, read it back, put the original back
+        let orig = q(&mut ui, ":SYSTem:DEBug:MASK:MAP?");
+        assert!(orig.starts_with("domain="), "{}", orig);
+        q(&mut ui, ":SYSTem:DEBug:MASK:MAP cols=stock");
+        assert!(q(&mut ui, ":SYST:DEB:MASK:MAP?").contains("cols=stock"));
+        q(&mut ui, ":SYST:DEB:MASK:MAP cols=bogus");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+        for kv in orig.split(' ') {
+            q(&mut ui, &format!(":SYST:DEB:MASK:MAP {}", kv));
+        }
+        assert_eq!(q(&mut ui, ":SYST:DEB:MASK:MAP?"), orig);
+        assert_eq!(q(&mut ui, ":SYST:DEB:MASK:COL? 0,3"), "off");
+    }
 }

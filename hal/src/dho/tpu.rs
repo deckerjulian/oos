@@ -476,6 +476,73 @@ pub fn edge_coupled(sh: &mut Shadows, ch: u32, slope: Slope, coupling: Coupling,
     t.w
 }
 
+/// UART trigger (docs/fork/hwuart.md): the source's comparator (level A, the trigger level with its hysteresis) on
+/// event R, the line inverted for idle-low signals (R pattern bit 23), the DC filter of the source, the receiver words
+/// (`uarttrig::words`), then the mux on the UART event. Channels only.
+pub fn uart(sh: &mut Shadows, ch: u32, u: &crate::dho::uarttrig::Uart, level: f64, vt: &[Vert; 4]) -> Vec<Write> {
+    let mut t = Tpu { sh, w: Vec::new() };
+    let a = cmp_a(ch);
+    t.bypass(false);
+    t.levels(ch, level, level, true, false, vt);
+    t.iir(ch);
+    t.source(Ev::R, a, 0, a, 0);
+    t.pattern(Ev::R, 0, 0, 2, u.invert as u32);
+    t.w.extend(crate::dho::uarttrig::words(u));
+    t.mode(crate::dho::uarttrig::MUX);
+    t.w
+}
+
+/// A protocol line on event `ev` as the stock SPI/I2C drivers route it: the channel's level-A comparator on both
+/// inputs, pattern (2, invert, 2, invert). Only bits 23:20 reach the line (bit 23 inverts it); bits 19:16 are copied
+/// from the stock values (docs/fork/hwserial.md).
+fn line(t: &mut Tpu, ev: Ev, ch: u32, invert: bool) {
+    let a = cmp_a(ch);
+    let i = invert as u32;
+    t.source(ev, a, 0, a, 0);
+    t.pattern(ev, 2, i, 2, i);
+}
+
+/// Level A of every distinct channel in `chs` at `level` with its hysteresis.
+fn line_levels(t: &mut Tpu, chs: &[u32], level: f64, vt: &[Vert; 4]) {
+    let mut done = Vec::new();
+    for &c in chs {
+        if !done.contains(&c) {
+            t.levels(c, level, level, true, false, vt);
+            done.push(c);
+        }
+    }
+}
+
+/// SPI trigger (docs/fork/hwserial.md): clock on event A (inverted for the falling edge), data on R, chip select on B
+/// (inverted when active high), the levels of the three lines, the filter on the clock's channel, the receiver words,
+/// then mux 12. Channels only.
+pub fn spi(sh: &mut Shadows, s: &crate::dho::serialtrig::Spi, level: f64, vt: &[Vert; 4]) -> Vec<Write> {
+    let mut t = Tpu { sh, w: Vec::new() };
+    t.bypass(false);
+    line_levels(&mut t, &[s.clk, s.data, s.cs], level, vt);
+    t.iir(s.clk);
+    line(&mut t, Ev::A, s.clk, s.clk_falling);
+    line(&mut t, Ev::R, s.data, false);
+    line(&mut t, Ev::B, s.cs, s.cs_high);
+    t.w.extend(crate::dho::serialtrig::spi_words(s));
+    t.mode(crate::dho::serialtrig::MUX_SPI);
+    t.w
+}
+
+/// I2C trigger (docs/fork/hwserial.md): SCL on event A, SDA on event B, their levels, the filter on SCL's channel, the
+/// receiver words, then mux 13. Channels only.
+pub fn i2c(sh: &mut Shadows, i: &crate::dho::serialtrig::I2c, level: f64, vt: &[Vert; 4]) -> Vec<Write> {
+    let mut t = Tpu { sh, w: Vec::new() };
+    t.bypass(false);
+    line_levels(&mut t, &[i.scl, i.sda], level, vt);
+    t.iir(i.scl);
+    line(&mut t, Ev::A, i.scl, false);
+    line(&mut t, Ev::B, i.sda, false);
+    t.w.extend(crate::dho::serialtrig::i2c_words(i));
+    t.mode(crate::dho::serialtrig::MUX_I2C);
+    t.w
+}
+
 /// Holdoff on its own (trigger.md 2.6): holdoff type 4 (time), 6.4 ns ticks, 48 bit.
 pub fn holdoff(sh: &mut Shadows, t_fs: i128) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
@@ -846,6 +913,52 @@ pub fn force(sh: &Shadows) -> Vec<Write> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn spi_and_i2c_route_their_lines() {
+        use crate::dho::serialtrig::{Dir, I2c, I2cCond, Spi};
+        use crate::dho::uarttrig::Relation;
+        let vt = [Vert { scale: 1e9, offset: 0.0, g: 1.0, noise: 0.0 }; 4];
+        let last = |w: &[Write], r: u32| w.iter().filter(|x| x.0 == r).last().map(|x| x.1);
+        let mut sh = Shadows::APP;
+        let s = Spi { clk: 2, data: 1, cs: 3, clk_falling: true, cs_high: false, timeout: None, width: 8, rel: Relation::Eq, min: 0x5a, max: 0x5a, mask: 0xff };
+        let w = spi(&mut sh, &s, 1.5e9, &vt);
+        // the stock patterns: A = CH2 level A (code 2) (2, 1, 2, 1) for the falling clock, R = CH1 (code 0) (2, 0, 2, 0),
+        // B = CH3 (code 4) (2, 0, 2, 0) for an active-low CS
+        assert_eq!(last(&w, 0x201c).unwrap() & 0x00ff_ffff, 2 | 2 << 8 | 2 << 16 | 1 << 19 | 2 << 20 | 1 << 23);
+        assert_eq!(last(&w, 0x204c).unwrap() & 0x00ff_ffff, 2 << 16 | 2 << 20);
+        assert_eq!(last(&w, 0x2034).unwrap() & 0x00ff_ffff, 4 | 4 << 8 | 2 << 16 | 2 << 20);
+        assert!([0x2004, 0x200c, 0x20b8].iter().all(|r| w.iter().any(|x| x.0 == *r)), "levels of CH1..CH3");
+        assert_eq!(*w.last().unwrap(), (0x205c, 12));
+        assert_eq!(last(&w, 0x2178), Some(7 << 4));
+        let i = I2c { scl: 1, sda: 2, cond: I2cCond::Start, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr: (0, 0, 0), data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) };
+        let w = i2c(&mut sh, &i, 1.5e9, &vt);
+        assert_eq!(last(&w, 0x201c).unwrap() & 0x00ff_ffff, 2 << 16 | 2 << 20);
+        assert_eq!(last(&w, 0x2034).unwrap() & 0x00ff_ffff, 2 | 2 << 8 | 2 << 16 | 2 << 20);
+        assert_eq!(*w.last().unwrap(), (0x205c, 13));
+        assert!(w.iter().all(|x| !(0x2200..=0x2218).contains(&x.0)));
+    }
+
+    #[test]
+    fn uart_routes_the_line_and_selects_the_receiver() {
+        use crate::dho::uarttrig::{Cond, Parity, Stop, Uart};
+        let mut sh = Shadows::APP;
+        let vt = [Vert { scale: 1e9, offset: 0.0, g: 1.0, noise: 0.0 }; 4];
+        let u = Uart { baud: 9600.0, bits: 8, parity: Parity::None, stop: Stop::One, cond: Cond::Start, invert: true };
+        let w = uart(&mut sh, 2, &u, 1.5e9, &vt);
+        // event R: comparator level A of CH2 (code 2) on both inputs, pattern (0, 0, 2) with the inversion bit
+        let r: Vec<u32> = w.iter().filter(|x| x.0 == 0x204c).map(|x| x.1).collect();
+        assert_eq!(*r.last().unwrap(), 2 | 2 << 8 | 2 << 20 | 1 << 23);
+        assert!(w.contains(&(0x2100, 16276)) && w.contains(&(0x2104, 7)) && w.contains(&(0x221c, 0)));
+        assert_eq!(*w.last().unwrap(), (0x205c, 4));
+        assert!(w.iter().any(|x| x.0 == 0x200c), "CH2 level A");
+        assert_eq!(w.iter().find(|x| x.0 == 0x208c).unwrap().1 >> 2 & 3, 1);
+        // the counter's write registers stay untouched
+        assert!(w.iter().all(|x| !(0x2200..=0x2218).contains(&x.0)));
+        // not inverted: bit 23 clear
+        let w = uart(&mut sh, 2, &Uart { invert: false, ..u }, 1.5e9, &vt);
+        assert_eq!(w.iter().filter(|x| x.0 == 0x204c).last().unwrap().1 & 1 << 23, 0);
+    }
 
     #[test]
     fn level_codes_from_the_doc_example() {

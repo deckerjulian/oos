@@ -75,6 +75,15 @@ impl CalAdc {
     pub fn fine_at(ch: usize, slot: usize) -> usize {
         FINE + 64 * ch + 4 * slot
     }
+    /// The eight core offsets stored for ADC mode `mode`.
+    pub fn offsets(&self, mode: usize) -> [i32; 8] {
+        std::array::from_fn(|n| self.s16(CalAdc::off_at(mode, n)))
+    }
+    pub fn set_offsets(&mut self, mode: usize, o: &[i32; 8]) {
+        for (n, &v) in o.iter().enumerate() {
+            self.set16(CalAdc::off_at(mode, n), v);
+        }
+    }
     pub fn get16(&self, o: usize) -> i32 {
         self.s16(o)
     }
@@ -219,6 +228,16 @@ impl Adc {
         w
     }
 
+    /// The 0x1034 word that writes core offset `o` (steps) to core `core` (register 0x14 + 8n), with the other bits of
+    /// the register 0 as every OOS and stock write has them. Err outside 0..7 / -1024..1023.
+    pub fn core_offset_word(core: usize, o: i32) -> Result<u32, String> {
+        if core > 7 || !(-1024..=1023).contains(&o) {
+            return Err(format!("core 0..7 and offset -1024..1023 steps, not {} / {}", core, o));
+        }
+        let w = Adc::default().core_offset(core, o);
+        Ok(w[0].val)
+    }
+
     /// Core offset register 0x14 + 8n (11-bit signed, -1024..1023; others not written).
     pub fn core_offset(&mut self, core: usize, o: i32) -> Vec<Wr> {
         let mut w = Vec::new();
@@ -304,6 +323,22 @@ pub fn measure(bus: &mut dyn crate::dho::bus::Bus, sleep_ms: &mut dyn FnMut(u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_offset_words() {
+        assert_eq!(Adc::core_offset_word(0, 5), Ok(0x0114_0005));
+        assert_eq!(Adc::core_offset_word(7, -1), Ok(0x014c_07ff));
+        assert!(Adc::core_offset_word(8, 0).is_err() && Adc::core_offset_word(0, 1024).is_err());
+    }
+
+    #[test]
+    fn mode_offsets_round_trip() {
+        let mut c = CalAdc::from_payload(vec![0; 0x738]).unwrap();
+        let o = [3, -2, 0, 1023, -1024, 7, -7, 1];
+        c.set_offsets(5, &o);
+        assert_eq!((c.offsets(5), c.offsets(4)), (o, [0; 8]));
+        assert_eq!(c.get16(CalAdc::off_at(5, 3)), 1023);
+    }
 
     const CAL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal");
 

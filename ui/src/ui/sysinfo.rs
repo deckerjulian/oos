@@ -132,6 +132,10 @@ impl Ui {
             oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),
             oos_hal::model::Source::Assumed => kvc("Identified", "assumed (no vendor.bin)", AMBER),
         });
+        if !p.unit.is_empty() {
+            // capabilities of this unit from the image (/etc/oos/limits.conf), not experimental
+            a.push(kv("Unit defaults", p.unit.join(", ")));
+        }
         a.push(Row::Head("Software".into()));
         a.push(kv("OOS", format!("oos-ui {}", env!("CARGO_PKG_VERSION"))));
         a.push(kv("Kernel", if self.info.is_empty() { "-".to_string() } else { self.info.clone() }));
@@ -217,11 +221,20 @@ impl Ui {
         }
         d.push(Row::Head("Acquisition now".into()));
         d.push(kv("Channels on", format!("{} of {}", self.m.n_on(), n_ch())));
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| self.m.srate_depth());
+        let (sr, depth) = self.src.rate_depth(&self.m);
         d.push(kv("Sample rate", si_short(sr, "Sa/s")));
         d.push(kv("Record", si_short(depth as f64, "pts")));
         d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));
         d.push(kv("Waveforms", fmt_count(self.wfm_total as f64)));
+        let (acq, used, dropped) = crate::drawpipe::counters().read();
+        if acq > 0 {
+            d.push(kv("Frames used", format!("{} of {} ({} dropped, {:?} pipeline)", fmt_count(used as f64), fmt_count(acq as f64), fmt_count(dropped as f64), crate::drawpipe::mode())));
+            let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
+            if crate::drawpipe::mode() == crate::drawpipe::Mode::Batch {
+                // short time bases measure the interpolated record: those frames stay out of the statistics
+                d.push(kv("Frames in statistics", format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64))));
+            }
+        }
         d.push(kv("Screen", format!("{:.0} fps", self.fps)));
         if p.experimental() {
             d.push(Row::Head("Experimental limits".into()));

@@ -24,7 +24,8 @@
 //!                                          --reset: R0 RESET=1/0 first, as the TI datasheet asks), then reads 0x1210
 //!   oos-fpgad pll --freq <Hz> --dry        table for another ADC clock (oos_hal::dho::lmx2582, pll.md) and its decode,
 //!                                          no hardware access; without --dry only 1.25 GHz (others are untested)
-//!   oos-fpgad gpio <line> <0|1> [--hold 60]  drive a GPIO line (by DT name) and keep it for --hold seconds
+//!   oos-fpgad gpio <line> <0|1> [--hold 60] [--force]  drive a GPIO line (by DT name) and keep it for --hold seconds;
+//!                                          generator lines (afg_in1..5, FG_M2C_GPIO) only with a generator or --force
 //!   oos-fpgad roll [run options] [--secs 3] [--scan] --execute
 //!                                          roll mode (roll-mode.md): normal set-up, roll display chain, stream for
 //!                                          --secs seconds, chunks (216 bytes: header + 100 words) to --out;
@@ -41,6 +42,11 @@
 //!                                          cal_afg.hex (dc: level = --offset); dry run prints the writes
 //!   oos-fpgad la status | la thr <pod1 V> <pod2 V> [--execute]
 //!                                          logic analyser (la.md): probe, line states 0x12dc, thresholds 0x12d4
+//!   oos-fpgad adc slots [--runs 4]         ADC measure unit (0x1040..0x1048): mean, min, max per slot and each slot's
+//!                                          mean against the slot average in ADC steps (docs/fork/core-offset.md)
+//!   oos-fpgad adc offset <core 0..7> <steps> [--execute]
+//!                                          one RT8847 core offset register (0x14 + 8n) over 0x1034; dry run prints
+//!                                          the word. Both refused while oos-ui runs (it owns the ADC and the measure unit)
 //!   oos-fpgad temp                         read only: SoC thermal zones, FPGA die temperature and VCCINT (XADC 0x1438)
 //!   oos-fpgad beep [once|long]             beeper (pwm-gpio, 2 kHz): 20 ms click or 4 s alarm
 //!   oos-fpgad guard [--period 1] [--power-off]
@@ -61,16 +67,22 @@
 //!   --keep-config      skip trigger, acquisition configuration and auto trigger (arm with what the stock system left behind)
 //!   --compress 1       FPGA compression factor k of the whole record (0x1170, stock live display path; use with --all)
 //!   --frames 1         frames per batch (one arm, one play, one read of all frames; capped at the frame ring)
+//!   --average N        hardware average of N triggers (0x1004 bit3; reads the newest frame of the batch; not verified)
 //!   --blocks 7         configuration blocks before the arm: bit0 trigger, bit1 acquisition, bit2 auto trigger
 //!   --afe              program the AFEs of the enabled channels (scale/offset, bandwidth --bw OFF|S20M|AUTO|<MHz>)
 //!   --la               logic analyser on (la.md, UNTESTED): LA set-up and a second, raw LA read after the analog one
 //!                      (run writes the bytes of that last read, the LA words); --la-thr 1.4 threshold of both pods in V
 //!                      (--la-alone: no analog channel shown, the analog rate is not halved)
+//!   --raw-too          with --compress k > 1: read the newest frame once more, raw (seq::read_raw_again), to --out.raw
 //!   --out /tmp/frame.bin
+//!   oos-fpgad compress-check <raw.bin> <compressed.bin> --k K [--mask 1]
+//!                                          offline (runs anywhere): which min/max pair layout explains the compressed
+//!                                          read of the same record (oos_hal::dho::pairs, docs/fork/compress.md)
 //! A channel set different from --app-mask switches the ADC mode; --afe and a mode switch read the calibration from
 //! OOS_CAL_DIR (default /rigol/data).
 
 mod board;
+mod compcheck;
 
 use oos_hal::dho::seq::{self, Settings, Step};
 use oos_hal::dho::{adc, afe, tpu};
@@ -84,11 +96,13 @@ struct Opt {
     out: String,
     execute: bool,
     no_read: bool,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    raw_too: bool,
 }
 
 fn parse(args: &[String]) -> Result<Opt, String> {
     let mut s = Settings::default();
-    let (mut app_mask, mut out, mut execute, mut no_read) = (1u32, "/tmp/frame.bin".to_string(), false, false);
+    let (mut app_mask, mut out, mut execute, mut no_read, mut raw_too) = (1u32, "/tmp/frame.bin".to_string(), false, false, false);
     let (mut scale, mut offset, mut bw) = (1.0, 0.0, afe::bw::OFF);
     let (mut n, mut at, mut all) = (4000u32, -2000i64, false);
     let mut i = 0;
@@ -115,6 +129,8 @@ fn parse(args: &[String]) -> Result<Opt, String> {
             "--blocks" => s.blocks = int(v)? as u8,
             "--frames" => s.frames = int(v)?,
             "--compress" => s.compress = int(v)?,
+            // hardware averaging (docs/fork/specs/01-hw-averaging.md), not verified on the unit
+            "--average" => s.mode = oos_hal::dho::acq::Mode::Average { count: int(v)? },
             "--la-thr" => {
                 let t = num(v)?;
                 s.la = Some(oos_hal::dho::la::Set { thr: [t, t], ..s.la.unwrap_or_default() });
@@ -153,6 +169,7 @@ fn parse(args: &[String]) -> Result<Opt, String> {
                     "--la-alone" => s.la = Some(oos_hal::dho::la::Set { analog_shown: false, ..s.la.unwrap_or_default() }),
                     "--all" => all = true,
                     "--execute" => execute = true,
+                    "--raw-too" => raw_too = true,
                     _ => return Err(format!("unknown option {}", a)),
                 }
             }
@@ -164,7 +181,10 @@ fn parse(args: &[String]) -> Result<Opt, String> {
     if !(1..=15).contains(&app_mask) {
         return Err("--app-mask 1..0xf".into());
     }
-    Ok(Opt { s, app_mask, out, execute, no_read })
+    if raw_too && s.compress < 2 {
+        return Err("--raw-too needs --compress k > 1".into());
+    }
+    Ok(Opt { s, app_mask, out, execute, no_read, raw_too })
 }
 
 fn print(st: &[Step]) {
@@ -182,6 +202,31 @@ fn print(st: &[Step]) {
         }
     }
     println!("# {} hardware writes", st.iter().filter(|s| matches!(s, Step::Wr(_) | Step::Afe(_))).count());
+}
+
+/// The commands `tool` runs (register, board and ADC access). A command missing here falls through to the usage text
+/// without a word (unit round 9: `adc` did).
+const TOOL_CMDS: [&str; 8] = ["status", "rd", "wr", "cold-boot", "fpga-boot", "pll", "gpio", "adc"];
+
+/// An oos-ui process is running (/proc/<pid>/comm).
+#[cfg(target_os = "linux")]
+fn ui_running() -> bool {
+    std::fs::read_dir("/proc").map(|d| d.flatten().any(|e| std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim() == "oos-ui"))).unwrap_or(true)
+}
+
+/// The lines of `adc slots`: per slot the mean over all runs (16-bit measure scale), the lowest min and highest max
+/// (12-bit), and the mean's distance from the average of all slots in ADC steps (16 codes).
+fn slot_lines(runs: &[[oos_hal::dho::levels::Slot; 8]]) -> Vec<String> {
+    let n = runs.len().max(1) as f64;
+    let mean: [f64; 8] = std::array::from_fn(|k| runs.iter().map(|r| r[k].mean).sum::<f64>() / n);
+    let all = mean.iter().sum::<f64>() / 8.0;
+    (0..8)
+        .map(|k| {
+            let lo = runs.iter().map(|r| r[k].min).min().unwrap_or(0);
+            let hi = runs.iter().map(|r| r[k].max).max().unwrap_or(0);
+            format!("slot {}: mean {:.1}  min {}  max {}  {:+.2} steps", k, mean[k], lo, hi, (mean[k] - all) / 16.0)
+        })
+        .collect()
 }
 
 fn main() {
@@ -203,6 +248,9 @@ fn main() {
         println!("mem       {:?} pts, LA on {:?}", l.max_mem, l.max_mem_la);
         println!("afg max   sine {} square {} ramp {} pulse {} noise {} Hz", l.afg_max_hz.sine, l.afg_max_hz.square, l.afg_max_hz.ramp, l.afg_max_hz.pulse, l.afg_max_hz.noise);
         println!("clocks    ADC {} Hz, generator {} Hz", l.adc_clock_hz, l.afg_clock_hz);
+        for u in &p.unit {
+            println!("unit      {} ({})", u, oos_hal::model::UNIT_CONF);
+        }
         for o in &p.overrides {
             println!("EXPERIMENTAL  {}", o);
         }
@@ -250,7 +298,17 @@ fn main() {
         }
         return;
     }
-    if matches!(cmd, "status" | "rd" | "wr" | "cold-boot" | "fpga-boot" | "pll" | "gpio") {
+    if cmd == "compress-check" {
+        match compcheck::run(&args[2..]) {
+            Ok(text) => print!("{}", text),
+            Err(e) => {
+                eprintln!("oos-fpgad: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if TOOL_CMDS.contains(&cmd) {
         if let Err(e) = tool(cmd, &args[2..]) {
             eprintln!("oos-fpgad: {}", e);
             std::process::exit(1);
@@ -274,18 +332,20 @@ fn main() {
     let cal = if o.s.afe { afe::Cal::load(&dir).ok() } else { None };
     let cal_adc = adc::CalAdc::load(&dir).ok();
     let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
-    let st = match seq::plan(&mut state, &o.s, cal.as_ref(), cal_adc.as_ref()) {
-        Ok((mut st, _)) => {
+    let (st, plan_p) = match seq::plan(&mut state, &o.s, cal.as_ref(), cal_adc.as_ref()) {
+        Ok((mut st, p)) => {
             if o.no_read {
                 st.retain(|x| !matches!(x, Step::Read { .. }));
             }
-            st
+            (st, p)
         }
         Err(e) => {
             eprintln!("oos-fpgad: {}", e);
             std::process::exit(2);
         }
     };
+    #[cfg(not(target_os = "linux"))]
+    let _ = plan_p;
     if cmd == "plan" || !o.execute {
         print(&st);
         if cmd == "run" {
@@ -296,7 +356,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
-        let run = || -> Result<(), String> {
+        let mut run = || -> Result<(), String> {
             let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
             let v = bar.rd(0x4000);
             if v != FPGA_VERSION {
@@ -306,17 +366,31 @@ fn main() {
             let mut c2h = std::fs::File::open("/dev/xdma0_c2h_0").map_err(|e| format!("/dev/xdma0_c2h_0: {}", e))?;
             let t0 = std::time::Instant::now();
             let log = |m: String| eprintln!("{:8.1} ms  {}", t0.elapsed().as_secs_f64() * 1e3, m);
+            let mut raw = oos_hal::dho::bus::DmaBuf::new();
             let bytes = if o.s.frames > 1 {
                 // batch: configuration, then arm / wait for the ring / read the recorded frames (max 30 ms extra)
                 let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
                 let (cfg, p) = state.configure(&o.s, cal.as_ref(), cal_adc.as_ref())?;
                 seq::execute(&cfg, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
-                let (b, n) = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, 30, log)?;
+                let mut dma = oos_hal::dho::bus::DmaBuf::new();
+                let n = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut dma, false, 30, log)?;
                 eprintln!("{:8.1} ms  {} frames of {} bytes", t0.elapsed().as_secs_f64() * 1e3, n, seq::frame_bytes(&o.s, &p));
-                b
+                if o.raw_too {
+                    seq::read_raw_again(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut raw, n.max(1) - 1, log)?;
+                }
+                dma.into_vec()
             } else {
-                seq::execute(&st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?
+                let b = seq::execute(&st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
+                if o.raw_too {
+                    seq::read_raw_again(&mut state, &o.s, &plan_p, &mut bar, &mut c2h, &mut raw, 0, log)?;
+                }
+                b
             };
+            if o.raw_too {
+                let path = format!("{}.raw", o.out);
+                std::fs::write(&path, raw.data()).map_err(|e| format!("{}: {}", path, e))?;
+                eprintln!("{:8.1} ms  {} raw bytes of the same record -> {}", t0.elapsed().as_secs_f64() * 1e3, raw.data().len(), path);
+            }
             std::fs::write(&o.out, &bytes).map_err(|e| format!("{}: {}", o.out, e))?;
             eprintln!("{:8.1} ms  {} bytes -> {}", t0.elapsed().as_secs_f64() * 1e3, bytes.len(), o.out);
             Ok(())
@@ -472,6 +546,32 @@ fn status_lines(rd: &mut dyn FnMut(u32) -> u32) -> Vec<String> {
     ]
 }
 
+/// Parameters of xdma.ko without `xdma.params`: DMA completion by polling the write-back word, what OOS was verified
+/// with. The stock system loads it with interrupts (docs/fork/specs/10-transfer-efficiency.md 1.4).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const XDMA_DEFAULT: &str = "poll_mode=1";
+
+/// The xdma.ko parameters of `xdma.params` in the system settings (`oos-conf`; None or empty = `XDMA_DEFAULT`). Only
+/// `poll_mode=0|1` and `interrupt_mode=0..3` (0 auto, 1 MSI, 2 legacy INTx, 3 MSI-X), each at most once: the line goes
+/// to `insmod` through a shell.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn xdma_params(v: Option<&str>) -> Result<String, String> {
+    let v = v.map(str::trim).unwrap_or("");
+    if v.is_empty() {
+        return Ok(XDMA_DEFAULT.into());
+    }
+    let mut seen = Vec::new();
+    for w in v.split_whitespace() {
+        let ok = matches!(w, "poll_mode=0" | "poll_mode=1" | "interrupt_mode=0" | "interrupt_mode=1" | "interrupt_mode=2" | "interrupt_mode=3");
+        let key = w.split('=').next().unwrap_or(w);
+        if !ok || seen.contains(&key) {
+            return Err(format!("xdma.params: {:?} is not allowed (poll_mode=0|1, interrupt_mode=0..3, each once)", w));
+        }
+        seen.push(key);
+    }
+    Ok(v.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
 /// PCIe host + xdma bring-up with retries (the loop of oos-fpga-up, without the FPGA boot), then BAR1. The device and
 /// the xdma nodes are polled every 20 ms instead of the fixed 2 s / 1 s sleeps of oos-fpga-up (`insmod` returns once
 /// the driver probed, so a link that is up shows at once).
@@ -502,7 +602,13 @@ fn pcie_up() -> std::io::Result<oos_hal::dho::bus::Bar1> {
         if !dev() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "FPGA did not appear on PCIe"));
         }
-        if !sh(&format!("insmod {}/updates/xdma.ko poll_mode=1", m)) {
+        let conf = std::process::Command::new("/bin/oos-conf").arg("xdma.params").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        let params = xdma_params(conf.as_deref()).unwrap_or_else(|e| {
+            eprintln!("oos-fpgad: {}; loading xdma with {}", e, XDMA_DEFAULT);
+            XDMA_DEFAULT.into()
+        });
+        eprintln!("oos-fpgad: insmod xdma.ko {}", params);
+        if !sh(&format!("insmod {}/updates/xdma.ko {}", m, params)) {
             return Err(std::io::Error::other("insmod xdma failed"));
         }
         let nodes = || ["/dev/xdma0_bypass", "/dev/xdma0_c2h_0"].iter().all(|n| std::path::Path::new(n).exists());
@@ -645,6 +751,8 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 let name = a.first().ok_or("gpio <line> <0|1> [--hold s]")?;
                 let v = a.get(1).ok_or("gpio <line> <0|1> [--hold s]")? == "1";
                 let hold = a.iter().position(|x| x == "--hold").and_then(|i| a.get(i + 1)).map(|x| x.parse::<u64>().map_err(|e| e.to_string())).transpose()?.unwrap_or(0);
+                // generator relays and supply only on a unit with a generator (docs/models.md 4.2)
+                oos_hal::dho::afg::line_allowed(&oos_hal::model::platform().caps, name, a.iter().any(|x| x == "--force"))?;
                 let _l = oos_hal::dho::gpio::Line::output(name, v).map_err(|e| format!("{}: {}", name, e))?;
                 println!("{} = {} (held {} s)", name, v as u8, hold);
                 std::thread::sleep(std::time::Duration::from_secs(hold));
@@ -701,6 +809,39 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 for k in 0..n {
                     let o = off + 4 * k;
                     println!("{:#06x} = {:#010x}", o, bar.rd(o));
+                }
+            }
+            "adc" => {
+                if ui_running() {
+                    return Err("oos-ui is running: stop it first (it owns the ADC and the measure unit)".into());
+                }
+                match a.first().map(String::as_str) {
+                    Some("slots") => {
+                        let runs = a.iter().position(|x| x == "--runs").and_then(|i| a.get(i + 1)).map(|x| x.parse::<u32>().map_err(|e| e.to_string())).transpose()?.unwrap_or(4).max(1);
+                        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                        let mut got = Vec::new();
+                        for _ in 0..runs {
+                            got.push(oos_hal::dho::levels::run(&mut bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64))).ok_or("measure unit did not finish")?);
+                        }
+                        for l in slot_lines(&got) {
+                            println!("{}", l);
+                        }
+                    }
+                    Some("offset") => {
+                        let usage = "adc offset <core 0..7> <steps -1024..1023> [--execute]";
+                        let core = a.get(1).ok_or(usage)?.parse::<usize>().map_err(|e| e.to_string())?;
+                        let o = a.get(2).ok_or(usage)?.parse::<i32>().map_err(|e| e.to_string())?;
+                        let w = oos_hal::dho::adc::Adc::core_offset_word(core, o)?;
+                        if !has("--execute") {
+                            println!("dry run: would write 0x1034 <- {:#010x} (core {} offset {} steps); add --execute", w, core, o);
+                            return Ok(());
+                        }
+                        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                        bar.wr(0x1034, w);
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                        println!("0x1034 <- {:#010x} (core {} offset {} steps)", w, core, o);
+                    }
+                    _ => return Err("adc slots [--runs n] | adc offset <core> <steps> [--execute]".into()),
                 }
             }
             "wr" => {
@@ -828,10 +969,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_tool_command_is_routed() {
+        let src = include_str!("main.rs");
+        let body = &src[src.find("fn tool(cmd: &str").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let arms: Vec<&str> = body.lines().filter_map(|l| l.strip_prefix("            \"")?.split_once("\" => {").map(|(c, _)| c)).collect();
+        assert!(arms.len() >= 6, "{:?}", arms);
+        for c in arms {
+            assert!(TOOL_CMDS.contains(&c), "tool arm {} missing from TOOL_CMDS", c);
+        }
+    }
+
+    #[test]
     fn status_interpretation() {
         let mut regs = std::collections::HashMap::from([(0x4000u32, 0xe207_2115u32), (0x4034, 0x2000), (0x1008, 1 << 29), (0x1210, 62500)]);
         let l = status_lines(&mut |o| *regs.entry(o).or_insert(0));
         assert!(l[0].contains("expected") && l[1].contains("stopped") && l[2].contains("pass") && l[3].contains("locked"));
+    }
+
+    #[test]
+    fn slot_lines_show_each_slot_against_the_average() {
+        use oos_hal::dho::levels::Slot;
+        let mut r = [Slot { min: 2040, max: 2056, mean: 32768.0 }; 8];
+        r[5].mean = 32768.0 + 7.0 * 16.0;
+        let l = slot_lines(&[r, r]);
+        assert!(l[5].ends_with("+6.12 steps"), "{}", l[5]);
+        assert!(l[0].ends_with("-0.88 steps") && l[0].contains("min 2040  max 2056"), "{}", l[0]);
         let mut bad = std::collections::HashMap::from([(0x1210u32, 0u32)]);
         assert!(status_lines(&mut |o| *bad.entry(o).or_insert(0))[3].contains("NOT locked"));
     }
@@ -845,6 +1008,19 @@ mod tests {
         assert_eq!(pll_dry(&args(&["--freq", "1.25e9"])).unwrap(), None);
         assert_eq!(pll_dry(&args(&["--reset"])).unwrap(), None);
         assert!(pll_dry(&args(&["--freq", "5e9", "--dry"])).is_err());
+    }
+
+    // Break it catches: a default that changes without a hardware check, or a value that puts more than the two known
+    // parameters on the insmod shell line.
+    #[test]
+    fn xdma_parameters_from_the_system_settings() {
+        assert_eq!(xdma_params(None).unwrap(), "poll_mode=1");
+        assert_eq!(xdma_params(Some(" \n")).unwrap(), "poll_mode=1");
+        assert_eq!(xdma_params(Some("poll_mode=0\n")).unwrap(), "poll_mode=0");
+        assert_eq!(xdma_params(Some("poll_mode=0   interrupt_mode=2")).unwrap(), "poll_mode=0 interrupt_mode=2");
+        for bad in ["poll_mode=2", "poll_mode=0; reboot", "poll_mode=0 poll_mode=1", "interrupt_mode=4", "c2h_timeout=1", "poll_mode=0 $(id)"] {
+            assert!(xdma_params(Some(bad)).is_err(), "{}", bad);
+        }
     }
 
     #[test]
@@ -1125,7 +1301,8 @@ fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
                 if bar.rd(0x4000) != FPGA_VERSION {
                     return Err("unexpected FPGA version, not touching it".into());
                 }
-                let mut io = afg::Io::open().map_err(|e| format!("AFG GPIO: {}", e))?;
+                let open = if a.iter().any(|x| x == "--force") { afg::Io::open_forced } else { afg::Io::open };
+                let mut io = open().map_err(|e| format!("AFG GPIO: {}", e))?;
                 io.apply(&mut bar, &ops);
                 println!("done; relays now {:#04x}. The lines stay as set while this process runs: Ctrl-C ends it (output keeps its state).", io.relays());
                 if a[0] != "off" {

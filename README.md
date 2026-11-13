@@ -83,8 +83,8 @@ Installing OOS means that you accept in particular the following risks:
   safety instructions and ratings. The open instrument contains a mains power supply with dangerous voltages. Disconnect
   the mains and all probes before you open it, and close it again before you connect mains. Only open it if you know
   how to do this safely.
-- **Network security.** OOS has no authentication: a root shell on telnet without a password, SCPI, VXI-11, the web
-  remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
+- **Network security.** Apart from SSH (password or key, [docs/network.md](docs/network.md) 7) OOS has no
+  authentication: SCPI, VXI-11, the web remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
   network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network only,
   never directly to the internet.**
 - **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can
@@ -209,7 +209,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 | Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
 | LXI identification | 8080 | `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
-| Telnet | 23 | root shell, no password |
+| SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([docs/network.md](docs/network.md) 7) |
 | mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-204527.local:8080`, and its services for browsing ([docs/network.md](docs/network.md)) |
 
 None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
@@ -510,7 +510,7 @@ The IP address comes from DHCP and is shown in the top bar. Without DHCP the sco
 By default OOS is **one-shot**: every start of OOS restores the stock boot, so the **next power-on starts the stock
 system**. This is the safe mode for a new installation.
 
-To start OOS once more, run this in a telnet session and power-cycle the scope:
+To start OOS once more, run this in an SSH session (or on the serial console) and power-cycle the scope:
 
 ```sh
 oos-boot-oos-again
@@ -765,7 +765,7 @@ again. Unless noted, the fixes below need the card in the reader, so you have to
 | The stock system starts instead of OOS | one-shot mode, or the loader refused the OOS image and used the fallback | `boot/switch.py show`, then select OOS again. If that repeats, rebuild the image. |
 | Rigol logo stays, nothing else, on every start | the kernel hangs before OOS runs | `sudo python3 boot/switch.py stock /dev/rdiskM --execute`, then install a working image |
 | Black screen; a Rockchip USB device (2207:330c) appears | the loader refused `recovery` and has no fallback | `switch.py stock`. If needed, `sudo python3 boot/card-install.py restore /dev/rdiskM --backup backups/recovery-<date>.bin --execute` |
-| Start-up screen stops at a step | a hardware step failed | Read the stage on the screen. Logs are at `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over telnet. |
+| Start-up screen stops at a step | a hardware step failed | Read the stage on the screen. Logs are at `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over SSH. |
 | A new build misbehaves | | System > Roll back update, or `oos-update rollback --execute` |
 | Nothing helps | | Write `sd-original.img` to the second card again (step 2) |
 

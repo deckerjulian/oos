@@ -15,7 +15,7 @@
 pub mod dho;
 mod record;
 
-pub use record::{sw_trig_level, to_record};
+pub use record::{sw_trig_level, to_record, trigger_point};
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
@@ -87,6 +87,8 @@ pub trait Board: Sync + 'static {
     fn slow_mode(&self, m: &Model) -> Slow;
     /// time base (s/div) from which the board streams in roll mode
     fn roll_tdiv(&self) -> f64;
+    /// hysteresis of the trigger comparators in divisions for the trigger source's scale at the BNC (V/div)
+    fn trig_hyst_div(&self, scale_bnc: f64, noise_reject: bool) -> f64;
     /// starts the acquisition thread
     #[cfg(target_os = "linux")]
     fn spawn(&self, o: Spawn) -> HwShared;
@@ -95,6 +97,40 @@ pub trait Board: Sync + 'static {
     fn live(&self, args: &[String]) -> Option<LiveShared>;
     /// prints what the debug source would write (`--fpga-dry`), no hardware access
     fn dry(&self);
+
+    /// hardware segmented recording for the model's set-up: the most segments it holds, None where the board records
+    /// no hardware segments (roll, scan, logic analyser); the UI then records the segments in software
+    fn seg_max(&self, m: &Model) -> Option<usize>;
+
+    /// Average mode with `Model::avg_hw`: the board averages in hardware for the model's set-up. False where it cannot
+    /// (roll, scan, logic analyser, hardware segments, a count or depth it does not take); the UI then averages
+    /// the frames.
+    fn avg_hw(&self, m: &Model) -> bool;
+
+    /// The DVM reads the board's hardware DVM (`DvmWant`) instead of the records; off where the board has none or it is
+    /// not enabled.
+    fn dvm_hw(&self) -> bool;
+
+    /// The mask test runs in the board's hardware (`MaskWant`) instead of on the records; off where the board has none
+    /// or it is not enabled.
+    fn mask_hw(&self) -> bool;
+
+    /// The zone trigger qualifies frames in the board's hardware (`ZoneWant`) instead of the records being filtered;
+    /// off where the board has none or it is not enabled.
+    fn zone_hw(&self) -> bool;
+
+    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:SERial?`, `UART?`).
+    fn uart_debug(&self, m: &Model) -> String;
+
+    /// Fork, the mask/zone comparator mapping under test (docs/fork/hwmask.md "Sweep"): with `kv` one `key=value` set,
+    /// then the whole mapping as one line; an error for a bad key or value, or where the board has none.
+    fn mask_map(&self, kv: Option<&str>) -> Result<String, String>;
+
+    /// The comparator's 8-bit code of `volts` under the current mapping (channel at `scale` V/div, `offset` V,
+    /// digital gain `gain`), and its column layout for `points` per channel with channel set `chans`: (columns,
+    /// samples per column).
+    fn mask_code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64;
+    fn mask_layout(&self, points: u32, chans: u32) -> (usize, f64);
 
     /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
     fn depths(&self) -> &'static [(&'static str, u64)];
@@ -159,6 +195,8 @@ pub struct Frame {
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
     pub la: Option<crate::ui::la::LaRec>,
+    /// the FPGA averaged this frame (Average mode with `Board::avg_hw`): the software average leaves it alone
+    pub hw_avg: bool,
 }
 
 /// Acquisition mode for slow time bases (roll-mode.md 1.2).
@@ -191,6 +229,89 @@ pub struct CounterRead {
     pub n: u64,
 }
 
+/// The FPGA's DVM block as the UI wants it (`dvm.hw = on`): the channel it measures, and a lane forced by
+/// `:SYSTem:DEBug:DVM:LANE` (one channel only; None = the channel's own).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DvmWant {
+    pub ch: usize,
+    pub lane: Option<u32>,
+}
+
+/// A reading of the DVM block (fork, docs/fork/dvm.md): the channel, lane and window exponent it was taken with, the
+/// raw registers (0x2244 read back, 0x224c, 0x2250, 0x2254, 0x2258), the values in volts (DC, AC rms, AC+DC rms;
+/// None when the decode refused the reading), and the number of the reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DvmRead {
+    pub ch: usize,
+    pub lane: u32,
+    pub exp: u32,
+    pub raw: [u32; 5],
+    pub volts: Option<[f64; 3]>,
+    pub n: u64,
+}
+
+/// Columns of a hardware mask table (`MaskWant::lo`/`hi`).
+pub const MASK_COLUMNS: usize = 1000;
+
+/// The FPGA mask test as the UI wants it (`mask.hw = on`, docs/fork/hwmask.md): source channel, the volt band of each
+/// table column, stop on a failure, and a number raised to clear the counters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaskWant {
+    pub ch: usize,
+    pub lo: Vec<f32>,
+    pub hi: Vec<f32>,
+    pub stop: bool,
+    pub clear: u64,
+}
+
+/// The FPGA zone trigger as the UI wants it (`zone.hw = on`, docs/fork/hwzone.md): source channel, up to two zones
+/// (outline in time relative to the trigger and volts; true = the trace must touch it), and a number raised to clear
+/// the counter.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ZoneWant {
+    pub ch: usize,
+    pub zones: Vec<(Vec<(f64, f64)>, bool)>,
+    pub clear: u64,
+}
+
+/// A reading of the zone unit (fork): source channel and slot, the 0x1190 control word, the raw words (0x4030, 0x4038,
+/// frames low/high, fails low/high), qualified frames (48 bits), armed and pass flags, and the number of the reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ZoneRead {
+    pub ch: usize,
+    pub slot: u32,
+    pub ctrl: u32,
+    pub raw: [u32; 6],
+    pub frames: u64,
+    pub armed: bool,
+    pub pass: bool,
+    /// the status was read inside an acquisition cycle (else armed and pass read 0), and the FSM state
+    pub in_cycle: bool,
+    pub state: u32,
+    pub n: u64,
+    /// the last batch: frames read, frames planned, milliseconds from arm to read
+    pub batch: (u32, u32, f32),
+}
+
+/// A reading of the mask unit's counters (fork): source channel and slot, the control word, the raw counter registers
+/// (frames low/high, fails low/high), the 48-bit counts, and the number of the reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MaskRead {
+    pub ch: usize,
+    pub slot: u32,
+    pub ctrl: u32,
+    pub raw: [u32; 4],
+    pub frames: u64,
+    pub fails: u64,
+    pub n: u64,
+    /// the set-up the table was built for: V/div, offset, digital gain of the channel, points per channel, channel set
+    pub scale: f64,
+    pub offset: f64,
+    pub gain: f64,
+    pub points: u32,
+    pub chans: u32,
+}
+
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
 pub struct Shared {
@@ -221,9 +342,94 @@ pub struct Shared {
     pub xadc: Option<(f32, f32)>,
     /// LA probe detect (GPIO 120, 1 = present), read about once a second; None = not read
     pub la_probe: Option<bool>,
+    /// hardware segmented recording
+    pub seg: HwSeg,
+    /// UI: `Model::hw_avg_clear`; a new value restarts the hardware average
+    pub avg_clear: u64,
     /// the FPGA's frequency counter: wanted by the UI (None: off), the latest reading
     pub counter_want: Option<CounterWant>,
     pub counter: Option<CounterRead>,
+    /// the FPGA's DVM block: wanted by the UI (None: off), the latest reading
+    pub dvm_want: Option<DvmWant>,
+    pub dvm: Option<DvmRead>,
+    /// STOP (docs/fork/stop-exact.md): the UI is stopped and the thread arms nothing; `final_req` is raised for a STOP
+    /// that wants the newest frame read raw, `final_ack` is the request done (its frame queued before)
+    pub hold: bool,
+    pub final_req: u64,
+    pub final_ack: u64,
+    /// the UI reads records the model does not tell the board about (protocol watch, XY): no live compression
+    pub needs_raw: bool,
+    /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
+    pub deep_raw: Option<crate::deepmeas::Want>,
+    /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
+    pub mask_want: Option<MaskWant>,
+    pub mask: Option<MaskRead>,
+    /// the mask table last loaded: (lower, upper, lower enabled, upper enabled) per column
+    pub mask_table: Option<std::sync::Arc<Vec<[u8; 4]>>>,
+    /// the mask or zone unit stalled the acquisition with the current settings: why; the UI tests in software
+    pub unit_blocked: Option<String>,
+    /// the FPGA's zone trigger: wanted by the UI (None: off), the latest reading
+    pub zone_want: Option<ZoneWant>,
+    pub zone: Option<ZoneRead>,
+    /// `trig.hw_status = on`: what triggered the last batch, from the SCU status (number of the reading; Some(true)
+    /// the TPU fired, Some(false) only forced acquisitions (auto timeout), None nothing accepted)
+    pub trig_fired: Option<(u64, Option<bool>)>,
+    /// signal levels from the FPGA's measure unit, for the auto set-up: wanted (request number, the settings stamp
+    /// they need, runs of 1.7 ms) and the answer (request number, per channel; None where the unit gave nothing usable)
+    pub levels_want: Option<(u64, u64, u32)>,
+    pub levels: Option<(u64, [Option<ChLevels>; 4])>,
+    /// debug (`:DEBug:SLOTs?`): one raw run of the measure unit, wanted (request number) and the answer (request
+    /// number, per slot 0..7: 12-bit min, 12-bit max, mean on the 16-bit scale; None when the unit gave nothing)
+    pub slots_want: Option<u64>,
+    pub slots: Option<SlotDump>,
+}
+
+/// A raw measure-unit run for `:DEBug:SLOTs?`: request number, per slot 12-bit min, 12-bit max, 16-bit mean.
+pub type SlotDump = (u64, Option<[[f32; 3]; 8]>);
+
+/// Levels of one channel from the measure unit, in volts as the records show them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ChLevels {
+    pub lo: f32,
+    pub hi: f32,
+    pub mean: f32,
+    /// the ADC range was reached: the scale is too small
+    pub clipped: bool,
+}
+
+/// Where a hardware segmented recording is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SegPhase {
+    #[default]
+    Idle,
+    /// the FPGA records; nothing is transferred
+    Recording,
+    /// the segments are read back: their stamps, and the frames into the queue
+    Reading,
+    /// all recorded segments are read; single segments can be shown (`HwSeg::want`)
+    Done,
+}
+
+/// A hardware segmented recording, shared by the UI and the acquisition thread.
+#[derive(Default)]
+pub struct HwSeg {
+    /// UI: a new number starts a recording (RUN or SINGLE pressed with hardware segments)
+    pub run: u64,
+    /// UI: the acquisition runs; false ends a recording early
+    pub running: bool,
+    /// UI: show this segment (the thread plays it and puts it in `shown`)
+    pub want: Option<u32>,
+    /// thread: the recording `run` the state below belongs to
+    pub done_run: u64,
+    pub phase: SegPhase,
+    /// thread: segments asked for, recorded, read back
+    pub total: u32,
+    pub recorded: u32,
+    pub read: u32,
+    /// thread: trigger time of each segment read back, seconds since the first trigger (None: no stamp)
+    pub times: Vec<Option<f64>>,
+    /// thread: the segment asked for with `want`
+    pub shown: Option<(u32, Frame)>,
 }
 
 /// Frames kept for the UI; older ones are dropped when the screen cannot keep up.

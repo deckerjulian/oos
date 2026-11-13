@@ -15,6 +15,7 @@
 //!   GET /update       update state and upload form; POST /update with a signed package (.oosupd) installs it
 //!                     (ui/update.rs: the signature is checked before anything is written)
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
+//! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
 use crate::gfx::Canvas;
 use crate::ui::Ui;
@@ -461,6 +462,8 @@ pub struct Http {
     /// connection, request so far, last data, accepted
     pending: Vec<(TcpStream, Vec<u8>, Instant, Instant)>,
     shots: Arc<Shots>,
+    /// who may install an update or use MCP (empty: everyone)
+    pub acl: crate::netacl::Acl,
 }
 
 impl Drop for Http {
@@ -567,15 +570,15 @@ fn unescape(s: &str) -> String {
 
 impl Http {
     pub fn open(port: u16) -> Http {
-        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new() }
+        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new(), acl: crate::netacl::Acl::default() }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = TcpListener::bind(("0.0.0.0", port)).ok();
+        let l = crate::net6::tcp(port);
         match &l {
             Some(l) => {
                 let _ = l.set_nonblocking(true);
-                eprintln!("oos-ui: web remote on port {}", port);
+                eprintln!("oos-ui: web remote on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
             }
             None => eprintln!("oos-ui: web port {} not available", port),
         }
@@ -693,6 +696,8 @@ impl Http {
                 let (route, query) = path.split_once('?').unwrap_or((&path, ""));
                 let req_body = &req[hdr_end.unwrap_or(req.len())..];
                 let post = text.starts_with("POST ");
+                // what changes the scope beyond keys and knobs: only from the allowed prefixes
+                let peer_ok = s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()));
                 // an answer that is text for the page to show, not the data asked for
                 let mut failed = false;
                 let mut csv = |r: Result<String, String>| match r {
@@ -704,6 +709,7 @@ impl Http {
                 };
                 let (ctype, body): (&str, Vec<u8>) = match route {
                     _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
+                    "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
                     "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
                     "/screen.png" | "/screen.jpg" => {
@@ -912,6 +918,12 @@ mod tests {
         assert!(!f("Host: x", "/cmd", false));
         assert!(!f("Host: dho924.local:8080", "/cmd", false));
         assert!(!f("Host: [fe80::1]:8080", "/cmd", false));
+        // the scope by its global IPv6 address (net.ipv6 = on), with and without the port, and the page's own requests
+        assert!(!f("Host: [2001:db8:5:7:1d2e:3f4a:5b6c:7d8e]:8080", "/cmd", false));
+        assert!(!f("Host: [2001:db8:5:7::7d8e]", "/cmd", false));
+        assert!(!f("Host: [2001:DB8:5:7::7D8E]:8080\r\nOrigin: http://[2001:db8:5:7::7d8e]:8080\r\nSec-Fetch-Site: same-origin", "/update", true));
+        assert!(f("Host: [2001:db8:5:7::7d8e]:8080\r\nOrigin: http://[2001:db8:5:7::1]:8080", "/update", true));
+        assert!(f("Host: [2001:db8::1].evil.example:8080", "/cmd", false));
         assert!(!f("", "/cmd", false));
         assert!(!f("Host: 192.168.177.64:8080\r\nOrigin: http://192.168.177.64:8080\r\nSec-Fetch-Site: same-origin", "/update", true));
         // a page elsewhere
@@ -1136,14 +1148,46 @@ setTimeout(() => {
     }
 
     /// With a frame loop that hands its screens over before each render, the picture is the screen that was shown,
-    /// taken without a copy, and the loop's canvas gets a buffer of the right size to draw into.
+    /// taken without a copy, and the loop's canvas gets a buffer of the right size to draw into. The hand-over is told
+    /// by the buffer, not its content: a blank canvas swapped for a zeroed spare has equal pixels.
+    ///
+    /// Break it catches as well: the test's own race. A request in before the first frame is answered with a copy of
+    /// the screen (`Shots::request` -> `tick`: the loop has not yet said that it renders whole frames), and frames
+    /// handed over afterwards are pictures made ahead. Run in one order or the other by the client's timing, that
+    /// failed about 1 in 7 under load; both orders now run on purpose.
     #[test]
     fn live_picture_from_the_frame_loop_without_a_copy() {
+        for frames_first in [true, false] {
+            live_picture_hand_over(frames_first);
+        }
+    }
+
+    fn live_picture_hand_over(frames_first: bool) {
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let mut frame = 0u32;
+        // the first screen handed over (the canvas got another buffer): the one before the render
+        let mut shown: Option<Vec<u32>> = None;
+        let mut one_frame = |h: &mut Http, cv: &mut Canvas, shown: &mut Option<Vec<u32>>| {
+            let (before, buf) = (cv.px.clone(), cv.px.as_ptr());
+            h.before_render(cv, true);
+            if cv.px.as_ptr() != buf && shown.is_none() {
+                *shown = Some(before);
+            }
+            assert_eq!(cv.px.len(), (cv.w * cv.h) as usize);
+            frame += 1;
+            cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+        };
+        if frames_first {
+            for _ in 0..3 {
+                h.poll(&mut ui, &cv, &mut scpi);
+                one_frame(&mut h, &mut cv, &mut shown);
+            }
+            assert!(shown.is_none(), "nothing handed over before a request");
+        }
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
@@ -1152,26 +1196,29 @@ setTimeout(() => {
             let _ = c.read_to_end(&mut out);
             out
         });
-        let mut shown = None;
-        let mut frame = 0u32;
-        while !t.is_finished() {
+        // the request is in before the next frame, whatever the load; the screen at that moment
+        while h.shots.lock().waiting.is_empty() && !t.is_finished() {
             h.poll(&mut ui, &cv, &mut scpi);
-            // a frame: hand over, then render a screen of its own (each frame another colour)
-            let before = cv.px.clone();
-            h.before_render(&mut cv, true);
-            if cv.px != before && shown.is_none() {
-                shown = Some(before);
-            }
-            assert_eq!(cv.px.len(), (cv.w * cv.h) as usize);
-            frame += 1;
-            cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let at_request = cv.px.clone();
+        while !t.is_finished() {
+            one_frame(&mut h, &mut cv, &mut shown);
+            h.poll(&mut ui, &cv, &mut scpi);
             std::thread::sleep(Duration::from_millis(5));
         }
         let out = t.join().unwrap();
         let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
-        let shown = shown.expect("a screen was handed over");
-        assert!(out[e..] == crate::store::png(cv.w as u32, cv.h as u32, &shown), "the PNG of the screen that was shown");
+        let png = |px: &[u32]| crate::store::png(cv.w as u32, cv.h as u32, px);
+        if frames_first {
+            // the frame loop runs: the next screen goes over by a buffer swap, and it is the picture
+            let shown = shown.expect("a screen was handed over");
+            assert!(out[e..] == png(&shown), "the PNG of the screen that was shown");
+        } else {
+            // before the first frame: the screen of that moment, copied
+            assert!(out[e..] == png(&at_request), "the PNG of the screen at the request");
+        }
     }
 
     /// A screenshot asked for as PNG never gets JPEG bytes, a JPEG viewer gets PNG only once the VPU failed.

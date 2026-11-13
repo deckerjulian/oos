@@ -10,6 +10,7 @@
 #   oos-board ui-args STATUS     prints the arguments of oos-ui
 #   oos-board bring-up STATUS    in the background: FPGA wait, PCIe, PLL, AFE and ADC init, calibrations, start-up checks.
 #                                Exit 0 when the acquisition hardware is up
+#   oos-board mac                prints the unit's own LAN MAC (vendor.bin), nothing if it cannot be read (oos-mac, eth.mac = vendor)
 hw() { [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; }
 case "$1" in
 has-hardware) hw;;
@@ -19,6 +20,11 @@ drivers)
 	insmod /lib/modules/$(uname -r)/kernel/drivers/pwm/pwm-gpio.ko 2>/dev/null
 	exit 0;;
 ui-args) hw && echo "--hw --afe --start-up $2"; exit 0;;
-bring-up) exec /bin/oos-fpgad cold-boot --execute --power-on --booted --progress "$2";;
-*) echo "usage: oos-board has-hardware | early STATUS | drivers | ui-args STATUS | bring-up STATUS" >&2; exit 2;;
+bring-up)
+	/bin/oos-fpgad cold-boot --execute --power-on --booted --progress "$2" || exit
+	# fork: the xdma interrupts to the little cores with `perf.place = on` (docs/fork/perf-plan.md item 6)
+	[ -x /bin/oos-irq-place ] && /bin/oos-irq-place
+	exit 0;;
+mac) /bin/oos-fpgad model 2>/dev/null | sed -n 's/^mac  *//p';;
+*) echo "usage: oos-board has-hardware | early STATUS | drivers | ui-args STATUS | bring-up STATUS | mac" >&2; exit 2;;
 esac

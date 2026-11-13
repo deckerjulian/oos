@@ -386,8 +386,8 @@ path (`max_frames`) keeps the 16 777 216-burst memory size.
    8 bytes).
 2. **The read buffer must not share cache lines with other heap data.** The RK3399's PCIe is not cache coherent and
    the XDMA driver maps the user pages for every read. With 2500-byte reads into a plain `Vec` at <= 100 ns/div the heap gets
-   corrupted within seconds. `bus::read_dma` reads into a 4 KiB aligned, page-padded region and moves the data to the front; every
-   C2H read in OOS goes through it.
+   corrupted within seconds. `bus::DmaBuf` reads into a 4 KiB aligned region of whole pages of its own; the batch
+   path keeps one across batches, `bus::read_dma` is a one-off of it. Every C2H read in OOS goes through it.
 3. Remaining at <= 100 ns/div: the record is exactly one screen (memsel = 10 divisions), so after the software trigger
    moves the record by a few samples the last few points of the screen have no data (amplitude of the last eighth 4 %
    low at 100 ns/div). Fix (host-tested, not yet verified on hardware): at Auto depth below the live depth oos-ui

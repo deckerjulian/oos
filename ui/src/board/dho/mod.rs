@@ -77,6 +77,10 @@ impl Board for Dho {
         hw::ROLL_TDIV
     }
 
+    fn trig_hyst_div(&self, scale_bnc: f64, noise_reject: bool) -> f64 {
+        oos_hal::dho::tpu::noise_hysteresis(scale_bnc * 1e9, noise_reject)
+    }
+
     #[cfg(target_os = "linux")]
     fn spawn(&self, o: super::Spawn) -> super::HwShared {
         hw::spawn(o.mask, o.program_afe, o.cal_dir, o.start_up)
@@ -113,6 +117,43 @@ impl Board for Dho {
                 println!("{:#x} {:#x}", off, v);
             }
         }
+    }
+
+    fn seg_max(&self, m: &Model) -> Option<usize> {
+        hw::seg_max(m)
+    }
+
+    fn dvm_hw(&self) -> bool {
+        hw::dvm_hw_on()
+    }
+
+    fn mask_hw(&self) -> bool {
+        hw::mask_hw_on()
+    }
+
+    fn zone_hw(&self) -> bool {
+        hw::zone_hw_on()
+    }
+
+    fn uart_debug(&self, m: &Model) -> String {
+        hw::serial_debug(m)
+    }
+
+    fn mask_map(&self, kv: Option<&str>) -> Result<String, String> {
+        hw::mask_map_set(kv)
+    }
+
+    fn mask_code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64 {
+        hw::mask_map().code(volts, scale, offset, gain)
+    }
+
+    fn mask_layout(&self, points: u32, chans: u32) -> (usize, f64) {
+        let (c, _, per) = hw::mask_map().layout(points, chans);
+        (c, per)
+    }
+
+    fn avg_hw(&self, m: &Model) -> bool {
+        hw::avg_hw_ok(m)
     }
 
     fn depths(&self) -> &'static [(&'static str, u64)] {

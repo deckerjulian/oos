@@ -149,6 +149,41 @@ pub enum TrigCoup {
 
 pub const TRIG_COUPS: [TrigCoup; 4] = [TrigCoup::Dc, TrigCoup::Ac, TrigCoup::LfReject, TrigCoup::HfReject];
 
+/// What the rear AUX OUT BNC carries (System > AUX out, `:SYSTem:AOUTput`, docs/fork/auxout.md).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AuxOut {
+    /// a pulse per trigger: the FPGA's power-up state, so the default
+    TrigOut,
+    /// constant low
+    Off,
+    /// a pulse per failed acquisition of the hardware mask test (`mask.hw = on`, docs/fork/hwmask.md); without it the
+    /// output stays low
+    PassFail,
+}
+
+pub const AUX_OUTS: [AuxOut; 3] = [AuxOut::TrigOut, AuxOut::Off, AuxOut::PassFail];
+
+impl AuxOut {
+    /// what the menu and SCPI take: pass/fail only where the mask test or the zone trigger can run in hardware
+    /// (`Board::mask_hw`, `Board::zone_hw`); a setup file takes every value
+    pub fn offered(self, hw_mask: bool) -> bool {
+        self != AuxOut::PassFail || hw_mask
+    }
+
+    /// the offered choices in menu order
+    pub fn choices(hw_mask: bool) -> Vec<AuxOut> {
+        AUX_OUTS.iter().copied().filter(|a| a.offered(hw_mask)).collect()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AuxOut::TrigOut => "Trigger out",
+            AuxOut::Off => "Off",
+            AuxOut::PassFail => "Pass/fail",
+        }
+    }
+}
+
 impl TrigCoup {
     pub fn name(self) -> &'static str {
         match self {
@@ -382,6 +417,127 @@ pub enum BusWhat {
     Error,
 }
 pub const BUS_WHATS: [BusWhat; 4] = [BusWhat::Frame, BusWhat::Id, BusWhat::Data, BusWhat::Error];
+
+/// How a protocol value compares (`SerialTrig`): with the value (`trig_bus_val`) as min, `max` as the upper limit, all
+/// after the mask. The relations of the TPU's serial receivers (docs/fork/serial-ui.md).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rel {
+    Eq,
+    Ne,
+    /// greater than the value
+    Gt,
+    /// less than max
+    Lt,
+    /// value <= x <= max
+    In,
+    /// x < value or x > max
+    Out,
+}
+pub const RELS: [Rel; 6] = [Rel::Eq, Rel::Ne, Rel::Gt, Rel::Lt, Rel::In, Rel::Out];
+impl Rel {
+    pub fn name(self) -> &'static str {
+        match self {
+            Rel::Eq => "=",
+            Rel::Ne => "\u{2260}",
+            Rel::Gt => ">",
+            Rel::Lt => "<",
+            Rel::In => "In range",
+            Rel::Out => "Out of range",
+        }
+    }
+
+    /// The relation needs the upper limit.
+    pub fn uses_max(self) -> bool {
+        matches!(self, Rel::Lt | Rel::In | Rel::Out)
+    }
+
+    /// `x` against `min`/`max` after `mask`.
+    pub fn test(self, x: u64, min: u64, max: u64, mask: u64) -> bool {
+        let (x, a, b) = (x & mask, min & mask, max & mask);
+        match self {
+            Rel::Eq => x == a,
+            Rel::Ne => x != a,
+            Rel::Gt => x > a,
+            Rel::Lt => x < b,
+            Rel::In => a <= x && x <= b,
+            Rel::Out => x < a || x > b,
+        }
+    }
+}
+
+/// UART stop bits of the trigger.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StopBits {
+    One,
+    OneHalf,
+    Two,
+}
+pub const STOP_BITS: [StopBits; 3] = [StopBits::One, StopBits::OneHalf, StopBits::Two];
+
+/// Which UART error the Error condition looks for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UartErr {
+    Either,
+    Parity,
+    Framing,
+}
+pub const UART_ERRS: [UartErr; 3] = [UartErr::Either, UartErr::Parity, UartErr::Framing];
+
+/// I2C transfer direction of the address condition.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum I2cDir {
+    Either,
+    Write,
+    Read,
+}
+pub const I2C_DIRS: [I2cDir; 3] = [I2cDir::Either, I2cDir::Write, I2cDir::Read];
+
+/// The protocol trigger's settings beyond condition and value (Trigger > Protocol, `:TRIGger:RS232|SPI|IIC:*`); the
+/// TPU's receivers take them all (`trig.serial_hw = on`), the software trigger as far as the decoders show it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct SerialTrig {
+    pub rel: Rel,
+    /// upper limit of `rel` (Lt, In, Out)
+    pub max: u64,
+    /// bits of the value that count (SPI, I2C data)
+    pub mask: u64,
+    /// UART: idle low (the line inverted)
+    pub uart_inv: bool,
+    pub uart_stop: StopBits,
+    pub uart_err: UartErr,
+    /// SPI: chip select active high
+    pub spi_cs_high: bool,
+    /// SPI without chip select: a clock pause longer than this starts a frame, s (0 = the decoder's default)
+    pub spi_timeout: f32,
+    /// I2C address condition: relation and upper limit, direction, 10-bit addresses
+    pub addr_rel: Rel,
+    pub addr_max: u32,
+    pub dir: I2cDir,
+    pub ten_bit: bool,
+    /// I2C data condition: 0 = any data byte of a frame (the software trigger), 1..5 = the first `bytes` data bytes
+    /// after the address, the first the most significant (also the TPU's receiver)
+    pub bytes: u8,
+}
+
+impl Default for SerialTrig {
+    fn default() -> SerialTrig {
+        SerialTrig {
+            rel: Rel::Eq,
+            max: 0xff,
+            mask: u64::MAX,
+            uart_inv: false,
+            uart_stop: StopBits::One,
+            uart_err: UartErr::Either,
+            spi_cs_high: false,
+            spi_timeout: 0.0,
+            addr_rel: Rel::Eq,
+            addr_max: 0x7f,
+            dir: I2cDir::Either,
+            ten_bit: false,
+            bytes: 0,
+        }
+    }
+}
 impl BusWhat {
     pub fn name(self) -> &'static str {
         match self {
@@ -725,6 +881,8 @@ pub struct Model {
     pub trig_level2: f32,
     /// noise reject: wider comparator hysteresis (0.7 instead of 0.3 div)
     pub trig_nrej: bool,
+    /// the auto set-up sets noise reject from the noise on the trigger signal's flat levels (opt-in, off by default)
+    pub auto_nrej: bool,
     /// coupling of the edge trigger on a channel (`trig_coupling` gives the one in effect)
     pub trig_coup: TrigCoup,
     /// second source: B (delay), clock (setup/hold)
@@ -748,8 +906,16 @@ pub struct Model {
     pub status: TrigStatus,
     pub acq: AcqMode,
     pub avg_count: u32,
+    /// Average mode: the FPGA averages (docs/fork/specs/01-hw-averaging.md) where the board can (`Board::avg_hw`), else
+    /// the software average; experimental, not verified on the unit
+    pub avg_hw: bool,
     /// segmented recording: records per RUN/SINGLE (0 = off), browsed with the history afterwards
     pub segments: usize,
+    /// segments recorded by the FPGA (one arm, hardware re-arm and trigger stamps) instead of the software history;
+    /// experimental, not verified on the unit
+    pub seg_hw: bool,
+    /// hardware segments: wait after each segment before the next arm, seconds (0 = back to back)
+    pub seg_ivl: f32,
     pub mdepth: usize, // index into `mdepths()` (0 = auto)
     pub persist: usize, // index into PERSIST
     pub intensity: u32, // 10..100 %
@@ -782,7 +948,9 @@ pub struct Model {
     pub cur_c: f32,
     pub cur_d: f32,
     pub touch_lock: bool,
-    #[allow(dead_code)] // fine V/div steps: not implemented yet
+    pub aux_out: AuxOut,
+    /// fine V/div: the scale knob walks the rows of the calibration table (`Board::vscale_steps_nv`), SCPI
+    /// `:CHANnel<n>:SCALe` takes any value; one switch for all channels
     pub fine_v: bool,
     /// fine time base on the knob
     pub fine_t: bool,
@@ -847,7 +1015,9 @@ pub struct Model {
     pub dec_diff: Option<usize>,
     /// protocol trigger condition and value
     pub trig_bus: BusWhat,
-    pub trig_bus_val: u32,
+    /// the value (or lower limit) of the condition: up to 40 bits (I2C, 5 bytes)
+    pub trig_bus_val: u64,
+    pub ser: SerialTrig,
     pub dec_thr: f32,
     pub dec_ascii: bool,
     pub dec_proto: Proto,
@@ -929,6 +1099,10 @@ pub struct Model {
     pub bode_ref: f64,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
+    /// hardware source: bumped when the hardware average has to start over (CLEAR, RUN, SINGLE); not stored
+    pub hw_avg_clear: u64,
+    /// AUTO sweep with the shortest auto-trigger time, set by the auto set-up while it reads levels; not stored
+    pub auto_fast: bool,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
     /// bandwidth test (Analysers > Bandwidth): source, signal frequency hint (0 = Auto), bins per period
     pub bw_src: usize,
@@ -1072,6 +1246,7 @@ impl Default for Model {
             trig_type: TrigType::Edge,
             trig_level2: 0.5,
             trig_nrej: false,
+            auto_nrej: false,
             trig_coup: TrigCoup::Dc,
             trig_src2: 3,
             trig_slope2: Slope::Rise,
@@ -1093,7 +1268,10 @@ impl Default for Model {
             status: TrigStatus::Wait,
             acq: AcqMode::Normal,
             avg_count: 16,
+            avg_hw: false,
             segments: 0,
+            seg_hw: false,
+            seg_ivl: 0.0,
             mdepth: 0,
             persist: 0,
             intensity: 60,
@@ -1114,6 +1292,7 @@ impl Default for Model {
             cur_c: 0.3,
             cur_d: 0.7,
             touch_lock: false,
+            aux_out: AuxOut::TrigOut,
             fine_v: false,
             fine_t: false,
             tfine: 1.0,
@@ -1154,6 +1333,7 @@ impl Default for Model {
             dec_diff: None,
             trig_bus: BusWhat::Id,
             trig_bus_val: 0x123,
+            ser: SerialTrig::default(),
             dec_thr: 1.65,
             dec_ascii: true,
             dec_proto: Proto::Uart,
@@ -1202,6 +1382,8 @@ impl Default for Model {
             bode_out: 1,
             bode_gen: 0,
             hw_stamp: 0,
+            hw_avg_clear: 0,
+            auto_fast: false,
             bode_addr: "192.168.1.100:5555".into(),
             bode_usb: false,
             bode_sw_time: 1.0,
@@ -1689,9 +1871,11 @@ impl Model {
         }
     }
     /// The logic analyser is on (and the model has it).
-    /// Comparator hysteresis of the trigger in divisions (trigger.md 2.3): 0.3, 0.7 with noise reject.
+    /// Comparator hysteresis of the trigger in divisions, as the hardware gets it (trigger.md 2.3): 0.3, 0.7 with
+    /// noise reject, more at 2 mV/div and below (the table of the trigger source's scale at the BNC).
     pub fn trig_hyst_div(&self) -> f32 {
-        if self.trig_nrej { 0.7 } else { 0.3 }
+        let c = &self.ch[self.trig_src.min(NCH - 1)];
+        crate::board::board().trig_hyst_div(c.volts_per_div() as f64 / c.probe as f64, self.trig_nrej) as f32
     }
 
     /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and

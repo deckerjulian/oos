@@ -76,7 +76,8 @@ docker run --rm -e OUT_OWNER="$(id -u):$(id -g)" -v oos-kbuild:/w -v "$here:/k:r
 	R=$(cat "$O/include/config/kernel.release"); M="$W/modroot/lib/modules/$R"
 	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko; do [ -f "$M/$m" ]; done
 	cp "$O/arch/arm64/boot/Image" /out/Image
-	cp "$O"/arch/arm64/boot/dts/rockchip/rk3399-rigol-dho900.dtb /out
+	# the board and its opt-in variants (rk3399-rigol-dho900-uhs.dtb: boot card in UHS-I)
+	for d in /k/dts/*.dts; do cp "$O/arch/arm64/boot/dts/rockchip/$(basename "$d" .dts).dtb" /out; done
 	cp "$O/.config" /out/config
 	printf "%s\n" "$R" > /out/kernel.release
 	tar -C "$W/modroot" -czf /out/modules.tar.gz .

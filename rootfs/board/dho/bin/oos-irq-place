@@ -1,0 +1,38 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-irq-place: with `perf.place = on` in the system settings, the xdma interrupts go to the little cores (cpu0-3,
+# the A53 of the RK3399), so the transfer completions leave the A72 to the frame loop and the acquisition thread
+# (oos-ui placement.rs, docs/fork/perf-plan.md item 6). Run by `oos-board bring-up` once xdma is loaded; a no-op
+# without the setting, and it never fails the bring-up.
+# With poll_mode=1 (the default) the completions are polled by xdma's own per-CPU kernel threads, not by an
+# interrupt: then there is nothing to move and the script says so.
+# OOS_PROC, OOS_SYS: other roots for a test on the host.
+P=${OOS_PROC:-/proc}
+S=${OOS_SYS:-/sys}
+[ "$(/bin/oos-conf perf.place off 2>/dev/null)" = on ] || exit 0
+# the cores with less than the largest cpu_capacity, as a hex mask (shell arithmetic: the unit's busybox awk has no
+# math support, so `2 ^ c` fails there)
+max=0
+for f in "$S"/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
+	[ -r "$f" ] || continue
+	v=$(cat "$f"); [ "$v" -gt "$max" ] && max=$v
+done
+m=0
+for f in "$S"/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
+	[ -r "$f" ] || continue
+	c=${f%/cpu_capacity}; c=${c##*/cpu}
+	[ "$(cat "$f")" -lt "$max" ] && m=$((m | 1 << c))
+done
+mask=
+[ "$m" -gt 0 ] && mask=$(printf '%x' "$m")
+[ -n "$mask" ] || { echo "oos-irq-place: no little cores"; exit 0; }
+irqs=$(awk -F: '/xdma/ { gsub(/ /, "", $1); print $1 }' "$P/interrupts")
+[ -n "$irqs" ] || { echo "oos-irq-place: no xdma interrupt (poll_mode=1: completions by xdma's threads)"; exit 0; }
+for i in $irqs; do
+	if echo "$mask" > "$P/irq/$i/smp_affinity" 2>/dev/null; then
+		echo "oos-irq-place: irq $i -> cpus 0x$mask"
+	else
+		echo "oos-irq-place: irq $i: smp_affinity not writable"
+	fi
+done
+exit 0

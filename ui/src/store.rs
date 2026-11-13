@@ -122,6 +122,20 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_diff", m.dec_diff.map_or("none".into(), |c| (c + 1).to_string()));
     kv("trig_bus", m.trig_bus.name().to_string());
     kv("trig_bus_val", m.trig_bus_val.to_string());
+    let s = &m.ser;
+    kv("ser.rel", name(s.rel));
+    kv("ser.max", s.max.to_string());
+    kv("ser.mask", s.mask.to_string());
+    kv("ser.uart_inv", s.uart_inv.to_string());
+    kv("ser.uart_stop", name(s.uart_stop));
+    kv("ser.uart_err", name(s.uart_err));
+    kv("ser.spi_cs_high", s.spi_cs_high.to_string());
+    kv("ser.spi_timeout", s.spi_timeout.to_string());
+    kv("ser.addr_rel", name(s.addr_rel));
+    kv("ser.addr_max", s.addr_max.to_string());
+    kv("ser.dir", name(s.dir));
+    kv("ser.ten_bit", s.ten_bit.to_string());
+    kv("ser.bytes", s.bytes.to_string());
     kv("dec_thr", m.dec_thr.to_string());
     kv("dec_ascii", m.dec_ascii.to_string());
     kv("dec_proto", m.dec_proto.key());
@@ -176,6 +190,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("trig_type", name(m.trig_type));
     kv("trig_level2", m.trig_level2.to_string());
     kv("trig_nrej", m.trig_nrej.to_string());
+    kv("auto_nrej", m.auto_nrej.to_string());
     kv("trig_coup", name(m.trig_coup));
     kv("trig_src2", m.trig_src2.to_string());
     kv("trig_slope2", name(m.trig_slope2));
@@ -195,7 +210,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("hold", m.hold.to_string());
     kv("acq", name(m.acq));
     kv("avg_count", m.avg_count.to_string());
+    kv("avg_hw", m.avg_hw.to_string());
     kv("segments", m.segments.to_string());
+    kv("seg_hw", m.seg_hw.to_string());
+    kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
     kv("persist", m.persist.to_string());
     kv("intensity", m.intensity.to_string());
@@ -221,6 +239,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("cur_c", m.cur_c.to_string());
     kv("cur_d", m.cur_d.to_string());
     kv("touch_lock", m.touch_lock.to_string());
+    kv("aux_out", name(m.aux_out));
     kv("fine_v", m.fine_v.to_string());
     kv("fine_t", m.fine_t.to_string());
     if m.tfine != 1.0 {
@@ -435,6 +454,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "holdoff" => m.holdoff = p_f32(v)?,
         "trig_type" => m.trig_type = p_enum(v, &TRIG_TYPES)?,
         "trig_nrej" => m.trig_nrej = p_bool(v)?,
+        "auto_nrej" => m.auto_nrej = p_bool(v)?,
         "trig_coup" => m.trig_coup = p_enum(v, &TRIG_COUPS)?,
         "trig_level2" => m.trig_level2 = p_f32(v)?,
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
@@ -461,7 +481,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "hold" => m.hold = p_f32(v)?,
         "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
         "avg_count" => m.avg_count = p_u32(v)?.max(1),
-        "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_MAX),
+        "avg_hw" => m.avg_hw = p_bool(v)?,
+        "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_HW_MAX),
+        "seg_hw" => m.seg_hw = p_bool(v)?,
+        "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
         "persist" => m.persist = p_idx(v, PERSIST.len())?,
         "intensity" => m.intensity = p_u32(v)?.clamp(10, 100),
@@ -527,6 +550,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "cur_c" => m.cur_c = p_f32(v)?,
         "cur_d" => m.cur_d = p_f32(v)?,
         "touch_lock" => m.touch_lock = p_bool(v)?,
+        "aux_out" => m.aux_out = p_enum(v, &AUX_OUTS)?,
         "fine_v" => m.fine_v = p_bool(v)?,
         "fine_t" => m.fine_t = p_bool(v)?,
         "tfine" => m.tfine = p_f32(v)?.clamp(0.1, 1.0),
@@ -567,6 +591,19 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_diff" => m.dec_diff = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
         "trig_bus" => m.trig_bus = *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?,
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
+        "ser.rel" => m.ser.rel = p_enum(v, &RELS)?,
+        "ser.max" => m.ser.max = v.trim().parse().map_err(|e| format!("ser.max: {}", e))?,
+        "ser.mask" => m.ser.mask = v.trim().parse().map_err(|e| format!("ser.mask: {}", e))?,
+        "ser.uart_inv" => m.ser.uart_inv = p_bool(v)?,
+        "ser.uart_stop" => m.ser.uart_stop = p_enum(v, &STOP_BITS)?,
+        "ser.uart_err" => m.ser.uart_err = p_enum(v, &UART_ERRS)?,
+        "ser.spi_cs_high" => m.ser.spi_cs_high = p_bool(v)?,
+        "ser.spi_timeout" => m.ser.spi_timeout = p_f32(v)?.max(0.0),
+        "ser.addr_rel" => m.ser.addr_rel = p_enum(v, &RELS)?,
+        "ser.addr_max" => m.ser.addr_max = p_u32(v)?.min(0x3ff),
+        "ser.dir" => m.ser.dir = p_enum(v, &I2C_DIRS)?,
+        "ser.ten_bit" => m.ser.ten_bit = p_bool(v)?,
+        "ser.bytes" => m.ser.bytes = p_u32(v)?.min(5) as u8,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
         "dec_proto" => m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?,
@@ -1118,6 +1155,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    // Break it catches: the hardware average switch lost in a setup or on by default, the count not stored with it.
+    #[test]
+    fn average_settings_round_trip() {
+        let mut m = Model::default();
+        assert!(!m.avg_hw);
+        (m.acq, m.avg_count, m.avg_hw) = (AcqMode::Average, 64, true);
+        let back = parse_setup(&setup_text(&m)).unwrap();
+        assert_eq!((back.acq, back.avg_count, back.avg_hw), (AcqMode::Average, 64, true));
+        // older setups without the key: software average
+        assert!(!parse_setup("acq = Average\navg_count = 8\n").unwrap().avg_hw);
+        assert!(parse_setup("avg_hw = maybe\n").is_err());
+    }
+
+    // Break it catches: hardware segment settings lost in a setup, a count clamped to the software limit, a negative
+    // or absurd interval reaching 0x4068.
+    #[test]
+    fn segment_settings_round_trip() {
+        let mut m = Model::default();
+        (m.segments, m.seg_hw, m.seg_ivl) = (20_000, true, 1e-3);
+        let back = parse_setup(&setup_text(&m)).unwrap();
+        assert_eq!((back.segments, back.seg_hw, back.seg_ivl), (20_000, true, 1e-3));
+        let d = parse_setup("segments = 900000\nseg_interval = -1\n").unwrap();
+        assert_eq!((d.segments, d.seg_hw, d.seg_ivl), (crate::ui::SEG_HW_MAX, false, 0.0));
+        assert_eq!(parse_setup("seg_interval = 1e9\n").unwrap().seg_ivl, crate::ui::SEG_IVL_MAX);
+    }
+
     #[test]
     fn tdiv_by_value_and_legacy_index() {
         let m = parse_setup("tdiv = 1e-9\nzoom_tdiv = 1e-9\n").unwrap();
@@ -1187,6 +1250,9 @@ mod tests {
         m.cur_a = 0.125;
         m.cur_b = 0.875;
         m.touch_lock = true;
+        m.aux_out = AuxOut::Off;
+        m.ser = SerialTrig { rel: Rel::Out, max: 0x1_2345_6789, mask: 0xf0f0, uart_inv: true, uart_stop: StopBits::Two, uart_err: UartErr::Parity, spi_cs_high: true, spi_timeout: 2e-6, addr_rel: Rel::In, addr_max: 0x3a0, dir: I2cDir::Read, ten_bit: true, bytes: 4 };
+        m.trig_bus_val = 0xab_cdef_0123;
         m.maths[3] = crate::math::MathCh { op: MathOp::Bpf, a: 4, b: 0, scale: 7, fc: 1234.0, bw: 56.0, offset: -1.5, win: Window::Blackman, lin: (1.0, 0.0) };
         m.math_bw = 777.0;
         m.zones[1] = crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };
@@ -1251,6 +1317,16 @@ mod tests {
         assert!(parse_setup("delay").is_err());
     }
 
+    /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state).
+    #[test]
+    fn setup_aux_out() {
+        assert_eq!(parse_setup("ch2.on = true").unwrap().aux_out, AuxOut::TrigOut);
+        assert!(setup_text(&Model::default()).contains("aux_out = TrigOut\n"));
+        assert_eq!(parse_setup("aux_out = Off").unwrap().aux_out, AuxOut::Off);
+        assert!(parse_setup("aux_out = Blink").is_err());
+        assert_eq!(parse_setup("aux_out = PassFail").unwrap().aux_out, AuxOut::PassFail);
+    }
+
     /// The Quick key action: written by name, read back, unknown names rejected, missing key = Screenshot.
     #[test]
     fn setup_quick_key() {
@@ -1300,7 +1376,7 @@ mod tests {
     fn csv_of_a_record() {
         let mut m = Model::default();
         m.ch[2].on = true;
-        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
         rec.ch[0] = vec![0.5, 1.25, f32::NAN];
         rec.ch[2] = vec![-1.0, 0.0, 3.3];
         let csv = wave_csv(&rec, &m);

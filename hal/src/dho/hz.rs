@@ -111,10 +111,49 @@ fn pow2(n: i128) -> i128 {
 /// bursts 125 M fits.
 pub const MEM_BURSTS: i128 = 0x500_0000;
 
+/// Frame memory in bursts of the segmented record (stock series parameter, `DevAcquireSpu_getMaxFrm` mode 1): the whole
+/// frame memory less the reserved top 1 M bursts. Kept at the stock size until the real size is measured (spec 03, 6.5).
+pub const RECORD_BURSTS: u32 = 16_777_216 - 0x10_0000;
+
+/// Most frames a segmented record of segments of `seg` bursts holds (spec 03, 1.5): the whole frame memory, unlike the
+/// live batch ring (`Params::max_frames`, half of it).
+pub fn max_record_frames(seg: u32) -> u32 {
+    RECORD_BURSTS / seg.max(1)
+}
+
 /// Segment size in 10-point bursts for `pts` raw points (normal mode).
 pub fn mem_size(pts: i128) -> i128 {
     let n = ((pts + 0x180) / 10).max(32);
     pow2(n).min((MEM_BURSTS - 0x10_0000) / 2)
+}
+
+/// Bursts at the top of the stock frame memory the FPGA uses for averaging (series parameter "average base",
+/// docs/fork/specs/01-hw-averaging.md 1.3). The live ring (the lower half) stays below it.
+pub const AVG_BASE_BURSTS: u32 = 5_242_880;
+
+/// Largest segment in average mode: the stock cap. The deep-record cap of `mem_size` does not apply, the average
+/// region sits inside the stock memory size.
+pub const AVG_SEG_CAP: i128 = 7_864_320;
+
+/// Segment size in 10-point bursts for `pts` raw points (points x ratio) in average mode (spec 01, 1.3): twice the
+/// bursts of a normal segment plus two 32-burst blocks of margin, rounded to a power of two below 25 M points and from
+/// there to the next multiple of 2048 bursts above (an exact multiple gets one more block, as in the stock rounding).
+pub fn mem_size_avg(pts: i128) -> i128 {
+    let n = (((pts + 383) / 320 + 2) * 64).max(32);
+    let n = if pts < 25_000_000 { pow2(n) } else { (n / 2048 + 1) * 2048 };
+    n.min(AVG_SEG_CAP)
+}
+
+/// Frames of a live batch in average mode: the lower half of the stock memory less 1 M bursts, in segments of `seg`
+/// bursts (the same ring as `Params::max_frames`, with the average segment). 0: the record does not fit.
+pub fn max_frames_avg(seg: u32) -> u32 {
+    (16_777_216 / 2 - 0x10_0000) / seg.max(1)
+}
+
+/// `p` with the average memory layout: the segment of `mem_size_avg` and its frame ring.
+pub fn avg_params(p: Params) -> Params {
+    let seg = mem_size_avg(p.memsel as i128 * p.ratio as i128) as u32;
+    Params { seg, max_frames: max_frames_avg(seg), ..p }
 }
 
 /// The sample rate `prep` asks for before the remap (roll mode's interpolation correction uses the
@@ -203,6 +242,73 @@ fn prep_nominal(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Param
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: a segment limit from the half ring of the live batches, or from the deep-record memory size.
+    #[test]
+    fn record_frames_use_the_whole_stock_memory() {
+        // spec 03, 1.5: 1,000 points -> 256 bursts -> 61,440 frames; 12,500 -> 2,048 -> 7,680
+        let at = |pts: i128, mask: u32| {
+            let p = prep(mask, 1_000_000_000_000_000, pts, 0);
+            (p.seg, max_record_frames(p.seg))
+        };
+        assert_eq!(at(1_000, 1), (256, 61_440));
+        assert_eq!(at(12_500, 1), (2_048, 7_680));
+        assert_eq!(at(100_000, 1), (16_384, 960));
+        assert_eq!(at(1_000, 3), (256, 61_440));
+        assert_eq!(at(12_500, 3), (4_096, 3_840));
+        assert_eq!(at(100_000, 3), (32_768, 480));
+        assert_eq!(at(1_000, 0xf), (512, 30_720));
+        assert_eq!(at(12_500, 0xf), (8_192, 1_920));
+        assert_eq!(at(100_000, 0xf), (65_536, 240));
+        // twice the live ring plus the reserved region
+        let p = prep(1, 1_000_000_000_000_000, 12_500, 0);
+        assert!(max_record_frames(p.seg) > 2 * p.max_frames);
+        assert_eq!(max_record_frames(0), RECORD_BURSTS);
+    }
+
+    // Break it catches: the normal layout in average mode, a missing 32-burst floor or cap, rounding above 25 M points,
+    // a frame ring computed from the normal segment. Expected values worked out by hand from spec 01, 1.3.
+    #[test]
+    fn average_segment_layout() {
+        // 1,000 points: (1383 / 320 + 2) x 64 = 384 -> 512 (normal 256)
+        assert_eq!((mem_size_avg(1_000), mem_size(1_000)), (512, 256));
+        // 0 points: (383 / 320 + 2) x 64 = 192 -> 256; the floor of 32 never binds with the margin of 128
+        assert_eq!(mem_size_avg(0), 256);
+        // 12,500 x ratio 1, 2, 4: (12883 / 320 + 2) x 64 = 2688 -> 4096; 25,383 / 320 = 79 -> 5184 -> 8192; 50,383 / 320 =
+        // 157 -> 10176 -> 16384
+        assert_eq!([1, 2, 4].map(|r| mem_size_avg(12_500 * r)), [4_096, 8_192, 16_384]);
+        // 1,000,000: (1000383 / 320 + 2) x 64 = 3127 x 64 = 200,128 -> 262,144
+        assert_eq!(mem_size_avg(1_000_000), 262_144);
+        // 4 M x 4: 16,000,383 / 320 = 50,001 -> 3,200,192 -> 4,194,304
+        assert_eq!(mem_size_avg(16_000_000), 4_194_304);
+        // 25 M points: 78,126 + 2 = 78,128 x 64 = 5,000,192, up to 2,442 x 2048 = 5,001,216; 125 M: capped
+        assert_eq!(mem_size_avg(25_000_000), 5_001_216);
+        // 25,015,297 points: 78,174 + 2 = 78,176 x 64 = 5,003,264 = 2,443 x 2048 exactly -> one block more, 5,005,312
+        assert_eq!(mem_size_avg(25_015_297), 5_005_312);
+        assert_eq!(mem_size_avg(125_000_000), AVG_SEG_CAP);
+        // frame ring: 7,340,032 bursts
+        assert_eq!((max_frames_avg(512), max_frames_avg(262_144), max_frames_avg(AVG_SEG_CAP as u32)), (14_336, 28, 0));
+        let p = avg_params(prep(1, 1_000_000_000_000_000, 1_000, 0));
+        assert_eq!((p.seg, p.max_frames, p.memsel), (512, 14_336, 1_000));
+        // idempotent, everything else as in normal mode
+        assert_eq!(avg_params(p), p);
+        let q = prep(0xf, 1_000_000_000_000_000, 12_500, 0);
+        assert_eq!(avg_params(q), Params { seg: 16_384, max_frames: 448, ..q });
+    }
+
+    // The Rust layout against `tools/hzmodel.py avg` (hal/testdata/avg-memsize.txt): both from spec 01, 1.3.
+    #[test]
+    fn average_layout_matches_the_python_model() {
+        let v = include_str!("../../testdata/avg-memsize.txt");
+        let mut n = 0;
+        for l in v.lines() {
+            let f: Vec<i128> = l.split_whitespace().map(|x| x.parse().unwrap()).collect();
+            let seg = mem_size_avg(f[0] * f[1]);
+            assert_eq!((seg, max_frames_avg(seg as u32) as i128), (f[2], f[3]), "{}", l);
+            n += 1;
+        }
+        assert_eq!(n, 36);
+    }
 
     #[test]
     fn deep_records_fit_one_segment() {

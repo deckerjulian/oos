@@ -234,11 +234,13 @@ pub struct Server {
     core_tcp: Option<TcpListener>,
     conns: Vec<Conn>,
     pub links: Vec<Option<Link>>,
+    /// who may connect (`netacl`, net.allow; empty: everyone)
+    pub acl: crate::netacl::Acl,
 }
 
 impl Server {
     pub fn open() -> Server {
-        let mut s = Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new() };
+        let mut s = Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new(), acl: crate::netacl::Acl::default() };
         s.set_open(true);
         s
     }
@@ -255,8 +257,8 @@ impl Server {
         if self.pm_tcp.is_some() || self.core_tcp.is_some() {
             return;
         }
-        let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
-        self.pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));
+        let tcp = |p: u16| crate::net6::tcp(p).inspect(|l| drop(l.set_nonblocking(true)));
+        self.pm_udp = crate::net6::udp(111).inspect(|u| drop(u.set_nonblocking(true)));
         (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
         eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if self.pm_tcp.is_some() { "111" } else { "unavailable" }, if self.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
     }
@@ -265,6 +267,9 @@ impl Server {
         if let Some(u) = &self.pm_udp {
             let mut b = [0u8; 1500];
             while let Ok((n, from)) = u.recv_from(&mut b) {
+                if !self.acl.permits(from.ip()) {
+                    continue;
+                }
                 if let Some(c) = parse_call(&b[..n]) {
                     let _ = u.send_to(&portmap(&c), from);
                 }
@@ -272,7 +277,10 @@ impl Server {
         }
         for (l, core) in [(&self.pm_tcp, false), (&self.core_tcp, true)] {
             if let Some(l) = l {
-                while let Ok((s, _)) = l.accept() {
+                while let Ok((s, peer)) = l.accept() {
+                    if !self.acl.permits(peer.ip()) {
+                        continue;
+                    }
                     let _ = s.set_nonblocking(false);
                     let _ = s.set_nodelay(true);
                     if self.conns.len() < MAX_CONNS {

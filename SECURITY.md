@@ -1,6 +1,6 @@
 # Security
 
-**OOS has no authentication, by design for now.** Telnet gives a root shell without a password. SCPI, VXI-11, the web remote,
+**OOS has no authentication apart from SSH, by design for now.** SSH asks for the scope's own password or a trusted key. SCPI, VXI-11, the web remote,
 MCP and the update page are open to everyone who can reach the scope, over Ethernet and over WLAN. The community signing key
 is public, so anyone on that network can also install an update. Keep the scope on a trusted bench network and never
 expose it to the internet. None of this is a vulnerability to report: it is listed in the
