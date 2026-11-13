@@ -611,8 +611,8 @@ waveform; the button with three dots at the top right of the plot leads to Exit,
 and peaks, decoder Events, or Trend with two charts. Tap the pane's title for its settings, a trend chart to change its
 measurement, the peak list's button to sort it. The x closes the pane.
 
-**Measurements.** A default set-up shows six in the strip above the cards. Measure > Labels on trace draws level lines and
-arrows with their values on the waveform.
+**Measurements.** A default set-up shows six in the strip under the plot. Measure > Dock moves that strip to the left, the
+right, or above the trace. Measure > Labels on trace draws level lines and arrows with their values on the waveform.
 
 **Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz the noise rises, and 2 GHz
 gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).

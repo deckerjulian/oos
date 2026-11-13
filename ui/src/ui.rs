@@ -56,6 +56,8 @@ pub const BOTTOM: Rect = Rect::new(0, 526, W, 74);
 /// Width of the measurement results overlay (statistics on) at the top right of the plot.
 const RESULTS_W: i32 = 196;
 const STRIP_ROW: i32 = 18;
+/// Width of the measurement strip when it is docked on the left or the right.
+const STRIP_SIDE: i32 = 220;
 /// Menu dialogs: header height, row pitch and control height of the list rows (touch targets of 40 px).
 const DLG_HEAD: i32 = 50;
 const DLG_ROW: i32 = 44;
@@ -311,6 +313,8 @@ enum Item {
     ZDelay,
     MeasStats,
     MeasLabels,
+    /// where the measurement strip sits
+    StripDock,
     XyMode,
     RefSrc,
     RefSave,
@@ -909,6 +913,16 @@ pub struct Ui {
     table_top: usize,
 }
 
+/// One line of the measurement strip when it is docked on the left or the right.
+struct StripLine {
+    pill: Option<(String, Rgb)>,
+    name: String,
+    value: String,
+    col: Rgb,
+    /// the name lines up with the names under a channel pill
+    align: bool,
+}
+
 impl Ui {
     pub fn new(src: Source) -> Ui {
         let mut m = Model::default();
@@ -1086,18 +1100,19 @@ impl Ui {
         meas + (self.m.cursor != CursorMode::Off) as i32 + dvm
     }
 
-    /// The plot: 10 x 8 divisions between the top bar and the cards; it gets shorter for strip rows (the results
-    /// panel is an overlay and takes no room).
+    /// The plot: 10 x 8 divisions between the top bar and the cards. A strip under the plot or above the trace
+    /// shortens it; a strip on the left or the right narrows it. The results panel is an overlay and takes no room.
     fn plot_rect(&self) -> Rect {
         // the logic analyser lanes have their own strip under the graticule: the analog picture shrinks with it
         let avail = self.plot_base() - self.la_strip_h() - self.pane_h();
-        Rect::new(PLOT_X, self.plot_top(), PLOT_W, (avail / 8 * 8).max(160))
+        let (x, w) = self.plot_span();
+        Rect::new(x, self.plot_top(), w, (avail / 8 * 8).max(160))
     }
 
-    /// Height for the graticule and the LA strip together (above the measurement rows).
+    /// Height for the graticule and the LA strip together (above a strip that sits under the plot).
     fn plot_base(&self) -> i32 {
-        let rows = self.strip_rows();
-        self.plot_bottom() - 2 - self.plot_top() - rows * STRIP_ROW - if rows > 0 { 4 } else { 0 }
+        let under = if self.m.strip_dock == StripDock::Under { self.strip_rows_h() } else { 0 };
+        self.plot_bottom() - 2 - self.plot_top() - under
     }
 
     /// Full screen: the plot takes the top bar and the cards too. Not with the touch lock, whose way out is the Menu
@@ -1107,7 +1122,8 @@ impl Ui {
     }
 
     fn plot_top(&self) -> i32 {
-        if self.full_on() { 0 } else { PLOT_Y }
+        let y = if self.full_on() { 0 } else { PLOT_Y };
+        if self.m.strip_dock == StripDock::Above { y + self.strip_rows_h() } else { y }
     }
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
@@ -3082,12 +3098,114 @@ impl Ui {
         }
     }
 
-    /// Measurement rows (one per channel) and the cursor row under the plot.
-    fn draw_strip(&self, cv: &mut Canvas) {
-        let f = &self.fonts;
+    /// Height the strip takes when it sits under the plot or above the trace.
+    fn strip_rows_h(&self) -> i32 {
+        let rows = self.strip_rows();
+        if rows == 0 { 0 } else { rows * STRIP_ROW + 4 }
+    }
+
+    /// Left edge and width of the graticule. A side dock keeps a column for the strip.
+    fn plot_span(&self) -> (i32, i32) {
+        if self.strip_rows() > 0 {
+            match self.m.strip_dock {
+                StripDock::Left => return (STRIP_SIDE, W - STRIP_SIDE),
+                StripDock::Right => return (0, W - STRIP_SIDE),
+                _ => {}
+            }
+        }
+        (PLOT_X, PLOT_W)
+    }
+
+    /// Top of the rows when the strip runs across the screen.
+    fn strip_band_y(&self) -> i32 {
+        if self.m.strip_dock == StripDock::Above {
+            let top = if self.full_on() { 0 } else { PLOT_Y };
+            return top + 2;
+        }
         let g = self.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
-        let mut y = (self.plot_bottom() + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
+        (self.plot_bottom() + 2 - self.strip_rows() * STRIP_ROW).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h())
+    }
+
+    /// The column a side dock reserves, from the graticule down to the cards.
+    fn strip_column(&self) -> Rect {
+        let y = self.grid.y;
+        let h = (self.plot_bottom() - y).max(0);
+        let x = if self.m.strip_dock == StripDock::Left { 0 } else { W - STRIP_SIDE };
+        Rect::new(x, y, STRIP_SIDE, h)
+    }
+
+    /// Where the strip is drawn. None when it has nothing to show.
+    fn strip_rect(&self) -> Option<Rect> {
+        let rows = self.strip_rows();
+        if rows == 0 {
+            return None;
+        }
+        match self.m.strip_dock {
+            StripDock::Left | StripDock::Right => Some(self.strip_column()),
+            _ => Some(Rect::new(0, self.strip_band_y(), W, rows * STRIP_ROW)),
+        }
+    }
+
+    /// One line of the strip when it is a column: channel pill on the first line of a group.
+    fn strip_side_lines(&self) -> Vec<StripLine> {
+        let mut lines = Vec::new();
+        let in_pane = self.results_pane_on();
+        if !self.results_panel() && !in_pane {
+            let rows = self.meas_rows();
+            for id in self.meas_groups() {
+                let col = self.wave_color(id);
+                let label = self.wave_name(id);
+                let mine: Vec<&tools::MeasRow> = rows.iter().filter(|r| r.src == id).collect();
+                for (i, row) in mine.iter().enumerate() {
+                    lines.push(StripLine { pill: (i == 0).then(|| (label.clone(), col)), name: row.name.clone(), value: row.text(), col, align: i > 0 });
+                }
+            }
+        }
+        if self.m.dvm_on || self.m.cnt_on {
+            for (name, value) in self.dvm_row() {
+                lines.push(StripLine { pill: None, name, value, col: TEXT, align: false });
+            }
+        }
+        if self.m.cursor != CursorMode::Off && !in_pane {
+            let c = self.m.active;
+            let mode = match self.m.cursor {
+                CursorMode::Volt => "Volt",
+                CursorMode::Track => "Track",
+                CursorMode::Xy => "XY",
+                _ => "Time",
+            };
+            let vals = self.cursor_values();
+            if let Some((label, value)) = vals.first() {
+                lines.push(StripLine {
+                    pill: Some((format!("CH{}", c + 1), CH_COLORS[c])),
+                    name: format!("{mode} {label}"),
+                    value: value.clone(),
+                    col: TEXT,
+                    align: false,
+                });
+            }
+            for (name, value) in vals.iter().skip(1) {
+                lines.push(StripLine { pill: None, name: name.clone(), value: value.clone(), col: TEXT, align: true });
+            }
+        }
+        lines
+    }
+
+    /// Measurement rows and the cursor row. Measure > Dock puts them under the plot, above the trace, or on a side.
+    fn draw_strip(&self, cv: &mut Canvas) {
+        if self.strip_rows() == 0 {
+            return;
+        }
+        match self.m.strip_dock {
+            StripDock::Left | StripDock::Right => self.draw_strip_side(cv),
+            _ => self.draw_strip_band(cv, self.strip_band_y()),
+        }
+    }
+
+    /// The strip as rows across the screen, starting at `y`.
+    fn draw_strip_band(&self, cv: &mut Canvas, mut y: i32) {
+        let f = &self.fonts;
         let in_pane = self.results_pane_on();
         if !self.results_panel() && !in_pane {
             let rows = self.meas_rows();
@@ -3141,6 +3259,56 @@ impl Ui {
                 cv.text(&f.sb, x2, y + 12, v, TEXT);
             }
         }
+    }
+
+    /// The same read-outs in a column beside the graticule: one measurement a line, the value at the right.
+    fn draw_strip_side(&self, cv: &mut Canvas) {
+        let lines = self.strip_side_lines();
+        if lines.is_empty() {
+            return;
+        }
+        let col = self.strip_column();
+        let n = lines.len() as i32;
+        let room = (col.h - 4).max(STRIP_ROW);
+        let pitch = if n * STRIP_ROW <= room { STRIP_ROW } else { (room / n).max(12) };
+        let f = &self.fonts;
+        cv.set_clip(col);
+        let mut y = col.y + 2;
+        for line in &lines {
+            let bar = Rect::new(col.x + 4, y, col.w - 8, (pitch - 2).max(12));
+            cv.fill(bar, BAR);
+            let mut text_x = bar.x + 6;
+            if let Some((label, pill_col)) = &line.pill {
+                let ph = (bar.h - 2).clamp(10, 14);
+                let r = Rect::new(bar.x + 2, bar.y + (bar.h - ph) / 2, 42, ph);
+                cv.round(r, 3, *pill_col, 255);
+                cv.text_in(&f.sb, r, 1, label, DARK_TEXT);
+                text_x = r.x + r.w + 6;
+            } else if line.align {
+                text_x = bar.x + 50;
+            }
+            let room_r = bar.x + bar.w - 4;
+            let vw = if line.value.is_empty() { 0 } else { f.sb.width(&line.value) };
+            // the value keeps the right edge; a long one is clipped there and the name gives way
+            let vx = if vw == 0 { room_r } else { (room_r - vw).max(text_x) };
+            let base = bar.y + bar.h - 4;
+            if vw > 0 {
+                cv.set_clip(Rect::new(text_x, bar.y, (room_r - text_x).max(0), bar.h));
+                cv.text(&f.sb, vx, base, &line.value, line.col);
+                cv.set_clip(col);
+            }
+            let name_w = vx - 6 - text_x;
+            if name_w > 8 && !line.name.is_empty() {
+                cv.set_clip(Rect::new(text_x, bar.y, name_w, bar.h));
+                cv.text(&f.s, text_x, base, &line.name, DIM);
+                cv.set_clip(col);
+            }
+            y += pitch;
+            if y + 12 > col.y + col.h {
+                break;
+            }
+        }
+        cv.no_clip();
     }
 
     /// Header and body of the measurement results overlay (statistics on): top right of the plot, under the status
@@ -3706,7 +3874,7 @@ impl Ui {
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::MeasClear],
+            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
@@ -4388,6 +4556,7 @@ impl Ui {
             Item::MaskClear => "Clear mask",
             Item::MeasStats => "Statistics",
             Item::MeasLabels => "Labels on trace",
+            Item::StripDock => "Dock",
             Item::Zoom => "Zoom",
             Item::AutoRoll => "Auto Roll",
             Item::Open(MenuId::Decode) => "Decode",
@@ -4719,6 +4888,7 @@ impl Ui {
             Item::MaskInvert => onoff(m.mask_inv),
             Item::MeasStats => onoff(self.stats_on),
             Item::MeasLabels => onoff(self.m.meas_labels),
+            Item::StripDock => self.m.strip_dock.label().into(),
             Item::Zoom => onoff(m.zoom),
             Item::AutoRoll => onoff(m.auto_roll),
             Item::DecOn => onoff(m.dec_on),
@@ -5098,6 +5268,11 @@ impl Ui {
             }
             Item::MeasStats => self.stats_on = !self.stats_on,
             Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
+            Item::StripDock => {
+                let all = StripDock::ALL;
+                let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
+                m.strip_dock = all[(i as i32 + d).clamp(0, all.len() as i32 - 1) as usize];
+            }
             Item::DecOn => self.m.dec_on = !self.m.dec_on,
             Item::DecSel => {
                 let k = (self.m.dec_sel as i32 + d).rem_euclid(DECODERS as i32) as usize;
@@ -5215,6 +5390,11 @@ impl Ui {
                 }
             }
             _ => {}
+        }
+        // moving the strip does not change what was measured
+        if it == Item::StripDock {
+            self.relayout();
+            return;
         }
         self.settings_changed();
     }
@@ -5631,6 +5811,7 @@ impl Ui {
             return o;
         }
         let v: &[&str] = match it {
+            Item::StripDock => return StripDock::ALL.iter().map(|s| s.label().to_string()).collect(),
             Item::ChOn(_) | Item::ChInvert(_) | Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn | Item::ColorGrade | Item::MaskOn | Item::MaskInvert => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
             Item::MaskAction => &["None", "Stop"],

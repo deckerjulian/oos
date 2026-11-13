@@ -630,6 +630,28 @@ pub enum Grid {
     None,
 }
 
+/// Where the measurement strip is drawn. Under is below the graticule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StripDock {
+    Under,
+    Left,
+    Right,
+    Above,
+}
+
+impl StripDock {
+    pub const ALL: [StripDock; 4] = [StripDock::Under, StripDock::Left, StripDock::Right, StripDock::Above];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StripDock::Under => "Under",
+            StripDock::Left => "Left",
+            StripDock::Right => "Right",
+            StripDock::Above => "Above",
+        }
+    }
+}
+
 /// Settings of one decoder (the `dec_*` fields of `Model` are the one the menu edits).
 #[derive(Clone, PartialEq, Debug)]
 pub struct DecCfg {
@@ -849,6 +871,8 @@ pub struct Model {
     pub pane: usize,
     /// what the measurements measure, drawn on the traces (measlabels.rs)
     pub meas_labels: bool,
+    /// measurement strip: under the plot, left, right, or above the trace
+    pub strip_dock: StripDock,
     /// what the two charts of the Trend pane show: 0 = by the list, 1 = off, k = row k - 2 of the measurement list
     pub trend_sel: [usize; 2],
     pub dec_on: bool,
@@ -1241,6 +1265,7 @@ impl Default for Model {
             dec_sel: 0,
             pane: 0,
             meas_labels: false,
+            strip_dock: StripDock::Under,
             trend_sel: [0, 0],
             dec_on: false,
             dec_src: 2,
