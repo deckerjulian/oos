@@ -199,7 +199,14 @@ Not changed, for the next step:
   noisy square 0.89, noise and clipped 1.00. Drawing dots from the read-out words was slower (1.3x: the per-column
   volt conversion through the board's loop), so dots keep the decode.
 - Four channels from the words in one pass per column (one ld4 for all channels) instead of one pass per channel.
-- Per-frame statistics (`framestats`, measurements on): +160 us per frame at 125 k points, more than the deposit.
+- Per-frame statistics (`framestats`, measurements on), branch perf/stats: `Values::of` took a finite-check pass, a
+  pass with compare-select extremes and f64 sums, and a second pass for the standard deviation. Now the extremes come
+  from `fastdraw::min_max` (NEON), the sums from one f64 pass whose non-finite result stands for a NaN or infinity in
+  the samples, and the standard deviation from those sums where avg^2 <= 256 x variance (relative error under 3e-14;
+  else the second pass as before). Max, Min, Mean and RMS are bit-identical to before (same sums in the same order);
+  Std dev within 1e-12 relative (`std_from_one_pass_stays_within_1e_12_of_two_passes`, incl. DC with little noise and
+  sparse pulses, which take the second pass). Host, 125 k-point window, all cheap measurements: 109 -> 40 us
+  (`perf_guard_framestats`, limit 0.7).
 
 ## Status of item 7 (branch feat/compress)
 
