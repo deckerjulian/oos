@@ -425,6 +425,19 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    // the DHO804 unit image: clock from NTP in CET, the server of the DHCP lease unless the settings name one
+    #[test]
+    fn unit_image_takes_the_time_from_the_dhcp_server() {
+        let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/unit/dho804/system.conf"));
+        assert!(bad.is_empty(), "{:?}", bad);
+        assert!(base.ntp && base.tz == "CET-1CEST,M3.5.0,M10.5.0/3" && base.ntp_server == DHCP);
+        let lease = |i: &str| (i == "eth0").then(|| "192.0.2.1".to_string());
+        let (fresh, _) = SysConf::parse_over(base.clone(), "");
+        assert_eq!(ntp_server(&fresh.ntp_server, lease), ("192.0.2.1".into(), NtpOrigin::Dhcp("eth0")));
+        let (user, _) = SysConf::parse_over(base, "ntp.server = pool.ntp.org\nremote.telnet = on\n");
+        assert_eq!(ntp_server(&user.ntp_server, lease), ("pool.ntp.org".into(), NtpOrigin::Set));
+    }
+
     #[test]
     fn image_defaults_under_the_settings() {
         let image = "# unit\nnet.allow = 192.0.2.0/24\nremote.ssh = on\neth.mac = 02:00:00:00:00:01\n";
