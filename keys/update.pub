@@ -3,3 +3,4 @@
 # this tree (see docs/update.md, "Keys").
 127971583bac85183f2c34f88ddf6b73ed99df7cea58b04cd581b4d5db43efd6  # id 4dbd03d9763869dd, maintainer key
 f73d56d8b05852c2fbbb2bcc79ac03420d885df19df3c5405e0958485191ffcf  # id 1d64e92f58d378be, community key, secret part in keys/community-signing.key
+f5f316e2b278b4c29a3724e711493ebb748f7f22d6c9eff265822110f4a4343d  # id 5b293adb4389dc84, unit owner key (DHO804 fork), secret part in ~/.config/oos/update-signing.key, not in this tree
