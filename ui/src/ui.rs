@@ -864,6 +864,9 @@ pub struct Ui {
     /// (`framestats::needs_samples` are then not available)
     meas_env_sent: [bool; NCH],
     meas_env: [bool; NCH],
+    /// the record a background measurement is wanted of (`meas_want`), when it must not be the newest at the time the
+    /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
+    meas_pending: Option<Record>,
     /// STOP waiting for the hardware's final frame (docs/fork/stop-exact.md): the request number and until when
     final_req: u64,
     stop_final: Option<f64>,
@@ -1109,6 +1112,7 @@ impl Ui {
             meas_n: 0,
             meas_env_sent: [false; NCH],
             meas_env: [false; NCH],
+            meas_pending: None,
             final_req: 0,
             stop_final: None,
             meas_new: false,
@@ -1944,6 +1948,11 @@ impl Ui {
                     // the result for the last record is still good when it comes after this one: `meas_n` only
                     // changes where a result out becomes wrong (a clear, measuring here at once)
                     self.meas_want = true;
+                    // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
+                    // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
+                    if crate::deepmeas::want(&self.m).is_some() {
+                        self.meas_pending = self.last[0].clone();
+                    }
                 } else {
                     self.measure_last();
                     self.meas_new = true;
@@ -4328,7 +4337,12 @@ impl Ui {
             return;
         }
         self.meas_want = false;
-        let Some(rec) = self.last[0].as_ref() else { return };
+        let pending = self.meas_pending.take();
+        let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
+        // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
+        if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame)) {
+            return;
+        }
         let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         let job: Vec<(usize, MeasSrc, f64, f64)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
@@ -7699,6 +7713,51 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::axis_label;
+
+    // Break it catches (unit 2026-11-13, 1 ms/div 10 M, meas.deep_raw = on): the background measurement measuring the
+    // newest record when the worker gets free. Raw deep records come once a second between pair records (held), so it
+    // measured a pair record: Mean stayed NaN live. The raw record waiting for the worker is the one measured.
+    #[test]
+    fn live_raw_deep_records_are_measured_while_the_worker_is_busy() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.measure_in_background();
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, 0)];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        ui.m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() };
+        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 2.0 } else { 0.0 }).collect();
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
+        let mut seq = 0;
+        for _ in 0..3 {
+            // the worker is still on the previous record when the raw one comes, and pair records follow
+            ui.meas_bg.as_mut().unwrap().busy = true;
+            seq += 1;
+            shared.lock().unwrap().queue.push_back(frame(seq, false, raw.clone()));
+            ui.step(0.02);
+            for _ in 0..3 {
+                seq += 1;
+                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+                ui.step(0.02);
+            }
+            ui.meas_bg.as_mut().unwrap().busy = false;
+            for _ in 0..50 {
+                ui.step(0.02);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let avg = ui.meas(0, Meas::Vavg);
+            assert!((avg - 0.5).abs() < 0.03, "Mean live: {}", avg);
+        }
+        crate::deepmeas::force(None);
+    }
 
     // Break it catches: Mean, RMS and Std dev shown from min/max pairs (a deep record read through the FPGA
     // compression), or Max/Min/Pk-pk lost with them
