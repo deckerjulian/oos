@@ -292,7 +292,10 @@ impl Ui {
     pub(super) fn wave_name(&self, id: WaveId) -> String {
         match id {
             WaveId::Ch(c) => format!("CH{}", c + 1),
-            WaveId::Ref(i) => format!("R{}", i + 1),
+            WaveId::Ref(i) => match self.refs.get(i).and_then(|r| r.as_ref()) {
+                Some(r) if !r.label.is_empty() => format!("R{} {}", i + 1, r.label),
+                _ => format!("R{}", i + 1),
+            },
         }
     }
 

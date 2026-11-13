@@ -1665,6 +1665,14 @@ impl Model {
         tscales()[self.tscale].max(HW_MIN_TDIV)
     }
 
+    /// Live analog / LA cannot display below 1 ns/div; the ADC window is that floor.
+    pub fn floor_live_tdiv(&mut self) {
+        if tscales()[self.tscale] < HW_MIN_TDIV {
+            self.tscale = tscales().iter().position(|&t| t >= HW_MIN_TDIV).unwrap_or(0);
+            self.tfine = 1.0;
+        }
+    }
+
     /// Keeps every offset within what the AFE of its scale can do.
     pub fn clamp_offsets(&mut self) {
         for ch in &mut self.ch {

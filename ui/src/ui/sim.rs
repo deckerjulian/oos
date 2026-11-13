@@ -205,30 +205,32 @@ impl Ui {
         for c in 0..NCH {
             self.m.ch[c].on = false;
         }
+        self.m.la.on = false;
         let rec_s = n as f64 * dt;
         let bit = nearest_tscale(8.0 / lane.bits_per_s / HDIV as f64);
-        let overview = nearest_tscale(rec_s / HDIV as f64);
+        let want_ov = rec_s / HDIV as f64;
+        let ts = tscales();
+        let overview = ts.iter().position(|&t| t as f64 + 1e-18 >= want_ov).unwrap_or(ts.len() - 1);
         self.m.tfine = 1.0;
         self.m.tscale = overview.max(bit);
-        let look = (rec_s * 0.15) as f32;
+        let look = (rec_s * 0.5) as f32;
         self.m.delay = look;
         self.set_zoom(true);
         self.m.zscale = bit;
         self.m.zdelay = look;
         self.clamp_zoom();
         self.m.meas = Self::default_meas().into_iter().map(|(k, _)| (k, WaveId::Ref(slot))).collect();
+        self.meas_src = WaveId::Ref(slot);
         self.m.eye_src = WaveId::Ref(slot);
         self.m.eye_rate = lane.bits_per_s;
         self.m.run = RunState::Stop;
-        self.sim_i = 0;
-        self.sim_play = false;
+        self.last[0] = None;
+        self.cleared = true;
         self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
         self.toast(&format!("{} → R{}", lane.name, slot + 1));
     }
-
-    pub(super) fn sim_tick(&mut self, _dt_wall: f64) {}
 }
 
 fn nearest_vdiv(want: f32) -> f32 {
@@ -263,11 +265,14 @@ mod tests {
         assert!((r.dt - 1.0 / (8.0 * 16e9)).abs() < 1e-18);
         assert_eq!(u.m.eye_src, WaveId::Ref(2));
         assert!((u.m.eye_rate - 16e9).abs() < 1.0);
-        assert!(!u.sim_play);
         assert!(!u.m.ch.iter().any(|c| c.on), "SIM is a reference, not the analog channels");
+        assert!(u.last[0].is_none());
+        assert_eq!(u.meas_src, WaveId::Ref(2));
         assert!(u.m.zoom);
-        assert!((u.m.time_per_div() as f64 - 50e-9).abs() < 1e-12, "overview tdiv {}", u.m.time_per_div());
+        // 65_536 samples at 8 UI, 16 Gb/s → 512 ns; first scale that covers the record is 100 ns/div
+        assert!((u.m.time_per_div() as f64 - 100e-9).abs() < 1e-12, "overview tdiv {}", u.m.time_per_div());
         assert!((tscales()[u.m.zscale] as f64 - 50e-12).abs() < 1e-12, "zoom {}", tscales()[u.m.zscale]);
+        assert!((u.m.delay as f64 - 256e-9).abs() < 1e-12);
         assert!(u.m.meas.iter().all(|(_, id)| *id == WaveId::Ref(2)));
         u.render(&mut Canvas::new(W, H));
         let names = serial::names().join(" ");
@@ -327,6 +332,25 @@ mod tests {
             u.render(&mut cv);
             let _ = std::fs::write(format!("{}/sim-menu-knobs.png", dir), crate::store::png_of(&cv));
         }
+    }
+
+    #[test]
+    fn sim_play_does_not_arm_the_adc() {
+        let mut u = ui();
+        u.m.sim_preset = LANES.iter().position(|l| l.name == "PCIe 4.0").unwrap();
+        u.m.apply_sim_preset();
+        u.activate(Item::SimPlay);
+        assert!(u.last[0].is_none());
+        u.m.run = RunState::Run;
+        u.step(1.0 / 60.0);
+        assert!(u.last[0].is_none(), "Run with analog off must not acquire");
+        assert!(!u.m.ch.iter().any(|c| c.on));
+        u.m.tscale = 0;
+        u.m.ch[0].on = true;
+        u.m.floor_live_tdiv();
+        assert!((u.m.time_per_div() as f64 - 1e-9).abs() < 1e-12);
+        u.step(1.0 / 60.0);
+        assert!(u.last[0].is_some(), "Run with analog on acquires");
     }
 
     #[test]

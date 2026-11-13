@@ -765,9 +765,6 @@ pub struct Ui {
     cal: selfcal::State,
     /// Bode sweep (bode.rs)
     bode: bode::State,
-    /// SIM: walking the loaded serial record on the phosphor
-    sim_play: bool,
-    sim_i: usize,
     /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
     /// to cards) is copied here during `render`
     pub hdmi_snap_want: bool,
@@ -947,8 +944,6 @@ impl Ui {
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
-            sim_play: false,
-            sim_i: 0,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
             trend: Vec::new(),
@@ -1445,13 +1440,10 @@ impl Ui {
         }
         self.was_running = running;
         let persist = PERSIST[self.m.persist].1;
-        // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if self.sim_play && self.m.run == RunState::Run {
-            self.sim_play = false;
-        }
-        if self.sim_play {
-            self.sim_tick(dt_wall);
-        } else if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
+        // a source started in STOP (replay) still shows its first record, unless the screen was cleared.
+        // analog off and no LA: do not arm the ADC / demo path (SIM Play is a stored ref)
+        let live = self.m.n_on() > 0 || self.m.la_on();
+        if live && (self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared)) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -1725,7 +1717,7 @@ impl Ui {
     fn fast_draw(&mut self, f: &crate::board::Frame) -> bool {
         let m = &self.m;
         let (w, h) = (self.ph.w, self.ph.h);
-        let tdiv = m.time_per_div() as f64;
+        let tdiv = m.hw_time_per_div() as f64;
         let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
         if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
             let fr = std::sync::Arc::new(f.clone());
@@ -3135,7 +3127,11 @@ impl Ui {
         cv.text(&f.mb, r.x + 30, r.y + 19, txt, col);
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; a loaded SIM
         // record is stored at its own rate, not the live ADC
-        let (sr, depth) = self.sim_rate_depth().or_else(|| self.src.hw_rate_depth().map(|(r, n)| (r, n as _))).unwrap_or_else(|| self.m.srate_depth());
+        let (sr, depth) = if self.m.run == RunState::Stop && self.m.n_on() == 0 {
+            self.sim_rate_depth().or_else(|| self.src.hw_rate_depth().map(|(r, n)| (r, n as _))).unwrap_or_else(|| self.m.srate_depth())
+        } else {
+            self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth())
+        };
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
         let acq_open = self.menu_open && self.menu_root() == MenuId::Acquire;
@@ -4586,7 +4582,10 @@ impl Ui {
             Item::RefSrc => format!("CH{}", self.ref_src + 1),
             Item::RefShow(i) => match &self.refs[i] {
                 None => "empty".into(),
-                Some(r) => format!("CH{} {}", r.src + 1, if r.on { "on" } else { "off" }),
+                Some(r) => {
+                    let src = if r.label.is_empty() { format!("CH{}", r.src + 1) } else { r.label.clone() };
+                    format!("{} {}", src, if r.on { "on" } else { "off" })
+                }
             },
             Item::MathA => src_name(m.math_a),
             Item::MathB => src_name(m.math_b),
@@ -4616,7 +4615,12 @@ impl Ui {
         let step = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).clamp(0, n as i32 - 1) as usize };
         let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
         match it {
-            Item::ChOn(c) => m.ch[c].on = !m.ch[c].on && c < n_ch(),
+            Item::ChOn(c) => {
+                m.ch[c].on = !m.ch[c].on && c < n_ch();
+                if m.ch[c].on && m.run == RunState::Run {
+                    m.floor_live_tdiv();
+                }
+            }
             Item::ChCoupling(c) => {
                 let all = board().couplings();
                 let i = all.iter().position(|&x| x == m.ch[c].coupling).unwrap_or(0);
@@ -5921,6 +5925,9 @@ impl Ui {
                 if !m.ch[c].on {
                     m.ch[c].on = true;
                     m.active = c;
+                    if m.run == RunState::Run {
+                        m.floor_live_tdiv();
+                    }
                     self.open_menu(MenuId::Channel(c));
                 } else if self.menu_open && self.menu == MenuId::Channel(c) {
                     m.ch[c].on = false;
@@ -5939,11 +5946,17 @@ impl Ui {
                 if m.run == RunState::Run && m.trig_mode == TrigMode::Single {
                     m.trig_mode = TrigMode::Auto;
                 }
+                if m.run == RunState::Run && (m.n_on() > 0 || m.la_on()) {
+                    m.floor_live_tdiv();
+                }
             }
             key::SINGLE => {
                 m.trig_mode = TrigMode::Single;
                 m.run = RunState::Run;
                 self.dirty_map = true;
+                if m.n_on() > 0 || m.la_on() {
+                    m.floor_live_tdiv();
+                }
             }
             key::AUTO => {
                 if self.src.is_hw() {
