@@ -996,6 +996,7 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
 
 
 /// Auto set-up: per channel find amplitude and frequency, choose V/div, offset, timebase and trigger.
+/// Live channels only. A shown reference uses `autoset_shown`.
 pub fn autoset(m: &mut Model, src: &Source) {
     // pass 1: which channels carry a signal, their levels and periods
     let mut found: Vec<(usize, Stats, f64)> = Vec::new();
@@ -1016,6 +1017,48 @@ pub fn autoset(m: &mut Model, src: &Source) {
         found.push((c, s, period));
     }
     place(m, &found);
+}
+
+/// Auto set-up of stored records. Each entry is one shown reference: its samples and its own sample interval.
+/// Vertical scale and position come from that record's levels, the same band rule as a live channel (the peak-to-peak
+/// fills 80 % of its band, the midpoint sits on the band centre). The time base shows about three periods of the
+/// slowest record. Analog channels, the trigger and the run state stay as they are.
+/// `None` where the record is flatter than the live set-up's floor (50 mV).
+pub fn autoset_shown(m: &mut Model, waves: &[(&[f32], f64)]) -> Vec<Option<(f32, f32)>> {
+    let measured: Vec<Stats> = waves.iter().map(|(v, dt)| stats(v, *dt)).collect();
+    let hot: Vec<bool> = measured.iter().map(|s| s.vmax - s.vmin >= 0.05).collect();
+    let n = hot.iter().filter(|&&h| h).count();
+    if n == 0 {
+        return vec![None; waves.len()];
+    }
+    let band = VDIV / n as f32;
+    let mut k = 0usize;
+    let mut slowest = 0.0f64;
+    let mut out = Vec::with_capacity(waves.len());
+    for (s, &h) in measured.iter().zip(&hot) {
+        if !h {
+            out.push(None);
+            continue;
+        }
+        let y_div = VDIV / 2.0 - band * (k as f32 + 0.5);
+        let vpp = s.vmax - s.vmin;
+        let want = vpp / (band * 0.8);
+        let vpd = VSCALES.iter().copied().find(|&x| x >= want).unwrap_or(VSCALES[VSCALES.len() - 1]);
+        let mid = (s.vmax + s.vmin) / 2.0;
+        out.push(Some((vpd, y_div * vpd - mid)));
+        if s.period.is_finite() && s.period > slowest {
+            slowest = s.period;
+        }
+        k += 1;
+    }
+    if slowest > 0.0 {
+        let ts = tscales();
+        let want = (slowest * 3.0 / HDIV as f64) as f32;
+        m.tscale = ts.iter().position(|&t| t >= want).unwrap_or(ts.len() - 1);
+        m.tfine = 1.0;
+        m.delay = 0.0;
+    }
+    out
 }
 
 /// A steady period in `v`, sample distance `dt`: at least three rising edges with hysteresis, spaced within 30 %.
@@ -1093,6 +1136,38 @@ pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shown_record_uses_its_own_interval_and_leaves_the_channels() {
+        let sine: Vec<f32> = (0..2000).map(|k| (k as f32 / 200.0 * std::f32::consts::TAU).sin()).collect();
+        let mut m = Model::default();
+        let on = m.ch.each_ref().map(|c| c.on);
+        let (trig, run) = ((m.trig_src, m.trig_level), m.run);
+        let views = autoset_shown(&mut m, &[(&sine, 1e-7)]);
+        let (vpd, off) = views[0].expect("level");
+        assert!((vpd - 0.5).abs() < 1e-6, "v/div {}", vpd);
+        assert!(off.abs() < 1e-3, "offset {}", off);
+        assert!((m.time_per_div() - 10e-6).abs() < 1e-12, "s/div {}", m.time_per_div());
+        assert_eq!(m.ch.each_ref().map(|c| c.on), on);
+        assert_eq!((m.trig_src, m.trig_level), trig);
+        assert_eq!(m.run, run);
+        // the same samples a decade slower are a decade slower on screen
+        let mut slow = Model::default();
+        autoset_shown(&mut slow, &[(&sine, 1e-6)]);
+        assert!((slow.time_per_div() - 100e-6).abs() < 1e-12, "s/div {}", slow.time_per_div());
+        // two records share the screen; a flat one is not a band and does not move the time base
+        let mut both = Model::default();
+        let flat = vec![0.01f32; 2000];
+        let views = autoset_shown(&mut both, &[(&sine, 1e-7), (&flat, 1e-7)]);
+        assert!(views[1].is_none());
+        assert!((views[0].unwrap().1).abs() < 1e-3);
+        assert!((both.time_per_div() - 10e-6).abs() < 1e-12);
+        let mut pair = Model::default();
+        let views = autoset_shown(&mut pair, &[(&sine, 1e-7), (&sine, 1e-7)]);
+        let (a, b) = (views[0].unwrap(), views[1].unwrap());
+        assert!((a.0 - 1.0).abs() < 1e-6 && (b.0 - 1.0).abs() < 1e-6, "{:?} {:?}", a, b);
+        assert!((a.1 - 2.0).abs() < 1e-3 && (b.1 + 2.0).abs() < 1e-3, "{:?} {:?}", a, b);
+    }
 
     #[test]
     fn periodic_takes_a_sine_and_refuses_noise_and_dc() {
