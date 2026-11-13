@@ -9,7 +9,7 @@
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
-//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, :SYSTem:AOUTput TOUT|OFF (rear AUX OUT; OFF is OOS), fork: :SYSTem:DEBug:DVM? (DVM block raw), :SYSTem:DEBug:MASK? (mask unit raw), :SYSTem:DEBug:MASK:MAP[?] key=value, :SYSTem:DEBug:MASK:COLumns? a,b, :SYSTem:DEBug:ZONE? (zone unit raw), :SYSTem:DEBug:UART? (TPU UART words), OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
+//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, :SYSTem:AOUTput TOUT|OFF (rear AUX OUT; OFF is OOS), fork: :SYSTem:DEBug:DVM? (DVM block raw), :SYSTem:DEBug:MASK? (mask unit raw), :SYSTem:DEBug:MASK:MAP[?] key=value, :SYSTem:DEBug:MASK:COLumns? a,b, :SYSTem:DEBug:ZONE? (zone unit raw), :SYSTem:DEBug:SERial? / UART? (TPU UART, SPI, I2C words), OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
 //! :SEGMents:TIMes? (hardware segments: trigger times since the first, s), :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
@@ -1016,7 +1016,7 @@ impl Scpi {
             return t(&ui.events_text());
         }
         // fork: the TPU UART receiver's words for the current settings (docs/fork/hwuart.md)
-        if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "UART") && query {
+        if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && (kw(nodes[2], "UART") || kw(nodes[2], "SERial")) && query {
             return t(&board().uart_debug(&ui.m));
         }
         // fork: the zone unit's raw status and counter next to the software filter (docs/fork/hwzone.md)
@@ -1048,6 +1048,20 @@ impl Scpi {
         // fork: the DVM block's raw registers next to the software DVM (docs/fork/dvm.md)
         if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && query {
             return t(&ui.dvm_debug_text());
+        }
+        // fork, unit debug: force the DVM block's lane with one channel (each lane = one pair of ADC cores)
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && kw(nodes[3], "LANE") {
+            if query {
+                return t(&ui.dvm_lane_text());
+            }
+            match arg.trim().to_ascii_uppercase().as_str() {
+                "AUTO" => ui.dvm_lane_set(None),
+                a => match a.parse::<u32>() {
+                    Ok(l) if l < 4 => ui.dvm_lane_set(Some(l)),
+                    _ => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                },
+            }
+            return None;
         }
         if kw(n0, "SYSTem") && nodes.len() == 2 && kw(nodes[1], "ERRor") && query {
             return t(&if self.err.is_empty() { "0,\"No error\"".to_string() } else { self.err.remove(0) });
@@ -1267,6 +1281,7 @@ mod aux_out_tests {
         assert!(q(&mut ui, ":SYSTem:DEBug:MASK?").starts_with("off,enabled=0,active=0,sw_pass=0,sw_fail=0,"));
         assert!(q(&mut ui, ":SYSTem:DEBug:ZONE?").starts_with("off,enabled=0,active=0,sw_drops=0,"));
         assert_eq!(q(&mut ui, ":SYSTem:DEBug:UART?"), "off,enabled=0");
+        assert_eq!(q(&mut ui, ":SYSTem:DEBug:SERial?"), "off,enabled=0");
         // the comparator mapping: set one key, read it back, put the original back
         let orig = q(&mut ui, ":SYSTem:DEBug:MASK:MAP?");
         assert!(orig.starts_with("domain="), "{}", orig);

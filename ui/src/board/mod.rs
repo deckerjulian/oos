@@ -119,8 +119,7 @@ pub trait Board: Sync + 'static {
     /// off where the board has none or it is not enabled.
     fn zone_hw(&self) -> bool;
 
-    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:UART?`); "none" where
-    /// the board has none.
+    /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:SERial?`, `UART?`).
     fn uart_debug(&self, m: &Model) -> String;
 
     /// Fork, the mask/zone comparator mapping under test (docs/fork/hwmask.md "Sweep"): with `kv` one `key=value` set,
@@ -230,10 +229,12 @@ pub struct CounterRead {
     pub n: u64,
 }
 
-/// The FPGA's DVM block as the UI wants it (`dvm.hw = on`): the channel it measures.
+/// The FPGA's DVM block as the UI wants it (`dvm.hw = on`): the channel it measures, and a lane forced by
+/// `:SYSTem:DEBug:DVM:LANE` (one channel only; None = the channel's own).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DvmWant {
     pub ch: usize,
+    pub lane: Option<u32>,
 }
 
 /// A reading of the DVM block (fork, docs/fork/dvm.md): the channel, lane and window exponent it was taken with, the

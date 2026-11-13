@@ -70,6 +70,16 @@ pub fn lane(mask: u32, ch: usize) -> Option<u32> {
     Some(ch as u32)
 }
 
+/// `lane` with a requested lane `forced` (0..3): taken only with one acquired channel, where every lane carries it
+/// (unit debug: each lane is a different pair of ADC cores, so their DC readings show the core offsets).
+pub fn lane_forced(mask: u32, ch: usize, forced: Option<u32>) -> Option<u32> {
+    let l = lane(mask, ch)?;
+    Some(match forced {
+        Some(f) if crate::dho::hz::ratio(mask) == 1 && (mask & 0xf).count_ones() == 1 => f & LANE_MASK,
+        _ => l,
+    })
+}
+
 fn fields(lane: u32, exp: u32) -> u32 {
     (lane & LANE_MASK) << LANE_SHIFT | (exp & EXP_MASK) << EXP_SHIFT
 }
@@ -176,6 +186,22 @@ mod tests {
         ];
         for (mask, ch, want) in cases {
             assert_eq!(lane(mask, ch), want, "mask {:#b} ch {}", mask, ch);
+        }
+    }
+
+    #[test]
+    fn forced_lanes_only_with_one_channel() {
+        let cases: [(u32, usize, Option<u32>, Option<u32>); 6] = [
+            (0b0001, 0, Some(3), Some(3)),
+            (0b0100, 2, Some(0), Some(0)),
+            (0b0100, 2, None, Some(2)),
+            // two or four channels: the lane is the channel's own
+            (0b0011, 1, Some(0), Some(2)),
+            (0b1111, 2, Some(1), Some(2)),
+            (0b0001, 1, Some(1), None),
+        ];
+        for (mask, ch, forced, want) in cases {
+            assert_eq!(lane_forced(mask, ch, forced), want, "mask {:#b} ch {} forced {:?}", mask, ch, forced);
         }
     }
 

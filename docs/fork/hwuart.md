@@ -82,3 +82,4 @@ Note `:SYSTem:DEBug:UART?` (expect `on,src=CH1,baud=115200,...,clocks=1356,r2100
 7. `trig.serial_hw = off`, restart: `:SYSTem:DEBug:UART?` returns `off,...`, the protocol trigger behaves as before.
 
 Record the results in `docs/fork/unit-dho804.md`.
+- SPI and I2C: `hwserial.md`.
