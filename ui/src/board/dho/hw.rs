@@ -561,8 +561,8 @@ enum DvmStep {
 /// The DVM block's next step: (re)started when the wanted channel, its lane in the acquired set `mask` or the
 /// acquisition configuration (`config`, raised on every configuration) changed; stopped when nothing is wanted or the
 /// channel is not acquired; read `DVM_READ_S` after the start or the last reading.
-fn dvm_step(want: Option<usize>, mask: u32, config: u64, running: Option<DvmKey>, elapsed_s: f64) -> (DvmStep, Option<DvmKey>) {
-    let target = want.and_then(|ch| oos_hal::dho::dvm::lane(mask, ch).map(|l| (ch, l, config)));
+fn dvm_step(want: Option<crate::board::DvmWant>, mask: u32, config: u64, running: Option<DvmKey>, elapsed_s: f64) -> (DvmStep, Option<DvmKey>) {
+    let target = want.and_then(|w| oos_hal::dho::dvm::lane_forced(mask, w.ch, w.lane).map(|l| (w.ch, l, config)));
     if target != running {
         let step = match (target, running) {
             (Some((_, l, _)), _) => DvmStep::Start(l),
@@ -1067,7 +1067,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
             {
                 use oos_hal::dho::dvm;
-                let want = out.lock().unwrap().dvm_want.map(|w| w.ch);
+                let want = out.lock().unwrap().dvm_want;
                 let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
                 let (step, key) = dvm_step(want, s.mask, configs, dvm_run.map(|r| r.0), elapsed);
                 match step {
@@ -1974,19 +1974,21 @@ mod tests {
     #[test]
     fn dvm_steps() {
         let t0 = Some((1, 2, 7));
+        let ch = |c: usize| Some(crate::board::DvmWant { ch: c, lane: None });
         // (want, mask, config, running, elapsed) -> (step, running after)
-        let cases: [(Option<usize>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 8] = [
+        let cases: [(Option<crate::board::DvmWant>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 9] = [
             (None, 0b11, 7, None, 0.0, DvmStep::Idle, None),
             // CH2 of CH1+CH2: lane 2
-            (Some(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
-            (Some(1), 0b11, 7, t0, 0.1, DvmStep::Idle, t0),
-            (Some(1), 0b11, 7, t0, 0.6, DvmStep::Read, t0),
+            (ch(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
+            (ch(1), 0b11, 7, t0, 0.1, DvmStep::Idle, t0),
+            (ch(1), 0b11, 7, t0, 0.6, DvmStep::Read, t0),
             // a new configuration restarts it
-            (Some(1), 0b11, 8, t0, 0.1, DvmStep::Start(2), Some((1, 2, 8))),
-            // CH2 alone: lane 1
-            (Some(1), 0b10, 7, t0, 0.6, DvmStep::Start(1), Some((1, 1, 7))),
+            (ch(1), 0b11, 8, t0, 0.1, DvmStep::Start(2), Some((1, 2, 8))),
+            // CH2 alone: lane 1; with lane 3 forced: lane 3
+            (ch(1), 0b10, 7, t0, 0.6, DvmStep::Start(1), Some((1, 1, 7))),
+            (Some(crate::board::DvmWant { ch: 1, lane: Some(3) }), 0b10, 7, Some((1, 1, 7)), 0.6, DvmStep::Start(3), Some((1, 3, 7))),
             // the channel left the acquired set, or the DVM was switched off
-            (Some(1), 0b01, 7, t0, 0.6, DvmStep::Stop, None),
+            (ch(1), 0b01, 7, t0, 0.6, DvmStep::Stop, None),
             (None, 0b11, 7, t0, 0.6, DvmStep::Stop, None),
         ];
         for (want, mask, config, running, el, step, after) in cases {

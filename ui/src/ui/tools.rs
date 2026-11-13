@@ -202,7 +202,7 @@ impl Ui {
     /// latest reading.
     pub(super) fn dvm_poll(&mut self) {
         let m = &self.m;
-        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw()).then_some(crate::board::DvmWant { ch: m.dvm_src });
+        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw()).then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
         if let Some(r) = self.src.hw_dvm(want) {
             self.dvm_hw = r;
         }
@@ -231,6 +231,16 @@ impl Ui {
     /// DVM reading of its source, volts: the DVM block's when it has one, else the software DVM.
     pub(super) fn dvm_value(&self) -> f64 {
         self.dvm_hw_value().unwrap_or_else(|| self.dvm_sw_value())
+    }
+
+    /// `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` (fork, unit debug): the DVM block reads lane n with one channel acquired.
+    pub fn dvm_lane_set(&mut self, lane: Option<u32>) {
+        self.dvm_lane = lane.map(|l| l & 3);
+    }
+
+    /// The forced lane, `AUTO` without one.
+    pub fn dvm_lane_text(&self) -> String {
+        self.dvm_lane.map_or("AUTO".into(), |l| l.to_string())
     }
 
     /// `:SYSTem:DEBug:DVM?` (fork): the DVM block's latest reading, raw, for the unit session (docs/fork/dvm.md), next to

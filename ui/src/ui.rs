@@ -943,6 +943,8 @@ pub struct Ui {
     cnt_clear: u64,
     /// the FPGA's DVM block (tools.rs, `dvm.hw = on`): latest reading
     dvm_hw: Option<crate::board::DvmRead>,
+    /// `:SYSTem:DEBug:DVM:LANE`: a lane forced for the DVM block (one channel only)
+    dvm_lane: Option<u32>,
     /// channel B of delay and phase
     meas_src_b: usize,
     /// the reference the Slot rows work on
@@ -1173,6 +1175,7 @@ impl Ui {
             cnt_hw: None,
             cnt_clear: 0,
             dvm_hw: None,
+            dvm_lane: None,
             meas_src_b: 1,
             ref_sel: 0,
             ref_src: 0,
@@ -9120,6 +9123,23 @@ mod tests {
         // 1 us/div at 1.25 GSa/s: the FPGA averages at every rate (0x1004 bit 2, B1)
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         assert!(board().avg_hw(&ui.m));
+    }
+
+    #[test]
+    fn dvm_lane_scpi() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(PANEL_W, PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":SYST:DEB:DVM:LANE?"), "AUTO");
+        q(&mut ui, ":SYSTem:DEBug:DVM:LANE 3");
+        assert_eq!((q(&mut ui, ":SYST:DEB:DVM:LANE?"), ui.dvm_lane), ("3".into(), Some(3)));
+        q(&mut ui, ":SYST:DEB:DVM:LANE 4");
+        assert_eq!(ui.dvm_lane, Some(3));
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+        q(&mut ui, ":SYST:DEB:DVM:LANE auto");
+        assert_eq!(ui.dvm_lane, None);
     }
 
     #[test]

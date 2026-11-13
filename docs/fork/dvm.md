@@ -1,7 +1,8 @@
 # DVM from the FPGA block
 
 Status: opt-in. Result layout and units measured on the unit (2026-11-13, round 2: private RE notes
-`docs/logs/oos_unitlab_20261113.md`); decode fixed on `fix/dvm-decode`, not yet re-checked against the software DVM. Spec: `specs/08-counter-dvm.md` section 1.2.
+`docs/logs/oos_unitlab_20261113.md`); decode checked against the software DVM in round 5 (below). Spec:
+`specs/08-counter-dvm.md` section 1.2.
 Next-round table row 2.5.
 
 ## What it does
@@ -51,14 +52,35 @@ one code, at or above 4096, and a mean square below the mean squared.
 Open: CH2 alone reported lane 2 where `dvm::lane` gives 1 (one channel: every lane carries it, so the reading is
 right either way; the log line may have come from a set-up with CH1 still acquired). Four channels not tried.
 
-## Re-check after the decode fix
+## Round 5: hardware against software
 
-1. `dvm.hw = on`, CH1 probe comp at 500 mV/div, offset 0, 10 dumps of `:SYSTem:DEBug:DVM?` per mode (0, 1, 2):
-   `hw` within 2 % of `sw` (DC about 0.15 V, AC rms about 0.15 V).
-2. The same at 100 mV/div, offset -0.15 V, and at 1 V/div with offset +2 V and the input open. `hw` against `sw` at
-   each: a factor 2 at 100 mV/div means the samples sit before the ADC x2 after all; the range's digital gain is in
-   the configuration note `AFE CH1: ... digital gain`.
-3. STOP, then RUN: no wrong value on the strip (the zero window shows the software value for one reading).
+| setting | hw DC; AC rms; AC+DC | sw | difference |
+|---|---|---|---|
+| CH1 500 mV/div, offset 0, probe comp | 0.1446; 0.1499; 0.2083 V | 0.1477; 0.1487; 0.2095 | DC -3.1 mV (-2.1 %), AC +0.8 %, AC+DC -0.6 % |
+| CH1 100 mV/div, offset -0.15 V | 0.1479; 0.1499; 0.2106 | 0.1482; 0.1497; 0.2107 | DC -0.3 mV, AC +0.1 % |
+| CH3 open, 1 V/div, offset +2 V | -0.0337; 0.0056; 0.0341 | (sw showed CH1's signal, see below) | no valid comparison |
+
+Reading:
+
+- Scale: the AC values agree within 0.8 % and 0.1 %. The cal-file gain is right; no factor 2 at 100 mV/div.
+- DC at 500 mV/div: -3.1 mV is about 2.7 ADC steps (1 step = 16 x 1.07 x 0.5 / 7500 V = 1.14 mV), while AC agrees.
+  The block sums one lane, and with one channel a lane is one pair of the eight ADC cores. The software averages all
+  cores. A lane's DC therefore differs from the all-core DC by the cores' offset residuals, which self-cal only trims
+  to +-1.5 steps per core (more if the stored offsets belong to another mode or were not loaded after the hand-over).
+  The same residuals limit the hardware average (spec 01 section 8). Not a decode error.
+- 1 V/div with +2 V: -34 mV is 1.7 % of the 2 V offset. Without a valid software value it cannot be separated from
+  the AFE offset accuracy, which the records share. The 428 codes per division of round 2 came from this same reading
+  (it assumed the offset was exactly 2 div), so it is not evidence of a scale error either.
+- STOP and RUN: no zero reading reached the strip.
+
+Per-lane check (needs this branch): `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` forces the lane with one channel acquired
+(every lane carries the channel then). CH1 alone, input open, 500 mV/div and 100 mV/div, offset 0; for each lane 0..3
+five `:SYSTem:DEBug:DVM?` dumps, then `AUTO`. Expect the four lane DC values to spread by a few ADC steps, with the
+software value near their mean. That spread is the per-core-pair offset map, also the input for the core offset fix.
+
+Default: keep `dvm.hw` opt-in until the per-lane check and the core offset fix. With the fix the DC error is bounded
+by the trim (about +-0.5 step); then the hardware DVM is the better default: acquisition-independent, 2^28 samples,
+no record or clipping dependence.
 
 ## Original on-unit test procedure (first session)
 
