@@ -74,7 +74,7 @@ treat the card as you would the password. Without `/oos` the file is in `/tmp/wl
 oos-ui passes only hexadecimal forms to wpa_supplicant (SSID bytes, the key), so a name or password cannot break a command
 or the file. Names from a scan are untrusted: they are cut, and control characters are replaced on the screen.
 
-**Everything open on Ethernet is open on the WLAN too:** telnet without a password, SCPI, VXI-11, the web remote, MCP and the
+**Everything open on Ethernet is open on the WLAN too:** telnet without a password, SCPI, VXI-11, HiSLIP on a computer, the web remote, the LAN announcement, MCP and the
 update page. Join only networks in which you trust every device.
 
 ## 6. Test

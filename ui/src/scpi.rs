@@ -141,6 +141,10 @@ impl Scpi {
         Scpi { l, clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
     }
 
+    pub fn port(&self) -> Option<u16> {
+        self.l.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
+    }
+
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
             while let Ok((s, _)) = l.accept() {
