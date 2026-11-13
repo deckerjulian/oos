@@ -1536,6 +1536,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         let name = if scan.is_some() { "scan" } else { "roll" };
                         status(format!("{}: {:.1} us per point, chunk {:.2} ms", name, rp.spacing_fs as f64 / 1e9, rp.spacing_fs as f64 * 100.0 / rp.ratio as f64 / 1e12));
                         rolling = Some(rp);
+                        // roll and scan stream raw points: no batch, so the state line's factor is set here
+                        crate::compress::note_batch_k(1);
                         rp
                     }
                 };
