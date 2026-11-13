@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(u.run_caption().0, "STOP");
         assert_eq!(u.ref_card_lines().0, "R1");
         let loaded = u.refs[0].as_ref().unwrap();
-        assert_eq!(loaded.v, sine);
+        assert_eq!(loaded.v.as_ref(), &sine);
         assert!(u.m.time_per_div() > 0.0 && u.m.time_per_div() as f64 * HDIV as f64 <= n as f64 * dt * 1.01, "import fits a useful view of the record");
         let (sr, live_mode) = u.acq_caption();
         assert!(!live_mode);
@@ -390,10 +390,10 @@ mod tests {
         u.set_offline(true);
         u.refs[1] = Some(RefWave {
             src: 0, color: 1, label: "previous capture".into(), t0: 0.0, dt: 1e-9,
-            v: (0..20_000).map(|index| {
+            v: ((0..20_000).map(|index| {
                 let amplitude = if index < 1000 { 1.0 } else { 5.0 };
                 if index % 4 < 2 { -amplitude } else { amplitude }
-            }).collect(), vpd: 1.0, offset: 0.0, on: true,
+            }).collect::<Vec<_>>()).into(), vpd: 1.0, offset: 0.0, on: true,
         });
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {
@@ -409,7 +409,7 @@ mod tests {
     fn import_keeps_the_live_window_until_take_over() {
         let mut u = ui();
         u.refs[1] = Some(RefWave { src: 0, color: 1, label: "existing".into(), t0: 0.0, dt: 1e-9,
-            v: vec![0.0, 1.0, 0.0], vpd: 0.2, offset: 0.0, on: true });
+            v: (vec![0.0, 1.0, 0.0]).into(), vpd: 0.2, offset: 0.0, on: true });
         let held = (u.m.tscale, u.m.tfine, u.m.delay);
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {

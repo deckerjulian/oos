@@ -64,6 +64,15 @@ pub fn src_ok(s: usize) -> bool {
     s < n_ch() || s >= NCH
 }
 
+/// Total selected single, pair and catalog rows, shared by UI and setup validation.
+pub const MEAS_SELECTION_MAX: usize = 1024;
+
+/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
+pub fn catalog_id_valid(id: u16) -> bool {
+    matches!(id, 15..=16 | 40..=51 | 60..=66 | 70..=76 | 80..=82 | 90..=93
+        | 100..=118 | 130..=137 | 150..=153 | 170..=186)
+}
+
 /// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
 /// that record's sample interval. Refs are not packed into the channel/math index.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -935,6 +944,8 @@ pub struct Model {
     pub meas: Vec<(Meas, WaveId)>,
     /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
     pub meas2: Vec<(usize, WaveId, WaveId)>,
+    /// Catalog results that are not a `Meas` row: id, source A, source B, third source, fourth source.
+    pub cat: Vec<(u16, WaveId, WaveId, WaveId, WaveId)>,
     pub dvm_on: bool,
     pub dvm_src: usize,
     pub dvm_mode: usize,
@@ -1370,6 +1381,7 @@ impl Default for Model {
             grid: Grid::Full,
             meas: Vec::new(),
             meas2: Vec::new(),
+            cat: Vec::new(),
             dvm_on: false,
             dvm_src: 0,
             dvm_mode: 0,
@@ -2082,6 +2094,19 @@ impl Model {
                         *id = WaveId::Ch(0);
                         changed = true;
                     }
+                }
+            }
+        }
+        let previous_cat = self.cat.len();
+        self.cat.retain(|row| catalog_id_valid(row.0));
+        self.cat.truncate(MEAS_SELECTION_MAX.saturating_sub(self.meas.len() + self.meas2.len()));
+        changed |= previous_cat != self.cat.len();
+        for row in &mut self.cat {
+            for source in [&mut row.1, &mut row.2, &mut row.3, &mut row.4] {
+                if let WaveId::Ch(c) = *source {
+                    if c >= n { *source = WaveId::Ch(0); changed = true; }
+                } else if matches!(*source, WaveId::Ref(i) if i >= NREF) {
+                    *source = WaveId::Ref(0); changed = true;
                 }
             }
         }

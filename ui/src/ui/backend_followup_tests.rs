@@ -136,7 +136,7 @@ fn full_eye_has_optional_panes_compact_placement_picker_and_live_return() {
         assert_eq!(ui.m.eye_place,where_);assert!(ui.eye_page_rect().w>200);
     }
     let close=ui.eye_pane_close();assert!(ui.eye_tap(close.x+2,close.y+2));assert!(!ui.eye_open());
-    ui.refs[0]=Some(RefWave{src:0,color:0,label:"test".into(),t0:0.0,dt:1e-9,v:vec![0.0,1.0,0.0],vpd:0.2,offset:0.0,on:true});
+    ui.refs[0]=Some(RefWave{src:0,color:0,label:"test".into(),t0:0.0,dt:1e-9,v: (vec![0.0,1.0,0.0]).into(),vpd:0.2,offset:0.0,on:true});
     ui.set_offline(true);
     let live=ui.top_buttons().into_iter().find(|b|b.0==TopBtn::Live).expect("Live return");
     ui.tap(live.2.x+4,live.2.y+4);assert!(!ui.record_mode());

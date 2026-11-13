@@ -248,6 +248,9 @@ pub fn setup_text(m: &Model) -> String {
     kv("la_window", (m.la_win + 1).to_string());
     kv("meas", m.meas.iter().map(|&(k, id)| format!("{:?}:{}", k, id.token())).collect::<Vec<_>>().join(" "));
     kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a.token(), b.token())).collect::<Vec<_>>().join(" "));
+    if !m.cat.is_empty() {
+        kv("cat", m.cat.iter().map(|&(k, a, b, c, d)| format!("{}:{}:{}:{}:{}", k, a.token(), b.token(), c.token(), d.token())).collect::<Vec<_>>().join(" "));
+    }
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
     kv("counter", format!("{} {} {} {}", m.cnt_on, m.cnt_src, m.cnt_mode, m.cnt_digits));
     for c in 0..NCH {
@@ -563,6 +566,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let (k, c) = e.split_once(':').ok_or_else(|| format!("not item:channel: {}", e))?;
                 out.push((p_enum(k, &ALL_MEAS)?, WaveId::parse(c)?));
             }
+            if out.len() + m.meas2.len() + m.cat.len() > MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
             m.meas = out;
         }
         "meas2" => {
@@ -572,7 +576,22 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let [k, a, b] = f[..] else { return Err(format!("not item:a:b: {}", e)) };
                 out.push((p_idx(k, crate::ui::PAIRS_N)?, WaveId::parse(a)?, WaveId::parse(b)?));
             }
+            if m.meas.len() + out.len() + m.cat.len() > MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
             m.meas2 = out;
+        }
+        "cat" => {
+            let mut out = Vec::new();
+            for e in v.split_whitespace() {
+                let f: Vec<&str> = e.split(':').collect();
+                let [k, a, b, c, d] = f[..] else { return Err(format!("not item:a:b:c:d: {}", e)) };
+                let id = k.parse::<u16>().map_err(|_| format!("not a catalog id: {}", k))?;
+                if !catalog_id_valid(id) { return Err(format!("unknown or non-Wave catalog id: {id}")); }
+                if m.meas.len() + m.meas2.len() + out.len() >= MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
+                let row = (id, WaveId::parse(a)?, WaveId::parse(b)?, WaveId::parse(c)?, WaveId::parse(d)?);
+                if out.contains(&row) { return Err("duplicate catalog row".into()); }
+                out.push(row);
+            }
+            m.cat = out;
         }
         "dvm" => {
             let f: Vec<&str> = v.split_whitespace().collect();
@@ -2528,6 +2547,21 @@ mod tests {
         assert_eq!(old.inv_a, WaveId::Ch(0));
         assert_eq!(old.dpt_g, WaveId::Ch(2));
         assert_eq!(old.inv_tq, None);
+    }
+
+    #[test]
+    fn catalog_setup_validates_ids_sources_duplicates_and_shared_selection_limit() {
+        let mut model=Model::default();
+        set(&mut model,"cat","90:R1:R2:3:4 170:R3:R4:R5:4").unwrap();
+        let text=setup_text(&model);let restored=parse_setup(&text).unwrap();assert_eq!(restored.cat,model.cat);
+        for invalid in ["999:R1:R2:3:4","1:R1:R2:3:4","90:R99:R2:3:4","90:R1:R2:3","90:R1:R2:3:4 90:R1:R2:3:4"] {
+            let before=model.cat.clone();assert!(set(&mut model,"cat",invalid).is_err(),"{invalid}");assert_eq!(model.cat,before);
+        }
+        model.meas=vec![(Meas::Vpp,WaveId::Ch(0));MEAS_SELECTION_MAX-1];model.meas2.clear();model.cat.clear();
+        assert!(set(&mut model,"cat","90:R1:R2:3:4 170:R3:R4:R5:4").is_err());assert!(model.cat.is_empty());
+        set(&mut model,"cat","90:R1:R2:3:4").unwrap();
+        assert!(set(&mut model,"meas2","0:1:2").is_err());assert!(model.meas2.is_empty());
+        set(&mut model,"cat","").unwrap();assert!(model.cat.is_empty());
     }
 
     #[test]

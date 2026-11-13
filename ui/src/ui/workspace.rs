@@ -31,7 +31,7 @@ mod tests {
         ui.m.delay = 4e-9;
         for i in 0..3 {
             ui.refs[i] = Some(RefWave { src: 0, color: i, label: format!("source-{i}"), t0: -2e-9, dt: 1e-10,
-                v: (0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect(), vpd: 0.1, offset: 0.0, on: true });
+                v: ((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>()).into(), vpd: 0.1, offset: 0.0, on: true });
         }
         ui
     }
@@ -411,7 +411,7 @@ mod tests {
             let r = ui.refs[1].as_mut().unwrap();
             r.t0 = -7e-6;
             r.dt = 2e-9;
-            r.v = (0..128).map(|i| i as f32 * 0.1).collect();
+            r.v = (0..128).map(|i| i as f32 * 0.1).collect::<Vec<_>>().into();
             r.vpd = 0.2;
             r.offset = 0.3;
             ui.select_workspace_source(WaveId::Ref(1));

@@ -598,7 +598,7 @@ mod tests {
             label: String::new(),
             t0: 0.0,
             dt: dt * 2.0,
-            v: slow,
+            v: (slow).into(),
             vpd: 2.0,
             offset: 0.0,
             on: true,

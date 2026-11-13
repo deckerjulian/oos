@@ -144,11 +144,11 @@ mod tests {
         u.m.trig_level = 0.0;
         u.m.trig_mode = TrigMode::Normal;
         u.m.tscale = tscales().iter().position(|&x| (x - 10e-9).abs() < 1e-14).unwrap();
-        let values = (0..5000).map(|i| {
+        let values: Vec<f32> = (0..5000).map(|i| {
             let amplitude = if i < 2500 { 0.5 } else { 1.0 };
             if i % 40 < 20 { -amplitude } else { amplitude }
         }).collect();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "Test record".into(), t0: 0.0, dt: 1e-9, v: values, vpd: 0.5, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "Test record".into(), t0: 0.0, dt: 1e-9, v: (values).into(), vpd: 0.5, offset: 0.0, on: true });
         u.meas_src = WaveId::Ref(0);
         u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
         u.m.run = RunState::Stop;
@@ -213,7 +213,7 @@ mod tests {
             label: String::new(),
             t0: 0.0,
             dt,
-            v: vec![0.0; 64],
+            v: (vec![0.0; 64]).into(),
             vpd,
             offset,
             on: true,
@@ -266,8 +266,8 @@ mod tests {
     #[test]
     fn every_reference_uses_the_same_time_window_at_its_own_sample_interval() {
         let mut u = replay();
-        let values = (0..2500).map(|i| if i < 1250 { if i % 20 < 10 { -1.0 } else { 1.0 } } else if i % 20 < 10 { -3.0 } else { 3.0 }).collect();
-        u.refs[1] = Some(RefWave { src: 0, color: 1, label: "Second source".into(), t0: 0.0, dt: 2e-9, v: values, vpd: 1.0, offset: 0.0, on: false });
+        let values: Vec<f32> = (0..2500).map(|i| if i < 1250 { if i % 20 < 10 { -1.0 } else { 1.0 } } else if i % 20 < 10 { -3.0 } else { 3.0 }).collect();
+        u.refs[1] = Some(RefWave { src: 0, color: 1, label: "Second source".into(), t0: 0.0, dt: 2e-9, v: (values).into(), vpd: 1.0, offset: 0.0, on: false });
         u.m.delay = 1e-6;
         u.step(0.01);
         assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 0.01);
@@ -297,7 +297,7 @@ mod tests {
                 match secondary {
                     WaveId::Ref(i) => u.refs[i] = Some(RefWave { src: 0, color: 1,
                         label: "Low-amplitude secondary".into(), t0: 0.0, dt: 1e-9,
-                        v: values, vpd: 2.0, offset: 0.0, on: false }),
+                        v: (values).into(), vpd: 2.0, offset: 0.0, on: false }),
                     WaveId::Ch(c) => {
                         u.m.ch[c].probe = 1.0;
                         u.m.ch[c].vfine = 2.0 / VSCALES[u.m.ch[c].vscale];
@@ -461,6 +461,8 @@ pub(super) struct Replay {
 }
 
 impl Replay {
+    pub(super) fn clear_deferred_statistics(&mut self) { self.deferred_statistics = None; }
+
     pub(super) fn reset_search(&mut self) {
         self.cursor = 0.0;
     }
@@ -472,7 +474,7 @@ impl Ui {
             (r.v.as_ptr() as usize, r.v.len(), r.dt.to_bits(), r.t0.to_bits(), r.vpd.to_bits()))).collect();
         let channels: Vec<_> = self.m.ch.iter().map(|ch| (ch.volts_per_div().to_bits(), ch.unit.name())).collect();
         let gate = (!self.m.meas_full_record).then(|| { let (scale, delay) = self.view(); (scale.to_bits(), delay.to_bits()) });
-        format!("{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}", self.m.meas, self.m.meas2,
+        format!("{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}", self.m.meas, (&self.m.meas2, &self.m.cat),
             (self.m.meas_full_record, self.m.meas_lpct.to_bits(), self.m.meas_hpct.to_bits(), self.m.meas_idle.to_bits(),
                 self.m.meas_n, self.m.meas_data, self.m.meas_out, self.m.meas_tsetup.to_bits(), self.m.meas_thold.to_bits()),
             refs, channels, gate, self.m.trigger(), self.m.trigger_wave(),
@@ -681,7 +683,7 @@ impl Ui {
             let summary = crate::wave::autoset_summary(&trace.v, trace.dt);
             let (lo, hi) = (summary.vmin, summary.vmax);
             let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo, hi) } else { (0.0, 1.0) };
-            self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: trace.v,
+            self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: (trace.v).into(),
                 vpd: ((hi - lo).abs() / 6.0).max(1e-6), offset: -0.5 * (hi + lo), on: true });
         }
         self.ref_sel = first;
@@ -694,7 +696,7 @@ impl Ui {
             if reference_session { self.m.meas = defaults.collect(); }
             else { self.m.meas.extend(defaults); }
         }
-        if reference_session { self.mstat.clear(); }
+        if reference_session { self.clear_measurement_statistics(); }
         self.meas_src = WaveId::Ref(first);
         if self.look == reflook::RefLook::TakeOver { self.solo_reference(first); }
         self.ensure_meas_own();
@@ -868,7 +870,7 @@ impl Ui {
         }
         if self.replay.sim_config_change {
             self.invalidate_reference_eye();
-            self.mstat.clear();
+            self.clear_measurement_statistics();
             self.replay.sim_config_change = false;
         }
         self.measure_refs();

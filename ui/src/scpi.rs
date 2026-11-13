@@ -1173,7 +1173,7 @@ impl Scpi {
                 // a setup file may hold keys of newer versions, here a typo must not pass for a setting; the keys that
                 // are only written when they differ from their default do not show
                 let k = arg.split('=').next().unwrap_or("").trim();
-                let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s)) || k.starts_with("math_expr");
+                let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s)) || k.starts_with("math_expr") || k == "cat";
                 if !optional && !crate::store::setup_text(&ui.m).lines().any(|l| l.split('=').next().unwrap_or("").trim() == k) {
                     self.err.push(format!("-224,\"Illegal parameter value\" unknown key {}", k));
                 }
@@ -1740,6 +1740,9 @@ fn meas_strip(ui: &Ui) -> String {
     for &(k, a, b) in &ui.m.meas2 {
         p.push(format!("{},{},{},{}", pair_token(k), wave_tok(a), wave_tok(b), e(ui.pair_at(k, a, b))));
     }
+    for (id,[a,b,c,d],value) in ui.catalog_export_values() {
+        p.push(format!("CAT{},{},{},{},{},{}",id,wave_tok(a),wave_tok(b),wave_tok(c),wave_tok(d),e(value)));
+    }
     if ui.m.dvm_on {
         let mode = ["DC", "ACRMS", "ACDC"][ui.m.dvm_mode.min(2)];
         p.push(format!("DVM,{},{},{}", mode, wave_tok(WaveId::Ch(ui.m.dvm_src.min(NCH - 1))), e(ui.dvm_value())));
@@ -2048,6 +2051,30 @@ mod tests {
         ui.m.la.on = true;
         ui.m.trig_la = Some(7);
         assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:EDGE:SOUR?;:TRIG:SOUR?"), "R1;R1");
+    }
+
+    #[test]
+    fn selected_catalog_rows_are_exported_and_setup_clear_accepts_an_empty_catalog() {
+        let (mut s, mut ui, cv)=session();
+        for amplitude in [2.0,0.5] {
+            let mut csv=String::from("Time (s),Volts\n");
+            for i in 0..1000 { csv.push_str(&format!("{:.12e},{}\n",i as f64*1e-6,amplitude*(i as f64*std::f64::consts::TAU/20.0).sin())); }
+            ui.load_waveform_auto(csv.as_bytes(),"power.csv").unwrap();
+        }
+        ui.set_offline(true);ui.m.meas_full_record=true;ui.m.meas.clear();ui.m.meas2.clear();
+        assert_eq!(line(&mut s,&mut ui,&cv,":SYST:SET cat = 90:R1:R2:3:4;:SYST:ERR?"),"0,\"No error\"");
+        let end=std::time::Instant::now()+Duration::from_secs(10);
+        let answer=loop {
+            let answer=line(&mut s,&mut ui,&cv,":MEAS:STRIP?");
+            let value=answer.rsplit(',').next().unwrap().parse::<f64>().unwrap();
+            if value.abs()<1e30 { assert!((value-0.5).abs()<0.01,"{answer}");break answer; }
+            assert!(std::time::Instant::now()<end,"{answer}");ui.step(0.0);std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!(answer.starts_with("CAT90,R1,R2,CHAN3,CHAN4,"),"{answer}");
+        assert_eq!(line(&mut s,&mut ui,&cv,":MEAS:READOUT?"),answer);
+        assert_eq!(captures(&ui),0.0,"SCPI row exports are not acquisitions");
+        assert_eq!(line(&mut s,&mut ui,&cv,":SYST:SET cat = ;:SYST:ERR?"),"0,\"No error\"");
+        assert!(ui.m.cat.is_empty());assert_eq!(line(&mut s,&mut ui,&cv,":MEAS:STRIP?"),"");
     }
 
     #[test]

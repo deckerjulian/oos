@@ -53,7 +53,7 @@ mod tests {
             let start = points / 2 + 100 + frame * 100;
             for bit in 0..8 { clock[start + bit * 8 + 2..start + bit * 8 + 6].fill(3.3); }
         }
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "stored SCK".into(), v: clock,
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "stored SCK".into(), v: (clock).into(),
             t0: -(points as f64 / 2.0) * 1e-9, dt: 1e-9, vpd: 0.5, offset: 0.0, on: true });
         ui.m.dec_on = true; ui.m.dec_proto = Proto::Spi; ui.m.dec_src = 0; ui.m.dec_src2 = DEC_REF_BASE;
         ui.m.dec_cs = None; ui.m.dec_bits = 8; ui.m.dec_mode = 0; ui.m.dec_thr = 1.65;

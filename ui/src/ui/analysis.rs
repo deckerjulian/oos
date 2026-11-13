@@ -120,6 +120,7 @@ impl RefMeasureWorker {
 /// Analyser state kept between records.
 #[derive(Default)]
 pub struct State {
+    pub(super) catalog_measurements: RefCell<super::meascatalog::backend::State>,
     /// The shared worker survives replay resets and additive imports.
     pub(super) reference_search: RefCell<super::reference_search::Cache>,
     pub(super) reference_decode: RefCell<super::reference_decode::Cache>,
@@ -235,7 +236,7 @@ impl Ui {
     pub(crate) fn set_measurement_full_record(&mut self, full: bool) {
         self.m.meas_full_record = full;
         if !full { for pending in &self.azr.ref_measure_pending { pending.set(None); } }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
         self.measure_last();
         self.mark_changed();
     }
@@ -244,7 +245,7 @@ impl Ui {
         if self.m.meas_full_record { "Full record" } else { "Screen" }
     }
 
-    fn measurement_bounds(&self, len: usize, t0: f64, dt: f64) -> (usize, usize) {
+    pub(super) fn measurement_bounds(&self, len: usize, t0: f64, dt: f64) -> (usize, usize) {
         if self.m.meas_full_record { return (0, len); }
         let (scale, delay) = self.view();
         let half = scale as f64 * HDIV as f64 * 0.5;
@@ -463,7 +464,7 @@ impl Ui {
     }
 
     pub(crate) fn measurement_busy(&self) -> bool {
-        self.own_measurement_busy() || self.azr.ch_measure_pending.iter().enumerate().any(|(channel, pending)| pending.get().is_some_and(|key|
+        self.catalog_measurement_busy() || self.own_measurement_busy() || self.azr.ch_measure_pending.iter().enumerate().any(|(channel, pending)| pending.get().is_some_and(|key|
             self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key)))
         || self.pair_measurement_busy()
         || self.azr.ref_measure_pending.iter().enumerate().any(|(slot, pending)|
@@ -1391,10 +1392,10 @@ mod measurement_gate_tests {
         }).collect();
         ui.last[0] = Some(rec);
         ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "2ns reference".into(),
-            t0: 0.0, dt: 2e-9, v: (0..2000).map(|i| {
+            t0: 0.0, dt: 2e-9, v: ((0..2000).map(|i| {
                 let amplitude = if i < 1000 { 2.0 } else { 4.0 };
                 if i % 50 < 25 { amplitude } else { -amplitude }
-            }).collect(), vpd: 1.0, offset: 0.0, on: true });
+            }).collect::<Vec<_>>()).into(), vpd: 1.0, offset: 0.0, on: true });
         ui
     }
 
@@ -1425,7 +1426,7 @@ mod measurement_gate_tests {
             rec.ch[0] = values.clone();
             ui.last[0] = Some(rec);
             ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "border outliers".into(),
-                t0, dt, v: values, vpd: 0.02, offset: 0.0, on: true });
+                t0, dt, v: (values).into(), vpd: 0.02, offset: 0.0, on: true });
             ui.measure_last();
             for source in [WaveId::Ch(0), WaveId::Ref(0)] {
                 assert!((ui.fact_meas(Meas::Vpp, source) - 0.12).abs() < 1e-8);
@@ -1493,7 +1494,7 @@ mod measurement_gate_tests {
         let (thresholds, _) = ui.reference_measurement(0).unwrap();
         assert!(!Arc::ptr_eq(&scale, &thresholds));
         // A worker may fill the existing Vec: pointer/length alone are insufficient.
-        for value in &mut ui.refs[0].as_mut().unwrap().v { *value *= 2.0; }
+        for value in std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v) { *value *= 2.0; }
         ui.replay.sim_revision += 1;
         let (fresh, _) = ui.reference_measurement(0).unwrap();
         assert!(!Arc::ptr_eq(&thresholds, &fresh));
@@ -1517,7 +1518,7 @@ mod measurement_gate_tests {
     fn large() -> Ui {
         let mut ui = sources();
         ui.set_offline(true);
-        ui.refs[0].as_mut().unwrap().v = (0..400_000).map(|i| if i % 100 < 50 { 1.0 } else { -1.0 }).collect();
+        ui.refs[0].as_mut().unwrap().v = (0..400_000).map(|i| if i % 100 < 50 { 1.0 } else { -1.0 }).collect::<Vec<_>>().into();
         ui.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
         ui
     }
@@ -1558,7 +1559,7 @@ mod measurement_gate_tests {
         ui.set_measurement_full_record(true);
         // Replace the source while its immutable worker snapshot is being measured.
         ui.workflow_epoch += 1;
-        for value in &mut ui.refs[0].as_mut().unwrap().v { *value *= 3.0; }
+        for value in std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v) { *value *= 3.0; }
         assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan());
         pump(&mut ui);
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 6.0);
@@ -1582,7 +1583,7 @@ mod measurement_gate_tests {
         ui.refs[0].as_mut().unwrap().v = (0..400_000).map(|i| {
             let amplitude = if i < 200_000 { 3.0 } else { 1.0 };
             if i % 100 < 50 { amplitude } else { -amplitude }
-        }).collect();
+        }).collect::<Vec<_>>().into();
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-6).abs() < 1e-10).unwrap();
         ui.m.delay = 400e-6;
         ui.m.meas_full_record = false;

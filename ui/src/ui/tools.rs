@@ -8,7 +8,7 @@ use super::*;
 use oos_dsp::measure::{burst_width, duration_n, time_outside, Analysis};
 
 /// A bounded selection can hold the complete catalog for every analog channel and reference slot.
-pub(super) const MEAS_MAX: usize = 1024;
+pub(super) const MEAS_MAX: usize = MEAS_SELECTION_MAX;
 /// Measurements on one row of the strip when it runs across the screen.
 pub(super) const STRIP_PER_ROW: usize = 6;
 
@@ -86,6 +86,44 @@ impl MeasRow {
 }
 
 impl Ui {
+    pub(super) fn measurement_count(&self) -> usize { self.m.meas.len() + self.m.meas2.len() + self.m.cat.len() }
+
+    pub(crate) fn catalog_export_values(&self) -> Vec<(u16,[WaveId;4],f64)> {
+        self.m.cat.iter().filter_map(|&(id,a,b,c,d)| self.cat_row(id,a,b,c,d).map(|row| (id,[a,b,c,d],row.v))).collect()
+    }
+
+    pub(super) fn selected_measurement_label(&self, index: usize) -> String {
+        if let Some(&(kind, source)) = self.m.meas.get(index) { return format!("{} {}", self.wave_name(source), kind.name()); }
+        let index = index.saturating_sub(self.m.meas.len());
+        if let Some(&(kind, a, b)) = self.m.meas2.get(index) {
+            return format!("{}-{} {}", self.wave_name(a), self.wave_name(b), PAIRS[kind.min(PAIRS.len()-1)].0);
+        }
+        let Some(&(id, a, b, c, d)) = self.m.cat.get(index.saturating_sub(self.m.meas2.len())) else { return String::new() };
+        self.catalog_source_label(id, [a,b,c,d])
+    }
+
+    pub(super) fn remove_measurement(&mut self, index: usize) {
+        if index < self.m.meas.len() {
+            let entry = self.m.meas.remove(index); self.meas_own.remove(&entry);
+        } else if index < self.m.meas.len() + self.m.meas2.len() {
+            self.m.meas2.remove(index - self.m.meas.len());
+        } else if index < self.measurement_count() {
+            self.m.cat.remove(index - self.m.meas.len() - self.m.meas2.len());
+        } else { return; }
+        self.meas_cfg = None; self.clear_measurement_statistics(); self.relayout();
+    }
+
+    pub(super) fn accept_catalog_stat(&mut self, entry: (u16,WaveId,WaveId,WaveId,WaveId), value: f64, capture: u64) {
+        if capture == 0 || capture != self.wfm_total || self.record_mode() || !value.is_finite() { return; }
+        let Some(index) = self.m.cat.iter().position(|row| *row == entry) else { return };
+        let index = self.m.meas.len() + self.m.meas2.len() + index;
+        self.mstat.resize(self.measurement_count(), MStat::default());
+        let stat = &mut self.mstat[index];
+        if stat.n == 0 { stat.min = value; stat.max = value; }
+        stat.n += 1; stat.sum += value; stat.sumsq += value * value;
+        stat.min = stat.min.min(value); stat.max = stat.max.max(value);
+    }
+
     /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
     pub fn meas_at(&self, id: WaveId, k: Meas) -> f64 {
         if let WaveId::Ch(channel) = id {
@@ -130,6 +168,11 @@ impl Ui {
             };
             v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit,
                 computing: self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b) });
+        }
+        for &(id, a, b, c, d) in &self.m.cat {
+            if let Some(row) = self.cat_row(id, a, b, c, d) {
+                v.push(row);
+            }
         }
         v
     }
@@ -268,7 +311,7 @@ impl Ui {
 
     /// Refuse a full selection explicitly rather than silently removing an older measurement.
     pub(super) fn meas_make_room(&mut self) -> bool {
-        if self.m.meas.len() + self.m.meas2.len() >= MEAS_MAX {
+        if self.m.meas.len() + self.m.meas2.len() + self.m.cat.len() >= MEAS_MAX {
             self.toast("Measurement selection is full. Remove an item in Selected before adding another.");
             return false;
         }
@@ -287,7 +330,7 @@ impl Ui {
             if !self.meas_make_room() { return; }
             self.m.meas2.push(e);
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     /// DVM and counter: a new record came in. Offline mode reads the reference directly.
@@ -603,7 +646,7 @@ impl Ui {
             label: String::new(),
             t0,
             dt,
-            v,
+            v: v.into(),
             vpd: self.m.ch[c].volts_per_div(),
             offset: self.m.ch[c].offset,
             on: true,
@@ -690,7 +733,7 @@ mod physical_extremum_time_tests {
         rec.ch[0] = values.clone();
         ui.last[0] = Some(rec);
         ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "nonzero origin".into(),
-            t0, dt, v: values, vpd: 0.5, offset: 0.0, on: true });
+            t0, dt, v: (values).into(), vpd: 0.5, offset: 0.0, on: true });
         ui.m.meas = vec![(Meas::TVmax, WaveId::Ch(0)), (Meas::TVmin, WaveId::Ref(0)), (Meas::Vpp, WaveId::Ref(0))];
 
         for (full, max_time, min_time, vpp) in [(true, -450e-9, 300e-9, 5.0), (false, 180e-9, 220e-9, 2.0)] {
@@ -714,7 +757,7 @@ mod physical_extremum_time_tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let origin = -9.99990584751956e-7;
         ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "clock origin".into(),
-            t0: origin, dt: 20e-12, v: vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0],
+            t0: origin, dt: 20e-12, v: (vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0]).into(),
             vpd: 0.5, offset: 0.0, on: true });
         ui.set_measurement_full_record(true);
         close(ui.meas_at(WaveId::Ref(0), Meas::TVmax), origin);

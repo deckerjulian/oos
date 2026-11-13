@@ -10,7 +10,7 @@ fn mixed() -> Ui {
     ui.m.meas.clear();
     ui.m.meas2.clear();
     ui.refs[0] = Some(RefWave { src: 0, color: 1, label: "Known record".into(),
-        t0: -40e-6, dt: 20e-9, v: (0..4000).map(|k| (k as f32 * 0.1).sin() * 0.4).collect(),
+        t0: -40e-6, dt: 20e-9, v: ((0..4000).map(|k| (k as f32 * 0.1).sin() * 0.4).collect::<Vec<_>>()).into(),
         vpd: 0.2, offset: 0.1, on: true });
     ui.relayout();
     ui
@@ -172,7 +172,7 @@ fn vertical_detail_phosphor_and_reference_pixels_follow_the_same_transform_as_ma
     ph.draw_ex(0,&model,(scale,delay),t0,dt,&values,24,None);
     let channel_y=ui.y_of_volts(0,0.1)-area.y;
     assert!(ph.map[0][channel_y as usize*ph.w..(channel_y as usize+1)*ph.w].iter().any(|&p|p>0));
-    let reference=ui.refs[0].as_mut().unwrap();reference.t0=t0;reference.dt=dt;reference.v=values;
+    let reference=ui.refs[0].as_mut().unwrap();reference.t0=t0;reference.dt=dt;reference.v=values.into();
     let expected=ui.y_of_wave(WaveId::Ref(0),0.1);
     let mut cv=Canvas::new(W,H);ui.draw_refs_at(&mut cv,area,(scale,delay),true);
     let color=REF_COLORS[1].1;
@@ -235,7 +235,7 @@ fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
     ui.m.tscale=tscales().iter().position(|&s|(s-200e-9).abs()<1e-14).unwrap();ui.m.delay=819.2e-9;
     ui.m.hist=Hist::Horizontal;
     ui.refs[0]=Some(RefWave{src:0,color:2,label:"R1".into(),t0:0.0,dt:5e-12,
-        v:(0..20_000).map(|i|(i as f32*0.03).sin()*0.4).collect(),vpd:0.2,offset:0.0,on:true});
+        v: ((0..20_000).map(|i|(i as f32*0.03).sin()*0.4).collect::<Vec<_>>()).into(),vpd:0.2,offset:0.0,on:true});
     ui.set_zoom(true);ui.m.zscale=tscales().iter().position(|&s|(s-200e-12).abs()<1e-16).unwrap();ui.m.zdelay=32.604365e-9;
     stacked(&mut ui);ui.m.run=RunState::Run;ui.step(0.02);
     assert!(!ui.record_mode());assert_eq!(ui.wins.len(),3);
