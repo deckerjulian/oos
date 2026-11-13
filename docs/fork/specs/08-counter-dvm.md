@@ -2,6 +2,10 @@
 
 Status: specification from static analysis. Short form.
 
+Upstream 0.1.9 implements the counter (0x2200..0x2240) in `hal/src/dho/counter.rs`, SCPI `:COUNter`,
+docs/protocols/counter.md. The fork takes it and drops its own counter work. Open in this spec: the DVM block
+(section 1.2, 0x2244..0x2258), which upstream does not write.
+
 ## 1. What the stock firmware does
 
 ### 1.1 Counter registers

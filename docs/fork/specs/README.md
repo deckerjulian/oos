@@ -19,7 +19,7 @@ Rank = expected gain x feasibility x confidence, for this unit (DHO804 hardware,
 | 2 | [03-segmented-timestamps.md](03-segmented-timestamps.md) | hardware segmented memory with trigger timestamps | high: us-level dead time, tens of thousands of segments, 250 ps stamps | high, same record engine OOS already drives | medium (timestamp registers unverified) |
 | 3 | [04-peak-decimation.md](04-peak-decimation.md) | display-length FPGA compression, anti-alias register | high: up to 250x less transfer per frame at 1 M points | high (compression verified at k = 4) | medium |
 | 4 | [01-hw-averaging.md](01-hw-averaging.md) | hardware averaging | medium-high: all triggers averaged, possibly one frame read per batch | high | medium (average semantics unknown) |
-| 5 | [08-counter-dvm.md](08-counter-dvm.md) | hardware counter and DVM | accuracy gain (1 s gate, 0.8 ns interpolation); small CPU gain | high | medium-high counter, medium DVM |
+| 5 | [08-counter-dvm.md](08-counter-dvm.md) | hardware counter and DVM (counter: upstream 0.1.9; DVM open) | accuracy gain (1 s gate, 0.8 ns interpolation); small CPU gain | high | medium-high counter, medium DVM |
 | 6 | [07-serial-triggers.md](07-serial-triggers.md) | UART, I2C, SPI hardware triggers | functional: real protocol trigger in Normal/Single | medium: field meanings need a hardware matrix | bits high, semantics low-medium |
 | 7 | [06-mask-unit.md](06-mask-unit.md) | pass/fail mask in the FPGA | medium: coverage and CPU | medium | low-medium |
 | 8 | [02-hires-fir.md](02-hires-fir.md) | high resolution, SPU FIR | quality, little CPU | depends on measurements | low: stock does not use the FIR for high-res |
@@ -44,7 +44,7 @@ Rank = expected gain x feasibility x confidence, for this unit (DHO804 hardware,
 1. Transfer efficiency 3.1 to 3.5 (no FPGA unknowns; gives the baseline for everything else).
 2. Display compression (04) and segmented memory (03), sharing the frame-ring work (ping-pong slots, full-ring record).
 3. Averaging (01) after the hardware questions 5.2 to 5.4 of its spec are answered.
-4. Counter and DVM (08).
+4. DVM (08 section 1.2). The counter is upstream's since 0.1.9.
 5. Serial triggers (07) and mask (06) after a hardware session to map field meanings.
 6. FIR / high-res (02) only after measurement 5.1 of its spec.
 

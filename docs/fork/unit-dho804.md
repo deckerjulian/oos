@@ -19,10 +19,10 @@ this unit uses, how to build its image, and what is still unverified.
 | Boot card | opt-in device tree with `sd-uhs-sdr104`, `sd-uhs-sdr50`, `regulator-settling-time-down-us = <30000>` on `vccio_sd`, no `regulator-init-microvolt` | `kernel/dts/rk3399-rigol-dho900-uhs.dts`, `kernel/build-base.sh` copies every board DTB |
 | Firewall | `net.allow` prefixes: nftables ruleset before any service starts; static `nft` in the image | `rootfs/initramfs/bin/oos-firewall`, `rootfs/build-nft.sh`, rcS |
 | Remote ACL | the same prefixes in oos-ui: `POST /update`, `/mcp` get 403, SCPI and VXI-11 connections are closed | `ui/src/netacl.rs`, `http.rs`, `scpi.rs`, `vxi11.rs` |
-| Telnet | `telnet = off` leaves telnetd out | rcS |
+| Telnet | upstream's `remote.telnet` (0.1.9+); the unit image sets it `off`. rcS reads it through `oos-conf`, oos-ui loads `/etc/oos/system.conf` under `/oos/system.conf`, so it does not start telnetd either | rcS, `ui/src/sysconf.rs` (`IMAGE_PATH`, `image_defaults`) |
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
-| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24`, `telnet = off`, `eth.mac = 02:00:00:00:00:01`), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
+| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24`, `remote.telnet = off`, `eth.mac = 02:00:00:00:00:01`), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
 
 Without `OOS_UNIT` the image is upstream-identical in behaviour, apart from carrying `nft` (about 1 MB).
 
@@ -74,12 +74,13 @@ calibrates the new board.
    kernel before rcS, which leaves `OOSK` set: recovery is card out, `switch.py stock` on a host. Use cold power
    cycles only; a warm restart from stock with the card at 1.8 V is not tested.
 3. Firewall on the OOS kernel: `nft list ruleset`, then from 192.0.2.x the web page, SCPI 5555, VXI-11 work; from
-   another subnet (or the 192.168.177.64 fallback) they do not; DHCP renewals and NTP still work.
+   another subnet (or a link-local 169.254.x.y peer, upstream's fallback since 0.1.9) they do not; DHCP renewals and NTP still work.
 4. oos-ui ACL: `POST /update` and `/mcp` from an allowed host work. For the refusal path the firewall has to let an
    outside host through: on the scope `nft delete table inet oos_fw`, then `POST /mcp` from another subnet gives 403
    and SCPI 5555 closes at once. Power-cycle afterwards to restore the firewall.
 5. MAC: `ip link show eth0` gives `02:00:00:00:00:01`, the DHCP server hands out the expected address.
-6. Telnet: port 23 closed; `telnet = on` in `/oos/system.conf` plus a power cycle opens it.
+6. Telnet: port 23 closed after boot and after oos-ui has started; System > Network > Remote services > telnet opens it
+   at once, `remote.telnet = on` in `/oos/system.conf` from the next start.
 7. Fallback path (risk 2 in `docs/oos-review.md`): unchanged by this work, still open.
 
 ## Transfer efficiency (spec 10): verification on hardware
@@ -203,3 +204,22 @@ for the first 32 batches after every clear. Calibrator square on CH1 unless stat
     points it falls back to software). The trace is complete and averaged, no wrap or garbage at the end.
 12. Fall-backs: roll (200 ms/div), scan (Auto Roll off), hardware segments on: the top bar drops "HW" and the software
     average runs. The LA is not testable on this unit.
+
+## Upstream sync 0.1.11 (2026-11-13)
+
+What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
+
+- Telnet: the fork's `telnet` key is dropped for upstream's `remote.telnet` (System > Network > Remote services). oos-ui
+  now layers the image default `/etc/oos/system.conf` under `/oos/system.conf` (known keys only; `net.allow` and
+  `eth.mac` are not copied into the settings file). Without that layering oos-ui would start telnetd at its start.
+- Network: upstream's link-local fallback (169.254.x.y/16, `arping -D`) replaces 192.168.177.64. It runs after the
+  firewall and the fixed MAC. With `net.allow = 192.0.2.0/24` a computer on a direct cable is dropped; add
+  `169.254.0.0/16` for that case. Upstream's remote switches close web, SCPI and VXI-11 ports; the ACL still applies to
+  what stays open. The fork's network section is now docs/network.md 6.
+- Acquisition: upstream's early end of a trigger wait (`seq::NEW_SETTINGS`) runs through the fork's generic
+  `execute_bus_until`, so prearm, DmaBuf reuse and the host model keep working. Upstream's deep-memory screen window
+  (`batch_plan` sets `window`, `decode` counts the trigger point from it) is part of the prearm key (`Settings` equality).
+- Counter: upstream's FPGA counter (`hal/src/dho/counter.rs`, `:COUNter`) replaces fork item B8's counter half.
+- Not verified on hardware: all of the above. The counter is polled in every pass of the acquisition loop, also during
+  a hardware segment recording or a hardware average; check that it does not disturb them.
+
