@@ -189,6 +189,7 @@ impl Ui {
             Item::ProtoWatch => onoff(self.azr.watch),
             Item::EyeOn => onoff(m.view == AView::Eye),
             Item::EyePlace => match m.eye_place {
+                EyePlace::Full => "Full".into(),
                 EyePlace::Side => "Side".into(),
                 EyePlace::Under => "Under".into(),
             },
@@ -347,7 +348,7 @@ impl Ui {
                 m.eye_from_record = false;
             }
             Item::EyePlace => {
-                let all = [EyePlace::Side, EyePlace::Under];
+                let all = [EyePlace::Full, EyePlace::Side, EyePlace::Under];
                 let i = all.iter().position(|&p| p == m.eye_place).unwrap_or(0);
                 m.eye_place = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
             }

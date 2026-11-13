@@ -70,7 +70,7 @@ impl Ui {
         }
         self.apply_look(look);
         self.toast(match look {
-            RefLook::Live => "Live",
+            RefLook::Live => "With live",
             RefLook::TakeOver => "Take over",
             RefLook::Waves => "Offline waveforms",
         });
@@ -742,6 +742,10 @@ mod tests {
         std::fs::write(dir.join("ref1.csv"), csv).unwrap();
         u.ref_sel = 0;
         u.activate(Item::RefImport);
+        assert_eq!(u.look, RefLook::Live);
+        assert!(!u.offline && u.m.ch[0].on, "import keeps the live channels");
+        assert!(u.refs[0].as_ref().unwrap().on && u.refs[1].as_ref().unwrap().on);
+        u.set_look(RefLook::TakeOver);
         assert_eq!(u.look, RefLook::TakeOver);
         assert!(u.offline);
         assert!(u.m.ch.iter().all(|c| !c.on), "other channels are hidden");

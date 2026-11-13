@@ -80,7 +80,7 @@ impl Ui {
     }
 
     pub(super) fn sim_items(&self) -> Vec<Item> {
-        vec![
+        let mut v = vec![
             Item::SimPreset,
             Item::SimRate,
             Item::SimPat,
@@ -99,7 +99,11 @@ impl Ui {
             Item::SimPlay,
             Item::SimShow,
             Item::SimDefaults,
-        ]
+        ];
+        if self.session_is_sim {
+            v.insert(0, Item::SimLive);
+        }
+        v
     }
 
     pub(super) fn sim_advanced_items(&self) -> Vec<Item> {
@@ -109,7 +113,7 @@ impl Ui {
 
     pub(super) fn sim_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SimPlay | Item::SimDefaults => Kind::Action,
+            Item::SimPlay | Item::SimLive | Item::SimDefaults => Kind::Action,
             Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => Kind::Choice,
             Item::SimRate | Item::SimHigh | Item::SimLow | Item::SimRise | Item::SimBw | Item::SimDeemph | Item::SimNoise | Item::SimRj | Item::SimPj | Item::SimPjHz
             | Item::SimSscDeviation | Item::SimSscHz | Item::SimDcd | Item::SimCorrRj | Item::SimCorrHz => Kind::Value,
@@ -142,6 +146,7 @@ impl Ui {
             Item::SimPjHz => "PJ freq",
             Item::SimSlot => "Slot",
             Item::SimPlay => "Play",
+            Item::SimLive => "Live",
             Item::SimShow => "Show",
             Item::SimDefaults => "Defaults",
             _ => return None,
@@ -241,6 +246,7 @@ impl Ui {
 
     pub(super) fn sim_activate(&mut self, it: Item) -> bool {
         match it {
+            Item::SimLive => self.return_to_live(),
             Item::SimPlay if self.sim_generating() => {
                 self.sim_cancel_generation();
                 self.toast("SIM generation cancelled");
@@ -720,6 +726,23 @@ mod tests {
         u.wait_sim_worker();
         assert_eq!(u.workflow_state(), state);
         assert_eq!(u.m.run, RunState::Stop);
+    }
+
+    #[test]
+    fn live_is_on_the_top_bar_and_in_the_sim_menu() {
+        let mut u = ui();
+        assert!(u.m.ch[0].on);
+        assert!(!u.top_buttons().iter().any(|b| b.0 == TopBtn::Live));
+        u.session_is_sim = true;
+        u.m.ch[0].on = false;
+        assert!(u.sim_items().first() == Some(&Item::SimLive));
+        let live = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Live).expect("Live");
+        u.tap(live.2.x + 4, 10);
+        assert!(!u.session_is_sim);
+        assert!(u.m.ch[0].on);
+        u.session_is_sim = true;
+        u.activate(Item::SimLive);
+        assert!(!u.session_is_sim && u.m.ch[0].on);
     }
 
     #[test]

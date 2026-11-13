@@ -317,7 +317,7 @@ impl Http {
                         let valid_slot = match (requested_slot, slot) { (_, Some(slot)) if (1..=10).contains(&slot) => ui.ref_slot_set(slot - 1), (None, None) => true, _ => false };
                         let result = if valid_slot { ui.load_waveform_bytes(req_body, &name) } else { Err("Choose a reference slot from R1 to R10.".into()) };
                         match result {
-                            Ok(()) => ("text/plain; charset=utf-8", format!("Loaded {} into R{}. Use Run/Stop or Single to acquire from this record; Return to live restores the live source.", name, ui.ref_slot() + 1).into_bytes()),
+                            Ok(()) => ("text/plain; charset=utf-8", format!("Loaded {} into R{}. It is on with the live channels. Take over to use this record's time base.", name, ui.ref_slot() + 1).into_bytes()),
                             Err(error) => {
                                 ui.ref_slot_set(previous);
                                 failed = true;
@@ -612,7 +612,7 @@ mod tests {
         }
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=clock.csv&slot=3", csv.as_bytes()));
         assert!(reply.starts_with("HTTP/1.1 200") && reply.contains("Loaded clock.csv into R3"), "{reply}");
-        assert!(ui.record_mode());
+        assert!(!ui.record_mode() && ui.m.ch[0].on, "a loaded reference stays on the live screen");
         assert_eq!(ui.ref_slot(), 2);
         assert_eq!(ui.ref_shown(), Some(true));
         assert!(!store.exists(), "an upload is read into memory, not written to a server-selected path");
@@ -636,7 +636,7 @@ mod tests {
         let state = get(&mut h, &mut ui, &cv, &mut scpi, "/ui-state");
         let body = state.split("\r\n\r\n").nth(1).unwrap();
         let parsed = crate::json::parse(body).unwrap();
-        assert_eq!(parsed.get("mode").and_then(crate::json::J::str), Some("reference"));
+        assert_eq!(parsed.get("mode").and_then(crate::json::J::str), Some("live"));
     }
 
     #[test]
