@@ -139,6 +139,19 @@ impl Board for Dho {
         hw::uart_debug(m)
     }
 
+    fn mask_map(&self, kv: Option<&str>) -> Result<String, String> {
+        hw::mask_map_set(kv)
+    }
+
+    fn mask_code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64 {
+        hw::mask_map().code(volts, scale, offset, gain)
+    }
+
+    fn mask_layout(&self, points: u32, chans: u32) -> (usize, f64) {
+        let (c, _, per) = hw::mask_map().layout(points, chans);
+        (c, per)
+    }
+
     fn avg_hw(&self, m: &Model) -> bool {
         hw::avg_hw_ok(m)
     }

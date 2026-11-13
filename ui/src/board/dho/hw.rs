@@ -435,14 +435,51 @@ fn zone_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "zone.hw").as_deref() == Some("on")
 }
 
+/// Keys of the comparator mapping in system.conf: `mask.map.<key> = <value>` (`mask::Map::set`).
+const MASK_MAP_KEYS: [&str; 8] = ["domain", "cpd", "mid", "shift", "offs", "invert", "cols", "range"];
+
+/// The mapping of system.conf's `mask.map.*` lines over the default; bad lines are reported and skipped.
+fn mask_map_from(conf: &str) -> oos_hal::dho::mask::Map {
+    let mut m = oos_hal::dho::mask::Map::default();
+    for k in MASK_MAP_KEYS {
+        if let Some(v) = crate::drawpipe::conf_value(None, conf, &format!("mask.map.{}", k)) {
+            if let Err(e) = m.set(&format!("{}={}", k, v)) {
+                eprintln!("oos-ui: system.conf mask.map.{}: {}", k, e);
+            }
+        }
+    }
+    m
+}
+
+fn mask_map_cell() -> &'static std::sync::Mutex<oos_hal::dho::mask::Map> {
+    static MAP: std::sync::OnceLock<std::sync::Mutex<oos_hal::dho::mask::Map>> = std::sync::OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(mask_map_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default())))
+}
+
+/// The comparator mapping of the mask test and the zone trigger now (system.conf, then `mask_map_set`).
+pub fn mask_map() -> oos_hal::dho::mask::Map {
+    *mask_map_cell().lock().unwrap()
+}
+
+/// Sets one `key=value` of the mapping (None: none), and returns the whole mapping. The acquisition thread takes the
+/// new mapping with the next batch and reloads the tables.
+pub fn mask_map_set(kv: Option<&str>) -> Result<String, String> {
+    let mut m = mask_map_cell().lock().unwrap();
+    if let Some(kv) = kv {
+        m.set(kv)?;
+    }
+    Ok(m.text())
+}
+
 /// The UI's mask test and zone trigger into the acquisition settings. The mask unit runs one of them: the mask test
 /// wins. AUX OUT pass/fail follows the zone result while the zone trigger runs (0x119c source bit).
-fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Option<&crate::board::ZoneWant>) {
-    want.hwmask = mask.map(hw_mask);
+fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Option<&crate::board::ZoneWant>, map: oos_hal::dho::mask::Map) {
+    want.hwmask = mask.map(|w| oos_hal::dho::seq::HwMask { map, ..hw_mask(w) });
     want.hwzone = zone.filter(|_| mask.is_none()).map(|z| oos_hal::dho::seq::HwZone {
         ch: z.ch,
         zones: z.zones.iter().take(2).map(|(poly, inside)| oos_hal::dho::zone::Zone { poly: poly.clone(), inside: *inside }).collect(),
         clear: z.clear,
+        map,
     });
     if let (auxout::AuxOut::PassFail(p), Some(_)) = (&mut want.aux, &want.hwzone) {
         p.source = auxout::Source::Zone;
@@ -519,7 +556,7 @@ pub fn uart_debug(m: &Model) -> String {
 
 /// The mask test of the acquisition settings from the UI's wish.
 fn hw_mask(w: &crate::board::MaskWant) -> oos_hal::dho::seq::HwMask {
-    oos_hal::dho::seq::HwMask { ch: w.ch, lo: w.lo.clone(), hi: w.hi.clone(), stop_on_fail: w.stop, clear: w.clear }
+    oos_hal::dho::seq::HwMask { ch: w.ch, lo: w.lo.clone(), hi: w.hi.clone(), stop_on_fail: w.stop, clear: w.clear, map: oos_hal::dho::mask::Map::default() }
 }
 
 /// Seconds between two readings of the DVM block, and from its (re)start to the first one. The window of 2^28 samples
@@ -997,7 +1034,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
-            hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref());
+            hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), mask_map());
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
@@ -1398,7 +1435,25 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     {
                         let mut g = out.lock().unwrap();
                         let n = g.mask.map_or(0, |r| r.n) + 1;
-                        g.mask = mr.map(|(ch, slot, ctrl, raw)| crate::board::MaskRead { ch, slot, ctrl, raw: [raw.frames_lo, raw.frames_hi, raw.fails_lo, raw.fails_hi], frames: raw.frames(), fails: raw.fails(), n });
+                        g.mask = mr.map(|(ch, slot, ctrl, raw)| crate::board::MaskRead {
+                            ch,
+                            slot,
+                            ctrl,
+                            raw: [raw.frames_lo, raw.frames_hi, raw.fails_lo, raw.fails_hi],
+                            frames: raw.frames(),
+                            fails: raw.fails(),
+                            n,
+                            scale: b.ch[ch].scale,
+                            offset: b.ch[ch].offset,
+                            gain: state.gain[ch],
+                            points: p.memsel,
+                            chans: b.mask,
+                        });
+                        // the table as loaded, for the column debug (`:SYSTem:DEBug:MASK:COLumns?`), when it changed
+                        let table: Option<Vec<[u8; 4]>> = state.mask_cols.as_ref().filter(|_| mr.is_some()).map(|t| t.iter().map(|k| [k.lo, k.hi, k.lo_en as u8, k.hi_en as u8]).collect());
+                        if table.as_deref() != g.mask_table.as_deref().map(|t| &t[..]) {
+                            g.mask_table = table.map(std::sync::Arc::new);
+                        }
                     }
                     // the zone unit's status and qualified-frame counter (docs/fork/hwzone.md)
                     let zr = state.zone_ctrl().zip(b.hwzone.as_ref()).zip(state.zone_run).map(|((ctrl, z), run)| (z.ch, run.0, ctrl, oos_hal::dho::zone::read(&mut bar, ctrl)));
@@ -1739,8 +1794,8 @@ mod tests {
         let v: Vec<f32> = (0..n as usize).map(|k| if (k / 2000) % 2 == 0 { 0.0 } else { 3.0 }).collect();
         let t0 = -(pre as f64) * dt;
         let touched = |poly: &[(f64, f64)]| -> bool {
-            let t = zone::table(&zone::Zone { poly: poly.to_vec(), inside: true }, n, rate, pre, scale, offset);
-            let per = zone::columns(n).1 as usize;
+            let t = zone::table(&zone::Zone { poly: poly.to_vec(), inside: true }, n, rate, pre, 1, scale, offset, 1.0, &mask::Map::default());
+            let per = mask::Map::default().layout(n, 1).1 as usize;
             let code = |x: f32| ((32768.0 + (x as f64 + offset) / scale * 7500.0).round() as u32 >> mask::SHIFT) as u8;
             let mut prev: Option<u8> = None;
             for (k, &x) in v.iter().enumerate() {
@@ -1819,6 +1874,14 @@ mod tests {
     }
 
     #[test]
+    fn mask_map_from_conf_lines() {
+        use oos_hal::dho::mask::{Domain, Layout, Map};
+        assert_eq!(mask_map_from(""), Map::default());
+        let m = mask_map_from("mask.hw = on\nmask.map.domain = pregain\nmask.map.cols = stock # sweep\nmask.map.shift = x\n");
+        assert_eq!((m.domain, m.layout, m.shift), (Domain::PreGain, Layout::Stock, 8));
+    }
+
+    #[test]
     fn zone_hw_from_conf() {
         assert!(!zone_hw_from(""));
         assert!(zone_hw_from("zone.hw = on\n"));
@@ -1831,16 +1894,16 @@ mod tests {
         let zw = ZoneWant { ch: 1, zones: vec![(vec![(0.0, 0.0), (1e-6, 1.0)], true), (vec![(0.0, 2.0), (1e-6, 3.0)], false), (vec![], true)], clear: 4 };
         let pf = auxout::AuxOut::PassFail(auxout::PassFail::DEFAULT);
         let mut s = Settings { aux: pf, ..Settings::default() };
-        hw_merge(&mut s, None, Some(&zw));
+        hw_merge(&mut s, None, Some(&zw), oos_hal::dho::mask::Map::default());
         let z = s.hwzone.as_ref().unwrap();
         assert_eq!((z.ch, z.zones.len(), z.zones[1].inside, z.clear), (1, 2, false, 4));
         assert_eq!(s.aux, auxout::AuxOut::PassFail(auxout::PassFail { source: auxout::Source::Zone, ..auxout::PassFail::DEFAULT }));
         // the mask test wins and keeps the mask source
         let mut s = Settings { aux: pf, ..Settings::default() };
-        hw_merge(&mut s, Some(&mw), Some(&zw));
+        hw_merge(&mut s, Some(&mw), Some(&zw), oos_hal::dho::mask::Map::default());
         assert!(s.hwmask.is_some() && s.hwzone.is_none() && s.aux == pf);
         let mut s = Settings::default();
-        hw_merge(&mut s, None, None);
+        hw_merge(&mut s, None, None, oos_hal::dho::mask::Map::default());
         assert!(s.hwmask.is_none() && s.hwzone.is_none() && s.aux == auxout::AuxOut::TriggerOut);
     }
 
@@ -1871,7 +1934,7 @@ mod tests {
         };
         let m = oos_dsp::mask::build(&wave(false, 1), 20, 0.2);
         let (lo, hi) = m.columns(mask::COLUMNS);
-        let cols = mask::table(&lo, &hi, scale, offset);
+        let cols = mask::table_map(&lo, &hi, n as u32, 1, scale, offset, 1.0, &mask::Map::default());
         // the read-out word of a sample (inverse of `seq::decode_volts`), and the 8-bit comparator on it
         let fails = |v: &[f32]| -> bool {
             v.iter().enumerate().any(|(k, &x)| {
