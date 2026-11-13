@@ -573,7 +573,7 @@ pub fn pipe() -> Option<&'static Pipe> {
     static P: OnceLock<Option<Pipe>> = OnceLock::new();
     P.get_or_init(|| {
         let env = std::env::var("OOS_PIPELINE").ok();
-        let conf = std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default();
+        let conf = crate::sysconf::fork_text();
         (mode_from(env.as_deref(), &conf) == Mode::Batch).then(|| Pipe::start(crate::placement::little_count().unwrap_or(WORKERS), true, counters()))
     })
     .as_ref()

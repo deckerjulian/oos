@@ -283,6 +283,18 @@ impl SysConf {
     }
 }
 
+/// The text the fork's keys (`acq.*`, `perf.*`, `trig.*`, ...; `drawpipe::conf_value`) are looked up in: the settings
+/// file (`default_path`), then the image defaults (`IMAGE_PATH`). `conf_value` takes the first line of a key, so the
+/// settings file wins, also with an empty value, as `oos-conf` has it for the scripts.
+pub fn fork_text() -> String {
+    fork_text_of(&std::fs::read_to_string(default_path()).unwrap_or_default(), &std::fs::read_to_string(IMAGE_PATH).unwrap_or_default())
+}
+
+/// `fork_text` from the two files' text.
+pub fn fork_text_of(settings: &str, image: &str) -> String {
+    format!("{}\n{}", settings, image)
+}
+
 /// `/oos/system.conf` when the data partition is there (it has `/oos/setups`), else the file in RAM.
 pub fn default_path() -> PathBuf {
     if Path::new("/oos/setups").is_dir() {
@@ -294,6 +306,18 @@ pub fn default_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    // Break it catches: a fork key (acq.pipeline, perf.place, acq.prearm) that only /oos/system.conf can set, so the
+    // unit image's defaults (/etc/oos/system.conf) do nothing; or an image default that beats the user's setting
+    #[test]
+    fn fork_keys_take_the_image_default_unless_the_settings_set_them() {
+        let image = "acq.pipeline = batch\nperf.place = on\n";
+        let v = |settings: &str, k: &str| crate::drawpipe::conf_value(None, &super::fork_text_of(settings, image), k);
+        assert_eq!(v("", "acq.pipeline").as_deref(), Some("batch"));
+        assert_eq!(v("perf.place = off\n", "perf.place").as_deref(), Some("off"));
+        assert_eq!(v("acq.pipeline =\n", "acq.pipeline").as_deref(), Some(""), "an empty value in the settings wins too");
+        assert_eq!(v("", "acq.prearm"), None);
+    }
     use super::*;
 
     #[test]
