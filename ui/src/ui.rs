@@ -786,6 +786,12 @@ pub struct Ui {
     stats_on: bool,
     /// measurement results overlay folded to its header
     results_min: bool,
+    /// Eye page: the right column slides from `eye_from` to `eye_to` (0 hidden, 1 shown), starting at `eye_t`.
+    eye_from: f32,
+    eye_to: f32,
+    eye_t: f64,
+    /// Which of the four eye-page plots fills the chart area.
+    eye_big: Option<u8>,
     /// Clear pressed: the screen stays empty (also in STOP) until the next record
     cleared: bool,
     refs: [Option<RefWave>; NREF],
@@ -954,6 +960,10 @@ impl Ui {
             single_armed: false,
             stats_on: false,
             results_min: false,
+            eye_from: 1.0,
+            eye_to: 1.0,
+            eye_t: 0.0,
+            eye_big: None,
             cleared: false,
             refs: std::array::from_fn(|_| None),
             cnt_total: 0,
@@ -6516,6 +6526,9 @@ impl Ui {
         }
         if self.view_on() && self.view_btn().contains(x, y) {
             return self.toggle_menu(MenuId::ViewMore);
+        }
+        if !self.menu_open && self.m.view == AView::Eye && !self.xy && self.eye_tap(x, y) {
+            return;
         }
         if self.table_tap(x, y) || self.pane_tap(x, y) {
             return;

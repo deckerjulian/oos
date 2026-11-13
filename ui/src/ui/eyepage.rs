@@ -6,6 +6,9 @@
 //!
 //! TIE is pooled over records: each record is timed against its own clock, so its TIE stands alone, and a window with
 //! few edges still adds up to a usable distribution. What drifts slower than one record is taken out by the fit.
+//!
+//! The right column (the four plots and the jitter figures) slides off the right edge; the tab on the eye brings it
+//! back. A tap on a plot gives it the whole chart area, and a second tap restores the four.
 
 use super::magnetic::missing_wave;
 use super::*;
@@ -45,6 +48,11 @@ const EYE_GUTTER: i32 = 50;
 const EYE_FOOT: i32 = 18;
 /// Under this height the text boxes give their room to the plots.
 const BOXES_MIN_H: i32 = 300;
+/// How long the right column takes to slide in or out.
+const SLIDE: f64 = 0.22;
+/// The tab that slides the column: wide enough for a finger, tall enough to see.
+const TAB_W: i32 = 40;
+const TAB_H: i32 = 52;
 
 /// The rectangles of the page. They tile the area down to its bottom edge: the plots take what the text leaves.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -99,6 +107,55 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
     let charts = [cell(0, 0), cell(1, 0), cell(0, 1), cell(1, 1)];
     let plots = charts.map(|c| Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, c.w - CHART_GUTTER - 6, (c.h - CHART_TITLE - CHART_FOOT).max(1)));
     Layout { eye, plot, head, charts, plots, fig, jit, fig_rows, jit_rows }
+}
+
+/// `open` is how far the right column is in: 1 is `layout`, 0 has slid it off the right edge and given its room to the eye.
+fn placed(a: Rect, open: f32) -> Layout {
+    let home = layout(a, false);
+    let open = open.clamp(0.0, 1.0);
+    if open >= 0.999 {
+        return home;
+    }
+    let edge = a.x + a.w;
+    let travel = (edge - home.charts[0].x).max(0);
+    let shift = ((1.0 - open) * travel as f32).round() as i32;
+    let grow = ((1.0 - open) * (edge - (home.eye.x + home.eye.w)).max(0) as f32).round() as i32;
+    let slide = |r: Rect| Rect::new(r.x + shift, r.y, r.w, r.h);
+    let widen = |r: Rect| Rect::new(r.x, r.y, r.w + grow, r.h);
+    Layout {
+        eye: widen(home.eye),
+        plot: widen(home.plot),
+        head: slide(home.head),
+        charts: home.charts.map(slide),
+        plots: home.plots.map(slide),
+        fig: widen(home.fig),
+        jit: slide(home.jit),
+        fig_rows: home.fig_rows,
+        jit_rows: home.jit_rows,
+    }
+}
+
+/// The chart cards and their plots. `big` gives that one plot the whole chart area.
+fn charts_shown(l: &Layout, big: Option<u8>) -> ([Rect; 4], [Rect; 4]) {
+    let mut charts = l.charts;
+    let mut plots = l.plots;
+    if let Some(k) = big {
+        let k = (k as usize).min(3);
+        let (x0, y0) = (l.charts[0].x, l.charts[0].y);
+        let (x1, y1) = (l.charts[1].x + l.charts[1].w, l.charts[2].y + l.charts[2].h);
+        charts[k] = Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1));
+        plots[k] = Rect::new(charts[k].x + CHART_GUTTER, charts[k].y + CHART_TITLE, (charts[k].w - CHART_GUTTER - 6).max(1), (charts[k].h - CHART_TITLE - CHART_FOOT).max(1));
+    }
+    (charts, plots)
+}
+
+/// The tab on the right edge of the eye. It stays below the overflow button.
+fn eye_tab_at(a: Rect, l: &Layout) -> Rect {
+    let edge = l.eye.x + l.eye.w;
+    let x = (edge - TAB_W).clamp(a.x, (a.x + a.w - TAB_W).max(a.x));
+    let (y0, y1) = (l.charts[0].y, l.charts[2].y + l.charts[2].h);
+    let y = (y0 + (y1 - y0 - TAB_H) / 2).clamp(a.y + HEAD_H, (a.y + a.h - TAB_H).max(a.y + HEAD_H));
+    Rect::new(x, y, TAB_W, TAB_H)
 }
 
 /// Voltage range for a signal between `lo` and `hi`: whole steps of 1, 2 or 5, about six of them. (low, high, step)
@@ -623,10 +680,11 @@ impl Ui {
         let rms = |s: (f64, u64)| if s.1 == 0 { f64::NAN } else { (s.0 / s.1 as f64).sqrt() };
         (j.period_jitter_rms, j.c2c_rms) = (rms(p.step), rms(p.step2));
         let trend = eye::tie_trend(&clk.edges, tie, clk);
-        p.chart_trend(&trend, clk, lay.plots[0].w as usize);
+        let (_, plots) = charts_shown(lay, self.eye_big);
+        p.chart_trend(&trend, clk, plots[0].w as usize);
         p.chart_hist(&j);
-        let (pj, why) = p.chart_spec(&trend, clk, lay.plots[2].w as usize);
-        p.chart_tub(&sorted, &j, clk.period, lay.plots[3].w as usize);
+        let (pj, why) = p.chart_spec(&trend, clk, plots[2].w as usize);
+        p.chart_tub(&sorted, &j, clk.period, plots[3].w as usize);
         p.text_jitter(&j, pj, &why);
         p.text_eye(e, &meas, clk.period, dt);
         p.text_status(&j);
@@ -694,36 +752,118 @@ impl Ui {
         (measured, model, eye_model)
     }
 
+    /// Where the column sits this frame: 0 has left the screen, 1 is home.
+    fn eye_open(&self) -> f32 {
+        let u = ((self.now - self.eye_t) / SLIDE).clamp(0.0, 1.0) as f32;
+        let e = u * u * (3.0 - 2.0 * u);
+        self.eye_from + (self.eye_to - self.eye_from) * e
+    }
+
+    fn eye_tab(&self) -> Rect {
+        eye_tab_at(self.area, &placed(self.area, self.eye_open()))
+    }
+
+    /// Slide the column the other way. A tap in the middle of a move reverses it.
+    fn eye_slide(&mut self) {
+        self.eye_from = self.eye_open();
+        self.eye_to = if self.eye_to > 0.5 { 0.0 } else { 1.0 };
+        self.eye_t = self.now;
+    }
+
+    /// The column tab, or a plot. A plot that is already open goes back to the four. Full screen has neither.
+    pub(super) fn eye_tap(&mut self, x: i32, y: i32) -> bool {
+        if self.full_on() {
+            return false;
+        }
+        if self.eye_tab().contains(x, y) {
+            self.eye_slide();
+            return true;
+        }
+        if self.eye_open() < 0.5 {
+            return false;
+        }
+        let l = placed(self.area, self.eye_open());
+        let (charts, _) = charts_shown(&l, self.eye_big);
+        if let Some(k) = self.eye_big {
+            if charts[k as usize].contains(x, y) {
+                self.eye_big = None;
+                self.azr.page.t = f64::NEG_INFINITY;
+                return true;
+            }
+            return false;
+        }
+        for (k, r) in charts.iter().enumerate() {
+            if r.contains(x, y) {
+                self.eye_big = Some(k as u8);
+                self.azr.page.t = f64::NEG_INFINITY;
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn draw_eye(&self, cv: &mut Canvas) {
         let a = self.area;
         let p = &self.azr.page;
-        let l = layout(a, self.full_on());
+        // full screen drops the column: the eye is the whole plot, and the plot button still goes back
+        if self.full_on() {
+            let l = layout(a, true);
+            cv.fill(a, BG);
+            self.eye_plot(cv, &l);
+            return;
+        }
+        let l = placed(a, self.eye_open());
         cv.fill(a, BG);
         self.eye_plot(cv, &l);
-        if l.head.w > 0 {
-            self.eye_head(cv, &l);
-        }
-        let col = self.wave_color(self.m.eye_src);
-        for k in 0..4 {
-            if l.charts[k].w < 8 {
-                continue;
-            }
-            self.chart_frame(cv, l.charts[k], l.plots[k], &p.charts[k]);
-            if p.charts[k].empty.is_empty() {
-                match k {
-                    0 => Self::plot_trend(cv, l.plots[0], &p.trend, col),
-                    1 => Self::plot_hist(cv, l.plots[1], &p.hist, col),
-                    2 => Self::plot_spec(cv, l.plots[2], &p.spec, col),
-                    _ => self.plot_tub(cv, l.plots[3], &p.tub),
-                }
-            }
-        }
         if l.fig_rows > 0 {
             self.eye_box(cv, l.fig, "Eye figures", l.fig_rows, &[("Measured", &p.eye_measured), ("Model", &p.eye_model), ("Records", &p.stats)]);
         }
-        if l.jit_rows > 0 {
-            self.eye_box(cv, l.jit, "Jitter breakdown", l.jit_rows, &[("Measured", &p.measured), ("Model", &p.model)]);
+        if l.charts[0].x < a.x + a.w {
+            cv.set_clip(a);
+            self.eye_head(cv, &l);
+            let (charts, plots) = charts_shown(&l, self.eye_big);
+            let col = self.wave_color(self.m.eye_src);
+            for k in 0..4 {
+                if self.eye_big.is_some_and(|b| b as usize != k) {
+                    continue;
+                }
+                self.chart_frame(cv, charts[k], plots[k], &p.charts[k]);
+                if p.charts[k].empty.is_empty() {
+                    match k {
+                        0 => Self::plot_trend(cv, plots[0], &p.trend, col),
+                        1 => Self::plot_hist(cv, plots[1], &p.hist, col),
+                        2 => Self::plot_spec(cv, plots[2], &p.spec, col),
+                        _ => self.plot_tub(cv, plots[3], &p.tub),
+                    }
+                }
+            }
+            if l.jit_rows > 0 {
+                self.eye_box(cv, l.jit, "Jitter breakdown", l.jit_rows, &[("Measured", &p.measured), ("Model", &p.model)]);
+            }
+            cv.no_clip();
         }
+        self.draw_eye_tab(cv);
+    }
+
+    /// Left edge of the heat scale on plot `r`. On the usual split it is the top right of the plot; with the column
+    /// away that corner belongs to the full-screen button, so the scale stops short of it.
+    fn heat_x(&self, r: Rect) -> i32 {
+        let src = match self.src.name() {
+            "DEMO" => "Demo signals",
+            "REPLAY" => "Replay",
+            _ => "",
+        };
+        let info = if src.is_empty() { 0 } else { self.fonts.s.width(src) + 16 };
+        let end = 68 + self.fonts.s.width("dense") + 4;
+        let limit = self.full_btn().0.x - 8 - info;
+        (r.x + r.w - 128).min(limit - end).max(r.x)
+    }
+
+    fn draw_eye_tab(&self, cv: &mut Canvas) {
+        let r = self.eye_tab();
+        cv.round(r, 6, PANEL_BG, 235);
+        cv.round_outline(r, 6, BTN_BORDER);
+        chevron(cv, r.x + r.w / 2, r.y + r.h / 2, if self.eye_to > 0.5 { 1 } else { -1 }, TEXT);
     }
 
     fn eye_head(&self, cv: &mut Canvas, l: &Layout) {
@@ -739,8 +879,8 @@ impl Ui {
         let p = &self.azr.page;
         let r = l.plot;
         cv.text(&f.sb, l.eye.x + 6, l.eye.y + 14, if p.title.is_empty() { "Eye" } else { &p.title }, TEXT);
-        // the density scale
-        let (kx, ky) = (r.x + r.w - 128, l.eye.y + 5);
+        // the density scale, kept clear of the buttons at the top right once the eye is the full width
+        let (kx, ky) = (self.heat_x(r), l.eye.y + 5);
         let pal = heat_palette();
         cv.text(&f.s, kx - 28, ky + 10, "rare", DIM);
         for i in 0..64 {
@@ -769,16 +909,7 @@ impl Ui {
                 let ty = if k == 0 { y + 10 } else if k == lines { y } else { y + 4 };
                 cv.text(&f.s, r.x - 4 - f.s.width(&s), ty, &s, AXIS_TEXT);
             }
-            if p.img_w == r.w as usize {
-                for (y, row) in p.img.chunks_exact(p.img_w).take(r.h as usize).enumerate() {
-                    let o = ((r.y + y as i32) * cv.w + r.x) as usize;
-                    for (d, &c) in cv.px[o..o + row.len()].iter_mut().zip(row) {
-                        if c != 0 {
-                            *d = c;
-                        }
-                    }
-                }
-            }
+            blit_hits(cv, r, &p.img, p.img_w);
             if let Some((one, zero)) = p.levels {
                 let span = (e.v_max - e.v_min) as f64;
                 for v in [one, zero] {
@@ -921,6 +1052,43 @@ fn ref_fp(v: &[f32], dt: f64, t0: f64) -> u64 {
         }
     }
     h
+}
+
+/// The coloured hits into `r`. Same size is copied; a column that is mid-slide is scaled so the eye stays put.
+fn blit_hits(cv: &mut Canvas, r: Rect, img: &[u32], iw: usize) {
+    if iw == 0 || r.w <= 0 || r.h <= 0 || img.len() < iw {
+        return;
+    }
+    let ih = img.len() / iw;
+    let x0 = r.x.max(0);
+    let y0 = r.y.max(0);
+    let x1 = (r.x + r.w).min(cv.w);
+    let y1 = (r.y + r.h).min(cv.h);
+    if x1 <= x0 || y1 <= y0 || ih == 0 {
+        return;
+    }
+    if iw == r.w as usize && ih == r.h as usize && x0 == r.x && y0 == r.y {
+        for (y, row) in img.chunks_exact(iw).take(r.h as usize).enumerate() {
+            let o = ((r.y + y as i32) * cv.w + r.x) as usize;
+            for (d, &c) in cv.px[o..o + row.len()].iter_mut().zip(row) {
+                if c != 0 {
+                    *d = c;
+                }
+            }
+        }
+        return;
+    }
+    for y in y0..y1 {
+        let sy = ((y - r.y) as usize * ih / r.h as usize).min(ih - 1);
+        let src = &img[sy * iw..(sy + 1) * iw];
+        let o = (y * cv.w) as usize;
+        for x in x0..x1 {
+            let c = src[((x - r.x) as usize * iw / r.w as usize).min(iw - 1)];
+            if c != 0 {
+                cv.px[o + x as usize] = c;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1244,18 +1412,147 @@ mod tests {
         assert!(!src.contains(&call));
     }
 
+    #[test]
+    fn the_column_slides_off_and_the_eye_takes_its_room() {
+        let mut ui = page(CLEAN, 2);
+        let home = layout(ui.area, false);
+        assert_eq!(placed(ui.area, 1.0), home);
+        let tab = ui.eye_tab();
+        ui.tap(tab.x + 8, tab.y + 8);
+        assert_eq!(ui.eye_to, 0.0);
+        assert!(ui.eye_open() > 0.9, "{}", ui.eye_open());
+        ui.now += SLIDE * 0.5;
+        let mid = ui.eye_open();
+        assert!(mid > 0.35 && mid < 0.65, "{}", mid);
+        let l = placed(ui.area, mid);
+        assert!(l.charts[0].x > home.charts[0].x && l.eye.w > home.eye.w, "{:?}", l);
+        ui.now += SLIDE;
+        assert!(ui.eye_open() < 0.001, "{}", ui.eye_open());
+        let shut = placed(ui.area, 0.0);
+        assert_eq!(shut.eye.x + shut.eye.w, ui.area.x + ui.area.w);
+        assert!(shut.charts[0].x >= ui.area.x + ui.area.w);
+        assert_eq!((shut.fig.x, shut.fig.w), (shut.eye.x, shut.eye.w));
+        let tab = ui.eye_tab();
+        ui.tap(tab.x + 8, tab.y + 8);
+        ui.now += SLIDE;
+        assert!((ui.eye_open() - 1.0).abs() < 0.001, "{}", ui.eye_open());
+        assert_eq!(placed(ui.area, ui.eye_open()), home);
+    }
+
+    /// Hiding the column must not throw away the eye or the pooled edges.
+    #[test]
+    fn sliding_the_column_keeps_the_eye() {
+        let mut ui = page(CLEAN, 5);
+        let (n, pool, w) = (ui.azr.page.records, ui.azr.page.pool.len(), ui.azr.page.img_w);
+        assert!(w > 0 && n > 1 && pool > 100, "{} {} {}", n, pool, w);
+        let tab = ui.eye_tab();
+        ui.tap(tab.x + tab.w / 2, tab.y + tab.h / 2);
+        ui.now += SLIDE;
+        ui.analyzer_update();
+        assert!(ui.azr.page.records > 1 && ui.azr.page.pool.len() >= pool, "{} {}", ui.azr.page.records, ui.azr.page.pool.len());
+        assert_eq!(ui.azr.page.img_w, w);
+        assert!(ui.eye_open() < 0.01);
+    }
+
+    #[test]
+    fn the_column_tab_stays_clear_of_the_overflow_button() {
+        let mut ui = page(CLEAN, 1);
+        for open in [0.0, 0.35, 1.0] {
+            ui.eye_from = open;
+            ui.eye_to = open;
+            ui.eye_t = ui.now;
+            let tab = ui.eye_tab();
+            assert!(!overlaps(tab, ui.view_btn()), "open {} tab {:?} btn {:?}", open, tab, ui.view_btn());
+            assert!(tab.w >= 40 && tab.h >= 40, "{:?}", tab);
+            assert!(ui.area.contains(tab.x + 1, tab.y + 1) && ui.area.contains(tab.x + tab.w - 2, tab.y + tab.h - 2), "{:?}", tab);
+        }
+    }
+
+    #[test]
+    fn a_tap_on_a_plot_fills_the_chart_area_and_a_second_tap_restores_the_four() {
+        let mut ui = page(NOISY, 4);
+        let home = layout(ui.area, false);
+        for k in 0..4 {
+            let r = home.charts[k];
+            ui.tap(r.x + r.w / 2, r.y + r.h / 2);
+            assert_eq!(ui.eye_big, Some(k as u8));
+            let (charts, plots) = charts_shown(&home, Some(k as u8));
+            let span = home.charts[1].x + home.charts[1].w - home.charts[0].x;
+            assert_eq!(charts[k].w, span);
+            assert!(plots[k].w > home.plots[k].w);
+            ui.tap(charts[k].x + 12, charts[k].y + 12);
+            assert_eq!(ui.eye_big, None);
+        }
+    }
+
+    /// With the column away, a tap where a plot used to be does not open one.
+    #[test]
+    fn a_hidden_column_has_no_plot_to_open() {
+        let mut ui = page(CLEAN, 2);
+        let home = layout(ui.area, false);
+        ui.eye_from = 0.0;
+        ui.eye_to = 0.0;
+        ui.eye_t = ui.now;
+        let r = home.charts[2];
+        ui.tap(r.x + 8, r.y + 8);
+        assert_eq!(ui.eye_big, None);
+    }
+
+    #[test]
+    fn the_heat_scale_stays_clear_of_the_top_buttons() {
+        let mut ui = page(CLEAN, 2);
+        let home = layout(ui.area, false);
+        assert_eq!(ui.heat_x(home.plot), home.plot.x + home.plot.w - 128);
+        ui.eye_from = 0.0;
+        ui.eye_to = 0.0;
+        ui.eye_t = ui.now;
+        let r = placed(ui.area, 0.0).plot;
+        let kx = ui.heat_x(r);
+        let scale = Rect::new(kx - 30, ui.area.y, 68 + ui.fonts.s.width("dense") + 34, 18);
+        assert!(scale.x + scale.w <= ui.full_btn().0.x - 8, "{:?} {:?}", scale, ui.full_btn().0);
+        assert!(!overlaps(scale, ui.full_btn().0) && !overlaps(scale, ui.view_btn()), "{:?}", scale);
+    }
+
+    #[test]
+    fn it_draws_while_the_column_moves_and_a_plot_is_open() {
+        let mut ui = page(NOISY, 4);
+        let mut cv = Canvas::new(W, H);
+        for (open, big) in [(1.0, None), (0.6, Some(1)), (0.25, Some(3)), (0.0, None)] {
+            ui.eye_from = open;
+            ui.eye_to = open;
+            ui.eye_t = ui.now;
+            ui.eye_big = big;
+            ui.draw_eye(&mut cv);
+        }
+    }
+
     /// Pictures for a visual check: `OOS_SHOTS=<dir> cargo test eye_page_shots -- --ignored`.
     #[test]
     #[ignore]
     fn eye_page_shots() {
         let dir = std::env::var("OOS_SHOTS").unwrap_or_else(|_| ".".into());
         let few = Sig { uis: 10, ..CLEAN };
-        for (name, s, n) in [("eye-clean", CLEAN, 40), ("eye-noisy", NOISY, 60), ("eye-few", few, 6), ("eye-tiny", Sig { uis: 6, ..CLEAN }, 3)] {
-            let mut ui = page(s, n);
+        let save = |ui: &mut Ui, name: &str| {
             let mut cv = Canvas::new(W, H);
             ui.render(&mut cv);
             std::fs::write(format!("{}/{}.png", dir, name), crate::store::png_of(&cv)).unwrap();
+        };
+        for (name, s, n) in [("eye-clean", CLEAN, 40), ("eye-noisy", NOISY, 60), ("eye-few", few, 6), ("eye-tiny", Sig { uis: 6, ..CLEAN }, 3)] {
+            let mut ui = page(s, n);
+            save(&mut ui, name);
             ui.m.run = RunState::Stop;
         }
+        let mut shown = page(NOISY, 40);
+        save(&mut shown, "eye-column-shown");
+        let tab = shown.eye_tab();
+        shown.tap(tab.x + 8, tab.y + 8);
+        shown.now += SLIDE;
+        save(&mut shown, "eye-column-hidden");
+        let mut open = page(NOISY, 40);
+        let r = layout(open.area, false).charts[3];
+        open.tap(r.x + r.w / 2, r.y + r.h / 2);
+        open.now += REFRESH;
+        open.analyzer_update();
+        save(&mut open, "eye-plot-expanded");
     }
 }
