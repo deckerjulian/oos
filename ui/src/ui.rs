@@ -198,6 +198,8 @@ pub enum MenuId {
     Acquire,
     Measure,
     MeasAdd,
+    /// short menu from a press-and-hold on Measure; Add meas is its shortcut
+    MeasHold,
     /// delay and phase between two channels
     MeasPair,
     /// digital voltmeter and counter (ui/tools.rs)
@@ -372,6 +374,8 @@ enum Item {
     AcqSeg,
     MeasSrc,
     MeasAdd(Meas),
+    /// shortcut on the press-and-hold menu: the next usual measurement
+    AddMeas,
     MeasPair(usize),
     MeasSrcB,
     DvmOn,
@@ -702,6 +706,10 @@ struct TouchState {
     y0: i32,
     x: i32,
     y: i32,
+    /// `Ui::now` when the finger went down
+    t0: f64,
+    /// a press-and-hold already opened its menu; the lift is not a tap
+    held: bool,
     drag: Drag,
     start_offset: f32,
     start_delay: f32,
@@ -1008,7 +1016,7 @@ impl Ui {
             offline: false,
             offline_ref: 0,
             offline_hold: None,
-            touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
+            touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, t0: 0.0, held: false, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
             trend: Vec::new(),
             pn: Default::default(),
@@ -1558,6 +1566,7 @@ impl Ui {
     pub fn step(&mut self, dt_wall: f64) {
         self.relayout();
         self.now += dt_wall;
+        self.meas_hold_tick();
         self.update_poll();
         self.wlan_poll();
         self.usb_poll();
@@ -3629,7 +3638,7 @@ impl Ui {
             (MenuId::Pick, Some(p)) => p.menu,
             (m, _) => m,
         };
-        if m == MenuId::MeasAdd {
+        if m == MenuId::MeasAdd || m == MenuId::MeasHold {
             MenuId::Measure
         } else {
             m
@@ -3972,7 +3981,8 @@ impl Ui {
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
+            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
+            MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
@@ -4567,6 +4577,7 @@ impl Ui {
             MenuId::Acquire => "Acquire".into(),
             MenuId::Measure => "Measure".into(),
             MenuId::MeasAdd => "Add measurement".into(),
+            MenuId::MeasHold => "Add".into(),
             MenuId::MeasPair => "Delay and phase (A to B)".into(),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
@@ -4599,7 +4610,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -4617,7 +4628,7 @@ impl Ui {
             Item::Open(MenuId::Horizontal) => "Horizontal",
             Item::Open(MenuId::ChMore(_)) => "More",
             Item::Open(MenuId::Measure) => "Measure",
-            Item::Open(MenuId::MeasAdd) => "Add item",
+            Item::AddMeas => "Add meas",
             Item::Open(MenuId::Cursor) => "Cursor",
             Item::Open(MenuId::Display) => "Display",
             Item::Open(MenuId::Utility) => "System",
@@ -5611,6 +5622,11 @@ impl Ui {
                         }
                     }
                 }
+                Item::AddMeas => {
+                    if let Some(k) = self.next_usual_meas() {
+                        self.activate(Item::MeasAdd(k));
+                    }
+                }
                 Item::MeasAdd(k) => {
                     let e = (k, self.meas_src);
                     if !self.m.meas.contains(&e) {
@@ -5916,6 +5932,71 @@ impl Ui {
         self.focus = 0;
     }
 
+    /// How long a finger stays down on Measure before the short menu opens. A shorter press is a tap.
+    const MEAS_HOLD_S: f64 = 0.45;
+
+    /// Usual measurements, in the order the Add meas shortcut offers them. Anything left follows `ALL_MEAS`.
+    const USUAL_MEAS: [Meas; 6] = [Meas::Vpp, Meas::Freq, Meas::Period, Meas::Vrms, Meas::Vavg, Meas::Rise];
+
+    /// The next usual measurement that is not already on the measure source.
+    fn next_usual_meas(&self) -> Option<Meas> {
+        let src = self.meas_src;
+        let on = |k: Meas| self.m.meas.iter().any(|e| e.0 == k && e.1 == src);
+        Self::USUAL_MEAS.into_iter().chain(ALL_MEAS).find(|k| !on(*k))
+    }
+
+    /// Rectangle of the Measure button on the top bar.
+    fn measure_btn(&self) -> Option<Rect> {
+        self.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).map(|b| b.2)
+    }
+
+    fn on_measure_btn(&self, x: i32, y: i32) -> bool {
+        self.measure_btn().is_some_and(|r| Self::top_hit(r).contains(x, y))
+    }
+
+    /// A tap on Measure opens the measurement list. Press again to close it.
+    fn open_meas_list(&mut self) {
+        if self.menu_open && self.menu == MenuId::MeasAdd {
+            self.close_menu();
+        } else {
+            self.open_menu(MenuId::MeasAdd);
+        }
+    }
+
+    /// A finger held on Measure opens the short menu. The lift is handled by `meas_hold_up`, not as a tap.
+    fn meas_hold_tick(&mut self) {
+        let t = &self.touch;
+        if !t.down || t.held || self.m.touch_lock || self.full_on() || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+            return;
+        }
+        if t.drag != Drag::None && t.drag != Drag::Pending {
+            return;
+        }
+        if (t.x - t.x0).abs() > 12 || (t.y - t.y0).abs() > 12 || self.now - t.t0 < Self::MEAS_HOLD_S {
+            return;
+        }
+        if !self.on_measure_btn(t.x0, t.y0) {
+            return;
+        }
+        self.touch.held = true;
+        self.open_menu(MenuId::MeasHold);
+    }
+
+    /// Lift after the short menu opened. On the Measure button, or on Add meas, that shortcut runs.
+    /// A lift anywhere else leaves the menu so the shortcut can still be tapped.
+    fn meas_hold_up(&mut self, x: i32, y: i32) {
+        if !(self.menu_open && self.menu == MenuId::MeasHold) {
+            return;
+        }
+        if self.tap_menu(x, y) {
+            return;
+        }
+        if self.on_measure_btn(x, y) {
+            self.activate(Item::AddMeas);
+            self.close_menu();
+        }
+    }
+
     fn toggle_menu(&mut self, id: MenuId) {
         if self.menu_open && self.menu_root() == id {
             self.close_menu();
@@ -6132,7 +6213,7 @@ impl Ui {
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
         let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet));
-        let (cols, cw, rh, gap) = if wide { (2, 400, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, 190, DLG_ROW + 2, 8) } else if grid && self.menu == MenuId::MeasAdd {
+        let (cols, cw, rh, gap) = if self.menu == MenuId::MeasHold { (1, 220, DLG_ROW, 16) } else if wide { (2, 400, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, 190, DLG_ROW + 2, 8) } else if grid && self.menu == MenuId::MeasAdd {
             if n > 54 { (7, 130, DLG_ROW + 2, 8) } else { (6, 150, DLG_ROW + 2, 8) }
         } else if grid { (4, 150, DLG_ROW + 2, 8) } else if n > 5 { (2, 400, DLG_ROW, 16) } else { (1, 400, DLG_ROW, 16) };
         let nrows = (n + cols - 1) / cols;
@@ -6768,7 +6849,7 @@ impl Ui {
         match ph {
             Phase::Down => {
                 let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
-                *t = TouchState { down: true, x0: x, y0: y, x, y, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0, win: self.cur_win };
+                *t = TouchState { down: true, x0: x, y0: y, x, y, t0: self.now, held: false, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0, win: self.cur_win };
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
                     return;
                 }
@@ -6911,10 +6992,16 @@ impl Ui {
             }
             _ => {
                 // Up
-                let was = (t.down, t.drag, t.x0, t.y0);
+                let was = (t.down, t.drag, t.x0, t.y0, t.held);
                 t.down = false;
                 t.drag = Drag::None;
+                t.held = false;
                 if !was.0 {
+                    return;
+                }
+                // the short menu is already open; this lift runs its shortcut instead of a tap
+                if was.4 {
+                    self.meas_hold_up(x, y);
                     return;
                 }
                 if let Drag::Zone(k) = was.1 {
@@ -7144,6 +7231,8 @@ impl Ui {
         for (b, _, r) in self.top_buttons() {
             if Self::top_hit(r).contains(x, y) {
                 return match b {
+                    // a tap opens the measurement list; a press-and-hold opens the short menu (meas_hold_tick)
+                    TopBtn::Menu(MenuId::Measure) => self.open_meas_list(),
                     TopBtn::Menu(id) => self.toggle_menu(id),
                     TopBtn::System => self.toggle_menu(MenuId::Utility),
                 };
@@ -8449,6 +8538,60 @@ mod tests {
         ui.activate(Item::ClearDisp);
         ui.step(0.033);
         assert_eq!(lit(&ui), 0);
+    }
+
+    /// A tap on Measure opens the measurement list. A press-and-hold opens a short menu and Add meas,
+    /// released on the button, adds the next usual measurement. The rest of the Measure page is unchanged.
+    #[test]
+    fn measure_tap_lists_and_hold_adds() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let rest = vec![
+            Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasPair), Item::MeasIdle, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::MeasClear,
+        ];
+        ui.key(key::MEASURE);
+        assert_eq!(ui.menu, MenuId::Measure);
+        assert_eq!(ui.items(MenuId::Measure), rest);
+        for it in ui.items(MenuId::Measure) {
+            assert_ne!(ui.item_label(it), "Add item");
+        }
+        ui.close_menu();
+        let r = ui.measure_btn().unwrap();
+        let (x, y) = mid(r);
+        ui.tap(x, y);
+        assert!(ui.menu_open && ui.menu == MenuId::MeasAdd);
+        assert!(!ui.m.meas.iter().any(|e| e.0 == Meas::Period));
+        ui.tap(x, y);
+        assert!(!ui.menu_open);
+        // a short press is still a tap
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        ui.step(0.2);
+        assert!(!ui.menu_open);
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+        assert!(ui.menu_open && ui.menu == MenuId::MeasAdd);
+        ui.close_menu();
+        // press and hold: the short menu, then the shortcut on release
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        ui.step(0.5);
+        assert!(ui.menu_open && ui.menu == MenuId::MeasHold);
+        assert_eq!(ui.items(MenuId::MeasHold), vec![Item::AddMeas]);
+        assert_eq!(ui.item_label(Item::AddMeas), "Add meas");
+        let n = ui.m.meas.len();
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+        assert!(ui.m.meas.contains(&(Meas::Period, WaveId::Ch(0))));
+        assert_eq!(ui.m.meas.len(), n + 1);
+        assert!(!ui.menu_open);
+        // a lift away from the button leaves the menu and adds nothing further
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        ui.step(0.5);
+        let n = ui.m.meas.len();
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: 8, y: 300 });
+        assert!(ui.menu_open && ui.menu == MenuId::MeasHold);
+        assert_eq!(ui.m.meas.len(), n);
+        let (bx, by) = mid(row_of(&ui, Item::AddMeas).ctrl);
+        ui.tap(bx, by);
+        assert!(ui.m.meas.len() > n);
+        assert_eq!(ui.menu, MenuId::MeasHold);
     }
 
     /// QUICK key and the Quick button run the action set in System > Quick key; Default keeps the setting.

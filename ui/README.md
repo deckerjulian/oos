@@ -49,7 +49,7 @@ orange), `- value +` for values, full-width buttons for actions, a Back button i
 plot outside a dialog closes it.
 
 **Pickers**: a choice whose options do not fit as segmented buttons shows `- value ▾ +`; tapping the value (or the
-row label) opens a grid of all options (like Measure > Add item), the current one in orange; tapping one sets it and
+row label) opens a grid of all options (like the measurement list), the current one in orange; tapping one sets it and
 returns to the menu, Back returns unchanged. `-`/`+`, Multi 2 and the ± steps keep stepping the value; a push on
 Multi 1 opens the picker. Items with pickers: Trigger > Type (12), Math > Operation (14), Math > Window (FFT, 5),
 Acquire > Memory (8), Acquire > Averages (10), Display > Persistence (7), Decode > Baud (10), Utility > Quick key
@@ -73,7 +73,9 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
   Video). Two-level types show a second level marker.
 - Acquire: Normal/Peak/Average (2..1024)/High res, memory depth Auto..50M (shown; the demo source ignores it).
 - Measure (`../dsp` measure): 35 items (voltage, time, edges, overshoot/preshoot, area, slew rate, pulse/edge counts,
-  ...), up to 6 at a time, **statistics** (mean, ±σ, n) in the results panel.
+  ...), up to 6 at a time, **statistics** (mean, ±σ, n) in the results panel. A tap on Measure opens the measurement
+  list. A press and hold opens a short menu; releasing on Measure runs **Add meas**, the next usual measurement.
+  Source, statistics and the rest of the Measure page are unchanged (Measure key, or Menu > Measure).
 - Cursor: time (dT, 1/dT) or voltage (dV), drag the lines.
 - **Math** (`../dsp` math): A+B, A-B, AxB, A/B, integral, derivative, abs, sqrt, lg, exp, low-/high-pass (corner
   frequency), **FFT** (dBV rms, Rect/Hann/Hamming/Blackman/Flattop, dB/div, offset, span 0..fs/2), auto scale.
