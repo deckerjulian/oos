@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Matching of the ADC core offsets of the active ADC mode at run time (fork, opt-in `cal.core_offset = tight`,
-//! docs/fork/core-offset.md). The RT8847's eight cores each have an offset register (0x14 + 8n, 1 ADC step); the stock
+//! docs/fork/core-offset.md). The RT8847's eight cores each have an offset register (0x14 + 8n, about half an ADC step per register step, unit round 11); the stock
 //! calibration trims every core to mid-scale within +-1.5 steps (self-cal.md 14.6), so two cores can differ by up to
 //! 3 steps. At decimated rates neighbouring samples come from two cores (netlist), and the difference stays in every
 //! frame: a fixed fs/2 pattern that the hardware average and the DVM block keep (spec 01 section 8, dvm.md).
@@ -27,9 +27,22 @@ pub trait TrimHw {
     fn wait_ms(&mut self, _ms: u32) {}
 }
 
-/// Tolerance in ADC steps: half the register's 1-step resolution plus measurement noise (the mean of 2^18 samples
-/// per core is good to about 0.05 step). The stock calibration uses 1.5.
+/// Target in ADC steps: a core further than this from the channel mean is corrected. The register step is about
+/// 0.55 ADC step (unit round 11), so a core can always get within 0.3; the rest is measurement noise.
 pub const TOL: f64 = 0.6;
+/// Accepted result in ADC steps when the noise keeps some core above `TOL` in every round: the best round is kept if
+/// its worst core is within this. The stock calibration accepts 1.5.
+pub const ACCEPT: f64 = 1.0;
+/// Measure-unit runs averaged per reading in `trim`: one run's slot means scatter by about 0.25 step against each
+/// other (unit round 11: slot 6 read +8.48, +8.20, +8.45 in three runs), more than the single-run 0.05 the mean of
+/// 2^18 samples would give.
+pub const AVG_RUNS: usize = 4;
+/// Wait after offset writes before the next measure run, ms. A run started right after the SPI write partly sees the
+/// old offset, so `order` measures too small a register step and `trim` then over-corrects and oscillates (unit
+/// round 11: no convergence, 0.77 steps left). The stock firmware waits 2 ms in its core-order search and 50 ms
+/// between calibration rounds.
+pub const ORDER_SETTLE_MS: u32 = 5;
+pub const TRIM_SETTLE_MS: u32 = 50;
 /// Rounds of correction before giving up.
 pub const ROUNDS: usize = 8;
 /// Nudge for `order`, register steps: about 32 ADC steps at the stock's 8 codes per register step.
@@ -45,12 +58,12 @@ pub const SPREAD_MAX: f64 = 8.0;
 /// Quietness gate. Matching to the channel mean assumes every core sees the same signal on average; a signal that
 /// is not quiet, or that is correlated with the interleave (near a multiple of fs/8), would be trimmed into the
 /// offsets. A channel is matched only when every slot's samples stay within `QUIET_RANGE` steps (max - min of the
-/// 12-bit codes; an open input spans 43 to 61 at 100 mV/div, unit round 9) and every slot's mean stays within `STABLE` steps over `GATE_RUNS`
+/// 12-bit codes; an open input spans 43 to 61 at 100 mV/div, unit round 9) and every slot's mean stays within `STABLE` steps (run-to-run scatter is about 0.3, round 11) over `GATE_RUNS`
 /// runs `GATE_WAIT_MS` apart: an fs/8-correlated signal that is not locked to the ADC clock moves the core means from
 /// run to run. A signal locked to the ADC clock (the built-in generator) cannot be told from an offset: the caller
 /// does not trim while the generator runs.
 pub const QUIET_RANGE: u16 = 128;
-pub const STABLE: f64 = 0.5;
+pub const STABLE: f64 = 1.0;
 pub const GATE_RUNS: usize = 3;
 pub const GATE_WAIT_MS: u32 = 20;
 /// Mid-scale on the 16-bit measure scale.
@@ -78,8 +91,10 @@ pub fn order(hw: &mut dyn TrimHw, cur: &[i32; 8]) -> Result<Order, String> {
     let mut codes = [0.0; 8];
     for n in 0..8 {
         hw.set_offset(n, cur[n] + NUDGE);
+        hw.wait_ms(ORDER_SETTLE_MS);
         let m = hw.slots();
         hw.set_offset(n, cur[n]);
+        hw.wait_ms(ORDER_SETTLE_MS);
         let m = m.ok_or("measure unit not answering")?;
         let d: [f64; 8] = std::array::from_fn(|k| m[k].mean - base[k].mean);
         let k = (0..8).max_by(|&a, &b| d[a].abs().total_cmp(&d[b].abs())).unwrap_or(0);
@@ -173,7 +188,9 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
     if usable.is_empty() {
         return Ok(Trimmed { offsets: o, residual: 0.0, matched, skipped });
     }
-    let mut m = first;
+    let mut m = average(&runs);
+    // the round with the smallest worst core: noise can keep one core above TOL in every round
+    let mut best = (f64::MAX, o);
     for round in 0..=ROUNDS {
         let mut worst: f64 = 0.0;
         let mut fix: Vec<(usize, i32)> = Vec::new();
@@ -193,6 +210,9 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
             }
         }
         residual = worst;
+        if worst < best.0 {
+            best = (worst, o);
+        }
         if fix.is_empty() {
             return Ok(Trimmed { offsets: o, residual, matched, skipped });
         }
@@ -203,9 +223,36 @@ pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8],
             o[n] = v.clamp(-1024, 1023);
             hw.set_offset(n, o[n]);
         }
-        m = hw.slots().ok_or("measure unit not answering")?;
+        hw.wait_ms(TRIM_SETTLE_MS);
+        m = measure(hw)?;
     }
-    Err(format!("core offsets did not converge in {} rounds, {:.2} steps left", ROUNDS, residual))
+    let (worst, offs) = best;
+    if worst <= ACCEPT {
+        for n in 0..8 {
+            if offs[n] != o[n] {
+                hw.set_offset(n, offs[n]);
+            }
+        }
+        return Ok(Trimmed { offsets: offs, residual: worst, matched, skipped });
+    }
+    Err(format!("core offsets did not converge in {} rounds, {:.2} steps left (best {:.2})", ROUNDS, residual, worst))
+}
+
+/// `AVG_RUNS` runs of the measure unit averaged per slot (means averaged, min and max over all runs).
+fn measure(hw: &mut dyn TrimHw) -> Result<[Slot; 8], String> {
+    let mut runs = Vec::with_capacity(AVG_RUNS);
+    for _ in 0..AVG_RUNS {
+        runs.push(hw.slots().ok_or("measure unit not answering")?);
+    }
+    Ok(average(&runs))
+}
+
+fn average(runs: &[[Slot; 8]]) -> [Slot; 8] {
+    std::array::from_fn(|k| Slot {
+        min: runs.iter().map(|r| r[k].min).min().unwrap_or(0),
+        max: runs.iter().map(|r| r[k].max).max().unwrap_or(0),
+        mean: runs.iter().map(|r| r[k].mean).sum::<f64>() / runs.len().max(1) as f64,
+    })
 }
 
 /// The trimmed offsets OOS keeps (`/oos/cal/core_offsets.hex`, a `calfile` container), apart from the cal_adc
@@ -277,21 +324,36 @@ mod tests {
         /// measure codes per register step (the unit: about 8, half an ADC step)
         reg_codes: f64,
         writes: usize,
+        /// per-run scatter of each slot mean, +- ADC steps (uniform, deterministic)
+        noise: f64,
+        seed: u64,
+        /// share of a run that still sees the offsets before the last write when no wait came in between
+        lag: f64,
+        prev: [i32; 8],
     }
 
     impl TrimHw for Model {
         fn slots(&mut self) -> Option<[Slot; 8]> {
             let mut s = [Slot::default(); 8];
             for n in 0..8 {
-                let mean = self.level + self.err[n] * self.lsb + self.reg[n] as f64 * self.reg_codes;
+                self.seed = self.seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let u = (self.seed >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0;
+                let reg = self.reg[n] as f64 * (1.0 - self.lag) + self.prev[n] as f64 * self.lag;
+                let mean = self.level + (self.err[n] + u * self.noise) * self.lsb + reg * self.reg_codes;
                 let code = (mean / 16.0).clamp(0.0, 4095.0) as u16;
                 s[self.perm[n]] = Slot { min: code.saturating_sub(20), max: (code + 20).min(4095), mean: mean.round() };
             }
+            self.prev = self.reg;
             Some(s)
         }
         fn set_offset(&mut self, core: usize, o: i32) {
             self.reg[core] = o;
             self.writes += 1;
+        }
+        fn wait_ms(&mut self, ms: u32) {
+            if ms >= ORDER_SETTLE_MS {
+                self.prev = self.reg;
+            }
         }
     }
 
@@ -305,7 +367,7 @@ mod tests {
     const ERR: [f64; 8] = [1.4, -1.3, 0.2, -0.9, 1.1, -1.5, 0.7, 0.0];
 
     fn model(level: f64) -> Model {
-        Model { err: ERR, reg: [3, -2, 0, 1, 0, 4, -1, 0], perm: PERM, level, lsb: 16.0, reg_codes: 8.0, writes: 0 }
+        Model { err: ERR, reg: [3, -2, 0, 1, 0, 4, -1, 0], perm: PERM, level, lsb: 16.0, reg_codes: 8.0, writes: 0, noise: 0.0, seed: 1, lag: 0.0, prev: [3, -2, 0, 1, 0, 4, -1, 0] }
     }
 
     // Break it catches: an overlay that writes modes it does not hold over the cal file, a byte layout that does not
@@ -403,6 +465,26 @@ mod tests {
             let cur = m.reg;
             let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ORD, &[16.0; 8]).unwrap();
             assert_eq!((t.offsets, t.matched, t.skipped, m.writes), (cur, 0, 1, 0), "level {}", level);
+        }
+    }
+
+    // Round 11: one run's slot means scatter by about 0.25 step, the register step is about 0.55 ADC step, and the
+    // trim gave up with 0.77 left. Break it catches: measuring before a write has settled (a too small register step
+    // from `order`, then over-correction that oscillates), giving up instead of keeping the best round within ACCEPT.
+    #[test]
+    fn noisy_slots_still_converge() {
+        for seed in 1..20 {
+            let mut m = model(MID);
+            m.err[5] += 10.0;
+            (m.noise, m.seed, m.reg_codes, m.lag) = (0.3, seed, 8.8, 0.6);
+            let cur = m.reg;
+            let ord = order(&mut m, &cur).unwrap();
+            assert!(ord.codes.iter().all(|c| (c - 8.8).abs() < 0.2), "seed {}: register step measured after settling {:?}", seed, ord.codes);
+            let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ord, &[16.0; 8]).unwrap_or_else(|e| panic!("seed {}: {}", seed, e));
+            assert_eq!((t.matched, m.reg), (1, t.offsets), "seed {}: matched, the registers hold the kept offsets", seed);
+            let tot: Vec<f64> = (0..8).map(|n| total(&m, n, t.offsets[n])).collect();
+            let mean = tot.iter().sum::<f64>() / 8.0;
+            assert!(tot.iter().all(|x| (x - mean).abs() <= ACCEPT + 0.2), "seed {}: {:?}", seed, tot);
         }
     }
 

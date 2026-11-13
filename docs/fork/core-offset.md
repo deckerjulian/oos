@@ -79,6 +79,19 @@ alone at 1 us/div, input open):
   threshold, so the search failed.
 - The open input spans 43 to 61 codes (max - min) at 100 mV/div, so the quietness gate of 64 left almost no margin.
 
+## Round 11 (unit, build 20261113-220242)
+
+- `adc slots --runs 8` and the stepping work. Core to slot: 0-0, 1-2, 2-1, 3-3, 4-4, 5-6, 6-5, 7-7 (the pairs 1/2 and
+  5/6 swapped). The far slot 6 is core 5. 16 register steps move a slot by 8 to 9 ADC steps against the slot average
+  (core 5: 12.8), so a register step is about half an ADC step.
+- `cal.core_offset = tight` found the order, then "did not converge in 8 rounds, 0.77 steps left"; nothing saved,
+  cal_adc.hex unchanged.
+- Cause: no wait between an offset write and the next measure run. A run that partly sees the old offset makes
+  `order` measure too small a register step, and `trim` then over-corrects and oscillates. One run's slot means also
+  scatter by about 0.3 step against each other, close to the 0.6 target. Fix: settle waits after writes as the stock
+  firmware has, 4 runs per reading, keep the best round within 1 step. The failure log line now includes the order
+  (slots and measured codes per register step).
+
 ## What the change does
 
 `hal::dho::coretrim`, called from the acquisition thread right after a configuration, with nothing armed, once per
@@ -90,11 +103,13 @@ ADC mode and session:
    divided by 64 is that core's measure codes per register step; `trim` uses it instead of an assumed size. Every
    nudge is taken back.
 2. `trim`: per acquired channel, its slots (`levels::slots`) are matched to the channel's mean, not to mid-scale.
-   Correction = difference divided by the measured codes per register step, rounded; up to 8 rounds; tolerance 0.6
-   steps (the mean of 2^18 samples per core is good to about 0.05 step). Codes per ADC step for the tolerance: 16, or
+   Correction = difference divided by the measured codes per register step, rounded; up to 8 rounds; target 0.6
+   steps. Each reading averages 4 measure runs, and every round waits 50 ms after its writes (`order` waits 5 ms
+   after each nudge), as the stock calibration does. When noise keeps one core above 0.6 in every round, the best
+   round is kept if its worst core is within 1 step (the stock calibration accepts 1.5). Codes per ADC step for the tolerance: 16, or
    32 where a digital gain of 2 or more puts the ADC x2 of 0x105c before the measure unit.
 3. Quietness gate: a channel is matched only when every slot's samples stay within 128 steps (max - min) and every
-   slot's mean moves by at most 0.5 step over three runs 20 ms apart. Matching to the channel mean assumes each core
+   slot's mean moves by at most 1 step over three runs 20 ms apart (one run's slot means scatter by about 0.3 step). Matching to the channel mean assumes each core
    sees the same signal on average; a signal near a multiple of fs/8 would otherwise be trimmed into the offsets.
    One that is not locked to the ADC clock moves the core means from run to run and is refused; one that is locked
    (the built-in generator) cannot be told from an offset, so nothing is trimmed while the generator runs. Inputs open

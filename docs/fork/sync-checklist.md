@@ -18,7 +18,10 @@ sync". Nothing here touches the unit.
    itself (`ui/src/ui/ssh.rs`, `ui/src/ssh.rs`, `oos-ssh`) is fork-only. Check: `grep -rn telnetd rootfs ui/src` finds nothing.
 4. Conflicts in `hal/src/dho/seq.rs` Poll handling: upstream's Poll body lives in the fork's `plain_step`. Port any
    upstream change there; `execute_until` stays a thin wrapper.
-5. Host tests, all must pass: `cargo test` in `hal`, `dsp`, `ui`, `fpgad`; `tools/ssh-sim.sh`.
+5. Host tests, all must pass: `cargo test` in `hal`, `dsp`, `ui`, `fpgad`; `tools/ssh-sim.sh`; `tools/fw-sim.sh`.
+   Downloaded sources: upstream's own build scripts (kexec, fsck, WLAN tools, Mesa) keep their pinned `ver=` and `sum=`
+   untouched; `tools/deps-check.sh` reports where a script and `rootfs/deps.lock` differ after a sync, and the
+   manifest line follows the script (docs/fork/deps.md).
 6. `cargo check --all-targets` of `hal`, `ui`, `fpgad` on linux/arm64 (container), so the `target_os = "linux"` paths
    compile:
    `docker run --rm -v "$PWD:/src" -v oos-target-<worktree>:/tgt -e CARGO_TARGET_DIR=/tgt -w /src/<crate> rust:1-alpine cargo check --all-targets`
