@@ -326,6 +326,8 @@ pub struct Shared {
     /// the FPGA's DVM block: wanted by the UI (None: off), the latest reading
     pub dvm_want: Option<DvmWant>,
     pub dvm: Option<DvmRead>,
+    /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
+    pub deep_raw: Option<crate::deepmeas::Want>,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
     pub mask_want: Option<MaskWant>,
     pub mask: Option<MaskRead>,

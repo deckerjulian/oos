@@ -656,6 +656,7 @@ impl Source {
         if let Source::Hw { shared, seen } = self {
             let mut g = shared.lock().unwrap();
             g.want = Some(board().want(m));
+            g.deep_raw = crate::deepmeas::want(m);
             g.slow = board().slow_mode(m);
             g.stamp = m.hw_stamp;
             g.avg_clear = m.hw_avg_clear;
