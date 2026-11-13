@@ -19,6 +19,7 @@ mod panes;
 mod autoset;
 mod selfcal;
 pub mod bode;
+mod sim;
 pub mod startup;
 mod afg;
 mod sysinfo;
@@ -216,6 +217,7 @@ pub enum MenuId {
     /// network overview and WLAN through a USB stick (ui/wlan.rs)
     Network,
     Bode,
+    Sim,
     Afg,
     BwTest,
     /// the overflow menu of an analyser view or XY (viewmore.rs)
@@ -616,6 +618,10 @@ enum Item {
     Dpt4,
     DptPct,
     DptZoom,
+    SimPreset,
+    SimSlot,
+    SimPlay,
+    SimShow,
 }
 
 #[derive(PartialEq)]
@@ -746,6 +752,9 @@ pub struct Ui {
     cal: selfcal::State,
     /// Bode sweep (bode.rs)
     bode: bode::State,
+    /// SIM: walking the loaded serial record on the phosphor
+    sim_play: bool,
+    sim_i: usize,
     /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
     /// to cards) is copied here during `render`
     pub hdmi_snap_want: bool,
@@ -925,6 +934,8 @@ impl Ui {
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
+            sim_play: false,
+            sim_i: 0,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
             trend: Vec::new(),
@@ -1422,7 +1433,12 @@ impl Ui {
         self.was_running = running;
         let persist = PERSIST[self.m.persist].1;
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
+        if self.sim_play && self.m.run == RunState::Run {
+            self.sim_play = false;
+        }
+        if self.sim_play {
+            self.sim_tick(dt_wall);
+        } else if self.m.run == RunState::Run || (self.last[0].is_none() && !self.cleared) {
             if self.dirty_map {
                 self.ph.clear();
                 self.phz.clear();
@@ -3526,6 +3542,7 @@ impl Ui {
             MenuId::SelfCal => self.cal_items(),
             MenuId::Network => vec![Item::NetEth, Item::NetMac, Item::NetWeb, Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
             MenuId::Bode => self.bode_items(),
+            MenuId::Sim => self.sim_items(),
             MenuId::Magnetic => self.magnetic_items(),
             MenuId::Inverter => self.inverter_items(),
             MenuId::Dpt => self.dpt_items(),
@@ -3594,7 +3611,7 @@ impl Ui {
         let mut g = vec![
             ("Acquisition", vec![RunStop, SingleAct, AutosetAct, ClearDisp, DefaultAct, Open(MenuId::Acquire)]),
             ("Trigger", vec![Open(MenuId::Trigger), SlopeAct, ForceAct, Open(MenuId::Zone)]),
-            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Decode), Open(MenuId::Mask)]),
+            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Sim), Open(MenuId::Decode), Open(MenuId::Mask)]),
             ("Analysers", ana),
             ("Instruments", ins),
             ("Display", disp),
@@ -4069,6 +4086,7 @@ impl Ui {
             MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Network => "Network".into(),
             MenuId::Bode => "Bode plot".into(),
+            MenuId::Sim => "SIM".into(),
             MenuId::Magnetic => "Magnetic".into(),
             MenuId::Inverter => "Inverter".into(),
             MenuId::Dpt => "Double pulse".into(),
@@ -4106,7 +4124,7 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
+        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)) {
             return k;
         }
         match it {
@@ -4127,7 +4145,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
+        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)) {
             return l;
         }
         match it {
@@ -4366,7 +4384,7 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
+        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -4557,7 +4575,7 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
+        if self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) {
             return;
         }
         let m = &mut self.m;
@@ -4971,7 +4989,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
-        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it)) {
+        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.sim_activate(it) || self.afg_activate(it)) {
             return;
         }
         match Self::kind(it) {
@@ -5339,7 +5357,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
+        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)) {
             return o;
         }
         let v: &[&str] = match it {

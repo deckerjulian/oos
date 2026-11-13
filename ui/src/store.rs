@@ -274,6 +274,7 @@ pub fn setup_text(m: &Model) -> String {
     let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
     kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a.token(), m.inv_b.token(), m.inv_c.token(), m.inv_ang, m.inv_poles, m.inv_an.token(), m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
     kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v.token(), m.dpt_i.token(), m.dpt_g.token(), m.dpt_4th, m.dpt_4ch.token(), m.dpt_pct, m.dpt_zoom));
+    kv("sim", format!("{} {}", m.sim_preset, m.sim_slot));
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
@@ -715,6 +716,12 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.spec_acpr_s = space.parse::<f64>().map_err(|e| e.to_string())?;
         }
         "bode_mode" => m.bode_mode = p_enum(v, &[oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z])?,
+        "sim" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            let [preset, slot] = w[..] else { return Err("sim: preset slot".into()) };
+            m.sim_preset = p_idx(preset, oos_dsp::serial::LANES.len())?;
+            m.sim_slot = p_idx(slot, NREF)?;
+        }
         "eye_more" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [ber, lo, hi, npj, rail, notch, b, hp] = w[..] else { return Err("eye_more".into()) };

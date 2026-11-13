@@ -1044,6 +1044,9 @@ pub struct Model {
     pub quick: Quick,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
     pub la: crate::ui::la::LaSet,
+    /// SIM menu: which serial preset and which R slot Play writes
+    pub sim_preset: usize,
+    pub sim_slot: usize,
 }
 
 pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
@@ -1364,6 +1367,8 @@ impl Default for Model {
             mask_stop: false,
             quick: Quick::Screenshot,
             la: Default::default(),
+            sim_preset: 3,
+            sim_slot: 0,
         };
         m.ch[0].offset = -1.5;
         m.trig_level = 1.5;

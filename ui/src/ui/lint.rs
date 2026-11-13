@@ -601,7 +601,7 @@ fn random_input_on_the_new_pages() {
         x ^= x << 17;
         x
     };
-    let pages = [MenuId::Logger, MenuId::ChMore(0), MenuId::Measure, MenuId::MeasPair, MenuId::Dvm, MenuId::Cursor, MenuId::Math, MenuId::Ref, MenuId::Mask, MenuId::Decode, MenuId::Trigger, MenuId::Display, MenuId::Storage, MenuId::Bode];
+    let pages = [MenuId::Logger, MenuId::ChMore(0), MenuId::Measure, MenuId::MeasPair, MenuId::Dvm, MenuId::Cursor, MenuId::Math, MenuId::Ref, MenuId::Sim, MenuId::Mask, MenuId::Decode, MenuId::Trigger, MenuId::Display, MenuId::Storage, MenuId::Bode];
     u.store_dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
     for i in 0..3_000 {
         if i % 40 == 0 {
