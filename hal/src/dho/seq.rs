@@ -6,7 +6,7 @@
 //! and the hardware source of `oos-ui`. Order (docs/protocols): [ADC mode] -> [AFE] -> TPU edge trigger -> wait FSM
 //! stopped -> acquisition configuration -> SCU auto/normal trigger -> arm -> wait done -> play-last read-out -> read.
 
-use crate::dho::{acq, adc, afe, hz, la, scu, tpu, Write};
+use crate::dho::{acq, adc, afe, auxout, hz, la, scu, tpu, Write};
 
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -124,6 +124,8 @@ pub struct Settings {
     /// hardware segmented recording (docs/fork/specs/03-segmented-timestamps.md): one arm records this many frames
     /// with FPGA re-arm and per-frame trigger timestamps (`seg`). None = the live batches.
     pub segments: Option<Segments>,
+    /// what the rear AUX OUT BNC carries (docs/fork/auxout.md); written with the acquisition block when it changed
+    pub aux: auxout::AuxOut,
 }
 
 /// A hardware segmented recording.
@@ -140,7 +142,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut }
     }
 }
 
@@ -157,6 +159,8 @@ pub struct State {
     pub la_was_on: bool,
     /// a holdoff other than `HOLDOFF_MIN` is in the TPU
     pub holdoff_set: bool,
+    /// the AUX OUT set-up last written; None = not written since the hand-over, so the first set-up writes it
+    pub aux: Option<auxout::AuxOut>,
 }
 
 impl State {
@@ -170,7 +174,7 @@ impl State {
                 a.channel_mode(c, mode);
             }
         }
-        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false }
+        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None }
     }
 
     /// Configuration steps for `s` (ADC mode if the channel set changed, AFEs, trigger, acquisition registers).
@@ -271,6 +275,11 @@ impl State {
                 let t = la::timing(&p, s.mask);
                 st.push(Step::Note(format!("LA on: m {}, {} Sa/s, {} LA samples, trigger at {}", t.m, t.rate, t.n, t.pre)));
                 st.extend(la::config(&mut self.sh, &p, s.mask, s.la.as_ref().is_some_and(|l| l.roll)).into_iter().map(Step::Wr));
+            }
+            if self.aux != Some(s.aux) {
+                st.push(Step::Note(format!("AUX OUT {:?}", s.aux)));
+                st.extend(auxout::writes(&s.aux).into_iter().map(Step::Wr));
+                self.aux = Some(s.aux);
             }
         }
         if let Some(l) = &s.la {
@@ -1031,6 +1040,27 @@ mod tests {
     }
 
     #[test]
+    fn aux_out_is_written_once_and_on_change() {
+        use auxout::{AuxOut, PassFail};
+        let aux = |st: &mut State, s: &Settings| -> Vec<Write> {
+            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| w.0 == auxout::SELECT || w.0 == auxout::PASSFAIL).collect()
+        };
+        let mut st = State::handover(1, None);
+        let base = Settings::default();
+        assert_eq!(aux(&mut st, &base), vec![(0x1430, 0)], "the first set-up states the power-up source");
+        assert_eq!(aux(&mut st, &base), vec![]);
+        let off = Settings { aux: AuxOut::Off, ..base.clone() };
+        assert_eq!(aux(&mut st, &off), vec![(0x1430, 2)]);
+        assert_eq!(aux(&mut st, &off), vec![]);
+        let pf = Settings { aux: AuxOut::PassFail(PassFail::DEFAULT), ..base.clone() };
+        assert_eq!(aux(&mut st, &pf), vec![(0x119c, 156), (0x1430, 3)]);
+        assert_eq!(aux(&mut st, &base), vec![(0x1430, 0)]);
+        // the diagnostic arm without the acquisition block leaves AUX OUT alone
+        let mut st = State::handover(1, None);
+        assert_eq!(aux(&mut st, &Settings { blocks: 5, ..off }), vec![]);
+    }
+
+    #[test]
     fn batch_of_frames() {
         // 1 us/div, CH1: 12 500 points per frame, ring of max_frames frames; 100 frames in one arm and one read
         let s = Settings { tdiv: 1e-6, frames: 100, window: None, ..Settings::default() };
@@ -1065,16 +1095,16 @@ mod tests {
         let w = writes(&st);
         assert!(w.contains(&(0x1108, 1_248_000)) && w.contains(&(0x1100, 0x11e8)));
         assert!(matches!(st.last(), Some(Step::Read { frames: 1, frame: 8000 })));
-        // trigger 17, acquisition 22, auto trigger 3, arm 29, pass-through 10, read-out window 7 + stop sequence 17 +
-        // type-4 play 12 (the sequence that delivered own frames on the unit, 2026-11-03)
-        assert_eq!(w.len(), 17 + 22 + 3 + 29 + 10 + 7 + 17 + 12);
+        // trigger 17, acquisition 22 + AUX OUT 1 (first set-up only), auto trigger 3, arm 29, pass-through 10, read-out
+        // window 7 + stop sequence 17 + type-4 play 12 (the sequence that delivered own frames on the unit, 2026-11-03)
+        assert_eq!(w.len(), 17 + 22 + 1 + 3 + 29 + 10 + 7 + 17 + 12);
         let k = w.iter().position(|x| *x == (0x1170, 0x4000_0001)).unwrap();
-        assert!(k > 17 + 22 + 3 + 29 - 1, "pass-through comes after the arm");
+        assert!(k > 17 + 22 + 1 + 3 + 29 - 1, "pass-through comes after the arm");
         assert_eq!(*w.last().unwrap(), (0x4004, 0x1));
         // the play-last read-out of the warm hand-over is still available: 28 writes
         let mut state = State::handover(1, None);
         let (st, _) = plan(&mut state, &Settings { play4: false, ..Settings::default() }, None, None).unwrap();
-        assert_eq!(writes(&st).len(), 17 + 22 + 3 + 29 + 28);
+        assert_eq!(writes(&st).len(), 17 + 22 + 1 + 3 + 29 + 28);
     }
 
     #[test]
