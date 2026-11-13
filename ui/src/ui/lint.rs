@@ -1966,3 +1966,51 @@ fn dq_and_dqs_refs_make_a_strobe_eye() {
         let _ = std::fs::write(format!("{}/ddr-dq-dqs-eye.png", dir), crate::store::png_of(&cv));
     }
 }
+
+#[test]
+fn cphy_eye_full_screen_shot() {
+    let dir = std::path::Path::new("/home/ubuntu/.cursor/projects/agent-repos-oos/uploads");
+    let va = dir.join("VA_SE_f764.wfm");
+    let clk = dir.join("ClockRecovery_b5e0.wfm");
+    if !va.is_file() || !clk.is_file() {
+        return;
+    }
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    for c in 0..NCH {
+        u.m.ch[c].on = false;
+    }
+    u.m.la.on = false;
+    u.m.run = RunState::Stop;
+    u.last[0] = None;
+    u.m.meas.clear();
+    u.ref_sel = 0;
+    u.ref_load_path(&va);
+    if let Some(r) = u.refs[0].as_mut() {
+        r.label = "VA".into();
+    }
+    let b = std::fs::read(&clk).unwrap();
+    let n = (b.len() - 8 - 820) / 4;
+    let mut v = Vec::with_capacity(n);
+    for k in 0..n {
+        let o = 820 + k * 4;
+        v.push(f32::from_le_bytes(b[o..o + 4].try_into().unwrap()));
+    }
+    let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
+    let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
+    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v, vpd: 0.5, offset: 0.0, on: true });
+    u.full = true;
+    u.relayout();
+    u.m.view = AView::Eye;
+    u.m.eye_src = WaveId::Ref(0);
+    u.m.eye_b = Some(WaveId::Ref(3));
+    u.m.eye_rate = 2.27e9;
+    u.azr.eye = None;
+    u.now = 1.0;
+    u.analyzer_update();
+    assert!(u.azr.eye.is_some());
+    let mut cv = Canvas::new(W, H);
+    u.render(&mut cv);
+    if let Ok(dir) = std::env::var("OOS_SHOT_DIR") {
+        let _ = std::fs::write(format!("{}/cphy-va-eye-full.png", dir), crate::store::png_of(&cv));
+    }
+}

@@ -60,7 +60,22 @@ pub(super) struct Layout {
     pub jit_rows: i32,
 }
 
-pub(super) fn layout(a: Rect) -> Layout {
+pub(super) fn layout(a: Rect, fill: bool) -> Layout {
+    if fill {
+        let empty = Rect::new(a.x, a.y, 0, 0);
+        let plot = Rect::new(a.x + EYE_GUTTER, a.y + EYE_TITLE, (a.w - EYE_GUTTER - 16).max(64), (a.h - EYE_TITLE - EYE_FOOT).max(64));
+        return Layout {
+            eye: a,
+            plot,
+            head: empty,
+            charts: [empty; 4],
+            plots: [empty; 4],
+            fig: empty,
+            jit: empty,
+            fig_rows: 0,
+            jit_rows: 0,
+        };
+    }
     let lw = a.w * 57 / 100;
     let (rx, rw) = (a.x + lw + GAP, a.w - lw - GAP);
     let bottom = a.y + a.h;
@@ -490,7 +505,7 @@ impl Ui {
             (s.v, None, s.dt, s.t0)
         };
         let (vpd, offset) = self.eye_scale(id);
-        let lay = layout(self.area);
+        let lay = layout(self.area, self.full_on());
         let (pw, ph) = (lay.plot.w.max(64), lay.plot.h.max(64));
         let tag = match id {
             WaveId::Ch(c) => (0u8, c),
@@ -682,12 +697,17 @@ impl Ui {
     pub(super) fn draw_eye(&self, cv: &mut Canvas) {
         let a = self.area;
         let p = &self.azr.page;
-        let l = layout(a);
+        let l = layout(a, self.full_on());
         cv.fill(a, BG);
         self.eye_plot(cv, &l);
-        self.eye_head(cv, &l);
+        if l.head.w > 0 {
+            self.eye_head(cv, &l);
+        }
         let col = self.wave_color(self.m.eye_src);
         for k in 0..4 {
+            if l.charts[k].w < 8 {
+                continue;
+            }
             self.chart_frame(cv, l.charts[k], l.plots[k], &p.charts[k]);
             if p.charts[k].empty.is_empty() {
                 match k {
@@ -997,7 +1017,7 @@ mod tests {
     fn the_page_tiles_the_area_to_its_bottom_edge() {
         for h in [160, 240, 296, 300, 352, 400, 440, 480] {
             let a = Rect::new(0, 40, W, h);
-            let l = layout(a);
+            let l = layout(a, false);
             let bottom = a.y + a.h;
             assert_eq!(l.charts[2].y + l.charts[2].h + if l.jit_rows > 0 { GAP + l.jit.h } else { 0 }, bottom, "right column, height {}", h);
             assert_eq!(l.charts[3].y + l.charts[3].h, l.charts[2].y + l.charts[2].h);
@@ -1006,6 +1026,15 @@ mod tests {
             assert!(l.plots.iter().all(|p| p.h >= 1 && p.w > 40), "{:?}", l.plots);
             assert_eq!(l.fig_rows > 0, h >= BOXES_MIN_H);
         }
+    }
+
+    #[test]
+    fn full_screen_gives_the_eye_the_whole_plot() {
+        let a = Rect::new(0, 0, W, H);
+        let l = layout(a, true);
+        assert_eq!((l.fig_rows, l.jit_rows), (0, 0));
+        assert!(l.plot.w > 900 && l.plot.h > 500, "{:?}", l.plot);
+        assert!(l.charts.iter().all(|c| c.w == 0));
     }
 
     #[test]
@@ -1097,7 +1126,7 @@ mod tests {
     fn nothing_sits_under_the_overflow_button() {
         for h in [160, 352, 480] {
             let a = Rect::new(0, 40, W, h);
-            let l = layout(a);
+            let l = layout(a, false);
             let btn = Rect::new(a.x + a.w - 48, a.y, 48, 42);
             for r in [l.eye, l.head, l.fig, l.jit].iter().chain(&l.charts) {
                 assert!(!overlaps(*r, btn), "{:?}", r);
@@ -1111,7 +1140,7 @@ mod tests {
         for s in [CLEAN, NOISY, Sig { uis: 6, ..CLEAN }] {
             let ui = page(s, 8);
             let (f, p) = (&ui.fonts, &ui.azr.page);
-            let l = layout(ui.area);
+            let l = layout(ui.area, false);
             for (k, c) in p.charts.iter().enumerate() {
                 assert!(f.sb.width(&c.title) + 12 <= l.charts[k].w, "'{}'", c.title);
                 assert!(f.s.width(&c.empty) <= l.plots[k].w, "'{}'", c.empty);
