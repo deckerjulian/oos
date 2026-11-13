@@ -1061,7 +1061,9 @@ def uart_from_the_generator_decodes(s, o):
     s.w(":SOUR:VOLT:OFFS 1.5")
     s.w(":SOUR:OUTP ON")
     s.w(f":CHAN{c}:SCAL 1")
-    s.w(":TIM:SCAL 0.0005")  # several frames: the first of a record may begin in the middle of one
+    # about 12 frames per record: the first of a record may begin in the middle of one and read wrong (a data 1 then a
+    # 0 looks like stop and start), with 3 frames per record (0.5 ms/div) that alone came near the 60 %
+    s.w(":TIM:SCAL 0.002")
     s.set(dec_on="true", dec_proto="Uart", dec_src=c - 1, dec_baud=3, dec_thr=1.5, dec_ascii="false")
     s.settle(extra=0.8)
     rows = []
