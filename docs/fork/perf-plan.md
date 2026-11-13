@@ -129,3 +129,17 @@ checklist.
 
 Ratios, not absolute times: hosts differ, ratios between two paths on the same host are stable. Keep a reference
 copy of each replaced function in the test module so the ratio has a fixed baseline.
+
+## Status of the UI items (branch perf/ui)
+
+- 2 done: `hw::decode_tail` decodes the last `QUEUE_MAX` frames of a batch. Guard: decoded <= kept, same frames and
+  sequence numbers as a full decode.
+- 3 done, default on: `trignear::edge_smooth_near` in `fast_draw` and `to_record`. The near answer is kept only when
+  the comparator state proves it equals the wide search (module comment), else the wide search runs. Guards: equality
+  over a synthetic corpus (42 k cases, half answered near), two adversarial fallback frames; ignored timing test, host
+  ratio 0.04-0.05 (30 -> 1.4 us at 12.5 k points, 231 -> 8.5 us at 100 k).
+- 6 done, opt-in `OOS_PLACE=1`: `placement::place` puts the frame loop and GPU helper on cpu4, the hw thread on cpu5.
+  Workers stay on the A53s through the existing `http::to_little_cores`. Guard: plan from a fake sysfs tree.
+  Not in ui/: the xdma interrupt to an A53 belongs in the rootfs (`oos-fpga-up`: `echo 1 > /proc/irq/<xdma>/
+  smp_affinity`, IRQ number from `/proc/interrupts`, 241 on this unit). Unit check: `top -H -d 1` per core,
+  `/proc/interrupts`, UI frame time with and without `OOS_PLACE`.

@@ -33,6 +33,7 @@ mod store;
 mod sysconf;
 mod trig;
 mod trignear;
+mod placement;
 mod ui;
 mod usbtmc;
 mod vxi11;
@@ -124,6 +125,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--hw") {
         http::pin_to_big_cores();
+        placement::place(placement::Role::Ui);
     }
     let mut ui = Ui::new(source(&args));
     if let Some(m) = &foreign {
@@ -303,6 +305,7 @@ const HDMI_BG: u32 = 0x0d1117;
 #[cfg(target_os = "linux")]
 fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
     http::pin_to_big_cores();
+    placement::place(placement::Role::Ui);
     let mut g = gpu::Gpu::start(gpu::HELPER)?;
     for i in 0..disp.buffers() {
         let (fd, pitch) = disp.export(i).map_err(|e| format!("export: {}", e))?;

@@ -478,6 +478,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
     std::thread::spawn(move || {
+        crate::placement::place(crate::placement::Role::Hw);
         let status = |s: String| {
             eprintln!("oos-ui hw: {}", s);
             out.lock().unwrap().status = s;
