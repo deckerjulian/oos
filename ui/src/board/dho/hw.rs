@@ -157,8 +157,10 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         la,
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m)).then(|| Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
         aux: aux_out(m.aux_out),
-        // the mask test comes from the UI's mask (`Shared::mask_want`), merged in the acquisition thread
+        // the mask test and zone trigger come from the UI (`Shared::mask_want`, `zone_want`), merged in the acquisition
+        // thread (`hw_merge`)
         hwmask: None,
+        hwzone: None,
     };
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
@@ -381,6 +383,32 @@ pub fn mask_hw_on() -> bool {
 /// The `mask.hw` line of system.conf; off unless `on`.
 fn mask_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "mask.hw").as_deref() == Some("on")
+}
+
+/// `zone.hw = on` in system.conf: the zone trigger qualifies frames in the FPGA (docs/fork/hwzone.md) and the records
+/// are no longer filtered in software where it can. Off by default until the mapping is verified on the unit.
+pub fn zone_hw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| zone_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+}
+
+/// The `zone.hw` line of system.conf; off unless `on`.
+fn zone_hw_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "zone.hw").as_deref() == Some("on")
+}
+
+/// The UI's mask test and zone trigger into the acquisition settings. The mask unit runs one of them: the mask test
+/// wins. AUX OUT pass/fail follows the zone result while the zone trigger runs (0x119c source bit).
+fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Option<&crate::board::ZoneWant>) {
+    want.hwmask = mask.map(hw_mask);
+    want.hwzone = zone.filter(|_| mask.is_none()).map(|z| oos_hal::dho::seq::HwZone {
+        ch: z.ch,
+        zones: z.zones.iter().take(2).map(|(poly, inside)| oos_hal::dho::zone::Zone { poly: poly.clone(), inside: *inside }).collect(),
+        clear: z.clear,
+    });
+    if let (auxout::AuxOut::PassFail(p), Some(_)) = (&mut want.aux, &want.hwzone) {
+        p.source = auxout::Source::Zone;
+    }
 }
 
 /// The mask test of the acquisition settings from the UI's wish.
@@ -851,9 +879,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
-            let (want, want_mode, avg_clear, mask_want) = {
+            let (want, want_mode, avg_clear, mask_want, zone_want) = {
                 let g = out.lock().unwrap();
-                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.as_ref().map(hw_mask))
+                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone())
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -863,7 +891,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
             want.afe = program_afe;
-            want.hwmask = mask_want;
+            hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref());
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
@@ -1266,6 +1294,16 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         let n = g.mask.map_or(0, |r| r.n) + 1;
                         g.mask = mr.map(|(ch, slot, ctrl, raw)| crate::board::MaskRead { ch, slot, ctrl, raw: [raw.frames_lo, raw.frames_hi, raw.fails_lo, raw.fails_hi], frames: raw.frames(), fails: raw.fails(), n });
                     }
+                    // the zone unit's status and qualified-frame counter (docs/fork/hwzone.md)
+                    let zr = state.zone_ctrl().zip(b.hwzone.as_ref()).zip(state.zone_run).map(|((ctrl, z), run)| (z.ch, run.0, ctrl, oos_hal::dho::zone::read(&mut bar, ctrl)));
+                    {
+                        let mut g = out.lock().unwrap();
+                        let n = g.zone.map_or(0, |r| r.n) + 1;
+                        g.zone = zr.map(|(ch, slot, ctrl, r)| {
+                            let c = r.counters;
+                            crate::board::ZoneRead { ch, slot, ctrl, raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi], frames: c.frames(), armed: r.armed(), pass: r.pass(), n }
+                        });
+                    }
                     // hardware average: one frame, shown or not, the average cleared after a complete hold average
                     let after = avg.as_mut().map(|(tr, _, logged)| {
                         let a = tr.batch(count);
@@ -1552,6 +1590,71 @@ mod tests {
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
+    }
+
+    /// The zones in the hardware tables, and the "touched" logic modelled on the read-out words (the assumed sample
+    /// scale): agrees with the software zone test on boxes on, off and across a square wave's edge.
+    #[test]
+    fn hardware_zone_tables_agree_with_the_software_zones() {
+        use oos_hal::dho::{mask, zone};
+        let (n, rate, pre, scale, offset) = (20_000u32, 100_000_000u64, 10_000u32, 1.0, -1.5);
+        let dt = 1.0 / rate as f64;
+        // 0 / 3 V square, period 4000 samples (40 us), rising edge at the trigger (sample 10,000)
+        let v: Vec<f32> = (0..n as usize).map(|k| if (k / 2000) % 2 == 0 { 0.0 } else { 3.0 }).collect();
+        let t0 = -(pre as f64) * dt;
+        let touched = |poly: &[(f64, f64)]| -> bool {
+            let t = zone::table(&zone::Zone { poly: poly.to_vec(), inside: true }, n, rate, pre, scale, offset);
+            let per = zone::columns(n).1 as usize;
+            let code = |x: f32| ((32768.0 + (x as f64 + offset) / scale * 7500.0).round() as u32 >> mask::SHIFT) as u8;
+            let mut prev: Option<u8> = None;
+            for (k, &x) in v.iter().enumerate() {
+                let c = t[(k / per).min(t.len() - 1)];
+                let s = code(x);
+                if c.on && ((c.lo..=c.hi).contains(&s) || prev.is_some_and(|p| (p < c.lo && s > c.hi) || (p > c.hi && s < c.lo))) {
+                    return true;
+                }
+                prev = Some(s);
+            }
+            false
+        };
+        // (box, touched): on the high level, on the low level, above the trace, across the rising edge at t = 0
+        let cases = [
+            (vec![(2e-6, 2.5), (8e-6, 3.5)], true),
+            (vec![(-8e-6, -0.5), (-2e-6, 0.5)], true),
+            (vec![(2e-6, 3.6), (8e-6, 4.0)], false),
+            (vec![(-1e-6, 1.0), (1e-6, 2.0)], true),
+            (vec![(5e-6, 1.0), (15e-6, 2.0)], false),
+        ];
+        for (pts, want) in cases {
+            let sw = crate::zone::hits(&crate::zone::Zone { on: true, src: 0, inside: true, pts: pts.clone() }, &v, t0, dt);
+            assert_eq!((sw, touched(&pts)), (want, want), "{:?}", pts);
+        }
+    }
+
+    #[test]
+    fn zone_hw_from_conf() {
+        assert!(!zone_hw_from(""));
+        assert!(zone_hw_from("zone.hw = on\n"));
+    }
+
+    #[test]
+    fn mask_and_zone_merge() {
+        use crate::board::{MaskWant, ZoneWant};
+        let mw = MaskWant { ch: 0, lo: vec![-1.0; 1000], hi: vec![1.0; 1000], stop: false, clear: 0 };
+        let zw = ZoneWant { ch: 1, zones: vec![(vec![(0.0, 0.0), (1e-6, 1.0)], true), (vec![(0.0, 2.0), (1e-6, 3.0)], false), (vec![], true)], clear: 4 };
+        let pf = auxout::AuxOut::PassFail(auxout::PassFail::DEFAULT);
+        let mut s = Settings { aux: pf, ..Settings::default() };
+        hw_merge(&mut s, None, Some(&zw));
+        let z = s.hwzone.as_ref().unwrap();
+        assert_eq!((z.ch, z.zones.len(), z.zones[1].inside, z.clear), (1, 2, false, 4));
+        assert_eq!(s.aux, auxout::AuxOut::PassFail(auxout::PassFail { source: auxout::Source::Zone, ..auxout::PassFail::DEFAULT }));
+        // the mask test wins and keeps the mask source
+        let mut s = Settings { aux: pf, ..Settings::default() };
+        hw_merge(&mut s, Some(&mw), Some(&zw));
+        assert!(s.hwmask.is_some() && s.hwzone.is_none() && s.aux == pf);
+        let mut s = Settings::default();
+        hw_merge(&mut s, None, None);
+        assert!(s.hwmask.is_none() && s.hwzone.is_none() && s.aux == auxout::AuxOut::TriggerOut);
     }
 
     #[test]

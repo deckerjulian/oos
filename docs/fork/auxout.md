@@ -48,12 +48,13 @@ to the idle level when the acquisition ends. That a comparator hit means "fail" 
 ## Pass/fail
 
 The pass/fail source is the FPGA mask comparator. A software mask result cannot reach the pin: no register pulses it
-directly. So pass/fail works only with the hardware mask test (`mask.hw = on`, `hwmask.md`).
+directly. So pass/fail works only with the hardware mask test (`mask.hw = on`, `hwmask.md`) or the hardware
+zone trigger (`zone.hw = on`, `hwzone.md`, 0x119c bit 29 set).
 
 - hal: `auxout::PassFail { width, source, event, idle_high }`, `PassFail::word()`, field constants in `auxout::pf`,
   `PassFail::DEFAULT` (1 us high pulse on a mask failure, an OOS choice).
-- ui: the `Pass/fail` menu choice and `:SYSTem:AOUTput PFAil` are offered only with `mask.hw = on`. A setup file
-  takes the value either way; without the hardware test the output then stays low.
+- ui: the `Pass/fail` menu choice and `:SYSTem:AOUTput PFAil` are offered only with `mask.hw = on` or
+  `zone.hw = on`. A setup file takes the value either way; without a hardware test the output then stays low.
 - Width, event and polarity have no menu items yet; the menu uses the default.
 
 ## On-unit check

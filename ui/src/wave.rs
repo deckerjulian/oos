@@ -513,6 +513,19 @@ impl Source {
         None
     }
 
+    /// Hardware source: hands the zone trigger the UI wants to the acquisition thread (None: off) and returns the latest
+    /// reading; None off the hardware.
+    pub fn hw_zone(&self, want: Option<crate::board::ZoneWant>) -> Option<Option<crate::board::ZoneRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            if g.zone_want != want {
+                g.zone_want = want;
+            }
+            return Some(g.zone);
+        }
+        None
+    }
+
     /// Hardware source: hands the mask test the UI wants to the acquisition thread (None: off) and returns the latest
     /// counter reading; None off the hardware.
     pub fn hw_mask(&self, want: Option<crate::board::MaskWant>) -> Option<Option<crate::board::MaskRead>> {

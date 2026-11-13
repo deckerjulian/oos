@@ -6,7 +6,7 @@
 //! and the hardware source of `oos-ui`. Order (docs/protocols): [ADC mode] -> [AFE] -> TPU edge trigger -> wait FSM
 //! stopped -> acquisition configuration -> SCU auto/normal trigger -> arm -> wait done -> play-last read-out -> read.
 
-use crate::dho::{acq, adc, afe, auxout, hz, la, mask, scu, tpu, Write};
+use crate::dho::{acq, adc, afe, auxout, hz, la, mask, scu, tpu, zone, Write};
 
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -128,6 +128,18 @@ pub struct Settings {
     pub aux: auxout::AuxOut,
     /// the FPGA mask test (docs/fork/hwmask.md); None = off
     pub hwmask: Option<HwMask>,
+    /// the FPGA zone trigger (docs/fork/hwzone.md); None = off. It shares the mask unit's slot and strobe, so it stays
+    /// off while `hwmask` is set
+    pub hwzone: Option<HwZone>,
+}
+
+/// Zone qualification in the FPGA: up to two zones on channel `ch`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HwZone {
+    pub ch: usize,
+    pub zones: Vec<zone::Zone>,
+    /// raised to clear the qualified-frame counter
+    pub clear: u64,
 }
 
 /// A mask test in the FPGA: the volt band of each of the `mask::COLUMNS` columns on channel `ch`.
@@ -158,7 +170,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut, hwmask: None }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut, hwmask: None, hwzone: None }
     }
 }
 
@@ -182,6 +194,10 @@ pub struct State {
     pub mask_cols: Option<Vec<mask::Column>>,
     pub mask_run: Option<(u32, u32, u64, bool)>,
     pub s1190: u32,
+    /// the zone unit: tables last loaded, and (slot, samples per column, control word, clear) of the running zone
+    /// qualification (None = off)
+    pub zone_tabs: [Option<Vec<zone::Column>>; 2],
+    pub zone_run: Option<(u32, u32, u32, u64)>,
 }
 
 impl State {
@@ -195,7 +211,7 @@ impl State {
                 a.channel_mode(c, mode);
             }
         }
-        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0 }
+        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0, zone_tabs: [None, None], zone_run: None }
     }
 
     /// Configuration steps for `s` (ADC mode if the channel set changed, AFEs, trigger, acquisition registers).
@@ -302,6 +318,7 @@ impl State {
                 st.extend(auxout::writes(&s.aux).into_iter().map(Step::Wr));
                 self.aux = Some(s.aux);
             }
+            st.extend(self.zone_steps(s, &p));
             st.extend(self.mask_steps(s, &p));
         }
         if let Some(l) = &s.la {
@@ -327,8 +344,13 @@ impl State {
                 return vec![];
             }
             self.sh.s4020 = mask::scu_bits(self.sh.s4020, false, false);
-            self.s1190 &= !mask::ctrl::SLOT_MASK;
-            return vec![Step::Note("mask test off".into()), Step::Wr((0x4020, self.sh.s4020)), Step::Wr((mask::COMPRESS, mask::compress::OFF)), Step::Wr((mask::CTRL, self.s1190))];
+            let mut w = vec![Step::Note("mask test off".into()), Step::Wr((0x4020, self.sh.s4020))];
+            // the zone trigger keeps the slot and the strobe it set up
+            if self.zone_run.is_none() {
+                self.s1190 &= !mask::ctrl::SLOT_MASK;
+                w.extend([Step::Wr((mask::COMPRESS, mask::compress::OFF)), Step::Wr((mask::CTRL, self.s1190))]);
+            }
+            return w;
         };
         let k = &s.ch[m.ch];
         let cols = mask::table(&m.lo, &m.hi, k.scale, k.offset);
@@ -352,6 +374,56 @@ impl State {
         let mut st = vec![Step::Note(format!("mask test CH{} slot {}, {} samples per column{}", m.ch + 1, slot, run.1, if clear { ", counters cleared" } else { "" }))];
         st.extend(w.into_iter().map(Step::Wr));
         st
+    }
+
+    /// The zone unit for `s` (docs/fork/hwzone.md), like `mask_steps`: nothing while it runs as wanted; else off, the
+    /// tables that changed, control, compression, slot (the counter cleared on a new slot, a new start or a clear
+    /// request) and armed; off when it is not wanted, the mask test is wanted, or its channel is not acquired.
+    fn zone_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        let want = s.hwzone.as_ref().filter(|z| s.hwmask.is_none() && !z.zones.is_empty()).and_then(|z| mask::slot(s.mask, z.ch).map(|sl| (z, sl)));
+        let Some((z, slot)) = want else {
+            if self.zone_run.take().is_none() {
+                return vec![];
+            }
+            self.sh.s4020 = zone::scu_bit(self.sh.s4020, false);
+            let mut w = vec![Step::Note("zone trigger off".into()), Step::Wr((0x4020, self.sh.s4020)), Step::Wr((zone::CTRL, 0))];
+            if self.mask_run.is_none() {
+                self.s1190 &= !mask::ctrl::SLOT_MASK;
+                w.extend([Step::Wr((mask::COMPRESS, mask::compress::OFF)), Step::Wr((mask::CTRL, self.s1190))]);
+            }
+            return w;
+        };
+        let k = &s.ch[z.ch];
+        let tabs: Vec<Vec<zone::Column>> = z.zones.iter().take(2).map(|x| zone::table(x, p.memsel, p.rate, p.pre, k.scale, k.offset)).collect();
+        let n = zone::columns(p.memsel).1;
+        let run = (slot, n, zone::ctrl_word(&z.zones), z.clear);
+        if self.zone_run == Some(run) && tabs.iter().enumerate().all(|(i, t)| self.zone_tabs[i].as_ref() == Some(t)) {
+            return vec![];
+        }
+        let clear = self.zone_run.map_or(true, |r| r.0 != run.0 || r.3 != run.3);
+        let mut w = vec![];
+        self.sh.s4020 = zone::scu_bit(self.sh.s4020, false);
+        w.push((0x4020, self.sh.s4020));
+        for (i, t) in tabs.into_iter().enumerate() {
+            if self.zone_tabs[i].as_ref() != Some(&t) {
+                w.extend(zone::load(i, &t));
+                self.zone_tabs[i] = Some(t);
+            }
+        }
+        w.push((zone::CTRL, run.2));
+        w.push((mask::COMPRESS, mask::compress_word(n)));
+        w.extend(mask::select(&mut self.s1190, slot, clear));
+        self.sh.s4020 = zone::scu_bit(self.sh.s4020, true);
+        w.push((0x4020, self.sh.s4020));
+        self.zone_run = Some(run);
+        let mut st = vec![Step::Note(format!("zone trigger CH{} slot {}, control {:#x}{}", z.ch + 1, slot, run.2, if clear { ", counter cleared" } else { "" }))];
+        st.extend(w.into_iter().map(Step::Wr));
+        st
+    }
+
+    /// The control shadow while the zone trigger runs (for `zone::read`), None when it is off.
+    pub fn zone_ctrl(&self) -> Option<u32> {
+        self.zone_run.map(|_| self.s1190)
     }
 
     /// The control shadow while the mask test runs (for `mask::read`), None when it is off.
@@ -1167,6 +1239,45 @@ mod tests {
         let two = Settings { mask: 0b11, hwmask: Some(HwMask { ch: 1, ..band(1.0) }), ..base.clone() };
         let mut st = State::handover(0b11, None);
         assert!(only(&mut st, &two).contains(&(0x1190, 0x0040_0000)));
+    }
+
+    #[test]
+    fn hardware_zone_starts_hands_over_to_the_mask_and_stops() {
+        let only = |st: &mut State, s: &Settings| -> Vec<Write> {
+            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194 | 0x11d0 | 0x11d8 | 0x11dc | 0x4020)).collect()
+        };
+        let bx = |inside| zone::Zone { poly: vec![(-1e-4, 0.5), (1e-4, 1.5)], inside };
+        let z1 = HwZone { ch: 0, zones: vec![bx(true)], clear: 0 };
+        let base = Settings { window: None, ..Settings::default() };
+        let on = Settings { hwzone: Some(z1.clone()), ..base.clone() };
+        let mut st = State::handover(1, None);
+        let w = only(&mut st, &on);
+        // off, table 1 (1000 + 1), control, compression, slot with clear, armed; then the auto-trigger write
+        assert_eq!(w.len(), 1 + 1001 + 1 + 1 + 2 + 1 + 1);
+        assert_eq!(w[0], (0x4020, 0x2001));
+        assert!(w[1..1001].iter().all(|x| x.0 == 0x11d8));
+        assert_eq!(w[1002..1008], [(0x11d0, 0x0500_0000), (0x1184, 0xc000_09c4), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0x2003), (0x4020, 0x2003)]);
+        assert_eq!(st.zone_ctrl(), Some(0x0010_0000));
+        assert_eq!(only(&mut st, &on), vec![(0x4020, 0x2003)]);
+        // a second zone that must not be touched: its table, the new control word, no clear
+        let two = Settings { hwzone: Some(HwZone { zones: vec![bx(true), bx(false)], ..z1.clone() }), ..base.clone() };
+        let w = only(&mut st, &two);
+        assert!(w.iter().filter(|x| x.0 == 0x11dc).count() == 1001 && w.contains(&(0x11d0, 0x0700_0000)) && w.contains(&(0x1190, 0x0010_0000)) && !w.contains(&(0x1190, 0x6010_0000)));
+        // the mask test wins: the zone logic off, the mask keeps the slot it sets
+        let mut m = Settings { hwmask: Some(HwMask { ch: 0, lo: vec![-1.0; mask::COLUMNS], hi: vec![1.0; mask::COLUMNS], stop_on_fail: false, clear: 0 }), ..two.clone() };
+        let w = only(&mut st, &m);
+        assert_eq!(&w[..2], [(0x4020, 0x2001), (0x11d0, 0)]);
+        assert_eq!(st.zone_ctrl(), None);
+        assert!(st.mask_ctrl().is_some() && *w.last().unwrap() == (0x4020, 0xe001));
+        // back to the zone: the mask goes off without taking the zone's slot and strobe
+        m.hwmask = None;
+        let w = only(&mut st, &m);
+        assert_eq!(st.zone_ctrl(), Some(0x0010_0000));
+        assert!(!w.contains(&(0x1184, 0x4000_0001)), "{:x?}", w);
+        assert_eq!(*w.last().unwrap(), (0x4020, 0x6003));
+        // off
+        let w = only(&mut st, &base);
+        assert_eq!(w, vec![(0x4020, 0x6001), (0x11d0, 0), (0x1184, 0x4000_0001), (0x1190, 0), (0x4020, 0x6001)]);
     }
 
     #[test]
