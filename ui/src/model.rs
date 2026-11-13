@@ -958,6 +958,12 @@ pub struct Model {
     pub meas_n: u32,
     /// false = clock edges, true = data edges
     pub meas_data: bool,
+    /// rise and fall reference levels, fractions of amplitude (0.1/0.9 or 0.2/0.8)
+    pub meas_lpct: f64,
+    pub meas_hpct: f64,
+    /// Setup+Hold counts a rising clock edge whose setup is below this, or whose hold is below this
+    pub meas_tsetup: f64,
+    pub meas_thold: f64,
     /// ACPR channel width and spacing, Hz
     pub spec_acpr_w: f64,
     pub spec_acpr_s: f64,
@@ -1293,6 +1299,10 @@ impl Default for Model {
             meas_out: oos_dsp::measure::Outside::Both,
             meas_n: 2,
             meas_data: false,
+            meas_lpct: 0.1,
+            meas_hpct: 0.9,
+            meas_tsetup: 0.0,
+            meas_thold: 0.0,
             spec_acpr_w: 1e6,
             spec_acpr_s: 2e6,
             mag_v: WaveId::Ch(0),

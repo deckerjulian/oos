@@ -5,7 +5,10 @@
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
+//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
+//! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
+//! :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
@@ -86,6 +89,35 @@ fn parse_ch(s: &str) -> Option<usize> {
     let (k, n) = suffix(s.trim());
     if kw(k, "CHANnel") {
         n.filter(|&n| (1..=NCH).contains(&n)).map(|n| n - 1)
+    } else {
+        None
+    }
+}
+
+fn shown(v: f64) -> String {
+    if v.is_finite() { e(v) } else { "9.9E37".into() }
+}
+
+fn arg_item(arg: &str) -> String {
+    arg.split(',').next().unwrap_or("").trim().to_ascii_uppercase()
+}
+
+fn arg_rest(arg: &str) -> &str {
+    arg.split_once(',').map(|(_, r)| r).unwrap_or("")
+}
+
+/// A measurement source: CHANn, or a ref slot R1–R10 (also REF1–REF10).
+fn parse_wave(s: &str) -> Option<WaveId> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some(c) = parse_ch(s) {
+        return Some(WaveId::Ch(c));
+    }
+    let (k, n) = suffix(s);
+    if kw(k, "REF") || k.eq_ignore_ascii_case("R") {
+        n.filter(|&n| (1..=NREF).contains(&n)).map(|n| WaveId::Ref(n - 1))
     } else {
         None
     }
@@ -489,47 +521,100 @@ impl Scpi {
         }
         // measurement, waveform, display, system (need the record / canvas)
         let n0 = nodes.first().copied().unwrap_or("");
-        if kw(n0, "MEASure") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            let mut parts = arg.split(',');
-            let item = parts.next().unwrap_or("").trim().to_ascii_uppercase();
-            let c = parts.next().and_then(parse_ch).unwrap_or(0);
-            let k = match item.as_str() {
-                "VPP" => Meas::Vpp,
-                "VMAX" => Meas::Vmax,
-                "VMIN" => Meas::Vmin,
-                "VAVG" => Meas::Vavg,
-                "VRMS" => Meas::Vrms,
-                "VAMP" => Meas::Vamp,
-                "FREQ" | "FREQUENCY" => Meas::Freq,
-                "PER" | "PERIOD" => Meas::Period,
-                "RTIM" | "RTIME" => Meas::Rise,
-                "FTIM" | "FTIME" => Meas::Fall,
-                "PWID" | "PWIDTH" => Meas::PWidth,
-                "PDUT" | "PDUTY" => Meas::PDuty,
-                "NDUT" | "NDUTY" => Meas::NDuty,
-                "NWID" | "NWIDTH" => Meas::NWidth,
-                "VTOP" => Meas::Vtop,
-                "VBAS" | "VBASE" => Meas::Vbase,
-                "OVER" | "OVERSHOOT" => Meas::Overshoot,
-                "PRES" | "PRESHOOT" => Meas::Preshoot,
-                "HTIM" | "HTIME" => Meas::HighTime,
-                "LTIM" | "LTIME" => Meas::LowTime,
-                "BWID" | "BWIDTH" => Meas::Burst,
-                "TOUT" | "TOUTSIDE" => Meas::Outside,
-                "NPER" | "NPERIODS" => Meas::NPeriods,
-                "CAMP" | "CYCAMP" => Meas::CycAmp,
-                "CTOP" => Meas::CycTop,
-                "CBAS" | "CBASE" => Meas::CycBase,
-                "CPP" | "CYCPP" => Meas::CycPp,
-                "CMAX" => Meas::CycMax,
-                "CMIN" => Meas::CycMin,
-                _ => {
-                    self.err.push("-224,\"Illegal parameter value\"".into());
+        if kw(n0, "MEASure") && nodes.len() == 2 {
+            let n1 = nodes[1];
+            if kw(n1, "REFS") {
+                if query {
+                    let ten = ui.m.meas_lpct < 0.15 && ui.m.meas_hpct > 0.85;
+                    return t(if ten { "10/90" } else { "20/80" });
+                }
+                let a = arg.trim().replace(' ', "");
+                let (lo, hi) = if a == "10/90" || a == "1090" || a == "10" {
+                    (0.1, 0.9)
+                } else if a == "20/80" || a == "2080" || a == "20" {
+                    (0.2, 0.8)
+                } else {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                };
+                ui.m.meas_lpct = lo;
+                ui.m.meas_hpct = hi;
+                ui.measure_last();
+                ui.mark_changed();
+                return None;
+            }
+            if kw(n1, "TSETup") || kw(n1, "THOLd") {
+                let setup = kw(n1, "TSETup");
+                if query {
+                    return t(&e(if setup { ui.m.meas_tsetup } else { ui.m.meas_thold }));
+                }
+                match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+                    Some(v) => {
+                        if setup {
+                            ui.m.meas_tsetup = v;
+                        } else {
+                            ui.m.meas_thold = v;
+                        }
+                        ui.mark_changed();
+                    }
+                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
+            }
+            if kw(n1, "ITEM") && query {
+                return t(&self.meas_item(ui, arg));
+            }
+        }
+        if kw(n0, "POWer") && nodes.len() == 2 && query {
+            if kw(nodes[1], "HARMonics") {
+                let src = match self.waves(arg) {
+                    Ok(v) => v,
+                    Err(s) => {
+                        self.err.push(s);
+                        return t("9.9E37");
+                    }
+                };
+                return match ui.fact_harmonics(&src) {
+                    Ok(h) if h.is_empty() => t("9.9E37"),
+                    Ok(h) => t(&h.iter().map(|(n, a)| format!("{},{}", n, e(*a))).collect::<Vec<_>>().join(";")),
+                    Err(()) => {
+                        self.err.push("-224,\"Illegal parameter value\"".into());
+                        t("9.9E37")
+                    }
+                };
+            }
+            if kw(nodes[1], "ITEM") {
+                return self.sourced(ui, arg, |ui, item, src| ui.fact_power(item, src));
+            }
+        }
+        if kw(n0, "SPECtrum") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_spectrum(item, src));
+        }
+        if kw(n0, "MAGnetic") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_magnetic(item, src));
+        }
+        if kw(n0, "INVerter") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            let src = match self.waves(arg_rest(arg)) {
+                Ok(v) => v,
+                Err(s) => {
+                    self.err.push(s);
                     return t("9.9E37");
                 }
             };
-            let v = ui.meas(c, k);
-            return t(&if v.is_finite() { e(v) } else { "9.9E37".into() });
+            return match ui.fact_inverter(&arg_item(arg), &src) {
+                Ok(crate::ui::facts::Fact::Word(w)) => t(w),
+                Ok(crate::ui::facts::Fact::Num(v)) => t(&shown(v)),
+                Err(()) => {
+                    self.err.push("-224,\"Illegal parameter value\"".into());
+                    t("9.9E37")
+                }
+            };
+        }
+        if kw(n0, "DPT") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_dpt(item, src));
+        }
+        if kw(n0, "BANDwidth") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return self.sourced(ui, arg, |ui, item, src| ui.fact_bandwidth(item, src));
         }
         if kw(n0, "WAVeform") && nodes.len() == 2 {
             let n1 = nodes[1];
@@ -609,6 +694,25 @@ impl Scpi {
             }
             if kw(nodes[1], "DATA") && query {
                 return t(&ui.bode_text());
+            }
+            if kw(nodes[1], "MODE") {
+                const MODES: [(&str, oos_dsp::bode::Mode); 3] = [("LOOP", oos_dsp::bode::Mode::Loop), ("PSRR", oos_dsp::bode::Mode::Psrr), ("IMPedance", oos_dsp::bode::Mode::Z)];
+                if query {
+                    let name = match ui.m.bode_mode {
+                        oos_dsp::bode::Mode::Loop => "LOOP",
+                        oos_dsp::bode::Mode::Psrr => "PSRR",
+                        oos_dsp::bode::Mode::Z => "IMP",
+                    };
+                    return t(name);
+                }
+                match MODES.iter().find(|(k, _)| kw(arg, k)) {
+                    Some((_, m)) => {
+                        ui.m.bode_mode = *m;
+                        ui.mark_changed();
+                    }
+                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
             }
             if kw(nodes[1], "GENerator") {
                 if query {
@@ -907,6 +1011,125 @@ impl Scpi {
         }
         self.err.push(format!("-113,\"Undefined header\" :LA:{}", n.join(":")));
         None
+    }
+
+    fn meas_item(&mut self, ui: &Ui, arg: &str) -> String {
+        let mut parts = arg.split(',');
+        let item = parts.next().unwrap_or("").trim().to_ascii_uppercase();
+        let rest: Vec<&str> = parts.map(str::trim).filter(|s| !s.is_empty()).collect();
+        let waves = match self.waves(&rest.join(",")) {
+            Ok(v) => v,
+            Err(s) => {
+                self.err.push(s);
+                return "9.9E37".into();
+            }
+        };
+        if item == "SETHOLD" || item == "SHOLD" {
+            let (clk, data) = match waves.as_slice() {
+                [] => ui.meas_pair_sources(),
+                [a, b] => (*a, *b),
+                _ => {
+                    self.err.push("-224,\"Illegal parameter value\"".into());
+                    return "9.9E37".into();
+                }
+            };
+            return shown(ui.fact_setup_hold(clk, data));
+        }
+        let id = match waves.as_slice() {
+            [] => WaveId::Ch(0),
+            [a] => *a,
+            _ => {
+                self.err.push("-224,\"Illegal parameter value\"".into());
+                return "9.9E37".into();
+            }
+        };
+        let k = match item.as_str() {
+            "VPP" => Meas::Vpp,
+            "VMAX" => Meas::Vmax,
+            "VMIN" => Meas::Vmin,
+            "VAVG" => Meas::Vavg,
+            "VRMS" => Meas::Vrms,
+            "VAMP" => Meas::Vamp,
+            "FREQ" | "FREQUENCY" => Meas::Freq,
+            "PER" | "PERIOD" => Meas::Period,
+            "RTIM" | "RTIME" => Meas::Rise,
+            "FTIM" | "FTIME" => Meas::Fall,
+            "PWID" | "PWIDTH" => Meas::PWidth,
+            "PDUT" | "PDUTY" => Meas::PDuty,
+            "NDUT" | "NDUTY" => Meas::NDuty,
+            "NWID" | "NWIDTH" => Meas::NWidth,
+            "VTOP" => Meas::Vtop,
+            "VBAS" | "VBASE" => Meas::Vbase,
+            "OVER" | "OVERSHOOT" => Meas::Overshoot,
+            "PRES" | "PRESHOOT" => Meas::Preshoot,
+            "HTIM" | "HTIME" => Meas::HighTime,
+            "LTIM" | "LTIME" => Meas::LowTime,
+            "BWID" | "BWIDTH" => Meas::Burst,
+            "TOUT" | "TOUTSIDE" => Meas::Outside,
+            "NPER" | "NPERIODS" => Meas::NPeriods,
+            "CAMP" | "CYCAMP" => Meas::CycAmp,
+            "CTOP" => Meas::CycTop,
+            "CBAS" | "CBASE" => Meas::CycBase,
+            "CPP" | "CYCPP" => Meas::CycPp,
+            "CMAX" => Meas::CycMax,
+            "CMIN" => Meas::CycMin,
+            "ESTUI" | "UI" => Meas::EstUi,
+            "MED" | "MEDIAN" => Meas::Median,
+            "MODE" => Meas::Mode,
+            "LSLO" | "LINSLOPE" => Meas::LinSlope,
+            "LINT" | "LININT" => Meas::LinInt,
+            "PAM0" | "L0" => Meas::Pam0,
+            "PAM1" | "L1" => Meas::Pam1,
+            "PAM2" | "L2" => Meas::Pam2,
+            "PAM3" | "L3" => Meas::Pam3,
+            "PSEP" => Meas::PamSep,
+            "BITS" | "ONES" => Meas::Bits,
+            "PLLUI" => Meas::PllUi,
+            "UIWTD" => Meas::UiWtd,
+            "FOLD" => Meas::FoldRms,
+            _ => {
+                self.err.push("-224,\"Illegal parameter value\"".into());
+                return "9.9E37".into();
+            }
+        };
+        shown(ui.fact_meas(k, id))
+    }
+
+    fn waves(&mut self, arg: &str) -> Result<Vec<WaveId>, String> {
+        let mut v = Vec::new();
+        for s in arg.split(',') {
+            let s = s.trim();
+            if s.is_empty() {
+                continue;
+            }
+            // the item name is not a source; callers pass only the source list
+            match parse_wave(s) {
+                Some(id) => v.push(id),
+                None => return Err(format!("-224,\"Illegal parameter value\" {}", s)),
+            }
+        }
+        Ok(v)
+    }
+
+    fn sourced(&mut self, ui: &Ui, arg: &str, f: impl FnOnce(&Ui, &str, &[WaveId]) -> Result<f64, ()>) -> Option<Vec<u8>> {
+        let src = match self.waves(arg_rest(arg)) {
+            Ok(v) => v,
+            Err(s) => {
+                self.err.push(s);
+                return Some(b"9.9E37".to_vec());
+            }
+        };
+        self.one_fact(f(ui, &arg_item(arg), &src))
+    }
+
+    fn one_fact(&mut self, r: Result<f64, ()>) -> Option<Vec<u8>> {
+        match r {
+            Ok(v) => Some(shown(v).into_bytes()),
+            Err(()) => {
+                self.err.push("-224,\"Illegal parameter value\"".into());
+                Some(b"9.9E37".to_vec())
+            }
+        }
     }
 
     fn wave_data(&self, ui: &Ui, p: (f64, f64, f64)) -> Vec<u8> {
