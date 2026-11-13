@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""switch.py: choose what the stock Rigol loader boots on a DHO800/DHO900 card (card in the Mac reader or an image).
+"""switch.py: choose what the stock loader boots on a DHO800/DHO900 card (card in a reader or an image).
 
 The stock loader (U-Boot 2014.10-RK3399, build 2024-08-29) boots `boot`; if that image fails its check it tries
 `recovery` (OOS), then `backup` (a copy of the stock boot image, see card-install.py --fallback-stock).

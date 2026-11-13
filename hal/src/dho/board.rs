@@ -14,7 +14,7 @@ use std::time::Duration;
 pub const XADC_REG: u32 = 0x1438;
 
 /// FPGA die temperature (degC) and VCCINT (V) from register 0x1438: bits [11:0] temperature code, [27:16] VCCINT code,
-/// with the standard Xilinx XADC transfer functions.
+/// with the standard XADC transfer functions.
 pub fn xadc(raw: u32) -> (f32, f32) {
     let t = (raw & 0xfff) as f32 * 503.975 / 4096.0 - 273.15;
     let v = ((raw >> 16) & 0xfff) as f32 / 4096.0 * 3.0;

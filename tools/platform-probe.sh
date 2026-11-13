@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# platform-probe.sh - READ-ONLY description of a Rigol scope running its stock software, for porting OOS to it
+# platform-probe.sh - READ-ONLY description of a scope running its stock software, for porting OOS to it
 # (MHO900, DHO1000, ...). Run it on a PC with adb, the scope on the same network with network adb on.
 #
 #   platform-probe.sh <scope-ip>[:port]

@@ -21,7 +21,7 @@
 //!                                          BOOT command (slots 0x0 / 0x400000 only) and the PCIe/xdma bring-up;
 //!                                          --ignore-clock: 0x1210 out of range only warns, counter logged per step
 //!   oos-fpgad pll [--reset | --r0 <val>]                LMX2582 table over GPIO (LE idles high first like spi2pll_lxm2582_gpio.ko;
-//!                                          --reset: R0 RESET=1/0 first, as the TI datasheet asks), then reads 0x1210
+//!                                          --reset: R0 RESET=1/0 first, as the datasheet asks), then reads 0x1210
 //!   oos-fpgad pll --freq <Hz> --dry        table for another ADC clock (oos_hal::dho::lmx2582, pll.md) and its decode,
 //!                                          no hardware access; without --dry only 1.25 GHz (others are untested)
 //!   oos-fpgad gpio <line> <0|1> [--hold 60]  drive a GPIO line (by DT name) and keep it for --hold seconds
@@ -678,7 +678,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                     send(&mut pll, [0, 0x00, 0x00]);
                     println!("LMX2582 reset (R0 = 0x0002, 0x0000)");
                 }
-                // Rigol's table, or the experimental one of limits.conf `adc.clock_hz` (as the cold boot)
+                // the stock table, or the experimental one of limits.conf `adc.clock_hz` (as the cold boot)
                 let table = oos_hal::dho::boot::pll_table()?;
                 if oos_hal::dho::clock::overclocked() {
                     println!("LMX2582: EXPERIMENTAL ADC clock {} Hz from limits.conf", oos_hal::dho::clock::adc_hz());
@@ -910,8 +910,8 @@ fn selfcal(a: &[String]) -> Result<(), String> {
     let ch = get("--ch").ok_or("--ch 1..4")?.parse::<usize>().map_err(|e| e.to_string())?.checked_sub(1).filter(|c| *c < 4).ok_or("--ch 1..4")?;
     let var = get("--var").map_or(Ok(2), |v| v.parse::<usize>()).map_err(|e| e.to_string())?.min(3);
     let limit = get("--limit").map_or(Ok(usize::MAX), |v| v.parse::<usize>()).map_err(|e| e.to_string())?;
-    let rigol = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
-    let cal = afe::Cal::load(&rigol).map_err(|e| format!("{}: {}", rigol, e))?;
+    let cal_dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
+    let cal = afe::Cal::load(&cal_dir).map_err(|e| format!("{}: {}", cal_dir, e))?;
     let block = cal.block(var, ch);
     let entries = sc::entries_of(&block);
     let tuples: Vec<[i32; 7]> = match get("--tuple") {
@@ -946,7 +946,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
         }
         let mut afe_bus = afe::GpioAfe::open().map_err(|e| format!("AFE GPIO: {}", e))?;
         // a full configuration of the channel first, so the AFE shadows match the unit (ADC mode = this channel only)
-        let cal_adc = adc::CalAdc::load(&rigol).ok();
+        let cal_adc = adc::CalAdc::load(&cal_dir).ok();
         let mut state = seq::State::handover(1, cal_adc.as_ref());
         let st = Settings { mask: 1 << ch, trig_src: ch as u32 + 1, afe: true, ..Settings::default() };
         let (steps, _) = state.configure(&st, Some(&cal), cal_adc.as_ref())?;
@@ -988,7 +988,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
             })?;
             println!("  {} configurations, largest change {:.2} %", r.measured, r.worst * 100.0);
             if has("--save") {
-                for f in sc::save(&r, &rigol)? {
+                for f in sc::save(&r, &cal_dir)? {
                     println!("  saved {}", f);
                 }
             }
@@ -1002,7 +1002,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
                 let z = sc::afe_zero(&mut hw, &mut a, cal.zero_trims(ch))?;
                 println!("  new  {:?}\n  table {:?}  ({:.1} s)", z, cal.zero_trims(ch), t0.elapsed().as_secs_f64());
                 if has("--save") {
-                    let (b, from) = calfile::load_first("cal_afe_zero.hex", &[calfile::OOS_CAL_DIR, &rigol]).ok_or("no cal_afe_zero.hex")?;
+                    let (b, from) = calfile::load_first("cal_afe_zero.hex", &[calfile::OOS_CAL_DIR, &cal_dir]).ok_or("no cal_afe_zero.hex")?;
                     let p = sc::zero_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, ch, &z);
                     calfile::save(calfile::OOS_CAL_DIR, "cal_afe_zero.hex", &p, calfile::now()).map_err(|e| e.to_string())?;
                     println!("  saved {}/cal_afe_zero.hex (base: {})", calfile::OOS_CAL_DIR, from);
@@ -1046,7 +1046,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
                     let keys: Vec<i64> = (0..801).map(|i| cal.key(i)).collect();
                     let mut nb = block.clone();
                     sc::rebuild_scales(&mut nb, &keys, &got);
-                    let (b, from) = calfile::load_first("cal_vertical.hex", &[calfile::OOS_CAL_DIR, &rigol]).ok_or("no cal_vertical.hex")?;
+                    let (b, from) = calfile::load_first("cal_vertical.hex", &[calfile::OOS_CAL_DIR, &cal_dir]).ok_or("no cal_vertical.hex")?;
                     let p = sc::vertical_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, &[(var, ch, nb)]);
                     calfile::save(calfile::OOS_CAL_DIR, "cal_vertical.hex", &p, calfile::now()).map_err(|e| e.to_string())?;
                     println!("  saved {}/cal_vertical.hex block group {} CH{} (base: {})", calfile::OOS_CAL_DIR, var, ch + 1, from);

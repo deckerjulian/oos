@@ -1399,7 +1399,7 @@ def analysers_show_the_signal(s, o):
 
 
 # Worst first: the analysers work on the whole record, so a deep record is what shows a slow one. The floors are about
-# half of what the unit measured on 2026-11-07, low enough for a busy Mac, high enough to catch a slowed-down analyser.
+# half of what the unit measured on 2026-11-07, low enough for a busy host, high enough to catch a slowed-down analyser.
 VIEW_FPS_FLOOR = 8.0
 VIEW_LATENCY_MAX = 1.0
 

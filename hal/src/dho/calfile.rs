@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_and_save_refuses_rigol() {
+    fn errors_and_save_refuses_stock_dir() {
         let b = build(&[1, 2, 3, 4], (2026, 11, 3, 21, 5, 9));
         assert_eq!(parse(&b), Ok(&[1u8, 2, 3, 4][..]));
         assert_eq!(stamp(&b), Some((2026, 11, 3, 21, 5, 9)));

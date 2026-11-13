@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Reference model of the AFE setting path, see docs/protocols/afe-settings.md.
-# Default: the filters of the unit; --stock: Rigol 1.04 for comparison.
+# Default: the filters of the unit; --stock: firmware 1.04 for comparison.
 # Models the per-channel shadow registers and prints the AFE write sequence (plus gear ioctl and ADC words).
 import os, struct, sys
 # calibration data of a unit after a self-cal: an older copy can have block group 3 of cal_vertical empty

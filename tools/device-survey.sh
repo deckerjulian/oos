@@ -54,7 +54,7 @@ run misc-devices      'cat /proc/misc; ls -l /dev | grep -E "spi|xdma|afg|dac|fg
 run i2c-sysfs         'for b in /sys/bus/i2c/devices/*; do echo "$b name=$(cat $b/name 2>/dev/null) driver=$(basename $(readlink $b/driver 2>/dev/null) 2>/dev/null)"; done'
 run interrupts        'cat /proc/interrupts'
 run dmesg             'dmesg'
-run rigol-tree        'ls -laR /rigol | head -400; echo; getprop | grep -i rigol'
+run stock-tree        'ls -laR /rigol | head -400; echo; getprop | grep -i rigol'
 run fpga-version      '/rigol/tools/pcie2dev 0x4000; /rigol/tools/pcie2dev 0x401c'
 
 if [ "$keys" -eq 1 ]; then

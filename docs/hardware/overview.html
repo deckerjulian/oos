@@ -29,7 +29,7 @@ svg text{font-family:inherit}
 </style></head>
 <body><main>
 <h1>How the scope works</h1>
-<p class="lead text">A map of the Rigol DHO800/DHO900 hardware: what the parts are, how a signal travels through them, and how the logic analyser and the generator fit in.</p>
+<p class="lead text">A map of the DHO800/DHO900 hardware: what the parts are, how a signal travels through them, and how the logic analyser and the generator fit in.</p>
 <nav><a href="#big">The big picture</a><a href="#analog">Analog channel</a><a href="#acq">Acquisition</a><a href="#trig">Trigger</a><a href="#la">Logic analyser</a><a href="#afg">Generator</a><a href="#clk">Clocks</a><a href="#start">Start-up</a><a href="#buses">Who talks to whom</a><a href="#models">Models</a><a href="#status">How sure is this</a></nav>
 
 <h2 id="big">The big picture</h2>
@@ -73,7 +73,7 @@ svg text{font-family:inherit}
 <div class="text"><p>OOS limits the output to: sine, noise and DC up to 60 MHz, square 15 MHz, pulse 2 MHz, ramp 150 kHz, arbitrary 10 MHz. The output is switched on in a fixed order: relays safe, supply on, relay code, then the FPGA.</p></div>
 
 <h2 id="clk">Clocks</h2>
-<div class="text"><p>One PLL chip, the TI LMX2582, makes the 1.25 GHz sample clock. Almost everything with a time in it follows from that number.</p></div>
+<div class="text"><p>One PLL chip, the LMX2582, makes the 1.25 GHz sample clock. Almost everything with a time in it follows from that number.</p></div>
 <table><tr><th>Clock</th><th>Value</th><th>Used by</th></tr>
 <tr><td>ADC clock</td><td>1.25 GHz</td><td>ADC; the expected count of a self-check in the FPGA</td></tr>
 <tr><td>ADC / 8</td><td>156.25 MHz, 6.4 ns</td><td>generator, roll stream, trigger time ticks</td></tr>

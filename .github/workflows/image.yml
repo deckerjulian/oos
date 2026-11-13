@@ -1,5 +1,5 @@
 # The whole image on Linux, as a release is built: kernel, initramfs, boot image, update package, USB install file.
-# Twice: on an arm64 runner (natively, the same compiler as on a Mac with Apple silicon) and on an x86-64 runner (cross
+# Twice: on an arm64 runner (natively, the same compiler as on an arm64 host) and on an x86-64 runner (cross
 # compiler for the kernel and oos-hw, QEMU for the arm64 containers). The last job compares what the two put into the
 # image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from
 # the programs built from the OOS source (see the job). The packages themselves hold the build time and differ always.
@@ -75,7 +75,7 @@ jobs:
       # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,
       # wpa_supplicant, e2fsck, scripts. The programs built from the OOS source only get a notice: Cargo mixes the host
       # into its crate hashes (rustc -vV says "host: ..."), which ends up in the symbol names and the code layout, and
-      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
+      # the distribution's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
       - name: arm64 and x86-64 builds the same
         run: |
           own='  initramfs/bin/oos-(hw|ui|fpgad|update)$'

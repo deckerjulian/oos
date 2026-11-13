@@ -10,7 +10,7 @@
 //! real time t -> nominal t * f / f0 before the model, nominal rate r -> real r * f / f0 after it.
 //!
 //! The clock is `model::platform().limits.adc_clock_hz`: 1.25 GHz unless limits.conf sets `adc.clock_hz` (experimental,
-//! for the overclocking test; the cold boot then writes `lmx2582::table_for` instead of Rigol's table). At 1.25 GHz
+//! for the overclocking test; the cold boot then writes `lmx2582::table_for` instead of the stock table). At 1.25 GHz
 //! every conversion is the identity, so nothing changes for normal use.
 
 /// The clock all of the stock tables and the models are made for.

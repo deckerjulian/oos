@@ -50,7 +50,7 @@ Bandwidth codes: 5 = 70, 6 = 100, 7 = 125, 10 = 250 MHz (`protocols/afe-settings
 4 = 50 and 9 = 200. HDO1000/2000/4000 models are other boards, which OOS does not support (see section 6).
 
 How OOS fills the three right-hand columns: LA = series 900, generator = name ends in "S", EXT trigger = 2 channels.
-These come from Rigol's model line-up. Not yet verified on hardware: whether the EDU variants have the LA port.
+These come from the model line-up. Not yet verified on hardware: whether the EDU variants have the LA port.
 
 OOS takes "DHO914S" as DHO914 plus generator.
 
@@ -173,7 +173,7 @@ Still open for models other than the DHO924S:
 - DHO800: front panel, LEDs and display are not yet verified on hardware.
 - Logic analyser in the UI: not implemented on any model (`hal::dho::la` exists).
 
-## 6. Related findings (other Rigol series)
+## 6. Related findings (other series)
 
 Series configurations:
 

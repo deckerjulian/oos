@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Automatic measurements (conventions of Rigol / IEEE 181: top and base from the histogram, 10/50/90 % reference
+//! Automatic measurements (conventions of IEEE 181: top and base from the histogram, 10/50/90 % reference
 //! levels, edges at the 50 % level with 10 % hysteresis, time values averaged over all complete cycles in the record).
 
 use crate::edges::edges;

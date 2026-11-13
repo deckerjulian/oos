@@ -353,7 +353,7 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
                 ("protocolVersion", J::Str(ver)),
                 ("capabilities", J::obj(&[("tools", J::obj(&[]))])),
                 ("serverInfo", J::obj(&[("name", J::s("oos-ui")), ("version", J::s(env!("CARGO_PKG_VERSION")))])),
-                ("instructions", J::s("Rigol DHO924S running OOS. Use the scpi tool with Rigol-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
+                ("instructions", J::s("DHO924S running OOS. Use the scpi tool with stock-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
             ])
         }
         "ping" => J::obj(&[]),
@@ -723,7 +723,7 @@ setTimeout(() => {
         q(":BODE:GEN \"10.0.0.9:5025\"");
         assert_eq!(q(":BODE:GEN?"), "10.0.0.9:5025");
         assert_eq!(q(":BODE:DATA?"), "");
-        // built-in generator, Rigol forms
+        // built-in generator, stock forms
         q(":SOUR:FREQ 12345.6");
         q(":SOURce1:VOLTage:LEVel:IMMediate:AMPLitude 0.5");
         q(":SOUR:VOLT:OFFS 0.25");

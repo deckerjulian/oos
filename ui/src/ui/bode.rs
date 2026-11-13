@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Bode plot with the built-in generator (S models, `Board::gen`) or an external generator on the LAN:
-//! OOS sends SCPI to the generator (presets for Rigol DG, Siglent SDG and plain SCPI), steps a logarithmic sweep, sets the time base to about 5 periods per screen,
+//! OOS sends SCPI to the generator (presets for APPL, BSWV and plain SCPI), steps a logarithmic sweep, sets the time base to about 5 periods per screen,
 //! measures gain and phase of the output channel against the input channel by a sine fit on every captured sample
 //! (`oos_dsp::bode`) and draws both curves. The generator connection runs in its own thread. With the built-in
 //! generator and input = output channel the gain is against the set amplitude and there is no phase.
@@ -14,8 +14,8 @@ use std::sync::mpsc;
 /// Generator presets: name, command template (`{f}` Hz, `{a}` Vpp), output on. Entry `BUILTIN` is the scope's own.
 pub const GENERATORS: [(&str, &str, &str); 4] = [
     ("Built-in", "", ""),
-    ("Rigol DG", ":SOUR1:APPL:SIN {f},{a},0", ":OUTP1 ON"),
-    ("Siglent SDG", "C1:BSWV WVTP,SINE,FRQ,{f},AMP,{a},OFST,0", "C1:OUTP ON"),
+    ("APPL", ":SOUR1:APPL:SIN {f},{a},0", ":OUTP1 ON"),
+    ("BSWV", "C1:BSWV WVTP,SINE,FRQ,{f},AMP,{a},OFST,0", "C1:OUTP ON"),
     ("SCPI", "FREQ {f};VOLT {a}", "OUTP ON"),
 ];
 

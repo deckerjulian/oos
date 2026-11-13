@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
+//! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
@@ -247,7 +247,7 @@ fn nearest(ladder: &[f32], v: f32) -> usize {
     best
 }
 
-/// Rigol number format: 7 significant digits, two-digit exponent ("2.000000E-04").
+/// Stock number format: 7 significant digits, two-digit exponent ("2.000000E-04").
 fn e(v: f64) -> String {
     if !v.is_finite() {
         return "9.9E37".into();
@@ -561,7 +561,7 @@ impl Scpi {
                         if query {
                             return Some(t(&m.trig_line().map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
                         }
-                        // D0..D15 like Rigol's source names, with the LA on
+                        // D0..D15 like the stock source names, with the LA on
                         match arg.trim().to_ascii_uppercase().strip_prefix('D').and_then(|n| n.parse::<u8>().ok()).filter(|&n| n < 16 && m.trig_la_ok()) {
                             Some(n) => m.trig_la = Some(n),
                             None => (m.trig_src, m.trig_la) = (parse_ch(arg)?, None),
@@ -757,7 +757,7 @@ impl Scpi {
                 }
                 return None;
             }
-            // modulation (Rigol DG style): :MOD[:STATe] ON|OFF, :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh <%>, :MOD:FM:DEViation <Hz>,
+            // modulation (APPL style): :MOD[:STATe] ON|OFF, :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh <%>, :MOD:FM:DEViation <Hz>,
             // :MOD:PM:DEViation <deg>, :MOD:<type>:INTernal:FREQuency <Hz>, :MOD:<type>:INTernal:FUNCtion <shape>
             if has("MOD") {
                 const SHAPES: [&str; 6] = ["SINusoid", "SQUare", "TRIangle", "RAMP", "NRAMp", "NOISe"];
@@ -943,7 +943,7 @@ impl Scpi {
         (pts, (pre, (yinc, yorg, yref)))
     }
 
-    /// `:LA:...` (Rigol's names where they exist): state, lines shown, pod thresholds, and the record of the last
+    /// `:LA:...` (the stock names where they exist): state, lines shown, pod thresholds, and the record of the last
     /// acquisition: `:LA:DATA?` is an IEEE block of u16 words, little endian, bit n = Dn, sample k at
     /// t0 + k dt from `:LA:PREamble?` (points,dt,t0).
     fn la_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
