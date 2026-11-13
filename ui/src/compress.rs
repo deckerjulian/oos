@@ -46,6 +46,17 @@ pub fn enabled() -> bool {
     })
 }
 
+/// The live-compression factor of the last batch read: 1 for raw frames (`:SYSTem:STATe?` `compress k`).
+static LAST_K: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+pub fn note_batch_k(k: u32) {
+    LAST_K.store(k, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn last_k() -> u32 {
+    LAST_K.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// `env` if set, else the `acq.compress` line of `conf`; off unless `on`.
 pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
     crate::drawpipe::conf_value(env, conf, "acq.compress").as_deref() == Some("on")

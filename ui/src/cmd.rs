@@ -134,7 +134,7 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = format!(" parts meas {:.1} analyse {:.1} pane {:.1} max {:.1} ms{}", p[0], p[1], p[2], p[3], gpu);
     let (acq, used, dropped) = crate::drawpipe::counters().read();
     let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
-    let gpu = format!("{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {}", gpu, crate::drawpipe::mode(), crate::sparse::interp(), acq, used, dropped, measured);
+    let gpu = format!("{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {} compress k {}", gpu, crate::drawpipe::mode(), crate::sparse::interp(), acq, used, dropped, measured, crate::compress::last_k());
     // the graphics chosen (the GPU part above only while the GPU really draws) and the monitor
     let hdmi = ui.hdmi_out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));
     // the GPU's time per frame of each screen: a monitor frame comes every second frame, the pair has 2/30 s
