@@ -2,15 +2,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
-//! *IDN? *RST *OPC[?] *ESR? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
+//! *IDN? *RST *OPC[?] *CLS *ESR?, :RUN :STOP :SINGle :TFORce :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE[?]|TYPe[?] :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
-//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:GATing SCREEN|NONE, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar,
+//! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
+//! :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta,
+//! :DVM:ENABle|SOURce|MODE|CURRent?, :COUNter:ENABle|SOURce|MODE|NDIGits|CURRent?,
+//! :MEASure:GATing SCREEN|NONE,
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
-//! :WAVeform:SOURce CHANn|Rn|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
-//! :REFerence:SLOT R1..R10, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
+//! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
+//! :DISPlay:DATA? [BMP|PNG],
+//! :REFerence:SLOT R1..R10, :CURRent, :SOURce, :VSCale, :VOFFset, :LABel:CONTent, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
 //! :SIM:PRESet <name>, :SIM:SLOT R1..R10, :SIM:PLAY ON|OFF, :SIM:SHOW ON|OFF,
 //! :SIM:SSC:MODE OFF|DOWN|CENTER, :SIM:SSC:DEViation <fraction>, :SIM:SSC:FREQuency <Hz>,
 //! :SIM:JITTer:DCD <seconds pp>|:CORRelated <seconds RMS>|:CORNer <Hz>, :SIM:PATTern PRBS7..31.
@@ -43,6 +48,8 @@ pub struct Program {
     waiting: Option<crate::ui::Operations>,
     separator: u8,
     pub bytes: usize,
+    /// A completed query may legitimately produce zero payload bytes.
+    pub has_reply: bool,
     invalid: bool,
 }
 impl Program {
@@ -58,15 +65,16 @@ impl Program {
         Self { commands, separator: b';', bytes: text.len(), ..Self::default() }
     }
     fn append(&mut self, reply: &[u8]) {
-        if !self.out.is_empty() { self.out.push(self.separator); }
-        self.out.extend_from_slice(reply); self.separator = b';';
+        if self.has_reply { self.out.push(self.separator); }
+        self.out.extend_from_slice(reply); self.separator = b';'; self.has_reply = true;
     }
     /// Adapter used by transport unit fixtures with a synchronous test interpreter.
     #[cfg(test)]
     pub fn immediate(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) -> Vec<u8> {
         while let Some((command, new_line)) = self.commands.pop_front() {
-            if new_line && !self.out.is_empty() { self.separator = b'\n'; }
-            let reply = exec(&command); if !reply.is_empty() { self.append(&reply); }
+            if new_line && self.has_reply { self.separator = b'\n'; }
+            let reply = exec(&command);
+            if !reply.is_empty() || command.split_whitespace().next().is_some_and(|header| header.ends_with('?')) { self.append(&reply); }
         }
         std::mem::take(&mut self.out)
     }
@@ -116,10 +124,15 @@ pub struct Scpi {
     /// :WAVeform:SOURce, a channel or a reference slot
     wav_src: WaveId,
     wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
-    /// :WAVeform:MODE: false = the screen CH record, true = the entire retained native CH acquisition (RAW); refs are full records in either mode
-    wav_raw: bool,
+    /// :WAVeform:MODE: 0 NORMal (screen), 1 MAXimum (memory while stopped), 2 RAW (memory)
+    wav_mode: u8,
+    /// :WAVeform:STARt and :WAVeform:STOP, 1-based inclusive. `stop == 0` reads through the last point.
+    wav_start: u64,
+    wav_stop: u64,
     err: Vec<String>,
     event_status: u8,
+    error_serial: u64,
+    last_error: Option<String>,
     opc_events: Vec<crate::ui::Operations>,
 }
 
@@ -348,7 +361,32 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_raw: false, err: Vec::new(), event_status: 0, opc_events: Vec::new() }
+        Scpi { l, clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_mode: 0, wav_start: 1, wav_stop: 0, err: Vec::new(), event_status: 0, error_serial: 0, last_error: None, opc_events: Vec::new() }
+    }
+
+    /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
+    /// so a client blocked on a line never waits forever.
+    fn push_err(&mut self, mut message: String) {
+        if message.len() > ERR_LEN {
+            let mut end = ERR_LEN;
+            while !message.is_char_boundary(end) { end -= 1; }
+            message.truncate(end);
+        }
+        let code = message.split(',').next().unwrap_or("").trim().parse::<i32>().unwrap_or(0);
+        self.event_status |= match code {
+            -199..=-100 => 32,
+            -299..=-200 => 16,
+            -399..=-300 => 8,
+            -499..=-400 => 4,
+            _ => 16,
+        };
+        self.error_serial = self.error_serial.wrapping_add(1);
+        self.last_error = Some(message.clone());
+        if self.err.len() < ERR_MAX { self.err.push(message); }
+        else {
+            self.err[ERR_MAX - 1] = "-350,\"Queue overflow\"".into();
+            self.event_status |= 8;
+        }
     }
 
     pub fn port(&self) -> Option<u16> {
@@ -401,7 +439,7 @@ impl Scpi {
                     self.clients[i].program = Some(program);
                     break;
                 };
-                if !response.is_empty() {
+                if program.has_reply {
                     response.push(b'\n');
                     if !send(&mut self.clients[i].s, &response) { closed = true; break; }
                 }
@@ -423,12 +461,16 @@ impl Scpi {
     }
 
     pub fn exec_line_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<Vec<u8>, &'static str> {
+        self.exec_message_checked(ui, cv, line).map(|(response, _)| response)
+    }
+
+    pub fn exec_message_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<(Vec<u8>, bool), &'static str> {
         let mut program = Program::new(line);
         match self.poll_program(ui, cv, &mut program) {
-            Some(response) => Ok(response),
+            Some(response) => Ok((response, program.has_reply)),
             None => {
                 let error = "Operation pending; use raw TCP or HiSLIP for *OPC?";
-                self.err.push(format!("-221,\"{}\"", error));
+                self.push_err(format!("-221,\"{}\"", error));
                 self.normalize_errors();
                 Err(error)
             }
@@ -451,32 +493,46 @@ impl Scpi {
         response
     }
 
+    fn append_program_reply(&mut self, program: &mut Program, response: &[u8]) -> bool {
+        let separator = usize::from(program.has_reply);
+        if response.len() > RESP_MAX.saturating_sub(program.out.len().saturating_add(separator)) {
+            self.push_err("-363,\"Output buffer overrun; remaining commands dropped\"".into());
+            program.commands.clear();
+            return false;
+        }
+        program.append(response);
+        true
+    }
+
     fn advance_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
         self.poll_events(ui);
-        if program.invalid { self.err.push("-363,\"Program message too large or too many commands\"".into()); return Some(Vec::new()); }
+        if program.invalid { self.push_err("-363,\"Program message too large or too many commands\"".into()); return Some(Vec::new()); }
         if let Some(fence) = &program.waiting {
             match fence.state(ui) {
                 crate::ui::OperationState::Pending => return None,
-                crate::ui::OperationState::Complete => { program.waiting = None; program.append(b"1"); },
+                crate::ui::OperationState::Complete => {
+                    program.waiting = None;
+                    if !self.append_program_reply(program, b"1") { return Some(std::mem::take(&mut program.out)); }
+                },
                 crate::ui::OperationState::Cancelled => {
-                    self.err.push("-410,\"OPC query interrupted by cancelled operation\"".into());
-                    program.commands.clear(); program.out.clear(); program.waiting = None;
+                    self.push_err("-410,\"OPC query interrupted by cancelled operation\"".into());
+                    program.commands.clear(); program.out.clear(); program.has_reply = false; program.waiting = None;
                     return Some(Vec::new());
                 }
             }
         }
         while let Some((command, new_line)) = program.commands.pop_front() {
-            if new_line && !program.out.is_empty() { program.separator = b'\n'; }
+            if new_line && program.has_reply { program.separator = b'\n'; }
             if program.out.len() >= RESP_MAX {
-                self.err.push("-363,\"Input buffer overrun\" rest of the line dropped".into());
+                self.push_err("-363,\"Input buffer overrun\" rest of the line dropped".into());
                 program.commands.clear(); break;
             }
             if command.eq_ignore_ascii_case("*OPC?") {
                 let fence = ui.scpi_operations();
                 if fence.state(ui) == crate::ui::OperationState::Pending { program.waiting = Some(fence); return None; }
-                program.append(b"1");
+                if !self.append_program_reply(program, b"1") { break; }
             } else if let Some(response) = self.exec(ui, cv, &command) {
-                program.append(&response);
+                if !self.append_program_reply(program, &response) { break; }
             }
         }
         Some(std::mem::take(&mut program.out))
@@ -484,9 +540,20 @@ impl Scpi {
 
     fn exec(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
         if let Some(error) = ui.take_sim_error() {
-            self.err.push(format!("-224,\"SIM generation failed\" {error}"));
+            self.push_err(format!("-224,\"SIM generation failed\" {error}"));
         }
+        let before = self.error_serial;
         let r = self.exec_cmd(ui, cv, cmd);
+        // a query with no payload would leave the client blocked on the next line: answer with the error instead
+        let query = cmd.split_whitespace().next().unwrap_or("").ends_with('?');
+        let r = if query && r.is_none() {
+            if self.error_serial == before {
+                self.push_err(format!("-113,\"Undefined header\" {}", cmd));
+            }
+            self.last_error.as_ref().map(|error| error.as_bytes().to_vec())
+        } else {
+            r
+        };
         self.normalize_errors();
         r
     }
@@ -500,7 +567,7 @@ impl Scpi {
         }
         if self.err.len() > ERR_MAX {
             self.err.truncate(ERR_MAX - 1);
-            self.err.push("-350,\"Queue overflow\"".into());
+            self.push_err("-350,\"Queue overflow\"".into());
         }
     }
 
@@ -525,7 +592,7 @@ impl Scpi {
             "*OPC" if !query => {
                 self.poll_events(ui);
                 if self.opc_events.len() < 64 { self.opc_events.push(ui.scpi_operations()); }
-                else { self.err.push("-350,\"Too many pending OPC events\"".into()); }
+                else { self.push_err("-350,\"Too many pending OPC events\"".into()); }
                 self.poll_events(ui);
                 return None;
             }
@@ -582,6 +649,17 @@ impl Scpi {
             ui.key(crate::ui::key::CLEAR);
             return None;
         }
+        // Rigol: a forced trigger releases Normal or Single when the level never crosses. On a reference or SIM
+        // session that is the replay flag; on the live path it is the same key as the front panel.
+        if !query && nodes.len() == 1 && kw(nodes[0], "TFORce") {
+            if ui.record_mode() {
+                ui.record_key(crate::ui::key::FORCE);
+            } else {
+                ui.key(crate::ui::key::FORCE);
+            }
+            ui.mark_changed();
+            return None;
+        }
         if !query && nodes.len() == 1 && kw(nodes[0], "STOP") && ui.sim_generating() {
             let _ = ui.sim_play_set(false);
             ui.mark_changed();
@@ -628,13 +706,13 @@ impl Scpi {
                     return t(&match id { WaveId::Ref(i) => format!("R{}", i + 1), WaveId::Ch(c) => format!("CHAN{}", c + 1) });
                 }
                 if let Some(id) = parse_wave(arg) {
-                    if !ui.set_trigger_source(id, secondary) { self.err.push("-224,\"Trigger source is unavailable\"".into()); }
+                    if !ui.set_trigger_source(id, secondary) { self.push_err("-224,\"Trigger source is unavailable\"".into()); }
                     ui.mark_changed();
                     return None;
                 }
                 // Leave D0..D15 to the existing LA source handler.
                 if !arg.trim().to_ascii_uppercase().starts_with('D') {
-                    self.err.push("-224,\"Invalid trigger source\"".into());
+                    self.push_err("-224,\"Invalid trigger source\"".into());
                     return None;
                 }
             }
@@ -655,7 +733,7 @@ impl Scpi {
                     "BUS" => Some(TrigType::Bus), _ => None,
                 };
                 if let Some(kind) = kind { ui.trigger_type_set(kind); ui.mark_changed(); }
-                else { self.err.push("-224,\"Invalid trigger type\"".into()); }
+                else { self.push_err("-224,\"Invalid trigger type\"".into()); }
                 return None;
             }
             if nodes.len() == 3 && kw(nodes[1], "RUNT") {
@@ -664,7 +742,7 @@ impl Scpi {
                 if let Some(value) = value {
                     if query { return t(&e(*value as f64)); }
                     if let Some(number) = num(arg) { *value = number; ui.mark_changed(); }
-                    else { self.err.push("-224,\"Invalid runt threshold\"".into()); }
+                    else { self.push_err("-224,\"Invalid runt threshold\"".into()); }
                     return None;
                 }
             }
@@ -911,11 +989,37 @@ impl Scpi {
                 let full_record = if kw(arg.trim(), "SCReen") { false }
                     else if kw(arg.trim(), "NONE") { true }
                     else {
-                        self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                         return None;
                     };
                 ui.set_measurement_full_record(full_record);
                 return None;
+            }
+            if kw(n1, "SOURce") {
+                if query {
+                    return t(&wave_tok(ui.meas_source()));
+                }
+                let words: Vec<_> = arg.split(',').map(str::trim).collect();
+                if words.is_empty() || words.len() > 2 || words.iter().any(|word| word.is_empty()) {
+                    self.push_err("-224,\"Illegal parameter value\"".into());
+                    return None;
+                }
+                let Some(a) = self.named_source(words[0]) else { return None };
+                let b = if words.len() == 2 {
+                    let Some(b) = self.named_source(words[1]) else { return None };
+                    Some(b)
+                } else { None };
+                ui.set_meas_source(a);
+                if let Some(b) = b { ui.set_meas_source_b(b); }
+                ui.mark_changed();
+                return None;
+            }
+            if kw(n1, "CLEar") && !query {
+                ui.meas_clear_remote();
+                return None;
+            }
+            if kw(n1, "ITEM") && !query {
+                return self.meas_place(ui, arg);
             }
             if kw(n1, "REFS") {
                 if query {
@@ -928,7 +1032,7 @@ impl Scpi {
                 } else if a == "20/80" || a == "2080" || a == "20" {
                     (0.2, 0.8)
                 } else {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                     return None;
                 };
                 ui.m.meas_lpct = lo;
@@ -951,7 +1055,7 @@ impl Scpi {
                         }
                         ui.mark_changed();
                     }
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -964,7 +1068,7 @@ impl Scpi {
                 let src = match self.waves(arg) {
                     Ok(v) => v,
                     Err(s) => {
-                        self.err.push(s);
+                        self.push_err(s);
                         return t("9.9E37");
                     }
                 };
@@ -972,7 +1076,7 @@ impl Scpi {
                     Ok(h) if h.is_empty() => t("9.9E37"),
                     Ok(h) => t(&h.iter().map(|(n, a)| format!("{},{}", n, e(*a))).collect::<Vec<_>>().join(";")),
                     Err(()) => {
-                        self.err.push("-224,\"Illegal parameter value\"".into());
+                        self.push_err("-224,\"Illegal parameter value\"".into());
                         t("9.9E37")
                     }
                 };
@@ -991,7 +1095,7 @@ impl Scpi {
             let src = match self.waves(arg_rest(arg)) {
                 Ok(v) => v,
                 Err(s) => {
-                    self.err.push(s);
+                    self.push_err(s);
                     return t("9.9E37");
                 }
             };
@@ -999,7 +1103,7 @@ impl Scpi {
                 Ok(crate::ui::facts::Fact::Word(w)) => t(w),
                 Ok(crate::ui::facts::Fact::Num(v)) => t(&shown(v)),
                 Err(()) => {
-                    self.err.push("-224,\"Illegal parameter value\"".into());
+                    self.push_err("-224,\"Illegal parameter value\"".into());
                     t("9.9E37")
                 }
             };
@@ -1019,17 +1123,25 @@ impl Scpi {
                 if let Some(id) = parse_wave(arg) {
                     self.wav_src = id;
                 } else if !arg.is_empty() {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 }
                 return None;
             }
             if kw(n1, "MODE") {
                 if query {
-                    return t(if self.wav_raw { "RAW" } else { "NORM" });
+                    return t(["NORM", "MAX", "RAW"][self.wav_mode.min(2) as usize]);
                 }
-                if kw(arg.trim(), "RAW") { self.wav_raw = true; }
-                else if kw(arg.trim(), "NORMal") { self.wav_raw = false; }
-                else { self.err.push(format!("-224,\"Unsupported waveform mode\" {}", arg)); }
+                let a = arg.trim();
+                self.wav_mode = if kw(a, "RAW") {
+                    2
+                } else if kw(a, "MAXimum") {
+                    1
+                } else if kw(a, "NORMal") {
+                    0
+                } else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                };
                 return None;
             }
             if kw(n1, "FORMat") {
@@ -1039,18 +1151,50 @@ impl Scpi {
                 let format = if kw(arg.trim(), "BYTE") { Some(0) } else if kw(arg.trim(), "WORD") { Some(1) }
                     else if kw(arg.trim(), "ASCii") { Some(2) } else { None };
                 if let Some(format) = format { self.wav_fmt = format; }
-                else { self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)); }
+                else { self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)); }
                 return None;
             }
-            let (pts, pre) = self.wave_params(ui);
-            if kw(n1, "POINts") && query {
-                return t(&format!("{}", pts));
+            if kw(n1, "STARt") || kw(n1, "STOP") {
+                let stop = kw(n1, "STOP");
+                if query {
+                    let n = self.wave_len(ui);
+                    let v = if stop { if self.wav_stop == 0 { n } else { self.wav_stop } } else { self.wav_start };
+                    return t(&v.to_string());
+                }
+                let Some(p) = arg.trim().parse::<u64>().ok().filter(|&p| p >= 1) else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                };
+                if stop {
+                    self.wav_stop = p;
+                    if p < self.wav_start {
+                        self.wav_start = p;
+                    }
+                } else {
+                    self.wav_start = p;
+                    if self.wav_stop != 0 && self.wav_stop < p {
+                        self.wav_stop = p;
+                    }
+                }
+                return None;
+            }
+            if kw(n1, "POINts") {
+                if query {
+                    return t(&self.page_count(ui).to_string());
+                }
+                // Rigol: the count to read, starting at STARt. stop 0 still means "the rest" until this sets it.
+                let Some(n) = arg.trim().parse::<u64>().ok().filter(|&n| n >= 1) else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                };
+                self.wav_stop = self.wav_start.saturating_add(n - 1);
+                return None;
             }
             if kw(n1, "PREamble") && query {
-                return t(&pre.0);
+                return t(&self.wave_preamble(ui));
             }
             if kw(n1, "DATA") && query {
-                return Some(self.wave_data(ui, pre.1));
+                return self.wave_data(ui);
             }
         }
         if kw(n0, "REFerence") {
@@ -1060,7 +1204,16 @@ impl Scpi {
             return self.sim_cmd(ui, &nodes[1..], query, arg);
         }
         if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
-            return Some(block(&bmp(cv)));
+            let kind = arg.split_whitespace().next().unwrap_or("").trim();
+            let up = kind.to_ascii_uppercase();
+            if up.starts_with("PNG") {
+                return Some(block(&crate::store::png_of(cv)));
+            }
+            if up.is_empty() || up.starts_with("BMP") {
+                return Some(block(&bmp(cv)));
+            }
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", kind));
+            return None;
         }
         // OOS extensions: analyser view, Identify, self-calibration, Bode
         if kw(n0, "VIEW") && nodes.len() == 1 {
@@ -1070,7 +1223,7 @@ impl Scpi {
             }
             match VIEWS.iter().find(|(k, _)| kw(arg, k)) {
                 Some((_, v)) => ui.set_analysis_view(*v),
-                None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
             }
             return None;
         }
@@ -1082,19 +1235,19 @@ impl Scpi {
                 return t(&ui.cal_status_text());
             }
             // :CALibrate:STARt 0..4[,ZERO]   (0 = all channels; the inputs must be disconnected)
-            if kw(nodes[1], "STARt") {
+            if kw(nodes[1], "STARt") && !query {
                 let mut it = arg.split(',');
                 let ch = it.next().unwrap_or("0").trim();
                 ui.selfcal_remote(ch, it.next().is_some_and(|z| kw(z.trim(), "ZERO")));
                 return None;
             }
-            if kw(nodes[1], "CANCel") {
+            if kw(nodes[1], "CANCel") && !query {
                 ui.selfcal_remote("cancel", false);
                 return None;
             }
         }
         if kw(n0, "BODE") && nodes.len() == 2 {
-            if kw(nodes[1], "RUN") {
+            if kw(nodes[1], "RUN") && !query {
                 ui.bode_run(parse_bool(arg).unwrap_or(true));
                 return None;
             }
@@ -1116,7 +1269,7 @@ impl Scpi {
                         ui.m.bode_mode = *m;
                         ui.mark_changed();
                     }
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -1127,7 +1280,7 @@ impl Scpi {
                 // one word, like the setup file keeps it
                 let a = arg.trim().trim_matches('"');
                 if a.contains(char::is_whitespace) {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 } else {
                     ui.m.bode_addr = a.to_string();
                 }
@@ -1136,7 +1289,7 @@ impl Scpi {
         }
         if suffix(n0).1.is_none_or(|n| (1..=gen_count().max(1)).contains(&n)) && kw(suffix(n0).0, "SOURce") && nodes.len() >= 2 {
             if !oos_hal::model::platform().caps.has_gen() {
-                self.err.push(format!("-241,\"Hardware missing\" no generator on the {}", oos_hal::model::platform().caps.name));
+                self.push_err(format!("-241,\"Hardware missing\" no generator on the {}", oos_hal::model::platform().caps.name));
                 return None;
             }
             // :SOURce<n> talks to generator n, whichever one the page shows
@@ -1157,7 +1310,7 @@ impl Scpi {
                 }
                 match parse_bool(arg) {
                     Some(on) => ui.afg_set(Some(on), None, None, None),
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -1172,7 +1325,7 @@ impl Scpi {
                     }
                     match SHAPES.iter().position(|s| kw(a, s)) {
                         Some(i) => ui.m.afg_mod_shape = i,
-                        None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                        None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                     }
                     return None;
                 }
@@ -1190,7 +1343,7 @@ impl Scpi {
                     }
                     match ["AM", "FM", "PM"].iter().position(|k| kw(a, k)) {
                         Some(i) => ui.m.afg_mod = i + 1,
-                        None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                        None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                     }
                     ui.afg_set(None, None, None, None);
                     return None;
@@ -1201,7 +1354,7 @@ impl Scpi {
                     }
                     match parse_bool(arg) {
                         Some(on) => ui.m.afg_mod = if on { ui.m.afg_mod.max(1) } else { 0 },
-                        None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                        None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                     }
                     return None;
                 };
@@ -1219,7 +1372,7 @@ impl Scpi {
                         }
                         ui.afg_set(None, None, None, None);
                     }
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -1229,15 +1382,15 @@ impl Scpi {
                 if has("DATA") && !query {
                     let v: Vec<f32> = arg.split(',').filter_map(num).collect();
                     if !ui.afg_arb_load(&v) {
-                        self.err.push(format!("-224,\"Illegal parameter value\" {} samples", v.len()));
+                        self.push_err(format!("-224,\"Illegal parameter value\" {} samples", v.len()));
                     }
                 } else if has("CAPTure") && !query {
                     match parse_ch(arg).ok_or("no channel".to_string()).and_then(|c| ui.afg_arb_capture(c)) {
                         Ok(_) => {}
-                        Err(e) => self.err.push(format!("-224,\"Illegal parameter value\" {}", e)),
+                        Err(e) => self.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
                     }
                 } else {
-                    self.err.push("-113,\"Undefined header\" :SOURce:ARB".into());
+                    self.push_err("-113,\"Undefined header\" :SOURce:ARB".into());
                 }
                 return None;
             }
@@ -1249,7 +1402,7 @@ impl Scpi {
                 match x {
                     Some(v) if duty => ui.m.afg_duty = v.clamp(5.0, 95.0),
                     Some(v) => ui.m.afg_symmetry = v.clamp(0.0, 100.0),
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -1264,7 +1417,7 @@ impl Scpi {
                         ui.m.afg_wave = i;
                         ui.afg_set(None, None, None, None);
                     }
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -1283,7 +1436,7 @@ impl Scpi {
                 }
                 match x {
                     Some(v) => ui.afg_set(None, (want == 0).then_some(v), (want == 1).then_some(v), (want == 2).then_some(v)),
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -1294,14 +1447,14 @@ impl Scpi {
                 let r = arg.split_once('=').ok_or("no '='".to_string()).and_then(|(k, v)| crate::store::set(&mut ui.m, k.trim(), v.trim()));
                 match r {
                     Ok(()) => ui.mark_changed(),
-                    Err(e) => self.err.push(format!("-224,\"Illegal parameter value\" {}", e)),
+                    Err(e) => self.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
                 }
                 // a setup file may hold keys of newer versions, here a typo must not pass for a setting; the keys that
                 // are only written when they differ from their default do not show
                 let k = arg.split('=').next().unwrap_or("").trim();
                 let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s)) || k.starts_with("math_expr") || k == "cat";
                 if !optional && !crate::store::setup_text(&ui.m).lines().any(|l| l.split('=').next().unwrap_or("").trim() == k) {
-                    self.err.push(format!("-224,\"Illegal parameter value\" unknown key {}", k));
+                    self.push_err(format!("-224,\"Illegal parameter value\" unknown key {}", k));
                 }
                 return None;
             }
@@ -1316,7 +1469,7 @@ impl Scpi {
             if kw(nodes[1], "LOG") && !query {
                 match parse_bool(arg) {
                     Some(on) => ui.log_set(on),
-                    None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
+                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
             }
@@ -1327,19 +1480,384 @@ impl Scpi {
         if kw(n0, "SYSTem") && nodes.len() == 2 && kw(nodes[1], "ERRor") && query {
             return t(&if self.err.is_empty() { "0,\"No error\"".to_string() } else { self.err.remove(0) });
         }
-        self.err.push(format!("-113,\"Undefined header\" {}", cmd));
+        if kw(n0, "CURSor") {
+            return self.cursor_cmd(ui, &nodes[1..], query, arg);
+        }
+        if kw(n0, "DVM") {
+            return self.dvm_cmd(ui, &nodes[1..], query, arg);
+        }
+        if kw(n0, "COUNter") {
+            return self.counter_cmd(ui, &nodes[1..], query, arg);
+        }
+        self.push_err(format!("-113,\"Undefined header\" {}", cmd));
+        None
+    }
+
+    /// Put a measurement on the readout. The query form stays in `meas_item`.
+    fn meas_place(&mut self, ui: &mut Ui, arg: &str) -> Option<Vec<u8>> {
+        let mut parts = arg.split(',');
+        let item = parts.next().unwrap_or("").trim();
+        if item.is_empty() {
+            self.push_err("-224,\"Illegal parameter value\"".into());
+            return None;
+        }
+        let source = |s: &mut Self, word: Option<&str>, fallback: WaveId| -> Option<WaveId> {
+            match word.map(str::trim).filter(|s| !s.is_empty()) {
+                None => Some(fallback),
+                Some(word) => s.named_source(word),
+            }
+        };
+        if let Some(k) = meas_kind(item) {
+            let Some(src) = source(self, parts.next(), ui.meas_source()) else { return None };
+            if parts.next().is_some() {
+                self.push_err("-224,\"Too many measurement sources\"".into());
+                return None;
+            }
+            if let Err(reason) = ui.meas_add(k, src) {
+                self.push_err(format!("-223,\"{}\"", reason));
+            }
+            return None;
+        }
+        if let Some(k) = pair_kind(item) {
+            let Some(a) = source(self, parts.next(), ui.meas_source()) else { return None };
+            let Some(b) = source(self, parts.next(), ui.meas_source_b()) else { return None };
+            if parts.next().is_some() {
+                self.push_err("-224,\"Too many measurement sources\"".into());
+                return None;
+            }
+            if let Err(reason) = ui.meas_add_pair(k, a, b) {
+                self.push_err(format!("-224,\"{}\"", reason));
+            }
+            return None;
+        }
+        self.push_err(format!("-224,\"Illegal parameter value\" {}", item));
+        None
+    }
+
+    fn cursor_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.is_empty() || (n.len() == 1 && kw(n0, "MODE")) {
+            if n.is_empty() {
+                self.push_err("-113,\"Undefined header\" :CURSor".into());
+                return None;
+            }
+            if query {
+                let s = match ui.m.cursor {
+                    CursorMode::Off => "OFF",
+                    CursorMode::Time | CursorMode::Volt => "MAN",
+                    CursorMode::Track => "TRAC",
+                    CursorMode::Xy => "XY",
+                };
+                return t(s);
+            }
+            let a = arg.trim();
+            ui.m.cursor = if kw(a, "OFF") {
+                CursorMode::Off
+            } else if kw(a, "MANual") {
+                if ui.m.cursor == CursorMode::Volt { CursorMode::Volt } else { CursorMode::Time }
+            } else if kw(a, "TRACk") {
+                CursorMode::Track
+            } else if a.eq_ignore_ascii_case("XY") {
+                CursorMode::Xy
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            return None;
+        }
+        if n.len() == 2 && kw(n0, "MANual") && kw(n[1], "TYPE") {
+            if query {
+                return t(if ui.m.cursor == CursorMode::Volt { "AMPL" } else { "TIME" });
+            }
+            if kw(arg, "TIME") {
+                ui.m.cursor = CursorMode::Time;
+            } else if kw(arg, "AMPLitude") {
+                ui.m.cursor = CursorMode::Volt;
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            }
+            return None;
+        }
+        // One selected waveform drives both cursor traces; a different second source is unsupported.
+        if n.len() == 2 && (kw(n0, "MANual") || kw(n0, "TRACk")) && (kw(n[1], "SOURce") || kw(n[1], "SOURce1") || kw(n[1], "SOURce2")) {
+            if query { return t(&wave_tok(ui.cursor_source())); }
+            let Some(source) = parse_wave(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            if kw(n[1], "SOURce2") && source != ui.cursor_source() {
+                self.push_err("-224,\"Independent second cursor source is unsupported\"".into());
+            } else if !ui.set_cursor_source(source) {
+                self.push_err("-224,\"Cursor source is unavailable\"".into());
+            }
+            return None;
+        }
+        if n.len() != 2 {
+            self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+            return None;
+        }
+        let which = n[1];
+        let xy = kw(n0, "XY");
+        let known = kw(n0, "MANual") || kw(n0, "TRACk") || xy;
+        if !known {
+            self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+            return None;
+        }
+        let x = kw(which, "CAX") || (xy && kw(which, "AX"));
+        let xb = kw(which, "CBX") || (xy && kw(which, "BX"));
+        let y = kw(which, "CAY") || (xy && kw(which, "AY"));
+        let yb = kw(which, "CBY") || (xy && kw(which, "BY"));
+        if x || xb {
+            return self.cursor_axis(ui, query, arg, true, x);
+        }
+        if y || yb {
+            return self.cursor_axis(ui, query, arg, false, y);
+        }
+        if !query {
+            self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+            return None;
+        }
+        let miss = || Some(b"9.9E37".to_vec());
+        let (ta, tb) = (ui.cursor_time_at(ui.m.cur_a), ui.cursor_time_at(ui.m.cur_b));
+        let y_of = |a: bool| {
+            if ui.m.cursor == CursorMode::Xy {
+                ui.cursor_volt_at(if a { ui.m.cur_c } else { ui.m.cur_d })
+            } else if ui.m.cursor == CursorMode::Volt {
+                ui.cursor_volt_at(if a { ui.m.cur_a } else { ui.m.cur_b })
+            } else if matches!(ui.m.cursor, CursorMode::Track | CursorMode::Time) {
+                ui.wave_at(if a { ta } else { tb }).map(|v| v as f64).unwrap_or(f64::NAN)
+            } else {
+                f64::NAN
+            }
+        };
+        if kw(which, "AXValue") {
+            return if ui.m.cursor == CursorMode::Volt || ui.m.cursor == CursorMode::Off { miss() } else { t(&e(ta)) };
+        }
+        if kw(which, "BXValue") {
+            return if ui.m.cursor == CursorMode::Volt || ui.m.cursor == CursorMode::Off { miss() } else { t(&e(tb)) };
+        }
+        if kw(which, "AYValue") {
+            return t(&shown(y_of(true)));
+        }
+        if kw(which, "BYValue") {
+            return t(&shown(y_of(false)));
+        }
+        if kw(which, "XDELta") {
+            return if matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { t(&e(tb - ta)) } else { miss() };
+        }
+        if kw(which, "IXDelta") {
+            let d = (tb - ta).abs();
+            return if d > 0.0 && matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { t(&e(1.0 / d)) } else { miss() };
+        }
+        if kw(which, "YDELta") {
+            let d = y_of(false) - y_of(true);
+            return t(&shown(d));
+        }
+        self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+        None
+    }
+
+    /// Horizontal (`x`) or vertical cursor. `a` is cursor A.
+    fn cursor_axis(&mut self, ui: &mut Ui, query: bool, arg: &str, x: bool, a: bool) -> Option<Vec<u8>> {
+        let xy = ui.m.cursor == CursorMode::Xy;
+        if query {
+            let frac = if x || !xy {
+                if a { ui.m.cur_a } else { ui.m.cur_b }
+            } else if a {
+                ui.m.cur_c
+            } else {
+                ui.m.cur_d
+            };
+            let v = if x { ui.cursor_time_at(frac) } else { ui.cursor_volt_at(frac) };
+            return Some(e(v).into_bytes());
+        }
+        let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite()) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let frac = if x { ui.cursor_frac_time(v) } else { ui.cursor_frac_volt(v) };
+        if x || !xy {
+            if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+        } else if a {
+            ui.m.cur_c = frac;
+        } else {
+            ui.m.cur_d = frac;
+        }
+        if ui.m.cursor == CursorMode::Off {
+            ui.m.cursor = if x { CursorMode::Time } else { CursorMode::Volt };
+        }
+        None
+    }
+
+    fn dvm_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "ENABle") {
+            if query {
+                return t(if ui.m.dvm_on { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.dvm_on = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "SOURce") {
+            if query {
+                return t(&format!("CHAN{}", ui.m.dvm_src.min(n_ch() - 1) + 1));
+            }
+            return match parse_ch(arg) {
+                Some(c) => {
+                    ui.m.dvm_src = c;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "MODE") {
+            const NAMES: [&str; 3] = ["DC", "ACRMS", "ACDC"];
+            if query {
+                return t(NAMES[ui.m.dvm_mode.min(2)]);
+            }
+            let a = arg.trim();
+            let mode = if kw(a, "DC") {
+                Some(0)
+            } else if kw(a, "ACRMs") || a.eq_ignore_ascii_case("ACRMS") {
+                Some(1)
+            } else if kw(a, "ACDC") || kw(a, "ACDCrms") {
+                Some(2)
+            } else {
+                None
+            };
+            return match mode {
+                Some(m) => {
+                    ui.m.dvm_mode = m;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "CURRent") && query {
+            return t(&shown(ui.dvm_value()));
+        }
+        self.push_err(format!("-113,\"Undefined header\" :DVM:{}", n.join(":")));
+        None
+    }
+
+    fn counter_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "ENABle") {
+            if query {
+                return t(if ui.m.cnt_on { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.cnt_on = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "SOURce") {
+            if query {
+                return t(&format!("CHAN{}", ui.m.cnt_src.min(n_ch() - 1) + 1));
+            }
+            return match parse_ch(arg) {
+                Some(c) => {
+                    ui.m.cnt_src = c;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "MODE") {
+            const NAMES: [&str; 3] = ["FREQ", "PER", "TOT"];
+            if query {
+                return t(NAMES[ui.m.cnt_mode.min(2)]);
+            }
+            let a = arg.trim();
+            let mode = if kw(a, "FREQuency") {
+                Some(0)
+            } else if kw(a, "PERiod") {
+                Some(1)
+            } else if kw(a, "TOTalize") {
+                Some(2)
+            } else {
+                None
+            };
+            return match mode {
+                Some(m) => {
+                    ui.m.cnt_mode = m;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "NDIGits") {
+            if query {
+                return t(&ui.m.cnt_digits.to_string());
+            }
+            return match arg.trim().parse::<u32>().ok().filter(|d| (3..=7).contains(d)) {
+                Some(d) => {
+                    ui.m.cnt_digits = d;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "CURRent") && query {
+            return t(&shown(ui.counter_value()));
+        }
+        if n.len() == 2 && kw(n0, "TOTalize") && kw(n[1], "CLEar") && !query {
+            ui.counter_clear();
+            return None;
+        }
+        self.push_err(format!("-113,\"Undefined header\" :COUNter:{}", n.join(":")));
         None
     }
 
     fn decode_cmd(&mut self, ui: &mut Ui, node: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
         if kw(node, "SRATe") { return self.decode_cphy_rate_cmd(ui, query, arg); }
         let text = |value: String| Some(value.into_bytes());
-        let illegal = |s: &mut Self| { s.err.push(format!("-224,\"Illegal decoder parameter\" {}", arg)); None };
+        let illegal = |s: &mut Self| { s.push_err(format!("-224,\"Illegal decoder parameter\" {}", arg)); None };
         if kw(node, "EVENts") && query {
             return match ui.decode_events_result() {
                 Ok(events) => text(events),
                 Err("Decode computing") => text("BUSY".into()),
-                Err(error) => { self.err.push(format!("-230,\"{}\"", error)); None }
+                Err(error) => { self.push_err(format!("-230,\"{}\"", error)); None }
             };
         }
         if kw(node, "BUSY") && query { return text(if ui.decode_busy() { "1" } else { "0" }.into()); }
@@ -1408,7 +1926,7 @@ impl Scpi {
             ui.mark_changed();
             return None;
         }
-        self.err.push(format!("-113,\"Undefined header\" DECode:{}", node));
+        self.push_err(format!("-113,\"Undefined header\" DECode:{}", node));
         None
     }
 
@@ -1416,7 +1934,7 @@ impl Scpi {
         if query { return Some(if ui.m.dec_cphy_rate == 0.0 { b"AUTO".to_vec() } else { e(ui.m.dec_cphy_rate).into_bytes() }); }
         match crate::decode::parse_cphy_rate(arg) {
             Ok(rate) => { ui.m.dec_cphy_rate = rate; ui.mark_changed(); }
-            Err(_) => self.err.push(format!("-224,\"Invalid C-PHY symbol rate\" {}", arg)),
+            Err(_) => self.push_err(format!("-224,\"Invalid C-PHY symbol rate\" {}", arg)),
         }
         None
     }
@@ -1428,24 +1946,81 @@ impl Scpi {
         }
     }
 
-    /// (points, (preamble string, (yinc, yorigin, yref)))
-    fn wave_params(&self, ui: &Ui) -> (usize, (String, (f64, f64, f64))) {
-        let (pts, dt, t0, vpd, offset) = match self.wav_src {
+    /// RAW, or MAXimum while stopped: the deep record. NORMal, and MAXimum while running: the screen.
+    fn wave_memory(&self, ui: &Ui) -> bool {
+        self.wav_mode == 2 || (self.wav_mode == 1 && ui.m.run == RunState::Stop)
+    }
+
+    fn wave_len(&self, ui: &Ui) -> u64 {
+        match self.wav_src {
+            WaveId::Ch(c) => ui.channel_points(c, self.wave_memory(ui)) as u64,
+            WaveId::Ref(i) => ui.ref_info(i).map(|(n, _, _, _, _)| n as u64).unwrap_or(0),
+        }
+    }
+
+    /// How many points the current STARt/STOP page holds, without copying them.
+    fn page_count(&self, ui: &Ui) -> u64 {
+        let n = self.wave_len(ui);
+        let a = self.wav_start.max(1);
+        if n == 0 || a > n {
+            return 0;
+        }
+        let b = if self.wav_stop == 0 { n } else { self.wav_stop.clamp(a, n) };
+        b - a + 1
+    }
+
+    fn wave_scale(&self, ui: &Ui) -> (f64, f64) {
+        match self.wav_src {
             WaveId::Ch(c) => {
                 let ch = &ui.m.ch[c];
-                let info = if self.wav_raw { ui.raw_info(c) } else { None };
-                let (pts, dt, t0) = info.or_else(|| ui.record_info(c)).unwrap_or((0, 0.0, 0.0));
-                (pts, dt, t0, ch.volts_per_div() as f64, ch.offset as f64)
+                (ch.volts_per_div() as f64, ch.offset as f64)
             }
-            WaveId::Ref(i) => ui.ref_info(i).unwrap_or((0, 0.0, 0.0, 1.0, 0.0)),
-        };
+            WaveId::Ref(i) => ui.ref_info(i).map(|(_, _, _, vpd, off)| (vpd, off)).unwrap_or((1.0, 0.0)),
+        }
+    }
+
+    fn y_codes(&self, vpd: f64, offset: f64) -> (f64, f64, f64) {
         let (yinc, yref) = match self.wav_fmt {
             1 => (vpd * VDIV as f64 / 60000.0, 32768.0),
             _ => (vpd * VDIV as f64 / 250.0, 128.0),
         };
         let yorg = if yinc == 0.0 { 0.0 } else { (offset / yinc).round() };
-        let pre = format!("{},{},{},1,{},{},0,{},{},{}", self.wav_fmt, if self.wav_raw { 2 } else { 0 }, pts, e(dt), e(t0), e(yinc), yorg, yref);
-        (pts, (pre, (yinc, yorg, yref)))
+        (yinc, yorg, yref)
+    }
+
+    fn wave_preamble(&self, ui: &Ui) -> String {
+        let (vpd, offset) = self.wave_scale(ui);
+        let (yinc, yorg, yref) = self.y_codes(vpd, offset);
+        let (dt, t0) = self.wave_origin(ui);
+        format!("{},{},{},1,{},{},0,{},{},{}", self.wav_fmt, self.wav_mode, self.page_count(ui), e(dt), e(t0), e(yinc), yorg, yref)
+    }
+
+    /// Sample interval and the time of the first point of the current page. Does not copy the samples.
+    fn wave_origin(&self, ui: &Ui) -> (f64, f64) {
+        let (dt, t0) = match self.wav_src {
+            WaveId::Ch(c) => ui.channel_origin(c, self.wave_memory(ui)).unwrap_or((0.0, 0.0)),
+            WaveId::Ref(i) => ui.ref_info(i).map(|(_, dt, t0, _, _)| (dt, t0)).unwrap_or((0.0, 0.0)),
+        };
+        let n = self.wave_len(ui);
+        let a = self.wav_start.max(1);
+        if n == 0 || a > n {
+            (dt, t0)
+        } else {
+            (dt, t0 + (a - 1) as f64 * dt)
+        }
+    }
+
+    /// The page `:WAVeform:DATA?` returns, and the scale of the source.
+    fn wave_page(&self, ui: &Ui) -> (Vec<f32>, f64, f64, f64, f64) {
+        let (start, stop) = (self.wav_start.max(1), self.wav_stop);
+        match self.wav_src {
+            WaveId::Ch(c) => {
+                let ch = &ui.m.ch[c];
+                let (v, dt, t0) = ui.channel_page(c, self.wave_memory(ui), start, stop).unwrap_or((Vec::new(), 0.0, 0.0));
+                (v, dt, t0, ch.volts_per_div() as f64, ch.offset as f64)
+            }
+            WaveId::Ref(i) => ui.ref_page(i, start, stop).unwrap_or((Vec::new(), 0.0, 0.0, 1.0, 0.0)),
+        }
     }
 
     /// `:LA:...` (the stock names where they exist): state, lines shown, pod thresholds, and the record of the last
@@ -1455,11 +2030,11 @@ impl Scpi {
         use crate::ui::la;
         let t = |s: String| Some(s.into_bytes());
         if !la::available() {
-            self.err.push(format!("-241,\"Hardware missing\" no logic analyser port on the {}", oos_hal::model::platform().caps.name));
+            self.push_err(format!("-241,\"Hardware missing\" no logic analyser port on the {}", oos_hal::model::platform().caps.name));
             return None;
         }
-        let bad = |e: &mut Vec<String>| {
-            e.push(format!("-224,\"Illegal parameter value\" {}", arg));
+        let bad = |s: &mut Self| {
+            s.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             None
         };
         let (k, idx) = suffix(n[0]);
@@ -1473,11 +2048,11 @@ impl Scpi {
                     ui.mark_changed();
                     return None;
                 }
-                None => return bad(&mut self.err),
+                None => return bad(self),
             }
         }
         if n.len() == 2 && kw(k, "DIGital") && kw(n[1], "DISPlay") {
-            let Some(line) = idx.filter(|&i| i < 16) else { return bad(&mut self.err) };
+            let Some(line) = idx.filter(|&i| i < 16) else { return bad(self) };
             if query {
                 return t((ui.m.la.show >> line & 1).to_string());
             }
@@ -1486,11 +2061,11 @@ impl Scpi {
                     ui.m.la.show = ui.m.la.show & !(1 << line) | (on as u16) << line;
                     return None;
                 }
-                None => return bad(&mut self.err),
+                None => return bad(self),
             }
         }
         if n.len() == 2 && kw(k, "POD") && kw(n[1], "THReshold") {
-            let Some(pod) = idx.filter(|&i| i == 1 || i == 2).map(|i| i - 1) else { return bad(&mut self.err) };
+            let Some(pod) = idx.filter(|&i| i == 1 || i == 2).map(|i| i - 1) else { return bad(self) };
             if query {
                 return t(format!("{:e}", ui.m.la.thr(pod)));
             }
@@ -1500,12 +2075,12 @@ impl Scpi {
                     ui.mark_changed();
                     return None;
                 }
-                _ => return bad(&mut self.err),
+                _ => return bad(self),
             }
         }
         if n.len() == 1 && query && (kw(n[0], "POINts") || kw(n[0], "PREamble") || kw(n[0], "DATA")) {
             let Some(r) = ui.la_record() else {
-                self.err.push("-230,\"Data corrupt or stale\" no LA record".into());
+                self.push_err("-230,\"Data corrupt or stale\" no LA record".into());
                 return if kw(n[0], "DATA") { Some(block(&[])) } else { t("0".into()) };
             };
             if kw(n[0], "POINts") {
@@ -1516,7 +2091,7 @@ impl Scpi {
             }
             return Some(block(&r.words.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>()));
         }
-        self.err.push(format!("-113,\"Undefined header\" :LA:{}", n.join(":")));
+        self.push_err(format!("-113,\"Undefined header\" :LA:{}", n.join(":")));
         None
     }
 
@@ -1540,7 +2115,7 @@ impl Scpi {
         let src = match self.waves(arg_rest(arg)) {
             Ok(v) => v,
             Err(s) => {
-                self.err.push(s);
+                self.push_err(s);
                 return Some(b"9.9E37".to_vec());
             }
         };
@@ -1551,8 +2126,31 @@ impl Scpi {
         match r {
             Ok(v) => Some(shown(v).into_bytes()),
             Err(()) => {
-                self.err.push("-224,\"Illegal parameter value\"".into());
+                self.push_err("-224,\"Illegal parameter value\"".into());
                 Some(b"9.9E37".to_vec())
+            }
+        }
+    }
+
+    /// `1,CHAN1` is slot 1 and the rest `CHAN1`. A bare `ON` stays on the current slot. A bad slot number is an error.
+    fn ref_pair(&mut self, ui: &Ui, arg: &str) -> (Option<usize>, String) {
+        let arg = arg.trim();
+        let (slot, rest) = if let Some((a, b)) = arg.split_once(',') {
+            (parse_slot(a), b.trim().trim_matches('"').to_string())
+        } else if arg.is_empty() {
+            (Some(ui.ref_slot()), String::new())
+        } else if let Some(i) = parse_slot(arg) {
+            (Some(i), String::new())
+        } else if arg.starts_with(|c: char| c.is_ascii_digit()) || arg.to_ascii_uppercase().starts_with('R') {
+            (None, String::new())
+        } else {
+            (Some(ui.ref_slot()), arg.trim_matches('"').to_string())
+        };
+        match slot {
+            Some(i) if i < NREF => (Some(i), rest),
+            _ => {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                (None, String::new())
             }
         }
     }
@@ -1571,25 +2169,104 @@ impl Scpi {
                     None
                 }
                 None => {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                     None
                 }
             };
         }
-        if kw(n0, "SHOW") {
+        if kw(n0, "SHOW") || kw(n0, "DISPlay") {
+            let (slot, rest) = self.ref_pair(ui, arg);
+            let Some(slot) = slot else { return None };
             if query {
-                return t(if ui.ref_shown() == Some(true) { "1" } else { "0" });
+                return t(if ui.ref_shown_slot(slot) == Some(true) { "1" } else { "0" });
             }
-            return match parse_bool(arg) {
-                Some(on) if ui.ref_show_set(on) => {
+            return match parse_bool(&rest) {
+                Some(on) if ui.ref_show_slot(slot, on) => {
                     ui.mark_changed();
                     None
                 }
                 _ => {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                     None
                 }
             };
+        }
+        if kw(n0, "CURRent") {
+            if query {
+                return t(&(ui.ref_slot() + 1).to_string());
+            }
+            return match parse_slot(arg) {
+                Some(i) if ui.ref_slot_set(i) => {
+                    ui.mark_changed();
+                    None
+                }
+                _ => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if kw(n0, "SOURce") {
+            let (slot, rest) = self.ref_pair(ui, arg);
+            let Some(slot) = slot else { return None };
+            if query {
+                return t(&format!("CHAN{}", ui.ref_source_of(slot) + 1));
+            }
+            return match parse_ch(&rest) {
+                Some(c) if ui.ref_source_set(slot, c) => {
+                    ui.mark_changed();
+                    None
+                }
+                _ => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if kw(n0, "VSCale") || kw(n0, "VOFFset") {
+            let scale = kw(n0, "VSCale");
+            let (slot, rest) = self.ref_pair(ui, arg);
+            let Some(slot) = slot else { return None };
+            if query {
+                let v = if scale { ui.ref_vscale(slot) } else { ui.ref_voffset(slot) };
+                return match v {
+                    Some(v) => t(&e(v as f64)),
+                    None => {
+                        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+                        None
+                    }
+                };
+            }
+            let Some(v) = num(&rest) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            let ok = if scale { ui.ref_vscale_set(slot, v) } else { ui.ref_voffset_set(slot, v) };
+            if ok {
+                ui.mark_changed();
+            } else {
+                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+            }
+            return None;
+        }
+        if n.len() >= 2 && kw(n0, "LABel") && kw(n[1], "CONTent") {
+            let (slot, rest) = self.ref_pair(ui, arg);
+            let Some(slot) = slot else { return None };
+            if query {
+                return match ui.ref_label(slot) {
+                    Some(s) => t(&s),
+                    None => {
+                        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+                        None
+                    }
+                };
+            }
+            if ui.ref_label_set(slot, rest) {
+                ui.mark_changed();
+            } else {
+                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+            }
+            return None;
         }
         if kw(n0, "CLEar") && !query {
             ui.ref_clear_all();
@@ -1597,20 +2274,29 @@ impl Scpi {
             return None;
         }
         if kw(n0, "SAVE") && !query {
+            if !arg.trim().is_empty() {
+                match parse_slot(arg) {
+                    Some(i) if ui.ref_slot_set(i) => {}
+                    _ => {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return None;
+                    }
+                }
+            }
             return match ui.ref_save_slot() {
                 Ok(()) => {
                     ui.mark_changed();
                     None
                 }
                 Err(e) => {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", e));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", e));
                     None
                 }
             };
         }
         if kw(n0, "LOAD") && !query {
             if arg.trim().is_empty() {
-                self.err.push("-224,\"Illegal parameter value\" no file".into());
+                self.push_err("-224,\"Illegal parameter value\" no file".into());
                 return None;
             }
             let r = ui.ref_load_named(arg);
@@ -1620,7 +2306,7 @@ impl Scpi {
             let r = if arg.trim().is_empty() { ui.ref_import_slot() } else { ui.ref_load_named(arg) };
             return self.ref_loaded(ui, r);
         }
-        self.err.push(format!("-113,\"Undefined header\" :REF:{}", n.join(":")));
+        self.push_err(format!("-113,\"Undefined header\" :REF:{}", n.join(":")));
         None
     }
 
@@ -1631,11 +2317,11 @@ impl Scpi {
                 None
             }
             Err(e) if e.starts_with("missing ") => {
-                self.err.push(format!("-256,\"File name not found\" {}", e.trim_start_matches("missing ")));
+                self.push_err(format!("-256,\"File name not found\" {}", e.trim_start_matches("missing ")));
                 None
             }
             Err(e) => {
-                self.err.push(format!("-224,\"Illegal parameter value\" {}", e));
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", e));
                 None
             }
         }
@@ -1655,7 +2341,7 @@ impl Scpi {
                 "OFF" => ui.m.sim_ssc = false,
                 "DOWN" => { ui.m.sim_ssc = true; ui.m.sim_ssc_center = false; }
                 "CENTER" | "CENT" => { ui.m.sim_ssc = true; ui.m.sim_ssc_center = true; }
-                _ => { self.err.push("-224,\"Illegal parameter value\" SSC mode".into()); return None; }
+                _ => { self.push_err("-224,\"Illegal parameter value\" SSC mode".into()); return None; }
             }
             ui.mark_changed();
             return None;
@@ -1673,7 +2359,7 @@ impl Scpi {
                 if query { return t(&e(*value)); }
                 match arg.trim().parse::<f64>() {
                     Ok(v) if v.is_finite() && v >= min && v <= max => *value = v,
-                    _ => { self.err.push("-224,\"Illegal parameter value\" SIM setting".into()); return None; }
+                    _ => { self.push_err("-224,\"Illegal parameter value\" SIM setting".into()); return None; }
                 }
                 ui.mark_changed();
                 return None;
@@ -1687,7 +2373,7 @@ impl Scpi {
                 ui.m.sim_prbs = p;
                 ui.mark_changed();
             } else {
-                self.err.push("-224,\"Illegal parameter value\" PRBS order".into());
+                self.push_err("-224,\"Illegal parameter value\" PRBS order".into());
             }
             return None;
         }
@@ -1699,7 +2385,7 @@ impl Scpi {
                 ui.mark_changed();
                 None
             } else {
-                self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 None
             };
         }
@@ -1714,7 +2400,7 @@ impl Scpi {
                     None
                 }
                 None => {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                     None
                 }
             };
@@ -1728,12 +2414,12 @@ impl Scpi {
                 Some(on) => {
                     match ui.sim_play_set(on) {
                         Ok(()) => ui.mark_changed(),
-                        Err(error) => self.err.push(format!("-224,\"Illegal parameter value\" {}", error)),
+                        Err(error) => self.push_err(format!("-224,\"Illegal parameter value\" {}", error)),
                     }
                     None
                 }
                 None => {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                     None
                 }
             };
@@ -1748,29 +2434,38 @@ impl Scpi {
                     None
                 }
                 _ => {
-                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                     None
                 }
             };
         }
-        self.err.push(format!("-113,\"Undefined header\" :SIM:{}", n.join(":")));
+        self.push_err(format!("-113,\"Undefined header\" :SIM:{}", n.join(":")));
         None
     }
 
-    fn wave_data(&self, ui: &Ui, p: (f64, f64, f64)) -> Vec<u8> {
-        let (yinc, yorg, yref) = p;
-        let v = match self.wav_src {
-            WaveId::Ch(c) => {
-                if self.wav_raw { ui.raw_volts(c).unwrap_or_else(|| ui.record_volts(c)) } else { ui.record_volts(c) }
-            }
-            WaveId::Ref(i) => ui.ref_volts(i),
-        };
-        match self.wav_fmt {
+    fn wave_data(&mut self, ui: &Ui) -> Option<Vec<u8>> {
+        // Bound output before taking a copy of the requested page. Metadata never copies samples.
+        let width = match self.wav_fmt { 0 => 1, 1 => 2, _ => 14 };
+        if self.page_count(ui).saturating_mul(width).saturating_add(11) > RESP_MAX as u64 {
+            self.push_err("-223,\"Too much data; select a shorter waveform page\"".into());
+            return None;
+        }
+        let (vpd, offset) = self.wave_scale(ui);
+        let (yinc, yorg, yref) = self.y_codes(vpd, offset);
+        let (v, _, _, _, _) = self.wave_page(ui);
+        Some(match self.wav_fmt {
             2 => {
-                let s: Vec<String> = v.iter().map(|&x| e(x as f64)).collect();
-                block(s.join(",").as_bytes())
+                use std::fmt::Write as _;
+                let mut text = String::with_capacity(v.len().saturating_mul(14));
+                for (index, value) in v.iter().enumerate() {
+                    if index != 0 { text.push(','); }
+                    let _ = write!(text, "{}", e(*value as f64));
+                }
+                block(text.as_bytes())
             }
             1 => {
+                // OOS wire policy: unsigned little-endian WORD, retained for existing clients.
+                // The Rigol guide specifies two bytes per point but does not specify their order.
                 let mut b = Vec::with_capacity(v.len() * 2);
                 for x in v {
                     let code = ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 65535.0) as u16;
@@ -1782,7 +2477,7 @@ impl Scpi {
                 let b: Vec<u8> = v.iter().map(|&x| ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 255.0) as u8).collect();
                 block(&b)
             }
-        }
+        })
     }
 
     /// :MEASure:ITEM? <item>[,CHANn|Rn[,src]]
@@ -1791,14 +2486,14 @@ impl Scpi {
         let mut parts = arg.split(',');
         let item = parts.next().unwrap_or("").trim();
         if item.is_empty() {
-            self.err.push("-224,\"Illegal parameter value\"".into());
+            self.push_err("-224,\"Illegal parameter value\"".into());
             return t("9.9E37");
         }
         if kw(item, "SETHold") || item.eq_ignore_ascii_case("SHOLD") {
             let waves = match self.waves(&parts.collect::<Vec<_>>().join(",")) {
                 Ok(waves) => waves,
                 Err(error) => {
-                    self.err.push(error);
+                    self.push_err(error);
                     return t("9.9E37");
                 }
             };
@@ -1806,7 +2501,7 @@ impl Scpi {
                 [] => ui.meas_pair_sources(),
                 [clock, data] => (*clock, *data),
                 _ => {
-                    self.err.push("-224,\"Illegal parameter value\"".into());
+                    self.push_err("-224,\"Illegal parameter value\"".into());
                     return t("9.9E37");
                 }
             };
@@ -1814,7 +2509,7 @@ impl Scpi {
         }
         // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
         let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
-            None => WaveId::Ch(0),
+            None => ui.meas_source(),
             Some(s) => match self.named_source(s) {
                 Some(id) => id,
                 None => return t("9.9E37"),
@@ -1825,13 +2520,13 @@ impl Scpi {
         }
         if let Some(k) = pair_kind(item) {
             let Some(word) = parts.next().map(str::trim).filter(|s| !s.is_empty()) else {
-                self.err.push("-224,\"Illegal parameter value\"".into());
+                self.push_err("-224,\"Illegal parameter value\"".into());
                 return t("9.9E37");
             };
             let Some(b) = self.named_source(word) else { return t("9.9E37") };
             return t(&e(ui.pair_at(k, src, b)));
         }
-        self.err.push("-224,\"Illegal parameter value\"".into());
+        self.push_err("-224,\"Illegal parameter value\"".into());
         t("9.9E37")
     }
 
@@ -1839,7 +2534,7 @@ impl Scpi {
         match parse_wave(s) {
             Some(id) => Some(id),
             None => {
-                self.err.push(format!("-224,\"Illegal parameter value\" {}", s));
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", s));
                 None
             }
         }
@@ -1849,7 +2544,7 @@ impl Scpi {
     fn eye_item(&mut self, ui: &Ui, arg: &str) -> Option<Vec<u8>> {
         let item = arg.split(',').next().unwrap_or("").trim();
         let Some(name) = crate::ui::EYE_ITEMS.iter().find(|n| kw(item, n)) else {
-            self.err.push("-224,\"Illegal parameter value\"".into());
+            self.push_err("-224,\"Illegal parameter value\"".into());
             return Some(b"9.9E37".to_vec());
         };
         let v = ui.eye_readings().iter().find(|(n, _)| n == name).map(|(_, v)| *v).unwrap_or(f64::NAN);
@@ -1975,7 +2670,7 @@ mod tests {
             assert_eq!(s.exec_line(&mut ui,&cv,":WAV:DATA?").len(),8011);
         }
         line(&mut s,&mut ui,&cv,":WAV:MODE RAW");
-        for command in [":WAV:MODE MAX",":WAV:MODE WRONG",":WAV:MODE RAWsuffix",":WAV:FORM WRONG",":WAV:FORM WORDsuffix"] {
+        for command in [":WAV:MODE WRONG",":WAV:MODE RAWsuffix",":WAV:FORM WRONG",":WAV:FORM WORDsuffix"] {
             line(&mut s,&mut ui,&cv,command);assert_eq!(line(&mut s,&mut ui,&cv,":WAV:MODE?;:WAV:FORM?"),"RAW;WORD");
             assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-224,"),"{command}");
         }
@@ -2024,7 +2719,7 @@ mod tests {
             line(&mut s,&mut ui,&cv,":STOP;:SINGLE");
             assert_eq!(s.poll_program(&mut ui,&cv,&mut p),Some(Vec::new()));
             assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-410,"));
-            assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");assert_eq!(ui.m.trig_mode,TrigMode::Single);
+            assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"4", "cancelled query latches query-error bit, not OPC");assert_eq!(ui.m.trig_mode,TrigMode::Single);
             let mut fresh=Program::new("*OPC?");assert!(s.poll_program(&mut ui,&cv,&mut fresh).is_none());
         }
     }
@@ -2209,7 +2904,7 @@ mod tests {
         let errors = s.err.clone();
         s.wav_src = WaveId::Ref(2);
         s.wav_fmt = 1;
-        s.wav_raw = true;
+        s.wav_mode = 2;
         // An independently pending client request must not be consumed or
         // cancelled while another client polls configuration/status.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2226,7 +2921,7 @@ mod tests {
             assert_eq!(s.err, errors, "status reads must not consume queued errors");
             assert_eq!(s.clients.len(), 1);
             assert_eq!(s.clients[0].buf, pending);
-            assert_eq!((s.wav_src, s.wav_fmt, s.wav_raw), (WaveId::Ref(2), 1, true));
+            assert_eq!((s.wav_src, s.wav_fmt, s.wav_mode), (WaveId::Ref(2), 1, 2));
         }
         line(&mut s, &mut ui, &cv, ":TIM:SCAL 0.000005");
         assert!(ui.measurement_statistics_snapshot_for_test().is_empty(), "a successful setting still invalidates statistics");
@@ -2254,7 +2949,7 @@ mod tests {
             assert_eq!(s.err.len(), 2);
             for query in ["RUN?", ":STOP?", ":SING?", ":SINGLE?", "*CLS?", "*RST?", ":CLE?", ":CLEAR?"] {
                 let errors = s.err.clone();
-                assert!(line(&mut s, &mut ui, &cv, query).is_empty(), "{query} has no defined query response");
+                assert!(line(&mut s, &mut ui, &cv, query).starts_with("-113,"), "{query} must answer Undefined header without acting");
                 assert_eq!(crate::store::setup_text(&ui.m), configuration, "{query} must not execute its action");
                 assert_eq!(ui.workflow_state(), workflow, "{query} must preserve Run/Stop and acquisition state");
                 assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{query} must preserve all acquired statistics");
@@ -2680,6 +3375,207 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":REF:CLE");
         assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:POIN?"), "0");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probewright_queries_answer_and_the_rigol_pages_round_trip() {
+        let (mut s, mut ui, cv) = session();
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0", "OOS starts its implemented status subset clear");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0");
+        let unknown = line(&mut s, &mut ui, &cv, ":REFerence:NOPE?");
+        assert!(unknown.starts_with("-113,"), "a missing query must answer, got {unknown:?}");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "32");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-113,"));
+        line(&mut s, &mut ui, &cv, "*CLS");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+
+        line(&mut s, &mut ui, &cv, ":CHAN1:DISP ON;:CHAN1:SCAL 0.5;:CHAN1:OFFS -0.25;:CHAN1:COUP AC;:CHAN1:BWL 20M");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:DISP?;:CHAN1:COUP?;:CHAN1:BWL?"), "1;AC;20M");
+        let scale: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:SCAL?").parse().unwrap();
+        assert!((scale - 0.5).abs() < 1e-6, "{scale}");
+        line(&mut s, &mut ui, &cv, ":CHAN1:PROB 10");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:PROB?"), "1.000000E+01");
+        line(&mut s, &mut ui, &cv, ":TIM:MAIN:SCAL 1e-3;:TIM:MAIN:OFFS 2e-3;:TRIG:SWE NORM;:TRIG:EDGE:SOUR CHAN1;:TRIG:EDGE:LEV 0.1;:TRIG:EDGE:SLOP NEG");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:SWE?;:TRIG:EDGE:SOUR?;:TRIG:EDGE:SLOP?"), "NORM;CHAN1;NEG");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:ITEM? VPP,CHAN1"), "9.9E37");
+
+        let png = s.exec_line(&mut ui, &cv, ":DISP:DATA? PNG");
+        assert!(png.starts_with(b"#9"), "IEEE block");
+        assert_eq!(&png[11..15], b"\x89PNG");
+        let bmp = s.exec_line(&mut ui, &cv, ":DISP:DATA?");
+        assert_eq!(&bmp[11..13], b"BM");
+
+        line(&mut s, &mut ui, &cv, ":WAV:MODE MAX;:WAV:FORM WORD;:WAV:STAR 1;:WAV:STOP 1000");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:MODE?;:WAV:FORM?;:WAV:STAR?;:WAV:STOP?"), "MAX;WORD;1;1000");
+    }
+
+    #[test]
+    fn reference_commands_and_a_raw_word_page() {
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":REF:CURR 1;:REF:SOUR 1,CHAN2;:REF:VSC 1,0.2;:REF:VOFF 1,-0.05;:REF:LAB:CONT 1,lane");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":REF:CURR?;:REF:SOUR? 1;:REF:LAB:CONT? 1"), "1;CHAN2;lane");
+        let vsc: f64 = line(&mut s, &mut ui, &cv, ":REF:VSC? 1").parse().unwrap();
+        let voff: f64 = line(&mut s, &mut ui, &cv, ":REF:VOFF? 1").parse().unwrap();
+        assert!((vsc - 0.2).abs() < 1e-6 && (voff + 0.05).abs() < 1e-6, "{vsc} {voff}");
+        line(&mut s, &mut ui, &cv, ":REF:SHOW 1,OFF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":REF:SHOW? 1"), "0");
+        line(&mut s, &mut ui, &cv, ":REF:SHOW 1,ON");
+
+        line(&mut s, &mut ui, &cv, ":WAV:SOUR R1;:WAV:MODE RAW;:WAV:FORM WORD;:WAV:STAR 10;:WAV:STOP 12");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:POIN?"), "3");
+        let data = s.exec_line(&mut ui, &cv, ":WAV:DATA?");
+        assert!(data.starts_with(b"#9"), "{:?}", &data[..data.len().min(16)]);
+        let n: usize = std::str::from_utf8(&data[2..11]).unwrap().parse().unwrap();
+        assert_eq!(n, 6, "three little-endian WORD points");
+        assert_eq!(data.len(), 11 + 6);
+
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 100;:SING");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 0.0);
+        line(&mut s, &mut ui, &cv, ":TFOR");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 1.0, "TFORce must release a waiting Single");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:STAT?"), "STOP");
+    }
+
+    #[test]
+    fn cursors_and_a_readout_round_trip() {
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TIM:MAIN:SCAL 1e-6;:TIM:MAIN:OFFS 0;:REF:VSC 1,1;:REF:VOFF 1,0");
+        line(&mut s, &mut ui, &cv, ":CURS:MODE MAN;:CURS:MAN:TYPE TIME;:CURS:MAN:SOUR R1;:CURS:MAN:CAX 0;:CURS:MAN:CBX 1e-6");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?;:CURS:MAN:TYPE?;:CURS:MAN:SOUR?"), "MAN;TIME;R1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MAN:CAX?"), "0.000000E+00");
+        let dx: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:XDEL?").parse().unwrap();
+        let inv: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:IXD?").parse().unwrap();
+        assert!((dx - 1e-6).abs() < 1e-9, "{dx}");
+        assert!((inv - 1e6).abs() < 1.0, "{inv}");
+
+        line(&mut s, &mut ui, &cv, ":CURS:MAN:TYPE AMPL;:CURS:MAN:CAY 0.5;:CURS:MAN:CBY -0.5");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?;:CURS:MAN:TYPE?"), "MAN;AMPL");
+        let ay: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:AYV?").parse().unwrap();
+        let dy: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:YDEL?").parse().unwrap();
+        assert!((ay - 0.5).abs() < 1e-4, "{ay}");
+        assert!((dy + 1.0).abs() < 1e-3, "{dy}");
+
+        line(&mut s, &mut ui, &cv, ":CURS:MODE XY;:CURS:XY:AX 1e-6;:CURS:XY:AY 0.25");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?"), "XY");
+        let ax: f64 = line(&mut s, &mut ui, &cv, ":CURS:XY:AX?").parse().unwrap();
+        let y: f64 = line(&mut s, &mut ui, &cv, ":CURS:XY:AY?").parse().unwrap();
+        assert!((ax - 1e-6).abs() < 1e-9 && (y - 0.25).abs() < 1e-4, "{ax} {y}");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE OFF;:CURS:MAN:XDEL?"), "9.9E37");
+
+        line(&mut s, &mut ui, &cv, ":MEAS:CLE;:MEAS:SOUR R1;:MEAS:ITEM VPP;:MEAS:ITEM RRDELAY,CHAN1,CHAN2");
+        let strip = line(&mut s, &mut ui, &cv, ":MEAS:STR?");
+        assert!(strip.contains("VPP,R1,"), "{strip}");
+        assert!(strip.contains("RRDELAY,CHAN1,CHAN2,"), "{strip}");
+        let vpp: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? VPP").parse().unwrap();
+        assert!((vpp - 1.0).abs() < 1e-3, "the saved square is 1 Vpp, got {vpp}");
+        line(&mut s, &mut ui, &cv, ":MEAS:CLE");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STR?"), "");
+
+        line(&mut s, &mut ui, &cv, ":DVM:ENAB ON;:DVM:SOUR CHAN2;:DVM:MODE ACRMS;:COUN:ENAB ON;:COUN:MODE PER;:COUN:NDIG 6");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DVM:ENAB?;:DVM:SOUR?;:DVM:MODE?;:COUN:ENAB?;:COUN:MODE?;:COUN:NDIG?"), "1;CHAN2;ACRMS;1;PER;6");
+        assert!(!line(&mut s, &mut ui, &cv, ":DVM:CURR?;:COUN:CURR?").is_empty());
+        line(&mut s, &mut ui, &cv, ":COUN:TOT:CLE");
+    }
+
+    #[test]
+    fn raw_tcp_empty_query_is_a_line_and_compound_query_keeps_its_position() {
+        let (mut scpi, mut ui, canvas) = session();
+        line(&mut scpi, &mut ui, &canvas, ":MEAS:CLEAR");
+        let mut client = TcpStream::connect(("127.0.0.1", scpi.port().unwrap())).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.write_all(b":MEAS:STRIP?\n").unwrap();
+        scpi.poll(&mut ui, &canvas);
+        let mut byte = [0]; client.read_exact(&mut byte).unwrap();
+        assert_eq!(&byte, b"\n");
+        client.write_all(b":MEAS:STRIP?;*OPC?\n*ESR?\n").unwrap();
+        scpi.poll(&mut ui, &canvas);
+        let mut reply = [0; 5]; client.read_exact(&mut reply).unwrap();
+        assert_eq!(&reply, b";1\n0\n");
+        assert_eq!(scpi.exec_message_checked(&mut ui, &canvas, ":MEAS:STRIP?"), Ok((Vec::new(), true)));
+        assert_eq!(scpi.exec_message_checked(&mut ui, &canvas, ":STOP"), Ok((Vec::new(), false)));
+    }
+
+    #[test]
+    fn cursor_setters_preserve_genuine_statistics_and_pending_single() {
+        let (mut scpi, mut ui, canvas) = session();
+        for _ in 0..4 { ui.step(0.05); }
+        let statistics = ui.measurement_statistics_snapshot_for_test();
+        assert!(statistics.iter().any(|&(count, _)| count >= 3));
+        let record = ui.record_volts(0).to_vec();
+        ui.m.trig_level = 100.0;
+        ui.key(crate::ui::key::SINGLE);
+        let stamp = ui.m.hw_stamp;
+        let source = ui.m.trigger_wave();
+        let mut waiting = Program::new("*OPC?;:RUN");
+        assert!(scpi.poll_program(&mut ui, &canvas, &mut waiting).is_none());
+        for command in [":CURS:MODE MAN", ":CURS:MAN:TYPE TIME", ":CURS:MAN:SOUR CHAN1",
+            ":CURS:MAN:CAX 0", ":CURS:MAN:CBX 1e-8", ":CURS:MAN:TYPE AMPL", ":CURS:MAN:CAY 0.2",
+            ":CURS:MAN:CBY -0.2", ":CURS:MODE XY", ":CURS:XY:AX 0", ":CURS:XY:AY 0.1",
+            ":CURS:XY:BX 1e-8", ":CURS:XY:BY -0.1", ":CURS:MODE TRAC", ":CURS:TRAC:SOUR2 CHAN1", ":CURS:MODE OFF"] {
+            line(&mut scpi, &mut ui, &canvas, command);
+            assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{command}");
+            assert_eq!(ui.record_volts(0), record, "{command}");
+            assert_eq!(ui.m.hw_stamp, stamp, "{command}");
+            assert_eq!(ui.m.trigger_wave(), source);
+            assert_eq!(ui.m.trig_mode, TrigMode::Single);
+            assert!(scpi.poll_program(&mut ui, &canvas, &mut waiting).is_none(), "{command}");
+        }
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    #[test]
+    fn waveform_word_is_little_endian_and_page_metadata_has_the_page_origin() {
+        let (mut scpi, mut ui, canvas) = session();
+        let volts = |code: u16| (code as f64 - 32768.0) * 8.0 / 60000.0;
+        ui.commit_waveform_traces(vec![crate::store::WaveTrace {
+            v: vec![0.0, volts(0x8123) as f32, volts(0x2345) as f32, 0.0],
+            dt: 5e-12, t0: -2e-9, label: "Known WORD codes".into(),
+        }], "wire-policy.csv", true).unwrap();
+        line(&mut scpi, &mut ui, &canvas, ":REF:VSC 1,1;:REF:VOFF 1,0;:WAV:SOUR R1;:WAV:MODE RAW;:WAV:FORM WORD;:WAV:STAR 2;:WAV:STOP 3");
+        assert_eq!(scpi.exec_line(&mut ui, &canvas, ":WAV:DATA?"), b"#9000000004\x23\x81\x45\x23");
+        let preamble = line(&mut scpi, &mut ui, &canvas, ":WAV:PRE?");
+        let values: Vec<_> = preamble.split(',').collect();
+        assert_eq!(&values[..4], &["1", "2", "2", "1"]);
+        assert!((values[4].parse::<f64>().unwrap() - 5e-12).abs() < 1e-18);
+        assert!((values[5].parse::<f64>().unwrap() - (-2e-9 + 5e-12)).abs() < 1e-15);
+        line(&mut scpi, &mut ui, &canvas, ":WAV:MODE MAX;:STOP");
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, ":WAV:PRE?").split(',').nth(1), Some("1"));
+        line(&mut scpi, &mut ui, &canvas, ":RUN");
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, ":WAV:PRE?").split(',').nth(1), Some("1"));
+    }
+
+    #[test]
+    fn query_error_stays_specific_when_the_bounded_error_queue_is_full() {
+        let (mut scpi, mut ui, canvas) = session();
+        for _ in 0..ERR_MAX { scpi.push_err("-113,\"Old command error\"".into()); }
+        let error = line(&mut scpi, &mut ui, &canvas, ":REF:VSC? 10");
+        assert!(error.starts_with("-230,"), "{error}");
+        assert_eq!(scpi.err.len(), ERR_MAX);
+        assert!(scpi.err.last().unwrap().starts_with("-350,"));
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, "*ESR?;*ESR?"), "56;0", "command, execution and queue-overflow bits");
+        line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?");
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, "*ESR?"), "0", "reading old errors does not relatch ESR");
+        let huge = format!(":{}?", "é".repeat(2000));
+        let reply = scpi.exec_line(&mut ui, &canvas, &huge);
+        assert!(reply.len() <= ERR_LEN);
+        assert!(std::str::from_utf8(&reply).unwrap().starts_with("-113,"));
+    }
+
+    #[test]
+    fn additional_action_queries_never_start_calibration_bode_or_force() {
+        let (mut scpi, mut ui, canvas) = reference_session();
+        let model = crate::store::setup_text(&ui.m);
+        let workflow = ui.workflow_state();
+        for query in [":TFOR?", ":TRIG:FORC?", ":CAL:STAR?", ":CAL:CANC?", ":BODE:RUN?", ":REF:CLEAR?", ":REF:SAVE?"] {
+            assert!(line(&mut scpi, &mut ui, &canvas, query).starts_with("-113,"), "{query}");
+            assert_eq!(crate::store::setup_text(&ui.m), model);
+            assert_eq!(ui.workflow_state(), workflow);
+        }
+        let old = ui.meas_pair_sources();
+        line(&mut scpi, &mut ui, &canvas, ":MEAS:SOUR R1,WRONG");
+        assert_eq!(ui.meas_pair_sources(), old, "invalid secondary source cannot partially apply");
     }
 
     fn wfm_bytes() -> Vec<u8> {

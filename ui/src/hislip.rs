@@ -191,7 +191,7 @@ fn on_program_message(peer: &mut Peer, live: &mut Vec<Live>, next: &mut u16, msg
                 peer.program = Some(program);
                 return Out { msgs: Vec::new(), close: false };
             };
-            if resp.is_empty() {
+            if !program.has_reply {
                 return Out { msgs: Vec::new(), close: false };
             }
             resp.push(b'\n');
@@ -310,7 +310,7 @@ impl Server {
             let clearing = self.conns[i].buf.get(2).is_some_and(|typ| matches!(*typ, DEVICE_CLEAR_COMPLETE | ASYNC_DEVICE_CLEAR));
             if !closed && !clearing { if let Some(mut program) = self.conns[i].peer.program.take() {
                 if let Some(mut response) = exec(&mut program) {
-                    if !response.is_empty() {
+                    if program.has_reply {
                         response.push(b'\n');
                         let peer = &self.conns[i].peer;
                         let max = self.live.iter().find(|live| live.id == peer.session).map(|live| live.max_payload).unwrap_or(MAX_PAYLOAD);
@@ -375,6 +375,38 @@ mod tests {
         } else {
             Vec::new()
         }
+    }
+
+    #[test]
+    fn empty_query_emits_data_end_but_writes_and_cancelled_fences_do_not() {
+        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut peer = Peer { role: Role::Sync, session: 1, pending: Vec::new(), msgid: 0, program: None };
+        let mut live = vec![Live { id: 1, max_payload: MAX_PAYLOAD }];
+        let mut next = 2;
+        let message = |id, command: &str| Message { typ: DATA_END, control: 0, param: id, data: command.as_bytes().to_vec() };
+        let empty = on_program_message(&mut peer, &mut live, &mut next, &message(7, ":MEAS:CLEAR;:MEAS:STRIP?"),
+            &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert_eq!(empty.msgs.len(), 1);
+        let reply = take_message(&mut empty.msgs[0].clone()).unwrap().unwrap();
+        assert_eq!((reply.typ, reply.param, reply.data), (DATA_END, 7, vec![b'\n']));
+        let write = on_program_message(&mut peer, &mut live, &mut next, &message(8, ":MEAS:CLEAR"),
+            &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(write.msgs.is_empty());
+        let compound = on_program_message(&mut peer, &mut live, &mut next, &message(9, ":MEAS:STRIP?;*OPC?"),
+            &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert_eq!(take_message(&mut compound.msgs[0].clone()).unwrap().unwrap().data, b";1\n");
+        let pending = on_program_message(&mut peer, &mut live, &mut next,
+            &message(10, ":MEAS:STRIP?;:TRIG:EDGE:LEV 10;:SINGLE;*OPC?;:RUN"),
+            &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(pending.msgs.is_empty(), "an earlier empty query must not emit a premature response at a pending fence");
+        let mut program = peer.program.take().unwrap();
+        assert!(program.has_reply);
+        scpi.exec_line(&mut ui, &cv, ":STOP");
+        assert_eq!(scpi.poll_program(&mut ui, &cv, &mut program), Some(Vec::new()));
+        assert!(!program.has_reply, "cancelled queries must not emit an empty DATA_END response");
+        assert_eq!(ui.m.run, crate::model::RunState::Stop);
     }
 
     #[test]

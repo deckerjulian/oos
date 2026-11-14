@@ -220,7 +220,7 @@ fn pump_link(link: &mut Link, exec: &mut dyn FnMut(&mut crate::scpi::Program) ->
     while let Some(mut program) = link.programs.pop_front() {
         if link.out.len() >= crate::scpi::RESP_MAX { link.programs.clear(); break; }
         let Some(response) = exec(&mut program) else { link.programs.push_front(program); break; };
-        if !response.is_empty() { link.out.extend_from_slice(&response); link.out.push(b'\n'); }
+        if program.has_reply { link.out.extend_from_slice(&response); link.out.push(b'\n'); }
     }
 }
 
@@ -385,6 +385,42 @@ mod tests {
         }
         m.extend_from_slice(args);
         m
+    }
+
+    #[test]
+    fn empty_query_has_a_readable_end_marker_and_cancelled_fence_has_no_reply() {
+        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut links = vec![Some(Link::default())];
+        let link = links[0].as_mut().unwrap();
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:CLEAR;:MEAS:STRIP?"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert_eq!(link.out, b"\n");
+        let mut args = Vec::new();
+        for value in [0, 1024, 1000, 0, 0, 0] { put(&mut args, value); }
+        let request = call(77, CORE_PROG, 12, &args);
+        let reply = core_async(&parse_call(&request).unwrap(), &mut links,
+            &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        let mut body = Xdr::new(&reply[24..]);
+        assert_eq!((body.u32(), body.u32()), (Some(0), Some(4)));
+        assert_eq!(body.opaque(), Some(&b"\n"[..]), "empty query succeeds instead of an immediate read timeout");
+        let link = links[0].as_mut().unwrap();
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:CLEAR"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(link.out.is_empty());
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:STRIP?;*OPC?"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert_eq!(std::mem::take(&mut link.out), b";1\n");
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:STRIP?;:TRIG:EDGE:LEV 10;:SINGLE;*OPC?;:RUN"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(link.out.is_empty());
+        assert_eq!(link.programs.len(), 1);
+        scpi.exec_line(&mut ui, &cv, ":STOP");
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(link.out.is_empty());
+        assert!(link.programs.is_empty());
+        assert_eq!(ui.m.run, crate::model::RunState::Stop);
     }
 
     #[test]

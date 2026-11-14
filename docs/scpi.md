@@ -38,7 +38,7 @@ Waveform names are `CHAN1` through `CHAN4` as available on the model, and `R1` t
 | `*CLS` | Clear the SCPI error/status state and pending operation-complete event registrations. Does not clear waveform memory. |
 | `*OPC?` | Wait for the defined finite operations below, then return `1`. |
 | `*OPC` | Register completion of those finite operations in standard-event bit 0. |
-| `*ESR?` | Read and clear OPC bit 0. Other standard-event bits and a complete IEEE status/SRQ subsystem are not implemented. |
+| `*ESR?` | Read and clear implemented event bits: OPC 0, query error 2, device error 3, execution error 4, command error 5. Starts clear; no power-on bit or complete status/SRQ subsystem. |
 | `:RUN` / `:STOP` | Idempotent acquisition assignments, also used for stored replay and SIM. |
 | `:SINGle` | Arm once; wait for a qualified capture and then stop. |
 | `:TFORce` or `:TRIGger:FORCe` | Explicitly accept a capture without requiring a trigger match. |
@@ -108,14 +108,15 @@ Choose a level inside the actual waveform range. Use `*OPC?` only when willing t
 | Command | Meaning |
 | --- | --- |
 | `:WAVeform:SOURce[?]` | Select `CHANn|Rn` for transfer; does not select the acquisition trigger. |
-| `:WAVeform:MODE[?]` | `NORMal|RAW`. `MAX` is unsupported and rejected, rather than silently changing to NORM. |
+| `:WAVeform:MODE[?]` | `NORMal|MAXimum|RAW`. MAX uses the CH screen while running and native memory while stopped. |
 | `:WAVeform:FORMat[?]` | `BYTE|WORD|ASCii`. Invalid formats are rejected without changing the selection. |
-| `:WAVeform:POINts?` | Actual points available for this source and mode. |
+| `:WAVeform:STARt[?]` / `:STOP[?]` | One-based inclusive transfer page; default start 1, stop through the last available point. Setting either keeps start <= stop. |
+| `:WAVeform:POINts[?]` | Query actual points in the page; set the requested count starting at STARt. Pages clip at the available data boundary. |
 | `:WAVeform:PREamble?` | Ten comma-separated fields listed below. |
 | `:WAVeform:DATA?` | IEEE definite-length binary block; ASCII format also uses a block. |
-| `:DISPlay:DATA?` | IEEE block containing a 24-bit BMP screenshot, not a waveform. |
+| `:DISPlay:DATA? [BMP|PNG]` | IEEE block containing a screenshot; default 24-bit BMP. |
 
-For CH inputs, NORM reads the interpolated display record; RAW uses retained native acquisition memory when available, including points outside the screen. If no native record exists, it falls back to the available processed record. References transfer their full native arrays in either mode. Do not assume `:ACQ:SRAT?` describes a reference: read its preamble. RAW is permitted while running in OOS; stock Rigol stop-only transfer assumptions differ. Multiple queries while running can observe different accepted captures; Stop first when metadata and data must match.
+For CH inputs, NORM reads the interpolated display record; RAW uses retained native acquisition memory when available, including points outside the screen. If no native record exists, it falls back to the available processed record. References use their native arrays in all three modes, restricted by the chosen transfer page. Do not assume `:ACQ:SRAT?` describes a reference: read its preamble. RAW is permitted while running in OOS; stock Rigol stop-only transfer assumptions differ. Multiple queries while running can observe different accepted captures; Stop first when metadata and data must match.
 
 Preamble fields:
 
@@ -123,16 +124,16 @@ Preamble fields:
 format,type,points,count,xincrement,xorigin,xreference,yincrement,yorigin,yreference
 ```
 
-`format` is 0 BYTE, 1 WORD, 2 ASCII. `type` is 0 NORM or 2 RAW. `count` is 1. Native times are seconds. Native transfer origins preserve the recorded metadata; analysis can additionally apply deskew corrections. Integer data converts as:
+`format` is 0 BYTE, 1 WORD, 2 ASCII. `type` is the selected mode: 0 NORM, 1 MAX, 2 RAW. MAX still switches its CH backing record according to Run/Stop. `count` is 1. Native times are seconds. Native transfer origins preserve the recorded metadata; analysis can additionally apply deskew corrections. Integer data converts as:
 
 ```text
 time[k] = (k - xreference) * xincrement + xorigin
 volts[k] = (code[k] - yorigin - yreference) * yincrement
 ```
 
-BYTE uses unsigned 8-bit samples. WORD uses unsigned **little-endian** 16-bit samples. These are quantized to the reported scale and can clip if the source lies outside that scale. ASCII contains comma-separated volt values in seven-significant-digit scientific notation; do not apply integer scaling again. Neither transfer is a promise of bit-identical original vendor file bytes.
+BYTE uses unsigned 8-bit samples. WORD uses unsigned **little-endian** 16-bit samples as the explicit OOS wire policy, preserved for existing clients. Rigol section 3.28.3 specifies two bytes per point without specifying their order, so this is not a verified physical Rigol byte-order claim. These are quantized to the reported scale and can clip if the source lies outside that scale. ASCII contains comma-separated volt values in seven-significant-digit scientific notation; do not apply integer scaling again. Neither transfer is a promise of bit-identical original vendor file bytes.
 
-A block is `#<N><N decimal length digits><payload>`, followed by the response newline. Read the announced byte length; never use newline splitting inside a binary payload. `:WAV:STARt`/`:WAV:STOP` chunk selection is not implemented. Long transfers encode the whole response on the main-loop path; slow receivers can stall it within existing send timeouts. WORD generally uses less memory than ASCII. The interpreter's aggregate response guard is not a hard bound on one large waveform result.
+A block is `#<N><N decimal length digits><payload>`, followed by the response newline. Read the announced byte length; never use newline splitting inside a binary payload. Use `:WAV:STARt`/`:WAV:STOP` for smaller pages; preamble origin is the time of the page's first point. Metadata borrows the record without copying samples. Before copying DATA, the server rejects pages whose worst-case encoded size exceeds 64 MiB with -223; ASCII uses a conservative 14 bytes per sample bound. Long pages still encode on the main-loop path and slow receivers can stall it within existing send timeouts. WORD generally uses less memory than ASCII.
 
 Minimal standard-library Python reader for the running Windows app:
 
@@ -189,8 +190,11 @@ The example deliberately stops acquisition and retains that state. It reads one 
 
 | Command | Reply / parameters |
 | --- | --- |
-| `:MEASure:ITEM? <item>[,<source>]` | Standard scalar; default source CHAN1. Valid items are listed below. |
-| `:MEASure:ITEM? <pair>,<A>,<B>` | Pair scalar, with native physical-time alignment. |
+| `:MEASure:ITEM? <item>[,<source>]` | Standard scalar; default source is the current Measure selection. Valid items are listed below. |
+| `:MEASure:ITEM? <pair>,<A>,<B>` | Pair scalar, with native physical-time alignment; omitted roles use the Measure selections. |
+| `:MEASure:ITEM <item>[,<A>[,<B>]]` | Add a standard/pair readout. Duplicates preserve statistics and Single. |
+| `:MEASure:SOURce[?] <A>[,<B>]` | Default Measure source(s); query returns A. Sources are `CHANn|Rn`. |
+| `:MEASure:CLEar` | Clear standard, pair and catalog selections through the shared statistics reset. |
 | `:MEASure:GATing[?]` | `SCREEN` follows the viewport; `NONE` means Full record. This gate is an OOS extension. |
 | `:MEASure:REFS[?]` | `10/90|20/80` edge thresholds. |
 | `:MEASure:TSETup[?]` / `:THOLd[?]` | Nonnegative seconds used by applicable setup/hold results. |
@@ -228,6 +232,23 @@ Additional OOS families accept item names defined by their analysis page/source 
 
 See [reference analysis](reference-analysis.md) for sampling, model-derived jitter, physical alignment and C-PHY limits. These extensions are not stock Rigol/DPOJET compatibility claims.
 
+## Cursors, DVM and counter
+
+| Command | Meaning |
+| --- | --- |
+| `:CURSor:MODE[?]` | `OFF|MANual|TRACk|XY`; MAN keeps the selected time/amplitude type. |
+| `:CURSor:MANual:TYPE[?]` | `TIME|AMPLitude`. |
+| `:CURSor:{MANual|TRACk}:SOURce[?]` | Selected `CHANn|Rn`, without changing acquisition. SOURce1 aliases it; a different SOURce2 is unsupported. |
+| `:CURSor:{MANual|TRACk}:CAX[?]` / `:CBX[?]` | A/B physical time in seconds; clips to the current visible span. |
+| `:CURSor:{MANual|TRACk}:CAY[?]` / `:CBY[?]` | A/B volts in the selected source's displayed lane, including display zoom. |
+| `:CURSor:XY:{AX|BX|AY|BY}[?]` | Independent X/Y coordinates on one selected waveform, not independent input sources. |
+| `:CURSor:{MANual|TRACk|XY}:{AXValue|BXValue|AYValue|BYValue|XDELta|IXDelta|YDELta}?` | Values/deltas; IXDelta is 1/abs(time delta). Missing is `9.9E37`. |
+| `:DVM:{ENABle|SOURce|MODE}[?]` | ON/OFF, acquired CHANn, and `DC|ACRMS|ACDC`; `:DVM:CURRent?` reads volts. |
+| `:COUNter:{ENABle|SOURce|MODE|NDIGits}[?]` | ON/OFF, acquired CHANn, `FREQuency|PERiod|TOTalize`, digits 3..7. |
+| `:COUNter:CURRent?` / `:COUNter:TOTalize:CLEar` | Current result / reset accumulated counter statistics. |
+
+Cursor changes preserve capture statistics and an armed Single. Track values use the selected native/reference waveform and physical origin; positions remain viewport fractions. DVM/counter sources are acquired channels, not references; physical meter/counter parity is not established.
+
 ## Reference storage, SIM and decoding
 
 | Command | Meaning |
@@ -236,7 +257,11 @@ See [reference analysis](reference-analysis.md) for sampling, model-derived jitt
 | `:REFerence:LOAD "path"` | Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. |
 | `:REFerence:IMPort ["path"]` | Load named file, or the selected `refN` file beside setups. |
 | `:REFerence:SAVE` | Copy the selected acquired channel record into the selected reference slot. Does not write a waveform file. |
-| `:REFerence:SHOW[?] ON|OFF` | Visibility of the selected slot. |
+| `:REFerence:SHOW[?] [<slot>,]ON|OFF` | Visibility of one slot; DISPlay aliases SHOW. Query accepts a slot number. |
+| `:REFerence:CURRent[?] 1..10` | Working slot, returned as a number; SLOT returns `Rn`. |
+| `:REFerence:SOURce[?] [<slot>,]CHANn` | Acquired-channel source used when saving a reference. |
+| `:REFerence:VSCale[?] [<slot>,]<V/div>` / `:VOFFset[?] [<slot>,]<V>` | Loaded-reference display scale/offset; stored samples are unchanged. |
+| `:REFerence:LABel:CONTent[?] [<slot>,]<text>` | Reference display label. |
 | `:REFerence:CLEar` | Clear all loaded reference slots. |
 | `:SIM:PRESet[?] <name>` | Select a supported preset by its UI name. |
 | `:SIM:SLOT[?] R1..R10` | Generated waveform destination. |
@@ -284,9 +309,9 @@ Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THRe
 
 ## Errors and compatibility limits
 
-Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue is bounded. Typical errors include -113 undefined header, -224 invalid parameter, -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.
+Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue holds at most 20 bounded messages; overflow is -350. Errors latch their event bit once; draining old errors does not relatch it. Unsupported or failed queries reply with specific error text as well as queuing it, even when full. Legitimate pending `*OPC?` keeps its deferred response. Typical errors include -113 undefined header, -224 invalid parameter, -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.
 
-A Rigol script commonly needs adjustments when it assumes stock `*IDN?`, `WAV:MODE MAX`, START/STOP transfer chunks, vendor-specific setup files, a full status/SRQ system, arbitrary trigger-specific subtrees, or references as physical ADC inputs. Check errors and actual readbacks after configuration. TekScope's `REMOTE:RUNStop`, `REMOTE:ACQMethod`, DATA/WFMOutpre/CURVe dialect is not implemented by these Rigol-style headers.
+A Rigol script commonly needs adjustments when it assumes stock `*IDN?`, big-endian WORD assumptions, vendor-specific setup files, a full status/SRQ system, arbitrary trigger-specific subtrees, or references as physical ADC inputs. Check errors and actual readbacks after configuration. TekScope's `REMOTE:RUNStop`, `REMOTE:ACQMethod`, DATA/WFMOutpre/CURVe dialect is not implemented by these Rigol-style headers.
 
 The canonical implementation is [scpi.rs](../ui/src/scpi.rs), with transport details in [hislip.rs](../ui/src/hislip.rs) and [vxi11.rs](../ui/src/vxi11.rs). This manual records the supported subset rather than treating a matching vendor header as proof of equivalent behavior.
 

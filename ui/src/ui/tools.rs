@@ -5,6 +5,10 @@
 //! labels. All of them work on the records the screen shows.
 
 use super::*;
+
+#[cfg(test)]
+#[path = "scpi_helpers_tests.rs"]
+mod scpi_helpers_tests;
 use oos_dsp::measure::{burst_width, duration_n, time_outside, Analysis};
 
 /// A bounded selection can hold the complete catalog for every analog channel and reference slot.
@@ -357,7 +361,7 @@ impl Ui {
         }
     }
 
-    pub(super) fn counter_clear(&mut self) {
+    pub(crate) fn counter_clear(&mut self) {
         self.cnt_total = 0;
         self.cnt_stat = MStat::default();
     }
@@ -441,7 +445,7 @@ impl Ui {
     }
 
     /// The selected source at a physical record time, independent of view offset.
-    pub(super) fn wave_at(&self, t: f64) -> Option<f32> {
+    pub(crate) fn wave_at(&self, t: f64) -> Option<f32> {
         let (w, dt, t0) = self.deskew_samples(self.selected_workspace_source()?)?;
         if w.is_empty() || !dt.is_finite() || dt <= 0.0 { return None; }
         let index = (t - t0) / dt;
@@ -455,9 +459,116 @@ impl Ui {
 
     /// Times of the two cursors.
     pub(super) fn cursor_times(&self) -> (f64, f64) {
+        (self.cursor_time_at(self.m.cur_a), self.cursor_time_at(self.m.cur_b))
+    }
+
+    /// Time at a horizontal cursor fraction (0 is the left edge, 1 the right).
+    pub(crate) fn cursor_time_at(&self, frac: f32) -> f64 {
         let (tpd, delay) = self.view();
-        let t = |c: f32| (c as f64 - 0.5) * HDIV as f64 * tpd as f64 + delay as f64;
-        (t(self.m.cur_a), t(self.m.cur_b))
+        (frac as f64 - 0.5) * HDIV as f64 * tpd as f64 + delay as f64
+    }
+
+    /// Screen fraction for a time, kept on the graticule.
+    pub(crate) fn cursor_frac_time(&self, t: f64) -> f32 {
+        let (tpd, delay) = self.view();
+        let span = HDIV as f64 * tpd as f64;
+        if !t.is_finite() || !span.is_finite() || span <= 0.0 {
+            return 0.5;
+        }
+        ((t - delay as f64) / span + 0.5).clamp(0.0, 1.0) as f32
+    }
+
+    /// Cursor focus follows the displayed source, independently of acquisition.
+    pub(crate) fn cursor_source(&self) -> WaveId {
+        self.selected_workspace_source().unwrap_or(WaveId::Ch(self.m.active.min(n_ch() - 1)))
+    }
+
+    pub(crate) fn set_cursor_source(&mut self, source: WaveId) -> bool {
+        let available = match source {
+            WaveId::Ch(c) => c < n_ch(),
+            WaveId::Ref(i) => self.refs.get(i).is_some_and(Option::is_some),
+        };
+        if !available { return false; }
+        self.select_workspace_source(source);
+        self.relayout();
+        true
+    }
+
+    /// Physical volts at the selected lane's screen fraction, including vertical zoom.
+    pub(crate) fn cursor_volt_at(&self, frac: f32) -> f64 {
+        let Some((source, scale, offset, _)) = self.cursor_source_context() else { return f64::NAN; };
+        let area = self.source_area(source).unwrap_or(self.area);
+        self.zoom_divs_at(area, frac) as f64 * scale as f64 - offset as f64
+    }
+
+    pub(crate) fn cursor_frac_volt(&self, v: f64) -> f32 {
+        let Some((source, scale, offset, _)) = self.cursor_source_context() else { return 0.5; };
+        let area = self.source_area(source).unwrap_or(self.area);
+        let (factor, center) = self.zoom_vertical_transform(area);
+        if !v.is_finite() || !scale.is_finite() || scale <= 0.0 { return 0.5; }
+        (0.5 - ((v + offset as f64) / scale as f64 - center as f64)
+            * factor as f64 / VDIV as f64).clamp(0.0, 1.0) as f32
+    }
+
+    /// The source `:MEASure:ITEM` uses when the command names none, and the second source of a pair.
+    pub(crate) fn meas_source(&self) -> WaveId {
+        self.meas_src
+    }
+
+    pub(crate) fn meas_source_b(&self) -> WaveId {
+        self.meas_src_b
+    }
+
+    pub(crate) fn set_meas_source(&mut self, id: WaveId) {
+        self.meas_src = id;
+    }
+
+    pub(crate) fn set_meas_source_b(&mut self, id: WaveId) {
+        self.meas_src_b = id;
+    }
+
+    /// Ok(true) adds a row; Ok(false) preserves an existing row and its statistics.
+    pub(crate) fn meas_add(&mut self, k: Meas, src: WaveId) -> Result<bool, &'static str> {
+        let e = (k, src);
+        if self.m.meas.iter().any(|item| *item == e) {
+            return Ok(false);
+        }
+        if !self.meas_make_room() {
+            return Err("Measurement selection is full");
+        }
+        self.m.meas.push(e);
+        self.ensure_meas_own();
+        self.mark_changed();
+        Ok(true)
+    }
+
+    /// Put one pair measurement on the readout, with the same idempotent contract.
+    pub(crate) fn meas_add_pair(&mut self, k: usize, a: WaveId, b: WaveId) -> Result<bool, &'static str> {
+        if a == b {
+            return Err("Source A and B are the same source");
+        }
+        let e = (k, a, b);
+        if self.m.meas2.iter().any(|item| *item == e) {
+            return Ok(false);
+        }
+        if !self.meas_make_room() {
+            return Err("Measurement selection is full");
+        }
+        self.m.meas2.push(e);
+        self.mark_changed();
+        Ok(true)
+    }
+
+    /// `:MEASure:CLEar`: the strip, the pair rows, and the catalog rows.
+    pub(crate) fn meas_clear_remote(&mut self) -> bool {
+        if self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty() { return false; }
+        self.m.meas.clear();
+        self.m.meas2.clear();
+        self.m.cat.clear();
+        self.meas_own.clear();
+        self.meas_cfg = None;
+        self.mark_changed();
+        true
     }
 
     /// File of a mask in the slot of the Storage page, beside the setups.
@@ -618,6 +729,78 @@ impl Ui {
     pub(crate) fn ref_show_set(&mut self, on: bool) -> bool {
         let Some(r) = self.refs.get_mut(self.ref_sel).and_then(|r| r.as_mut()) else { return false };
         r.on = on;
+        true
+    }
+
+    /// Whether slot `slot` is drawn. None when it is empty or out of range.
+    pub(crate) fn ref_shown_slot(&self, slot: usize) -> Option<bool> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.on)
+    }
+
+    pub(crate) fn ref_show_slot(&mut self, slot: usize, on: bool) -> bool {
+        if self.refs.get(slot).is_none_or(Option::is_none) {
+            return false;
+        }
+        self.ref_sel = slot;
+        self.ref_show_set(on)
+    }
+
+    /// Channel a `:REFerence:SAVE` of this slot copies. A saved slot remembers its own source.
+    pub(crate) fn ref_source_of(&self, slot: usize) -> usize {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src).unwrap_or(if slot == self.ref_sel { self.ref_src } else { 0 })
+    }
+
+    pub(crate) fn ref_source_set(&mut self, slot: usize, ch: usize) -> bool {
+        if slot >= NREF || ch >= n_ch() {
+            return false;
+        }
+        self.ref_sel = slot;
+        self.ref_src = ch;
+        if let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) {
+            r.src = ch;
+        }
+        true
+    }
+
+    pub(crate) fn ref_vscale(&self, slot: usize) -> Option<f32> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.vpd)
+    }
+
+    pub(crate) fn ref_vscale_set(&mut self, slot: usize, vpd: f32) -> bool {
+        if slot >= NREF || !vpd.is_finite() || vpd <= 0.0 {
+            return false;
+        }
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        self.ref_sel = slot;
+        r.vpd = vpd;
+        true
+    }
+
+    pub(crate) fn ref_voffset(&self, slot: usize) -> Option<f32> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.offset)
+    }
+
+    pub(crate) fn ref_voffset_set(&mut self, slot: usize, offset: f32) -> bool {
+        if slot >= NREF || !offset.is_finite() {
+            return false;
+        }
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        self.ref_sel = slot;
+        r.offset = offset;
+        true
+    }
+
+    pub(crate) fn ref_label(&self, slot: usize) -> Option<String> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.label.clone())
+    }
+
+    pub(crate) fn ref_label_set(&mut self, slot: usize, label: String) -> bool {
+        if slot >= NREF {
+            return false;
+        }
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        self.ref_sel = slot;
+        r.label = label;
         true
     }
 
