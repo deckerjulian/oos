@@ -1750,9 +1750,13 @@ impl Scpi {
                 return t(if ui.m.cursor == CursorMode::Volt { "AMPL" } else { "TIME" });
             }
             if kw(arg, "TIME") {
-                ui.m.cursor = CursorMode::Time;
+                if ui.m.cursor != CursorMode::Xy {
+                    ui.m.cursor = CursorMode::Time;
+                }
             } else if kw(arg, "AMPLitude") {
-                ui.m.cursor = CursorMode::Volt;
+                if ui.m.cursor != CursorMode::Xy {
+                    ui.m.cursor = CursorMode::Volt;
+                }
             } else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
@@ -1761,7 +1765,8 @@ impl Scpi {
             return None;
         }
         // One source: the active channel. Track's second source has nowhere to live, so a different SOURce2 is an error.
-        // Manual X and Y share cur_a/cur_b. XY is the mode that keeps both axes (X in cur_a/cur_b, Y in cur_c/cur_d).
+        // Time cursors use cur_a/cur_b. Voltage cursors use them too, until both axes are set: then the screen's
+        // XY cursors keep the times in cur_a/cur_b and the voltages in cur_c/cur_d.
         if n.len() == 2 && (kw(n0, "MANual") || kw(n0, "TRACk")) && (kw(n[1], "SOURce") || kw(n[1], "SOURce1") || kw(n[1], "SOURce2")) {
             if query {
                 return t(&format!("CHAN{}", ui.m.active.min(n_ch() - 1) + 1));
@@ -1849,15 +1854,17 @@ impl Scpi {
 
     /// Horizontal (`x`) or vertical cursor. `a` is cursor A.
     fn cursor_axis(&mut self, ui: &mut Ui, query: bool, arg: &str, x: bool, a: bool) -> Option<Vec<u8>> {
-        let xy = ui.m.cursor == CursorMode::Xy;
+        let place = |ui: &Ui, x: bool, a: bool| -> Option<f32> {
+            Some(match (x, ui.m.cursor) {
+                (true, CursorMode::Volt | CursorMode::Off) => return None,
+                (false, CursorMode::Time | CursorMode::Track | CursorMode::Off) => return None,
+                (false, CursorMode::Xy) => if a { ui.m.cur_c } else { ui.m.cur_d },
+                (false, CursorMode::Volt) => if a { ui.m.cur_a } else { ui.m.cur_b },
+                (true, _) => if a { ui.m.cur_a } else { ui.m.cur_b },
+            })
+        };
         if query {
-            let frac = if x || !xy {
-                if a { ui.m.cur_a } else { ui.m.cur_b }
-            } else if a {
-                ui.m.cur_c
-            } else {
-                ui.m.cur_d
-            };
+            let Some(frac) = place(ui, x, a) else { return Some(b"9.9E37".to_vec()) };
             let v = if x { ui.cursor_time_at(frac) } else { ui.cursor_volt_at(frac) };
             return Some(e(v).into_bytes());
         }
@@ -1866,15 +1873,34 @@ impl Scpi {
             return None;
         };
         let frac = if x { ui.cursor_frac_time(v) } else { ui.cursor_frac_volt(v) };
-        if x || !xy {
-            if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
-        } else if a {
-            ui.m.cur_c = frac;
-        } else {
-            ui.m.cur_d = frac;
-        }
-        if ui.m.cursor == CursorMode::Off {
-            ui.m.cursor = if x { CursorMode::Time } else { CursorMode::Volt };
+        match (x, ui.m.cursor) {
+            (true, CursorMode::Volt) => {
+                ui.m.cur_c = ui.m.cur_a;
+                ui.m.cur_d = ui.m.cur_b;
+                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                ui.m.cursor = CursorMode::Xy;
+            }
+            (false, CursorMode::Time | CursorMode::Track) => {
+                if a { ui.m.cur_c = frac; } else { ui.m.cur_d = frac; }
+                ui.m.cursor = CursorMode::Xy;
+            }
+            (false, CursorMode::Xy) => {
+                if a { ui.m.cur_c = frac; } else { ui.m.cur_d = frac; }
+            }
+            (true, CursorMode::Off) => {
+                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                ui.m.cursor = CursorMode::Time;
+            }
+            (false, CursorMode::Off) => {
+                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                ui.m.cursor = CursorMode::Volt;
+            }
+            (true, _) => {
+                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+            }
+            (false, _) => {
+                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+            }
         }
         ui.mark_changed();
         None
@@ -3171,6 +3197,25 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":DVM:ENAB?;:DVM:SOUR?;:DVM:MODE?;:COUN:ENAB?;:COUN:MODE?;:COUN:NDIG?"), "1;CHAN2;ACRMS;1;PER;6");
         assert!(!line(&mut s, &mut ui, &cv, ":DVM:CURR?;:COUN:CURR?").is_empty());
         line(&mut s, &mut ui, &cv, ":COUN:TOT:CLE");
+    }
+
+    #[test]
+    fn manual_cursors_keep_time_and_voltage_together() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, ":TIM:MAIN:SCAL 1e-6;:TIM:MAIN:OFFS 0;:CHAN1:SCAL 1;:CHAN1:OFFS 0");
+        line(&mut s, &mut ui, &cv, ":CURS:MODE MAN;:CURS:MAN:CAX 0;:CURS:MAN:CBX 1e-6;:CURS:MAN:CAY 0.5;:CURS:MAN:CBY -0.5");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?"), "XY", "both axes are the screen's XY cursors");
+        let ax: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CAX?").parse().unwrap();
+        let bx: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CBX?").parse().unwrap();
+        let ay: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CAY?").parse().unwrap();
+        let by: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CBY?").parse().unwrap();
+        assert!((ax).abs() < 1e-9 && (bx - 1e-6).abs() < 1e-9, "times {ax} {bx}");
+        assert!((ay - 0.5).abs() < 1e-4 && (by + 0.5).abs() < 1e-4, "volts {ay} {by}");
+        line(&mut s, &mut ui, &cv, ":CURS:MODE OFF;:CURS:MAN:TYPE AMPL;:CURS:MAN:CAY 0.25;:CURS:MAN:CAX 0");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?"), "XY");
+        let kept: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CAY?").parse().unwrap();
+        let moved: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CAX?").parse().unwrap();
+        assert!((kept - 0.25).abs() < 1e-4 && moved.abs() < 1e-9, "voltage survived the time cursor: {kept} {moved}");
     }
 
     #[test]
