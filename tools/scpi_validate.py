@@ -54,16 +54,52 @@ class OOS:
         self.sock.close()
 
     def query(self, command):
+        return self.query_bytes(command).decode("ascii").strip()
+
+    def query_bytes(self, command):
         self.sock.sendall((command + "\n").encode("ascii"))
-        line = self.stream.readline(8192)
-        if not line.endswith(b"\n"):
-            raise RuntimeError(f"Incomplete SCPI response to {command!r}")
-        return line.decode("ascii").strip()
+        # Definite-length IEEE blocks are binary; an empty line is a complete valid reply.
+        first = self.stream.read(1)
+        if not first:
+            raise RuntimeError(f"No SCPI response to {command!r}")
+        if first == b"\n":
+            return b""
+        if first != b"#":
+            line = first + self.stream.readline(1 << 20)
+            if not line.endswith(b"\n"):
+                raise RuntimeError(f"Incomplete SCPI response to {command!r}")
+            return line[:-1].rstrip(b"\r")
+        def exact(count):
+            data = bytearray()
+            while len(data) < count:
+                chunk = self.stream.read(count - len(data))
+                if not chunk:
+                    raise RuntimeError(f"Incomplete block from {command!r}")
+                data.extend(chunk)
+            return bytes(data)
+        width = exact(1)
+        if width not in b"123456789":
+            raise RuntimeError(f"Bad block length width from {command!r}: {width!r}")
+        digits = exact(int(width))
+        if not digits.isdigit():
+            raise RuntimeError(f"Bad block length from {command!r}: {digits!r}")
+        length = int(digits)
+        if length > 64 << 20:
+            raise RuntimeError(f"Block from {command!r} exceeds the OOS response limit")
+        payload = exact(length)
+        if exact(1) != b"\n":
+            raise RuntimeError(f"Block from {command!r} was not terminated")
+        return first + width + digits + payload
+
+    def send(self, command):
+        self.sock.sendall((command + "\n").encode("ascii"))
 
     def write(self, command):
-        self.sock.sendall((command + "\n").encode("ascii"))
-        if self.query("*OPC?") != "1":
-            raise RuntimeError(f"Command did not complete: {command}")
+        self.send(command)
+        # Ordered acknowledgement, not an operation-completion barrier: changing a setting
+        # during an intentionally waiting Single must not block the validator itself.
+        if self.query("*IDN?") != self.idn:
+            raise RuntimeError(f"Command acknowledgement failed: {command}")
 
     def request(self, path, data=None):
         headers = {"Origin": self.base}
@@ -130,6 +166,9 @@ class Results:
         self.add(name, actual == expected, actual=actual, expected=expected)
 
     def add(self, name, passed, **details):
+        # Binary framing assertions still need a JSON-serializable evidence report.
+        details = {key: {"hex": value.hex()} if isinstance(value, bytes) else value
+                   for key, value in details.items()}
         self.checks.append({"name": name, "passed": bool(passed), **details})
         print(f"{'PASS' if passed else 'FAIL'} {name}")
 
@@ -221,11 +260,14 @@ def validate(oos, result):
     # An impossible level waits without capturing. A real crossing completes
     # Single exactly once; continuous Run advances and Stop holds the counter.
     oos.window(10e-6)
-    oos.write(":TRIGger:EDGE:SOURce CHANnel1")
+    oos.write(":TRIGger:EDGE:SOURce R1")
     oos.write(":TRIGger:EDGE:SLOPe POS")
     oos.write(":TRIGger:EDGE:LEVel 100")
     baseline = oos.state()["captures"]
-    oos.write(":SINGle")
+    # This arm intentionally has no hit. A true *OPC? must remain pending;
+    # acknowledge receipt with the following status query instead of waiting for completion.
+    oos.send(":SINGle")
+    result.equal("Single arm command acknowledged", oos.query(":TRIGger:STATus?"), "WAIT")
     armed = oos.wait_state(lambda state: state["status"] == "WAIT")
     result.equal("Single arms reference replay", armed["running"], True)
     result.equal("impossible trigger waits", armed["status"], "WAIT")
@@ -260,6 +302,90 @@ def validate(oos, result):
     result.equal("Stop holds capture count", held["captures"], stopped["captures"])
     result.equal("Stop and replay Play agree", oos.query(":SIM:PLAY?"), "0")
     result.equal("final error queue", oos.query(":SYSTem:ERRor?").split(",")[0], "0")
+
+    # The commands a Rigol DHO800/DHO900 controller sends. A query must always
+    # answer; an unknown header is an error in the queue and in *ESR, never silence.
+    oos.write("*CLS")
+    unknown = oos.query(":REFerence:NOPE?")
+    result.equal("unknown query answers", unknown.split(",")[0], "-113")
+    result.equal("unknown query sets the command-error bit", oos.query("*ESR?"), "32")
+    result.equal("unknown query is queued", oos.query(":SYSTem:ERRor?").split(",")[0], "-113")
+
+    oos.write(":CHANnel1:DISPlay ON")
+    oos.write(":CHANnel1:SCALe 0.5")
+    oos.write(":CHANnel1:OFFSet -0.25")
+    oos.write(":CHANnel1:COUPling AC")
+    oos.write(":CHANnel1:BWLimit 20M")
+    result.equal("channel display", oos.query(":CHANnel1:DISPlay?"), "1")
+    result.equal("channel coupling", oos.query(":CHANnel1:COUPling?"), "AC")
+    result.equal("channel bandwidth", oos.query(":CHANnel1:BWLimit?"), "20M")
+    result.numeric("channel scale", float(oos.query(":CHANnel1:SCALe?")), 0.5, relative=1e-6)
+    oos.write(":CHANnel1:PROBe 10")
+    result.numeric("channel probe", float(oos.query(":CHANnel1:PROBe?")), 10.0, relative=1e-6)
+    oos.write(":TIMebase:MAIN:SCALe 1e-6")
+    oos.write(":TRIGger:SWEep NORMal")
+    oos.write(":TRIGger:EDGE:SOURce CHANnel1")
+    oos.write(":TRIGger:EDGE:SLOPe NEG")
+    result.equal("trigger sweep", oos.query(":TRIGger:SWEep?"), "NORM")
+    result.equal("trigger slope", oos.query(":TRIGger:EDGE:SLOPe?"), "NEG")
+    result.equal("no live record is an invalid measurement", oos.measure("VPP", "CHANnel1"), 9.9e37)
+
+    png = oos.query_bytes(":DISPlay:DATA? PNG")
+    result.equal("png screenshot is an IEEE block", png[:2], b"#9")
+    result.equal("png screenshot is a PNG", png[11:15], b"\x89PNG")
+
+    oos.write(":REFerence:CURRent 1")
+    oos.write(":REFerence:SOURce 1,CHANnel2")
+    oos.write(":REFerence:VSCale 1,0.2")
+    oos.write(":REFerence:VOFFset 1,-0.05")
+    oos.write(":REFerence:LABel:CONTent 1,lane")
+    result.equal("reference current", oos.query(":REFerence:CURRent?"), "1")
+    result.equal("reference source", oos.query(":REFerence:SOURce? 1"), "CHAN2")
+    result.equal("reference label", oos.query(":REFerence:LABel:CONTent? 1"), "lane")
+    result.numeric("reference scale", float(oos.query(":REFerence:VSCale? 1")), 0.2, relative=1e-6)
+    oos.write(":REFerence:SHOW 1,OFF")
+    result.equal("reference hidden", oos.query(":REFerence:SHOW? 1"), "0")
+    oos.write(":REFerence:SHOW 1,ON")
+
+    oos.write(":WAVeform:SOURce R1")
+    oos.write(":WAVeform:MODE RAW")
+    oos.write(":WAVeform:FORMat WORD")
+    oos.write(":WAVeform:STARt 10")
+    oos.write(":WAVeform:STOP 12")
+    result.equal("raw page length", oos.query(":WAVeform:POINts?"), "3")
+    page = oos.query_bytes(":WAVeform:DATA?")
+    result.equal("raw WORD page length field", page[2:11], b"000000006")
+    result.equal("raw WORD page is three little-endian points", len(page), 17)
+
+    oos.write(":CURSor:MODE MANual")
+    oos.write(":CURSor:MANual:TYPE TIME")
+    oos.write(":CURSor:MANual:CAX 0")
+    oos.write(":CURSor:MANual:CBX 1e-6")
+    result.equal("cursor mode", oos.query(":CURSor:MODE?"), "MAN")
+    result.equal("cursor type", oos.query(":CURSor:MANual:TYPE?"), "TIME")
+    result.numeric("cursor A time", float(oos.query(":CURSor:MANual:CAX?")), 0.0, absolute=1e-12)
+    result.numeric("cursor delta", float(oos.query(":CURSor:MANual:XDELta?")), 1e-6, relative=1e-4)
+    oos.write(":CURSor:MODE OFF")
+    result.equal("cursors off have no delta", float(oos.query(":CURSor:MANual:XDELta?")), 9.9e37)
+
+    oos.write(":MEASure:CLEar")
+    oos.write(":MEASure:SOURce R1")
+    oos.write(":MEASure:ITEM VPP")
+    result.equal("measurement source", oos.query(":MEASure:SOURce?"), "R1")
+    strip = oos.query(":MEASure:STRip?")
+    result.add("measure item is on the readout", strip.startswith("VPP,R1,"), strip=strip)
+    oos.write(":MEASure:CLEar")
+    result.equal("measure clear empties the readout", oos.query(":MEASure:STRip?"), "")
+
+    oos.write(":DVM:ENABle ON")
+    oos.write(":DVM:SOURce CHANnel2")
+    oos.write(":DVM:MODE ACRMS")
+    oos.write(":COUNter:ENABle ON")
+    oos.write(":COUNter:MODE PERiod")
+    oos.write(":COUNter:NDIGits 6")
+    result.equal("dvm and counter setup",
+                 oos.query(":DVM:ENABle?;:DVM:SOURce?;:DVM:MODE?;:COUNter:ENABle?;:COUNter:MODE?;:COUNter:NDIGits?"),
+                 "1;CHAN2;ACRMS;1;PER;6")
     return {"upload": upload, "before_pan": before, "after_pan": after,
             "armed": armed, "single": single, "running": running, "final_state": held}
 

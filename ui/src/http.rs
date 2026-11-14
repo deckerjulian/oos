@@ -477,8 +477,8 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
         "tools/call" => match params.get("name").and_then(J::str) {
             Some("scpi") => {
                 let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
-                match scpi.exec_line_checked(ui, cv, c) {
-                    Ok(r) => text(if r.is_empty() { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") }),
+                match scpi.exec_message_checked(ui, cv, c) {
+                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") }),
                     Err(error) => J::obj(&[("isError", J::Bool(true)), ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])]))]),
                 }
             }
@@ -902,6 +902,23 @@ setTimeout(() => {
         let reply=mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut ui,&cv,&mut scpi).unwrap();
         let reply=crate::json::parse(&reply).unwrap();assert_eq!(reply.get("result").unwrap().get("isError"),Some(&crate::json::J::Bool(true)));
         assert_eq!(ui.m.trig_mode,crate::model::TrigMode::Single,"commands after an unsupported immediate barrier must not execute");
+    }
+
+    #[test]
+    fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let empty = mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR;:MEAS:STRIP?"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(empty.contains("\"text\":\"\""), "{empty}");
+        assert!(!empty.contains("\"text\":\"ok\""));
+        let write = mcp(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(write.contains("\"text\":\"ok\""), "{write}");
+        let compound = mcp(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:STRIP?;*OPC?"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(compound.contains("\"text\":\";1\""), "{compound}");
     }
 
     #[test]
