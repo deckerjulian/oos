@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
-//! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
+//! *IDN? *RST *OPC[?] *CLS *ESR?, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
+//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|STARt|STOP|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
@@ -67,7 +67,12 @@ pub struct Scpi {
     wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
     /// :WAVeform:MODE: false = the screen record, true = every sample of the record in the screen window (RAW)
     wav_raw: bool,
+    /// :WAVeform:STARt / :STOP: the first and last point `:WAVeform:DATA?` returns, 1-based (stop 0 = to the end)
+    wav_start: usize,
+    wav_stop: usize,
     err: Vec<String>,
+    /// *ESR?: the standard event status register (OPC 1, query error 4, device error 8, execution error 16, command error 32)
+    esr: u8,
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
@@ -132,7 +137,7 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
-        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new() }
+        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, wav_start: 1, wav_stop: 0, err: Vec::new(), esr: 0 }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
@@ -231,7 +236,18 @@ impl Scpi {
     }
 
     fn exec(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
+        let errs = self.err.len();
         let r = self.exec_cmd(ui, cv, cmd);
+        // a new error latches its class in the event status register (-1xx command, -2xx execution, -3xx device, -4xx query)
+        for e in self.err.iter().skip(errs) {
+            self.esr |= match e.trim_start_matches('-').chars().next() {
+                Some('1') => 32,
+                Some('2') => 16,
+                Some('3') => 8,
+                Some('4') => 4,
+                _ => 0,
+            };
+        }
         // a client that never asks for its errors, or sends megabytes of nonsense, must not fill the memory
         for e in &mut self.err {
             if e.len() > ERR_LEN {
@@ -263,12 +279,23 @@ impl Scpi {
                 let p = oos_hal::model::platform();
                 return t(&format!("OOS,{},{},oos-ui {}", p.caps.name, p.serial.as_deref().unwrap_or("0"), env!("CARGO_PKG_VERSION")));
             }
-            "*OPC" => return if query { t("1") } else { None },
+            "*OPC" if query => return t("1"),
+            "*OPC" => {
+                self.esr |= 1;
+                return None;
+            }
+            "*ESR" if query => {
+                let v = self.esr;
+                self.esr = 0;
+                return t(&v.to_string());
+            }
             "*CLS" => {
                 self.err.clear();
+                self.esr = 0;
                 return None;
             }
             "*RST" => {
+                self.esr = 0;
                 ui.key(crate::ui::key::DEFAULT);
                 return None;
             }
@@ -619,6 +646,27 @@ impl Scpi {
                 self.wav_fmt = if a.starts_with("WORD") { 1 } else if a.starts_with("ASC") { 2 } else { 0 };
                 return None;
             }
+            if kw(n1, "STARt") || kw(n1, "STOP") {
+                let stop = kw(n1, "STOP");
+                if query {
+                    let n = self.wave_len(ui);
+                    return t(&(if stop { if self.wav_stop == 0 { n } else { self.wav_stop } } else { self.wav_start }).to_string());
+                }
+                let Some(p) = arg.trim().parse::<usize>().ok().filter(|&p| p >= 1) else {
+                    self.err.push(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                };
+                if stop {
+                    self.wav_stop = p;
+                    self.wav_start = self.wav_start.min(p);
+                } else {
+                    self.wav_start = p;
+                    if self.wav_stop != 0 {
+                        self.wav_stop = self.wav_stop.max(p);
+                    }
+                }
+                return None;
+            }
             let (pts, pre) = self.wave_params(ui);
             if kw(n1, "POINts") && query {
                 return t(&format!("{}", pts));
@@ -916,13 +964,28 @@ impl Scpi {
         None
     }
 
+    /// The STARt..STOP page of a record of `n` points as an index range (empty when STARt is past the end).
+    fn page(&self, n: usize) -> (usize, usize) {
+        let a = (self.wav_start.max(1) - 1).min(n);
+        let b = if self.wav_stop == 0 { n } else { self.wav_stop.clamp(a, n) };
+        (a, b)
+    }
+
+    /// The number of points in the record of the current source and mode, before paging.
+    fn wave_len(&self, ui: &Ui) -> usize {
+        let info = if self.wav_raw { ui.raw_info(self.wav_src) } else { None };
+        info.or_else(|| ui.record_info(self.wav_src)).map_or(0, |i| i.0)
+    }
+
     /// (points, (preamble string, (yinc, yorigin, yref)))
     fn wave_params(&self, ui: &Ui) -> (usize, (String, (f64, f64, f64))) {
         let c = self.wav_src;
         let ch = &ui.m.ch[c];
         let vpd = ch.volts_per_div() as f64;
         let info = if self.wav_raw { ui.raw_info(c) } else { None };
-        let (pts, dt, t0) = info.or_else(|| ui.record_info(c)).unwrap_or((0, 0.0, 0.0));
+        let (n, dt, t0) = info.or_else(|| ui.record_info(c)).unwrap_or((0, 0.0, 0.0));
+        let (a, b) = self.page(n);
+        let (pts, t0) = (b - a, t0 + a as f64 * dt);
         let (yinc, yref) = match self.wav_fmt {
             1 => (vpd * VDIV as f64 / 60000.0, 32768.0),
             _ => (vpd * VDIV as f64 / 250.0, 128.0),
@@ -1007,6 +1070,8 @@ impl Scpi {
     fn wave_data(&self, ui: &Ui, p: (f64, f64, f64)) -> Vec<u8> {
         let (yinc, yorg, yref) = p;
         let v = if self.wav_raw { ui.raw_volts(self.wav_src).unwrap_or_else(|| ui.record_volts(self.wav_src)) } else { ui.record_volts(self.wav_src) };
+        let (a, b) = self.page(v.len());
+        let v = &v[a..b];
         match self.wav_fmt {
             2 => {
                 let s: Vec<String> = v.iter().map(|&x| e(x as f64)).collect();
@@ -1014,7 +1079,7 @@ impl Scpi {
             }
             1 => {
                 let mut b = Vec::with_capacity(v.len() * 2);
-                for x in v {
+                for &x in v {
                     let code = ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 65535.0) as u16;
                     b.extend_from_slice(&code.to_le_bytes());
                 }
@@ -1059,4 +1124,84 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
         b.resize(b.len() + row - w * 3, 0);
     }
     b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wave::Source;
+
+    fn setup() -> (Scpi, Ui, Canvas) {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        for _ in 0..5 {
+            ui.step(0.04);
+        }
+        (Scpi::open(0), ui, cv)
+    }
+
+    fn line(s: &mut Scpi, ui: &mut Ui, cv: &Canvas, l: &str) -> String {
+        String::from_utf8_lossy(&s.exec_line(ui, cv, l)).into_owned()
+    }
+
+    #[test]
+    fn esr_returns_an_integer_and_clears_on_read() {
+        let (mut s, mut ui, cv) = setup();
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0");
+        line(&mut s, &mut ui, &cv, "*OPC");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?;*ESR?"), "1;0");
+        // an undefined header is a command error (bit 5), an illegal value an execution error (bit 4)
+        line(&mut s, &mut ui, &cv, ":NOPE:NOPE");
+        line(&mut s, &mut ui, &cv, ":WAVeform:STARt 0");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "48");
+        line(&mut s, &mut ui, &cv, ":NOPE");
+        line(&mut s, &mut ui, &cv, "*CLS");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0");
+        // reading the error queue does not latch the register again
+        line(&mut s, &mut ui, &cv, ":NOPE");
+        line(&mut s, &mut ui, &cv, "*ESR?");
+        line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0");
+    }
+
+    #[test]
+    fn waveform_start_stop_page_the_data() {
+        let (mut s, mut ui, cv) = setup();
+        line(&mut s, &mut ui, &cv, ":WAVeform:FORMat ASCii");
+        let n: usize = line(&mut s, &mut ui, &cv, ":WAVeform:POINts?").parse().unwrap();
+        assert!(n > 10);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:STARt?"), "1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:STOP?"), n.to_string());
+        let all = line(&mut s, &mut ui, &cv, ":WAVeform:DATA?");
+        let all: Vec<&str> = all[11..].split(',').collect();
+        assert_eq!(all.len(), n);
+        let pre0 = line(&mut s, &mut ui, &cv, ":WAVeform:PREamble?");
+        line(&mut s, &mut ui, &cv, ":WAVeform:STARt 3");
+        line(&mut s, &mut ui, &cv, ":WAVeform:STOP 7");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:POINts?"), "5");
+        let page = line(&mut s, &mut ui, &cv, ":WAVeform:DATA?");
+        assert_eq!(page[11..].split(',').collect::<Vec<_>>(), all[2..7]);
+        // the preamble describes the page: its point count and the time of its first point
+        let (p0, p1) = (pre0.split(',').collect::<Vec<_>>(), line(&mut s, &mut ui, &cv, ":WAVeform:PREamble?"));
+        let p1: Vec<&str> = p1.split(',').collect();
+        assert_eq!(p1[2], "5");
+        let (dt, t0, t0p): (f64, f64, f64) = (p0[4].parse().unwrap(), p0[5].parse().unwrap(), p1[5].parse().unwrap());
+        assert!((t0p - (t0 + 2.0 * dt)).abs() < dt * 1e-3);
+        // STOP below STARt pulls STARt down; STARt above STOP pushes STOP up; a bad value changes nothing
+        line(&mut s, &mut ui, &cv, ":WAVeform:STOP 2");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:STARt?"), "2");
+        line(&mut s, &mut ui, &cv, ":WAVeform:STARt 9");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:STOP?"), "9");
+        line(&mut s, &mut ui, &cv, ":WAVeform:STARt abc");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:STARt?"), "9");
+        assert!(line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?").starts_with("-224"));
+        // a page past the end is empty, STOP past the end is cut to the record
+        line(&mut s, &mut ui, &cv, &format!(":WAVeform:STARt {}", n + 5));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:POINts?"), "0");
+        line(&mut s, &mut ui, &cv, &format!(":WAVeform:STARt {};:WAVeform:STOP {}", n - 1, n + 100));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":WAVeform:POINts?"), "2");
+        // BYTE data is one byte per point of the page
+        line(&mut s, &mut ui, &cv, ":WAVeform:FORMat BYTE");
+        assert_eq!(&line(&mut s, &mut ui, &cv, ":WAVeform:DATA?")[..11], "#9000000002");
+    }
 }
