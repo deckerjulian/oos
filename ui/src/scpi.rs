@@ -12,6 +12,7 @@
 //! :MEASure:STATistic:DISPlay|RESet|ITEM, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
 //! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta,
 //! :DVM:ENABle|SOURce|MODE|CURRent?, :COUNter:ENABle|SOURce|MODE|NDIGits|CURRent?,
+//! :MASK:ENABle|SOURce|X|Y|CREate|RESet|OPERate|FAILed?|PASSed?|TOTal?,
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
@@ -1430,6 +1431,9 @@ impl Scpi {
         if kw(n0, "CURSor") {
             return self.cursor_cmd(ui, &nodes[1..], query, arg);
         }
+        if kw(n0, "MASK") {
+            return self.mask_cmd(ui, &nodes[1..], query, arg);
+        }
         if kw(n0, "DVM") {
             return self.dvm_cmd(ui, &nodes[1..], query, arg);
         }
@@ -1874,6 +1878,105 @@ impl Scpi {
         }
         ui.mark_changed();
         None
+    }
+
+    fn mask_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "ENABle") {
+            if query {
+                return t(if ui.m.mask_on { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.mask_on = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "SOURce") {
+            if query {
+                return t(&format!("CHAN{}", ui.m.mask_src.min(n_ch() - 1) + 1));
+            }
+            return match parse_ch(arg) {
+                Some(c) => {
+                    ui.m.mask_src = c;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && (kw(n0, "X") || kw(n0, "Y")) {
+            let horizontal = kw(n0, "X");
+            if query {
+                return t(&e(if horizontal { ui.m.mask_x } else { ui.m.mask_y } as f64));
+            }
+            let Some(v) = num(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            let ok = if horizontal { ui.mask_tolerance(Some(v), None) } else { ui.mask_tolerance(None, Some(v)) };
+            if ok {
+                ui.mark_changed();
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            }
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "CREate") && !query {
+            if ui.mask_create() {
+                ui.mark_changed();
+            } else {
+                self.push_err("-230,\"Data corrupt or stale\" source has no waveform".into());
+            }
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "RESet") && !query {
+            ui.mask_counts_reset();
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "OPERate") {
+            if query {
+                return t(if ui.m.mask_on && ui.m.run == RunState::Run { "RUN" } else { "STOP" });
+            }
+            if !ui.m.mask_on {
+                self.push_err("-224,\"Illegal parameter value\" mask is off".into());
+                return None;
+            }
+            let a = arg.trim();
+            if kw(a, "RUN") {
+                ui.m.run = RunState::Run;
+                if ui.m.trig_mode == TrigMode::Single {
+                    ui.m.trig_mode = TrigMode::Auto;
+                }
+                ui.mark_changed();
+                None
+            } else if kw(a, "STOP") {
+                ui.m.run = RunState::Stop;
+                ui.mark_changed();
+                None
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                None
+            }
+        } else if n.len() == 1 && query && (kw(n0, "FAILed") || kw(n0, "PASSed") || kw(n0, "TOTal")) {
+            let (pass, fail) = ui.mask_counts();
+            let n = if kw(n0, "FAILed") { fail } else if kw(n0, "PASSed") { pass } else { pass + fail };
+            t(&n.to_string())
+        } else {
+            self.push_err(format!("-113,\"Undefined header\" :MASK:{}", n.join(":")));
+            None
+        }
     }
 
     fn dvm_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
@@ -3125,6 +3228,32 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX 10");
         assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "the upper threshold must stay above the lower");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX?"), "80");
+    }
+
+    #[test]
+    fn a_mask_counts_passes_and_failures() {
+        let (mut s, mut ui, cv) = session();
+        for _ in 0..20 {
+            ui.step(0.05);
+        }
+        line(&mut s, &mut ui, &cv, "*CLS;:MASK:SOUR CHAN1;:MASK:X 0.5;:MASK:Y 0.5;:MASK:ENAB ON;:MASK:CRE;:MASK:OPER RUN");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"", "the demo record must be there to build a mask");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MASK:ENAB?;:MASK:SOUR?;:MASK:OPER?"), "1;CHAN1;RUN");
+        let x: f64 = line(&mut s, &mut ui, &cv, ":MASK:X?").parse().unwrap();
+        let y: f64 = line(&mut s, &mut ui, &cv, ":MASK:Y?").parse().unwrap();
+        assert!((x - 0.5).abs() < 1e-6 && (y - 0.5).abs() < 1e-6, "{x} {y}");
+        for _ in 0..10 {
+            ui.step(0.05);
+        }
+        let passed: u64 = line(&mut s, &mut ui, &cv, ":MASK:PASS?").parse().unwrap();
+        let failed: u64 = line(&mut s, &mut ui, &cv, ":MASK:FAIL?").parse().unwrap();
+        let total: u64 = line(&mut s, &mut ui, &cv, ":MASK:TOT?").parse().unwrap();
+        assert_eq!(total, passed + failed);
+        assert!(total > 0, "a running mask must count frames, pass {passed} fail {failed}");
+        line(&mut s, &mut ui, &cv, ":MASK:RES");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MASK:PASS?;:MASK:FAIL?;:MASK:TOT?"), "0;0;0");
+        line(&mut s, &mut ui, &cv, ":MASK:OPER STOP");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MASK:OPER?"), "STOP");
     }
 
     fn wfm_bytes() -> Vec<u8> {

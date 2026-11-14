@@ -581,6 +581,46 @@ impl Ui {
         self.xy = on;
     }
 
+    /// Builds the pass/fail mask from the source channel of the record on screen.
+    pub(crate) fn mask_create(&mut self) -> bool {
+        let c = self.m.mask_src;
+        let ready = self.last[0].as_ref().is_some_and(|r| c < r.ch.len() && !r.ch[c].is_empty());
+        if !ready {
+            return false;
+        }
+        self.create_mask();
+        true
+    }
+
+    pub(crate) fn mask_counts(&self) -> (u64, u64) {
+        (self.mask_pass, self.mask_fail)
+    }
+
+    pub(crate) fn mask_counts_reset(&mut self) {
+        self.mask_pass = 0;
+        self.mask_fail = 0;
+    }
+
+    /// Horizontal tolerance is 0 to 2 div. Vertical is 0.04 to 4 div. A mask already on screen is rebuilt.
+    pub(crate) fn mask_tolerance(&mut self, x: Option<f32>, y: Option<f32>) -> bool {
+        if let Some(v) = x {
+            if !(0.0..=2.0).contains(&v) {
+                return false;
+            }
+            self.m.mask_x = v;
+        }
+        if let Some(v) = y {
+            if !(0.04..=4.0).contains(&v) {
+                return false;
+            }
+            self.m.mask_y = v;
+        }
+        if self.mask_ref.is_some() {
+            self.build_mask();
+        }
+        true
+    }
+
     /// File of a mask in the slot of the Storage page, beside the setups.
     fn mask_path(&self) -> std::path::PathBuf {
         self.setup_path().with_file_name(format!("mask{}.txt", self.store_slot))
