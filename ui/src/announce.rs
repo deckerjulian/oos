@@ -511,6 +511,11 @@ impl Announcer {
         Announcer { sock, services: services.to_vec(), joined: Vec::new(), last: Vec::new(), burst: 2, next: Instant::now(), refresh: Instant::now() + Duration::from_secs(60), interfaces_next: Instant::now() }
     }
 
+    /// No responder: nothing bound, nothing announced (services on loopback only).
+    pub fn closed() -> Announcer {
+        Announcer { sock: None, services: Vec::new(), joined: Vec::new(), last: Vec::new(), burst: 0, next: Instant::now(), refresh: Instant::now(), interfaces_next: Instant::now() }
+    }
+
     /// The responder owns a socket and has real listeners to announce.
     pub fn available(&self) -> bool {
         self.sock.is_some() && !self.services.is_empty()

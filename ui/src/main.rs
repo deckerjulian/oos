@@ -11,6 +11,7 @@
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
 //!   --model NAME                   act as this model (DHO802 .. DHO924S), instead of /rigol/data/vendor.bin
 //!   --limits FILE                  experimental limits (default /oos/limits.conf, docs/models.md)
+//!   --lan                          Windows window: open web/SCPI/HiSLIP to the network (default: this PC only)
 
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -56,6 +57,23 @@ mod desktop;
 use gfx::Canvas;
 use ui::Ui;
 use wave::Source;
+
+/// Network services listen on this machine only (loopback) instead of every interface. The Windows desktop
+/// window starts that way unless `--lan`, so Windows asks no firewall question; tests always do.
+static LOOPBACK_ONLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(cfg!(test));
+
+pub(crate) fn set_loopback_only(on: bool) {
+    LOOPBACK_ONLY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn loopback_only() -> bool {
+    LOOPBACK_ONLY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The address the web, SCPI, VXI-11 and HiSLIP servers bind.
+pub(crate) fn listen_ip() -> std::net::Ipv4Addr {
+    if loopback_only() { std::net::Ipv4Addr::LOCALHOST } else { std::net::Ipv4Addr::UNSPECIFIED }
+}
 
 fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
@@ -227,7 +245,8 @@ fn on_scope() -> bool {
 fn lan(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
     let (web, scpi, vxi, hislip) = lan_servers(scope, args);
     let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
-    let ann = announce::Announcer::open(&services);
+    // mDNS would bind 5353 on every interface; on loopback there is nobody to announce to
+    let ann = if loopback_only() { announce::Announcer::closed() } else { announce::Announcer::open(&services) };
     (web, scpi, vxi, hislip, ann)
 }
 

@@ -630,7 +630,7 @@ impl Http {
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = TcpListener::bind(("0.0.0.0", port)).ok();
+        let l = TcpListener::bind((crate::listen_ip(), port)).ok();
         match &l {
             Some(l) => {
                 let _ = l.set_nonblocking(true);
