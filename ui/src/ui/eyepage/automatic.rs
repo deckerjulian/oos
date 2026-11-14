@@ -490,7 +490,7 @@ mod performance_and_timing_tests {
         let key = ui.auto_eye_key();
         for revision in 2..40 {
             ui.replay.sim_revision = revision;
-            ui.refs[1].as_mut().unwrap().v[0] = revision as f32;
+            std::sync::Arc::make_mut(&mut ui.refs[1].as_mut().unwrap().v)[0] = revision as f32;
             ui.step(0.01);
             assert_eq!(ui.auto_eye_key(), key);
             assert_eq!(ui.azr.eye_auto.submitted, 1);
@@ -511,7 +511,7 @@ mod performance_and_timing_tests {
         assert_eq!(job.data.v.len(), 300_000, "the full accepted record enters the worker");
         let snapshot_sample = job.data.v[0];
         for revision in 2..40 {
-            ui.replay.sim_revision = revision; ui.refs[0].as_mut().unwrap().v[0] = if revision % 2 == 0 { 0.9 } else { -0.9 };
+            ui.replay.sim_revision = revision; std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v)[0] = if revision % 2 == 0 { 0.9 } else { -0.9 };
             ui.step(0.01);
             assert_eq!(ui.azr.eye_auto.submitted, 1, "busy UI updates queue metadata, not another snapshot");
             assert!(ui.azr.eye_auto.summary.is_none(), "no synchronous full-record infer/fold ran on the UI path");
