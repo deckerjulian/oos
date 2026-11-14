@@ -1075,20 +1075,20 @@ impl Ui {
         let rate = self.eye_rate_caption();
         let pick = self.eye_header_source();
         btn(cv, pick, BTN, BTN_BORDER);
-        cv.text(&self.fonts.sb, pick.x + 5, a.y + 18, &format!("Eye {}", source), self.wave_color(self.m.eye_src));
+        cv.text(&self.fonts().sb, pick.x + 5, a.y + 18, &format!("Eye {}", source), self.wave_color(self.m.eye_src));
         chevron_down(cv, pick.x + pick.w - 14, pick.y + pick.h / 2 - 2, DIM);
         let place = self.eye_place_control();
         btn(cv, place, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts.s, place, 1, &self.value(Item::EyePlace), TEXT);
+        cv.text_in(&self.fonts().s, place, 1, &self.value(Item::EyePlace), TEXT);
         let settings = Rect::new(place.x + place.w + 4, pick.y, (close.x - place.x - place.w - 8).max(1), pick.h);
         btn(cv, settings, BTN, BTN_BORDER);
         cv.set_clip(Rect::new(settings.x + 5, settings.y, (settings.w - 23).max(1), settings.h));
         let scope = self.azr.eye_auto.snapshot_caption().unwrap_or_else(|| self.eye_source_mode_label().into());
-        cv.text(&self.fonts.s, settings.x + 5, a.y + 18, &format!("{} · {}", scope, rate), TEXT);
+        cv.text(&self.fonts().s, settings.x + 5, a.y + 18, &format!("{} · {}", scope, rate), TEXT);
         cv.no_clip();
         chevron_down(cv, settings.x + settings.w - 14, settings.y + settings.h / 2 - 2, DIM);
         btn(cv, close, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts.s, close, 1, "Close", TEXT);
+        cv.text_in(&self.fonts().s, close, 1, "Close", TEXT);
     }
 
     pub(super) fn draw_eye(&self, cv: &mut Canvas) {
@@ -1145,8 +1145,8 @@ impl Ui {
             "REPLAY" => "Replay",
             _ => "",
         };
-        let info = if src.is_empty() { 0 } else { self.fonts.s.width(src) + 16 };
-        let end = 68 + self.fonts.s.width("dense") + 4;
+        let info = if src.is_empty() { 0 } else { self.fonts().s.width(src) + 16 };
+        let end = 68 + self.fonts().s.width("dense") + 4;
         let button = self.full_btn().0;
         let candidate = r.x + r.w - 128;
         if button.x >= r.x && button.x < r.x + r.w {
@@ -1171,7 +1171,7 @@ impl Ui {
         if l.head.w < 40 || l.head.h < 16 {
             return;
         }
-        let f = &self.fonts;
+        let f = self.fonts();
         let p = &self.azr.page;
         cv.set_clip(l.head);
         cv.text(&f.sb, l.head.x + 2, l.head.y + 15, &p.status[0], TEXT);
@@ -1181,7 +1181,7 @@ impl Ui {
 
     /// The eye: frame, axes in volts and UI, the coloured hits and the two levels.
     fn eye_plot(&self, cv: &mut Canvas, l: &Layout) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let p = &self.azr.page;
         let r = l.plot;
         cv.fill(r, BAR);
@@ -1225,7 +1225,7 @@ impl Ui {
 
     /// Box, title, axis ends of a chart, or the reason it is empty.
     fn chart_frame(&self, cv: &mut Canvas, c: Rect, r: Rect, ch: &Chart) {
-        let f = &self.fonts;
+        let f = self.fonts();
         cv.round(c, 4, BAR, 255);
         cv.round_outline(c, 4, CARD_BORDER);
         cv.text(&f.sb, c.x + 6, c.y + 13, &ch.title, TEXT);
@@ -1286,7 +1286,7 @@ impl Ui {
         cv.dashed_hline(r.x + 1, r.x + r.w - 2, y(-12.0), 4, 4, GRID_FRAME);
         let n = (b.ui.len() as i32 - 1).max(1);
         let x = |k: usize| r.x + 1 + k as i32 * (r.w - 3) / n;
-        let f = &self.fonts;
+        let f = self.fonts();
         let x0 = r.x + r.w / 2 - 44;
         let x1 = cv.text(&f.s, x0, r.y + r.h + 12, "counted", MEASURED);
         cv.text(&f.s, x1 + 8, r.y + r.h + 12, "model", MODELLED);
@@ -1309,7 +1309,8 @@ impl Ui {
     /// A text box: a title, then columns of figures under their heads. Rows that do not fit stay out, the first are
     /// the ones that matter most.
     fn eye_box(&self, cv: &mut Canvas, r: Rect, title: &str, rows: i32, cols: &[(&str, &[Cell])]) {
-        let f = &self.fonts;
+        // dense tables of figures: the normal text size at every setting, their rows and columns are made for it
+        let f = crate::font::Fonts::get(0);
         cv.round(r, 4, BAR, 255);
         cv.round_outline(r, 4, CARD_BORDER);
         let cw = (r.w - 12) / cols.len() as i32;
@@ -1452,41 +1453,26 @@ fn eye_on_grid(mut source: WaveSamp, t0: f64, dt: f64, n: usize) -> Vec<f32> {
     }).collect()
 }
 
-/// The coloured hits into `r`. Same size is copied; a column that is mid-slide is scaled so the eye stays put.
+/// The coloured hits into `r`. Same size is copied; a column that is mid-slide is scaled so the eye stays put. Both go
+/// through `Canvas::image` (0 is transparent), so a recording canvas (GPU drawing) gets them too.
 fn blit_hits(cv: &mut Canvas, r: Rect, img: &[u32], iw: usize) {
     if iw == 0 || r.w <= 0 || r.h <= 0 || img.len() < iw {
         return;
     }
     let ih = img.len() / iw;
-    let x0 = r.x.max(0);
-    let y0 = r.y.max(0);
-    let x1 = (r.x + r.w).min(cv.w);
-    let y1 = (r.y + r.h).min(cv.h);
-    if x1 <= x0 || y1 <= y0 || ih == 0 {
-        return;
+    let (w, h) = (r.w as usize, r.h as usize);
+    if iw == w && ih == h {
+        return cv.image(r, &img[..iw * ih], true);
     }
-    if iw == r.w as usize && ih == r.h as usize && x0 == r.x && y0 == r.y {
-        for (y, row) in img.chunks_exact(iw).take(r.h as usize).enumerate() {
-            let o = ((r.y + y as i32) * cv.w + r.x) as usize;
-            for (d, &c) in cv.px[o..o + row.len()].iter_mut().zip(row) {
-                if c != 0 {
-                    *d = c;
-                }
-            }
-        }
-        return;
-    }
-    for y in y0..y1 {
-        let sy = ((y - r.y) as usize * ih / r.h as usize).min(ih - 1);
+    let mut px = vec![0u32; w * h];
+    for (y, row) in px.chunks_exact_mut(w).enumerate() {
+        let sy = (y * ih / h).min(ih - 1);
         let src = &img[sy * iw..(sy + 1) * iw];
-        let o = (y * cv.w) as usize;
-        for x in x0..x1 {
-            let c = src[((x - r.x) as usize * iw / r.w as usize).min(iw - 1)];
-            if c != 0 {
-                cv.px[o + x as usize] = c;
-            }
+        for (x, d) in row.iter_mut().enumerate() {
+            *d = src[(x * iw / w).min(iw - 1)];
         }
     }
+    cv.image(r, &px, true);
 }
 
 #[cfg(test)]
@@ -1651,7 +1637,7 @@ mod tests {
     #[test]
     fn the_page_tiles_the_area_to_its_bottom_edge() {
         for h in [160, 240, 296, 300, 352, 400, 440, 480] {
-            let a = Rect::new(0, 40, W, h);
+            let a = Rect::new(0, 40, PANEL_W, h);
             let l = layout(a, false);
             let bottom = a.y + a.h;
             assert_eq!(l.charts[2].y + l.charts[2].h + if l.jit_rows > 0 { GAP + l.jit.h } else { 0 }, bottom, "right column, height {}", h);
@@ -1774,7 +1760,7 @@ mod tests {
     fn eye_page_timing() {
         let s = Sig { rate: 10e6, uis: 8000, prbs: true, spu: 125, rj: 50e-12, pj: 0.0, volt_noise: 0.01 };
         let mut ui = page(s, 3);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         let t = std::time::Instant::now();
         for _ in 0..20 {
             ui.analyzer_update();
@@ -1808,7 +1794,7 @@ mod tests {
     fn nothing_sits_under_the_overflow_button() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.view = AView::Eye;
-        for w in [640, W] {
+        for w in [640, PANEL_W] {
             for h in [160, 352, 480] {
                 ui.workspace.eye_float = Some(Rect::new(0, 40, w, h));
                 ui.relayout();
@@ -1828,8 +1814,8 @@ mod tests {
     fn the_text_fits_its_boxes() {
         for s in [CLEAN, NOISY, Sig { uis: 6, ..CLEAN }] {
             let ui = page(s, 8);
-            let (f, p) = (&ui.fonts, &ui.azr.page);
-            let l = layout(Rect::new(0, 40, W, 400), false);
+            let (f, p) = (ui.fonts(), &ui.azr.page);
+            let l = layout(Rect::new(0, 40, PANEL_W, 400), false);
             for (k, c) in p.charts.iter().enumerate() {
                 assert!(f.sb.width(&c.title) + 12 <= l.charts[k].w, "'{}'", c.title);
                 assert!(f.s.width(&c.empty) <= l.plots[k].w, "'{}'", c.empty);
@@ -1896,7 +1882,7 @@ mod tests {
         ui.activate(Item::EyeClear);
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.azr.eye.is_none() && ui.azr.page.pool.is_empty() && ui.azr.page.img.is_empty());
-        ui.render(&mut Canvas::new(W, H));
+        ui.render(&mut Canvas::new(PANEL_W, PANEL_H));
     }
 
     #[test]
@@ -1911,7 +1897,7 @@ mod tests {
     #[test]
     fn it_draws_at_every_height_and_with_the_source_off() {
         let mut ui = page(NOISY, 4);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         for h in [160, 240, 352, 480] {
             ui.area.h = h;
             ui.analyzer_update();
@@ -2105,7 +2091,7 @@ mod tests {
         ui.eye_t = ui.now;
         let r = placed(ui.eye_page_rect(), 0.0).plot;
         let kx = ui.heat_x(r);
-        let scale = Rect::new(kx - 30, ui.eye_page_rect().y, 68 + ui.fonts.s.width("dense") + 34, 18);
+        let scale = Rect::new(kx - 30, ui.eye_page_rect().y, 68 + ui.fonts().s.width("dense") + 34, 18);
         if ui.full_btn().0.x >= r.x {
             assert!(scale.x + scale.w <= ui.full_btn().0.x - 8, "{:?} {:?}", scale, ui.full_btn().0);
         }
@@ -2132,7 +2118,7 @@ mod tests {
         let dir = std::env::var("OOS_SHOTS").unwrap_or_else(|_| ".".into());
         let few = Sig { uis: 10, ..CLEAN };
         let save = |ui: &mut Ui, name: &str| {
-            let mut cv = Canvas::new(W, H);
+            let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);
             std::fs::write(format!("{}/{}.png", dir, name), crate::store::png_of(&cv)).unwrap();
         };

@@ -315,13 +315,18 @@ fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
         return (vmax as f64, vmin as f64);
     }
     // centre of the mode bin, refined by the mean of the samples in it
+    // (summed in the order of the samples, as `mean` would: the same value, without a copy of them)
     let bin_mean = |b: usize| {
         let (l, h) = (vmin + span * b as f32 / 255.0, vmin + span * (b + 1) as f32 / 255.0);
-        let s: Vec<f64> = f.iter().filter(|&&x| x >= l && x < h).map(|&x| x as f64).collect();
-        if s.is_empty() {
+        let (mut s, mut n) = (0.0f64, 0usize);
+        for &x in f.iter().filter(|&&x| x >= l && x < h) {
+            s += x as f64;
+            n += 1;
+        }
+        if n == 0 {
             l as f64
         } else {
-            mean(&s)
+            s / n as f64
         }
     };
     (bin_mean(hi), bin_mean(lo))
@@ -357,7 +362,14 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
 
 /// IEEE-181 uses 10/90. The menu also offers 20/80 (`lpct` / `hpct` as fractions of amplitude).
 pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
-    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    // the finite samples: the record itself when it has no gap (a copy of 100 kpts per channel otherwise)
+    let own: Vec<f32>;
+    let f: &[f32] = if v.iter().all(|x| x.is_finite()) {
+        v
+    } else {
+        own = v.iter().copied().filter(|x| x.is_finite()).collect();
+        &own
+    };
     if f.len() < 4 {
         return Analysis::default();
     }
@@ -377,7 +389,7 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     let avg = f.iter().map(|&x| x as f64).sum::<f64>() / n;
     let rms = (f.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / n).sqrt();
     let std = (f.iter().map(|&x| (x as f64 - avg).powi(2)).sum::<f64>() / n).sqrt();
-    let (top, base) = top_base(&f, vmin, vmax);
+    let (top, base) = top_base(f, vmin, vmax);
     let (lpct, hpct) = refs(lpct, hpct);
     let (lin_slope, lin_int) = linreg(v, dt);
     let mut a = Analysis {

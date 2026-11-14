@@ -323,7 +323,7 @@ fn former_eye_plot_target_is_plain_waveform_and_auto_eye_remains_in_the_menu() {
     let mut ui=mixed();let a=ui.grid;
     tap(&mut ui,Rect::new(a.x+MARK_W+6,a.y+22,96,28));assert_eq!(ui.m.view,AView::Scope);
     ui.open_menu(MenuId::Eye);assert!(ui.items(MenuId::Eye).contains(&Item::EyeAct));
-    assert!(ui.fonts.s.width("Bathtub (model)")<=120);
+    assert!(ui.fonts().s.width("Bathtub (model)")<=120);
     ui.m.eye_rate=64e9;ui.azr.eye_auto.enabled=true;assert!(ui.eye_rate_caption().starts_with("Est."));
     ui.azr.eye_auto.enabled=false;assert!(!ui.eye_rate_caption().starts_with("Est."));
 }

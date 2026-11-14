@@ -24,8 +24,10 @@
 
 pub mod card;
 pub mod ed25519;
+pub mod fdt;
 pub mod first;
 pub mod hash;
+pub mod inflate;
 pub mod kexec;
 pub mod pkg;
 
@@ -346,13 +348,15 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
     Ok(r)
 }
 
-/// What a kexec start needs: kernel, initramfs (with the package, the key that verified it and the running device
-/// tree), the build.
+/// What a kexec start needs: kernel, initramfs (with the package, the key that verified it and the device tree section
+/// the start runs with), the build; and for an image with another device tree, the tree to start it with (the new one
+/// with the loader's changes, `fdt::with_loader_changes`), which `kexec::load_with_tree` takes.
 #[derive(Debug)]
 pub struct Staged {
     pub kernel: Vec<u8>,
     pub initrd: Vec<u8>,
     pub build: String,
+    pub tree: Option<Vec<u8>>,
 }
 
 /// The first half of an install by kexec start (module `kexec`): every check of `install` (nothing written), the device
@@ -361,7 +365,9 @@ pub struct Staged {
 /// second half is `install` run by the started image itself (`oos-update boot`). None: nothing to do.
 ///
 /// `booted_dt`: the device tree section of the image the loader started (`kexec::BOOTED_DT`, saved by `oos-update
-/// boot`); without it only an image in `recovery` that is the running build (`running`) tells.
+/// boot`); without it only an image in `recovery` that is the running build (`running`) tells. `running_tree`: the tree
+/// the running kernel got (`/sys/firmware/fdt`), given when a kexec start with another tree can be made
+/// (`kexec::TOOL`); without it an image with another tree is refused.
 pub fn kexec_stage(
     card: &mut Card,
     state_path: &Path,
@@ -370,6 +376,7 @@ pub fn kexec_stage(
     opt: &InstallOpt,
     booted_dt: Option<&[u8]>,
     running: Option<&str>,
+    running_tree: Option<&[u8]>,
 ) -> Result<(Report, Option<Staged>), String> {
     let mut r = install(card, state_path, package, keys, &InstallOpt { execute: false, ..*opt })?;
     if r.unchanged {
@@ -397,12 +404,22 @@ pub fn kexec_stage(
             kexec::parts(&cur_img).map_err(|e| format!("recovery: {}: no device tree to compare with", e))?.2.to_vec()
         }
     };
-    if booted != dt {
-        return Err("the image brings another device tree than the one this scope started with: a kexec start keeps the running tree and cannot try it".into());
-    }
-    r.say("device tree: the same as the running one");
+    let tree = if booted == dt {
+        r.say("device tree: the same as the running one");
+        None
+    } else {
+        let Some(run) = running_tree else {
+            return Err("the image brings another device tree than the one this scope started with, and this build cannot start a kernel with another tree".into());
+        };
+        let new_dt = fdt::rsce_file(dt, fdt::TREE).map_err(|e| format!("the new image's device tree: {}", e))?;
+        let old_dt = fdt::rsce_file(&booted, fdt::TREE).map_err(|e| format!("the running image's device tree: {}", e))?;
+        let (t, n) = fdt::with_loader_changes(new_dt, old_dt, run).map_err(|e| format!("the new device tree: {}", e))?;
+        r.say(format!("device tree: another one; the kexec start tries it, with the {} changes the loader made to the running one", n));
+        Some(t)
+    };
     let key = keys.iter().find(|k| pkg::key_id(k) == m.key).ok_or("no key for the package")?;
-    let staged = Staged { kernel: kernel.to_vec(), initrd: kexec::initrd(ramdisk, package, key, &booted), build: m.build.clone() };
+    // the started image keeps the tree section it runs with (for its own updates later): the new one, when it brings one
+    let staged = Staged { kernel: kernel.to_vec(), initrd: kexec::initrd(ramdisk, package, key, dt), build: m.build.clone(), tree };
     if !opt.execute {
         r.say(format!("start build {} by kexec; it installs itself once it runs (dry run: --execute)", short(&staged.build)));
         return Ok((r, None));

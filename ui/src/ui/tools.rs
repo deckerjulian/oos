@@ -353,9 +353,36 @@ impl Ui {
         self.clear_measurement_statistics();
     }
 
-    /// DVM and counter: a new record came in. Offline mode reads the reference directly.
+    /// The hardware counter (on the unit): the set-up for the FPGA's counter, and a new reading into the statistics.
+    /// Off the hardware the counter is worked out from the records (`counter_update`).
+    pub(super) fn counter_poll(&mut self) {
+        let m = &self.m;
+        let want = (m.cnt_on && m.ch[m.cnt_src].on).then_some(crate::board::CounterWant { ch: m.cnt_src, mode: m.cnt_mode.min(2), digits: m.cnt_digits, clear: self.cnt_clear });
+        let Some(r) = self.src.hw_counter(want) else { return };
+        match r {
+            Some(r) if Some(r.n) != self.cnt_hw.map(|x| x.n) => {
+                if let Some(t) = r.period.filter(|_| self.m.cnt_mode == 0) {
+                    let v = 1.0 / t;
+                    let st = &mut self.cnt_stat;
+                    if st.n == 0 {
+                        (st.min, st.max) = (v, v);
+                    }
+                    st.n += 1;
+                    st.sum += v;
+                    st.min = st.min.min(v);
+                    st.max = st.max.max(v);
+                }
+                self.cnt_hw = Some(r);
+            }
+            Some(_) => {}
+            None => self.cnt_hw = None,
+        }
+    }
+
+    /// DVM and counter: a new record came in. Offline mode reads the reference directly; on the hardware the FPGA
+    /// counts (`counter_poll`).
     pub(super) fn counter_update(&mut self) {
-        if self.offline || !self.m.cnt_on {
+        if self.offline || !self.m.cnt_on || self.src.is_hw() {
             return;
         }
         let c = self.m.cnt_src;
@@ -377,9 +404,50 @@ impl Ui {
         }
     }
 
+    /// The counter's value as the strip shows it (Hz, s or edges); None without one. Offline mode reads the reference
+    /// on the card, the hardware its FPGA counter. SCPI :COUNter:CURRent? (as `counter_value`, NaN for None)
+    pub fn counter_reading(&self) -> Option<f64> {
+        if !self.m.cnt_on {
+            return None;
+        }
+        if let Some(i) = self.offline_meter() {
+            let v = match self.m.cnt_mode {
+                2 => self.ref_ana[i].rises.len() as f64,
+                1 => self.meas_at(WaveId::Ref(i), Meas::Period),
+                _ => self.meas_at(WaveId::Ref(i), Meas::Freq),
+            };
+            return v.is_finite().then_some(v);
+        }
+        let c = self.m.cnt_src.min(NCH - 1);
+        let on = self.m.ch[c].on;
+        let v = if self.src.is_hw() {
+            let r = self.cnt_hw.filter(|_| on)?;
+            match self.m.cnt_mode {
+                2 => r.total as f64,
+                1 => r.period?,
+                _ => 1.0 / r.period?,
+            }
+        } else {
+            match self.m.cnt_mode {
+                2 => self.cnt_total as f64,
+                1 if on => self.meas_at(WaveId::Ch(c), Meas::Period),
+                0 if on => self.meas_at(WaveId::Ch(c), Meas::Freq),
+                _ => return None,
+            }
+        };
+        v.is_finite().then_some(v)
+    }
+
+    /// Clear counter, from SCPI :COUNter:TOTalize:CLEar.
+    pub fn counter_reset(&mut self) {
+        self.counter_clear();
+    }
+
     pub(crate) fn counter_clear(&mut self) {
         self.cnt_total = 0;
         self.cnt_stat = MStat::default();
+        self.cnt_clear += 1;
+        self.cnt_hw = None;
     }
 
     /// DVM reading of its source, volts. Offline mode reads the reference on the card.
@@ -401,16 +469,7 @@ impl Ui {
 
     /// Counter reading: frequency, period, or the totalised edge count. NaN when that mode has nothing to show.
     pub fn counter_value(&self) -> f64 {
-        if !self.m.cnt_on {
-            return f64::NAN;
-        }
-        let c = self.m.cnt_src.min(NCH - 1);
-        match self.m.cnt_mode {
-            2 => self.cnt_total as f64,
-            1 if self.m.ch[c].on => self.meas_at(WaveId::Ch(c), Meas::Period),
-            0 if self.m.ch[c].on => self.meas_at(WaveId::Ch(c), Meas::Freq),
-            _ => f64::NAN,
-        }
+        self.counter_reading().unwrap_or(f64::NAN)
     }
 
     /// The strip row of DVM and counter: (label, value) pairs.
@@ -442,9 +501,14 @@ impl Ui {
                 let c = self.m.cnt_src;
                 let digits = self.m.cnt_digits as usize;
                 let on = self.m.ch[c].on;
+                let hw = self.src.is_hw();
+                let hw_t = self.cnt_hw.and_then(|r| r.period).filter(|_| on);
                 let period = self.meas_at(WaveId::Ch(c), Meas::Period);
                 let frequency = self.meas_at(WaveId::Ch(c), Meas::Freq);
                 let t = match self.m.cnt_mode {
+                    2 if hw => self.cnt_hw.map_or("----".into(), |r| fmt_count(r.total as f64)),
+                    1 if hw => hw_t.map_or("----".into(), |t| si_digits(t, "s", digits)),
+                    0 if hw => hw_t.map_or("----".into(), |t| si_digits(1.0 / t, "Hz", digits)),
                     2 => fmt_count(self.cnt_total as f64),
                     1 if on && period.is_finite() => si_digits(period, "s", digits),
                     0 if on && frequency.is_finite() => si_digits(frequency, "Hz", digits),
@@ -1172,5 +1236,30 @@ mod physical_extremum_time_tests {
         close(ui.meas_at(WaveId::Ref(0), Meas::TVmax), origin);
         close(ui.fact_meas(Meas::TVmax, WaveId::Ref(0)), origin);
         close(ui.meas_at(WaveId::Ref(0), Meas::TVmin), origin + 40e-12);
+    }
+}
+
+#[cfg(test)]
+mod counter_tests {
+    use super::*;
+
+    /// The counter through SCPI, off the hardware: set-up, a value from the records, the totalizer's clear.
+    #[test]
+    fn the_counter_by_scpi() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let cv = crate::gfx::Canvas::new(ui.scr.w, ui.scr.h);
+        let mut s = crate::scpi::Scpi::open(0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(s.exec_line(ui, &cv, c)).unwrap().trim().to_string();
+        q(&mut ui, ":COUNter:ENABle 1;:COUNter:SOURce CHAN1;:COUNter:MODE FREQuency;:COUNter:NDIGits 6");
+        assert_eq!(q(&mut ui, ":COUNter:ENABle?;:COUNter:SOURce?;:COUNter:MODE?;:COUNter:NDIGits?"), "1;CHAN1;FREQ;6");
+        for _ in 0..10 {
+            ui.step(0.05);
+        }
+        let f: f64 = q(&mut ui, ":COUNter:CURRent?").parse().unwrap();
+        assert!(f.is_finite() && f > 0.0 && f < 1e9, "{}", f);
+        q(&mut ui, ":COUNter:MODE TOTalize");
+        q(&mut ui, ":COUNter:TOTalize:CLEar");
+        assert_eq!(q(&mut ui, ":COUNter:CURRent?").parse::<f64>().unwrap(), 0.0);
+        assert_eq!(q(&mut ui, ":COUNter:NDIGits 9;:COUNter:NDIGits?"), "6", "out of range: kept");
     }
 }

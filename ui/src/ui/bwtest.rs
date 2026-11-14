@@ -123,7 +123,7 @@ impl Ui {
 
     pub(super) fn draw_bw(&self, cv: &mut Canvas) {
         let a = self.area;
-        let f = &self.fonts;
+        let f = self.fonts();
         let col = CH_COLORS[self.m.bw_src.min(NCH - 1)];
         let Some(r) = &self.azr.bw else {
             let msg = if self.azr.bw_info.is_empty() { "waiting for a record".to_string() } else { self.azr.bw_info.clone() };
@@ -219,7 +219,7 @@ mod tests {
         for _ in 0..40 {
             ui.step(0.05);
         }
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         // the demo CH1 is a 1 kHz square: an edge is found, the rise time is positive and finite
         let r = ui.azr.bw.as_ref().unwrap_or_else(|| panic!("no result: {}", ui.azr.bw_info));

@@ -214,7 +214,7 @@ impl Ui {
             if k > 0 {
                 cv.line(band.x, band.y, band.x + band.w, band.y, LINE);
             }
-            cv.text(&self.fonts.s, band.x + 6, band.y + 16, name, DIM);
+            cv.text(&self.fonts().s, band.x + 6, band.y + 16, name, DIM);
             draw_cols(cv, band, cols, *col);
         }
         if let Some(p) = &self.azr.dpt {

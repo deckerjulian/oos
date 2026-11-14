@@ -549,7 +549,7 @@ impl Ui {
         if lines.is_empty() {
             return;
         }
-        let f = &self.fonts;
+        let f = self.fonts();
         let a = self.lane_area();
         let (band, pitch) = self.la_band(lines.len());
         cv.set_clip(band);
@@ -569,11 +569,13 @@ impl Ui {
             let x0 = a.w as f64 / 2.0 + (la.t0 - delay as f64) / tdiv as f64 * ppd - MARK_W as f64;
             self.la_columns(la, x0, la.dt / tdiv as f64 * ppd, w as usize)
         });
+        // the lane names: the normal size where the text size would not fit a lane or the marker strip
+        let nf = if f.s.size <= pitch && f.s.width("D15") <= MARK_W - 3 { &f.s } else { &crate::font::Fonts::get(0).s };
         for (i, &n) in lines.iter().enumerate() {
             let top = band.y + LA_HEAD + i as i32 * pitch;
             let (yh, yl) = (top + 2, top + pitch - 3);
             let col = POD_COLORS[n / 8];
-            cv.text(&f.s, a.x + 3, yl + 1, NAMES[n], col);
+            cv.text(nf, a.x + 3, yl + 1, NAMES[n], col);
             let Some(cols) = &cols else { continue };
             let bit = 1u16 << n;
             let dim = scale(col, 90);
@@ -709,13 +711,13 @@ mod tests {
         assert_eq!(la.words.len(), DEMO_SAMPLES);
         let at = |t: f64| la.words[((t - la.t0) / la.dt) as usize];
         assert!(at(20e-6) >> 14 & 1 == 1 && at(-20e-6) >> 14 & 1 == 0);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.close_menu();
         ui.render(&mut cv);
         // the band is drawn: the lane of D0 has trace pixels of the pod-1 colour
         let (band, pitch) = ui.la_band(16);
         let y0 = band.y + 14;
-        let lit = (y0..y0 + pitch).flat_map(|y| (band.x + MARK_W..band.x + band.w - MARK_W).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * W + x) as usize] & 0xff_ffff == POD_COLORS[0]).count();
+        let lit = (y0..y0 + pitch).flat_map(|y| (band.x + MARK_W..band.x + band.w - MARK_W).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] & 0xff_ffff == POD_COLORS[0]).count();
         assert!(lit > 500, "{} lit pixels", lit);
         // the LA key again: off and closed
         ui.key(key::LA);
@@ -767,7 +769,7 @@ mod decode_tests {
         assert!(pitch >= 9);
         assert!(row.y >= band.y + LA_HEAD + 16 * pitch, "the row must be under the last lane: {:?} {:?}", row, band);
         assert!(row.y + row.h <= band.y + band.h + 2, "the row must stay in the strip: {:?} {:?}", row, band);
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         let _ = crate::store::write(&dir.join("la-decoder-row.png"), &crate::store::png_of(&cv));
         // something is drawn in the row, right of its label
@@ -869,7 +871,7 @@ mod remote_tests {
     #[test]
     fn scpi_and_csv() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        let cv = Canvas::new(W, H);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let mut q = |ui: &mut Ui, c: &str| scpi.exec_line(ui, &cv, c);
         let s = |b: Vec<u8>| String::from_utf8(b).unwrap();
@@ -977,7 +979,7 @@ mod trigger_tests {
     #[test]
     fn scpi_source() {
         let mut ui = ui_la();
-        let cv = Canvas::new(W, H);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         scpi.exec_line(&mut ui, &cv, ":TRIG:EDGE:SOUR D7");
         assert_eq!(ui.m.trig_line(), Some(7));

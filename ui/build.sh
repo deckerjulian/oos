@@ -7,7 +7,9 @@
 set -e
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
-[ -f assets/font.bin ] || python3 tools/mkfont.py assets/font.bin
+[ -f assets/font.bin ] || python3 tools/mkfont.py assets/font.bin normal
+[ -f assets/font-large.bin ] || python3 tools/mkfont.py assets/font-large.bin large
+[ -f assets/font-larger.bin ] || python3 tools/mkfont.py assets/font-larger.bin larger
 cargo build --release --target aarch64-unknown-linux-musl
 cargo build --release
 ls -l target/aarch64-unknown-linux-musl/release/oos-ui

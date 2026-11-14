@@ -243,9 +243,10 @@ impl Ui {
 
     pub(super) fn draw_sysinfo(&self, cv: &mut Canvas) {
         let Some(cols) = &self.sysinfo else { return };
-        let f = &self.fonts;
-        cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 140);
-        let r = Rect::new(10, 10, W - 20, H - 20);
+        let f = self.fonts();
+        let scr = self.scr.rect();
+        cv.blend(scr, rgb(0, 0, 0), 140);
+        let r = scr.inset(10);
         cv.round(r, 8, ACCENT, 255);
         cv.round(r.inset(2), 7, DLG_BG, 255);
         let top = Rect::new(r.x + 16, r.y + 8, r.w - 32, 30);
@@ -253,23 +254,32 @@ impl Ui {
         cv.text_in(&f.s, top, 2, "updated every second \u{b7} tap to close", DIM);
         let gap = 18;
         let cw = (r.w - 32 - 2 * gap) / 3;
+        // line heights from the fonts (19, 20 and 17 px at the normal text size)
+        let (kv_h, head_h, note_h) = (f.m.size + 5, f.mb.size + 6, f.s.size + 5);
         for (i, col) in cols.iter().enumerate() {
             let x = r.x + 16 + i as i32 * (cw + gap);
             let mut y = r.y + 44;
-            let kw = cw * 2 / 5;
+            // the larger text sizes: the keys as wide as they need, the rest for the values
+            let kw = if self.m.text_size == TextSize::Normal {
+                cw * 2 / 5
+            } else {
+                col.iter().map(|row| if let Row::Kv(k, ..) = row { f.s.width(k) + 10 } else { 0 }).max().unwrap_or(0).min(cw / 2)
+            };
             cv.set_clip(Rect::new(x, r.y, cw, r.h - 4));
             for row in col {
                 match row {
                     Row::Head(t) => {
                         y += 6;
-                        cv.text_in(&f.mb, Rect::new(x, y, cw, 20), 0, t, ACCENT);
-                        cv.hline(x, x + cw, y + 21, LINE);
-                        y += 26;
+                        cv.text_in(&f.mb, Rect::new(x, y, cw, head_h), 0, t, ACCENT);
+                        cv.hline(x, x + cw, y + head_h + 1, LINE);
+                        y += head_h + 6;
                     }
                     Row::Kv(k, v, c) => {
-                        cv.text_in(&f.s, Rect::new(x, y, kw, 18), 0, k, DIM);
-                        cv.text_in(&f.m, Rect::new(x + kw, y, cw - kw, 18), 0, v, *c);
-                        y += 19;
+                        cv.text_in(&f.s, Rect::new(x, y, kw, kv_h - 1), 0, k, DIM);
+                        // a value that would be cut off takes a smaller size
+                        let vf = if self.m.text_size == TextSize::Normal { &f.m } else { super::fit_font(&[&f.m, &f.s, &crate::font::Fonts::get(0).m], cw - kw, v) };
+                        cv.text_in(vf, Rect::new(x + kw, y, cw - kw, kv_h - 1), 0, v, *c);
+                        y += kv_h;
                     }
                     Row::Note(t, c) => {
                         // word wrap to the column width
@@ -277,16 +287,16 @@ impl Ui {
                         for w in t.split(' ') {
                             let cand = if line.is_empty() { w.to_string() } else { format!("{} {}", line, w) };
                             if f.s.width(&cand) > cw && !line.is_empty() {
-                                cv.text_in(&f.s, Rect::new(x, y, cw, 17), 0, &line, *c);
-                                y += 17;
+                                cv.text_in(&f.s, Rect::new(x, y, cw, note_h), 0, &line, *c);
+                                y += note_h;
                                 line = w.to_string();
                             } else {
                                 line = cand;
                             }
                         }
                         if !line.is_empty() {
-                            cv.text_in(&f.s, Rect::new(x, y, cw, 17), 0, &line, *c);
-                            y += 17;
+                            cv.text_in(&f.s, Rect::new(x, y, cw, note_h), 0, &line, *c);
+                            y += note_h;
                         }
                     }
                 }
@@ -310,7 +320,7 @@ mod tests {
         assert!(rows.iter().all(|c| !c.is_empty()));
         assert!(rows[0].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "Model" && v.contains("DHO924S"))));
         assert!(rows[2].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "3-4 channels" && v == "312.5 MSa/s  31.25 Mpts")));
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         // any key closes it; the next frame forgets the rows
         ui.key(key::RUNSTOP);

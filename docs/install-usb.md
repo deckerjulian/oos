@@ -21,7 +21,7 @@ Compared with the card route (`README.md`, Installation):
 That last row is the price. The stock loader has no start counter: when `boot` selects OOS, every power-on starts the OOS
 kernel until the first program of the image has run and put the stock selection back. A corrupt image is no problem, the
 loader refuses it and starts the stock copy. A kernel that accepts the image and hangs on the way to the first script is.
-This is why only models OOS has run on are accepted (section 4).
+This is why only models with the hardware of a model OOS has run on are accepted (section 4).
 
 ## 1. Steps
 
@@ -40,7 +40,9 @@ This is why only models OOS has run on are accepted (section 4).
 
 OOS starts once, in one-shot mode: the following power-on starts stock again. To start OOS again run the same update: when
 `recovery` holds an OOS image the loader takes, it writes nothing but the selection, also when that image is a newer build
-installed over the network since. An empty file `oos-reinstall.txt` on the stick writes the stick's build instead. A
+installed over the network since. When the stick's build is newer than the card's (0.1.7 on: the builds are read from
+the images), it is written: the stick updates OOS. An empty file `oos-reinstall.txt` on the stick writes the stick's
+build in any case. A
 damaged OOS image in `recovery` (an update cut by a power loss) is replaced by the rollback image when that one is whole,
 else by the stick's build. If the OOS in `recovery` starts but hangs early every time (no rollback happens because the
 start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
@@ -62,7 +64,8 @@ change under `/rigol`.
 2. Rescue set on the stick, each file read back. A complete set is kept: after the first install `recovery` holds OOS.
 3. If OOS is selected and `recovery` changes: stock selected first.
 4. Stock copy of `boot` to the start of `backup`, read back. The loader's fallback when it refuses `recovery`.
-5. Image to `recovery`, read back: only when `recovery` does not hold a valid OOS image yet, or with `oos-reinstall.txt`.
+5. Image to `recovery`, read back: only when `recovery` does not hold a valid OOS image yet or an older build than the
+   stick's, or with `oos-reinstall.txt`.
 6. Last, one sector: `boot` selects OOS.
 
 A failure or power cut before step 6 leaves a card that starts stock as before. The same file finishes the job.
@@ -85,8 +88,34 @@ The stock `recovery` is replaced. Whatever starts into it no longer works; every
 
 ## 4. Models
 
-Only models OOS has run on: `first::VERIFIED_MODELS`, today the DHO924S. On another model the update stops with a message in the
-log. An empty file `oos-any-model.txt` on the stick overrides this. Do that only if you are ready to open the scope.
+The install goes ahead on its own only on a model whose hardware OOS has run on: the models of a hardware variant
+with a report ([models.md](models.md) 2.1, `VARIANTS` in `hal/src/dho/target.rs`). Models of one variant differ only
+in their licensed bandwidth.
+
+| Verified | Not verified yet |
+|---|---|
+| DHO804, DHO814, DHO824 (a DHO804 runs OOS) | DHO802, DHO812 |
+| DHO914S, DHO924S (a DHO924S runs OOS) | DHO914, DHO924, DHO914-EDU, DHO924-EDU |
+
+On another model the update stops before it writes anything; the screen reports a failure, and `oos-install.log` on
+the stick says:
+
+```
+oos-update: OOS has not run on a DHO802 yet (hardware variant "DHO800, 2 channels": no unit of it has run OOS so far). Nothing written.
+Verified (OOS has run on a model with the same hardware): DHO804, DHO814, DHO824, DHO914S, DHO924S.
+...
+exit code 1
+```
+
+**To install anyway**, put an empty file named `oos-any-model.txt` into the top folder of the stick, next to the
+`.GEL` file, and run the update again (over ADB: `oos-update gel-install ... --any-model`). A dry run first
+(`oos-dry-run.txt`) is wise. The risk: if the OOS kernel hangs on that model before its first program runs, every
+power-on starts it again, and the only way back is to open the scope and put the card into a computer (the table at
+the top). Everything else is the same as on a verified model: a corrupt image is refused by the loader, and a start
+of OOS that gets as far as its first program puts the stock selection back. Only do it if you are ready to open the
+scope. Please report how it went (an issue or the forum thread), so the model can be listed as verified.
+
+A model the model table does not know (another board family) is refused also with the file.
 
 ## 5. Going back
 
@@ -114,6 +143,7 @@ On a card that can be taken out, not on an only card:
 2. Install, power-cycle: OOS starts, with `/oos` formatted if it was empty. **Done 2026-11-08** (with `/oos` already
    there).
 3. Next power-on: stock, with calibration and licences as before.
-4. The same update again: "already holds", OOS selected. After an update over the network: "kept, only selected".
+4. The same update again: "already holds", OOS selected. After an update over the network to a newer build: "kept,
+   only selected". A newer build on the stick than on the card (0.1.7 on): written ("the stick's newer build").
    **"Already holds" done 2026-11-08.**
 5. Damage test: a refused image in `recovery` (card in a reader) starts the stock copy in `backup`.

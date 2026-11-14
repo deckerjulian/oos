@@ -106,6 +106,8 @@ pub struct Settings {
     pub header: bool,
     /// noise reject: 0.7 instead of 0.3 div comparator hysteresis (trigger.md 2.3, 2.7)
     pub noise_reject: bool,
+    /// coupling of the edge trigger (trigger.md 2.5); the other types are always DC
+    pub trig_couple: tpu::Coupling,
     /// frames per batch: one arm records this many triggered frames, one type-4 play and one read return them all
     /// (limited to `Params::max_frames`; needs `play4`)
     pub frames: u32,
@@ -123,7 +125,7 @@ impl Default for Settings {
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
         let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, frames: 1, compress: 1, la: None }
+        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None }
     }
 }
 
@@ -263,7 +265,7 @@ impl State {
         let vt: [tpu::Vert; 4] = [0, 1, 2, 3].map(|c| tpu::Vert { scale: nv(s.ch[c].scale), offset: nv(s.ch[c].offset), g: self.gain[c], noise });
         let edge = if s.slope == tpu::Slope::Falling { tpu::Edge::Falling } else { tpu::Edge::Rising };
         let mut w = match &s.trigger {
-            Trig::Edge => tpu::edge(ts, src, s.slope, nv(s.level), vt[tc].offset, vt[tc].scale, vt[tc].g, noise, 8_000_000),
+            Trig::Edge => tpu::edge_coupled(ts, src, s.slope, s.trig_couple, nv(s.level), vt[tc].offset, vt[tc].scale, vt[tc].g, noise, 8_000_000),
             Trig::Pulse { pol, when, lower, upper } => tpu::pulse(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), &vt),
             Trig::Slope { when, lower, upper, lo } => tpu::slope(ts, src, edge, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt),
             Trig::Runt { pol, when, lower, upper, lo } => tpu::runt(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt, true),
@@ -495,10 +497,18 @@ pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Optio
 /// `0x4010 - first + 1`), then play and read exactly those frames.
 /// Returns the bytes (count x `frame_bytes`) and the count.
 #[cfg(target_os = "linux")]
-pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, wait_ms: u64, mut log: impl FnMut(String)) -> Result<(Vec<u8>, u32), String> {
+pub fn acquire_batch(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, wait_ms: u64, log: impl FnMut(String)) -> Result<(Vec<u8>, u32), String> {
+    acquire_batch_until(st, s, p, bar, c2h, wait_ms, log, || false)
+}
+
+/// `acquire_batch` whose wait for a trigger ends with `Err(NEW_SETTINGS)` as soon as `stop()` says so (checked every
+/// 10 ms): in NORMAL without a trigger the wait lasts 2 s, and new settings would wait for it.
+#[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments)]
+pub fn acquire_batch_until(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, wait_ms: u64, mut log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<(Vec<u8>, u32), String> {
     use crate::dho::bus::Bus;
     let nf = frames(s, p);
-    execute(&st.arm_steps(s, p), bar, None, c2h, &mut log)?;
+    execute_until(&st.arm_steps(s, p), bar, None, c2h, &mut log, stop)?;
     let t = std::time::Instant::now();
     let mut count = bar.rd(0x4010).wrapping_add(1).min(nf);
     while count < nf && t.elapsed().as_millis() < wait_ms as u128 {
@@ -531,7 +541,16 @@ pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate:
 
 /// Runs steps on the unit; returns the bytes of the Read step. `log` gets notes and poll results.
 #[cfg(target_os = "linux")]
-pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, mut log: impl FnMut(String)) -> Result<Vec<u8>, String> {
+pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<Vec<u8>, String> {
+    execute_until(steps, bar, afe_bus, c2h, log, || false)
+}
+
+/// What `execute_until` returns when `stop` ended a poll: the same state of the FPGA as a poll that timed out.
+pub const NEW_SETTINGS: &str = "stopped for new settings";
+
+/// `execute` whose polls end early with `Err(NEW_SETTINGS)` when `stop()` says so (checked every 10 ms).
+#[cfg(target_os = "linux")]
+pub fn execute_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, mut log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<Vec<u8>, String> {
     use crate::dho::bus::Bus;
     let mut afe_bus = afe_bus;
     let mut out = Vec::new();
@@ -551,9 +570,15 @@ pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<
             Step::Poll { reg, bit, ms, what } => {
                 let t = std::time::Instant::now();
                 let mut last = bar.rd(*reg);
+                let mut k = 0u32;
                 while last & bit == 0 && t.elapsed().as_millis() < *ms as u128 {
                     std::thread::sleep(std::time::Duration::from_micros(500));
                     last = bar.rd(*reg);
+                    k += 1;
+                    if k % 20 == 0 && last & bit == 0 && stop() {
+                        log(format!("{} {} ({:.1} ms)", what, NEW_SETTINGS, t.elapsed().as_secs_f64() * 1e3));
+                        return Err(NEW_SETTINGS.into());
+                    }
                 }
                 let ok = last & bit != 0;
                 log(format!("{} {} ({:#x} = {:#010x}, {:.1} ms)", what, if ok { "ok" } else { "TIMEOUT" }, reg, last, t.elapsed().as_secs_f64() * 1e3));

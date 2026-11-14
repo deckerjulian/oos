@@ -6,7 +6,7 @@
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|BIAS|EXPand|LABel:SHOW|LABel:CONTent,
 //! :TIMebase[:MAIN]:SCALe|OFFSet, :TIMebase:DELay:ENABle|SCALe|OFFSet, :TIMebase:VERNier, :TIMebase:HREFerence:MODE, :TIMebase:MODE, :TIMebase:ROLL,
 //! :TIMebase:XY:ENABle|X|Y|Z,
-//! :TRIGger:MODE[?]|TYPe[?] :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?,
+//! :TRIGger:MODE[?]|TYPe[?] :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?,
 //! :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M)|TYPE NORM/PEAK/AVER/HRES|AVERages|ULTRa:MAXFrame,
 //! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar, :MEASure:INDicator,
 //! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
@@ -34,7 +34,8 @@
 //! a long stored record is computing, and BUSY? polls without changing acquisition or statistics.
 //! :DECode:CPHY:RATE {AUTO|symbols_per_second} sets a known C-PHY symbol rate; :DECode:SRATe is an alias.
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
-//! :SYSTem:ERRor?, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
+//! :COUNter:TOTalize:CLEar, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4,
+//! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :CANCel, :BODE:RUN ON|OFF / :DATA? / :GENerator "ip:port",
 //! built-in generator: :SOURce[1]:OUTPut[:STATe] ON|OFF, :FUNCtion SINusoid|SQUare|RAMP|PULSe|NOISe|DC|ARB, :ARB:DATA, :ARB:CAPTure, :FUNCtion:SQUare:DUTY, :FUNCtion:RAMP:SYMMetry, :MOD[:STATe], :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh,
 //! :MOD:FM|PM:DEViation, :MOD:<type>:INTernal:FREQuency|FUNCtion, :FREQuency <Hz>,
@@ -46,7 +47,9 @@ use crate::board::{board, Board};
 use crate::math::{math_scales, MathCh, MathOp, Window, NMATH, MATH_REF_BASE};
 use crate::model::*;
 use crate::ui::Ui;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, Write};
+#[cfg(test)]
+use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
@@ -257,7 +260,7 @@ fn parse_proto(arg: &str) -> Option<Proto> {
     if kw(a, "LIN") { return Some(Proto::Lin); }
     if kw(a, "SPI") { return Some(Proto::Spi); }
     if kw(a, "CAN") { return Some(Proto::Can); }
-    PROTOS.into_iter().find(|p| proto_token(*p).eq_ignore_ascii_case(a))
+    PROTOS.iter().copied().find(|p| proto_token(*p).eq_ignore_ascii_case(a))
 }
 
 fn nearest_baud(v: f64) -> usize {
@@ -606,6 +609,10 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
+        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_mode: 0, wav_start: 1, wav_stop: 0, err: Vec::new(), event_status: 0, error_serial: 0, last_error: None, opc_events: Vec::new() }
+    }
+
+    fn bind(port: u16) -> Option<TcpListener> {
         let l = TcpListener::bind(("0.0.0.0", port)).ok();
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
@@ -613,7 +620,7 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_mode: 0, wav_start: 1, wav_stop: 0, err: Vec::new(), event_status: 0, error_serial: 0, last_error: None, opc_events: Vec::new() }
+        l
     }
 
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
@@ -645,13 +652,26 @@ impl Scpi {
         self.l.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
     }
 
+    /// System > Network > Remote services: the port open (`Some`), or closed with its connections.
+    pub fn set_open(&mut self, port: Option<u16>) {
+        match port {
+            Some(p) if self.l.is_none() => self.l = Self::bind(p),
+            Some(_) => {}
+            None => {
+                if self.l.take().is_some() {
+                    eprintln!("oos-ui: SCPI off");
+                }
+                self.clients.clear();
+            }
+        }
+    }
+
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
             while let Ok((s, _)) = l.accept() {
                 let _ = s.set_nonblocking(false);
-                let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                 let _ = s.set_nodelay(true);
-                // each connection costs a read per frame
+                // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_now`)
                 if self.clients.len() < MAX_CLIENTS {
                     self.clients.push(Client { s, buf: Vec::new(), program: None });
                 }
@@ -663,7 +683,7 @@ impl Scpi {
             let mut closed = false;
             let mut read_bytes = 0;
             loop {
-                match self.clients[i].s.read(&mut tmp) {
+                match crate::net::read_now(&self.clients[i].s, &mut tmp) {
                     Ok(0) => {
                         closed = true;
                         break;
@@ -673,7 +693,7 @@ impl Scpi {
                         self.clients[i].buf.extend_from_slice(&tmp[..n]); read_bytes += n;
                         if read_bytes >= 65536 { break; }
                     },
-                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => break,
+                    Err(e) if crate::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
                         break;
@@ -1244,6 +1264,25 @@ impl Scpi {
                     };
                     return Some(t(s));
                 }
+                if nodes.len() == 2 && kw(last, "COUPling") {
+                    if query {
+                        return Some(t(match m.trig_coup {
+                            TrigCoup::Dc => "DC",
+                            TrigCoup::Ac => "AC",
+                            TrigCoup::LfReject => "LFR",
+                            TrigCoup::HfReject => "HFR",
+                        }));
+                    }
+                    let a = arg.trim().to_ascii_uppercase();
+                    m.trig_coup = match a.as_str() {
+                        "DC" => TrigCoup::Dc,
+                        "AC" => TrigCoup::Ac,
+                        "LFR" | "LFREJECT" => TrigCoup::LfReject,
+                        "HFR" | "HFREJECT" => TrigCoup::HfReject,
+                        _ => return None,
+                    };
+                    return Some(None);
+                }
                 if nodes.len() == 2 && kw(last, "NREJect") {
                     if query {
                         return Some(t(if m.trig_nrej { "1" } else { "0" }));
@@ -1675,7 +1714,7 @@ impl Scpi {
         if kw(n0, "SIM") {
             return self.sim_cmd(ui, &nodes[1..], query, arg);
         }
-        if kw(n0, "DISPlay") && !(nodes.len() == 2 && kw(nodes[1], "DATA")) {
+        if kw(n0, "DISPlay") && !(nodes.len() == 2 && kw(nodes[1], "DATA")) && !(nodes.len() >= 2 && kw(nodes[1], "VIEW")) {
             return self.display_cmd(ui, &nodes[1..], query, arg);
         }
         if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
@@ -1688,6 +1727,24 @@ impl Scpi {
                 return Some(block(&bmp(cv)));
             }
             self.push_err(format!("-224,\"Illegal parameter value\" {}", kind));
+            return None;
+        }
+        // Display > Views (ui/views.rs): :DISPlay:VIEW <n> shows view n, :DISPlay:VIEW:COUNt <1..4> how many there are
+        if kw(n0, "DISPlay") && nodes.len() >= 2 && kw(nodes[1], "VIEW") {
+            let count = nodes.len() == 3 && kw(nodes[2], "COUNt");
+            if nodes.len() > 3 || (nodes.len() == 3 && !count) {
+                self.push_err("-113,\"Undefined header\"".into());
+                return None;
+            }
+            if query {
+                return t(&(if count { ui.m.views } else { ui.m.view_cur + 1 }).to_string());
+            }
+            let n = arg.trim().parse::<usize>().ok();
+            match n {
+                Some(n) if count && (1..=crate::ui::VIEWS_MAX).contains(&n) => ui.views_set(n),
+                Some(n) if !count && (1..=ui.m.views).contains(&n) => ui.view_go(n - 1),
+                _ => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
             return None;
         }
         // OOS extensions: analyser view, Identify, self-calibration, Bode
@@ -1749,15 +1806,18 @@ impl Scpi {
                 return None;
             }
             if kw(nodes[1], "GENerator") {
+                // "usb": the generator on the USB-A port; anything else is its LAN address (kept while on USB)
                 if query {
-                    return t(&ui.m.bode_addr);
+                    return t(if ui.m.bode_usb { "usb" } else { ui.m.bode_addr.as_str() });
                 }
                 // one word, like the setup file keeps it
                 let a = arg.trim().trim_matches('"');
                 if a.contains(char::is_whitespace) {
                     self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                } else if a.eq_ignore_ascii_case("usb") {
+                    ui.m.bode_usb = true;
                 } else {
-                    ui.m.bode_addr = a.to_string();
+                    (ui.m.bode_addr, ui.m.bode_usb) = (a.to_string(), false);
                 }
                 return None;
             }
@@ -1940,6 +2000,18 @@ impl Scpi {
             }
             if kw(nodes[1], "STATe") && query {
                 return t(crate::cmd::stat_text(ui).trim());
+            }
+            // System > Graphics: CPU or GPU (whether the GPU really draws: the `gpu` part of :SYSTem:STATe?)
+            if kw(nodes[1], "GRAPhics") {
+                if query {
+                    return t(if ui.sys.gpu { "GPU" } else { "CPU" });
+                }
+                match arg.trim().to_ascii_uppercase().as_str() {
+                    "GPU" => ui.graphics_set(true),
+                    "CPU" => ui.graphics_set(false),
+                    _ => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
             }
             if kw(nodes[1], "LOG") && !query {
                 match parse_bool(arg) {

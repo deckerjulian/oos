@@ -30,8 +30,16 @@ if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
 fi
 # 1) the board starts what takes long while the rest of rcS runs (oos-board, one per board: rootfs/board/)
 /bin/oos-board early $ST > /tmp/oos-cold.log 2>&1
-# 2) network: DHCP, else the address the scope used under stock; in the background (no cable: up to 15 s)
+# 2) network, in the background: no address without a cable; with one DHCP, else a link-local address (RFC 3927,
+#    169.254.x.y), so a computer on the same cable, which takes one of those itself, reaches the scope without any
+#    set-up. oos-ui gives a link at 10 Mbit/s one more autonegotiation and sets the clock by NTP if asked to
+#    (docs/network.md)
 ip link set lo up
+# the scope's name on the network (System > Network > Remote services > Name: net.name in /oos/system.conf, mounted in
+# 0b; oos-ui writes it at its first start, from the model and the serial number): the kernel's host name, which the
+# DHCP clients send (-x hostname:) so that a router lists the scope by it; oos-ui keeps it up to date while it runs
+name=$(sed -n 's/^[[:space:]]*net\.name[[:space:]]*=[[:space:]]*\([A-Za-z0-9-]*\).*/\1/p' /oos/system.conf 2>/dev/null | tail -n 1)
+echo "${name:-oos}" > /proc/sys/kernel/hostname
 # a fixed, locally administered MAC from the SD card's CID (the kernel picks a random one per boot, which filled the
 # bench DHCP pool on 2026-11-03)
 cid=$(cat /sys/block/mmcblk0/device/cid 2>/dev/null)
@@ -41,12 +49,21 @@ if [ -n "$cid" ]; then
 fi
 ip link set eth0 up 2>/dev/null
 (
-	if ! udhcpc -i eth0 -n -q -t 5 -s /etc/udhcpc.script >/dev/null 2>&1; then
-		ip addr add 192.168.177.64/24 dev eth0
+	# the link is up to bring the cable's link up; an address only once there is one
+	until [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = 1 ]; do sleep 2; done
+	# -O ntpsrv: the NTP servers of the lease too (DHCP option 42, udhcpc.script); -x hostname: the scope's name
+	if ! udhcpc -i eth0 -n -q -t 5 -O ntpsrv -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; then
+		# from the MAC (the same on every start), another one while it is taken on the cable
+		set -- $(tr ':' ' ' < /sys/class/net/eth0/address)
+		a=$((0x$5 % 254 + 1)) b=$((0x$6)) n=0
+		while ! arping -D -q -c 2 -I eth0 169.254.$a.$b && [ $n -lt 8 ]; do
+			a=$((a % 254 + 1)) b=$(((b + 37) % 256)) n=$((n + 1))
+		done
+		ip addr add 169.254.$a.$b/16 dev eth0
 		: > /tmp/oos-net.fallback
-		echo "oos: no DHCP answer, eth0 = 192.168.177.64/24" > /dev/kmsg
-		# a cable or a server that comes later still counts
-		until udhcpc -i eth0 -n -q -t 2 -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
+		echo "oos: no DHCP answer, eth0 = 169.254.$a.$b/16 (link-local)" > /dev/kmsg
+		# a server that comes later still counts
+		until udhcpc -i eth0 -n -q -t 2 -O ntpsrv -x hostname:"$(cat /proc/sys/kernel/hostname)" -s /etc/udhcpc.script >/dev/null 2>&1; do sleep 30; done
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &

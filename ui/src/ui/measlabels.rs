@@ -11,6 +11,11 @@ use oos_dsp::measure::{Analysis, Meas};
 const MAX_LABELS: usize = 6;
 const LABEL_H: i32 = 17;
 
+/// Height of a label: 17 px at the normal text size, growing with the font.
+fn label_h(ui: &Ui) -> i32 {
+    LABEL_H + ui.fonts().s.size - 12
+}
+
 /// Where a label goes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Mark {
@@ -98,11 +103,12 @@ pub(super) fn vertical_t(v: &[f32], t0: f64, dt: f64, t_lo: f64, t_hi: f64, _lo:
 
 impl Ui {
     fn meas_label(&self, cv: &mut Canvas, cx: i32, y: i32, text: &str, col: Rgb) {
-        let f = &self.fonts;
+        let f = self.fonts();
         let a = self.area;
         let w = f.s.width(text) + 10;
         let x = (cx - w / 2).clamp(a.x + 2, a.x + a.w - w - 2);
-        let r = Rect::new(x, (y - LABEL_H / 2).clamp(a.y + 2, a.y + a.h - LABEL_H - 2), w, LABEL_H);
+        let h = label_h(self);
+        let r = Rect::new(x, (y - h / 2).clamp(a.y + 2, a.y + a.h - h - 2), w, h);
         cv.round(r, 3, super::PANEL_BG, 225);
         cv.text_in(&f.s, r, 1, text, col);
     }
@@ -179,7 +185,7 @@ impl Ui {
                 Some(Mark::Level(l)) => {
                     let y = self.y_of_id(id, l as f32);
                     cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, col);
-                    self.meas_label(cv, a.x + a.w * (3 + 2 * (levels % 3)) / 10, y - 11, &text, col);
+                    self.meas_label(cv, a.x + a.w * (3 + 2 * (levels % 3)) / 10, y - label_h(self) / 2 - 3, &text, col);
                     levels += 1;
                 }
                 Some(Mark::Vertical(lo, hi)) => {
@@ -193,7 +199,7 @@ impl Ui {
                         cv.line(x, y, x - 4, y + 7 * d, col);
                         cv.line(x, y, x + 4, y + 7 * d, col);
                     }
-                    self.meas_label(cv, x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (LABEL_H + 2), &text, col);
+                    self.meas_label(cv, x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (label_h(self) + 2), &text, col);
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
@@ -209,7 +215,7 @@ impl Ui {
                         cv.line(x, y, x + head * d, y - 4, col);
                         cv.line(x, y, x + head * d, y + 4, col);
                     }
-                    self.meas_label(cv, (x0 + x1) / 2, y - 11, &text, col);
+                    self.meas_label(cv, (x0 + x1) / 2, y - label_h(self) / 2 - 3, &text, col);
                     rows += 1;
                 }
                 None => {}
@@ -220,7 +226,7 @@ impl Ui {
 
 /// Half the width of a label: places it beside a vertical arrow.
 fn label_half(ui: &Ui, text: &str) -> i32 {
-    (ui.fonts.s.width(text) + 10) / 2
+    (ui.fonts().s.width(text) + 10) / 2
 }
 
 #[cfg(test)]

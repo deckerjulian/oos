@@ -14,9 +14,10 @@
 //! Only `boot` (its magic), `recovery` and the start of `backup` are written. A failure or a power cut before step 4
 //! leaves a card that starts stock as before.
 //!
-//! Run again on a card that already has OOS (to start it once more in one-shot mode), it keeps what `recovery` holds
-//! when that is an image the loader takes: a newer build installed over the network since stays. Only `reinstall`
-//! (`oos-reinstall.txt` on the stick) writes the stick's build over it. A damaged OOS image in `recovery` (an update
+//! Run again on a card that already has OOS (to start it once more in one-shot mode, or to update it), it keeps what
+//! `recovery` holds when that is an image the loader takes and not older than the stick's build (the builds are read
+//! from the images' initramfs, `inflate::image_build`): a newer build installed over the network since stays, an older
+//! one is updated. `reinstall` (`oos-reinstall.txt` on the stick) writes the stick's build in any case. A damaged OOS image in `recovery` (an update
 //! cut by a power loss) is replaced by the rollback image when that one is whole, else by the stick's build.
 
 use super::card::{check_image, Card, Region, BOOT_LBA, RECOVERY_LBA, SECTOR};
@@ -26,9 +27,15 @@ use super::pkg;
 use std::io::{Read, Write};
 use std::path::Path;
 
-/// Models this has run on. Only a card in a host computer helps if the kernel hangs on another one, and that means
-/// opening the scope: docs/install-usb.md.
-pub const VERIFIED_MODELS: &[&str] = crate::target::ACTIVE.verified_models;
+/// Models of a hardware variant OOS has run on (`Target::variants`). Only a card in a host computer helps if the
+/// kernel hangs on another one, and that means opening the scope: docs/install-usb.md.
+pub fn verified_models() -> Vec<&'static str> {
+    crate::target::ACTIVE.verified_models()
+}
+
+/// The file on the stick, and the flag of `oos-update gel-install`, that let the install go on on any model.
+pub const ANY_MODEL_FILE: &str = "oos-any-model.txt";
+pub const ANY_MODEL_FLAG: &str = "--any-model";
 /// `boot`, and the part of `backup` that holds its stock copy.
 pub const BOOT_BYTES: usize = crate::target::ACTIVE.layout.boot_bytes;
 /// Everything in front of the `kernel` partition: loader, vendor storage, `parameter`, `uboot`, `trust`, `misc`, `resource`.
@@ -47,19 +54,46 @@ pub struct FirstOpt {
     pub reinstall: bool,
 }
 
-/// The model of `/rigol/data/vendor.bin`, if it may be installed on.
+/// The model of `/rigol/data/vendor.bin`, if it may be installed on: what the log says about it. A refusal says which
+/// models are verified, what the risk is and how to go on anyway (the install log on the stick is all a user sees).
 pub fn check_model(vendor: Option<&[u8]>, any: bool) -> Result<String, String> {
+    let t = &crate::target::ACTIVE;
     let name = vendor.and_then(|v| crate::model::decode_vendor(v).ok()).and_then(|v| v.model);
-    match name {
-        Some(n) if VERIFIED_MODELS.contains(&n.as_str()) => Ok(n),
-        Some(n) if any && crate::model::lookup(&n).is_some() => Ok(format!("{} (never run on this model, accepted by request)", n)),
-        Some(n) if crate::model::lookup(&n).is_some() => {
-            Err(format!("OOS has never run on the {}: a hang would need the card in a host computer. Nothing written", n))
+    let Some(n) = name else {
+        return if any { Ok("unknown (accepted by request)".into()) } else { Err(refusal("cannot read the model from /rigol/data/vendor.bin")) };
+    };
+    let known = crate::model::lookup(&n).is_some();
+    match t.variant(&n) {
+        Some(v) if v.verified() => {
+            let ran = v.ran_on.iter().map(|r| r.0).collect::<Vec<_>>();
+            if ran.iter().any(|r| r.eq_ignore_ascii_case(&n)) {
+                Ok(n)
+            } else {
+                Ok(format!("{} (hardware variant \"{}\": the same hardware as the {}, which OOS has run on)", n, v.name, ran.join(", ")))
+            }
         }
-        Some(n) => Err(format!("unknown model {}: nothing written", n)),
-        None if any => Ok("unknown (accepted by request)".into()),
-        None => Err("cannot read the model from vendor.bin: nothing written".into()),
+        _ if any && known => Ok(format!("{} (OOS has not run on this hardware variant yet; accepted by request, {})", n, ANY_MODEL_FILE)),
+        Some(v) => Err(refusal(&format!("OOS has not run on a {} yet (hardware variant \"{}\": no unit of it has run OOS so far)", n, v.name))),
+        None if known => Err(refusal(&format!("OOS has not run on a {} yet", n))),
+        None => Err(format!("unknown model {} (not in the model table of the {}): nothing written", n, t.family_name)),
     }
+}
+
+/// Why it stops, the verified models, the risk, and the way on.
+fn refusal(why: &str) -> String {
+    format!(
+        "{}. Nothing written.\n\
+         Verified (OOS has run on a model with the same hardware): {}.\n\
+         The risk on another model: if the OOS kernel hangs before its first program runs, every power-on starts it\n\
+         again, and the only way back is to open the scope and put its SD card into a computer (docs/install-usb.md 4).\n\
+         To install anyway: put an empty file {} into the top folder of the USB stick, next to the .GEL\n\
+         file, and run the update again (oos-update gel-install: {}). A dry run first (oos-dry-run.txt) is wise.\n\
+         Please report how it went, so the model can be listed as verified: https://github.com/deckerjulian/oos/issues",
+        why,
+        verified_models().join(", "),
+        ANY_MODEL_FILE,
+        ANY_MODEL_FLAG
+    )
 }
 
 fn kind(head: &[u8]) -> Option<&'static str> {
@@ -190,11 +224,22 @@ pub fn first_install(
         None
     } else if what == "an OOS image" {
         let valid = card.header(Region::Recovery).map_err(io)?.map(|h| card.read_image(Region::Recovery, h.len)).transpose().map_err(io)?;
+        // the builds' time stamps (`YYYYMMDD-HHMMSS kernel ...`) sort as text
+        let stamp = |b: &str| b.split_whitespace().next().unwrap_or("").to_string();
+        let card_build = valid.as_ref().and_then(|(b, _)| super::inflate::image_build(b));
+        let stick_build = super::inflate::image_build(img).unwrap_or_else(|| h.manifest.build.clone());
+        let older = card_build.as_deref().map(stamp).filter(|c| *c < stamp(&stick_build));
+        if let (Some(c), false) = (&older, opt.reinstall) {
+            log(&format!("recovery holds build {}, the stick has the newer {}", c, stamp(&stick_build)));
+        }
         match valid.as_ref().map(|(b, _)| check_image(b)) {
+            Some(Ok(_)) if older.is_some() && !opt.reinstall => Some((Cow::Borrowed(img), "recovery: the stick's newer build goes here")),
             Some(Ok(i)) if !opt.reinstall => {
                 log(&format!(
-                    "recovery holds a valid OOS image ('{}', {} bytes), maybe a newer build installed over the network: kept, only selected (oos-reinstall.txt on the stick writes the stick's build)",
-                    i.name, i.len
+                    "recovery holds a valid OOS image ('{}', {} bytes, build {}), not older than the stick's: kept, only selected (oos-reinstall.txt on the stick writes the stick's build)",
+                    i.name,
+                    i.len,
+                    card_build.as_deref().map(stamp).unwrap_or_else(|| "unknown".into())
                 ));
                 None
             }

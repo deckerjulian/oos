@@ -8,13 +8,22 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// The screens the layout is checked on: the panel, a 10" panel (1280 x 800) and a Full HD monitor.
+pub(super) const SCREENS: [Screen; 3] = [Screen::PANEL, Screen { w: 1280, h: 800 }, Screen { w: 1920, h: 1080 }];
+
+fn demo_on(scr: Screen) -> Ui {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.scr = scr;
+    u
+}
+
 fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
     let Some(d) = ui.dlg_layout() else { return };
-    let f = &ui.fonts;
+    let f = ui.fonts();
     let mut bad = |what: String| {
         out.insert(format!("{}: {}", ctx, what));
     };
-    if d.r.x < 0 || d.r.y < 0 || d.r.x + d.r.w > W || d.r.y + d.r.h > H {
+    if d.r.x < 0 || d.r.y < 0 || d.r.right() > ui.scr.w || d.r.bottom() > ui.scr.h {
         bad(format!("dialog off the screen {:?}", d.r));
     }
     for (i, row) in d.rows.iter().enumerate() {
@@ -55,7 +64,8 @@ fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
                 }
             }
             Ctl::Text => {
-                if f.m.width(&ui.value(row.it)) > c.w {
+                let v = ui.value(row.it);
+                if ui.text_row_font(c.w, &v).width(&v) > c.w {
                     bad(format!("{} text too long", name));
                 }
             }
@@ -68,9 +78,9 @@ fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
                 if t.is_empty() {
                     bad(format!("{} has no text", name));
                 }
-                let room = c.w - if matches!(row.it, Item::Open(_)) { 40 } else { 8 };
-                if f.mb.width(&t) > room {
-                    bad(format!("{} text '{}' {} > {}", name, t, f.mb.width(&t), room));
+                let (font, r, fits) = ui.btn_text(c, matches!(row.it, Item::Open(_)), &t);
+                if !fits {
+                    bad(format!("{} text '{}' {} > {}", name, t, font.width(&t), r.w - 8));
                 }
             }
         }
@@ -99,18 +109,34 @@ fn walk(make: &dyn Fn() -> Ui, ctx: &str, out: &mut BTreeSet<String>) {
     }
 }
 
+/// Every menu at every text size, on every screen.
 #[test]
 fn every_menu_fits() {
     let mut out = BTreeSet::new();
+    for scr in SCREENS {
+        for ts in TEXT_SIZES {
+            menus_fit_at(scr, ts, &mut out);
+        }
+    }
+    let list: Vec<&String> = out.iter().collect();
+    for l in &list {
+        println!("{}", l);
+    }
+    assert!(list.is_empty(), "{} layout problems", list.len());
+}
+
+fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
+    let mut out = BTreeSet::new();
     let open = |m: MenuId, set: &dyn Fn(&mut Ui)| {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = demo_on(scr);
+        u.m.text_size = ts;
         set(&mut u);
         u.relayout();
         u.open_menu(m);
         u
     };
     use MenuId::*;
-    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasHold, MeasPair, Dvm, Cursor, Display, Windows, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Magnetic, Inverter, Dpt] {
+    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasHold, MeasPair, Dvm, Cursor, Display, Windows, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote, Time, Magnetic, Inverter, Dpt] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }
@@ -129,12 +155,38 @@ fn every_menu_fits() {
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
     walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Split")), "Windows split", &mut out);
     walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Four")), "Windows four", &mut out);
+    walk(&|| open(Bode, &|u| u.m.bode_gen = bode::FREE), "Bode free sweep", &mut out);
+    walk(&|| open(Bode, &|u| { u.m.bode_gen = bode::FREE; u.m.bode_sw_in = 0 }), "Bode free sweep no input", &mut out);
+    walk(&|| open(Bode, &|u| u.m.bode_gen = 5), "Bode UNI-T LAN", &mut out);
+    walk(&|| open(Bode, &|u| { u.m.bode_gen = 5; u.m.bode_usb = true }), "Bode UNI-T USB", &mut out);
+    // the clock page in its longest states: a failure after a sync, a zone of its own, a long server name
+    let ntp_failed = |u: &mut Ui| {
+        u.sys.ntp = true;
+        u.sys.ntp_server = "a-rather-long-ntp-server-name.example.org".into();
+        u.sys.tz = "<+0545>-5:45<+0645>,M3.5.0/2:30:30,M10.5.0/3".into();
+        u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: 0.5, stratum: 1 }));
+        u.ntp_report(Err("Address family not supported (os error 97)".into()));
+    };
+    walk(&|| open(Time, &ntp_failed), "Time failed", &mut out);
+    // NTP server = DHCP: the longest failure with the fallback server named
+    let dhcp_failed = |u: &mut Ui| {
+        u.sys.ntp = true;
+        u.ntp_report(Err("Address family not supported (os error 97)".into()));
+        u.ntp_dhcp_asked_for_tests("pool.ntp.org", crate::sysconf::NtpOrigin::NoDhcp);
+    };
+    walk(&|| open(Time, &dhcp_failed), "Time DHCP failed", &mut out);
+    walk(&|| open(Time, &|u| { u.sys.ntp = true; u.ntp_dhcp_asked_for_tests("255.255.255.255", crate::sysconf::NtpOrigin::Dhcp("wlan0")); u.ntp_report(Err("Address family not supported (os error 97)".into())) }), "Time DHCP failed lease", &mut out);
+    walk(&|| open(Time, &|u| { u.sys.ntp = true; u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: -12.25, stratum: 1 })) }), "Time synced", &mut out);
+    walk(&|| open(Network, &|u| { u.eth_link = true; u.eth.speed = Some(100); u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())] }), "Network 100M", &mut out);
+    // the longest name on the network, and the longest default (DHO924S with six digits)
+    walk(&|| open(Remote, &|u| { u.sys.net_name = "x".repeat(63); u.net = "192.168.177.164".into() }), "Remote long name", &mut out);
+    walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-204527".into()), "Remote default name", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
     for t in TRIG_TYPES {
         walk(&|| open(Trigger, &|u| u.set_trig_type(t)), &format!("Trigger {}", t.name()), &mut out);
         walk(&|| open(Trigger, &|u| { u.m.la.on = true; u.set_trig_type(t) }), &format!("Trigger {} LA", t.name()), &mut out);
     }
-    for p in PROTOS {
+    for p in PROTOS.iter().copied() {
         walk(&|| open(Decode, &|u| u.set_dec_proto(p)), &format!("Decode {}", p.name()), &mut out);
         walk(&|| open(Decode, &|u| { u.m.la.on = true; u.m.dec_la_in = true; u.set_dec_proto(p) }), &format!("Decode {} LA", p.name()), &mut out);
     }
@@ -143,11 +195,7 @@ fn every_menu_fits() {
             walk(&|| open(Trigger, &|u| { u.set_dec_proto(p); u.set_trig_type(t) }), &format!("Trigger {} {}", t.name(), p.name()), &mut out);
         }
     }
-    let list: Vec<&String> = out.iter().collect();
-    for l in &list {
-        println!("{}", l);
-    }
-    assert!(list.is_empty(), "{} layout problems", list.len());
+    all.extend(out.into_iter().map(|l| format!("{}x{} {}: {}", scr.w, scr.h, ts.name(), l)));
 }
 
 #[test]
@@ -222,7 +270,7 @@ fn files_go_to_the_stick_while_it_is_there() {
 fn system_info_has_the_rates() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.wfm_rate = 123.0;
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     assert!(u.sysinfo_rows().iter().flatten().any(|r| matches!(r, super::sysinfo::Row::Kv(k, ..) if k.contains("Waveforms"))));
 }
@@ -230,7 +278,13 @@ fn system_info_has_the_rates() {
 /// Compact source controls fit every mix; auxiliary tools remain in Sources.
 #[test]
 fn bottom_row_fits_in_every_mix() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    for scr in SCREENS {
+        bottom_row_fits_on(scr);
+    }
+}
+
+fn bottom_row_fits_on(scr: Screen) {
+    let mut u = demo_on(scr);
     for bits in 0..64 {
         for c in 0..NCH {
             u.m.ch[c].on = bits >> c & 1 == 1;
@@ -241,13 +295,109 @@ fn bottom_row_fits_in_every_mix() {
         let mut all: Vec<Rect> = c.ch.into_iter().filter(|rect| rect.w > 0).collect();
         all.extend([c.time, c.trig]);
         for (i, a) in all.iter().enumerate() {
-            assert!(a.w >= 38 && a.h >= 30 && a.x + a.w <= W, "mix {:b}: {:?}", bits, a);
+            assert!(a.w >= 38 && a.h >= 30 && a.right() <= u.scr.w, "{:?} mix {:b}: {:?}", scr, bits, a);
             assert!(!all[i + 1..].iter().any(|b| overlaps(*a, *b)), "mix {:b}: {:?}", bits, a);
         }
         assert!(c.trig.w >= 222 && c.time.w >= 124, "mix {:b}", bits);
         // A visible channel keeps a distinct source hit target.
         for k in 0..NCH {
             assert!(!u.m.ch[k].on || c.ch[k].w >= 38, "mix {:b}: CH{} {}", bits, k + 1, c.ch[k].w);
+        }
+    }
+}
+
+/// The main screen at every text size: the top bar keeps its boxes and buttons apart, the text stands inside the bars,
+/// boxes and rows, the measurement rows fit between the plot and the cards, a card text fits wherever it fits at the
+/// normal size, and the menus stay between the top bar and the cards.
+#[test]
+fn every_text_size_keeps_the_screen_in_order() {
+    for scr in SCREENS {
+        screen_in_order_on(scr);
+    }
+}
+
+fn screen_in_order_on(scr: Screen) {
+    let cap = |f: &Font| f.size * 72 / 100;
+    let normal = crate::font::Fonts::get(0);
+    for ts in TEXT_SIZES {
+        let mut u = demo_on(scr);
+        u.m.text_size = ts;
+        let f = u.fonts();
+        // top bar, with and without the stick boxes
+        for (usb, wlan) in [(false, false), (true, false), (false, true), (true, true)] {
+            (u.usb, u.wlan_stick) = (usb, wlan);
+            let pill = u.run_pill();
+            assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
+            let boxes: Vec<Rect> = [Some(u.net_box()), wlan.then(|| u.wlan_box()), usb.then(|| u.usb_box())].into_iter().flatten().collect();
+            for (i, b) in boxes.iter().enumerate() {
+                assert!(b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6, "{:?}: {:?}", ts, b);
+                assert!(!boxes[i + 1..].iter().any(|o| overlaps(*o, *b)), "{:?}: {:?}", ts, b);
+            }
+            for (_, l, r) in u.top_buttons() {
+                assert!(r.x > pill.x + pill.w && r.x + r.w <= u.top_right(), "{:?}: {} {:?}", ts, l, r);
+                assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
+            }
+        }
+        (u.usb, u.wlan_stick) = (false, false);
+        // the two lines of the network box: room for an address, the first line's descent above the second's capitals
+        let n = u.net_box();
+        assert!(20 + f.sb.width("255.255.255.255") <= n.w && 20 + f.sb.width("not connected") <= n.w, "{:?}", ts);
+        assert!(n.y + 5 + cap(&f.s) + f.s.descent <= n.y + n.h - 4 - cap(&f.sb), "{:?}: {:?}", ts, n);
+        // a strip row holds its text
+        let bh = u.lay().strip_row - 2;
+        let base = (bh + cap(&f.s)) / 2;
+        assert!(base - cap(&f.sb) >= 0 && base + f.s.descent <= bh, "{:?}: strip row", ts);
+        // everything on: four channels with six measurements each, cursors, DVM
+        for c in 0..NCH {
+            u.m.ch[c].on = true;
+        }
+        u.m.meas = (0..NCH).flat_map(|c| ALL_MEAS.iter().take(6).map(move |&k| (k, WaveId::Ch(c)))).collect();
+        u.m.cursor = CursorMode::Time;
+        u.m.dvm_on = true;
+        for _ in 0..3 {
+            u.step(0.04);
+        }
+        u.relayout();
+        assert!(u.grid.h >= 160, "{:?}: {:?}", ts, u.grid);
+        assert!(u.grid.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y, "{:?}: {:?}", ts, u.grid);
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        // the statistics card stays in the plot (with as many items as the strip shows on one row each)
+        let all = std::mem::replace(&mut u.m.meas, ALL_MEAS.iter().take(12).map(|&k| (k, WaveId::Ch(0))).collect());
+        u.stats_on = true;
+        u.relayout();
+        let (head, body) = u.results_rects().unwrap();
+        assert!(head.x >= 0 && body.y + body.h <= u.grid.y + u.grid.h && f.sb.width("Measurements") + 24 + f.s.width("n 999k") + 20 <= head.w, "{:?}", ts);
+        u.render(&mut cv);
+        (u.stats_on, u.m.meas) = (false, all);
+        // the cards in every mix of channels, LA and generator, with long texts
+        for c in 0..NCH {
+            (u.m.ch[c].offset, u.m.ch[c].probe, u.m.ch[c].invert) = (-12.5, 100.0, true);
+        }
+        for bits in 0..64 {
+            for c in 0..NCH {
+                u.m.ch[c].on = bits >> c & 1 == 1;
+            }
+            (u.m.la.on, u.m.afg_on) = (bits & 16 != 0, bits & 32 != 0);
+            let chs = u.cards().0;
+            let sub = u.card_sub_font();
+            for c in (0..NCH).filter(|&c| u.m.ch[c].on) {
+                let (r, t) = (chs[c], u.card_sub(c));
+                assert!(sub.width(&t) <= r.w - 22 || normal.s.width(&t) > r.w - 22, "{:?} mix {:b}: CH{} '{}'", ts, bits, c + 1, t);
+                let scale = format!("{}/div", si_short(u.m.ch[c].volts_per_div() as f64, "V"));
+                assert!(Ui::card_font(f, &scale, r.w - 24).width(&scale) <= r.w - 24 || normal.m.width(&scale) > r.w - 24, "{:?} mix {:b}: CH{}", ts, bits, c + 1);
+            }
+            u.render(&mut cv);
+        }
+        // menus under the top bar, on the screen, as high as at the normal size (the rows keep their 44 px)
+        use MenuId::*;
+        for m in [Main, Channel(0), Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Decode, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote] {
+            u.open_menu(m);
+            let d = u.dlg_layout().unwrap();
+            assert!(d.r.y >= u.frame().top.bottom() && d.r.bottom() <= u.scr.h && d.r.x >= 0 && d.r.right() <= u.scr.w, "{:?}: {:?} {:?}", ts, m, d.r);
+            assert!(d.rows.iter().all(|r| r.ctrl.h >= 40), "{:?}: {:?}", ts, m);
+            u.render(&mut cv);
+            u.close_menu();
         }
     }
 }
@@ -303,7 +453,7 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     // the card of the statistics stays on the screen
     u.stats_on = true;
     let (_, body) = u.results_rects().unwrap();
-    assert!(body.y + body.h <= H, "{:?}", body);
+    assert!(body.y + body.h <= PANEL_H, "{:?}", body);
 }
 
 #[test]
@@ -348,7 +498,7 @@ fn tracking_cursors_read_the_trace() {
     let v = u.cursor_values();
     assert_eq!(v.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["X1", "Y1", "X2", "Y2", "\u{394}X", "\u{394}Y"]);
     assert!(v[1].1.ends_with('V') && v[3].1.ends_with('V'), "{:?}", v);
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
 }
 
@@ -376,7 +526,7 @@ fn ten_references() {
     assert_eq!(u.refs.iter().filter(|r| r.is_some()).count(), NREF);
     u.open_menu(MenuId::Ref);
     assert_eq!(u.items(MenuId::Ref).iter().filter(|i| matches!(i, Item::RefShow(_))).count(), NREF);
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
 }
 
@@ -463,7 +613,7 @@ fn four_decoders_side_by_side() {
     for _ in 0..4 {
         u.step(0.04);
     }
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     let ev = u.decode_events();
     assert!(ev.iter().any(|e| e.who.starts_with("D1 UART")), "{:?}", &ev[..ev.len().min(3)]);
@@ -511,7 +661,7 @@ fn event_table_scrolls_and_goes_to_an_event() {
     assert_eq!(u.table, Some(tables::TableKind::Decode));
     let n = u.table_rows(tables::TableKind::Decode).len();
     assert!(n > 3);
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // running: a tap only says so
     let (x, y) = (u.area.x + 100, u.area.y + 8 + 40 + 40);
@@ -542,7 +692,7 @@ fn search_list_shows_the_marks() {
     u.activate(Item::SearchTable);
     assert_eq!(u.table, Some(tables::TableKind::Search));
     assert_eq!(u.table_rows(tables::TableKind::Search).len(), u.search_events().len());
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
 }
 
@@ -565,9 +715,11 @@ fn binary_waveform_can_be_read_back() {
 
 #[test]
 fn second_pane_fits_with_everything_else() {
-    for pane in 1..tables::PANES.len() {
-        for la in [false, true] {
+    for (pane, la, ts, scr) in (1..tables::PANES.len()).flat_map(|p| [false, true].into_iter().flat_map(move |l| TEXT_SIZES.into_iter().flat_map(move |t| SCREENS.map(|s| (p, l, t, s))))) {
+        {
             let mut u = with_two_channels();
+            u.scr = scr;
+            u.m.text_size = ts;
             u.m.pane = pane;
             u.m.la.on = la;
             u.m.cursor = CursorMode::Time;
@@ -579,9 +731,9 @@ fn second_pane_fits_with_everything_else() {
             assert!(u.grid.h >= 160, "pane {} la {}: {:?}", pane, la, u.grid);
             if u.pane_h() > 0 {
                 let r = u.pane_rect();
-                assert!(r.y > u.grid.y + u.grid.h && r.y + r.h + u.strip_rows() * STRIP_ROW <= BOTTOM.y, "pane {} la {}: {:?}", pane, la, r);
+                assert!(r.y > u.grid.y + u.grid.h && r.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y, "pane {} la {}: {:?}", pane, la, r);
             }
-            let mut cv = Canvas::new(W, H);
+            let mut cv = Canvas::new(u.scr.w, u.scr.h);
             u.render(&mut cv);
         }
     }
@@ -605,8 +757,15 @@ fn second_pane_fits_with_everything_else() {
 /// Taps and knobs at random with everything new switched on: nothing may panic (a panic ends oos-ui).
 #[test]
 fn random_input_on_the_new_pages() {
+    for scr in SCREENS {
+        random_input_on(scr);
+    }
+}
+
+fn random_input_on(scr: Screen) {
     let mut u = with_two_channels();
-    let mut cv = Canvas::new(W, H);
+    u.scr = scr;
+    let mut cv = Canvas::new(scr.w, scr.h);
     let mut x = 0x9e37_79b9_7f4a_7c15u64;
     let mut next = move || {
         x ^= x << 13;
@@ -623,7 +782,7 @@ fn random_input_on_the_new_pages() {
         match next() % 6 {
             0 => u.key([0xba, 0xbb, 0xbc, 0xaa, 0xab, 0xac][next() as usize % 6]),
             1 => u.step(0.02),
-            _ => u.tap((next() % W as u64) as i32, (next() % H as u64) as i32),
+            _ => u.tap((next() % scr.w as u64) as i32, (next() % scr.h as u64) as i32),
         }
         if u.wlan.osk.is_some() && next() % 3 == 0 {
             u.wlan.osk = None;
@@ -657,7 +816,7 @@ fn xy_cursors_show_both_axes() {
     assert_eq!(u.items(MenuId::Cursor).len(), 5);
     assert!(u.value(Item::CurC).ends_with('V'));
     u.adjust(Item::CurD, 20);
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!((b.cursor, b.cur_d), (CursorMode::Xy, u.m.cur_d));
@@ -879,7 +1038,7 @@ fn the_offset_stays_in_the_range_of_the_scale() {
 #[test]
 fn scpi_errors_and_answers_stay_bounded() {
     let mut u = with_two_channels();
-    let cv = Canvas::new(W, H);
+    let cv = Canvas::new(PANEL_W, PANEL_H);
     let mut s = crate::scpi::Scpi::open(0);
     for _ in 0..1000 {
         s.exec_line(&mut u, &cv, &format!(":NOPE{}", "x".repeat(10_000)));
@@ -944,7 +1103,7 @@ fn a_formula_is_a_math_channel() {
     u.m.math_expr[0] = "t".into();
     assert!((u.math_wave()[1] as f64 - rec.t0 - rec.dt).abs() < rec.dt * 1e-3 + 1e-9);
     u.m.math_expr[0] = "2*CH1-CH2".into();
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!((b.math, b.math_expr[0].as_str()), (MathOp::Expr, "2*CH1-CH2"));
@@ -998,7 +1157,7 @@ fn the_trend_pane_follows_a_measurement() {
     }
     assert_eq!(u.trend.len(), 2);
     assert!(u.trend[0].pts.len() > 5);
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // the first two of the list side by side; a tap moves a chart on
     assert_eq!(u.trend_charts(), [(0, 0), (1, 1)]);
@@ -1090,7 +1249,7 @@ fn the_sort_button_works_by_touch_in_pane_and_view() {
     square_on_ch1(&mut u);
     u.relayout();
     u.analyzer_update();
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     let by_f = peak_hz(&u);
     assert!(by_f.windows(2).all(|w| w[0] < w[1]));
@@ -1124,7 +1283,7 @@ fn the_sort_button_works_by_touch_in_pane_and_view() {
 /// Everything the panes write stays inside its pane, and in the width it was given.
 #[test]
 fn pane_text_fits() {
-    let f = crate::font::Fonts::load();
+    let f = crate::font::Fonts::get(0);
     // the widest cell against the narrowest column, with the side column open
     let x = panes::tests_result_cols(1024 - 308 - 16);
     let w = |k: usize| x[k + 1] - x[k] - 8;
@@ -1187,7 +1346,7 @@ fn a_long_results_list_scrolls_by_touch() {
         u.step(0.04);
     }
     u.relayout();
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     let r = u.pane_rect();
     let (fit, _) = Ui::results_fit(r, 14);
@@ -1219,7 +1378,7 @@ fn the_results_pane_shows_cursors_and_peaks() {
     u.relayout();
     u.analyzer_update();
     assert!(!u.azr.peaks.is_empty());
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // the pane's own close button still works
     let r = u.pane_rect();
@@ -1304,7 +1463,7 @@ fn pane_pictures() {
     let shot = |u: &mut Ui, n: &str| {
         u.relayout();
         u.analyzer_update();
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
         let _ = crate::store::write(&dir.join(format!("{}.png", n)), &crate::store::png_of(&cv));
     };
@@ -1347,6 +1506,14 @@ fn pane_pictures() {
         u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))];
     }, 2);
     shot(&mut u, "results-many");
+    // a protocol module's own view (the example module, compiled in the tests)
+    let mut u = live(tables::PANE_BUS, &|u| { u.set_dec_proto(Proto::from_key("Example").unwrap()); u.m.dec_on = true; u.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap(); }, 1);
+    shot(&mut u, "bus-view");
+    let mut u = live(tables::PANE_BUS, &|_| {}, 1);
+    shot(&mut u, "bus-view-empty");
+    // DCC: the demo layout, collected over two seconds of records
+    let mut u = live(0, &|u| { u.set_dec_proto(Proto::from_key("Dcc").unwrap()); u.m.dec_on = true; u.m.tscale = tscales().iter().position(|&x| (x - 2e-3).abs() < 1e-6).unwrap(); }, 3);
+    shot(&mut u, "bus-view-dcc");
     let mut u = live(2, &|u| u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1))], 2);
     shot(&mut u, "results-three");
     let mut u = live(2, &|u| { u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))]; u.m.ch[0].on = true; u.m.spec_src = WaveId::Ch(3); }, 2);
@@ -1379,7 +1546,7 @@ fn a_spectrum_limit_counts_what_goes_over() {
         u.step(0.04);
     }
     assert!(u.azr.limit_n > 0);
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // a limit far below the trace: every one goes over
     for p in u.azr.limit.as_mut().unwrap() {
@@ -1410,7 +1577,7 @@ fn a_reference_has_its_colour_and_name() {
     u.wlan.osk.as_mut().unwrap().text = "golden".into();
     u.osk_done();
     assert_eq!(u.refs[0].as_ref().unwrap().label, "golden");
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
 }
 
@@ -1435,7 +1602,7 @@ fn a_reference_travels_through_a_file() {
     u.adjust(Item::RefVpd, 1);
     u.adjust(Item::RefOffset, 3);
     assert_ne!(u.value(Item::RefOffset), "-");
-    let mut cv = Canvas::new(W, H);
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // a file that is not one
     std::fs::write(dir.join("ref5.csv"), "nothing here\n").unwrap();
@@ -1811,28 +1978,43 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     assert!(matches!(u.src, Source::Demo { .. }));
 }
 
-/// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`.
+/// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`, one directory per
+/// text size (`OOS_TEXT_SIZE=Large` for one of them; `OOS_SIZE=1920x1080` for another screen than the panel).
 #[test]
 #[ignore]
 fn gallery() {
+    let Ok(base) = std::env::var("OOS_GALLERY") else { return };
+    let only = std::env::var("OOS_TEXT_SIZE").ok();
+    for ts in TEXT_SIZES.into_iter().filter(|t| only.as_deref().map_or(true, |o| o == t.name())) {
+        gallery_at(&std::path::PathBuf::from(&base).join(ts.name().to_lowercase()), ts);
+    }
+}
+
+fn gallery_at(dir: &std::path::Path, ts: TextSize) {
     use MenuId as M;
-    let Ok(dir) = std::env::var("OOS_GALLERY") else { return };
-    let dir = std::path::PathBuf::from(dir);
+    let _ = std::fs::create_dir_all(dir);
+    let scr = std::env::var("OOS_SIZE").ok().and_then(|s| Screen::parse(&s)).unwrap_or(Screen::PANEL);
+    let new = || {
+        let mut u = demo_on(scr);
+        u.m.text_size = ts;
+        u.relayout();
+        u
+    };
     let k = |u: &mut Ui, s: &str| {
         crate::cmd::run(u, &format!("key {}", s));
     };
     type S = (&'static str, fn(&mut Ui));
-    let menus: Vec<(&str, M)> = vec![("menu-main", M::Main), ("menu-ch", M::Channel(0)), ("menu-hor", M::Horizontal), ("menu-trig", M::Trigger), ("menu-acq", M::Acquire), ("menu-measure", M::Measure), ("menu-measadd", M::MeasAdd), ("menu-cursor", M::Cursor), ("menu-display", M::Display), ("menu-system", M::Utility), ("menu-math", M::Math), ("menu-ref", M::Ref), ("menu-decode", M::Decode), ("menu-storage", M::Storage), ("menu-mask", M::Mask), ("menu-zone", M::Zone), ("menu-spectrum", M::Spectrum), ("menu-eye", M::Eye), ("menu-power", M::Power), ("menu-identify", M::Identify), ("menu-selfcal", M::SelfCal), ("menu-bode", M::Bode), ("menu-afg", M::Afg), ("menu-bw", M::BwTest), ("menu-la", M::La), ("menu-lalines", M::LaLines), ("menu-lapat", M::LaPat), ("menu-network", M::Network)];
+    let menus: Vec<(&str, M)> = vec![("menu-main", M::Main), ("menu-ch", M::Channel(0)), ("menu-hor", M::Horizontal), ("menu-trig", M::Trigger), ("menu-acq", M::Acquire), ("menu-measure", M::Measure), ("menu-measadd", M::MeasAdd), ("menu-cursor", M::Cursor), ("menu-display", M::Display), ("menu-system", M::Utility), ("menu-math", M::Math), ("menu-ref", M::Ref), ("menu-decode", M::Decode), ("menu-storage", M::Storage), ("menu-mask", M::Mask), ("menu-zone", M::Zone), ("menu-spectrum", M::Spectrum), ("menu-eye", M::Eye), ("menu-power", M::Power), ("menu-identify", M::Identify), ("menu-selfcal", M::SelfCal), ("menu-bode", M::Bode), ("menu-afg", M::Afg), ("menu-bw", M::BwTest), ("menu-la", M::La), ("menu-lalines", M::LaLines), ("menu-lapat", M::LaPat), ("menu-network", M::Network), ("menu-remote", M::Remote), ("menu-time", M::Time)];
     let shot = |u: &mut Ui, n: &str| {
         for _ in 0..24 {
             u.step(0.04);
         }
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
         let _ = crate::store::write(&dir.join(format!("{}.png", n)), &crate::store::png_of(&cv));
     };
     for (n, m) in menus {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = new();
         u.open_menu(m);
         shot(&mut u, n);
     }
@@ -1914,19 +2096,35 @@ fn gallery() {
             u.open_menu(MenuId::Network);
         }),
         ("s-decode", |u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; }),
+        ("s-4ch-meas", |u| {
+            for c in 0..4 {
+                u.m.ch[c].on = true;
+            }
+            u.m.meas.extend([(Meas::Vpp, WaveId::Ch(1)), (Meas::Freq, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1)), (Meas::Vpp, WaveId::Ch(2)), (Meas::Period, WaveId::Ch(2)), (Meas::Vmax, WaveId::Ch(3)), (Meas::Vmin, WaveId::Ch(3))]);
+            u.m.cursor = CursorMode::Time;
+        }),
+        ("s-events", |u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; u.m.pane = tables::PANE_EVENTS; }),
+        ("s-stats", |u| { u.m.ch[1].on = true; u.m.meas.push((Meas::Freq, WaveId::Ch(1))); u.stats_on = true; }),
+        ("s-osk", |u| u.activate(Item::ChLabel(0))),
+        ("s-startup", |u| {
+            use oos_hal::bootstatus::line;
+            u.start_up_begin(None);
+            let t = line(3.9, "ok", "Linux", "6.12.115") + &line(4.0, "ok", "FPGA image", "") + &line(14.3, "warn", "Calibration data", "missing: cal_afg.hex") + &line(14.4, "run", "Sample clock (PLL lock)", "waiting for the lock");
+            u.start_up_update(&t, 16.0);
+        }),
     ];
     for (n, f) in scenes {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = new();
         f(&mut u);
         shot(&mut u, n);
     }
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = new();
     k(&mut u, "measure");
     shot(&mut u, "k-measure");
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = new();
     u.activate(Item::About);
     shot(&mut u, "s-about");
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = new();
     u.activate(Item::Update);
     shot(&mut u, "s-update");
 }
@@ -2358,4 +2556,67 @@ fn the_measurement_strip_docks_on_four_sides() {
     shot(&mut u, "strip-left-pair.png");
     let s = u.strip_rect().unwrap();
     assert!(!overlaps(u.grid, s));
+}
+
+/// Display > HDMI = Layout: the monitor's picture leaves the panel's layout and maps as they were (the panel picture
+/// after it is the same), and its plot shows the traces, stretched from the panel's maps, in every kind of view.
+#[test]
+fn the_hdmi_layout_leaves_the_panel_alone() {
+    type View = (&'static str, fn(&mut Ui));
+    let views: [View; 8] = [
+        ("plain", |_| {}),
+        ("zoom", |u| u.set_zoom(true)),
+        ("colour grade", |u| u.m.color_grade = true),
+        ("histogram rows", |u| u.m.hist = Hist::Vertical),
+        ("histogram columns", |u| u.m.hist = Hist::Horizontal),
+        ("xy", |u| {
+            u.m.ch[1].on = true;
+            u.xy = true;
+        }),
+        ("spectrum", |u| u.m.view = AView::Spectrum),
+        ("trend pane", |u| u.m.pane = tables::PANE_TREND),
+    ];
+    for (name, set) in views {
+        let mut u = with_two_channels();
+        set(&mut u);
+        for _ in 0..8 {
+            u.step(0.04);
+        }
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let before = (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.frames, u.scr);
+        let mut hc = Canvas::new(1920, 1080);
+        u.render_view(&mut hc);
+        assert_eq!(before, (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.frames, u.scr), "{}", name);
+        let mut again = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut again);
+        assert!(again.px == cv.px, "{}: the panel picture changed", name);
+        if !u.xy && u.m.view == AView::Scope {
+            let yellow = hc.px.iter().filter(|&&p| (p >> 16) & 255 > 150 && (p >> 8) & 255 > 120 && p & 255 < 90).count();
+            assert!(yellow > 2000, "{}: {} trace pixels on the monitor", name, yellow);
+        }
+        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
+            let _ = crate::store::write(&std::path::Path::new(&d).join(format!("hdmi-layout-{}.png", name.replace(' ', "-"))), &crate::store::png_of(&hc));
+        }
+    }
+}
+
+#[test]
+fn trigger_coupling_by_menu_scpi_and_setup() {
+    let mut u = with_two_channels();
+    let cv = Canvas::new(PANEL_W, PANEL_H);
+    let mut s = crate::scpi::Scpi::open(0);
+    assert!(u.trigger_items().contains(&Item::TrigCoup));
+    s.exec_line(&mut u, &cv, ":TRIG:COUP AC");
+    assert_eq!(u.m.trig_coup, TrigCoup::Ac);
+    assert_eq!(String::from_utf8_lossy(&s.exec_line(&mut u, &cv, ":TRIG:COUP?")).trim(), "AC");
+    u.select_option(Item::TrigCoup, "HF reject");
+    assert_eq!(u.m.trig_coup, TrigCoup::HfReject);
+    let back = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
+    assert_eq!(back.trig_coup, TrigCoup::HfReject);
+    // only the edge trigger on a channel is filtered; the hardware gets it
+    assert_eq!(board().want(&u.m).trig_couple, oos_hal::dho::tpu::Coupling::HfReject);
+    u.m.trig_type = TrigType::Pulse;
+    assert_eq!(u.m.trig_coupling(), TrigCoup::Dc);
+    assert!(!u.trigger_items().contains(&Item::TrigCoup));
 }

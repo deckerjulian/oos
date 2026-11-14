@@ -71,7 +71,6 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
         }
         Proto::CanFd => x1::can_fd(line, dt, can_rate, crate::decode::FD_RATES[m.dec_fdrate], thr, hy, m.dec_canh),
         Proto::FlexRay => x1::flexray(line, dt, 10e6, thr, hy, false),
-        Proto::Dmx512 => x1::dmx512(line, dt, thr, hy, false),
         Proto::ModbusRtu => x1::modbus_rtu(line, dt, baud, m.dec_parity, thr, hy, false),
         Proto::ModbusAscii => x1::modbus_ascii(line, dt, baud, m.dec_bits.clamp(7, 8), if m.dec_parity == Parity::None { Parity::Even } else { m.dec_parity }, thr, hy, false),
         Proto::OneWire => x1::onewire(get(m.dec_src)?, dt, thr, hy, false),
@@ -91,8 +90,6 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
             x2::qspi(cs, get(m.dec_src2)?, &io, &x2::QspiCfg::new(1, 1, 1, 3, 0, false), true, thr, hy)
         }
         Proto::I3c => x2::i3c(get(m.dec_src)?, get(m.dec_src2)?, &[], thr, hy),
-        Proto::Spdif => x2::spdif(get(m.dec_src)?, thr, hy),
-        Proto::UsbPd => x2::usbpd(get(m.dec_src)?, dt, thr, hy),
         Proto::Arinc429 => {
             let r = crate::decode::ARINC_RATES[m.dec_arate];
             x3::arinc429(line, dt, if r > 0.0 { Some(r) } else { None }, thr, hy)
@@ -108,12 +105,22 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
         Proto::Cphy => oos_dsp::cphy::decode(get(m.dec_src)?, get(m.dec_src2)?,
             opt(m.dec_cs)?.ok_or("C-PHY C source missing")?, dt,
             (m.dec_cphy_rate > 0.0).then_some(m.dec_cphy_rate), thr.abs().max(1e-6)),
+        // a module: the lines of its roles; a role it names must have a source (the third and fourth may be "none")
+        Proto::Module(i) => {
+            let p = crate::protocols::get(i);
+            let r = p.roles();
+            let lines = [Some(line), if r[1].is_some() { Some(get(m.dec_src2)?) } else { None }, if r[2].is_some() { opt(m.dec_cs)? } else { None }, if r[3].is_some() { opt(m.dec_src4)? } else { None }];
+            return p.decode(&crate::protocols::Lines { lines, dt, thr, hy, opt: m.dec_opts() });
+        }
     })
 }
 
 /// Whether a packet satisfies the protocol trigger condition of `m`.
 pub fn matches(m: &Model, p: &Packet) -> bool {
     let v = m.trig_bus_val;
+    if let Some(r) = m.dec_proto.module().and_then(|x| x.trigger_match(m.trig_bus, v, p)) {
+        return r;
+    }
     match m.trig_bus {
         BusWhat::Frame => match p.kind {
             Kind::Start | Kind::Break | Kind::Word { cmd: true } => true,

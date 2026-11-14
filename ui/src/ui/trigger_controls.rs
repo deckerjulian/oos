@@ -121,12 +121,12 @@ impl Ui {
     pub(super) fn draw_compact_trigger(&self, cv: &mut Canvas, rect: Rect) {
         btn(cv, rect, BAR, if self.menu_open && self.menu_root() == MenuId::Trigger { ACCENT } else { CARD_BORDER });
         cv.set_clip(rect.inset(3));
-        cv.text(&self.fonts.sb, rect.x + 7, rect.y + 12,
+        cv.text(&self.fonts().sb, rect.x + 7, rect.y + 12,
             &format!("{} · {} · {:?}", self.trigger_source_label(), self.m.trig_type.name(), self.m.trig_mode), ACCENT);
         let levels = if matches!(self.m.trig_type, TrigType::Runt | TrigType::Slope | TrigType::Window) {
             format!("{} … {}", si_short(self.m.trig_level2 as f64, "V"), si_short(self.m.trig_level as f64, "V"))
         } else { si_short(self.m.trig_level as f64, "V") };
-        cv.text(&self.fonts.s, rect.x + 7, rect.y + 25, &levels, TEXT);
+        cv.text(&self.fonts().s, rect.x + 7, rect.y + 25, &levels, TEXT);
         cv.no_clip();
     }
 
@@ -164,12 +164,12 @@ impl Ui {
             let y = y.clamp(a.y + margin, a.y + a.h - margin);
             let x = a.x + a.w - 22;
             cv.triangle([(x, y), (x + 8, y - 6), (x + 8, y + 6)], ACCENT);
-            cv.text(&self.fonts.sb, x + 10, y + 5, tag, ACCENT);
+            cv.text(&self.fonts().sb, x + 10, y + 5, tag, ACCENT);
             if (tag == "T" && self.touch.drag == Drag::Level) || (tag == "t" && self.touch.drag == Drag::Level2) {
                 cv.hline(a.x, a.x + a.w - 1, y, ACCENT);
             }
             let text = format!("{} {}", Self::trigger_wave_label(id), si_short(level as f64, "V"));
-            backed_text(cv, &self.fonts.s, x - self.fonts.s.width(&text) - 4, y + 4, &text, ACCENT);
+            backed_text(cv, &self.fonts().s, x - self.fonts().s.width(&text) - 4, y + 4, &text, ACCENT);
         }
     }
 }

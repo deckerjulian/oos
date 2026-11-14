@@ -8,6 +8,7 @@
 #   tools/gel-sim.sh [stock do_update.sh]    the real script of a stock update file, if at hand; else the same steps here
 #
 # OOS_CAL_DIR: a folder with vendor.bin, for the model check. Without it the run uses oos-any-model.txt.
+# OOS_GEL_OLD: the GEL of an older build, installed first: the run then shows the update of an older build.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
@@ -19,6 +20,7 @@ rm -rf "$w"; mkdir -p "$w/cal-data"
 [ -n "${OOS_CAL_DIR:-}" ] && cp "$OOS_CAL_DIR/vendor.bin" "$w/cal-data/" 2>/dev/null || true
 echo calibration > "$w/cal-data/cal_example.hex"
 cp "$gel" "$w/"
+[ -z "${OOS_GEL_OLD:-}" ] || cp "$OOS_GEL_OLD" "$w/old.GEL"
 python3 -I - "$w/card" <<'PY'
 import sys
 S = 512
@@ -53,6 +55,10 @@ UPD
 	upd() { su -s /bin/sh -c "OOS_GEL_CARD=/w/card /rigol/shell/do_update.sh $S/$G" root; }
 	sums() { dd if=/w/card bs=512 skip=$1 count=$2 2>/dev/null | sha256sum | cut -c1-16; }
 
+	if [ -f /w/old.GEL ]; then
+		echo "== an older build first"; cp /w/old.GEL $S/$G; upd >/dev/null; echo "exit $?"
+		printf KRNL | dd of=/w/card bs=512 seek=122880 conv=notrunc 2>/dev/null; cp /w/$G $S/
+	fi
 	echo "== dry run"; touch $S/oos-dry-run.txt; h0=$(sha256sum < /w/card); upd; echo "exit $?"; rm $S/oos-dry-run.txt
 	[ "$h0" = "$(sha256sum < /w/card)" ] && echo "card unchanged"
 	[ -f $S/OOS-rescue/SHA256SUMS ] && (cd $S/OOS-rescue && sha256sum -c SHA256SUMS)
@@ -62,6 +68,7 @@ UPD
 	echo "boot magic: $(magic 122880)"; echo "backup magic: $(magic 319488)"
 	[ "$b" = "$(sums 319488 65536)" ] && echo "backup = stock boot"
 	echo "recovery: $(dd if=/w/card bs=512 skip=188416 count=1 2>/dev/null | head -c 8)"
+	grep -E "newer|kept, only" $S/oos-install.log || true
 	ls /mnt/tmp
 
 	echo "== after a start of OOS (one-shot), the file selects it again"; printf KRNL | dd of=/w/card bs=512 seek=122880 conv=notrunc 2>/dev/null

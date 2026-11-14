@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn all_twenty_seven_protocol_dispatchers_match_the_same_live_samples_as_refs() {
-        for protocol in PROTOS.into_iter().filter(|protocol| *protocol != Proto::Cphy) {
+        for protocol in PROTOS.iter().copied().filter(|protocol| *protocol != Proto::Cphy) {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
             ui.set_dec_proto(protocol);
             ui.m.dec_on = true;

@@ -180,7 +180,7 @@ impl Ui {
     }
 
     pub(super) fn draw_offline_card(&self, cv: &mut Canvas, r: Rect, sel: bool) {
-        let f = &self.fonts;
+        let f = &self.fonts();
         cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
         let (name, sub) = self.ref_card_lines();

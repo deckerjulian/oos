@@ -29,7 +29,8 @@ The network box at the top right, or System > Network:
 - **Forget WLAN network:** lists the saved networks, a tap removes one.
 - **WLAN details:** connection, signal, address, MAC of the stick.
 
-The page also shows the state of Ethernet, its MAC, the address of the web remote and the other ways in.
+The page also shows the state and speed of Ethernet, its MAC, the address of the web remote and the other ways in, and
+the 10 Mbit retry ([network.md](network.md)).
 
 The keyboard takes every password character: Shift for one capital, `#+=` for the symbols, Show for the plain text. Touch
 or any knob work (turn to choose, push to press).
@@ -60,8 +61,8 @@ Then every 2 s:
    keeps the address; a lost link or another network drops it.
 4. `wlan0` gone (stick pulled): wpa_supplicant and DHCP stop.
 
-`ignore_routes_with_linkdown` is set, so that the fallback address of eth0 (192.168.177.64/24, kept without a cable) does
-not take the traffic of a WLAN in that same network. `wlan0` gets route metric 20.
+`ignore_routes_with_linkdown` is set, so that a route of eth0 whose cable was pulled does not take the traffic of a WLAN
+in that same network. `wlan0` gets route metric 20.
 
 Logs: `/tmp/oos-wlan.log`, `/tmp/wpa_supplicant.log`. By hand: `wpa_cli -p /run/wpa_supplicant -i wlan0 status`.
 

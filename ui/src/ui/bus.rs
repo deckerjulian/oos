@@ -199,7 +199,7 @@ impl Ui {
         if !self.m.bus.on {
             return;
         }
-        let f = &self.fonts;
+        let f = &self.fonts();
         let a = self.area;
         if a.w < 40 || a.h < 40 {
             return;

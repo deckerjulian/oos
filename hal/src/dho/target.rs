@@ -4,7 +4,7 @@
 //! The DHO800/DHO900 described for the neutral code (`crate::target`): its card layout, models and limits.
 
 use crate::model::{bw_code_mhz, AfgMax, Caps, Limits};
-use crate::target::{Layout, Target};
+use crate::target::{Layout, Target, Variant};
 
 const DHO800: &str = "DHO800";
 const DHO900: &str = "DHO900";
@@ -24,6 +24,27 @@ pub const MODEL_TABLE: [(&str, u32, usize, &str); 12] = [
     ("DHO924-EDU", 10, 4, DHO900),
     // not a model: the family name alone (vendor.bin unreadable but the user forces the series)
     ("DHO900", 10, 4, DHO900),
+];
+
+/// The hardware variants (docs/models.md 2.1). A model counts as verified for the first install when OOS has run on a
+/// model of its variant; the risk it guards against is a kernel that hangs before the first program of the image runs.
+///
+/// Models are grouped only where they differ in nothing but the bandwidth code: the same series, the same number of
+/// channels, the same generator and the same edition. The bandwidth code is what the stock software makes of the same
+/// front end (it limits the RT1642 filter to it, docs/models.md 2), and the bandwidth is sold as a licence: a DHO804
+/// has been seen identifying as a DHO824 in vendor.bin. Kept apart, because the hardware is not known to be the same:
+/// - 2 and 4 channels (two front ends fewer, an EXT trigger input instead);
+/// - a DHO900 with and without generator (the output stage), and the EDU editions (whether they have the LA port is
+///   not known);
+/// - DHO800 and DHO900 (logic analyser port, front panel).
+///
+/// "DHO900" in the model table is not a model (the series forced by hand) and belongs to no variant.
+const VARIANTS: [Variant; 5] = [
+    Variant { name: "DHO800, 4 channels", models: &["DHO804", "DHO814", "DHO824"], ran_on: &[("DHO804", "user report, several releases")] },
+    Variant { name: "DHO800, 2 channels", models: &["DHO802", "DHO812"], ran_on: &[] },
+    Variant { name: "DHO900 with generator", models: &["DHO914S", "DHO924S"], ran_on: &[("DHO924S", "the developer's unit")] },
+    Variant { name: "DHO900 without generator", models: &["DHO914", "DHO924"], ran_on: &[] },
+    Variant { name: "DHO900 EDU", models: &["DHO914-EDU", "DHO924-EDU"], ran_on: &[] },
 ];
 
 /// Capabilities of a model name (case-insensitive): the table plus what the name implies (S = generator, DHO900 =
@@ -116,7 +137,7 @@ pub const DHO: Target = Target {
         "0x00038000@0x0004c000(backup)",
     ],
     card_controller: "fe320000",
-    verified_models: &["DHO924S"],
+    variants: &VARIANTS,
     assumed_model: "DHO924S",
     caps,
     family,

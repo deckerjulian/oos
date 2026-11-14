@@ -193,7 +193,7 @@ impl Ui {
                     cv.line(w[0].0, w[0].1, w[1].0, w[1].1, col);
                 }
             }
-            let f = &self.fonts;
+            let f = &self.fonts();
             let (xl, yl) = if bh { ("B", "H") } else { ("\u{3c8}", "i") };
             cv.text(&f.s, a.x + 8, a.y + a.h - 4, xl, DIM);
             cv.text(&f.s, a.x + 8, a.y + 16, yl, DIM);

@@ -445,7 +445,7 @@ impl Ui {
 
     fn draw_dq(&self, cv: &mut Canvas) {
         let a = self.area;
-        let f = &self.fonts;
+        let f = &self.fonts();
         let mut lines = vec![format!("{}   angle {}", if self.m.inv_volt { "voltage" } else { "current" }, self.ang_name())];
         if let Some(q) = &self.azr.dq {
             lines.push(format!("D {}   Q {}   zero {}", num(Some(q.d), ""), num(Some(q.q), ""), num(Some(q.zero), "")));
@@ -564,7 +564,7 @@ impl Ui {
                     }
                     prev = Some((x, y));
                 }
-                cv.text(&self.fonts.s, plot.x, plot.y + 14, "rpm / rev", DIM);
+                cv.text(&self.fonts().s, plot.x, plot.y + 14, "rpm / rev", DIM);
                 cv.no_clip();
             }
         }

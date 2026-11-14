@@ -573,7 +573,7 @@ impl Ui {
 
     pub(super) fn draw_catalog(&self, cv: &mut Canvas) {
         let lay = self.catalog_lay();
-        let f = &self.fonts;
+        let f = &self.fonts();
         cv.round(lay.r, 8, ACCENT, 255);
         cv.round(lay.r.inset(2), 7, DLG_BG, 255);
         cv.text(&f.mb, lay.r.x + 16, lay.r.y + 28, "ADD MEASUREMENTS", TEXT);

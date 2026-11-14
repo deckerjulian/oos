@@ -74,7 +74,7 @@ impl Ui {
     /// Panel bars hide only for Full while the external display copies the panel.
     pub(crate) fn sync_full(&mut self) {
         // waveform on an external display keeps the panel's bars; with no display attached Full enlarges the panel
-        self.full = self.m.density == Density::Full && !(self.m.hdmi_wave && self.hdmi_present);
+        self.full = self.m.density == Density::Full && !(self.m.hdmi != HdmiMode::Mirror && self.hdmi_present);
     }
 
     /// Called when an external display comes or goes, so Full follows it.
@@ -157,7 +157,7 @@ mod tests {
     }
 
     fn render(u: &mut Ui) -> Canvas {
-        let mut cv = Canvas::new(W, H);
+        let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.render(&mut cv);
         cv
     }
@@ -273,7 +273,7 @@ mod tests {
     fn full_screen_enlarges_without_an_external_display_and_goes_back() {
         // default "waveform on the external display", but no display attached (desktop, or a scope without a monitor)
         let mut u = ui();
-        assert!(u.m.hdmi_wave);
+        assert_eq!(u.m.hdmi, HdmiMode::Waveform);
         let press = |u: &mut Ui| {
             render(u);
             let (_, hit) = u.full_btn();

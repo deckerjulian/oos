@@ -612,16 +612,16 @@ impl Ui {
         cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 150);
         let r = Self::load_slot_box();
         cv.round(r, 8, ACCENT, 255); cv.round(r.inset(2), 7, DLG_BG, 255);
-        cv.text_in(&self.fonts.lb, Rect::new(r.x, r.y + 16, r.w, 28), 1, "Load into", ACCENT);
-        cv.text_in(&self.fonts.m, Rect::new(r.x, r.y + 46, r.w, 22), 1, "Choose a destination before opening the file.", DIM);
+        cv.text_in(&self.fonts().lb, Rect::new(r.x, r.y + 16, r.w, 28), 1, "Load into", ACCENT);
+        cv.text_in(&self.fonts().m, Rect::new(r.x, r.y + 46, r.w, 22), 1, "Choose a destination before opening the file.", DIM);
         for slot in 0..NREF {
             let b = Self::load_slot_button(slot);
             btn(cv, b, BTN, if self.refs[slot].is_some() { AMBER } else { BTN_BORDER });
             let label = format!("R{}{}", slot + 1, if self.refs[slot].is_some() { " replace" } else { "" });
-            cv.text_in(&self.fonts.mb, b, 1, &label, TEXT);
+            cv.text_in(&self.fonts().mb, b, 1, &label, TEXT);
         }
         let cancel = Self::load_slot_cancel(); btn(cv, cancel, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts.mb, cancel, 1, "Cancel", TEXT);
+        cv.text_in(&self.fonts().mb, cancel, 1, "Cancel", TEXT);
     }
 
     pub fn load_waveform_bytes(&mut self, data: &[u8], name: &str) -> Result<(), String> {
@@ -974,12 +974,12 @@ impl Ui {
             let col = REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1;
             btn(cv, rect, BAR, if r.on { col } else { CARD_BORDER });
             cv.set_clip(rect.inset(7));
-            cv.text(&self.fonts.sb, rect.x + 10, rect.y + 18, &format!("R{}", slot + 1), col);
-            cv.text(&self.fonts.s, rect.x + rect.w - 34, rect.y + 18, if r.on { "On" } else { "Off" }, if r.on { col } else { DIM });
+            cv.text(&self.fonts().sb, rect.x + 10, rect.y + 18, &format!("R{}", slot + 1), col);
+            cv.text(&self.fonts().s, rect.x + rect.w - 34, rect.y + 18, if r.on { "On" } else { "Off" }, if r.on { col } else { DIM });
             let (scale, rate) = Self::ref_badge_readout(r);
-            cv.text(Self::card_font(&self.fonts, &scale, rect.w - 24), rect.x + 10, rect.y + 42, &scale, TEXT);
+            cv.text(Self::card_font(&self.fonts(), &scale, rect.w - 24), rect.x + 10, rect.y + 42, &scale, TEXT);
             let sub = if r.label.is_empty() { rate } else { format!("{}  \u{b7}  {}", rate, r.label) };
-            cv.text(&self.fonts.s, rect.x + 10, rect.y + 58, &sub, DIM);
+            cv.text(&self.fonts().s, rect.x + 10, rect.y + 58, &sub, DIM);
             cv.no_clip();
         }
     }
@@ -991,11 +991,11 @@ impl Ui {
     pub(super) fn draw_session_card(&self, cv: &mut Canvas, r: Rect) {
         btn(cv, r, BAR, CARD_BORDER);
         let title = if self.session_is_sim { "SIMULATION" } else { "STORED WAVEFORM" };
-        cv.text(&self.fonts.sb, r.x + 10, r.y + 16, title, ACCENT);
+        cv.text(&self.fonts().sb, r.x + 10, r.y + 16, title, ACCENT);
         let (pause, exit) = Self::session_buttons(r);
         btn(cv, pause, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts.sb, pause, 1, if self.m.run == RunState::Run { "Stop" } else { "Run" }, TEXT);
+        cv.text_in(&self.fonts().sb, pause, 1, if self.m.run == RunState::Run { "Stop" } else { "Run" }, TEXT);
         btn(cv, exit, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts.sb, exit, 1, "Live", TEXT);
+        cv.text_in(&self.fonts().sb, exit, 1, "Live", TEXT);
     }
 }

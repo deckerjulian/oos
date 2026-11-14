@@ -59,9 +59,9 @@ pub fn draw(cv: &mut Canvas, ui: &Ui, hover: Option<(i32, i32)>) {
     cv.fill(Rect::new(W, 0, WIDTH, 600), BG);
     cv.vline(W, 0, 599, BORDER);
     let x = W + 12;
-    cv.text(&ui.fonts.mb, x, 23, "FRONT PANEL", TEXT);
+    cv.text(&ui.fonts().mb, x, 23, "FRONT PANEL", TEXT);
     for (y, title) in [(81, "ACQUISITION"), (169, "CHANNELS & TOOLS"), (330, "KNOBS")] {
-        cv.text(&ui.fonts.sb, x, y, title, DIM);
+        cv.text(&ui.fonts().sb, x, y, title, DIM);
     }
     for c in controls() {
         let on = (c.command == "key runstop" && ui.m.run == RunState::Run)
@@ -70,13 +70,13 @@ pub fn draw(cv: &mut Canvas, ui: &Ui, hover: Option<(i32, i32)>) {
         cv.round(c.rect, 5, border, 255);
         cv.round(c.rect.inset(1), 4, BUTTON, 255);
         let label = if c.command == "key runstop" { if ui.m.run == RunState::Run { "Stop" } else { "Run" } } else { c.label };
-        cv.text_in(&ui.fonts.sb, c.rect, 1, label, if on { ACCENT } else { TEXT });
+        cv.text_in(&ui.fonts().sb, c.rect, 1, label, if on { ACCENT } else { TEXT });
     }
     for (i, label) in ["V scale", "V position", "H scale", "H position", "Trigger", "Multi 1", "Multi 2"].iter().enumerate() {
-        cv.text(&ui.fonts.s, x, 355 + i as i32 * 31, label, TEXT);
+        cv.text(&ui.fonts().s, x, 355 + i as i32 * 31, label, TEXT);
     }
     let status = ui.lan_web_port.map(|port| format!("Web :{port}  |  Ctrl+O load")).unwrap_or_else(|| "Web unavailable  |  Ctrl+O load".into());
-    cv.text(&ui.fonts.s, x, 581, &status, DIM);
+    cv.text(&ui.fonts().s, x, 581, &status, DIM);
 }
 
 #[cfg(test)]
