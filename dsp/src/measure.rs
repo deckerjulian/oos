@@ -236,6 +236,11 @@ pub struct Analysis {
     pub pll_ui: f64,
     pub ui_wtd: f64,
     pub fold_rms: f64,
+    /// Mean of the per-edge slew rates between the low and high reference levels, V/s (falling is negative).
+    pub rise_slew: f64,
+    pub fall_slew: f64,
+    /// Time of the last sample, seconds from the first.
+    pub t_end: f64,
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -301,53 +306,58 @@ fn linreg(v: &[f32], dt: f64) -> (f64, f64) {
     (slope, intercept)
 }
 
-/// Top/base by histogram modes of the upper/lower 40 % (fallback: max/min when there are no flat levels).
+/// Top/base, automatic method: histogram modes, falling back to max/min.
+///
+/// Histogram over [min, max] with 1000 bins (fewer samples: half the sample count, at least 64). From the middle
+/// bin, the lower half gives base and the upper half gives top: the fullest bin, ties to the outer bin. Max/min
+/// is used instead when the data is flat, a half is empty, a peak sits in the outermost bin (clipping), or a peak
+/// holds fewer samples than `peak_threshold` (a poor peak). A bin's value is its lower edge.
 fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
-    let span = (vmax - vmin).max(1e-12);
-    let mut hist = [0u32; 256];
+    let minmax = (vmax as f64, vmin as f64);
+    let n = f.len();
+    if !(vmax > vmin) || n == 0 {
+        return minmax;
+    }
+    let nbins = if n > 1000 { 1000 } else { (n / 2).max(64) };
+    let (lo_v, width) = (vmin as f64, (vmax as f64 - vmin as f64) / nbins as f64);
+    let mut hist = vec![0u64; nbins];
     for &x in f {
-        hist[(((x - vmin) / span) * 255.0) as usize] += 1;
+        let b = ((x as f64 - lo_v) / width).floor().max(0.0) as usize;
+        hist[b.min(nbins - 1)] += 1;
     }
-    let mode = |a: usize, b: usize| (a..b).max_by_key(|&i| hist[i]).unwrap_or(a);
-    let (lo, hi) = (mode(0, 102), mode(154, 256));
-    let need = (f.len() / 20) as u32;
-    if hist[lo] < need || hist[hi] < need {
-        return (vmax as f64, vmin as f64);
-    }
-    // centre of the mode bin, refined by the mean of the samples in it
-    // (summed in the order of the samples, as `mean` would: the same value, without a copy of them)
-    let bin_mean = |b: usize| {
-        let (l, h) = (vmin + span * b as f32 / 255.0, vmin + span * (b + 1) as f32 / 255.0);
-        let (mut s, mut n) = (0.0f64, 0usize);
-        for &x in f.iter().filter(|&&x| x >= l && x < h) {
-            s += x as f64;
-            n += 1;
+    let thr = peak_threshold(&hist, n);
+    let mid = (0.5 * nbins as f64).round() as usize;
+    // fullest bin scanning from the middle outward; `>=` makes ties go to the outer bin
+    let pick = |bins: &mut dyn Iterator<Item = usize>| {
+        let mut best = None::<usize>;
+        for i in bins {
+            if best.map_or(true, |b| hist[i] >= hist[b]) {
+                best = Some(i);
+            }
         }
-        if n == 0 {
-            l as f64
-        } else {
-            s / n as f64
-        }
+        best
     };
-    (bin_mean(hi), bin_mean(lo))
+    let lo = pick(&mut (0..=mid.min(nbins - 1)).rev());
+    let hi = pick(&mut (mid.min(nbins - 1)..nbins));
+    let (Some(lo), Some(hi)) = (lo, hi) else { return minmax };
+    let bad = |i: usize, outer: usize| hist[i] == 0 || i == outer || (hist[i] as f64) < thr;
+    if bad(lo, 0) || bad(hi, nbins - 1) {
+        return minmax;
+    }
+    (lo_v + hi as f64 * width, lo_v + lo as f64 * width)
 }
 
-/// Crossing of `level` searched from index `from` backwards (`back`) down to `lim`, or forwards up to `lim`, in the
-/// given direction.
-fn cross(v: &[f32], from: usize, level: f32, up: bool, back: bool, lim: usize) -> Option<f64> {
-    let hit = |i: usize| {
-        let (a, b) = (v[i - 1], v[i]);
-        a.is_finite() && b.is_finite() && if up { a < level && b >= level } else { a > level && b <= level }
-    };
-    let at = |i: usize| {
-        let (a, b) = (v[i - 1], v[i]);
-        (i - 1) as f64 + ((level - a) / (b - a)) as f64
-    };
-    if back {
-        (lim.max(1)..=from.min(v.len() - 1)).rev().find(|&i| hit(i)).map(at)
-    } else {
-        (from.max(1)..lim.min(v.len())).find(|&i| hit(i)).map(at)
-    }
+/// Smallest count a histogram peak needs to be a real level: about twice the mean count per bin. `stride` is the
+/// spacing of populated bins (above 1 when the samples are quantised more coarsely than the bins).
+fn peak_threshold(hist: &[u64], n: usize) -> f64 {
+    let k = hist.len() as f64;
+    let m = k + 3.0;
+    let or = hist.iter().enumerate().filter(|(_, &c)| c > 0).fold(0usize, |a, (i, _)| a | i);
+    let stride = if or == 0 { 1.0 } else { (1usize << or.trailing_zeros()) as f64 };
+    let n = n as f64;
+    let t1 = if k < 2.0 { 2.0 * n } else { 2.0 * (stride * n / k).floor() };
+    let t2 = 2.0 * n / (m / (4.0 * stride) + k) + 8.0;
+    t1.max(t2)
 }
 
 pub fn analyze(v: &[f32], dt: f64) -> Analysis {
@@ -386,9 +396,13 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     }
     let (vmax, vmin) = (v[imax], v[imin]);
     let n = f.len() as f64;
-    let avg = f.iter().map(|&x| x as f64).sum::<f64>() / n;
+    let sum = f.iter().map(|&x| x as f64).sum::<f64>();
+    let smean = sum / n;
     let rms = (f.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / n).sqrt();
-    let std = (f.iter().map(|&x| (x as f64 - avg).powi(2)).sum::<f64>() / n).sqrt();
+    let std = (f.iter().map(|&x| (x as f64 - smean).powi(2)).sum::<f64>() / n).sqrt();
+    // trapezoid rule: the area over the record, and the mean is that area over the record's span
+    let trap = sum - (f[0] as f64 + f[f.len() - 1] as f64) / 2.0;
+    let avg = trap / (n - 1.0);
     let (top, base) = top_base(f, vmin, vmax);
     let (lpct, hpct) = refs(lpct, hpct);
     let (lin_slope, lin_int) = linreg(v, dt);
@@ -401,7 +415,10 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         avg,
         rms,
         std,
-        area: avg * n * dt,
+        area: trap * dt,
+        rise_slew: f64::NAN,
+        fall_slew: f64::NAN,
+        t_end: (v.len() - 1) as f64 * dt,
         t_vmax: imax as f64 * dt,
         t_vmin: imin as f64 * dt,
         rise_time: f64::NAN,
@@ -456,28 +473,28 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     }
     let lo = (base + lpct * amp) as f32;
     let hi_l = (base + hpct * amp) as f32;
-    let mut rt = Vec::new();
-    let mut ft = Vec::new();
-    // an edge's levels lie between its neighbours. Searching further costs a pass over the record per edge: a million
-    // noisy samples that seldom reach the 10 % and 90 % levels held the main thread for half a minute
-    for (k, x) in e.iter().enumerate() {
-        let i = x.t as usize + 1;
-        let (before, after) = (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
-        if x.rising {
-            if let (Some(p), Some(q)) = (cross(v, i, lo, true, true, before), cross(v, i, hi_l, true, false, after)) {
-                rt.push((q - p) * dt);
-            }
-        } else if let (Some(p), Some(q)) = (cross(v, i, hi_l, false, true, before), cross(v, i, lo, false, false, after)) {
-            ft.push((q - p) * dt);
-        }
-    }
+    // the low and high reference crossings use the same comparator as the mid edges: a band of 5 % of the amplitude
+    // either side of the level, so noise or ringing at 10 % / 90 % does not add or move crossings
+    let band = (amp * 0.1) as f32;
+    let at = |level: f32| {
+        let e = edges(v, level, band);
+        let r: Vec<f64> = e.iter().filter(|x| x.rising).map(|x| x.t * dt).collect();
+        let f: Vec<f64> = e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect();
+        (r, f)
+    };
+    let (hr, hf) = at(hi_l);
+    let (lr, lf) = at(lo);
+    // one result per transition: a low crossing pairs with the next high crossing when no other low crossing is between
+    let rt = pair_widths(&lr, &hr);
+    let ft = pair_widths(&hf, &lf);
+    let dv = (hi_l - lo) as f64;
     a.rise_time = mean(&rt);
     a.fall_time = mean(&ft);
+    a.rise_slew = mean(&rt.iter().map(|w| dv / w).collect::<Vec<_>>());
+    a.fall_slew = mean(&ft.iter().map(|w| -dv / w).collect::<Vec<_>>());
     a.rise_count = rt.len();
     a.fall_count = ft.len();
-    // keep the high and low reference crossings: high time, low time and time outside are measured there
-    let (hr, hf) = level_times(v, hi_l, dt);
-    let (lr, lf) = level_times(v, lo, dt);
+    // high time, low time and time outside are measured at the same reference crossings
     let hi = pair_widths(&hr, &hf);
     let low = pair_widths(&lf, &lr);
     a.high_time = mean(&hi);
@@ -501,14 +518,37 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
 }
 
 impl Analysis {
+    /// Mean of the per-cycle periods.
     pub fn period(&self) -> f64 {
-        let p = |e: &[f64]| if e.len() >= 2 { (e[e.len() - 1] - e[0]) / (e.len() - 1) as f64 } else { f64::NAN };
-        let r = p(&self.rises);
-        if r.is_finite() {
-            r
-        } else {
-            p(&self.falls)
+        mean(&self.periods())
+    }
+    /// Mean of the per-cycle frequencies (1 / each cycle's period), not 1 / mean period.
+    pub fn frequency(&self) -> f64 {
+        mean(&self.periods().iter().map(|p| 1.0 / p).collect::<Vec<_>>())
+    }
+    /// Back-to-back cycle periods between edges of the same polarity as the first mid edge.
+    fn periods(&self) -> Vec<f64> {
+        let first_rising = match (self.rises.first(), self.falls.first()) {
+            (Some(r), Some(f)) => r <= f,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        let e = if first_rising { &self.rises } else { &self.falls };
+        e.windows(2).map(|w| w[1] - w[0]).collect()
+    }
+    /// Mean positive duty cycle, %. Each cycle starts on a rising edge: (next fall - rise) / (next rise - rise).
+    fn duty(&self) -> f64 {
+        let e = edge_seq(self);
+        let mut d = Vec::new();
+        let mut k = e.iter().position(|x| x.1).unwrap_or(e.len());
+        while k + 2 < e.len() {
+            let (t0, t1, t2) = (e[k].0, e[k + 1].0, e[k + 2].0);
+            if t2 > t0 {
+                d.push((t1 - t0) / (t2 - t0) * 100.0);
+            }
+            k += 2;
         }
+        mean(&d)
     }
     /// Mean width of complete positive (rise -> fall) or negative (fall -> rise) pulses. One pass over the sorted edges:
     /// a deep record has a hundred thousand of them, and this runs for every frame.
@@ -570,26 +610,26 @@ impl Analysis {
             Meas::Area => self.area,
             Meas::AreaCyc => self.cyc_area,
             Meas::Period => self.period(),
-            Meas::Freq => 1.0 / self.period(),
+            Meas::Freq => self.frequency(),
             Meas::Rise => self.rise_time,
             Meas::Fall => self.fall_time,
             Meas::PWidth => self.width(true),
             Meas::NWidth => self.width(false),
-            Meas::PDuty => self.width(true) / self.period() * 100.0,
-            Meas::NDuty => self.width(false) / self.period() * 100.0,
+            Meas::PDuty => self.duty(),
+            Meas::NDuty => 100.0 - self.duty(),
             Meas::PPulses => self.pulses(true),
             Meas::NPulses => self.pulses(false),
             Meas::PEdges => self.rises.len() as f64,
             Meas::NEdges => self.falls.len() as f64,
             Meas::TVmax => self.t_vmax,
             Meas::TVmin => self.t_vmin,
-            Meas::PSlew => (self.hpct_or_default() - self.lpct_or_default()) * amp / self.rise_time,
-            Meas::NSlew => -(self.hpct_or_default() - self.lpct_or_default()) * amp / self.fall_time,
+            Meas::PSlew => self.rise_slew,
+            Meas::NSlew => self.fall_slew,
             Meas::HighTime => self.high_time,
             Meas::LowTime => self.low_time,
             Meas::Burst => burst_width(self, 0.0),
             Meas::Outside => time_outside(self, Outside::Both),
-            Meas::NPeriods => duration_n(self, 2, false),
+            Meas::NPeriods => duration_n(self, 6, false),
             Meas::CycAmp => self.cyc_amp,
             Meas::CycTop => self.cyc_top,
             Meas::CycBase => self.cyc_base,
@@ -623,28 +663,6 @@ impl Analysis {
     fn hpct_or_default(&self) -> f64 {
         if self.hpct > 0.0 { self.hpct } else { 0.9 }
     }
-}
-
-/// Rising and falling crossings of `level`, seconds from the first sample.
-fn level_times(v: &[f32], level: f32, dt: f64) -> (Vec<f64>, Vec<f64>) {
-    let (mut rises, mut falls) = (Vec::new(), Vec::new());
-    for i in 1..v.len() {
-        let (a, b) = (v[i - 1], v[i]);
-        if !(a.is_finite() && b.is_finite()) || a == b {
-            continue;
-        }
-        let hit_up = a < level && b >= level;
-        let hit_dn = a > level && b <= level;
-        if hit_up || hit_dn {
-            let t = ((i - 1) as f64 + ((level - a) / (b - a)) as f64) * dt;
-            if hit_up {
-                rises.push(t);
-            } else {
-                falls.push(t);
-            }
-        }
-    }
-    (rises, falls)
 }
 
 /// Durations of complete pulses, with ascending edge times. Each opening goes to
@@ -702,28 +720,47 @@ fn mids(a: &Analysis) -> Vec<f64> {
     t
 }
 
-/// Mean burst width. A burst is a run of adjacent mid crossings whose gaps are all at most `idle` seconds.
-/// `idle` <= 0 uses the period of `a`. One continuous clock is one burst.
+/// Mid crossings with their direction (true = rising), in time order.
+fn edge_seq(a: &Analysis) -> Vec<(f64, bool)> {
+    let mut e: Vec<(f64, bool)> = a.rises.iter().map(|&t| (t, true)).chain(a.falls.iter().map(|&t| (t, false))).collect();
+    e.sort_by(|x, y| x.0.total_cmp(&y.0));
+    e
+}
+
+/// Default idle time between bursts, seconds.
+pub const BURST_IDLE: f64 = 50e-6;
+
+/// Mean burst width. A burst starts at a rising mid edge that follows at least `idle` seconds without edges (counted
+/// from the start of the record for the first edge) and ends at the first falling edge followed by more than `idle`
+/// seconds without edges (or by the end of the record). `idle` <= 0 uses `BURST_IDLE`. A clock that never pauses for
+/// `idle` has no burst.
 pub fn burst_width(a: &Analysis, idle: f64) -> f64 {
-    let idle = if idle > 0.0 { idle } else { a.period() };
-    if !(idle > 0.0) || !idle.is_finite() {
+    let idle = if idle > 0.0 && idle.is_finite() { idle } else { BURST_IDLE };
+    let e = edge_seq(a);
+    if e.len() < 2 {
         return f64::NAN;
     }
-    let t = mids(a);
-    if t.len() < 2 {
-        return f64::NAN;
-    }
-    let (mut widths, mut start) = (Vec::new(), 0usize);
-    for i in 1..t.len() {
-        if t[i] - t[i - 1] > idle {
-            if i - start >= 2 {
-                widths.push(t[i - 1] - t[start]);
-            }
-            start = i;
+    let (mut widths, mut prev, mut i) = (Vec::new(), 0.0, 0usize);
+    'bursts: while i < e.len() {
+        while i < e.len() && !(e[i].1 && e[i].0 - prev >= idle) {
+            prev = e[i].0;
+            i += 1;
         }
-    }
-    if t.len() - start >= 2 {
-        widths.push(t[t.len() - 1] - t[start]);
+        if i == e.len() {
+            break;
+        }
+        let start = e[i].0;
+        for j in i..e.len() {
+            if !e[j].1 {
+                let next = e.get(j + 1).map_or(a.t_end, |x| x.0);
+                if next - e[j].0 > idle {
+                    widths.push(e[j].0 - start);
+                    i = j;
+                    continue 'bursts;
+                }
+            }
+        }
+        break;
     }
     mean(&widths)
 }
@@ -760,36 +797,72 @@ pub fn duration_n(a: &Analysis, n: usize, data: bool) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pair(pub bool, pub bool);
 
-/// Delay from the first selected edge of A to the nearest selected edge of B (may be negative), seconds.
+/// Delay from the first selected edge of A to the first selected edge of B in the record, seconds (negative when B's
+/// edge comes first).
 pub fn delay(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
-    let ea = if p.0 { &a.rises } else { &a.falls };
-    let eb = if p.1 { &b.rises } else { &b.falls };
-    let Some(&ta) = ea.first() else { return f64::NAN };
-    eb.iter().map(|&tb| tb - ta).min_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap()).unwrap_or(f64::NAN)
+    match (edge_list(a, p.0).first(), edge_list(b, p.1).first()) {
+        (Some(&ta), Some(&tb)) => tb - ta,
+        _ => f64::NAN,
+    }
 }
 
-/// Phase of B relative to A in degrees (delay / period of A x 360).
+/// Phase of B relative to A in degrees, 0..360: for every selected edge of B inside a cycle of A (from one selected
+/// edge of A to the next), (B - cycle start) / cycle length x 360. The mean over all such edges.
 pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
-    delay(a, b, p) / a.period() * 360.0
+    let (ea, eb) = (edge_list(a, p.0), edge_list(b, p.1));
+    let (mut d, mut j) = (Vec::new(), 0usize);
+    for w in ea.windows(2) {
+        while j < eb.len() && eb[j] < w[0] {
+            j += 1;
+        }
+        while j < eb.len() && eb[j] < w[1] {
+            d.push((eb[j] - w[0]) / (w[1] - w[0]) * 360.0);
+            j += 1;
+        }
+    }
+    mean(&d)
 }
 
 fn edge_list<'a>(a: &'a Analysis, rising: bool) -> &'a [f64] {
     if rising { &a.rises } else { &a.falls }
 }
 
-/// Mean, over every selected edge of A, of the closest selected edge of B minus that edge. May be negative.
+/// Default skew window, seconds: only B edges within this of an A edge are paired.
+pub const SKEW_WINDOW: (f64, f64) = (-10e-9, 10e-9);
+
+/// Mean skew (B edge - A edge) with the default window of +/- 10 ns.
 pub fn skew(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
+    skew_within(a, b, p, SKEW_WINDOW.0, SKEW_WINDOW.1)
+}
+
+/// Mean skew over edge pairs whose B - A lies in `min..=max`. Pairs are found greedily in time order: a B edge too
+/// early for the window moves to the next B, too late moves to the next A, and a later A nearer to the same B wins.
+/// Edges outside the window are never paired.
+pub fn skew_within(a: &Analysis, b: &Analysis, p: Pair, min: f64, max: f64) -> f64 {
     let (ea, eb) = (edge_list(a, p.0), edge_list(b, p.1));
-    if ea.is_empty() || eb.is_empty() {
-        return f64::NAN;
-    }
-    let mut j = 0usize;
-    let mut d = Vec::with_capacity(ea.len());
-    for &ta in ea {
-        while j + 1 < eb.len() && (eb[j + 1] - ta).abs() <= (eb[j] - ta).abs() {
+    let (mut d, mut i, mut j) = (Vec::new(), 0usize, 0usize);
+    while i < ea.len() && j < eb.len() {
+        let mut x = eb[j] - ea[i];
+        if x < min {
             j += 1;
+            continue;
         }
-        d.push(eb[j] - ta);
+        if x > max {
+            i += 1;
+            continue;
+        }
+        while i + 1 < ea.len() {
+            let y = eb[j] - ea[i + 1];
+            if y >= min && y <= max && y.abs() < x.abs() {
+                x = y;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        d.push(x);
+        i += 1;
+        j += 1;
     }
     mean(&d)
 }

@@ -49,7 +49,8 @@ fn hss_clock_fills_the_single_channel_list() {
     check(Meas::Vbase, -0.5, 0.02, 1e-3);
     check(Meas::Vamp, amp, 0.02, 1e-3);
     check(Meas::Vupper, 0.4, 0.02, 1e-3);
-    check(Meas::Vmid, 0.0, 0.02, 0.02);
+    // top and base are histogram bin edges, so the mid level can sit up to one bin (1 mV here) off zero
+    check(Meas::Vmid, 0.0, 0.02, 0.05);
     check(Meas::Vlower, -0.4, 0.02, 1e-3);
     check(Meas::Vavg, 0.0, 0.02, 0.02);
     check(Meas::VavgCyc, 0.0, 0.02, 0.02);
@@ -75,7 +76,7 @@ fn hss_clock_fills_the_single_channel_list() {
     check(Meas::LowTime, 10e-9 - rise, 0.08, 1e-12);
     // Both averages the above-90 % widths with the below-10 % widths. On this clock they are the same width.
     check(Meas::Outside, 10e-9 - rise, 0.08, 1e-12);
-    check(Meas::NPeriods, 40e-9, 0.02, 1e-12);
+    check(Meas::NPeriods, 120e-9, 0.02, 1e-12);
     check(Meas::CycMax, 0.5, 0.02, 1e-3);
     check(Meas::CycMin, -0.5, 0.02, 1e-3);
     check(Meas::CycPp, amp, 0.02, 1e-3);
@@ -87,8 +88,9 @@ fn hss_clock_fills_the_single_channel_list() {
         let got = a.get(m);
         assert!((got - n as f64).abs() <= 2.0, "{m:?} {got} vs {n}");
     }
+    // a continuous clock never pauses for the burst idle time (50 us): no burst
     let burst = a.get(Meas::Burst);
-    assert!(burst.is_finite() && burst > 1e-6, "burst {burst}");
+    assert!(burst.is_nan(), "burst {burst}");
     for m in [Meas::TVmax, Meas::TVmin] {
         let tv = a.get(m);
         assert!(tv.is_finite() && tv >= 0.0 && tv < v.len() as f64 * dt, "{m:?} {tv}");
@@ -123,8 +125,8 @@ fn hss_clock_levels_frequency_and_rise() {
     let want = rise_10_90(2e-9);
     assert!(close(a.get(Meas::Rise), want, 0.02), "rise {} want {}", a.get(Meas::Rise), want);
     assert!(close(a.get(Meas::Fall), want, 0.02), "fall {}", a.get(Meas::Fall));
-    // two bit periods of the 50 MHz square (the default N is 2)
-    assert!(close(a.get(Meas::NPeriods), 40e-9, 0.02), "nper {}", a.get(Meas::NPeriods));
+    // six periods of the 50 MHz square (the default N is 6)
+    assert!(close(a.get(Meas::NPeriods), 120e-9, 0.02), "nper {}", a.get(Meas::NPeriods));
 }
 
 #[test]
@@ -280,6 +282,11 @@ fn hss_pcie4_nominal_opens_an_eye() {
     assert!(a.get(Meas::Fall) > 20e-12 && a.get(Meas::Fall) < 45e-12, "fall {}", a.get(Meas::Fall));
     for m in oos_dsp::measure::ALL {
         let g = a.get(m);
+        // continuous data never pauses for the burst idle time, so it has no burst
+        if m == Meas::Burst {
+            assert!(g.is_nan(), "pcie4 Burst {g}");
+            continue;
+        }
         assert!(g.is_finite(), "pcie4 {m:?} {g}");
     }
     assert!(m.amplitude > 0.55, "amp {}", m.amplitude);

@@ -91,10 +91,11 @@ fn high_low_burst_outside_and_n_periods() {
     assert!(close(time_outside(&a, Outside::Below), a.low_time, 1e-9));
     let both = time_outside(&a, Outside::Both);
     assert!(both > a.high_time && both < a.low_time, "{}", both);
-    // gaps are 3 us and 7 us: an idle of one period is a single burst, 4 us splits on the low gap
-    assert!(burst_width(&a, a.period()) > 0.5e-3, "{}", burst_width(&a, a.period()));
+    // gaps are 3 us and 7 us: an idle of one period never pauses long enough to start a burst, 4 us splits on the low gap
+    assert!(burst_width(&a, a.period()).is_nan(), "{}", burst_width(&a, a.period()));
     assert!(close(burst_width(&a, 4e-6), 3e-6, 0.02), "{}", burst_width(&a, 4e-6));
-    assert!(close(a.get(Meas::NPeriods), 20e-6, 1e-4), "{}", a.get(Meas::NPeriods));
+    // six periods of 10 us
+    assert!(close(a.get(Meas::NPeriods), 60e-6, 1e-4), "{}", a.get(Meas::NPeriods));
     assert!(close(duration_n(&a, 2, true), 10e-6, 0.02), "{}", duration_n(&a, 2, true));
 }
 
@@ -118,11 +119,14 @@ fn skew_setup_and_hold() {
     let fb = PulseTrain { offset: 125e-6, ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6) };
     let a = analyze(&sample(|t| fa.v(t), 0.0, dt, 5000), dt);
     let b = analyze(&sample(|t| fb.v(t), 0.0, dt, 5000), dt);
-    assert!(close(skew(&a, &b, Pair(true, true)), 125e-6, 1e-3), "{}", skew(&a, &b, Pair(true, true)));
+    // 125 us is far outside the default +/- 10 ns window: no pair
+    assert!(skew(&a, &b, Pair(true, true)).is_nan());
+    let w = |a: &Analysis, b: &Analysis| skew_within(a, b, Pair(true, true), -200e-6, 200e-6);
+    assert!(close(w(&a, &b), 125e-6, 1e-3), "{}", w(&a, &b));
     // data lags the clock by 125 us: setup is the rest of the period to the previous data edge, hold is the lag
     assert!(close(setup_time(&a, &b), 375e-6, 0.02), "{}", setup_time(&a, &b));
     assert!(close(hold_time(&a, &b), 125e-6, 0.02), "{}", hold_time(&a, &b));
-    assert!(close(skew(&b, &a, Pair(true, true)), -125e-6, 1e-3));
+    assert!(close(w(&b, &a), -125e-6, 1e-3), "{}", w(&b, &a));
     assert_eq!(setup_hold_violations(&a, &b, 0.0, 0.0), 0.0);
     assert!(setup_hold_violations(&a, &b, 400e-6, 0.0) > 0.0);
 }
@@ -169,4 +173,82 @@ fn no_frequency_on_noise() {
     let a = analyze_min(&v, dt, 0.4);
     assert!(a.get(Meas::Freq).is_nan() && a.get(Meas::Rise).is_nan());
     assert!(a.get(Meas::Vpp) > 0.0);
+}
+
+#[test]
+fn frequency_is_the_mean_of_per_cycle_frequencies() {
+    // cycles of 10 us and 30 us alternate: mean period 20 us, but mean frequency (1/10 + 1/30) / 2 = 66.67 kHz
+    let dt = 1e-8;
+    let rises = [0.0, 10e-6, 40e-6, 50e-6, 80e-6, 90e-6, 120e-6];
+    let v: Vec<f32> = (0..1_300_000 / 100)
+        .map(|i| {
+            // start low: every rise is 2 us later in the record
+            let t = i as f64 * dt - 2e-6;
+            match rises.iter().rposition(|&r| r <= t) {
+                Some(k) if t - rises[k] < 4e-6 => 1.0,
+                _ => 0.0,
+            }
+        })
+        .collect();
+    let a = analyze(&v, dt);
+    assert!(close(a.period(), 20e-6, 1e-3), "{}", a.period());
+    assert!(close(a.get(Meas::Freq), (1.0 / 10e-6 + 1.0 / 30e-6) / 2.0, 1e-3), "{}", a.get(Meas::Freq));
+    // duty per cycle: 4/10 and 4/30, mean 26.67 %
+    assert!(close(a.get(Meas::PDuty), (40.0 + 400.0 / 30.0) / 2.0, 1e-3), "{}", a.get(Meas::PDuty));
+    assert!(close(a.get(Meas::NDuty), 100.0 - (40.0 + 400.0 / 30.0) / 2.0, 1e-3));
+}
+
+#[test]
+fn area_and_mean_use_the_trapezoid_rule() {
+    let v: Vec<f32> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let a = analyze(&v, 0.5);
+    // a ramp from 0 to 4 over 2 s: area 4, mean 2 (the sample mean is also 2; the rectangle area would be 5)
+    assert!(close(a.get(Meas::Area), 4.0, 1e-9), "{}", a.get(Meas::Area));
+    assert!(close(a.get(Meas::Vavg), 2.0, 1e-9));
+    let v: Vec<f32> = vec![4.0, 0.0, 0.0, 0.0, 0.0];
+    let a = analyze(&v, 1.0);
+    assert!(close(a.get(Meas::Area), 2.0, 1e-9) && close(a.get(Meas::Vavg), 0.5, 1e-9), "{} {}", a.get(Meas::Area), a.get(Meas::Vavg));
+}
+
+#[test]
+fn rise_time_ignores_ringing_at_the_low_reference() {
+    // a 0..1 V step with a 100 ns linear edge, preceded by a small wiggle across the 10 % level that stays inside
+    // the 5 % hysteresis band: it must not count as an extra low crossing
+    let dt = 1e-9;
+    let v: Vec<f32> = (0..4000)
+        .map(|i| {
+            let t = i as f64 * dt;
+            let base = if (1000e-9..1100e-9).contains(&t) { (t - 1000e-9) / 100e-9 } else if t >= 1100e-9 { 1.0 } else { 0.0 };
+            let w = if (500e-9..900e-9).contains(&t) { 0.12 } else { 0.0 };
+            (base + w) as f32
+        })
+        .collect();
+    let a = analyze(&v, dt);
+    assert!(close(a.get(Meas::Rise), 80e-9, 0.02), "{}", a.get(Meas::Rise));
+    assert!(close(a.get(Meas::PSlew), 0.8 / 80e-9, 0.02), "{}", a.get(Meas::PSlew));
+}
+
+#[test]
+fn phase_is_measured_within_each_cycle() {
+    let dt = 1e-6;
+    let fa = PulseTrain::square(1e3, 0.0, 1.0, 1e-6);
+    let fb = PulseTrain { offset: 875e-6, ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6) };
+    let a = analyze(&sample(|t| fa.v(t), 0.0, dt, 5000), dt);
+    let b = analyze(&sample(|t| fb.v(t), 0.0, dt, 5000), dt);
+    // B lags by 7/8 of a cycle: 315 degrees, never -45
+    assert!(close(phase(&a, &b, Pair(true, true)), 315.0, 1e-3), "{}", phase(&a, &b, Pair(true, true)));
+}
+
+#[test]
+fn burst_needs_an_idle_gap_before_and_after() {
+    // three 1 MHz pulses, 100 us of silence, three more: two bursts of 2.5 us (first rise to last fall)
+    let dt = 1e-8;
+    let on = |t: f64| {
+        let starts = [10e-6, 112.5e-6];
+        starts.iter().any(|&s| t >= s && t < s + 3e-6 && ((t - s) % 1e-6) < 0.5e-6)
+    };
+    let v: Vec<f32> = (0..20_000).map(|i| if on(i as f64 * dt) { 1.0 } else { 0.0 }).collect();
+    let a = analyze(&v, dt);
+    let w = burst_width(&a, 0.0);
+    assert!(close(w, 2.5e-6, 0.01), "{}", w);
 }
