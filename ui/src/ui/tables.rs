@@ -96,6 +96,21 @@ impl Ui {
         EventRow { t, who: format!("{} #{}", self.trigger_source_label(), index + 1), text: self.m.trig_type.name().to_string(), ok: true }
     }
 
+    /// Whether the decoder event table is open.
+    pub(crate) fn decode_table_on(&self) -> bool {
+        self.table == Some(TableKind::Decode)
+    }
+
+    /// Opens or closes the decoder event table. A search table stays up until this opens the decoder one.
+    pub(crate) fn set_decode_table(&mut self, on: bool) {
+        if on {
+            self.table = Some(TableKind::Decode);
+            self.table_top = 0;
+        } else if self.table == Some(TableKind::Decode) {
+            self.table = None;
+        }
+    }
+
     /// The decoder events as text, one per line: time, decoder, content (SCPI).
     pub fn events_text(&self) -> String {
         self.decode_events().iter().map(|r| format!("{:e},{},{},{}", r.t, r.who, r.text, if r.ok { "ok" } else { "error" })).collect::<Vec<_>>().join("\n")

@@ -3015,22 +3015,25 @@ impl Ui {
                 return Some(c);
             }
         }
-        (0..NCH).find(|&c| self.m.ch[c].on)
+        (0..n_ch()).find(|&c| self.m.ch[c].on)
     }
 
     /// Histogram bins from the phosphor map: rows (vertical) or columns within +-0.5 div of the trigger level
     /// (horizontal); with the mean and standard deviation in pixels.
     fn hist_bins(&self) -> Option<(Vec<u64>, f64, f64)> {
         let c = self.hist_src()?;
-        let (w, h) = (self.ph.w, self.ph.h);
-        let map = &self.ph.map[c];
+        let area = self.source_area(WaveId::Ch(c)).unwrap_or(self.wave_area());
+        let phosphor = if self.m.zoom { &self.phz } else { &self.ph };
+        let (w, h) = (phosphor.w, phosphor.h);
+        let map = &phosphor.map[c];
         let bins: Vec<u64> = match self.m.hist {
             Hist::Off => return None,
             Hist::Vertical => (0..h).map(|r| map[r * w..(r + 1) * w].iter().map(|&x| x as u64).sum()).collect(),
             Hist::Horizontal => {
                 let ch = &self.m.ch[c];
                 let ppd = h as f32 / VDIV;
-                let yl = h as f32 / 2.0 - (self.m.trig_level + ch.offset) / ch.volts_per_div() * ppd;
+                let (factor, center) = self.zoom_vertical_transform(area);
+                let yl = h as f32 / 2.0 - ((self.m.trig_level + ch.offset) / ch.volts_per_div() - center) * factor * ppd;
                 let (r0, r1) = (((yl - ppd / 2.0).max(0.0)) as usize, ((yl + ppd / 2.0).max(0.0) as usize).min(h));
                 (0..w).map(|x| (r0..r1).map(|r| map[r * w + x] as u64).sum()).collect()
             }
@@ -3063,9 +3066,11 @@ impl Ui {
                     }
                 }
                 // pixel row -> volts
-                let vpp = ch.volts_per_div() as f64 / (a.h as f64 / VDIV as f64);
-                let mv = (a.h as f64 / 2.0 - mean) * vpp - ch.offset as f64;
-                format!("Hist CH{}  mean {}  \u{3c3} {}", c + 1, si(mv, "V"), si(sd * vpp, "V"))
+                let (factor, center) = self.zoom_vertical_transform(a);
+                let h = bins.len().max(1) as f64;
+                let vpp = ch.volts_per_div() as f64 * VDIV as f64 / h / factor as f64;
+                let mv = (h / 2.0 - mean) * vpp + center as f64 * ch.volts_per_div() as f64 - ch.offset as f64;
+                format!("Hist CH{}  mean {}  \u{3c3} {}", c + 1, si(mv, self.m.unit(c)), si(sd * vpp, self.m.unit(c)))
             }
             _ => {
                 for (x, &b) in bins.iter().enumerate() {
@@ -3643,8 +3648,9 @@ impl Ui {
     }
 
     fn draw_cursors(&self, cv: &mut Canvas) {
-        let Some((source, _, _, _)) = self.cursor_source_context() else { return };
-        if !self.workspace_source_visible_here(source) { return; }
+        let source = self.cursor_source();
+        if !self.workspace_source_visible_here(source)
+            && !(self.m.cursor == CursorMode::Track && self.workspace_source_visible_here(self.cursor_b_source())) { return; }
         let f = &self.fonts;
         let a = self.area;
         cv.set_clip(a);
@@ -3668,10 +3674,15 @@ impl Ui {
                     let x = a.x + (frac * a.w as f32) as i32;
                     cv.dashed_vline(x, a.y, a.y + a.h - 1, 4, 3, CURSOR);
                     tagbox(cv, x + 2, a.y + a.h - 36, name);
-                    // tracking: a mark where the cursor meets the trace
-                    if let (CursorMode::Track, Some(v)) = (self.m.cursor, self.wave_at(t)) {
-                        let y = self.y_of_wave(source, v);
-                        cv.dashed_hline(x - 10, x + 10, y, 2, 2, CURSOR);
+                    // Each tracking mark follows its own native source and lane.
+                    if self.m.cursor == CursorMode::Track {
+                        let id = if name == "X1" { source } else { self.cursor_b_source() };
+                        if self.workspace_source_visible_here(id) {
+                            if let Some(v) = self.wave_at_source(id, t) {
+                                let y = self.y_of_wave(id, v);
+                                cv.dashed_hline(x - 10, x + 10, y, 2, 2, CURSOR);
+                            }
+                        }
                     }
                 }
             }
@@ -3688,7 +3699,14 @@ impl Ui {
 
     /// Cursor read-outs: (label, value) pairs.
     fn cursor_values(&self) -> Vec<(String, String)> {
-        let Some((source, scale, offset, unit)) = self.cursor_source_context() else { return Vec::new() };
+        let (source, scale, offset, unit) = match self.cursor_source_context() {
+            Some(context) => context,
+            None if self.m.cursor == CursorMode::Track => {
+                let source = self.cursor_source();
+                (source, 1.0, 0.0, self.cursor_source_unit(source))
+            }
+            None => return Vec::new(),
+        };
         let area = self.source_area(source).unwrap_or(self.area);
         match self.m.cursor {
             CursorMode::Off => Vec::new(),
@@ -3707,16 +3725,18 @@ impl Ui {
             }
             CursorMode::Track => {
                 let (ta, tb) = self.cursor_times();
-                let y = |t: f64| self.wave_at(t);
-                let txt = |v: Option<f32>| v.map_or("----".to_string(), |v| si(v as f64, unit));
-                let dy = y(ta).zip(y(tb)).map(|(a, b)| b - a);
+                let second = self.cursor_b_source();
+                let (ya, yb) = (self.wave_at_source(source, ta), self.wave_at_source(second, tb));
+                let (ua, ub) = (unit, self.cursor_source_unit(second));
+                let txt = |v: Option<f32>, u: &str| v.map_or("----".to_string(), |v| si(v as f64, u));
+                let dy = ya.zip(yb).filter(|_| ua == ub).map(|(a, b)| b - a);
                 vec![
                     ("X1".into(), si(ta, "s")),
-                    ("Y1".into(), txt(y(ta))),
+                    ("Y1".into(), txt(ya, ua)),
                     ("X2".into(), si(tb, "s")),
-                    ("Y2".into(), txt(y(tb))),
+                    ("Y2".into(), txt(yb, ub)),
                     ("\u{394}X".into(), si(tb - ta, "s")),
-                    ("\u{394}Y".into(), txt(dy)),
+                    ("\u{394}Y".into(), txt(dy, if ua == ub { ua } else { "" })),
                 ]
             }
             CursorMode::Time => {
@@ -7207,10 +7227,24 @@ impl Ui {
         }
     }
 
+    /// Force belongs to the current acquisition owner, independent of modal UI.
+    pub(crate) fn force_trigger(&mut self) {
+        if self.m.run == RunState::Stop && self.m.trig_mode == TrigMode::Single {
+            self.scpi_arm_operation();
+            self.single_armed = false;
+        }
+        if self.record_mode() { self.record_key(key::FORCE); return; }
+        self.bus_candidate_key(key::FORCE);
+        self.m.run = RunState::Run;
+        self.src.force_hw();
+        self.toast("Force trigger");
+    }
+
     pub fn key(&mut self, k: u8) {
         if k == 0 {
             return; // release
         }
+        if k == key::FORCE { self.force_trigger(); return; }
         if self.load_slot_ask { self.cancel_load_slot(); return; }
         if (k == key::RUNSTOP && self.m.run == RunState::Run) || k == key::SINGLE || k == key::DEFAULT || (0x15..=0x18).contains(&k) {
             self.sim_cancel_generation();
@@ -7313,10 +7347,7 @@ impl Ui {
             }
             key::SLOPE => self.adjust(Item::TrigSlope, 1),
             key::FORCE => {
-                if self.m.run == RunState::Stop {
-                    self.m.run = RunState::Run;
-                }
-                self.toast("Force trigger");
+                self.force_trigger();
             }
             key::MEASURE => self.open_meas_list(),
             key::CURSOR => {

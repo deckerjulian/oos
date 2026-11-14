@@ -331,3 +331,88 @@ These canonical long spellings are accepted case-insensitively. Some additionall
 
 `ONE`, `ZERO`, `AMPLITUDE`, `CROSSING`, `RISE`, `FALL`, `HEIGHT`, `WIDTH`, `Q`, `HBER`, `RECORDS`, `EDGES`, `UI`, `SAMPLING`, `TPP`, `TRMS`, `DCD`, `DDJ`, `PJRMS`, `PRMS`, `C2C`, `F2`, `F4`, `F8`, `SRJ`, `PN`, `TPRE`, `TPOST`, `PPRE`, `PPOST`, `DCCM`, `ACCM`, `XOVER`, `TNT`, `SSCPPM`, `SSCRATE`, `TJ`, `RJ`, `DJ`, `OPENING`, `SEEN`, `TJBER`, `EWBER`, `J2`, `J9`, `NPJ`.
 
+
+
+## Additional controller commands (frozen PR41 revision3374f6b)
+
+These commands are implemented by the same model and acquisition router above. They extend the documented subset; their presence does not imply support for every sibling command in the Rigol guide. Reference tokens in Math, decoder roles and Track cursors are OOS extensions. The primary Rigol guide covers the corresponding command families in sections3.4,3.6,3.8,3.13,3.15–3.17 and3.26. Explicit unsupported states return an error or the existing invalid numeric sentinel rather than a fabricated measurement.
+
+### Channels, acquisition and display
+
+| Command | Parameters / behavior |
+| --- | --- |
+| `:CHANnel<n>:POSition[?]` | Vertical position in divisions, converted through that channel's current scale. |
+| `:CHANnel<n>:UNITs[?]` | Supported channel unit. Use the configured unit when interpreting cursor/readout values. |
+| `:CHANnel<n>:VERNier[?]` | Boolean fine vertical control. |
+| `:CHANnel<n>:TCALibrate[?]` | Channel deskew in seconds; native transfer metadata remains unchanged. |
+| `:CHANnel<n>:BIAS[?]` | Software channel zero-bias correction. This is not a calibration procedure. |
+| `:CHANnel<n>:EXPand[?]` | Vertical expansion reference supported by the model. |
+| `:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]` | Label visibility and text. |
+| `:ACQuire:TYPE[?]` | `NORMal|PEAK|AVERages|HRESolution`. |
+| `:ACQuire:AVERages[?]` | Requested average count, mapped to supported powers of two. Read back the selected count. |
+| `:ACQuire:ULTRa:MAXFrame[?]` | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. |
+| `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom enable, seconds/div and physical center time. |
+| `:TIMebase:VERNier[?]` | Boolean fine horizontal control. |
+| `:TIMebase:HREFerence:MODE[?]` | Horizontal expansion reference. |
+| `:TIMebase:MODE[?]` | Main/zoom/XY mode supported by the model. |
+| `:TIMebase:ROLL[?]` | Model roll setting; acquisition source restrictions still apply. |
+| `:TIMebase:XY:ENABle[?]`, `:X[?]`, `:Y[?]`, `:Z[?]` | XY display and channel roles; `NONE` disables the optional Z input. |
+| `:DISPlay:TYPE[?]` | `DOTS|VECTors`. |
+| `:DISPlay:GRADing:TIME[?]` | `MIN`, `INFinite`, or a duration mapped to the supported persistence ladder. |
+| `:DISPlay:WBRightness[?]`, `:GBRightness[?]` | Waveform/grid brightness. |
+| `:DISPlay:GRID[?]` | Supported full/half/no-grid display choice. |
+| `:DISPlay:RULers[?]`, `:COLor[?]` | Rulers and color grading. |
+| `:REFerence:COLor[?]`, `:RESet` | Selected/explicit slot color and reference display-scale reset. Recorded samples and native timing are retained. |
+
+Display configuration is not proof of hardware acquisition capability. Force aliases route through the active context: stored/SIM acquisition receives a software force; live acquisition requests one hardware pulse. Local mock tests verify routing/counting, not a physical FPGA outcome.
+
+### Measurement settings and statistics
+
+| Command | Parameters / behavior |
+| --- | --- |
+| `:MEASure:STATistic:DISPlay[?]` | Statistics summary visibility. Toggling it retains accumulated observations. |
+| `:MEASure:STATistic:ITEM <item>[,source[,source]]` | Add the specified standard/pair readout and show statistics. |
+| `:MEASure:STATistic:ITEM? <field>,<item>[,source[,source]]` | `MAXimum|MINimum|CURRent|AVERages|DEViation|CNT` (`COUNt` alias). Current uses the configured row's own settings where applicable. |
+| `:MEASure:STATistic:RESet` | Central statistics reset, including catalog/deferred accounting. It does not create an acquisition. |
+| `:MEASure:SETup:MIN[?]`, `:MAX[?]` | Global default low/high thresholds in percent. Existing per-row overrides remain a separate UI feature. |
+| `:MEASure:SETup:PSA[?]`, `:PSB[?]`, `:DSA[?]`, `:DSB[?]` | Phase/delay source A/B. CH/ref waveforms are supported; stock digital/Math measurement roles are not implied. |
+| `:MEASure:BURSt:IDLE[?]` | Burst idle interval in seconds. |
+| `:MEASure:OUTSide[?]` | `ABOVe|BELow|BOTH` outside-level measurement selection. |
+| `:MEASure:NPERiods[?]` | Configured period count for relevant measurements. |
+| `:MEASure:EDGes[?]` | `CLOCk|DATA` edge measurement mode. |
+| `:MEASure:INDicator[?]` | Measurement labels; `:CURSor:MEASure:INDicator[?]` is an alias. |
+
+Statistics count accepted observations. A stopped reference can have a valid current value with count0 after reset. Worker completion, polling and panning do not by themselves add observations. The existing SCREEN/NONE gate and per-row settings still determine each result; OPC does not wait for background analysis.
+
+### Math and decoder slots
+
+`<n>` selects an implemented Math/decoder slot; read back the configuration rather than assuming the model has the stock slot count. Math source names are `CHANn`, loaded `Rn`, and an **earlier** `MATHn`. Self/forward dependencies are rejected; an FFT/frequency-domain result cannot be used as a time-domain source. Empty references and unsupported formulas report an unavailable/conflict state.
+
+| Command | Parameters / behavior |
+| --- | --- |
+| `:MATH<n>:DISPlay[?]`, `:OPERator[?]` | Enable/disable and select an implemented Math operator. |
+| `:MATH<n>:SOURce1[?]`, `:SOURce2[?]` | CH/ref/earlier-Math identity, preserving native physical timing. |
+| `:MATH<n>:SCALe[?]`, `:OFFSet[?]` | Math display scale and offset. FFT scale uses its dB ladder. |
+| `:MATH<n>:EXPRession[?]` | Root formula parser, including loaded reference names such as `R1 - R2`. |
+| `:MATH<n>:FFT:SOURce[?]`, `:WINDow[?]`, `:SCALe[?]` | FFT input, supported window and dB display scale. |
+| `:MATH<n>:FILTer:TYPE[?]`, `:W1[?]`, `:W2[?]` | Supported low/high/band-pass/stop filter and valid corner frequencies. |
+| `:BUS<n>:MODE[?]`, `:DISPlay[?]`, `:FORMat[?]` | Decoder protocol, visibility, `HEX|ASCii` formatting. |
+| `:BUS<n>:EVENt[?]` | Shared decode event-table visibility. |
+| `:BUS<n>:THReshold[?]` | Decoder threshold in source units. |
+| `:BUS<n>:DATA?` | Ready event rows in an IEEE block. `BUSY` while required decoding is pending; unavailable sources return an error. |
+| `:BUS<n>:RS232:TX[?]`, `:RX[?]` | CH/ref role identities. UART decoding uses the configured primary input. |
+| `:BUS<n>:RS232:BAUD[?]`, `:PARity[?]`, `:DBITs[?]` | Supported baud ladder, parity and data-bit count. |
+| `:BUS<n>:IIC:SCLK:SOURce[?]`, `:SDA:SOURce[?]` | I2C clock/data CH/ref roles. |
+| `:BUS<n>:SPI:SCLK:SOURce[?]`, `:MOSI:SOURce[?]`, `:SS:SOURce[?]` | SPI CH/ref roles; `OFF`/`NONE` disables optional select. |
+| `:BUS<n>:SPI:DBITs[?]` | Supported SPI word length. |
+
+Decoder headers preserve the existing `DECode` source schema, including references. Configuring an inactive decoder does not select it as the acquisition trigger. For an active Bus trigger, the decoder's actual primary input owns qualification. Required inputs must overlap in physical time; no synthetic hardware/LA input is invented for a reference. Other protocol-specific Rigol BUS subtrees remain unsupported unless listed.
+
+### Track cursors, mask and histogram
+
+Track cursor B now has its own CH/ref source: `:CURSor:TRACk:SOURce1[?]` and `:SOURce2[?]`. An unset B follows A. Sampling uses each source's native dt/t0 plus deskew and the current detail view. A/B readback is display-only and does not arm acquisition or enable an ADC. `YDELta` is unavailable when the two source units differ. Manual cursors still have one common source; independent manual B is not a second acquisition channel. Setting both time and voltage positions promotes the UI to XY cursors instead of discarding the other axis.
+
+Mask commands are `:MASK:ENABle[?]`, `:SOURce[?]`, `:X[?]`, `:Y[?]`, `:CREate`, `:RESet`, `:OPERate[?]`, `:FAILed?`, `:PASSed?`, `:TOTal?`. Mask sources are physical CH roles, not reference or Math inputs. A mask needs accepted channel data; enabling a page or querying a counter does not prove a valid mask or physical pass/fail result.
+
+Histogram commands are `:HISTogram:ENABle[?]`, `:TYPE[?]`, `:SOURce[?]`, `:STATistics:RESult?`. Supported sources are CH roles; histogram results describe the rendered display-density distribution and current view/zoom, not an exact full-native-record population. Empty results carry invalid sentinels where no figure exists. This is the same histogram shown in the UI.
+
