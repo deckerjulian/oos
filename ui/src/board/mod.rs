@@ -196,6 +196,8 @@ pub struct Shared {
     /// counter set by the UI with the settings; frames acquired after applying them carry it (`Frame::stamp`), so a
     /// sweep can tell frames of the new step from queued ones
     pub stamp: u64,
+    /// one force-trigger pulse for the acquisition thread (the FPGA bit, not a new set-up)
+    pub force: bool,
     /// FPGA version register 0x4000 (0 until the FPGA was reached)
     pub fpga_version: u32,
     /// FPGA XADC: die temperature (degC) and VCCINT (V), read about once a second (System info page)

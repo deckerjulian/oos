@@ -432,6 +432,13 @@ impl Source {
         matches!(self, Source::Hw { .. })
     }
 
+    /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
+    pub fn force_hw(&self) {
+        if let Source::Hw { shared, .. } = self {
+            shared.lock().unwrap().force = true;
+        }
+    }
+
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {

@@ -6976,6 +6976,13 @@ impl Ui {
         if k == 0 {
             return; // release
         }
+        // A dialog must not swallow a force trigger: the pulse is asked for before the dialog is dismissed.
+        if k == key::FORCE {
+            if self.m.run == RunState::Stop {
+                self.m.run = RunState::Run;
+            }
+            self.src.force_hw();
+        }
         if (k == key::RUNSTOP && self.m.run == RunState::Run) || k == key::SINGLE || k == key::DEFAULT || (0x15..=0x18).contains(&k) {
             self.sim_cancel_generation();
         }
@@ -7081,6 +7088,7 @@ impl Ui {
                 if self.m.run == RunState::Stop {
                     self.m.run = RunState::Run;
                 }
+                self.src.force_hw();
                 self.toast("Force trigger");
             }
             key::MEASURE => self.open_meas_list(),

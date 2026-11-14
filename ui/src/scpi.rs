@@ -700,7 +700,8 @@ impl Scpi {
             return None;
         }
         // Rigol: a forced trigger releases Normal or Single when the level never crosses. On a reference or SIM
-        // session that is the replay flag; on the live path it is the same key as the front panel.
+        // session that is the replay flag. On the live hardware the front-panel key also asks the acquisition
+        // thread to pulse the FPGA force bit.
         if !query && nodes.len() == 1 && kw(nodes[0], "TFORce") {
             if ui.record_mode() {
                 ui.record_key(crate::ui::key::FORCE);
@@ -4158,6 +4159,18 @@ mod tests {
         assert!(data.starts_with("#9") && data.contains("RS232"), "{data}");
         line(&mut s, &mut ui, &cv, "*CLS;:BUS1:FORM DEC");
         assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224"), "only hex and ASCII are on this screen");
+    }
+
+    #[test]
+    fn a_live_force_trigger_asks_the_hardware_thread_to_pulse() {
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Stop;
+        let mut s = Scpi::open(0);
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        line(&mut s, &mut ui, &cv, ":TFOR");
+        assert!(shared.lock().unwrap().force, "the acquisition thread pulses the FPGA force bit");
+        assert_eq!(ui.m.run, RunState::Run);
     }
 
     #[test]

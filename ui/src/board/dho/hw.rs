@@ -495,6 +495,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
             }
             let (s, p) = current.clone().unwrap();
+            // :TFORce. A pulse of the force bit on the shadows now in force, then back. Not part of the set-up, so it
+            // does not reconfigure.
+            if std::mem::take(&mut out.lock().unwrap().force) {
+                bar.apply(&oos_hal::dho::tpu::force(&state.ts));
+            }
             if mode != Slow::Off {
                 // roll and scan (roll-mode.md): stream chunks; roll keeps 10 divisions and puts the newest point at the
                 // right edge, scan writes the screen from left to right; publish ~30 pictures per second
