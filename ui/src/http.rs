@@ -597,6 +597,30 @@ mod tests {
         }
     }
 
+    /// An explicitly started, private backend for tools/scpi_validate.py.
+    /// It opens no desktop, hardware device or LAN discovery announcer.
+    #[test]
+    #[ignore = "Owned headless backend for explicit local SCPI acceptance"]
+    fn scpi_validation_fixture() {
+        let var = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+        let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
+        let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16);
+        assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let end = std::time::Instant::now() + Duration::from_secs(var("OOS_VALIDATION_SECONDS", 90));
+        while !ui.quit && std::time::Instant::now() < end {
+            ui.step(0.04);
+            ui.render(&mut cv);
+            scpi.poll(&mut ui, &cv);
+            for command in h.poll(&mut ui, &cv, &mut scpi) { crate::cmd::run(&mut ui, &command); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn get(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, path: &str) -> String {
         request(h, ui, cv, scpi, format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).into_bytes())
     }
