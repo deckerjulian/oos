@@ -1969,20 +1969,26 @@ impl Scpi {
             ui.mark_changed();
             return None;
         }
-        // One source: the active channel. Track's second source has nowhere to live, so a different SOURce2 is an error.
         // Time cursors use cur_a/cur_b. Voltage cursors use them too, until both axes are set: then the screen's
         // XY cursors keep the times in cur_a/cur_b and the voltages in cur_c/cur_d.
+        // Track cursor A follows the active channel. Cursor B follows cur_b_ch, or the active channel until set.
         if n.len() == 2 && (kw(n0, "MANual") || kw(n0, "TRACk")) && (kw(n[1], "SOURce") || kw(n[1], "SOURce1") || kw(n[1], "SOURce2")) {
+            let second = kw(n[1], "SOURce2");
             if query {
-                return t(&format!("CHAN{}", ui.m.active.min(n_ch() - 1) + 1));
-            }
-            if kw(n[1], "SOURce2") && parse_ch(arg).is_some_and(|c| c != ui.m.active) {
-                self.push_err("-224,\"Illegal parameter value\" one cursor source".into());
-                return None;
+                let c = if second && kw(n0, "TRACk") { ui.m.cur_b_ch.unwrap_or(ui.m.active) } else { ui.m.active };
+                return t(&format!("CHAN{}", c.min(n_ch() - 1) + 1));
             }
             return match parse_ch(arg) {
                 Some(c) => {
-                    ui.m.active = c;
+                    ui.m.ch[c].on = true;
+                    if second && kw(n0, "TRACk") {
+                        ui.m.cur_b_ch = Some(c);
+                    } else if second && c != ui.m.active {
+                        self.push_err("-224,\"Illegal parameter value\" one manual cursor source".into());
+                        return None;
+                    } else if !second {
+                        ui.m.active = c;
+                    }
                     ui.mark_changed();
                     None
                 }
@@ -2024,7 +2030,10 @@ impl Scpi {
                 ui.cursor_volt_at(if a { ui.m.cur_c } else { ui.m.cur_d })
             } else if ui.m.cursor == CursorMode::Volt {
                 ui.cursor_volt_at(if a { ui.m.cur_a } else { ui.m.cur_b })
-            } else if matches!(ui.m.cursor, CursorMode::Track | CursorMode::Time) {
+            } else if ui.m.cursor == CursorMode::Track {
+                let c = if a { ui.m.active } else { ui.m.cur_b_ch.unwrap_or(ui.m.active) };
+                ui.wave_at_ch(c, if a { ta } else { tb }).map(|v| v as f64).unwrap_or(f64::NAN)
+            } else if ui.m.cursor == CursorMode::Time {
                 ui.wave_at(if a { ta } else { tb }).map(|v| v as f64).unwrap_or(f64::NAN)
             } else {
                 f64::NAN
@@ -4010,6 +4019,21 @@ mod tests {
         let kept: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CAY?").parse().unwrap();
         let moved: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CAX?").parse().unwrap();
         assert!((kept - 0.25).abs() < 1e-4 && moved.abs() < 1e-9, "voltage survived the time cursor: {kept} {moved}");
+    }
+
+    #[test]
+    fn track_cursor_b_follows_its_own_channel() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, "*CLS;:CURS:MODE TRAC;:CURS:TRAC:SOUR1 CHAN1;:CURS:TRAC:SOUR2 CHAN2;:CURS:TRAC:CAX 0;:CURS:TRAC:CBX 1e-6");
+        for _ in 0..4 {
+            ui.step(0.05);
+        }
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:TRAC:SOUR1?;:CURS:TRAC:SOUR2?"), "CHAN1;CHAN2");
+        let ay = line(&mut s, &mut ui, &cv, ":CURS:TRAC:AYV?");
+        let by = line(&mut s, &mut ui, &cv, ":CURS:TRAC:BYV?");
+        assert!(ay.parse::<f64>().unwrap().is_finite() && by.parse::<f64>().unwrap().is_finite(), "{ay} {by}");
+        line(&mut s, &mut ui, &cv, "*CLS;:CURS:MODE MAN;:CURS:MAN:SOUR2 CHAN2");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224"), "manual mode keeps one source");
     }
 
     #[test]

@@ -3438,10 +3438,13 @@ impl Ui {
                     let x = a.x + (frac * a.w as f32) as i32;
                     cv.dashed_vline(x, a.y, a.y + a.h - 1, 4, 3, CURSOR);
                     tagbox(cv, x + 2, a.y + a.h - 36, name);
-                    // tracking: a mark where the cursor meets the trace
-                    if let (CursorMode::Track, Some(v)) = (self.m.cursor, self.wave_at(t)) {
-                        let y = self.y_of_volts(self.m.active, v);
-                        cv.dashed_hline(x - 10, x + 10, y, 2, 2, CURSOR);
+                    // tracking: a mark where the cursor meets its source. X2 can follow another channel.
+                    if self.m.cursor == CursorMode::Track {
+                        let c = if name == "X1" { self.m.active } else { self.m.cur_b_ch.unwrap_or(self.m.active) };
+                        if let Some(v) = self.wave_at_ch(c, t) {
+                            let y = self.y_of_volts(c, v);
+                            cv.dashed_hline(x - 10, x + 10, y, 2, 2, CURSOR);
+                        }
                     }
                 }
             }
@@ -3475,17 +3478,18 @@ impl Ui {
             }
             CursorMode::Track => {
                 let (ta, tb) = self.cursor_times();
-                let y = |t: f64| self.wave_at(t);
-                let u = self.m.unit(self.m.active);
-                let txt = |v: Option<f32>| v.map_or("----".to_string(), |v| si(v as f64, u));
-                let dy = y(ta).zip(y(tb)).map(|(a, b)| b - a);
+                let (ca, cb) = (self.m.active, self.m.cur_b_ch.unwrap_or(self.m.active));
+                let (ya, yb) = (self.wave_at_ch(ca, ta), self.wave_at_ch(cb, tb));
+                let (ua, ub) = (self.m.unit(ca), self.m.unit(cb));
+                let txt = |v: Option<f32>, u: &str| v.map_or("----".to_string(), |v| si(v as f64, u));
+                let dy = ya.zip(yb).map(|(a, b)| b - a);
                 vec![
                     ("X1".into(), si(ta, "s")),
-                    ("Y1".into(), txt(y(ta))),
+                    ("Y1".into(), txt(ya, ua)),
                     ("X2".into(), si(tb, "s")),
-                    ("Y2".into(), txt(y(tb))),
+                    ("Y2".into(), txt(yb, ub)),
                     ("\u{394}X".into(), si(tb - ta, "s")),
-                    ("\u{394}Y".into(), txt(dy)),
+                    ("\u{394}Y".into(), txt(dy, if ua == ub { ua } else { "" })),
                 ]
             }
             CursorMode::Time => {

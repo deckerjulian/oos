@@ -354,6 +354,10 @@ def validate(oos, result):
     result.equal("cursor type", oos.query(":CURSor:MANual:TYPE?"), "TIME")
     result.numeric("cursor A time", float(oos.query(":CURSor:MANual:CAX?")), 0.0, absolute=1e-12)
     result.numeric("cursor delta", float(oos.query(":CURSor:MANual:XDELta?")), 1e-6, relative=1e-4)
+    oos.write(":CURSor:MODE TRACk")
+    oos.write(":CURSor:TRACk:SOURce1 CHANnel1")
+    oos.write(":CURSor:TRACk:SOURce2 CHANnel2")
+    result.equal("track cursor sources", oos.query(":CURSor:TRACk:SOURce1?;:CURSor:TRACk:SOURce2?"), "CHAN1;CHAN2")
     oos.write(":CURSor:MODE OFF")
     result.equal("cursors off have no delta", float(oos.query(":CURSor:MANual:XDELta?")), 9.9e37)
 
