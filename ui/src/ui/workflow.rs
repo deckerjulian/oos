@@ -468,6 +468,11 @@ impl Replay {
     pub(super) fn request_force(&mut self) { self.force = true; }
     pub(super) fn clear_deferred_statistics(&mut self) { self.deferred_statistics = None; }
 
+    pub(super) fn reset_trigger_source(&mut self) {
+        self.cursor=0.0;self.force=false;self.trigger_time=None;
+        self.deferred_statistics=None;
+    }
+
     pub(super) fn reset_search(&mut self) {
         self.cursor = 0.0;
     }

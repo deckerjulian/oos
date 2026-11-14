@@ -19,6 +19,9 @@ impl Ui {
     pub(crate) fn set_trigger_source(&mut self, id: WaveId, secondary: bool) -> bool {
         if matches!(id, WaveId::Ref(i) if i >= NREF || self.refs[i].is_none()) { return false; }
         if matches!(id, WaveId::Ch(c) if c >= n_ch()) { return false; }
+        let running=self.m.run==RunState::Run;
+        let previous_context=self.record_mode();
+        let primary_changed=!secondary && self.m.trigger_wave()!=id;
         if !secondary {
             match id {
                 WaveId::Ch(c) if self.record_mode() => self.activate_live_channel(c),
@@ -31,7 +34,18 @@ impl Ui {
             }
         }
         self.m.set_trigger_wave(id, secondary);
-        self.replay.reset_search();
+        if !secondary && (primary_changed || previous_context!=self.record_mode()) {
+            // Choosing the acquisition source preserves the user's Run/Stop
+            // intent. It never turns a stopped source choice into an acquisition.
+            self.sim_cancel_generation();self.cancel_bus_candidate(true);
+            self.m.run=if running{RunState::Run}else{RunState::Stop};
+            self.sim_play=self.record_mode() && running;
+            self.m.status=if running{TrigStatus::Wait}else{TrigStatus::Stop};
+            if running && self.m.trig_mode==TrigMode::Single{self.single_armed=false;}
+            if !running && previous_context && !self.record_mode(){self.cleared=true;}
+            self.replay.reset_trigger_source();
+            self.replay.next=self.now;self.replay.sim_next=self.now;
+        } else { self.replay.reset_search(); }
         true
     }
 
@@ -157,5 +171,71 @@ impl Ui {
             let text = format!("{} {}", Self::trigger_wave_label(id), si_short(level as f64, "V"));
             backed_text(cv, &self.fonts.s, x - self.fonts.s.width(&text) - 4, y + 4, &text, ACCENT);
         }
+    }
+}
+#[cfg(test)]
+mod acquisition_source_tests {
+    use super::*;
+    use std::sync::Arc;
+    fn fixture(running:bool)->Ui {
+        let mut ui=Ui::new(Source::Demo{t:0.0});
+        ui.m.run=if running{RunState::Run}else{RunState::Stop};
+        ui.m.status=if running{TrigStatus::Auto}else{TrigStatus::Stop};
+        ui.m.trig_type=TrigType::Edge;ui.m.trig_mode=TrigMode::Normal;ui.m.trig_level=0.;
+        ui.m.meas=vec![(Meas::Vpp,WaveId::Ref(0))];ui.m.meas2.clear();ui.m.cat.clear();
+        for i in 0..2{ui.refs[i]=Some(RefWave{src:0,color:i,label:format!("R{}",i+1),t0:0.,dt:1e-9,
+            v:(0..5000).map(|k|if i==1||k%40<20{-1.0}else{1.0}).collect::<Vec<_>>().into(),vpd:0.5,offset:0.,on:true});}
+        ui
+    }
+    #[test]
+    fn choosing_primary_ref_while_live_running_arms_and_accepts_without_an_extra_run(){
+        let mut ui=fixture(true);let samples=Arc::clone(&ui.refs[0].as_ref().unwrap().v);
+        assert!(ui.set_trigger_source(WaveId::Ref(0),false));
+        assert!(ui.record_mode()&&ui.sim_play);assert_eq!((ui.m.run,ui.m.status),(RunState::Run,TrigStatus::Wait));
+        ui.step(0.0);assert_eq!(ui.replay.captures,1);assert_eq!(ui.m.status,TrigStatus::Triggered);
+        assert!(Arc::ptr_eq(&samples,&ui.refs[0].as_ref().unwrap().v));assert_eq!(ui.mstat[0].n,1);
+    }
+    #[test]
+    fn choosing_primary_ref_while_stopped_holds_until_single_accepts_exactly_once(){
+        let mut ui=fixture(false);assert!(ui.set_trigger_source(WaveId::Ref(0),false));
+        assert_eq!((ui.m.run,ui.m.status),(RunState::Stop,TrigStatus::Stop));assert!(!ui.sim_play);
+        ui.step(0.2);assert_eq!(ui.replay.captures,0);
+        ui.key(key::SINGLE);ui.step(0.0);assert_eq!(ui.replay.captures,1);assert_eq!(ui.m.run,RunState::Stop);
+        ui.step(0.2);assert_eq!(ui.replay.captures,1);
+    }
+    #[test]
+    fn returning_to_primary_channel_preserves_run_or_stop_without_stopped_preview_acquisition(){
+        for running in[false,true]{let mut ui=fixture(running);ui.set_trigger_source(WaveId::Ref(0),false);
+            ui.m.run=if running{RunState::Run}else{RunState::Stop};ui.sim_play=running;
+            assert!(ui.set_trigger_source(WaveId::Ch(0),false));assert!(!ui.record_mode()&&!ui.sim_play);
+            assert_eq!(ui.m.run,if running{RunState::Run}else{RunState::Stop});
+            assert_eq!(ui.m.status,if running{TrigStatus::Wait}else{TrigStatus::Stop});
+            if !running{let count=ui.wfm_total;ui.step(0.2);assert_eq!(ui.wfm_total,count,"choosing a source while Stop cannot acquire a preview");}
+        }
+    }
+    #[test]
+    fn same_context_ref_change_arms_fresh_condition_without_reusing_old_hits_or_force(){
+        let mut ui=fixture(true);ui.set_trigger_source(WaveId::Ref(0),false);ui.key(key::RUNSTOP);
+        if ui.m.run==RunState::Stop{ui.key(key::RUNSTOP);}ui.step(0.2);assert!(ui.replay.trigger_time.is_some());
+        let count=ui.replay.captures;ui.replay.request_force();
+        assert!(ui.set_trigger_source(WaveId::Ref(1),false));assert_eq!((ui.m.run,ui.m.status),(RunState::Run,TrigStatus::Wait));
+        assert_eq!(ui.replay.trigger_time,None);assert!(!ui.replay.force_requested());
+        ui.step(0.0);assert_eq!(ui.replay.captures,count);assert_eq!(ui.m.status,TrigStatus::Wait);assert!(ui.search_events().is_empty());
+    }
+    #[test]
+    fn switching_source_while_single_is_armed_preserves_single_and_stops_on_one_hit(){
+        let mut ui=fixture(true);ui.m.trig_mode=TrigMode::Single;ui.single_armed=true;
+        assert!(ui.set_trigger_source(WaveId::Ref(0),false));assert_eq!(ui.m.trig_mode,TrigMode::Single);
+        assert_eq!(ui.m.run,RunState::Run);assert!(!ui.single_armed);
+        ui.step(0.0);assert_eq!((ui.m.run,ui.replay.captures),(RunState::Stop,1));ui.step(0.2);assert_eq!(ui.replay.captures,1);
+    }
+    #[test]
+    fn secondary_source_focus_and_overlay_import_keep_live_acquisition_context(){
+        let mut ui=fixture(true);let before=(ui.m.run,ui.m.status,ui.m.trigger_wave(),ui.record_mode());
+        assert!(ui.set_trigger_source(WaveId::Ref(1),true));assert_eq!((ui.m.run,ui.m.status,ui.m.trigger_wave(),ui.record_mode()),before);
+        ui.select_workspace_source(WaveId::Ref(0));assert_eq!((ui.m.run,ui.m.status,ui.m.trigger_wave(),ui.record_mode()),before);
+        let trace=crate::store::WaveTrace{t0:0.,dt:1e-9,v:vec![0.,1.,0.,1.],label:"overlay".into()};
+        ui.commit_waveform_traces_at(vec![trace],"overlay",2).unwrap();
+        assert_eq!((ui.m.run,ui.m.status,ui.m.trigger_wave(),ui.record_mode()),before);assert!(ui.m.ch[0].on);
     }
 }
