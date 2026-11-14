@@ -1647,18 +1647,30 @@ impl Ui {
         self.dirty_map = true;
     }
 
+    fn main_horizontal_step(&mut self, direction: i32, fraction: f32) {
+        let divisions = (fraction as f64 - 0.5) * HDIV as f64;
+        let anchor = self.m.delay as f64 + divisions * self.m.time_per_div() as f64;
+        self.adjust(Item::HScale, direction);
+        self.m.delay = (anchor - divisions * self.m.time_per_div() as f64) as f32;
+        self.clamp_zoom();
+    }
+
     fn zoom_horizontal_step(&mut self, direction: i32, _area: Rect, fraction: f32) {
-        let before = tscales()[self.m.zscale];
-        let anchor = self.m.zdelay + (fraction - 0.5) * HDIV * before;
+        let divisions = (fraction as f64 - 0.5) * HDIV as f64;
+        let anchor = self.m.zdelay as f64 + divisions * tscales()[self.m.zscale] as f64;
         self.m.zscale = (self.m.zscale as i64 + direction as i64).clamp(0, (tscales().len() - 1) as i64) as usize;
         self.m.zscale = self.m.zscale.min(self.m.tscale);
-        self.m.zdelay = anchor - (fraction - 0.5) * HDIV * tscales()[self.m.zscale];
+        self.m.zdelay = (anchor - divisions * tscales()[self.m.zscale] as f64) as f32;
         self.clamp_zoom();
         self.settings_changed();
     }
 
-    /// Plain wheel pans time. Ctrl-wheel scales the pointed trace, or display V zoom in detail.
-    pub fn pointer_wheel(&mut self, x: i32, y: i32, steps: i32, vertical: bool) -> bool {
+    /// Plain wheel pans time; Ctrl-wheel zooms time around the pointer.
+    pub fn pointer_wheel(&mut self, x: i32, y: i32, steps: i32, zoom_time: bool) -> bool {
+        self.pointer_wheel_motion(x, y, steps, zoom_time, false)
+    }
+
+    fn pointer_wheel_motion(&mut self, x: i32, y: i32, steps: i32, zoom_time: bool, vertical: bool) -> bool {
         if self.eye_open() && self.eye_pane_rect().contains(x,y) { return false; }
         if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.m.touch_lock || self.view_on() || !self.grid.contains(x, y) { return false; }
         let lane = self.wins.iter().position(|area| area.contains(x, y));
@@ -1672,7 +1684,16 @@ impl Ui {
             None => {},
         }
         let steps = steps.clamp(-32, 32);
-        if vertical {
+        if zoom_time {
+            let area = if detail { self.wins[lane.unwrap()] }
+                else if self.m.zoom { Self::split_zoom(self.grid).0 }
+                else { lane.map(|index| self.wins[index]).unwrap_or(self.area) };
+            let fraction = ((x - area.x) as f32 / area.w.max(1) as f32).clamp(0.0, 1.0);
+            for _ in 0..steps.unsigned_abs() {
+                if detail { self.zoom_horizontal_step(-steps.signum(), area, fraction); }
+                else { self.main_horizontal_step(-steps.signum(), fraction); }
+            }
+        } else if vertical {
             if detail {
                 let area = self.wins[lane.unwrap()];
                 let fraction = (y - area.y) as f32 / area.h.max(1) as f32;
@@ -7189,7 +7210,9 @@ impl Ui {
             Ev::Wheel { x, y, steps, ctrl, shift, alt } => {
                 if self.menu_open { crate::cmd::run(self, &format!("knob multi1 {steps:+}")); }
                 else if alt { crate::cmd::run(self, &format!("knob tlevel {:+}", steps.clamp(-32, 32) * 5)); }
-                else { self.pointer_wheel(x, y, steps, ctrl || shift); }
+                else if ctrl { self.pointer_wheel(x, y, steps, true); }
+                else if shift { self.pointer_wheel_motion(x, y, steps, false, true); }
+                else { self.pointer_wheel(x, y, steps, false); }
             }
         }
     }
@@ -7565,12 +7588,7 @@ impl Ui {
         let fy = ((midpoint.1 - area.y as f32) / area.h.max(1) as f32).clamp(0.0, 1.0);
         if dt != 0 {
             if detail { self.zoom_horizontal_step(dt, area, fx); }
-            else {
-                let anchor = self.m.delay + (fx - 0.5) * HDIV * self.m.time_per_div();
-                self.adjust(Item::HScale, dt);
-                self.m.delay = anchor - (fx - 0.5) * HDIV * self.m.time_per_div();
-                self.clamp_zoom();
-            }
+            else { self.main_horizontal_step(dt, fx); }
         }
         if dv != 0 {
             if detail { self.zoom_vertical_step(-dv, area, fy); }

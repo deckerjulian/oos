@@ -263,8 +263,9 @@ On Windows, with Rust installed, build and open the desktop window from PowerShe
 .\build-windows.ps1 -Run
 ```
 
-The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop,
-and the mouse wheel changes the timebase. F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
+The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop.
+Plain mouse wheel pans horizontally, and Ctrl+wheel zooms the time scale around the pointer.
+F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
 with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
 
 For development, run the checkout and automatically restart after saving source changes:

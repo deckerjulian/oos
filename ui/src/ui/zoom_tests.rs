@@ -99,7 +99,7 @@ fn vertical_zoom_is_shared_by_detail_lanes_and_has_exact_forward_inverse_mapping
 }
 
 #[test]
-fn detail_pinch_and_ctrl_wheel_keep_voltage_anchor_without_source_mutations() {
+fn detail_pinch_and_ctrl_wheel_keep_time_anchor_without_source_mutations() {
     let mut ui=mixed();ui.set_zoom(true);stacked(&mut ui);
     let area=ui.source_area(WaveId::Ref(0)).unwrap();
     let model=crate::store::setup_text(&ui.m);
@@ -109,7 +109,14 @@ fn detail_pinch_and_ctrl_wheel_keep_voltage_anchor_without_source_mutations() {
     let (scale,delay)=ui.view();
     ui.handle(Ev::Wheel{x,y,steps:1,ctrl:false,shift:false,alt:false});
     assert_eq!(ui.view().0,scale);assert!(ui.view().1<delay);
-    let v=ui.zoom_divs_at(area,fy);ui.handle(Ev::Wheel{x,y,steps:1,ctrl:true,shift:false,alt:false});
+    let v=ui.zoom_divs_at(area,fy);
+    let fx=(x-area.x) as f64/area.w as f64;
+    let before=ui.view();let anchor=before.1 as f64+(fx-0.5)*HDIV as f64*before.0 as f64;
+    let vertical=(ui.zoom_vfactor,ui.zoom_vcenter);
+    ui.handle(Ev::Wheel{x,y,steps:1,ctrl:true,shift:false,alt:false});
+    let after=ui.view();let held=after.1 as f64+(fx-0.5)*HDIV as f64*after.0 as f64;
+    assert!(after.0<before.0 && (held-anchor).abs()<before.0 as f64*1e-5);
+    assert_eq!((ui.zoom_vfactor,ui.zoom_vcenter),vertical);
     assert!((ui.zoom_divs_at(area,fy)-v).abs()<1e-5);
     // Spread actual fingers in the same detail lane: both axes are display magnification.
     let (x0,y0)=(area.x+200,area.y+area.h/3);
@@ -209,7 +216,7 @@ fn ac_source_has_no_absolute_trigger_marker_and_dc_drag_draws_thin_guide() {
 }
 
 #[test]
-fn desktop_modifier_events_pan_without_zoom_and_control_scale_the_pointed_reference() {
+fn desktop_modifier_events_pan_and_control_zoom_time_without_vertical_changes() {
     let mut ui=mixed();stacked(&mut ui);
     let area=ui.source_area(WaveId::Ref(0)).unwrap();let (x,y)=(area.x+area.w/2,area.y+area.h/2);
     let source=ui.refs[0].as_ref().unwrap();let original=(source.vpd,source.offset,source.v.as_ptr());
@@ -219,13 +226,13 @@ fn desktop_modifier_events_pan_without_zoom_and_control_scale_the_pointed_refere
     let source=ui.refs[0].as_ref().unwrap();assert_eq!((source.vpd,source.offset,source.v.as_ptr()),original);
     assert_eq!(ui.m.ch,ch);assert_eq!(ui.m.trigger(),trigger);
     ui.handle(Ev::Wheel{x,y,steps:1,ctrl:true,shift:false,alt:false});
-    assert!(ui.refs[0].as_ref().unwrap().vpd<original.0);assert_eq!(ui.ref_sel,0);
+    assert!(ui.m.tscale<scale);assert_eq!(ui.refs[0].as_ref().unwrap().vpd,original.0);assert_eq!(ui.ref_sel,0);
     assert_eq!(ui.refs[0].as_ref().unwrap().offset,original.1);assert_eq!(ui.m.ch,ch);
     assert_eq!(ui.m.trigger(),trigger);assert_eq!((ui.m.run,ui.records,ui.replay.captures),(RunState::Stop,0,0));
     ui.set_zoom(true);stacked(&mut ui);let a=ui.source_area(WaveId::Ch(0)).unwrap();
     let before=ui.m.ch.clone();let factor=ui.zoom_vfactor;let zscale=ui.m.zscale;
     ui.handle(Ev::Wheel{x:a.x+a.w/2,y:a.y+a.h/2,steps:1,ctrl:true,shift:false,alt:false});
-    assert!(ui.zoom_vfactor>factor);assert_eq!(ui.m.ch,before);assert_eq!(ui.m.zscale,zscale);
+    assert_eq!(ui.zoom_vfactor,factor);assert_eq!(ui.m.ch,before);assert!(ui.m.zscale<zscale);
 }
 
 #[test]
@@ -319,4 +326,73 @@ fn former_eye_plot_target_is_plain_waveform_and_auto_eye_remains_in_the_menu() {
     assert!(ui.fonts.s.width("Bathtub (model)")<=120);
     ui.m.eye_rate=64e9;ui.azr.eye_auto.enabled=true;assert!(ui.eye_rate_caption().starts_with("Est."));
     ui.azr.eye_auto.enabled=false;assert!(!ui.eye_rate_caption().starts_with("Est."));
+}
+
+#[test]
+fn ctrl_wheel_anchors_main_detail_and_overview_for_reference_native_and_mixed_records() {
+    use std::sync::Arc;
+    for source in 0..3 { for stack in [false,true] { for surface in 0..3 {
+        let mut ui=mixed();
+        if source==0 { ui.set_offline(true); }
+        for (c,ch) in ui.m.ch.iter_mut().enumerate() { ch.on=source!=0 && c==0; }
+        let values:Vec<f32>=(0..20_000).map(|i|(i as f32*0.003).sin()*0.4).collect();
+        let native=Arc::new(crate::board::Frame { seq: 42, dt:5e-12,
+            ch:[values.clone(),Vec::new(),Vec::new(),Vec::new()],..Default::default() });
+        let mut record=Ui::blank_record();record.ch[0]=values[5000..6000].to_vec();
+        record.dt=5e-12;record.t0=-25e-9;
+        record.raw=Some(crate::wave::Raw { frame:Arc::clone(&native),i0:5000,i1:6000,t0:-25e-9,conditioned:true });
+        ui.last[0]=Some(record);
+        ui.refs[0]=if source==1 {None} else {Some(RefWave {src:0,color:1,label:"Native-equivalent reference".into(),
+            v:values.into(),dt:5e-12,t0:-50e-9,vpd:0.2,offset:0.1,on:true})};
+        let reference=ui.refs[0].as_ref().map(|r|Arc::clone(&r.v));
+        ui.m.tscale=tscales().iter().position(|&t|t==5e-9f32).unwrap();ui.m.tfine=1.0;ui.m.delay=0.0;
+        ui.records=11;ui.wfm_total=11;ui.replay.captures=7;ui.m.run=RunState::Stop;
+        ui.relayout();if surface!=0 {ui.set_zoom(true);}if stack {stacked(&mut ui);}
+        let selected=if source==1 {WaveId::Ch(0)} else {WaveId::Ref(0)};
+        let area=if surface==2 {Ui::split_zoom(ui.grid).0} else {ui.source_area(selected).unwrap()};
+        let (x,y)=(area.x+area.w/3,area.y+area.h/3);
+        let fraction=(x-area.x) as f64/area.w as f64;
+        let before=if surface==1 {ui.view()} else {(ui.m.time_per_div(),ui.m.delay)};
+        let anchor=before.1 as f64+(fraction-0.5)*HDIV as f64*before.0 as f64;
+        let channels=ui.m.ch.clone();let trigger=ui.m.trigger();
+        let vertical=(ui.zoom_vfactor,ui.zoom_vcenter);
+        let ref_settings=ui.refs[0].as_ref().map(|r|(r.vpd,r.offset,r.t0,r.dt));
+        let detail_before=(ui.m.zscale,ui.m.zdelay);
+        let main_before=(ui.m.tscale,ui.m.delay);
+        ui.handle(Ev::Wheel{x,y,steps:1,ctrl:true,shift:false,alt:false});
+        let after=if surface==1 {ui.view()} else {(ui.m.time_per_div(),ui.m.delay)};
+        let held=after.1 as f64+(fraction-0.5)*HDIV as f64*after.0 as f64;
+        assert!(after.0<before.0,"source{source} stack{stack} surface{surface}");
+        assert!((held-anchor).abs()<before.0 as f64*HDIV as f64*2e-7+1e-18,"anchor{anchor} held{held}");
+        if surface==1 {assert_eq!((ui.m.tscale,ui.m.delay),main_before);}
+        if surface==2 {assert_eq!((ui.m.zscale,ui.m.zdelay),detail_before);}
+        assert_eq!((ui.zoom_vfactor,ui.zoom_vcenter),vertical);
+        assert_eq!(ui.m.ch,channels);assert_eq!(ui.m.trigger(),trigger);
+        assert_eq!(ui.refs[0].as_ref().map(|r|(r.vpd,r.offset,r.t0,r.dt)),ref_settings);
+        ui.handle(Ev::Wheel{x,y,steps:-1,ctrl:true,shift:false,alt:false});
+        let restored=if surface==1 {ui.view()} else {(ui.m.time_per_div(),ui.m.delay)};
+        assert_eq!(restored.0,before.0);
+        assert!((restored.1-before.1).abs()<before.0*1e-5);
+        ui.handle(Ev::Wheel{x,y,steps:2,ctrl:false,shift:false,alt:false});
+        let panned=if surface==1 {ui.view()} else {(ui.m.time_per_div(),ui.m.delay)};
+        assert_eq!(panned.0,restored.0);assert!(panned.1<restored.1);
+        ui.step(0.0);
+        assert!(Arc::ptr_eq(&native,&ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame));
+        assert_eq!(native.seq,42);assert_eq!(native.ch[0][5050],(5050f32*0.003).sin()*0.4);
+        if let Some(owner)=reference {assert!(Arc::ptr_eq(&owner,&ui.refs[0].as_ref().unwrap().v));}
+        assert_eq!((ui.m.run,ui.records,ui.wfm_total,ui.replay.captures),(RunState::Stop,11,11,7));
+    }}}
+}
+
+#[test]
+fn shift_wheel_and_vertical_controls_remain_vertical_while_ctrl_takes_time_zoom() {
+    let mut ui=mixed();ui.set_zoom(true);let area=ui.wave_area();
+    let (x,y)=(area.x+area.w/3,area.y+area.h/3);
+    let time=ui.view();let factor=ui.zoom_vfactor;
+    ui.handle(Ev::Wheel{x,y,steps:1,ctrl:false,shift:true,alt:false});
+    assert_eq!(ui.view(),time);assert!(ui.zoom_vfactor>factor);
+    let vertical=(ui.zoom_vfactor,ui.zoom_vcenter);let time=ui.view();
+    ui.handle(Ev::Wheel{x,y,steps:1,ctrl:true,shift:true,alt:false});
+    assert!(ui.view().0<time.0);assert_eq!((ui.zoom_vfactor,ui.zoom_vcenter),vertical);
+    let time=ui.view();control(&mut ui,"V+");assert_eq!(ui.view(),time);assert!(ui.zoom_vfactor>vertical.0);
 }

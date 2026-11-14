@@ -8,7 +8,7 @@
 //!
 //!   wheel          horizontal pan; menu selection         Enter        Multi 1 push
 //!   Shift+wheel    V scale                                  Up / Down    V position
-//!   Ctrl+wheel     V scale / zoom-detail V magnification    Left / Right H position
+//!   Ctrl+wheel     time-scale zoom around the pointer       Left / Right H position
 //!   Alt+wheel      trigger level                            PgUp / PgDn  trigger level
 //!   Space  Run/Stop     S  Single     A  Auto     C  Clear     M  Measure    U  Cursor
 //!   1-4    CH1-CH4      F  Math       R  Ref      L  LA        G  Generator  T  Trigger menu
@@ -157,6 +157,7 @@ pub fn run(mut ui: Ui, args: &[String]) {
     let mut loader = picker::Loader::new();
     let mut last = Instant::now();
     let mut wheel = 0.0f32;
+    let mut wheel_modifiers = (false, false, false);
     let mut pointer = PointerState::default();
     let mut was_down = false;
     let mut was_right = false;
@@ -186,6 +187,18 @@ pub fn run(mut ui: Ui, args: &[String]) {
                     let point = geometry.pointer(size, x as f32, y as f32);
                     pointer.apply(&mut ui, phase, point, false, &controls);
                 }
+                input::Event::Wheel { x, y, size, delta, ctrl, shift, alt } => {
+                    let modifiers = (ctrl, shift, alt);
+                    if modifiers != wheel_modifiers { wheel = 0.0; wheel_modifiers = modifiers; }
+                    wheel += delta as f32 / 120.0;
+                    let steps = wheel.trunc() as i32;
+                    wheel -= steps as f32;
+                    if steps != 0 {
+                        if let Some((x, y)) = geometry.pointer(size, x as f32, y as f32) {
+                            ui.handle(Ev::Wheel { x, y, steps, ctrl, shift, alt });
+                        }
+                    }
+                }
                 input::Event::Key { key, ctrl, repeat } => {
                     if key == Key::O && ctrl && !repeat { ui.request_waveform(); }
                     else if key == Key::F6 && !repeat { ui.desktop_panel = Some(!ui.desktop_panel.unwrap_or(false)); }
@@ -205,17 +218,20 @@ pub fn run(mut ui: Ui, args: &[String]) {
                 }
             }
         }
-        // The same modifier event path is exercised by backend input tests.
-        if let Some((_, dy)) = win.get_scroll_wheel() {
-            wheel += dy / NOTCH;
-        }
-        let steps = wheel.trunc() as i32;
-        if steps != 0 {
-            wheel -= steps as f32;
+        // Native Windows messages retain the event position and modifiers. Poll
+        // only when subclass installation failed, so one notch is never applied twice.
+        if !input.mouse_captured() {
             let shift = win.is_key_down(Key::LeftShift) || win.is_key_down(Key::RightShift);
             let ctrl = win.is_key_down(Key::LeftCtrl) || win.is_key_down(Key::RightCtrl);
             let alt = win.is_key_down(Key::LeftAlt) || win.is_key_down(Key::RightAlt);
-            if let Some((x, y)) = at { ui.handle(Ev::Wheel { x, y, steps, ctrl, shift, alt }); }
+            let modifiers = (ctrl, shift, alt);
+            if modifiers != wheel_modifiers { wheel = 0.0; wheel_modifiers = modifiers; }
+            if let Some((_, dy)) = win.get_scroll_wheel() { wheel += dy / NOTCH; }
+            let steps = wheel.trunc() as i32;
+            if steps != 0 {
+                wheel -= steps as f32;
+                if let Some((x, y)) = at { ui.handle(Ev::Wheel { x, y, steps, ctrl, shift, alt }); }
+            }
         }
         services.poll(&mut ui, &cv);
         if let Some((slot, result)) = loader.poll(ui.waveform_epoch()) {

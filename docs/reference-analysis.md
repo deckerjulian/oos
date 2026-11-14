@@ -75,10 +75,12 @@ Tap the corner magnifier to open/close the overview/detail view. The overview
 retains the main timebase and overlaid sources; detail may use Overlay or Stacked.
 Move/resize the overview selection to position the detail window. Detail dragging
 moves waveform content naturally. Plain mouse wheel pans horizontally. Ctrl plus
-wheel adjusts vertical display magnification in zoom detail, or the selected
-source's vertical scale outside zoom. H controls/box/pinch provide horizontal
-zoom without overloading plain scrolling. Main/overview gestures affect the main
-timebase.
+wheel zooms the horizontal time scale around the pointer: over detail it changes
+the detail scale; over the main plot or overview it changes the main timebase.
+Scrolling up zooms in and scrolling down zooms out. Source vertical settings and
+detail vertical magnification stay unchanged. Shift plus wheel, V controls and
+vertical knobs remain available for vertical adjustments. H controls, box and
+pinch also provide horizontal zoom.
 
 The compact zoom row provides H-/H+, V-/V+, Box, Reset and Close. V controls are
 display magnification and preserve physical source settings. Box remains selected
