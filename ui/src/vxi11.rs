@@ -106,11 +106,12 @@ pub fn portmap(c: &Call) -> Vec<u8> {
 #[derive(Default)]
 pub struct Link {
     pub out: Vec<u8>,
+    programs: std::collections::VecDeque<crate::scpi::Program>,
 }
 
 /// Core channel procedures; `exec` runs one program message (may contain several ';'-separated commands) and
 /// returns the response bytes (without the newline).
-pub fn core(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&str) -> Vec<u8>) -> Vec<u8> {
+pub fn core_async(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) -> Vec<u8> {
     if c.prog != CORE_PROG || c.vers != 1 {
         return reply(c.xid, 1);
     }
@@ -148,17 +149,12 @@ pub fn core(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&str) 
             let data = x.opaque().unwrap_or(&[]);
             match links.get_mut(lid).and_then(|l| l.as_mut()) {
                 Some(l) => {
-                    let text = String::from_utf8_lossy(data);
-                    for line in text.split(['\n', '\r']).filter(|s| !s.trim().is_empty()) {
-                        if l.out.len() >= crate::scpi::RESP_MAX {
-                            break;
-                        }
-                        let r = exec(line.trim());
-                        if !r.is_empty() {
-                            l.out.extend_from_slice(&r);
-                            l.out.push(b'\n');
-                        }
+                    let queued: usize = l.programs.iter().map(|program| program.bytes).sum();
+                    if queued + data.len() > MAX_RECORD || l.programs.len() >= 16 {
+                        put(&mut o, 9); put(&mut o, 0); return o;
                     }
+                    l.programs.push_back(crate::scpi::Program::new(&String::from_utf8_lossy(data)));
+                    pump_link(l, exec);
                     put(&mut o, 0);
                     put(&mut o, data.len() as u32);
                 }
@@ -202,7 +198,7 @@ pub fn core(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&str) 
             if c.proc_ == 15 {
                 let lid = x.u32().unwrap_or(u32::MAX) as usize;
                 if let Some(Some(l)) = links.get_mut(lid) {
-                    l.out.clear();
+                    l.out.clear(); l.programs.clear();
                 }
             }
             put(&mut o, 0);
@@ -220,6 +216,19 @@ pub fn core(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&str) 
     o
 }
 
+fn pump_link(link: &mut Link, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
+    while let Some(mut program) = link.programs.pop_front() {
+        if link.out.len() >= crate::scpi::RESP_MAX { link.programs.clear(); break; }
+        let Some(response) = exec(&mut program) else { link.programs.push_front(program); break; };
+        if program.has_reply { link.out.extend_from_slice(&response); link.out.push(b'\n'); }
+    }
+}
+
+#[cfg(test)]
+pub fn core(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&str) -> Vec<u8>) -> Vec<u8> {
+    core_async(c, links, &mut |program| Some(program.immediate(exec)))
+}
+
 const MAX_CONNS: usize = 8;
 const MAX_LINKS: usize = 16;
 
@@ -227,6 +236,7 @@ struct Conn {
     s: TcpStream,
     buf: Vec<u8>,
     core: bool,
+    links: Vec<usize>,
 }
 
 /// The listeners: portmapper TCP/UDP 111, core TCP `CORE_PORT`.
@@ -257,7 +267,8 @@ impl Server {
         s
     }
 
-    pub fn poll(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) {
+    pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
+
         if let Some(u) = &self.pm_udp {
             let mut b = [0u8; 1500];
             while let Ok((n, from)) = u.recv_from(&mut b) {
@@ -273,7 +284,7 @@ impl Server {
                     let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                     let _ = s.set_nodelay(true);
                     if self.conns.len() < MAX_CONNS {
-                        self.conns.push(Conn { s, buf: Vec::new(), core });
+                        self.conns.push(Conn { s, buf: Vec::new(), core, links: Vec::new() });
                     }
                 }
             }
@@ -282,13 +293,18 @@ impl Server {
         while i < self.conns.len() {
             let mut closed = false;
             let mut tmp = [0u8; 8192];
+            let mut read_bytes = 0;
             loop {
                 match self.conns[i].s.read(&mut tmp) {
                     Ok(0) => {
                         closed = true;
                         break;
                     }
-                    Ok(n) => self.conns[i].buf.extend_from_slice(&tmp[..n]),
+                    Ok(n) => {
+                        if self.conns[i].buf.len() + n > MAX_RECORD { closed = true; break; }
+                        self.conns[i].buf.extend_from_slice(&tmp[..n]); read_bytes += n;
+                        if read_bytes >= 65536 { break; }
+                    },
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => break,
                     Err(_) => {
                         closed = true;
@@ -297,9 +313,20 @@ impl Server {
                 }
             }
             // RPC record marking: 4-byte header (bit31 = last fragment, length), fragments joined
-            while let Some(msg) = take_record(&mut self.conns[i].buf) {
+            while !closed {
+                let Some(msg) = take_record(&mut self.conns[i].buf) else { break; };
                 let r = match parse_call(&msg) {
-                    Some(c) if self.conns[i].core => core(&c, &mut self.links, exec),
+                    Some(c) if self.conns[i].core => {
+                        let response = core_async(&c, &mut self.links, exec);
+                        if c.proc_ == 10 && response.get(24..28) == Some(&0u32.to_be_bytes()) {
+                            if let Some(id) = response.get(28..32) {
+                                let id = u32::from_be_bytes(id.try_into().unwrap()) as usize;
+                                for connection in &mut self.conns { connection.links.retain(|old| *old != id); }
+                                self.conns[i].links.push(id);
+                            }
+                        }
+                        response
+                    },
                     Some(c) => portmap(&c),
                     None => continue,
                 };
@@ -310,10 +337,14 @@ impl Server {
                     break;
                 }
             }
+            if !closed {
+                for &id in &self.conns[i].links { if let Some(Some(link)) = self.links.get_mut(id) { pump_link(link, exec); } }
+            }
             // what is left is one unfinished record: nothing beyond the announced maxRecvSize
             closed |= self.conns[i].buf.len() > MAX_RECORD;
             if closed {
-                self.conns.remove(i);
+                let connection = self.conns.remove(i);
+                for id in connection.links { if let Some(link) = self.links.get_mut(id) { *link = None; } }
                 // a client that left without destroy_link: nobody can read what its link holds
                 if !self.conns.iter().any(|c| c.core) {
                     self.links.clear();
@@ -354,6 +385,42 @@ mod tests {
         }
         m.extend_from_slice(args);
         m
+    }
+
+    #[test]
+    fn empty_query_has_a_readable_end_marker_and_cancelled_fence_has_no_reply() {
+        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut links = vec![Some(Link::default())];
+        let link = links[0].as_mut().unwrap();
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:CLEAR;:MEAS:STRIP?"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert_eq!(link.out, b"\n");
+        let mut args = Vec::new();
+        for value in [0, 1024, 1000, 0, 0, 0] { put(&mut args, value); }
+        let request = call(77, CORE_PROG, 12, &args);
+        let reply = core_async(&parse_call(&request).unwrap(), &mut links,
+            &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        let mut body = Xdr::new(&reply[24..]);
+        assert_eq!((body.u32(), body.u32()), (Some(0), Some(4)));
+        assert_eq!(body.opaque(), Some(&b"\n"[..]), "empty query succeeds instead of an immediate read timeout");
+        let link = links[0].as_mut().unwrap();
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:CLEAR"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(link.out.is_empty());
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:STRIP?;*OPC?"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert_eq!(std::mem::take(&mut link.out), b";1\n");
+        link.programs.push_back(crate::scpi::Program::new(":MEAS:STRIP?;:TRIG:EDGE:LEV 10;:SINGLE;*OPC?;:RUN"));
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(link.out.is_empty());
+        assert_eq!(link.programs.len(), 1);
+        scpi.exec_line(&mut ui, &cv, ":STOP");
+        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert!(link.out.is_empty());
+        assert!(link.programs.is_empty());
+        assert_eq!(ui.m.run, crate::model::RunState::Stop);
     }
 
     #[test]

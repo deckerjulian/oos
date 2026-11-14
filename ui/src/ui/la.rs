@@ -792,8 +792,8 @@ mod decode_tests {
         // demo signals: no probe to ask for
         assert!(ui.la_probe_ok());
         ui.la_probe_set(Some(false));
-        let r = ui.aux_cards().0.unwrap();
-        ui.tap(r.x + 10, r.y + 10);
+        ui.tap(80, BOTTOM.y + 15);
+        ui.tap(110, BOTTOM.y - 49); // Sources > Logic analyser.
         assert!(!ui.m.la.on && !ui.menu_open);
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("No LA probe")));
         ui.key(key::LA);

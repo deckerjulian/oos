@@ -13,7 +13,7 @@ SD card (stock layout, boot.md)
  └─ rigol      stock data incl. /rigol/data/cal_*.hex; OOS mounts it read only (oos-mount-stock)
 
 initramfs /etc/rcS:  oos-oneshot (KRNL back, next power-on = stock) + start count -> oos-board early (FPGA BOOT command) ->
-                     network in the background -> telnetd -> oos-board drivers (touch edt-ft5x06, beeper pwm-gpio) ->
+                     network in the background -> provisioned key-only SSH -> oos-board drivers (touch edt-ft5x06, beeper pwm-gpio) ->
                      oos-ui (start-up screen) -> in the background oos-mount-stock (read only) +
                      oos-board bring-up (oos-fpgad cold-boot --execute --power-on) (order and status: boot.md)
 FPGA:                cold boot by OOS (default); the warm hand-over from the stock system still works

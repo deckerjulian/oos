@@ -24,8 +24,8 @@ impl Services {
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         self.scpi.poll(ui, cv);
-        self.vxi.poll(&mut |command| self.scpi.exec_line(ui, cv, command));
-        self.hislip.poll(&mut |command| self.scpi.exec_line(ui, cv, command));
+        self.vxi.poll_async(&mut |program| self.scpi.poll_program(ui, cv, program));
+        self.hislip.poll_async(&mut |program| self.scpi.poll_program(ui, cv, program));
         for command in self.web.poll(ui, cv, &mut self.scpi) {
             cmd::run(ui, &command);
         }

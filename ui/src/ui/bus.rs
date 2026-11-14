@@ -16,6 +16,40 @@ use oos_dsp::decode::{i2c_at, Kind as DecKind, Packet};
 /// The bus trace. Kept off the channel palette so the line stays its own colour.
 const BUS: Rgb = rgb(0xc4, 0x8a, 0x2a);
 
+/// One cached display window and at most one in-flight decode. Exact full-record
+/// decode/trigger results use reference_decode, independently of this plot limit.
+#[derive(Default)]
+pub(super) struct Cache {
+    key: Option<String>,
+    packets: Vec<Packet>,
+    worker: Option<Worker>,
+    scans: usize,
+}
+struct Job { key: String, data: Vec<f32>, clk: Vec<f32>, t0: f64, dt: f64, thresholds: [f32;4] }
+impl Job {
+    fn run(&self) -> Vec<Packet> {
+        let [data, dh, clk, ch] = self.thresholds;
+        i2c_at(&self.data,&self.clk,data,dh,clk,ch).into_iter().map(|mut packet| {
+            packet.t0=self.t0+packet.t0*self.dt;packet.t1=self.t0+packet.t1*self.dt;packet
+        }).collect()
+    }
+}
+struct Worker {
+    tx: std::sync::mpsc::SyncSender<Job>,
+    rx: std::sync::mpsc::Receiver<(String,Vec<Packet>)>,
+    busy: bool,
+}
+impl Worker {
+    fn open() -> Self {
+        let (tx,input)=std::sync::mpsc::sync_channel::<Job>(1);
+        let (output,rx)=std::sync::mpsc::channel();
+        std::thread::Builder::new().name("trace-bus".into()).spawn(move || {
+            while let Ok(job)=input.recv() { let packets=job.run();if output.send((job.key,packets)).is_err(){break;} }
+        }).expect("start trace bus worker");
+        Self{tx,rx,busy:false}
+    }
+}
+
 struct Src<'a> {
     t0: f64,
     dt: f64,
@@ -227,6 +261,9 @@ impl Ui {
             }
             x_prev = x1;
         }
+        if self.trace_bus.borrow().worker.as_ref().is_some_and(|worker|worker.busy) {
+            cv.text(&f.s,left+4,(y-12).max(a.y+12),"Computing",TEXT);
+        }
         if self.touch.drag == super::Drag::Bus {
             cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, BUS);
             let s = format!("{:.1} div", self.m.bus.pos);
@@ -297,13 +334,13 @@ impl Ui {
                     return None;
                 }
                 let rec = self.last[0].as_ref()?;
-                let v = &rec.ch[c];
-                if v.len() < 2 || !(rec.dt > 0.0) {
-                    return None;
-                }
+                let (v, dt, t0) = if let Some(raw) = rec.raw.as_ref().filter(|raw| !raw.frame.envelope && raw.frame.ch[c].len() >= 2) {
+                    (&raw.frame.ch[c][..], raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt)
+                } else { (&rec.ch[c][..], rec.dt, rec.t0) };
+                if v.len() < 2 || !dt.is_finite() || dt <= 0.0 { return None; }
                 Some(Src {
-                    t0: rec.t0,
-                    dt: rec.dt,
+                    t0: self.source_time_origin(id, t0),
+                    dt,
                     v,
                     thr,
                     hyst: (0.1 * self.m.ch[c].volts_per_div()).max(1e-6),
@@ -315,7 +352,7 @@ impl Ui {
                     return None;
                 }
                 Some(Src {
-                    t0: r.t0,
+                    t0: self.source_time_origin(id, r.t0),
                     dt: r.dt,
                     v: &r.v,
                     thr,
@@ -335,35 +372,31 @@ impl Ui {
     }
 
     fn bus_packets(&self) -> Vec<Packet> {
-        if !self.m.bus.on || self.m.bus.kind != BusKind::I2c {
-            return Vec::new();
-        }
-        let (lo, hi) = self.bus_span();
-        let data = self.bus_src(self.m.bus.data, self.m.bus.data_thr);
-        let clk = self.bus_src(self.m.bus.clk, self.m.bus.clk_thr);
-        let (Some(data), Some(clk)) = (data, clk) else {
-            return Vec::new();
-        };
-        let Some(sd) = cut(data.t0, data.dt, data.v, lo, hi) else {
-            return Vec::new();
-        };
-        let Some(sc) = cut(clk.t0, clk.dt, clk.v, lo, hi) else {
-            return Vec::new();
-        };
-        let Some((sda, scl, t0, dt)) = align(sd, sc) else {
-            return Vec::new();
-        };
-        if !(dt > 0.0) {
-            return Vec::new();
-        }
-        i2c_at(&sda, &scl, data.thr, data.hyst, clk.thr, clk.hyst)
-            .into_iter()
-            .map(|mut p| {
-                p.t0 = t0 + p.t0 * dt;
-                p.t1 = t0 + p.t1 * dt;
-                p
-            })
-            .collect()
+        if !self.m.bus.on || self.m.bus.kind != BusKind::I2c { return Vec::new(); }
+        let (lo,hi)=self.bus_span();
+        let (Some(data),Some(clk))=(self.bus_src(self.m.bus.data,self.m.bus.data_thr),self.bus_src(self.m.bus.clk,self.m.bus.clk_thr)) else {return Vec::new();};
+        let acquisition = if matches!(self.m.bus.clk,WaveId::Ch(_)) || matches!(self.m.bus.data,WaveId::Ch(_)) { self.wfm_total } else {0};
+        let key=format!("{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}",(self.m.bus.clk,self.m.bus.data,self.m.bus.clk_thr.to_bits(),self.m.bus.data_thr.to_bits()),
+            (data.v.as_ptr() as usize,data.v.len(),data.t0.to_bits(),data.dt.to_bits()),
+            (clk.v.as_ptr() as usize,clk.v.len(),clk.t0.to_bits(),clk.dt.to_bits()),
+            (lo.to_bits(),hi.to_bits()),(data.hyst.to_bits(),clk.hyst.to_bits()),self.workflow_epoch,acquisition,self.replay.sim_revision);
+        let mut cache=self.trace_bus.borrow_mut();
+        let answer=cache.worker.as_mut().and_then(|w|w.rx.try_recv().ok().map(|answer|{w.busy=false;answer}));
+        if let Some((finished,packets))=answer { if finished==key {cache.key=Some(finished);cache.packets=packets;} }
+        if cache.key.as_ref()==Some(&key) {return cache.packets.clone();}
+        if cache.worker.as_ref().is_some_and(|worker|worker.busy) {return Vec::new();}
+        let (Some(sd),Some(sc))=(cut(data.t0,data.dt,data.v,lo,hi),cut(clk.t0,clk.dt,clk.v,lo,hi)) else{return Vec::new();};
+        let background=sd.2.len().max(sc.2.len())>262_144;
+        // Alignment is display-bounded to2M points. It does not replace the exact
+        // native interval used by the decoder table, Search or software trigger.
+        let Some((sda,scl,t0,dt))=align(sd,sc) else{return Vec::new();};
+        let job=Job{key:key.clone(),data:sda,clk:scl,t0,dt,thresholds:[data.thr,data.hyst,clk.thr,clk.hyst]};
+        cache.scans+=1;
+        if background {
+            let worker=cache.worker.get_or_insert_with(Worker::open);
+            if worker.tx.try_send(job).is_ok(){worker.busy=true;}
+            Vec::new()
+        } else {let packets=job.run();cache.key=Some(key);cache.packets=packets.clone();packets}
     }
 
     /// Hex words the plot draws for the bus, in time order.
@@ -422,7 +455,8 @@ fn align(a: (f64, f64, &[f32]), b: (f64, f64, &[f32])) -> Option<(Vec<f32>, Vec<
     if av.len() < 2 || bv.len() < 2 || !(adt > 0.0) || !(bdt > 0.0) {
         return None;
     }
-    let same =
+    const MAX_N: usize = 2_000_000;
+    let same = av.len() <= MAX_N &&
         (at0 - bt0).abs() <= adt * 1e-6 && (adt - bdt).abs() <= adt * 1e-6 && av.len() == bv.len();
     if same {
         return Some((av.to_vec(), bv.to_vec(), at0, adt));
@@ -434,7 +468,6 @@ fn align(a: (f64, f64, &[f32]), b: (f64, f64, &[f32])) -> Option<(Vec<f32>, Vec<
     }
     let mut dt = adt.min(bdt);
     let mut n = ((t1 - t0) / dt).floor() as usize + 1;
-    const MAX_N: usize = 2_000_000;
     if n > MAX_N {
         n = MAX_N;
         dt = (t1 - t0) / (n.saturating_sub(1).max(1) as f64);
@@ -565,7 +598,7 @@ mod tests {
             label: String::new(),
             t0: 0.0,
             dt: dt * 2.0,
-            v: slow,
+            v: (slow).into(),
             vpd: 2.0,
             offset: 0.0,
             on: true,
@@ -579,6 +612,30 @@ mod tests {
         assert_eq!(u.bus_words(), ["50", "00", "12", "50", "AB", "CD"]);
         u.m.bus.data_thr = 4.0;
         assert!(u.bus_words().is_empty());
+    }
+
+    #[test]
+    fn retained_native_bus_uses_a_bounded_worker_and_reuses_the_same_view_result() {
+        let (scl,sda,dt)=xfer();let mut u=ui();
+        put_channels(&mut u,vec![3.3;3],vec![3.3;3],200e-6);
+        let expand=|v:Vec<f32>|v.into_iter().flat_map(|v|std::iter::repeat_n(v,256)).collect();
+        let mut ch:[Vec<f32>;NCH]=Default::default();ch[0]=expand(scl);ch[1]=expand(sda);
+        let frame=std::sync::Arc::new(crate::board::Frame{dt:dt/256.0,ch,..Default::default()});
+        u.last[0].as_mut().unwrap().raw=Some(crate::wave::Raw{frame:frame.clone(),i0:0,i1:frame.ch[0].len(),t0:0.001,conditioned:true});
+        u.m.delay=0.0013;
+        assert!(u.bus_packets().is_empty());assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy);
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
+        let packets=loop {let packets=u.bus_packets();if !packets.is_empty(){break packets;}
+            assert!(std::time::Instant::now()<deadline);std::thread::sleep(std::time::Duration::from_millis(1));};
+        assert!(packets.iter().all(|p|p.t0>=0.001));
+        assert_eq!(u.bus_words(),["50","00","12","50","AB","CD"]);
+        assert_eq!(u.trace_bus.borrow().scans,1);
+        u.m.bus.clk_thr=5.0;assert!(u.bus_words().is_empty(),"old-threshold words must not leak");
+        while u.trace_bus.borrow().worker.as_ref().unwrap().busy {
+            let _=u.bus_packets();assert!(std::time::Instant::now()<deadline);std::thread::yield_now();
+        }
+        assert!(u.bus_words().is_empty());assert_eq!(u.trace_bus.borrow().scans,2);
+        assert_eq!(frame.dt,dt/256.0);
     }
 
     #[test]

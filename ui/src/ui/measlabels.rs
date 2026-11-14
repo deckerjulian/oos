@@ -3,7 +3,7 @@
 //! Measure > Labels on trace: what a measurement measures, on the trace: level lines for levels, arrows for spans.
 
 use super::{si, Canvas, Rect, Ui, CH_COLORS, REF_COLORS};
-use crate::model::{WaveId, VDIV};
+use crate::model::WaveId;
 use crate::gfx::Rgb;
 use oos_dsp::measure::{Analysis, Meas};
 
@@ -24,7 +24,8 @@ pub(super) enum Mark {
 
 /// First index of `v` above `after`.
 fn next_after(v: &[f64], after: f64) -> Option<f64> {
-    v.iter().copied().find(|&t| t > after)
+    if after.is_nan() { return None; }
+    v.get(v.partition_point(|&time| time <= after)).copied()
 }
 
 /// The mark of measurement `k`, starting from the first time on the screen `t0`; `None` = nothing to draw for it.
@@ -115,9 +116,7 @@ impl Ui {
                 let Some(r) = self.refs.get(i).and_then(|r| r.as_ref()) else {
                     return a.y + a.h / 2;
                 };
-                let ppy = a.h as f32 / VDIV;
-                let cy = a.y as f32 + a.h as f32 / 2.0;
-                (cy - (v + r.offset) / r.vpd.max(1e-12) * ppy).round() as i32
+                self.zoom_y_of_divs(a, (v + r.offset) / r.vpd.max(1e-12)).round() as i32
             }
         }
     }
@@ -134,7 +133,7 @@ impl Ui {
             WaveId::Ch(c) => {
                 let rec = self.last[0].as_ref()?;
                 let v = rec.ch.get(c)?;
-                (!v.is_empty()).then_some((v.as_slice(), rec.t0, rec.dt))
+                (!v.is_empty()).then_some((v.as_slice(), self.source_time_origin(id, rec.t0), rec.dt))
             }
             WaveId::Ref(i) => {
                 let (v, t0, dt) = self.reference_slice(i)?;
@@ -165,10 +164,7 @@ impl Ui {
                 continue;
             }
             let Some((samp, wave_t0, dt)) = self.label_wave(id) else { continue };
-            let ana = match id {
-                WaveId::Ch(c) => &self.ana[c],
-                WaveId::Ref(i) => &self.ref_ana[i],
-            };
+            let Some((ana, analysis_t0)) = self.meas_number_analysis(id, k) else { continue };
             if !ana.valid {
                 continue;
             }
@@ -178,7 +174,7 @@ impl Ui {
             }
             let col = self.label_col(id);
             let text = format!("{} {}", k.name(), si(v, k.unit()));
-            let left = t_lo - wave_t0;
+            let left = t_lo - analysis_t0;
             match mark(k, &ana, left) {
                 Some(Mark::Level(l)) => {
                     let y = self.y_of_id(id, l as f32);
@@ -201,7 +197,7 @@ impl Ui {
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
-                    let (x0, x1) = (self.x_of_time((wave_t0 + t0) as f32), self.x_of_time((wave_t0 + t1) as f32));
+                    let (x0, x1) = (self.x_of_time((analysis_t0 + t0) as f32), self.x_of_time((analysis_t0 + t1) as f32));
                     if x1 <= x0 + 1 || x1 < a.x || x0 > a.x + a.w {
                         continue;
                     }

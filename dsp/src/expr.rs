@@ -45,6 +45,8 @@ pub struct Expr {
     ops: Vec<Op>,
     /// the channels it reads
     pub used: [bool; crate::CHANNELS],
+    /// Indices in the caller's source-name table. Legacy parsing uses CH1..CH4.
+    pub used_sources: Vec<usize>,
 }
 
 struct Parser<'a> {
@@ -52,6 +54,8 @@ struct Parser<'a> {
     at: usize,
     ops: Vec<Op>,
     used: [bool; crate::CHANNELS],
+    names: &'a [&'a str],
+    used_sources: Vec<usize>,
 }
 
 impl Parser<'_> {
@@ -153,9 +157,10 @@ impl Parser<'_> {
         match name.as_str() {
             "t" => self.ops.push(Op::T),
             "pi" => self.ops.push(Op::Num(std::f64::consts::PI)),
-            "ch1" | "ch2" | "ch3" | "ch4" => {
-                let k = (name.as_bytes()[2] - b'1') as usize;
-                self.used[k] = true;
+            _ if self.names.iter().any(|s| s.eq_ignore_ascii_case(&name)) => {
+                let k = self.names.iter().position(|s| s.eq_ignore_ascii_case(&name)).unwrap();
+                if k < crate::CHANNELS { self.used[k] = true; }
+                if !self.used_sources.contains(&k) { self.used_sources.push(k); }
                 self.ops.push(Op::Ch(k));
             }
             _ => return Err(format!("Unknown name {}", name)),
@@ -200,13 +205,18 @@ impl Parser<'_> {
 
 impl Expr {
     pub fn parse(text: &str) -> Result<Expr, String> {
+        Self::parse_sources(text, &["CH1", "CH2", "CH3", "CH4"])
+    }
+
+    /// Parse additional named waveforms without changing legacy channel indices.
+    pub fn parse_sources(text: &str, names: &[&str]) -> Result<Expr, String> {
         if text.trim().is_empty() {
             return Err("Empty formula".into());
         }
         if text.len() > EXPR_MAX {
             return Err("Formula too long".into());
         }
-        let mut p = Parser { s: text.as_bytes(), at: 0, ops: Vec::new(), used: [false; crate::CHANNELS] };
+        let mut p = Parser { s: text.as_bytes(), at: 0, ops: Vec::new(), used: [false; crate::CHANNELS], names, used_sources: Vec::new() };
         p.sum(0)?;
         if let Some(c) = p.peek() {
             return Err(format!("Unexpected {}", c as char));
@@ -224,11 +234,11 @@ impl Expr {
         if most > STACK {
             return Err("Formula too deep".into());
         }
-        Ok(Expr { ops: p.ops, used: p.used })
+        Ok(Expr { ops: p.ops, used: p.used, used_sources: p.used_sources })
     }
 
     /// One value for `ch` at sample `k`.
-    fn at(&self, ch: &[&[f32]; crate::CHANNELS], k: usize, t: f64) -> f64 {
+    fn at(&self, ch: &[&[f32]], k: usize, t: f64) -> f64 {
         let mut st = [0f64; STACK + 1];
         let mut n = 0;
         for op in &self.ops {
@@ -238,7 +248,7 @@ impl Expr {
                     n += 1;
                 }
                 Op::Ch(c) => {
-                    st[n] = ch[c].get(k).map_or(f64::NAN, |&v| v as f64);
+                    st[n] = ch.get(c).and_then(|s| s.get(k)).map_or(f64::NAN, |&v| v as f64);
                     n += 1;
                 }
                 Op::T => {
@@ -268,14 +278,28 @@ impl Expr {
     /// The waveform: as long as the shortest channel it reads, `fallback` samples when it reads none. Empty when a
     /// channel it reads has no data.
     pub fn eval(&self, ch: [&[f32]; crate::CHANNELS], t0: f64, dt: f64, fallback: usize) -> Vec<f32> {
-        let n = (0..crate::CHANNELS).filter(|&c| self.used[c]).map(|c| ch[c].len()).min().unwrap_or(fallback);
-        (0..n).map(|k| self.at(&ch, k, t0 + k as f64 * dt) as f32).collect()
+        self.eval_sources(&ch, t0, dt, fallback)
+    }
+
+    pub fn eval_sources(&self, sources: &[&[f32]], t0: f64, dt: f64, fallback: usize) -> Vec<f32> {
+        let n = self.used_sources.iter().map(|&s| sources.get(s).map_or(0, |v| v.len())).min().unwrap_or(fallback);
+        (0..n).map(|k| self.at(sources, k, t0 + k as f64 * dt) as f32).collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_reference_and_math_sources_keep_legacy_parser_behavior() {
+        let e = Expr::parse_sources("R1-M1+t", &["CH1", "CH2", "CH3", "CH4", "M1", "R1"]).unwrap();
+        let a = [1.0, 2.0];
+        let b = [4.0, 7.0];
+        assert_eq!(e.eval_sources(&[&[], &[], &[], &[], &a, &b], 1.0, 0.5, 0), vec![4.0, 6.5]);
+        assert!(Expr::parse("R1").is_err(), "legacy callers do not accept undeclared variables");
+        assert!(e.eval([&[], &[], &[], &[]], 0.0, 1.0, 1).is_empty());
+    }
 
     fn one(s: &str) -> f64 {
         Expr::parse(s).unwrap().eval([&[], &[], &[], &[]], 0.0, 1.0, 1)[0] as f64

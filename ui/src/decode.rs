@@ -14,3 +14,15 @@ pub const SENT_TICKS: [f64; 8] = [3e-6, 5e-6, 10e-6, 20e-6, 30e-6, 50e-6, 90e-6,
 /// USB speed settings (auto: from the idle state and the SYNC).
 pub const USB_SPEEDS: [oos_dsp::decode_ext3::UsbSpeed; 3] = [oos_dsp::decode_ext3::UsbSpeed::Auto, oos_dsp::decode_ext3::UsbSpeed::Low, oos_dsp::decode_ext3::UsbSpeed::Full];
 pub const BAUDS: [f64; 10] = [1200.0, 2400.0, 4800.0, 9600.0, 19200.0, 38400.0, 57600.0, 115200.0, 460800.0, 921600.0];
+
+pub const CPHY_RATES: [f64; 19] = [0.0, 0.5e9, 1e9, 1.5e9, 2e9, 2.25e9, 2.5e9, 3e9, 3.5e9,
+    4e9, 4.5e9, 6e9, 8e9, 10e9, 12e9, 16e9, 20e9, 25e9, 32e9];
+pub fn cphy_rate_label(rate: f64) -> String {
+    if rate == 0.0 { "Auto".into() } else { format!("{} Gsym/s", rate / 1e9) }
+}
+pub fn parse_cphy_rate(text: &str) -> Result<f64, String> {
+    if text.trim().eq_ignore_ascii_case("AUTO") { return Ok(0.0); }
+    let rate = text.trim().parse::<f64>().map_err(|_| "C-PHY symbol rate needs Hz or AUTO".to_string())?;
+    if !rate.is_finite() || !(0.0..=1e12).contains(&rate) { return Err("C-PHY symbol rate must be AUTO or 0..1e12 sym/s".into()); }
+    Ok(rate)
+}

@@ -83,8 +83,8 @@ Installing OOS means that you accept in particular the following risks:
   safety instructions and ratings. The open instrument contains a mains power supply with dangerous voltages. Disconnect
   the mains and all probes before you open it, and close it again before you connect mains. Only open it if you know
   how to do this safely.
-- **Network security.** OOS has no authentication: a root shell on telnet without a password, SCPI, VXI-11, HiSLIP, the web
-  remote, the LAN announcement and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
+- **Network security.** The root shell uses [provisioned key-only SSH](docs/ssh.md). SCPI, VXI-11, HiSLIP, the web
+  remote, the LAN announcement and MCP remain open to everyone who can reach the scope. The community signing key is public, so anyone on the
   network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network only,
   never directly to the internet.**
 - **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can
@@ -191,7 +191,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 
 | Interface | Port | Purpose |
 |---|---|---|
-| SCPI over TCP | 5555 | stock-style command subset, see [ui/src/scpi.rs](ui/src/scpi.rs); `:WAVeform:MODE RAW` reads every sample of the record in the screen window |
+| SCPI over TCP | 5555 | [SCPI manual](docs/scpi.md): DHO800/DHO900 subset and OOS extensions; RAW reads retained native CH memory, and references retain their own native timing |
 | VXI-11 | 111, 9009 | on the scope, where port 111 is free: `TCPIP::<ip>::INSTR` |
 | HiSLIP | 4880 | on a computer: the payload is the same SCPI interpreter; `TCPIP::<ip>::hislip0::INSTR` |
 | Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
@@ -263,8 +263,9 @@ On Windows, with Rust installed, build and open the desktop window from PowerShe
 .\build-windows.ps1 -Run
 ```
 
-The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop,
-and the mouse wheel changes the timebase. F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
+The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop.
+Plain mouse wheel pans horizontally, and Ctrl+wheel zooms the time scale around the pointer.
+F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
 with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
 
 For development, run the checkout and automatically restart after saving source changes:
@@ -287,8 +288,13 @@ With SSC enabled, the stored record covers a complete modulation cycle at eight 
 Long records generate in the background; cancel or return to Live to keep the previous session.
 Configurations exceeding the generation budget report an error without replacing the current waveform.
 The HSS down-spread profile removes its DC term; centered spread uses plus/minus the configured deviation.
-The Eye analyzes the full stored reference once per changed record or setting, including while the trace is
-zoomed. Ordinary trace measurements continue to follow the captured window.
+Choose **Auto Eye/Jitter** in the analysis menu/settings to analyze the selected live or reference
+source. Automatic setup recovers an NRZ clock/rate, chooses voltage thresholds from the signal and opens the eye
+with its TIE trend, histogram, spectrum and bathtub. The source/rate header keeps manual rate and explicit-clock
+settings accessible. Flat, insufficient or sparsely sampled data shows its limit; model estimates are labeled.
+The Eye analyzes a full stored reference once per changed record or setting, including while the trace is zoomed;
+large files show Computing without blocking navigation. Live captures accumulate; stopped panning does not add
+observations. Ordinary trace measurements use the selected Screen or Full record gate.
 
 The same advanced settings are available through OOS SCPI. Values use seconds, hertz and fractional
 deviation (0.005 means 0.5%). Configure them together, then start generation and poll `:SIM:BUSY?`:
@@ -535,7 +541,7 @@ The IP address comes from DHCP and is shown in the top bar. Without DHCP the sco
 By default OOS is **one-shot**: every start of OOS restores the stock boot, so the **next power-on starts the stock
 system**. This is the safe mode for a new installation.
 
-To start OOS once more, run this in a telnet session and power-cycle the scope:
+To start OOS once more, run this in an authenticated SSH session (or at the local console) and power-cycle the scope:
 
 ```sh
 oos-boot-oos-again
@@ -657,8 +663,9 @@ move the insertion point, a tap into the entry puts it there; typing and Delete 
 **Generator.** Tap the frequency in the generator window for a keypad with units; the limits apply by themselves. The - and
 + buttons step it. Changes inside one amplitude range take effect at once and keep the output running.
 
-**Analysers.** Menu > Analysers holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. They replace the
-waveform; the button with three dots at the top right of the plot leads to Exit, Settings and, for the eye, Clear eye.
+**Analysers.** Menu > Analysers holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. Eye/Jitter
+opens as a full analysis page with optional side or lower panes and has source/rate settings and Close in its pane header. Other analyser views
+use the button with three dots at the top right for Exit and Settings.
 
 **Panes.** Display > Pane puts a second view under the waveform: Spectrum with a peak list, Results with statistics, cursors
 and peaks, decoder Events, or Trend with two charts. Tap the pane's title for its settings, a trend chart to change its
@@ -721,7 +728,7 @@ again. Unless noted, the fixes below need the card in the reader, so you have to
 | The stock system starts instead of OOS | one-shot mode, or the loader refused the OOS image and used the fallback | `boot/switch.py show`, then select OOS again. If that repeats, rebuild the image. |
 | Stock logo stays, nothing else, on every start | the kernel hangs before OOS runs | `sudo python3 boot/switch.py stock /dev/rdiskM --execute`, then install a working image |
 | Black screen; USB device 2207:330c appears | the loader refused `recovery` and has no fallback | `switch.py stock`. If needed, `sudo python3 boot/card-install.py restore /dev/rdiskM --backup backups/recovery-<date>.bin --execute` |
-| Start-up screen stops at a step | a hardware step failed | Read the stage on the screen. Logs are at `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over telnet. |
+| Start-up screen stops at a step | a hardware step failed | Read the stage on the screen. Logs are at `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over SSH or the local console. |
 | A new build misbehaves | | System > Roll back update, or `oos-update rollback --execute` |
 | Nothing helps | | Write `sd-original.img` to the second card again (step 2) |
 

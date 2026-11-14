@@ -168,8 +168,8 @@ fn serve(mut ui: Ui, args: &[String]) {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
-        vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
-        hislip.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
+        hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             cmd::run(&mut ui, &c);
         }
@@ -364,8 +364,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
             }
         }
         scpi.poll(&mut ui, &cv);
-        vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
-        hislip.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
+        hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         ann.poll();
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             if let cmd::Out::Shot(p) = cmd::run(&mut ui, &c) {

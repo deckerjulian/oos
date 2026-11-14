@@ -84,9 +84,17 @@ impl Ui {
             (r.t0, r.dt, r.v.len())
         });
         if let Some((t0, dt, n)) = spec {
+            let t0 = self.source_time_origin(WaveId::Ref(slot), t0);
             self.apply_record_timebase(t0, dt, n);
+            self.m.zoom = n > 8192 && !self.zoom_user_closed;
+            if self.m.zoom {
+                let detail = dt * 8192.0 / HDIV as f64;
+                self.m.zscale = tscales().iter().rposition(|&t| t as f64 <= detail).unwrap_or(0);
+                self.m.zdelay = (t0 + 0.5 * dt * 8192.0) as f32;
+            }
         }
         self.m.eye_src = WaveId::Ref(slot);
+        self.select_workspace_source(WaveId::Ref(slot));
         self.ph.clear();
         self.phz.clear();
         // Install the stopped screen gate before touching other references.
@@ -136,11 +144,22 @@ impl Ui {
             let kind = if self.session_is_sim { "SIM" } else { "REF" };
             if let Some(r) = self.refs.get(self.active_reference()).and_then(|r| r.as_ref()).filter(|r| r.v.len() >= 2 && r.dt > 0.0) {
                 let sr = 1.0 / r.dt;
-                return (format!("{} \u{b7} {} \u{b7} {}", kind, si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
+                return (format!("{kind} \u{b7} {} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
             }
             return (format!("{kind} \u{b7} \u{2014}"), false);
         }
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| self.m.srate_depth());
+        let captured = self.last[0].as_ref().and_then(|r| {
+            if let Some(raw) = r.raw.as_ref() {
+                return Some((raw.frame.acq.0, raw.frame.acq.1 as u64));
+            }
+            if matches!(self.src, Source::Demo { .. }) {
+                let points = r.ch.iter().map(Vec::len).max().unwrap_or(0);
+                return (points > 0 && r.dt > 0.0).then_some((1.0 / r.dt, points as u64));
+            }
+            None
+        });
+        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64))
+            .or(captured).unwrap_or_else(|| self.m.srate_depth());
         (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), true)
     }
 
@@ -300,9 +319,12 @@ mod tests {
         let sine: Vec<f32> = (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
         write_csv(&dir, 1, 0.0, dt, &sine);
         live.activate(Item::RefImport);
-        assert!(live.m.ch[0].on && !live.offline, "import stays with the live channels");
+        assert!(live.m.ch[0].on && !live.offline, "a live import adds an overlay without taking over acquisition");
+        assert_eq!(live.m.tscale, scale, "import cannot silently change the ADC timebase");
+        assert!(live.cards().0.iter().any(|card| card.w > 0));
         assert!(live.refs[0].as_ref().unwrap().on);
-        let _ = scale;
+        live.set_look(reflook::RefLook::TakeOver);
+        assert!(live.m.ch.iter().all(|channel| !channel.on) && live.offline, "Take over explicitly enters a stored-waveform session");
 
         let mut play = ui();
         play.activate(Item::SimPlay);
@@ -340,7 +362,7 @@ mod tests {
         assert_eq!(u.run_caption().0, "STOP");
         assert_eq!(u.ref_card_lines().0, "R1");
         let loaded = u.refs[0].as_ref().unwrap();
-        assert_eq!(loaded.v, sine);
+        assert_eq!(loaded.v.as_ref(), &sine);
         assert!(u.m.time_per_div() > 0.0 && u.m.time_per_div() as f64 * HDIV as f64 <= n as f64 * dt * 1.01, "import fits a useful view of the record");
         let (sr, live_mode) = u.acq_caption();
         assert!(!live_mode);
@@ -363,15 +385,31 @@ mod tests {
     }
 
     #[test]
-    fn import_keeps_the_live_window_until_take_over() {
+    fn import_gates_existing_references_before_the_first_measurement() {
         let mut u = ui();
+        u.set_offline(true);
         u.refs[1] = Some(RefWave {
             src: 0, color: 1, label: "previous capture".into(), t0: 0.0, dt: 1e-9,
-            v: (0..20_000).map(|index| {
+            v: ((0..20_000).map(|index| {
                 let amplitude = if index < 1000 { 1.0 } else { 5.0 };
                 if index % 4 < 2 { -amplitude } else { amplitude }
-            }).collect(), vpd: 1.0, offset: 0.0, on: true,
+            }).collect::<Vec<_>>()).into(), vpd: 1.0, offset: 0.0, on: true,
         });
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..100 {
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, if index % 4 < 2 { -0.5 } else { 0.5 }));
+        }
+        u.load_waveform_bytes(csv.as_bytes(), "new record.csv").unwrap();
+        assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 1e-6,
+            "existing refs use the imported screen gate immediately, not their full record");
+        assert!(u.reference_slice(1).unwrap().0.len() < 1000);
+    }
+
+    #[test]
+    fn import_keeps_the_live_window_until_take_over() {
+        let mut u = ui();
+        u.refs[1] = Some(RefWave { src: 0, color: 1, label: "existing".into(), t0: 0.0, dt: 1e-9,
+            v: (vec![0.0, 1.0, 0.0]).into(), vpd: 0.2, offset: 0.0, on: true });
         let held = (u.m.tscale, u.m.tfine, u.m.delay);
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {
@@ -401,7 +439,7 @@ mod tests {
         assert!(u.m.ch[0].on && !u.offline && !u.session_is_sim);
         let note = u.live_ref_note();
         assert!(note.contains("R1") && note.contains("Sa/s"), "{note}");
-        u.fit_shown_reference();
+        assert!(u.fit_selected_record(), "Fit record is explicit and separate from ADC Autoset");
         assert!(u.m.ch[0].on && !u.offline);
         assert!(u.m.time_per_div() < live);
         u.session_is_sim = true;

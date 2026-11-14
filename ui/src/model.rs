@@ -11,6 +11,24 @@ use crate::math::{MathOp, Window};
 pub const NCH: usize = <Active as Board>::MAX_CHANNELS;
 /// Reference waveform slots, R1..R10. A slot is waveform memory, not a channel index.
 pub const NREF: usize = 10;
+/// Decoder namespace: CH0..3 and reserved legacy LA4..19 stay unchanged.
+/// LA decoding still uses dec_la_in/dec_la; stored roles append R1..R10.
+pub const DEC_REF_BASE: usize = NCH + 16;
+pub const DEC_SOURCE_COUNT: usize = DEC_REF_BASE + NREF;
+
+pub fn decode_wave(source: usize) -> Option<WaveId> {
+    if source < NCH { Some(WaveId::Ch(source)) }
+    else if (DEC_REF_BASE..DEC_SOURCE_COUNT).contains(&source) { Some(WaveId::Ref(source - DEC_REF_BASE)) }
+    else { None }
+}
+
+pub fn decode_source_name(source: usize) -> String {
+    match decode_wave(source) {
+        Some(WaveId::Ch(c)) => format!("CH{}", c + 1),
+        Some(WaveId::Ref(i)) => format!("R{}", i + 1),
+        None => "Unavailable".into(),
+    }
+}
 const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp take oos_dsp::CHANNELS channels");
 
 /// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`).
@@ -44,6 +62,15 @@ pub fn opt_ch_names(none: &str) -> Vec<String> {
 /// Whether source index `s` exists on this unit: channels 0..n_ch(), and every index from NCH on (math channels).
 pub fn src_ok(s: usize) -> bool {
     s < n_ch() || s >= NCH
+}
+
+/// Total selected single, pair and catalog rows, shared by UI and setup validation.
+pub const MEAS_SELECTION_MAX: usize = 1024;
+
+/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
+pub fn catalog_id_valid(id: u16) -> bool {
+    matches!(id, 15..=16 | 40..=51 | 60..=66 | 70..=76 | 80..=82 | 90..=93
+        | 100..=118 | 130..=137 | 150..=153 | 170..=186)
 }
 
 /// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
@@ -369,13 +396,15 @@ pub enum Proto {
     Usb,
     Manchester,
     Mlt3,
+    /// MIPI C-PHY: A/B/C electrical states and synchronized 16-bit words.
+    Cphy,
 }
 
-pub const PROTOS: [Proto; 27] = [
+pub const PROTOS: [Proto; 28] = [
     Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
     Proto::FlexRay, Proto::Dmx512, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
     Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Spdif, Proto::UsbPd, Proto::Arinc429, Proto::Sent, Proto::Usb,
-    Proto::Manchester, Proto::Mlt3,
+    Proto::Manchester, Proto::Mlt3, Proto::Cphy,
 ];
 
 impl Proto {
@@ -408,11 +437,13 @@ impl Proto {
             Proto::Usb => "USB",
             Proto::Manchester => "Manchester",
             Proto::Mlt3 => "MLT-3",
+            Proto::Cphy => "C-PHY",
         }
     }
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
         match self {
+            Proto::Cphy => [Some("A"), Some("B"), Some("C"), None],
             Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some("SDA"), Some("SCL"), None, None],
             Proto::Spi => [Some("MOSI"), Some("Clock"), Some("CS"), None],
             Proto::I2s => [Some("SD"), Some("SCK"), Some("WS"), None],
@@ -695,6 +726,7 @@ pub struct DecCfg {
     pub tick: usize,
     pub nibbles: u32,
     pub uspeed: usize,
+    pub cphy_rate: f64,
     pub src4: Option<usize>,
     pub la_in: bool,
     pub la: [Option<u8>; 4],
@@ -845,10 +877,18 @@ pub fn bus_label(s: &str) -> String {
 #[derive(Clone, PartialEq, Debug)]
 pub struct Model {
     pub ch: [Channel; NCH],
+    /// Post-capture time correction in seconds, subtracted from native source time.
+    /// Independent of the hardware channel's sampling deskew; samples are never rewritten.
+    pub deskew_ch: [f64; NCH],
+    pub deskew_ref: [f64; NREF],
     pub active: usize, // channel the vertical knobs act on
+    /// Track cursor B's source. None follows the selected workspace source.
+    pub cur_b_source: Option<WaveId>,
     pub tscale: usize,
     pub delay: f32, // s, horizontal position of the trigger point relative to the centre
     pub trig_src: usize,
+    /// Stored reference trigger source; None selects the physical trig_src channel.
+    pub trig_ref: Option<usize>,
     /// edge and pulse trigger on a logic analyser line instead of `trig_src` (`trig_line`)
     pub trig_la: Option<u8>,
     /// pattern trigger: D0..D15 (H / L / X), with the LA on
@@ -865,6 +905,8 @@ pub struct Model {
     pub trig_nrej: bool,
     /// second source: B (delay), clock (setup/hold)
     pub trig_src2: usize,
+    /// Stored reference for delay B / setup-hold clock.
+    pub trig_ref2: Option<usize>,
     pub trig_slope2: Slope,
     pub trig_pol: Pol,
     pub trig_when: WhenKind,
@@ -904,6 +946,8 @@ pub struct Model {
     pub meas: Vec<(Meas, WaveId)>,
     /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
     pub meas2: Vec<(usize, WaveId, WaveId)>,
+    /// Catalog results that are not a `Meas` row: id, source A, source B, third source, fourth source.
+    pub cat: Vec<(u16, WaveId, WaveId, WaveId, WaveId)>,
     pub dvm_on: bool,
     pub dvm_src: usize,
     pub dvm_mode: usize,
@@ -979,6 +1023,8 @@ pub struct Model {
     pub dec_nibbles: u32,
     /// USB speed (index into decode::USB_SPEEDS, 0 = auto)
     pub dec_uspeed: usize,
+    /// Known C-PHY symbol rate in sym/s; zero recovers timing from the record.
+    pub dec_cphy_rate: f64,
     /// fourth decoder source (JTAG TDO, Quad-SPI IO1)
     pub dec_src4: Option<usize>,
     /// decoder input: logic analyser lines instead of the channels (`dec_on_la`)
@@ -1089,6 +1135,8 @@ pub struct Model {
     /// Rise/fall low and high as fractions of amplitude (0.1/0.9 or 0.2/0.8).
     pub meas_lpct: f64,
     pub meas_hpct: f64,
+    /// False measures the visible time window; true measures each source's complete stored record.
+    pub meas_full_record: bool,
     /// SetupAndHold limits (s). Zero means any negative setup or hold.
     pub meas_tsetup: f64,
     pub meas_thold: f64,
@@ -1291,10 +1339,14 @@ impl Default for Model {
         let t200u = ts.iter().position(|&t| (t - 200e-6).abs() < 1e-9).unwrap_or(ts.len() / 2);
         let mut m = Model {
             ch: std::array::from_fn(|i| c(i == 0)),
+            deskew_ch: [0.0; NCH],
+            deskew_ref: [0.0; NREF],
             active: 0,
+            cur_b_source: None,
             tscale: t200u,
             delay: 0.0,
             trig_src: 0,
+            trig_ref: None,
             trig_la: None,
             pat_la: [Bit::X; 16],
             trig_level: 0.0,
@@ -1305,6 +1357,7 @@ impl Default for Model {
             trig_level2: 0.5,
             trig_nrej: false,
             trig_src2: 3,
+            trig_ref2: None,
             trig_slope2: Slope::Rise,
             trig_pol: Pol::Pos,
             trig_when: WhenKind::Lt,
@@ -1331,6 +1384,7 @@ impl Default for Model {
             grid: Grid::Full,
             meas: Vec::new(),
             meas2: Vec::new(),
+            cat: Vec::new(),
             dvm_on: false,
             dvm_src: 0,
             dvm_mode: 0,
@@ -1381,6 +1435,7 @@ impl Default for Model {
             dec_tick: 0,
             dec_nibbles: 6,
             dec_uspeed: 0,
+            dec_cphy_rate: 0.0,
             dec_src4: None,
             dec_la_in: false,
             dec_la: [Some(8), Some(10), None, None],
@@ -1455,6 +1510,7 @@ impl Default for Model {
             meas_data: false,
             meas_lpct: 0.1,
             meas_hpct: 0.9,
+            meas_full_record: false,
             meas_tsetup: 0.0,
             meas_thold: 0.0,
             spec_acpr_w: 1e6,
@@ -1658,6 +1714,23 @@ impl Model {
         }
     }
 
+    pub fn trigger_wave(&self) -> WaveId {
+        self.trig_ref.map_or(WaveId::Ch(self.trig_src), WaveId::Ref)
+    }
+
+    pub fn trigger_wave2(&self) -> WaveId {
+        self.trig_ref2.map_or(WaveId::Ch(self.trig_src2), WaveId::Ref)
+    }
+
+    pub fn set_trigger_wave(&mut self, source: WaveId, secondary: bool) {
+        let (channel, reference) = if secondary { (&mut self.trig_src2, &mut self.trig_ref2) } else { (&mut self.trig_src, &mut self.trig_ref) };
+        match source {
+            WaveId::Ch(c) => { *channel = c.min(NCH - 1); *reference = None; }
+            WaveId::Ref(i) => { *reference = Some(i.min(NREF - 1)); }
+        }
+        if !secondary { self.trig_la = None; }
+    }
+
     /// The configured trigger for the software trigger engine.
     pub fn trigger(&self) -> oos_dsp::trigger::Trigger {
         use oos_dsp::trigger::{Trigger, VideoSync, WinWhen};
@@ -1729,18 +1802,18 @@ impl Model {
             }
             TrigType::Bus => {
                 let r = self.dec_proto.roles();
-                u[self.dec_src] = true;
+                if let Some(v) = u.get_mut(self.dec_src) { *v = true; }
                 if r[1].is_some() {
-                    u[self.dec_src2] = true;
+                    if let Some(v) = u.get_mut(self.dec_src2) { *v = true; }
                 }
                 if let (Some(_), Some(c)) = (r[2], self.dec_cs) {
-                    u[c] = true;
+                    if let Some(v) = u.get_mut(c) { *v = true; }
                 }
                 if let (Some(_), Some(c)) = (r[3], self.dec_src4) {
-                    u[c] = true;
+                    if let Some(v) = u.get_mut(c) { *v = true; }
                 }
                 if let (true, Some(c)) = (self.dec_proto.diff_ok(), self.dec_diff) {
-                    u[c] = true;
+                    if let Some(v) = u.get_mut(c) { *v = true; }
                 }
             }
             _ => u[self.trig_src] = true,
@@ -1815,6 +1888,7 @@ impl Model {
                 1.0 / if crate::decode::USB_SPEEDS[self.dec_uspeed] == UsbSpeed::Low { USB_LOW } else { USB_FULL }
             }
             Proto::Manchester | Proto::Mlt3 => 1.0 / crate::decode::BAUDS[self.dec_baud],
+            Proto::Cphy => if self.dec_cphy_rate > 0.0 { 1.0 / self.dec_cphy_rate } else { 1e-9 },
         }
     }
 
@@ -1860,7 +1934,7 @@ impl Model {
 
     /// The settings of the decoder the menu edits.
     pub fn dec_cfg(&self) -> DecCfg {
-        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone() }
+        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), cphy_rate: self.dec_cphy_rate, src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone() }
     }
 
     fn dec_load(&mut self, c: &DecCfg) {
@@ -1874,6 +1948,7 @@ impl Model {
         self.dec_tick = c.tick.clone();
         self.dec_nibbles = c.nibbles.clone();
         self.dec_uspeed = c.uspeed.clone();
+        self.dec_cphy_rate = c.cphy_rate;
         self.dec_src4 = c.src4.clone();
         self.dec_la_in = c.la_in.clone();
         self.dec_la = c.la.clone();
@@ -1978,7 +2053,7 @@ impl Model {
             return changed;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
-        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.bw_src, &mut self.afg_arb_src]
+        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.mask_src, &mut self.bw_src, &mut self.afg_arb_src]
             .into_iter()
             .chain(self.zones.iter_mut().map(|z| &mut z.src))
         {
@@ -1995,7 +2070,13 @@ impl Model {
                 }
             }
         }
-        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs, &mut self.z_src] {
+        for s in [&mut self.dec_src, &mut self.dec_src2] {
+            if decode_wave(*s).is_none() || (*s < NCH && *s >= n) { *s = 0; changed = true; }
+        }
+        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs] {
+            if s.is_some_and(|c| decode_wave(c).is_none() || (c < NCH && c >= n)) { *s = None; changed = true; }
+        }
+        for s in [&mut self.z_src] {
             if s.is_some_and(|c| c >= n) {
                 *s = None;
                 changed = true;
@@ -2016,6 +2097,19 @@ impl Model {
                         *id = WaveId::Ch(0);
                         changed = true;
                     }
+                }
+            }
+        }
+        let previous_cat = self.cat.len();
+        self.cat.retain(|row| catalog_id_valid(row.0));
+        self.cat.truncate(MEAS_SELECTION_MAX.saturating_sub(self.meas.len() + self.meas2.len()));
+        changed |= previous_cat != self.cat.len();
+        for row in &mut self.cat {
+            for source in [&mut row.1, &mut row.2, &mut row.3, &mut row.4] {
+                if let WaveId::Ch(c) = *source {
+                    if c >= n { *source = WaveId::Ch(0); changed = true; }
+                } else if matches!(*source, WaveId::Ref(i) if i >= NREF) {
+                    *source = WaveId::Ref(0); changed = true;
                 }
             }
         }
@@ -2078,7 +2172,7 @@ impl Model {
     }
     /// The decoder reads logic analyser lines (the choice only counts while the LA is on).
     pub fn dec_on_la(&self) -> bool {
-        self.dec_la_in && self.la_on()
+        self.dec_la_in && self.la_on() && self.dec_proto != Proto::Cphy
     }
     pub fn max_mem(&self) -> u64 {
         // limits 125 / 62.5 / 31.25 M (stock: 50 / 25 / 10 M); above 78.6 M only with the larger segment cap

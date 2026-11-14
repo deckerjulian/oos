@@ -135,6 +135,7 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_tick", m.dec_tick.to_string());
     kv("dec_nibbles", m.dec_nibbles.to_string());
     kv("dec_uspeed", m.dec_uspeed.to_string());
+    kv("dec_cphy_rate", m.dec_cphy_rate.to_string());
     kv("dec_src4", m.dec_src4.map_or("none".into(), |c| (c + 1).to_string()));
     kv("dec_diff", m.dec_diff.map_or("none".into(), |c| (c + 1).to_string()));
     kv("trig_bus", m.trig_bus.name().to_string());
@@ -171,6 +172,12 @@ pub fn setup_text(m: &Model) -> String {
         s.push_str(&v);
         s.push('\n');
     };
+    for (i, &seconds) in m.deskew_ch.iter().enumerate() {
+        if seconds != 0.0 { kv(&format!("deskew_ch{}", i + 1), seconds.to_string()); }
+    }
+    for (i, &seconds) in m.deskew_ref.iter().enumerate() {
+        if seconds != 0.0 { kv(&format!("deskew_ref{}", i + 1), seconds.to_string()); }
+    }
     for (c, ch) in m.ch.iter().enumerate() {
         let p = |k: &str| format!("ch{}.{}", c + 1, k);
         kv(&p("on"), ch.on.to_string());
@@ -194,9 +201,13 @@ pub fn setup_text(m: &Model) -> String {
         kv(&p("invert"), ch.invert.to_string());
     }
     kv("active", m.active.to_string());
+    if let Some(source) = m.cur_b_source {
+        kv("cur_b_source", source.token());
+    }
     kv("tdiv", tscales()[m.tscale].to_string());
     kv("delay", m.delay.to_string());
     kv("trig_src", m.trig_src.to_string());
+    kv("trig_ref", m.trig_ref.map_or("none".into(), |i| i.to_string()));
     kv("trig_la", m.trig_la.map_or("none".to_string(), |n| n.to_string()));
     kv("pat_la", m.pat_la.iter().map(|&b| match b { Bit::H => 'H', Bit::L => 'L', _ => 'X' }).collect());
     kv("trig_level", m.trig_level.to_string());
@@ -207,6 +218,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("trig_level2", m.trig_level2.to_string());
     kv("trig_nrej", m.trig_nrej.to_string());
     kv("trig_src2", m.trig_src2.to_string());
+    kv("trig_ref2", m.trig_ref2.map_or("none".into(), |i| i.to_string()));
     kv("trig_slope2", name(m.trig_slope2));
     kv("trig_pol", name(m.trig_pol));
     kv("trig_when", name(m.trig_when));
@@ -239,6 +251,9 @@ pub fn setup_text(m: &Model) -> String {
     kv("la_window", (m.la_win + 1).to_string());
     kv("meas", m.meas.iter().map(|&(k, id)| format!("{:?}:{}", k, id.token())).collect::<Vec<_>>().join(" "));
     kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a.token(), b.token())).collect::<Vec<_>>().join(" "));
+    if !m.cat.is_empty() {
+        kv("cat", m.cat.iter().map(|&(k, a, b, c, d)| format!("{}:{}:{}:{}:{}", k, a.token(), b.token(), c.token(), d.token())).collect::<Vec<_>>().join(" "));
+    }
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
     kv("counter", format!("{} {} {} {}", m.cnt_on, m.cnt_src, m.cnt_mode, m.cnt_digits));
     for c in 0..NCH {
@@ -313,6 +328,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
     kv("meas_cfg", format!("{} {:?} {} {} {} {} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }, m.meas_lpct, m.meas_hpct, m.meas_tsetup, m.meas_thold));
+    kv("meas_full_record", m.meas_full_record.to_string());
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     kv("bode_mode", name(m.bode_mode));
     kv("eye_more", format!("{} {} {} {} {} {} {} {}", m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, if m.eye_npj { 1 } else { 0 }, opt(m.eye_rail), m.eye_notch, opt(m.eye_b), if m.eye_hp { 1 } else { 0 }));
@@ -381,6 +397,20 @@ fn p_idx(v: &str, n: usize) -> Result<usize, String> {
     }
 }
 
+fn p_decode_source(v: &str) -> Result<usize, String> {
+    let source = if v.trim().starts_with(['R', 'r']) {
+        match WaveId::parse(v.trim())? { WaveId::Ref(i) => DEC_REF_BASE + i, _ => unreachable!() }
+    } else { p_idx(v, DEC_SOURCE_COUNT)? };
+    decode_wave(source).map(|_| source).ok_or_else(|| "decoder source must be CH or R; LA uses dec_la".into())
+}
+
+fn p_decode_optional_one_based(v: &str) -> Result<Option<usize>, String> {
+    if v.trim() == "none" { return Ok(None); }
+    if v.trim().starts_with(['R', 'r']) { return p_decode_source(v).map(Some); }
+    let source = p_idx(v, DEC_SOURCE_COUNT + 1)?.max(1) - 1;
+    decode_wave(source).map(|_| Some(source)).ok_or_else(|| "invalid decoder source".into())
+}
+
 fn p_enum<T: Debug + Copy>(v: &str, all: &[T]) -> Result<T, String> {
     all.iter().copied().find(|x| format!("{:?}", x) == v).ok_or_else(|| format!("unknown value: {}", v))
 }
@@ -395,6 +425,14 @@ fn p_list<T>(v: &str, n: usize, f: impl Fn(&str) -> Result<T, String>) -> Result
 }
 
 pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
+    if let Some((reference, suffix)) = k.strip_prefix("deskew_ch").map(|s| (false, s))
+        .or_else(|| k.strip_prefix("deskew_ref").map(|s| (true, s))) {
+        let values: &mut [f64] = if reference { &mut m.deskew_ref } else { &mut m.deskew_ch };
+        let index = suffix.parse::<usize>().ok().and_then(|i| i.checked_sub(1)).filter(|&i| i < values.len()).ok_or("invalid deskew source")?;
+        let value = v.parse::<f64>().ok().filter(|x| x.is_finite() && x.abs() <= 1000.0).ok_or("invalid deskew seconds")?;
+        values[index] = value;
+        return Ok(());
+    }
     // the other decoders: dec_sel comes first in the file
     if let Some((n, field)) = k.strip_prefix('d').and_then(|r| r.split_once('.')) {
         if let Ok(n) = n.parse::<usize>() {
@@ -410,8 +448,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let c = m.maths.get_mut(n.wrapping_sub(1)).ok_or("unknown math channel")?;
             match field {
                 "op" => c.op = p_enum(v, &MATH_OPS)?,
-                "a" => c.a = p_idx(v, NCH + crate::math::NMATH)?,
-                "b" => c.b = p_idx(v, NCH + crate::math::NMATH)?,
+                "a" => c.a = p_idx(v, crate::math::MATH_SOURCES)?,
+                "b" => c.b = p_idx(v, crate::math::MATH_SOURCES)?,
                 "scale" => c.scale = p_idx(v, crate::math::math_scales().len())?,
                 "fc" => c.fc = p_f32(v)?,
                 "bw" => c.bw = p_f32(v)?,
@@ -459,11 +497,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
     let ntime = tscales().len();
     match k {
         "active" => m.active = p_idx(v, NCH)?,
+        "cur_b_ch" => m.cur_b_source = Some(WaveId::Ch(p_idx(v, NCH)?)),
+        "cur_b_source" => m.cur_b_source = if v == "none" { None } else { Some(WaveId::parse(v)?) },
         "tdiv" => m.tscale = tdiv_index(v)?,
         // setups before the 1/2 ns steps: index into the old ladder (5 ns .. 1000 s)
         "tscale" => m.tscale = legacy_tscale(v, ntime)?,
         "delay" => m.delay = p_f32(v)?,
         "trig_src" => m.trig_src = p_idx(v, NCH)?,
+        "trig_ref" => m.trig_ref = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
 "pat_la" => {
             if v.trim().len() != 16 {
                 return Err(format!("pat_la: {:?}", v));
@@ -481,6 +522,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "trig_nrej" => m.trig_nrej = p_bool(v)?,
         "trig_level2" => m.trig_level2 = p_f32(v)?,
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
+        "trig_ref2" => m.trig_ref2 = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
         "trig_slope2" => m.trig_slope2 = p_enum(v, &SLOPES)?,
         "trig_pol" => m.trig_pol = p_enum(v, &POLS)?,
         "trig_when" => m.trig_when = p_enum(v, &WHENS)?,
@@ -529,6 +571,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let (k, c) = e.split_once(':').ok_or_else(|| format!("not item:channel: {}", e))?;
                 out.push((p_enum(k, &ALL_MEAS)?, WaveId::parse(c)?));
             }
+            if out.len() + m.meas2.len() + m.cat.len() > MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
             m.meas = out;
         }
         "meas2" => {
@@ -538,7 +581,22 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let [k, a, b] = f[..] else { return Err(format!("not item:a:b: {}", e)) };
                 out.push((p_idx(k, crate::ui::PAIRS_N)?, WaveId::parse(a)?, WaveId::parse(b)?));
             }
+            if m.meas.len() + out.len() + m.cat.len() > MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
             m.meas2 = out;
+        }
+        "cat" => {
+            let mut out = Vec::new();
+            for e in v.split_whitespace() {
+                let f: Vec<&str> = e.split(':').collect();
+                let [k, a, b, c, d] = f[..] else { return Err(format!("not item:a:b:c:d: {}", e)) };
+                let id = k.parse::<u16>().map_err(|_| format!("not a catalog id: {}", k))?;
+                if !catalog_id_valid(id) { return Err(format!("unknown or non-Wave catalog id: {id}")); }
+                if m.meas.len() + m.meas2.len() + out.len() >= MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
+                let row = (id, WaveId::parse(a)?, WaveId::parse(b)?, WaveId::parse(c)?, WaveId::parse(d)?);
+                if out.contains(&row) { return Err("duplicate catalog row".into()); }
+                out.push(row);
+            }
+            m.cat = out;
         }
         "dvm" => {
             let f: Vec<&str> = v.split_whitespace().collect();
@@ -577,8 +635,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "v_expand_gnd" => m.v_expand_gnd = p_bool(v)?,
         "h_expand" => m.h_expand = p_enum(v, &HEXPANDS)?,
         "math" => m.math = p_enum(v, &MATH_OPS)?,
-        "math_a" => m.math_a = p_idx(v, NCH + crate::math::NMATH)?,
-        "math_b" => m.math_b = p_idx(v, NCH + crate::math::NMATH)?,
+        "math_a" => m.math_a = p_idx(v, crate::math::MATH_SOURCES)?,
+        "math_b" => m.math_b = p_idx(v, crate::math::MATH_SOURCES)?,
         "math_bw" => m.math_bw = p_f32(v)?,
         "math_sel" => m.math_sel = p_idx(v, crate::math::NMATH)?,
         "math_scale" => m.math_scale = p_idx(v, crate::math::math_scales().len())?,
@@ -598,7 +656,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "math_offset" => m.math_offset = p_f32(v)?,
         "fft_win" => m.fft_win = p_enum(v, &WINDOWS)?,
         "dec_on" => m.dec_on = p_bool(v)?,
-        "dec_src" => m.dec_src = p_idx(v, NCH)?,
+        "dec_src" => m.dec_src = p_decode_source(v)?,
         "dec_baud" => m.dec_baud = p_idx(v, crate::decode::BAUDS.len())?,
         "dec_canrate" => m.dec_canrate = p_idx(v, crate::decode::CAN_RATES.len())?,
         "dec_canh" => m.dec_canh = p_bool(v)?,
@@ -607,15 +665,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_tick" => m.dec_tick = p_idx(v, crate::decode::SENT_TICKS.len())?,
         "dec_nibbles" => m.dec_nibbles = p_u32(v)?.clamp(1, 6),
         "dec_uspeed" => m.dec_uspeed = p_idx(v, crate::decode::USB_SPEEDS.len())?,
-        "dec_src4" => m.dec_src4 = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
-        "dec_diff" => m.dec_diff = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
+        "dec_cphy_rate" => m.dec_cphy_rate = crate::decode::parse_cphy_rate(v)?,
+        "dec_src4" => m.dec_src4 = p_decode_optional_one_based(v)?,
+        "dec_diff" => m.dec_diff = p_decode_optional_one_based(v)?,
         "trig_bus" => m.trig_bus = *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?,
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
         "dec_proto" => m.dec_proto = p_enum(v, &PROTOS)?,
-        "dec_src2" => m.dec_src2 = p_idx(v, NCH)?,
-        "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_idx(v, NCH)?) },
+        "dec_src2" => m.dec_src2 = p_decode_source(v)?,
+        "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_decode_source(v)?) },
         "dec_mode" => m.dec_mode = p_idx(v, 4)? as u8,
         "dec_bits" => m.dec_bits = p_u32(v)?.clamp(4, 32),
         "dec_parity" => m.dec_parity = p_enum(v, &PARITIES)?,
@@ -764,6 +823,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 *r = if *s == "-" { None } else { Some(s.parse::<u8>().map_err(|_| format!("dec_la: {:?}", v))?.min(15)) };
             }
         }
+        "meas_full_record" => m.meas_full_record = p_bool(v)?,
         "meas_cfg" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 4 && w.len() != 8 {
@@ -986,15 +1046,21 @@ pub struct WaveTrace {
     pub label: String,
 }
 
-/// Extensions `load` will open. The bytes decide the format; the name does not.
+/// Import bounds shared by native readers and remote uploads. They include the
+/// supplied 80 MB / 20-million-point captures without unbounded allocations.
+pub const MAX_WAVEFORM_BYTES: usize = 128 << 20;
+pub const MAX_WAVEFORM_SAMPLES: usize = 32_000_000;
+
+/// Extensions shown by native and browser waveform import. The header chooses the parser.
 pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx"];
 
 /// A stored waveform, recognized by its header:
-/// `OOSW`; `:WFM#002` or `:WFM#003`; `:WFMPRE:`; `WAVEDESC`; cookie `AG`;
+/// `OOSW`; `:WFM#001`, `:WFM#002` or `:WFM#003`; `:WFMPRE:`; `WAVEDESC`; cookie `AG`;
 /// a `$&%#` block (`9601`, `9007`, or `2001`) or a `Title:` / `Plotname:` transient (`Binary:` or `Values:`);
 /// XML `WaveformInternal` or `WaveformPatternInternal`; or a CSV time column.
 /// Anything else is refused.
 pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
+    if bytes.len() > MAX_WAVEFORM_BYTES { return Err("waveform exceeds the 128 MiB import limit".into()); }
     if bytes.starts_with(b"OOSW") {
         return parse_oosw(bytes);
     }
@@ -1038,6 +1104,7 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let n = usize::try_from(u64::from_le_bytes(b[12..20].try_into().unwrap())).map_err(|_| "OOS waveform is too large".to_string())?;
     let dt = f64::from_le_bytes(b[20..28].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[28..36].try_into().unwrap());
+    if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
     if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
         return Err("that file holds no waveform".into());
     }
@@ -1069,6 +1136,7 @@ fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
         if rest.is_empty() {
             continue;
         }
+        if rows.len() >= MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
         rows.push((t, rest));
     }
     let dt = match rows.as_slice() {
@@ -1085,7 +1153,10 @@ fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
     Ok(traces)
 }
 
-/// Reference waveform whose header is `:WFM#002` or `:WFM#003`, YT vector, first frame.
+/// Tek reference waveform version 001/002/003, YT vector, first frame.
+/// Version 001 uses an 88-byte reference block, 156-byte explicit dimensions,
+/// and 132-byte implicit dimensions. Later versions use 90/160/136 bytes.
+/// See Tektronix Reference Waveform File Format (077-0220-10/11).
 fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if b.len() < 78 {
         return Err("truncated WFM".into());
@@ -1093,7 +1164,7 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     let le = match u16::from_le_bytes(b[0..2].try_into().unwrap()) {
         0x0F0F => true,
         0xF0F0 => false,
-        _ => return Err("header is not :WFM#002 or :WFM#003".into()),
+        _ => return Err("header is not a Tek WFM version 001, 002 or 003".into()),
     };
     let get_u32 = |o| {
         let v = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
@@ -1109,50 +1180,55 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
         f64::from_le_bytes(raw)
     };
     let ver = &b[2..10];
-    if ver != b":WFM#002" && ver != b":WFM#003" {
-        return Err("header is not :WFM#002 or :WFM#003".into());
+    if ver != b":WFM#001" && ver != b":WFM#002" && ver != b":WFM#003" {
+        return Err("header is not a Tek WFM version 001, 002 or 003".into());
     }
     let bpp = b[15] as usize;
     if bpp == 0 || bpp > 8 {
         return Err("WFM sample size".into());
     }
-    let curve = get_i32(16) as usize;
+    let curve = usize::try_from(get_i32(16)).map_err(|_| "WFM curve offset is negative")?;
     let label = b[40..72].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string();
-    // :WFM#002 / :WFM#003: packed header after the 78-byte static block
+    let (reference_size, explicit_size, implicit_size) = if ver == b":WFM#001" { (88, 156, 132) } else { (90, 160, 136) };
+    // Packed header follows the common 78-byte static block.
     let mut i = 78usize;
     let need = |n: usize| -> Result<(), String> { if b.len() < n { Err("truncated WFM".into()) } else { Ok(()) } };
-    need(i + 90)?;
-    i += 90; // reference file data
-    need(i + 160)?;
+    need(i + reference_size)?;
+    i += reference_size;
+    need(i + explicit_size)?;
     let vscale = get_f64(i);
     let voff = get_f64(i + 8);
     let fmt = get_u32(i + 72); // after scale, offset, size, units, 4 doubles
-    i += 160; // exp dim 1
-    need(i + 160)?;
-    i += 160; // exp dim 2
-    need(i + 136)?;
+    i += explicit_size;
+    need(i + explicit_size)?;
+    i += explicit_size;
+    need(i + implicit_size)?;
     let dt = get_f64(i);
     let t0 = get_f64(i + 8);
-    i += 136; // imp dim 1 → imp dim 2
-    need(i + 136 + 12 + 12 + 24 + 30)?;
-    i += 136 + 12 + 12 + 24; // imp dim 2, time bases, update spec → curve spec
+    i += implicit_size;
+    need(i + implicit_size + 12 + 12 + 24 + 30)?;
+    i += implicit_size + 12 + 12 + 24;
     let data_start = get_u32(i + 14) as usize;
     let post_start = get_u32(i + 18) as usize;
-    if !(dt > 0.0) {
-        return Err("WFM has no time step".into());
+    if !dt.is_finite() || dt <= 0.0 || !t0.is_finite() || !vscale.is_finite() || !voff.is_finite() {
+        return Err("WFM time and voltage scaling must be finite with a positive time step".into());
     }
-    if curve > b.len() || data_start > post_start {
+    if curve < i + 30 || data_start > post_start {
         return Err("WFM curve is empty".into());
     }
-    let start = curve.saturating_add(data_start);
-    let stop = curve.saturating_add(post_start).min(b.len().saturating_sub(8));
-    if stop <= start + bpp {
+    let expected_bpp = match fmt { 0 => 2, 1 | 2 | 4 => 4, 3 | 5 => 8, 6 | 7 => 1, _ => return Err("WFM sample format".into()) };
+    if bpp != expected_bpp { return Err("WFM sample format does not match bytes per point".into()); }
+    let start = curve.checked_add(data_start).ok_or("WFM curve offset overflow")?;
+    let stop = curve.checked_add(post_start).ok_or("WFM curve offset overflow")?;
+    if stop > b.len().saturating_sub(8) { return Err("truncated WFM curve".into()); }
+    if stop <= start || (stop - start) % bpp != 0 {
         return Err("WFM curve is empty".into());
     }
     let n = (stop - start) / bpp;
     if n < 2 {
         return Err("WFM curve is empty".into());
     }
+    if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
     let mut v = Vec::with_capacity(n);
     for k in 0..n {
         let o = start + k * bpp;
@@ -1164,6 +1240,12 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
             1 if bpp >= 4 => {
                 let s = i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
                 (if le { s } else { s.swap_bytes() }) as f64
+            }
+            2 => get_u32(o) as f64,
+            3 => {
+                let mut raw: [u8; 8] = b[o..o + 8].try_into().unwrap();
+                if !le { raw.reverse(); }
+                u64::from_le_bytes(raw) as f64
             }
             4 if bpp >= 4 => {
                 let mut raw = [0u8; 4];
@@ -1225,7 +1307,7 @@ fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     }
     let nr = match kv.get("NR_PT") {
         None => 0,
-        Some(value) => value.parse::<usize>().ok().filter(|n| (2..=16_000_000).contains(n))
+        Some(value) => value.parse::<usize>().ok().filter(|n| (2..=MAX_WAVEFORM_SAMPLES).contains(n))
             .ok_or("invalid waveform point count")?,
     };
     let msb = kv.get("BYT_OR").is_some_and(|s| s.eq_ignore_ascii_case("MSB"));
@@ -1244,8 +1326,8 @@ fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         }
         let len: usize = std::str::from_utf8(&b[i + 1..i + 1 + n]).ok().and_then(|s| s.parse().ok()).ok_or("truncated waveform")?;
         let start = i + 1 + n;
-        if len > 64 << 20 || start.checked_add(len).is_none_or(|end| end > b.len()) {
-            return Err(if len > 64 << 20 { "waveform is too large" } else { "truncated waveform" }.into());
+        if len > MAX_WAVEFORM_BYTES || start.checked_add(len).is_none_or(|end| end > b.len()) {
+            return Err(if len > MAX_WAVEFORM_BYTES { "waveform is too large" } else { "truncated waveform" }.into());
         }
         (start, len)
     } else {
@@ -1265,7 +1347,7 @@ fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             return Err("truncated waveform".into());
         }
         let n = vals / bpp;
-        if n > 16_000_000 {
+        if n > MAX_WAVEFORM_SAMPLES {
             return Err("waveform is too large".into());
         }
         for k in 0..n {
@@ -1360,7 +1442,7 @@ fn parse_wavedesc(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let ris = endian_u32(b, i + 52, le) as usize;
     let nbytes = endian_u32(b, i + 60, le) as usize;
     let count = endian_u32(b, i + 116, le) as usize;
-    if desc < 188 || desc > 8192 || count < 2 || count > 16_000_000 {
+    if desc < 188 || desc > 8192 || count < 2 || count > MAX_WAVEFORM_SAMPLES {
         return Err("that file holds no waveform".into());
     }
     let bpp = if count > 0 && nbytes % count == 0 && matches!(nbytes / count, 1 | 2 | 4) {
@@ -1448,7 +1530,7 @@ fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             let data = p + dsize;
             if matches!(kind, 1 | 2 | 3) && bpp == 4 && bsize >= 8 && bsize % 4 == 0 {
                 let n = (bsize / 4).min(if npts >= 2 { npts } else { bsize / 4 });
-                if n >= 2 && n <= 16_000_000 {
+                if n >= 2 && n <= MAX_WAVEFORM_SAMPLES {
                     let v: Vec<f32> = (0..n).map(|k| f32::from_le_bytes(b[data + k * 4..data + k * 4 + 4].try_into().unwrap())).collect();
                     if kind == 1 {
                         normal = Some(v);
@@ -1539,7 +1621,7 @@ fn post_vars(text: &str) -> Result<(usize, Vec<String>), String> {
     Ok((nvars, names))
 }
 
-fn traces_from_columns(cols: &[f64], nvars: usize, names: &[String]) -> Result<Vec<WaveTrace>, String> {
+fn traces_from_columns(cols: &[f64], nvars: usize, names: &[String], time_f32: bool) -> Result<Vec<WaveTrace>, String> {
     if !(2..=64).contains(&nvars) { return Err("invalid waveform column count".into()); }
     let mut n = cols.len();
     if n > 0 && cols[n - 1].abs() >= 1e29 {
@@ -1553,15 +1635,23 @@ fn traces_from_columns(cols: &[f64], nvars: usize, names: &[String]) -> Result<V
         return Err("that file holds no waveform".into());
     };
     let rows = body.len() / nvars;
-    if rows < 2 || rows > 16_000_000 {
+    if rows < 2 || rows > MAX_WAVEFORM_SAMPLES {
         return Err(if rows < 2 { "that file holds no waveform" } else { "waveform is too large" }.into());
     }
     let t0 = body[0];
-    let dt = body[nvars] - t0;
+    let dt = if time_f32 { (body[(rows - 1) * nvars] - t0) / (rows - 1) as f64 } else { body[nvars] - t0 };
     if !(t0.is_finite() && dt.is_finite() && dt > 0.0) {
         return Err("that file holds no waveform".into());
     }
-    if !(0..rows).all(|r| uniform_time(body[r * nvars], t0, dt, r)) {
+    let valid_time = |r: usize| {
+        let t = body[r * nvars];
+        if time_f32 {
+            let expected = t0 + r as f64 * dt;
+            let tolerance = (dt.abs() * 1e-5).max(t0.abs().max(expected.abs()) * f32::EPSILON as f64 * 2.0).max(1e-45);
+            t.is_finite() && expected.is_finite() && (t - expected).abs() <= tolerance
+        } else { uniform_time(t, t0, dt, r) }
+    };
+    if !(0..rows).all(valid_time) {
         return Err("nonuniform waveform time axis is not supported".into());
     }
     let mut out = Vec::with_capacity(nvars - 1);
@@ -1581,8 +1671,8 @@ fn parse_tr0_blocks(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     while pos + 16 <= b.len() {
         let le = block_le(&b[pos..pos + 16]).ok_or("that file is not a waveform")?;
         let n = endian_u32(b, pos + 12, le) as usize;
-        if n > 64 << 20 || pos + 16 + n > b.len() {
-            return Err(if n > 64 << 20 { "waveform is too large" } else { "truncated waveform" }.into());
+        if n > MAX_WAVEFORM_BYTES || pos + 16 + n > b.len() {
+            return Err(if n > MAX_WAVEFORM_BYTES { "waveform is too large" } else { "truncated waveform" }.into());
         }
         let body = &b[pos + 16..pos + 16 + n];
         pos += 16 + n;
@@ -1627,7 +1717,7 @@ fn parse_tr0_blocks(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             cols.push(x);
         }
     }
-    traces_from_columns(&cols, nvars, &names)
+    traces_from_columns(&cols, nvars, &names, width == 4)
 }
 
 fn parse_tr0_ascii(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
@@ -1666,7 +1756,7 @@ fn parse_tr0_ascii(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             cols.push(x);
         }
     }
-    traces_from_columns(&cols, nvars, &names)
+    traces_from_columns(&cols, nvars, &names, false)
 }
 
 fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
@@ -1690,7 +1780,7 @@ fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             i += 1;
         }
         let points = if npts >= 2 { npts } else { (b.len() - i) / (nvars * 8) };
-        if points < 2 || points > 16_000_000 {
+        if points < 2 || points > MAX_WAVEFORM_SAMPLES {
             return Err(if points < 2 { "that file holds no waveform" } else { "waveform is too large" }.into());
         }
         if i + points * nvars * 8 > b.len() {
@@ -1719,7 +1809,7 @@ fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             return Err("that file holds no waveform".into());
         }
     }
-    traces_from_columns(&cols, nvars, &names)
+    traces_from_columns(&cols, nvars, &names, false)
 }
 
 fn raw_field(header: &str, key: &str) -> Option<usize> {
@@ -1776,7 +1866,7 @@ fn parse_wfmx(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let points: usize = xml_text(&head, "Points").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
     let t0: f64 = xml_text(&head, "XOrg").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
     let dt: f64 = xml_text(&head, "XInc").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
-    if points < 2 || points > 16_000_000 || !(dt.is_finite() && dt > 0.0 && t0.is_finite()) {
+    if points < 2 || points > MAX_WAVEFORM_SAMPLES || !(dt.is_finite() && dt > 0.0 && t0.is_finite()) {
         return Err("that file holds no waveform".into());
     }
     let payload = wfmx_payload(b, points)?;
@@ -1846,18 +1936,17 @@ fn wfmx_volts(payload: &[u8], points: usize, t0: f64, dt: f64) -> Result<Vec<f32
     if payload.len() == points * 8 {
         let f32s = le_f32(payload, false);
         let xs: Vec<f64> = f32s[..points].iter().map(|x| *x as f64).collect();
-        if x_matches(&xs, t0, dt) {
+        if x_matches_f32(&xs, t0, dt) {
             return Ok(as_y(&f32s[points..]));
         }
         let inter: Vec<f64> = f32s.iter().step_by(2).copied().map(|x| x as f64).collect();
-        if x_matches(&inter, t0, dt) {
+        if x_matches_f32(&inter, t0, dt) {
             return Ok(f32s.iter().skip(1).step_by(2).copied().collect());
         }
-        let ys: Vec<f32> = (0..points).map(|k| endian_f64(payload, k * 8, true) as f32).collect();
-        if ys.iter().filter(|x| x.is_finite()).count() * 2 >= ys.len() {
-            return Ok(ys);
-        }
-        return Ok((0..points).map(|k| endian_f64(payload, k * 8, false) as f32).collect());
+        // Eight bytes per point could also be an implicit f64 Y array. Without
+        // a declared layout it cannot be distinguished safely from malformed
+        // f32 X/Y data. Never reinterpret a failed explicit time axis as volts.
+        return Err("unsupported or ambiguous WFMX sample layout".into());
     }
     if payload.len() == points * 16 {
         let xs: Vec<f64> = (0..points).map(|k| endian_f64(payload, k * 8, true)).collect();
@@ -1870,6 +1959,14 @@ fn wfmx_volts(payload: &[u8], points: usize, t0: f64, dt: f64) -> Result<Vec<f32
         }
     }
     Err("that file holds no waveform".into())
+}
+
+fn x_matches_f32(xs: &[f64], t0: f64, dt: f64) -> bool {
+    xs.len() >= 2 && xs.iter().enumerate().all(|(i, &x)| {
+        let expected = t0 + i as f64 * dt;
+        let tolerance = (dt.abs() * 1e-5).max(expected.abs() * f32::EPSILON as f64).max(1e-45);
+        x.is_finite() && expected.is_finite() && (x - expected).abs() <= tolerance
+    })
 }
 
 fn x_matches(xs: &[f64], t0: f64, dt: f64) -> bool {
@@ -2458,6 +2555,21 @@ mod tests {
     }
 
     #[test]
+    fn catalog_setup_validates_ids_sources_duplicates_and_shared_selection_limit() {
+        let mut model=Model::default();
+        set(&mut model,"cat","90:R1:R2:3:4 170:R3:R4:R5:4").unwrap();
+        let text=setup_text(&model);let restored=parse_setup(&text).unwrap();assert_eq!(restored.cat,model.cat);
+        for invalid in ["999:R1:R2:3:4","1:R1:R2:3:4","90:R99:R2:3:4","90:R1:R2:3","90:R1:R2:3:4 90:R1:R2:3:4"] {
+            let before=model.cat.clone();assert!(set(&mut model,"cat",invalid).is_err(),"{invalid}");assert_eq!(model.cat,before);
+        }
+        model.meas=vec![(Meas::Vpp,WaveId::Ch(0));MEAS_SELECTION_MAX-1];model.meas2.clear();model.cat.clear();
+        assert!(set(&mut model,"cat","90:R1:R2:3:4 170:R3:R4:R5:4").is_err());assert!(model.cat.is_empty());
+        set(&mut model,"cat","90:R1:R2:3:4").unwrap();
+        assert!(set(&mut model,"meas2","0:1:2").is_err());assert!(model.meas2.is_empty());
+        set(&mut model,"cat","").unwrap();assert!(model.cat.is_empty());
+    }
+
+    #[test]
     fn setup_round_trip() {
         let m = custom();
         assert_ne!(m, Model::default());
@@ -2581,301 +2693,78 @@ mod tests {
             assert!((a - b).abs() < 1e-6, "{a} {b}");
         }
         let old = wfm_f32(b":WFM#001", -1e-6, 1e-9, &v, "lane");
-        assert_eq!(parse_wave(&old, "old.wfm").unwrap_err(), "header is not :WFM#002 or :WFM#003");
+        assert_eq!(parse_wave(&old, "old.wfm").unwrap()[0].v, v);
         let two = wfm_f32(b":WFM#002", 0.0, 2e-9, &v, "two");
         assert_eq!(parse_wave(&two, "two.wfm").unwrap()[0].label, "two");
     }
 
-    #[test]
-    fn other_waveform_headers_load_and_unknown_bytes_are_refused() {
-        let samples = [0.0_f32, 1.0, -0.5, 0.25];
-        let isf = isf_i16(0.0, 1e-9, 1e-3, &[0, 1000, -500, 250]);
-        let got = parse_wave(&isf, "a.isf").unwrap();
-        assert_close(&got[0], 0.0, 1e-9, &samples);
-
-        let trc = wavedesc_i16(0.0, 1e-9, 1e-3, 0.0, &[0, 1000, -500, 250]);
-        assert_close(&parse_wave(&trc, "a.trc").unwrap()[0], 0.0, 1e-9, &samples);
-
-        let ag = ag_f32(-1e-6, 2e-9, &samples, "lane");
-        let got = parse_wave(&ag, "a.bin").unwrap();
-        assert_eq!(got[0].label, "lane");
-        assert_close(&got[0], -1e-6, 2e-9, &samples);
-
-        let tr0 = tr0_f32(0.0, 1e-9, &samples);
-        assert_close(&parse_wave(&tr0, "a.tr0").unwrap()[0], 0.0, 1e-9, &samples);
-        let mut ascii = String::from("00020000000000009601*x ");
-        for name in ["TIME", "v(1)"] {
-            ascii.push_str(&format!("{name:<16}"));
+    /// A short Tek WFM curve of f32 samples, little endian.
+    fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+        let (explicit, implicit, specification, curve) = if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
+        let mut b = vec![0u8; curve + v.len() * 4 + 8];
+        b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
+        b[2..10].copy_from_slice(magic);
+        b[15] = 4;
+        b[16..20].copy_from_slice(&(curve as i32).to_le_bytes());
+        let lab = label.as_bytes();
+        b[40..40 + lab.len()].copy_from_slice(lab);
+        let put_f64 = |b: &mut [u8], o: usize, x: f64| b[o..o + 8].copy_from_slice(&x.to_le_bytes());
+        let put_u32 = |b: &mut [u8], o: usize, x: u32| b[o..o + 4].copy_from_slice(&x.to_le_bytes());
+        put_f64(&mut b, explicit, 1.0);
+        put_f64(&mut b, explicit + 8, 0.0);
+        put_u32(&mut b, explicit + 72, 4);
+        put_f64(&mut b, implicit, dt);
+        put_f64(&mut b, implicit + 8, t0);
+        put_u32(&mut b, specification + 14, 0);
+        put_u32(&mut b, specification + 18, (v.len() * 4) as u32);
+        for (k, &x) in v.iter().enumerate() {
+            b[curve + k * 4..curve + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
         }
-        ascii.push_str("$&%#");
-        for (k, x) in samples.iter().enumerate() {
-            ascii.push_str(&format!("{:11.4e}{:11.4e}", k as f64 * 1e-9, x));
-        }
-        ascii.push_str(&format!("{:11.4e}", 1.0e30));
-        assert_close(&parse_wave(ascii.as_bytes(), "c.tr0").unwrap()[0], 0.0, 1e-9, &samples);
-        let raw = raw_f64(0.0, 1e-9, &samples);
-        assert_close(&parse_wave(&raw, "b.tr0").unwrap()[0], 0.0, 1e-9, &samples);
-
-        let wfmx = wfmx_f32(-1e-6, 1e-9, &samples);
-        assert_close(&parse_wave(&wfmx, "a.wfmx").unwrap()[0], -1e-6, 1e-9, &samples);
-
-        assert!(parse_wave(b"\x00\x01\x02\x03\xff", "no.bin").is_err());
-        assert!(parse_wave(b"not a waveform\n", "no.csv").unwrap_err().contains("no waveform"));
-        assert!(parse_wave(b"AGxx,1,2\n3,4,5\n", "no.bin").is_err());
+        b
     }
 
     #[test]
-    fn header_import_isf_block_digits_and_point_counts_are_checked() {
-        for byte in 0..=u8::MAX {
-            let mut b = b":WFMPRE:BYT_NR 1;NR_PT 2;XINCR 1e-9;:CURVE #".to_vec();
-            b.push(byte);
-            b.extend_from_slice(b"000000000");
-            assert!(parse_wave(&b, "bad.isf").is_err(), "block byte {byte}");
-        }
-        for field in ["NR_PT -1", "NR_PT 2.5", "NR_PT 18446744073709551615", "BYT_NR 1.5", "YMULT wrong"] {
-            let b = format!(":WFMPRE:BYT_NR 1;XINCR 1e-9;{field};:CURVE #12\0\x01");
-            assert!(parse_wave(b.as_bytes(), "bad.isf").is_err(), "{field}");
-        }
-        assert!(parse_wave(b":WFMPRE:BYT_NR 1;NR_PT 3;XINCR 1;:CURVE #12\0\x01", "short.isf")
-            .unwrap_err().contains("truncated"));
-    }
-
-    #[test]
-    fn header_import_isf_envelope_preserves_pairs_and_requires_complete_data() {
-        let header = b":WFMPRE:BYT_NR 1;NR_PT 2;PT_FMT ENV;XINCR 1;:CURVE #14";
-        let mut b = header.to_vec();
-        b.extend([-2i8 as u8, 2, -1i8 as u8, 1]);
-        let traces = parse_wave(&b, "envelope.isf").unwrap();
-        assert_eq!(traces.len(), 2);
-        assert_eq!(traces[0].v, [-2.0, -1.0]);
-        assert_eq!(traces[1].v, [2.0, 1.0]);
-        let short = b":WFMPRE:BYT_NR 1;NR_PT 2;PT_FMT ENV;XINCR 1;:CURVE #13\0\x01\x02";
-        assert!(parse_wave(short, "short.isf").unwrap_err().contains("truncated"));
-    }
-
-    #[test]
-    fn header_import_fixed_width_unicode_is_safe_and_invalid_data_is_refused() {
-        let text = format!("0002{}x$&%#", "é".repeat(16));
-        let (nvars, names) = post_vars(&text).unwrap();
-        assert_eq!((nvars, names.len()), (2, 2));
-        let text = format!("00020000000000009601*x $&%#{}", "é".repeat(16));
-        assert!(parse_wave(text.as_bytes(), "bad.tr0").is_err());
-    }
-
-    #[test]
-    fn header_import_transient_requires_every_time_sample_to_be_uniform() {
-        for time in [3.0, 1.0, f64::NAN, f64::INFINITY] {
-            let mut b = raw_f64(0.0, 1.0, &[10.0, 20.0, 30.0, 40.0]);
-            let start = b.len() - 4 * 16;
-            b[start + 2 * 16..start + 2 * 16 + 8].copy_from_slice(&time.to_le_bytes());
-            assert!(parse_wave(&b, "adaptive.tr0").unwrap_err().contains("nonuniform"));
-        }
-        let values = [10.0, 20.0, 30.0, 40.0];
-        let b = raw_f64(-2e-6, 2e-9, &values);
-        assert_close(&parse_wave(&b, "regular.tr0").unwrap()[0], -2e-6, 2e-9, &values);
-    }
-
-    #[test]
-    fn header_import_wfmx_preserves_whitespace_bytes_at_binary_boundaries() {
-        for first in [0x3f800020, 0x3f80000a, 0x3f80000d] {
-            for last in [0x0a800000, 0x0d800000] {
-                let values = [f32::from_bits(first), f32::from_bits(last)];
-                let b = wfmx_f32(0.0, 1.0, &values);
-                let trace = parse_wave(&b, "bytes.wfmx").unwrap().remove(0);
-                assert_eq!(trace.v.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), [first, last]);
-                let mut crlf = b.clone();
-                let separator = crlf.len() - 8 - 1;
-                crlf.insert(separator, b'\r');
-                assert_eq!(parse_wave(&crlf, "crlf.wfmx").unwrap()[0].v, values);
+    fn all_tek_wfm_versions_keep_voltage_calibration_time_origin_and_byte_order() {
+        for magic in [b":WFM#001", b":WFM#002", b":WFM#003"] {
+            let (explicit, implicit, specification, curve) = if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
+            for big_endian in [false, true] {
+                let codes = [-2.0, 0.0, 2.0, 4.0];
+                let mut bytes = wfm_f32(magic, -9.5e-7, 20e-12, &codes, "captured");
+                bytes[explicit..explicit + 8].copy_from_slice(&0.125f64.to_le_bytes());
+                bytes[explicit + 8..explicit + 16].copy_from_slice(&0.75f64.to_le_bytes());
+                if big_endian {
+                    bytes[0..2].copy_from_slice(&[0xf0, 0xf0]);
+                    for offset in [16, explicit + 72, specification + 14, specification + 18] { bytes[offset..offset + 4].reverse(); }
+                    for offset in [explicit, explicit + 8, implicit, implicit + 8] { bytes[offset..offset + 8].reverse(); }
+                    for offset in (curve..curve + codes.len() * 4).step_by(4) { bytes[offset..offset + 4].reverse(); }
+                }
+                let parsed = parse_wave(&bytes, "capture.wfm").unwrap();
+                assert_eq!(parsed[0].v, [0.5, 0.75, 1.0, 1.25]);
+                assert_eq!(parsed[0].label, "captured");
+                assert_eq!(parsed[0].dt, 20e-12);
+                assert_eq!(parsed[0].t0, -9.5e-7);
             }
         }
     }
 
     #[test]
-    fn header_import_wfmx_embedded_payload_uses_exact_length_not_binary_tag_bytes() {
-        let values = [f32::from_bits(0x3f800020), 2.0];
-        let mut b = b"<?xml?><DataFile><FileType>WaveformInternal</FileType><Points>2</Points><XOrg>0</XOrg><XInc>1</XInc><Data>".to_vec();
-        for value in values { b.extend(value.to_le_bytes()); }
-        b.extend_from_slice(b"</Data></DataFile>");
-        assert_eq!(parse_wave(&b, "embedded.wfmx").unwrap()[0].v, values);
-        let mut b = b"<Data>".to_vec();
-        let payload = b"</Data>123456789";
-        assert_eq!(payload.len(), 16);
-        b.extend_from_slice(payload);
-        b.extend_from_slice(b"</Data>");
-        assert_eq!(wfmx_payload(&b, 4).unwrap(), payload);
-        assert!(wfmx_payload(&b, usize::MAX).is_err());
-    }
-
-    #[test]
-    fn header_import_wfmx_separator_cannot_replace_a_missing_payload_byte() {
-        let mut b = wfmx_f32(0.0, 1.0, &[1.0, 2.0]);
-        b.pop();
-        assert!(parse_wave(&b, "short.wfmx").unwrap_err().contains("truncated"));
-    }
-
-    #[test]
-    fn header_import_wfmx_checks_the_whole_explicit_time_axis() {
-        let mut payload = Vec::new();
-        for value in [0.0f64, 1.0, 3.0, 10.0, 20.0, 30.0] { payload.extend(value.to_le_bytes()); }
-        assert!(wfmx_volts(&payload, 3, 0.0, 1.0).is_err());
-        payload[16..24].copy_from_slice(&2.0f64.to_le_bytes());
-        assert_eq!(wfmx_volts(&payload, 3, 0.0, 1.0).unwrap(), [10.0, 20.0, 30.0]);
-    }
-
-    #[test]
-    fn header_import_known_formats_tolerate_all_truncation_boundaries_without_panicking() {
-        let values = [0.0, 1.0, -0.5, 0.25];
-        let fixtures = [
-            isf_i16(0.0, 1e-9, 1e-3, &[0, 1000, -500, 250]),
-            wavedesc_i16(0.0, 1e-9, 1e-3, 0.0, &[0, 1000, -500, 250]),
-            ag_f32(0.0, 1e-9, &values, "lane"),
-            tr0_f32(0.0, 1e-9, &values), raw_f64(0.0, 1e-9, &values), wfmx_f32(0.0, 1e-9, &values),
-        ];
-        for b in fixtures {
-            for end in 0..b.len() { let _ = parse_wave(&b[..end], "header.bin"); }
-            assert_eq!(parse_wave(&b, "header.bin").unwrap()[0].v.len(), 4);
-        }
-    }
-
-    fn assert_close(t: &WaveTrace, t0: f64, dt: f64, v: &[f32]) {
-        let tol = dt.abs() * 1e-5 + 1e-15;
-        assert!((t.t0 - t0).abs() <= tol, "t0 {} {}", t.t0, t0);
-        assert!((t.dt - dt).abs() <= tol, "dt {} {}", t.dt, dt);
-        assert_eq!(t.v.len(), v.len());
-        for (a, b) in t.v.iter().zip(v) {
-            assert!((a - b).abs() < 1e-5, "{a} {b}");
-        }
-    }
-
-    fn isf_i16(t0: f64, dt: f64, ymult: f64, codes: &[i16]) -> Vec<u8> {
-        let mut curve = Vec::new();
-        for c in codes {
-            curve.extend_from_slice(&c.to_le_bytes());
-        }
-        let len = curve.len().to_string();
-        let mut b = format!(":WFMPRE:BYT_NR 2;ENCDG BIN;BN_FMT RI;BYT_OR LSB;NR_PT {};PT_FMT Y;XINCR {dt:.9e};XZERO {t0:.9e};PT_OFF 0;YMULT {ymult:.9e};YOFF 0;YZERO 0;WFID \"lane\";:CURVE #{}{len}", codes.len(), len.len()).into_bytes();
-        b.extend(curve);
-        b
-    }
-
-    fn wavedesc_i16(t0: f64, dt: f64, gain: f32, off: f32, codes: &[i16]) -> Vec<u8> {
-        let desc = 346usize;
-        let mut b = vec![0u8; desc + codes.len() * 2];
-        b[..8].copy_from_slice(b"WAVEDESC");
-        b[32] = 1;
-        b[34] = 1;
-        b[36..40].copy_from_slice(&(desc as u32).to_le_bytes());
-        b[60..64].copy_from_slice(&((codes.len() * 2) as u32).to_le_bytes());
-        b[116..120].copy_from_slice(&(codes.len() as u32).to_le_bytes());
-        b[96..98].copy_from_slice(b"C1");
-        b[156..160].copy_from_slice(&gain.to_le_bytes());
-        b[160..164].copy_from_slice(&off.to_le_bytes());
-        b[176..180].copy_from_slice(&(dt as f32).to_le_bytes());
-        b[180..188].copy_from_slice(&t0.to_le_bytes());
-        for (k, c) in codes.iter().enumerate() {
-            b[desc + k * 2..desc + k * 2 + 2].copy_from_slice(&c.to_le_bytes());
-        }
-        b
-    }
-
-    fn ag_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
-        let mut b = Vec::new();
-        b.extend_from_slice(b"AG10");
-        let size_at = b.len();
-        b.extend_from_slice(&0u32.to_le_bytes());
-        b.extend_from_slice(&1u32.to_le_bytes());
-        let mut h = vec![0u8; 140];
-        h[..4].copy_from_slice(&140u32.to_le_bytes());
-        h[4..8].copy_from_slice(&1u32.to_le_bytes());
-        h[8..12].copy_from_slice(&1u32.to_le_bytes());
-        h[12..16].copy_from_slice(&(v.len() as u32).to_le_bytes());
-        h[32..40].copy_from_slice(&dt.to_le_bytes());
-        h[40..48].copy_from_slice(&t0.to_le_bytes());
-        h[112..112 + label.len()].copy_from_slice(label.as_bytes());
-        b.extend(h);
-        b.extend_from_slice(&12u32.to_le_bytes());
-        b.extend_from_slice(&1u16.to_le_bytes());
-        b.extend_from_slice(&4u16.to_le_bytes());
-        b.extend_from_slice(&((v.len() * 4) as u32).to_le_bytes());
-        for x in v {
-            b.extend_from_slice(&x.to_le_bytes());
-        }
-        let n = b.len() as u32;
-        b[size_at..size_at + 4].copy_from_slice(&n.to_le_bytes());
-        b
-    }
-
-    fn tr0_block(payload: &[u8]) -> Vec<u8> {
-        let mut b = Vec::new();
-        b.extend_from_slice(b"\x04\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00");
-        b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        b.extend_from_slice(payload);
-        b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        b
-    }
-
-    fn tr0_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
-        let mut header = String::from("00020000000000009601*x ");
-        for name in ["TIME", "v(1)"] {
-            header.push_str(&format!("{name:<16}"));
-        }
-        header.push_str("$&%#");
-        let mut data = Vec::new();
-        for (k, x) in v.iter().enumerate() {
-            let t = (t0 + k as f64 * dt) as f32;
-            data.extend_from_slice(&t.to_le_bytes());
-            data.extend_from_slice(&x.to_le_bytes());
-        }
-        data.extend_from_slice(&1.0e30_f32.to_le_bytes());
-        let mut b = tr0_block(header.as_bytes());
-        b.extend(tr0_block(&data));
-        b
-    }
-
-    fn raw_f64(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
-        let mut b = format!("Title: t\nDate: today\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: {}\nVariables:\n\t0\ttime\ttime\n\t1\tv(1)\tvoltage\nBinary:\n", v.len()).into_bytes();
-        for (k, x) in v.iter().enumerate() {
-            b.extend_from_slice(&(t0 + k as f64 * dt).to_le_bytes());
-            b.extend_from_slice(&(*x as f64).to_le_bytes());
-        }
-        b
-    }
-
-    fn wfmx_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
-        let mut b = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<DcaFile><Header><FileType>WaveformInternal</FileType></Header><Points>{}</Points><XOrg>{t0}</XOrg><XInc>{dt}</XInc><Data Lengths=\"{}, 1\"></Data></DcaFile>\n", v.len(), v.len()).into_bytes();
-        for x in v {
-            b.extend_from_slice(&x.to_le_bytes());
-        }
-        b
-    }
-
-    /// A short `:WFM#002` or `:WFM#003` curve of f32 samples, little endian.
-    fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
-        const CURVE: usize = 838;
-        let mut b = vec![0u8; CURVE + v.len() * 4 + 8];
-        b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
-        b[2..10].copy_from_slice(magic);
-        b[15] = 4;
-        b[16..20].copy_from_slice(&(CURVE as i32).to_le_bytes());
-        let lab = label.as_bytes();
-        b[40..40 + lab.len()].copy_from_slice(lab);
-        let put_f64 = |b: &mut [u8], o: usize, x: f64| b[o..o + 8].copy_from_slice(&x.to_le_bytes());
-        let put_u32 = |b: &mut [u8], o: usize, x: u32| b[o..o + 4].copy_from_slice(&x.to_le_bytes());
-        // exp dim 1 at 168
-        put_f64(&mut b, 168, 1.0);
-        put_f64(&mut b, 176, 0.0);
-        put_u32(&mut b, 168 + 72, 4);
-        // imp dim 1 at 488
-        put_f64(&mut b, 488, dt);
-        put_f64(&mut b, 496, t0);
-        // curve spec at 808
-        put_u32(&mut b, 808 + 14, 0);
-        put_u32(&mut b, 808 + 18, (v.len() * 4) as u32);
-        for (k, &x) in v.iter().enumerate() {
-            b[CURVE + k * 4..CURVE + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
-        }
-        b
+    fn tek_wfm_rejects_truncated_misaligned_or_invalid_scaling_before_decoding() {
+        let original = wfm_f32(b":WFM#001", 0.0, 20e-12, &[-1.0, 1.0], "capture");
+        let mut truncated = original.clone();
+        truncated.remove(truncated.len() - 9);
+        assert!(parse_wave(&truncated, "capture.wfm").unwrap_err().contains("truncated"));
+        let mut wrong_size = original.clone();
+        wrong_size[15] = 2;
+        assert!(parse_wave(&wrong_size, "capture.wfm").unwrap_err().contains("bytes per point"));
+        let mut negative = original.clone();
+        negative[16..20].copy_from_slice(&(-1i32).to_le_bytes());
+        assert!(parse_wave(&negative, "capture.wfm").unwrap_err().contains("negative"));
+        let mut bad_time = original.clone();
+        bad_time[478..486].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(parse_wave(&bad_time, "capture.wfm").unwrap_err().contains("finite"));
+        let mut bad_voltage = original;
+        bad_voltage[166..174].copy_from_slice(&f64::INFINITY.to_le_bytes());
+        assert!(parse_wave(&bad_voltage, "capture.wfm").unwrap_err().contains("finite"));
     }
 
     #[test]
@@ -3164,4 +3053,310 @@ mod tests {
         assert_eq!(file_name(&next_name(&dir, "shot", "png")), "shot-003.png");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+#[cfg(test)]
+mod header_import_tests {
+    use super::*;
+    #[test]
+    fn other_waveform_headers_load_and_unknown_bytes_are_refused() {
+        let samples = [0.0_f32, 1.0, -0.5, 0.25];
+        let isf = isf_i16(0.0, 1e-9, 1e-3, &[0, 1000, -500, 250]);
+        let got = parse_wave(&isf, "a.isf").unwrap();
+        assert_close(&got[0], 0.0, 1e-9, &samples);
+
+        let trc = wavedesc_i16(0.0, 1e-9, 1e-3, 0.0, &[0, 1000, -500, 250]);
+        assert_close(&parse_wave(&trc, "a.trc").unwrap()[0], 0.0, 1e-9, &samples);
+
+        let ag = ag_f32(-1e-6, 2e-9, &samples, "lane");
+        let got = parse_wave(&ag, "a.bin").unwrap();
+        assert_eq!(got[0].label, "lane");
+        assert_close(&got[0], -1e-6, 2e-9, &samples);
+
+        let tr0 = tr0_f32(0.0, 1e-9, &samples);
+        assert_close(&parse_wave(&tr0, "a.tr0").unwrap()[0], 0.0, 1e-9, &samples);
+        let mut ascii = String::from("00020000000000009601*x ");
+        for name in ["TIME", "v(1)"] {
+            ascii.push_str(&format!("{name:<16}"));
+        }
+        ascii.push_str("$&%#");
+        for (k, x) in samples.iter().enumerate() {
+            ascii.push_str(&format!("{:11.4e}{:11.4e}", k as f64 * 1e-9, x));
+        }
+        ascii.push_str(&format!("{:11.4e}", 1.0e30));
+        assert_close(&parse_wave(ascii.as_bytes(), "c.tr0").unwrap()[0], 0.0, 1e-9, &samples);
+        let raw = raw_f64(0.0, 1e-9, &samples);
+        assert_close(&parse_wave(&raw, "b.tr0").unwrap()[0], 0.0, 1e-9, &samples);
+
+        let wfmx = wfmx_f32(-1e-6, 1e-9, &samples);
+        assert_close(&parse_wave(&wfmx, "a.wfmx").unwrap()[0], -1e-6, 1e-9, &samples);
+
+        assert!(parse_wave(b"\x00\x01\x02\x03\xff", "no.bin").is_err());
+        assert!(parse_wave(b"not a waveform\n", "no.csv").unwrap_err().contains("no waveform"));
+        assert!(parse_wave(b"AGxx,1,2\n3,4,5\n", "no.bin").is_err());
+    }
+
+    #[test]
+    fn header_import_isf_block_digits_and_point_counts_are_checked() {
+        for byte in 0..=u8::MAX {
+            let mut b = b":WFMPRE:BYT_NR 1;NR_PT 2;XINCR 1e-9;:CURVE #".to_vec();
+            b.push(byte);
+            b.extend_from_slice(b"000000000");
+            assert!(parse_wave(&b, "bad.isf").is_err(), "block byte {byte}");
+        }
+        for field in ["NR_PT -1", "NR_PT 2.5", "NR_PT 18446744073709551615", "BYT_NR 1.5", "YMULT wrong"] {
+            let b = format!(":WFMPRE:BYT_NR 1;XINCR 1e-9;{field};:CURVE #12\0\x01");
+            assert!(parse_wave(b.as_bytes(), "bad.isf").is_err(), "{field}");
+        }
+        assert!(parse_wave(b":WFMPRE:BYT_NR 1;NR_PT 3;XINCR 1;:CURVE #12\0\x01", "short.isf")
+            .unwrap_err().contains("truncated"));
+    }
+
+    #[test]
+    fn header_import_isf_envelope_preserves_pairs_and_requires_complete_data() {
+        let header = b":WFMPRE:BYT_NR 1;NR_PT 2;PT_FMT ENV;XINCR 1;:CURVE #14";
+        let mut b = header.to_vec();
+        b.extend([-2i8 as u8, 2, -1i8 as u8, 1]);
+        let traces = parse_wave(&b, "envelope.isf").unwrap();
+        assert_eq!(traces.len(), 2);
+        assert_eq!(traces[0].v, [-2.0, -1.0]);
+        assert_eq!(traces[1].v, [2.0, 1.0]);
+        let short = b":WFMPRE:BYT_NR 1;NR_PT 2;PT_FMT ENV;XINCR 1;:CURVE #13\0\x01\x02";
+        assert!(parse_wave(short, "short.isf").unwrap_err().contains("truncated"));
+    }
+
+    #[test]
+    fn header_import_fixed_width_unicode_is_safe_and_invalid_data_is_refused() {
+        let text = format!("0002{}x$&%#", "é".repeat(16));
+        let (nvars, names) = post_vars(&text).unwrap();
+        assert_eq!((nvars, names.len()), (2, 2));
+        let text = format!("00020000000000009601*x $&%#{}", "é".repeat(16));
+        assert!(parse_wave(text.as_bytes(), "bad.tr0").is_err());
+    }
+
+    #[test]
+    fn header_import_transient_requires_every_time_sample_to_be_uniform() {
+        for time in [3.0, 1.0, f64::NAN, f64::INFINITY] {
+            let mut b = raw_f64(0.0, 1.0, &[10.0, 20.0, 30.0, 40.0]);
+            let start = b.len() - 4 * 16;
+            b[start + 2 * 16..start + 2 * 16 + 8].copy_from_slice(&time.to_le_bytes());
+            assert!(parse_wave(&b, "adaptive.tr0").unwrap_err().contains("nonuniform"));
+        }
+        let values = [10.0, 20.0, 30.0, 40.0];
+        let b = raw_f64(-2e-6, 2e-9, &values);
+        assert_close(&parse_wave(&b, "regular.tr0").unwrap()[0], -2e-6, 2e-9, &values);
+    }
+
+    #[test]
+    fn header_import_wfmx_preserves_whitespace_bytes_at_binary_boundaries() {
+        for first in [0x3f800020, 0x3f80000a, 0x3f80000d] {
+            for last in [0x0a800000, 0x0d800000] {
+                let values = [f32::from_bits(first), f32::from_bits(last)];
+                let b = wfmx_f32(0.0, 1.0, &values);
+                let trace = parse_wave(&b, "bytes.wfmx").unwrap().remove(0);
+                assert_eq!(trace.v.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), [first, last]);
+                let mut crlf = b.clone();
+                let separator = crlf.len() - 8 - 1;
+                crlf.insert(separator, b'\r');
+                assert_eq!(parse_wave(&crlf, "crlf.wfmx").unwrap()[0].v, values);
+            }
+        }
+    }
+
+    #[test]
+    fn header_import_wfmx_embedded_payload_uses_exact_length_not_binary_tag_bytes() {
+        let values = [f32::from_bits(0x3f800020), 2.0];
+        let mut b = b"<?xml?><DataFile><FileType>WaveformInternal</FileType><Points>2</Points><XOrg>0</XOrg><XInc>1</XInc><Data>".to_vec();
+        for value in values { b.extend(value.to_le_bytes()); }
+        b.extend_from_slice(b"</Data></DataFile>");
+        assert_eq!(parse_wave(&b, "embedded.wfmx").unwrap()[0].v, values);
+        let mut b = b"<Data>".to_vec();
+        let payload = b"</Data>123456789";
+        assert_eq!(payload.len(), 16);
+        b.extend_from_slice(payload);
+        b.extend_from_slice(b"</Data>");
+        assert_eq!(wfmx_payload(&b, 4).unwrap(), payload);
+        assert!(wfmx_payload(&b, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn header_import_wfmx_separator_cannot_replace_a_missing_payload_byte() {
+        let mut b = wfmx_f32(0.0, 1.0, &[1.0, 2.0]);
+        b.pop();
+        assert!(parse_wave(&b, "short.wfmx").unwrap_err().contains("truncated"));
+    }
+
+    #[test]
+    fn header_import_wfmx_checks_the_whole_explicit_time_axis() {
+        let mut payload = Vec::new();
+        for value in [0.0f64, 1.0, 3.0, 10.0, 20.0, 30.0] { payload.extend(value.to_le_bytes()); }
+        assert!(wfmx_volts(&payload, 3, 0.0, 1.0).is_err());
+        payload[16..24].copy_from_slice(&2.0f64.to_le_bytes());
+        assert_eq!(wfmx_volts(&payload, 3, 0.0, 1.0).unwrap(), [10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn header_import_wfmx_f32_axis_accepts_quantization_without_guessing_other_layouts() {
+        let n = 100_000;
+        let t0 = -37e-6;
+        let dt = 1e-9;
+        let xs: Vec<f32> = (0..n).map(|i| (t0 + i as f64 * dt) as f32).collect();
+        let ys: Vec<f32> = (0..n).map(|i| ((i % 37) as f32 - 18.0) / 19.0).collect();
+        for interleaved in [false, true] {
+            let mut payload = Vec::with_capacity(n * 8);
+            if interleaved {
+                for i in 0..n { payload.extend(xs[i].to_le_bytes()); payload.extend(ys[i].to_le_bytes()); }
+            } else {
+                for x in &xs { payload.extend(x.to_le_bytes()); }
+                for y in &ys { payload.extend(y.to_le_bytes()); }
+            }
+            assert_eq!(wfmx_volts(&payload, n, t0, dt).unwrap(), ys);
+            let at = if interleaved { (n - 1) * 8 } else { (n - 1) * 4 };
+            payload[at..at + 4].copy_from_slice(&(xs[n - 1] + 10.0 * dt as f32).to_le_bytes());
+            assert!(wfmx_volts(&payload, n, t0, dt).unwrap_err().contains("ambiguous"));
+        }
+        let implicit_f64: Vec<u8> = [1.0f64, 2.0, 3.0].into_iter().flat_map(f64::to_le_bytes).collect();
+        assert!(wfmx_volts(&implicit_f64, 3, 0.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn header_import_long_tr0_f32_times_keep_source_precision_and_reject_adaptive_axis() {
+        let values: Vec<f32> = (0..100_000).map(|i| (i % 7) as f32).collect();
+        let b = tr0_f32(-37e-6, 1e-9, &values);
+        let got = parse_wave(&b, "long.tr0").unwrap();
+        assert_eq!(got[0].v, values);
+        assert!((got[0].dt - 1e-9).abs() < 1e-16);
+        let mut cols = Vec::new();
+        for i in 0..1000 { cols.extend([(i as f64 * 1e-9) as f32 as f64, i as f64]); }
+        cols[998 * 2] += 5e-9;
+        assert!(traces_from_columns(&cols, 2, &[], true).unwrap_err().contains("nonuniform"));
+    }
+
+    #[test]
+    fn header_import_known_formats_tolerate_all_truncation_boundaries_without_panicking() {
+        let values = [0.0, 1.0, -0.5, 0.25];
+        let fixtures = [
+            isf_i16(0.0, 1e-9, 1e-3, &[0, 1000, -500, 250]),
+            wavedesc_i16(0.0, 1e-9, 1e-3, 0.0, &[0, 1000, -500, 250]),
+            ag_f32(0.0, 1e-9, &values, "lane"),
+            tr0_f32(0.0, 1e-9, &values), raw_f64(0.0, 1e-9, &values), wfmx_f32(0.0, 1e-9, &values),
+        ];
+        for b in fixtures {
+            for end in 0..b.len() { let _ = parse_wave(&b[..end], "header.bin"); }
+            assert_eq!(parse_wave(&b, "header.bin").unwrap()[0].v.len(), 4);
+        }
+    }
+
+    fn assert_close(t: &WaveTrace, t0: f64, dt: f64, v: &[f32]) {
+        let tol = dt.abs() * 1e-5 + 1e-15;
+        assert!((t.t0 - t0).abs() <= tol, "t0 {} {}", t.t0, t0);
+        assert!((t.dt - dt).abs() <= tol, "dt {} {}", t.dt, dt);
+        assert_eq!(t.v.len(), v.len());
+        for (a, b) in t.v.iter().zip(v) {
+            assert!((a - b).abs() < 1e-5, "{a} {b}");
+        }
+    }
+
+    fn isf_i16(t0: f64, dt: f64, ymult: f64, codes: &[i16]) -> Vec<u8> {
+        let mut curve = Vec::new();
+        for c in codes {
+            curve.extend_from_slice(&c.to_le_bytes());
+        }
+        let len = curve.len().to_string();
+        let mut b = format!(":WFMPRE:BYT_NR 2;ENCDG BIN;BN_FMT RI;BYT_OR LSB;NR_PT {};PT_FMT Y;XINCR {dt:.9e};XZERO {t0:.9e};PT_OFF 0;YMULT {ymult:.9e};YOFF 0;YZERO 0;WFID \"lane\";:CURVE #{}{len}", codes.len(), len.len()).into_bytes();
+        b.extend(curve);
+        b
+    }
+
+    fn wavedesc_i16(t0: f64, dt: f64, gain: f32, off: f32, codes: &[i16]) -> Vec<u8> {
+        let desc = 346usize;
+        let mut b = vec![0u8; desc + codes.len() * 2];
+        b[..8].copy_from_slice(b"WAVEDESC");
+        b[32] = 1;
+        b[34] = 1;
+        b[36..40].copy_from_slice(&(desc as u32).to_le_bytes());
+        b[60..64].copy_from_slice(&((codes.len() * 2) as u32).to_le_bytes());
+        b[116..120].copy_from_slice(&(codes.len() as u32).to_le_bytes());
+        b[96..98].copy_from_slice(b"C1");
+        b[156..160].copy_from_slice(&gain.to_le_bytes());
+        b[160..164].copy_from_slice(&off.to_le_bytes());
+        b[176..180].copy_from_slice(&(dt as f32).to_le_bytes());
+        b[180..188].copy_from_slice(&t0.to_le_bytes());
+        for (k, c) in codes.iter().enumerate() {
+            b[desc + k * 2..desc + k * 2 + 2].copy_from_slice(&c.to_le_bytes());
+        }
+        b
+    }
+
+    fn ag_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"AG10");
+        let size_at = b.len();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        let mut h = vec![0u8; 140];
+        h[..4].copy_from_slice(&140u32.to_le_bytes());
+        h[4..8].copy_from_slice(&1u32.to_le_bytes());
+        h[8..12].copy_from_slice(&1u32.to_le_bytes());
+        h[12..16].copy_from_slice(&(v.len() as u32).to_le_bytes());
+        h[32..40].copy_from_slice(&dt.to_le_bytes());
+        h[40..48].copy_from_slice(&t0.to_le_bytes());
+        h[112..112 + label.len()].copy_from_slice(label.as_bytes());
+        b.extend(h);
+        b.extend_from_slice(&12u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&4u16.to_le_bytes());
+        b.extend_from_slice(&((v.len() * 4) as u32).to_le_bytes());
+        for x in v {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+        let n = b.len() as u32;
+        b[size_at..size_at + 4].copy_from_slice(&n.to_le_bytes());
+        b
+    }
+
+    fn tr0_block(payload: &[u8]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"\x04\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00");
+        b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        b.extend_from_slice(payload);
+        b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        b
+    }
+
+    fn tr0_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
+        let mut header = String::from("00020000000000009601*x ");
+        for name in ["TIME", "v(1)"] {
+            header.push_str(&format!("{name:<16}"));
+        }
+        header.push_str("$&%#");
+        let mut data = Vec::new();
+        for (k, x) in v.iter().enumerate() {
+            let t = (t0 + k as f64 * dt) as f32;
+            data.extend_from_slice(&t.to_le_bytes());
+            data.extend_from_slice(&x.to_le_bytes());
+        }
+        data.extend_from_slice(&1.0e30_f32.to_le_bytes());
+        let mut b = tr0_block(header.as_bytes());
+        b.extend(tr0_block(&data));
+        b
+    }
+
+    fn raw_f64(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
+        let mut b = format!("Title: t\nDate: today\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: {}\nVariables:\n\t0\ttime\ttime\n\t1\tv(1)\tvoltage\nBinary:\n", v.len()).into_bytes();
+        for (k, x) in v.iter().enumerate() {
+            b.extend_from_slice(&(t0 + k as f64 * dt).to_le_bytes());
+            b.extend_from_slice(&(*x as f64).to_le_bytes());
+        }
+        b
+    }
+
+    fn wfmx_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
+        let mut b = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<DcaFile><Header><FileType>WaveformInternal</FileType></Header><Points>{}</Points><XOrg>{t0}</XOrg><XInc>{dt}</XInc><Data Lengths=\"{}, 1\"></Data></DcaFile>\n", v.len(), v.len()).into_bytes();
+        for x in v {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+        b
+    }
+
 }

@@ -121,7 +121,7 @@ from `/etc/oos-board` ([porting.md](porting.md)):
    by stock at the next power-on (`update.md`), then the start count of 4c. Then **`oos-fpgad fpga-boot`**: only the
    BOOT command (spidev1.0, slot 0x400000), its uptime to `/tmp/oos-fpga-booted`. The bitstream loads while the rest of
    rcS runs; the fixed 3 s FPGA wait is counted from this command.
-3. Network in the background (`udhcpc -t 5` would block the start-up up to 15 s without a DHCP answer), telnetd, banner,
+3. Network in the background (`udhcpc -t 5` would block the start-up up to 15 s without a DHCP answer), provisioned key-only SSH ([ssh.md](ssh.md)), banner,
    `/oos`, touch and beeper modules.
 4. **oos-ui** with `--hw --afe --start-up /tmp/oos-boot.status`: the start-up screen (`ui/src/ui/startup.rs`; logo or
    `/oos/splash.ppm`, checklist with times) while its hardware thread waits for the `end` line. No demo signals and

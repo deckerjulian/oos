@@ -10,6 +10,7 @@ use oos_dsp::trigger::Input;
 
 /// Packets of the decoder settings in `m` on the channels of `inp` (times = fractional sample indices).
 pub fn decode(m: &Model, ch: [&[f32]; NCH], dt: f64) -> Result<Vec<Packet>, &'static str> {
+    if m.dec_src >= NCH { return Err("stored decoder inputs need the reference adapter"); }
     decode_at(m, ch, dt, m.dec_thr, 0.1 * m.ch[m.dec_src].volts_per_div())
 }
 
@@ -35,10 +36,10 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
 }
 
 /// `decode` with the threshold and hysteresis given.
-fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result<Vec<Packet>, &'static str> {
+pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result<Vec<Packet>, &'static str> {
     use oos_dsp::decode::{can, i2c, i2s, lin, mil1553, spi, uart, Parity};
     use oos_dsp::{decode_ext as x1, decode_ext2 as x2, decode_ext3 as x3};
-    let get = |c: usize| if ch[c].is_empty() { Err("source channel off") } else { Ok(ch[c]) };
+    let get = |c: usize| ch.get(c).copied().filter(|v| !v.is_empty()).ok_or("source channel off");
     let opt = |c: Option<usize>| -> Result<Option<&[f32]>, &'static str> { c.map(get).transpose() };
     // RS-485 / differential: A - B, threshold around 0 V like the pair's receiver
     let diff;
@@ -104,6 +105,9 @@ fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result
         Proto::Usb => x3::usb(get(m.dec_src)?, opt(m.dec_cs)?, dt, crate::decode::USB_SPEEDS[m.dec_uspeed], thr, hy),
         Proto::Manchester => oos_dsp::linecode::manchester(line, dt, baud, thr, hy),
         Proto::Mlt3 => oos_dsp::linecode::mlt3(line, dt, baud, thr, hy),
+        Proto::Cphy => oos_dsp::cphy::decode(get(m.dec_src)?, get(m.dec_src2)?,
+            opt(m.dec_cs)?.ok_or("C-PHY C source missing")?, dt,
+            (m.dec_cphy_rate > 0.0).then_some(m.dec_cphy_rate), thr.abs().max(1e-6)),
     })
 }
 

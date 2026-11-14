@@ -348,7 +348,7 @@ impl Ui {
             Item::NetMac => Some(file("/sys/class/net/eth0/address")).filter(|m| !m.is_empty()).unwrap_or("-".into()),
             Item::NetWeb if self.net.is_empty() => "not connected".into(),
             Item::NetWeb => format!("http://{}:8080", self.net),
-            Item::NetPorts => "SCPI 5555, VXI-11, telnet 23".into(),
+            Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (key)".into(),
             _ => {
                 let l = &self.wlan.link;
                 if !l.stick {
@@ -647,7 +647,7 @@ impl Ui {
             OskFor::MathExpr(k) => {
                 let t = o.text.trim().to_string();
                 // the keyboard stays open on an error: the formula is still there to correct
-                if let Some(e) = (!t.is_empty()).then(|| oos_dsp::expr::Expr::parse(&t).err()).flatten() {
+                if let Some(e) = (!t.is_empty()).then(|| crate::math::parse_expr(&t).err()).flatten() {
                     return self.toast(&e);
                 }
                 self.m.math_expr[k] = t;
@@ -1024,6 +1024,31 @@ mod tests {
         assert!(ui.fonts.m.width(&ui.net_value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.net_value(Item::NetWlan));
         ui.tap(950, 20);
         assert!(!ui.menu_open);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_network_page_uses_actual_runtime_ports_before_scope_fallbacks() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.net = "192.168.1.148".into();
+        ui.lan_web_port = Some(18080);
+        ui.lan_status = "SCPI 5555 / HiSLIP 14880 / mDNS on".into();
+        assert_eq!(ui.net_value(Item::NetWeb), "http://192.168.1.148:18080");
+        assert_eq!(ui.net_value(Item::NetPorts), ui.lan_status);
+        assert!(!ui.net_value(Item::NetPorts).contains("VXI"));
+        assert!(!ui.net_value(Item::NetPorts).contains("telnet"));
+        ui.lan_web_port = None;
+        ui.lan_status = "SCPI unavailable / HiSLIP 14999 / mDNS unavailable".into();
+        assert!(ui.net_value(Item::NetWeb).contains("Web port unavailable"));
+        assert_eq!(ui.net_value(Item::NetPorts), ui.lan_status, "failed binds must not invent default listeners");
+    }
+
+    #[test]
+    fn hardware_network_fallback_names_key_only_ssh_instead_of_telnet() {
+        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let ports = ui.net_value(Item::NetPorts);
+        assert!(ports.contains("SSH 22 (key)"));
+        assert!(!ports.contains("telnet"));
     }
 
     #[test]

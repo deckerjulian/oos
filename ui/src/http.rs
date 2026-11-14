@@ -5,7 +5,7 @@
 //!   GET /             page            GET /screen.png   current screen (PNG, 60 to 175 KB; the page's live view and saving)
 //!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
 //!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
-//!   POST /waveform?name=...&slot=1   load a waveform into the chosen reference (no file written)
+//!   POST /waveform?name=...&slot=1   load a waveform into a chosen reference (no file written)
 //!   GET /ui-state     source, acquisition state and capture count for the remote controls
 //!   GET /cmd?c=...    one key, knob or touch command (cmd.rs syntax: "key runstop", "knob vscale +1", "tap 100 200");
 //!                     other commands are refused (`cmd::remote_ok`)
@@ -24,7 +24,7 @@ use std::time::Duration;
 
 /// Longest request: `POST /update` (a package is ~31 MB, the image at most 64 MiB), every other request.
 const MAX_UPDATE: usize = 70 << 20;
-const MAX_WAVEFORM: usize = 64 << 20;
+const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
@@ -102,13 +102,13 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 .workflow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px}.workflow label{display:flex;align-items:center;gap:6px;color:#b8c0ca;font-size:13px}.workflow .primary{border-color:#f0a93b;color:#f0a93b}.session{margin-left:auto;color:#b8c0ca;font-size:13px;font-variant-numeric:tabular-nums}.file-hint{min-height:20px;margin:0 0 8px;color:#b8c0ca;font-size:13px}.file-hint.bad{color:#ffab91}header{flex-wrap:wrap}@media(max-width:620px){.session{margin-left:0;flex-basis:100%}.workflow{gap:6px}button{min-height:40px}}</style></head>
 <body><header><b>OOS remote</b><span id="st">connecting ...</span><nav><a href="/update">Update</a></nav></header>
 <div class="workflow" aria-label="Waveform and source actions">
-<button id="load-wave" class="primary" onclick="document.getElementById('wave-file').click()">Load waveform</button>
+<button id="load-wave" class="primary" onclick="askFile()">Load waveform</button>
 <input id="wave-file" type="file" accept=".csv,.bin,.wfm,.trc,.isf,.tr0,.wfmx" hidden>
-<label>Into <select id="wave-slot" aria-label="Reference slot"><option value="1">R1</option><option value="2">R2</option><option value="3">R3</option><option value="4">R4</option><option value="5">R5</option><option value="6">R6</option><option value="7">R7</option><option value="8">R8</option><option value="9">R9</option><option value="10">R10</option></select></label>
+<label>Into <select id="wave-slot" aria-label="Reference slot"><option value="" selected>Choose slot</option><option value="1">R1</option><option value="2">R2</option><option value="3">R3</option><option value="4">R4</option><option value="5">R5</option><option value="6">R6</option><option value="7">R7</option><option value="8">R8</option><option value="9">R9</option><option value="10">R10</option></select></label>
 <button id="sim-mode" onclick="c('workflow sim')">SIM</button><button id="return-live" onclick="c('workflow live')" hidden>Return to live</button>
 <button id="acquire-toggle" onclick="c('key runstop')" aria-label="Run or stop acquisition">Run/Stop</button><button onclick="c('key single')">Single</button>
 <button onclick="c('workflow measure')">Add measurement</button><span id="session-state" class="session" aria-live="polite">Reading source...</span></div>
-<p id="wave-status" class="file-hint" role="status">CSV, BIN, WFM, TRC, ISF, TR0 or WFMX · up to 64 MiB. You can also drop a file on the waveform.</p>
+<p id="wave-status" class="file-hint" role="status">Choose a slot, then CSV, BIN, WFM, TRC, ISF, TR0 or WFMX · up to 128 MiB. You can also drop a file on the waveform.</p>
 <img id="s" width="1024" height="600" alt="scope screen" src="/screen.png">
 <div class="g"><div class="k"><span>Acquisition</span><div>
 <button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Autoset</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
@@ -138,6 +138,7 @@ function say(t){msg=t;until=Date.now()+5000;show();}
 function show(bad){st.textContent=Date.now()<until?msg:(paused?'picture paused':bad?'no connection':'connected, '+n+' pictures/s');st.className=bad?'bad':'';}
 function c(x){return fetch('/cmd?c='+encodeURIComponent(x)).then(async r=>{const text=await r.text();if(!r.ok||text==='refused')throw Error(text);refreshState();}).catch(()=>say('Command not sent. Check the connection.'));}
 let statePending=false,uploading=false,workflowState=null;
+function askFile(){const slot=document.getElementById('wave-slot'),status=document.getElementById('wave-status');if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';return;}document.getElementById('wave-file').click();}
 function refreshState(){if(statePending||document.hidden)return;statePending=true;fetch('/ui-state').then(r=>{if(!r.ok)throw Error();return r.json();}).then(v=>{
 const mode=v.mode==='sim'?'SIM':v.mode==='reference'?'Stored waveform':'Live';
 workflowState=v;
@@ -146,7 +147,8 @@ document.getElementById('sim-mode').className=v.mode==='sim'?'on':'';document.ge
 document.getElementById('acquire-toggle').textContent=v.running?'Stop':'Run';
 }).catch(()=>{}).finally(()=>{statePending=false;});}
 async function uploadWave(file){if(!file||uploading)return;const status=document.getElementById('wave-status'),button=document.getElementById('load-wave'),slot=document.getElementById('wave-slot');
-if(file.size>64*1024*1024){status.textContent='That file is larger than 64 MiB. Export a shorter waveform and try again.';status.className='file-hint bad';return;}
+if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';document.getElementById('wave-file').value='';return;}
+if(file.size>128*1024*1024){status.textContent='That file is larger than 128 MiB. Export a shorter waveform and try again.';status.className='file-hint bad';return;}
 uploading=true;button.disabled=true;slot.disabled=true;button.textContent='Loading...';status.className='file-hint';status.textContent='Loading '+file.name+' into R'+slot.value+'...';
 try{const response=await fetch('/waveform?name='+encodeURIComponent(file.name)+'&slot='+encodeURIComponent(slot.value),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});const text=await response.text();if(!response.ok)throw Error(text);status.textContent=text;refreshState();}
 catch(error){status.textContent='Could not load waveform: '+(error.message||'check the connection and try again.');status.className='file-hint bad';}
@@ -154,7 +156,7 @@ finally{uploading=false;button.disabled=false;slot.disabled=false;button.textCon
 document.getElementById('wave-file').addEventListener('change',event=>uploadWave(event.target.files[0]));
 s.addEventListener('dragover',event=>{if(Array.from(event.dataTransfer?.types||[]).includes('Files'))event.preventDefault();});
 s.addEventListener('drop',event=>{event.preventDefault();uploadWave(event.dataTransfer.files[0]);});
-document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='o'){event.preventDefault();document.getElementById('wave-file').click();}});
+document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='o'){event.preventDefault();askFile();}});
 refreshState();
 function dl(u,ext){say('saving ...');fetch(u).then(r=>r.ok?r.blob():r.text().then(t=>Promise.reject(t))).then(b=>{
 const a=document.createElement('a'),d=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,19).replace(/[:T]/g,'-');
@@ -164,7 +166,7 @@ function pause(){paused=!paused;pb.textContent=paused?'Resume picture':'Pause pi
 function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*1024/r.width),Math.round((p.clientY-r.top)*600/r.height)];}
 let d0=null;
 function down(e){e.preventDefault();d0=pt(e);}
-function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){const r=workflowState?.loadRect;if(Array.isArray(r)&&r.length===4&&start[0]>=r[0]&&start[0]<r[0]+r[2]&&start[1]>=r[1]&&start[1]<r[1]+r[3])document.getElementById('wave-file').click();else c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
+function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){const r=workflowState?.loadRect;if(Array.isArray(r)&&r.length===4&&start[0]>=r[0]&&start[0]<r[0]+r[2]&&start[1]>=r[1]&&start[1]<r[1]+r[3])askFile();else c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
 s.addEventListener('mousedown',down);s.addEventListener('mouseup',up);s.addEventListener('touchstart',down,{passive:false});s.addEventListener('touchend',up,{passive:false});
 s.ondragstart=()=>false;
 let count=0;setInterval(()=>{n=count;count=0;if(!document.hidden){refreshState();if(!paused)show(st.className=='bad');}},1000);
@@ -310,14 +312,18 @@ impl Http {
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
                     "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
                     "/waveform" if post => {
-                        let requested_slot = query.split('&').find_map(|part| part.strip_prefix("slot="));
-                        let slot = requested_slot.and_then(|value| value.parse::<usize>().ok());
+                        let slot = query.split('&').find_map(|part| part.strip_prefix("slot=")).and_then(|value| value.parse::<usize>().ok());
                         let name = waveform_name(query);
                         let previous = ui.ref_slot();
-                        let valid_slot = match (requested_slot, slot) { (_, Some(slot)) if (1..=10).contains(&slot) => ui.ref_slot_set(slot - 1), (None, None) => true, _ => false };
-                        let result = if valid_slot { ui.load_waveform_bytes(req_body, &name) } else { Err("Choose a reference slot from R1 to R10.".into()) };
+                        let result = if let Some(slot) = slot.filter(|s| (1..=10).contains(s)) {
+                            ui.load_waveform_bytes_at(req_body, &name, slot - 1)
+                        } else { Err("Choose a reference slot from R1 to R10.".into()) };
                         match result {
-                            Ok(()) => ("text/plain; charset=utf-8", format!("Loaded {} into R{}. It is on with the live channels. Take over to use this record's time base.", name, ui.ref_slot() + 1).into_bytes()),
+                            Ok(()) => {
+                                let hint = if ui.record_mode() { "Use Run/Stop or Single to acquire from this record; Return to live restores the live source." }
+                                    else { "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition." };
+                                ("text/plain; charset=utf-8", format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint).into_bytes())
+                            }
                             Err(error) => {
                                 ui.ref_slot_set(previous);
                                 failed = true;
@@ -471,8 +477,10 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
         "tools/call" => match params.get("name").and_then(J::str) {
             Some("scpi") => {
                 let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
-                let r = scpi.exec_line(ui, cv, c);
-                text(if r.is_empty() { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") })
+                match scpi.exec_message_checked(ui, cv, c) {
+                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") }),
+                    Err(error) => J::obj(&[("isError", J::Bool(true)), ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])]))]),
+                }
             }
             Some("screenshot") => J::obj(&[("content", J::Arr(vec![J::obj(&[("type", J::s("image")), ("mimeType", J::s("image/png")), ("data", J::Str(base64(&crate::store::png_of(cv))))])]))]),
             _ => return Some(err(id, -32602.0, "unknown tool")),
@@ -589,6 +597,30 @@ mod tests {
         }
     }
 
+    /// An explicitly started, private backend for tools/scpi_validate.py.
+    /// It opens no desktop, hardware device or LAN discovery announcer.
+    #[test]
+    #[ignore = "Owned headless backend for explicit local SCPI acceptance"]
+    fn scpi_validation_fixture() {
+        let var = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+        let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
+        let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16);
+        assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let end = std::time::Instant::now() + Duration::from_secs(var("OOS_VALIDATION_SECONDS", 90));
+        while !ui.quit && std::time::Instant::now() < end {
+            ui.step(0.04);
+            ui.render(&mut cv);
+            scpi.poll(&mut ui, &cv);
+            for command in h.poll(&mut ui, &cv, &mut scpi) { crate::cmd::run(&mut ui, &command); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn get(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, path: &str) -> String {
         request(h, ui, cv, scpi, format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).into_bytes())
     }
@@ -612,8 +644,11 @@ mod tests {
         }
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=clock.csv&slot=3", csv.as_bytes()));
         assert!(reply.starts_with("HTTP/1.1 200") && reply.contains("Loaded clock.csv into R3"), "{reply}");
-        assert!(!ui.record_mode() && ui.m.ch[0].on, "a loaded reference stays on the live screen");
+        assert!(!ui.record_mode(), "loading into a live session adds a reference overlay");
         assert_eq!(ui.ref_slot(), 2);
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=no-slot.csv", csv.as_bytes()));
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+        assert_eq!(ui.ref_slot(), 2, "an omitted destination must not replace R1");
         assert_eq!(ui.ref_shown(), Some(true));
         assert!(!store.exists(), "an upload is read into memory, not written to a server-selected path");
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.csv&slot=4", b"not a waveform"));
@@ -627,8 +662,13 @@ mod tests {
         malformed.extend_from_slice(&1e-9f64.to_le_bytes());
         malformed.extend_from_slice(&0f64.to_le_bytes());
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.bin&slot=4", &malformed));
-        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("too large"), "{reply}");
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("32-million-sample import limit"), "{reply}");
         assert_eq!(ui.ref_slot(), 2);
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=clock.csv", csv.as_bytes()));
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+        assert_eq!(ui.ref_slot(), 2, "a file with no slot does not replace R1");
+        assert!(ui.meas_at(crate::model::WaveId::Ref(0), oos_dsp::measure::Meas::Vpp).is_nan());
+        assert!(ui.meas_at(crate::model::WaveId::Ref(2), oos_dsp::measure::Meas::Vpp).is_finite());
         for slot in ["0", "11", "nope", ""] {
             let reply = request(&mut h, &mut ui, &cv, &mut scpi, post(&format!("/waveform?slot={slot}"), csv.as_bytes()));
             assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
@@ -641,6 +681,8 @@ mod tests {
 
     #[test]
     fn waveform_upload_has_its_own_limit_and_origin_protection() {
+        assert_eq!(MAX_WAVEFORM, 128 << 20, "native and browser imports share the parser byte limit");
+        assert!(PAGE.contains("up to 128 MiB") && PAGE.contains("file.size>128*1024*1024"));
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
@@ -873,6 +915,34 @@ setTimeout(() => {
         assert_eq!(unescape("a%é1"), "a1");
         assert_eq!(unescape("%€"), String::from_utf8_lossy(&[0xac]));
         assert_eq!(unescape("x%4"), "x%4");
+    }
+
+    #[test]
+    fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
+        let mut ui=crate::ui::Ui::new(crate::wave::Source::Demo{t:0.0});ui.set_offline(true);
+        let mut csv=String::from("Time (s),Volts\n");for i in 0..4000 {csv.push_str(&format!("{},{}\n",i as f64*1e-9,if i%40<20 {-0.5}else{0.5}));}
+        ui.load_waveform_bytes(csv.as_bytes(),"opc.csv").unwrap();ui.m.trig_level=10.0;
+        let cv=crate::gfx::Canvas::new(crate::ui::W,crate::ui::H);let mut scpi=crate::scpi::Scpi::open(0);
+        let reply=mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut ui,&cv,&mut scpi).unwrap();
+        let reply=crate::json::parse(&reply).unwrap();assert_eq!(reply.get("result").unwrap().get("isError"),Some(&crate::json::J::Bool(true)));
+        assert_eq!(ui.m.trig_mode,crate::model::TrigMode::Single,"commands after an unsupported immediate barrier must not execute");
+    }
+
+    #[test]
+    fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let empty = mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR;:MEAS:STRIP?"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(empty.contains("\"text\":\"\""), "{empty}");
+        assert!(!empty.contains("\"text\":\"ok\""));
+        let write = mcp(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(write.contains("\"text\":\"ok\""), "{write}");
+        let compound = mcp(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:STRIP?;*OPC?"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(compound.contains("\"text\":\";1\""), "{compound}");
     }
 
     #[test]

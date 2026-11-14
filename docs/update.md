@@ -119,13 +119,13 @@ starts with the UTC build time; an older build than the installed one is refused
   offline copy) and never publish it. Whoever wants only their own builds on a scope adds the public line of their key
   to `keys/update.pub`, removes the community line and the other lines they do not want, and installs that build. From
   then on that scope refuses community packages. If the own key is lost, a scope that trusts only this key needs an
-  image installed by hand (`card-install.py` on a host, or `dd` over telnet).
+  image installed by hand (`card-install.py` on a host, or `dd` over an authenticated SSH session).
 - Public keys: `keys/update.pub`, compiled into every build (`oos_hal::update::TRUSTED_KEYS`). A second key (e.g. a CI
   key) is added as another line; a key is retired by an update that no longer lists it.
 - Ed25519 and SHA-2 are implemented in the tree (no crates beyond libc): RFC 8032 test vectors, FIPS examples, and a
   cross-check against Python `cryptography` in both directions (Rust signs / Python verifies and the reverse).
-- The signature guards the install path only. Telnet, SCPI and the web remote stay unauthenticated (bench LAN): anyone
-  on the LAN can still write the card by hand. With the community key trusted, anyone on the LAN can also sign and
+- The signature guards the install path only. The root shell requires a provisioned SSH key ([ssh.md](ssh.md)); SCPI
+  and the web remote retain their existing unauthenticated bench-LAN interfaces. With the community key trusted, anyone on the LAN can also sign and
   install a package. What the signature buys then: a damaged package, or one not made for OOS, is never installed by
   the web page or the GUI. Keeping foreign packages out takes a build without the community key.
 

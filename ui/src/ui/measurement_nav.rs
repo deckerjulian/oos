@@ -24,10 +24,9 @@ impl Ui {
     fn measurement_catalog_all(&self) -> Vec<Item> {
         let common = [Meas::Vpp, Meas::Vamp, Meas::Freq, Meas::Period, Meas::Vrms, Meas::Vavg, Meas::Rise, Meas::Fall, Meas::PDuty, Meas::PWidth, Meas::Overshoot, Meas::PEdges];
         let group = self.meas_category.min(GROUPS.len() - 1);
+        if group == 6 { return (0..self.measurement_count()).map(|index| Item::MeasRemove(index as u16)).collect(); }
         let choices: Vec<Meas> = if group == 0 {
             common.into()
-        } else if group == 6 {
-            self.m.meas.iter().filter(|e| e.1 == self.meas_src).map(|e| e.0).collect()
         } else {
             ALL_MEAS.iter().copied().filter(|&k| category(k) == group).collect()
         };
@@ -36,12 +35,15 @@ impl Ui {
 
     pub(super) fn measurement_catalog(&self) -> Vec<Item> {
         let items = self.measurement_catalog_all();
-        let pages = items.len().max(1).div_ceil(24);
-        items.into_iter().skip(self.meas_catalog_page.min(pages - 1) * 24).take(24).collect()
+        let size = self.legacy_page_size();
+        let pages = items.len().max(1).div_ceil(size);
+        items.into_iter().skip(self.meas_catalog_page.min(pages - 1) * size).take(size).collect()
     }
 
+    fn legacy_page_size(&self) -> usize { if self.meas_category == 6 { 12 } else { 24 } }
+
     fn catalog_page_buttons() -> (Rect, Rect) {
-        (Rect::new(758, 82, 78, 34), Rect::new(844, 82, 78, 34))
+        (Rect::new(660, 82, 78, 34), Rect::new(746, 82, 78, 34))
     }
 
     fn measurement_group_rect(group: usize) -> Rect {
@@ -51,11 +53,21 @@ impl Ui {
     pub(super) fn measurement_chooser_layout(&self) -> Dlg {
         let r = Rect::new(14, 70, W - 28, 402);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
-        let source = Row { it: Item::MeasSrc, label: Rect::new(26, 122, 66, 40), ctrl: Rect::new(94, 122, 190, 40), ctl: Ctl::Pick };
-        let settings = Row { it: Item::Open(MenuId::Measure), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(298, 122, 142, 40), ctl: Ctl::Button };
-        let pairs = Row { it: Item::Open(MenuId::MeasPair), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(452, 122, 164, 40), ctl: Ctl::Button };
-        let mut rows = vec![source, settings, pairs];
+        let source = Row { it: Item::MeasSrc, label: Rect::new(26, 122, 54, 40), ctrl: Rect::new(84, 122, 172, 40), ctl: Ctl::Pick };
+        let gate = Row { it: Item::MeasGate, label: Rect::new(270, 122, 42, 40), ctrl: Rect::new(316, 122, 244, 40), ctl: Ctl::Seg(vec!["Screen".into(), "Full record".into()], Some(usize::from(self.m.meas_full_record))) };
+        let settings = Row { it: Item::Open(MenuId::Measure), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(572, 122, 128, 40), ctl: Ctl::Button };
+        let pairs = Row { it: Item::Open(MenuId::MeasPair), label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(712, 122, 164, 40), ctl: Ctl::Button };
+        let mut rows = vec![source, gate, settings, pairs];
         for (i, item) in self.measurement_catalog().into_iter().enumerate() {
+            if let Item::MeasRemove(index) = item {
+                let x = 208 + i as i32 % 2 * 390;
+                let y = 170 + i as i32 / 2 * 43;
+                rows.push(Row { it: item, label: Rect::new(0,0,0,0), ctrl: Rect::new(x,y,300,40), ctl: Ctl::Button });
+                if (index as usize) < self.m.meas.len() {
+                    rows.push(Row { it: Item::MeasCfg(index), label: Rect::new(0,0,0,0), ctrl: Rect::new(x+304,y,74,40), ctl: Ctl::Button });
+                }
+                continue;
+            }
             let x = 208 + i as i32 % 4 * 195;
             let y = 170 + i as i32 / 4 * 43;
             let added = match item {
@@ -69,25 +81,26 @@ impl Ui {
                 rows.push(Row { it: item, label: Rect::new(0, 0, 0, 0), ctrl: Rect::new(x, y, 183, 40), ctl: Ctl::Button });
             }
         }
-        Dlg { r, close, back: None, rows, heads: Vec::new() }
+        let back = self.parent.map(|_| Rect::new(close.x - 88,close.y,78,DLG_CTRL));
+        Dlg { r, close, back, rows, heads: Vec::new() }
     }
 
     pub(super) fn draw_measurement_groups(&self, cv: &mut Canvas) {
-        if self.menu != MenuId::MeasAdd { return; }
+        if self.menu != MenuId::MeasLegacy { return; }
         for (i, label) in GROUPS.iter().enumerate() {
             let rect = Self::measurement_group_rect(i);
             let selected = i == self.meas_category;
             btn(cv, rect, if selected { ACCENT } else { BTN }, if selected { ACCENT } else { BTN_BORDER });
             cv.text_in(&self.fonts.mb, rect, 1, label, if selected { DARK_TEXT } else { TEXT });
         }
-        let source_count = self.m.meas.iter().filter(|e| e.1 == self.meas_src).count();
-        let line = format!("{} selected on {}  ·  tap to add or remove", source_count, self.wave_name(self.meas_src));
-        cv.text(&self.fonts.s, 634, 145, &line, DIM);
+        let source_count = self.measurement_count();
+        let line = format!("{} selected", source_count);
+        cv.text(&self.fonts.s, 892, 145, &line, DIM);
         let all = self.measurement_catalog_all();
-        if all.len() > 24 {
-            let pages = all.len().div_ceil(24);
+        if all.len() > self.legacy_page_size() {
+            let pages = all.len().div_ceil(self.legacy_page_size());
             let page = self.meas_catalog_page.min(pages - 1);
-            cv.text(&self.fonts.s, 620, 104, &format!("Page {} / {}", page + 1, pages), DIM);
+            cv.text(&self.fonts.s, 520, 104, &format!("Page {} / {}", page + 1, pages), DIM);
             let (prev, next) = Self::catalog_page_buttons();
             for (r, label) in [(prev, "Prev"), (next, "Next")] {
                 btn(cv, r, BTN, BTN_BORDER);
@@ -101,10 +114,10 @@ impl Ui {
     }
 
     pub(super) fn measurement_group_tap(&mut self, x: i32, y: i32) -> bool {
-        if !(self.menu_open && self.menu == MenuId::MeasAdd) { return false; }
+        if !(self.menu_open && self.menu == MenuId::MeasLegacy) { return false; }
         let all = self.measurement_catalog_all();
-        if all.len() > 24 {
-            let pages = all.len().div_ceil(24);
+        if all.len() > self.legacy_page_size() {
+            let pages = all.len().div_ceil(self.legacy_page_size());
             let (prev, next) = Self::catalog_page_buttons();
             if prev.contains(x, y) || next.contains(x, y) {
                 self.meas_catalog_page = if prev.contains(x, y) { self.meas_catalog_page.min(pages - 1).saturating_sub(1) } else { (self.meas_catalog_page + 1).min(pages - 1) };
@@ -200,7 +213,7 @@ impl Ui {
                 let r = self.strip_column();
                 cv.fill(r, BG);
                 cv.text(&self.fonts.sb, r.x + 8, r.y + 16, "Measurements", TEXT);
-                cv.text(&self.fonts.s, r.x + 8, r.y + 34, &format!("{}–{} of {}", first + 1, end, lines.len()), DIM);
+                cv.text(&self.fonts.s, r.x + 8, r.y + 34, &format!("{}-{} of {} · {}", first + 1, end, lines.len(), self.measurement_gate_label()), DIM);
                 let mut current_source = lines[..first].iter().rev().find_map(|line| line.pill.as_ref().map(|p| p.0.clone())).unwrap_or_default();
                 for (row, line) in lines[first..end].iter().enumerate() {
                     let y = r.y + 44 + row as i32 * 20;
@@ -238,7 +251,7 @@ impl Ui {
                         cv.text(&self.fonts.sb, vx, y + 12, &value, color);
                     }
                 }
-                cv.text(&self.fonts.sb, 12, y0 + BAND_ROWS * STRIP_ROW + 21, &format!("Measurements {}–{} of {}", first + 1, end, rows.len()), TEXT);
+                cv.text(&self.fonts.sb, 12, y0 + BAND_ROWS * STRIP_ROW + 21, &format!("Measurements {}-{} of {} · {}", first + 1, end, rows.len(), self.measurement_gate_label()), TEXT);
                 // Meter and cursor rows remain available beneath the page controls.
                 let extra_y = y0 + (BAND_ROWS + NAV_ROWS) * STRIP_ROW;
                 for (row, (label, value)) in self.dvm_row().iter().enumerate() {
@@ -250,6 +263,12 @@ impl Ui {
                 if self.m.cursor != CursorMode::Off {
                     let y = extra_y + if self.m.dvm_on || self.m.cnt_on { STRIP_ROW } else { 0 };
                     let mut x = 12;
+                    if let Some((label, color)) = self.cursor_badge() {
+                        let pill = Rect::new(8, y + 1, 42, 14);
+                        cv.round(pill, 3, color, 255);
+                        cv.text_in(&self.fonts.sb, pill, 1, &label, DARK_TEXT);
+                        x = 58;
+                    }
                     for (label, value) in self.cursor_values() {
                         x = cv.text(&self.fonts.s, x, y + 12, &label, DIM) + 8;
                         x = cv.text(&self.fonts.sb, x, y + 12, &value, TEXT) + 24;
@@ -267,7 +286,7 @@ impl Ui {
     }
 
     pub(super) fn results_page_size(&self) -> usize {
-        ((self.over_area().h - 98).max(22) / 22).clamp(1, 8) as usize
+        ((self.over_area().h - 98).max(42) / 42).clamp(1, 8) as usize
     }
 
     pub(super) fn results_page_range(&self, total: usize) -> (usize, usize) {
@@ -282,7 +301,7 @@ impl Ui {
     pub(super) fn draw_results_page_buttons(&self, cv: &mut Canvas, body: Rect, total: usize) {
         if total <= self.results_page_size() || self.results_min { return; }
         let (first, end) = self.results_page_range(total);
-        cv.text(&self.fonts.s, body.x + 10, body.y + body.h - 14, &format!("{}–{} / {}", first + 1, end, total), DIM);
+        cv.text(&self.fonts.s, body.x + 10, body.y + body.h - 14, &format!("{}-{} / {}", first + 1, end, total), DIM);
         let (prev, next) = Self::results_page_buttons(body);
         for (rect, label) in [(prev, "Prev"), (next, "Next")] {
             btn(cv, rect, BTN, BTN_BORDER);
@@ -354,7 +373,7 @@ mod tests {
             let amplitude = if i < 2000 { 1.0 } else { 3.0 };
             if (i / 50) % 2 == 0 { amplitude } else { -amplitude }
         }).collect();
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "changing amplitude".into(), t0: 0.0, dt: 1e-9, v: samples, vpd: 1.0, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "changing amplitude".into(), t0: 0.0, dt: 1e-9, v: (samples).into(), vpd: 1.0, offset: 0.0, on: true });
         ui.offline_ref = 0;
         ui.m.zoom = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-9).abs() < 1e-12).unwrap();
@@ -371,40 +390,20 @@ mod tests {
     }
 
     #[test]
-    fn source_settings_and_all_selected_items_are_reachable() {
+    fn the_catalog_opens_settings_and_adds_from_the_time_group() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.meas.clear();
-        for &kind in &ALL_MEAS { ui.activate(Item::MeasAdd(kind)); }
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);
-        if let Ok(directory) = std::env::var("OOS_SHOT_DIR") {
-            let mut canvas = Canvas::new(W, H);
-            ui.render(&mut canvas);
-            let _ = std::fs::write(std::path::Path::new(&directory).join("measurement-chooser.png"), crate::store::png_of(&canvas));
-        }
-        let layout = ui.dlg_layout().unwrap();
-        assert!(layout.rows.iter().any(|row| row.it == Item::MeasSrc));
-        assert!(layout.rows.iter().any(|row| row.it == Item::Open(MenuId::Measure)));
-        assert!(layout.rows.iter().any(|row| row.it == Item::Open(MenuId::MeasPair)));
-        let group = Ui::measurement_group_rect(6);
-        ui.tap(group.x + group.w / 2, group.y + group.h / 2);
-        assert_eq!(ui.meas_category, 6);
-        let mut visited = HashSet::new();
-        for page in 0..3 {
-            assert_eq!(ui.meas_catalog_page, page);
-            let layout = ui.dlg_layout().unwrap();
-            for row in &layout.rows {
-                assert!(row.ctrl.y + row.ctrl.h <= layout.r.y + layout.r.h);
-                if let Item::MeasAdd(kind) = row.it { visited.insert(kind); }
-            }
-            let (_, next) = Ui::catalog_page_buttons();
-            ui.tap(next.x + next.w / 2, next.y + next.h / 2);
-        }
-        assert_eq!(visited.len(), ALL_MEAS.len());
-        let last = *ALL_MEAS.last().unwrap();
-        let row = ui.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasAdd(last)).unwrap();
-        ui.tap(row.ctrl.x + row.ctrl.w / 2, row.ctrl.y + row.ctrl.h / 2);
-        assert!(!ui.m.meas.contains(&(last, WaveId::Ch(0))), "selected measurement can be removed");
+        let settings = ui.catalog_settings_rect();
+        ui.tap(settings.x + 4, settings.y + 4);
+        assert_eq!(ui.menu, MenuId::Measure, "settings stays reachable from the catalog");
+        ui.close_menu();
+        ui.key(key::MEASURE);
+        ui.catalog_add(super::super::meascatalog::Cat::LowTime);
+        assert!(ui.m.meas.iter().any(|e| e.0 == Meas::LowTime));
+        ui.catalog_add(super::super::meascatalog::Cat::LowTime);
+        assert!(!ui.m.meas.iter().any(|e| e.0 == Meas::LowTime), "adding again removes it");
     }
 
     #[test]
@@ -413,7 +412,7 @@ mod tests {
         ui.set_offline(true);
         let samples: Vec<f32> = (0..4000).map(|i| if (i / 50) % 2 == 0 { 0.5 } else { -0.5 }).collect();
         for slot in 0..2 {
-            ui.refs[slot] = Some(RefWave { src: 0, color: slot, label: format!("R{} clock", slot + 1), t0: 0.0, dt: 1e-9, v: samples.clone(), vpd: 0.2, offset: 0.0, on: true });
+            ui.refs[slot] = Some(RefWave { src: 0, color: slot, label: format!("R{} clock", slot + 1), t0: 0.0, dt: 1e-9, v: (samples.clone()).into(), vpd: 0.2, offset: 0.0, on: true });
         }
         ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(0))).collect();
         ui.m.meas2 = (0..13).map(|kind| (kind, WaveId::Ref(0), WaveId::Ref(1))).collect();

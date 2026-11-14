@@ -70,6 +70,15 @@ EOF
 [ -x "$root/rootfs/out/wpa_supplicant" ] && [ -x "$root/rootfs/out/wpa_cli" ] || "$root/rootfs/build-wlan-tools.sh"
 # /oos is checked before it is mounted
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
+# SSH replaces the development telnet shell. Only public keys can be seeded;
+# private host identities are generated once on each scope, on persistent /oos.
+[ -x "$root/rootfs/out/dropbear" ] && [ -x "$root/rootfs/out/dropbearkey" ] || sh "$root/rootfs/build-ssh-tools.sh"
+ssh_seed="$root/rootfs/out/ssh-seed"
+mkdir -p "$ssh_seed"
+rm -f "$ssh_seed/authorized_keys"
+if [ -n "${OOS_SSH_AUTHORIZED_KEYS:-}" ]; then
+	python3 -I "$root/tools/ssh-keys.py" validate "$OOS_SSH_AUTHORIZED_KEYS" --out "$ssh_seed/authorized_keys"
+fi
 
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
@@ -85,7 +94,14 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
 	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck $r/bin/
+	cp /wlan/dropbear /wlan/dropbearkey $r/bin/
+	chmod 755 $r/bin/oos-ssh $r/bin/dropbear $r/bin/dropbearkey
+	if [ -s /wlan/ssh-seed/authorized_keys ]; then
+		mkdir -p $r/etc/oos-ssh; cp /wlan/ssh-seed/authorized_keys $r/etc/oos-ssh/authorized_keys
+		chmod 700 $r/etc/oos-ssh; chmod 600 $r/etc/oos-ssh/authorized_keys
+	fi
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck
+	cp /wlan/dropbear.COPYING /wlan/dropbear-libtomcrypt.COPYING /wlan/dropbear-libtommath.COPYING $r/etc/licenses/
 	ln -sf busybox $r/bin/sh
 	echo "$BUILD_ID" > $r/etc/oos-build
 	# rcS brings the acquisition hardware up at boot (cold boot + oos-ui --hw --afe); OOS_NO_AUTOACQ=1 leaves it out

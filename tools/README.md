@@ -8,6 +8,7 @@
 | `scpi_validate.py --web-port 18080` | local desktop only | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
 | `sim_validate.py --web-port 18080` | local desktop only | replaces R8 to validate full-cycle SSC, advanced jitter configuration, background generation/cancellation and safe generation limits; writes evidence to `local/sim-validation.json` |
 | `device-deploy.sh IP [--restore]` | `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS |
+| `ssh-keys.py --data-dir DIR add / list / remove` | offline mounted data directory only | manage Ed25519 public keys without a network connection; [SSH setup](../docs/ssh.md) |
 | `device-survey.sh [ip] [--keys]` | read-only over adb | inventory of the running stock system: USB/HID, input, GPIO owners, pinmux, ttyS0, PCIe, partitions |
 | `platform-probe.sh IP` | read-only over adb, removes its files again | description of another model (MHO900, DHO1000, ...) for a port, ready to share: device tree, buses, display, partition table, `/rigol` by name; serial number and MAC addresses replaced ([docs/porting.md](../docs/porting.md)) |
 

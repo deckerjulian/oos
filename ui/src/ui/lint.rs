@@ -161,7 +161,19 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Load file", "SIM", "Measure", "Cursor", "Display", "Storage", "System"]);
     let (_, _, load) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Load).unwrap();
     u.tap(load.x + 5, load.y + 5);
-    assert!(u.open_wave_request && !u.menu_open);
+    assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
+    u.dismiss_context();
+    assert!(!u.load_slot_ask && !u.open_wave_request);
+    assert!(u.refs.iter().all(Option::is_none));
+    u.tap(load.x + 5, load.y + 5);
+    u.tap(8, 8);
+    assert!(!u.load_slot_ask && !u.open_wave_request, "an outside tap cancels without loading");
+    u.tap(load.x + 5, load.y + 5);
+    let r3 = Ui::load_slot_button(2);
+    u.tap(r3.x + 4, r3.y + 4);
+    assert!(!u.load_slot_ask && u.open_wave_request);
+    assert_eq!(u.waveform_destination(), Some(2));
+    assert_eq!(u.ref_slot(), 0, "destination selection is separate from the current reference");
     u.open_wave_request = false;
     // Measurement choices remain one tap away, without going through acquisition or another menu.
     let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
@@ -215,7 +227,7 @@ fn system_info_has_the_rates() {
     assert!(u.sysinfo_rows().iter().flatten().any(|r| matches!(r, super::sysinfo::Row::Kv(k, ..) if k.contains("Waveforms"))));
 }
 
-/// All mixes of channels, LA and generator: the row fits, nothing overlaps, every card can be touched.
+/// Compact source controls fit every mix; auxiliary tools remain in Sources.
 #[test]
 fn bottom_row_fits_in_every_mix() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
@@ -225,35 +237,30 @@ fn bottom_row_fits_in_every_mix() {
         }
         (u.m.la.on, u.m.afg_on) = (bits & 16 != 0, bits & 32 != 0);
         let c = u.card_layout();
-        let (la, gen) = (c.la.expect("the DHO924S has an LA port"), c.gen.expect("and a generator"));
-        let mut all: Vec<Rect> = c.ch.to_vec();
-        all.extend([la, gen, c.time, c.trig]);
+        assert!(c.la.is_none() && c.gen.is_none(), "auxiliary tools do not reserve LCD footer space");
+        let mut all: Vec<Rect> = c.ch.into_iter().filter(|rect| rect.w > 0).collect();
+        all.extend([c.time, c.trig]);
         for (i, a) in all.iter().enumerate() {
-            assert!(a.w >= 54 && a.x + a.w <= W - 6, "mix {:b}: {:?}", bits, a);
+            assert!(a.w >= 38 && a.h >= 30 && a.x + a.w <= W, "mix {:b}: {:?}", bits, a);
             assert!(!all[i + 1..].iter().any(|b| overlaps(*a, *b)), "mix {:b}: {:?}", bits, a);
         }
-        assert!(c.trig.w >= 222 && c.time.w >= 130, "mix {:b}", bits);
-        // a channel that is on keeps room for its text
+        assert!(c.trig.w >= 222 && c.time.w >= 124, "mix {:b}", bits);
+        // A visible channel keeps a distinct source hit target.
         for k in 0..NCH {
-            assert!(!u.m.ch[k].on || c.ch[k].w >= 90, "mix {:b}: CH{} {}", bits, k + 1, c.ch[k].w);
+            assert!(!u.m.ch[k].on || c.ch[k].w >= 38, "mix {:b}: CH{} {}", bits, k + 1, c.ch[k].w);
         }
     }
 }
 
 #[test]
-fn la_and_generator_cards_open_their_pages() {
+fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
-    let tap = |u: &mut Ui, r: Rect| u.tap(r.x + r.w / 2, r.y + r.h / 2);
-    // an LA that is off comes on, like a channel; a second tap only closes the page
-    let r = u.aux_cards().0.unwrap();
-    tap(&mut u, r);
+    u.tap(80, BOTTOM.y + 15);
+    u.tap(110, BOTTOM.y - 49); // Sources: Logic analyser, immediately above Generator.
     assert!(u.m.la.on && u.menu_open && u.menu == MenuId::La);
-    let r = u.aux_cards().0.unwrap();
-    tap(&mut u, r);
-    assert!(u.m.la.on && !u.menu_open);
-    // the generator page opens, the output stays off
-    let r = u.aux_cards().1.unwrap();
-    tap(&mut u, r);
+    u.close_menu();
+    u.tap(80, BOTTOM.y + 15);
+    u.tap(110, BOTTOM.y - 19);
     assert!(u.menu_open && u.menu == MenuId::Afg);
     assert!(!u.m.afg_on, "a card must not switch an output on");
 }
@@ -1450,7 +1457,7 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
     std::fs::write(dir.join("wave-001.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
     u.activate(Item::RefImport);
     let r = u.refs[0].as_ref().expect("R1");
-    assert_eq!(r.v, want);
+    assert_eq!(r.v.as_ref(), &want);
     assert!((r.dt - dt).abs() < 1e-18);
     std::fs::remove_file(dir.join("wave-001.bin")).unwrap();
     // A real f32 WFM fixture is independent of the live channel-enable bits: importing the BIN
@@ -1475,7 +1482,7 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
         std::fs::write(dir.join("cap.wfm"), wfm).unwrap();
         u.activate(Item::RefImport);
         let loaded = u.refs[0].as_ref().expect("WFM loaded into R1");
-        assert_eq!(loaded.v, want);
+        assert_eq!(loaded.v.as_ref(), &want);
         assert_eq!(loaded.label, "captured");
         assert!((loaded.dt - dt).abs() < 1e-18);
         assert!((loaded.t0 - rec.t0).abs() < 1e-18);
@@ -1502,7 +1509,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     u.activate(Item::RefImport);
     let loaded = u.refs[0].as_ref().unwrap();
     assert!((loaded.dt - dt).abs() < 1e-18, "{}", loaded.dt);
-    assert_eq!(loaded.v, sine);
+    assert_eq!(loaded.v.as_ref(), &sine);
 
     let mut screen: [Vec<f32>; NCH] = Default::default();
     screen[0] = vec![0.25, 0.5, 0.75, 1.0];
@@ -1516,7 +1523,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
         ch: screen.clone(),
         triggered: true,
         partial: false,
-        raw: Some(crate::wave::Raw { frame: std::sync::Arc::new(frame), i0: 0, i1: 200, t0: -2e-7 }),
+        raw: Some(crate::wave::Raw { frame: std::sync::Arc::new(frame), i0: 0, i1: 200, t0: -2e-7, conditioned: false }),
         la: None,
     });
     let rec = u.last[0].as_ref().unwrap();
@@ -1645,7 +1652,7 @@ fn write_wave(dir: &std::path::Path, slot: usize, t0: f64, dt: f64, v: &[f32]) {
 }
 
 fn put_ref(u: &mut Ui, slot: usize, t0: f64, dt: f64, v: Vec<f32>) {
-    u.refs[slot] = Some(RefWave { src: 0, color: 0, label: String::new(), t0, dt, v, vpd: 0.2, offset: 0.0, on: true });
+    u.refs[slot] = Some(RefWave { src: 0, color: 0, label: String::new(), t0, dt, v: v.into(), vpd: 0.2, offset: 0.0, on: true });
 }
 
 /// Voltage of a 1 kHz triangle current in an ideal inductor.
@@ -1697,7 +1704,7 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     u.m.ch[0].bw = BW_20M;
     u.m.ch[0].coupling = Coupling::Ac;
     u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
-    let row = u.meas_rows().into_iter().find(|r| r.name == "Pk-pk").expect("pk-pk");
+    let row = u.meas_rows().into_iter().find(|r| r.name == "Vpp").expect("pk-pk");
     let direct = oos_dsp::measure::analyze_min(&sine, dt, 0.4 * 0.2);
     assert!((row.v - direct.get(Meas::Vpp)).abs() < 1e-6, "{} vs {}", row.v, direct.get(Meas::Vpp));
     let mut filtered = sine.clone();
@@ -2031,7 +2038,7 @@ fn cphy_eye_full_screen_shot() {
     }
     let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
-    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v, vpd: 0.5, offset: 0.0, on: true });
+    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v: v.into(), vpd: 0.5, offset: 0.0, on: true });
     u.full = true;
     u.relayout();
     u.m.view = AView::Eye;

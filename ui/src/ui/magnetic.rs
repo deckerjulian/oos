@@ -343,7 +343,7 @@ impl Ui {
                 }
                 let (v, dt) = self.meas_wave(rec, c);
                 let t0 = if v.len() > rec.ch[c].len() { rec.raw.as_ref().map(|r| r.t0).unwrap_or(rec.t0) } else { rec.t0 };
-                (v.len() >= 2 && dt > 0.0).then_some(WaveSamp { v, t0, dt })
+                (v.len() >= 2 && dt > 0.0).then_some(WaveSamp { v, t0: self.source_time_origin(id, t0), dt })
             }
             WaveId::Ref(i) => {
                 let (v, t0, dt) = self.reference_slice(i)?;

@@ -7,6 +7,11 @@
 
 use super::*;
 
+/// Render cost depends on the plot width, never on the retained native depth.
+fn plot_samples(v: &[f32]) -> Vec<f32> {
+    v.iter().step_by(v.len().div_ceil(200).max(1)).copied().filter(|x| x.is_finite()).collect()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum RefLook {
     Live,
@@ -31,7 +36,7 @@ pub(super) struct MeasOwn {
 }
 
 impl MeasOwn {
-    fn shared(m: &Model) -> Self {
+    pub(super) fn shared(m: &Model) -> Self {
         Self {
             low: m.meas_lpct,
             high: m.meas_hpct,
@@ -149,77 +154,21 @@ impl Ui {
             .collect()
     }
 
-    /// One added measurement, using its own settings when those have been set.
+    /// One added measurement, with shared cached analysis for untouched settings.
     pub(super) fn meas_number(&self, id: WaveId, k: Meas) -> f64 {
-        let own = self.meas_own.get(&(k, id)).copied();
-        let (low, high) = match own.filter(|o| o.refs_set) {
-            Some(o) => (o.low, o.high),
-            None => (self.m.meas_lpct, self.m.meas_hpct),
-        };
-        let Some(a) = self.analysis_for(id, low, high) else { return f64::NAN };
-        let idle = own.filter(|o| o.idle_set).map(|o| o.idle).unwrap_or(self.m.meas_idle);
-        let side = own.filter(|o| o.side_set).map(|o| o.side).unwrap_or(self.m.meas_out);
-        let n = own.filter(|o| o.n_set).map(|o| o.n).unwrap_or(self.m.meas_n);
-        let data = own.filter(|o| o.data_set).map(|o| o.data).unwrap_or(self.m.meas_data);
-        match k {
-            Meas::Burst => oos_dsp::measure::burst_width(&a, idle),
-            Meas::Outside => oos_dsp::measure::time_outside(&a, side),
-            Meas::NPeriods => oos_dsp::measure::duration_n(&a, n.max(1) as usize, data),
-            _ => a.get(k),
-        }
+        self.measurement_with_own(id, k, id)
     }
 
-    fn analysis_for(&self, id: WaveId, low: f64, high: f64) -> Option<oos_dsp::measure::Analysis> {
-        if (low - self.m.meas_lpct).abs() < 1e-12 && (high - self.m.meas_hpct).abs() < 1e-12 {
-            return self.meas_analysis(id).map(|(a, _)| a);
-        }
-        match id {
-            WaveId::Ch(c) => {
-                if c >= n_ch() || !self.m.ch[c].on {
-                    return None;
-                }
-                let rec = self.last[0].as_ref()?;
-                let (v, dt) = self.meas_wave(rec, c);
-                if v.len() < 2 || !(dt > 0.0) {
-                    return None;
-                }
-                Some(oos_dsp::measure::analyze_refs(&v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64, low, high))
-            }
-            WaveId::Ref(i) => {
-                let (samples, _, dt) = self.reference_slice(i)?;
-                if samples.len() < 2 || !(dt > 0.0) {
-                    return None;
-                }
-                let vpd = self.refs[i].as_ref().map(|r| r.vpd).unwrap_or(0.2);
-                Some(oos_dsp::measure::analyze_refs(samples, dt, 0.4 * vpd as f64, low, high))
-            }
-        }
-    }
-
-    /// A value of `kind` on one reference of the set. Settings follow that reference when it has
-    /// this measurement, otherwise the first added copy of the kind.
+    /// A set cell inherits the first added row of this kind unless it has its own row.
     pub(super) fn set_cell(&self, kind: Meas, slot: usize) -> f64 {
         let id = WaveId::Ref(slot);
-        if self.meas_own.contains_key(&(kind, id)) || self.m.meas.iter().any(|e| *e == (kind, id)) {
-            return self.meas_number(id, kind);
-        }
-        let Some(&(_, src)) = self.m.meas.iter().find(|e| e.0 == kind) else { return f64::NAN };
-        let own = self.meas_own.get(&(kind, src)).copied();
-        let (low, high) = match own.filter(|o| o.refs_set) {
-            Some(o) => (o.low, o.high),
-            None => (self.m.meas_lpct, self.m.meas_hpct),
+        let owner = if self.meas_own.contains_key(&(kind, id)) || self.m.meas.contains(&(kind, id)) {
+            id
+        } else {
+            let Some(&(_, source)) = self.m.meas.iter().find(|e| e.0 == kind) else { return f64::NAN };
+            source
         };
-        let Some(a) = self.analysis_for(id, low, high) else { return f64::NAN };
-        let idle = own.filter(|o| o.idle_set).map(|o| o.idle).unwrap_or(self.m.meas_idle);
-        let side = own.filter(|o| o.side_set).map(|o| o.side).unwrap_or(self.m.meas_out);
-        let n = own.filter(|o| o.n_set).map(|o| o.n).unwrap_or(self.m.meas_n);
-        let data = own.filter(|o| o.data_set).map(|o| o.data).unwrap_or(self.m.meas_data);
-        match kind {
-            Meas::Burst => oos_dsp::measure::burst_width(&a, idle),
-            Meas::Outside => oos_dsp::measure::time_outside(&a, side),
-            Meas::NPeriods => oos_dsp::measure::duration_n(&a, n.max(1) as usize, data),
-            _ => a.get(kind),
-        }
+        self.measurement_with_own(id, kind, owner)
     }
 
     pub(super) fn set_kinds(&self) -> Vec<Meas> {
@@ -378,7 +327,7 @@ impl Ui {
             let top = y;
             let plot = Rect::new(r.x + 28, top, r.w - 40, plot_h);
             cv.fill(plot, BAR);
-            let finite: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).step_by((v.len() / 200).max(1)).collect();
+            let finite = plot_samples(v);
             if finite.len() >= 2 {
                 let lo = finite.iter().copied().fold(f32::INFINITY, f32::min);
                 let hi = finite.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -461,6 +410,7 @@ impl Ui {
         let index = self.meas_cfg? as usize;
         let (k, _) = *self.m.meas.get(index)?;
         let extras = match k {
+            Meas::Rise | Meas::Fall => 1,
             Meas::Burst => 1,
             Meas::Outside => 1,
             Meas::NPeriods => 2,
@@ -519,6 +469,11 @@ impl Ui {
         let (low, high) = if own.refs_set { (own.low, own.high) } else { (self.m.meas_lpct, self.m.meas_hpct) };
         btn(cv, g.refs, BTN, BTN_BORDER);
         cv.text_in(&f.mb, g.refs, 1, &format!("{:.0}/{:.0}", low * 100.0, high * 100.0), TEXT);
+        if matches!(k,Meas::Rise|Meas::Fall) {
+            self.cfg_caption(cv,g.panel,2,"Edges used");
+            let text=self.meas_edge_coverage_caption(id,k);
+            cv.text_in(&f.s,Rect::new(g.panel.x+168,g.panel.y+144,280,36),1,&text,DIM);
+        }
         if let (Some(mi), Some(pl)) = (g.idle_m, g.idle_p) {
             self.cfg_caption(cv, g.panel, 2, "Idle");
             let idle = if own.idle_set { own.idle } else { self.m.meas_idle };
@@ -542,6 +497,16 @@ impl Ui {
             btn(cv, edges, BTN, BTN_BORDER);
             cv.text_in(&f.mb, edges, 1, if data { "Data" } else { "Clock" }, TEXT);
         }
+    }
+
+    fn meas_edge_coverage_caption(&self,id:WaveId,kind:Meas)->String {
+        let Some((analysis,_))=self.meas_number_analysis(id,kind) else {
+            return if self.meas_number_computing(id,kind){"Computing"}else{"Not retained"}.into();
+        };
+        let (used,total)=if kind==Meas::Rise {(analysis.rise_count,analysis.rises.len())}
+            else {(analysis.fall_count,analysis.falls.len())};
+        if used==0 {format!("0 / {total}; unavailable")}
+        else {format!("{used} / {total} qualified")}
     }
 
     fn cfg_caption(&self, cv: &mut Canvas, panel: Rect, n: i32, text: &str) {
@@ -615,7 +580,7 @@ impl Ui {
         if let Some(own) = own {
             self.meas_own.insert((k, next), own);
         }
-        self.mstat.clear();
+        self.clear_measurement_statistics();
     }
 
     fn meas_sources(&self) -> Vec<WaveId> {
@@ -631,7 +596,7 @@ impl Ui {
         v
     }
 
-    pub(super) fn set_meas_refs(&mut self, index: usize, low: f64, high: f64) {
+    pub(crate) fn set_meas_refs(&mut self, index: usize, low: f64, high: f64) {
         if index >= self.m.meas.len() {
             return;
         }
@@ -642,6 +607,7 @@ impl Ui {
             own.high = high;
             own.refs_set = true;
         }
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_refs(&mut self) {
@@ -654,6 +620,7 @@ impl Ui {
             own.high = high;
             own.refs_set = true;
         }
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_idle(&mut self, d: i32) {
@@ -666,6 +633,7 @@ impl Ui {
             own.idle = v;
             own.idle_set = true;
         }
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_side(&mut self) {
@@ -678,6 +646,7 @@ impl Ui {
             own.side = v;
             own.side_set = true;
         }
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_n(&mut self, d: i32) {
@@ -688,6 +657,7 @@ impl Ui {
             own.n = v;
             own.n_set = true;
         }
+        self.clear_measurement_statistics();
     }
 
     fn meas_cfg_edges(&mut self) {
@@ -697,6 +667,7 @@ impl Ui {
             own.data = !cur;
             own.data_set = true;
         }
+        self.clear_measurement_statistics();
     }
 }
 
@@ -712,6 +683,16 @@ mod tests {
         (0..400).map(|i| if (i / 20) % 2 == 0 { -amp } else { amp }).collect()
     }
 
+    #[test]
+    fn plot_sampling_is_bounded_even_when_most_native_samples_are_not_finite() {
+        let mut values = vec![f32::NAN; 1_000_003];
+        for value in values.iter_mut().step_by(1000) { *value = 1.0; }
+        let sampled = plot_samples(&values);
+        assert!(sampled.len() <= 200);
+        assert_eq!(sampled.first(), Some(&1.0));
+        assert_eq!(plot_samples(&[f32::NAN, 0.0, 1.0]), vec![0.0, 1.0]);
+    }
+
     fn edge() -> Vec<f32> {
         let mut v = vec![0.0f32; 20];
         v.extend((0..100).map(|i| i as f32 / 99.0));
@@ -722,7 +703,7 @@ mod tests {
     }
 
     fn put(u: &mut Ui, slot: usize, v: Vec<f32>, on: bool) {
-        u.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: format!("R{}", slot + 1), t0: 0.0, dt: 1e-9, v, vpd: 1.0, offset: 0.0, on });
+        u.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: format!("R{}", slot + 1), t0: 0.0, dt: 1e-9, v: v.into(), vpd: 1.0, offset: 0.0, on });
     }
 
     #[test]
@@ -742,7 +723,7 @@ mod tests {
         std::fs::write(dir.join("ref1.csv"), csv).unwrap();
         u.ref_sel = 0;
         u.activate(Item::RefImport);
-        assert_eq!(u.look, RefLook::Live);
+        assert_eq!(u.look, RefLook::Live, "import adds a reference without changing the live acquisition");
         assert!(!u.offline && u.m.ch[0].on, "import keeps the live channels");
         assert!(u.refs[0].as_ref().unwrap().on && u.refs[1].as_ref().unwrap().on);
         u.set_look(RefLook::TakeOver);
@@ -803,17 +784,34 @@ mod tests {
         assert!(u.meas_own.contains_key(&(Meas::Vpp, WaveId::Ch(0))));
         assert!(u.meas_own.contains_key(&(Meas::Burst, WaveId::Ch(0))));
         u.key(key::MEASURE);
-        let group = Rect::new(26, 170 + 6 * 43, 164, 40);
-        u.tap(group.x + 8, group.y + 8);
-        assert_eq!(u.meas_category, 6);
-        let vpp = u.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasCfg(0)).expect("a place to open Vpp settings");
-        let burst = u.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasCfg(1)).expect("a place to open Burst settings");
-        u.tap(vpp.ctrl.x + vpp.ctrl.w / 2, vpp.ctrl.y + vpp.ctrl.h / 2);
+        let vpp = u.catalog_set_rect(Meas::Vpp).expect("a place to open Vpp settings");
+        u.tap(vpp.x + vpp.w / 2, vpp.y + vpp.h / 2);
         let g = u.cfg_geom().expect("Vpp has a settings dialog");
         assert!(g.source_m.w > 0 && g.refs.w > 0 && g.idle_m.is_none());
         u.meas_cfg = None;
-        u.tap(burst.ctrl.x + burst.ctrl.w / 2, burst.ctrl.y + burst.ctrl.h / 2);
-        let g = u.cfg_geom().unwrap();
+        let mut opened = false;
+        for _ in 0..12 {
+            let view = u.catalog_view();
+            if !opened {
+                if let Some(time) = u.catalog_group_rect(1) {
+                    if time.y < view.y + view.h - 4 && time.y + time.h > view.y + 4 {
+                        let y = (time.y + 4).clamp(view.y + 2, view.y + view.h - 2);
+                        u.tap(time.x + 12, y);
+                        opened = true;
+                        continue;
+                    }
+                }
+            } else if let Some(burst) = u.catalog_set_rect(Meas::Burst) {
+                let y = burst.y + burst.h / 2;
+                if view.contains(burst.x + burst.w / 2, y) {
+                    u.tap(burst.x + burst.w / 2, y);
+                    break;
+                }
+            }
+            let down = u.catalog_scroll_down().expect("scroll");
+            u.tap(down.x + 4, down.y + 4);
+        }
+        let g = u.cfg_geom().expect("Burst has a settings dialog");
         assert!(g.refs.w > 0 && g.idle_m.is_some(), "Burst keeps its own idle");
         u.meas_cfg_tap(g.idle_p.unwrap().x + 4, g.idle_p.unwrap().y + 4);
         let burst_idle = u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle;
@@ -843,4 +841,17 @@ mod tests {
         assert!((fast - 60e-9).abs() < 8e-9, "{fast}");
         assert!(fast < slow);
     }
+    #[test]
+    fn rise_fall_settings_show_qualified_counts_and_missing_partial_transitions(){
+        let mut u=ui();u.m.meas_full_record=true;
+        let mut v=vec![0.0];v.extend((0..4000).map(|i|if i%2==0{0.4}else{0.6}));v.push(1.0);
+        put(&mut u,0,v,true);u.m.meas=vec![(Meas::Rise,WaveId::Ref(0)),(Meas::Fall,WaveId::Ref(0))];
+        for (index,kind)in[Meas::Rise,Meas::Fall].into_iter().enumerate(){
+            u.open_meas_cfg(index);let caption=u.meas_edge_coverage_caption(WaveId::Ref(0),kind);
+            assert!(caption.starts_with("0 /")&&caption.contains("unavailable"),"{caption}");assert!(u.meas_number(WaveId::Ref(0),kind).is_nan());
+            let geometry=u.cfg_geom().unwrap();assert!(geometry.panel.h>=212);
+            assert!(u.fonts.s.width(&caption)<=280);
+        }
+    }
+
 }

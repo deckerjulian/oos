@@ -14,6 +14,8 @@ use super::magnetic::{missing_wave, WaveSamp};
 use super::*;
 use oos_dsp::eye::{self, Bathtub, EdgeMeans, Jitter, JitterFit};
 
+pub(super) mod automatic;
+
 /// Seconds between refreshes of the page.
 const REFRESH: f64 = 0.2;
 
@@ -49,14 +51,14 @@ const EYE_OUT: f64 = 0.25;
 const EYE_SHRUNK: f64 = 0.4;
 
 const GAP: i32 = 4;
-/// Top of the right column: stays clear of the overflow button.
-const HEAD_H: i32 = 44;
+/// The workspace header owns Close/source/rate, outside the chart content.
+const HEAD_H: i32 = 0;
 const ROW: i32 = 15;
 const BOX_HEAD: i32 = 25;
 const CHART_TITLE: i32 = 17;
 const CHART_FOOT: i32 = 14;
 const CHART_GUTTER: i32 = 50;
-const EYE_TITLE: i32 = 20;
+const EYE_TITLE: i32 = 4;
 const EYE_GUTTER: i32 = 50;
 const EYE_FOOT: i32 = 18;
 /// Under this height the text boxes give their room to the plots.
@@ -368,7 +370,7 @@ impl Default for Page {
                 Chart { title: "TIE trend".into(), ..wait.clone() },
                 Chart { title: "TIE histogram".into(), ..wait.clone() },
                 Chart { title: "TIE spectrum".into(), ..wait.clone() },
-                Chart { title: "Bathtub".into(), ..wait },
+                Chart { title: "Bathtub (model)".into(), ..wait },
             ],
             trend: Vec::new(),
             hist: Vec::new(),
@@ -500,14 +502,13 @@ impl Page {
 
     fn chart_tub(&mut self, sorted: &[f64], j: &Jitter, period: f64, cols: usize) {
         let c = &mut self.charts[3];
-        *c = Chart { title: "Bathtub".into(), ..Chart::default() };
+        *c = Chart { title: "Bathtub (model)".into(), ..Chart::default() };
         self.tub = eye::bathtub(sorted, j, period, cols.max(2));
         if self.tub.model.is_empty() {
             c.empty = format!("Needs {} edges", eye::MIN_EDGES);
             return;
         }
-        let limit = if j.fit == JitterFit::Limit { "over " } else { "" };
-        c.title = format!("Bathtub  {}{:.3} UI at 1e-12", limit, self.tub.opening);
+        c.title = "Bathtub (model)".into();
         c.x = ("0".into(), "1 UI".into());
         c.y = ("1".into(), format!("1e{:.0}", TUB_FOOT));
     }
@@ -614,34 +615,53 @@ impl Ui {
             WaveId::Ref(i) => {
                 let r = self.refs.get(i)?.as_ref()?;
                 (r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0)
-                    .then(|| WaveSamp { v: r.v.clone(), t0: r.t0, dt: r.dt })
+                    .then(|| WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt })
             }
-            WaveId::Ch(_) => self.wave_samples(rec, id),
+            WaveId::Ch(c) => {
+                let (values, dt, t0) = self.eye_channel_samples(rec, c)?;
+                Some(WaveSamp { v: values.to_vec(), dt, t0 })
+            }
         }
+    }
+
+    /// Eye timing always uses the entire retained native acquisition, never the
+    /// interpolated screen record or its current measurement/view gate.
+    fn eye_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
+        if c >= n_ch() || !self.m.ch[c].on { return None; }
+        let (values, dt, t0) = if let Some(raw) = &rec.raw {
+            if raw.frame.envelope || self.m.acq == AcqMode::HiRes { return None; }
+            let values = raw.frame.ch.get(c)?;
+            (values.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt)
+        } else { (rec.ch.get(c)?.as_slice(), rec.dt, rec.t0) };
+        (values.len() >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite())
+            .then_some((values, dt, self.source_time_origin(WaveId::Ch(c), t0)))
+    }
+
+    fn eye_input_problem(&self, rec: &Record, id: WaveId) -> Option<&'static str> {
+        if let WaveId::Ch(c) = id {
+            if c < n_ch() && self.m.ch[c].on && rec.raw.is_some() && self.m.acq == AcqMode::HiRes {
+                return Some("Native HiRes samples are not retained for Eye/Jitter; use Normal acquisition");
+            }
+            if c < n_ch() && self.m.ch[c].on && rec.raw.as_ref().is_some_and(|raw| raw.frame.envelope) {
+                return Some("Envelope acquisition has no native time samples for Eye/Jitter");
+            }
+        }
+        None
     }
 
     fn eye_source_ready(&self, rec: &Record, id: WaveId) -> bool {
         match id {
             WaveId::Ref(i) => self.refs.get(i).and_then(Option::as_ref)
                 .is_some_and(|r| r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0),
-            WaveId::Ch(i) => i < n_ch() && self.m.ch[i].on && rec.ch[i].len() >= 2 && rec.dt > 0.0,
+            WaveId::Ch(i) => self.eye_channel_samples(rec, i).is_some(),
         }
     }
 
-    /// Keep live channel/strobe alignment unchanged. A reference source instead
-    /// puts its full record and reference clock on their finest stored grid.
+    /// Data and clock share the finest native grid within their physical overlap.
     fn eye_pair(&self, rec: &Record, id: WaveId, clock: WaveId) -> Option<(Vec<f32>, Vec<f32>, f64, f64)> {
-        if matches!(id, WaveId::Ch(_)) {
-            let mut t = self.take_waves(rec, &[id, clock], &[]).ok()?;
-            let b = t.v.pop()?;
-            let a = t.v.pop()?;
-            return Some((a, b, t.dt, t.t0));
-        }
         let a = self.eye_samples(rec, id)?;
         let b = self.eye_samples(rec, clock)?;
-        let grid = if matches!(clock, WaveId::Ref(_)) &&
-            (b.dt < a.dt || ((b.dt - a.dt).abs() <= a.dt * 1e-9 && b.v.len() > a.v.len())) { &b } else { &a };
-        let (dt, t0, n) = (grid.dt, grid.t0, grid.v.len());
+        let (dt, t0, n) = eye_common_grid(&a, &b)?;
         Some((eye_on_grid(a, t0, dt, n), eye_on_grid(b, t0, dt, n), dt, t0))
     }
 
@@ -649,8 +669,10 @@ impl Ui {
     pub(super) fn invalidate_reference_eye(&mut self) {
         self.azr.eye = None;
         self.azr.eye_ref = None;
+        self.azr.eye_sim_revision = None;
         self.azr.eye_res = None;
         self.azr.page = Page::default();
+        self.azr.eye_auto.invalidate();
     }
 
     /// Hash every reference sample before making copies or computing statistics.
@@ -664,7 +686,11 @@ impl Ui {
                 h = h.rotate_left(13) ^ i as u64 ^ u64::MAX;
                 continue;
             };
-            h = h.rotate_left(13) ^ ref_fp(&r.v, r.dt, r.t0) ^ i as u64;
+            let t0 = self.source_time_origin(source, r.t0);
+            let data_identity = if self.session_is_sim && i == self.m.sim_slot {
+                self.replay.sim_revision ^ r.dt.to_bits() ^ t0.to_bits()
+            } else { ref_fp(&r.v, r.dt, t0) };
+            h = h.rotate_left(13) ^ data_identity ^ i as u64;
             h = h.rotate_left(13) ^ r.vpd.to_bits() as u64 ^ ((r.offset.to_bits() as u64) << 32);
         }
         for setting in [self.m.eye_ber, self.m.eye_pn_lo, self.m.eye_pn_hi, self.m.eye_notch] {
@@ -689,6 +715,15 @@ impl Ui {
 
     /// Eye page, per record. Clock, when set, is the strobe: its edges fold the source (DQ vs DQS).
     pub(super) fn eye_update(&mut self, rec: &Record) {
+        for id in [Some(self.m.eye_src), self.m.eye_b, self.m.eye_rail].into_iter().flatten() {
+            if let Some(problem) = self.eye_input_problem(rec, id) {
+                self.azr.eye = None; self.azr.eye_res = None; self.azr.eye_auto.summary = None;
+                self.azr.eye_auto.invalidate();
+                self.azr.page = Page::default(); self.azr.page.status = [self.wave_name(id), problem.into()];
+                return;
+            }
+        }
+        if self.eye_auto_update(rec) { return; }
         let id = self.m.eye_src;
         let clk_id = self.m.eye_b;
         if !self.eye_source_ready(rec, id) {
@@ -718,24 +753,31 @@ impl Ui {
         if fp.is_some() && fp == self.azr.eye_ref && self.azr.eye.is_some() && self.azr.eye_key == key {
             return;
         }
-        let reference_changed = fp.is_some() && fp != self.azr.eye_ref;
-        let (v, clk_v, dt) = if let Some(b) = clk_id {
-            let Some((v, clock, dt, _)) = self.eye_pair(rec, id, b) else { return };
-            (v, Some(clock), dt)
+        let sim_capture = self.session_is_sim && id == WaveId::Ref(self.m.sim_slot) && self.replay.sim_revision > 0;
+        let reference_changed = fp.is_some() && fp != self.azr.eye_ref && !sim_capture;
+        let (v, clk_v, dt, t0) = if let Some(b) = clk_id {
+            let Some((v, clock, dt, t0)) = self.eye_pair(rec, id, b) else {
+                self.azr.eye = None; self.azr.eye_res = None; self.azr.page = Page::default();
+                self.azr.page.status = ["No overlapping Eye data/clock interval".into(), "Check source timing and deskew".into()];
+                return;
+            };
+            (v, Some(clock), dt, t0)
         } else {
             let s = self.eye_samples(rec, id).unwrap();
-            (s.v, None, s.dt)
+            (s.v, None, s.dt, s.t0)
         };
         let recov = clk_v.as_deref().unwrap_or(&v);
         let recov_id = clk_id.unwrap_or(id);
         let st = match recov_id {
-            WaveId::Ch(c) if clk_id.is_none() => self.stats[c],
+            WaveId::Ch(c) if clk_id.is_none() && rec.raw.is_none() => self.stats[c],
             _ => stats(recov, dt),
         };
         let (clk_vpd, _) = self.eye_scale(recov_id);
         // A strobe idles near one rail between bursts; histogram top/base sit on that rail and the
         // comparator chatters. Peak-to-peak with a wide hysteresis keeps the burst edges.
-        let (thr, hyst) = if clk_id.is_some() {
+        let (thr, hyst) = if let Some(summary) = self.azr.eye_auto.summary.as_ref().filter(|_| self.azr.eye_auto.enabled) {
+            (summary.threshold, summary.hysteresis)
+        } else if clk_id.is_some() {
             let (lo, hi) = (st.vmin, st.vmax);
             (0.5 * (lo + hi), (0.2 * (hi - lo)).max(0.1 * clk_vpd))
         } else {
@@ -745,7 +787,10 @@ impl Ui {
         let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
         // An idle live bus keeps its accumulated eye. A replacement reference
         // without edges must not display the previous reference's results.
-        let Some(clk) = eye::recover_clock(recov, dt, thr, hyst, rate) else {
+        let recovered = if self.azr.eye_auto.enabled && clk_id.is_none() {
+            eye::recover_clock_pll(recov, dt, thr, hyst, rate, 0.0, true)
+        } else { eye::recover_clock(recov, dt, thr, hyst, rate) };
+        let Some(clk) = recovered else {
             if reference_changed { self.invalidate_reference_eye(); }
             self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(recov_id));
             return;
@@ -762,6 +807,7 @@ impl Ui {
             let (lo, hi, step) = eye_range(lo, hi);
             self.azr.eye = Some(eye::Eye::new(pw as usize, ph as usize, 2, lo as f32, hi as f32));
             self.azr.eye_key = key;
+            self.azr.eye_sim_revision = None;
             self.azr.eye_res = None;
             self.azr.page = Page { vstep: step, ..Page::default() };
         }
@@ -789,18 +835,25 @@ impl Ui {
         } else {
             (clk.clone(), v.clone())
         };
+        if sim_capture && self.azr.eye_sim_revision == Some((self.m.sim_slot, self.replay.sim_revision)) {
+            let tie = eye::tie(&clk.edges, &clk);
+            self.azr.eye_ref = fp;
+            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
+            return;
+        }
+        if sim_capture { self.azr.eye_sim_revision = Some((self.m.sim_slot, self.replay.sim_revision)); }
         self.azr.eye.as_mut().unwrap().accumulate(&data, dt, &fold);
         self.azr.eye_ref = fp;
         let tie = eye::tie(&clk.edges, &clk);
         self.azr.page.add(&tie, &clk);
         if fp.is_some() || self.now - self.azr.page.t >= REFRESH {
             self.azr.page.t = self.now;
-            self.eye_refresh(&clk, &tie, dt, &lay, &v, rec);
+            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
         }
     }
 
     /// The heavy part of the page, from the pool and the last record.
-    fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, lay: &Layout, wave: &[f32], rec: &Record) {
+    fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, t0: f64, lay: &Layout, wave: &[f32], rec: &Record) {
         let clock = if let Some(b) = self.m.eye_b {
             format!("clock from {}", self.wave_name(b))
         } else if self.m.eye_from_record {
@@ -810,7 +863,7 @@ impl Ui {
         } else {
             "clock fitted to the edges".into()
         };
-        let source = if matches!(self.m.eye_src, WaveId::Ref(_)) { format!("{} · full record", self.wave_name(self.m.eye_src)) } else { self.wave_name(self.m.eye_src) };
+        let source = if let WaveId::Ref(i) = self.m.eye_src { format!("{} · {}", self.wave_name(self.m.eye_src), if self.session_is_sim && i == self.m.sim_slot { "live SIM captures" } else { "fixed full record" }) } else { self.wave_name(self.m.eye_src) };
         let title = format!("{} \u{b7} {} \u{b7} {}", source, si(1.0 / clk.period, "b/s"), clock);
         let Some(e) = self.azr.eye.as_ref() else { return };
         let meas = e.measure(clk.period);
@@ -834,80 +887,22 @@ impl Ui {
         p.text_status(&j);
         p.title = title;
         let means = self.azr.page.means.clone();
-        let (measured, model, eye_model) = self.eye_facts(clk, tie, &trend, &j, &meas, wave, dt, rec, &means);
+        let (measured, model, eye_model) = self.eye_facts(clk, tie, &trend, &j, &meas, wave, dt, t0, rec, &means);
         self.azr.page.measured.extend(measured);
         self.azr.page.model.extend(model);
         self.azr.page.eye_model.extend(eye_model);
         self.azr.eye_res = Some((meas, j, clk.period));
+        self.eye_auto_finish_status();
     }
 
-    /// The measurements that sit beside the existing eye and jitter figures.
-    fn eye_facts(&mut self, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, rec: &Record, means: &EdgeMeans) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
-        let few = format!("needs {} edges", eye::MIN_EDGES);
-        let miss = |l| cell(l, few.clone(), Kind::Missing);
-        if j.fit == JitterFit::TooFew {
-            for name in EYE_FACTS {
-                self.azr.page.put_fig(name, f64::NAN);
-            }
-            let model = ["TJ@BER", "EW@BER", "J2", "J9", "NPJ"].map(miss).to_vec();
-            let measured = ["F/2", "F/4", "F/8", "SRJ", "Pn rms", "Pn note", "TIE pre", "TIE post", "DC CM", "AC CM", "Cross", "T/nT", "SSC ppm", "SSC rate"].map(miss).to_vec();
-            let eye_model = vec![cell("Ht@BER", "no eye".into(), Kind::Missing)];
-            return (measured, model, eye_model);
-        }
-        let ber = self.m.eye_ber;
-        let (tjber, ewber, j2, j9) = (eye::tj_at(j, ber), eye::eye_width_at(j, clk.period, ber), eye::tj_at(j, eye::BER_J2), eye::tj_at(j, eye::BER_J9));
-        let npj = if self.m.eye_npj { eye::npj(tie, clk, trend, means) } else { f64::NAN };
-        let (f2, f4, f8) = (eye::subrate_pp(trend, clk.period, 2), eye::subrate_pp(trend, clk.period, 4), eye::subrate_pp(trend, clk.period, 8));
-        let srj = eye::srj_pp(trend, clk.period);
-        let pn = eye::phase_noise(trend, clk.period, self.m.eye_pn_lo, self.m.eye_pn_hi);
-        let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id)).map(|s| (s.v, s.dt));
-        let ps = eye::psij(trend, clk, tie, rail.as_ref().map(|(v, d)| (v.as_slice(), *d)), self.m.eye_notch, meas.height, meas.width, Some((wave, dt)));
-        let (dc, ac, cross) = if let Some(b) = self.m.eye_b {
-            match self.eye_pair(rec, self.m.eye_src, b) {
-                Some((a, b, dt, _)) => (eye::dc_common(&a, &b), eye::ac_common_pp(&a, Some(&b), dt, self.m.eye_hp), eye::diff_crossover(&a, &b)),
-                None => (f64::NAN, f64::NAN, f64::NAN),
-            }
-        } else {
-            (f64::NAN, eye::ac_common_pp(wave, None, dt, self.m.eye_hp), f64::NAN)
-        };
-        let tnt = eye::tnt_ratio(wave, dt, clk);
-        let (ppm, _) = eye::ssc_deviation(clk);
-        let ssc_hz = eye::ssc_rate(clk);
-        let hber = meas.height_at(ber);
-        for (name, v) in [("HBER", hber), ("F2", f2), ("F4", f4), ("F8", f8), ("SRJ", srj), ("PN", pn), ("TPRE", ps.before.tie_pp), ("TPOST", ps.after.tie_pp), ("PPRE", ps.before.pj), ("PPOST", ps.after.pj), ("DCCM", dc), ("ACCM", ac), ("XOVer", cross), ("TNT", tnt), ("SSCPpm", ppm), ("SSCRate", ssc_hz), ("TJBer", tjber), ("EWBer", ewber), ("J2", j2), ("J9", j9), ("NPJ", npj)] {
-            self.azr.page.put_fig(name, v);
-        }
-        let mut model = vec![
-            figure("TJ@BER", tjber, "s", Kind::Model, &few),
-            figure("EW@BER", ewber, "UI", Kind::Model, &few),
-            figure("J2", j2, "s", Kind::Model, &few),
-            figure("J9", j9, "s", Kind::Model, &few),
-        ];
-        if self.m.eye_npj {
-            model.push(figure("NPJ", npj, "s", Kind::Model, &few));
-        } else {
-            model.push(cell("NPJ", "off".into(), Kind::Missing));
-        }
-        let mut measured = vec![
-            figure("F/2", f2, "s", Kind::Measured, &few),
-            figure("F/4", f4, "s", Kind::Measured, &few),
-            figure("F/8", f8, "s", Kind::Measured, &few),
-            figure("SRJ", srj, "s", Kind::Measured, &few),
-            figure("Pn rms", pn, "s", Kind::Measured, &few),
-            cell("Pn note", if eye::is_clock(clk) { "clock" } else { "data" }.into(), if eye::is_clock(clk) { Kind::Measured } else { Kind::Missing }),
-        ];
-        measured.push(figure("TIE pre", ps.before.tie_pp, "s", Kind::Measured, &few));
-        measured.push(figure("TIE post", ps.after.tie_pp, "s", Kind::Measured, &few));
-        measured.push(figure("PJ pre", ps.before.pj, "s", Kind::Measured, &few));
-        measured.push(figure("PJ post", ps.after.pj, "s", Kind::Measured, &few));
-        measured.push(figure("DC CM", dc, "V", Kind::Measured, "no B"));
-        measured.push(figure("AC CM", ac, "V", Kind::Measured, &few));
-        measured.push(figure("Cross", cross, "V", Kind::Measured, "no B"));
-        measured.push(figure("T/nT", tnt, "dB", Kind::Measured, &few));
-        measured.push(figure("SSC ppm", ppm, "ppm", Kind::Measured, &few));
-        measured.push(figure("SSC rate", ssc_hz, "Hz", Kind::Measured, &few));
-        let eye_model = vec![figure("Ht@BER", hber, "V", Kind::Model, "no eye")];
-        (measured, model, eye_model)
+    /// Gather optional companions; the DSP/figure builder is also used off-thread.
+    fn eye_facts(&mut self, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, t0: f64, rec: &Record, means: &EdgeMeans) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+        let settings = FactSettings::from(&self.m);
+        let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id)).map(|s| eye_on_grid(s, t0, dt, wave.len()));
+        let companion = self.m.eye_b.and_then(|id| self.eye_pair(rec, self.m.eye_src, id));
+        populate_eye_facts(&mut self.azr.page, settings, clk, tie, trend, j, meas, wave, dt, means,
+            rail.as_ref().map(|v| (v.as_slice(), dt)),
+            companion.as_ref().map(|(a, b, dt, _)| (a.as_slice(), b.as_slice(), *dt)))
     }
 
     /// Where the column sits this frame: 0 has left the screen, 1 is home.
@@ -961,133 +956,68 @@ impl Ui {
         false
     }
 
-    /// Full, Side and Under, then Close, on the bar above the eye.
-    pub(super) fn eye_place_btns(&self) -> (Rect, Rect, Rect) {
-        let a = self.eye_chrome_rect();
-        let full = Rect::new(a.x + 6, a.y + 4, 52, 28);
-        let side = Rect::new(full.x + 56, full.y, 52, 28);
-        (full, side, Rect::new(side.x + 56, side.y, 58, 28))
-    }
-
     pub(super) fn eye_pane_close(&self) -> Rect {
-        let a = self.eye_chrome_rect();
-        let right = if self.m.eye_place == EyePlace::Full { self.full_btn().0.x - 8 } else { a.x + a.w - 4 };
-        Rect::new(right - 42, a.y + 2, 42, 32)
+        let a = self.eye_pane_rect();
+        let full=self.full_btn().0;
+        let right=if full.y<a.y+workspace::HEADER && full.y+full.h>a.y && full.x>a.x && full.x<a.x+a.w {full.x-8} else {a.x+a.w-2};
+        Rect::new(right-48, a.y + 1, 48, workspace::HEADER - 2)
     }
 
     pub(super) fn eye_set_place(&mut self, place: EyePlace) {
         let previous = self.m.eye_place;
+        if place == EyePlace::Full { self.workspace.eye_float = None; self.workspace.eye_left = false; }
         self.m.eye_place = place;
         if place == EyePlace::Under && self.eye_below() == 0 {
             self.m.eye_place = EyePlace::Side;
             self.toast("Eye stays beside the trace: not enough room below. Hide the logic lanes or measurements to use Under.");
         }
         if self.m.eye_place == previous { return; }
-        self.azr.eye = None;
+        if !self.azr.eye_auto.enabled && !self.auto_eye_large() { self.azr.eye = None; }
         self.relayout();
         self.analyzer_update();
     }
 
-    /// The waveform on screen, and the bit rate measured from it.
-    fn eye_from_waveform(&self) -> Option<(WaveId, Option<f64>)> {
-        let ids = {
-            let mut ids = Vec::new();
-            let mut push = |id: WaveId| {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-            };
-            if self.m.active < NCH && self.m.ch[self.m.active].on {
-                push(WaveId::Ch(self.m.active));
+    /// Bit rate of `id` from its edges. Nothing was typed.
+    pub(super) fn waveform_bit_rate(&self, id: WaveId) -> Option<f64> {
+        match id {
+            WaveId::Ref(i) => {
+                let r = self.refs.get(i)?.as_ref()?;
+                automatic::probe_rate(&r.v, r.dt)
             }
-            for c in 0..NCH {
-                if self.m.ch[c].on {
-                    push(WaveId::Ch(c));
-                }
-            }
-            for i in 0..self.refs.len() {
-                if self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 2) {
-                    push(WaveId::Ref(i));
-                }
-            }
-            ids
-        };
-        let has = |id: WaveId| -> bool {
-            match &self.last[0] {
-                Some(r) => self.eye_source_ready(r, id),
-                None => matches!(id, WaveId::Ref(_)) && self.eye_source_ready(&Self::blank_record(), id),
-            }
-        };
-        let mut fallback = None;
-        for id in ids {
-            if !has(id) {
-                continue;
-            }
-            if fallback.is_none() {
-                fallback = Some(id);
-            }
-            if let Some(rate) = self.waveform_bit_rate(id) {
-                return Some((id, Some(rate)));
+            WaveId::Ch(c) => {
+                let rec = self.last[0].as_ref()?;
+                let (values, dt, _) = self.eye_channel_samples(rec, c)?;
+                automatic::probe_rate(values, dt)
             }
         }
-        fallback.map(|id| (id, None))
-    }
-
-    /// Bit rate of `id` from its edges. Nothing was typed.
-    fn waveform_bit_rate(&self, id: WaveId) -> Option<f64> {
-        let owned;
-        let rec = if let Some(r) = self.last[0].as_ref() {
-            r
-        } else if matches!(id, WaveId::Ref(_)) {
-            owned = Self::blank_record();
-            &owned
-        } else {
-            return None;
-        };
-        let s = self.eye_samples(rec, id)?;
-        let vpd = match id {
-            WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].volts_per_div(),
-            WaveId::Ref(i) => self.refs.get(i)?.as_ref()?.vpd,
-        };
-        let st = match id {
-            WaveId::Ch(c) if self.stats[c.min(NCH - 1)].valid => self.stats[c.min(NCH - 1)],
-            _ => stats(&s.v, s.dt),
-        };
-        let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
-        eye::recover_clock(&s.v, s.dt, thr, 0.1 * vpd, None).filter(|c| c.period.is_finite() && c.period > 0.0).map(|c| c.rate())
     }
 
     /// One press: look at the waveform, take the bit rate from that record, and open the eye.
     pub(super) fn eye_make(&mut self) {
-        self.measure_last();
-        let Some((id, rate)) = self.eye_from_waveform() else {
-            self.toast("No waveform in this record");
-            return;
-        };
-        self.m.eye_src = id;
+        // Selection is intentional: never switch away from a flat/weak selected
+        // signal merely because another visible channel has an easier clock.
+        let id = self.selected_workspace_source().or_else(|| {
+            (0..n_ch()).filter(|&c| self.m.ch[c].on).map(WaveId::Ch)
+                .chain((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(WaveId::Ref)).next()
+        });
+        self.close_menu();
+        if let Some(id) = id { self.m.eye_src = id; }
         self.m.eye_from_record = true;
-        self.m.eye_rate = rate.unwrap_or(0.0);
+        self.m.eye_rate = 0.0;
+        self.m.eye_b = None;
+        self.m.eye_rail = None;
+        self.m.eye_notch = 0.0;
+        self.m.eye_hp = false;
         self.m.view = AView::Eye;
-        self.azr.eye = None;
-        self.azr.eye_res = None;
-        self.azr.eye_ref = None;
-        self.azr.page = Page::default();
+        self.eye_big = None;
+        self.eye_to = 1.0;
+        self.eye_from = 1.0;
+        self.invalidate_reference_eye();
+        self.azr.eye_auto.enabled = true;
         self.relayout();
-        self.analyzer_update();
-        match rate {
-            Some(r) => self.toast(&format!("Eye · {}", si(r, "b/s"))),
-            None => self.toast("No bit rate in this record"),
-        }
-    }
-
-    pub(super) fn draw_eye_btn(&self, cv: &mut Canvas) {
-        if self.view_on() || (self.eye_open() && self.m.eye_place == EyePlace::Full) {
-            return;
-        }
-        let r = self.eye_btn();
-        let on = self.eye_open();
-        btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
-        cv.text_in(&self.fonts.sb, r, 1, "Eye", if on { ACCENT } else { TEXT });
+        let rec = self.last[0].clone().unwrap_or_else(Self::blank_record);
+        self.eye_update(&rec);
+        self.toast(if id.is_some() { "Automatic Eye/Jitter on the selected source" } else { "No active or loaded waveform: select a source" });
     }
 
     /// The eye in its pane, with Side / Under and Close on the bar. The trace stays in the plot.
@@ -1102,33 +1032,63 @@ impl Ui {
         self.draw_eye(cv);
     }
 
-    pub(super) fn draw_eye_bar(&self, cv: &mut Canvas, a: Rect) {
-        let f = &self.fonts;
-        let (full, side, under) = self.eye_place_btns();
-        for (r, name, place) in [(full, "Full", EyePlace::Full), (side, "Side", EyePlace::Side), (under, "Under", EyePlace::Under)] {
-            let on = self.m.eye_place == place;
-            btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
-            cv.text_in(&f.s, r, 1, name, if on { ACCENT } else { TEXT });
+    pub(super) fn eye_header_source(&self) -> Rect {
+        let a = self.eye_pane_rect();
+        Rect::new(a.x + 4, a.y + 1, 88.min((a.w - 58).max(1)), workspace::HEADER - 2)
+    }
+
+    pub(super) fn eye_source_mode_label(&self) -> &'static str {
+        match self.m.eye_src {
+            WaveId::Ref(i) if self.session_is_sim && i == self.m.sim_slot => "SIM captures",
+            WaveId::Ref(_) => "Full record",
+            WaveId::Ch(_) if self.m.run == RunState::Stop => "Stopped",
+            WaveId::Ch(_) => "Live",
         }
+    }
+
+    pub(super) fn eye_place_control(&self) -> Rect {
+        let a = self.eye_pane_rect();
+        Rect::new(a.x + 96, a.y + 1, 48, workspace::HEADER - 2)
+    }
+
+    pub(super) fn eye_header_tap(&mut self, x: i32, y: i32) {
+        if self.eye_place_control().contains(x, y) {
+            self.open_menu(MenuId::Eye);
+            self.open_picker(Item::EyePlace);
+            return;
+        }
+        let source = self.eye_header_source().contains(x, y);
+        self.open_menu(MenuId::Eye);
+        if source { self.open_picker(Item::EyeSrc); }
+    }
+
+    pub(super) fn eye_rate_caption(&self) -> String {
+        if self.m.eye_rate > 0.0 {
+            format!("{}{}", if self.azr.eye_auto.enabled { "Est." } else { "" }, si_short(self.m.eye_rate, "b/s"))
+        } else { "Auto rate".into() }
+    }
+
+    fn draw_eye_bar(&self, cv: &mut Canvas, a: Rect) {
         let close = self.eye_pane_close();
+        cv.fill(Rect::new(a.x + 1, a.y + 1, a.w - 2, workspace::HEADER - 1), BAR);
+        let source = match self.m.eye_src { WaveId::Ch(c) => format!("CH{}", c + 1), WaveId::Ref(i) => format!("R{}", i + 1) };
+        let rate = self.eye_rate_caption();
+        let pick = self.eye_header_source();
+        btn(cv, pick, BTN, BTN_BORDER);
+        cv.text(&self.fonts.sb, pick.x + 5, a.y + 18, &format!("Eye {}", source), self.wave_color(self.m.eye_src));
+        chevron_down(cv, pick.x + pick.w - 14, pick.y + pick.h / 2 - 2, DIM);
+        let place = self.eye_place_control();
+        btn(cv, place, BTN, BTN_BORDER);
+        cv.text_in(&self.fonts.s, place, 1, &self.value(Item::EyePlace), TEXT);
+        let settings = Rect::new(place.x + place.w + 4, pick.y, (close.x - place.x - place.w - 8).max(1), pick.h);
+        btn(cv, settings, BTN, BTN_BORDER);
+        cv.set_clip(Rect::new(settings.x + 5, settings.y, (settings.w - 23).max(1), settings.h));
+        let scope = self.azr.eye_auto.snapshot_caption().unwrap_or_else(|| self.eye_source_mode_label().into());
+        cv.text(&self.fonts.s, settings.x + 5, a.y + 18, &format!("{} · {}", scope, rate), TEXT);
+        cv.no_clip();
+        chevron_down(cv, settings.x + settings.w - 14, settings.y + settings.h / 2 - 2, DIM);
         btn(cv, close, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, close, 1, "\u{d7}", TEXT);
-        let rate = if self.m.eye_rate > 0.0 { si(self.m.eye_rate, "b/s") } else { "no bit rate".into() };
-        let note = if self.m.eye_from_record {
-            "from the record"
-        } else if self.m.eye_rate > 0.0 {
-            "set"
-        } else {
-            ""
-        };
-        let t = if note.is_empty() { rate } else { format!("{rate} · {note}") };
-        let x = under.x + under.w + 8;
-        let lab = Rect::new(x, a.y + 4, (close.x - 8 - x).max(0), 28);
-        if lab.w > 8 {
-            cv.set_clip(lab);
-            cv.text_in(&f.s, lab, 0, &t, TEXT);
-            cv.no_clip();
-        }
+        cv.text_in(&self.fonts.s, close, 1, "Close", TEXT);
     }
 
     pub(super) fn draw_eye(&self, cv: &mut Canvas) {
@@ -1149,7 +1109,7 @@ impl Ui {
         }
         if l.charts[0].x < a.x + a.w {
             cv.set_clip(a);
-            self.eye_head(cv, &l);
+            // One workspace header owns source/rate and docking; charts need no duplicate title.
             let (charts, plots) = charts_shown(&l, self.eye_big);
             let col = self.wave_color(self.m.eye_src);
             for k in 0..4 {
@@ -1224,22 +1184,6 @@ impl Ui {
         let f = &self.fonts;
         let p = &self.azr.page;
         let r = l.plot;
-        let title = if p.title.is_empty() { "Eye" } else { p.title.as_str() };
-        // a narrow pane keeps the title and drops the scale when the two would meet
-        let scale = l.eye.w >= f.sb.width(title) + 210;
-        let title_w = if scale { l.eye.w - 200 } else { l.eye.w };
-        cv.set_clip(Rect::new(l.eye.x, l.eye.y, title_w.max(1), EYE_TITLE + 2));
-        cv.text(&f.sb, l.eye.x + 6, l.eye.y + 14, title, TEXT);
-        cv.no_clip();
-        if scale {
-            let pal = heat_palette();
-            let (kx, ky) = (self.heat_x(r), l.eye.y + 5);
-            cv.text(&f.s, kx - 28, ky + 10, "rare", DIM);
-            for i in 0..64 {
-                cv.fill(Rect::new(kx + i, ky, 1, 10), pal[(i * 4) as usize]);
-            }
-            cv.text(&f.s, kx + 68, ky + 10, "dense", DIM);
-        }
         cv.fill(r, BAR);
         // half a UI per time line, the crossings stand out
         for k in 0..=4 {
@@ -1391,6 +1335,78 @@ impl Ui {
     }
 }
 
+#[derive(Clone, Copy)]
+struct FactSettings { ber: f64, npj: bool, pn_lo: f64, pn_hi: f64, notch: f64, hp: bool }
+
+impl From<&Model> for FactSettings {
+    fn from(m: &Model) -> Self {
+        Self { ber: m.eye_ber, npj: m.eye_npj, pn_lo: m.eye_pn_lo, pn_hi: m.eye_pn_hi, notch: m.eye_notch, hp: m.eye_hp }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn populate_eye_facts(page: &mut Page, settings: FactSettings, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, means: &EdgeMeans, rail: Option<(&[f32], f64)>, companion: Option<(&[f32], &[f32], f64)>) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+    let few = format!("needs {} edges", eye::MIN_EDGES);
+    let miss = |l| cell(l, few.clone(), Kind::Missing);
+    if j.fit == JitterFit::TooFew {
+        for name in EYE_FACTS {
+            page.put_fig(name, f64::NAN);
+        }
+        let model = ["TJ@BER", "EW@BER", "J2", "J9", "NPJ"].map(miss).to_vec();
+        let measured = ["F/2", "F/4", "F/8", "SRJ", "Pn rms", "Pn note", "TIE pre", "TIE post", "DC CM", "AC CM", "Cross", "T/nT", "SSC ppm", "SSC rate"].map(miss).to_vec();
+        let eye_model = vec![cell("Ht@BER", "no eye".into(), Kind::Missing)];
+        return (measured, model, eye_model);
+    }
+    let ber = settings.ber;
+    let (tjber, ewber, j2, j9) = (eye::tj_at(j, ber), eye::eye_width_at(j, clk.period, ber), eye::tj_at(j, eye::BER_J2), eye::tj_at(j, eye::BER_J9));
+    let npj = if settings.npj { eye::npj(tie, clk, trend, means) } else { f64::NAN };
+    let (f2, f4, f8) = (eye::subrate_pp(trend, clk.period, 2), eye::subrate_pp(trend, clk.period, 4), eye::subrate_pp(trend, clk.period, 8));
+    let srj = eye::srj_pp(trend, clk.period);
+    let pn = eye::phase_noise(trend, clk.period, settings.pn_lo, settings.pn_hi);
+    let ps = eye::psij(trend, clk, tie, rail, settings.notch, meas.height, meas.width, Some((wave, dt)));
+    let (dc, ac, cross) = companion.map_or_else(
+        || (f64::NAN, eye::ac_common_pp(wave, None, dt, settings.hp), f64::NAN),
+        |(a, b, dt)| (eye::dc_common(a, b), eye::ac_common_pp(a, Some(b), dt, settings.hp), eye::diff_crossover(a, b)));
+    let tnt = eye::tnt_ratio(wave, dt, clk);
+    let (ppm, _) = eye::ssc_deviation(clk);
+    let ssc_hz = eye::ssc_rate(clk);
+    let hber = meas.height_at(ber);
+    for (name, v) in [("HBER", hber), ("F2", f2), ("F4", f4), ("F8", f8), ("SRJ", srj), ("PN", pn), ("TPRE", ps.before.tie_pp), ("TPOST", ps.after.tie_pp), ("PPRE", ps.before.pj), ("PPOST", ps.after.pj), ("DCCM", dc), ("ACCM", ac), ("XOVer", cross), ("TNT", tnt), ("SSCPpm", ppm), ("SSCRate", ssc_hz), ("TJBer", tjber), ("EWBer", ewber), ("J2", j2), ("J9", j9), ("NPJ", npj)] {
+        page.put_fig(name, v);
+    }
+    let mut model = vec![
+        figure("TJ@BER", tjber, "s", Kind::Model, &few),
+        figure("EW@BER", ewber, "UI", Kind::Model, &few),
+        figure("J2", j2, "s", Kind::Model, &few),
+        figure("J9", j9, "s", Kind::Model, &few),
+    ];
+    if settings.npj {
+        model.push(figure("NPJ", npj, "s", Kind::Model, &few));
+    } else {
+        model.push(cell("NPJ", "off".into(), Kind::Missing));
+    }
+    let mut measured = vec![
+        figure("F/2", f2, "s", Kind::Measured, &few),
+        figure("F/4", f4, "s", Kind::Measured, &few),
+        figure("F/8", f8, "s", Kind::Measured, &few),
+        figure("SRJ", srj, "s", Kind::Measured, &few),
+        figure("Pn rms", pn, "s", Kind::Measured, &few),
+        cell("Pn note", if eye::is_clock(clk) { "clock" } else { "data" }.into(), if eye::is_clock(clk) { Kind::Measured } else { Kind::Missing }),
+    ];
+    measured.push(figure("TIE pre", ps.before.tie_pp, "s", Kind::Measured, &few));
+    measured.push(figure("TIE post", ps.after.tie_pp, "s", Kind::Measured, &few));
+    measured.push(figure("PJ pre", ps.before.pj, "s", Kind::Measured, &few));
+    measured.push(figure("PJ post", ps.after.pj, "s", Kind::Measured, &few));
+    measured.push(figure("DC CM", dc, "V", Kind::Measured, "no B"));
+    measured.push(figure("AC CM", ac, "V", Kind::Measured, &few));
+    measured.push(figure("Cross", cross, "V", Kind::Measured, "no B"));
+    measured.push(figure("T/nT", tnt, "dB", Kind::Measured, &few));
+    measured.push(figure("SSC ppm", ppm, "ppm", Kind::Measured, &few));
+    measured.push(figure("SSC rate", ssc_hz, "Hz", Kind::Measured, &few));
+    let eye_model = vec![figure("Ht@BER", hber, "V", Kind::Model, "no eye")];
+    (measured, model, eye_model)
+}
+
 /// Room for the label of a figure.
 pub(super) const LABEL_W: i32 = 64;
 
@@ -1406,6 +1422,19 @@ fn ref_fp(v: &[f32], dt: f64, t0: f64) -> u64 {
 }
 
 /// Reference-only Eye alignment; ordinary analyser measurement gates are unchanged.
+fn eye_common_grid(a: &WaveSamp, b: &WaveSamp) -> Option<(f64, f64, usize)> {
+    if a.v.len() < 2 || b.v.len() < 2 || !a.dt.is_finite() || !b.dt.is_finite() || a.dt <= 0.0 || b.dt <= 0.0
+        || !a.t0.is_finite() || !b.t0.is_finite() { return None; }
+    let grid = if a.dt <= b.dt { a } else { b };
+    let start = a.t0.max(b.t0);
+    let stop = (a.t0 + (a.v.len() - 1) as f64 * a.dt).min(b.t0 + (b.v.len() - 1) as f64 * b.dt);
+    let snap = |x: f64| if (x - x.round()).abs() <= 1e-7 { x.round() } else { x };
+    let first = snap((start - grid.t0) / grid.dt).ceil().max(0.0);
+    let last = snap((stop - grid.t0) / grid.dt).floor().min((grid.v.len() - 1) as f64);
+    if last < first + 1.0 { return None; }
+    Some((grid.dt, grid.t0 + first * grid.dt, (last - first + 1.0) as usize))
+}
+
 fn eye_on_grid(mut source: WaveSamp, t0: f64, dt: f64, n: usize) -> Vec<f32> {
     if (source.dt - dt).abs() <= dt.abs() * 1e-9 && (source.t0 - t0).abs() <= dt.abs() * 1e-6 {
         source.v.resize(n, f32::NAN);
@@ -1568,9 +1597,10 @@ mod tests {
         }).collect();
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.run = RunState::Stop;
-        ui.session_is_sim = true;
+        ui.session_is_sim = false;
+        ui.set_offline(true);
         ui.m.sim_slot = 0;
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "SSC clock".into(), t0: 0.0, dt, v: samples, vpd: 0.5, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "SSC clock".into(), t0: 0.0, dt, v: (samples).into(), vpd: 0.5, offset: 0.0, on: true });
         ui.m.eye_src = WaveId::Ref(0);
         ui.m.eye_rate = rate;
         ui.m.zoom = true;
@@ -1604,7 +1634,7 @@ mod tests {
             assert_eq!(reading(&ui, "SSCRate"), ssc);
         }
         // A waveform edit away from the old three fingerprint samples is still a new record.
-        ui.refs[0].as_mut().unwrap().v[1000] *= 0.8;
+        std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v)[1000] *= 0.8;
         ui.eye_update(&Ui::blank_record());
         assert_ne!(ui.azr.eye_ref, identity);
         assert_eq!(ui.azr.page.records, 1);
@@ -1613,7 +1643,7 @@ mod tests {
         ui.eye_update(&Ui::blank_record());
         assert_ne!(ui.azr.eye_ref, waveform_identity, "settings refresh the cached figures");
         assert_eq!(ui.azr.page.records, 1);
-        ui.refs[0].as_mut().unwrap().v.fill(0.0);
+        std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v).fill(0.0);
         ui.eye_update(&Ui::blank_record());
         assert!(ui.azr.eye.is_none() && ui.azr.eye_res.is_none(), "an edgeless replacement cannot keep stale results");
     }
@@ -1776,12 +1806,19 @@ mod tests {
 
     #[test]
     fn nothing_sits_under_the_overflow_button() {
-        for h in [160, 352, 480] {
-            let a = Rect::new(0, 40, W, h);
-            let l = layout(a, false);
-            let btn = Rect::new(a.x + a.w - 48, a.y, 48, 42);
-            for r in [l.eye, l.head, l.fig, l.jit].iter().chain(&l.charts) {
-                assert!(!overlaps(*r, btn), "{:?}", r);
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.view = AView::Eye;
+        for w in [640, W] {
+            for h in [160, 352, 480] {
+                ui.workspace.eye_float = Some(Rect::new(0, 40, w, h));
+                ui.relayout();
+                let content = ui.eye_page_rect();
+                let close = ui.eye_pane_close();
+                assert!(content.y >= close.y + close.h, "workspace header must reserve Close before laying out any charts");
+                let l = layout(content, false);
+                for r in [l.eye, l.head, l.fig, l.jit].iter().chain(&l.charts) {
+                    assert!(!overlaps(*r, close), "{:?} sits under actual Close {:?}", r, close);
+                }
             }
         }
     }
@@ -1892,42 +1929,70 @@ mod tests {
         a.w > 0 && b.w > 0 && a.h > 0 && b.h > 0 && !(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h)
     }
 
-    /// One press reads the bit rate and opens the full page. Side and Under are extra and can be left again.
     #[test]
-    fn one_press_opens_the_full_page_and_side_is_optional() {
+    fn selected_eye_source_keeps_its_identity_and_updates_only_automatic_rate() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        let mut noise = Noise(3);
+        for (slot, signal) in [(0, CLEAN), (1, Sig { rate: CLEAN.rate * 2.0, ..CLEAN })] {
+            let rec = record(signal, &mut noise);
+            ui.refs[slot] = Some(RefWave { src: 0, color: slot, label: format!("Rate {slot}"), t0: rec.t0, dt: rec.dt,
+                v: (rec.ch[0].clone()).into(), vpd: 0.2, offset: 0.0, on: true });
+        }
+        ui.select_workspace_source(WaveId::Ref(1));
+        ui.eye_make();
+        assert_eq!(ui.m.eye_src, WaveId::Ref(1));
+        assert!((ui.m.eye_rate - CLEAN.rate * 2.0).abs() / (CLEAN.rate * 2.0) < 0.02);
+        ui.adjust(Item::EyeSrc, -1);
+        assert_eq!(ui.m.eye_src, WaveId::Ref(0));
+        assert!((ui.m.eye_rate - CLEAN.rate).abs() / CLEAN.rate < 0.02);
+        ui.m.eye_from_record = false;
+        ui.m.eye_rate = 125e6;
+        ui.adjust(Item::EyeSrc, 1);
+        assert_eq!(ui.m.eye_rate, 125e6, "a deliberately manual rate survives source selection");
+        std::sync::Arc::make_mut(&mut ui.refs[1].as_mut().unwrap().v).fill(0.0);
+        ui.eye_make();
+        assert_eq!(ui.m.eye_src, WaveId::Ref(1));
+        assert_eq!(ui.m.eye_rate, 0.0, "a flat selected record does not silently use another source's clock");
+    }
+
+    /// One press reads the bit rate from the record. The eye starts beside the trace; Under stacks it below.
+    #[test]
+    fn one_press_reads_the_rate_and_keeps_the_trace() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.eye_place = EyePlace::Side;
         ui.m.run = RunState::Stop;
         ui.m.eye_rate = 123.0;
         let mut n = Noise(3);
         ui.last[0] = Some(record(CLEAN, &mut n));
         ui.render(&mut Canvas::new(W, H));
-        let b = ui.eye_btn();
-        ui.tap(b.x + 8, b.y + 8);
+        let g = ui.grid;
+        ui.tap(g.x + 40, g.y + 30);
+        assert_ne!(ui.m.view, AView::Eye, "the waveform has no Eye shortcut");
+        ui.open_menu(MenuId::Eye);
+        assert!(ui.items(MenuId::Eye).contains(&Item::EyeAct));
+        let b = ui.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::EyeAct).unwrap().ctrl;
+        for phase in [Phase::Down, Phase::Up] { ui.handle(Ev::Touch { id: 0, phase, x: b.x+b.w/2, y: b.y+b.h/2 }); }
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.m.eye_from_record);
-        assert_eq!(ui.m.eye_place, EyePlace::Full);
+        assert_eq!(ui.m.eye_place, EyePlace::Side);
         assert!((ui.m.eye_rate - CLEAN.rate).abs() / CLEAN.rate < 0.02, "rate {}", ui.m.eye_rate);
         ui.render(&mut Canvas::new(W, H));
-        let page = ui.eye_page_rect();
-        assert!(page.w >= 700 && page.h >= 300, "full page {:?}", page);
-        let home = layout(page, false);
-        assert!(home.fig_rows > 0 && home.jit_rows > 0 && home.charts[0].w > 40, "figures {:?}", home);
-        let (_, side, _) = ui.eye_place_btns();
-        ui.tap(side.x + 4, side.y + 4);
-        ui.render(&mut Canvas::new(W, H));
         let (wave, eye) = (ui.grid, ui.eye_pane_rect());
-        assert_eq!(ui.m.eye_place, EyePlace::Side);
         assert!(separated(wave, eye), "wave {:?} eye {:?}", wave, eye);
         assert!(eye.x >= wave.x + wave.w);
-        let (_, _, under) = ui.eye_place_btns();
-        ui.tap(under.x + 4, under.y + 4);
+        assert!(wave.w > eye.w && eye.w > 250, "wave {:?} eye {:?}", wave, eye);
+        let (x, y) = (eye.x + 20, eye.y + 12);
+        ui.context_menu(x, y);
+        let popup_x = x.clamp(4, W - 244 - 4);
+        let popup_y = y.clamp(TOP.h, (BOTTOM.y - (6 * 30 + 8)).max(TOP.h));
+        ui.tap(popup_x + 24, popup_y + 4 + 2 * 30 + 15); // Dock Eye below.
         ui.render(&mut Canvas::new(W, H));
+        let (wave, eye) = (ui.grid, ui.eye_pane_rect());
         assert_eq!(ui.m.eye_place, EyePlace::Under);
-        let (full, _, _) = ui.eye_place_btns();
-        ui.tap(full.x + 4, full.y + 4);
-        ui.render(&mut Canvas::new(W, H));
-        assert_eq!(ui.m.eye_place, EyePlace::Full);
-        assert!(ui.eye_page_rect().w >= 700);
+        assert!(separated(wave, eye), "wave {:?} eye {:?}", wave, eye);
+        assert!(eye.y >= wave.y + wave.h - 1);
+        assert!(eye.w + 2 >= wave.w);
         let c = ui.eye_pane_close();
         ui.tap(c.x + 4, c.y + 4);
         assert_eq!(ui.m.view, AView::Scope);
@@ -2088,5 +2153,138 @@ mod tests {
         open.now += REFRESH;
         open.analyzer_update();
         save(&mut open, "eye-plot-expanded");
+    }
+}
+#[cfg(test)]
+mod automatic_setup_tests {
+    use super::*;
+
+    fn reference(values: Vec<f32>, dt: f64) -> Ui {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "Auto test".into(), t0: -1e-6,
+            dt, v: (values).into(), vpd: 0.2, offset: 0.0, on: true });
+        ui.select_workspace_source(WaveId::Ref(0));
+        ui.m.run = RunState::Stop;
+        ui
+    }
+
+    fn square(samples: usize, samples_per_ui: usize) -> Vec<f32> {
+        (0..samples).map(|i| if i / samples_per_ui % 2 == 0 { -1.0 } else { 1.0 }).collect()
+    }
+
+    #[test]
+    fn auto_eye_is_one_action_uses_selected_data_and_closes_settings() {
+        let mut ui = reference(square(20_000, 20), 50e-12);
+        ui.m.eye_b = Some(WaveId::Ref(9));
+        ui.m.eye_rail = Some(WaveId::Ref(8));
+        ui.m.eye_notch = 10e6;
+        ui.m.eye_rate = 123.0;
+        ui.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
+        ui.open_menu(MenuId::Eye);
+        let before = (ui.m.run, ui.replay.captures, ui.m.trigger_wave(), ui.m.meas.clone());
+        ui.activate(Item::EyeAct);
+        assert!(!ui.menu_open);
+        assert_eq!(ui.m.eye_src, WaveId::Ref(0));
+        assert_eq!((ui.m.eye_b, ui.m.eye_rail, ui.m.eye_notch), (None, None, 0.0));
+        assert!(ui.m.eye_from_record && (ui.m.eye_rate / 1e9 - 1.0).abs() < 0.01);
+        assert_eq!((ui.m.run, ui.replay.captures, ui.m.trigger_wave(), ui.m.meas.clone()), before);
+        let summary = ui.azr.eye_auto.summary.as_ref().unwrap();
+        assert!(summary.threshold.abs() < 0.01 && summary.hysteresis > 0.0);
+        assert!(ui.azr.page.records > 0 && !ui.azr.page.readings.is_empty());
+        assert!(ui.azr.page.status[0].contains("Auto"));
+    }
+
+    #[test]
+    fn auto_eye_flat_or_undersampled_data_has_explicit_missing_results() {
+        for (values, dt, reason) in [(vec![0.5; 1000], 1e-9, "Flat"), (square(1000, 1), 1e-9, "2 samples")] {
+            let mut ui = reference(values, dt);
+            ui.eye_make();
+            assert!(ui.azr.eye.is_none() && ui.azr.eye_res.is_none());
+            assert!(ui.azr.page.readings.is_empty());
+            assert!(ui.azr.page.status[1].contains(reason), "{:?}", ui.azr.page.status);
+            assert_eq!(ui.m.run, RunState::Stop);
+        }
+    }
+
+    #[test]
+    fn auto_eye_reports_low_sample_density_without_inventing_compliance() {
+        let mut ui = reference(square(8000, 4), 0.25e-9);
+        ui.eye_make();
+        let summary = ui.azr.eye_auto.summary.as_ref().unwrap();
+        assert!((summary.samples_per_ui - 4.0).abs() < 0.01);
+        assert!(summary.warning.contains("Limited sampling"));
+        assert!(ui.azr.eye.is_some() && ui.azr.page.status[0].contains("limited"));
+    }
+
+    #[test]
+    fn auto_eye_live_updates_on_new_captures_but_stopped_pan_is_not_new_data() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut rec = Ui::blank_record();
+        rec.dt = 50e-12;
+        rec.t0 = -0.5e-6;
+        rec.ch[0] = square(20_000, 20);
+        ui.last[0] = Some(rec);
+        ui.select_workspace_source(WaveId::Ch(0));
+        ui.m.run = RunState::Run;
+        ui.eye_make();
+        assert_eq!(ui.m.eye_src, WaveId::Ch(0));
+        assert_eq!(ui.azr.page.records, 1);
+        let first_hits = ui.azr.eye.as_ref().unwrap().hits.iter().map(|&n| n as u64).sum::<u64>();
+        let mut fresh = ui.last[0].clone().unwrap();
+        fresh.ch[0].rotate_left(3);
+        ui.last[0] = Some(fresh);
+        ui.records += 1;
+        ui.now += REFRESH;
+        ui.analyzer_update();
+        assert_eq!(ui.azr.page.records, 2);
+        assert!(ui.azr.eye.as_ref().unwrap().hits.iter().map(|&n| n as u64).sum::<u64>() > first_hits);
+        let threshold = ui.azr.eye_auto.summary.as_ref().unwrap().threshold;
+        ui.m.run = RunState::Stop;
+        for _ in 0..20 { ui.m.zdelay += 1e-9; ui.analyzer_update(); }
+        assert_eq!(ui.azr.page.records, 2, "stopped panning cannot manufacture observations");
+        assert_eq!(ui.azr.eye_auto.summary.as_ref().unwrap().threshold, threshold);
+        assert!(!ui.azr.page.img.is_empty() && !ui.azr.page.hist.is_empty());
+        ui.render(&mut Canvas::new(W, H));
+    }
+
+    #[test]
+    fn auto_eye_background_rejects_old_source_and_does_not_recount_pan() {
+        let mut ui = reference(square(300_000, 20), 50e-12);
+        ui.eye_make();
+        assert!(ui.azr.page.status[0].contains("Computing"));
+        assert_eq!(ui.azr.eye_auto.submitted, 1);
+        ui.refs[0].as_mut().unwrap().v = square(300_000, 10).into();
+        ui.eye_make();
+        let start = std::time::Instant::now();
+        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 20 {
+            ui.step(0.01);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(ui.azr.eye_res.is_some(), "{:?}", ui.azr.page.status);
+        assert!((ui.m.eye_rate / 2e9 - 1.0).abs() < 0.01);
+        let submitted = ui.azr.eye_auto.submitted;
+        let records = ui.azr.page.records;
+        for _ in 0..30 { ui.m.zdelay += 1e-9; ui.analyzer_update(); }
+        assert_eq!((ui.azr.eye_auto.submitted, ui.azr.page.records), (submitted, records));
+        assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 0));
+    }
+
+    #[test]
+    fn auto_eye_stored_reference_stays_background_when_another_slot_is_simulated() {
+        let mut ui = reference(square(300_000, 20), 50e-12);
+        ui.session_is_sim = true;
+        ui.m.sim_slot = 1;
+        ui.eye_make();
+        assert_eq!(ui.azr.eye_auto.submitted, 1);
+        assert!(ui.azr.eye_res.is_none() && ui.azr.page.status[0].contains("Computing"));
+        let start = std::time::Instant::now();
+        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 20 {
+            ui.eye_auto_poll();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(ui.azr.eye_res.is_some(), "{:?}", ui.azr.page.status);
+        assert_eq!(ui.azr.page.records, 1);
+        assert!(ui.azr.page.title.contains("fixed full record"));
     }
 }

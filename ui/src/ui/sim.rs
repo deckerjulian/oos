@@ -1,13 +1,19 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! SIM: load a nominal serial record into a reference slot.
-//! Play moves the timebase window through a record that is longer than the window.
-//! A record that already fits stays one picture. Live acquisition is unchanged.
+//! SIM generates fresh serial captures through one bounded worker. Immutable
+//! file references use stored-record replay; moving their viewport is analysis,
+//! not a new physical SIM capture.
 
 use super::*;
 use oos_dsp::serial::{self, Lane, LANES};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, mpsc::{self, Receiver, Sender}};
+
+#[path = "sim_bus_candidate.rs"]
+mod sim_bus_candidate;
+#[cfg(test)]
+#[path = "sim_bus_tests.rs"]
+mod sim_bus_tests;
 
 const PRBS: [u8; 6] = [7, 9, 13, 15, 23, 31];
 
@@ -16,19 +22,44 @@ struct Request {
     lane: Lane,
     slot: usize,
     continuing: bool,
+    fresh: bool,
     run: bool,
+    guard: String,
+    trigger: Option<super::reference_search::SimTrigger>,
+    bus_trigger: Option<Result<sim_bus_candidate::Plan, &'static str>>,
+}
+
+struct Generated {
+    samples: Vec<f32>,
+    hits: Option<(usize, Arc<Vec<f64>>)>,
+    bus_decode: Option<sim_bus_candidate::Decoded>,
+    error: Option<&'static str>,
+}
+
+impl Generated {
+    fn evaluate(request: &Request, samples: Vec<f32>) -> Self {
+        if let Some(plan)=&request.bus_trigger {
+            return match plan.as_ref().map_err(|error|*error).and_then(|plan|plan.evaluate(&samples,serial::dt_of(&request.lane))) {
+                Ok(decoded)=>Self{samples,hits:Some((decoded.primary_slot,Arc::clone(&decoded.hits))),bus_decode:Some(decoded),error:None},
+                Err(error)=>Self{samples,hits:None,bus_decode:None,error:Some(error)},
+            };
+        }
+        let hits = request.trigger.as_ref().map(|trigger| (trigger.primary_slot, trigger.evaluate(&samples, serial::dt_of(&request.lane))));
+        Self { samples, hits, bus_decode:None,error:None }
+    }
 }
 
 /// One worker per UI. Knob changes replace queued requests, never spawn a
 /// parallel set of multi-million-sample generators. Only the latest reply wins.
 pub(super) struct Generation {
     requests: Sender<Request>,
-    results: Receiver<(Request, Result<Vec<f32>, String>)>,
+    results: Receiver<(Request, Result<Generated, String>)>,
     next: u64,
     active: Option<u64>,
     run: bool,
-    #[cfg(test)]
-    completed: u64,
+    in_flight: bool,
+    queued: Option<Request>,
+    pending: Option<(Request, Generated)>,
 }
 
 impl Generation {
@@ -38,11 +69,12 @@ impl Generation {
         std::thread::Builder::new().name("oos-sim".into()).spawn(move || {
             while let Ok(mut request) = input.recv() {
                 while let Ok(newer) = input.try_recv() { request = newer; }
-                let generated = serial::try_generate(&request.lane);
+                let generated = serial::try_generate(&request.lane).map(|samples| Generated::evaluate(&request, samples));
                 if output.send((request, generated)).is_err() { break; }
             }
         }).map_err(|error| format!("Could not start SIM generator: {error}"))?;
-        Ok(Self { requests, results, next: 0, active: None, run: false, #[cfg(test)] completed: 0 })
+        Ok(Self { requests, results, next: 0, active: None, run: false, in_flight: false,
+            queued: None, pending: None })
     }
 
     fn submit(&mut self, mut request: Request) -> Result<(), String> {
@@ -50,10 +82,21 @@ impl Generation {
         request.id = self.next;
         self.active = Some(request.id);
         self.run = request.run;
+        if self.in_flight { self.queued = Some(request); return Ok(()); }
+        self.in_flight = true;
         self.requests.send(request).map_err(|_| {
             self.active = None;
+            self.in_flight = false;
             "SIM generator stopped; return to Live and try again".into()
         })
+    }
+
+    fn advance_queue(&mut self) -> Result<(), String> {
+        if self.in_flight { return Ok(()); }
+        let Some(request) = self.queued.take() else { return Ok(()); };
+        if self.active != Some(request.id) { return Ok(()); }
+        self.in_flight = true;
+        self.requests.send(request).map_err(|_| { self.in_flight = false; self.active = None; "SIM generator stopped".into() })
     }
 }
 
@@ -80,7 +123,7 @@ impl Ui {
     }
 
     pub(super) fn sim_items(&self) -> Vec<Item> {
-        let mut v = vec![
+        let mut items = vec![
             Item::SimPreset,
             Item::SimRate,
             Item::SimPat,
@@ -100,10 +143,8 @@ impl Ui {
             Item::SimShow,
             Item::SimDefaults,
         ];
-        if self.session_is_sim {
-            v.insert(0, Item::SimLive);
-        }
-        v
+        if self.record_mode() { items.insert(0, Item::SimLive); }
+        items
     }
 
     pub(super) fn sim_advanced_items(&self) -> Vec<Item> {
@@ -248,7 +289,8 @@ impl Ui {
         match it {
             Item::SimLive => self.return_to_live(),
             Item::SimPlay if self.sim_generating() => {
-                self.sim_cancel_generation();
+                if self.session_is_sim && self.m.run==RunState::Run { self.record_key(key::RUNSTOP); }
+                else { self.sim_cancel_generation(); }
                 self.toast("SIM generation cancelled");
             }
             Item::SimPlay if self.session_is_sim => { self.record_key(key::RUNSTOP); },
@@ -300,6 +342,10 @@ impl Ui {
         Some((1.0 / r.dt, r.v.len() as u64))
     }
 
+    pub(super) fn sim_operation(&self) -> Option<(u64, u64)> {
+        self.sim_generation.as_ref().and_then(|generation| generation.active.map(|id| (self.workflow_epoch, id)))
+    }
+
     pub(crate) fn sim_generating(&self) -> bool {
         self.sim_generation.as_ref().is_some_and(|generation| generation.active.is_some())
     }
@@ -309,8 +355,42 @@ impl Ui {
             .map_or(self.m.run == RunState::Run, |generation| generation.run)
     }
 
+    fn sim_trigger_model(&self, lane: &Lane, slot: usize, continuing: bool) -> Model {
+        let mut model = self.m.clone();
+        if !continuing || model.trig_ref.is_none() { model.set_trigger_wave(WaveId::Ref(slot), false); }
+        if !continuing { model.trig_level = (0.5 * (lane.v_high + lane.v_low)) as f32; }
+        model
+    }
+
+    fn sim_candidate_vpd(&self, lane: &Lane, slot: usize, continuing: bool, run: bool) -> f32 {
+        if continuing && run {
+            self.refs[slot].as_ref().map_or(((lane.v_high - lane.v_low) / 6.0) as f32, |r| r.vpd)
+        } else { nearest_vdiv(((lane.v_high - lane.v_low).abs().max(0.2) / 4.0) as f32) }
+    }
+
+    fn sim_trigger_guard(&self, lane: &Lane, slot: usize, continuing: bool, run: bool) -> String {
+        let effective = self.sim_trigger_model(lane, slot, continuing);
+        let vpd = self.sim_candidate_vpd(lane, slot, continuing, run);
+        // Include the user's current configuration as well as the effective
+        // initial-SIM defaults, but not unrelated live-frame allocations.
+        format!("{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}", self.m.trigger(), self.m.dec_cfg(),
+            (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val), self.m.trigger_wave(), self.m.trigger_wave2(),
+            self.trigger_vpd(false).to_bits(), self.trigger_vpd(true).to_bits(),
+            self.reference_trigger_fingerprint(&effective, effective.trig_ref.unwrap_or(slot), Some((slot, vpd)))) + &self.sim_bus_guard(&effective,slot)
+    }
+
+    fn sim_capture_request(&self, lane: Lane, slot: usize, continuing: bool, fresh: bool, run: bool) -> Request {
+        let model = self.sim_trigger_model(&lane, slot, continuing);
+        let vpd = self.sim_candidate_vpd(&lane, slot, continuing, run);
+        Request { id: 0, lane, slot, continuing, fresh, run,
+            guard: self.sim_trigger_guard(&lane, slot, continuing, run), trigger: self.prepare_sim_trigger(&model, slot, vpd),
+            bus_trigger: if self.m.trig_on_la(){Some(Err("SIM qualification on logic-analyzer inputs is unavailable"))}else if matches!(model.trig_type,TrigType::Pattern|TrigType::Duration){Some(Err("SIM Pattern/Duration qualification is unavailable"))}else if model.trig_type==TrigType::Bus{Some(self.prepare_sim_bus(&model,slot,vpd))}else{None} }
+    }
+
     pub(crate) fn sim_cancel_generation(&mut self) {
-        if let Some(generation) = &mut self.sim_generation { generation.active = None; }
+        if let Some(generation) = &mut self.sim_generation {
+            generation.active = None; generation.queued = None; generation.pending = None;
+        }
     }
 
     pub(crate) fn take_sim_error(&mut self) -> Option<String> {
@@ -325,13 +405,25 @@ impl Ui {
     /// SSC records are generated off the UI thread; ordinary records stay fast.
     fn sim_load(&mut self, run: bool) -> Result<(), String> {
         self.sim_error = None;
+        self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
         let lane = self.sim_lane();
         let count = serial::sample_count(&lane)?;
-        let request = Request { id: 0, lane, slot: self.m.sim_slot, continuing: self.session_is_sim, run };
-        if count <= 65_536 {
+        let continuing=self.session_is_sim && !self.replay.sim_initial_armed;
+        let mut request = self.sim_capture_request(lane, self.m.sim_slot, continuing, false, run);
+        if let Some(Err(error))=&request.bus_trigger { return Err((*error).into()); }
+        if request.bus_trigger.is_some() && run && !continuing {
+            // Arming changes control ownership, never the accepted data. A miss
+            // must keep retrying even before the first SIM reference exists.
+            self.remember_live();self.session_is_sim=true;self.sim_play=true;
+            self.replay.sim_initial_armed=true;self.m.run=RunState::Run;self.m.status=TrigStatus::Wait;
+            self.m.set_trigger_wave(WaveId::Ref(self.m.sim_slot),false);
+            request=self.sim_capture_request(lane,self.m.sim_slot,false,false,true);
+        }
+        if count <= 65_536 && request.bus_trigger.is_none() {
             let generated = serial::try_generate(&lane)?;
             self.sim_cancel_generation();
+            let generated = Generated::evaluate(&request, generated);
             self.sim_finish(request, generated);
         } else {
             if self.sim_generation.is_none() { self.sim_generation = Some(Generation::new()?); }
@@ -342,12 +434,22 @@ impl Ui {
     }
 
     pub(super) fn sim_poll(&mut self) {
+        let pending = self.sim_generation.as_mut().and_then(|generation| generation.pending.take());
+        if let Some((request, generated)) = pending {
+            if self.sim_generation.as_ref().is_some_and(|generation| generation.active == Some(request.id)) {
+                self.sim_generation.as_mut().unwrap().active = None;
+                self.sim_finish(request, generated);
+            }
+        }
         loop {
             let Some(generation) = &mut self.sim_generation else { return };
             match generation.results.try_recv() {
                 Ok((request, result)) => {
-                    #[cfg(test)] { generation.completed = request.id; }
-                    if generation.active != Some(request.id) { continue; }
+                    generation.in_flight = false;
+                    if generation.active != Some(request.id) {
+                        if let Err(error) = generation.advance_queue() { self.sim_error = Some(error); }
+                        continue;
+                    }
                     generation.active = None;
                     match result {
                         Ok(generated) => self.sim_finish(request, generated),
@@ -383,7 +485,7 @@ impl Ui {
     #[cfg(test)]
     fn wait_sim_worker(&mut self) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while self.sim_generation.as_ref().is_some_and(|generation| generation.completed < generation.next) {
+        while self.sim_generation.as_ref().is_some_and(|generation| generation.in_flight || generation.queued.is_some()) {
             self.sim_poll();
             assert!(std::time::Instant::now() < deadline, "SIM worker did not finish");
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -391,11 +493,37 @@ impl Ui {
     }
 
     /// Commit one successful result. Overview is the stored record; zoom is ~eight UI.
-    fn sim_finish(&mut self, request: Request, v: Vec<f32>) {
+    fn sim_finish(&mut self, request: Request, generated: Generated) {
+        if request.guard != self.sim_trigger_guard(&request.lane, request.slot, request.continuing, request.run) {
+            // This result belongs to a superseded trigger/source/scale snapshot.
+            // Keep the last accepted record; the next running tick retries.
+            if self.session_is_sim { self.replay.sim_next = self.now; }
+            else { self.toast("SIM trigger changed while generating; press Play to use the new condition"); }
+            return;
+        }
+        if let Some(error)=generated.error {self.sim_error=Some(error.into());self.m.status=TrigStatus::Wait;self.toast(&format!("SIM: {error}"));return;}
+        let operation = OperationToken::Sim(self.workflow_epoch, request.id);
+        if request.bus_trigger.is_some() && request.run && generated.hits.as_ref().is_some_and(|(_,hits)|hits.is_empty())
+            && self.m.trig_mode!=TrigMode::Auto && !self.replay.force_requested() {
+            self.scpi_finish_operation(operation);
+            self.m.status=TrigStatus::Wait;return;
+        }
+        if request.fresh || (request.continuing && request.run) {
+            self.sim_finish_capture(request, generated);
+            if !self.sim_generating() { self.scpi_finish_operation(operation); }
+            return;
+        }
+        self.scpi_finish_operation(operation);
+        let Generated { samples: v, hits, bus_decode, .. } = generated;
         let Request { lane, slot, continuing, run, .. } = request;
+        let initialize_measurements = self.refs.iter().all(Option::is_none)
+            && self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
         self.remember_live();
         self.session_is_sim = true;
+        let forced=self.replay.force_requested();
         self.replay = Default::default();
+        if forced{self.replay.request_force();}
+        self.clear_measurement_statistics();
         let n = v.len();
         let dt = serial::dt_of(&lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
@@ -406,17 +534,16 @@ impl Ui {
             label: lane.name.into(),
             t0: 0.0,
             dt,
-            v,
+            v: v.into(),
             vpd,
             offset: (-0.5 * (lane.v_high + lane.v_low)) as f32,
             on: true,
         });
         self.invalidate_reference_eye();
         if self.offline { self.offline_ref = slot; }
-        // a stored record, not the live analog path
-        for c in 0..NCH {
-            self.m.ch[c].on = false;
-        }
+        // Required CH bus auxiliaries remain accepted immutable snapshots.
+        let retained_channels=bus_decode.as_ref().map_or([false;NCH],|decoded|decoded.channels);
+        for c in 0..NCH {self.m.ch[c].on=retained_channels[c];}
         self.m.la.on = false;
         let rec_s = n as f64 * dt;
         let bit = nearest_tscale(8.0 / lane.bits_per_s / HDIV as f64);
@@ -427,30 +554,42 @@ impl Ui {
         self.m.tscale = overview.max(bit);
         let look = (rec_s * 0.5) as f32;
         self.m.delay = look;
-        self.set_zoom(true);
+        self.set_record_zoom(true);
         self.m.zscale = bit;
         self.m.zdelay = look;
         self.clamp_zoom();
         if !continuing {
-            self.m.meas = Self::sim_meas(slot);
-            self.m.meas2.clear();
-            self.m.meas_labels = false;
+            if initialize_measurements {
+                self.m.meas = Self::sim_meas(slot);
+                self.m.meas_labels = false;
+            } else if !self.m.meas.is_empty() {
+                // Starting a simulator must not erase the loaded-file catalog.
+                // Add useful SIM readouts without duplicating an existing item.
+                for item in Self::sim_meas(slot) {
+                    if !self.m.meas.contains(&item) { self.m.meas.push(item); }
+                }
+            }
         }
-        self.meas_src = WaveId::Ref(slot);
+        self.select_workspace_source(WaveId::Ref(slot));
         self.m.eye_src = WaveId::Ref(slot);
         self.m.eye_rate = lane.bits_per_s;
+        if !continuing || self.m.trig_ref.is_none() { self.m.set_trigger_wave(WaveId::Ref(slot), false); }
         self.m.run = if run { RunState::Run } else { RunState::Stop };
         self.m.status = if run { TrigStatus::Wait } else { TrigStatus::Stop };
         if !continuing { self.m.trig_level = ((lane.v_high + lane.v_low) * 0.5) as f32; }
-        self.last[0] = None;
+        if !retained_channels.iter().any(|on|*on){self.last[0] = None;}
         self.cleared = true;
         self.sim_play = run;
-        if run { self.sim_tick(0.0); }
+        self.replay.fresh_sim = true;
+        self.replay.sim_next = self.now + 0.5;
+        if let Some(decoded)=bus_decode {self.seed_sim_bus_decode(&self.m,decoded.packets,Arc::clone(&decoded.hits));}
+        if let Some((source, times)) = hits { self.install_reference_trigger_hits(source, times); }
+        if run { self.replay_acquire(0.0); }
         else { self.refresh_stopped_reference(); }
         self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
-        self.toast(&format!("{} → R{}", lane.name, slot + 1));
+        self.toast(&format!("{} to R{}", lane.name, slot + 1));
     }
 
     pub(crate) fn sim_preset_name(&self) -> &'static str {
@@ -488,7 +627,7 @@ impl Ui {
         self.sim_play
     }
 
-    /// On writes the selected preset into the selected slot, the same as Play. Off stops the walk.
+    /// On starts fresh captures of the selected preset. Off holds the accepted record.
     pub(crate) fn sim_play_set(&mut self, on: bool) -> Result<(), String> {
         if on {
             self.sim_load(true)?;
@@ -511,9 +650,80 @@ impl Ui {
         true
     }
 
-    /// Acquires the next reference window using the shared trigger and Run/Stop state.
+    /// Each SIM acquisition is a newly generated physical record, not an animated
+    /// viewport over one seeded record. The single worker bounds cadence and memory.
     pub(super) fn sim_tick(&mut self, dt_wall: f64) {
-        self.replay_acquire(dt_wall);
+        if !self.session_is_sim { self.replay_acquire(dt_wall); return; }
+        // A large initial or external-reference scan must be serviced before
+        // scheduling a replacement. Its source stays installed while pending.
+        if self.m.run == RunState::Run && self.sim_play && self.replay.fresh_sim && self.replay.captures == 0 && !self.sim_generating() {
+            self.replay_acquire(dt_wall);
+            if self.reference_search_busy() { return; }
+        }
+        if self.m.run != RunState::Run || !self.sim_play || self.sim_generating() || self.now < self.replay.sim_next { return; }
+        // Finish analysis/statistics for the accepted record before replacing
+        // it, so large Full-record readouts cannot be perpetually superseded.
+        if self.measurement_busy() { return; }
+        self.replay.sim_next = self.now + 0.5;
+        let mut lane = self.sim_lane();
+        self.replay.sim_attempt = self.replay.sim_attempt.wrapping_add(1);
+        lane.seed ^= self.replay.sim_attempt.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        if let Err(error) = serial::sample_count(&lane) { self.sim_error = Some(error); self.m.run = RunState::Stop; self.sim_play = false; return; }
+        if self.sim_generation.is_none() {
+            match Generation::new() { Ok(worker) => self.sim_generation = Some(worker), Err(error) => { self.sim_error = Some(error); return; } }
+        }
+        let initial=self.replay.sim_initial_armed;
+        let request = self.sim_capture_request(lane, self.m.sim_slot, !initial, !initial, true);
+        if let Some(Err(error))=&request.bus_trigger {self.sim_error=Some((*error).into());self.m.status=TrigStatus::Wait;return;}
+        if let Err(error) = self.sim_generation.as_mut().unwrap().submit(request) { self.sim_error = Some(error); }
+    }
+
+    fn sim_finish_capture(&mut self, request: Request, generated: Generated) {
+        if !self.session_is_sim || !self.sim_play || self.m.run != RunState::Run || request.slot != self.m.sim_slot { return; }
+        if generated.hits.is_none() {
+            if !self.reference_search_supported() { self.m.status = TrigStatus::Wait; return; }
+            let source = self.m.trig_ref.unwrap_or_else(|| self.active_reference());
+            if self.reference_trigger_hits(source).is_none() {
+                // The actual external trigger source has not finished scanning.
+                // Retain one candidate off-screen; polling never installs it.
+                if self.sim_generation.is_none() {
+                    match Generation::new() { Ok(worker) => self.sim_generation = Some(worker), Err(error) => { self.sim_error = Some(error); return; } }
+                }
+                let generation = self.sim_generation.as_mut().unwrap();
+                generation.active = Some(request.id);
+                generation.run = request.run;
+                generation.pending = Some((request, generated));
+                self.m.status = TrigStatus::Wait;
+                return;
+            }
+        }
+        let Generated { samples, hits, bus_decode, .. } = generated;
+        let previous = self.refs[request.slot].take();
+        let dt = serial::dt_of(&request.lane);
+        let midpoint = 0.5 * (request.lane.v_high + request.lane.v_low);
+        self.refs[request.slot] = Some(RefWave {
+            src: 0, color: previous.as_ref().map_or(0, |r| r.color), label: request.lane.name.into(),
+            t0: 0.0, dt, v: (samples).into(),
+            vpd: previous.as_ref().map_or(((request.lane.v_high - request.lane.v_low) / 6.0) as f32, |r| r.vpd),
+            offset: previous.as_ref().map_or(-midpoint as f32, |r| r.offset), on: true,
+        });
+        let captures = self.replay.captures;
+        let old_rate = self.m.eye_rate;
+        if !request.fresh { self.m.eye_rate = request.lane.bits_per_s; }
+        self.replay.sim_config_change = !request.fresh;
+        self.replay.fresh_sim = true;
+        self.replay.next = 0.0;
+        if let Some(decoded)=bus_decode {self.seed_sim_bus_decode(&self.m,decoded.packets,Arc::clone(&decoded.hits));}
+        if let Some((source, times)) = hits { self.install_reference_trigger_hits(source, times); }
+        self.replay_acquire(0.0);
+        if self.replay.captures == captures {
+            // Normal/Single without a hit holds the last accepted acquisition.
+            self.refs[request.slot] = previous;
+            self.m.eye_rate = old_rate;
+            self.replay.reset_search();
+            self.replay.fresh_sim = false;
+            self.replay.sim_config_change = false;
+        }
     }
 
 }
@@ -686,12 +896,14 @@ mod tests {
     fn cancelled_ssc_generation_cannot_replace_live_or_an_imported_record() {
         for import in [false, true] {
             let mut u = ui();
+            let live = (u.m.n_on(), u.m.run, u.record_mode());
             u.m.sim_ssc_hz = 1e6; // complete SSC period, small enough for a fast worker test
             u.sim_play_set(true).unwrap();
             assert!(u.sim_generating());
             assert!(!u.session_is_sim, "starting generation must not replace the live session");
             if import {
                 u.load_waveform_bytes(b"Time (s),Volts\n0,-1\n1e-9,1\n2e-9,-1\n", "keep.csv").unwrap();
+                assert_eq!((u.m.n_on(), u.m.run, u.record_mode()), live, "cancelling pending SIM must preserve additive Live import");
             } else {
                 u.return_to_live();
             }
@@ -726,6 +938,30 @@ mod tests {
         u.wait_sim_worker();
         assert_eq!(u.workflow_state(), state);
         assert_eq!(u.m.run, RunState::Stop);
+    }
+
+    #[test]
+    fn entering_sim_preserves_configured_measurements_pairs_and_settings() {
+        let mut u = ui();
+        u.m.sim_ssc = false;
+        u.m.sim_slot = 4;
+        u.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(1))).collect();
+        u.m.meas2 = (0..super::tools::PAIRS.len()).map(|kind| (kind, WaveId::Ref(1), WaveId::Ref(2))).collect();
+        u.m.meas_full_record = true;
+        u.m.meas_labels = true;
+        let singles = u.m.meas.clone();
+        let pairs = u.m.meas2.clone();
+        u.sim_load(false).unwrap();
+        u.wait_sim_generation();
+        assert!(u.m.meas.starts_with(&singles));
+        assert_eq!(u.m.meas.len(), singles.len() + SIM_MEAS.len());
+        assert_eq!(u.m.meas2, pairs);
+        assert!(u.m.meas_full_record && u.m.meas_labels);
+        assert_eq!(u.m.run, RunState::Stop);
+        let configured = u.m.meas.clone();
+        u.sim_load(false).unwrap();
+        u.wait_sim_generation();
+        assert_eq!(u.m.meas, configured, "regenerating does not duplicate SIM readouts");
     }
 
     #[test]
@@ -797,11 +1033,11 @@ mod tests {
         assert_eq!(n, 65_536);
         let rows = u.meas_rows();
         assert_eq!(rows.len(), 12);
-        for want in ["Pk-pk", "Freq", "Period", "Rise", "Fall", "+Duty", "Amp", "Overshoot", "+Width", "-Width", "+Slew", "+Edges"] {
+        for want in ["Vpp", "Freq", "Period", "Rise time", "Fall time", "+Duty", "Vamp", "Overshoot", "+Width", "-Width", "+Rate", "+Edges"] {
             let row = rows.iter().find(|r| r.name == want).unwrap_or_else(|| panic!("missing {want}"));
             assert!(!row.v.is_infinite(), "{want} {}", row.v);
         }
-        let vpp = rows.iter().find(|r| r.name == "Pk-pk").unwrap().v;
+        let vpp = rows.iter().find(|r| r.name == "Vpp").unwrap().v;
         assert!(vpp > 0.5 && vpp < 1.2, "vpp {}", vpp);
         assert!(!u.m.meas_labels, "labels are opt-in so initial SIM does not hide the waveform");
         let mut cv = Canvas::new(W, H);
@@ -883,7 +1119,7 @@ mod tests {
     /// A step in the record, low then high, so the edge on screen has a place to move.
     fn put_step(u: &mut Ui, n: usize, dt: f64, tdiv: f32) {
         let v: Vec<f32> = (0..n).map(|i| if i < n / 5 { -0.5 } else { 0.5 }).collect();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "rec".into(), t0: 0.0, dt, v, vpd: 0.2, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "rec".into(), t0: 0.0, dt, v: v.into(), vpd: 0.2, offset: 0.0, on: true });
         u.m.sim_slot = 0;
         u.m.ch[0].on = false;
         u.m.run = RunState::Run;
@@ -948,12 +1184,212 @@ mod tests {
     }
 
     #[test]
+    fn main_loop_sim_changes_samples_measurements_and_eye_only_on_accepted_captures() {
+        let mut u = ui();
+        u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 2.0 HS").unwrap();
+        u.m.apply_sim_preset();
+        u.m.sim_ssc = false;
+        u.m.meas_full_record = true;
+        u.sim_play_set(true).unwrap();
+        u.wait_sim_generation();
+        u.eye_make();
+        let records = |u: &Ui| u.eye_readings().iter().find(|(name, _)| *name == "RECords").unwrap().1;
+        let before = u.refs[0].as_ref().unwrap().v.clone();
+        let value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
+        let captures = u.replay.captures;
+        let eye_records = records(&u);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while u.replay.captures < captures + 2 && std::time::Instant::now() < deadline {
+            u.step(0.01);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(u.replay.captures >= captures + 2);
+        assert_ne!(u.refs[0].as_ref().unwrap().v, before, "capture counters alone do not prove fresh acquisition");
+        assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), value, "full-record SIM measurements must use the new noisy samples");
+        assert!(records(&u) >= eye_records + 2.0, "Eye accumulates each accepted revision");
+        u.key(key::RUNSTOP);
+        let held = u.refs[0].as_ref().unwrap().v.clone();
+        let held_count = u.replay.captures;
+        let held_eye = records(&u);
+        u.step(1.0);
+        u.wait_sim_worker();
+        u.step(0.1);
+        assert_eq!(u.refs[0].as_ref().unwrap().v, held);
+        assert_eq!(u.replay.captures, held_count);
+        assert_eq!(records(&u), held_eye);
+        u.key(key::SINGLE);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while u.m.run != RunState::Stop && std::time::Instant::now() < deadline {
+            u.step(0.01);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(u.m.run, RunState::Stop);
+        assert_eq!(u.replay.captures, held_count + 1);
+        assert_ne!(u.refs[0].as_ref().unwrap().v, held, "Single also needs a fresh generated record");
+        assert_eq!(records(&u), held_eye + 1.0);
+    }
+
+    fn drive_until(u: &mut Ui, done: impl Fn(&Ui) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !done(u) && std::time::Instant::now() < deadline {
+            u.step(0.01);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(done(u), "SIM main loop did not reach the expected capture/analysis state");
+    }
+
+    #[test]
+    fn actual_default_ssc_accepts_fresh_large_captures_and_honors_stop_single_wait_force() {
+        let mut u = ui();
+        assert_eq!(u.sim_lane().name, "PCIe 4.0");
+        assert!(u.sim_lane().ssc);
+        let count = serial::sample_count(&u.sim_lane()).unwrap();
+        assert!(count > 3_000_000, "the actual default SSC record must exercise asynchronous triggering");
+        u.sim_play_set(true).unwrap();
+        drive_until(&mut u, |u| u.replay.captures >= 1);
+        assert_eq!(u.refs[0].as_ref().unwrap().v.len(), count);
+        assert!(!u.reference_search_busy(), "initial acceptance uses worker-computed hits");
+        let first = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
+        let first_value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
+        drive_until(&mut u, |u| u.replay.captures >= 2);
+        assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], first);
+        assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), first_value);
+        u.key(key::RUNSTOP);
+        let held = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
+        let held_count = u.replay.captures;
+        u.wait_sim_worker();
+        u.step(0.2);
+        assert_eq!(u.replay.captures, held_count);
+        assert_eq!(u.refs[0].as_ref().unwrap().v[..8192], held);
+        u.key(key::SINGLE);
+        drive_until(&mut u, |u| u.m.run == RunState::Stop);
+        assert_eq!(u.replay.captures, held_count + 1);
+        assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], held);
+        let waiting = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
+        let before = u.replay.captures;
+        u.m.trig_level = 10.0;
+        u.key(key::SINGLE);
+        let attempt = u.replay.sim_attempt;
+        drive_until(&mut u, |u| u.replay.sim_attempt >= attempt + 2);
+        assert_eq!(u.m.status, TrigStatus::Wait);
+        assert_eq!(u.replay.captures, before);
+        assert_eq!(u.refs[0].as_ref().unwrap().v[..8192], waiting, "no-hit candidates never become the visible accepted record");
+        u.key(key::FORCE);
+        drive_until(&mut u, |u| u.m.run == RunState::Stop);
+        assert_eq!(u.replay.captures, before + 1);
+        assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], waiting);
+        println!("default SSC: {count} samples; fresh captures, Stop, Single, WAIT and Force passed");
+    }
+
+    #[test]
+    fn large_full_record_sim_backpressure_finishes_values_and_counts_statistics_once_per_capture() {
+        let mut u = ui();
+        assert!(serial::sample_count(&u.sim_lane()).unwrap() > 3_000_000);
+        u.m.meas_full_record = true;
+        u.sim_play_set(true).unwrap();
+        drive_until(&mut u, |u| u.replay.captures >= 1);
+        drive_until(&mut u, |u| u.mstat.first().is_some_and(|stat| stat.n >= 1));
+        assert!(u.meas_at(WaveId::Ref(0), Meas::Vpp).is_finite());
+        assert_eq!(u.m.run, RunState::Run, "Full record must become ready without stopping");
+        let first = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
+        let value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
+        drive_until(&mut u, |u| u.mstat.first().is_some_and(|stat| stat.n >= 2));
+        assert_eq!(u.mstat[0].n, u.replay.captures);
+        assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], first);
+        assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), value);
+        u.key(key::RUNSTOP);
+        let n = u.mstat[0].n;
+        for _ in 0..10 { u.poll_reference_measurements(); u.finish_deferred_capture_statistics(); let _ = u.meas_rows(); }
+        assert_eq!(u.mstat[0].n, n, "worker polling and reads cannot count an accepted revision twice");
+        u.wait_sim_worker();
+    }
+
+    #[test]
+    fn generated_hits_reject_changed_trigger_source_threshold_hysteresis_and_secondary_record() {
+        for change in 0..7 {
+            let mut u = ui();
+            u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 2.0 HS").unwrap();
+            u.m.apply_sim_preset();
+            u.sim_play_set(true).unwrap();
+            u.refs[1] = Some(RefWave { src: 0, color: 1, label: "External".into(), t0: 0.0, dt: 2e-9,
+                v: ((0..1024).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>()).into(), vpd: 0.2, offset: 0.0, on: false });
+            if change == 5 {
+                u.m.trig_type = TrigType::Delay;
+                u.m.set_trigger_wave(WaveId::Ref(1), true);
+            } else if change == 6 {
+                u.m.trig_type = TrigType::Bus;
+                u.m.dec_proto = Proto::Uart;
+                u.m.trig_bus = BusWhat::Data;
+                u.m.trig_bus_val = 0x55;
+            }
+            let mut lane = u.sim_lane();
+            lane.seed ^= 19;
+            let request = u.sim_capture_request(lane, 0, true, true, true);
+            let generated = Generated::evaluate(&request, serial::try_generate(&lane).unwrap());
+            let pointer = u.refs[0].as_ref().unwrap().v.as_ptr();
+            let captures = u.replay.captures;
+            match change {
+                0 => u.m.trig_level = 10.0,
+                1 => u.m.trig_type = TrigType::Pulse,
+                2 => u.m.set_trigger_wave(WaveId::Ref(1), false),
+                3 => u.refs[0].as_mut().unwrap().vpd *= 2.0,
+                4 => u.m.trig_nrej = !u.m.trig_nrej,
+                5 => u.refs[1].as_mut().unwrap().v = vec![0.0; 1024] .into(),
+                _ => u.m.trig_bus_val = 0xaa,
+            }
+            u.sim_finish(request, generated);
+            assert_eq!(u.refs[0].as_ref().unwrap().v.as_ptr(), pointer);
+            assert_eq!(u.replay.captures, captures, "change {change}: stale worker hits cannot validate a new condition");
+        }
+    }
+
+    #[test]
+    fn external_reference_scan_holds_one_candidate_without_exposing_it_and_keeps_its_own_timebase() {
+        for source in [1, 2] {
+            let mut u = ui();
+            u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 2.0 HS").unwrap();
+            u.m.apply_sim_preset();
+            u.sim_play_set(true).unwrap();
+            u.refs[source] = Some(RefWave { src: 0, color: source, label: "Long external trigger".into(), t0: 20e-9, dt: 10e-12,
+                v: ((0..263_168).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>()).into(), vpd: 0.2, offset: 0.0, on: false });
+            assert!(u.set_trigger_source(WaveId::Ref(source), false));
+            u.m.trig_level = 0.0;
+            u.m.trig_mode = TrigMode::Single;
+            let captures = u.replay.captures;
+            let pointer = u.refs[0].as_ref().unwrap().v.as_ptr();
+            let mut lane = u.sim_lane();
+            lane.seed ^= 23;
+            let request = u.sim_capture_request(lane, 0, true, true, true);
+            assert!(request.trigger.is_none(), "independent external triggers use their existing shared cache");
+            let generated = Generated::evaluate(&request, serial::try_generate(&lane).unwrap());
+            u.sim_finish(request, generated);
+            assert_eq!(u.refs[0].as_ref().unwrap().v.as_ptr(), pointer);
+            assert_eq!(u.replay.captures, captures);
+            assert!(u.sim_generation.as_ref().unwrap().pending.is_some());
+            u.wait_sim_generation();
+            assert_eq!(u.replay.captures, captures + 1);
+            assert_eq!(u.m.run, RunState::Stop);
+            assert!((u.replay.trigger_time.unwrap() - (20e-9 + 7.5 * 10e-12)).abs() < 1e-15);
+            let hits = u.reference_trigger_hits(source).unwrap();
+            u.replay.sim_attempt += 1;
+            assert!(Arc::ptr_eq(&hits, &u.reference_trigger_hits(source).unwrap()), "unrelated SIM attempts must not invalidate the external hit cache");
+        }
+    }
+
+    #[test]
     fn loaded_sim_uses_run_stop_and_returns_to_live_explicitly() {
         let mut u = ui();
         u.activate(Item::SimPlay);
         u.wait_sim_generation();
         let before = u.replay.captures;
         u.step(0.5);
+        // A fresh capture is generated off-thread. Advancing simulated time is
+        // not evidence that the worker has run, particularly in the full suite.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while u.replay.captures == before && std::time::Instant::now() < deadline {
+            u.step(0.01);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
         assert!(u.replay.captures > before && u.sim_play);
         assert!(u.last[0].is_none());
         u.key(key::RUNSTOP);

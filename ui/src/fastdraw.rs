@@ -172,6 +172,9 @@ pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt
 }
 
 #[cfg(test)]
+mod validation;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
