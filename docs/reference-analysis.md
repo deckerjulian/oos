@@ -13,6 +13,23 @@ results use the physical intersection and the slowest participating sample inter
 Records exceeding 32M points or 256 MiB of aligned buffers report a limit instead
 of silently shortening the record.
 
+NRZ Data Rate estimates the mean bit UI from transition spacing; NRZ Clock Rate
+uses the recovered clock. Both show bit/s and assume one bit per symbol, rather
+than PAM or C-PHY throughput. Frequency remains the inverse mean same-direction
+cycle period, so a random NRZ pattern can show about one quarter of its bit rate.
+This separates clock cycles from data UIs as described in the
+[DPOJET measurement definitions](https://download.tek.com/manual/DPOJET-OnlineHelp%3D9%3DTraditional_US_Letter_PDF%3DEN-US_077004826.pdf).
+An unrecoverable UI stays unavailable instead of falling back to cycle frequency.
+
+SIM Rise 20-80% specifies an isolated edge before bandwidth filtering and
+de-emphasis. Rise/Fall measurements use their selected 10/90 or 20/80 global
+reference levels on the resulting waveform. De-emphasis, like-bit runs and the
+level estimator can therefore change the measured mean. Each Rise/Fall settings
+panel shows qualified transitions used versus detected midpoint transitions;
+zero qualifying pairs leaves the value unavailable. OOS currently averages all
+eligible transitions; DPOJET's optional preceding-one-UI-only qualification is
+not implemented. These definitions do not establish PCIe compliance.
+
 Setup files retain catalog IDs and source roles alongside existing single/pair
 rows, with a shared 1024-row bound. SCPI `:MEAS:STRIP?` and `:MEAS:READOUT?`
 append these as `CAT<id>,A,B,C,D,value`; pending/missing values use the existing

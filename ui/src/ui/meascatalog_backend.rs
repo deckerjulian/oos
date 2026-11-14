@@ -117,11 +117,12 @@ impl Ui{
         Ok((Key{family:family(c),sources:keys,roles,settings:settings(&self.m,family(c)),epoch:self.workflow_epoch,full:self.m.meas_full_record},inputs))
     }
     pub(in crate::ui) fn catalog_reading(&self,c:Cat,row:[WaveId;4])->Reading{
-        let quality=if family(c)==Family::Eye{"NRZ estimate / jitter model"}else{"Derived from scaled source roles"};
+        let quality=if family(c)==Family::Eye{"NRZ estimate / jitter model"}else if family(c)==Family::Rate{"NRZ UI estimate"}else{"Derived from scaled source roles"};
         let(key,inputs)=match self.catalog_snapshot(c,row){Ok(value)=>value,Err(reason)=>return Reading{value:f64::NAN,computing:false,reason:Some(reason),quality}};
         let mut state=self.azr.catalog_measurements.borrow_mut();
         if let Some(answer)=state.cache.iter().find(|answer|answer.key==key){return match &answer.result{
-            Ok(values)=>Reading{value:values.iter().find(|(id,_)|*id==c).map_or(f64::NAN,|(_,v)|*v),computing:false,reason:None,quality:values.quality},
+            Ok(values)=>{let value=values.iter().find(|(id,_)|*id==c).map_or(f64::NAN,|(_,v)|*v);
+                Reading{value,computing:false,reason:if !value.is_finite()&&family(c)==Family::Rate{Some("NRZ UI unrecoverable; need transitions and at least 2 samples/UI")}else{None},quality:values.quality}},
             Err(reason)=>Reading{value:f64::NAN,computing:false,reason:Some(*reason),quality}};}
         let tuple=(c as u16,row[0],row[1],row[2],row[3]);
         if !state.pending.iter().any(|(old,_)|*old==key){state.pending.push_back((key.clone(),tuple));while state.pending.len()>tools::MEAS_MAX{state.pending.pop_front();}}
@@ -191,6 +192,12 @@ fn compute(job:&Job)->Result<Batch,&'static str>{
         .map(|cat|(cat,eval.cat_number(cat,a,b,c,d))).collect();
     let quality=if job.key.family==Family::Eye{
         eval.eye.borrow().as_ref().and_then(|eye|eye.as_ref()).map_or("NRZ estimate: insufficient transitions or sampling",|eye|eye.quality)
+    }else if job.key.family==Family::Rate{
+        eval.rate.borrow().as_ref().map_or("NRZ estimate: insufficient transitions",|analysis|{
+            if !analysis.est_ui.is_finite()||analysis.est_ui<2.0*eval.dt {"NRZ estimate: insufficient transitions or sampling"}
+            else if analysis.est_ui/eval.dt<10.0 {"NRZ estimate: limited sampling"}
+            else {"NRZ estimate: transition intervals / fitted bit counts"}
+        })
     }else if job.key.family==Family::Pulse{
         eval.pulse.borrow().as_ref().map_or("DPT: no qualifying pulse",|pulse|if pulse.sample_limit{"DPT estimate: sample limited"}else if pulse.diode_from_id||pulse.err_from_vds||pulse.qoss_approx{"DPT estimate: inferred recovery or charge"}else{"Derived DPT result"})
     }else{"Derived from scaled source roles"};
@@ -301,24 +308,15 @@ impl Evaluator {
         let nan = f64::NAN;
         let one = |id| self.wave_vec(id).map(|w| w);
         match c {
-            Cat::UnitInterval => {
+            Cat::UnitInterval | Cat::DataRate => {
                 let Some((v, _, dt)) = one(a) else { return nan };
                 if self.rate.borrow().is_none(){*self.rate.borrow_mut()=Some(oos_dsp::measure::analyze(v,dt));}
-                let an=self.rate.borrow();let an=an.as_ref().unwrap();
-                let u = an.get(Meas::EstUi);
-                if u.is_finite() && u > 0.0 { u } else { an.period() }
-            }
-            Cat::DataRate => {
-                let Some((v, _, dt)) = one(a) else { return nan };
-                if self.rate.borrow().is_none(){*self.rate.borrow_mut()=Some(oos_dsp::measure::analyze(v,dt));}
-                let an=self.rate.borrow();let an=an.as_ref().unwrap();
-                let p = an.period();
-                if p.is_finite() && p > 0.0 {
-                    1.0 / p
-                } else {
-                    let u = an.get(Meas::EstUi);
-                    if u.is_finite() && u > 0.0 { 1.0 / u } else { nan }
-                }
+                let analysis=self.rate.borrow();let analysis=analysis.as_ref().unwrap();
+                let interval=analysis.est_ui;
+                // Clock cycle period on random NRZ data averages several UIs.
+                // Neither it nor a SIM/eye preset is a substitute for recovered bit spacing.
+                if !interval.is_finite() || interval < 2.0*dt || analysis.rises.len()+analysis.falls.len()<3 {return nan;}
+                if c==Cat::UnitInterval {interval} else {1.0/interval}
             }
             Cat::JitterSummary | Cat::TjBer => self.eye_num(a, |e| e.tj),
             Cat::Tie => self.eye_num(a, |e| e.tie_pp),
@@ -653,6 +651,61 @@ mod tests{
         ui.reset_catalog_statistics();ui.wfm_total=1;ui.last[0].as_mut().unwrap().ch[0][1]=9.0;
         assert_eq!(ui.last[0].as_ref().unwrap().ch[0].as_ptr(),pointer);
         assert_eq!(read(&mut ui),9.0,"pre-clear processed snapshot must not survive reused pointer/capture");
+    }
+
+    #[test]
+    fn pcie4_default_full_ssc_samples_report_nrz_rate_and_stopped_pan_recomputes_the_window(){
+        let lane=oos_dsp::serial::LANES[3];let dt=oos_dsp::serial::dt_of(&lane);
+        let samples=oos_dsp::serial::try_generate(&lane).unwrap();assert_eq!(samples.len(),3_878_788);
+        let mut ui=fixture();ui.m.meas_full_record=false;ui.m.zoom=false;
+        ui.m.tscale=tscales().iter().position(|&s|s==50e-9f32).unwrap();ui.m.tfine=1.0;ui.m.delay=28.6e-6;
+        put(&mut ui,0,samples,0.0,dt);ui.refs[0].as_mut().unwrap().vpd=0.2;
+        ui.session_is_sim=true;ui.m.sim_slot=0;ui.replay.sim_revision=1;ui.m.sim_rate=1e9;
+        ui.m.cat=vec![row(Cat::DataRate),row(Cat::BitRate),row(Cat::UnitInterval)];ui.relayout();
+        let owner=Arc::clone(&ui.refs[0].as_ref().unwrap().v);let counters=(ui.wfm_total,ui.records,ui.replay.captures);
+        let ideal=oos_dsp::hss::ssc_edge_times(owner.len()/8+4096,lane.bits_per_s,lane.ssc_deviation,lane.ssc_hz,"Down-spread only");
+        let bits=oos_dsp::hss::prbs_bits(lane.prbs as u32,ideal.len()).unwrap();
+        let independent_rate=|ui:&Ui|{
+            let r=ui.refs[0].as_ref().unwrap();let(lo,hi)=ui.measurement_bounds(r.v.len(),r.t0,r.dt);let v=&r.v[lo..hi];
+            let low=v.iter().copied().fold(f32::INFINITY,f32::min);let high=v.iter().copied().fold(f32::NEG_INFINITY,f32::max);
+            let threshold=(low+high)as f64*0.5;
+            let crossings=v.windows(2).enumerate().filter_map(|(i,p)|{let(a,b)=(p[0]as f64,p[1]as f64);
+                ((a<threshold)!=(b<threshold)).then(||(((lo+i)as f64+(threshold-a)/(b-a))*dt,b>a))}).collect::<Vec<_>>();
+            // Known generated PRBS symbol ordinals are an independent run-count oracle.
+            // Match observed transitions to the pre-jitter SSC lattice; measure elapsed time
+            // from actual samples, never return the preset rate or use the DSP UI estimator.
+            let indices=crossings.iter().map(|&(time,rising)|{
+                let j=ideal.partition_point(|edge|*edge<time);
+                let index=if j==ideal.len()||j>0&&(ideal[j-1]-time).abs()<(ideal[j]-time).abs(){j-1}else{j};
+                assert!(index>0&&bits[index]!=bits[index-1]);assert_eq!(bits[index]==1,rising);
+                index
+            }).collect::<Vec<_>>();
+            assert!(indices.windows(2).all(|pair|pair[1]>pair[0]),"one observation per actual PRBS transition");
+            (indices.last().unwrap()-indices[0])as f64/(crossings.last().unwrap().0-crossings[0].0)
+
+        };
+        let oracle=independent_rate(&ui);let rate=wait(&mut ui,Cat::DataRate);let clock=wait(&mut ui,Cat::BitRate);let interval=wait(&mut ui,Cat::UnitInterval);
+        assert!(rate.quality.contains("NRZ")&&rate.quality.contains("limited"));
+        assert!((rate.value-oracle).abs()/oracle<0.001,"{} vs oracle{}",rate.value,oracle);
+        assert!((clock.value-oracle).abs()/oracle<0.001);assert!((interval.value*rate.value-1.0).abs()<1e-12);
+        assert!(rate.value>15.9e9&&rate.value<16.1e9,"accepted data, not the pending1G SIM setting");
+        assert_eq!(meta(Cat::DataRate).unit,"b/s");assert_eq!(meta(Cat::BitRate).unit,"b/s");
+        let a=ui.meas_analysis(WaveId::Ref(0)).unwrap().0;
+        assert!(rate.value/a.get(Meas::Freq)>3.8&&rate.value/a.get(Meas::Freq)<4.2);
+        assert!((a.est_ui*rate.value-1.0).abs()<1e-12);assert!((a.pll_ui*clock.value-1.0).abs()<0.001);
+        let area=ui.wave_area();let(x,y)=(area.x+area.w/3,area.y+area.h/2);
+        for _ in 0..11 {ui.handle(Ev::Wheel{x,y,steps:32,ctrl:false,shift:false,alt:false});}
+        ui.step(0.0);let panned=wait(&mut ui,Cat::DataRate);let panned_clock=wait(&mut ui,Cat::BitRate);let oracle=independent_rate(&ui);
+        assert!((panned.value-oracle).abs()/oracle<0.001);assert!((panned_clock.value-oracle).abs()/oracle<0.001);
+        assert!((panned.value-rate.value).abs()>1e6,"SSC rate follows the stopped physical gate");
+        assert!(Arc::ptr_eq(&owner,&ui.refs[0].as_ref().unwrap().v));assert_eq!((ui.wfm_total,ui.records,ui.replay.captures),counters);
+        assert_eq!(ui.m.run,RunState::Stop);
+    }
+
+    #[test]
+    fn nrz_rate_is_missing_when_no_ui_can_be_recovered_instead_of_using_a_cycle_fallback(){
+        let mut ui=fixture();put(&mut ui,0,vec![0.0;1000],0.0,1e-9);ui.m.cat=vec![row(Cat::DataRate),row(Cat::UnitInterval)];
+        for cat in[Cat::DataRate,Cat::UnitInterval]{let r=wait(&mut ui,cat);assert!(r.value.is_nan()&&r.reason.is_some());}
     }
 
 }

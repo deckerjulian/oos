@@ -202,6 +202,9 @@ pub struct Analysis {
     pub falls: Vec<f64>,
     pub rise_time: f64,
     pub fall_time: f64,
+    /// Complete reference-level crossing pairs used in the rise/fall means.
+    pub rise_count: usize,
+    pub fall_count: usize,
     pub cyc_avg: f64,
     pub cyc_rms: f64,
     pub cyc_area: f64,
@@ -458,6 +461,8 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     }
     a.rise_time = mean(&rt);
     a.fall_time = mean(&ft);
+    a.rise_count = rt.len();
+    a.fall_count = ft.len();
     // keep the high and low reference crossings: high time, low time and time outside are measured there
     let (hr, hf) = level_times(v, hi_l, dt);
     let (lr, lf) = level_times(v, lo, dt);

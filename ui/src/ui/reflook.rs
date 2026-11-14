@@ -410,6 +410,7 @@ impl Ui {
         let index = self.meas_cfg? as usize;
         let (k, _) = *self.m.meas.get(index)?;
         let extras = match k {
+            Meas::Rise | Meas::Fall => 1,
             Meas::Burst => 1,
             Meas::Outside => 1,
             Meas::NPeriods => 2,
@@ -468,6 +469,11 @@ impl Ui {
         let (low, high) = if own.refs_set { (own.low, own.high) } else { (self.m.meas_lpct, self.m.meas_hpct) };
         btn(cv, g.refs, BTN, BTN_BORDER);
         cv.text_in(&f.mb, g.refs, 1, &format!("{:.0}/{:.0}", low * 100.0, high * 100.0), TEXT);
+        if matches!(k,Meas::Rise|Meas::Fall) {
+            self.cfg_caption(cv,g.panel,2,"Edges used");
+            let text=self.meas_edge_coverage_caption(id,k);
+            cv.text_in(&f.s,Rect::new(g.panel.x+168,g.panel.y+144,280,36),1,&text,DIM);
+        }
         if let (Some(mi), Some(pl)) = (g.idle_m, g.idle_p) {
             self.cfg_caption(cv, g.panel, 2, "Idle");
             let idle = if own.idle_set { own.idle } else { self.m.meas_idle };
@@ -491,6 +497,16 @@ impl Ui {
             btn(cv, edges, BTN, BTN_BORDER);
             cv.text_in(&f.mb, edges, 1, if data { "Data" } else { "Clock" }, TEXT);
         }
+    }
+
+    fn meas_edge_coverage_caption(&self,id:WaveId,kind:Meas)->String {
+        let Some((analysis,_))=self.meas_number_analysis(id,kind) else {
+            return if self.meas_number_computing(id,kind){"Computing"}else{"Not retained"}.into();
+        };
+        let (used,total)=if kind==Meas::Rise {(analysis.rise_count,analysis.rises.len())}
+            else {(analysis.fall_count,analysis.falls.len())};
+        if used==0 {format!("0 / {total}; unavailable")}
+        else {format!("{used} / {total} qualified")}
     }
 
     fn cfg_caption(&self, cv: &mut Canvas, panel: Rect, n: i32, text: &str) {
@@ -825,4 +841,17 @@ mod tests {
         assert!((fast - 60e-9).abs() < 8e-9, "{fast}");
         assert!(fast < slow);
     }
+    #[test]
+    fn rise_fall_settings_show_qualified_counts_and_missing_partial_transitions(){
+        let mut u=ui();u.m.meas_full_record=true;
+        let mut v=vec![0.0];v.extend((0..4000).map(|i|if i%2==0{0.4}else{0.6}));v.push(1.0);
+        put(&mut u,0,v,true);u.m.meas=vec![(Meas::Rise,WaveId::Ref(0)),(Meas::Fall,WaveId::Ref(0))];
+        for (index,kind)in[Meas::Rise,Meas::Fall].into_iter().enumerate(){
+            u.open_meas_cfg(index);let caption=u.meas_edge_coverage_caption(WaveId::Ref(0),kind);
+            assert!(caption.starts_with("0 /")&&caption.contains("unavailable"),"{caption}");assert!(u.meas_number(WaveId::Ref(0),kind).is_nan());
+            let geometry=u.cfg_geom().unwrap();assert!(geometry.panel.h>=212);
+            assert!(u.fonts.s.width(&caption)<=280);
+        }
+    }
+
 }
