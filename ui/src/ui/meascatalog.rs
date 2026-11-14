@@ -256,7 +256,7 @@ fn meta(c: Cat) -> Meta {
         Cat::Period => m("Period", "Time from one mid crossing to the next in the same direction.", Square, "s", meas(Meas::Period), One),
         Cat::Frequency => m("Frequency", "How often a full cycle repeats.", Square, "Hz", meas(Meas::Freq), One),
         Cat::UnitInterval => m("Unit Interval", "Shortest repeating gap between the mid crossings.", Square, "s", Wave, One),
-        Cat::DataRate => m("Data Rate", "Repetition rate from the period, or from the unit interval when the period is empty.", Square, "Hz", Wave, One),
+        Cat::DataRate => m("Rep. rate", "Repetition rate from the period, or from the unit interval when the period is empty.", Square, "Hz", Wave, One),
         Cat::PosWidth => m("Positive Pulse Width", "Time a cycle stays above the mid level.", Square, "s", meas(Meas::PWidth), One),
         Cat::NegWidth => m("Negative Pulse Width", "Time a cycle stays below the mid level.", Square, "s", meas(Meas::NWidth), One),
         Cat::Skew => m("Skew", "Mean gap from each edge to the nearest edge on the other source.", Edge, "s", Pair(8), Two),
@@ -301,7 +301,7 @@ fn meta(c: Cat) -> Meta {
         Cat::AcCommon => m("AC Common Mode (Pk-Pk)", "Peak-to-peak of the common mode after the high-pass.", Pulse, "V", Wave, Two),
         Cat::DiffCross => m("Differential Crossover", "Mean voltage where the two sources cross.", Pulse, "V", Wave, Two),
         Cat::Tnt => m("T/nT Ratio", "Mid-interval level of a steady bit against the last transition, in dB.", Pulse, "dB", Wave, One),
-        Cat::BitRate => m("Data Rate", "Bit rate of the recovered clock.", Square, "Hz", Wave, One),
+        Cat::BitRate => m("Bit rate", "Bit rate of the recovered clock.", Square, "Hz", Wave, One),
         Cat::SscDev => m("SSC Freq Dev", "Peak-to-peak spread of the cycle frequency, in parts per million.", Slope, "ppm", Wave, One),
         Cat::SscRate => m("SSC Modulation Rate", "How fast that frequency spread repeats.", Slope, "Hz", Wave, One),
         Cat::PowerQuality => m("Power Quality", "Real power over the whole cycles of the voltage and the current.", Bars, "W", Wave, One),
@@ -1016,11 +1016,11 @@ mod tests {
         ui.catalog_add(Cat::Amplitude);
         ui.catalog_add(Cat::LowTime);
         let rows = ready_rows(&mut ui);
-        let amp = rows.iter().find(|r| r.name == "Amp").expect("amplitude");
+        let amp = rows.iter().find(|r| r.name == "Vamp").expect("amplitude");
         assert!((amp.v - 2.0).abs() < 0.15, "amplitude {}", amp.v);
         assert!(rows.iter().any(|r| r.name == "Low time" && r.v.is_finite()), "low time");
         ui.catalog_add(Cat::DataRate);
-        let rate = ready_rows(&mut ui).into_iter().find(|r| r.name == "Data Rate").unwrap();
+        let rate = ready_rows(&mut ui).into_iter().find(|r| r.name == "Rep. rate").unwrap();
         assert!(rate.v.is_finite() && rate.v > 0.0, "{}", rate.v);
     }
 
