@@ -10,6 +10,7 @@
 use super::*;
 
 const CH_NAMES: [&str; 4] = ["CH1", "CH2", "CH3", "CH4"];
+const REF_NAMES: [&str; NREF] = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"];
 const MATH_NAMES: [&str; 8] = ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"];
 
 impl Ui {
@@ -22,6 +23,7 @@ impl Ui {
         }
         if self.m.win_layout != WinLayout::One {
             v.extend((0..n_ch()).filter(|&c| self.m.ch[c].on).map(Item::WinCh));
+            v.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(Item::WinRef));
             v.extend((0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).map(Item::WinMath));
             if self.m.la_on() {
                 v.push(Item::WinLa);
@@ -71,12 +73,21 @@ impl Ui {
 
     /// Panel bars hide only for Full while the external display copies the panel.
     pub(crate) fn sync_full(&mut self) {
-        self.full = self.m.density == Density::Full && !self.m.hdmi_wave;
+        // waveform on an external display keeps the panel's bars; with no display attached Full enlarges the panel
+        self.full = self.m.density == Density::Full && !(self.m.hdmi_wave && self.hdmi_present);
+    }
+
+    /// Called when an external display comes or goes, so Full follows it.
+    pub(crate) fn set_hdmi_present(&mut self, present: bool) {
+        if self.hdmi_present != present {
+            self.hdmi_present = present;
+            self.sync_full();
+        }
     }
 
     pub(super) fn win_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::WinLayout | Item::WinCh(_) | Item::WinMath(_) | Item::WinLa => Some(Kind::Choice),
+            Item::WinLayout | Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => Some(Kind::Choice),
             _ => None,
         }
     }
@@ -86,6 +97,7 @@ impl Ui {
             Item::Open(MenuId::Windows) => "Windows",
             Item::WinLayout => "Density",
             Item::WinCh(c) => CH_NAMES.get(c).copied().unwrap_or("CH"),
+            Item::WinRef(i) => REF_NAMES.get(i).copied().unwrap_or("R"),
             Item::WinMath(k) => MATH_NAMES.get(k).copied().unwrap_or("M"),
             Item::WinLa => "LA",
             _ => return None,
@@ -96,6 +108,7 @@ impl Ui {
         Some(match it {
             Item::WinLayout => self.m.density.label().to_string(),
             Item::WinCh(c) => (self.m.ch_win[c].min(self.m.win_layout.count() - 1) + 1).to_string(),
+            Item::WinRef(i) => (self.m.ref_win[i].min(self.m.win_layout.count() - 1) + 1).to_string(),
             Item::WinMath(k) => (self.m.math_win[k].min(self.m.win_layout.count() - 1) + 1).to_string(),
             Item::WinLa => (self.m.la_win.min(self.m.win_layout.count() - 1) + 1).to_string(),
             _ => return None,
@@ -105,7 +118,7 @@ impl Ui {
     pub(super) fn win_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
             Item::WinLayout => Density::ALL.iter().map(|d| d.label().to_string()).collect(),
-            Item::WinCh(_) | Item::WinMath(_) | Item::WinLa => (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect(),
+            Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect(),
             _ => return None,
         })
     }
@@ -121,6 +134,7 @@ impl Ui {
                 self.apply_density();
             }
             Item::WinCh(c) => self.m.ch_win[c] = cyc(self.m.ch_win[c].min(n - 1), n),
+            Item::WinRef(i) => self.m.ref_win[i] = cyc(self.m.ref_win[i].min(n - 1), n),
             Item::WinMath(k) => self.m.math_win[k] = cyc(self.m.math_win[k].min(n - 1), n),
             Item::WinLa => self.m.la_win = cyc(self.m.la_win.min(n - 1), n),
             _ => return false,
@@ -256,6 +270,50 @@ mod tests {
     }
 
     #[test]
+    fn full_screen_enlarges_without_an_external_display_and_goes_back() {
+        // default "waveform on the external display", but no display attached (desktop, or a scope without a monitor)
+        let mut u = ui();
+        assert!(u.m.hdmi_wave);
+        let press = |u: &mut Ui| {
+            render(u);
+            let (_, hit) = u.full_btn();
+            let (x, y) = (hit.x + hit.w / 2, hit.y + hit.h / 2);
+            u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+            u.step(0.08);
+            u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+            render(u);
+        };
+        render(&mut u);
+        let normal = u.grid;
+        press(&mut u);
+        assert!(u.full && u.grid.h > normal.h, "Full must enlarge the plot: {:?} {:?}", u.grid, normal);
+        press(&mut u);
+        assert_eq!((u.m.density, u.full, u.grid), (Density::Scope, false, normal));
+        // a display attached while Full: the panel keeps its bars, the external display shows the waveform
+        press(&mut u);
+        u.set_hdmi_present(true);
+        render(&mut u);
+        assert!(!u.full && u.grid == normal);
+        u.set_hdmi_present(false);
+        render(&mut u);
+        assert!(u.full && u.grid.h > normal.h);
+    }
+
+    #[test]
+    fn a_loaded_reference_gets_a_window_row_and_draws_there() {
+        let mut u = ui();
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt: 1e-9, v: vec![0.0f32; 400].into(), vpd: 1.0, offset: 0.0, on: true });
+        u.select_option(Item::WinLayout, "Four");
+        render(&mut u);
+        assert!(u.win_items().contains(&Item::WinRef(0)), "{:?}", u.win_items());
+        assert!(!u.win_items().contains(&Item::WinRef(1)), "only loaded references are listed");
+        u.select_option(Item::WinRef(0), "3");
+        assert_eq!(u.value(Item::WinRef(0)), "3");
+        render(&mut u);
+        assert_eq!(u.source_area(WaveId::Ref(0)), Some(u.wins[2]));
+    }
+
+    #[test]
     fn the_corner_button_stays_where_it_is_dropped() {
         let mut u = ui();
         u.select_option(Item::Hdmi, "Mirror");
@@ -353,6 +411,7 @@ mod tests {
         u.stats_on = true;
         render(&mut u);
         let normal = u.grid;
+        u.set_hdmi_present(true);
         u.hdmi_snap_want = true;
         u.select_option(Item::WinLayout, "Full");
         let mut cv = Canvas::new(W, H);
