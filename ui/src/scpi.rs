@@ -3,7 +3,7 @@
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
 //! *IDN? *RST *OPC? *CLS *ESR?, :RUN :STOP :SINGle :TFORce :AUToscale :CLEar,
-//! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|BIAS|LABel:SHOW|LABel:CONTent,
+//! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|BIAS|EXPand|LABel:SHOW|LABel:CONTent,
 //! :TIMebase[:MAIN]:SCALe|OFFSet, :TIMebase:DELay:ENABle|SCALe|OFFSet, :TIMebase:VERNier, :TIMebase:HREFerence:MODE, :TIMebase:MODE, :TIMebase:ROLL,
 //! :TIMebase:XY:ENABle|X|Y|Z,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?,
@@ -22,7 +22,7 @@
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
 //! :DISPlay:DATA? [BMP|PNG], :DISPlay:TYPE|GRADing:TIME|WBRightness|GBRightness|GRID|RULers|COLor,
 //! :REFerence:SLOT R1..R10, :CURRent, :SOURce, :VSCale, :VOFFset, :COLor, :RESet, :LABel:CONTent, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
-//! :MEASure:SETup:MAX|MIN (percent thresholds),
+//! :MEASure:SETup:MAX|MIN (percent thresholds), :MEASure:SETup:PSA|PSB|DSA|DSB,
 //! :SIM:PRESet <name>, :SIM:SLOT R1..R10, :SIM:PLAY ON|OFF, :SIM:SHOW ON|OFF,
 //! :SIM:SSC:MODE OFF|DOWN|CENTER, :SIM:SSC:DEViation <fraction>, :SIM:SSC:FREQuency <Hz>,
 //! :SIM:JITTer:DCD <seconds pp>|:CORRelated <seconds RMS>|:CORNer <Hz>, :SIM:PATTern PRBS7..31.
@@ -819,6 +819,22 @@ impl Scpi {
                         }
                     };
                 }
+                if kw(n1, "EXPand") {
+                    // One switch for every channel: scale around ground, or around the screen center.
+                    // The manual spells this GND|CENTer on math. This screen keeps it on the channel.
+                    if query {
+                        return Some(t(if m.v_expand_gnd { "GND" } else { "CENT" }));
+                    }
+                    if kw(arg, "GND") {
+                        m.v_expand_gnd = true;
+                    } else if kw(arg, "CENTer") {
+                        m.v_expand_gnd = false;
+                    } else {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    }
+                    return Some(None);
+                }
+                let expand_gnd = m.v_expand_gnd;
                 let slow_deskew = m.time_per_div() > 10e-6;
                 let ch = &mut m.ch[c];
                 if kw(n1, "DISPlay") {
@@ -830,8 +846,12 @@ impl Scpi {
                     if query {
                         return Some(t(&e(ch.volts_per_div() as f64)));
                     }
+                    let old = ch.volts_per_div();
                     ch.vscale = nearest(&VSCALES, num(arg)? / ch.probe);
                     ch.vfine = 1.0;
+                    if expand_gnd && old > 0.0 {
+                        ch.offset *= ch.volts_per_div() / old;
+                    }
                 } else if kw(n1, "OFFSet") || kw(n1, "POSition") {
                     if query {
                         return Some(t(&e(ch.offset as f64)));
@@ -1142,8 +1162,25 @@ impl Scpi {
         if kw(n0, "MEASure") && nodes.len() == 3 && kw(nodes[1], "STATistic") {
             return self.meas_stat_cmd(ui, nodes[2], query, arg);
         }
-        if kw(n0, "MEASure") && nodes.len() == 3 && kw(nodes[1], "SETup") && (kw(nodes[2], "MAX") || kw(nodes[2], "MIN")) {
-            return self.meas_threshold(ui, kw(nodes[2], "MAX"), query, arg);
+        if kw(n0, "MEASure") && nodes.len() == 3 && kw(nodes[1], "SETup") {
+            let which = nodes[2];
+            if kw(which, "MAX") || kw(which, "MIN") {
+                return self.meas_threshold(ui, kw(which, "MAX"), query, arg);
+            }
+            if kw(which, "PSA") || kw(which, "DSA") || kw(which, "PSB") || kw(which, "DSB") {
+                let second = kw(which, "PSB") || kw(which, "DSB");
+                if query {
+                    return t(&wave_tok(if second { ui.meas_source_b() } else { ui.meas_source() }));
+                }
+                let Some(id) = self.named_source(arg) else { return None };
+                if second {
+                    ui.set_meas_source_b(id);
+                } else {
+                    ui.set_meas_source(id);
+                }
+                ui.mark_changed();
+                return None;
+            }
         }
         if kw(n0, "TIMebase") {
             return self.timebase_more(ui, &nodes[1..], query, arg);
@@ -4241,6 +4278,18 @@ mod tests {
         assert!((held_bias - 0.25).abs() < 1e-6, "{held_bias}");
         line(&mut s, &mut ui, &cv, ":CHAN1:BIAS 0");
 
+        line(&mut s, &mut ui, &cv, "*CLS;:CHAN1:OFFS 0.5;:CHAN1:SCAL 1;:CHAN1:EXP GND");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:EXP?;:CHAN2:EXP?"), "GND;GND");
+        line(&mut s, &mut ui, &cv, ":CHAN1:SCAL 2");
+        let grown: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:OFFS?").parse().unwrap();
+        assert!((grown - 1.0).abs() < 1e-4, "ground expand keeps the zero in place, offset {grown}");
+        line(&mut s, &mut ui, &cv, ":CHAN1:EXP CENT;:CHAN1:SCAL 1");
+        let held: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:OFFS?").parse().unwrap();
+        assert!((held - 1.0).abs() < 1e-4, "center expand leaves the offset, {held}");
+        line(&mut s, &mut ui, &cv, ":CHAN1:EXP FOO");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:EXP?"), "CENT");
+
         line(&mut s, &mut ui, &cv, ":CHAN1:TCAL 2e-8");
         let skew: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:TCAL?").parse().unwrap();
         assert!((skew - 2e-8).abs() < 1e-12, "{skew}");
@@ -4254,6 +4303,12 @@ mod tests {
         let voff: f64 = line(&mut s, &mut ui, &cv, ":REF:VOFF? 1").parse().unwrap();
         assert!((vsc - 1.0).abs() < 1e-6 && voff.abs() < 1e-9, "reset scale {vsc} offset {voff}");
         assert_eq!(line(&mut s, &mut ui, &cv, ":REF:COL? 1"), "RED");
+
+        line(&mut s, &mut ui, &cv, "*CLS;:MEAS:SET:PSA CHAN2;:MEAS:SET:PSB R1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:DSA?;:MEAS:SET:DSB?;:MEAS:SOUR?"), "CHAN2;R1;CHAN2");
+        line(&mut s, &mut ui, &cv, ":MEAS:SET:PSA MATH1");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "a measurement source is a channel or a reference");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SOUR?"), "CHAN2");
 
         line(&mut s, &mut ui, &cv, ":MEAS:SET:MIN 20;:MEAS:SET:MAX 80");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MIN?;:MEAS:SET:MAX?"), "20;80");
