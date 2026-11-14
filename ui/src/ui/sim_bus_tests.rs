@@ -487,3 +487,61 @@ fn large_stored_and_native_clock_snapshots_are_shared_without_ui_scans_and_keep_
         println!("3M {} auxiliary: request {:?}; shared owner, no UI decode scan, eight original-time hits", if native { "native Frame" } else { "Ref" }, elapsed);
     }
 }
+
+#[test]
+fn opc_single_waits_after_a_completed_no_hit_generation_until_the_matching_retry_commits() {
+    let (mut ui, old, fresh) = live_fixture(TrigMode::Single);
+    let before = Accepted::of(&ui);
+    let mut held = Held::arm_first(&mut ui);
+    let request = held.request.as_ref().unwrap();
+    let completed_generation = OperationToken::Sim(ui.workflow_epoch, request.id);
+    let fence = ui.scpi_operations();
+    let mut scpi = crate::scpi::Scpi::open(0);
+    let cv = Canvas::new(W, H);
+    let mut query = crate::scpi::Program::new("*OPC?;:TRIG:STAT?");
+    assert!(scpi.poll_program(&mut ui, &cv, &mut query).is_none());
+    held.finish(&mut ui, old);
+    before.assert_held(&ui);
+    assert!(!ui.sim_generating(), "the worker request itself is finished");
+    assert!(ui.scpi_completed.contains(&completed_generation), "no-hit generation is a completed operation, not an accepted capture");
+    assert_eq!((ui.m.run, ui.m.status), (RunState::Run, TrigStatus::Wait));
+    assert_eq!(fence.state(&ui), OperationState::Pending, "Single still needs its own accepted-capture receipt");
+    assert!(scpi.poll_program(&mut ui, &cv, &mut query).is_none());
+    ui.step(0.0);
+    held.receive_request();
+    assert_ne!(held.request.as_ref().unwrap().id, match completed_generation { OperationToken::Sim(_, id) => id, _ => unreachable!() });
+    assert_eq!(fence.state(&ui), OperationState::Pending);
+    held.finish(&mut ui, fresh.clone());
+    assert_eq!(ui.replay.captures, before.captures + 1);
+    assert_eq!(ui.m.run, RunState::Stop);
+    assert_eq!(ui.refs[2].as_ref().unwrap().v.as_slice(), fresh.as_slice());
+    assert_eq!(fence.state(&ui), OperationState::Complete);
+    assert_eq!(scpi.poll_program(&mut ui, &cv, &mut query), Some(b"1;STOP".to_vec()));
+    let accepted = Accepted::of(&ui);
+    for _ in 0..3 { ui.step(0.0); accepted.assert_held(&ui); }
+}
+
+#[test]
+fn opc_completed_generation_receipt_survives_the_next_periodic_request_without_waiting_for_it() {
+    let (mut ui, _old, fresh) = live_fixture(TrigMode::Normal);
+    let mut held = Held::arm_first(&mut ui);
+    let first = held.request.as_ref().unwrap().id;
+    let fence = ui.scpi_operations();
+    let mut scpi = crate::scpi::Scpi::open(0);
+    let cv = Canvas::new(W, H);
+    let mut query = crate::scpi::Program::new("*OPC?;:SIM:BUSY?");
+    assert!(scpi.poll_program(&mut ui, &cv, &mut query).is_none());
+    held.finish(&mut ui, fresh);
+    assert_eq!(ui.replay.captures, 1);
+    assert_eq!(fence.state(&ui), OperationState::Complete);
+    let accepted = Accepted::of(&ui);
+    ui.step(0.51);
+    held.receive_request();
+    assert_ne!(held.request.as_ref().unwrap().id, first);
+    assert!(held.request.as_ref().unwrap().fresh, "exercise a true periodic capture after initial acceptance");
+    assert!(ui.sim_generating());
+    accepted.assert_held(&ui);
+    assert_eq!(fence.state(&ui), OperationState::Complete, "a later request must not extend the completed fence");
+    assert_eq!(scpi.poll_program(&mut ui, &cv, &mut query), Some(b"1;1".to_vec()));
+    ui.key(key::RUNSTOP);
+}

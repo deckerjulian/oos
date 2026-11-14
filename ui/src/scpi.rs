@@ -2146,6 +2146,35 @@ mod tests {
         assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());assert_eq!(captures(&ui),1.0);
     }
 
+    #[test]
+    fn integration_reference_source_switch_interrupts_old_fence_and_new_single_accepts_once() {
+        let (mut scpi, mut ui, cv) = session();
+        ui.set_offline(true);
+        for slot in 0..2 {
+            let values = (0..4000).map(|i| if slot == 0 || i % 40 < 20 { -0.5 } else { 0.5 }).collect();
+            ui.commit_waveform_traces_at(vec![crate::store::WaveTrace { v: values, dt: 1e-9, t0: 2e-6, label: format!("R{}", slot + 1) }], "source-change", slot).unwrap();
+        }
+        let original = [ui.ref_volts(0), ui.ref_volts(1)];
+        line(&mut scpi, &mut ui, &cv, ":TRIG:SOUR R1;:TRIG:MODE EDGE;:TRIG:EDGE:LEV 0;:TIM:SCAL 1e-8;:TIM:OFFS 3e-6");
+        let mut old = Program::new(":SINGLE;*OPC?;:RUN");
+        assert!(scpi.poll_program(&mut ui, &cv, &mut old).is_none());
+        ui.step(0.2); assert_eq!(captures(&ui), 0.0);
+        assert!(scpi.poll_program(&mut ui, &cv, &mut old).is_none());
+        // Use the UI acquisition router directly: a SCPI mark_changed call here
+        // would mask a missing operation-token hook on the actual source change.
+        assert!(ui.set_trigger_source(WaveId::Ref(1), false));
+        assert_eq!((ui.m.trig_mode, ui.m.run, ui.m.status), (TrigMode::Single, RunState::Run, TrigStatus::Wait));
+        assert_eq!(scpi.poll_program(&mut ui, &cv, &mut old), Some(Vec::new()));
+        assert!(line(&mut scpi, &mut ui, &cv, ":SYST:ERR?").starts_with("-410,"));
+        let mut new = Program::new("*OPC?;:TRIG:STAT?");
+        assert!(scpi.poll_program(&mut ui, &cv, &mut new).is_none());
+        ui.step(0.2);
+        assert_eq!(scpi.poll_program(&mut ui, &cv, &mut new), Some(b"1;STOP".to_vec()));
+        assert_eq!(captures(&ui), 1.0); assert_eq!(ui.m.trig_ref, Some(1));
+        ui.step(0.2); assert_eq!(captures(&ui), 1.0, "the cancelled query's trailing RUN must never execute");
+        assert_eq!([ui.ref_volts(0), ui.ref_volts(1)], original);
+    }
+
     fn reference_session() -> (Scpi, Ui, Canvas) {
         let (mut s, mut ui, cv) = session();
         // Import is additive in Live. These tests explicitly exercise stored
