@@ -526,6 +526,9 @@ const PAIR_ITEMS: &[(&str, &str, usize)] = &[
     ("SETHold", "SETHOLD", 14),
     ("FSETup", "FSETUP", 15),
     ("FHOLd", "FHOLD", 16),
+    ("DSETup", "DSETUP", 17),
+    ("DHOLd", "DHOLD", 18),
+    ("DSEThold", "DSETHOLD", 19),
 ];
 
 fn meas_kind(item: &str) -> Option<Meas> {

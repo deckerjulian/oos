@@ -867,53 +867,102 @@ pub fn skew_within(a: &Analysis, b: &Analysis, p: Pair, min: f64, max: f64) -> f
     mean(&d)
 }
 
-/// Setup: clock edge minus the closest earlier data mid. Positive when the data edge leads the clock.
+/// The clock edges that latch data: rising, falling, or both (DDR strobes such as DQS).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Latch {
+    Rise,
+    Fall,
+    Both,
+}
+
+impl Latch {
+    pub fn of(rise: bool) -> Latch {
+        if rise { Latch::Rise } else { Latch::Fall }
+    }
+
+    fn edges(self, clock: &Analysis) -> Vec<f64> {
+        match self {
+            Latch::Rise => clock.rises.clone(),
+            Latch::Fall => clock.falls.clone(),
+            Latch::Both => mids(clock),
+        }
+    }
+}
+
+/// Setup: clock edge minus the last data mid before it. Positive when the data edge leads the clock.
 /// `rise` selects rising or falling clock edges; data uses either-direction mids.
+///
+/// Only a data change inside the clock edge's own cycle counts: after the previous latching edge and at most one
+/// typical edge spacing before this one. A clock edge whose data did not change in its cycle has no setup of its
+/// own. Without this, data that holds steady (an idle or repeating DQ between strobe bursts) pairs every clock edge
+/// with a transition from long ago and the mean reads hundreds of UIs.
 pub fn setup_time(clock: &Analysis, data: &Analysis) -> f64 {
     setup_time_at(clock, data, true)
 }
 
 pub fn setup_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
-    mean(&setup_times(clock, data, rise))
+    setup_time_on(clock, data, Latch::of(rise))
 }
 
-/// Hold: the next data mid minus the clock edge.
+pub fn setup_time_on(clock: &Analysis, data: &Analysis, latch: Latch) -> f64 {
+    mean(&cycles(clock, data, latch).iter().filter_map(|c| c.0).collect::<Vec<_>>())
+}
+
+/// Hold: the first data mid after the clock edge minus the edge, when it comes before the next latching edge and
+/// within one typical edge spacing (as for setup).
 pub fn hold_time(clock: &Analysis, data: &Analysis) -> f64 {
     hold_time_at(clock, data, true)
 }
 
 pub fn hold_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
-    mean(&hold_times(clock, data, rise))
+    hold_time_on(clock, data, Latch::of(rise))
 }
 
-fn setup_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
-    let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
+pub fn hold_time_on(clock: &Analysis, data: &Analysis, latch: Latch) -> f64 {
+    mean(&cycles(clock, data, latch).iter().filter_map(|c| c.1).collect::<Vec<_>>())
+}
+
+/// Every setup and hold time, for statistics outside the mean.
+pub fn setup_hold_times(clock: &Analysis, data: &Analysis, latch: Latch) -> (Vec<f64>, Vec<f64>) {
+    let c = cycles(clock, data, latch);
+    (c.iter().filter_map(|c| c.0).collect(), c.iter().filter_map(|c| c.1).collect())
+}
+
+/// Median spacing of sorted edges; infinite when there are fewer than two.
+fn typical_spacing(c: &[f64]) -> f64 {
+    let mut gaps: Vec<f64> = c.windows(2).map(|w| w[1] - w[0]).filter(|g| g.is_finite() && *g > 0.0).collect();
+    if gaps.is_empty() {
+        return f64::INFINITY;
+    }
+    let k = gaps.len() / 2;
+    gaps.select_nth_unstable_by(k, f64::total_cmp);
+    gaps[k]
+}
+
+/// Per latching clock edge: (setup, hold), each present only when the data changed inside that edge's cycle.
+fn cycles(clock: &Analysis, data: &Analysis, latch: Latch) -> Vec<(Option<f64>, Option<f64>)> {
+    let (c, d) = (latch.edges(clock), mids(data));
+    let span = typical_spacing(&c);
+    let mut out = Vec::with_capacity(c.len());
     let mut j = 0usize;
-    let mut s = Vec::new();
-    for &tc in c {
+    for (i, &tc) in c.iter().enumerate() {
+        if !tc.is_finite() {
+            continue;
+        }
+        let prev = if i > 0 { c[i - 1].max(tc - span) } else { tc - span };
+        let next = if i + 1 < c.len() { c[i + 1].min(tc + span) } else { tc + span };
         while j < d.len() && d[j] < tc {
             j += 1;
         }
-        if j > 0 {
-            s.push(tc - d[j - 1]);
+        let setup = (j > 0 && d[j - 1] > prev).then(|| tc - d[j - 1]);
+        let mut k = j;
+        while k < d.len() && d[k] <= tc {
+            k += 1;
         }
+        let hold = (k < d.len() && d[k] < next).then(|| d[k] - tc);
+        out.push((setup, hold));
     }
-    s
-}
-
-fn hold_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
-    let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
-    let mut j = 0usize;
-    let mut s = Vec::new();
-    for &tc in c {
-        while j < d.len() && d[j] <= tc {
-            j += 1;
-        }
-        if j < d.len() {
-            s.push(d[j] - tc);
-        }
-    }
-    s
+    out
 }
 
 /// Clock edges whose setup is below `tsetup` or hold below `thold`.
@@ -922,12 +971,14 @@ pub fn setup_hold_violations(clock: &Analysis, data: &Analysis, tsetup: f64, tho
 }
 
 pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64, rise: bool) -> f64 {
-    let (su, ho) = (setup_times(clock, data, rise), hold_times(clock, data, rise));
-    if su.len() != ho.len() {
-        let n = su.len().min(ho.len());
-        return su[..n].iter().zip(&ho[..n]).filter(|(&s, &h)| s < tsetup || h < thold).count() as f64;
-    }
-    su.iter().zip(&ho).filter(|(&s, &h)| s < tsetup || h < thold).count() as f64
+    setup_hold_violations_on(clock, data, tsetup, thold, Latch::of(rise))
+}
+
+pub fn setup_hold_violations_on(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64, latch: Latch) -> f64 {
+    cycles(clock, data, latch)
+        .iter()
+        .filter(|(s, h)| s.is_some_and(|s| s < tsetup) || h.is_some_and(|h| h < thold))
+        .count() as f64
 }
 
 #[cfg(test)]
@@ -1075,5 +1126,60 @@ mod tests {
         assert!((setup_time(&clk, &data) - 1.5e-9).abs() < 1e-12);
         assert_eq!(setup_hold_violations(&clk, &data, 1.2e-9, 1.2e-9), 1.0);
         assert_eq!(setup_hold_violations(&clk, &data, 2e-9, 3e-9), 2.0);
+    }
+
+    /// DDR write: a strobe toggling every UI in bursts with long idle gaps between them, and data centred
+    /// between strobe edges that changes only now and then.
+    fn ddr_write() -> (Analysis, Analysis, f64) {
+        let ui = 375e-12;
+        let (mut rises, mut falls, mut data) = (Vec::new(), Vec::new(), Vec::new());
+        for burst in 0..20 {
+            let t0 = burst as f64 * 300e-9;
+            for k in 0..16 {
+                let t = t0 + k as f64 * ui;
+                if k % 2 == 0 { rises.push(t) } else { falls.push(t) }
+            }
+            // two data changes per burst, each half a UI before a strobe edge (rising in one, falling in the other)
+            data.push(t0 + 3.5 * ui);
+            data.push(t0 + 10.5 * ui);
+        }
+        let clock = Analysis { valid: true, rises, falls, ..Analysis::default() };
+        let (rises, falls): (Vec<f64>, Vec<f64>) = (data.iter().step_by(2).copied().collect(), data.iter().skip(1).step_by(2).copied().collect());
+        (clock, Analysis { valid: true, rises, falls, ..Analysis::default() }, ui)
+    }
+
+    #[test]
+    fn steady_data_between_strobe_bursts_does_not_pair_with_stale_transitions() {
+        let (dqs, dq, ui) = ddr_write();
+        // both strobe edges latch: every data change is half a UI from its edges on either side
+        let (setups, holds) = setup_hold_times(&dqs, &dq, Latch::Both);
+        assert_eq!((setups.len(), holds.len()), (40, 40), "one setup and one hold per data change");
+        for t in setups.iter().chain(&holds) {
+            assert!((t - 0.5 * ui).abs() < 1e-15, "{}", t);
+        }
+        assert!((setup_time_on(&dqs, &dq, Latch::Both) - 0.5 * ui).abs() < 1e-15);
+        assert!((hold_time_on(&dqs, &dq, Latch::Both) - 0.5 * ui).abs() < 1e-15);
+        // one edge direction: the stable time inside that edge's own cycle (two UIs), never the idle gap
+        for latch in [Latch::Rise, Latch::Fall] {
+            let (s, h) = setup_hold_times(&dqs, &dq, latch);
+            assert!(!s.is_empty() && !h.is_empty());
+            assert!(s.iter().chain(&h).all(|t| *t > 0.0 && *t <= 2.0 * ui + 1e-15), "{:?} {:?}", s, h);
+        }
+        assert_eq!(setup_hold_violations_on(&dqs, &dq, 0.4 * ui, 0.4 * ui, Latch::Both), 0.0);
+        assert_eq!(setup_hold_violations_on(&dqs, &dq, 0.6 * ui, 0.0, Latch::Both), 40.0);
+    }
+
+    #[test]
+    fn dense_single_edge_clock_keeps_its_setup_and_hold() {
+        // data changes once every clock period, 3 ns before each rising edge of a 10 ns clock
+        let rises: Vec<f64> = (1..50).map(|k| k as f64 * 10e-9).collect();
+        let falls: Vec<f64> = rises.iter().map(|t| t + 5e-9).collect();
+        let d: Vec<f64> = rises.iter().map(|t| t - 3e-9).collect();
+        let clock = Analysis { valid: true, rises, falls, ..Analysis::default() };
+        let data = Analysis { valid: true, rises: d.iter().step_by(2).copied().collect(), falls: d.iter().skip(1).step_by(2).copied().collect(), ..Analysis::default() };
+        assert!((setup_time(&clock, &data) - 3e-9).abs() < 1e-15);
+        // the next change is 7 ns after each edge, one before the last edge has none
+        assert!((hold_time(&clock, &data) - 7e-9).abs() < 1e-15);
+        assert_eq!(setup_hold_times(&clock, &data, Latch::Rise).0.len(), 49);
     }
 }

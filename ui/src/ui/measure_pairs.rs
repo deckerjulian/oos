@@ -3,7 +3,7 @@
 use super::*;
 use super::analysis::RefMeasureKey;
 use super::tools::{PairKind, PAIRS, MEAS_MAX};
-use oos_dsp::measure::{Analysis, Pair, delay, phase, skew, setup_time_at, hold_time_at, setup_hold_violations_at};
+use oos_dsp::measure::{Analysis, Latch, Pair, delay, phase, skew, setup_time_at, hold_time_at, setup_hold_violations_at, setup_time_on, hold_time_on, setup_hold_violations_on};
 use std::{collections::VecDeque, sync::{Arc, mpsc}};
 
 const DIRECT_EDGES: usize = 8_192;
@@ -37,6 +37,8 @@ fn compute(job: &Job) -> f64 {
         PairKind::Skew=>skew(&a,&b,Pair(ea,eb)), PairKind::Setup=>setup_time_at(&a,&b,ea),
         PairKind::Hold=>hold_time_at(&a,&b,ea),
         PairKind::SetupAndHold=>setup_hold_violations_at(&a,&b,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),ea),
+        PairKind::SetupBoth=>setup_time_on(&a,&b,Latch::Both), PairKind::HoldBoth=>hold_time_on(&a,&b,Latch::Both),
+        PairKind::SetupAndHoldBoth=>setup_hold_violations_on(&a,&b,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),Latch::Both),
     }
 }
 impl Worker {

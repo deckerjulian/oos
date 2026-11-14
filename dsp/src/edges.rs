@@ -13,12 +13,28 @@ pub struct Edge {
 /// Edges of `v` through `level` with a hysteresis band of `hyst` (total width, centred on the level): a rising edge is
 /// counted when the signal goes from below level - hyst/2 to above level + hyst/2; its time is the last crossing of
 /// `level` before that (linear interpolation). NaN samples are skipped.
+///
+/// A signal can rest inside the band: a DDR strobe (DQS) idles at its mid level between bursts. The last crossing of
+/// `level` then lies where the rest began, often a whole burst gap before the edge. When the signal stayed in the band
+/// after that crossing much longer than it took to get there from the far side, the crossing is stale and the edge is
+/// timed where the signal leaves the band instead (its crossing of level ± hyst/2).
 pub fn edges(v: &[f32], level: f32, hyst: f32) -> Vec<Edge> {
     let (lo, hi) = (level - hyst / 2.0, level + hyst / 2.0);
     let mut out = Vec::new();
     let mut state: Option<bool> = None;
     let mut last_cross: Option<f64> = None;
+    // last sample outside the band on the side the signal is leaving (above hi while high, below lo while low)
+    let mut outside: Option<f64> = None;
     let mut prev: Option<(usize, f32)> = None;
+    // the edge time: the level crossing, or the band exit when the crossing went stale in the band
+    let time = |cross: Option<f64>, outside: Option<f64>, prev: Option<(usize, f32)>, i: usize, x: f32, bound: f32| -> f64 {
+        let exit = prev.map_or(i as f64, |(j, p)| if x != p { j as f64 + (bound - p) as f64 / (x - p) as f64 * (i - j) as f64 } else { i as f64 });
+        match (cross, outside) {
+            (Some(c), Some(o)) if exit - c > 4.0 * (c - o).max(1.0) => exit,
+            (Some(c), _) => c,
+            (None, _) => exit,
+        }
+    };
     for (i, &x) in v.iter().enumerate() {
         if !x.is_finite() {
             continue;
@@ -38,12 +54,17 @@ pub fn edges(v: &[f32], level: f32, hyst: f32) -> Vec<Edge> {
             }
             Some(false) if x > hi => {
                 state = Some(true);
-                out.push(Edge { t: last_cross.unwrap_or(i as f64), rising: true });
+                out.push(Edge { t: time(last_cross, outside, prev, i, x, hi), rising: true });
             }
             Some(true) if x < lo => {
                 state = Some(false);
-                out.push(Edge { t: last_cross.unwrap_or(i as f64), rising: false });
+                out.push(Edge { t: time(last_cross, outside, prev, i, x, lo), rising: false });
             }
+            _ => {}
+        }
+        match state {
+            Some(true) if x > hi => outside = Some(i as f64),
+            Some(false) if x < lo => outside = Some(i as f64),
             _ => {}
         }
         prev = Some((i, x));

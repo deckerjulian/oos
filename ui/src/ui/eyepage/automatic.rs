@@ -179,6 +179,8 @@ fn compute(mut job: Job) -> Result<Computed, String> {
     checkpoint!("aligned");
     let recovery_wave = clock_wave.as_deref().unwrap_or(&data);
     let (summary, clock) = infer(recovery_wave, dt, job.requested_rate, clock_wave.is_some())?;
+    // A strobe folds on its own edges and measures its jitter inside each burst (bursts start at any phase).
+    let (strobe_fold, clock) = if clock_wave.is_some() { (Some(eye::strobe_clock(&clock)), eye::strobe_ideal(&clock)) } else { (None, clock) };
     checkpoint!(format!("clock rate={} edges={}", summary.rate, clock.edges.len()));
     let st = stats(&data, dt);
     checkpoint!("data statistics");
@@ -186,15 +188,15 @@ fn compute(mut job: Job) -> Result<Computed, String> {
     let mut eye = eye::Eye::new(DENSITY_WIDTH, DENSITY_HEIGHT, 2, lo as f32, hi as f32);
     let gated;
     let accumulated = if clock_wave.is_some() { gated = eye::gate_around_clock(&data, dt, &clock, 1.5); &gated[..] } else { &data[..] };
-    let fold = if clock_wave.is_some() {
+    let fold = if let Some(strobe) = &strobe_fold {
         let height = |candidate: &eye::Clock| {
             let mut preview = eye::Eye::new(48, 48, 2, lo as f32, hi as f32);
             preview.accumulate(accumulated, dt, candidate);
             let h = preview.measure(candidate.period).height;
             if h.is_finite() { h } else { f64::NEG_INFINITY }
         };
-        let shifted = eye::center_strobe(&clock);
-        if height(&shifted) > height(&clock) { shifted } else { clock.clone() }
+        let shifted = eye::center_strobe(strobe);
+        if height(&shifted) > height(strobe) { shifted } else { strobe.clone() }
     } else { clock.clone() };
     checkpoint!("fold prepared");
     eye.accumulate(accumulated, dt, &fold);

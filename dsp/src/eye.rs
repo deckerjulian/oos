@@ -198,6 +198,79 @@ pub fn gate_around_clock(v: &[f32], dt: f64, c: &Clock, uis: f64) -> Vec<f32> {
     v.iter().zip(keep).map(|(&x, k)| if k { x } else { f32::NAN }).collect()
 }
 
+/// Ticks for a strobe that runs in bursts (DDR DQS): within a burst, `tick(burst)` gives its ticks; every gap of more
+/// than 1.5 UI is filled with ticks one UI apart, carried forward from the burst before and back from the burst after,
+/// meeting in the middle of the gap. A few ticks also extend before the first and after the last edge.
+fn burst_ticks(edges: &[f64], period: f64, tick: impl Fn(&[f64]) -> Vec<f64>) -> Vec<f64> {
+    const SPARE: usize = 4;
+    let mut bursts: Vec<&[f64]> = Vec::new();
+    let mut start = 0;
+    for i in 1..=edges.len() {
+        if i == edges.len() || edges[i] - edges[i - 1] > 1.5 * period {
+            bursts.push(&edges[start..i]);
+            start = i;
+        }
+    }
+    let mut out = Vec::with_capacity(edges.len() + 2 * SPARE * bursts.len());
+    let first = tick(bursts[0]);
+    out.extend((1..=SPARE).rev().map(|k| first[0] - k as f64 * period));
+    let mut prev_end: Option<f64> = None;
+    for b in &bursts {
+        let t = tick(b);
+        if let Some(end) = prev_end {
+            // a short gap (a preamble, a missed edge) holds a whole number of UIs: spread its ticks evenly
+            let m = ((t[0] - end) / period).round();
+            if m <= 8.0 {
+                out.extend((1..m as usize).map(|k| end + k as f64 * (t[0] - end) / m));
+                out.extend_from_slice(&t);
+                prev_end = t.last().copied();
+                continue;
+            }
+            let mid = 0.5 * (end + t[0]);
+            let mut k = 1.0;
+            while end + k * period < mid - 0.5 * period {
+                out.push(end + k * period);
+                k += 1.0;
+            }
+            let back: Vec<f64> = (1..).map(|k| t[0] - k as f64 * period).take_while(|&x| x > mid + 0.5 * period).collect();
+            out.extend(back.into_iter().rev());
+        }
+        out.extend_from_slice(&t);
+        prev_end = t.last().copied();
+    }
+    let end = prev_end.unwrap();
+    out.extend((1..=SPARE).map(|k| end + k as f64 * period));
+    out
+}
+
+/// Strobe clock for folding: a tick at every strobe edge itself. Each burst of a DDR strobe starts at its own phase,
+/// so no single constant-rate clock lines the bursts up; folding on the strobe's own edges does, and shows the data
+/// as the receiver latches it. `period` stays the strobe's UI. Unchanged when there are fewer than 2 edges.
+pub fn strobe_clock(c: &Clock) -> Clock {
+    if c.edges.len() < 2 || !(c.period > 0.0) {
+        return c.clone();
+    }
+    let ticks = burst_ticks(&c.edges, c.period, |b| b.to_vec());
+    let phase = c.edges[0];
+    Clock { period: c.period, phase, edges: c.edges.clone(), ticks, first_rising: c.first_rising }
+}
+
+/// Strobe clock for jitter: within each burst, the ideal constant-rate ticks fitted to that burst's edges. The TIE
+/// against it is the strobe's own jitter inside its bursts, not the arbitrary phase between one burst and the next.
+pub fn strobe_ideal(c: &Clock) -> Clock {
+    if c.edges.len() < 2 || !(c.period > 0.0) {
+        return c.clone();
+    }
+    let p = c.period;
+    let ticks = burst_ticks(&c.edges, p, |b| {
+        let n: Vec<f64> = b.iter().map(|t| ((t - b[0]) / p).round()).collect();
+        let (phase, period) = line_fit(&n, b).filter(|(_, q)| *q > 0.5 * p && *q < 1.5 * p).unwrap_or((b[0], p));
+        let last = n.last().copied().unwrap_or(0.0) as i64;
+        (0..=last).map(|k| phase + k as f64 * period).collect()
+    });
+    Clock { period: p, phase: c.edges[0], edges: c.edges.clone(), ticks, first_rising: c.first_rising }
+}
+
 /// Half a UI earlier: a source-synchronous strobe samples the middle of the bit, which this page draws at 0.5 UI.
 pub fn center_strobe(c: &Clock) -> Clock {
     let mut o = c.clone();

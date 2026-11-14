@@ -798,6 +798,8 @@ impl Ui {
             self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(recov_id));
             return;
         };
+        // A strobe folds on its own edges and measures its jitter inside each burst (bursts start at any phase).
+        let (strobe_fold, clk) = if clk_id.is_some() { (Some(eye::strobe_clock(&clk)), eye::strobe_ideal(&clk)) } else { (None, clk) };
         let data_st = stats(&v, dt);
         let left = self.azr.eye.as_ref().is_some_and(|e| {
             let (lo, hi) = (e.v_min as f64, e.v_max as f64);
@@ -819,8 +821,8 @@ impl Ui {
             self.azr.eye.as_mut().unwrap().clear();
             self.azr.page = Page { vstep: self.azr.page.vstep, ..Page::default() };
         }
-        let (fold, data) = if clk_id.is_some() {
-            let gated = eye::gate_around_clock(&v, dt, &clk, 1.5);
+        let (fold, data) = if let Some(strobe) = &strobe_fold {
+            let gated = eye::gate_around_clock(&v, dt, strobe, 1.5);
             let e = self.azr.eye.as_ref().unwrap();
             let height = |c: &eye::Clock| {
                 let mut t = eye::Eye::new(48, 48, 2, e.v_min, e.v_max);
@@ -832,8 +834,8 @@ impl Ui {
                     f64::NEG_INFINITY
                 }
             };
-            let shifted = eye::center_strobe(&clk);
-            let fold = if height(&shifted) > height(&clk) { shifted } else { clk.clone() };
+            let shifted = eye::center_strobe(strobe);
+            let fold = if height(&shifted) > height(strobe) { shifted } else { strobe.clone() };
             (fold, gated)
         } else {
             (clk.clone(), v.clone())

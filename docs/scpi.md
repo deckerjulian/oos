@@ -325,11 +325,24 @@ These canonical long spellings are accepted case-insensitively. Some additionall
 
 ### Pair items
 
-`RRDELAY`, `FFDELAY`, `RFDELAY`, `FRDELAY`, `RRPHASE`, `FFPHASE`, `RFPHASE`, `FRPHASE`, `RRSKEW`, `FFSKEW`, `RFSKEW`, `FRSKEW`, `SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD`.
+`RRDELAY`, `FFDELAY`, `RFDELAY`, `FRDELAY`, `RRPHASE`, `FFPHASE`, `RFPHASE`, `FRPHASE`, `RRSKEW`, `FFSKEW`, `RFSKEW`, `FRSKEW`, `SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD`, `DSETUP`, `DHOLD`, `DSETHOLD`.
+
+Setup and hold take source A as the clock and B as the data. `SETUP`/`HOLD` latch on rising clock edges, `FSETUP`/`FHOLD` on falling ones, and the `D` items on both, as a DDR strobe (DQS) does. A clock edge counts only when the data changed inside its own cycle: after the previous latching edge and within one typical edge spacing. Data that holds steady between strobe bursts adds no setup or hold. `SETHOLD`/`DSETHOLD` count the edges that break `:MEAS:TSETup`/`:MEAS:THOLd`.
 
 ### Eye figures
 
 `ONE`, `ZERO`, `AMPLITUDE`, `CROSSING`, `RISE`, `FALL`, `HEIGHT`, `WIDTH`, `Q`, `HBER`, `RECORDS`, `EDGES`, `UI`, `SAMPLING`, `TPP`, `TRMS`, `DCD`, `DDJ`, `PJRMS`, `PRMS`, `C2C`, `F2`, `F4`, `F8`, `SRJ`, `PN`, `TPRE`, `TPOST`, `PPRE`, `PPOST`, `DCCM`, `ACCM`, `XOVER`, `TNT`, `SSCPPM`, `SSCRATE`, `TJ`, `RJ`, `DJ`, `OPENING`, `SEEN`, `TJBER`, `EWBER`, `J2`, `J9`, `NPJ`.
+
+With an Eye clock source (a strobe such as DQS, setup key `eye_more`), the data is folded on each strobe edge itself, so bursts that start at unrelated phases line up as the receiver latches them; idle time more than 1.5 UI from a strobe edge is left out. The jitter figures (TIE, TJ, ...) then describe the strobe against an ideal clock fitted to each burst separately, not one clock across the whole record. Example for DQ in R2 and DQS in R1, over the whole record:
+
+```text
+:SYST:SET eye = R2 0 1
+:SYST:SET eye_more = 0.000000000001 1000 1000000 0 - 0 R1 1
+:VIEW EYE
+:EYE:ITEM? WIDTH
+```
+
+A full-record Eye of a long reference runs in the background. Until it finishes, the page and `:EYE:ITEM?` still show the previous result, so check that `EDGES` and `UI` belong to the new source before reading the figures.
 
 
 

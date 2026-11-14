@@ -41,10 +41,14 @@ pub enum PairKind {
     Setup,
     Hold,
     SetupAndHold,
+    /// Setup, hold and their limit check on both clock edges: DDR strobes (DQS) latch on rising and falling.
+    SetupBoth,
+    HoldBoth,
+    SetupAndHoldBoth,
 }
 
 /// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still means the same row.
-pub const PAIRS: [(&str, PairKind, bool, bool); 17] = [
+pub const PAIRS: [(&str, PairKind, bool, bool); 20] = [
     ("Delay rise-rise", PairKind::Delay, true, true),
     ("Delay fall-fall", PairKind::Delay, false, false),
     ("Delay rise-fall", PairKind::Delay, true, false),
@@ -62,6 +66,9 @@ pub const PAIRS: [(&str, PairKind, bool, bool); 17] = [
     ("Setup+Hold", PairKind::SetupAndHold, true, true),
     ("Setup fall", PairKind::Setup, false, true),
     ("Hold fall", PairKind::Hold, false, true),
+    ("Setup DDR", PairKind::SetupBoth, true, true),
+    ("Hold DDR", PairKind::HoldBoth, true, true),
+    ("Setup+Hold DDR", PairKind::SetupAndHoldBoth, true, true),
 ];
 
 /// DVM modes and counter modes.
@@ -199,7 +206,7 @@ impl Ui {
             };
             let unit = match kind {
                 PairKind::Phase => "\u{b0}",
-                PairKind::SetupAndHold => "",
+                PairKind::SetupAndHold | PairKind::SetupAndHoldBoth => "",
                 _ => "s",
             };
             v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit,
