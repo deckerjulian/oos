@@ -103,8 +103,13 @@ Choose Auto Eye/Jitter in the analysis menu/settings. The action
 uses the selected source, clears stale companion/notch settings, estimates NRZ
 rate/threshold/hysteresis, opens the full Eye page with optional Side/Under panes, TIE trend, histogram,
 spectrum and bathtub plots, and closes setup. Long immutable records run in a
-background worker. Fresh accepted live/SIM captures accumulate; panning a stopped
-record does not manufacture new captures.
+background worker. Small accepted live/SIM captures accumulate. Large captures
+use completed native-record snapshots: the last result remains visible while the
+next snapshot is being analyzed, and the page labels that capture explicitly.
+Source or analysis-setting changes reject obsolete work. Moving the pane or
+panning a stopped record does not manufacture new captures or repeat the full
+analysis. Drawing uses a bounded raster while timing recovery retains native
+samples and edges.
 
 Flat data, too few edges and inadequate sampling produce explicit missing/limited
 results. Automatic NRZ recovery is an estimate: a PAM/C-PHY rail is not a validated
