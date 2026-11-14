@@ -11,10 +11,12 @@
 //! device tree the scope started with (`/oos-kexec.dt`). Only that start, once it reached rcS and found the card and
 //! /oos, installs it (`oos-update boot`). A hang there: power-cycle; `recovery` still holds the running build.
 //!
-//! What it does not try: the device tree. `kexec_file_load` gives the new kernel the tree of the running one, so an
-//! image whose `second` (the RSCE container with the tree) differs from the tree the scope started with
-//! (`BOOTED_DT`) is refused for this way. And the start runs on warm hardware: a kernel that only fails from a cold
-//! start passes.
+//! The device tree: `kexec_file_load` gives the new kernel the tree of the running one. An image whose `second` (the
+//! RSCE container with the tree) differs from the tree the scope started with (`BOOTED_DT`) is started with
+//! `kexec_load` instead, through kexec-tools (`TOOL`, `kexec -c --dtb`), with its own tree and the changes the loader
+//! made to the running one (`fdt::with_loader_changes`): the tree a power-on would give it. A build without the tool
+//! (0.1.6 and older) refuses such an image. What it does not try: the start runs on warm hardware, so a kernel that
+//! only fails from a cold start passes.
 //!
 //! Only an image that knows how to finish such a start can take it: its package says so with the signed line
 //! `trial kexec` (`LINE`), which `oos-update pack` writes. Older packages install the direct way.
@@ -31,6 +33,35 @@ pub const KEY_FILE: &str = "/oos-kexec.key";
 pub const DT_FILE: &str = "/oos-kexec.dt";
 /// The device tree section of the image the loader started (`oos-update boot` saves it; a kexec start carries it on).
 pub const BOOTED_DT: &str = "/tmp/oos-booted.dt";
+/// kexec-tools in the image: a kexec start with another device tree (`load_with_tree`).
+pub const TOOL: &str = "/bin/kexec";
+/// The lowest address for the segments of a kexec start with kexec-tools (`--mem-min`), unless the GIC's tables lie
+/// higher. The GICv3 keeps the LPI and ITS tables of the running kernel across kexec (it cannot be told new ones), and
+/// the started kernel takes them over and writes to them; `/proc/iomem` does not show them, so kexec-tools would put a
+/// segment over them (seen: the initramfs at 0xa200000 over the tables at 0xa320000..0xa400000, which the new kernel
+/// then found damaged: "rootfs image is not initramfs", no root). They are allocated early, low in memory.
+pub const SEGMENTS_FROM: u64 = 1 << 30;
+
+/// The lowest address for the segments, from the running kernel's log: above `SEGMENTS_FROM` and above every GIC table
+/// it names (`... LPI ... table @0x...`, `ITS@<frame>: allocated ... @<table>`: the last address of a line), rounded up
+/// to a GiB.
+pub fn segments_from(log: &str) -> u64 {
+    let mut top = 0u64;
+    for l in log.lines().filter(|l| l.contains("GIC") || l.contains("ITS")) {
+        // the last one: in `ITS@0xfee20000: allocated ... @a380000` the first is the ITS' register frame
+        let Some((_, part)) = l.rsplit_once('@') else { continue };
+        let hex = part.trim_start_matches("0x");
+        let end = hex.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(hex.len());
+        if let Ok(a) = u64::from_str_radix(&hex[..end], 16) {
+            top = top.max(a);
+        }
+    }
+    // a table at an address is at most a few MiB long
+    SEGMENTS_FROM.max((top + (16 << 20)).div_ceil(1 << 30) << 30)
+}
+
+/// The tree the running kernel got from the loader (or from the kexec start before).
+pub const RUNNING_TREE: &str = "/sys/firmware/fdt";
 /// Kernel command line word of a kexec start: `oos.kexec=install[,downgrade][,force]`.
 pub const KEY: &str = "oos.kexec=";
 
@@ -181,7 +212,43 @@ mod sys {
         Ok(())
     }
 
-    /// Forget a loaded kernel.
+    /// Load kernel, initramfs and device tree for the next `start`, through kexec-tools (`kexec_load`, which takes a
+    /// tree; `-c`: kexec-tools 2.0.32 would take kexec_file_load and drop the tree without a word).
+    /// The running kernel's log (klogctl), for `segments_from`.
+    fn kernel_log() -> String {
+        let mut b = vec![0u8; 1 << 20];
+        // SYSLOG_ACTION_READ_ALL
+        let n = unsafe { libc::klogctl(3, b.as_mut_ptr() as *mut libc::c_char, b.len() as libc::c_int) };
+        b.truncate(n.max(0) as usize);
+        String::from_utf8_lossy(&b).into_owned()
+    }
+
+    pub fn load_with_tree(kernel: &[u8], initrd: &[u8], tree: &[u8], cmdline: &str) -> Result<(), String> {
+        let dir = std::path::Path::new("/tmp/oos-kexec");
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
+        let r = (|| {
+            for (n, d) in [("Image", kernel), ("initrd", initrd), ("tree.dtb", tree)] {
+                std::fs::write(dir.join(n), d).map_err(|e| format!("{}: {}", n, e))?;
+            }
+            let p = |n: &str| dir.join(n).display().to_string();
+            let from = super::segments_from(&kernel_log());
+            let o = std::process::Command::new(super::TOOL)
+                .args(["-c", &format!("--mem-min=0x{:x}", from), "-l", &p("Image"), &format!("--initrd={}", p("initrd")), &format!("--dtb={}", p("tree.dtb")), &format!("--command-line={}", cmdline)])
+                .output()
+                .map_err(|e| format!("{}: {}", super::TOOL, e))?;
+            if !o.status.success() {
+                let err = String::from_utf8_lossy(&o.stderr);
+                return Err(format!("kexec -l: {}", err.lines().last().unwrap_or("failed")));
+            }
+            Ok(())
+        })();
+        // the kernel has its own copy now
+        let _ = std::fs::remove_dir_all(dir);
+        r
+    }
+
+    /// Forget a loaded kernel (either way it was loaded: both fill the same slot).
     pub fn unload() -> Result<(), String> {
         let r = unsafe { libc::syscall(SYS_KEXEC_FILE_LOAD, -1, -1, 0 as libc::c_ulong, std::ptr::null::<u8>(), KEXEC_FILE_UNLOAD) };
         if r != 0 {
@@ -203,7 +270,7 @@ mod sys {
 }
 
 #[cfg(target_os = "linux")]
-pub use sys::{load, loaded, start, unload};
+pub use sys::{load, load_with_tree, loaded, start, unload};
 
 #[cfg(test)]
 mod tests {
@@ -258,6 +325,20 @@ mod tests {
         }
         assert_eq!(tree_at(&h), Some((2048 + 3 * 2048 + 2 * 2048, 300)));
         assert_eq!(tree_at(&[0u8; 2048]), None);
+    }
+
+    #[test]
+    fn segments_stay_above_the_gic_tables() {
+        // the unit's log (RK3399, 4 GiB): every table below 1 GiB
+        let log = "[    8.516497] ITS [mem 0xfee20000-0xfee3ffff]
+[    8.521765] ITS@0x00000000fee20000: allocated 65536 Devices @a380000 (flat, esz 8, psz 64K, shr 0)
+[    8.537289] GICv3: using LPI property table @0x000000000a320000
+[    8.550501] GICv3: CPU0: using allocated LPI pending table @0x000000000a330000
+[    8.948864] GICv3: CPU5: using allocated LPI pending table @0x0000000002400000
+[    9.000000] other: x @0x0000000f00000000";
+        assert_eq!(segments_from(log), 1 << 30, "the ITS' register frame near 4 GiB is no table");
+        assert_eq!(segments_from(""), 1 << 30, "no log: 1 GiB");
+        assert_eq!(segments_from("GICv3: CPU0: using allocated LPI pending table @0x0000000050000000"), 2 << 30);
     }
 
     #[test]

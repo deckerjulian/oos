@@ -19,6 +19,8 @@
 //!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]
 //!                                          first install from the running stock system, rescue set in DIR; again on
 //!                                          a card with a valid OOS image it only selects OOS (--reinstall: writes it)
+//!                                          --any-model: also on a model whose hardware variant OOS has not run on
+//!                                          yet (hal target `variants`; docs/install-usb.md 4)
 //!   oos-update confirm                     end the trial by hand (the watcher normally does it); only once the image
 //!                                          on trial runs
 //!   oos-update arm                         select OOS for the next power-on: only a valid image in recovery, never
@@ -283,7 +285,9 @@ fn install(a: &Args) {
     }
     let booted = std::fs::read(kexec::BOOTED_DT).ok();
     let running = update::running_build();
-    match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, booted.as_deref(), running.as_deref()) {
+    // another device tree can be tried with kexec-tools, from the tree the running kernel got
+    let running_tree = Path::new(kexec::TOOL).exists().then(|| std::fs::read(kexec::RUNNING_TREE).ok()).flatten();
+    match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, booted.as_deref(), running.as_deref(), running_tree.as_deref()) {
         Err(e) if e.contains("device tree") => die(&format!(
             "{}. Try the image on a card you can take out; then --new-dt writes it directly, without the kexec trial start",
             e
@@ -383,7 +387,11 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
         std::process::exit(1)
     };
     let cmd = kexec::cmdline(&kexec::running_cmdline(), f);
-    if let Err(e) = kexec::load(&s.kernel, &s.initrd, &cmd) {
+    let loaded = match &s.tree {
+        Some(t) => kexec::load_with_tree(&s.kernel, &s.initrd, t, &cmd),
+        None => kexec::load(&s.kernel, &s.initrd, &cmd),
+    };
+    if let Err(e) = loaded {
         undo(&e, None);
     }
     drop(s);
@@ -432,6 +440,7 @@ fn kexec_check(a: &Args) {
     kexec::unload().unwrap_or_else(|e| die(&e));
     let tree = match std::fs::read(kexec::BOOTED_DT) {
         Ok(b) if b == dt => "the same as the running one",
+        Ok(_) if Path::new(kexec::TOOL).exists() => "DIFFERS from the running one (the kexec start tries the new one, with kexec-tools)",
         Ok(_) => "DIFFERS from the running one (install needs --new-dt)",
         Err(_) => "running one unknown",
     };

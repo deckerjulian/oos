@@ -1,0 +1,184 @@
+From: Julian Decker <git@deckerjulian.com>
+Subject: media: verisilicon: RGB input for the VPU2 JPEG encoder
+
+The VPU2 encoder (RK3399, RK3568 VEPU, PX30) converts RGB input to
+YCbCr itself: input format 7 (RGB888, 32 bits a pixel), the conversion
+coefficients in RGB2YUV_CONVERSION_COEF1..3 and the position of each
+component in RGB_MASK_MSB. The driver offers only YUV formats, so a
+program that has an RGB picture, a screen, converts it on the CPU first,
+which takes longer than the encoder.
+
+Offer V4L2_PIX_FMT_XBGR32 on the VPU2 variants, with the coefficients
+of JPEG (BT.601, full range). The H1 variants keep their list.
+
+---
+--- a/drivers/media/platform/verisilicon/hantro_hw.h
++++ b/drivers/media/platform/verisilicon/hantro_hw.h
+@@ -394,12 +394,14 @@
+  * @ROCKCHIP_VPU_ENC_FMT_YUV420SP: Y/CbCr 4:2:0 semi-planar format
+  * @ROCKCHIP_VPU_ENC_FMT_YUYV422: YUV 4:2:2 packed format (YUYV)
+  * @ROCKCHIP_VPU_ENC_FMT_UYVY422: YUV 4:2:2 packed format (UYVY)
++ * @ROCKCHIP_VPU_ENC_FMT_RGB888: RGB, 8 bits a component in 32 bits a pixel
+  */
+ enum hantro_enc_fmt {
+ 	ROCKCHIP_VPU_ENC_FMT_YUV420P = 0,
+ 	ROCKCHIP_VPU_ENC_FMT_YUV420SP = 1,
+ 	ROCKCHIP_VPU_ENC_FMT_YUYV422 = 2,
+ 	ROCKCHIP_VPU_ENC_FMT_UYVY422 = 3,
++	ROCKCHIP_VPU_ENC_FMT_RGB888 = 7,
+ };
+ 
+ extern const struct hantro_variant imx8mm_vpu_g1_variant;
+--- a/drivers/media/platform/verisilicon/rockchip_vpu2_hw_jpeg_enc.c
++++ b/drivers/media/platform/verisilicon/rockchip_vpu2_hw_jpeg_enc.c
+@@ -32,6 +32,37 @@
+ 
+ #define VEPU_JPEG_QUANT_TABLE_COUNT 16
+ 
++/* Byte order of 32-bit RGB input, as measured on an RK3399 */
++#define VEPU_RGB888_INPUT_SWAP		(VEPU_REG_INPUT_SWAP32)
++
++static bool rockchip_vpu2_rgb_input(struct hantro_ctx *ctx)
++{
++	return ctx->vpu_src_fmt->enc_fmt == ROCKCHIP_VPU_ENC_FMT_RGB888;
++}
++
++/*
++ * RGB input: the encoder converts it to YCbCr with these coefficients
++ * (16-bit fixed point). JPEG (JFIF) is BT.601 at full range:
++ * Y = 0.299 R + 0.587 G + 0.114 B, Cb = (B - Y) / 1.772 + 128,
++ * Cr = (R - Y) / 1.402 + 128. V4L2_PIX_FMT_XBGR32 has red in bits
++ * 23..16 of a little-endian word.
++ */
++static void rockchip_vpu2_set_rgb_conversion(struct hantro_dev *vpu)
++{
++	vepu_write_relaxed(vpu, VEPU_REG_RGB2YUV_CONVERSION_COEFB(38470) |
++				VEPU_REG_RGB2YUV_CONVERSION_COEFA(19595),
++			   VEPU_REG_RGB2YUV_CONVERSION_COEF1);
++	vepu_write_relaxed(vpu, VEPU_REG_RGB2YUV_CONVERSION_COEFE(36984) |
++				VEPU_REG_RGB2YUV_CONVERSION_COEFC(7471),
++			   VEPU_REG_RGB2YUV_CONVERSION_COEF2);
++	vepu_write_relaxed(vpu, VEPU_REG_RGB2YUV_CONVERSION_COEFF(46745),
++			   VEPU_REG_RGB2YUV_CONVERSION_COEF3);
++	vepu_write_relaxed(vpu, VEPU_REG_RGB_MASK_B_MSB(7) |
++				VEPU_REG_RGB_MASK_G_MSB(15) |
++				VEPU_REG_RGB_MASK_R_MSB(23),
++			   VEPU_REG_RGB_MASK_MSB);
++}
++
+ static void rockchip_vpu2_set_src_img_ctrl(struct hantro_dev *vpu,
+ 					   struct hantro_ctx *ctx)
+ {
+@@ -62,6 +93,9 @@
+ 
+ 	reg = VEPU_REG_IN_IMG_CTRL_FMT(ctx->vpu_src_fmt->enc_fmt);
+ 	vepu_write_relaxed(vpu, reg, VEPU_REG_ENC_CTRL1);
++
++	if (rockchip_vpu2_rgb_input(ctx))
++		rockchip_vpu2_set_rgb_conversion(vpu);
+ }
+ 
+ static void rockchip_vpu2_jpeg_enc_set_buffers(struct hantro_dev *vpu,
+@@ -163,10 +197,13 @@
+ 
+ 	reg = VEPU_REG_OUTPUT_SWAP32
+ 		| VEPU_REG_OUTPUT_SWAP16
+-		| VEPU_REG_OUTPUT_SWAP8
+-		| VEPU_REG_INPUT_SWAP8
+-		| VEPU_REG_INPUT_SWAP16
+-		| VEPU_REG_INPUT_SWAP32;
++		| VEPU_REG_OUTPUT_SWAP8;
++	if (rockchip_vpu2_rgb_input(ctx))
++		reg |= VEPU_RGB888_INPUT_SWAP;
++	else
++		reg |= VEPU_REG_INPUT_SWAP8
++			| VEPU_REG_INPUT_SWAP16
++			| VEPU_REG_INPUT_SWAP32;
+ 	/* Make sure that all registers are written at this point. */
+ 	vepu_write(vpu, reg, VEPU_REG_DATA_ENDIAN);
+ 
+--- a/drivers/media/platform/verisilicon/rockchip_vpu_hw.c
++++ b/drivers/media/platform/verisilicon/rockchip_vpu_hw.c
+@@ -61,6 +61,49 @@
+ 	},
+ };
+ 
++/* The VPU2 encoder also takes RGB, which it converts to YCbCr itself. */
++static const struct hantro_fmt rockchip_vpu2_enc_fmts[] = {
++	{
++		.fourcc = V4L2_PIX_FMT_YUV420M,
++		.codec_mode = HANTRO_MODE_NONE,
++		.enc_fmt = ROCKCHIP_VPU_ENC_FMT_YUV420P,
++	},
++	{
++		.fourcc = V4L2_PIX_FMT_NV12M,
++		.codec_mode = HANTRO_MODE_NONE,
++		.enc_fmt = ROCKCHIP_VPU_ENC_FMT_YUV420SP,
++	},
++	{
++		.fourcc = V4L2_PIX_FMT_YUYV,
++		.codec_mode = HANTRO_MODE_NONE,
++		.enc_fmt = ROCKCHIP_VPU_ENC_FMT_YUYV422,
++	},
++	{
++		.fourcc = V4L2_PIX_FMT_UYVY,
++		.codec_mode = HANTRO_MODE_NONE,
++		.enc_fmt = ROCKCHIP_VPU_ENC_FMT_UYVY422,
++	},
++	{
++		.fourcc = V4L2_PIX_FMT_XBGR32,
++		.codec_mode = HANTRO_MODE_NONE,
++		.enc_fmt = ROCKCHIP_VPU_ENC_FMT_RGB888,
++	},
++	{
++		.fourcc = V4L2_PIX_FMT_JPEG,
++		.codec_mode = HANTRO_MODE_JPEG_ENC,
++		.max_depth = 2,
++		.header_size = JPEG_HEADER_SIZE,
++		.frmsize = {
++			.min_width = 96,
++			.max_width = 8192,
++			.step_width = MB_DIM,
++			.min_height = 32,
++			.max_height = 8192,
++			.step_height = MB_DIM,
++		},
++	},
++};
++
+ static const struct hantro_fmt rockchip_vpu1_postproc_fmts[] = {
+ 	{
+ 		.fourcc = V4L2_PIX_FMT_YUYV,
+@@ -729,8 +772,8 @@
+  */
+ const struct hantro_variant rk3399_vpu_variant = {
+ 	.enc_offset = 0x0,
+-	.enc_fmts = rockchip_vpu_enc_fmts,
+-	.num_enc_fmts = ARRAY_SIZE(rockchip_vpu_enc_fmts),
++	.enc_fmts = rockchip_vpu2_enc_fmts,
++	.num_enc_fmts = ARRAY_SIZE(rockchip_vpu2_enc_fmts),
+ 	.dec_offset = 0x400,
+ 	.dec_fmts = rk3399_vpu_dec_fmts,
+ 	.num_dec_fmts = ARRAY_SIZE(rk3399_vpu_dec_fmts),
+@@ -746,8 +789,8 @@
+ 
+ const struct hantro_variant rk3568_vepu_variant = {
+ 	.enc_offset = 0x0,
+-	.enc_fmts = rockchip_vpu_enc_fmts,
+-	.num_enc_fmts = ARRAY_SIZE(rockchip_vpu_enc_fmts),
++	.enc_fmts = rockchip_vpu2_enc_fmts,
++	.num_enc_fmts = ARRAY_SIZE(rockchip_vpu2_enc_fmts),
+ 	.codec = HANTRO_JPEG_ENCODER,
+ 	.codec_ops = rk3568_vepu_codec_ops,
+ 	.irqs = rk3568_vepu_irqs,
+@@ -773,8 +816,8 @@
+ 
+ const struct hantro_variant px30_vpu_variant = {
+ 	.enc_offset = 0x0,
+-	.enc_fmts = rockchip_vpu_enc_fmts,
+-	.num_enc_fmts = ARRAY_SIZE(rockchip_vpu_enc_fmts),
++	.enc_fmts = rockchip_vpu2_enc_fmts,
++	.num_enc_fmts = ARRAY_SIZE(rockchip_vpu2_enc_fmts),
+ 	.dec_offset = 0x400,
+ 	.dec_fmts = rockchip_vdpu2_dec_fmts,
+ 	.num_dec_fmts = ARRAY_SIZE(rockchip_vdpu2_dec_fmts),

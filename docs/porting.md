@@ -35,7 +35,7 @@ The code keeps the board apart:
   (`board::boundary`) fails when other code of the GUI uses `oos_hal::dho` or `board::dho`.
 
 - `hal/src/target.rs`: the description of a board family (`Target`): card layout, update target, partition table
-  marks, boot card controller, verified models, model table, standard limits, overclock steps. `hal/src/dho/target.rs`
+  marks, boot card controller, hardware variants (and which have run OOS), model table, standard limits, overclock steps. `hal/src/dho/target.rs`
   fills it in, and the neutral code reads `target::ACTIVE`.
 - `rootfs/board/<name>/`: what the image takes from the board. `etc/oos-board` holds the same values for the scripts and
   the build (kernel tree, command line, modules, name of the update file); a hal test keeps it equal to `Target`.

@@ -8,9 +8,12 @@ How the DHO800/DHO900 hardware works and how OOS drives it. "Verified on the uni
 - [architecture.md](architecture.md): how the SD card, kernel, Rust crates and GUI fit together.
 - [boot.md](boot.md): card layout, boot chain, the image format of the stock loader, OOS start-up order.
 - [install-usb.md](install-usb.md): installing OOS from a USB stick, without opening the scope.
+- [sdcard-backup.md](sdcard-backup.md): backing up and cloning the SD card on Windows, macOS and Linux (card route).
 - [update.md](update.md): signed update packages, trial start and rollback.
 - [wlan.md](wlan.md): WLAN through a USB stick.
+- [network.md](network.md): Ethernet and a link at 10 Mbit/s, date and time from NTP, time zones, `/oos/system.conf`.
 - [models.md](models.md): model identity, capabilities, limits, overclocking and `/oos/limits.conf`.
+- [protocol-modules.md](protocol-modules.md): adding a protocol decoder as a module: one file, one registration.
 - [porting.md](porting.md): other models (MHO900, DHO1000/4000): what carries over, and how to describe one.
 - [bandwidth-test.md](bandwidth-test.md): procedure to measure the analog bandwidth.
 

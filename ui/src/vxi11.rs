@@ -8,9 +8,7 @@
 //! The commands go through the SCPI interpreter (`Scpi::exec`); everything runs non-blocking from the main loop.
 //! Unauthenticated like SCPI and the web remote: bench LAN only.
 
-use std::io::{ErrorKind, Read};
 use std::net::{TcpListener, TcpStream, UdpSocket};
-use std::time::Duration;
 
 pub const PMAP_PROG: u32 = 100_000;
 pub const CORE_PROG: u32 = 0x0607AF;
@@ -260,11 +258,27 @@ impl Server {
     }
 
     pub fn open() -> Server {
-        let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
-        let pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));
-        let s = Server { pm_tcp: tcp(111), pm_udp, core_tcp: tcp(CORE_PORT), conns: Vec::new(), links: Vec::new() };
-        eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if s.pm_tcp.is_some() { "111" } else { "unavailable" }, if s.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
+        let mut s = Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new() };
+        s.set_open(true);
         s
+    }
+
+    /// System > Network > Remote services: portmapper and core port open, or closed with their connections.
+    pub fn set_open(&mut self, on: bool) {
+        if !on {
+            if self.pm_tcp.take().is_some() | self.core_tcp.take().is_some() | self.pm_udp.take().is_some() {
+                eprintln!("oos-ui: VXI-11 off");
+            }
+            self.conns.clear();
+            return;
+        }
+        if self.pm_tcp.is_some() || self.core_tcp.is_some() {
+            return;
+        }
+        let tcp = |p: u16| TcpListener::bind(("0.0.0.0", p)).ok().inspect(|l| drop(l.set_nonblocking(true)));
+        self.pm_udp = UdpSocket::bind(("0.0.0.0", 111)).ok().inspect(|u| drop(u.set_nonblocking(true)));
+        (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
+        eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if self.pm_tcp.is_some() { "111" } else { "unavailable" }, if self.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
     }
 
     pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
@@ -281,7 +295,6 @@ impl Server {
             if let Some(l) = l {
                 while let Ok((s, _)) = l.accept() {
                     let _ = s.set_nonblocking(false);
-                    let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                     let _ = s.set_nodelay(true);
                     if self.conns.len() < MAX_CONNS {
                         self.conns.push(Conn { s, buf: Vec::new(), core, links: Vec::new() });
@@ -295,7 +308,7 @@ impl Server {
             let mut tmp = [0u8; 8192];
             let mut read_bytes = 0;
             loop {
-                match self.conns[i].s.read(&mut tmp) {
+                match crate::net::read_now(&self.conns[i].s, &mut tmp) {
                     Ok(0) => {
                         closed = true;
                         break;
@@ -305,7 +318,7 @@ impl Server {
                         self.conns[i].buf.extend_from_slice(&tmp[..n]); read_bytes += n;
                         if read_bytes >= 65536 { break; }
                     },
-                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => break,
+                    Err(e) if crate::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
                         break;

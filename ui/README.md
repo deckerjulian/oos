@@ -89,6 +89,16 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
 - **History**: the last 200 records; Navigation back/forward step through them (stops the acquisition), play/stop or
   Navigate returns to live; measurements are recomputed for the record shown.
 - Display: persistence Min..Infinite, **colour grade**, intensity, grid full/light/off, **XY** (CH1 vs CH2), clear.
+- **Text size** (Display > Text size): Normal, Large, Larger. Each has its own font atlas (`assets/font.bin`,
+  `font-large.bin`, `font-larger.bin`: the seven faces 2 and 4 px bigger) and its own row of layout sizes (`LAYS` in
+  `src/ui.rs`: strip row pitch 18/21/24 px, dialog label column and column widths, picker grid columns, results overlay,
+  card baselines). Touch targets stay 40 px high at every size; the top bar and the cards keep their height, the
+  network box grows taller and wider. A text that would not fit at the chosen size takes the next smaller one (start
+  menu buttons, channel card lines, narrow table columns); the eye / jitter figure tables and the LA lane names keep the
+  normal size. Normal is drawn exactly as before the setting existed. Saved as `text_size = Normal|Large|Larger`;
+  Default set-up and Recall keep it, the HDMI header keeps the normal size. `cargo test every_menu_fits` and
+  `every_text_size_keeps_the_screen_in_order` check the layout at every size; `OOS_GALLERY=dir cargo test gallery --
+  --ignored` writes every screen per size (`OOS_TEXT_SIZE=Large` for one).
 - **Clear** (CLEAR key, Display > Clear, Quick key set to Clear, SCPI `:CLEar`): empties the screen like a scope:
   waveforms, persistence / colour-grade maps, averaging (restarts from the next record), measurements and their
   statistics, mask pass/fail counts and the search marks (the last record is dropped, so math, decode, CSV and Ref
@@ -205,7 +215,7 @@ stays as it is.
 ## Web remote (HTTP 8080)
 
 `http://<scope>:8080/` shows the live screen (about 5 frames/s as BMP), a click on it is a touch tap, buttons below
-act as front-panel keys and knobs. `GET /cmd?c=<text command>` runs one key, knob or touch command, `GET /screen.bmp` returns the screen, `GET /screen.png`, `/wave.csv` and `/la.csv` are the downloads of the page. Answers above 256 KiB go out in a thread of their own (at most two), so a slow link does not stall the frame loop. `cargo test web_demo -- --ignored --nocapture` runs this page with the demo signals on a host.
+act as front-panel keys and knobs. `GET /cmd?c=<text command>` runs one key, knob or touch command, `GET /screen.bmp` returns the screen, `GET /screen.jpg` the live picture as JPEG from the VPU (`src/vpu.rs`, PNG where there is no VPU), `GET /screen.png`, `/wave.csv` and `/la.csv` are the downloads of the page. Answers above 256 KiB go out in a thread of their own (at most two), so a slow link does not stall the frame loop. `cargo test web_demo -- --ignored --nocapture` runs this page with the demo signals on a host.
 Like SCPI it is unauthenticated: bench network only. The root shell separately requires a provisioned SSH key ([SSH setup](../docs/ssh.md)).
 
 ## Build and test
@@ -227,6 +237,27 @@ overlay, folded), `tests/startmenu.txt` (g0-g3: start menu, history entries, tou
 button) and `tests/axes.txt` (h0-h1: volt labels with a non-round offset, in a short zoom view). Tap coordinates in
 the scripts are those of the layout of 2026-11-03 (second revision: start menu, network box).
 
+**Layout for other screens.** The frame of the screen (top bar, waveform area, bottom bar with the Menu button and
+the cards) comes from the screen size in `src/layout.rs` (`Screen`, `METRICS`, `Frame`, cuts of a `Rect`), not from
+fixed positions. Everything follows it: the plot, the measurement rows, both bars, the menus and dialogs, the
+start-up screen (centred), the on-screen keyboard (a block of its own size in the middle) and System info. Only the
+power-on picture is panel-sized (`PANEL_W` / `PANEL_H`, counted by the test `layout_panel_budget`, which lets that
+number only go down). The layout tests run on the panel, 1280 x 800 and 1920 x 1080 (`ui/lint.rs`, `SCREENS`). On the
+scope the screen is the panel. On the host another size can be tried:
+
+```
+target/release/oos-ui --script tests/basic.txt --size 1920x1080   # taps in the scripts are panel coordinates
+tools/layout-check.sh record     # before a layout change: tests/*.txt at the three text sizes, 276 pictures
+tools/layout-check.sh check      # after it: names every picture that differs, with the box of the change
+```
+
+`OOS_GALLERY=dir OOS_SIZE=1920x1080 cargo test --release gallery -- --ignored` renders every page at that size.
+Display > HDMI > Layout uses the same: `Ui::render_view` draws the screen once more at the monitor's size (at most
+1920 x 1080, `Screen::for_monitor`), with the plot's traces stretched from the panel's phosphor maps; the panel's
+layout and maps stay as they are.
+`layout-check.sh` gives each script an empty storage directory and stops the clock (`OOS_FIXED_TIME`), so the same
+source gives the same pictures; the script command `textsize normal|large|larger` sets Display > Text size.
+
 On the scope (OOS shell): `insmod .../edt-ft5x06.ko` once, then `/tmp/oos-ui &`. SIGTERM restores the previous
 display content and turns the LEDs off. In the OOS image `etc/rcS` loads the touch driver and starts `/bin/oos-ui`
 in a restart loop (`touch /tmp/oos-ui.off` before `killall oos-ui` keeps it stopped).
@@ -242,15 +273,18 @@ for physical-time alignment, automatic Eye/Jitter, TekScope-style zoom and nativ
 memory navigation. [SSH provisioning](../docs/ssh.md) covers the scope image's
 key-only shell access.
 
-`src/gfx.rs` renderer, `src/font.rs` + `assets/font.bin` (generated by `tools/mkfont.py` from Roboto Regular/Medium
-in `tools/fonts/`, Apache License 2.0), `src/model.rs` settings and number formatting, `src/wave.rs` sources, phosphor map,
+`src/gfx.rs` renderer, `src/font.rs` + `assets/font.bin`, `font-large.bin`, `font-larger.bin` (generated by
+`tools/mkfont.py OUT normal|large|larger` from Roboto Regular/Medium in `tools/fonts/`, Apache License 2.0; the same
+bytes on every run), `src/model.rs` settings and number formatting, `src/wave.rs` sources, phosphor map,
 measurements, auto set-up, `src/ui.rs` layout, menus, input, colour grade, mask display, `src/store.rs` setup files, CSV, PNG, `src/drm.rs` KMS output, `src/input.rs` touch, front
-panel, FIFO, `src/cmd.rs` text commands, `src/main.rs`.
+panel, FIFO, `src/cmd.rs` text commands, `src/layout.rs` screen size, frame and cuts, `src/main.rs`.
 
 ## Next
 
 Live data from `oos-fpgad` (shared-memory ring), settings persistence across reboots and a storage directory on a
-writable partition (Storage writes to `/tmp/oos` for now), HDMI as a second output, GPU (Mali) path for higher waveform rates, LA (D0-D15) display.
+writable partition (Storage writes to `/tmp/oos` for now), HDMI as a second output, LA (D0-D15) display. Display > Graphics = GPU (the default) puts the picture together on the Mali-T860
+(gpu/README.md): the screen in two layers (`Ui::render_layers`), the traces as jobs, `gpu.rs` and the helper
+`oos-gpu`; on the panel no faster than the CPU path, which skips empty pixels.
 
 ## Protocol trigger (2026-11-03)
 

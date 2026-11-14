@@ -35,6 +35,36 @@ pub struct Layout {
     pub boot_bytes: usize,
 }
 
+/// Models with the same hardware (board, FPGA, front ends), told apart only by what the stock software makes of it,
+/// such as the rated bandwidth.
+#[derive(Debug)]
+pub struct Variant {
+    /// as a person calls it
+    pub name: &'static str,
+    pub models: &'static [&'static str],
+    /// the models of it OOS is known to have run on, and who says so; empty: not verified
+    pub ran_on: &'static [(&'static str, &'static str)],
+}
+
+impl Variant {
+    pub fn verified(&self) -> bool {
+        !self.ran_on.is_empty()
+    }
+}
+
+impl Target {
+    /// The hardware variant of a model name (case-insensitive).
+    pub fn variant(&self, model: &str) -> Option<&'static Variant> {
+        let n = model.trim().to_ascii_uppercase();
+        self.variants.iter().find(|v| v.models.contains(&n.as_str()))
+    }
+
+    /// Every model of a variant OOS has run on, in the order of the table.
+    pub fn verified_models(&self) -> Vec<&'static str> {
+        self.variants.iter().filter(|v| v.verified()).flat_map(|v| v.models.iter().copied()).collect()
+    }
+}
+
 /// One board family.
 pub struct Target {
     /// the name of its folders (`hal/src/<name>`, `ui/src/board/<name>`, `rootfs/board/<name>`)
@@ -48,8 +78,9 @@ pub struct Target {
     pub parm_marks: &'static [&'static str],
     /// part of the sysfs path of the boot card's controller
     pub card_controller: &'static str,
-    /// models OOS has run on: the first install from the stock system takes no other without being told
-    pub verified_models: &'static [&'static str],
+    /// the hardware variants of the family: the first install from the stock system takes a model without being told
+    /// only when OOS has run on a model of its variant
+    pub variants: &'static [Variant],
     /// the model assumed when the unit does not say what it is
     pub assumed_model: &'static str,
     /// capabilities of a model name, `None` if it is not in the table

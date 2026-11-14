@@ -195,6 +195,17 @@ the trigger channel must be in the acquisition channel mask (0x4008[3:0] / chmas
 
 GND is not a trigger coupling.
 
+Measured on a DHO924S (2026-11-13, CH1 500 mV/div, 1 Vpp sine on 1 V DC, NORMAL sweep, records per second):
+
+- DC at level 0 V: no trigger (the signal stays between 0.5 and 1.5 V). AC at level 0 V: triggers at 10 kHz, 100 kHz
+  and 1 MHz.
+- LF reject removes the DC like AC and puts its output at the middle code: with the offset in the level code (as for
+  DC) and -1 V channel offset it fired at levels 0.8 to 1.2 V and not at 0 V; with 0 V offset at -0.2 to 0.2 V. OOS
+  leaves the offset out of the level for LF reject as for AC, so 0 V is the zero crossing of the filtered signal. At
+  10 kHz the output is already small (it fires only within about the hysteresis around the middle).
+- HF reject keeps the DC (level 1 V fires, as with DC) and suppresses 1 MHz (no trigger at 1 V), 10 kHz and 100 kHz
+  pass.
+
 Sequence: if the code equals the stored one, **no write**. Otherwise store, `bypass(coupling != DC)` (0x205c bit12),
 `iir(code, source, 0x800)`: 0x208c = (s208c & 0xfffc0000) | code | ((source-1)&3) << 2 | 0x800 << 4.
 

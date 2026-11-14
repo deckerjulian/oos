@@ -241,7 +241,7 @@ impl Ui {
 
     pub(super) fn draw_waves_board(&self, cv: &mut Canvas) {
         let Some(r) = self.waves_board_rect() else { return };
-        let f = &self.fonts;
+        let f = &self.fonts();
         cv.fill(r, PANEL_BG);
         cv.rect(r, CARD_BORDER);
         cv.set_clip(r.inset(6));
@@ -259,7 +259,7 @@ impl Ui {
     }
 
     fn draw_set_table(&self, cv: &mut Canvas, r: Rect, mut y: i32, slots: &[usize], table: &[(Meas, Vec<f64>)]) -> i32 {
-        let f = &self.fonts;
+        let f = &self.fonts();
         y += 16;
         cv.text(&f.s, r.x + 8, y, "Table", LABEL);
         y += 4;
@@ -291,7 +291,7 @@ impl Ui {
     }
 
     fn draw_set_summary(&self, cv: &mut Canvas, r: Rect, mut y: i32) -> i32 {
-        let f = &self.fonts;
+        let f = &self.fonts();
         y += 14;
         cv.text(&f.s, r.x + 8, y, "Summary", LABEL);
         y += 4;
@@ -313,7 +313,7 @@ impl Ui {
     }
 
     fn draw_set_plots(&self, cv: &mut Canvas, r: Rect, mut y: i32, slots: &[usize]) -> i32 {
-        let f = &self.fonts;
+        let f = &self.fonts();
         y += 14;
         cv.text(&f.s, r.x + 8, y, "Plots", LABEL);
         y += 6;
@@ -350,7 +350,7 @@ impl Ui {
     }
 
     fn draw_set_histogram(&self, cv: &mut Canvas, r: Rect, mut y: i32) {
-        let f = &self.fonts;
+        let f = &self.fonts();
         y += 10;
         cv.text(&f.s, r.x + 8, y, "Histogram", LABEL);
         y += 6;
@@ -456,7 +456,7 @@ impl Ui {
         let index = self.meas_cfg.unwrap() as usize;
         let Some(&(k, id)) = self.m.meas.get(index) else { return };
         let own = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
-        let f = &self.fonts;
+        let f = &self.fonts();
         cv.round(g.panel, 8, ACCENT, 255);
         cv.round(g.panel.inset(2), 7, DLG_BG, 255);
         cv.text(&f.mb, g.panel.x + 16, g.panel.y + 26, &format!("{} settings", k.name()), TEXT);
@@ -510,11 +510,11 @@ impl Ui {
     }
 
     fn cfg_caption(&self, cv: &mut Canvas, panel: Rect, n: i32, text: &str) {
-        cv.text(&self.fonts.s, panel.x + 16, panel.y + 72 + n * 48, text, LABEL);
+        cv.text(&self.fonts().s, panel.x + 16, panel.y + 72 + n * 48, text, LABEL);
     }
 
     fn draw_stepper(&self, cv: &mut Canvas, minus: Rect, plus: Rect, full: Rect, value: &str) {
-        let f = &self.fonts;
+        let f = &self.fonts();
         btn(cv, minus, BTN, BTN_BORDER);
         cv.text_in(&f.mb, minus, 1, "-", TEXT);
         btn(cv, plus, BTN, BTN_BORDER);
@@ -850,7 +850,7 @@ mod tests {
             u.open_meas_cfg(index);let caption=u.meas_edge_coverage_caption(WaveId::Ref(0),kind);
             assert!(caption.starts_with("0 /")&&caption.contains("unavailable"),"{caption}");assert!(u.meas_number(WaveId::Ref(0),kind).is_nan());
             let geometry=u.cfg_geom().unwrap();assert!(geometry.panel.h>=212);
-            assert!(u.fonts.s.width(&caption)<=280);
+            assert!(u.fonts().s.width(&caption)<=280);
         }
     }
 

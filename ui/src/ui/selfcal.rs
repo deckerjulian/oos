@@ -200,7 +200,7 @@ impl Ui {
         let p = sh.lock().unwrap().cal_progress.clone();
         let Some((d, t, s)) = p else { return };
         let a = self.area;
-        let f = &self.fonts;
+        let f = self.fonts();
         let txt = format!("Self-cal {:.0} %  {}  (inputs disconnected; Cancel in System > Self-cal)", 100.0 * d as f64 / t.max(1) as f64, s);
         let r = Rect::new(a.x + 20, a.y + a.h / 2 - 20, a.w - 40, 40);
         cv.round(r, 6, rgb(0x30, 0x22, 0x08), 240);

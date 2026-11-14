@@ -21,7 +21,7 @@ Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/s
 | package damaged in transfer, or not signed by a trusted key (the community key is public, so this stops mistakes, not an attacker: see "Keys") | refused before anything is written |
 | image the stock loader would refuse (wrong SHA-1 id, section length not a multiple of 4) | refused before anything is written |
 | power lost while `recovery` is written | the boot magic is set to `KRNL` before the write and back to `OOSK` only after the read-back, so the next power-on starts the intact stock image in `boot`; the previous OOS image is still in the rollback slot. The stock copy in `backup` is not needed for this |
-| new kernel or initramfs hangs **before** rcS (panics, cannot find the card) | the new image is first started by kexec, with `recovery` untouched (below): power-cycle, and the previous OOS build starts again (stock in one-shot mode). The next OOS start reports it. Not covered for a new device tree (`--new-dt`), packages without `trial kexec` (older builds) and `--no-kexec` |
+| new kernel or initramfs hangs **before** rcS (panics, cannot find the card) | the new image is first started by kexec, with `recovery` untouched (below): power-cycle, and the previous OOS build starts again (stock in one-shot mode). The next OOS start reports it. A new device tree is tried too, from 0.1.7 on (below). Not covered for `--new-dt`, packages without `trial kexec` (older builds) and `--no-kexec` |
 | new build hangs in rcS after `oos-oneshot` and the start count (the first three commands of rcS) | `KRNL` is back, so the next power-on boots stock; when OOS is started again, the trial image's second start rolls back |
 | new oos-ui crashes in a loop (3 restarts) or never runs 20 s stable within 180 s | the watcher writes the previous image back right away; the notice is shown on the panel; power-cycle starts the previous build |
 | cold boot ends in `abort` or hangs while oos-ui runs stable (hardware trouble) | counts as a good start (no automatic rollback); the screen names the stage, System > Roll back update is available |
@@ -37,9 +37,10 @@ OOS has no loader of its own, so nothing counts the starts before rcS. An image 
    (`oos-update boot`, before anything writes `recovery`).
 2. The state names the build (`kexec <build>`). The boot selection stays as it is: `recovery` still holds the running
    build.
-3. Its kernel and initramfs are loaded with `kexec_file_load`. A second, uncompressed archive in the initramfs carries
-   the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`: the new build may trust other keys)
-   and the running device tree (`/oos-kexec.dt`); the command line gets `oos.kexec=install` and `initramfs_async=0`
+3. Its kernel and initramfs are loaded with `kexec_file_load`, or, when the image brings another device tree, with
+   `kexec_load` through kexec-tools (`/bin/kexec -c --dtb`, see "Another device tree" below). A second, uncompressed
+   archive in the initramfs carries the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`:
+   the new build may trust other keys) and the device tree section the start runs with (`/oos-kexec.dt`); the command line gets `oos.kexec=install` and `initramfs_async=0`
    (the archive is unpacked before any driver probes). Under the update lock the start-up watcher and oos-ui are
    stopped. Then what writes to memory on its own stops: every network link goes down (the Ethernet controller has
    no shutdown hook, its receive DMA would write packets into memory of the next kernel) and the display subsystem is
@@ -59,9 +60,8 @@ start (step 3) puts everything back and starts oos-ui again.
 
 What it does not cover:
 
-- The device tree: `kexec_file_load` gives the new kernel the running tree. An image with another tree is refused for
-  this path; `--new-dt` writes it directly, without a safety net before rcS. Try such an image on a card you can take
-  out first.
+- A device tree change before 0.1.7: those builds have no kexec-tools and refuse an image with another tree for this
+  path (`--new-dt` writes it directly, without a safety net before rcS). Install 0.1.7 first.
 - A kernel that runs from kexec but hangs before rcS from a cold start (the kexec start runs on warm hardware) starts
   again at every power-on, as with a direct install.
 - The install from 0.1.0 to a later build: 0.1.0 has no kexec start and writes the package directly.
@@ -70,6 +70,27 @@ What it does not cover:
 - A start whose device tree is unknown (`/tmp/oos-booted.dt` missing: started before a build with this, or
   recovery unreadable at start-up) takes the tree from `recovery` only while the state names the running build
   there; otherwise power-cycle once or use `--new-dt`.
+
+### Another device tree
+
+`kexec_file_load` gives the new kernel the running tree, so it cannot try an image with another one. From 0.1.7 the
+image has kexec-tools (`rootfs/build-kexec.sh`, static), and `oos-update` loads such an image with `kexec_load`, which
+takes a tree. Not the image's tree as it is: the stock loader adds to it at every power-on (reserved memory for the
+ramdisk and the boot logo, `bootargs`, the display mode it set up for the logo, the logo's memory). The new tree gets
+those changes: the difference between the tree in the image that started (`/tmp/oos-booted.dt`) and the tree the
+kernel got (`/sys/firmware/fdt`), applied by node path (`hal/src/update/fdt.rs`). So the kexec start runs with the
+tree a power-on of the new image would give it. The loader writes plain values; a change in a `phandle` (dtc numbers
+them anew in every tree) or to a node the new tree does not have refuses the kexec start, and the install then needs
+`--new-dt`. Left out on purpose: the running kernel's ramdisk (`linux,initrd-*` in `/chosen` and its reservation):
+kexec-tools names the new one, and the kernel drops a ramdisk that lies in reserved memory (seen on the unit: the
+55 MB of the kexec start fell into the 13 MB the loader had reserved for its own, and the kernel found no root; the
+power-cycle brought the running build back, as it should). On the unit 33 changes of the loader carry over.
+
+Where the segments go: above 1 GiB (`kexec --mem-min`), and above every GIC table the running kernel's log names. The
+GICv3 keeps its LPI and ITS tables across kexec (it cannot be given new ones); the started kernel takes them over and
+writes to them, and `/proc/iomem` does not show them. On the unit they lie at 0x2400000 and 0xa320000..0xa400000,
+where kexec-tools put the 55 MB initramfs at first: the new kernel found it damaged ("rootfs image is not initramfs
+(uncompression error)", read from pstore after a start with `panic=5`), with every other bus master stopped as well.
 
 `oos-update kexec-check FILE` loads a package's kernel and initramfs and unloads them again, nothing written, no
 restart: it shows that the running kernel takes the image for a kexec start.
@@ -195,8 +216,8 @@ next power-on boots stock: a boot counter with one try, without an own U-Boot.
   the install again.
 - The downgrade check only knows the state's `current`: with no state, an untracked image or after a rollback, any signed
   build can be installed from the LAN without authentication. It still runs on trial.
-- **A new device tree has no safety net** (`--new-dt`), and neither has a direct install (`--no-kexec`, packages without
-  `trial kexec`): a kernel that panics, hangs or cannot reach the SD card before rcS starts again with OOS selected on
+- **`--new-dt` has no safety net**, and neither has a direct install (`--no-kexec`, packages without `trial kexec`, the
+  USB stick): a kernel that panics, hangs or cannot reach the SD card before rcS starts again with OOS selected on
   every power-on, and the card has to come out. Test such a change on a card you can take out first.
 - The watcher judges a start by oos-ui staying up and the start-up checklist finishing. A build that runs but measures
   wrongly is confirmed and becomes the rollback image at the next install.

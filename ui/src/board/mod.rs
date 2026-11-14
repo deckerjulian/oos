@@ -15,8 +15,8 @@
 pub mod dho;
 mod record;
 
-pub use record::to_record;
 pub use record::resample as resample_record;
+pub use record::{sw_trig_level, to_record};
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
@@ -211,6 +211,25 @@ pub enum Slow {
     Scan { delay: f64, single: bool },
 }
 
+/// The hardware frequency counter as the UI wants it: channel, mode (0 frequency, 1 period, 2 totalize), resolution in
+/// digits, and a number the UI raises to clear it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CounterWant {
+    pub ch: usize,
+    pub mode: usize,
+    pub digits: u32,
+    pub clear: u64,
+}
+
+/// A reading of the hardware counter: the signal's period (None: no result in the gate), the edges counted since the
+/// start, and the number of the reading (a new one after every gate).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CounterRead {
+    pub period: Option<f64>,
+    pub total: u64,
+    pub n: u64,
+}
+
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
 pub struct Shared {
@@ -245,6 +264,9 @@ pub struct Shared {
     pub xadc: Option<(f32, f32)>,
     /// LA probe detect (GPIO 120, 1 = present), read about once a second; None = not read
     pub la_probe: Option<bool>,
+    /// the FPGA's frequency counter: wanted by the UI (None: off), the latest reading
+    pub counter_want: Option<CounterWant>,
+    pub counter: Option<CounterRead>,
 }
 
 /// Maximum queued frames; the producer also enforces a byte budget and waits

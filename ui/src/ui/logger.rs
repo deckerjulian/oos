@@ -64,7 +64,7 @@ impl Ui {
             return self.toast("No measurements: tap Measure");
         }
         let dir = self.save_dir();
-        let p = crate::store::next_name(&dir, "log", "csv");
+        let p = self.new_file(&dir, "log", "csv");
         let head = self.log_head();
         if let Err(e) = crate::store::write(&p, format!("{}\n", head).as_bytes()) {
             return self.toast(&format!("Log not started: {}", e));

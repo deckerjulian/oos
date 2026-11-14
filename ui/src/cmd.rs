@@ -10,10 +10,16 @@
 //!   shot <path>              screenshot (PPM)
 //!   frames <n>               host only: advance n frames
 //!   storedir <path>          storage directory (setups, CSV, PNG)
+//!   textsize <name>          Display > Text size (normal, large, larger)
+//!   menu <name>              opens a menu by its title or the entry that opens it (ui/script.rs)
+//!   set <label> = <value>    an item of the open menu by its label, to the option shown as <value>
+//!   do <label>               presses an item of the open menu (an action or a sub-menu)
+//!   pick <label>             opens the grid of all options of an item of the open menu (as a tap on its value)
 //!   stat [path]              write fps / frame count / state to /tmp/oos-ui.stat
 //!   quit
 
 use crate::gfx::Canvas;
+use crate::model::TEXT_SIZES;
 use crate::ui::*;
 
 pub enum Out {
@@ -91,11 +97,31 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
             ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: v[4], y: v[5] });
         }
         "release" => ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: 0, y: 0 }),
+        // by name: the rest of the line (labels have spaces)
+        "menu" | "set" | "do" | "pick" => {
+            let rest = line.trim_start()[w[0].len()..].trim();
+            let r = match w[0] {
+                "menu" => ui.script_menu(rest),
+                "do" => ui.script_do(rest),
+                "pick" => ui.script_pick(rest),
+                _ => match rest.split_once(" = ") {
+                    Some((l, v)) => ui.script_set(l, v),
+                    None => Err("set <label> = <value>".into()),
+                },
+            };
+            if let Err(e) = r {
+                eprintln!("oos-ui: {}: {}", line.trim(), e);
+            }
+        }
         "frames" if w.len() > 1 => return Out::Frames(num(w[1]).max(0) as u32),
         "shot" if w.len() > 1 => return Out::Shot(w[1].to_string()),
         "quit" => ui.quit = true,
         "selfcal" if w.len() > 1 => ui.selfcal_remote_full(w[1], w[2..].contains(&"zero"), w[2..].contains(&"adc")),
         "storedir" if w.len() > 1 => ui.store_dir = w[1].into(),
+        "textsize" if w.len() > 1 => match TEXT_SIZES.iter().find(|t| t.name().eq_ignore_ascii_case(w[1])) {
+            Some(&t) => ui.m.text_size = t,
+            None => eprintln!("oos-ui: unknown text size: {}", w[1]),
+        },
         "stat" => {
             let _ = std::fs::write(w.get(1).copied().unwrap_or("/tmp/oos-ui.stat"), stat_text(ui));
         }
@@ -107,9 +133,17 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
 /// The running state in one line: the `stat` command and `:SYSTem:STATe?`.
 pub fn stat_text(ui: &Ui) -> String {
     let e = ui.fast_edges;
+    let gpu = ui.t_gpu.map_or(String::new(), |t| format!(" gpu layers {:.1} copy {:.1} wait {:.1} (upload {:.1} draw {:.1} read {:.1}) ms", t[0], t[1], t[2], t[3], t[4], t[5]));
+    let p = ui.t_parts;
+    let gpu = format!(" parts meas {:.1} analyse {:.1} pane {:.1} max {:.1} ms{}", p[0], p[1], p[2], p[3], gpu);
+    // the graphics chosen (the GPU part above only while the GPU really draws) and the monitor
+    let hdmi = ui.hdmi_out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));
+    // the GPU's time per frame of each screen: a monitor frame comes every second frame, the pair has 2/30 s
+    let screens = ui.t_gpu_screens.map_or(String::new(), |(p, m)| format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m))));
+    let gpu = format!("{}{} graphics {}{}", gpu, screens, if ui.sys.gpu { "gpu" } else { "cpu" }, hdmi);
     format!(
-        "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}\n",
-        ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1
+        "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}{}\n",
+        ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1, gpu
     )
 }
 

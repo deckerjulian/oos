@@ -168,12 +168,13 @@ fn opt_src_step_in(i: usize, d: i32, nch: usize) -> usize {
 pub const HDIV: f32 = 10.0;
 pub const VDIV: f32 = 8.0;
 
-/// Channel colours (yellow, sky blue, pink, teal: a colour-blind safe set).
+/// Channel colours (yellow, teal, pink, sky blue: a colour-blind safe set). CH2 teal and CH4 blue as the colour
+/// rings of the scope's own probes and inputs have them (CH2 cyan, CH4 blue); until 0.1.11 the two were the other way.
 const PALETTE: [Rgb; 8] = [
     rgb(0xf0, 0xe4, 0x42),
-    rgb(0x56, 0xb4, 0xe9),
-    rgb(0xe0, 0x8c, 0xc0),
     rgb(0x2e, 0xc4, 0xa0),
+    rgb(0xe0, 0x8c, 0xc0),
+    rgb(0x56, 0xb4, 0xe9),
     rgb(0xf0, 0x90, 0x40),
     rgb(0xa0, 0x90, 0xf0),
     rgb(0xc0, 0xd0, 0x60),
@@ -231,6 +232,29 @@ impl Coupling {
             Coupling::Ac => "AC",
             Coupling::Gnd => "GND",
             Coupling::Dc50 => "DC50",
+        }
+    }
+}
+
+/// Coupling of the edge trigger: a filter in the trigger path only, the trace stays as the channel's coupling shows it
+/// (trigger.md 2.5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TrigCoup {
+    Dc,
+    Ac,
+    LfReject,
+    HfReject,
+}
+
+pub const TRIG_COUPS: [TrigCoup; 4] = [TrigCoup::Dc, TrigCoup::Ac, TrigCoup::LfReject, TrigCoup::HfReject];
+
+impl TrigCoup {
+    pub fn name(self) -> &'static str {
+        match self {
+            TrigCoup::Dc => "DC",
+            TrigCoup::Ac => "AC",
+            TrigCoup::LfReject => "LF reject",
+            TrigCoup::HfReject => "HF reject",
         }
     }
 }
@@ -378,7 +402,6 @@ pub enum Proto {
     Parallel,
     CanFd,
     FlexRay,
-    Dmx512,
     ModbusRtu,
     ModbusAscii,
     OneWire,
@@ -388,8 +411,6 @@ pub enum Proto {
     Jtag,
     Qspi,
     I3c,
-    Spdif,
-    UsbPd,
     Arinc429,
     Sent,
     /// USB 1.x / 2.0 low / full speed
@@ -398,18 +419,46 @@ pub enum Proto {
     Mlt3,
     /// MIPI C-PHY: A/B/C electrical states and synchronized 16-bit words.
     Cphy,
+    /// a protocol module (`protocols::MODULES[i]`)
+    Module(u8),
 }
 
-pub const PROTOS: [Proto; 28] = [
+/// The protocols wired by hand; the modules come after them in [`PROTOS`].
+pub const BUILTIN_PROTOS: [Proto; 25] = [
     Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
-    Proto::FlexRay, Proto::Dmx512, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
-    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Spdif, Proto::UsbPd, Proto::Arinc429, Proto::Sent, Proto::Usb,
+    Proto::FlexRay, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
+    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Arinc429, Proto::Sent, Proto::Usb,
     Proto::Manchester, Proto::Mlt3, Proto::Cphy,
 ];
 
+/// Every protocol of the Decode menu: the built-in ones, then the modules.
+pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
+    std::sync::LazyLock::new(|| BUILTIN_PROTOS.iter().copied().chain((0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8))).collect());
+
 impl Proto {
+    /// The module behind a module protocol.
+    pub fn module(self) -> Option<&'static dyn crate::protocols::Protocol> {
+        match self {
+            Proto::Module(i) => Some(crate::protocols::get(i)),
+            _ => None,
+        }
+    }
+
+    /// Name in saved setups: the variant name, or the module's key.
+    pub fn key(self) -> String {
+        match self.module() {
+            Some(p) => p.key().to_string(),
+            None => format!("{:?}", self),
+        }
+    }
+
+    pub fn from_key(k: &str) -> Option<Proto> {
+        PROTOS.iter().copied().find(|p| p.key() == k)
+    }
+
     pub fn name(self) -> &'static str {
         match self {
+            Proto::Module(i) => crate::protocols::get(i).name(),
             Proto::Uart => "UART",
             Proto::I2c => "I2C",
             Proto::Spi => "SPI",
@@ -420,7 +469,6 @@ impl Proto {
             Proto::Parallel => "Parallel",
             Proto::CanFd => "CAN-FD",
             Proto::FlexRay => "FlexRay",
-            Proto::Dmx512 => "DMX512",
             Proto::ModbusRtu => "Modbus RTU",
             Proto::ModbusAscii => "Modbus ASCII",
             Proto::OneWire => "1-Wire",
@@ -430,8 +478,6 @@ impl Proto {
             Proto::Jtag => "JTAG",
             Proto::Qspi => "Quad-SPI",
             Proto::I3c => "I3C",
-            Proto::Spdif => "S/PDIF",
-            Proto::UsbPd => "USB PD",
             Proto::Arinc429 => "ARINC 429",
             Proto::Sent => "SENT",
             Proto::Usb => "USB",
@@ -443,6 +489,7 @@ impl Proto {
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
         match self {
+            Proto::Module(i) => crate::protocols::get(i).roles(),
             Proto::Cphy => [Some("A"), Some("B"), Some("C"), None],
             Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some("SDA"), Some("SCL"), None, None],
             Proto::Spi => [Some("MOSI"), Some("Clock"), Some("CS"), None],
@@ -451,7 +498,6 @@ impl Proto {
             Proto::Swd => [Some("SWDIO"), Some("SWCLK"), None, None],
             Proto::Jtag => [Some("TMS"), Some("TCK"), Some("TDI"), Some("TDO")],
             Proto::Qspi => [Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")],
-            Proto::UsbPd => [Some("CC"), None, None, None],
             // D- optional: D+ alone decodes without SE0
             Proto::Usb => [Some("D+"), None, Some("D-"), None],
             _ =>[Some("Source"), None, None, None],
@@ -459,7 +505,10 @@ impl Proto {
     }
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok(self) -> bool {
-        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Dmx512 | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429)
+        if let Some(p) = self.module() {
+            return p.diff_ok();
+        }
+        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429)
     }
 }
 
@@ -586,9 +635,11 @@ pub enum Quick {
     Single,
     RunStop,
     Clear,
+    /// the next of Display > Views (ui/views.rs)
+    NextView,
 }
 
-pub const QUICKS: [Quick; 8] = [Quick::Screenshot, Quick::SavePng, Quick::SaveSetup, Quick::SaveCsv, Quick::Autoset, Quick::Single, Quick::RunStop, Quick::Clear];
+pub const QUICKS: [Quick; 9] = [Quick::Screenshot, Quick::SavePng, Quick::SaveSetup, Quick::SaveCsv, Quick::Autoset, Quick::Single, Quick::RunStop, Quick::Clear, Quick::NextView];
 
 impl Quick {
     /// Name in the Utility menu and its picker.
@@ -602,6 +653,7 @@ impl Quick {
             Quick::Single => "Single",
             Quick::RunStop => "Run/Stop",
             Quick::Clear => "Clear",
+            Quick::NextView => "Next view",
         }
     }
 
@@ -616,7 +668,48 @@ impl Quick {
             Quick::Single => "Single",
             Quick::RunStop => "Run/Stop",
             Quick::Clear => "Clear",
+            Quick::NextView => "View",
         }
+    }
+}
+
+/// What an HDMI monitor shows. Mirror: the panel picture, scaled. Waveform: a settings line and the waveform area,
+/// scaled. Layout: the whole screen laid out again at the monitor's size, sharp, with the traces stretched; it costs a
+/// second render per monitor frame (about 5 to 10 ms on the unit at 1920 x 1080), so the panel may get fewer frames.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum HdmiMode {
+    Mirror,
+    #[default]
+    Waveform,
+    Layout,
+}
+
+pub const HDMI_MODES: [HdmiMode; 3] = [HdmiMode::Mirror, HdmiMode::Waveform, HdmiMode::Layout];
+
+/// Size of the text on the screen (Display > Text size): Normal is the original look, Large and Larger use fonts 2 and
+/// 4 px bigger with the rows, cards and dialogs grown to match. A preference: Default keeps it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TextSize {
+    #[default]
+    Normal,
+    Large,
+    Larger,
+}
+
+pub const TEXT_SIZES: [TextSize; 3] = [TextSize::Normal, TextSize::Large, TextSize::Larger];
+
+impl TextSize {
+    pub fn name(self) -> &'static str {
+        match self {
+            TextSize::Normal => "Normal",
+            TextSize::Large => "Large",
+            TextSize::Larger => "Larger",
+        }
+    }
+
+    /// 0, 1, 2: the font set and the layout metrics.
+    pub fn index(self) -> usize {
+        self as usize
     }
 }
 
@@ -739,6 +832,7 @@ pub struct DecCfg {
     pub mode: u8,
     pub bits: u32,
     pub parity: oos_dsp::decode::Parity,
+    pub opt: [u8; crate::protocols::OPTS],
 }
 
 /// Decoders at once.
@@ -903,6 +997,8 @@ pub struct Model {
     pub trig_level2: f32,
     /// noise reject: wider comparator hysteresis (0.7 instead of 0.3 div)
     pub trig_nrej: bool,
+    /// coupling of the edge trigger on a channel (`trig_coupling` gives the one in effect)
+    pub trig_coup: TrigCoup,
     /// second source: B (delay), clock (setup/hold)
     pub trig_src2: usize,
     /// Stored reference for delay B / setup-hold clock.
@@ -1051,6 +1147,8 @@ pub struct Model {
     pub dec_parity: oos_dsp::decode::Parity,
     /// one bus on the plot
     pub bus: TraceBus,
+    /// option settings of a protocol module (`protocols::Opt`), indices into its choices
+    pub dec_opt: [u8; crate::protocols::OPTS],
     pub zoom: bool,
     /// slow time bases on the hardware: roll from 50 ms/div (on), scan from 200 ms/div (off), like stock "Auto Roll"
     pub auto_roll: bool,
@@ -1060,9 +1158,15 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
-    /// External display. False copies the panel. True puts the plot on the display and leaves the panel for controls.
-    /// The density changes that plot; the panel keeps its bars.
-    pub hdmi_wave: bool,
+    /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
+    /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
+    pub hdmi: HdmiMode,
+    /// Display > Views: how many screen arrangements there are to switch between (1: off; ui/views.rs)
+    pub views: usize,
+    /// the one shown (0-based)
+    pub view_cur: usize,
+    /// what each view keeps while another one is shown (ui/views.rs, `Ui::view_snapshot`); empty: not set up yet
+    pub view_slots: [String; crate::ui::VIEWS_MAX],
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
@@ -1187,6 +1291,18 @@ pub struct Model {
     pub dpt_4ch: WaveId,
     pub dpt_pct: f64,
     pub dpt_zoom: DptZoom,
+    /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
+    pub bode_usb: bool,
+    /// Bode with a generator that sweeps on its own (`ui::bode::FREE`, same start/stop): sweep time (s), logarithmic
+    /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
+    /// `bode_ref` dBV)
+    pub bode_sw_time: f64,
+    pub bode_sw_log: bool,
+    pub bode_sync: usize,
+    pub bode_sync_slope: Slope,
+    pub bode_sync_level: f32,
+    pub bode_sw_in: usize,
+    pub bode_ref: f64,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
@@ -1227,6 +1343,8 @@ pub struct Model {
     pub mask_inv: bool,
     /// action of the QUICK key
     pub quick: Quick,
+    /// size of the text on the screen
+    pub text_size: TextSize,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
     pub la: crate::ui::la::LaSet,
     /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
@@ -1358,6 +1476,7 @@ impl Default for Model {
             trig_type: TrigType::Edge,
             trig_level2: 0.5,
             trig_nrej: false,
+            trig_coup: TrigCoup::Dc,
             trig_src2: 3,
             trig_ref2: None,
             trig_slope2: Slope::Rise,
@@ -1453,6 +1572,7 @@ impl Default for Model {
             dec_bits: 8,
             dec_parity: oos_dsp::decode::Parity::None,
             bus: TraceBus::default(),
+            dec_opt: [0; crate::protocols::OPTS],
             zoom: false,
             auto_roll: true,
             zscale: 0,
@@ -1460,7 +1580,10 @@ impl Default for Model {
             color_grade: false,
             // samples as dots by default
             dots: true,
-            hdmi_wave: true,
+            hdmi: HdmiMode::Waveform,
+            views: 1,
+            view_cur: 0,
+            view_slots: Default::default(),
             z_src: None,
             hist: Hist::Off,
             view: AView::Scope,
@@ -1555,6 +1678,14 @@ impl Default for Model {
             dpt_4ch: WaveId::Ch(3),
             dpt_pct: 10.0,
             dpt_zoom: DptZoom::Both,
+            bode_usb: false,
+            bode_sw_time: 1.0,
+            bode_sw_log: true,
+            bode_sync: NCH - 1,
+            bode_sync_slope: Slope::Rise,
+            bode_sync_level: 1.0,
+            bode_sw_in: 1,
+            bode_ref: 0.0,
             bw_src: 0,
             bw_hint: 0.0,
             bw_bins: 2000,
@@ -1591,6 +1722,7 @@ impl Default for Model {
             mask_stop: false,
             mask_inv: false,
             quick: Quick::Screenshot,
+            text_size: TextSize::Normal,
             la: Default::default(),
             sim_preset: 3,
             sim_slot: 0,
@@ -1854,9 +1986,17 @@ impl Model {
             // USB auto: low-speed packets)
             TrigType::Bus if self.dec_proto == Proto::Arinc429 && self.dec_arate == 0 => 200.0 / crate::decode::ARINC_RATES[1],
             TrigType::Bus if self.dec_proto == Proto::Usb && self.dec_uspeed == 0 => 200.0 / oos_dsp::decode_ext3::USB_LOW,
-            TrigType::Bus => 200.0 * self.bus_bit(),
+            TrigType::Bus => self.dec_proto.module().and_then(|p| p.frame_span(&self.dec_opts())).unwrap_or(200.0 * self.bus_bit()),
             TrigType::Edge | TrigType::Pattern => 0.0,
             _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
+        }
+    }
+
+    /// The option settings of the decoder's protocol module, in range (zeros for a built-in protocol).
+    pub fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
+        match self.dec_proto {
+            Proto::Module(i) => crate::protocols::opt_fit(i, self.dec_opt),
+            _ => [0; crate::protocols::OPTS],
         }
     }
 
@@ -1871,10 +2011,8 @@ impl Model {
             Proto::I2s => 0.6e-6,
             Proto::Mil1553 => 1e-6,
             Proto::FlexRay => 0.1e-6,
-            Proto::Dmx512 => 4e-6,
             Proto::OneWire => 15e-6,
-            Proto::Spdif => 0.15e-6,
-            Proto::UsbPd => 3.33e-6,
+            Proto::Module(i) => crate::protocols::get(i).bit_time(&self.dec_opts()),
             // auto: high speed (the finer sampling)
             Proto::Arinc429 => {
                 let r = crate::decode::ARINC_RATES[self.dec_arate];
@@ -1937,7 +2075,7 @@ impl Model {
 
     /// The settings of the decoder the menu edits.
     pub fn dec_cfg(&self) -> DecCfg {
-        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), cphy_rate: self.dec_cphy_rate, src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone() }
+        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), cphy_rate: self.dec_cphy_rate, src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone(), opt: self.dec_opt }
     }
 
     fn dec_load(&mut self, c: &DecCfg) {
@@ -1964,6 +2102,7 @@ impl Model {
         self.dec_mode = c.mode.clone();
         self.dec_bits = c.bits.clone();
         self.dec_parity = c.parity.clone();
+        self.dec_opt = c.opt;
     }
 
     /// Settings of decoder `k`.
@@ -2054,6 +2193,15 @@ impl Model {
         }
         if n >= NCH {
             return changed;
+        }
+        // the Bode sync channel goes to the last input (CH4 by default, CH2 on a 2-channel model), its input to none
+        if self.bode_sync >= n {
+            self.bode_sync = n - 1;
+            changed = true;
+        }
+        if self.bode_sw_in > n {
+            self.bode_sw_in = 0;
+            changed = true;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
         for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.mask_src, &mut self.bw_src, &mut self.afg_arb_src]
@@ -2148,6 +2296,12 @@ impl Model {
     /// Comparator hysteresis of the trigger in divisions (trigger.md 2.3): 0.3, 0.7 with noise reject.
     pub fn trig_hyst_div(&self) -> f32 {
         if self.trig_nrej { 0.7 } else { 0.3 }
+    }
+
+    /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and
+    /// for an LA line.
+    pub fn trig_coupling(&self) -> TrigCoup {
+        if self.trig_type == TrigType::Edge && self.trig_line().is_none() { self.trig_coup } else { TrigCoup::Dc }
     }
 
     pub fn la_on(&self) -> bool {

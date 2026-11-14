@@ -651,7 +651,7 @@ mod performance_and_timing_tests {
         wave.label = "Capture_信号_very_long_file_name_".repeat(8); wave.vpd = 0.25;
         let (name, readout) = ui.ref_badge_lines(0, &wave, 200);
         assert!(name.starts_with("R1 ") && name.ends_with("..."));
-        assert!(ui.fonts.sb.width(&name) <= 188);
+        assert!(ui.fonts().sb.width(&name) <= 188);
         assert_eq!(readout, "250 mV/div · 50 GSa/s");
         assert!(ui.ref_badge_lines(9, &wave, 36).0.starts_with("R10"));
         let mut canvas = Canvas::new(400, 100);
@@ -671,14 +671,14 @@ mod performance_and_timing_tests {
         let width = buttons[0].2.x - 12 - 166;
         let caption = ui.top_acq_caption(width).0;
         assert!(caption.contains("REF") && caption.contains("200 GSa/s") && caption.contains("20.0 Mpts"), "{caption}");
-        assert!(ui.fonts.s.width(&caption) <= width, "caption {:?} width={} room={width}", caption, ui.fonts.s.width(&caption));
+        assert!(ui.fonts().s.width(&caption) <= width, "caption {:?} width={} room={width}", caption, ui.fonts().s.width(&caption));
         assert!(buttons[0].2.x > Ui::SINGLE_BTN.x + Ui::SINGLE_BTN.w);
-        for (_, _, button) in buttons { assert!(button.w >= 40 && Ui::top_hit(button).h >= 40); }
+        for (_, _, button) in buttons { assert!(button.w >= 40 && ui.top_hit(button).h >= 40); }
         ui.usb = true; ui.wlan_stick = true;
         let room = ui.top_buttons()[0].2.x - 12 - 166;
         let caption = ui.top_acq_caption(room).0;
         assert!(caption.contains("REF") && caption.contains("20.0 Mpts"));
-        assert!(ui.fonts.s.width(&caption) <= room);
+        assert!(ui.fonts().s.width(&caption) <= room);
         ui.full = true;
         assert!(ui.footer_rects().4.is_some(), "expanded scope keeps Live reachable while its top bar is hidden");
     }

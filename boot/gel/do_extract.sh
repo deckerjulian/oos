@@ -8,9 +8,11 @@
 #
 # Files on the stick that change what happens:
 #   oos-dry-run.txt    all checks and the rescue set, the card is not written
-#   oos-any-model.txt  also on a model OOS never ran on
-#   oos-reinstall.txt  write the stick's build also when the card holds a valid OOS image (else that one is kept and only
-#                      selected: a newer build installed over the network stays)
+#   oos-any-model.txt  also on a model whose hardware variant OOS has not run on yet (the log of a refused run says
+#                      which models are verified, and the risk)
+#   oos-reinstall.txt  write the stick's build also when the card holds a valid OOS image of the same or a newer build
+#                      (else that one is kept and only selected: a newer build installed over the network stays; an
+#                      older one is updated)
 SRC=/mnt/tmp/oos
 
 # the stick holds the update file, in its top folder

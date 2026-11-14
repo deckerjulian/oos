@@ -19,7 +19,8 @@ jobs:
       matrix:
         runner: [ubuntu-24.04-arm, ubuntu-24.04]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    # x86-64: the arm64 containers (busybox, kexec-tools, Mesa for the GPU helper) run through QEMU, which takes hours
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
       - name: QEMU for the arm64 containers

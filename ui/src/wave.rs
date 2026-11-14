@@ -188,23 +188,14 @@ fn ext_demo(p: Proto) -> Option<&'static ExtDemo> {
         let mut v = Vec::new();
         let fd = g1::FdFrame { id: 0x123, ext: false, fd: true, brs: true, esi: false, data: (1..=12).collect() };
         v.push((Proto::CanFd, mk(g1::can_fd_logic(&[fd], 500e3, 2e6, 0.0, 3.3), None, 40e-6)));
-        let mut w = g1::Wave::new(0.0, 3.3, 20e-9);
-        w.level(true, 20e-6);
-        g1::dmx(&mut w, 0, &[255, 128, 64, 32, 16, 8, 4, 0]);
-        w.level(true, 50e-6);
-        v.push((Proto::Dmx512, mk(w.done(), None, 0.0)));
         let f: Vec<u32> = g1::modbus_rtu_frame(0x11, &[0x03, 0x00, 0x6B, 0x00, 0x03]).into_iter().map(u32::from).collect();
         v.push((Proto::ModbusRtu, mk(uart(&f, 8, Parity::Even, 19200.0), None, 2e-3)));
         v.push((Proto::Uart9, mk(uart(&[0x1A5, 0x0C3, 0x07E], 9, Parity::None, 9600.0), None, 1e-3)));
         let ow = [g1::Ow::Reset { presence: true }, g1::Ow::Write(0x33), g1::Ow::Read(0x28), g1::Ow::Read(0xFF), g1::Ow::Read(0x4C), g1::Ow::Read(0x3D)];
         v.push((Proto::OneWire, mk(g1::onewire_logic(&ow, 0.0, 3.3), None, 200e-6)));
-        let pd = g2::PdFrame::Msg { sop: 0, header: 0x1161, data: vec![0x0801_912C], bad_crc: false };
-        v.push((Proto::UsbPd, mk(g2::usbpd(&[pd], 300e3, 0.0, 1.1), None, 100e-6)));
         let ops = [g2::SwdOp::LineReset, g2::SwdOp::JtagToSwd, g2::SwdOp::LineReset, g2::SwdOp::Idle(2), g2::SwdOp::Xfer { ap: false, read: true, a: 0, ack: 1, data: 0x2BA0_1477, bad_parity: false }, g2::SwdOp::Idle(4)];
         let (clk, dio) = g2::swd(&ops, 1e6, 0.0, 3.3);
         v.push((Proto::Swd, mk(dio, Some(clk), 20e-6)));
-        let cs = [0u8; 24];
-        v.push((Proto::Spdif, mk(g2::spdif(&[(0x12345, 0x6789A); 6], &cs, 48e3, &[], 0.0, 3.3), None, 0.0)));
         // FlexRay 10 Mbit/s on RxD: a static frame with 8 payload bytes
         let fr = g1::FrFrame { ppi: false, nf: true, sync: false, startup: false, id: 0x2a, cycle: 5, payload: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88], channel_b: false };
         v.push((Proto::FlexRay, mk(oos_dsp::sim::bits_logic(&g1::flexray_bits(&fr, 11), 1e-7, 20, 0.0, 3.3), None, 10e-6)));
@@ -306,6 +297,15 @@ fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
         (Some(Proto::Spi), 1) => return demo_bus().2[0].v(t.rem_euclid(50e-6)),
         (Some(Proto::Spi), 2) => return demo_bus().2[2].v(t.rem_euclid(50e-6)),
         (Some(Proto::Spi), 3) => return demo_bus().2[1].v(t.rem_euclid(50e-6)),
+        // a protocol module: its demo lines on the channels of its setup
+        (Some(Proto::Module(i)), _) => {
+            if let Some(d) = crate::protocols::demo(i) {
+                let s = crate::protocols::get(i).setup();
+                if let Some(f) = (0..4).find(|&r| s.src[r] == Some(ch)).and_then(|r| d.lines[r].as_ref()) {
+                    return f(t.rem_euclid(d.period));
+                }
+            }
+        }
         (Some(p), 2 | 3) => {
             if let Some(d) = ext_demo(p) {
                 let tt = t.rem_euclid(d.period);
@@ -489,6 +489,17 @@ impl Source {
                 (0..n).map(|k| v[((k as f64 * dt) / f.dt) as usize % v.len()]).collect()
             }
         }
+    }
+
+    /// Hardware source: hands the counter set-up the UI wants to the acquisition thread (None: off) and returns the
+    /// latest reading; None off the hardware (the counter is then worked out from the records).
+    pub fn hw_counter(&self, want: Option<crate::board::CounterWant>) -> Option<Option<crate::board::CounterRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.counter_want = want;
+            return Some(g.counter);
+        }
+        None
     }
 
     /// Hardware source: FPGA version (0 = not reached) and the latest XADC reading (die degC, VCCINT V).
@@ -916,7 +927,14 @@ pub struct Stats {
 }
 
 pub fn stats(v: &[f32], dt: f64) -> Stats {
-    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    // the finite samples: the record itself when it has no gap
+    let own: Vec<f32>;
+    let f: &[f32] = if v.iter().all(|x| x.is_finite()) {
+        v
+    } else {
+        own = v.iter().copied().filter(|x| x.is_finite()).collect();
+        &own
+    };
     if f.len() < 4 {
         return Stats::default();
     }
@@ -928,7 +946,7 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
     // top/base: histogram modes of the upper and lower 40 %
     let span = (vmax - vmin).max(1e-9);
     let mut hist = [0u32; 256];
-    for &x in &f {
+    for &x in f {
         hist[(((x - vmin) / span) * 255.0) as usize] += 1;
     }
     let mode = |a: usize, b: usize| -> usize { (a..b).max_by_key(|&i| hist[i]).unwrap_or(a) };

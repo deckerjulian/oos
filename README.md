@@ -4,7 +4,7 @@ OOS replaces the software of a DHO800/DHO900 oscilloscope with a Linux 6.12 kern
 written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
 
 > **Experimental software. Read the [disclaimer](#disclaimer) before you install it.**
-> OOS has only been run on one DHO924S so far, and several functions have never run on real hardware
+> OOS has run on a DHO924S and, by a user report, on a DHO804; several functions have never run on real hardware
 > ([status](#status)). Measurements made with OOS are not calibrated to any standard.
 
 <table>
@@ -103,18 +103,19 @@ OOS reads the model from `/rigol/data/vendor.bin` at start and adapts channels, 
 trigger to it. The stock software has to be on the card for that; without it, set `model = ...` in `/oos/limits.conf`.
 Details and limits: [docs/models.md](docs/models.md).
 
-| Model | Rated bandwidth | Channels | Logic analyser | Generator | EXT trigger |
-|---|---|---|---|---|---|
-| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes |
-| DHO804 / DHO814 | 70 / 100 MHz | 4 | - | - | - |
-| DHO824 | 250 MHz | 4 | - | - | - |
-| DHO914 / DHO914-EDU | 125 MHz | 4 | yes | - | - |
-| DHO914S | 125 MHz | 4 | yes | yes | - |
-| DHO924 / DHO924-EDU | 250 MHz | 4 | yes | - | - |
-| DHO924S | 250 MHz | 4 | yes | yes | - |
+| Model | Rated bandwidth | Channels | Logic analyser | Generator | EXT trigger | Runs OOS |
+|---|---|---|---|---|---|---|
+| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes | not yet |
+| DHO804 / DHO814 / DHO824 | 70 / 100 / 250 MHz | 4 | - | - | - | a DHO804 runs it (user report) |
+| DHO914 / DHO924 | 125 / 250 MHz | 4 | yes | - | - | not yet |
+| DHO914-EDU / DHO924-EDU | 125 / 250 MHz | 4 | yes | - | - | not yet |
+| DHO914S / DHO924S | 125 / 250 MHz | 4 | yes | yes | - | a DHO924S runs it (developer's unit) |
 
-**Tested on hardware: DHO924S only.** All other models are prepared from the known model table and have never run OOS.
-The feature columns follow the model line-up; whether the EDU variants have the LA port is not confirmed. DHO1000,
+Each row is one hardware variant: its models differ only in the licensed bandwidth ([docs/models.md](docs/models.md)
+2.1), so a model whose row runs OOS counts as verified, and the USB install takes it without being told
+([docs/install-usb.md](docs/install-usb.md) 4). The other models are prepared from the known model table and have
+never run OOS. The feature columns follow the model line-up; whether the EDU variants have the LA port is not
+confirmed. DHO1000,
 HDO1000/2000/4000 and MHO models are different boards and are not supported; [docs/porting.md](docs/porting.md) says
 what would carry over and how an owner can describe one.
 
@@ -152,32 +153,44 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Waveform windows: the plot split into two windows side by side, two stacked, or four, each channel, math channel and
   the LA in a window of your choice, all on one time base
 - Full screen: one tap at the top right of the plot hides the top bar and the cards, one more brings them back
-- HDMI output as a mirror or as a separate waveform workspace
+- Text size Normal, Large or Larger for the bars, cards, measurement rows, menus and dialogs; backlight brightness
+- HDMI output as a mirror, as a separate waveform workspace, or laid out again at the monitor's size
+- the picture drawn on the GPU (Mali-T860, Panfrost; System > Graphics, CPU as before is the other choice): a third
+  less load on the frame loop, a monitor scaled without CPU work ([gpu/README.md](gpu/README.md)); the web picture as
+  JPEG from the video encoder (VPU)
 
 **Measurement and maths**
 - 35 automatic measurements plus delay and phase between channels, 14 at once, with statistics
-- Time, voltage, tracking and XY cursors; DVM and counter from the record
+- Time, voltage, tracking and XY cursors; DVM; frequency counter in the FPGA (reciprocal, up to 6 digits; frequency, period, totalize)
 - Second pane under the plot, as high as its content: spectrum with a peak list, results table with statistics, cursors
   and peaks, decoder events, or the trends of two measurements
 - Measurements labelled on the trace: level lines and arrows with their values
+- Up to four views to switch between (Display > Views): each keeps its windows, second pane, measurements, cursors
+  and zoom; a swipe from the edge of the plot or the numbers in the top bar switch
 - Data logger: measurements as CSV at an interval from 1 s to 1 h, to the stick or the card
 - 8 math channels, also on each other, with free formulas (`sqrt(CH1^2+CH2^2)`): add, subtract, multiply, divide, integrate, differentiate, abs, sqrt, log, ln, exp, Ax+B,
   low/high/band-pass and band-stop filters, FFT
 - Reference waveforms with scale, offset, colour, name and CSV export and import, mask test
 
-**Protocol decoders (25)**
-- Four decoders at once, with an event table you can export and that jumps to an event
+**Protocol decoders (26)**
+- Four decoders at once, with an event table you can export and that jumps to an event; DCC lists one command per row
+  ("Loco 5  Fwd 50/128")
 - Serial: UART, UART 9-bit, I2C, SPI, Quad-SPI, I3C, 1-Wire, DS2482, SWD, JTAG
 - Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553
 - Audio, lighting, industrial: I2S, S/PDIF, DMX512, Modbus RTU, Modbus ASCII
 - Other: USB low/full speed, USB PD, parallel
+- Model railways: NMRA DCC (contributed by Arjen Halma), with a view of the layout in Display > Second pane > Bus view:
+  locomotives, turnouts, signals, and the track status, green while live and red after an emergency stop
+- New decoders come as protocol modules: one file, one registration ([docs/protocol-modules.md](docs/protocol-modules.md))
 
 **Analysers**
 - Spectrum analyser: resolution from the whole record, span that follows the signal in the pane, fundamental and harmonics
   found as numbered peaks, RBW, trace modes, waterfall, THD, SNR, SFDR, limit line from a trace
 - Eye diagram with voltage and UI axes, density colours, TIE trend, histogram and spectrum, bathtub curve. Jitter split into TJ, RJ and DJ (dual-Dirac model) and measured DCD, DDJ and PJ, pooled over records
 - Power analysis: quality, harmonics, switching, ripple
-- Bode plot with the built-in generator or an external one (APPL, BSWV, generic SCPI)
+- Bode plot with the built-in generator or an external one on the LAN or the USB-A port (APPL or BSWV command sets, a
+  UTG900 preset, generic SCPI), or from one record of a generator that sweeps on its own and marks the sweep start on a
+  sync output
 - Identify: names a signal and sets up a trigger and decoder for it
 - Bandwidth test: rise time, overshoot and magnitude response from a fast edge
 
@@ -199,8 +212,11 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 | LAN announcement | 5353 | mDNS of the SCPI socket, VXI-11 and HiSLIP; the HTTP record's path is `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | Telnet | 23 | root shell, no password |
+| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-204527.local:8080`, and its services for browsing ([docs/network.md](docs/network.md)) |
 
-All of them run over Ethernet and over WLAN with a USB stick in the front port (RTL8188EU; open, WPA and WPA2 personal
+None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
+the slow cores with spare time only (on a DHO924S the screen stays at 30 frames a second with two web viewers). All of
+them run over Ethernet and over WLAN with a USB stick in the front port (RTL8188EU; open, WPA and WPA2 personal
 networks, see [docs/wlan.md](docs/wlan.md)).
 
 **System**
@@ -208,6 +224,9 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 - Self-calibration into own files (`/oos/cal`); factory files are never changed
 - System > Overclock: the sample clock in steps from 1.25 to 2 GHz, experimental, from the next power-on
 - Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits
+- System > Date and time: the clock from an NTP server (off by default), time zones with daylight saving time, or set
+  by hand; once the clock is set, file names carry the local date and time
+- System > Network > 10 Mbit retry: an Ethernet link that comes up at 10 Mbit/s gets one more autonegotiation
 - On-screen keyboard for names, formulas and WLAN passwords, with arrow keys to correct inside a long entry
 - The start-up screen shows the version and the build
 - Signed update packages with trial start and automatic rollback
@@ -231,12 +250,17 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 |---|---|
 | Boot, cold boot, acquisition, trigger, roll and scan, touch, front panel, generator (sine, built-in Bode), self-calibration | run on a DHO924S |
 | Signed updates from the web page and the shell, kexec trial start, trial and confirmation, install over ADB | run on a DHO924S |
+| An update with another device tree, tried by kexec first (kexec-tools, from 0.1.7) | run on a DHO924S: 0.1.6 to 0.1.7 to 0.1.8 through the web page, with cold starts |
+| System > Graphics = GPU, JPEG live picture from the video encoder | run on a DHO924S, on the panel and with a 1920x1080 monitor in Mirror, Waveform and Layout |
+| Frequency counter in the FPGA, backlight, AC/DC by a long press | run on a DHO924S (the counter with the built-in generator, 1.5 Hz to 9.9 MHz) |
 | Logic analyser with a PLA2216: lines, pulse widths, edge, pulse, pattern, duration and protocol trigger, UART, SPI and I2C on the lines, roll, scan, whole deep records, CSV | run on a DHO924S, three lines (D0 to D2) driven; thresholds have no effect here, under stock neither |
 | Generator modulation (AM, FM, PM), deep memory, limits, web, MCP, VXI-11 | run on a DHO924S |
 | HDMI output | run on a DHO924S |
 | Automatic rollback of a bad update | tests on the host only |
 | USB install without opening the scope | run on a DHO924S with a modified stock system: dry run, first install, run again |
 | Generator noise, system info, bandwidth test | tests on the host only |
+| Bode with a free-running sweep | tests on the host only (synthetic sweeps); the scan path for sweeps above about 0.9 s is not yet tried on a unit |
+| Bode with a generator on USB (USBTMC), UNI-T UTG900 preset | tests on the host only (a simulated USBTMC device); no generator on USB tried yet |
 | USB storage stick, 10:1 probe | run on a DHO924S |
 | WLAN | driver, firmware and scan run on a DHO924S with an RTL8188EU stick; joining a network tested on simulated radios only |
 | Overclocking (System > Overclock) | run on a DHO924S: 1.5 GHz with more noise, 2 GHz with wrong samples; the default stays 1.25 GHz |
@@ -353,7 +377,7 @@ Docker for them:
 |---|---|
 | `DHO800_DHO900_OOS_Install.GEL` | install from a USB stick through the stock system, without opening the scope: go on at [From a USB stick](#from-a-usb-stick) |
 | `oos-<version>.img` | install on a second card: steps 1, 2 and 6 to 8 below, with `--image oos-<version>.img` in step 6. Steps 3 to 5 are the build, skip them |
-| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on |
+| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on. From 0.1.6 or older, first `oos-0.1.7.oosupd` from the [0.1.7 release](https://github.com/deckerjulian/oos/releases/tag/v0.1.7): later builds bring another device tree, which only 0.1.7 and later can try before they install it |
 | `SHA256SUMS` | the checksums of all of them |
 
 Check what you downloaded. The number has to be the same as in the file's line of `SHA256SUMS`:
@@ -369,7 +393,8 @@ ADB needs steps 3 to 5 to build the image.
 ### On a second card
 
 The steps below use macOS, where they were developed. `tools/sdcard-clone.sh` needs macOS; on Linux, use `dd` for the
-clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested.
+clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested. Steps 1 and 2 on Windows and Linux, with the
+tools to use and what to watch out for: [docs/sdcard-backup.md](docs/sdcard-backup.md).
 
 **You will need for the second card**
 
@@ -402,7 +427,8 @@ This step protects your factory calibration. **Do not skip it.**
    tools/sdcard-clone.sh read diskN ~/oos-backup/sd-original.img
    ```
 4. Keep the image in at least two places, then **put the original card away**. From here on you only use the second
-   card.
+   card. On Windows or Linux: [docs/sdcard-backup.md](docs/sdcard-backup.md). Always the whole card, never a
+   partition, and never let the computer format or initialise it.
 
 ### 2. Write the clone to the second card
 
@@ -534,7 +560,8 @@ sudo python3 boot/switch.py show /dev/rdiskM
 3. The scope screen appears. Each failed step is named on the screen. A missing calibration file is a warning: the
    scope then runs on defaults and is less accurate.
 
-The IP address comes from DHCP and is shown in the top bar. Without DHCP the scope uses `192.168.177.64/24`.
+The IP address comes from DHCP and is shown in the top bar. Without DHCP the scope takes a link-local address
+(169.254.x.y, as computers do): a computer connected straight to the scope reaches it without any set-up.
 
 ### 8. Choose how OOS starts
 
@@ -641,6 +668,11 @@ works. Putting it back needs the card in a reader, with `recovery.bin` from the 
 ## Daily use
 
 **Controls.** Front-panel keys and knobs work as labelled. The Menu button at the bottom left reaches every function.
+A channel key held for more than half a second, or a finger held on a channel's card, switches that channel between
+AC and DC coupling.
+
+**Backlight.** Display > Backlight sets the panel's brightness from 10 to 100 %, in steps that look even to the eye. It is
+a setting of the scope (`/oos/system.conf`).
 
 **Auto.** Works on the channels that are on, at full bandwidth, and sets the memory depth back to Auto; each channel then
 gets its own bandwidth back. With no signal it restores the set-up. Afterwards a bar at the top of the plot offers a few
@@ -652,6 +684,21 @@ windows share the time base, and a drag in a window moves a channel of that wind
 window. The button with four corners at the top right of the plot gives the plot the whole screen; it shows inward
 corners then and brings the top bar and the cards back. The box button under it arms one drag: the next drag on the
 plot draws a box, and that box is the zoom window. A tap does not zoom.
+
+**Views.** Instead of one screen with everything on it, Display > Views (2, 3 or 4) gives screens to switch between.
+Each view keeps what is shown and where: the windows, the second pane, the measurements and their bar, DVM and
+counter, the cursors, the zoom, the histogram, the analyser page, XY and full screen. The channels, the time base,
+the trigger and the acquisition are the same in all of them; what changes while a view is shown stays with it, and a
+view not used yet starts with the plot alone. To switch: the numbers left of the top bar's buttons, a swipe from the
+left or right edge of the plot inwards (a vertical drag there still moves a channel or the trigger level), the Quick
+key set to Next view, or SCPI `:DISPlay:VIEW <n>` (`:DISPlay:VIEW:COUNt <1..4>`). The views are saved with a setup.
+
+**Text size.** Display > Text size makes the text larger: Normal is the original look, Large and Larger use fonts 2 and 4
+pixels bigger in the top bar, the cards, the measurement and cursor rows, the menus, the keyboard and the dialogs. The rows
+under the plot grow with them, so the plot gets a little shorter. Where a long text would not fit (a narrow channel card
+with four channels on, a long button label in the start menu, a narrow table column) it stays at the next smaller size, and
+the dense figure tables of the eye / jitter view keep the normal size. The setting is kept with the other preferences and
+across restarts; Default set-up and Recall keep it.
 
 **Bandwidth and noisy signals.** A channel's bandwidth is Auto by default: the limit follows the sample rate, as on the
 stock system. With Full, the noise of a slow signal can be larger than the trigger hysteresis and the hardware triggers
@@ -667,12 +714,48 @@ move the insertion point, a tap into the entry puts it there; typing and Delete 
 opens as a full analysis page with optional side or lower panes and has source/rate settings and Close in its pane header. Other analyser views
 use the button with three dots at the top right for Exit and Settings.
 
+**Bode with an external generator.** In Analysers > Bode pick the Generator preset (Rigol DG, Siglent SDG, UNI-T
+UTG900 for the UTG932 and UTG962, or SCPI for one that takes `FREQ` and `VOLT`), then Connection: LAN with Gen address
+(IP, port 5555 if none is given; the knob moves the last number) or USB for a generator in the USB-A port of the scope.
+On USB the scope takes the first USBTMC instrument it finds (no PC, no driver), asks it for `*IDN?` and shows the
+answer; without one the sweep stops with the reason (no USB device, a device that is not USBTMC, no permission). Rigol
+DG and Siglent SDG generators are USBTMC instruments as well. The scope sets channel 1 of the generator to a sine of
+Amplitude (Vpp) without offset, switches its output on and steps through the frequencies. Over SCPI,
+`:BODE:GENerator "usb"` selects USB and `:BODE:GENerator "192.168.1.20:5025"` the LAN again.
+- UNI-T UTG900 commands: `:CHANnel1:MODe CONTINUE`, `:CHANnel1:BASE:WAVe SINe`, `:CHANnel1:AMPLitude:UNIT VPP`,
+  `:CHANnel1:BASE:AMPLitude`, `:CHANnel1:BASE:OFFSet 0`, `:CHANnel1:BASE:FREQuency`, `:CHANnel1:OUTPut ON`, from the
+  UNI-T UTG900 series programming manual (REV 00, 2022-07-15; the English UTG900E manual has the same commands). Not
+  yet tried with a real UTG900.
+
+**Bode with a free-running sweep.** For a generator that the scope does not control, but that sweeps on its own and
+gives a sync (marker) pulse at the start of each sweep. Wire the generator to the input of the device under test and to
+the input channel (CH1), the output of the device to the output channel (CH2), and the sync output to CH4. In Analysers >
+Bode set Generator = Free-running sweep, then the same Start freq, Stop freq, Sweep time and Sweep (Lin or Log) as on the
+generator, the Sync channel, its edge and level (the sync pulse must cross the level; set the channel's scale so the
+pulse is on the screen). Input (ref) Off compares the output with Ref level in dBV (0 dBV = 1 V RMS) instead of an
+input channel. Points is the number of frequencies read from the sweep. Start / stop sweep sets the time base and the
+memory for one sweep, triggers once (SINGLE) on the sync edge and waits; start the sweep on the generator. The plot
+shows the gain over frequency, the settings come back afterwards.
+- Each frequency is read in a short window of the record, about 4 periods long and never wider than 25 % in frequency,
+  by a fit of a sine that follows the sweep. Where the sweep passes a frequency in less than one period, that frequency
+  is left out (the message says so). Over three decades, 20 Hz needs a sweep time of a few seconds; a linear sweep
+  needs much more time for its low end than a logarithmic one.
+- Phase comes from the fit of both channels and is shown only with an input channel, where both fits are clean.
+- Sweeps up to about 0.9 s run as normal records (100 ms/div at most), the trigger one division from the left edge.
+  Longer sweeps run in scan mode (Auto Roll off during the sweep, up to 200 s/div, 500 s and more): the trigger sits
+  at the centre, the sweep in the right half, and the record holds min/max pairs. There the gain is half the
+  peak-to-peak value in each window, and there is no phase. The start of the sweep is taken from the sync edge in the
+  record itself.
+- On a 2-channel model use CH1 for the output, CH2 for the sync and Input (ref) Off.
+- `:BODE:RUN ON` starts it over SCPI, `:BODE:DATA?` returns the points (phase NaN where there is none).
+
 **Panes.** Display > Pane puts a second view under the waveform: Spectrum with a peak list, Results with statistics, cursors
 and peaks, decoder Events, or Trend with two charts. Tap the pane's title for its settings, a trend chart to change its
 measurement, the peak list's button to sort it. The x closes the pane.
 
 **Measurements.** A default set-up shows six in the strip under the plot. Measure > Dock moves that strip to the left, the
-right, or above the trace. Measure > Labels on trace draws level lines and arrows with their values on the waveform.
+right, or above the trace. In Measure > Add item a tap adds a measurement of the source channel and a second tap removes
+it. Measure > Labels on trace draws level lines and arrows with their values on the waveform.
 
 **Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz the noise rises, and 2 GHz
 gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
@@ -680,8 +763,12 @@ gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
 **Web remote.** Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the
 window, so it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer;
 records above 2 million points have to be saved on the scope or read over SCPI. The live picture is a PNG of about 90 KB; "Live picture
-format" can switch it to the uncompressed 1.8 MB BMP (the choice is kept in the browser). Pause stops the pictures, and a
-tab in the background stops them too. The Update link leads to the update page.
+format" can switch it to the uncompressed 1.8 MB BMP, or to a JPEG of about 75 KB that the scope's video encoder
+makes at under a third of the processor time of a PNG (text a little less sharp; screenshots stay PNG). The choice is kept in the
+browser. The PNG is made off the
+scope's frame loop, only of a changed screen, up to 20 a second (about 13 reach a browser over Ethernet); the page gets
+each new picture as soon as it is made, and while the screen stands still it gets "not modified" instead. The scope's
+own screen does not slow down for it. Pause stops the pictures, and a tab in the background stops them too. The Update link leads to the update page.
 
 **Files.** Setups are kept on OOS's own persistent area `/oos` and survive a power cycle. Screenshots and CSV files go to
 a USB stick in the front port (FAT32, exFAT or ext4), into the folder `OOS`, and can be pulled whenever nothing is being
@@ -702,15 +789,25 @@ curl --data-binary @oos-<version>.oosupd http://<scope>:8080/update
 or open `http://<scope>:8080/update` in a browser. The scope restarts into the new build by kexec before anything is
 written, and the new build installs itself from there; if its kernel hangs, a power-cycle starts the previous build
 again. After the install, power-cycle: that start is the trial (coming from 0.1.0, which has no kexec start, too).
+From 0.1.6 or older go to 0.1.7 first: 0.1.8 and later bring another device tree (the GPU and the video encoder on),
+and only 0.1.7 and later start such an image by kexec with its own tree; 0.1.6 refuses it.
 The new build runs on trial. If it crashes in a loop or never becomes stable, the previous image is written back. System > Update shows the state and
 System > Roll back update returns to the previous image. Details: [docs/update.md](docs/update.md).
 
 **Network.** Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web
 remote. For WLAN, put an RTL8188EU stick into the front USB port, tap Find WLAN networks, tap a network and enter the
 password. It joins by itself from then on. Everything open on Ethernet is then open on that network too. Details:
-[docs/wlan.md](docs/wlan.md).
+[docs/wlan.md](docs/wlan.md). The page also shows the speed of the Ethernet link; a link at 10 Mbit/s gets one more
+autonegotiation (10 Mbit retry, on by default, [docs/network.md](docs/network.md)).
 
-**Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin`, little endian: `OOSW`, u32 version (1), u32 channels, u64
+**Date and time.** The scope has no clock battery and starts in 2013. System > Date and time > Time from NTP (off by
+default) sets the clock from `pool.ntp.org` or another server whenever a network link comes up, and every hour; Time
+zone picks the zone with its daylight saving rules (or takes a POSIX `TZ` string), Set the clock takes it by hand. From
+then on file names carry the local date and time (`shot-20261111-143005.png`) instead of a number. The settings are in
+`/oos/system.conf`, see [docs/network.md](docs/network.md).
+
+**Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin` (`wave-<date>-<time>.bin` once the clock
+is set), little endian: `OOSW`, u32 version (1), u32 channels, u64
 samples per channel, f64 dt, f64 t0, then per channel its number (u32) and the samples (f32, volts). Both hold the record
 on the screen.
 
@@ -805,6 +902,8 @@ Third-party parts keep their own licences:
 | XDMA driver | Dual BSD/GPL |
 | BusyBox | GPL-2.0 |
 | e2fsck (e2fsprogs) | GPL-2.0; the notice is in the image at `/etc/licenses/e2fsck` |
+| kexec (kexec-tools) | GPL-2.0; the text is in the image at `/etc/licenses/kexec-tools` |
+| Mesa, libdrm, glibc, libstdc++, zlib (the GPU helper, [gpu/README.md](gpu/README.md)) | MIT, MIT, LGPL-2.1, GPL-3.0 with the runtime exception, zlib; the texts are in the image under `/etc/licenses` |
 | Roboto font | Apache-2.0, see [ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt) |
 | wpa_supplicant | BSD-3-Clause; the text is in the image at `/etc/licenses/wpa_supplicant` |
 | RTL8188EU firmware | the firmware redistribution licence, see [LICENCE.rtlwifi_firmware.txt](rootfs/initramfs/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt) |

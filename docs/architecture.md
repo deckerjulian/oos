@@ -76,6 +76,9 @@ decoders, mask test, signal generators for tests and the demo source. Waveforms 
 
 One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layout in `ui`, state in `model`.
 
+Protocol decoders that come as modules (`ui/src/protocols`, [protocol-modules.md](protocol-modules.md)) bring their
+menu rows, trigger rules, labels, demo traffic and an optional view of their own through one trait, `Protocol`.
+
 Everything the UI asks of the hardware goes through the trait `board::Board` (`ui/src/board/mod.rs`): what the
 acquisition thread is to apply, the generator, the front-end steps, the front panel, the board readings. The UI speaks
 in the model's terms and gets frames in volts back (`board::Frame`, `board::to_record`). `board::dho` implements it
@@ -86,12 +89,14 @@ Threads:
 
 | Thread | Job |
 |---|---|
-| main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip |
+| main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip; reads the web, SCPI and VXI-11 connections without waiting (`net::read_now`): nothing in the loop may block on the network |
 | input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
-| scpi, http, hislip, announce | SCPI on 5555, web remote on 8080, HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
+| scpi, http, hislip, announce | SCPI on 5555, web remote on 8080 (polled by the main thread), HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
+| web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
+| ntp | SNTP exchange and clock step when Time from NTP is on (`sntp`, `ui/time.rs`; `network.md`) |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
 `Live` (read-out loop), `Hw` (real acquisitions of the board; on the DHO800/DHO900 the TPU trigger is set to the
@@ -129,5 +134,6 @@ Builds for the unit: `--target aarch64-unknown-linux-musl` (static, rust-lld).
   starves the TX and the c2h read times out (`protocols/record-play.md`).
 - The read-path gain/offset (WPU) must be OOS's own: values left by the stock system shift the codes.
 - 0x1210 counts the ADC data clock, which runs only after the ADC sync and eye scan: check it after step 12.
-- UI state: settings survive oos-ui restarts within a boot (`/tmp/oos-ui.setup`); the power key talks to the panel
-  MCU (`FA 05 02`, dialog, `FA 05 01/03`; `protocols/board.md` 4).
+- UI state: settings survive oos-ui restarts within a boot (`/tmp/oos-ui.setup`); the settings of the scope itself
+  (NTP, time zone, Ethernet) are in `/oos/system.conf` (`sysconf`, `network.md`), apart from the setups; the power key
+  talks to the panel MCU (`FA 05 02`, dialog, `FA 05 01/03`; `protocols/board.md` 4).

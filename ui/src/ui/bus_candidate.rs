@@ -390,7 +390,7 @@ impl Ui {
         if x < area.x || x >= area.x + area.w { return; }
         canvas.set_clip(area);
         canvas.dashed_vline(x, area.y + 21, area.y + area.h - 1, 2, 6, AMBER);
-        canvas.text(&self.fonts.sb, (x + 4).min(area.x + area.w - 66), area.y + 31, "Bus event", AMBER);
+        canvas.text(&self.fonts().sb, (x + 4).min(area.x + area.w - 66), area.y + 31, "Bus event", AMBER);
         canvas.no_clip();
     }
 }

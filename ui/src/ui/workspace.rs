@@ -590,17 +590,17 @@ impl Ui {
          (Item::MeasSrcB, Rect::new(start + width + 26, dialog.r.y + 6, width, DLG_CTRL))]
     }
     pub(super) fn draw_pair_header(&self, cv: &mut Canvas, dialog: &Dlg) {
-        cv.text(&self.fonts.mb, dialog.r.x + 14, dialog.r.y + 31, "Pairs", TEXT);
+        cv.text(&self.fonts().mb, dialog.r.x + 14, dialog.r.y + 31, "Pairs", TEXT);
         let targets = self.pair_header_sources(dialog);
         for ((_, rect), id) in targets.into_iter().zip([self.meas_src, self.meas_src_b]) {
             btn(cv, rect, BTN, BTN_BORDER);
             cv.set_clip(Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h));
-            cv.text_in(&self.fonts.sb, Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h), 1, &self.pair_source_caption(id), self.wave_color(id));
+            cv.text_in(&self.fonts().sb, Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h), 1, &self.pair_source_caption(id), self.wave_color(id));
             cv.no_clip();
             chevron_down(cv, rect.x + rect.w - 16, rect.y + rect.h / 2 - 3, DIM);
         }
         let a = targets[0].1;
-        cv.text_in(&self.fonts.mb, Rect::new(a.x + a.w, a.y, 26, a.h), 1, "to", TEXT);
+        cv.text_in(&self.fonts().mb, Rect::new(a.x + a.w, a.y, 26, a.h), 1, "to", TEXT);
     }
     pub(super) fn stacked(&self) -> bool {
         self.workspace.stacked && !self.xy && matches!(self.m.view, AView::Scope | AView::Eye)
@@ -676,7 +676,7 @@ impl Ui {
         cv.hline(0, W - 1, BOTTOM.y, LINE);
         let draw = |cv: &mut Canvas, r, label: &str, on| {
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
-            cv.text_in(&self.fonts.s, r, 1, label, if on { ACCENT } else { TEXT });
+            cv.text_in(&self.fonts().s, r, 1, label, if on { ACCENT } else { TEXT });
         };
         draw(cv, Self::MENU_BTN, if self.m.touch_lock { "Unlock" } else { "Menu" }, false);
         draw(cv, Rect::new(56, BOTTOM.y + 3, 64, 30), "Sources", false);
@@ -688,7 +688,7 @@ impl Ui {
             let color = self.wave_color(id);
             // the active source is filled in its colour, the others only carry it in their label
             btn(cv, rect, if selected { color } else { BAR }, if selected { color } else { BTN_BORDER });
-            cv.text_in(&self.fonts.sb, rect, 1, &label, if selected { BAR } else { color });
+            cv.text_in(&self.fonts().sb, rect, 1, &label, if selected { BAR } else { color });
         }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
         draw(cv, overlay, "Overlay", !self.workspace.stacked);
@@ -823,7 +823,7 @@ impl Ui {
             cv.round(popup.rect.inset(1), 4, BAR, 255);
             for (index, (label, _)) in popup.rows.iter().enumerate() {
                 let r = Rect::new(popup.rect.x + 5, popup.rect.y + 4 + index as i32 * 30, popup.rect.w - 10, 30);
-                cv.set_clip(r); cv.text(&self.fonts.s, r.x + 7, r.y + 20, label, TEXT); cv.no_clip();
+                cv.set_clip(r); cv.text(&self.fonts().s, r.x + 7, r.y + 20, label, TEXT); cv.no_clip();
             }
         }
         if self.workspace.gesture.is_some_and(|gesture| gesture.moved && gesture.panel != Panel::Plot) {
@@ -833,12 +833,12 @@ impl Ui {
                       Rect::new(left + width - 72, top, 68, (bottom - top).max(1)),
                       Rect::new(left + 76, bottom - 52, (width - 152).max(1), 48)] {
                 cv.round_outline(r, 4, ACCENT);
-                cv.text_in(&self.fonts.s, Rect::new(r.x, r.y + 8, r.w, 24), 1, "Dock", ACCENT);
+                cv.text_in(&self.fonts().s, Rect::new(r.x, r.y + 8, r.w, 24), 1, "Dock", ACCENT);
             }
             if self.workspace.gesture.is_some_and(|gesture| gesture.panel == Panel::Measurements) {
                 let r = Rect::new(left + 76, top, (width - 152).max(1), 32);
                 cv.round_outline(r, 4, ACCENT);
-                cv.text_in(&self.fonts.s, r, 1, "Dock above", ACCENT);
+                cv.text_in(&self.fonts().s, r, 1, "Dock above", ACCENT);
             }
         }
     }

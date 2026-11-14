@@ -354,8 +354,9 @@ and the threshold through 0x12dc (T2).
 - **SCPI:** `:LA:STATe`, `:LA:DIGital<n>:DISPlay` (n = 0..15), `:LA:POD<1|2>:THReshold` (sets the user preset, +-15 V),
   `:LA:POINts?`, `:LA:PREamble?` (points,dt,t0), `:LA:DATA?` (IEEE block, u16 little endian, bit n = Dn). Models without
   the port answer -241 "Hardware missing".
-- **CSV:** Storage > CSV also writes `la-NNN.csv` while the LA is on: the lines shown, a row at the start, one per change
-  and one at the end. A record of millions of samples stays small and nothing is lost.
+- **CSV:** Storage > CSV also writes `la-NNN.csv` (`la-<date>-<time>.csv` once the clock is set) while the LA is on:
+  the lines shown, a row at the start, one per change and one at the end. A record of millions of samples stays small
+  and nothing is lost.
 
 ## 12. Review notes
 
