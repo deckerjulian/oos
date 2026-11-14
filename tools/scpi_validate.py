@@ -135,6 +135,9 @@ class OOS:
 
     def window(self, centre):
         self.write(":STOP")
+        # Long imports may open detail zoom. These assertions target the MAIN
+        # window; moving MAIN alone correctly leaves a zoomed Screen gate alone.
+        self.write(":SYSTem:SET zoom = 0")
         self.write(":TIMebase:SCALe 1e-6")
         self.write(f":TIMebase:OFFSet {centre:.12g}")
         # SCPI writes are consumed before the next display/analysis tick. Wait
@@ -323,6 +326,7 @@ def validate(oos, result):
     oos.write(":CHANnel1:PROBe 10")
     result.numeric("channel probe", float(oos.query(":CHANnel1:PROBe?")), 10.0, relative=1e-6)
     oos.write(":TIMebase:MAIN:SCALe 1e-6")
+    oos.write(":TIMebase:MAIN:OFFSet 0")
     oos.write(":TRIGger:SWEep NORMal")
     oos.write(":TRIGger:EDGE:SOURce CHANnel1")
     oos.write(":TRIGger:EDGE:SLOPe NEG")
@@ -386,8 +390,11 @@ def validate(oos, result):
     result.equal("dvm and counter setup",
                  oos.query(":DVM:ENABle?;:DVM:SOURce?;:DVM:MODE?;:COUNter:ENABle?;:COUNter:MODE?;:COUNter:NDIGits?"),
                  "1;CHAN2;ACRMS;1;PER;6")
+    final_state = oos.state()
+    result.equal("controller commands leave acquisition stopped", final_state["running"], False)
+    result.equal("controller final error queue", oos.query(":SYSTem:ERRor?").split(",")[0], "0")
     return {"upload": upload, "before_pan": before, "after_pan": after,
-            "armed": armed, "single": single, "running": running, "final_state": held}
+            "armed": armed, "single": single, "running": running, "held": held, "final_state": final_state}
 
 
 def main():
