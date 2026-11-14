@@ -105,6 +105,13 @@ mod tests {
         assert_eq!(ui.decoder_worker_state_for_test(), (1, 1), "one worker and no accepted-frame rescan");
         let hit = ui.bus_candidate.last_hit.unwrap();
         assert!(ui.search_events().iter().any(|time| (*time - hit).abs() < 1e-15));
+        // The accepted native record is now large enough for background Eye
+        // analysis. Pending acquisition remains frozen until acceptance above;
+        // after it, wait for that actual snapshot before testing stopped repaint.
+        until(&mut ui, |ui| ui.azr.eye.is_some());
+        assert_eq!((ui.records, ui.wfm_total), (before.0 + 1, before.1 + 1));
+        assert_eq!(shared.lock().unwrap().queue.len(), 1);
+        assert!(ui.azr.eye_auto.snapshot_caption().unwrap().contains(&format!("CH1 #{}", ui.records)));
         let stopped = (ui.records, ui.wfm_total, ui.azr.eye.as_ref().unwrap().records);
         for _ in 0..4 { ui.step(0.02); }
         assert_eq!((ui.records, ui.wfm_total, ui.azr.eye.as_ref().unwrap().records), stopped);

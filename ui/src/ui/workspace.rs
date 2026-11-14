@@ -633,11 +633,12 @@ impl Ui {
         self.relayout();
         self.dirty_map = true;
     }
-    fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Option<Rect>, Rect) {
+    pub(super) fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Option<Rect>, Rect) {
         let y = BOTTOM.y + 3;
         let mut right = W - 4;
         let panel = self.desktop_panel.map(|_| { right -= 48; let r = Rect::new(right, y, 46, 30); right -= 4; r });
-        let live = self.record_mode().then(|| { right -= 44; let r = Rect::new(right, y, 42, 30); right -= 4; r });
+        let top_live = !self.full_on() && self.top_buttons().iter().any(|button| button.0 == TopBtn::Live);
+        let live = (self.record_mode() && !top_live).then(|| { right -= 44; let r = Rect::new(right, y, 42, 30); right -= 4; r });
         right -= 222;
         let trigger = Rect::new(right, y, 222, 30);
         right -= 128;

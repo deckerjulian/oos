@@ -3352,24 +3352,36 @@ impl Ui {
         (scale, rate)
     }
 
+    fn ref_badge_lines(&self, slot: usize, r: &RefWave, maximum: i32) -> (String, String) {
+        let tag = format!("R{}", slot + 1);
+        let mut name = if r.label.trim().is_empty() || r.label.trim() == tag { tag.clone() } else { format!("{} {}", tag, r.label.trim()) };
+        let width = (maximum - 12).max(16);
+        if self.fonts.sb.width(&name) > width {
+            while name.len() > tag.len() && self.fonts.sb.width(&format!("{}...", name)) > width { name.pop(); }
+            if self.fonts.sb.width(&format!("{}...", name)) <= width { name.push_str("..."); }
+            else { name = tag; }
+        }
+        let (scale, rate) = Self::ref_badge_readout(r);
+        (name, format!("{} · {}", scale, rate))
+    }
+
     /// Name, volts per division, and the record's sample rate, beside the trace.
     fn draw_ref_badge(&self, cv: &mut Canvas, area: Rect, y: i32, col: Rgb, slot: usize, r: &RefWave) {
         let f = &self.fonts;
-        let name = if r.label.is_empty() { format!("R{}", slot + 1) } else { r.label.clone() };
-        let (scale, rate) = Self::ref_badge_readout(r);
-        let text_w = f.sb.width(&name).max(f.s.width(&scale)).max(f.s.width(&rate));
-        let bw = (text_w + 12).clamp(36, (area.w - 16).max(36));
-        let bh = 46;
+        let maximum = (area.w - 16).clamp(36, 300);
+        let (name, readout) = self.ref_badge_lines(slot, r, maximum);
+        let text_w = f.sb.width(&name).max(f.s.width(&readout));
+        let bw = (text_w + 12).clamp(36, maximum);
+        let bh = 34;
         let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - 2).max(area.y + 2));
         let x0 = (area.x + 80).min((area.x + area.w - bw - 4).max(area.x + 2));
         let b = Rect::new(x0, y0, bw, bh);
         cv.round(b, 3, col, 255);
         cv.set_clip(b);
         let ink = rgb(0, 0, 0);
-        let row = b.h / 3;
+        let row = b.h / 2;
         cv.text_in(&f.sb, Rect::new(b.x, b.y + 1, b.w, row), 1, &name, ink);
-        cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &scale, ink);
-        cv.text_in(&f.s, Rect::new(b.x, b.y + 2 * row, b.w, row), 1, &rate, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &readout, ink);
         cv.set_clip(area);
     }
 
@@ -3659,6 +3671,7 @@ impl Ui {
     /// Status line inside the top of the plot: touch lock, history position and search count on the left; a source that
     /// is not the live hardware on the right.
     fn draw_info(&self, cv: &mut Canvas) {
+        if self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none() { return; }
         let f = &self.fonts;
         let g = self.grid;
         let y = g.y + 14;
@@ -4060,16 +4073,42 @@ impl Ui {
         if self.record_mode() {
             all.insert(0, (TopBtn::Live, "Live"));
         }
+        let required = 166 + f.s.width(&self.acq_caption().0) + 12;
+        let fits = |items: &[(TopBtn, &'static str)], padding: i32| {
+            let width = items.iter().map(|(_, label)| (f.mb.width(label) + padding).max(40)).sum::<i32>()
+                + items.len().saturating_sub(1) as i32 * 6;
+            self.top_right() - 8 - width >= required
+        };
+        let mut padding = 28;
+        if !fits(&all, padding) {
+            if let Some((_, label)) = all.iter_mut().find(|(b, _)| *b == TopBtn::Load) { *label = "Load"; }
+        }
+        if !fits(&all, padding) { padding = 20; }
+        for (button, short) in [(TopBtn::Menu(MenuId::Storage), "Store"), (TopBtn::Menu(MenuId::Display), "Disp"),
+            (TopBtn::Menu(MenuId::Measure), "Meas"), (TopBtn::System, "Sys")] {
+            if fits(&all, padding) { break; }
+            if let Some((_, label)) = all.iter_mut().find(|(b, _)| *b == button) { *label = short; }
+        }
         let mut x = self.top_right() - 8;
         let mut out = Vec::new();
         for &(b, l) in all.iter().rev() {
-            let w = f.mb.width(l) + 28;
+            let w = (f.mb.width(l) + padding).max(40);
             x -= w;
             out.push((b, l, Rect::new(x, 5, w, 30)));
             x -= 6;
         }
         out.reverse();
         out
+    }
+
+    fn top_acq_caption(&self, width: i32) -> (String, bool) {
+        let (caption, live) = self.acq_caption();
+        if !live && self.fonts.s.width(&caption) > width {
+            if let Some(r) = self.refs.get(self.active_reference()).and_then(Option::as_ref) {
+                return (format!("{} · {}", if self.session_is_sim { "SIM" } else { "REF" }, si_digits(r.v.len() as f64, "pts", 3)), false);
+            }
+        }
+        (caption, live)
     }
 
     /// While a USB stick is mounted: left of the network and WLAN boxes; the top-bar buttons move over for it.
@@ -4122,9 +4161,9 @@ impl Ui {
         cv.text_in(&f.s, Self::SINGLE_BTN, 1, "Single", TEXT);
         // acquisition: sample rate and depth of the hardware when it runs, else of the model; mode.
         // Offline mode shows the reference's own rate and length, with no acquire mode.
-        let (caption, live_acq) = self.acq_caption();
         let buttons = self.top_buttons();
         let room = buttons.first().map_or(self.top_right(), |b| b.2.x) - 12;
+        let (caption, live_acq) = self.top_acq_caption((room - 166).max(1));
         let acq_open = self.menu_open && self.menu_root() == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
         let tcol = if acq_open { ACCENT } else { TEXT };
         cv.set_clip(Rect::new(166, 0, (room - 166).max(1), TOP.h));

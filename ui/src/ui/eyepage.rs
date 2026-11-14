@@ -617,27 +617,48 @@ impl Ui {
                 (r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0)
                     .then(|| WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt })
             }
-            WaveId::Ch(_) => self.wave_samples(rec, id),
+            WaveId::Ch(c) => {
+                let (values, dt, t0) = self.eye_channel_samples(rec, c)?;
+                Some(WaveSamp { v: values.to_vec(), dt, t0 })
+            }
         }
+    }
+
+    /// Eye timing always uses the entire retained native acquisition, never the
+    /// interpolated screen record or its current measurement/view gate.
+    fn eye_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
+        if c >= n_ch() || !self.m.ch[c].on { return None; }
+        let (values, dt, t0) = if let Some(raw) = &rec.raw {
+            if raw.frame.envelope || self.m.acq == AcqMode::HiRes { return None; }
+            let values = raw.frame.ch.get(c)?;
+            (values.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt)
+        } else { (rec.ch.get(c)?.as_slice(), rec.dt, rec.t0) };
+        (values.len() >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite())
+            .then_some((values, dt, self.source_time_origin(WaveId::Ch(c), t0)))
+    }
+
+    fn eye_input_problem(&self, rec: &Record, id: WaveId) -> Option<&'static str> {
+        if let WaveId::Ch(c) = id {
+            if c < n_ch() && self.m.ch[c].on && rec.raw.is_some() && self.m.acq == AcqMode::HiRes {
+                return Some("Native HiRes samples are not retained for Eye/Jitter; use Normal acquisition");
+            }
+            if c < n_ch() && self.m.ch[c].on && rec.raw.as_ref().is_some_and(|raw| raw.frame.envelope) {
+                return Some("Envelope acquisition has no native time samples for Eye/Jitter");
+            }
+        }
+        None
     }
 
     fn eye_source_ready(&self, rec: &Record, id: WaveId) -> bool {
         match id {
             WaveId::Ref(i) => self.refs.get(i).and_then(Option::as_ref)
                 .is_some_and(|r| r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0),
-            WaveId::Ch(i) => i < n_ch() && self.m.ch[i].on && rec.ch[i].len() >= 2 && rec.dt > 0.0,
+            WaveId::Ch(i) => self.eye_channel_samples(rec, i).is_some(),
         }
     }
 
-    /// Keep live channel/strobe alignment unchanged. A reference source instead
-    /// puts its full record and reference clock on their finest stored grid.
+    /// Data and clock share the finest native grid within their physical overlap.
     fn eye_pair(&self, rec: &Record, id: WaveId, clock: WaveId) -> Option<(Vec<f32>, Vec<f32>, f64, f64)> {
-        if matches!(id, WaveId::Ch(_)) {
-            let mut t = self.take_waves(rec, &[id, clock], &[]).ok()?;
-            let b = t.v.pop()?;
-            let a = t.v.pop()?;
-            return Some((a, b, t.dt, t.t0));
-        }
         let a = self.eye_samples(rec, id)?;
         let b = self.eye_samples(rec, clock)?;
         let (dt, t0, n) = eye_common_grid(&a, &b)?;
@@ -694,6 +715,14 @@ impl Ui {
 
     /// Eye page, per record. Clock, when set, is the strobe: its edges fold the source (DQ vs DQS).
     pub(super) fn eye_update(&mut self, rec: &Record) {
+        for id in [Some(self.m.eye_src), self.m.eye_b, self.m.eye_rail].into_iter().flatten() {
+            if let Some(problem) = self.eye_input_problem(rec, id) {
+                self.azr.eye = None; self.azr.eye_res = None; self.azr.eye_auto.summary = None;
+                self.azr.eye_auto.invalidate();
+                self.azr.page = Page::default(); self.azr.page.status = [self.wave_name(id), problem.into()];
+                return;
+            }
+        }
         if self.eye_auto_update(rec) { return; }
         let id = self.m.eye_src;
         let clk_id = self.m.eye_b;
@@ -740,7 +769,7 @@ impl Ui {
         let recov = clk_v.as_deref().unwrap_or(&v);
         let recov_id = clk_id.unwrap_or(id);
         let st = match recov_id {
-            WaveId::Ch(c) if clk_id.is_none() => self.stats[c],
+            WaveId::Ch(c) if clk_id.is_none() && rec.raw.is_none() => self.stats[c],
             _ => stats(recov, dt),
         };
         let (clk_vpd, _) = self.eye_scale(recov_id);
@@ -943,7 +972,7 @@ impl Ui {
             self.toast("Eye stays beside the trace: not enough room below. Hide the logic lanes or measurements to use Under.");
         }
         if self.m.eye_place == previous { return; }
-        if !self.azr.eye_auto.enabled { self.azr.eye = None; }
+        if !self.azr.eye_auto.enabled && !self.auto_eye_large() { self.azr.eye = None; }
         self.relayout();
         self.analyzer_update();
     }
@@ -957,7 +986,8 @@ impl Ui {
             }
             WaveId::Ch(c) => {
                 let rec = self.last[0].as_ref()?;
-                (c < n_ch() && self.m.ch[c].on).then(|| automatic::probe_rate(&rec.ch[c], rec.dt)).flatten()
+                let (values, dt, _) = self.eye_channel_samples(rec, c)?;
+                automatic::probe_rate(values, dt)
             }
         }
     }
@@ -1053,7 +1083,8 @@ impl Ui {
         let settings = Rect::new(place.x + place.w + 4, pick.y, (close.x - place.x - place.w - 8).max(1), pick.h);
         btn(cv, settings, BTN, BTN_BORDER);
         cv.set_clip(Rect::new(settings.x + 5, settings.y, (settings.w - 23).max(1), settings.h));
-        cv.text(&self.fonts.s, settings.x + 5, a.y + 18, &format!("{} · {}", self.eye_source_mode_label(), rate), TEXT);
+        let scope = self.azr.eye_auto.snapshot_caption().unwrap_or_else(|| self.eye_source_mode_label().into());
+        cv.text(&self.fonts.s, settings.x + 5, a.y + 18, &format!("{} · {}", scope, rate), TEXT);
         cv.no_clip();
         chevron_down(cv, settings.x + settings.w - 14, settings.y + settings.h / 2 - 2, DIM);
         btn(cv, close, BTN, BTN_BORDER);
