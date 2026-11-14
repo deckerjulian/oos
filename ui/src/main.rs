@@ -41,6 +41,7 @@ mod vpu;
 mod layout;
 mod remote;
 mod wave;
+mod wavefile;
 mod zone;
 #[cfg(target_os = "linux")]
 mod drm;
