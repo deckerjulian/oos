@@ -800,6 +800,33 @@ impl Ui {
         true
     }
 
+    pub(crate) fn ref_color(&self, slot: usize) -> Option<usize> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.color)
+    }
+
+    pub(crate) fn ref_color_set(&mut self, slot: usize, color: usize) -> bool {
+        if slot >= NREF {
+            return false;
+        }
+        self.ref_sel = slot;
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        r.color = color;
+        true
+    }
+
+    /// `:REFerence:RESet`: offset back to zero, scale back to the source channel.
+    pub(crate) fn ref_reset_scale(&mut self, slot: usize) -> bool {
+        if slot >= NREF {
+            return false;
+        }
+        let Some(src) = self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src) else { return false };
+        let vpd = self.m.ch[src.min(n_ch() - 1)].volts_per_div();
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        r.offset = 0.0;
+        r.vpd = vpd.max(1e-9);
+        true
+    }
+
     pub(crate) fn ref_label(&self, slot: usize) -> Option<String> {
         self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.label.clone())
     }

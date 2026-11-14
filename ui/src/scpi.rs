@@ -3,9 +3,10 @@
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
 //! *IDN? *RST *OPC? *CLS *ESR?, :RUN :STOP :SINGle :TFORce :AUToscale :CLEar,
-//! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|LABel:SHOW|LABel:CONTent,
+//! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|LABel:SHOW|LABel:CONTent,
 //! :TIMebase[:MAIN]:SCALe|OFFSet, :TIMebase:DELay:ENABle|SCALe|OFFSet, :TIMebase:VERNier, :TIMebase:HREFerence:MODE, :TIMebase:XY:ENABle,
-//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
+//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?,
+//! :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M)|TYPE NORM/PEAK/AVER/HRES|AVERages|ULTRa:MAXFrame,
 //! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar,
 //! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
 //! :MEASure:STATistic:DISPlay|RESet|ITEM, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
@@ -15,7 +16,8 @@
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
 //! :DISPlay:DATA? [BMP|PNG],
-//! :REFerence:SLOT R1..R10, :CURRent, :SOURce, :VSCale, :VOFFset, :LABel:CONTent, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
+//! :REFerence:SLOT R1..R10, :CURRent, :SOURce, :VSCale, :VOFFset, :COLor, :RESet, :LABel:CONTent, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
+//! :MEASure:SETup:MAX|MIN (percent thresholds),
 //! :SIM:PRESet <name>, :SIM:SLOT R1..R10, :SIM:PLAY ON|OFF, :SIM:SHOW ON|OFF,
 //! :SIM:SSC:MODE OFF|DOWN|CENTER, :SIM:SSC:DEViation <fraction>, :SIM:SSC:FREQuency <Hz>,
 //! :SIM:JITTer:DCD <seconds pp>|:CORRelated <seconds RMS>|:CORNer <Hz>, :SIM:PATTern PRBS7..31.
@@ -259,6 +261,22 @@ fn pair_token(k: usize) -> &'static str {
 }
 
 /// R1..R10, REF1..REF10, or 1..10.
+fn ref_color_index(s: &str) -> Option<usize> {
+    if kw(s, "GRAY") || kw(s, "WHITe") {
+        Some(0)
+    } else if kw(s, "RED") {
+        Some(1)
+    } else if kw(s, "GREen") {
+        Some(2)
+    } else if kw(s, "BLUE") {
+        Some(3)
+    } else if kw(s, "ORANge") || kw(s, "VIOLet") {
+        Some(4)
+    } else {
+        None
+    }
+}
+
 fn parse_slot(s: &str) -> Option<usize> {
     let s = s.trim().trim_matches('"');
     if let Some(WaveId::Ref(i)) = parse_wave(s) {
@@ -606,6 +624,7 @@ impl Scpi {
                         }
                     };
                 }
+                let slow_deskew = m.time_per_div() > 10e-6;
                 let ch = &mut m.ch[c];
                 if kw(n1, "DISPlay") {
                     if query {
@@ -685,6 +704,20 @@ impl Scpi {
                         return Some(t(if ch.invert { "1" } else { "0" }));
                     }
                     ch.invert = parse_bool(arg)?;
+                } else if kw(n1, "TCALibrate") {
+                    if query {
+                        return Some(t(&e(ch.skew as f64)));
+                    }
+                    // The manual refuses a deskew change on a slow time base.
+                    if slow_deskew {
+                        self.push_err("-224,\"Illegal parameter value\" timebase".into());
+                        return Some(None);
+                    }
+                    let Some(v) = num(arg).filter(|v| v.abs() <= SKEW_MAX) else {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return Some(None);
+                    };
+                    ch.skew = v;
                 } else {
                     return None;
                 }
@@ -799,6 +832,18 @@ impl Scpi {
                 }
                 return None;
             }
+            if kw(n0, "ACQuire") && nodes.len() == 3 && kw(nodes[1], "ULTRa") && kw(nodes[2], "MAXFrame") {
+                if query {
+                    return Some(t(&m.segments.to_string()));
+                }
+                let Some(n) = arg.trim().parse::<usize>().ok() else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return Some(None);
+                };
+                let steps = crate::ui::SEGMENTS;
+                m.segments = *steps.iter().min_by_key(|s| s.abs_diff(n)).unwrap_or(&0);
+                return Some(None);
+            }
             if kw(n0, "ACQuire") && nodes.len() == 2 && !query && kw(nodes[1], "MDEPth") {
                 // AUTO or one of the depths of the Acquire menu (`mdepths`), e.g. 1000000 or 1M
                 let a = arg.trim().to_ascii_uppercase();
@@ -815,13 +860,53 @@ impl Scpi {
                 m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
                 return Some(None);
             }
-            if kw(n0, "ACQuire") && nodes.len() == 2 && query {
-                let (sr, depth) = m.srate_depth();
-                if kw(nodes[1], "SRATe") {
-                    return Some(t(&e(sr)));
+            if kw(n0, "ACQuire") && nodes.len() == 2 {
+                let n1 = nodes[1];
+                if kw(n1, "TYPE") {
+                    if query {
+                        return Some(t(match m.acq {
+                            AcqMode::Normal => "NORM",
+                            AcqMode::Peak => "PEAK",
+                            AcqMode::Average => "AVER",
+                            AcqMode::HiRes => "HRES",
+                        }));
+                    }
+                    let a = arg.trim();
+                    m.acq = if kw(a, "NORMal") {
+                        AcqMode::Normal
+                    } else if kw(a, "PEAK") {
+                        AcqMode::Peak
+                    } else if kw(a, "AVERages") {
+                        AcqMode::Average
+                    } else if kw(a, "HRESolution") || a.eq_ignore_ascii_case("HRES") {
+                        AcqMode::HiRes
+                    } else {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return Some(None);
+                    };
+                    return Some(None);
                 }
-                if kw(nodes[1], "MDEPth") {
-                    return Some(t(&e(depth as f64)));
+                if kw(n1, "AVERages") {
+                    if query {
+                        return Some(t(&m.avg_count.to_string()));
+                    }
+                    // The Acquire menu's counts. A value that is not one of them snaps down to the next lower power of two.
+                    const COUNTS: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+                    let Some(n) = arg.trim().parse::<u32>().ok().filter(|n| *n >= 2) else {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return Some(None);
+                    };
+                    m.avg_count = COUNTS.iter().rev().find(|&&c| c <= n).copied().unwrap_or(2);
+                    return Some(None);
+                }
+                if query {
+                    let (sr, depth) = m.srate_depth();
+                    if kw(n1, "SRATe") {
+                        return Some(t(&e(sr)));
+                    }
+                    if kw(n1, "MDEPth") {
+                        return Some(t(&e(depth as f64)));
+                    }
                 }
                 return None;
             }
@@ -850,6 +935,9 @@ impl Scpi {
         }
         if kw(n0, "MEASure") && nodes.len() == 3 && kw(nodes[1], "STATistic") {
             return self.meas_stat_cmd(ui, nodes[2], query, arg);
+        }
+        if kw(n0, "MEASure") && nodes.len() == 3 && kw(nodes[1], "SETup") && (kw(nodes[2], "MAX") || kw(nodes[2], "MIN")) {
+            return self.meas_threshold(ui, kw(nodes[2], "MAX"), query, arg);
         }
         if kw(n0, "TIMebase") {
             return self.timebase_more(ui, &nodes[1..], query, arg);
@@ -1349,6 +1437,35 @@ impl Scpi {
             return self.counter_cmd(ui, &nodes[1..], query, arg);
         }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
+        None
+    }
+
+    /// Upper (`high`) or lower threshold, as a percent of the waveform, the same pair `:MEASure:REFS` sets.
+    fn meas_threshold(&mut self, ui: &mut Ui, high: bool, query: bool, arg: &str) -> Option<Vec<u8>> {
+        if query {
+            let pct = if high { ui.m.meas_hpct } else { ui.m.meas_lpct };
+            return Some(format!("{}", (pct * 100.0).round() as i32).into_bytes());
+        }
+        let Some(pct) = arg.trim().parse::<f64>().ok().filter(|v| (0.0..=100.0).contains(v)) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let frac = pct / 100.0;
+        if high {
+            if frac <= ui.m.meas_lpct {
+                self.push_err("-224,\"Illegal parameter value\" below the lower threshold".into());
+                return None;
+            }
+            ui.m.meas_hpct = frac;
+        } else {
+            if frac >= ui.m.meas_hpct {
+                self.push_err("-224,\"Illegal parameter value\" above the upper threshold".into());
+                return None;
+            }
+            ui.m.meas_lpct = frac;
+        }
+        ui.measure_last();
+        ui.mark_changed();
         None
     }
 
@@ -2112,6 +2229,11 @@ impl Scpi {
     }
 
     /// `1,CHAN1` is slot 1 and the rest `CHAN1`. A bare `ON` stays on the current slot. A bad slot number is an error.
+    /// Rigol's five reference colors. The screen's fifth color is violet; `ORANge` selects it because that is Rigol's fifth name.
+    fn ref_color_name(i: usize) -> &'static str {
+        ["GRAY", "RED", "GRE", "BLUE", "ORAN"][i.min(4)]
+    }
+
     fn ref_pair(&mut self, ui: &Ui, arg: &str) -> (Option<usize>, String) {
         let arg = arg.trim();
         let (slot, rest) = if let Some((a, b)) = arg.split_once(',') {
@@ -2241,6 +2363,39 @@ impl Scpi {
                 };
             }
             if ui.ref_label_set(slot, rest) {
+                ui.mark_changed();
+            } else {
+                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+            }
+            return None;
+        }
+        if kw(n0, "RESet") && !query {
+            let (slot, _) = self.ref_pair(ui, arg);
+            let Some(slot) = slot else { return None };
+            if ui.ref_reset_scale(slot) {
+                ui.mark_changed();
+            } else {
+                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+            }
+            return None;
+        }
+        if kw(n0, "COLor") {
+            let (slot, rest) = self.ref_pair(ui, arg);
+            let Some(slot) = slot else { return None };
+            if query {
+                return match ui.ref_color(slot) {
+                    Some(i) => t(Self::ref_color_name(i)),
+                    None => {
+                        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+                        None
+                    }
+                };
+            }
+            let Some(i) = ref_color_index(&rest) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            if ui.ref_color_set(slot, i) {
                 ui.mark_changed();
             } else {
                 self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
@@ -2941,6 +3096,35 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STAT:DISP?;:MEAS:STR?"), "1;VPP,R1,1.000000E+00");
         line(&mut s, &mut ui, &cv, ":MEAS:STAT:RES");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STAT:ITEM? CNT,VPP,R1"), "0.000000E+00");
+    }
+
+    #[test]
+    fn acquisition_deskew_reference_color_and_thresholds_round_trip() {
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":ACQ:TYPE AVER;:ACQ:AVER 100;:ACQ:ULTR:MAXF 100");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":ACQ:TYPE?;:ACQ:AVER?;:ACQ:ULTR:MAXF?"), "AVER;64;100");
+        line(&mut s, &mut ui, &cv, ":ACQ:TYPE HRES;:ACQ:ULTR:MAXF 0");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":ACQ:TYPE?;:ACQ:ULTR:MAXF?"), "HRES;0");
+
+        line(&mut s, &mut ui, &cv, ":CHAN1:TCAL 2e-8");
+        let skew: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:TCAL?").parse().unwrap();
+        assert!((skew - 2e-8).abs() < 1e-12, "{skew}");
+        line(&mut s, &mut ui, &cv, ":TIM:SCAL 2e-5;:CHAN1:TCAL 1e-9");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "a slow time base refuses a deskew change");
+        let held: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:TCAL?").parse().unwrap();
+        assert!((held - 2e-8).abs() < 1e-12, "{held}");
+
+        line(&mut s, &mut ui, &cv, ":REF:VSC 1,0.5;:REF:VOFF 1,0.1;:REF:RES 1;:REF:COL 1,RED");
+        let vsc: f64 = line(&mut s, &mut ui, &cv, ":REF:VSC? 1").parse().unwrap();
+        let voff: f64 = line(&mut s, &mut ui, &cv, ":REF:VOFF? 1").parse().unwrap();
+        assert!((vsc - 1.0).abs() < 1e-6 && voff.abs() < 1e-9, "reset scale {vsc} offset {voff}");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":REF:COL? 1"), "RED");
+
+        line(&mut s, &mut ui, &cv, ":MEAS:SET:MIN 20;:MEAS:SET:MAX 80");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MIN?;:MEAS:SET:MAX?"), "20;80");
+        line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX 10");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "the upper threshold must stay above the lower");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX?"), "80");
     }
 
     fn wfm_bytes() -> Vec<u8> {
