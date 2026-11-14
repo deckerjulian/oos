@@ -136,7 +136,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u
     };
     use MenuId::*;
-    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote, Time] {
+    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasAddMore, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote, Time] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }
@@ -366,7 +366,7 @@ fn screen_in_order_on(scr: Screen) {
         }
         // menus under the top bar, on the screen, as high as at the normal size (the rows keep their 44 px)
         use MenuId::*;
-        for m in [Main, Channel(0), Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Decode, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote] {
+        for m in [Main, Channel(0), Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasAddMore, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Decode, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote] {
             u.open_menu(m);
             let d = u.dlg_layout().unwrap();
             assert!(d.r.y >= u.frame().top.bottom() && d.r.bottom() <= u.scr.h && d.r.x >= 0 && d.r.right() <= u.scr.w, "{:?}: {:?} {:?}", ts, m, d.r);
