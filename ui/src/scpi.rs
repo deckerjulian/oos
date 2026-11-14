@@ -19,7 +19,7 @@
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
-//! :DISPlay:DATA? [BMP|PNG],
+//! :DISPlay:DATA? [BMP|PNG], :DISPlay:TYPE|GRADing:TIME|WBRightness|GRID,
 //! :REFerence:SLOT R1..R10, :CURRent, :SOURce, :VSCale, :VOFFset, :COLor, :RESet, :LABel:CONTent, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
 //! :MEASure:SETup:MAX|MIN (percent thresholds),
 //! :SIM:PRESet <name>, :SIM:SLOT R1..R10, :SIM:PLAY ON|OFF, :SIM:SHOW ON|OFF,
@@ -107,6 +107,31 @@ fn kw(tok: &str, long: &str) -> bool {
 fn suffix(tok: &str) -> (&str, Option<usize>) {
     let i = tok.find(|c: char| c.is_ascii_digit()).unwrap_or(tok.len());
     (&tok[..i], tok[i..].parse().ok())
+}
+
+fn persist_index(arg: &str) -> Option<usize> {
+    let a = arg.trim();
+    if kw(a, "MIN") {
+        return Some(0);
+    }
+    if kw(a, "INFinite") {
+        return Some(PERSIST.len() - 1);
+    }
+    let v = a.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0)?;
+    let times = [0.0, 0.1, 0.5, 1.0, 5.0, 10.0];
+    times.iter().enumerate().min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i)
+}
+
+fn persist_token(i: usize) -> &'static str {
+    match i {
+        0 => "MIN",
+        1 => "0.1",
+        2 => "0.5",
+        3 => "1",
+        4 => "5",
+        5 => "10",
+        _ => "INF",
+    }
 }
 
 fn bus_index(tok: &str) -> Option<usize> {
@@ -1318,6 +1343,9 @@ impl Scpi {
         if kw(n0, "SIM") {
             return self.sim_cmd(ui, &nodes[1..], query, arg);
         }
+        if kw(n0, "DISPlay") && !(nodes.len() == 2 && kw(nodes[1], "DATA")) {
+            return self.display_cmd(ui, &nodes[1..], query, arg);
+        }
         if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
             let kind = arg.split_whitespace().next().unwrap_or("").trim();
             let up = kind.to_ascii_uppercase();
@@ -2079,6 +2107,74 @@ impl Scpi {
             }
         }
         ui.mark_changed();
+        None
+    }
+
+    /// Waveform drawing, persistence, brightness, and the graticule. Persistence snaps to the times the screen actually keeps.
+    fn display_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "TYPE") {
+            if query {
+                return t(if ui.m.dots { "DOTS" } else { "VECT" });
+            }
+            ui.m.dots = if kw(arg, "VECTors") {
+                false
+            } else if kw(arg, "DOTS") {
+                true
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 2 && kw(n0, "GRADing") && kw(n[1], "TIME") {
+            if query {
+                return t(persist_token(ui.m.persist));
+            }
+            let Some(i) = persist_index(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.m.persist = i;
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "WBRightness") {
+            if query {
+                return t(&ui.m.intensity.to_string());
+            }
+            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (1..=100).contains(v)) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.m.intensity = v.clamp(10, 100);
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "GRID") {
+            if query {
+                return t(match ui.m.grid {
+                    Grid::Full => "FULL",
+                    Grid::Light => "HALF",
+                    Grid::None => "NONE",
+                });
+            }
+            ui.m.grid = if kw(arg, "FULL") {
+                Grid::Full
+            } else if kw(arg, "HALF") {
+                Grid::Light
+            } else if kw(arg, "NONE") {
+                Grid::None
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.mark_changed();
+            return None;
+        }
+        self.push_err(format!("-113,\"Undefined header\" :DISPlay:{}", n.join(":")));
         None
     }
 
@@ -4062,6 +4158,17 @@ mod tests {
         assert!(data.starts_with("#9") && data.contains("RS232"), "{data}");
         line(&mut s, &mut ui, &cv, "*CLS;:BUS1:FORM DEC");
         assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224"), "only hex and ASCII are on this screen");
+    }
+
+    #[test]
+    fn display_type_persistence_brightness_and_grid() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, "*CLS;:DISP:TYPE VECT;:DISP:GRAD:TIME 0.1;:DISP:WBR 50;:DISP:GRID HALF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:TYPE?;:DISP:GRAD:TIME?;:DISP:WBR?;:DISP:GRID?"), "VECT;0.1;50;HALF");
+        line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME 0.2");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME?"), "0.1", "0.2 s snaps to the screen's 100 ms step");
+        line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME INF;:DISP:TYPE DOTS;:DISP:GRID NONE;:DISP:WBR 7");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME?;:DISP:TYPE?;:DISP:GRID?;:DISP:WBR?"), "INF;DOTS;NONE;10");
     }
 
     fn wfm_bytes() -> Vec<u8> {

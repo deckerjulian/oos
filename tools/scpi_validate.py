@@ -442,6 +442,16 @@ def validate(oos, result):
     )
     oos.write(":BUS1:DISPlay OFF")
 
+    oos.write(":DISPlay:TYPE VECTors")
+    oos.write(":DISPlay:GRADing:TIME 0.1")
+    oos.write(":DISPlay:WBRightness 50")
+    oos.write(":DISPlay:GRID HALF")
+    result.equal(
+        "display setup",
+        oos.query(":DISPlay:TYPE?;:DISPlay:GRADing:TIME?;:DISPlay:WBRightness?;:DISPlay:GRID?"),
+        "VECT;0.1;50;HALF",
+    )
+
     oos.write(":MEASure:SETup:MIN 20")
     oos.write(":MEASure:SETup:MAX 80")
     result.equal("measure thresholds", oos.query(":MEASure:SETup:MIN?;:MEASure:SETup:MAX?"), "20;80")
