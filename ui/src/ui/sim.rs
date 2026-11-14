@@ -342,6 +342,10 @@ impl Ui {
         Some((1.0 / r.dt, r.v.len() as u64))
     }
 
+    pub(super) fn sim_operation(&self) -> Option<(u64, u64)> {
+        self.sim_generation.as_ref().and_then(|generation| generation.active.map(|id| (self.workflow_epoch, id)))
+    }
+
     pub(crate) fn sim_generating(&self) -> bool {
         self.sim_generation.as_ref().is_some_and(|generation| generation.active.is_some())
     }
@@ -498,11 +502,18 @@ impl Ui {
             return;
         }
         if let Some(error)=generated.error {self.sim_error=Some(error.into());self.m.status=TrigStatus::Wait;self.toast(&format!("SIM: {error}"));return;}
+        let operation = OperationToken::Sim(self.workflow_epoch, request.id);
         if request.bus_trigger.is_some() && request.run && generated.hits.as_ref().is_some_and(|(_,hits)|hits.is_empty())
             && self.m.trig_mode!=TrigMode::Auto && !self.replay.force_requested() {
+            self.scpi_finish_operation(operation);
             self.m.status=TrigStatus::Wait;return;
         }
-        if request.fresh || (request.continuing && request.run) { self.sim_finish_capture(request, generated); return; }
+        if request.fresh || (request.continuing && request.run) {
+            self.sim_finish_capture(request, generated);
+            if !self.sim_generating() { self.scpi_finish_operation(operation); }
+            return;
+        }
+        self.scpi_finish_operation(operation);
         let Generated { samples: v, hits, bus_decode, .. } = generated;
         let Request { lane, slot, continuing, run, .. } = request;
         let initialize_measurements = self.refs.iter().all(Option::is_none)

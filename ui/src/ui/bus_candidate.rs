@@ -77,6 +77,18 @@ mod tests {
     }
 
     #[test]
+    fn mixed_bus_remote_single_fence_survives_arm_tick_and_rejects_rearm() {
+        let (mut ui,_)=fixture(10_000);let mut scpi=crate::scpi::Scpi::open(0);let cv=Canvas::new(W,H);
+        let mut program=crate::scpi::Program::new(":SINGLE;*OPC?;:RUN");
+        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());ui.step(0.001);
+        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());
+        scpi.exec_line(&mut ui,&cv,":STOP;:SINGLE");
+        assert_eq!(scpi.poll_program(&mut ui,&cv,&mut program),Some(Vec::new()));
+        assert_eq!(ui.m.trig_mode,TrigMode::Single);
+        assert!(String::from_utf8(scpi.exec_line(&mut ui,&cv,":SYST:ERR?")).unwrap().starts_with("-410,"));
+    }
+
+    #[test]
     fn single_preserves_picture_statistics_eye_and_fifo_until_one_matched_candidate_commits() {
         let points = 300_000;
         let (mut ui, shared) = fixture(points);
@@ -188,10 +200,10 @@ mod tests {
         response.clear(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap();
         assert_eq!(ui.m.run, RunState::Stop); assert!(!ui.bus_candidate_waiting());
         ui.m.trig_bus_val = 0x5a;
-        socket.write_all(b":SINGLE;*OPC?\n").unwrap(); scpi.poll(&mut ui, &Canvas::new(W, H));
+        socket.write_all(b":SINGLE;:TRIG:STAT?\n").unwrap(); scpi.poll(&mut ui, &Canvas::new(W, H));
         response.clear(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap(); ui.step(0.001);
         push(&ui, &shared, points, 0xa5, 3);
-        socket.write_all(b":TRIG:FORC;*OPC?\n").unwrap(); scpi.poll(&mut ui, &Canvas::new(W, H));
+        socket.write_all(b":TRIG:FORC;:TRIG:STAT?\n").unwrap(); scpi.poll(&mut ui, &Canvas::new(W, H));
         response.clear(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap(); ui.step(0.001);
         assert_eq!(ui.records, before + 1); assert_eq!(ui.m.run, RunState::Stop); assert_eq!(ui.m.status, TrigStatus::Stop);
         assert!(!ui.last[0].as_ref().unwrap().triggered);
@@ -272,6 +284,7 @@ impl Ui {
                 self.m.run = RunState::Run; self.m.status = TrigStatus::Wait;
             }
             2 => {
+                self.scpi_arm_operation();
                 self.cancel_bus_candidate(true);
                 self.single_armed = false;
                 self.m.trig_mode = TrigMode::Single; self.m.run = RunState::Run; self.m.status = TrigStatus::Wait;

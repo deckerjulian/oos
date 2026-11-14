@@ -825,6 +825,8 @@ impl Ui {
                 }
             }
             key::SINGLE => {
+                self.operation_serial = self.operation_serial.wrapping_add(1);
+                self.single_operation = self.operation_serial;
                 self.m.trig_mode = TrigMode::Single;
                 self.m.run = RunState::Run;
                 self.sim_play = true;
@@ -878,6 +880,7 @@ impl Ui {
         self.replay.viewport = Some((slot, self.view().0, self.view().1));
         self.m.status = if hit.is_some() { TrigStatus::Triggered } else { TrigStatus::Auto };
         if self.m.trig_mode == TrigMode::Single {
+            self.scpi_finish_operation(OperationToken::Single(self.single_operation));
             self.m.run = RunState::Stop;
             self.sim_play = false;
         }

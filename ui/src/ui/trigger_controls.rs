@@ -41,7 +41,7 @@ impl Ui {
             self.m.run=if running{RunState::Run}else{RunState::Stop};
             self.sim_play=self.record_mode() && running;
             self.m.status=if running{TrigStatus::Wait}else{TrigStatus::Stop};
-            if running && self.m.trig_mode==TrigMode::Single{self.single_armed=false;}
+            if running && self.m.trig_mode==TrigMode::Single{self.single_armed=false;self.scpi_arm_operation();}
             if !running && previous_context && !self.record_mode(){self.cleared=true;}
             self.replay.reset_trigger_source();
             self.replay.next=self.now;self.replay.sim_next=self.now;

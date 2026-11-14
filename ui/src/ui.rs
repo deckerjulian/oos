@@ -43,6 +43,8 @@ mod wlan;
 mod windows;
 mod workspace;
 mod trigger_controls;
+mod scpi_operations;
+pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
 mod reference_search;
 mod reference_decode;
 mod bus_candidate;
@@ -967,6 +969,9 @@ pub struct Ui {
     pub records: u64,
     /// auto set-up under way on the hardware (autoset.rs)
     auto: Option<autoset::AutoRun>,
+    operation_serial: u64,
+    scpi_completed: std::collections::VecDeque<OperationToken>,
+    single_operation: u64,
     /// when the bar of views after an auto set-up came up (ui/autoset.rs)
     auto_bar: Option<f64>,
     pub fps: f32,
@@ -1192,6 +1197,9 @@ impl Ui {
             frames: 0,
             records: 0,
             auto: None,
+            operation_serial: 0,
+            scpi_completed: std::collections::VecDeque::new(),
+            single_operation: 0,
             auto_bar: None,
             fps: 0.0,
             wfm_rate: 0.0,
@@ -2181,11 +2189,13 @@ impl Ui {
                         if self.m.segments > 0 {
                             self.seg_n += 1;
                             if self.seg_n >= self.m.segments {
+                                if self.m.trig_mode == TrigMode::Single { self.scpi_finish_operation(OperationToken::Single(self.single_operation)); }
                                 self.m.run = RunState::Stop;
                                 self.toast(&format!("{} segments recorded", self.seg_n));
                                 break;
                             }
                         } else if self.m.trig_mode == TrigMode::Single && !self.last[0].as_ref().is_some_and(|r| r.partial) {
+                            self.scpi_finish_operation(OperationToken::Single(self.single_operation));
                             self.m.run = RunState::Stop;
                             break;
                         }
@@ -6063,7 +6073,7 @@ impl Ui {
 
     fn settings_changed(&mut self) {
         self.cancel_bus_candidate(true);
-        if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run { self.single_armed = false; }
+        if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run { self.single_armed = false; self.scpi_arm_operation(); }
         if self.m.run == RunState::Run {
             self.dirty_map = true;
         }
@@ -7208,6 +7218,8 @@ impl Ui {
                 }
             }
             key::SINGLE => {
+                self.operation_serial = self.operation_serial.wrapping_add(1);
+                self.single_operation = self.operation_serial;
                 m.trig_mode = TrigMode::Single;
                 m.run = RunState::Run;
                 self.single_armed = false;

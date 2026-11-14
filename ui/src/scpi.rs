@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
-//! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
+//! *IDN? *RST *OPC[?] *ESR? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
-//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
+//! :TRIGger:MODE[?]|TYPe[?] :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
 //! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
 //! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:GATing SCREEN|NONE, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
@@ -35,9 +35,47 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
+/// One bounded SCPI message, retained by its transport while *OPC? is pending.
+#[derive(Default)]
+pub struct Program {
+    commands: std::collections::VecDeque<(String, bool)>,
+    out: Vec<u8>,
+    waiting: Option<crate::ui::Operations>,
+    separator: u8,
+    pub bytes: usize,
+    invalid: bool,
+}
+impl Program {
+    pub fn new(text: &str) -> Self {
+        if text.len() > MAX_LINE { return Self { invalid: true, ..Self::default() }; }
+        let mut commands = std::collections::VecDeque::new();
+        for line in text.split(['\n', '\r']).filter(|line| !line.trim().is_empty()) {
+            for (index, command) in line.split(';').map(str::trim).filter(|s| !s.is_empty()).enumerate() {
+                if commands.len() >= 1024 { return Self { invalid: true, ..Self::default() }; }
+                commands.push_back((command.to_string(), index == 0));
+            }
+        }
+        Self { commands, separator: b';', bytes: text.len(), ..Self::default() }
+    }
+    fn append(&mut self, reply: &[u8]) {
+        if !self.out.is_empty() { self.out.push(self.separator); }
+        self.out.extend_from_slice(reply); self.separator = b';';
+    }
+    /// Adapter used by transport unit fixtures with a synchronous test interpreter.
+    #[cfg(test)]
+    pub fn immediate(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) -> Vec<u8> {
+        while let Some((command, new_line)) = self.commands.pop_front() {
+            if new_line && !self.out.is_empty() { self.separator = b'\n'; }
+            let reply = exec(&command); if !reply.is_empty() { self.append(&reply); }
+        }
+        std::mem::take(&mut self.out)
+    }
+}
+
 struct Client {
     s: TcpStream,
     buf: Vec<u8>,
+    program: Option<Program>,
 }
 
 /// Longest command line (`:SOURce:ARB:DATA` with its samples is the longest there is); a client past it is dropped.
@@ -78,9 +116,11 @@ pub struct Scpi {
     /// :WAVeform:SOURce, a channel or a reference slot
     wav_src: WaveId,
     wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
-    /// :WAVeform:MODE: false = the screen record, true = every sample of the record in the screen window (RAW)
+    /// :WAVeform:MODE: false = the screen CH record, true = the entire retained native CH acquisition (RAW); refs are full records in either mode
     wav_raw: bool,
     err: Vec<String>,
+    event_status: u8,
+    opc_events: Vec<crate::ui::Operations>,
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
@@ -308,7 +348,7 @@ impl Scpi {
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
-        Scpi { l, clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_raw: false, err: Vec::new() }
+        Scpi { l, clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_raw: false, err: Vec::new(), event_status: 0, opc_events: Vec::new() }
     }
 
     pub fn port(&self) -> Option<u16> {
@@ -323,7 +363,7 @@ impl Scpi {
                 let _ = s.set_nodelay(true);
                 // each connection costs a read per frame
                 if self.clients.len() < MAX_CLIENTS {
-                    self.clients.push(Client { s, buf: Vec::new() });
+                    self.clients.push(Client { s, buf: Vec::new(), program: None });
                 }
             }
         }
@@ -331,13 +371,18 @@ impl Scpi {
         while i < self.clients.len() {
             let mut tmp = [0u8; 4096];
             let mut closed = false;
+            let mut read_bytes = 0;
             loop {
                 match self.clients[i].s.read(&mut tmp) {
                     Ok(0) => {
                         closed = true;
                         break;
                     }
-                    Ok(n) => self.clients[i].buf.extend_from_slice(&tmp[..n]),
+                    Ok(n) => {
+                        if self.clients[i].buf.len() + n > MAX_LINE { closed = true; break; }
+                        self.clients[i].buf.extend_from_slice(&tmp[..n]); read_bytes += n;
+                        if read_bytes >= 65536 { break; }
+                    },
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => break,
                     Err(_) => {
                         closed = true;
@@ -345,16 +390,20 @@ impl Scpi {
                     }
                 }
             }
-            'lines: while let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') {
-                let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
-                let line = String::from_utf8_lossy(&line).trim().to_string();
-                let mut response = self.exec_line(ui, cv, &line);
+            while !closed {
+                if self.clients[i].program.is_none() {
+                    let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') else { break; };
+                    let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
+                    self.clients[i].program = Some(Program::new(&String::from_utf8_lossy(&line)));
+                }
+                let mut program = self.clients[i].program.take().unwrap();
+                let Some(mut response) = self.poll_program(ui, cv, &mut program) else {
+                    self.clients[i].program = Some(program);
+                    break;
+                };
                 if !response.is_empty() {
                     response.push(b'\n');
-                    if !send(&mut self.clients[i].s, &response) {
-                        closed = true;
-                        break 'lines;
-                    }
+                    if !send(&mut self.clients[i].s, &response) { closed = true; break; }
                 }
             }
             closed |= self.clients[i].buf.len() > MAX_LINE;
@@ -366,22 +415,71 @@ impl Scpi {
         }
     }
 
-    /// One program message (commands separated by ';'): the responses joined by ';' (empty without a query).
+    /// Immediate adapter for HTTP and in-process callers. Deferred barriers must use
+    /// `poll_program`: returning 1 here while an operation is pending would be false.
+    /// Commands before a pending barrier execute once; the remaining message is rejected.
     pub fn exec_line(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Vec<u8> {
-        let mut out: Vec<u8> = Vec::new();
-        for cmd in line.split(';') {
-            if out.len() >= RESP_MAX {
-                self.err.push("-363,\"Input buffer overrun\" rest of the line dropped".into());
-                break;
-            }
-            if let Some(r) = self.exec(ui, cv, cmd.trim()) {
-                if !out.is_empty() {
-                    out.push(b';');
-                }
-                out.extend_from_slice(&r);
+        self.exec_line_checked(ui, cv, line).unwrap_or_default()
+    }
+
+    pub fn exec_line_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<Vec<u8>, &'static str> {
+        let mut program = Program::new(line);
+        match self.poll_program(ui, cv, &mut program) {
+            Some(response) => Ok(response),
+            None => {
+                let error = "Operation pending; use raw TCP or HiSLIP for *OPC?";
+                self.err.push(format!("-221,\"{}\"", error));
+                self.normalize_errors();
+                Err(error)
             }
         }
-        out
+    }
+
+    fn poll_events(&mut self, ui: &Ui) {
+        self.opc_events.retain(|fence| match fence.state(ui) {
+            crate::ui::OperationState::Pending => true,
+            crate::ui::OperationState::Complete => { self.event_status |= 1; false },
+            crate::ui::OperationState::Cancelled => false,
+        });
+    }
+
+    /// Advance a bounded per-client message without waiting on the UI thread.
+    /// The continuation owns its earlier replies and remaining commands: no write is replayed.
+    pub fn poll_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
+        let response = self.advance_program(ui, cv, program);
+        self.normalize_errors();
+        response
+    }
+
+    fn advance_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
+        self.poll_events(ui);
+        if program.invalid { self.err.push("-363,\"Program message too large or too many commands\"".into()); return Some(Vec::new()); }
+        if let Some(fence) = &program.waiting {
+            match fence.state(ui) {
+                crate::ui::OperationState::Pending => return None,
+                crate::ui::OperationState::Complete => { program.waiting = None; program.append(b"1"); },
+                crate::ui::OperationState::Cancelled => {
+                    self.err.push("-410,\"OPC query interrupted by cancelled operation\"".into());
+                    program.commands.clear(); program.out.clear(); program.waiting = None;
+                    return Some(Vec::new());
+                }
+            }
+        }
+        while let Some((command, new_line)) = program.commands.pop_front() {
+            if new_line && !program.out.is_empty() { program.separator = b'\n'; }
+            if program.out.len() >= RESP_MAX {
+                self.err.push("-363,\"Input buffer overrun\" rest of the line dropped".into());
+                program.commands.clear(); break;
+            }
+            if command.eq_ignore_ascii_case("*OPC?") {
+                let fence = ui.scpi_operations();
+                if fence.state(ui) == crate::ui::OperationState::Pending { program.waiting = Some(fence); return None; }
+                program.append(b"1");
+            } else if let Some(response) = self.exec(ui, cv, &command) {
+                program.append(&response);
+            }
+        }
+        Some(std::mem::take(&mut program.out))
     }
 
     fn exec(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
@@ -389,6 +487,11 @@ impl Scpi {
             self.err.push(format!("-224,\"SIM generation failed\" {error}"));
         }
         let r = self.exec_cmd(ui, cv, cmd);
+        self.normalize_errors();
+        r
+    }
+
+    fn normalize_errors(&mut self) {
         // a client that never asks for its errors, or sends megabytes of nonsense, must not fill the memory
         for e in &mut self.err {
             if e.len() > ERR_LEN {
@@ -399,7 +502,6 @@ impl Scpi {
             self.err.truncate(ERR_MAX - 1);
             self.err.push("-350,\"Queue overflow\"".into());
         }
-        r
     }
 
     fn exec_cmd(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
@@ -420,12 +522,26 @@ impl Scpi {
                 let p = oos_hal::model::platform();
                 return t(&format!("OOS,{},{},oos-ui {}", p.caps.name, p.serial.as_deref().unwrap_or("0"), env!("CARGO_PKG_VERSION")));
             }
-            "*OPC" => return if query { t("1") } else { None },
+            "*OPC" if !query => {
+                self.poll_events(ui);
+                if self.opc_events.len() < 64 { self.opc_events.push(ui.scpi_operations()); }
+                else { self.err.push("-350,\"Too many pending OPC events\"".into()); }
+                self.poll_events(ui);
+                return None;
+            }
+            "*ESR" if query => {
+                self.poll_events(ui);
+                let status = std::mem::take(&mut self.event_status);
+                return t(&status.to_string());
+            }
             "*CLS" if !query => {
                 self.err.clear();
+                self.event_status = 0;
+                self.opc_events.clear();
                 return None;
             }
             "*RST" if !query => {
+                self.event_status = 0; self.opc_events.clear();
                 ui.key(crate::ui::key::DEFAULT);
                 return None;
             }
@@ -522,8 +638,12 @@ impl Scpi {
                     return None;
                 }
             }
-            if nodes.len() == 2 && kw(last, "TYPe") {
-                if query { return t(ui.m.trig_type.name()); }
+            if nodes.len() == 2 && (kw(last, "TYPe") || kw(last, "MODE")) {
+                if query { return t(if kw(last, "MODE") { match ui.m.trig_type {
+                    TrigType::Edge => "EDGE", TrigType::Pulse => "PULS", TrigType::Slope => "SLOP", TrigType::Video => "VID",
+                    TrigType::Pattern => "PATT", TrigType::Duration => "DUR", TrigType::Timeout => "TIM", TrigType::Runt => "RUNT",
+                    TrigType::Window => "WIND", TrigType::Delay => "DEL", TrigType::SetupHold => "SET", TrigType::NthEdge => "NEDG", TrigType::Bus => "BUS",
+                }} else { ui.m.trig_type.name() }); }
                 let name = arg.trim().to_ascii_uppercase();
                 let kind = match name.as_str() {
                     "EDGE" => Some(TrigType::Edge), "PULSE" | "PULS" => Some(TrigType::Pulse),
@@ -531,7 +651,7 @@ impl Scpi {
                     "PATTERN" | "PATT" => Some(TrigType::Pattern), "DURATION" | "DUR" => Some(TrigType::Duration),
                     "TIMEOUT" | "TIM" => Some(TrigType::Timeout), "RUNT" => Some(TrigType::Runt),
                     "WINDOW" | "WIND" => Some(TrigType::Window), "DELAY" | "DEL" => Some(TrigType::Delay),
-                    "SETUPHOLD" | "SETUP" => Some(TrigType::SetupHold), "NTHEDGE" | "NTH" => Some(TrigType::NthEdge),
+                    "SETUPHOLD" | "SETUP" | "SET" => Some(TrigType::SetupHold), "NTHEDGE" | "NTH" | "NEDGE" | "NEDG" => Some(TrigType::NthEdge),
                     "BUS" => Some(TrigType::Bus), _ => None,
                 };
                 if let Some(kind) = kind { ui.trigger_type_set(kind); ui.mark_changed(); }
@@ -548,6 +668,11 @@ impl Scpi {
                     return None;
                 }
             }
+        }
+        if !query && (nodes.len() == 1 && kw(nodes[0], "SINGle")
+            || nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "SWEep")
+                && arg.to_ascii_uppercase().starts_with("SING") && ui.m.run == RunState::Run) {
+            ui.scpi_arm_operation();
         }
         let m = &mut ui.m;
         let r: Option<Option<Vec<u8>>> = (|| {
@@ -657,9 +782,6 @@ impl Scpi {
             }
             if kw(n0, "TRIGger") {
                 let last = *nodes.last()?;
-                if nodes.len() == 2 && kw(last, "MODE") {
-                    return Some(if query { t("EDGE") } else { None });
-                }
                 if nodes.len() == 2 && kw(last, "STATus") {
                     let s = match (m.run, m.status) {
                         (RunState::Stop, _) => "STOP",
@@ -905,15 +1027,19 @@ impl Scpi {
                 if query {
                     return t(if self.wav_raw { "RAW" } else { "NORM" });
                 }
-                self.wav_raw = arg.to_ascii_uppercase().starts_with("RAW");
+                if kw(arg.trim(), "RAW") { self.wav_raw = true; }
+                else if kw(arg.trim(), "NORMal") { self.wav_raw = false; }
+                else { self.err.push(format!("-224,\"Unsupported waveform mode\" {}", arg)); }
                 return None;
             }
             if kw(n1, "FORMat") {
                 if query {
                     return t(["BYTE", "WORD", "ASC"][self.wav_fmt as usize]);
                 }
-                let a = arg.to_ascii_uppercase();
-                self.wav_fmt = if a.starts_with("WORD") { 1 } else if a.starts_with("ASC") { 2 } else { 0 };
+                let format = if kw(arg.trim(), "BYTE") { Some(0) } else if kw(arg.trim(), "WORD") { Some(1) }
+                    else if kw(arg.trim(), "ASCii") { Some(2) } else { None };
+                if let Some(format) = format { self.wav_fmt = format; }
+                else { self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)); }
                 return None;
             }
             let (pts, pre) = self.wave_params(ui);
@@ -1318,7 +1444,7 @@ impl Scpi {
             _ => (vpd * VDIV as f64 / 250.0, 128.0),
         };
         let yorg = if yinc == 0.0 { 0.0 } else { (offset / yinc).round() };
-        let pre = format!("{},0,{},1,{},{},0,{},{},{}", self.wav_fmt, pts, e(dt), e(t0), e(yinc), yorg, yref);
+        let pre = format!("{},{},{},1,{},{},0,{},{},{}", self.wav_fmt, if self.wav_raw { 2 } else { 0 }, pts, e(dt), e(t0), e(yinc), yorg, yref);
         (pts, (pre, (yinc, yorg, yref)))
     }
 
@@ -1821,6 +1947,205 @@ mod tests {
         String::from_utf8(s.exec_line(ui, cv, cmd)).unwrap()
     }
 
+    #[test]
+    fn compatibility_trigger_modes_roundtrip_actual_types() {
+        let (mut s,mut ui,cv)=reference_session();
+        for (token,reply,kind) in [("EDGE","EDGE",TrigType::Edge),("PULSe","PULS",TrigType::Pulse),("SLOPe","SLOP",TrigType::Slope),
+            ("VIDeo","VID",TrigType::Video),("PATTern","PATT",TrigType::Pattern),("DURation","DUR",TrigType::Duration),
+            ("TIMeout","TIM",TrigType::Timeout),("RUNT","RUNT",TrigType::Runt),("WINDow","WIND",TrigType::Window),
+            ("DELay","DEL",TrigType::Delay),("SETup","SET",TrigType::SetupHold),("NEDGe","NEDG",TrigType::NthEdge),("BUS","BUS",TrigType::Bus)] {
+            line(&mut s,&mut ui,&cv,&format!(":TRIG:MODE {token}"));assert_eq!(ui.m.trig_type,kind);
+            assert_eq!(line(&mut s,&mut ui,&cv,":TRIG:MODE?"),reply);
+            line(&mut s,&mut ui,&cv,&format!(":TRIG:MODE {reply}"));
+            assert_eq!(line(&mut s,&mut ui,&cv,":TRIG:TYPE?"),kind.name());assert_eq!(ui.m.trig_ref,Some(0));
+        }
+        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("0,"));
+        line(&mut s,&mut ui,&cv,":TRIG:MODE MADEUP");assert_eq!(ui.m.trig_type,TrigType::Bus);
+        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-224,"));
+    }
+
+    #[test]
+    fn compatibility_waveform_metadata_and_invalid_enums() {
+        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":WAV:SOUR R1;:WAV:FORM WORD");
+        for (mode,kind) in [("RAW",2),("NORM",0)] {
+            line(&mut s,&mut ui,&cv,&format!(":WAV:MODE {mode}"));
+            let pre=line(&mut s,&mut ui,&cv,":WAV:PRE?");let f:Vec<_>=pre.split(',').collect();
+            assert_eq!(f.len(),10);assert_eq!(f[0],"1");assert_eq!(f[1],kind.to_string());assert_eq!(f[2],"4000");
+            assert!((f[4].parse::<f64>().unwrap()-1e-9).abs()<1e-15);
+            assert_eq!(s.exec_line(&mut ui,&cv,":WAV:DATA?").len(),8011);
+        }
+        line(&mut s,&mut ui,&cv,":WAV:MODE RAW");
+        for command in [":WAV:MODE MAX",":WAV:MODE WRONG",":WAV:MODE RAWsuffix",":WAV:FORM WRONG",":WAV:FORM WORDsuffix"] {
+            line(&mut s,&mut ui,&cv,command);assert_eq!(line(&mut s,&mut ui,&cv,":WAV:MODE?;:WAV:FORM?"),"RAW;WORD");
+            assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-224,"),"{command}");
+        }
+    }
+
+    #[test]
+    fn compatibility_opc_single_waits_across_ticks_and_resumes_without_replaying_writes() {
+        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
+        let mut p=Program::new(":SINGLE;:TRIG:STAT?;*OPC?;:TRIG:STAT?");assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());
+        for _ in 0..3 {ui.step(0.2);assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());}
+        assert_eq!(captures(&ui),0.0);line(&mut s,&mut ui,&cv,":TRIG:FORC");ui.step(0.2);
+        assert_eq!(s.poll_program(&mut ui,&cv,&mut p),Some(b"WAIT;1;STOP".to_vec()));assert_eq!(captures(&ui),1.0);
+        ui.step(0.2);assert_eq!(captures(&ui),1.0);line(&mut s,&mut ui,&cv,":RUN");
+        assert_eq!(line(&mut s,&mut ui,&cv,"*OPC?"),"1");
+    }
+
+    #[test]
+    fn compatibility_opc_events_clear_reset_and_immediate_adapter() {
+        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE;*OPC");
+        assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");line(&mut s,&mut ui,&cv,"*CLS");
+        line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 0");ui.step(0.2);assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");
+        line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE;*OPC");assert_eq!(line(&mut s,&mut ui,&cv,"*OPC?"),"");
+        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-221,"));
+        line(&mut s,&mut ui,&cv,"*RST");assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");
+        line(&mut s,&mut ui,&cv,":STOP;*OPC");assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?;*ESR?"),"1;0");
+    }
+
+    #[test]
+    fn compatibility_raw_tcp_pending_opc_does_not_block_other_clients() {
+        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
+        let mut waiting=TcpStream::connect(("127.0.0.1",s.port().unwrap())).unwrap();waiting.set_nonblocking(true).unwrap();
+        waiting.write_all(b":SINGLE;*OPC?;:TRIG:STAT?\n").unwrap();s.poll(&mut ui,&cv);ui.step(0.2);s.poll(&mut ui,&cv);
+        let mut bytes=[0;128];assert_eq!(waiting.read(&mut bytes).unwrap_err().kind(),ErrorKind::WouldBlock);
+        let mut control=TcpStream::connect(("127.0.0.1",s.port().unwrap())).unwrap();control.write_all(b":TRIG:FORC\n").unwrap();
+        s.poll(&mut ui,&cv);ui.step(0.2);s.poll(&mut ui,&cv);let n=waiting.read(&mut bytes).unwrap();
+        assert_eq!(&bytes[..n],b"1;STOP\n");assert_eq!(captures(&ui),1.0);
+    }
+
+    #[test]
+    fn compatibility_cancelled_single_interrupts_query_and_does_not_follow_new_arm() {
+        for stored in [false,true] {
+            let (mut s,mut ui,cv)=if stored {reference_session()} else {session()};
+            line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE;*OPC");
+            let mut p=Program::new("*OPC?;:RUN");assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());
+            ui.step(0.02);assert!(s.poll_program(&mut ui,&cv,&mut p).is_none(),"initial hardware stamp must not complete {stored:?} Single");
+            line(&mut s,&mut ui,&cv,":STOP;:SINGLE");
+            assert_eq!(s.poll_program(&mut ui,&cv,&mut p),Some(Vec::new()));
+            assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-410,"));
+            assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");assert_eq!(ui.m.trig_mode,TrigMode::Single);
+            let mut fresh=Program::new("*OPC?");assert!(s.poll_program(&mut ui,&cv,&mut fresh).is_none());
+        }
+    }
+
+    #[test]
+    fn compatibility_hislip_defers_entire_multiline_payload_with_original_message_id() {
+        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
+        let mut server=crate::hislip::Server::open(0);
+        let mut client=TcpStream::connect(("127.0.0.1",server.port().unwrap())).unwrap();client.set_nonblocking(true).unwrap();
+        client.write_all(&crate::hislip::encode(0,0,0x0100_0000,b"hislip0")).unwrap();
+        server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p));
+        let mut bytes=[0;1024];let n=client.read(&mut bytes).unwrap();let init=crate::hislip::take_message(&mut bytes[..n].to_vec()).unwrap().unwrap();assert_eq!(init.typ,1);
+        client.write_all(&crate::hislip::encode(7,0,77,b":SINGLE;:TRIG:STAT?;*OPC?\n:TRIG:STAT?\n")).unwrap();
+        server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p));ui.step(0.2);server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p));
+        assert_eq!(client.read(&mut bytes).unwrap_err().kind(),ErrorKind::WouldBlock);
+        line(&mut s,&mut ui,&cv,":TRIG:FORC");ui.step(0.2);server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p));
+        let n=client.read(&mut bytes).unwrap();let response=crate::hislip::take_message(&mut bytes[..n].to_vec()).unwrap().unwrap();
+        assert_eq!((response.typ,response.param),(7,77));assert_eq!(response.data,b"WAIT;1\nSTOP\n");
+    }
+
+    #[test]
+    fn compatibility_disconnected_raw_client_cannot_resume_trailing_writes() {
+        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
+        let mut client=TcpStream::connect(("127.0.0.1",s.port().unwrap())).unwrap();
+        client.write_all(b":SINGLE;*OPC?;:RUN\n").unwrap();s.poll(&mut ui,&cv);assert!(s.clients[0].program.is_some());
+        client.shutdown(std::net::Shutdown::Both).unwrap();drop(client);
+        line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 0");ui.step(0.2);s.poll(&mut ui,&cv);
+        assert!(s.clients.is_empty());assert_eq!(ui.m.run,RunState::Stop);assert_eq!(captures(&ui),1.0);
+    }
+
+    #[test]
+    fn compatibility_program_command_count_is_bounded_before_execution() {
+        let (mut s,mut ui,cv)=session();let old=ui.m.trig_level;
+        let message=format!("{}:TRIG:EDGE:LEV 2", ";".to_string()+&":TRIG:STAT?;".repeat(1025));
+        assert!(s.exec_line(&mut ui,&cv,&message).is_empty());assert_eq!(ui.m.trig_level,old);
+        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-363,"));
+    }
+
+    #[test]
+    fn compatibility_opc_waits_for_actual_large_sim_generation_but_not_future_captures() {
+        let (mut s,mut ui,cv)=session();let mut p=Program::new(":SIM:PLAY ON;*OPC?;:SIM:BUSY?");
+        assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());assert!(ui.sim_generating());
+        let deadline=std::time::Instant::now()+Duration::from_secs(15);
+        let response=loop {
+            ui.step(0.01);
+            if let Some(response)=s.poll_program(&mut ui,&cv,&mut p) {break response;}
+            assert!(std::time::Instant::now()<deadline,"SIM operation did not finish");std::thread::sleep(Duration::from_millis(2));
+        };
+        assert!(response.starts_with(b"1;"));assert!(ui.ref_info(0).unwrap().0>262_144,"exercise real background default SSC");
+        line(&mut s,&mut ui,&cv,":STOP");
+        let (mut s,mut ui,cv)=session();let mut p=Program::new(":SIM:PLAY ON;*OPC?;:RUN");
+        assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());line(&mut s,&mut ui,&cv,":SIM:PLAY OFF");
+        assert_eq!(s.poll_program(&mut ui,&cv,&mut p),Some(Vec::new()));
+        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-410,"));
+    }
+
+    #[test]
+    fn compatibility_newly_accepted_arm_cannot_complete_a_cancelled_prior_fence() {
+        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE");
+        let mut old=Program::new("*OPC?;:RUN");assert!(s.poll_program(&mut ui,&cv,&mut old).is_none());
+        line(&mut s,&mut ui,&cv,":STOP;:TRIG:EDGE:LEV 0;:SINGLE");ui.step(0.2);assert_eq!(captures(&ui),1.0);
+        assert_eq!(s.poll_program(&mut ui,&cv,&mut old),Some(Vec::new()));
+        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-410,"));assert_eq!(ui.m.run,RunState::Stop);
+    }
+
+    #[test]
+    fn compatibility_hislip_sync_and_async_clear_discard_pending_tail_without_stale_reply() {
+        fn read_message(socket:&mut TcpStream)->crate::hislip::Message {
+            let mut b=[0;4096];let n=socket.read(&mut b).unwrap();crate::hislip::take_message(&mut b[..n].to_vec()).unwrap().unwrap()
+        }
+        for asynchronous in [false,true] {
+            let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":TRIG:EDGE:LEV 10");
+            let mut server=crate::hislip::Server::open(0);let port=server.port().unwrap();
+            let mut sync=TcpStream::connect(("127.0.0.1",port)).unwrap();sync.set_nonblocking(true).unwrap();
+            sync.write_all(&crate::hislip::encode(0,0,0x0100_0000,b"hislip0")).unwrap();server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p));
+            let session=read_message(&mut sync).param as u16;
+            sync.write_all(&crate::hislip::encode(7,0,42,b":SINGLE;*OPC?;:RUN\n")).unwrap();server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p));
+            if asynchronous {
+                let mut control=TcpStream::connect(("127.0.0.1",port)).unwrap();control.set_nonblocking(true).unwrap();
+                control.write_all(&crate::hislip::encode(17,0,session as u32,b"")).unwrap();server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p));
+                assert_eq!(read_message(&mut control).typ,18);
+                control.write_all(&crate::hislip::encode(19,0,0,b"")).unwrap();server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p));
+                assert_eq!(read_message(&mut control).typ,23);
+            } else {
+                sync.write_all(&crate::hislip::encode(8,0,0,b"")).unwrap();server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p));
+                assert_eq!(read_message(&mut sync).typ,9);
+            }
+            line(&mut scpi,&mut ui,&cv,":TRIG:EDGE:LEV 0");ui.step(0.2);server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p));
+            assert_eq!(ui.m.run,RunState::Stop);let mut b=[0;128];assert_eq!(sync.read(&mut b).unwrap_err().kind(),ErrorKind::WouldBlock);
+            sync.write_all(&crate::hislip::encode(7,0,44,b"*IDN?\n")).unwrap();server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p));
+            assert!(read_message(&mut sync).data.starts_with(b"OOS,"));
+        }
+    }
+
+    #[test]
+    fn compatibility_sweep_single_allocates_new_arm_after_a_completed_single() {
+        let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":SINGLE");ui.step(0.2);assert_eq!(captures(&ui),1.0);
+        let mut program=Program::new(":TRIG:SWE NORM;:RUN;:TRIG:EDGE:LEV 10;:TRIG:SWE SING;*OPC?");
+        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none(),"a previous Single receipt must not complete the SWEEP arm");
+        ui.step(0.2);assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());assert_eq!(captures(&ui),1.0);
+        assert_eq!((ui.m.run,ui.m.status),(RunState::Run,TrigStatus::Wait));
+    }
+
+    #[test]
+    fn compatibility_pending_and_invalid_program_errors_stay_bounded() {
+        let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE");
+        for _ in 0..100 {assert!(scpi.exec_line_checked(&mut ui,&cv,"*OPC?").is_err());}
+        assert!(scpi.err.len()<=ERR_MAX);
+        let invalid=":TRIG:STAT?;".repeat(1025);
+        for _ in 0..100 {scpi.exec_line(&mut ui,&cv,&invalid);}
+        assert!(scpi.err.len()<=ERR_MAX);assert!(scpi.err.iter().all(|error|error.len()<=ERR_LEN));
+    }
+
+    #[test]
+    fn compatibility_setup_single_rearms_with_a_fresh_operation_identity() {
+        let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":SINGLE");ui.step(0.2);
+        let mut program=Program::new(":TRIG:SWE NORM;:RUN;:TRIG:EDGE:LEV 10;:SYST:SET trig_mode = Single;*OPC?");
+        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());ui.step(0.2);
+        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());assert_eq!(captures(&ui),1.0);
+    }
+
     fn reference_session() -> (Scpi, Ui, Canvas) {
         let (mut s, mut ui, cv) = session();
         // Import is additive in Live. These tests explicitly exercise stored
@@ -1862,7 +2187,7 @@ mod tests {
         let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (stream, _) = listener.accept().unwrap();
         let pending = b":MEAS:ITEM? VPP,CHAN1".to_vec();
-        s.clients.push(Client { s: stream, buf: pending.clone() });
+        s.clients.push(Client { s: stream, buf: pending.clone(), program: None });
         for query in [":TRIG:STAT?", ":TIM:SCAL?", ":CHAN1:DISP?", ":CHAN1:OFFS?", ":ACQ:SRAT?", ":ACQ:MDEP?"] {
             assert!(!line(&mut s, &mut ui, &cv, query).is_empty(), "{query} must return its existing reply");
             assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{query} must preserve every statistic bit-for-bit");

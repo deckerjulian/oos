@@ -477,8 +477,10 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
         "tools/call" => match params.get("name").and_then(J::str) {
             Some("scpi") => {
                 let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
-                let r = scpi.exec_line(ui, cv, c);
-                text(if r.is_empty() { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") })
+                match scpi.exec_line_checked(ui, cv, c) {
+                    Ok(r) => text(if r.is_empty() { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") }),
+                    Err(error) => J::obj(&[("isError", J::Bool(true)), ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])]))]),
+                }
             }
             Some("screenshot") => J::obj(&[("content", J::Arr(vec![J::obj(&[("type", J::s("image")), ("mimeType", J::s("image/png")), ("data", J::Str(base64(&crate::store::png_of(cv))))])]))]),
             _ => return Some(err(id, -32602.0, "unknown tool")),
@@ -889,6 +891,17 @@ setTimeout(() => {
         assert_eq!(unescape("a%é1"), "a1");
         assert_eq!(unescape("%€"), String::from_utf8_lossy(&[0xac]));
         assert_eq!(unescape("x%4"), "x%4");
+    }
+
+    #[test]
+    fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
+        let mut ui=crate::ui::Ui::new(crate::wave::Source::Demo{t:0.0});ui.set_offline(true);
+        let mut csv=String::from("Time (s),Volts\n");for i in 0..4000 {csv.push_str(&format!("{},{}\n",i as f64*1e-9,if i%40<20 {-0.5}else{0.5}));}
+        ui.load_waveform_bytes(csv.as_bytes(),"opc.csv").unwrap();ui.m.trig_level=10.0;
+        let cv=crate::gfx::Canvas::new(crate::ui::W,crate::ui::H);let mut scpi=crate::scpi::Scpi::open(0);
+        let reply=mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut ui,&cv,&mut scpi).unwrap();
+        let reply=crate::json::parse(&reply).unwrap();assert_eq!(reply.get("result").unwrap().get("isError"),Some(&crate::json::J::Bool(true)));
+        assert_eq!(ui.m.trig_mode,crate::model::TrigMode::Single,"commands after an unsupported immediate barrier must not execute");
     }
 
     #[test]

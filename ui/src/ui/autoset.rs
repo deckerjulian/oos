@@ -31,6 +31,7 @@ enum Stage {
 }
 
 pub struct AutoRun {
+    id: u64,
     back: Box<Model>,
     stage: Stage,
     records: u64,
@@ -70,6 +71,8 @@ impl Ui {
             self.toast("Auto set-up");
         }
     }
+    pub(super) fn auto_operation(&self) -> Option<u64> { self.auto.as_ref().map(|job| job.id) }
+
     /// An auto set-up is under way.
     pub fn auto_running(&self) -> bool {
         self.auto.is_some()
@@ -107,7 +110,8 @@ impl Ui {
         m.tfine = 1.0;
         m.delay = 0.0;
         m.run = RunState::Run;
-        self.auto = Some(AutoRun { back, stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
+        self.operation_serial = self.operation_serial.wrapping_add(1);
+        self.auto = Some(AutoRun { id: self.operation_serial, back, stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
         self.mark_changed();
         self.toast("Auto set-up...");
     }
@@ -206,6 +210,7 @@ impl Ui {
     }
 
     fn auto_end(&mut self, a: AutoRun) {
+        self.scpi_finish_operation(OperationToken::Auto(a.id));
         eprintln!("oos-ui auto: levels {:?}, periods {:?}", a.lv, a.period);
         let found: Vec<(usize, Stats, f64)> = (0..n_ch())
             .filter_map(|c| a.period[c].map(|p| (c, Stats { vmin: a.lv[c].0, vmax: a.lv[c].1, ..Stats::default() }, p)))
@@ -489,7 +494,7 @@ mod tests {
     fn successful_hardware_autoset_restores_configured_memory_depth() {
         let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.mdepth=1;
         let back=Box::new(ui.m.clone());ui.m.mdepth=0;
-        ui.auto_end(AutoRun{back,stage:Stage::Search(0),records:0,since:0.0,fits:true,
+        ui.auto_end(AutoRun{id:0,back,stage:Stage::Search(0),records:0,since:0.0,fits:true,
             lv:[(-1.0,1.0);NCH],want:[true;NCH],period:[Some(1e-6),None,None,None],full:[2.0;NCH],swing:[2.0;NCH]});
         assert_eq!(ui.m.mdepth,1);
     }
