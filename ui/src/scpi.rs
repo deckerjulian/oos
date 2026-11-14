@@ -4,13 +4,14 @@
 //! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
 //! *IDN? *RST *OPC? *CLS *ESR?, :RUN :STOP :SINGle :TFORce :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|BIAS|LABel:SHOW|LABel:CONTent,
-//! :TIMebase[:MAIN]:SCALe|OFFSet, :TIMebase:DELay:ENABle|SCALe|OFFSet, :TIMebase:VERNier, :TIMebase:HREFerence:MODE, :TIMebase:XY:ENABle,
+//! :TIMebase[:MAIN]:SCALe|OFFSet, :TIMebase:DELay:ENABle|SCALe|OFFSet, :TIMebase:VERNier, :TIMebase:HREFerence:MODE, :TIMebase:MODE, :TIMebase:ROLL,
+//! :TIMebase:XY:ENABle|X|Y|Z,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?,
 //! :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M)|TYPE NORM/PEAK/AVER/HRES|AVERages|ULTRa:MAXFrame,
-//! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar,
+//! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar, :MEASure:INDicator,
 //! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
 //! :MEASure:STATistic:DISPlay|RESet|ITEM, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
-//! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta,
+//! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta, :CURSor:MEASure:INDicator,
 //! :DVM:ENABle|SOURce|MODE|CURRent?, :COUNter:ENABle|SOURce|MODE|NDIGits|CURRent?,
 //! :MASK:ENABle|SOURce|X|Y|CREate|RESet|OPERate|FAILed?|PASSed?|TOTal?,
 //! :HISTogram:ENABle|TYPE|SOURce, :HISTogram:STATistics:RESult?,
@@ -19,7 +20,7 @@
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
-//! :DISPlay:DATA? [BMP|PNG], :DISPlay:TYPE|GRADing:TIME|WBRightness|GRID,
+//! :DISPlay:DATA? [BMP|PNG], :DISPlay:TYPE|GRADing:TIME|WBRightness|GBRightness|GRID|RULers|COLor,
 //! :REFerence:SLOT R1..R10, :CURRent, :SOURce, :VSCale, :VOFFset, :COLor, :RESet, :LABel:CONTent, :LOAD <file>, :IMPort [file], :SAVE, :SHOW ON|OFF, :CLEar,
 //! :MEASure:SETup:MAX|MIN (percent thresholds),
 //! :SIM:PRESet <name>, :SIM:SLOT R1..R10, :SIM:PLAY ON|OFF, :SIM:SHOW ON|OFF,
@@ -1195,6 +1196,9 @@ impl Scpi {
                 ui.mark_changed();
                 return None;
             }
+            if kw(n1, "INDicator") {
+                return self.meas_indicator(ui, query, arg);
+            }
             if kw(n1, "TSETup") || kw(n1, "THOLd") {
                 let setup = kw(n1, "TSETup");
                 if query {
@@ -1871,6 +1875,40 @@ impl Scpi {
             ui.mark_changed();
             return None;
         }
+        if n.len() == 1 && kw(n0, "ROLL") {
+            // Auto roll: the screen enters roll at 50 ms/div while this is on.
+            if query {
+                return t(if ui.m.auto_roll { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.auto_roll = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "MODE") {
+            // MAIN is YT. XY is the screen's XY plot. This screen has no forced roll mode; auto roll is :TIMebase:ROLL.
+            // The query names XY while that plot is on, so a controller can read the mode it just set.
+            if query {
+                return t(if ui.xy_on() { "XY" } else { "MAIN" });
+            }
+            if kw(arg, "MAIN") {
+                ui.xy_set(false);
+            } else if arg.trim().eq_ignore_ascii_case("XY") {
+                ui.xy_set(true);
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            }
+            ui.mark_changed();
+            return None;
+        }
         if n.len() == 2 && kw(n0, "XY") && kw(n[1], "ENABle") {
             if query {
                 return t(if ui.xy_on() { "1" } else { "0" });
@@ -1886,6 +1924,34 @@ impl Scpi {
                     None
                 }
             };
+        }
+        if n.len() == 2 && kw(n0, "XY") && (kw(n[1], "X") || kw(n[1], "Y")) {
+            // The plot is CH1 against CH2. Those sources are not selectable.
+            let x = kw(n[1], "X");
+            if query {
+                return t(if x { "CHAN1" } else { "CHAN2" });
+            }
+            let want = if x { 0 } else { 1 };
+            if parse_ch(arg) == Some(want) {
+                return None;
+            }
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        }
+        if n.len() == 2 && kw(n0, "XY") && kw(n[1], "Z") {
+            if query {
+                return t(&ui.m.z_src.map(chan_token).unwrap_or_else(|| "NONE".into()));
+            }
+            if kw(arg, "NONE") || kw(arg, "OFF") {
+                ui.m.z_src = None;
+            } else if let Some(c) = parse_ch(arg) {
+                ui.m.z_src = Some(c);
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            }
+            ui.mark_changed();
+            return None;
         }
         self.push_err(format!("-113,\"Undefined header\" :TIMebase:{}", n.join(":")));
         None
@@ -1960,6 +2026,9 @@ impl Scpi {
             };
             ui.mark_changed();
             return None;
+        }
+        if n.len() == 2 && kw(n0, "MEASure") && kw(n[1], "INDicator") {
+            return self.meas_indicator(ui, query, arg);
         }
         if n.len() == 2 && kw(n0, "MANual") && kw(n[1], "TYPE") {
             if query {
@@ -2195,8 +2264,72 @@ impl Scpi {
             ui.mark_changed();
             return None;
         }
+        if n.len() == 1 && kw(n0, "GBRightness") {
+            if query {
+                return t(&ui.m.grid_bright.to_string());
+            }
+            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (0..=100).contains(v)) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            // The screen's grid brightness starts at 10, the same floor as the waveform brightness.
+            ui.m.grid_bright = v.clamp(10, 100);
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "RULers") {
+            if query {
+                return t(if ui.m.grid_frame { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.grid_frame = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "COLor") {
+            if query {
+                return t(if ui.m.color_grade { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.color_grade = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
         self.push_err(format!("-113,\"Undefined header\" :DISPlay:{}", n.join(":")));
         None
+    }
+
+    /// The labels the screen draws on the trace for the measurements. Both Rigol headers drive that one switch.
+    fn meas_indicator(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            return t(if ui.m.meas_labels { "1" } else { "0" });
+        }
+        match parse_bool(arg) {
+            Some(on) => {
+                ui.m.meas_labels = on;
+                ui.mark_changed();
+                None
+            }
+            None => {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                None
+            }
+        }
     }
 
     /// One of the four decoders. RS232 is the screen's UART. The event table is one window for every bus.
@@ -4242,6 +4375,30 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME?"), "0.1", "0.2 s snaps to the screen's 100 ms step");
         line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME INF;:DISP:TYPE DOTS;:DISP:GRID NONE;:DISP:WBR 7");
         assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME?;:DISP:TYPE?;:DISP:GRID?;:DISP:WBR?"), "INF;DOTS;NONE;10");
+
+        line(&mut s, &mut ui, &cv, "*CLS;:DISP:GBR 40;:DISP:RUL OFF;:DISP:COL ON");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GBR?;:DISP:RUL?;:DISP:COL?"), "40;0;1");
+        line(&mut s, &mut ui, &cv, ":DISP:GBR 3");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GBR?"), "10", "grid brightness stays at the screen floor");
+        line(&mut s, &mut ui, &cv, ":DISP:GBR 101");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GBR?"), "10");
+
+        line(&mut s, &mut ui, &cv, "*CLS;:TIM:ROLL 0;:TIM:MODE XY;:TIM:XY:Z CHAN3");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:ROLL?;:TIM:MODE?;:TIM:XY:ENAB?;:TIM:XY:X?;:TIM:XY:Y?;:TIM:XY:Z?"), "0;XY;1;CHAN1;CHAN2;CHAN3");
+        line(&mut s, &mut ui, &cv, ":TIM:MODE ROLL");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "roll is the auto-roll switch, not a timebase mode");
+        line(&mut s, &mut ui, &cv, ":TIM:XY:X CHAN2");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "the XY plot is CH1 against CH2");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:MODE?;:TIM:XY:X?;:TIM:XY:Z?"), "XY;CHAN1;CHAN3");
+        line(&mut s, &mut ui, &cv, ":TIM:MODE MAIN;:TIM:XY:Z NONE");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:MODE?;:TIM:XY:ENAB?;:TIM:XY:Z?"), "MAIN;0;NONE");
+
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:IND?"), "0");
+        line(&mut s, &mut ui, &cv, ":MEAS:IND ON");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MEAS:IND?"), "1");
+        line(&mut s, &mut ui, &cv, ":CURS:MEAS:IND OFF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:IND?"), "0");
     }
 
     fn wfm_bytes() -> Vec<u8> {

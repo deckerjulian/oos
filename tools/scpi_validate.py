@@ -458,6 +458,27 @@ def validate(oos, result):
         oos.query(":DISPlay:TYPE?;:DISPlay:GRADing:TIME?;:DISPlay:WBRightness?;:DISPlay:GRID?"),
         "VECT;0.1;50;HALF",
     )
+    oos.write(":DISPlay:GBRightness 40")
+    oos.write(":DISPlay:RULers OFF")
+    oos.write(":DISPlay:COLor ON")
+    result.equal(
+        "grid brightness rulers and color grade",
+        oos.query(":DISPlay:GBRightness?;:DISPlay:RULers?;:DISPlay:COLor?"),
+        "40;0;1",
+    )
+    oos.write(":TIMebase:ROLL 0")
+    oos.write(":TIMebase:MODE XY")
+    oos.write(":TIMebase:XY:Z CHANnel3")
+    result.equal(
+        "timebase roll xy and z",
+        oos.query(":TIMebase:ROLL?;:TIMebase:MODE?;:TIMebase:XY:ENABle?;:TIMebase:XY:X?;:TIMebase:XY:Y?;:TIMebase:XY:Z?"),
+        "0;XY;1;CHAN1;CHAN2;CHAN3",
+    )
+    oos.write(":TIMebase:MODE MAIN")
+    oos.write(":TIMebase:XY:Z NONE")
+    oos.write(":MEASure:INDicator ON")
+    result.equal("measurement labels", oos.query(":CURSor:MEASure:INDicator?"), "1")
+    oos.write(":MEASure:INDicator OFF")
 
     oos.write(":MEASure:SETup:MIN 20")
     oos.write(":MEASure:SETup:MAX 80")
