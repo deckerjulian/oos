@@ -322,33 +322,32 @@ impl Ui {
         self.toast_saved(&p, res);
     }
 
-    /// A CSV of that form into the slot of the Slot row: at least two rows, even time steps taken from the first two.
+    /// A waveform file beside the setups into the Slot row's reference: `refN` with one of `WAVE_EXTS` (the header chooses
+    /// the parser, see `wavefile`). A file with several traces fills the slots from the Slot row on.
     pub(super) fn ref_import(&mut self) {
-        let p = self.ref_path();
-        let Ok(t) = std::fs::read_to_string(&p) else { return self.toast(&format!("No {}", crate::store::file_name(&p))) };
-        let rows: Vec<(f64, f32)> = t
-            .lines()
-            .filter_map(|l| {
-                let (a, b) = l.split_once(',')?;
-                Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
-            })
-            .collect();
-        let dt = match rows[..] {
-            [a, b, ..] if b.0 > a.0 => b.0 - a.0,
-            _ => return self.toast("That file holds no waveform"),
+        let dir = self.ref_path().with_file_name("");
+        let found = crate::wavefile::WAVE_EXTS.iter().map(|e| dir.join(format!("ref{}.{e}", self.ref_sel + 1))).find(|p| p.is_file());
+        let p = found.unwrap_or_else(|| self.ref_path());
+        let Ok(bytes) = std::fs::read(&p) else { return self.toast(&format!("No {}", crate::store::file_name(&p))) };
+        let traces = match crate::wavefile::parse_wave(&bytes, &crate::store::file_name(&p)) {
+            Ok(t) if !t.is_empty() => t,
+            Ok(_) => return self.toast("That file holds no waveform"),
+            Err(e) => return self.toast(&e),
         };
         let c = self.ref_src;
-        self.refs[self.ref_sel] = Some(RefWave {
-            src: c,
-            color: 0,
-            label: String::new(),
-            t0: rows[0].0,
-            dt,
-            v: rows.iter().map(|r| r.1).collect(),
-            vpd: self.m.ch[c].volts_per_div(),
-            offset: self.m.ch[c].offset,
-            on: true,
-        });
+        for (k, t) in traces.into_iter().take(NREF).enumerate() {
+            self.refs[(self.ref_sel + k) % NREF] = Some(RefWave {
+                src: c,
+                color: 0,
+                label: t.label,
+                t0: t.t0,
+                dt: t.dt,
+                v: t.v,
+                vpd: self.m.ch[c].volts_per_div(),
+                offset: self.m.ch[c].offset,
+                on: true,
+            });
+        }
         self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(&p)));
     }
 

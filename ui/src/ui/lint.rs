@@ -1591,6 +1591,25 @@ fn a_reference_travels_through_a_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_bin_in_storage_opens_on_the_slot() {
+    let dir = std::env::temp_dir().join(format!("oos-refbin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = with_two_channels();
+    u.store_dir = dir.clone();
+    let rec = u.last[0].as_ref().unwrap().clone();
+    std::fs::write(dir.join("ref1.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.activate(Item::RefImport);
+    let r = u.refs[0].as_ref().expect("R1");
+    assert_eq!(r.v, rec.ch[0]);
+    assert!((r.dt - rec.dt).abs() < 1e-18);
+    std::fs::write(dir.join("ref1.bin"), b"not a waveformÿþ").unwrap();
+    u.activate(Item::RefImport);
+    assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("not a waveform")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`, one directory per
 /// text size (`OOS_TEXT_SIZE=Large` for one of them; `OOS_SIZE=1920x1080` for another screen than the panel).
 #[test]
