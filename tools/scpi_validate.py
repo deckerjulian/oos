@@ -54,11 +54,42 @@ class OOS:
         self.sock.close()
 
     def query(self, command):
+        return self.query_bytes(command).decode("ascii").strip()
+
+    def query_bytes(self, command):
         self.sock.sendall((command + "\n").encode("ascii"))
-        line = self.stream.readline(8192)
-        if not line.endswith(b"\n"):
-            raise RuntimeError(f"Incomplete SCPI response to {command!r}")
-        return line.decode("ascii").strip()
+        # An IEEE block is #9, nine digits, then that many bytes. Any other answer is one line.
+        # Read a single byte first: a one-character answer such as "0" must not swallow its newline.
+        first = self.stream.read(1)
+        if not first:
+            raise RuntimeError(f"No SCPI response to {command!r}")
+        if first != b"#":
+            rest = self.stream.readline(1 << 20)
+            line = first + rest
+            if not line.endswith(b"\n"):
+                raise RuntimeError(f"Incomplete SCPI response to {command!r}")
+            return line[:-1]
+        second = self.stream.read(1)
+        if second != b"9":
+            rest = self.stream.readline(1 << 20)
+            line = first + second + rest
+            if not line.endswith(b"\n"):
+                raise RuntimeError(f"Incomplete SCPI response to {command!r}")
+            return line[:-1]
+        digits = self.stream.read(9)
+        try:
+            n = int(digits)
+        except ValueError as error:
+            raise RuntimeError(f"Bad block length from {command!r}: {digits!r}") from error
+        payload = b""
+        while len(payload) < n:
+            chunk = self.stream.read(n - len(payload))
+            if not chunk:
+                raise RuntimeError(f"Incomplete block from {command!r}")
+            payload += chunk
+        if self.stream.read(1) != b"\n":
+            raise RuntimeError(f"Block from {command!r} was not terminated")
+        return first + second + digits + payload
 
     def write(self, command):
         self.sock.sendall((command + "\n").encode("ascii"))
@@ -260,6 +291,60 @@ def validate(oos, result):
     result.equal("Stop holds capture count", held["captures"], stopped["captures"])
     result.equal("Stop and replay Play agree", oos.query(":SIM:PLAY?"), "0")
     result.equal("final error queue", oos.query(":SYSTem:ERRor?").split(",")[0], "0")
+
+    # The commands a Rigol DHO800/DHO900 controller sends. A query must always
+    # answer; an unknown header is an error in the queue and in *ESR, never silence.
+    oos.write("*CLS")
+    unknown = oos.query(":REFerence:NOPE?")
+    result.equal("unknown query answers", unknown.split(",")[0], "-113")
+    result.equal("unknown query sets the command-error bit", oos.query("*ESR?"), "32")
+    result.equal("unknown query is queued", oos.query(":SYSTem:ERRor?").split(",")[0], "-113")
+
+    oos.write(":CHANnel1:DISPlay ON")
+    oos.write(":CHANnel1:SCALe 0.5")
+    oos.write(":CHANnel1:OFFSet -0.25")
+    oos.write(":CHANnel1:COUPling AC")
+    oos.write(":CHANnel1:BWLimit 20M")
+    result.equal("channel display", oos.query(":CHANnel1:DISPlay?"), "1")
+    result.equal("channel coupling", oos.query(":CHANnel1:COUPling?"), "AC")
+    result.equal("channel bandwidth", oos.query(":CHANnel1:BWLimit?"), "20M")
+    result.numeric("channel scale", float(oos.query(":CHANnel1:SCALe?")), 0.5, relative=1e-6)
+    oos.write(":CHANnel1:PROBe 10")
+    result.numeric("channel probe", float(oos.query(":CHANnel1:PROBe?")), 10.0, relative=1e-6)
+    oos.write(":TIMebase:MAIN:SCALe 1e-6")
+    oos.write(":TRIGger:SWEep NORMal")
+    oos.write(":TRIGger:EDGE:SOURce CHANnel1")
+    oos.write(":TRIGger:EDGE:SLOPe NEG")
+    result.equal("trigger sweep", oos.query(":TRIGger:SWEep?"), "NORM")
+    result.equal("trigger slope", oos.query(":TRIGger:EDGE:SLOPe?"), "NEG")
+    result.equal("no live record is an invalid measurement", oos.measure("VPP", "CHANnel1"), 9.9e37)
+
+    png = oos.query_bytes(":DISPlay:DATA? PNG")
+    result.equal("png screenshot is an IEEE block", png[:2], b"#9")
+    result.equal("png screenshot is a PNG", png[11:15], b"\x89PNG")
+
+    oos.write(":REFerence:CURRent 1")
+    oos.write(":REFerence:SOURce 1,CHANnel2")
+    oos.write(":REFerence:VSCale 1,0.2")
+    oos.write(":REFerence:VOFFset 1,-0.05")
+    oos.write(":REFerence:LABel:CONTent 1,lane")
+    result.equal("reference current", oos.query(":REFerence:CURRent?"), "1")
+    result.equal("reference source", oos.query(":REFerence:SOURce? 1"), "CHAN2")
+    result.equal("reference label", oos.query(":REFerence:LABel:CONTent? 1"), "lane")
+    result.numeric("reference scale", float(oos.query(":REFerence:VSCale? 1")), 0.2, relative=1e-6)
+    oos.write(":REFerence:SHOW 1,OFF")
+    result.equal("reference hidden", oos.query(":REFerence:SHOW? 1"), "0")
+    oos.write(":REFerence:SHOW 1,ON")
+
+    oos.write(":WAVeform:SOURce R1")
+    oos.write(":WAVeform:MODE RAW")
+    oos.write(":WAVeform:FORMat WORD")
+    oos.write(":WAVeform:STARt 10")
+    oos.write(":WAVeform:STOP 12")
+    result.equal("raw page length", oos.query(":WAVeform:POINts?"), "3")
+    page = oos.query_bytes(":WAVeform:DATA?")
+    result.equal("raw WORD page length field", page[2:11], b"000000006")
+    result.equal("raw WORD page is three high-byte-first points", len(page), 17)
     return {"upload": upload, "before_pan": before, "after_pan": after,
             "armed": armed, "single": single, "running": running, "final_state": held}
 

@@ -1004,6 +1004,20 @@ struct StripLine {
     align: bool,
 }
 
+/// A 1-based inclusive page. `stop == 0` means the last sample. A start past the end is an empty page.
+fn copy_page(v: &[f32], dt: f64, t0: f64, start: u64, stop: u64) -> (Vec<f32>, f64, f64) {
+    let n = v.len() as u64;
+    if n == 0 || start > n {
+        return (Vec::new(), dt, t0);
+    }
+    let a = start.max(1);
+    let b = if stop == 0 { n } else { stop.clamp(a, n) };
+    let lo = (a - 1) as usize;
+    let hi = b as usize;
+    let page = v[lo..hi].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect();
+    (page, dt, t0 + lo as f64 * dt)
+}
+
 impl Ui {
     pub fn new(src: Source) -> Ui {
         let mut m = Model::default();
@@ -1758,9 +1772,54 @@ impl Ui {
         self.last[0].as_ref().map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect()).unwrap_or_default()
     }
 
+    /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
+    /// acquisition kept one, otherwise the screen record.
+    fn channel_view(&self, c: usize, memory: bool) -> Option<(&[f32], f64, f64)> {
+        let rec = self.last[0].as_ref()?;
+        if memory {
+            if let Some(raw) = rec.raw.as_ref().filter(|r| !r.frame.envelope) {
+                if let Some(v) = raw.frame.ch.get(c) {
+                    if raw.i1 <= v.len() && raw.i1 > raw.i0 {
+                        return Some((&v[raw.i0..raw.i1], raw.frame.dt, raw.t0));
+                    }
+                }
+            }
+        }
+        let v = rec.ch.get(c)?;
+        (!v.is_empty()).then_some((v.as_slice(), rec.dt, rec.t0))
+    }
+
+    /// How many points `channel_page` can walk. Zero when that source has no record.
+    pub fn channel_points(&self, c: usize, memory: bool) -> usize {
+        self.channel_view(c, memory).map(|(v, _, _)| v.len()).unwrap_or(0)
+    }
+
+    /// `(dt, t0)` of that same record. None when it is empty.
+    pub fn channel_origin(&self, c: usize, memory: bool) -> Option<(f64, f64)> {
+        self.channel_view(c, memory).map(|(_, dt, t0)| (dt, t0))
+    }
+
+    /// One page of a channel, 1-based inclusive, the same numbering as `:WAVeform:STARt` and `:WAVeform:STOP`.
+    /// `stop == 0` reads through the last point. The time is the first sample of the page.
+    pub fn channel_page(&self, c: usize, memory: bool, start: u64, stop: u64) -> Option<(Vec<f32>, f64, f64)> {
+        let (v, dt, t0) = self.channel_view(c, memory)?;
+        Some(copy_page(v, dt, t0, start, stop))
+    }
+
     /// Samples of a reference slot, finite volts. Empty when that slot holds nothing.
     pub(crate) fn ref_volts(&self, slot: usize) -> Vec<f32> {
-        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.v.iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect()).unwrap_or_default()
+        self.ref_page(slot, 1, 0).map(|(v, _, _, _, _)| v).unwrap_or_default()
+    }
+
+    /// One page of a reference slot. `None` when the slot is empty. Volts per division and offset travel with it.
+    pub fn ref_page(&self, slot: usize, start: u64, stop: u64) -> Option<(Vec<f32>, f64, f64, f64, f64)> {
+        let r = self.refs.get(slot)?.as_ref()?;
+        if r.v.len() < 2 || !(r.dt > 0.0) {
+            return None;
+        }
+        let (page, dt, t0) = copy_page(&r.v, r.dt, r.t0, start, stop);
+        let vpd = if r.vpd > 0.0 { r.vpd as f64 } else { 1.0 };
+        Some((page, dt, t0, vpd, r.offset as f64))
     }
 
     /// (points, dt, t0, volts per division, offset) of a slot that has a record.

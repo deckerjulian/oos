@@ -603,6 +603,78 @@ impl Ui {
         true
     }
 
+    /// Whether slot `slot` is drawn. None when it is empty or out of range.
+    pub(crate) fn ref_shown_slot(&self, slot: usize) -> Option<bool> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.on)
+    }
+
+    pub(crate) fn ref_show_slot(&mut self, slot: usize, on: bool) -> bool {
+        if slot >= NREF {
+            return false;
+        }
+        self.ref_sel = slot;
+        self.ref_show_set(on)
+    }
+
+    /// Channel a `:REFerence:SAVE` of this slot copies. A saved slot remembers its own source.
+    pub(crate) fn ref_source_of(&self, slot: usize) -> usize {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src).unwrap_or(if slot == self.ref_sel { self.ref_src } else { 0 })
+    }
+
+    pub(crate) fn ref_source_set(&mut self, slot: usize, ch: usize) -> bool {
+        if slot >= NREF || ch >= n_ch() {
+            return false;
+        }
+        self.ref_sel = slot;
+        self.ref_src = ch;
+        if let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) {
+            r.src = ch;
+        }
+        true
+    }
+
+    pub(crate) fn ref_vscale(&self, slot: usize) -> Option<f32> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.vpd)
+    }
+
+    pub(crate) fn ref_vscale_set(&mut self, slot: usize, vpd: f32) -> bool {
+        if slot >= NREF || !(vpd > 0.0) {
+            return false;
+        }
+        self.ref_sel = slot;
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        r.vpd = vpd;
+        true
+    }
+
+    pub(crate) fn ref_voffset(&self, slot: usize) -> Option<f32> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.offset)
+    }
+
+    pub(crate) fn ref_voffset_set(&mut self, slot: usize, offset: f32) -> bool {
+        if slot >= NREF || !offset.is_finite() {
+            return false;
+        }
+        self.ref_sel = slot;
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        r.offset = offset;
+        true
+    }
+
+    pub(crate) fn ref_label(&self, slot: usize) -> Option<String> {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.label.clone())
+    }
+
+    pub(crate) fn ref_label_set(&mut self, slot: usize, label: String) -> bool {
+        if slot >= NREF {
+            return false;
+        }
+        self.ref_sel = slot;
+        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+        r.label = label;
+        true
+    }
+
     /// Empties every reference slot, the same as Clear all.
     pub(crate) fn ref_clear_all(&mut self) {
         self.refs = std::array::from_fn(|_| None);
