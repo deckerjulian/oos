@@ -40,7 +40,7 @@ impl Cache {
 }
 
 /// The required analogue roles, including the implicit Parallel data bank.
-fn sources(m: &Model) -> Result<Vec<usize>, &'static str> {
+pub(super) fn sources(m: &Model) -> Result<Vec<usize>, &'static str> {
     let mut ids = vec![m.dec_src];
     if m.dec_proto == Proto::Parallel {
         let (base, count) = if m.dec_src >= DEC_REF_BASE { (DEC_REF_BASE, NREF) } else { (0, NCH) };
@@ -64,11 +64,13 @@ fn sources(m: &Model) -> Result<Vec<usize>, &'static str> {
     Ok(unique)
 }
 
-impl Job {
-    fn run(&self) -> Packets {
-        let start = self.waves.iter().map(|w| w.t0).fold(f64::NEG_INFINITY, f64::max);
-        let stop = self.waves.iter().map(|w| w.t0 + (w.v.len() - 1) as f64 * w.dt).fold(f64::INFINITY, f64::min);
-        let finest = self.waves.iter().min_by(|a, b| a.dt.total_cmp(&b.dt)).ok_or("Decoder source empty")?;
+/// Borrowed native or candidate inputs; alignment and protocol dispatch are shared.
+pub(super) struct BorrowedWave<'a> { pub source: usize, pub v: &'a [f32], pub dt: f64, pub t0: f64 }
+pub(super) fn decode_borrowed(original: &Model, waves: &[BorrowedWave<'_>], hysteresis: f32) -> Packets {
+    if waves.is_empty() || waves.len()>NCH || waves.iter().any(|w|w.v.len()<2||!w.dt.is_finite()||w.dt<=0.0||!w.t0.is_finite()) { return Err("Invalid decoder record"); }
+        let start = waves.iter().map(|w| w.t0).fold(f64::NEG_INFINITY, f64::max);
+        let stop = waves.iter().map(|w| w.t0 + (w.v.len() - 1) as f64 * w.dt).fold(f64::INFINITY, f64::min);
+        let finest = waves.iter().min_by(|a, b| a.dt.total_cmp(&b.dt)).ok_or("Decoder source empty")?;
         let dt = finest.dt;
         let snap = |value: f64| if (value - value.round()).abs() <= 1e-7 { value.round() } else { value };
         let first = snap((start - finest.t0) / dt).ceil();
@@ -77,7 +79,7 @@ impl Job {
         let count = (last - first + 1.0) as usize;
         if count > MAX_POINTS { return Err("Decoder aligned record exceeds 32M samples"); }
         let t0 = finest.t0 + first * dt;
-        let aligned: Vec<Option<Vec<f32>>> = self.waves.iter().map(|w| {
+        let aligned: Vec<Option<Vec<f32>>> = waves.iter().map(|w| {
             if w.dt == dt && w.t0 == t0 && w.v.len() == count { return None; }
             Some((0..count).map(|i| {
                 let index = snap((t0 + i as f64 * dt - w.t0) / w.dt);
@@ -87,9 +89,9 @@ impl Job {
                 else { w.v[k] + index.fract() as f32 * (w.v[k + 1] - w.v[k]) }
             }).collect())
         }).collect();
-        let ch: [&[f32]; NCH] = std::array::from_fn(|i| self.waves.get(i).map_or(&[][..], |w| aligned[i].as_deref().unwrap_or(&w.v)));
-        let slot = |source| self.waves.iter().position(|w| w.source == source);
-        let mut model = self.model.clone();
+        let ch: [&[f32]; NCH] = std::array::from_fn(|i| waves.get(i).map_or(&[][..], |w| aligned[i].as_deref().unwrap_or(w.v)));
+        let slot = |source| waves.iter().position(|w| w.source == source);
+        let mut model = original.clone();
         model.dec_src = slot(model.dec_src).unwrap_or(0);
         model.dec_src2 = slot(model.dec_src2).unwrap_or(0);
         model.dec_cs = model.dec_cs.and_then(slot);
@@ -97,13 +99,18 @@ impl Job {
         model.dec_diff = model.dec_diff.and_then(slot);
         // Parallel's selected bank is already ordered in the four DSP slots.
         if model.dec_proto == Proto::Parallel { model.dec_src = 0; }
-        let mut packets = crate::trig::decode_at(&model, ch, dt, model.dec_thr, self.hysteresis)?;
+        let mut packets = crate::trig::decode_at(&model, ch, dt, model.dec_thr, hysteresis)?;
         if packets.len() > MAX_PACKETS { return Err("Decode exceeds 250000 packets; shorten the record"); }
         for packet in &mut packets {
             packet.t0 = t0 + packet.t0 * dt;
             packet.t1 = t0 + packet.t1 * dt;
         }
         Ok(Arc::new(packets))
+}
+impl Job {
+    fn run(&self) -> Packets {
+        let waves=self.waves.iter().map(|w|BorrowedWave{source:w.source,v:&w.v,dt:w.dt,t0:w.t0}).collect::<Vec<_>>();
+        decode_borrowed(&self.model,&waves,self.hysteresis)
     }
 }
 
@@ -199,6 +206,12 @@ impl Ui {
             let packets = job.run();
             cache.put(key, packets.clone());
             packets
+        }
+    }
+    pub(super) fn seed_sim_bus_decode(&self, model:&Model, packets:Arc<Vec<Packet>>, hits:Arc<Vec<f64>>) {
+        if let Ok(key)=self.decoder_key(model) {
+            let mut cache=self.azr.reference_decode.borrow_mut();cache.put(key.clone(),Ok(packets));
+            if let Some(entry)=cache.entries.iter_mut().rev().find(|entry|entry.key==key){entry.hits=Some((model.trig_bus,model.trig_bus_val,hits));}
         }
     }
     pub(super) fn seed_accepted_decode(&self, record: &Record, packets: Arc<Vec<Packet>>) {

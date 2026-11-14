@@ -456,11 +456,16 @@ pub(super) struct Replay {
     pub(super) sim_attempt: u64,
     pub(super) sim_next: f64,
     pub(super) fresh_sim: bool,
+    pub(super) sim_initial_armed: bool,
     pub(super) sim_config_change: bool,
     deferred_statistics: Option<DeferredCaptureStatistics>,
 }
 
 impl Replay {
+    #[cfg(test)]
+    pub(super) fn frame_for_test(&self) -> Option<(usize,usize,usize)> { self.frame }
+    pub(super) fn force_requested(&self) -> bool { self.force }
+    pub(super) fn request_force(&mut self) { self.force = true; }
     pub(super) fn clear_deferred_statistics(&mut self) { self.deferred_statistics = None; }
 
     pub(super) fn reset_search(&mut self) {
@@ -793,7 +798,7 @@ impl Ui {
             self.activate_live_channel((key_code - 0x15) as usize);
             return true;
         }
-        if matches!(key_code, key::RUNSTOP | key::SINGLE | key::FORCE) && self.refs.get(self.active_reference()).and_then(Option::as_ref).is_none() {
+        if matches!(key_code, key::RUNSTOP | key::SINGLE | key::FORCE) && !self.replay.sim_initial_armed && self.refs.get(self.active_reference()).and_then(Option::as_ref).is_none() {
             self.m.run = RunState::Stop;
             self.sim_play = false;
             self.m.status = TrigStatus::Stop;
@@ -829,6 +834,9 @@ impl Ui {
             }
             _ => return false,
         }
+        // A user arm/force starts immediately; the prior capture's periodic
+        // cadence cannot delay a new Single or Run after Stop/cancellation.
+        if self.m.run==RunState::Run {self.replay.sim_next=self.now;}
         true
     }
 

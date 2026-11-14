@@ -9,6 +9,12 @@ use super::*;
 use oos_dsp::serial::{self, Lane, LANES};
 use std::sync::{Arc, mpsc::{self, Receiver, Sender}};
 
+#[path = "sim_bus_candidate.rs"]
+mod sim_bus_candidate;
+#[cfg(test)]
+#[path = "sim_bus_tests.rs"]
+mod sim_bus_tests;
+
 const PRBS: [u8; 6] = [7, 9, 13, 15, 23, 31];
 
 struct Request {
@@ -20,17 +26,26 @@ struct Request {
     run: bool,
     guard: String,
     trigger: Option<super::reference_search::SimTrigger>,
+    bus_trigger: Option<Result<sim_bus_candidate::Plan, &'static str>>,
 }
 
 struct Generated {
     samples: Vec<f32>,
     hits: Option<(usize, Arc<Vec<f64>>)>,
+    bus_decode: Option<sim_bus_candidate::Decoded>,
+    error: Option<&'static str>,
 }
 
 impl Generated {
     fn evaluate(request: &Request, samples: Vec<f32>) -> Self {
+        if let Some(plan)=&request.bus_trigger {
+            return match plan.as_ref().map_err(|error|*error).and_then(|plan|plan.evaluate(&samples,serial::dt_of(&request.lane))) {
+                Ok(decoded)=>Self{samples,hits:Some((decoded.primary_slot,Arc::clone(&decoded.hits))),bus_decode:Some(decoded),error:None},
+                Err(error)=>Self{samples,hits:None,bus_decode:None,error:Some(error)},
+            };
+        }
         let hits = request.trigger.as_ref().map(|trigger| (trigger.primary_slot, trigger.evaluate(&samples, serial::dt_of(&request.lane))));
-        Self { samples, hits }
+        Self { samples, hits, bus_decode:None,error:None }
     }
 }
 
@@ -274,7 +289,8 @@ impl Ui {
         match it {
             Item::SimLive => self.return_to_live(),
             Item::SimPlay if self.sim_generating() => {
-                self.sim_cancel_generation();
+                if self.session_is_sim && self.m.run==RunState::Run { self.record_key(key::RUNSTOP); }
+                else { self.sim_cancel_generation(); }
                 self.toast("SIM generation cancelled");
             }
             Item::SimPlay if self.session_is_sim => { self.record_key(key::RUNSTOP); },
@@ -356,14 +372,15 @@ impl Ui {
         format!("{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}", self.m.trigger(), self.m.dec_cfg(),
             (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val), self.m.trigger_wave(), self.m.trigger_wave2(),
             self.trigger_vpd(false).to_bits(), self.trigger_vpd(true).to_bits(),
-            self.reference_trigger_fingerprint(&effective, effective.trig_ref.unwrap_or(slot), Some((slot, vpd))))
+            self.reference_trigger_fingerprint(&effective, effective.trig_ref.unwrap_or(slot), Some((slot, vpd)))) + &self.sim_bus_guard(&effective,slot)
     }
 
     fn sim_capture_request(&self, lane: Lane, slot: usize, continuing: bool, fresh: bool, run: bool) -> Request {
         let model = self.sim_trigger_model(&lane, slot, continuing);
         let vpd = self.sim_candidate_vpd(&lane, slot, continuing, run);
         Request { id: 0, lane, slot, continuing, fresh, run,
-            guard: self.sim_trigger_guard(&lane, slot, continuing, run), trigger: self.prepare_sim_trigger(&model, slot, vpd) }
+            guard: self.sim_trigger_guard(&lane, slot, continuing, run), trigger: self.prepare_sim_trigger(&model, slot, vpd),
+            bus_trigger: if self.m.trig_on_la(){Some(Err("SIM qualification on logic-analyzer inputs is unavailable"))}else if matches!(model.trig_type,TrigType::Pattern|TrigType::Duration){Some(Err("SIM Pattern/Duration qualification is unavailable"))}else if model.trig_type==TrigType::Bus{Some(self.prepare_sim_bus(&model,slot,vpd))}else{None} }
     }
 
     pub(crate) fn sim_cancel_generation(&mut self) {
@@ -388,8 +405,18 @@ impl Ui {
         self.sim_cancel_generation();
         let lane = self.sim_lane();
         let count = serial::sample_count(&lane)?;
-        let request = self.sim_capture_request(lane, self.m.sim_slot, self.session_is_sim, false, run);
-        if count <= 65_536 {
+        let continuing=self.session_is_sim && !self.replay.sim_initial_armed;
+        let mut request = self.sim_capture_request(lane, self.m.sim_slot, continuing, false, run);
+        if let Some(Err(error))=&request.bus_trigger { return Err((*error).into()); }
+        if request.bus_trigger.is_some() && run && !continuing {
+            // Arming changes control ownership, never the accepted data. A miss
+            // must keep retrying even before the first SIM reference exists.
+            self.remember_live();self.session_is_sim=true;self.sim_play=true;
+            self.replay.sim_initial_armed=true;self.m.run=RunState::Run;self.m.status=TrigStatus::Wait;
+            self.m.set_trigger_wave(WaveId::Ref(self.m.sim_slot),false);
+            request=self.sim_capture_request(lane,self.m.sim_slot,false,false,true);
+        }
+        if count <= 65_536 && request.bus_trigger.is_none() {
             let generated = serial::try_generate(&lane)?;
             self.sim_cancel_generation();
             let generated = Generated::evaluate(&request, generated);
@@ -470,14 +497,21 @@ impl Ui {
             else { self.toast("SIM trigger changed while generating; press Play to use the new condition"); }
             return;
         }
+        if let Some(error)=generated.error {self.sim_error=Some(error.into());self.m.status=TrigStatus::Wait;self.toast(&format!("SIM: {error}"));return;}
+        if request.bus_trigger.is_some() && request.run && generated.hits.as_ref().is_some_and(|(_,hits)|hits.is_empty())
+            && self.m.trig_mode!=TrigMode::Auto && !self.replay.force_requested() {
+            self.m.status=TrigStatus::Wait;return;
+        }
         if request.fresh || (request.continuing && request.run) { self.sim_finish_capture(request, generated); return; }
-        let Generated { samples: v, hits } = generated;
+        let Generated { samples: v, hits, bus_decode, .. } = generated;
         let Request { lane, slot, continuing, run, .. } = request;
         let initialize_measurements = self.refs.iter().all(Option::is_none)
             && self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
         self.remember_live();
         self.session_is_sim = true;
+        let forced=self.replay.force_requested();
         self.replay = Default::default();
+        if forced{self.replay.request_force();}
         self.clear_measurement_statistics();
         let n = v.len();
         let dt = serial::dt_of(&lane);
@@ -496,10 +530,9 @@ impl Ui {
         });
         self.invalidate_reference_eye();
         if self.offline { self.offline_ref = slot; }
-        // a stored record, not the live analog path
-        for c in 0..NCH {
-            self.m.ch[c].on = false;
-        }
+        // Required CH bus auxiliaries remain accepted immutable snapshots.
+        let retained_channels=bus_decode.as_ref().map_or([false;NCH],|decoded|decoded.channels);
+        for c in 0..NCH {self.m.ch[c].on=retained_channels[c];}
         self.m.la.on = false;
         let rec_s = n as f64 * dt;
         let bit = nearest_tscale(8.0 / lane.bits_per_s / HDIV as f64);
@@ -533,11 +566,12 @@ impl Ui {
         self.m.run = if run { RunState::Run } else { RunState::Stop };
         self.m.status = if run { TrigStatus::Wait } else { TrigStatus::Stop };
         if !continuing { self.m.trig_level = ((lane.v_high + lane.v_low) * 0.5) as f32; }
-        self.last[0] = None;
+        if !retained_channels.iter().any(|on|*on){self.last[0] = None;}
         self.cleared = true;
         self.sim_play = run;
         self.replay.fresh_sim = true;
         self.replay.sim_next = self.now + 0.5;
+        if let Some(decoded)=bus_decode {self.seed_sim_bus_decode(&self.m,decoded.packets,Arc::clone(&decoded.hits));}
         if let Some((source, times)) = hits { self.install_reference_trigger_hits(source, times); }
         if run { self.replay_acquire(0.0); }
         else { self.refresh_stopped_reference(); }
@@ -627,7 +661,9 @@ impl Ui {
         if self.sim_generation.is_none() {
             match Generation::new() { Ok(worker) => self.sim_generation = Some(worker), Err(error) => { self.sim_error = Some(error); return; } }
         }
-        let request = self.sim_capture_request(lane, self.m.sim_slot, true, true, true);
+        let initial=self.replay.sim_initial_armed;
+        let request = self.sim_capture_request(lane, self.m.sim_slot, !initial, !initial, true);
+        if let Some(Err(error))=&request.bus_trigger {self.sim_error=Some((*error).into());self.m.status=TrigStatus::Wait;return;}
         if let Err(error) = self.sim_generation.as_mut().unwrap().submit(request) { self.sim_error = Some(error); }
     }
 
@@ -650,7 +686,7 @@ impl Ui {
                 return;
             }
         }
-        let Generated { samples, hits } = generated;
+        let Generated { samples, hits, bus_decode, .. } = generated;
         let previous = self.refs[request.slot].take();
         let dt = serial::dt_of(&request.lane);
         let midpoint = 0.5 * (request.lane.v_high + request.lane.v_low);
@@ -666,6 +702,7 @@ impl Ui {
         self.replay.sim_config_change = !request.fresh;
         self.replay.fresh_sim = true;
         self.replay.next = 0.0;
+        if let Some(decoded)=bus_decode {self.seed_sim_bus_decode(&self.m,decoded.packets,Arc::clone(&decoded.hits));}
         if let Some((source, times)) = hits { self.install_reference_trigger_hits(source, times); }
         self.replay_acquire(0.0);
         if self.replay.captures == captures {
