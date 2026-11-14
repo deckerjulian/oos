@@ -410,6 +410,8 @@ enum Item {
     AcqDepth,
     AcqSeg,
     MeasSrc,
+    /// copies every measurement on Source A to the picked source
+    MeasCopyTo,
     MeasAdd(Meas),
     /// shortcut on the press-and-hold menu: the next usual measurement
     AddMeas,
@@ -4545,7 +4547,7 @@ impl Ui {
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
+            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
@@ -5358,6 +5360,7 @@ impl Ui {
             Item::AcqSeg => "Segments",
             Item::AcqDepth => "Memory",
             Item::MeasSrc => "Source A",
+            Item::MeasCopyTo => "Copy meas. to",
             Item::MeasSrcB => "Source B",
             Item::MeasPair(k) => tools::PAIRS[k.min(tools::PAIRS.len() - 1)].0,
             Item::DvmOn => "DVM",
@@ -5554,6 +5557,7 @@ impl Ui {
             Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => self.wave_name(self.meas_src),
+            Item::MeasCopyTo => "Pick".into(),
             Item::MeasSrcB => self.wave_name(self.meas_src_b),
             Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
@@ -6708,6 +6712,7 @@ impl Ui {
             Item::DecSrc => return self.decoder_sources().into_iter().map(decode_source_name).collect(),
             Item::RefSrc => return ch_names(),
             Item::MeasSrc | Item::MeasSrcB | Item::CatSourceC | Item::CatSourceD => return self.wave_names(),
+            Item::MeasCopyTo => return self.wave_names().into_iter().filter(|n| *n != self.wave_name(self.meas_src)).collect(),
             Item::MathA | Item::MathB => return self.math_source_ids(self.m.math_sel).into_iter().map(src_name).collect(),
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
             Item::TrigSlope => &["Rising", "Falling", "Either"],
@@ -6860,6 +6865,14 @@ impl Ui {
             if let Some(rate) = crate::decode::CPHY_RATES.into_iter().find(|&rate| crate::decode::cphy_rate_label(rate) == want) {
                 self.m.dec_cphy_rate = rate;
                 self.settings_changed();
+            }
+            return;
+        }
+        if it == Item::MeasCopyTo {
+            if let Some(to) = self.wave_ids().into_iter().find(|&w| self.wave_name(w) == want) {
+                let from = self.meas_src;
+                let n = self.copy_measurements(from, to);
+                self.toast(&format!("{} measurement{} copied {} -> {}", n, if n == 1 { "" } else { "s" }, self.wave_name(from), want));
             }
             return;
         }
@@ -9555,7 +9568,7 @@ mod tests {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let rest = vec![
-            Item::MeasSrc, Item::MeasSrcB, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear,
+            Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear,
         ];
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);

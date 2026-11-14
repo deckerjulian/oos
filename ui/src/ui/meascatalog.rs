@@ -8,7 +8,7 @@ use super::*;
 #[path = "meascatalog_backend.rs"]
 pub(super) mod backend;
 
-const TABS: [&str; 6] = ["Standard", "Jitter", "Power", "IMDA", "DPM", "WBG-DPT"];
+const TABS: [&str; 6] = ["Basic", "Jitter & eye", "Power", "Motor drive", "Power rails", "Double pulse"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
@@ -198,21 +198,21 @@ const DREC: &[Cat] = &[Cat::Trr, Cat::Qrr, Cat::Err, Cat::Irrm, Cat::DiodeDdt, C
 
 fn tab_groups(tab: u8) -> &'static [(&'static str, &'static [Cat])] {
     match tab {
-        0 => &[("AMPLITUDE MEASUREMENTS", AMP), ("TIME MEASUREMENTS", TIME)],
-        1 => &[("JITTER MEASUREMENTS", JIT), ("EYE MEASUREMENTS", EYE_G), ("AMPLITUDE MEASUREMENTS", JAMP), ("TIME MEASUREMENTS", JTIME)],
+        0 => &[("AMPLITUDE", AMP), ("TIMING", TIME)],
+        1 => &[("JITTER", JIT), ("EYE", EYE_G), ("AMPLITUDE", JAMP), ("TIMING", JTIME)],
         2 => &[
-            ("INPUT ANALYSIS", PIN),
-            ("AMPLITUDE ANALYSIS", PAMP),
-            ("TIMING ANALYSIS", PTIM),
-            ("SWITCHING ANALYSIS", PSW),
-            ("MAGNETIC ANALYSIS", PMAG),
-            ("OUTPUT ANALYSIS", POUT),
-            ("FREQUENCY RESPONSE ANALYSIS", PFR),
-            ("GREEN POWER ANALYSIS", PGR),
+            ("INPUT", PIN),
+            ("AMPLITUDE", PAMP),
+            ("TIMING", PTIM),
+            ("SWITCHING", PSW),
+            ("MAGNETICS", PMAG),
+            ("OUTPUT", POUT),
+            ("PSRR & IMPEDANCE", PFR),
+            ("POWER FACTOR", PGR),
         ],
-        3 => &[("INVERTER", INV), ("MECHANICAL", MECH)],
-        4 => &[("RAIL", RAIL)],
-        _ => &[("SWITCHING", DSW), ("RECOVERY", DREC)],
+        3 => &[("DQ0 TRANSFORM", INV), ("SHAFT & EFFICIENCY", MECH)],
+        4 => &[("RAIL SEQUENCING", RAIL)],
+        _ => &[("SWITCHING", DSW), ("DIODE RECOVERY", DREC)],
     }
 }
 
@@ -849,6 +849,42 @@ impl Ui {
         }
     }
 
+    /// Copies every measurement that reads `from` (single, pair and catalog rows) to `to`; rows already present are
+    /// skipped. Returns how many were added.
+    pub(super) fn copy_measurements(&mut self, from: WaveId, to: WaveId) -> usize {
+        if from == to {
+            return 0;
+        }
+        let swap = |w: WaveId| if w == from { to } else { w };
+        let mut added = 0;
+        let room = |m: &crate::model::Model| m.meas.len() + m.meas2.len() + m.cat.len() < MEAS_SELECTION_MAX;
+        for (k, w) in self.m.meas.clone() {
+            if w == from && !self.m.meas.contains(&(k, to)) && room(&self.m) {
+                self.m.meas.push((k, to));
+                added += 1;
+            }
+        }
+        for (k, a, b) in self.m.meas2.clone() {
+            let row = (k, swap(a), swap(b));
+            if (a == from || b == from) && !self.m.meas2.contains(&row) && room(&self.m) {
+                self.m.meas2.push(row);
+                added += 1;
+            }
+        }
+        for (id, a, b, c, d) in self.m.cat.clone() {
+            let row = (id, swap(a), swap(b), swap(c), swap(d));
+            if [a, b, c, d].contains(&from) && !self.m.cat.contains(&row) && room(&self.m) {
+                self.m.cat.push(row);
+                added += 1;
+            }
+        }
+        if added > 0 {
+            self.clear_measurement_statistics();
+            self.settings_changed();
+        }
+        added
+    }
+
     pub(super) fn cat_row(&self,id:u16,a:WaveId,b:WaveId,c:WaveId,d:WaveId)->Option<tools::MeasRow>{
         let cat=cat_from(id)?;let info=meta(cat);let reading=self.catalog_reading(cat,[a,b,c,d]);
         Some(tools::MeasRow{name:info.name.into(),src:[a,b,c,d][catalog_roles(cat)[0]],v:reading.value,unit:info.unit,computing:reading.computing})
@@ -1004,6 +1040,23 @@ mod tests {
         }
         assert!(names.contains(&"RJ-dd") && names.contains(&"DJ-dd"), "dual-Dirac names");
         assert_eq!(TABS.len(), 6);
+    }
+
+    #[test]
+    fn copy_to_repeats_source_a_measurements_on_the_target_once() {
+        let mut ui=Ui::new(Source::Demo{t:0.0});
+        put(&mut ui,0,square(1.0,2000,40),1e-6);put(&mut ui,1,square(1.0,2000,40),1e-6);
+        let (r1,r2,ch1)=(WaveId::Ref(0),WaveId::Ref(1),WaveId::Ch(0));
+        ui.m.meas=vec![(Meas::Vpp,r1),(Meas::Freq,r1),(Meas::Vpp,ch1),(Meas::Freq,r2)];
+        ui.m.meas2=vec![(0,r1,ch1)];
+        ui.m.cat=vec![(Cat::DataRate as u16,r1,r1,r1,r1)];
+        ui.meas_src=r1;
+        assert!(ui.options(Item::MeasCopyTo).iter().all(|n|n!="R1"));
+        ui.select_option(Item::MeasCopyTo,"R2");
+        assert_eq!(ui.m.meas,vec![(Meas::Vpp,r1),(Meas::Freq,r1),(Meas::Vpp,ch1),(Meas::Freq,r2),(Meas::Vpp,r2)]);
+        assert_eq!(ui.m.meas2,vec![(0,r1,ch1),(0,r2,ch1)]);
+        assert_eq!(ui.m.cat.last().copied(),Some((Cat::DataRate as u16,r2,r2,r2,r2)));
+        assert_eq!(ui.copy_measurements(r1,r2),0,"a second copy adds nothing");
     }
 
     #[test]
