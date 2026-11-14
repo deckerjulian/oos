@@ -1,4 +1,4 @@
-# Other Rigol models
+# Other models
 
 OOS runs on the DHO800 and DHO900 only. **Do not install it on another model**: its acquisition part is another
 board, and the USB install and the card layout are verified on the DHO800/DHO900 only.

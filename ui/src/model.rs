@@ -9,6 +9,26 @@ use crate::math::{MathOp, Window};
 
 /// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`).
 pub const NCH: usize = <Active as Board>::MAX_CHANNELS;
+/// Reference waveform slots, R1..R10. A slot is waveform memory, not a channel index.
+pub const NREF: usize = 10;
+/// Decoder namespace: CH0..3 and reserved legacy LA4..19 stay unchanged.
+/// LA decoding still uses dec_la_in/dec_la; stored roles append R1..R10.
+pub const DEC_REF_BASE: usize = NCH + 16;
+pub const DEC_SOURCE_COUNT: usize = DEC_REF_BASE + NREF;
+
+pub fn decode_wave(source: usize) -> Option<WaveId> {
+    if source < NCH { Some(WaveId::Ch(source)) }
+    else if (DEC_REF_BASE..DEC_SOURCE_COUNT).contains(&source) { Some(WaveId::Ref(source - DEC_REF_BASE)) }
+    else { None }
+}
+
+pub fn decode_source_name(source: usize) -> String {
+    match decode_wave(source) {
+        Some(WaveId::Ch(c)) => format!("CH{}", c + 1),
+        Some(WaveId::Ref(i)) => format!("R{}", i + 1),
+        None => "Unavailable".into(),
+    }
+}
 const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp take oos_dsp::CHANNELS channels");
 
 /// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`).
@@ -44,10 +64,85 @@ pub fn src_ok(s: usize) -> bool {
     s < n_ch() || s >= NCH
 }
 
+/// Total selected single, pair and catalog rows, shared by UI and setup validation.
+pub const MEAS_SELECTION_MAX: usize = 1024;
+
+/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
+pub fn catalog_id_valid(id: u16) -> bool {
+    matches!(id, 15..=16 | 40..=51 | 60..=66 | 70..=76 | 80..=82 | 90..=93
+        | 100..=118 | 130..=137 | 150..=153 | 170..=186)
+}
+
+/// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
+/// that record's sample interval. Refs are not packed into the channel/math index.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum WaveId {
+    Ch(usize),
+    Ref(usize),
+}
+
+impl WaveId {
+    pub fn ch(self) -> Option<usize> {
+        match self {
+            WaveId::Ch(c) => Some(c),
+            WaveId::Ref(_) => None,
+        }
+    }
+
+    /// Setup text: `1`..`4` are channels, `R1`..`R10` are refs. Old files only have channel numbers.
+    pub fn token(self) -> String {
+        match self {
+            WaveId::Ch(c) => (c + 1).to_string(),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        }
+    }
+
+    /// Inverse of `token`. `0` is CH1, the same clamp the old channel parser used.
+    pub fn parse(v: &str) -> Result<WaveId, String> {
+        if let Some(rest) = v.strip_prefix('R').or_else(|| v.strip_prefix('r')) {
+            let n = rest.parse::<usize>().map_err(|_| format!("not a source: {}", v))?;
+            if (1..=NREF).contains(&n) {
+                Ok(WaveId::Ref(n - 1))
+            } else {
+                Err(format!("R{} out of range", n))
+            }
+        } else {
+            let i = v.parse::<usize>().map_err(|_| format!("not a source: {}", v))?;
+            if i == 0 {
+                Ok(WaveId::Ch(0))
+            } else if i <= NCH {
+                Ok(WaveId::Ch(i - 1))
+            } else {
+                Err(format!("{} out of range", i))
+            }
+        }
+    }
+}
+
 /// `d` steps from source index `i` among `0..n`, cycling and skipping the channels the unit lacks (2-channel models:
 /// CH3/CH4). The steps match the option lists (`ch_names`), so picking an option by its index distance works.
 pub fn src_step(i: usize, n: usize, d: i32) -> usize {
     src_step_in(i, n, d, n_ch())
+}
+
+/// 1-2-5 steps from `lo` to `hi`. `zero` inserts 0 (an unset geometry or resistance). `d` moves along that list and stops at the ends.
+pub fn eng_ladder(x: f64, d: i32, lo: f64, hi: f64, zero: bool) -> f64 {
+    let mut l = Vec::new();
+    if zero {
+        l.push(0.0);
+    }
+    let mut e = lo;
+    while e <= hi * 1.001 && l.len() < 48 {
+        l.push(e);
+        l.push(e * 2.0);
+        l.push(e * 5.0);
+        e *= 10.0;
+    }
+    if l.is_empty() {
+        return x;
+    }
+    let i = l.iter().position(|&v| v + 1e-12 >= x).unwrap_or(l.len() - 1);
+    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
 }
 
 /// `src_step` for a unit with `nch` inputs.
@@ -99,16 +194,20 @@ pub const CH_COLORS: [Rgb; NCH] = {
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
 /// scales digitally (cal_vertical digital gain 2.15 / 5.38 / 10.76 at 500 / 200 / 100 uV, no forced 20 MHz).
 pub const VSCALES: [f32; 16] = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
-/// s/div: 5 ns .. 1000 s.
+/// Fastest time/div the ADC acquisition uses. Stored refs (SIM) may display faster than this.
+pub const HW_MIN_TDIV: f32 = 1e-9;
+
+/// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
+/// `HW_MIN_TDIV` (`hw_time_per_div`).
 pub fn tscales() -> Vec<f32> {
     let mut v = Vec::new();
-    let mut d = 1e-9_f64;
+    let mut d = 1e-11_f64;
     while d < 2000.0 {
         for m in [1.0, 2.0, 5.0] {
             let x = d * m;
-            // from 1 ns/div (stock 5 ns): below 5 ns/div the screen holds 12..62 samples, drawn with the
-            // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
-            if x >= 0.99e-9 && x <= 1000.1 {
+            // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn
+            // with the windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
+            if x >= 0.49e-10 && x <= 1000.1 {
                 v.push(x as f32);
             }
         }
@@ -184,6 +283,20 @@ pub enum AView {
     Bode,
     /// bandwidth test: step response of the front end (ui/bwtest.rs)
     Step,
+    Magnetic,
+    Inverter,
+    Dpt,
+}
+
+/// Where the eye is drawn. The full page is the default. Side and Under are extra panes and leave that page available.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EyePlace {
+    /// The eye fills the plot: the figures, the jitter column and the charts.
+    Full,
+    /// A pane to the right of the trace.
+    Side,
+    /// A pane under the trace.
+    Under,
 }
 
 /// Power analysis page.
@@ -193,6 +306,52 @@ pub enum PowerMode {
     Harmonics,
     Switching,
     Ripple,
+    /// C = q / v over the turn-on record
+    Capacitance,
+    /// rail overshoot, undershoot, DC and turn-on maximum
+    Rail,
+}
+
+/// Magnetic plot: current against flux linkage, or B against H when the core is set.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MagPlot {
+    IPsi,
+    BH,
+}
+
+/// Inverter page.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InvPage {
+    Dq0,
+    Mech,
+}
+
+/// Where the inverter takes its angle.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InvAngle {
+    /// θ from the phase trio (DQ0 only)
+    Off,
+    Phase,
+    Analog,
+    Quad,
+    Hall,
+}
+
+/// The optional fourth probe of a double pulse.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DptFourth {
+    Off,
+    Gate,
+    DiodeV,
+    DiodeI,
+}
+
+/// Which edge the double-pulse plot is zoomed to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DptZoom {
+    Both,
+    TurnOn,
+    TurnOff,
 }
 
 /// Waveform histogram: off, vertical (voltage distribution of the whole screen), horizontal (time distribution in a
@@ -256,15 +415,20 @@ pub enum Proto {
     Sent,
     /// USB 1.x / 2.0 low / full speed
     Usb,
+    Manchester,
+    Mlt3,
+    /// MIPI C-PHY: A/B/C electrical states and synchronized 16-bit words.
+    Cphy,
     /// a protocol module (`protocols::MODULES[i]`)
     Module(u8),
 }
 
 /// The protocols wired by hand; the modules come after them in [`PROTOS`].
-pub const BUILTIN_PROTOS: [Proto; 22] = [
+pub const BUILTIN_PROTOS: [Proto; 25] = [
     Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
     Proto::FlexRay, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
     Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Arinc429, Proto::Sent, Proto::Usb,
+    Proto::Manchester, Proto::Mlt3, Proto::Cphy,
 ];
 
 /// Every protocol of the Decode menu: the built-in ones, then the modules.
@@ -317,12 +481,16 @@ impl Proto {
             Proto::Arinc429 => "ARINC 429",
             Proto::Sent => "SENT",
             Proto::Usb => "USB",
+            Proto::Manchester => "Manchester",
+            Proto::Mlt3 => "MLT-3",
+            Proto::Cphy => "C-PHY",
         }
     }
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
         match self {
             Proto::Module(i) => crate::protocols::get(i).roles(),
+            Proto::Cphy => [Some("A"), Some("B"), Some("C"), None],
             Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some("SDA"), Some("SCL"), None, None],
             Proto::Spi => [Some("MOSI"), Some("Clock"), Some("CS"), None],
             Proto::I2s => [Some("SD"), Some("SCK"), Some("WS"), None],
@@ -579,13 +747,32 @@ impl WinLayout {
             WinLayout::Quad => 4,
         }
     }
+}
+
+/// How much of the 1024×600 picture the plot takes. The same four apply to the panel and to a scaled window of it,
+/// and to the waveform on the external display.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Density {
+    /// top bar, plot, measurement strip, cards
+    #[default]
+    Scope,
+    /// plot and measurement strip
+    Full,
+    /// plot, and under it a pane of numbers or two stacked traces
+    Split,
+    /// four equal panes
+    Four,
+}
+
+impl Density {
+    pub const ALL: [Density; 4] = [Density::Scope, Density::Full, Density::Split, Density::Four];
 
     pub fn label(self) -> &'static str {
         match self {
-            WinLayout::One => "One",
-            WinLayout::Cols => "Side by side",
-            WinLayout::Rows => "Stacked",
-            WinLayout::Quad => "Four",
+            Density::Scope => "Scope",
+            Density::Full => "Full",
+            Density::Split => "Split",
+            Density::Four => "Four",
         }
     }
 }
@@ -595,6 +782,28 @@ pub enum Grid {
     Full,
     Light,
     None,
+}
+
+/// Where the measurement strip is drawn. Under is below the graticule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StripDock {
+    Under,
+    Left,
+    Right,
+    Above,
+}
+
+impl StripDock {
+    pub const ALL: [StripDock; 4] = [StripDock::Under, StripDock::Left, StripDock::Right, StripDock::Above];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StripDock::Under => "Under",
+            StripDock::Left => "Left",
+            StripDock::Right => "Right",
+            StripDock::Above => "Above",
+        }
+    }
 }
 
 /// Settings of one decoder (the `dec_*` fields of `Model` are the one the menu edits).
@@ -610,6 +819,7 @@ pub struct DecCfg {
     pub tick: usize,
     pub nibbles: u32,
     pub uspeed: usize,
+    pub cphy_rate: f64,
     pub src4: Option<usize>,
     pub la_in: bool,
     pub la: [Option<u8>; 4],
@@ -704,13 +914,75 @@ impl Channel {
     }
 }
 
+/// How far a bus may sit from the middle of the grid, in divisions. Positive is up.
+pub const BUS_POS_MIN: f32 = -3.6;
+pub const BUS_POS_MAX: f32 = 3.6;
+
+/// The bus drawn on the plot. Only I2C is defined.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BusKind {
+    I2c,
+}
+
+impl BusKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            BusKind::I2c => "I2C",
+        }
+    }
+}
+
+/// One bus on the waveform: on or off, a label, and a vertical position in divisions.
+#[derive(Clone, PartialEq, Debug)]
+pub struct TraceBus {
+    pub on: bool,
+    pub label: String,
+    /// divisions from the center of the grid, positive up
+    pub pos: f32,
+    pub kind: BusKind,
+    /// clock (SCL) and data (SDA)
+    pub clk: WaveId,
+    pub data: WaveId,
+    pub clk_thr: f32,
+    pub data_thr: f32,
+    /// the address word includes the read/write bit as its least significant bit
+    pub addr_rw: bool,
+}
+
+impl Default for TraceBus {
+    fn default() -> Self {
+        Self { on: false, label: "I2C".into(), pos: -3.0, kind: BusKind::I2c, clk: WaveId::Ch(0), data: WaveId::Ch(1), clk_thr: 1.65, data_thr: 1.65, addr_rw: false }
+    }
+}
+
+impl TraceBus {
+    /// The name drawn on the plot. An empty label falls back to the type.
+    pub fn shown_label(&self) -> String {
+        let t = self.label.trim();
+        if t.is_empty() { self.kind.name().to_string() } else { t.to_string() }
+    }
+}
+
+/// Keeps a bus label to the length of a channel name, without control characters.
+pub fn bus_label(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(10).collect::<String>().trim().to_string()
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct Model {
     pub ch: [Channel; NCH],
+    /// Post-capture time correction in seconds, subtracted from native source time.
+    /// Independent of the hardware channel's sampling deskew; samples are never rewritten.
+    pub deskew_ch: [f64; NCH],
+    pub deskew_ref: [f64; NREF],
     pub active: usize, // channel the vertical knobs act on
+    /// Track cursor B's source. None follows the selected workspace source.
+    pub cur_b_source: Option<WaveId>,
     pub tscale: usize,
     pub delay: f32, // s, horizontal position of the trigger point relative to the centre
     pub trig_src: usize,
+    /// Stored reference trigger source; None selects the physical trig_src channel.
+    pub trig_ref: Option<usize>,
     /// edge and pulse trigger on a logic analyser line instead of `trig_src` (`trig_line`)
     pub trig_la: Option<u8>,
     /// pattern trigger: D0..D15 (H / L / X), with the LA on
@@ -729,6 +1001,8 @@ pub struct Model {
     pub trig_coup: TrigCoup,
     /// second source: B (delay), clock (setup/hold)
     pub trig_src2: usize,
+    /// Stored reference for delay B / setup-hold clock.
+    pub trig_ref2: Option<usize>,
     pub trig_slope2: Slope,
     pub trig_pol: Pol,
     pub trig_when: WhenKind,
@@ -759,13 +1033,19 @@ pub struct Model {
     pub grid_frame: bool,
     /// waveform windows, and the window (0-based) of each channel and math channel
     pub win_layout: WinLayout,
+    /// Scope, Full, Split, Four. This is what the Windows row sets; `win_layout` is the split it asked for.
+    pub density: Density,
     pub ch_win: [usize; NCH],
     pub math_win: [usize; crate::math::NMATH],
     /// window of the LA lanes while the plot is split (one window: their strip under the plot)
     pub la_win: usize,
-    pub meas: Vec<(Meas, usize)>,
-    /// delay and phase: entry of `ui::tools::PAIRS`, channel A, channel B
-    pub meas2: Vec<(usize, usize, usize)>,
+    /// Window of each reference trace in a split (not Stacked).
+    pub ref_win: [usize; NREF],
+    pub meas: Vec<(Meas, WaveId)>,
+    /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
+    pub meas2: Vec<(usize, WaveId, WaveId)>,
+    /// Catalog results that are not a `Meas` row: id, source A, source B, third source, fourth source.
+    pub cat: Vec<(u16, WaveId, WaveId, WaveId, WaveId)>,
     pub dvm_on: bool,
     pub dvm_src: usize,
     pub dvm_mode: usize,
@@ -815,10 +1095,14 @@ pub struct Model {
     /// the other decoders; None = not touched yet; the slot of `dec_sel` is not used
     pub decs: [Option<DecCfg>; DECODERS],
     pub dec_sel: usize,
-    /// second pane under the plot, index into `ui::tables::PANES`
+    /// second pane under the plot, index into `ui::tables::PANES` (0 = traces, no pane drawn)
     pub pane: usize,
+    /// pane Split returns to after Scope, Full or Four (0 = two stacked traces)
+    pub split_pane: usize,
     /// what the measurements measure, drawn on the traces (measlabels.rs)
     pub meas_labels: bool,
+    /// measurement strip: under the plot, left, right, or above the trace
+    pub strip_dock: StripDock,
     /// what the two charts of the Trend pane show: 0 = by the list, 1 = off, k = row k - 2 of the measurement list
     pub trend_sel: [usize; 2],
     pub dec_on: bool,
@@ -837,6 +1121,8 @@ pub struct Model {
     pub dec_nibbles: u32,
     /// USB speed (index into decode::USB_SPEEDS, 0 = auto)
     pub dec_uspeed: usize,
+    /// Known C-PHY symbol rate in sym/s; zero recovers timing from the record.
+    pub dec_cphy_rate: f64,
     /// fourth decoder source (JTAG TDO, Quad-SPI IO1)
     pub dec_src4: Option<usize>,
     /// decoder input: logic analyser lines instead of the channels (`dec_on_la`)
@@ -859,6 +1145,8 @@ pub struct Model {
     /// data bits: UART 5..9, SPI 4..32
     pub dec_bits: u32,
     pub dec_parity: oos_dsp::decode::Parity,
+    /// one bus on the plot
+    pub bus: TraceBus,
     /// option settings of a protocol module (`protocols::Opt`), indices into its choices
     pub dec_opt: [u8; crate::protocols::OPTS],
     pub zoom: bool,
@@ -870,7 +1158,8 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
-    /// what an HDMI monitor shows (Display > HDMI)
+    /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
+    /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
     /// Display > Views: how many screen arrangements there are to switch between (1: off; ui/views.rs)
     pub views: usize,
@@ -885,7 +1174,7 @@ pub struct Model {
     pub view: AView,
     /// spectrum analyser: source, centre/span (Hz, span 0 = 0 .. fs/2), RBW (0 = auto), window, trace mode
     /// (0 normal, 1 average, 2 max hold, 3 min hold), reference level (dBV, top of the grid), waterfall, distortion
-    pub spec_src: usize,
+    pub spec_src: WaveId,
     pub spec_center: f64,
     pub spec_span: f64,
     pub spec_rbw: f64,
@@ -899,22 +1188,109 @@ pub struct Model {
     pub spec_wf: bool,
     pub spec_dist: bool,
     /// eye diagram: source, bit rate (0 = recovered from the edges)
-    pub eye_src: usize,
+    pub eye_src: WaveId,
     pub eye_rate: f64,
-    /// power analysis: voltage and current source, page, line frequency (0 = from the voltage)
-    pub pw_v: usize,
-    pub pw_i: usize,
+    /// the bit rate was measured from the record, not entered on the control
+    pub eye_from_record: bool,
+    /// beside the trace, or under it
+    pub eye_place: EyePlace,
+    /// BER for TJ, eye width and eye height. J2 and J9 ignore it.
+    pub eye_ber: f64,
+    /// phase-noise integration offsets, Hz
+    pub eye_pn_lo: f64,
+    pub eye_pn_hi: f64,
+    /// NPJ stays off until this is set
+    pub eye_npj: bool,
+    /// optional clock / other rail: its edges fold the eye (DQS, recovered clock). Common-mode figures also use it.
+    pub eye_b: Option<WaveId>,
+    pub eye_rail: Option<WaveId>,
+    /// Hz removed from the TIE as a sine; 0 = none
+    pub eye_notch: f64,
+    /// 30 kHz high-pass on the common mode
+    pub eye_hp: bool,
+    /// power analysis: voltage and current source, page
+    pub pw_v: WaveId,
+    pub pw_i: WaveId,
     pub pw_mode: PowerMode,
+    /// line and switching frequency for the ripple tones; 0 = measured
+    pub pw_fline: f64,
+    pub pw_fsw: f64,
+    /// input voltage for turn on/off, clock and reference for the rail (NaN = histogram top)
+    pub pw_vin: Option<WaveId>,
+    pub pw_clk: Option<WaveId>,
+    /// None = the histogram top of the rail
+    pub pw_ref: Option<f64>,
     /// Bode plot: sweep start/stop (Hz), points, generator amplitude (Vpp), input/output channel, generator preset
     /// and LAN address
     pub bode_start: f64,
     pub bode_stop: f64,
     pub bode_points: usize,
     pub bode_amp: f64,
-    pub bode_in: usize,
-    pub bode_out: usize,
+    pub bode_in: WaveId,
+    pub bode_out: WaveId,
     pub bode_gen: usize,
     pub bode_addr: String,
+    /// loop gain, PSRR, or the linear Vout/Vin ratio
+    pub bode_mode: oos_dsp::bode::Mode,
+    /// burst idle (0 = one period), which side Time Outside counts, and Duration N
+    pub meas_idle: f64,
+    pub meas_out: oos_dsp::measure::Outside,
+    pub meas_n: u32,
+    /// false = clock edges, true = data edges
+    pub meas_data: bool,
+    /// Rise/fall low and high as fractions of amplitude (0.1/0.9 or 0.2/0.8).
+    pub meas_lpct: f64,
+    pub meas_hpct: f64,
+    /// False measures the visible time window; true measures each source's complete stored record.
+    pub meas_full_record: bool,
+    /// SetupAndHold limits (s). Zero means any negative setup or hold.
+    pub meas_tsetup: f64,
+    pub meas_thold: f64,
+    /// ACPR channel width and spacing, Hz
+    pub spec_acpr_w: f64,
+    pub spec_acpr_s: f64,
+    /// magnetic analysis: voltage, current (a channel or a loaded ref), turns, area m² (0 = unset), path m (0 = unset), copper Ω, plot, cursor
+    pub mag_v: WaveId,
+    pub mag_i: WaveId,
+    pub mag_n: f64,
+    pub mag_ae: f64,
+    pub mag_le: f64,
+    pub mag_rcu: f64,
+    pub mag_plot: MagPlot,
+    pub mag_cur: usize,
+    /// inverter: page, phases, angle source, pole pairs, analog angle (channel or ref), voltage trio (else current)
+    pub inv_page: InvPage,
+    pub inv_a: WaveId,
+    pub inv_b: WaveId,
+    pub inv_c: WaveId,
+    pub inv_ang: InvAngle,
+    pub inv_poles: u32,
+    pub inv_an: WaveId,
+    pub inv_volt: bool,
+    pub inv_tq: Option<WaveId>,
+    pub inv_ev: Option<WaveId>,
+    pub inv_ei: Option<WaveId>,
+    pub inv_scale: f64,
+    pub inv_degv: f64,
+    pub inv_off: f64,
+    /// analog angle is electrical (pole pairs convert it); false means the volts are already the shaft
+    pub inv_elec: bool,
+    pub inv_qa: u8,
+    pub inv_qb: u8,
+    pub inv_qi: Option<u8>,
+    pub inv_cpr: f64,
+    pub inv_swap: bool,
+    pub inv_ha: u8,
+    pub inv_hb: u8,
+    pub inv_hc: u8,
+    /// double pulse: Vds, Id, Vgs, optional fourth probe and its source, gate percent, zoom
+    pub dpt_v: WaveId,
+    pub dpt_i: WaveId,
+    pub dpt_g: WaveId,
+    pub dpt_4th: DptFourth,
+    pub dpt_4ch: WaveId,
+    pub dpt_pct: f64,
+    pub dpt_zoom: DptZoom,
     /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
     pub bode_usb: bool,
     /// Bode with a generator that sweeps on its own (`ui::bode::FREE`, same start/stop): sweep time (s), logarithmic
@@ -964,12 +1340,36 @@ pub struct Model {
     pub mask_x: f32,
     pub mask_y: f32,
     pub mask_stop: bool,
+    pub mask_inv: bool,
     /// action of the QUICK key
     pub quick: Quick,
     /// size of the text on the screen
     pub text_size: TextSize,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
     pub la: crate::ui::la::LaSet,
+    /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
+    pub sim_preset: usize,
+    pub sim_slot: usize,
+    pub sim_rate: f64,
+    pub sim_prbs: u8,
+    pub sim_vhigh: f64,
+    pub sim_vlow: f64,
+    pub sim_rise: f64,
+    pub sim_noise: f64,
+    pub sim_bw: f64,
+    pub sim_deemph: f64,
+    pub sim_ssc: bool,
+    pub sim_ssc_center: bool,
+    /// Spread deviation as a fraction; 0.005 is 0.5%.
+    pub sim_ssc_deviation: f64,
+    pub sim_ssc_hz: f64,
+    pub sim_rj: f64,
+    pub sim_pj: f64,
+    pub sim_pjhz: f64,
+    /// Duty-cycle distortion, seconds peak-to-peak.
+    pub sim_dcd_pp: f64,
+    pub sim_corr_rj: f64,
+    pub sim_corr_hz: f64,
 }
 
 pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
@@ -1059,10 +1459,14 @@ impl Default for Model {
         let t200u = ts.iter().position(|&t| (t - 200e-6).abs() < 1e-9).unwrap_or(ts.len() / 2);
         let mut m = Model {
             ch: std::array::from_fn(|i| c(i == 0)),
+            deskew_ch: [0.0; NCH],
+            deskew_ref: [0.0; NREF],
             active: 0,
+            cur_b_source: None,
             tscale: t200u,
             delay: 0.0,
             trig_src: 0,
+            trig_ref: None,
             trig_la: None,
             pat_la: [Bit::X; 16],
             trig_level: 0.0,
@@ -1074,6 +1478,7 @@ impl Default for Model {
             trig_nrej: false,
             trig_coup: TrigCoup::Dc,
             trig_src2: 3,
+            trig_ref2: None,
             trig_slope2: Slope::Rise,
             trig_pol: Pol::Pos,
             trig_when: WhenKind::Lt,
@@ -1100,6 +1505,7 @@ impl Default for Model {
             grid: Grid::Full,
             meas: Vec::new(),
             meas2: Vec::new(),
+            cat: Vec::new(),
             dvm_on: false,
             dvm_src: 0,
             dvm_mode: 0,
@@ -1136,7 +1542,9 @@ impl Default for Model {
             decs: Default::default(),
             dec_sel: 0,
             pane: 0,
+            split_pane: 0,
             meas_labels: false,
+            strip_dock: StripDock::Under,
             trend_sel: [0, 0],
             dec_on: false,
             dec_src: 2,
@@ -1148,6 +1556,7 @@ impl Default for Model {
             dec_tick: 0,
             dec_nibbles: 6,
             dec_uspeed: 0,
+            dec_cphy_rate: 0.0,
             dec_src4: None,
             dec_la_in: false,
             dec_la: [Some(8), Some(10), None, None],
@@ -1162,6 +1571,7 @@ impl Default for Model {
             dec_mode: 0,
             dec_bits: 8,
             dec_parity: oos_dsp::decode::Parity::None,
+            bus: TraceBus::default(),
             dec_opt: [0; crate::protocols::OPTS],
             zoom: false,
             auto_roll: true,
@@ -1177,7 +1587,7 @@ impl Default for Model {
             z_src: None,
             hist: Hist::Off,
             view: AView::Scope,
-            spec_src: 0,
+            spec_src: WaveId::Ch(0),
             spec_center: 0.0,
             spec_span: 0.0,
             spec_rbw: 0.0,
@@ -1189,20 +1599,85 @@ impl Default for Model {
             spec_ref: 10.0,
             spec_wf: false,
             spec_dist: false,
-            eye_src: 0,
+            eye_src: WaveId::Ch(0),
             eye_rate: 0.0,
-            pw_v: 0,
-            pw_i: 1,
+            eye_from_record: false,
+            eye_place: EyePlace::Full,
+            eye_ber: 1e-12,
+            eye_pn_lo: 1e3,
+            eye_pn_hi: 1e6,
+            eye_npj: false,
+            eye_b: None,
+            eye_rail: None,
+            eye_notch: 0.0,
+            eye_hp: true,
+            pw_v: WaveId::Ch(0),
+            pw_i: WaveId::Ch(1),
             pw_mode: PowerMode::Quality,
+            pw_fline: 0.0,
+            pw_fsw: 0.0,
+            pw_vin: None,
+            pw_clk: None,
+            pw_ref: None,
             bode_start: 100.0,
             bode_stop: 1e6,
             bode_points: 40,
             bode_amp: 1.0,
-            bode_in: 0,
-            bode_out: 1,
+            bode_in: WaveId::Ch(0),
+            bode_out: WaveId::Ch(1),
             bode_gen: 0,
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
+            bode_mode: oos_dsp::bode::Mode::Loop,
+            meas_idle: 0.0,
+            meas_out: oos_dsp::measure::Outside::Both,
+            meas_n: 2,
+            meas_data: false,
+            meas_lpct: 0.1,
+            meas_hpct: 0.9,
+            meas_full_record: false,
+            meas_tsetup: 0.0,
+            meas_thold: 0.0,
+            spec_acpr_w: 1e6,
+            spec_acpr_s: 2e6,
+            mag_v: WaveId::Ch(0),
+            mag_i: WaveId::Ch(1),
+            mag_n: 1.0,
+            mag_ae: 0.0,
+            mag_le: 0.0,
+            mag_rcu: 0.0,
+            mag_plot: MagPlot::IPsi,
+            mag_cur: 0,
+            inv_page: InvPage::Dq0,
+            inv_a: WaveId::Ch(0),
+            inv_b: WaveId::Ch(1),
+            inv_c: WaveId::Ch(2),
+            inv_ang: InvAngle::Off,
+            inv_poles: 1,
+            inv_an: WaveId::Ch(3),
+            inv_volt: true,
+            inv_tq: None,
+            inv_ev: None,
+            inv_ei: None,
+            inv_scale: 1.0,
+            inv_degv: 1.0,
+            inv_off: 0.0,
+            inv_elec: false,
+            inv_qa: 0,
+            inv_qb: 1,
+            inv_qi: None,
+            inv_cpr: 1024.0,
+            inv_swap: false,
+            inv_ha: 0,
+            inv_hb: 1,
+            inv_hc: 2,
+            dpt_v: WaveId::Ch(0),
+            dpt_i: WaveId::Ch(1),
+            dpt_g: WaveId::Ch(2),
+            dpt_4th: DptFourth::Off,
+            dpt_4ch: WaveId::Ch(3),
+            dpt_pct: 10.0,
+            dpt_zoom: DptZoom::Both,
             bode_usb: false,
             bode_sw_time: 1.0,
             bode_sw_log: true,
@@ -1221,9 +1696,11 @@ impl Default for Model {
             grid_bright: 100,
             grid_frame: true,
             win_layout: WinLayout::One,
+            density: Density::Scope,
             ch_win: [0; NCH],
             math_win: [0; crate::math::NMATH],
             la_win: 0,
+            ref_win: [0; NREF],
             afg_arb_src: 0,
             afg_freq: 1000.0,
             afg_ampl: 1.0,
@@ -1243,10 +1720,32 @@ impl Default for Model {
             mask_x: 0.2,
             mask_y: 0.4,
             mask_stop: false,
+            mask_inv: false,
             quick: Quick::Screenshot,
             text_size: TextSize::Normal,
             la: Default::default(),
+            sim_preset: 3,
+            sim_slot: 0,
+            sim_rate: 0.0,
+            sim_prbs: 31,
+            sim_vhigh: 0.0,
+            sim_vlow: 0.0,
+            sim_rise: 0.0,
+            sim_noise: 0.0,
+            sim_bw: 0.0,
+            sim_deemph: 0.0,
+            sim_ssc: false,
+            sim_ssc_center: false,
+            sim_ssc_deviation: 0.005,
+            sim_ssc_hz: 33e3,
+            sim_rj: 0.0,
+            sim_pj: 0.0,
+            sim_pjhz: 0.0,
+            sim_dcd_pp: 0.0,
+            sim_corr_rj: 0.0,
+            sim_corr_hz: 1e6,
         };
+        m.apply_sim_preset();
         m.ch[0].offset = -1.5;
         m.trig_level = 1.5;
         m
@@ -1254,6 +1753,29 @@ impl Default for Model {
 }
 
 impl Model {
+    /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
+    pub fn apply_sim_preset(&mut self) {
+        let l = oos_dsp::serial::LANES[self.sim_preset.min(oos_dsp::serial::LANES.len() - 1)];
+        self.sim_rate = l.bits_per_s;
+        self.sim_prbs = l.prbs;
+        self.sim_vhigh = l.v_high;
+        self.sim_vlow = l.v_low;
+        self.sim_rise = l.rise;
+        self.sim_noise = l.noise_rms;
+        self.sim_bw = l.bw;
+        self.sim_deemph = l.deemph_db;
+        self.sim_ssc = l.ssc;
+        self.sim_ssc_center = l.ssc_center;
+        self.sim_ssc_deviation = l.ssc_deviation;
+        self.sim_ssc_hz = l.ssc_hz;
+        self.sim_rj = l.rj_rms;
+        self.sim_pj = l.pj_peak;
+        self.sim_pjhz = l.pj_hz;
+        self.sim_dcd_pp = l.dcd_pp;
+        self.sim_corr_rj = l.corr_rj_rms;
+        self.sim_corr_hz = l.corr_rj_hz;
+    }
+
     /// The settings of the selected generator.
     pub fn gen_read(&self) -> GenCh {
         GenCh {
@@ -1327,6 +1849,23 @@ impl Model {
         }
     }
 
+    pub fn trigger_wave(&self) -> WaveId {
+        self.trig_ref.map_or(WaveId::Ch(self.trig_src), WaveId::Ref)
+    }
+
+    pub fn trigger_wave2(&self) -> WaveId {
+        self.trig_ref2.map_or(WaveId::Ch(self.trig_src2), WaveId::Ref)
+    }
+
+    pub fn set_trigger_wave(&mut self, source: WaveId, secondary: bool) {
+        let (channel, reference) = if secondary { (&mut self.trig_src2, &mut self.trig_ref2) } else { (&mut self.trig_src, &mut self.trig_ref) };
+        match source {
+            WaveId::Ch(c) => { *channel = c.min(NCH - 1); *reference = None; }
+            WaveId::Ref(i) => { *reference = Some(i.min(NREF - 1)); }
+        }
+        if !secondary { self.trig_la = None; }
+    }
+
     /// The configured trigger for the software trigger engine.
     pub fn trigger(&self) -> oos_dsp::trigger::Trigger {
         use oos_dsp::trigger::{Trigger, VideoSync, WinWhen};
@@ -1398,18 +1937,18 @@ impl Model {
             }
             TrigType::Bus => {
                 let r = self.dec_proto.roles();
-                u[self.dec_src] = true;
+                if let Some(v) = u.get_mut(self.dec_src) { *v = true; }
                 if r[1].is_some() {
-                    u[self.dec_src2] = true;
+                    if let Some(v) = u.get_mut(self.dec_src2) { *v = true; }
                 }
                 if let (Some(_), Some(c)) = (r[2], self.dec_cs) {
-                    u[c] = true;
+                    if let Some(v) = u.get_mut(c) { *v = true; }
                 }
                 if let (Some(_), Some(c)) = (r[3], self.dec_src4) {
-                    u[c] = true;
+                    if let Some(v) = u.get_mut(c) { *v = true; }
                 }
                 if let (true, Some(c)) = (self.dec_proto.diff_ok(), self.dec_diff) {
-                    u[c] = true;
+                    if let Some(v) = u.get_mut(c) { *v = true; }
                 }
             }
             _ => u[self.trig_src] = true,
@@ -1489,6 +2028,8 @@ impl Model {
                 use oos_dsp::decode_ext3::{UsbSpeed, USB_FULL, USB_LOW};
                 1.0 / if crate::decode::USB_SPEEDS[self.dec_uspeed] == UsbSpeed::Low { USB_LOW } else { USB_FULL }
             }
+            Proto::Manchester | Proto::Mlt3 => 1.0 / crate::decode::BAUDS[self.dec_baud],
+            Proto::Cphy => if self.dec_cphy_rate > 0.0 { 1.0 / self.dec_cphy_rate } else { 1e-9 },
         }
     }
 
@@ -1496,9 +2037,18 @@ impl Model {
         tscales()[self.tscale] * self.tfine
     }
 
-    /// The time base the acquisition runs at: the step, which covers at least the screen.
+    /// The time base the acquisition runs at: the step, which covers at least the screen. Display scales below
+    /// 1 ns/div stay on the plot; the ADC still takes a 1 ns/div window.
     pub fn hw_time_per_div(&self) -> f32 {
-        tscales()[self.tscale]
+        tscales()[self.tscale].max(HW_MIN_TDIV)
+    }
+
+    /// Live analog / LA cannot display below 1 ns/div; the ADC window is that floor.
+    pub fn floor_live_tdiv(&mut self) {
+        if tscales()[self.tscale] < HW_MIN_TDIV {
+            self.tscale = tscales().iter().position(|&t| t >= HW_MIN_TDIV).unwrap_or(0);
+            self.tfine = 1.0;
+        }
     }
 
     /// Keeps every offset within what the AFE of its scale can do.
@@ -1525,7 +2075,7 @@ impl Model {
 
     /// The settings of the decoder the menu edits.
     pub fn dec_cfg(&self) -> DecCfg {
-        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone(), opt: self.dec_opt }
+        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), cphy_rate: self.dec_cphy_rate, src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone(), opt: self.dec_opt }
     }
 
     fn dec_load(&mut self, c: &DecCfg) {
@@ -1539,6 +2089,7 @@ impl Model {
         self.dec_tick = c.tick.clone();
         self.dec_nibbles = c.nibbles.clone();
         self.dec_uspeed = c.uspeed.clone();
+        self.dec_cphy_rate = c.cphy_rate;
         self.dec_src4 = c.src4.clone();
         self.dec_la_in = c.la_in.clone();
         self.dec_la = c.la.clone();
@@ -1653,7 +2204,7 @@ impl Model {
             changed = true;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
-        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src]
+        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.mask_src, &mut self.bw_src, &mut self.afg_arb_src]
             .into_iter()
             .chain(self.zones.iter_mut().map(|z| &mut z.src))
         {
@@ -1662,10 +2213,63 @@ impl Model {
                 changed = true;
             }
         }
-        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs, &mut self.z_src] {
+        for s in [&mut self.mag_v, &mut self.mag_i, &mut self.inv_a, &mut self.inv_b, &mut self.inv_c, &mut self.inv_an, &mut self.dpt_v, &mut self.dpt_i, &mut self.dpt_g, &mut self.dpt_4ch, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out] {
+            if let WaveId::Ch(c) = *s {
+                if c >= n {
+                    *s = WaveId::Ch(0);
+                    changed = true;
+                }
+            }
+        }
+        for s in [&mut self.dec_src, &mut self.dec_src2] {
+            if decode_wave(*s).is_none() || (*s < NCH && *s >= n) { *s = 0; changed = true; }
+        }
+        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs] {
+            if s.is_some_and(|c| decode_wave(c).is_none() || (c < NCH && c >= n)) { *s = None; changed = true; }
+        }
+        for s in [&mut self.z_src] {
             if s.is_some_and(|c| c >= n) {
                 *s = None;
                 changed = true;
+            }
+        }
+        for e in &mut self.meas {
+            if let WaveId::Ch(c) = e.1 {
+                if c >= n {
+                    e.1 = WaveId::Ch(0);
+                    changed = true;
+                }
+            }
+        }
+        for e in &mut self.meas2 {
+            for id in [&mut e.1, &mut e.2] {
+                if let WaveId::Ch(c) = *id {
+                    if c >= n {
+                        *id = WaveId::Ch(0);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        let previous_cat = self.cat.len();
+        self.cat.retain(|row| catalog_id_valid(row.0));
+        self.cat.truncate(MEAS_SELECTION_MAX.saturating_sub(self.meas.len() + self.meas2.len()));
+        changed |= previous_cat != self.cat.len();
+        for row in &mut self.cat {
+            for source in [&mut row.1, &mut row.2, &mut row.3, &mut row.4] {
+                if let WaveId::Ch(c) = *source {
+                    if c >= n { *source = WaveId::Ch(0); changed = true; }
+                } else if matches!(*source, WaveId::Ref(i) if i >= NREF) {
+                    *source = WaveId::Ref(0); changed = true;
+                }
+            }
+        }
+        for s in [&mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei, &mut self.eye_b, &mut self.eye_rail, &mut self.pw_vin, &mut self.pw_clk] {
+            if let Some(WaveId::Ch(c)) = *s {
+                if c >= n {
+                    *s = None;
+                    changed = true;
+                }
             }
         }
         // math sources: channels 0..NCH, then math channels (always there)
@@ -1725,7 +2329,7 @@ impl Model {
     }
     /// The decoder reads logic analyser lines (the choice only counts while the LA is on).
     pub fn dec_on_la(&self) -> bool {
-        self.dec_la_in && self.la_on()
+        self.dec_la_in && self.la_on() && self.dec_proto != Proto::Cphy
     }
     pub fn max_mem(&self) -> u64 {
         // limits 125 / 62.5 / 31.25 M (stock: 50 / 25 / 10 M); above 78.6 M only with the larger segment cap

@@ -4,6 +4,8 @@
 //! oos-ui: the OOS oscilloscope screen.
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
+//!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
+//!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
@@ -35,6 +37,8 @@ mod trig;
 mod ui;
 mod usbtmc;
 mod vxi11;
+mod hislip;
+mod announce;
 mod json;
 mod gpu;
 mod vpu;
@@ -46,6 +50,8 @@ mod zone;
 mod drm;
 #[cfg(target_os = "linux")]
 mod input;
+#[cfg(windows)]
+mod desktop;
 
 use gfx::Canvas;
 use ui::Ui;
@@ -122,6 +128,9 @@ fn main() {
         http::pin_to_big_cores();
     }
     let mut ui = Ui::new(source(&args));
+    if args.iter().any(|a| a == "--offline") {
+        ui.set_offline(true);
+    }
     if let Some(m) = &foreign {
         ui.toast(&format!("This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)", m));
     }
@@ -164,6 +173,11 @@ fn main() {
     }
     if let Some(d) = arg(&args, "--store-dir") {
         ui.store_dir = d.into();
+    } else if cfg!(windows) {
+        // no /tmp on Windows: setups, CSV and screenshots go to Documents\OOS
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            ui.store_dir = std::path::Path::new(&home).join("Documents").join("OOS");
+        }
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);
@@ -172,31 +186,81 @@ fn main() {
     {
         device_main(ui, &args);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        desktop::run(ui, &args);
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = ui;
         eprintln!("oos-ui: no display backend on this OS; use --script FILE");
     }
 }
 
-/// No display and no hardware: the demo source behind SCPI, the web server and VXI-11, for tools/device-test.py on a
-/// host. `OOS_DEMO_LOOP=<mask>` puts the generator on those channels, as a cable from the output would.
+/// No display and no hardware: the demo source behind SCPI and the web server on a computer, which also accepts
+/// HiSLIP. VXI-11 stays on the scope, where port 111 is free. `OOS_DEMO_LOOP=<mask>` puts the generator on those
+/// channels, as a cable from the output would.
 fn serve(mut ui: Ui, args: &[String]) {
-    let port = |name: &str, d: u16| arg(args, name).and_then(|p| p.parse().ok()).unwrap_or(d);
-    let mut web = http::Http::open(port("--web-port", 8080));
-    let mut scpi = scpi::Scpi::open(port("--scpi-port", 5555));
-    let mut vxi = vxi11::Server::open();
+    let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args);
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
-        vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
+        hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             cmd::run(&mut ui, &c);
         }
+        ann.poll();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+}
+
+/// The scope, where port 111 is free for VXI-11: the acquisition device is present, or the boot identity was read.
+/// A computer has neither, and accepts HiSLIP instead.
+fn on_scope() -> bool {
+    std::path::Path::new("/dev/xdma0_bypass").exists() || matches!(oos_hal::model::platform().source, oos_hal::model::Source::Vendor)
+}
+
+/// SCPI, the web server, and whichever of VXI-11 and HiSLIP this machine accepts, plus the announcement.
+fn lan(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
+    let (web, scpi, vxi, hislip) = lan_servers(scope, args);
+    let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
+    let ann = announce::Announcer::open(&services);
+    (web, scpi, vxi, hislip, ann)
+}
+
+/// The listeners of `lan` without the announcement: the scope announces itself by name (mdns.rs, System > Network).
+fn lan_servers(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server) {
+    let mut web = http::Http::open(lan_port(args, "--web-port", 8080));
+    let scpi = scpi::Scpi::open(lan_port(args, "--scpi-port", 5555));
+    let vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
+    let hislip = if scope { hislip::Server::closed() } else { hislip::Server::open(lan_port(args, "--hislip-port", hislip::PORT)) };
+    web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
+    (web, scpi, vxi, hislip)
+}
+
+fn lan_port(args: &[String], name: &str, d: u16) -> u16 {
+    arg(args, name).and_then(|p| p.parse().ok()).unwrap_or(d)
+}
+
+/// The name responder's services as System > Network sets them, made to match the listeners that are really up:
+/// VXI-11 only where it listens, HiSLIP where it does, and LXI discovery (`_lxi._tcp`) beside the web server, both
+/// pointing at the identification page.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn mdns_services(mut c: mdns::Config, web: Option<u16>, vxi: Option<u16>, hislip: Option<u16>) -> mdns::Config {
+    if vxi.is_none() {
+        c.services.retain(|s| s.kind != "_vxi-11._tcp");
+    }
+    if let Some(p) = web.filter(|_| c.services.iter().any(|s| s.kind == "_http._tcp")) {
+        let path = format!("path={}", announce::IDENTIFICATION_PATH);
+        c.services.push(mdns::Service { kind: "_lxi._tcp".into(), port: p, txt: vec![path] });
+    }
+    if let Some(p) = hislip {
+        c.services.push(mdns::Service { kind: "_hislip._tcp".into(), port: p, txt: Vec::new() });
+    }
+    c
 }
 
 /// The layers of a GPU picture (System > Graphics = GPU): under and over the traces, and the traces as jobs. The
@@ -468,6 +532,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         match store::parse_setup(&t) {
             Ok(m) => {
                 ui.m = m;
+                ui.sync_full();
                 eprintln!("oos-ui: settings restored from {}", SETUP_FILE);
             }
             Err(e) => eprintln!("oos-ui: {}: {}", SETUP_FILE, e),
@@ -489,11 +554,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let eth_t0 = Instant::now();
     let mut eth_t: Option<Instant> = None;
     input::install_signal_handlers();
-    let web_port = arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080);
-    let scpi_port = arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555);
-    let mut web = http::Http::open(web_port);
-    let mut scpi = scpi::Scpi::open(scpi_port);
-    let mut vxi = vxi11::Server::open();
+    // the scope accepts VXI-11, a computer HiSLIP instead; the scope announces itself by name (mdns.rs below)
+    let scope = on_scope();
+    let (web_port, scpi_port) = (lan_port(args, "--web-port", 8080), lan_port(args, "--scpi-port", 5555));
+    let (mut web, mut scpi, mut vxi, mut hislip) = lan_servers(scope, args);
     // System > Network > Remote services, as applied: web, SCPI, VXI-11, telnet (None: not yet, at the start)
     let mut remote_now: Option<[bool; 4]> = None;
     // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
@@ -555,17 +619,19 @@ fn device_main(mut ui: Ui, args: &[String]) {
             if want[1] != was[1] {
                 scpi.set_open(want[1].then_some(scpi_port));
             }
-            if want[2] != was[2] {
+            // VXI-11 needs port 111, which only the scope has free
+            if want[2] != was[2] && scope {
                 vxi.set_open(want[2]);
             }
             if want[3] != was[3] {
                 remote::telnet(want[3]);
             }
+            web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
             remote_now = Some(want);
         }
         if mdns_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
             mdns_t = Some(Instant::now());
-            let c = ui.mdns_config(web_port, scpi_port);
+            let c = mdns_services(ui.mdns_config(web_port, scpi_port), web.port(), vxi.service_port(), hislip.port());
             if mdns_now.as_ref() != Some(&c) {
                 if mdns_now.as_ref().map_or(true, |o| o.name != c.name) {
                     remote::hostname(&c.name);
@@ -575,7 +641,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
             }
         }
         scpi.poll(&mut ui, &cv);
-        vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
+        hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             if let cmd::Out::Shot(p) = cmd::run(&mut ui, &c) {
                 ui.shot_request = Some(p);
@@ -589,6 +656,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         let t0 = Instant::now();
         ui.step(dt);
         let t1 = Instant::now();
+        ui.set_hdmi_present(hdmi.is_some());
         let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
         ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi == model::HdmiMode::Waveform;
         // System > Graphics: the helper follows the setting

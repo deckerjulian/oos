@@ -2,11 +2,11 @@
 
 ## Who boots what
 
-- The acquisition FPGA is a Zynq XC7Z015 (Rigol calls it "K7"). Its images live in a QSPI flash on the FPGA side, slots at
+- The acquisition FPGA is a Zynq XC7Z015 (the board calls it "K7"). Its images live in a QSPI flash on the FPGA side, slots at
   0x000000 (factory/default), 0x400000 (the one `start_rigol_app.sh` boots), 0x800000.
 - The RK3399 does not see that flash. It talks over **SPI1 (`/dev/spidev1.0`, pins GPIO1_A7/B0/B1/B2)** to a boot monitor
   on the FPGA side, which understands short ASCII commands framed by `\r`.
-- After the image is running the FPGA brings up its PCIe endpoint (Xilinx XDMA, 10ee:7022, Gen2 x2). Only then may the
+- After the image is running the FPGA brings up its PCIe endpoint (XDMA, 10ee:7022, Gen2 x2). Only then may the
   RK3399 PCIe host driver probe. That is why `pcie-rockchip` is built as a module.
 
 ## `spi2boot <hexaddr>` (what boots the scope)
@@ -18,7 +18,7 @@ SPI_IOC_WR_MODE          = 0      (ioctl 0x40016b01)
 SPI_IOC_WR_MAX_SPEED_HZ  = 10 MHz (ioctl 0x40046b04)
 write(fd, "\rBOOT\r", 6)
 write(fd, addr as 4 bytes big endian, 4)        e.g. 00 40 00 00 for 0x400000
-wait 3 to 10 s                                  (fixed wait for the image to boot; OOS 3 s, Rigol 10 s)
+wait 3 to 10 s                                  (fixed wait for the image to boot; OOS 3 s, the stock firmware 10 s)
 ```
 
 No reply is read. Success is only visible afterwards: the PCIe link trains and register 0x4000 reads the FPGA version

@@ -15,6 +15,7 @@
 pub mod dho;
 mod record;
 
+pub use record::resample as resample_record;
 pub use record::{sw_trig_level, to_record};
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
@@ -137,7 +138,42 @@ pub trait Board: Sync + 'static {
     fn panel_keys(&self, buf: &mut Vec<u8>) -> Vec<u8>;
 }
 
-/// One decoded record: volts per enabled channel, sample period, index of the hardware trigger point.
+/// Six inexpensive full-frame readings, prepared outside the UI event loop.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BasicStats {
+    pub valid: bool,
+    pub count: u64,
+    /// Vmin, Vmax, Vpp, Vavg, Vrms (including DC), population StdDev.
+    pub values: [f64; 6],
+}
+
+impl BasicStats {
+    pub fn of(values: &[f32]) -> Self {
+        let (mut count, mut mean, mut m2, mut squares, mut low, mut high) =
+            (0u64, 0.0f64, 0.0f64, 0.0f64, f64::INFINITY, f64::NEG_INFINITY);
+        for value in values.iter().copied().filter(|value| value.is_finite()) {
+            let value = value as f64;
+            count += 1;
+            let delta = value - mean;
+            mean += delta / count as f64;
+            m2 += delta * (value - mean);
+            squares += value * value;
+            low = low.min(value); high = high.max(value);
+        }
+        if count == 0 { return Self::default(); }
+        Self { valid: true, count, values: [low, high, high - low, mean,
+            (squares / count as f64).sqrt(), (m2 / count as f64).max(0.0).sqrt()] }
+    }
+    pub fn reading(self, measurement: crate::model::Meas) -> Option<f64> {
+        use crate::model::Meas;
+        if !self.valid { return None; }
+        let index = match measurement { Meas::Vmin => 0, Meas::Vmax => 1, Meas::Vpp => 2,
+            Meas::Vavg => 3, Meas::Vrms => 4, Meas::StdDev => 5, _ => return None };
+        Some(self.values[index])
+    }
+}
+
+/// One decoded record: volts per enabled channel, sample period and trigger index.
 #[derive(Clone, Default)]
 pub struct Frame {
     pub seq: u64,
@@ -156,6 +192,9 @@ pub struct Frame {
     pub acq: (f64, usize),
     /// `Shared::stamp` in force when the generator and the settings behind this frame were applied
     pub stamp: u64,
+    /// Full-frame summaries computed before publication; callers must still
+    /// apply the physical measurement gate before using them for a screen read.
+    pub basic: [BasicStats; NCH],
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
     pub la: Option<crate::ui::la::LaRec>,
@@ -200,9 +239,9 @@ pub struct Shared {
     pub halted: bool,
     pub rearm: bool,
     /// the latest frame (auto set-up and the replay of the screen look at it)
-    pub frame: Frame,
+    pub frame: Arc<Frame>,
     /// frames not drawn yet, oldest first (one batch delivers many)
-    pub queue: std::collections::VecDeque<Frame>,
+    pub queue: std::collections::VecDeque<Arc<Frame>>,
     pub status: String,
     /// self-calibration: request (channels, AFE zero too), progress (done, total, text), result, cancel flag
     /// (channels, AFE zero, ADC cores)
@@ -215,6 +254,10 @@ pub struct Shared {
     /// counter set by the UI with the settings; frames acquired after applying them carry it (`Frame::stamp`), so a
     /// sweep can tell frames of the new step from queued ones
     pub stamp: u64,
+    /// one force-trigger pulse for the acquisition thread (the FPGA bit, not a new set-up)
+    pub force: bool,
+    #[cfg(test)]
+    pub force_requests: u64,
     /// FPGA version register 0x4000 (0 until the FPGA was reached)
     pub fpga_version: u32,
     /// FPGA XADC: die temperature (degC) and VCCINT (V), read about once a second (System info page)
@@ -226,7 +269,8 @@ pub struct Shared {
     pub counter: Option<CounterRead>,
 }
 
-/// Frames kept for the UI; older ones are dropped when the screen cannot keep up.
+/// Maximum queued frames; the producer also enforces a byte budget and waits
+/// before arming when full, so late screen refreshes do not discard acquisitions.
 pub const QUEUE_MAX: usize = 96;
 
 pub type HwShared = Arc<Mutex<Shared>>;

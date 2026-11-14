@@ -30,8 +30,8 @@ echo "---- OOS install, $(date)"
 SAVE=$STICK/OOS-rescue
 mkdir -p "$SAVE" || exit 5
 # calibration and licences: read here, kept on the stick (a copy that already exists stays as it is)
-if [ ! -d "$SAVE/rigol-data" ]; then
-	cp -R /rigol/data "$SAVE/rigol-data.new" && mv "$SAVE/rigol-data.new" "$SAVE/rigol-data" || { echo "cannot copy /rigol/data"; exit 6; }
+if [ ! -d "$SAVE/cal-data" ]; then
+	cp -R /rigol/data "$SAVE/cal-data.new" && mv "$SAVE/cal-data.new" "$SAVE/cal-data" || { echo "cannot copy /rigol/data"; exit 6; }
 fi
 
 args=--execute

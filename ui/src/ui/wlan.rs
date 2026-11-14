@@ -115,7 +115,7 @@ fn scan() -> Result<Vec<Net>, String> {
 fn saved_to_card(c: &Ctrl) -> Result<(), String> {
     c.save()?;
     // the scope is usually switched off at the mains
-    unsafe { libc::sync() };
+    crate::store::sync_disks();
     Ok(())
 }
 
@@ -324,6 +324,15 @@ impl Ui {
 
     /// Text rows of the network page.
     pub(super) fn net_value(&self, it: Item) -> String {
+        #[cfg(windows)]
+        if !self.lan_status.is_empty() {
+            match it {
+                Item::NetEth => return if self.net.is_empty() { "No active LAN address".into() } else { format!("{} \u{b7} connected", self.net) },
+                Item::NetWeb => return self.lan_web_port.map_or_else(|| "Web port unavailable; choose another --web-port".into(), |port| format!("http://{}:{}", if self.net.is_empty() { "localhost" } else { &self.net }, port)),
+                Item::NetPorts => return self.lan_status.clone(),
+                _ => {}
+            }
+        }
         let addr = |n: &str| self.net_ifs.iter().find(|i| i.0 == n).map(|i| i.1.as_str());
         let file = |p: &str| std::fs::read_to_string(p).map(|t| t.trim().to_string()).unwrap_or_default();
         match it {
@@ -338,6 +347,11 @@ impl Ui {
                 }
             }
             Item::NetMac => Some(file("/sys/class/net/eth0/address")).filter(|m| !m.is_empty()).unwrap_or("-".into()),
+            // same as the Remote services page (`remote_value`): the web remote may be switched off
+            Item::NetWeb if !self.sys.remote_web => "off".into(),
+            Item::NetWeb if self.net.is_empty() => "not connected".into(),
+            Item::NetWeb => format!("http://{}:8080", self.net),
+            Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (key)".into(),
             _ => {
                 let l = &self.wlan.link;
                 if !l.stick {
@@ -406,6 +420,8 @@ pub(super) enum OskFor {
     Label(usize),
     /// the name of a reference
     RefLabel(usize),
+    /// the name drawn on the bus
+    BusLabel,
     /// the formula of a math channel
     MathExpr(usize),
     /// System > Date and time (time.rs): another NTP server, a POSIX time zone, the clock by hand
@@ -502,6 +518,14 @@ impl Osk {
         o
     }
 
+    /// The keyboard for the name drawn on the bus.
+    pub(super) fn for_bus(now: &str) -> Osk {
+        let mut o = Osk::new(OskFor::BusLabel);
+        o.text = now.to_string();
+        o.cursor = o.text.chars().count();
+        o
+    }
+
     /// The keyboard for the name of reference `i`.
     pub(super) fn for_ref(i: usize, now: &str) -> Osk {
         let mut o = Osk::new(OskFor::RefLabel(i));
@@ -527,7 +551,7 @@ impl Osk {
         match self.what {
             OskFor::Name => wlan::SSID_MAX,
             OskFor::Pass(_) => wlan::PASS_LEN.1,
-            OskFor::Label(_) | OskFor::RefLabel(_) => LABEL_MAX,
+            OskFor::Label(_) | OskFor::RefLabel(_) | OskFor::BusLabel => LABEL_MAX,
             OskFor::MathExpr(_) => oos_dsp::expr::EXPR_MAX,
             OskFor::NtpServer => crate::sysconf::SERVER_MAX,
             OskFor::Tz => crate::clock::TZ_MAX,
@@ -665,7 +689,7 @@ impl Ui {
             OskFor::MathExpr(k) => {
                 let t = o.text.trim().to_string();
                 // the keyboard stays open on an error: the formula is still there to correct
-                if let Some(e) = (!t.is_empty()).then(|| oos_dsp::expr::Expr::parse(&t).err()).flatten() {
+                if let Some(e) = (!t.is_empty()).then(|| crate::math::parse_expr(&t).err()).flatten() {
                     return self.toast(&e);
                 }
                 self.m.math_expr[k] = t;
@@ -676,6 +700,10 @@ impl Ui {
                 if let Some(r) = &mut self.refs[i] {
                     r.label = t;
                 }
+                self.wlan.osk = None;
+            }
+            OskFor::BusLabel => {
+                self.m.bus.label = crate::model::bus_label(&o.text);
                 self.wlan.osk = None;
             }
             OskFor::Name if o.text.is_empty() => self.toast("Enter the name of the network"),
@@ -773,6 +801,7 @@ impl Ui {
             OskFor::Name => "Name of the network".to_string(),
             OskFor::Label(c) => format!("Name of CH{} (empty: CH{})", c + 1, c + 1),
             OskFor::RefLabel(i) => format!("Name of R{} (empty: R{})", i + 1, i + 1),
+            OskFor::BusLabel => "Name of the bus (empty: I2C)".to_string(),
             OskFor::MathExpr(k) => format!("Formula of M{}: CH1-4, t, pi, sin cos tan sqrt abs ln log exp min max", k + 1),
             OskFor::NtpServer => "NTP server: a name or an address".to_string(),
             OskFor::Tz => "Time zone, POSIX: CET-1CEST,M3.5.0,M10.5.0/3 or <+04>-4 (4 hours east)".to_string(),
@@ -1050,6 +1079,31 @@ mod tests {
         assert!(ui.fonts().m.width(&ui.net_value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.net_value(Item::NetWlan));
         ui.tap(950, 20);
         assert!(!ui.menu_open);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_network_page_uses_actual_runtime_ports_before_scope_fallbacks() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.net = "192.168.1.148".into();
+        ui.lan_web_port = Some(18080);
+        ui.lan_status = "SCPI 5555 / HiSLIP 14880 / mDNS on".into();
+        assert_eq!(ui.net_value(Item::NetWeb), "http://192.168.1.148:18080");
+        assert_eq!(ui.net_value(Item::NetPorts), ui.lan_status);
+        assert!(!ui.net_value(Item::NetPorts).contains("VXI"));
+        assert!(!ui.net_value(Item::NetPorts).contains("telnet"));
+        ui.lan_web_port = None;
+        ui.lan_status = "SCPI unavailable / HiSLIP 14999 / mDNS unavailable".into();
+        assert!(ui.net_value(Item::NetWeb).contains("Web port unavailable"));
+        assert_eq!(ui.net_value(Item::NetPorts), ui.lan_status, "failed binds must not invent default listeners");
+    }
+
+    #[test]
+    fn hardware_network_fallback_names_key_only_ssh_instead_of_telnet() {
+        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let ports = ui.net_value(Item::NetPorts);
+        assert!(ports.contains("SSH 22 (key)"));
+        assert!(!ports.contains("telnet"));
     }
 
     #[test]

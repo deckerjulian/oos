@@ -1,0 +1,53 @@
+# measurement-engines.txt — one screenshot of each new analyser page on the demo signal.
+# Main-menu order: 6 acquisition + 4 trigger + 6 analysis, then Spectrum, Eye, Power,
+# Bode, Bandwidth, Identify, Magnetic (22), Inverter (23), Double pulse (24).
+
+key ch2
+key ch3
+key ch4
+key measure
+key measure
+frames 8
+
+# Magnetic: I vs integral V of CH1 and CH2
+knob multi1 push
+knob multi1 +22
+knob multi1 push
+knob multi1 push
+key measure
+key measure
+frames 6
+shot /opt/cursor/artifacts/magnetic.ppm
+
+# Inverter, DQ0 page
+knob multi1 push
+knob multi1 +23
+knob multi1 push
+knob multi1 push
+key measure
+key measure
+frames 6
+shot /opt/cursor/artifacts/inverter-dq0.ppm
+
+# Same inverter, Mechanical page (do not push View: that would leave the page)
+knob multi1 push
+knob multi1 +23
+knob multi1 push
+knob multi1 +1
+knob multi2 +1
+key measure
+key measure
+frames 6
+shot /opt/cursor/artifacts/inverter-mechanical.ppm
+
+# Double pulse
+knob multi1 push
+knob multi1 +24
+knob multi1 push
+knob multi1 push
+key measure
+key measure
+frames 6
+shot /opt/cursor/artifacts/double-pulse.ppm
+
+quit

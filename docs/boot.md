@@ -6,7 +6,7 @@
   `sdhci@fe330000` (eMMC controller) is enabled in the DT but not used for the system.
 - Linux sees the card as `/dev/block/mmcblk0`; a tool that works on the card should also handle `mmcblk1`.
 
-## Card layout (Rockchip legacy "parameter" layout)
+## Card layout (legacy "parameter" layout)
 
 Partition table: the stock PARM CMDLINE. Offsets there are relative to LBA 0x2000; the table below is absolute. Verified on
 the unit against a card image: the IDB, vendor storage, `uboot` through `backup`, `verity_mode`, `baseparamer` and `frp`.
@@ -14,7 +14,7 @@ the unit against a card image: the IDB, vendor storage, `uboot` through `backup`
 | LBA | Sectors | Size | Partition / content |
 |---:|---:|---:|---|
 | 0 | | | no MBR signature, no GPT |
-| 64 | | | IDB: Rockchip TPL/SPL (DDR init + miniloader) |
+| 64 | | | IDB: TPL/SPL (DDR init + miniloader) |
 | 7168 | 4 x 128 | 4 x 64 KiB | vendor storage: LAN MAC (id 3), BT MAC (id 4), id 26 (8 bytes) |
 | 8192 | 0x2000 | 4 MiB | `parameter` (PARM, copies up to LBA 16383) |
 | 16384 | 0x2000 | 4 MiB | `uboot` (LOADER, U-Boot 2014.10-RK3399, 2024-08-29) |
@@ -40,10 +40,10 @@ for a `recovery`/`backup` boot it prefixes the partition list with `0x00002000@0
 
 ## Boot chain
 
-1. BootROM -> IDB at LBA 64 (TPL/SPL) -> `uboot` partition (Rockchip U-Boot 2014.10) + `trust` (BL31).
+1. BootROM -> IDB at LBA 64 (TPL/SPL) -> `uboot` partition (U-Boot 2014.10) + `trust` (BL31).
 2. U-Boot reads `parameter`, the reboot flag and boot keys; normally it boots `boot`, falling back to `recovery`, then `backup`.
    It loads the kernel from `kernel` and the DTB from `resource` (it can also load the FDT from the recovery image).
-3. Rockchip "KRNL" images are `KRNL` + u32 length + payload (+ CRC). `boot` and `recovery` hold only ramdisks.
+3. "KRNL" images are `KRNL` + u32 length + payload (+ CRC). `boot` and `recovery` hold only ramdisks.
 4. U-Boot 2014 RK also boots Android boot images (`ANDROID!` header).
 
 ### How the stock loader chooses
@@ -57,7 +57,7 @@ The `misc` boot request is not on the power-on path.
   ("recovery key pressed", "rockusb key pressed"). The stock Android restarts through the front-panel MCU (power
   cycle), so the flag from `reboot recovery` does not survive.
 - When an image fails its check (magic and sha): `boot` failed -> "try to start recovery"; `recovery` failed -> "try
-  to start backup"; else Rockusb.
+  to start backup"; else USB download mode.
 
 **Switch used by OOS:** replace the magic `KRNL` at the start of `boot` (LBA 122880) with `OOSK`. The loader then
 boots `recovery`, and if it refuses that image it boots `backup`, which holds a copy of the stock boot image
@@ -68,7 +68,7 @@ on a card in a host computer. The OOS initramfs restores `KRNL` at start (one-sh
 
 Verified on the unit: the loader refuses an image whose ramdisk length is not a multiple of 4. It hashes with the RK3399
 crypto engine (`init` mode 0xa0), which works on 32-bit words. Images built from stock parts (with `boot` = `OOSK`,
-`backup` = `BAKK`, so a refusal shows as Rockusb 2207:330c) gave: stock kernel + stock ramdisk + stock DTB boots (command
+`backup` = `BAKK`, so a refusal shows as USB id 2207:330c) gave: stock kernel + stock ramdisk + stock DTB boots (command
 line then starts with `0x00002000@0x00000000(parameter)`); the same padded to 29.5 MB boots; the stock kernel padded to
 the 6.12 size boots; stock kernel + stock DTB + an initramfs of 1 181 602 bytes is refused. `oos-bootimg.py` pads the
 ramdisk to 4 bytes; the padded image boots Linux 6.12.115+ on the unit (panel, SD card as mmcblk0, Ethernet, one-shot).
@@ -76,8 +76,8 @@ The switch (`OOSK` in `boot` -> loader boots `recovery`) is verified on the unit
 
 ### Image refusal
 
-With `boot` = `OOSK` and the fallback in `backup` disabled (`BAKK`), a refused image leaves the Rigol logo on screen and
-the scope enumerates on USB as Rockchip 2207:330c (Rockusb): the loader refused `recovery` and `backup` and went to "try
+With `boot` = `OOSK` and the fallback in `backup` disabled (`BAKK`), a refused image leaves the stock logo on screen and
+the scope enumerates on USB as 2207:330c: the loader refused `recovery` and `backup` and went to "try
 to start rockusb". With a stock copy in `backup`, a refusal of `recovery` boots Android instead.
 
 The loader's check:
@@ -93,7 +93,7 @@ The loader's messages go to UART2 (115200 8N1).
   `second`, `name[16]`, `cmdline[512]`, `id[32]`.
 - kernel = uncompressed arm64 `Image`, loaded and entered at 0x00280000 (limit 0x00200000 + 0x3800000).
 - ramdisk = gzip newc cpio, loaded at 0x04BF0000 (ramdisk + second together < 0x3000000).
-- second = Rockchip RSCE container with `rk-kernel.dtb`.
+- second = RSCE container with `rk-kernel.dtb`.
 - id = SHA-1 over kernel + le32 size, ramdisk + le32 size, second + le32 size, then header bytes 32..575; the loader
   refuses an image whose id does not match.
 - The kernel command line is built by the loader: DTB `/chosen/bootargs` + the PARM CMDLINE + the loader's own words.
@@ -105,7 +105,7 @@ The loader's messages go to UART2 (115200 8N1).
 - The stock `kernel` partition stays untouched; OOS carries its kernel in the `recovery` boot image.
 - The switch between stock and OOS is the magic of `boot`: `OOSK` = OOS (via the fallback to `recovery`), `KRNL` = stock.
 - The PARM table stays as it is. Assumed, not yet verified on hardware: U-Boot checks a CRC over the first 942 bytes of
-  the PARM copy, and a changed table drops into Rockusb.
+  the PARM copy, and a changed table drops into USB download mode.
 
 ## OOS start-up after the kernel (rcS)
 
@@ -121,7 +121,7 @@ from `/etc/oos-board` ([porting.md](porting.md)):
    by stock at the next power-on (`update.md`), then the start count of 4c. Then **`oos-fpgad fpga-boot`**: only the
    BOOT command (spidev1.0, slot 0x400000), its uptime to `/tmp/oos-fpga-booted`. The bitstream loads while the rest of
    rcS runs; the fixed 3 s FPGA wait is counted from this command.
-3. Network in the background (`udhcpc -t 5` would block the start-up up to 15 s without a DHCP answer), telnetd, banner,
+3. Network in the background (`udhcpc -t 5` would block the start-up up to 15 s without a DHCP answer), provisioned key-only SSH ([ssh.md](ssh.md)), banner,
    `/oos`, touch and beeper modules.
 4. **oos-ui** with `--hw --afe --start-up /tmp/oos-boot.status`: the start-up screen (`ui/src/ui/startup.rs`; logo or
    `/oos/splash.ppm`, checklist with times) while its hardware thread waits for the `end` line. No demo signals and
@@ -130,7 +130,7 @@ from `/etc/oos-board` ([porting.md](porting.md)):
    without confirmation is rolled back here. After oos-ui: `oos-update watch` in the background confirms the trial
    (oos-ui 20 s stable + start-up finished) or writes the previous image back.
 4d. `oos-wlan` in the background: waits for the end of the start-up, then WLAN through a USB stick (`wlan.md`).
-5. In the background: `oos-mount-rigol`, then **`oos-fpgad cold-boot --execute --power-on --booted --progress`**:
+5. In the background: `oos-mount-stock`, then **`oos-fpgad cold-boot --execute --power-on --booted --progress`**:
    calibration files check (warn if one is missing or damaged), sample clock and AFEs during the FPGA wait (GPIO
    only, no FPGA needed), the rest of the wait, PCIe polled every 20 ms, the cold-boot steps grouped into the screen's stages (`boot::stage`: FPGA image, sample clock, analog front ends,
    ADC and memory set-up, ADC data lanes, signal path; line-open errors as "GPIO lines", cold-boot warnings as

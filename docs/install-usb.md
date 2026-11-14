@@ -78,7 +78,7 @@ Written on the card: 4 bytes of `boot`, `recovery`, the first 32 MiB of `backup`
 | File | Content |
 |---|---|
 | `oos-install.log` | the report of every run |
-| `OOS-rescue/rigol-data/` | copy of `/rigol/data`: calibration, licences |
+| `OOS-rescue/cal-data/` | copy of `/rigol/data`: calibration, licences |
 | `OOS-rescue/unit.txt` | serial number of the scope the set is from: a stick with the set of another scope stops the install |
 | `OOS-rescue/card-head.bin` | the first 36 MiB of the card: loader, vendor storage, `parameter`, `uboot`, `trust`, `misc`, `resource` |
 | `OOS-rescue/boot.bin`, `recovery.bin` | those partitions as they were |

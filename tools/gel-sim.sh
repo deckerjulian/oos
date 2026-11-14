@@ -15,10 +15,10 @@ root=$(cd "$here/.." && pwd)
 gel="$root/boot/out/DHO800_DHO900_OOS_Install.GEL"
 [ -f "$gel" ] || { echo "run boot/build-dev-image.sh first" >&2; exit 1; }
 w="${TMPDIR:-/tmp}/oos-gel-sim"
-rm -rf "$w"; mkdir -p "$w/rigol-data"
+rm -rf "$w"; mkdir -p "$w/cal-data"
 [ -z "${1:-}" ] || cp "$1" "$w/do_update.sh"
-[ -n "${OOS_CAL_DIR:-}" ] && cp "$OOS_CAL_DIR/vendor.bin" "$w/rigol-data/" 2>/dev/null || true
-echo calibration > "$w/rigol-data/cal_example.hex"
+[ -n "${OOS_CAL_DIR:-}" ] && cp "$OOS_CAL_DIR/vendor.bin" "$w/cal-data/" 2>/dev/null || true
+echo calibration > "$w/cal-data/cal_example.hex"
 cp "$gel" "$w/"
 [ -z "${OOS_GEL_OLD:-}" ] || cp "$OOS_GEL_OLD" "$w/old.GEL"
 python3 -I - "$w/card" <<'PY'
@@ -39,7 +39,7 @@ docker run --rm --platform linux/arm64 -v "$w:/w" ubuntu:26.04 bash -euc '
 	ln -s /usr/bin/mksh /system/bin/sh; ln -s /bin/bash /system/bin/bash
 	# the busybox of the stock system unpacks gzip by itself
 	printf "#!/bin/sh\nshift\nexec tar \"\$@\"\n" > /system/bin/busybox; chmod +x /system/bin/busybox
-	cp -r /w/rigol-data /rigol/data
+	cp -r /w/cal-data /rigol/data
 	if [ -f /w/do_update.sh ]; then cp /w/do_update.sh /rigol/shell/; else cat > /rigol/shell/do_update.sh <<UPD
 #!/system/bin/bash
 mkdir -p /mnt/tmp /mnt/bak; cd /mnt/tmp
@@ -62,7 +62,7 @@ UPD
 	echo "== dry run"; touch $S/oos-dry-run.txt; h0=$(sha256sum < /w/card); upd; echo "exit $?"; rm $S/oos-dry-run.txt
 	[ "$h0" = "$(sha256sum < /w/card)" ] && echo "card unchanged"
 	[ -f $S/OOS-rescue/SHA256SUMS ] && (cd $S/OOS-rescue && sha256sum -c SHA256SUMS)
-	ls /rigol/data $S/OOS-rescue/rigol-data | head -8
+	ls /rigol/data $S/OOS-rescue/cal-data | head -8
 
 	echo "== install"; b=$(sums 122880 65536); upd; echo "exit $?"
 	echo "boot magic: $(magic 122880)"; echo "backup magic: $(magic 319488)"

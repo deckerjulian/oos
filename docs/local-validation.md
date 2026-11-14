@@ -1,0 +1,25 @@
+# Local validation
+
+The Windows source app runs through `run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880`. The watcher keeps the previous app visible until a successful build, then replaces only its own process. Source saves rebuild automatically; loaded waveforms may need reopening after a restart. F6 opens detached hardware controls.
+
+The final combined source at `c556944` passed **613 UI tests** with 18 opt-in tests ignored, **231 DSP tests** with 2 benchmarks ignored, and **4 Python client-framing tests**. The external Python SCPI validator passed **129 checks** against a separately owned headless backend on private ports. That backend opened no desktop, physical device or discovery announcer, and was stopped afterward. The Windows development build and ARM64/Linux Rust check passed. Unchanged SSH provisioning had already passed **10 offline tests**.
+
+Coverage includes reference Math/Decode/Bus triggering, native memory and stopped navigation, Screen/Full gates, per-frame basic statistics, pending/stale/cancelled workers, reference/live/SIM Run/Stop/Single, exact completion fences, all legacy measurement routes, the bounded catalog, remote cursors and empty-query replies. Ctrl plus wheel zooms the horizontal time scale around the pointer; plain wheel pans time. Windows wheel messages retain their original modifiers/coordinates. Tests cover native/ref/mixed sources, stacked/overlay, main/detail/overview and preservation of stopped samples. Native physical mouse/touch delivery was not exercised during this backend-only pass.
+
+Five explicit actual-file tests passed at the preceding `5471043` checkpoint in 27.69 seconds: both 20M-point Gen7 references at 5 ps, full-record caching, bounded Fit, differential Math, stacked zoom/Auto Eye and the C-PHY trio. The unchanged Gen7 Eye path retained 3,085,099 native edges and completed within its original 30-second deadline, with a 64.0235 Gb/s NRZ estimate and limited sampling explicitly shown. C-PHY produced 4,499 electrical fields without qualified SYNC/words; Single waited and Force accepted once. Subsequent NRZ-rate tests additionally use the actual default 3.88M-sample PCIe-style generator and stopped wheel navigation.
+
+## TekScope baseline
+
+The user's knowledge MCP supplied primary TekScope and DPOJET definitions. A separate, explicitly targeted local TekScope PC session was then queried through that MCP. Its REF1/REF2 records matched the supplied Gen7 n/p files in point count, interval and all 128 checked sequential samples; this is not a full-record content hash. Full-record Vpp and RMS agree with existing OOS-loaded metrics within floating-point rounding. TekScope timing/rate readings carried warning 540, Low amplitude, so they are not treated as a clean timing-accuracy oracle. Every temporary measurement was removed; the original reference list and transfer selector were restored. No physical instrument was configured.
+
+The catalog's NRZ Data Rate now estimates bit rate from measured UI rather than PRBS cycle frequency. NRZ Clock Rate is separately labeled; both use bit/s units and state their assumptions. Rise/fall retain the configured threshold definition and expose qualified-pair counts in row settings. General 10/90 averages on shaped, de-emphasized PRBS are not equivalent to the SIM knob's isolated pre-filter 20/80 transition. These are signal-analysis measurements, not a PCIe/DPOJET compliance certificate.
+
+## Limits and evidence
+
+Host benchmarks measured 3.715x for four-worker conversion/statistics, 3.644x for parallel frame-map deposit, and 23.192x for near-trigger search on their documented fixtures. These are not scope CPU, DMA throughput or physical FPS results. Expensive catalog rows can remain Computing when new full records arrive faster than their worker; sustained 20M-record throughput for all catalog results was not established. Large live/SIM Eye results identify completed native-capture snapshots.
+
+ARM64 Rust checking does not build the firmware image or link Dropbear: this host lacks Docker/an ARM C toolchain, and no SSH service, keys or image were installed on hardware. C-PHY remains single-trio six-state electrical/synchronized-word decoding without CSI/DSI payload interpretation, multi-trio merging or eighteen-state coding. VXI pending-read waiting and backpressured bulk sends retain the limitations in the SCPI manual.
+
+All validation reported here ran locally. Integration pushes and merge commits use `[skip ci]`; no workflow, Actions setting or tag was changed. Incoming PR41 already had CI runs on its own branch when inspected; this integration did not start or rerun them.
+
+Local ignored evidence is under `local/ref-integration`: `final-ui-all.log`, `final-dsp-all.log`, `final-arm-check.log`, `final-source-build.log`, `final-scpi-validation.json`, `private-scpi-provenance.json`, `tekscope-owned-measurements/report.md`, and `pcie4-measurement-audit.md`. See [reference workflows](reference-analysis.md), the [SCPI manual](scpi.md) and [SSH provisioning](ssh.md).

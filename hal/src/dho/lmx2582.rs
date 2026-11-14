@@ -1,17 +1,17 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! TI LMX2582 sample-clock synthesizer (docs/protocols/pll.md): field decode of a 46-word table like Rigol's
+//! LMX2582 sample-clock synthesizer (docs/protocols/pll.md): field decode of a 46-word table like the stock
 //! `PLL_TABLE`, and tables for other output frequencies, so the unit can later be tested above 1.25 GSa/s.
 //!
-//! Field positions and limits are from the TI datasheet SNAS680E (rev. E, August 2022): register field descriptions
+//! Field positions and limits are from the datasheet SNAS680E (rev. E, August 2022): register field descriptions
 //! (Tables 7-5..7-50), input path boundaries (Table 7-1), MASH order vs. minimum N and PFD delay (Table 7-2), channel
 //! divider vs. VCO frequency (Table 7-4). Pure code, no hardware access: `table_for` only builds the words, writing
 //! them stays with `oos-fpgad pll` / the cold boot.
 //!
 //! `table_for` starts from `PLL_TABLE` and changes only the frequency-dependent fields (PLL_N, PLL_NUM, PLL_DEN, the
 //! channel divider segments, VTUNE_ADJ). The reference path (100 MHz OSCin straight to a 100 MHz PFD), charge pump,
-//! output B buffer, MASH order / PFD delay and the calibration set-up stay Rigol's: those are the parts that are proven
+//! output B buffer, MASH order / PFD delay and the calibration set-up stay the stock values: those are the parts that are proven
 //! on the board, and the loop filter on the PCB was designed around them. None of the other tables has run on a unit.
 
 use crate::dho::boot::regs::PLL_TABLE;
@@ -19,7 +19,7 @@ use crate::dho::boot::regs::PLL_TABLE;
 /// One LMX2582 table: `[addr, data hi, data lo]`, written in this order (R0 with FCAL_EN last starts the calibration).
 pub type Table = [[u8; 3]; 46];
 
-/// OSCin of the board, inferred from Rigol's table [G, from the values]: the reference path is bypassed (OSC_2X 0,
+/// OSCin of the board, inferred from the stock table [G, from the values]: the reference path is bypassed (OSC_2X 0,
 /// PLL_R_PRE 1, MULT 1, PLL_R 1), so f_PD = f_OSC, and f_OUT = f_OSC x 2 x 25 / 4 = 12.5 x f_OSC = 1.25 GHz only
 /// for 100 MHz. Consistent with the rest of the table: CAL_CLK_DIV 0 (calibration clock = OSCin must be <= 200 MHz),
 /// ACAL_CMP_DLY 25 (> 10 is the datasheet's figure for 100 MHz), FCAL_HPFD_ADJ 0 (PFD <= 100 MHz) and
@@ -34,9 +34,9 @@ pub const N_MAX: u32 = 4095;
 /// VTUNE_ADJ (R30[7:6]) must be 3 from this VCO frequency up, else 0 (Table 7-25).
 pub const VTUNE_ADJ_FROM_HZ: u64 = 6_500_000_000;
 
-/// The CHDIV 4 limit of Table 7-4 (VCO <= 4736 MHz) is raised to Rigol's own operating point: the stock table runs
+/// The CHDIV 4 limit of Table 7-4 (VCO <= 4736 MHz) is raised to the stock operating point: the stock table runs
 /// the VCO at 5000 MHz through /4 on every DHO800/900, i.e. 264 MHz above rev. E of the datasheet (the limit was
-/// changed in that revision, the TICS Pro export is older). Only this one proven point is admitted, nothing above.
+/// changed in that revision, the register export is older). Only this one proven point is admitted, nothing above.
 pub const CHDIV4_STOCK_VCO_HZ: u64 = 5_000_000_000;
 
 /// A channel divider setting of Table 7-4: total division, the divide values of segments 1..3 (1 = segment not in
@@ -372,7 +372,7 @@ impl Fields {
         if self.outb_mux == 0 {
             match self.chdiv().and_then(|c| CHDIVS.iter().find(|d| d.total == c)) {
                 Some(d) if d.total == 4 && vco > CHDIV4_DATASHEET_MAX_HZ as f64 && vco <= d.vco_max_hz as f64 => {
-                    n.push(format!("CHDIV 4 at VCO {:.0} MHz: above the 4736 MHz of Table 7-4 (rev. E); Rigol's stock operating point", vco / 1e6))
+                    n.push(format!("CHDIV 4 at VCO {:.0} MHz: above the 4736 MHz of Table 7-4 (rev. E); the stock operating point", vco / 1e6))
                 }
                 Some(d) if vco < d.vco_min_hz as f64 || vco > d.vco_max_hz as f64 => n.push(format!(
                     "CHDIV {} needs VCO {}..{} MHz (Table 7-4), table has {:.3} MHz",
@@ -495,10 +495,10 @@ pub fn format_table(t: &Table) -> String {
 /// (R35, R36) and VTUNE_ADJ (R30) changed; R0 stays last so the VCO calibration runs with the new values.
 ///
 /// Choice: every channel divider of `CHDIVS` whose VCO range (also 3.55..7.1 GHz) holds f_out x CHDIV; integer-N
-/// first (fractional spurs land in the sample clock), then the VCO closest to Rigol's 5 GHz (where the board's loop
+/// first (fractional spurs land in the sample clock), then the VCO closest to the stock 5 GHz (where the board's loop
 /// filter, charge pump and calibration are proven), then the smaller divider. The fraction is reduced; when its
-/// denominator divides Rigol's PLL_DEN (4) that denominator is kept, so 1.25 GHz gives `PLL_TABLE` exactly. MASH
-/// order 3 and PFD_DLY 2 stay (Rigol runs 3rd order even at NUM 0); PLL_N must be >= 18 (Table 7-2, 3rd order).
+/// denominator divides the stock PLL_DEN (4) that denominator is kept, so 1.25 GHz gives `PLL_TABLE` exactly. MASH
+/// order 3 and PFD_DLY 2 stay (the stock table runs 3rd order even at NUM 0); PLL_N must be >= 18 (Table 7-2, 3rd order).
 /// Refuses non-integral Hz, frequencies no divider reaches within the limits, and the VCO-direct range.
 pub fn table_for(f_out_hz: f64) -> Result<Table, String> {
     if !f_out_hz.is_finite() || f_out_hz <= 0.0 {
@@ -556,7 +556,7 @@ pub fn table_for(f_out_hz: f64) -> Result<Table, String> {
         [_, _, 1] => 2,
         _ => 3,
     };
-    // segments outside the path: enable 0, divide code left at /2 like the TICS Pro export (SEG3 in PLL_TABLE)
+    // segments outside the path: enable 0, divide code left at /2 like the register export (SEG3 in PLL_TABLE)
     let code = |i: usize| if i < segs { seg_code(d.seg[i]) } else { 1 };
     set(&mut t, 35, 2, 2, (d.seg[0] == 3) as u32);
     set(&mut t, 35, 1, 1, 1);
@@ -586,7 +586,7 @@ mod tests {
         assert_eq!((f.cal_clk_div, f.acal_cmp_dly, f.vco_idac, f.vtune_adj), (0, 25, 300, 0));
         assert_eq!(f.f_vco_exact(), Some(5_000_000_000));
         assert_eq!(f.f_out_b_exact(), Some(1_250_000_000));
-        // the only remark: CHDIV 4 above the rev. E limit (Rigol's point)
+        // the only remark: CHDIV 4 above the rev. E limit (the stock point)
         let n = f.notes();
         assert_eq!(n.len(), 1, "{:?}", n);
         assert!(n[0].contains("CHDIV 4"));

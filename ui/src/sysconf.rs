@@ -240,8 +240,14 @@ impl SysConf {
         f.write_all(self.text().as_bytes())?;
         f.sync_all()?;
         std::fs::rename(&tmp, path)?;
-        let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        std::fs::File::open(dir)?.sync_all()
+        // the rename reaches the disk with the directory; Windows cannot open a directory as a file (the desktop build
+        // keeps the rename alone)
+        #[cfg(unix)]
+        {
+            let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            std::fs::File::open(dir)?.sync_all()?;
+        }
+        Ok(())
     }
 }
 

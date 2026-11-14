@@ -408,21 +408,21 @@ impl Canvas {
             std::mem::swap(&mut x0, &mut x1);
             std::mem::swap(&mut y0, &mut y1);
         }
-        let dx = x1 - x0;
-        let dy = y1 - y0;
+        let dx = (x1 - x0) as i64;
+        let dy = (y1 - y0) as i64;
         let grad = if dx != 0 { (dy << 16) / dx } else { 1 << 16 };
         if self.rec.is_some() {
             // the box of the pixels the loop below would touch: the major axis x0..=x1, the minor one the two rows
             let (lo, hi) = (y0.min(y1), y0.max(y1) + 2);
-            let b = if steep { Rect::new(lo, x0, hi - lo, dx + 1) } else { Rect::new(x0, lo, dx + 1, hi - lo) };
+            let b = if steep { Rect::new(lo, x0, hi - lo, dx as i32 + 1) } else { Rect::new(x0, lo, dx as i32 + 1, hi - lo) };
             if let Some(cl) = self.clipr(b) {
                 self.cmd(cl, if steep { CMD_LINE_STEEP } else { CMD_LINE }, x0, y0, 0, grad as u32, 0xff00_0000 | (c & 0xff_ffff));
             }
             return;
         }
-        let mut yf = y0 << 16;
+        let mut yf = (y0 as i64) << 16;
         for x in x0..=x1 {
-            let yi = yf >> 16;
+            let yi = (yf >> 16) as i32;
             let fr = ((yf >> 8) & 255) as u32;
             if steep {
                 self.pixel(yi, x, c, 255 - fr);

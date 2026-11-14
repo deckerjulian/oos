@@ -487,14 +487,14 @@ impl Ui {
         }
         let (h, pitch) = self.la_fit(n);
         let g = self.grid;
-        (Rect::new(g.x, g.y + g.h + 2, g.w, h - 2), pitch)
+        (Rect::new(g.x, g.y + g.h + 2 + self.eye_below(), g.w, h - 2), pitch)
     }
 
     /// Height the lane strip takes from the plot (0 when no lanes are drawn: analysers, XY, LA off; and in a split plot,
     /// where the lanes are in a window).
     pub(super) fn la_strip_h(&self) -> i32 {
         let n = self.m.la.lines().len();
-        if self.m.la_on() && n > 0 && self.m.view == AView::Scope && !self.xy && self.n_wins() == 1 {
+        if self.m.la_on() && n > 0 && matches!(self.m.view, AView::Scope | AView::Eye) && !self.xy && self.n_wins() == 1 {
             self.la_fit(n).0
         } else {
             0
@@ -794,8 +794,8 @@ mod decode_tests {
         // demo signals: no probe to ask for
         assert!(ui.la_probe_ok());
         ui.la_probe_set(Some(false));
-        let r = ui.aux_cards().0.unwrap();
-        ui.tap(r.x + 10, r.y + 10);
+        ui.tap(80, BOTTOM.y + 15);
+        ui.tap(110, BOTTOM.y - 49); // Sources > Logic analyser.
         assert!(!ui.m.la.on && !ui.menu_open);
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("No LA probe")));
         ui.key(key::LA);

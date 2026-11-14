@@ -235,7 +235,7 @@ mod tests {
     fn each_view_keeps_its_arrangement_and_shares_the_rest() {
         let mut u = ui();
         u.views_set(3);
-        u.m.meas = vec![(Meas::Freq, 0), (Meas::Vpp, 0)];
+        u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(0))];
         u.m.zoom = true;
         let tdiv = u.m.tscale;
         u.view_go(1);
@@ -244,7 +244,7 @@ mod tests {
         u.m.pane = 1;
         u.xy = true;
         u.view_go(0);
-        assert_eq!(u.m.meas, vec![(Meas::Freq, 0), (Meas::Vpp, 0)]);
+        assert_eq!(u.m.meas, vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(0))]);
         assert!(u.m.zoom && u.m.pane == 0 && !u.xy);
         u.view_step(1);
         assert!(u.m.pane == 1 && u.xy && u.m.meas.is_empty());
@@ -258,7 +258,7 @@ mod tests {
     fn views_go_with_a_setup() {
         let mut u = ui();
         u.views_set(2);
-        u.m.meas = vec![(Meas::Freq, 0)];
+        u.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
         u.view_go(1);
         u.m.cursor = CursorMode::Time;
         let text = store::setup_text(&u.m);

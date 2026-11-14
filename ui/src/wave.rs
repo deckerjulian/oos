@@ -53,6 +53,9 @@ pub struct Raw {
     pub i1: usize,
     /// time of sample i0 relative to the trigger (s)
     pub t0: f64,
+    /// Native values already include the acquisition's coupling/filter/invert.
+    /// A reconstructed display must not condition those samples a second time.
+    pub conditioned: bool,
 }
 
 pub enum Source {
@@ -432,6 +435,16 @@ impl Source {
         matches!(self, Source::Hw { .. })
     }
 
+    /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
+    pub fn force_hw(&self) {
+        if let Source::Hw { shared, .. } = self {
+            let mut state = shared.lock().unwrap();
+            state.force = true;
+            #[cfg(test)]
+            { state.force_requests += 1; }
+        }
+    }
+
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
@@ -516,7 +529,7 @@ impl Source {
 
     /// Hardware source: takes every queued frame but the newest (the fast display path draws them; the newest stays
     /// for `acquire`, which makes the full record for measurements, decoding and history).
-    pub fn drain_but_last(&mut self) -> Vec<crate::board::Frame> {
+    pub fn drain_but_last(&mut self) -> Vec<std::sync::Arc<crate::board::Frame>> {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
             let n = g.queue.len().saturating_sub(1);
@@ -527,9 +540,20 @@ impl Source {
 
     /// One acquisition for the current settings, or None if Normal/Single mode found no trigger.
     pub fn acquire(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng) -> Option<Record> {
-        let tdiv = m.time_per_div() as f64;
-        let window = tdiv * HDIV as f64;
-        let n = 3600usize;
+        self.acquire_impl(m, dt_wall, rng, false)
+    }
+
+    /// Full-depth desktop acquisition, called only by the bounded demo worker.
+    pub(crate) fn acquire_full_demo(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng) -> Option<Record> {
+        self.acquire_impl(m, dt_wall, rng, true)
+    }
+
+    fn acquire_impl(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng, full_demo: bool) -> Option<Record> {
+        let tdiv = m.hw_time_per_div() as f64;
+        let (window, n) = if full_demo && matches!(self, Source::Demo { .. }) {
+            let (rate, points) = m.srate_depth();
+            (points as f64 / rate, points as usize)
+        } else { (tdiv * HDIV as f64, 3600usize) };
         let dt = window / n as f64;
         let t_first = m.delay as f64 - window / 2.0; // relative to the trigger
         let level = m.trig_level as f64;
@@ -555,7 +579,7 @@ impl Source {
             };
             *seen = f.seq;
             drop(g);
-            return Some(crate::board::to_record(&std::sync::Arc::new(f), m, n, window, t_first));
+            return Some(crate::board::to_record(&f, m, n, window, t_first));
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
             let g = shared.lock().unwrap();
@@ -678,7 +702,8 @@ impl Source {
                 Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la })
             }
             Source::Replay { words, xinc, yinc, yorg, yref } => {
-                let volts: Vec<f32> = words.iter().map(|&w| ((w as f64 - *yorg - *yref) * *yinc) as f32).collect();
+                let mut volts: Vec<f32> = words.iter().map(|&w| ((w as f64 - *yorg - *yref) * *yinc) as f32).collect();
+                condition(m, 0, &mut volts, *xinc);
                 // software trigger (oos-dsp) on the stored samples; only CH1 is stored, other sources: edge on CH1
                 let trig = if m.trig_channels().iter().enumerate().all(|(c, &u)| !u || c == 0) {
                     m.trigger()
@@ -705,7 +730,16 @@ impl Source {
                 }
                 let mut chs: [Vec<f32>; NCH] = Default::default();
                 chs[0] = v;
-                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la: None })
+                let mut native: [Vec<f32>; NCH] = Default::default();
+                native[0] = volts;
+                let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&native[c]));
+                let native_len = native[0].len();
+                let frame = std::sync::Arc::new(crate::board::Frame { seq: 1, dt: *xinc,
+                    pre: ti.round().clamp(0.0, native_len.saturating_sub(1) as f64) as usize,
+                    ch: native, roll: false, envelope: false, scan: false, partial: false,
+                    acq: (1.0 / *xinc, native_len), stamp: 0, basic, la: None });
+                let raw = Some(Raw { frame, i0: 0, i1: native_len, t0: -ti * *xinc, conditioned: true });
+                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None })
             }
             Source::Live { .. } | Source::Hw { .. } => None, // handled above
         }
@@ -1014,6 +1048,7 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
 
 
 /// Auto set-up: per channel find amplitude and frequency, choose V/div, offset, timebase and trigger.
+/// Live channels only. A shown reference uses `autoset_shown`.
 pub fn autoset(m: &mut Model, src: &Source) {
     // pass 1: which channels carry a signal, their levels and periods
     let mut found: Vec<(usize, Stats, f64)> = Vec::new();
@@ -1034,6 +1069,81 @@ pub fn autoset(m: &mut Model, src: &Source) {
         found.push((c, s, period));
     }
     place(m, &found);
+}
+
+/// Auto set-up of stored records. Each entry is one shown reference: its samples and its own sample interval.
+/// Vertical scale and position come from that record's levels, the same band rule as a live channel (the peak-to-peak
+/// fills 80 % of its band, the midpoint sits on the band centre). The time base shows about three periods of the
+/// slowest record. Analog channels, the trigger and the run state stay as they are.
+/// `None` where the record is flatter than the live set-up's floor (50 mV).
+pub fn autoset_shown(m: &mut Model, waves: &[(&[f32], f64)]) -> Vec<Option<(f32, f32)>> {
+    let measured: Vec<Stats> = waves.iter().map(|(v, dt)| autoset_summary(v, *dt)).collect();
+    let hot: Vec<bool> = measured.iter().map(|s| s.vmax - s.vmin >= 0.05).collect();
+    let n = hot.iter().filter(|&&h| h).count();
+    if n == 0 {
+        return vec![None; waves.len()];
+    }
+    let band = VDIV / n as f32;
+    let mut k = 0usize;
+    let mut slowest = 0.0f64;
+    let mut out = Vec::with_capacity(waves.len());
+    for (s, &h) in measured.iter().zip(&hot) {
+        if !h {
+            out.push(None);
+            continue;
+        }
+        let y_div = VDIV / 2.0 - band * (k as f32 + 0.5);
+        let vpp = s.vmax - s.vmin;
+        let want = vpp / (band * 0.8);
+        let vpd = VSCALES.iter().copied().find(|&x| x >= want).unwrap_or(VSCALES[VSCALES.len() - 1]);
+        let mid = (s.vmax + s.vmin) / 2.0;
+        out.push(Some((vpd, y_div * vpd - mid)));
+        if s.period.is_finite() && s.period > slowest {
+            slowest = s.period;
+        }
+        k += 1;
+    }
+    if slowest > 0.0 {
+        let ts = tscales();
+        let want = (slowest * 3.0 / HDIV as f64) as f32;
+        m.tscale = ts.iter().position(|&t| t >= want).unwrap_or(ts.len() - 1);
+        m.tfine = 1.0;
+        m.delay = 0.0;
+    }
+    out
+}
+
+/// Display setup is bounded independently of file size. Native contiguous windows
+/// retain fast edges; a separate record-wide sample supplies slow-signal context.
+/// This is an autoset estimate, never a replacement for measurement analysis.
+pub(crate) fn autoset_summary(v: &[f32], dt: f64) -> Stats {
+    const WINDOW: usize = 16_384;
+    if v.len() <= WINDOW * 4 { return stats(v, dt); }
+    if !dt.is_finite() || dt <= 0.0 { return Stats::default(); }
+    let mut summary = Stats { vmin: f32::INFINITY, vmax: f32::NEG_INFINITY, period: f64::NAN, ..Stats::default() };
+    let mut candidates = [(0.0f32, f64::NAN); 3];
+    for (index, start) in [0, (v.len() - WINDOW) / 2, v.len() - WINDOW].into_iter().enumerate() {
+        let window = stats(&v[start..start + WINDOW], dt);
+        if !window.valid { continue; }
+        summary.valid = true;
+        summary.vmin = summary.vmin.min(window.vmin);
+        summary.vmax = summary.vmax.max(window.vmax);
+        candidates[index] = (window.vmax - window.vmin, window.period);
+    }
+    let stride = v.len().div_ceil(WINDOW);
+    let coarse: Vec<f32> = v.iter().step_by(stride).copied().collect();
+    let wide = stats(&coarse, dt * stride as f64);
+    if wide.valid {
+        summary.valid = true;
+        summary.vmin = summary.vmin.min(wide.vmin);
+        summary.vmax = summary.vmax.max(wide.vmax);
+    }
+    // Small fast noise on a slow waveform is not its period. A candidate must
+    // carry a substantial part of the observed swing, as in hardware autoset.
+    let swing = summary.vmax - summary.vmin;
+    summary.period = candidates.into_iter().filter(|&(height, period)| height >= 0.4 * swing && period.is_finite() && period > 0.0)
+        .map(|(_, period)| period).min_by(f64::total_cmp).unwrap_or(wide.period);
+    summary
 }
 
 /// A steady period in `v`, sample distance `dt`: at least three rising edges with hysteresis, spaced within 30 %.
@@ -1110,7 +1220,50 @@ pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn autoset_summary_handles_native_fast_edges_and_slow_signal_with_fast_noise() {
+        let count=1_000_000;
+        let fast:Vec<f32>=(0..count).map(|k|(k as f64*std::f64::consts::TAU/32.0).sin() as f32).collect();
+        let summary=super::autoset_summary(&fast,1e-9);
+        assert!((summary.period/32e-9-1.0).abs()<0.01);
+        let slow:Vec<f32>=(0..count).map(|k|((k as f64*std::f64::consts::TAU/100_000.0).sin()+0.005*(k as f64*std::f64::consts::TAU/32.0).sin()) as f32).collect();
+        let summary=super::autoset_summary(&slow,1e-9);
+        assert!((summary.period/100e-6-1.0).abs()<0.02,"period {}",summary.period);
+        assert!(summary.vmax-summary.vmin>1.9);
+    }
     use super::*;
+
+    #[test]
+    fn shown_record_uses_its_own_interval_and_leaves_the_channels() {
+        let sine: Vec<f32> = (0..2000).map(|k| (k as f32 / 200.0 * std::f32::consts::TAU).sin()).collect();
+        let mut m = Model::default();
+        let on = m.ch.each_ref().map(|c| c.on);
+        let (trig, run) = ((m.trig_src, m.trig_level), m.run);
+        let views = autoset_shown(&mut m, &[(&sine, 1e-7)]);
+        let (vpd, off) = views[0].expect("level");
+        assert!((vpd - 0.5).abs() < 1e-6, "v/div {}", vpd);
+        assert!(off.abs() < 1e-3, "offset {}", off);
+        assert!((m.time_per_div() - 10e-6).abs() < 1e-12, "s/div {}", m.time_per_div());
+        assert_eq!(m.ch.each_ref().map(|c| c.on), on);
+        assert_eq!((m.trig_src, m.trig_level), trig);
+        assert_eq!(m.run, run);
+        // the same samples a decade slower are a decade slower on screen
+        let mut slow = Model::default();
+        autoset_shown(&mut slow, &[(&sine, 1e-6)]);
+        assert!((slow.time_per_div() - 100e-6).abs() < 1e-12, "s/div {}", slow.time_per_div());
+        // two records share the screen; a flat one is not a band and does not move the time base
+        let mut both = Model::default();
+        let flat = vec![0.01f32; 2000];
+        let views = autoset_shown(&mut both, &[(&sine, 1e-7), (&flat, 1e-7)]);
+        assert!(views[1].is_none());
+        assert!((views[0].unwrap().1).abs() < 1e-3);
+        assert!((both.time_per_div() - 10e-6).abs() < 1e-12);
+        let mut pair = Model::default();
+        let views = autoset_shown(&mut pair, &[(&sine, 1e-7), (&sine, 1e-7)]);
+        let (a, b) = (views[0].unwrap(), views[1].unwrap());
+        assert!((a.0 - 1.0).abs() < 1e-6 && (b.0 - 1.0).abs() < 1e-6, "{:?} {:?}", a, b);
+        assert!((a.1 - 2.0).abs() < 1e-3 && (b.1 + 2.0).abs() < 1e-3, "{:?} {:?}", a, b);
+    }
 
     #[test]
     fn periodic_takes_a_sine_and_refuses_noise_and_dc() {

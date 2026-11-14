@@ -12,11 +12,14 @@ and meant for any software-side trigger/measurement in OOS.
 | `mask` | mask (pass/fail) test: envelope around a reference waveform (sliding min/max over +-tol_x samples, +-tol_y volts, O(n) monotonic deque), test of a record against it (records of another length mapped proportionally, NaN skipped; verdict with violation count and first violating sample), band of a column range for drawing |
 | `interp` | linear and Lanczos-windowed sinc interpolation (exact and table kernel) for sparse screen views |
 | `math` | A+B, A-B, AxB, A/B, integral, derivative, abs, sqrt, lg, ln, exp, 1st-order low/high-pass, FFT with Rect/Hann/Hamming/Blackman/Flattop (amplitude-correct), dBV, peak search |
+| `magnetic` | inductance from the rising ψ–i slope, B / H / μr when turns, area and path are set, cycle loss with an optional copper subtraction, I vs ∫V |
+| `motor` | amplitude-invariant Clarke and Park (DQ0), shaft speed, acceleration, direction and angle from a phase vector, analog angle, quadrature or Hall, torque, mechanical power, system efficiency |
+| `dpt` | wide-bandgap double pulse: peaks, switching times, dv/dt and di/dt, dead time, reverse recovery, Qoss. E on and E off stay in `power` |
 | `sim` | generators: pulse trains with glitches/runts/missing pulses, composite video PAL/NTSC with field-distinguishing vertical interval, UART / I2C / SPI bus waveforms, sampling, noise |
 
 Conventions: waveforms are `&[f32]` volts every `dt` seconds; trigger points are fractional sample indices at the moment
 the condition is decided (closing edge of a pulse, end of a transition, expiry of a timeout, ...); measurements follow
-Rigol / IEEE 181 (top/base from the histogram, 10/50/90 % levels).
+IEEE 181 (top/base from the histogram, 10/50/90 % levels).
 
 ```
 cargo test     # 33 tests: every trigger type, measurement, decoder and math function against signals with known answers;

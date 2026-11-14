@@ -1,15 +1,15 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The overflow menu of the views that replace the waveform (analysers, XY): a button in the plot leads to what they
-//! need most, and above all out of them.
+//! need most, and above all out of them. The eye keeps its own bar: Full is the page, and Side and Under are extra.
 
 use super::{AView, Item, MenuId, Rect, Ui, BTN_BORDER, PANEL_BG, TEXT};
 use crate::gfx::Canvas;
 
 impl Ui {
-    /// A view other than the waveform fills the plot.
+    /// A view other than the waveform fills the plot. The eye has its own bar and is not one of these.
     pub(super) fn view_on(&self) -> bool {
-        self.xy || self.m.view != AView::Scope
+        self.xy || !matches!(self.m.view, AView::Scope | AView::Eye)
     }
 
     pub(super) fn view_name(&self) -> &'static str {
@@ -22,6 +22,9 @@ impl Ui {
             AView::Power => "Power analysis",
             AView::Bode => "Bode plot",
             AView::Step => "Bandwidth test",
+            AView::Magnetic => "Magnetic",
+            AView::Inverter => "Inverter",
+            AView::Dpt => "Double pulse",
             AView::Scope => "Scope",
         }
     }
@@ -47,6 +50,9 @@ impl Ui {
             AView::Power => Some(MenuId::Power),
             AView::Bode => Some(MenuId::Bode),
             AView::Step => Some(MenuId::BwTest),
+            AView::Magnetic => Some(MenuId::Magnetic),
+            AView::Inverter => Some(MenuId::Inverter),
+            AView::Dpt => Some(MenuId::Dpt),
             AView::Scope => None,
         }
     }
@@ -100,7 +106,7 @@ mod tests {
 
     #[test]
     fn the_button_opens_the_menu_and_exit_ends_the_view() {
-        for view in [AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Step] {
+        for view in [AView::Spectrum, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt] {
             let mut ui = at(view);
             let r = ui.view_btn();
             ui.tap(r.x + 5, r.y + 5);

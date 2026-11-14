@@ -464,7 +464,7 @@ fn bytes_from(out: &mut Vec<Packet>, d: &[Byte], from: usize) {
 // ---------------------------------------------------------------------------------------------------------------
 // 1-Wire
 
-/// Dallas/Maxim 1-Wire CRC-8 (x^8 + x^5 + x^4 + 1, reflected 0x8C, init 0), as in the ROM code and scratchpads.
+/// 1-Wire CRC-8 (x^8 + x^5 + x^4 + 1, reflected 0x8C, init 0), as in the ROM code and scratchpads.
 pub fn ow_crc8(bytes: &[u8]) -> u8 {
     let mut c = 0u8;
     for &b in bytes {
@@ -596,7 +596,7 @@ impl OwNet {
     }
 }
 
-/// 1-Wire (timings of Maxim/Analog Devices AN126, standard and overdrive speed) on the bus line, idle high. Low
+/// 1-Wire (timings of application note AN126, standard and overdrive speed) on the bus line, idle high. Low
 /// pulses are classified by length: standard: < 15 us = 1, < 150 us = 0, >= 300 us = reset; overdrive: < 2 us = 1,
 /// < 40 us = 0, >= 40 us = reset; a reset >= 400 us returns to standard speed, OVERDRIVE SKIP/MATCH ROM (0x3C/0x69)
 /// switch to overdrive. `overdrive` = speed at the record start.

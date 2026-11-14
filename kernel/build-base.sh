@@ -6,11 +6,11 @@
 #
 # Why Docker: the kernel tree has file names that differ only in case; macOS' default file system is case-insensitive.
 # Everything happens in the Docker volume "oos-kbuild". The container has the host's architecture: on an arm64 host
-# (Apple silicon, Linux arm64) the "cross" compiler is Ubuntu's native gcc under its triplet name, on any other host
-# (x86-64 Linux) Ubuntu's gcc-aarch64-linux-gnu, the same gcc version. No emulation is needed for the kernel.
+# the "cross" compiler is the distribution's native gcc under its triplet name, on any other host
+# (x86-64 Linux) the distribution's gcc-aarch64-linux-gnu, the same gcc version. No emulation is needed for the kernel.
 # The fixed time stamp and the names below make the build repeatable.
 #
-#   kernel/build-base.sh            build (about 5 minutes on an M-series Mac)
+#   kernel/build-base.sh            build (about 5 minutes on an arm64 host)
 #   kernel/build-base.sh shell      open a shell in the build container
 #   kernel/build-base.sh image      only make sure the build image is there and print its name (boot/build-dev-image.sh
 #                                   compiles oos-hw with it)
@@ -64,7 +64,7 @@ docker run --rm -e OUT_OWNER="$(id -u):$(id -g)" -v oos-kbuild:/w -v "$here:/k:r
 	export KCFLAGS="-ffile-prefix-map=$W/=" KAFLAGS="-ffile-prefix-map=$W/="
 	export KBUILD_BUILD_TIMESTAMP="Fri Oct 30 18:11:06 UTC 2026" KBUILD_BUILD_USER=oos KBUILD_BUILD_HOST=oos
 	export KBUILD_BUILD_VERSION=1 SOURCE_DATE_EPOCH=1793383866 LOCALVERSION=+
-	# the Rockchip drivers ask git for their revision, and this tree is none: tools/git answers from a recorded list
+	# the SoC drivers ask git for their revision, and this tree is none: tools/git answers from a recorded list
 	export OOS_WORK="$W" PATH="/k/tools:$PATH"
 	make -C "$K" O="$O" ARCH=arm64 CROSS_COMPILE=$CROSS olddefconfig
 	make -C "$K" O="$O" ARCH=arm64 CROSS_COMPILE=$CROSS -j"$JOBS" Image dtbs modules > "$W/make.log" 2>&1 || { tail -n 20 "$W/make.log"; exit 1; }
@@ -76,7 +76,7 @@ docker run --rm -e OUT_OWNER="$(id -u):$(id -g)" -v oos-kbuild:/w -v "$here:/k:r
 	R=$(cat "$O/include/config/kernel.release"); M="$W/modroot/lib/modules/$R"
 	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko; do [ -f "$M/$m" ]; done
 	cp "$O/arch/arm64/boot/Image" /out/Image
-	cp "$O"/arch/arm64/boot/dts/rockchip/rk3399-rigol-dho900.dtb /out
+	cp "$O"/arch/arm64/boot/dts/rockchip/rk3399-dho900.dtb /out
 	cp "$O/.config" /out/config
 	printf "%s\n" "$R" > /out/kernel.release
 	tar -C "$W/modroot" -czf /out/modules.tar.gz .

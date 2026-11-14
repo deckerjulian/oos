@@ -273,7 +273,7 @@ impl Card {
 
     /// Select stock for the next power-on (`OOSK` -> `KRNL`, like `oos-oneshot`). Ok(false) when it already was `KRNL`.
     /// Before `recovery` is written: a power cut in the write then starts the intact stock image in `boot`. With `OOSK`
-    /// the loader would refuse the half-written `recovery` and go on to `backup`, which may be empty (Rockusb).
+    /// the loader would refuse the half-written `recovery` and go on to `backup`, which may be empty (USB download mode).
     pub fn disarm_oos(&mut self) -> Result<bool, String> {
         self.set_magic(b"KRNL", b"OOSK")
     }

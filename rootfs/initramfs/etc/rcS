@@ -15,7 +15,7 @@ st ok Linux "$(uname -r)"
 /bin/oos-mount-data > /tmp/oos-data.log 2>&1
 [ -x /bin/oos-update ] && /bin/oos-update boot >> /tmp/oos-update.log 2>&1
 # 0c) the stock partition, read only: oos-ui reads the model and the serial number from it when it starts
-/bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1
+/bin/oos-mount-stock >> /tmp/oos-data.log 2>&1
 # 0d) experimental ADC clock (limits.conf adc.clock_hz): a start that did not reach the end leaves its mark, and the next
 #     one goes back to the stock clock by itself, so a clock that hangs the scope cannot keep it hanging
 if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
@@ -67,9 +67,9 @@ ip link set eth0 up 2>/dev/null
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &
-# 3) remote shell for bring-up (UNAUTHENTICATED: development image, use on the bench LAN only); off with
-#    System > Network > Remote services > telnet (remote.telnet = off in /oos/system.conf, mounted in 0b)
-grep -qE '^[[:space:]]*remote\.telnet[[:space:]]*=[[:space:]]*(off|false|0)([[:space:]]|#|$)' /oos/system.conf 2>/dev/null || telnetd -l /bin/sh
+# 3) key-only remote shell. No listener without a provisioned public key and
+# persistent data mount; host identity survives updates. Console access remains.
+[ -x /bin/oos-ssh ] && (/bin/oos-ssh start >> /tmp/oos-ssh.log 2>&1 &)
 # 4) banner on the panel and the serial console
 /bin/oos-info | tee /dev/tty1 > /dev/kmsg
 # 4b) what the data partition (0b) keeps for the screen
@@ -95,7 +95,7 @@ if /bin/oos-board has-hardware; then
 	(setsid sh -c '
 		ST=/tmp/oos-boot.status
 		st() { printf "%s\t%s\t%s\t%s\n" "$(cut -d" " -f1 /proc/uptime)" "$1" "$2" "$3" >> $ST; }
-		/bin/oos-mount-rigol >> /tmp/oos-cold.log 2>&1
+		/bin/oos-mount-stock >> /tmp/oos-cold.log 2>&1
 		if /bin/oos-board bring-up $ST >> /tmp/oos-cold.log 2>&1; then
 			rm -f /oos/clock-try; sync
 			st end "" ""

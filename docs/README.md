@@ -1,6 +1,6 @@
 # OOS technical documentation
 
-How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on the unit" means seen on a running scope;
+How the DHO800/DHO900 hardware works and how OOS drives it. "Verified on the unit" means seen on a running scope;
 "assumed" or "not yet verified on hardware" means it was never run.
 
 ## System
@@ -14,7 +14,7 @@ How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on t
 - [network.md](network.md): Ethernet and a link at 10 Mbit/s, date and time from NTP, time zones, `/oos/system.conf`.
 - [models.md](models.md): model identity, capabilities, limits, overclocking and `/oos/limits.conf`.
 - [protocol-modules.md](protocol-modules.md): adding a protocol decoder as a module: one file, one registration.
-- [porting.md](porting.md): other Rigol models (MHO900, DHO1000/4000): what carries over, and how to describe one.
+- [porting.md](porting.md): other models (MHO900, DHO1000/4000): what carries over, and how to describe one.
 - [bandwidth-test.md](bandwidth-test.md): procedure to measure the analog bandwidth.
 
 ## Hardware

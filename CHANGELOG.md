@@ -283,6 +283,8 @@ From 0.1.1 to 0.1.4: install the package through the web page or `oos-update ins
 
 New:
 
+- Measure > Dock places the measurement strip under the plot (the default), on the left, on the right, or above the
+  trace. The choice is kept in the setup file.
 - Waveform windows: Display > Windows splits the plot into two windows side by side, two stacked, or four. Each
   channel and math channel stands in one window (chosen on the same page; a new split spreads the channels that are
   on), all on the same time base. The LA gets a window too: its lanes stand at the bottom of it (all of it when no
@@ -291,6 +293,8 @@ New:
   use one window. A drag in a window moves a channel of that window. Saved in setups.
 - Full screen: the button at the top right of the plot (or Display > Windows > Full screen) gives the plot the whole
   screen without the top bar and the cards; the same button goes back. Not while the touch lock is on.
+- Zoom area: the button under the full-screen button arms one drag. The next drag on the plot draws a box, and the
+  time span of that box is the zoom window. A tap, or a second tap, does not zoom.
 - After an auto set-up a bar at the top of the waveform window, above the signal, offers four views of the trigger
   channel: about three periods, about ten periods, the rising edge, the falling edge (the edge's 10-90 % time across
   about two divisions, slope set to match). Its cross or a tap elsewhere closes it, otherwise it goes after 30 s.
@@ -431,7 +435,7 @@ New:
 - SCPI `:WAVeform:MODE RAW` reads every sample of the record in the screen window.
 - OOS drives no hardware on another board: when `vendor.bin` names a model outside the DHO800/DHO900 family,
   `oos-fpgad` refuses and `oos-ui` shows the demo signal.
-- `tools/platform-probe.sh` describes another Rigol model for a port, read only ([docs/porting.md](docs/porting.md)).
+- `tools/platform-probe.sh` describes another model for a port, read only ([docs/porting.md](docs/porting.md)).
 
 Measured:
 

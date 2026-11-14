@@ -109,12 +109,18 @@ pub fn uart(v: &[f32], dt: f64, baud: f64, bits: u32, parity: Parity, thr: f32, 
 }
 
 /// I2C: START/STOP from SDA edges while SCL is high, bits sampled at SCL rising edges, 9th bit = ACK (low).
+/// One threshold and hysteresis for both lines.
 pub fn i2c(sda: &[f32], scl: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
-    let scl_s = states(scl, thr, hyst);
-    let sda_s = states(sda, thr, hyst);
+    i2c_at(sda, scl, thr, hyst, thr, hyst)
+}
+
+/// I2C with a threshold and hysteresis of its own on the data line and on the clock.
+pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f32, scl_hyst: f32) -> Vec<Packet> {
+    let scl_s = states(scl, scl_thr, scl_hyst);
+    let sda_s = states(sda, sda_thr, sda_hyst);
     let mut ev: Vec<(f64, u8)> = Vec::new(); // 0 = SCL rising, 1 = SDA falling, 2 = SDA rising
-    ev.extend(edges(scl, thr, hyst).iter().filter(|e| e.rising).map(|e| (e.t, 0)));
-    ev.extend(edges(sda, thr, hyst).iter().map(|e| (e.t, if e.rising { 2 } else { 1 })));
+    ev.extend(edges(scl, scl_thr, scl_hyst).iter().filter(|e| e.rising).map(|e| (e.t, 0)));
+    ev.extend(edges(sda, sda_thr, sda_hyst).iter().map(|e| (e.t, if e.rising { 2 } else { 1 })));
     ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     let at = |s: &Vec<Option<bool>>, t: f64| s.get((t + 0.5) as usize).copied().flatten().unwrap_or(true);
     let mut out = Vec::new();
@@ -264,6 +270,33 @@ mod tests {
                 (Kind::Stop, 0, true),
             ]
         );
+    }
+
+    /// Clock and data can sit at different levels. A threshold that fits the data misses a smaller clock.
+    #[test]
+    fn i2c_separate_thresholds() {
+        let rate = 100e3;
+        let dt = 0.25e-6;
+        let (sda, scl) = i2c_logic(
+            &[I2cXfer { addr: 0x50, read: false, data: vec![0x42], repeated: false, stop: true }],
+            rate,
+            0.0,
+            3.3,
+        );
+        let a = sample(|t| sda.v(t), 0.0, dt, 1600);
+        let c: Vec<f32> = sample(|t| scl.v(t), 0.0, dt, 1600).into_iter().map(|v| v / 3.3).collect();
+        let p = i2c_at(&a, &c, 1.65, 0.2, 0.4, 0.1);
+        let k: Vec<(Kind, u32, bool)> = p.iter().map(|x| (x.kind, x.value, x.ok)).collect();
+        assert_eq!(
+            k,
+            [
+                (Kind::Start, 0, true),
+                (Kind::Addr { read: false }, 0x50, true),
+                (Kind::Data, 0x42, true),
+                (Kind::Stop, 0, true),
+            ]
+        );
+        assert!(i2c(&a, &c, 1.65, 0.2).iter().all(|x| !matches!(x.kind, Kind::Addr { .. } | Kind::Data)));
     }
 
     #[test]

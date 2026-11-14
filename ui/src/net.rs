@@ -13,6 +13,7 @@ use std::net::TcpStream;
 /// The kernel rounds the timeout up to whole timer ticks (4 ms at 250 Hz, up to 8 ms), and it was paid in the frame
 /// loop: for every web request, and for every open SCPI connection on every pass of the loop. 23 small web requests a
 /// second took the scope's screen from 28 to 22 frames a second.
+#[cfg(unix)]
 pub fn read_now(s: &TcpStream, buf: &mut [u8]) -> io::Result<usize> {
     use std::os::fd::AsRawFd;
     // SAFETY: `buf` is valid for writes of `buf.len()` bytes; the descriptor belongs to `s` for the call.
@@ -22,6 +23,17 @@ pub fn read_now(s: &TcpStream, buf: &mut [u8]) -> io::Result<usize> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+/// Windows desktop build: no `MSG_DONTWAIT`; the socket is made non-blocking for this one read and blocking again
+/// after, which gives the same answer (`WouldBlock` when nothing has arrived).
+#[cfg(not(unix))]
+pub fn read_now(s: &TcpStream, buf: &mut [u8]) -> io::Result<usize> {
+    use std::io::Read;
+    s.set_nonblocking(true)?;
+    let r = (&*s).read(buf);
+    s.set_nonblocking(false)?;
+    r
 }
 
 /// Whether a read error only means "nothing now" (try again in the next pass).

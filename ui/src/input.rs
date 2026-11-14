@@ -68,7 +68,7 @@ fn open_nb(path: &str, flags: i32) -> i32 {
     unsafe { libc::open(c.as_ptr(), flags | libc::O_NONBLOCK | libc::O_CLOEXEC) }
 }
 
-/// Finds the touch screen's event device in /proc/bus/input/devices (FocalTech / edt-ft5x06).
+/// Finds the touch screen's event device in /proc/bus/input/devices (edt-ft5x06).
 fn find_touch() -> Option<String> {
     let s = std::fs::read_to_string("/proc/bus/input/devices").ok()?;
     for block in s.split("\n\n") {

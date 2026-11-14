@@ -3,7 +3,7 @@ name = "oos-ui"
 version = "0.1.12"
 repository = "https://github.com/deckerjulian/oos"
 edition = "2021"
-description = "OOS oscilloscope user interface for the Rigol DHO800/DHO900 (software renderer on DRM/KMS, touch, front panel)"
+description = "OOS oscilloscope user interface for the DHO800/DHO900 (software renderer on DRM/KMS, touch, front panel)"
 license = "GPL-2.0-or-later"
 
 [dependencies]
@@ -11,9 +11,19 @@ libc = "0.2"
 oos-hal = { path = "../hal" }
 oos-dsp = { path = "../dsp" }
 
+# a desktop window for the host build (src/desktop.rs); the scope build does not use it
+[target.'cfg(windows)'.dependencies]
+minifb = "0.27"
+windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_UI_Controls_Dialogs"] }
+
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
 debug = false
+
+# Keep long-reference DSP and Eye analysis responsive in the source watcher.
+# The UI itself keeps the normal fast incremental development build.
+[profile.dev.package.oos-dsp]
+opt-level = 2

@@ -90,12 +90,18 @@ pub struct Usbtmc<B: Bulk> {
     pub timeout_ms: u32,
 }
 
+/// errno for "device shut down" (Linux 108); the Windows C runtime has no such code, so the same number stands in.
+#[cfg(unix)]
+const ESHUTDOWN: i32 = libc::ESHUTDOWN;
+#[cfg(not(unix))]
+const ESHUTDOWN: i32 = 108;
+
 /// A readable text for a failed transfer.
 fn io_text(e: &io::Error) -> String {
     match e.raw_os_error() {
         Some(libc::ETIMEDOUT) => "no answer (timeout)".into(),
         Some(libc::EPIPE) => "endpoint stalled".into(),
-        Some(libc::ENODEV) | Some(libc::ESHUTDOWN) => "device unplugged".into(),
+        Some(libc::ENODEV) | Some(ESHUTDOWN) => "device unplugged".into(),
         _ => e.to_string(),
     }
 }
@@ -292,12 +298,16 @@ pub fn find(root: &Path) -> Result<Device, String> {
 
 // ---------------------------------------------------------------------------------------------- usbfs
 
+#[cfg(unix)]
 const fn ioc(dir: u32, nr: u32, size: usize) -> libc::c_ulong {
     ((dir << 30) | ((size as u32) << 16) | ((b'U' as u32) << 8) | nr) as libc::c_ulong
 }
+#[cfg(unix)]
 const IOC_W: u32 = 1;
+#[cfg(unix)]
 const IOC_R: u32 = 2;
 
+#[cfg(unix)]
 /// struct usbdevfs_bulktransfer
 #[repr(C)]
 struct BulkTransfer {
@@ -307,6 +317,7 @@ struct BulkTransfer {
     data: *mut libc::c_void,
 }
 
+#[cfg(unix)]
 /// struct usbdevfs_ioctl
 #[repr(C)]
 struct UsbIoctl {
@@ -315,13 +326,20 @@ struct UsbIoctl {
     data: *mut libc::c_void,
 }
 
+#[cfg(unix)]
 const USBDEVFS_BULK: libc::c_ulong = ioc(IOC_R | IOC_W, 2, std::mem::size_of::<BulkTransfer>());
+#[cfg(unix)]
 const USBDEVFS_CLAIMINTERFACE: libc::c_ulong = ioc(IOC_R, 15, 4);
+#[cfg(unix)]
 const USBDEVFS_RELEASEINTERFACE: libc::c_ulong = ioc(IOC_R, 16, 4);
+#[cfg(unix)]
 const USBDEVFS_IOCTL: libc::c_ulong = ioc(IOC_R | IOC_W, 18, std::mem::size_of::<UsbIoctl>());
+#[cfg(unix)]
 const USBDEVFS_CLEAR_HALT: libc::c_ulong = ioc(IOC_R, 21, 4);
+#[cfg(unix)]
 const USBDEVFS_DISCONNECT: libc::c_ulong = ioc(0, 22, 0);
 
+#[cfg(unix)]
 fn ioctl<T>(fd: i32, req: libc::c_ulong, arg: *mut T) -> io::Result<i32> {
     loop {
         let r = unsafe { libc::ioctl(fd, req as _, arg) };
@@ -335,6 +353,7 @@ fn ioctl<T>(fd: i32, req: libc::c_ulong, arg: *mut T) -> io::Result<i32> {
     }
 }
 
+#[cfg(unix)]
 /// A claimed USBTMC interface on its usbfs node.
 pub struct UsbFs {
     file: std::fs::File,
@@ -343,6 +362,7 @@ pub struct UsbFs {
     ep_in: u8,
 }
 
+#[cfg(unix)]
 impl UsbFs {
     /// Opens the device node and claims the interface (a kernel driver on it is detached first).
     pub fn open(d: &Device) -> Result<UsbFs, String> {
@@ -378,6 +398,7 @@ impl UsbFs {
     }
 }
 
+#[cfg(unix)]
 impl Bulk for UsbFs {
     fn bulk_out(&mut self, data: &[u8], timeout_ms: u32) -> io::Result<usize> {
         // usbfs only reads from this buffer for an OUT endpoint
@@ -392,10 +413,36 @@ impl Bulk for UsbFs {
     }
 }
 
+#[cfg(unix)]
 impl Drop for UsbFs {
     fn drop(&mut self) {
         let mut ifno = self.ifno;
         let _ = ioctl(self.fd(), USBDEVFS_RELEASEINTERFACE, &mut ifno);
+    }
+}
+
+/// Windows desktop build: there is no usbfs, so no USB instrument can be opened (the Bode generator falls back to its
+/// other links).
+#[cfg(not(unix))]
+pub struct UsbFs;
+
+#[cfg(not(unix))]
+impl UsbFs {
+    pub fn open(d: &Device) -> Result<UsbFs, String> {
+        Err(format!("{}: USBTMC over usbfs needs Linux", d.node().display()))
+    }
+}
+
+#[cfg(not(unix))]
+impl Bulk for UsbFs {
+    fn bulk_out(&mut self, _data: &[u8], _timeout_ms: u32) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "USBTMC over usbfs needs Linux"))
+    }
+    fn bulk_in(&mut self, _buf: &mut [u8], _timeout_ms: u32) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "USBTMC over usbfs needs Linux"))
+    }
+    fn clear_halt(&mut self, _inp: bool) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "USBTMC over usbfs needs Linux"))
     }
 }
 
@@ -565,11 +612,14 @@ mod tests {
         assert_eq!(t.command("x").unwrap_err(), "device unplugged");
     }
 
+    #[cfg(unix)]
     fn write(p: &Path, k: &str, v: &str) {
         std::fs::create_dir_all(p).unwrap();
         std::fs::write(p.join(k), format!("{}\n", v)).unwrap();
     }
 
+    // sysfs interface directories are named like `1-1:1.0`, which is not a valid file name on Windows
+    #[cfg(unix)]
     #[test]
     fn find_reads_sysfs() {
         let root = std::env::temp_dir().join(format!("oos-usbtmc-{}", std::process::id()));
@@ -608,6 +658,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(unix)]
     #[test]
     fn usbfs_requests() {
         // the numbers of <linux/usbdevice_fs.h> on a 64-bit kernel

@@ -287,6 +287,32 @@ fn eye_sparse_record_still_draws_lines() {
     assert!(close(e.eye_amplitude(), 1.0, 0.05));
 }
 
+/// A source-synchronous strobe (DQS) clocks the data (DQ). The eye is DQ folded on DQS edges, not CDR from DQ.
+#[test]
+fn eye_folds_data_on_a_strobe_clock() {
+    let (rate, spu, nui) = (1e9, 32usize, 2048usize);
+    let ui = 1.0 / rate;
+    let dt = ui / spu as f64;
+    let bits = prbs7(nui);
+    let mut dq = Vec::with_capacity(nui * spu);
+    let mut dqs = Vec::with_capacity(nui * spu);
+    for i in 0..nui * spu {
+        let t = i as f64 * dt;
+        let k = ((t + 0.5 * ui) / ui).floor() as usize;
+        dq.push(if bits[k.min(bits.len() - 1)] { 1.0 } else { 0.0 });
+        dqs.push(if (t / ui).floor() as usize % 2 == 0 { 1.0 } else { 0.0 });
+    }
+    let clk = eye::recover_clock(&dqs, dt, 0.5, 0.1, None).unwrap();
+    assert!(close(clk.period, ui, ui * 1e-6), "{}", clk.period);
+    let mut e = Eye::new(128, 64, 2, -0.25, 1.25);
+    e.accumulate(&dq, dt, &eye::center_strobe(&clk));
+    let m = e.measure(clk.period);
+    assert!(m.height > 0.7, "{:?}", m);
+    assert!(m.width > 0.5 * ui, "{:?}", m);
+    let idle = eye::gate_around_clock(&dq, dt, &clk, 1.5);
+    assert_eq!(idle.iter().filter(|x| x.is_finite()).count(), dq.len());
+}
+
 #[test]
 fn jitter_gaussian_edge_jitter_gives_rj() {
     let rate = 1e6;
@@ -682,6 +708,200 @@ fn power_ripple_inrush_efficiency_soa_and_duty() {
     assert!(power::ripple(&[]).0.is_nan());
 }
 
+// ------------------------------------------------------------------------------------------------ magnetic, motor, double pulse
+
+fn inductor(l: f64, r: f64, dt: f64, n: usize) -> (Vec<f32>, Vec<f32>) {
+    let f = 1000.0;
+    let v = sample(
+        |t| {
+            let x = (t * f).fract();
+            let i = if x < 0.5 { -1.0 + 4.0 * x } else { 3.0 - 4.0 * x };
+            let di = if x < 0.5 { 4.0 * f } else { -4.0 * f };
+            l * di + r * i
+        },
+        0.0,
+        dt,
+        n,
+    );
+    let i = sample(|t| { let x = (t * f).fract(); if x < 0.5 { -1.0 + 4.0 * x } else { 3.0 - 4.0 * x } }, 0.0, dt, n);
+    (v, i)
+}
+
+#[test]
+fn magnetic_inductance_of_a_linear_core_is_the_slope() {
+    let l = 1e-3;
+    let dt = 2e-6;
+    let (v, i) = inductor(l, 0.0, dt, 6000);
+    let m = oos_dsp::magnetic::measure(&v, &i, dt, oos_dsp::magnetic::Geom::default());
+    assert!(m.kept >= 8, "{:?}", (m.kept, m.dropped, m.note, m.cycles));
+    assert!(close(m.l.unwrap(), l, 0.01 * l), "{} {}", m.l.unwrap(), m.note);
+    // a sampled pure inductor leaves a fraction of a watt of trapezoid error
+    assert!(m.loss.unwrap().abs() < 0.02, "{}", m.loss.unwrap());
+    let loop0 = &m.loops[0];
+    let (i0, p0) = (loop0[0].1, loop0[0].0);
+    for &(psi, cur) in loop0 {
+        let est = p0 + l * (cur - i0);
+        assert!((psi - est).abs() < 2e-4, "psi {} est {} i {}", psi, est, cur);
+    }
+}
+
+#[test]
+fn magnetic_series_resistance_is_the_loss_and_rcu_removes_it() {
+    let dt = 2e-6;
+    let (v, i) = inductor(1e-3, 1.0, dt, 6000);
+    let m = oos_dsp::magnetic::measure(&v, &i, dt, oos_dsp::magnetic::Geom::default());
+    assert!(close(m.loss.unwrap(), 1.0 / 3.0, 0.02), "{} {}", m.loss.unwrap(), m.note);
+    let g = oos_dsp::magnetic::Geom { rcu: 1.0, ..oos_dsp::magnetic::Geom::default() };
+    let m = oos_dsp::magnetic::measure(&v, &i, dt, g);
+    assert!(m.loss.unwrap().abs() < 0.02, "left {} copper {}", m.loss.unwrap(), m.copper);
+    assert!(close(m.copper, 1.0 / 3.0, 0.02), "{}", m.copper);
+}
+
+#[test]
+fn magnetic_short_record_nan_and_reversed_current() {
+    let dt = 2e-6;
+    let (v, i) = inductor(1e-3, 1.0, dt, 200);
+    let m = oos_dsp::magnetic::measure(&v, &i, dt, Default::default());
+    assert!(m.l.is_none() && m.loss.is_none() && m.partial, "{}", m.note);
+    let nan = vec![f32::NAN; 64];
+    let m = oos_dsp::magnetic::measure(&nan, &nan, dt, Default::default());
+    assert!(m.l.is_none() && m.loss.is_none(), "{}", m.note);
+    let (v, i) = inductor(1e-3, 1.0, dt, 6000);
+    let i: Vec<f32> = i.iter().map(|x| -x).collect();
+    let m = oos_dsp::magnetic::measure(&v, &i, dt, Default::default());
+    assert!(m.loss.unwrap() < 0.0, "{}", m.loss.unwrap());
+    assert!(close(m.loss.unwrap(), -1.0 / 3.0, 0.02), "{}", m.loss.unwrap());
+}
+
+#[test]
+fn motor_balanced_sines_put_the_peak_on_d() {
+    let dt = 1e-4;
+    let (f, a, n) = (50.0, 10.0, 8000);
+    let w = 2.0 * PI * f;
+    let va = sample(|t| a * (w * t).cos(), 0.0, dt, n);
+    let vb = sample(|t| a * (w * t - 2.0 * PI / 3.0).cos(), 0.0, dt, n);
+    let vc = sample(|t| a * (w * t + 2.0 * PI / 3.0).cos(), 0.0, dt, n);
+    let d = oos_dsp::motor::dq0(&va, &vb, &vc, dt, oos_dsp::motor::Theta::Vector).unwrap();
+    assert!(close(d.d, a, 0.05), "{:?}", (d.d, d.q, d.zero));
+    assert!(close(d.q, 0.0, 0.05) && close(d.zero, 0.0, 0.05), "{:?}", (d.d, d.q, d.zero));
+    assert!(oos_dsp::motor::dq0(&va, &vb, &[], dt, oos_dsp::motor::Theta::Vector).is_none());
+}
+
+#[test]
+fn motor_quadrature_speed_and_swapped_direction() {
+    let (hold, cycles, dt, cpr) = (10usize, 50usize, 1e-4, 100.0);
+    let n = hold * 4 * cycles;
+    let mut a = vec![false; n];
+    let mut b = vec![false; n];
+    for k in 0..n {
+        match (k / hold) % 4 {
+            0 => {}
+            1 => a[k] = true,
+            2 => {
+                a[k] = true;
+                b[k] = true;
+            }
+            _ => b[k] = true,
+        }
+    }
+    let s = oos_dsp::motor::shaft_quad(&a, &b, None, dt, 0.0, cpr, false);
+    // one count per state change: the first sample establishes the state and does not count
+    let counts = (n / hold - 1) as f64;
+    let cps = counts / ((n - 1) as f64 * dt);
+    let rpm = cps / cpr * 60.0;
+    assert!(close(s.rpm.unwrap(), rpm, 1e-6), "{} vs {} ({})", s.rpm.unwrap(), rpm, cps * 360.0 / cpr);
+    assert_eq!(s.direction, oos_dsp::motor::Direction::Forward);
+    let swapped = oos_dsp::motor::shaft_quad(&a, &b, None, dt, 0.0, cpr, true);
+    assert_eq!(swapped.direction, oos_dsp::motor::Direction::Reverse);
+    assert!(close(swapped.rpm.unwrap(), -rpm, 1e-6), "{}", swapped.rpm.unwrap());
+}
+
+#[test]
+fn motor_torque_and_bus_give_mechanical_power_and_efficiency() {
+    let (rpm, dt, n) = (600.0, 1e-4, 4000);
+    let deg_s = rpm * 6.0;
+    let v = sample(|t| deg_s * t, 0.0, dt, n);
+    let shaft = oos_dsp::motor::shaft_analog(&v, dt, 0.0, 1.0, 0.0, false, 1);
+    assert!(close(shaft.rpm.unwrap(), rpm, 0.05), "{}", shaft.rpm.unwrap());
+    let torque = vec![2.0f32; n];
+    let bus_v = vec![48.0f32; n];
+    let bus_i = vec![4.0f32; n];
+    let m = oos_dsp::motor::mechanical(shaft, Some(&torque), 1.0, Some(&bus_v), Some(&bus_i));
+    let p = 2.0 * rpm * 2.0 * PI / 60.0;
+    assert!(close(m.p_mech.unwrap(), p, 0.01), "{}", m.p_mech.unwrap());
+    assert!(close(m.p_elec.unwrap(), 192.0, 1e-6));
+    assert!(close(m.eff.unwrap(), p / 192.0, 1e-4), "{}", m.eff.unwrap());
+    assert!(!m.generating);
+}
+
+#[test]
+fn double_pulse_timings_peak_and_recovery_charge() {
+    let dt = 1e-9;
+    let tend = 13e-6;
+    let n = (tend / dt) as usize;
+    // gate: two pulses, 0..10 V in 20 ns. Current plateau 10 A. Recovery triangle 4 A, 200 ns base.
+    let gate = [(0.0, 0.0), (1e-6, 0.0), (1.02e-6, 10.0), (6e-6, 10.0), (6.02e-6, 0.0), (10e-6, 0.0), (10.02e-6, 10.0), (12e-6, 10.0), (12.02e-6, 0.0)];
+    let id = [
+        (0.0, 0.0),
+        (1.1e-6, 0.0),
+        (1.2e-6, 10.0),
+        (6.05e-6, 10.0),
+        (6.15e-6, 0.0),
+        (10.05e-6, 0.0),
+        (10.15e-6, 10.0),
+        (10.25e-6, 14.0),
+        (10.35e-6, 10.0),
+        (12e-6, 10.0),
+    ];
+    let vds = [
+        (0.0, 400.0),
+        (1.05e-6, 400.0),
+        (1.15e-6, 1.0),
+        (6.1e-6, 1.0),
+        (6.2e-6, 400.0),
+        (6.25e-6, 480.0),
+        (6.4e-6, 400.0),
+        (10.05e-6, 400.0),
+        (10.15e-6, 1.0),
+        (12e-6, 1.0),
+    ];
+    let g = sample(|t| pwl(&gate, t), 0.0, dt, n);
+    let i = sample(|t| pwl(&id, t), 0.0, dt, n);
+    let v = sample(|t| pwl(&vds, t), 0.0, dt, n);
+    let p = oos_dsp::dpt::measure(&v, &i, Some(&g), oos_dsp::dpt::Fourth::Off, dt, 10.0);
+    assert!(close(p.td_on.unwrap(), 58e-9, 2e-9), "tdon {}", p.td_on.unwrap());
+    assert!(close(p.tr.unwrap(), 80e-9, 2e-9), "tr {}", p.tr.unwrap());
+    assert!(close(p.ton.unwrap(), 138e-9, 3e-9), "ton {}", p.ton.unwrap());
+    assert!(close(p.vpeak.unwrap(), 480.0, 1e-6), "vpeak {}", p.vpeak.unwrap());
+    assert!(close(p.ipeak.unwrap(), 14.0, 1e-3), "ipeak {}", p.ipeak.unwrap());
+    assert!(close(p.irrm.unwrap(), 4.0, 0.05), "irrm {}", p.irrm.unwrap());
+    // symmetric triangle, Trr ends at 10 % of Irrm: 190 ns of the 200 ns base
+    assert!(close(p.trr.unwrap(), 190e-9, 3e-9), "trr {}", p.trr.unwrap());
+    assert!(close(p.qrr.unwrap(), 0.5 * 200e-9 * 4.0, 0.01 * 0.5 * 200e-9 * 4.0), "qrr {}", p.qrr.unwrap());
+}
+
+#[test]
+fn double_pulse_one_pulse_no_dead_time_and_inverted_current() {
+    let dt = 1e-9;
+    let n = (8e-6 / dt) as usize;
+    let gate = [(0.0, 0.0), (1e-6, 0.0), (1.02e-6, 10.0), (6e-6, 10.0), (6.02e-6, 0.0)];
+    let id = [(0.0, 0.0), (1.1e-6, 0.0), (1.2e-6, 10.0), (6.05e-6, 10.0), (6.15e-6, 0.0)];
+    let vds = [(0.0, 400.0), (1.05e-6, 400.0), (1.15e-6, 1.0), (6.1e-6, 1.0), (6.2e-6, 400.0), (6.25e-6, 480.0), (6.4e-6, 400.0)];
+    let g = sample(|t| pwl(&gate, t), 0.0, dt, n);
+    let i = sample(|t| pwl(&id, t), 0.0, dt, n);
+    let v = sample(|t| pwl(&vds, t), 0.0, dt, n);
+    let pos = oos_dsp::dpt::measure(&v, &i, Some(&g), oos_dsp::dpt::Fourth::Off, dt, 10.0);
+    assert!(pos.trr.is_none() && pos.tdt.is_none() && pos.td_on.is_none(), "{}", pos.note);
+    assert!(pos.td_off.is_some() && pos.tf.is_some() && pos.toff.is_some(), "{:?}", (pos.td_off, pos.tf, pos.toff));
+    let inv: Vec<f32> = i.iter().map(|x| -x).collect();
+    let neg = oos_dsp::dpt::measure(&v, &inv, Some(&g), oos_dsp::dpt::Fourth::Off, dt, 10.0);
+    assert!(neg.inverted && neg.trr.is_none() && neg.tdt.is_none());
+    assert!(close(neg.td_off.unwrap(), pos.td_off.unwrap(), 2e-9), "{} {}", neg.td_off.unwrap(), pos.td_off.unwrap());
+    assert!(close(neg.tf.unwrap(), pos.tf.unwrap(), 2e-9));
+    assert!(close(neg.toff.unwrap(), pos.toff.unwrap(), 2e-9));
+    assert!(neg.td_on.is_none());
+}
+
 // ------------------------------------------------------------------------------------------------ identify
 
 use oos_dsp::decode::Parity;
@@ -1061,4 +1281,167 @@ fn spectrum_cost_on_the_host() {
         }
         println!("{}: {:.2} ms", name, t.elapsed().as_secs_f64() * 100.0);
     }
+}
+
+#[test]
+fn acpr_ratio_and_a_band_that_runs_off_the_trace() {
+    use oos_dsp::spectrum::Spectrum;
+    let mut dbv = vec![-120.0f32; 100];
+    dbv[20] = 0.0;
+    dbv[60] = -10.0;
+    let s = Spectrum { f0: 0.0, df: 1e3, rbw: 1e3, dbv, ..Default::default() };
+    let a = spectrum::acpr(&s, 4e3, 40e3);
+    assert!(close(a.ratio, 0.1, 1e-6), "{:?}", a);
+    assert!(close(a.upper_db, -10.0, 1e-4) && a.lower_db.is_nan(), "{:?}", a);
+    assert!(spectrum::acpr(&s, 0.0, 1.0).ratio.is_nan());
+}
+
+#[test]
+fn switching_slew_rds_ripple_turn_times_capacitance_and_rail() {
+    let (t_i, t_v) = (50e-9, 100e-9);
+    let on = 1e-6;
+    let von = 0.5;
+    let vp = [(on, 400.0), (on + t_i, 400.0), (on + t_i + t_v, von), (on + 5e-6, von), (on + 5e-6 + t_v, 400.0)];
+    let ip = [(on, 0.0), (on + t_i, 10.0), (on + 5e-6 + t_v, 10.0), (on + 5e-6 + t_v + t_i, 0.0)];
+    let dt = 1e-9;
+    let vds = sample(|t| pwl(&vp, t % 10e-6), 0.0, dt, 30_000);
+    let id = sample(|t| pwl(&ip, t % 10e-6), 0.0, dt, 30_000);
+    let s = power::switching(&vds, &id, dt, 10.0);
+    let slope_v = (400.0 - von) / t_v;
+    assert!(close(s.dvdt_rise, slope_v, 0.02 * slope_v), "{}", s.dvdt_rise);
+    assert!(close(s.dvdt_fall, -slope_v, 0.02 * slope_v), "{}", s.dvdt_fall);
+    assert!(close(s.didt_rise, 10.0 / t_i, 0.02 * 10.0 / t_i), "{}", s.didt_rise);
+    assert!(close(s.didt_fall, -10.0 / t_i, 0.02 * 10.0 / t_i), "{}", s.didt_fall);
+    assert!(s.rds_on > 0.04 && s.rds_on < 0.08, "{}", s.rds_on);
+
+    let dt = 1e-5;
+    let v = sample(|t| (2.0 * PI * 1e3 * t).sin(), 0.0, dt, 10_000);
+    let tone = power::tone_ripple(&v, dt, 1e3);
+    assert!(close(tone.pp, 2.0, 1e-3) && close(tone.rms, 1.0 / 2f64.sqrt(), 1e-3), "{:?}", tone);
+    assert!(power::switching_ripple(&v, dt, 2e6).pp.is_nan());
+    let dt_r = 1e-7;
+    let ripple: Vec<f32> = (0..20_000)
+        .map(|k| {
+            let t = k as f64 * dt_r;
+            ((2.0 * std::f64::consts::PI * 1e5 * t).sin() + 0.25 * (2.0 * std::f64::consts::PI * 1e6 * t).sin()) as f32
+        })
+        .collect();
+    let line = power::switching_ripple(&ripple, dt_r, 1e5);
+    assert!(close(line.pp, 2.0, 0.02) && close(line.rms, 1.0 / 2f64.sqrt(), 0.02), "{line:?}");
+    let clamped = power::switching_ripple(&ripple, dt_r, 5e6);
+    assert!(close(clamped.pp, 0.5, 0.05), "1 MHz clamp {clamped:?}");
+    assert!(close(power::line_hz(&v, dt), 1e3, 5.0));
+
+    let vin = sample(|t| pwl(&[(0.0, 0.0), (100e-6, 0.0), (110e-6, 10.0), (1e-3, 10.0)], t), 0.0, 1e-6, 1000);
+    let vout = sample(|t| pwl(&[(0.0, 0.0), (200e-6, 0.0), (300e-6, 5.0), (1e-3, 5.0)], t), 0.0, 1e-6, 1000);
+    let ton = power::turn_on_time(&vin, &vout, 1e-6);
+    assert!(close(ton, 195e-6, 2e-6), "{}", ton);
+    let vin = sample(|t| pwl(&[(0.0, 10.0), (100e-6, 10.0), (110e-6, 0.0), (1e-3, 0.0)], t), 0.0, 1e-6, 1000);
+    let vout = sample(|t| pwl(&[(0.0, 5.0), (200e-6, 5.0), (300e-6, 0.0), (1e-3, 0.0)], t), 0.0, 1e-6, 1000);
+    let toff = power::turn_off_time(&vin, &vout, 1e-6);
+    assert!(close(toff, 195e-6, 2e-6), "{}", toff);
+
+    let v: Vec<f32> = (0..1000).map(|k| k as f32 / 999.0 * 10.0).collect();
+    let i = vec![0.01f32; 1000];
+    let c = power::input_capacitance(&v, &i, 1e-6);
+    assert!(close(c, 0.01 * 999e-6 / 10.0, 1e-12), "{}", c);
+    assert!(power::input_capacitance(&[1.0; 10], &i, 1e-6).is_nan());
+
+    let mut rail = vec![5.0f32; 1000];
+    rail[100] = 6.0;
+    rail[200] = 4.0;
+    let r = power::rail(&rail, 1e-6, Some(5.0), None, None);
+    assert!(close(r.overshoot, 1.0, 1e-9) && close(r.undershoot, 1.0, 1e-9) && close(r.dc, 5.0, 1e-9) && close(r.turn_on, 6.0, 1e-9), "{:?}", r);
+}
+
+#[test]
+fn bode_psrr_negates_the_gain_and_impedance_is_the_ratio() {
+    use oos_dsp::bode::{self, Mode};
+    let dt = 1e-6;
+    let sine = |amp: f64, ph: f64| -> Vec<f32> {
+        (0..50_000).map(|k| (amp * (2.0 * PI * 1000.0 * k as f64 * dt + ph).sin()) as f32).collect()
+    };
+    let (inp, out) = (sine(1.0, 0.0), sine(0.1, -PI / 4.0));
+    let (g, p) = bode::response(Mode::Loop, &inp, &out, dt, 1000.0).unwrap();
+    assert!(close(g, -20.0, 0.01) && close(p, -45.0, 0.05), "{} {}", g, p);
+    let (g, p) = bode::response(Mode::Psrr, &inp, &out, dt, 1000.0).unwrap();
+    assert!(close(g, 20.0, 0.01) && close(p, -45.0, 0.05), "{} {}", g, p);
+    let (z, p) = bode::response(Mode::Z, &inp, &out, dt, 1000.0).unwrap();
+    assert!(close(z, 0.1, 1e-4) && close(p, -45.0, 0.05), "{} {}", z, p);
+}
+
+#[test]
+fn eye_ber_subrate_common_mode_and_ssc() {
+    use oos_dsp::eye::{self, Clock, EyeMeas, Jitter};
+    let m = EyeMeas { one: 1.0, zero: 0.0, sigma_one: 0.01, sigma_zero: 0.01, ..Default::default() };
+    let q = eye::norm_inv(1.0 - 1e-12);
+    let want = (1.0 - q * 0.01) - q * 0.01;
+    assert!(close(m.height_at(1e-12), want, 1e-9), "{}", m.height_at(1e-12));
+    let closed = EyeMeas { sigma_one: 1.0, sigma_zero: 1.0, ..m };
+    assert_eq!(closed.height_at(1e-12), 0.0);
+    let j = Jitter { dj_pp: 1e-12, rj_rms: 1e-12, ..Default::default() };
+    let j2 = eye::tj_at(&j, eye::BER_J2);
+    let j9 = eye::tj_at(&j, eye::BER_J9);
+    assert!(j2 < j9 && close(eye::tj_at(&j, 1e-12), 1e-12 + 2.0 * q * 1e-12, 1e-18), "{} {}", j2, j9);
+    assert!(close(eye::eye_width_at(&j, 1e-9, 1e-12), (1.0 - eye::tj_at(&j, 1e-12) / 1e-9).max(0.0), 1e-12));
+
+    let period = 1e-9;
+    let trend: Vec<f32> = (0..256).map(|k| (1e-12 * (PI * k as f64).cos()) as f32).collect();
+    assert!(close(eye::subrate_pp(&trend, period, 2), 2e-12, 1e-16), "{}", eye::subrate_pp(&trend, period, 2));
+    let tone = |div: f64| -> Vec<f32> { (0..512).map(|k| (1e-12 * (PI * k as f64 / (div / 2.0)).cos()) as f32).collect() };
+    assert!(close(eye::subrate_pp(&tone(4.0), period, 4), 2e-12, 1e-14), "F/4");
+    assert!(close(eye::subrate_pp(&tone(8.0), period, 8), 2e-12, 1e-14), "F/8");
+    assert!(close(eye::srj_pp(&trend, period), 2e-12, 1e-15), "{}", eye::srj_pp(&trend, period));
+    let wide = tone(2.0);
+    let mixed: Vec<f32> = (0..512).map(|k| wide[k] + tone(4.0)[k] + tone(8.0)[k]).collect();
+    assert!(close(eye::srj_pp(&mixed, period), 6e-12, 0.05), "{}", eye::srj_pp(&mixed, period));
+    assert_eq!(eye::phase_noise(&vec![0.0; 128], period, 1.0, 1.0 / period), 0.0);
+    let pn: Vec<f32> = (0..4096).map(|k| (5e-12 * (2.0 * PI * k as f64 / 64.0).sin()) as f32).collect();
+    let floor = eye::phase_noise(&pn, period, 1.0 / (period * 256.0), 1.0 / (period * 16.0));
+    // the sine's own bin is left out, so this is the window skirt, well under the 5 ps tone
+    assert!(floor.is_finite() && floor < 2.5e-12, "phase noise off the line {floor}");
+    assert!(eye::npj(&[0.0; 10], &Clock::default(), &trend, &eye::EdgeMeans::default()).is_nan());
+    let n_edge = 2048usize;
+    let sine: Vec<f64> = (0..n_edge).map(|k| 10e-12 * (2.0 * PI * k as f64 / 32.0).sin()).collect();
+    let trend_j: Vec<f32> = sine.iter().map(|x| *x as f32).collect();
+    let edges: Vec<f64> = (0..n_edge).map(|k| k as f64 * period).collect();
+    let clk = Clock { period, phase: 0.0, edges, ticks: vec![], first_rising: true };
+    let left = eye::npj(&sine, &clk, &trend_j, &eye::EdgeMeans::default());
+    assert!(left.is_finite() && left < 2e-12, "npj after the sine {left}");
+    let ps = eye::psij(&trend_j, &clk, &sine, None, 1.0 / (period * 32.0), 0.4, 0.6 * period, None);
+    assert!(close(ps.before.tie_pp, 20e-12, 0.02), "psij before {}", ps.before.tie_pp);
+    assert!(ps.after.tie_pp < 2e-12 && ps.after.pj < ps.before.pj, "psij after {} pj {}", ps.after.tie_pp, ps.after.pj);
+
+    assert!(close(eye::dc_common(&[1.0, 1.0], &[3.0, 3.0]), 2.0, 1e-9));
+    assert!(close(eye::ac_common_pp(&[0.0, 1.0, 0.0, 1.0], None, 1e-6, false), 1.0, 1e-9));
+    let a: Vec<f32> = (0..11).map(|k| k as f32 / 10.0).collect();
+    let b: Vec<f32> = (0..11).map(|k| 1.0 - k as f32 / 10.0).collect();
+    assert!(close(eye::diff_crossover(&a, &b), 0.5, 1e-6), "{}", eye::diff_crossover(&a, &b));
+
+    let dt = 1e-8;
+    let mut v = vec![0.5f32; 500];
+    for k in 40..60 {
+        v[k] = 1.0;
+    }
+    let c = Clock { period: 1e-6, phase: 0.0, edges: vec![0.0, 3e-6], ticks: vec![], first_rising: true };
+    assert!(close(eye::tnt_ratio(&v, dt, &c), 20.0 * (0.5f64).log10(), 0.05), "{}", eye::tnt_ratio(&v, dt, &c));
+
+    let mut edges = Vec::new();
+    let mut t = 0.0;
+    for _ in 0..64 {
+        let f = 1e6 * (1.0 + 0.05 * (2.0 * PI * 125e3 * t).sin());
+        let p = 1.0 / f;
+        edges.push(t);
+        edges.push(t + 0.5 * p);
+        t += p;
+    }
+    let c = Clock { period: 1e-6, phase: 0.0, edges, ticks: vec![], first_rising: true };
+    let (ppm, _) = eye::ssc_deviation(&c);
+    assert!(ppm > 50_000.0 && ppm < 150_000.0, "{}", ppm);
+    let rate = eye::ssc_rate(&c);
+    assert!(close(rate, 125e3, 30e3), "{}", rate);
+    let clock = Clock { period: 1e-6, phase: 0.0, edges: (0..32).map(|k| k as f64 * 1e-6).collect(), ticks: vec![], first_rising: true };
+    assert!(eye::is_clock(&clock));
+    let data = Clock { edges: (0..32).map(|k| k as f64 * 3e-6).collect(), ..clock };
+    assert!(!eye::is_clock(&data));
 }

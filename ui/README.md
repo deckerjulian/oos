@@ -14,13 +14,18 @@ Dark theme, the colour-blind safe channel colours yellow / sky blue / pink / tea
 |---|---|
 | top bar (40 px) | state pill (TRIG'D / AUTO / WAIT / STOP, tap = run/stop), acquisition "rate · depth · mode" (e.g. 12.5 MSa/s · 100 kpts · Normal; the hardware's numbers while `--hw` runs), tap on it = Acquire page, buttons for what is used most and the menus without a front-panel key: Measure, Cursor, Display, Storage, System (with About and the Quick key setting), network box ("Ethernet · DHCP" + IPv4 address, or "not connected"). Buttons are drawn 30 px high and tapped over the full 40 px |
 | plot 970 x 448 (10 x 8 div; 970 x 464 without strip rows) | from y = 52 to the cards, 24 px gutters: channel markers left of it, trigger level marker right of it (its value inside the plot), trigger position above it. Drawn inside the plot: volt labels of the active channel along the left edge (a label that would overlap another label, the status line, the time labels, the mask pill or the decode band is left out; 5 px gap to the channel markers), time labels along the bottom edge (0 s in orange), a status line at the top (left: Touch locked, History n/m, Search count; right: source · wfm/s · fps), messages as an amber pill at the top centre (beside or under an open dialog, never over its controls), the mask pill, the math label, cursors (X1/X2, Y1/Y2 tags), the decode band above the time labels |
-| strip | one row per channel with measurements (label grey, value in the channel colour), one row for the cursor read-outs; each row makes the plot 18 px shorter |
+| strip | one row per channel with measurements (label grey, value in the channel colour), one row for the cursor read-outs. Measure > Dock puts it under the plot (the default; each row makes the plot 18 px shorter), above the trace, or in a column on the left or the right |
 | results overlay | with Measure > Statistics on: a translucent card at the top right of the plot (left of the strip where a drag moves the trigger level) with value, mean, ±σ per item and the number of acquisitions; tap its header to fold it to one line. It takes no room from the plot |
 | cards (66 px) | **Menu** button (start menu, see below), CH1-CH4 (wide with V/div, coupling, probe, bandwidth, offset when on; narrow with a ring when off; tap = channel menu), TIME (time/div, delay or zoom time/div; tap = horizontal menu), trigger (type, slope / polarity / video standard, level; tap = trigger menu; Source and Sweep buttons over the card height cycle CH1-4 and Auto/Normal/Single) |
 
 Layout before 2026-11-03: top bar 40 + info row 18, toolbar 38 px over the cards, 74 px label gutter, results as a
 fixed 178 px column; the plot was 880 x 384 (700 x 384 with statistics). The toolbar is gone, LIVE and ? as well
 (state pill = run/stop, About in System), the info row and the labels moved into the plot.
+
+Offline mode (System > Offline, or `oos-ui --offline`) hides the CH1–CH4 cards. A session can start in that mode
+with those channels off and no demo on them. Import slot and SIM Play then keep analog off, set TIME from the
+record's own interval and length, and put the reference name (R1–R10 and its label) where the trigger card is.
+The DVM and the counter read that reference. With the mode off, the live screen is unchanged.
 
 **No touch buttons for functions with a front-panel key.** They are on their keys (see Input) and, so that the scope
 works by touch alone, in the **start menu** (Menu button at the bottom left, or Multi 1 with no menu open): a grid in
@@ -44,7 +49,7 @@ orange), `- value +` for values, full-width buttons for actions, a Back button i
 plot outside a dialog closes it.
 
 **Pickers**: a choice whose options do not fit as segmented buttons shows `- value ▾ +`; tapping the value (or the
-row label) opens a grid of all options (like Measure > Add item), the current one in orange; tapping one sets it and
+row label) opens a grid of all options (like the measurement list), the current one in orange; tapping one sets it and
 returns to the menu, Back returns unchanged. `-`/`+`, Multi 2 and the ± steps keep stepping the value; a push on
 Multi 1 opens the picker. Items with pickers: Trigger > Type (12), Math > Operation (14), Math > Window (FFT, 5),
 Acquire > Memory (8), Acquire > Averages (10), Display > Persistence (7), Decode > Baud (10), Utility > Quick key
@@ -68,7 +73,9 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
   Video). Two-level types show a second level marker.
 - Acquire: Normal/Peak/Average (2..1024)/High res, memory depth Auto..50M (shown; the demo source ignores it).
 - Measure (`../dsp` measure): 35 items (voltage, time, edges, overshoot/preshoot, area, slew rate, pulse/edge counts,
-  ...), up to 6 at a time, **statistics** (mean, ±σ, n) in the results panel.
+  ...), up to 6 at a time, **statistics** (mean, ±σ, n) in the results panel. A tap on Measure opens the measurement
+  list. A press and hold opens a short menu; releasing on Measure runs **Add meas**, the next usual measurement.
+  Source, statistics and the rest of the Measure page are unchanged (Measure key, or Menu > Measure).
 - Cursor: time (dT, 1/dT) or voltage (dV), drag the lines.
 - **Math** (`../dsp` math): A+B, A-B, AxB, A/B, integral, derivative, abs, sqrt, lg, exp, low-/high-pass (corner
   frequency), **FFT** (dBV rms, Rect/Hann/Hamming/Blackman/Flattop, dB/div, offset, span 0..fs/2), auto scale.
@@ -106,7 +113,7 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
   coloured by its density relative to the densest pixel on a temperature scale blue -> cyan -> green -> yellow -> red
   (rare -> frequent; intensity shifts the scale). Merged rather than per channel, so overlapping traces count together;
   with infinite persistence it shows jitter and rare events. Cost per frame: one 1024-entry LUT from a
-  256-colour palette, then per pixel one add per channel and a table look-up (about 0.6 ms per frame on the Mac with
+  256-colour palette, then per pixel one add per channel and a table look-up (about 0.6 ms per frame on a host with
   4 channels, so a few ms on the A72).
 - **Storage** (toolbar Storage, or Menu > Storage): save setup to `setup<slot>.txt` (slot 1-9), recall setup from it,
   save the waveform of the record shown as CSV (`wave-NNN.csv`: `Time (s)` relative to the trigger + one `CHn (V)`
@@ -146,17 +153,28 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
   4 RUN, 5 STOP, 6/7 SINGLE, 8 LA, 9 G1, 10 G2, 11 TOUCH, 12 A up/down, 13 B left/right, 14 SLOPE1, 15 SLOPE2,
   16 A left/right, 17 B up/down, 18 INTENSITY); `Inputs::set_leds` translates it to the MCU's hardware bits with a
   table (see `docs/protocols/frontpanel.md`) and sends frames cmd 1/2/3.
-- **Control FIFO** `/tmp/oos-ui.ctl` (for remote tests over telnet): `key ch1`, `knob vscale +2`, `tap x y`,
+- **Control FIFO** `/tmp/oos-ui.ctl` (for remote tests over key-authenticated SSH): `key ch1`, `knob vscale +2`, `tap x y`,
   `drag x0 y0 x1 y1`, `shot /tmp/x.ppm`, `storedir /tmp/oos`, `stat`, `quit` (see `src/cmd.rs`).
 
 ## SCPI (TCP 5555)
 
-A Rigol-compatible subset, enough for scripts and the openSciLab bridge: `*IDN? *RST *OPC? *CLS`, `:RUN :STOP :SINGle
+See the [OOS Plus SCPI manual](../docs/scpi.md) for the supported DHO924S-style
+subset, command/result lists, reference/SIM/decoder extensions, binary transfer
+example, asynchronous operation completion and explicit compatibility limits.
+
+A stock-compatible subset, enough for scripts and the openSciLab bridge: `*IDN? *RST *OPC? *CLS`, `:RUN :STOP :SINGle
 :AUToscale :CLEar`, `:CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert`, `:TIMebase[:MAIN]:SCALe|OFFSet`,
 `:TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe :TRIGger:SWEep :TRIGger:STATus?`, `:ACQuire:SRATe?|MDEPth?`,
-`:MEASure:ITEM? <item>,CHANn`, `:WAVeform:SOURce|MODE|FORMat(BYTE/WORD/ASCii)|POINts?|PREamble?|DATA?` (the displayed
-record, volts = (code - yorigin - yref) * yinc), `:DISPlay:DATA?` (24-bit BMP of the screen), `:SYSTem:ERRor?`.
-Remote changes go through the same model as the screen. Tested from the Mac against the unit on 2026-11-02.
+`:MEASure:ITEM? <item>[,CHANn|Rn]` and `:MEASure:ITEM? <pair>,<src>,<src>` (R1–R10 as well as CHANn),
+`:MEASure:STRip?` (the rows under the plot, plus the DVM and counter when they are on),
+`:MEASure:READout?` (those rows, and the eye figures when the eye page is up),
+`:EYE:ITEM? <figure>` (height, width, unit interval, total jitter, and the other figures on that page),
+`:WAVeform:SOURce|MODE|FORMat(BYTE/WORD/ASCii)|POINts?|PREamble?|DATA?` (NORM display data,
+RAW retained native CH memory, or full native references; volts = (code - yorigin - yref) * yinc),
+`:DISPlay:DATA?` (24-bit BMP of the screen), `:SYSTem:ERRor?`.
+Remote changes go through the same model as the screen. Tested from a host against the unit on 2026-11-02.
+That historical hardware check does not certify the full stock command set or
+the later extensions; current local coverage and limits are in the manual.
 
 ## Live FPGA source (experimental)
 
@@ -198,7 +216,7 @@ stays as it is.
 
 `http://<scope>:8080/` shows the live screen (about 5 frames/s as BMP), a click on it is a touch tap, buttons below
 act as front-panel keys and knobs. `GET /cmd?c=<text command>` runs one key, knob or touch command, `GET /screen.bmp` returns the screen, `GET /screen.jpg` the live picture as JPEG from the VPU (`src/vpu.rs`, PNG where there is no VPU), `GET /screen.png`, `/wave.csv` and `/la.csv` are the downloads of the page. Answers above 256 KiB go out in a thread of their own (at most two), so a slow link does not stall the frame loop. `cargo test web_demo -- --ignored --nocapture` runs this page with the demo signals on a host.
-Like telnet and SCPI it is unauthenticated: bench network only.
+Like SCPI it is unauthenticated: bench network only. The root shell separately requires a provisioned SSH key ([SSH setup](../docs/ssh.md)).
 
 ## Build and test
 
@@ -248,6 +266,12 @@ Frame timing on the unit (4 demo channels, 6 acquisitions per frame): step 25 ms
 render 4 ms, present 1 ms; so the drawing itself has room for 60 fps and more with a cheaper source.
 
 ## Files
+
+Loaded references can now feed Math and protocol Decode, including single-trio
+six-wirestate C-PHY. See [loaded-waveform workflows](../docs/reference-analysis.md)
+for physical-time alignment, automatic Eye/Jitter, TekScope-style zoom and native
+memory navigation. [SSH provisioning](../docs/ssh.md) covers the scope image's
+key-only shell access.
 
 `src/gfx.rs` renderer, `src/font.rs` + `assets/font.bin`, `font-large.bin`, `font-larger.bin` (generated by
 `tools/mkfont.py OUT normal|large|larger` from Roboto Regular/Medium in `tools/fonts/`, Apache License 2.0; the same

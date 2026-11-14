@@ -92,6 +92,7 @@ impl Ui {
         let pressed = match ev {
             Ev::Key(k) => *k != 0,
             Ev::Touch { phase, .. } => *phase == Phase::Up,
+            Ev::Wheel { .. } => false,
         };
         if pressed {
             if let Some(s) = self.start_up.as_mut().filter(|s| s.view.finished.is_some() || Self::start_up_stalled(s)) {

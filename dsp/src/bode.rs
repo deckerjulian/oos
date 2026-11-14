@@ -60,6 +60,16 @@ fn solve3(m: [[f64; 3]; 3], r: [f64; 3]) -> Option<[f64; 3]> {
     Some([col(0), col(1), col(2)])
 }
 
+fn wrap_deg(mut ph: f64) -> f64 {
+    while ph > 180.0 {
+        ph -= 360.0;
+    }
+    while ph <= -180.0 {
+        ph += 360.0;
+    }
+    ph
+}
+
 /// Gain (dB) and phase (degrees, -180..180, output relative to input) of `out` against `inp` at `f`.
 pub fn gain_phase(inp: &[f32], out: &[f32], dt: f64, f: f64) -> Option<(f64, f64)> {
     let (ai, pi, _) = sine_fit(inp, dt, f)?;
@@ -67,14 +77,37 @@ pub fn gain_phase(inp: &[f32], out: &[f32], dt: f64, f: f64) -> Option<(f64, f64
     if ai <= 0.0 {
         return None;
     }
-    let mut ph = (po - pi).to_degrees();
-    while ph > 180.0 {
-        ph -= 360.0;
+    Some((20.0 * (ao / ai).log10(), wrap_deg((po - pi).to_degrees())))
+}
+
+/// What a Bode sweep stores in the middle field of each point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Control loop: gain in dB, `20 log10(Vout / Vin)`.
+    Loop,
+    /// Power-supply rejection: `20 log10(Vin / Vout)`, the negation of the control-loop gain. Phase is kept so the
+    /// point is still (Hz, dB, degrees).
+    Psrr,
+    /// Impedance: the linear ratio `Vout / Vin`, not ohms. Phase is computed the same way as the control loop.
+    /// `:BODE:DATA?` documents the middle field as dB; in this mode that field is the linear ratio.
+    Z,
+}
+
+/// One frequency of a sweep in `mode`: (middle field, phase degrees). The middle field is dB for the loop and for
+/// PSRR, and the linear Vout/Vin ratio for impedance.
+pub fn response(mode: Mode, inp: &[f32], out: &[f32], dt: f64, f: f64) -> Option<(f64, f64)> {
+    match mode {
+        Mode::Loop => gain_phase(inp, out, dt, f),
+        Mode::Psrr => gain_phase(inp, out, dt, f).map(|(g, p)| (-g, p)),
+        Mode::Z => {
+            let (ai, pi, _) = sine_fit(inp, dt, f)?;
+            let (ao, po, _) = sine_fit(out, dt, f)?;
+            if ai <= 0.0 {
+                return None;
+            }
+            Some((ao / ai, wrap_deg((po - pi).to_degrees())))
+        }
     }
-    while ph <= -180.0 {
-        ph += 360.0;
-    }
-    Some((20.0 * (ao / ai).log10(), ph))
 }
 
 /// `n` logarithmically spaced frequencies from `start` to `stop` (both included).

@@ -63,7 +63,7 @@ done'
 {
 	pp=$(part parameter)
 	[ -n "$pp" ] && { echo "== parameter $pp"; dd if="$pp" bs=512 count=8 2>/dev/null | tr -cd "\040-\176\n"; echo; }
-	# Rockchip keeps the table at sector 8192 of the card too
+	# The card keeps the table at sector 8192 of the card too
 	for d in /dev/block/mmcblk0 /dev/block/mmcblk1 /dev/mmcblk0 /dev/mmcblk1; do
 		[ -b "$d" ] || continue
 		t=$(dd if="$d" bs=512 skip=8192 count=8 2>/dev/null | tr -cd "\040-\176\n")
@@ -71,7 +71,7 @@ done'
 	done
 } > "$out/parameter.txt" 2>&1
 echo "parameter exit 0" >> "$out/index.txt"
-# Rockchip: the command line names the partitions as size@offset in sectors from sector 8192 of the card
+# The command line names the partitions as size@offset in sectors from sector 8192 of the card
 card=$(for d in /dev/block/mmcblk0 /dev/mmcblk0; do [ -b $d ] && echo $d && break; done)
 for n in boot recovery backup kernel resource misc; do
 	p=$(part $n)
@@ -84,6 +84,6 @@ for n in boot recovery backup kernel resource misc; do
 done
 echo "boot-headers exit 0" >> "$out/index.txt"
 # names and sizes only: no file content
-run rigol-tree 'ls -laR /rigol 2>/dev/null | head -2000'
+run stock-tree 'ls -laR /rigol 2>/dev/null | head -2000'
 run apps 'ls -la /system/app /system/priv-app /data/app 2>/dev/null | head -200'
 echo done >> "$out/index.txt"

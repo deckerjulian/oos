@@ -22,7 +22,7 @@ Tiers, in this order:
 A test that cannot run for lack of wiring is SKIP. A result that needs a decision is INFO. The results go to
 device-test/<time>/ as report.md, results.json and screenshots.
 
-It only talks to the published interfaces, plus read-only commands on the telnet shell. shell() refuses everything
+It only talks to the published interfaces, plus read-only commands over key-authenticated SSH. shell() refuses everything
 that could write the FPGA flash, the calibration or the boot partitions, so a typo here cannot.
 """
 
@@ -197,27 +197,18 @@ class Scope:
                 f.write(b)
 
     def shell(self, cmd, wait=2.0, reads_card=False):
-        """A read-only command on the telnet shell, the output as text."""
+        """A read-only command over SSH, with strict host identity checking."""
         if self.sim:
             raise Skip("no shell in the simulation")
         if FORBIDDEN.search(cmd) and not reads_card:
             raise AssertionError(f"refused here: {cmd}")
-        s = socket.create_connection((self.host, 23), timeout=10)
-        time.sleep(1)
-        s.sendall(b"echo @@S; " + cmd.encode() + b"; echo @@E\n")
-        s.settimeout(wait + 8)
-        b, end = b"", time.time() + wait + 8
-        while b.count(b"@@E") < 2 and time.time() < end:
-            try:
-                c = s.recv(65536)
-            except socket.timeout:
-                break
-            if not c:
-                break
-            b += c
-        s.close()
-        t = b.decode(errors="replace")
-        return t.split("@@S", 2)[-1].split("@@E")[0].strip()
+        args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                "-o", "ConnectTimeout=10", "-p", os.environ.get("OOS_SSH_PORT", "22")]
+        if os.environ.get("OOS_SSH_IDENTITY"):
+            args += ["-i", os.environ["OOS_SSH_IDENTITY"]]
+        result = subprocess.run(args + [f"root@{self.host}", cmd], capture_output=True,
+                                text=True, timeout=wait + 15, check=True)
+        return result.stdout.strip()
 
     def base(self):
         """Back to a known state: defaults, the waveform view, the generator's channel at 1 V/div, generator off, running."""
@@ -1504,7 +1495,7 @@ def analysers_show_the_signal(s, o):
 
 
 # Worst first: the analysers work on the whole record, so a deep record is what shows a slow one. The floors are about
-# half of what the unit measured on 2026-11-07, low enough for a busy Mac, high enough to catch a slowed-down analyser.
+# half of what the unit measured on 2026-11-07, low enough for a busy host, high enough to catch a slowed-down analyser.
 VIEW_FPS_FLOOR = 8.0
 VIEW_LATENCY_MAX = 1.0
 

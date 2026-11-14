@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 2026 Julian Decker
  *
- * Rigol DHO800/DHO900 oscilloscope main board (RK3399).
+ * DHO800/DHO900 oscilloscope main board (RK3399).
  */
 
 /dts-v1/;
@@ -40,8 +40,8 @@
 /delete-node/ &mipi_dphy_tx1rx1;
 
 / {
-	model = "Rigol DHO800/DHO900";
-	compatible = "rigol,dho900", "rockchip,rk3399";
+	model = "DHO800/DHO900";
+	compatible = "dho900", "rockchip,rk3399";
 
 	aliases {
 		/* The card holds the system and the tools expect it as mmcblk0. */
@@ -274,7 +274,7 @@
 &dsi {
 	status = "okay";
 
-	/* The panel ID 93 65 04 makes this a Jadard JD9365. */
+	/* The panel ID 93 65 04 makes this a JD9365. */
 	panel: panel@0 {
 		compatible = "simple-panel-dsi";
 		reg = <0>;

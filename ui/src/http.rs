@@ -7,6 +7,8 @@
 //!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
 //!   GET /screen.jpg   the live picture as JPEG from the VPU (`vpu.rs`; PNG where there is none), as /screen.png
 //!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
+//!   POST /waveform?name=...&slot=1   load a waveform into a chosen reference (no file written)
+//!   GET /ui-state     source, acquisition state and capture count for the remote controls
 //!   GET /cmd?c=...    one key, knob or touch command (cmd.rs syntax: "key runstop", "knob vscale +1", "tap 100 200");
 //!                     other commands are refused (`cmd::remote_ok`)
 //!   GET /lxi/identification   LXI identification XML (LXI Device Specification 2011, 10.2)
@@ -25,6 +27,7 @@ use std::time::{Duration, Instant};
 
 /// Longest request: `POST /update` (a package is ~31 MB, the image at most 64 MiB), every other request.
 const MAX_UPDATE: usize = 70 << 20;
+const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
@@ -60,6 +63,20 @@ fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send
         return false;
     }
     true
+}
+
+/// Which instrument addresses the identification page lists. The default is the scope: VXI-11 and the SCPI socket.
+#[derive(Clone, Debug)]
+pub struct Offer {
+    pub scpi_port: Option<u16>,
+    pub vxi11: bool,
+    pub hislip_port: Option<u16>,
+}
+
+impl Default for Offer {
+    fn default() -> Offer {
+        Offer { scpi_port: Some(5555), vxi11: true, hislip_port: None }
+    }
 }
 
 fn busy_answer(s: &TcpStream) {
@@ -461,6 +478,8 @@ pub struct Http {
     /// connection, request so far, last data, accepted
     pending: Vec<(TcpStream, Vec<u8>, Instant, Instant)>,
     shots: Arc<Shots>,
+    /// the addresses the identification page names
+    offer: Offer,
 }
 
 impl Drop for Http {
@@ -478,21 +497,32 @@ a{color:#5cb2f0;text-decoration:none}a:hover{text-decoration:underline}
 #st{color:#9aa4af;font-size:13px}#st.bad{color:#f0a93b}
 button{background:#242a33;color:#e4e7ea;border:1px solid #3a424d;border-radius:6px;padding:7px 11px;font:inherit;cursor:pointer;touch-action:manipulation}
 button:hover{background:#2f3743}button:active{background:#3a4452}button.on{border-color:#f0a93b;color:#f0a93b}
+button:focus-visible,a:focus-visible,select:focus-visible{outline:2px solid #f0a93b;outline-offset:3px}button:disabled{opacity:.55;cursor:wait}
+select{background:#242a33;color:#e4e7ea;border:1px solid #3a424d;border-radius:6px;padding:7px;font:inherit}
 pre{background:#0d0f13;border:1px solid #2a3038;border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap}
 code{font:13px ui-monospace,Menlo,Consolas,monospace}"#;
 
 const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OOS remote</title>
 <link rel="stylesheet" href="/style.css">
 <style>img{display:block;width:100%;height:auto;border:1px solid #3a424d;border-radius:6px;cursor:crosshair;touch-action:none;user-select:none;-webkit-user-select:none}
-.g{display:flex;flex-wrap:wrap;gap:12px 22px;margin-top:12px}.k span{display:block;font-size:12px;color:#9aa4af;margin-bottom:3px}.k div{display:flex;flex-wrap:wrap;gap:4px}</style></head>
+.g{display:flex;flex-wrap:wrap;gap:12px 22px;margin-top:12px}.k span{display:block;font-size:12px;color:#9aa4af;margin-bottom:3px}.k div{display:flex;flex-wrap:wrap;gap:4px}
+.workflow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px}.workflow label{display:flex;align-items:center;gap:6px;color:#b8c0ca;font-size:13px}.workflow .primary{border-color:#f0a93b;color:#f0a93b}.session{margin-left:auto;color:#b8c0ca;font-size:13px;font-variant-numeric:tabular-nums}.file-hint{min-height:20px;margin:0 0 8px;color:#b8c0ca;font-size:13px}.file-hint.bad{color:#ffab91}header{flex-wrap:wrap}@media(max-width:620px){.session{margin-left:0;flex-basis:100%}.workflow{gap:6px}button{min-height:40px}}</style></head>
 <body><header><b>OOS remote</b><span id="st">connecting ...</span><nav><a href="/update">Update</a></nav></header>
+<div class="workflow" aria-label="Waveform and source actions">
+<button id="load-wave" class="primary" onclick="askFile()">Load waveform</button>
+<input id="wave-file" type="file" accept=".csv,.bin,.wfm,.trc,.isf,.tr0,.wfmx" hidden>
+<label>Into <select id="wave-slot" aria-label="Reference slot"><option value="" selected>Choose slot</option><option value="1">R1</option><option value="2">R2</option><option value="3">R3</option><option value="4">R4</option><option value="5">R5</option><option value="6">R6</option><option value="7">R7</option><option value="8">R8</option><option value="9">R9</option><option value="10">R10</option></select></label>
+<button id="sim-mode" onclick="c('workflow sim')">SIM</button><button id="return-live" onclick="c('workflow live')" hidden>Return to live</button>
+<button id="acquire-toggle" onclick="c('key runstop')" aria-label="Run or stop acquisition">Run/Stop</button><button onclick="c('key single')">Single</button>
+<button onclick="c('workflow measure')">Add measurement</button><span id="session-state" class="session" aria-live="polite">Reading source...</span></div>
+<p id="wave-status" class="file-hint" role="status">Choose a slot, then CSV, BIN, WFM, TRC, ISF, TR0 or WFMX · up to 128 MiB. You can also drop a file on the waveform.</p>
 <img id="s" width="1024" height="600" alt="scope screen" src="/screen.png">
 <div class="g"><div class="k"><span>Acquisition</span><div>
-<button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Auto</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
+<button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Autoset</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
 <div class="k"><span>Channels</span><div>
 <button onclick="c('key ch1')">CH1</button><button onclick="c('key ch2')">CH2</button><button onclick="c('key ch3')">CH3</button><button onclick="c('key ch4')">CH4</button><button onclick="c('key math')">Math</button><button onclick="c('key ref')">Ref</button><button onclick="c('key la')">LA</button><button onclick="c('key gi')">Gen</button></div></div>
 <div class="k"><span>Tools</span><div>
-<button onclick="c('key measure')">Measure</button><button onclick="c('key cursor')">Cursor</button><button onclick="c('key analyse')">Decode</button><button onclick="c('key tmenu')">Trigger</button></div></div></div>
+<button onclick="c('workflow settings')">Measure settings</button><button onclick="c('key cursor')">Cursor</button><button onclick="c('key analyse')">Decode</button><button onclick="c('key tmenu')">Trigger</button><button onclick="c('key force')">Force trigger</button></div></div></div>
 <div class="g">
 <div class="k"><span>V scale</span><div><button onclick="c('knob vscale -1')">-</button><button onclick="c('knob vscale +1')">+</button></div></div>
 <div class="k"><span>V pos</span><div><button onclick="c('knob vpos -5')">-</button><button onclick="c('knob vpos +5')">+</button></div></div>
@@ -503,7 +533,7 @@ const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
 <div class="k"><span>Multi 2</span><div><button onclick="c('knob multi2 -1')">-</button><button onclick="c('knob multi2 +1')">+</button></div></div></div>
 <div class="g"><div class="k"><span>Save to this computer</span><div>
 <button onclick="dl('/screen.png','png')">Screenshot (PNG)</button><button onclick="dl('/wave.csv','csv')">Waveform (CSV)</button><button onclick="dl('/wave.bin','bin')">Waveform (binary)</button><button onclick="dl('/la.csv','la.csv')">LA lines (CSV)</button></div></div>
-<div class="k"><span>Picture</span><div><button id="p" onclick="pause()">Pause</button></div></div>
+<div class="k"><span>Browser picture only</span><div><button id="p" onclick="pause()">Pause picture</button></div></div>
 <div class="k"><span>Live picture format</span><div><button id="fp" onclick="setfmt('png')" title="compressed, about 90 KB per picture">PNG</button><button id="fb" onclick="setfmt('bmp')" title="uncompressed, 1.8 MB per picture">BMP</button><button id="fj" onclick="setfmt('jpg')" title="made by the scope's video encoder, about 70 KB per picture: up to 20 a second, but text a little less sharp">JPEG</button></div></div></div>
 <script>
 const s=document.getElementById('s'),st=document.getElementById('st'),pb=document.getElementById('p'),fp=document.getElementById('fp'),fb=document.getElementById('fb'),fj=document.getElementById('fj');
@@ -513,19 +543,40 @@ function setfmt(f){fmt=f;try{localStorage.setItem('fmt',f);}catch(e){}fp.classNa
 setfmt(fmt);
 function say(t){msg=t;until=Date.now()+5000;show();}
 function show(bad){st.textContent=Date.now()<until?msg:(paused?'picture paused':bad?'no connection':'connected, '+n+' pictures/s');st.className=bad?'bad':'';}
-function c(x){fetch('/cmd?c='+encodeURIComponent(x)).catch(()=>say('command not sent'));}
+function c(x){return fetch('/cmd?c='+encodeURIComponent(x)).then(async r=>{const text=await r.text();if(!r.ok||text==='refused')throw Error(text);refreshState();}).catch(()=>say('Command not sent. Check the connection.'));}
+let statePending=false,uploading=false,workflowState=null;
+function askFile(){const slot=document.getElementById('wave-slot'),status=document.getElementById('wave-status');if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';return;}document.getElementById('wave-file').click();}
+function refreshState(){if(statePending||document.hidden)return;statePending=true;fetch('/ui-state').then(r=>{if(!r.ok)throw Error();return r.json();}).then(v=>{
+const mode=v.mode==='sim'?'SIM':v.mode==='reference'?'Stored waveform':'Live';
+workflowState=v;
+document.getElementById('session-state').textContent=[mode,v.source,v.status,(v.captures>0?'Capture '+v.captures:'')].filter(Boolean).join(' · ');
+document.getElementById('sim-mode').className=v.mode==='sim'?'on':'';document.getElementById('return-live').hidden=v.mode==='live';
+document.getElementById('acquire-toggle').textContent=v.running?'Stop':'Run';
+}).catch(()=>{}).finally(()=>{statePending=false;});}
+async function uploadWave(file){if(!file||uploading)return;const status=document.getElementById('wave-status'),button=document.getElementById('load-wave'),slot=document.getElementById('wave-slot');
+if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';document.getElementById('wave-file').value='';return;}
+if(file.size>128*1024*1024){status.textContent='That file is larger than 128 MiB. Export a shorter waveform and try again.';status.className='file-hint bad';return;}
+uploading=true;button.disabled=true;slot.disabled=true;button.textContent='Loading...';status.className='file-hint';status.textContent='Loading '+file.name+' into R'+slot.value+'...';
+try{const response=await fetch('/waveform?name='+encodeURIComponent(file.name)+'&slot='+encodeURIComponent(slot.value),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});const text=await response.text();if(!response.ok)throw Error(text);status.textContent=text;refreshState();}
+catch(error){status.textContent='Could not load waveform: '+(error.message||'check the connection and try again.');status.className='file-hint bad';}
+finally{uploading=false;button.disabled=false;slot.disabled=false;button.textContent='Load waveform';document.getElementById('wave-file').value='';}}
+document.getElementById('wave-file').addEventListener('change',event=>uploadWave(event.target.files[0]));
+s.addEventListener('dragover',event=>{if(Array.from(event.dataTransfer?.types||[]).includes('Files'))event.preventDefault();});
+s.addEventListener('drop',event=>{event.preventDefault();uploadWave(event.dataTransfer.files[0]);});
+document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='o'){event.preventDefault();askFile();}});
+refreshState();
 function dl(u,ext){say('saving ...');Promise.all([fetch(u).then(r=>r.ok?r.blob():r.text().then(t=>Promise.reject(t))),fetch('/stamp').then(r=>r.ok?r.text():'').catch(()=>'')]).then(([b,t])=>{
 const a=document.createElement('a'),d=t.trim()||new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,19).replace(/-|:/g,'').replace('T','-');
 a.href=URL.createObjectURL(b);a.download='oos-'+d+'.'+ext;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10000);say('saved');
 }).catch(e=>say(typeof e=='string'?e:'not saved: no connection'));}
-function pause(){paused=!paused;pb.textContent=paused?'Resume':'Pause';pb.className=paused?'on':'';show();go();}
+function pause(){paused=!paused;pb.textContent=paused?'Resume picture':'Pause picture';pb.className=paused?'on':'';show();go();}
 function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*(s.naturalWidth||1024)/r.width),Math.round((p.clientY-r.top)*(s.naturalHeight||600)/r.height)];}
 let d0=null;
 function down(e){e.preventDefault();d0=pt(e);}
-function up(e){if(!d0)return;e.preventDefault();const p=pt(e);if(Math.abs(p[0]-d0[0])+Math.abs(p[1]-d0[1])<8)c('tap '+d0[0]+' '+d0[1]);else c('drag '+d0[0]+' '+d0[1]+' '+p[0]+' '+p[1]);d0=null;}
+function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){const r=workflowState?.loadRect;if(Array.isArray(r)&&r.length===4&&start[0]>=r[0]&&start[0]<r[0]+r[2]&&start[1]>=r[1]&&start[1]<r[1]+r[3])askFile();else c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
 s.addEventListener('mousedown',down);s.addEventListener('mouseup',up);s.addEventListener('touchstart',down,{passive:false});s.addEventListener('touchend',up,{passive:false});
 s.ondragstart=()=>false;
-let count=0;setInterval(()=>{n=count;count=0;if(!paused&&!document.hidden)show(st.className=='bad');},1000);
+let count=0;setInterval(()=>{n=count;count=0;if(!document.hidden){refreshState();if(!paused)show(st.className=='bad');}},1000);
 // no pictures while paused or in a background tab: each one is 90 KB as PNG, 1.8 MB as BMP, which the scope has to send
 // a PNG comes with an ETag: sent back, the scope holds the request until its screen has changed (304 after 2 s), so
 // the next request can go at once; a BMP has none, so a pause between them
@@ -565,9 +616,17 @@ fn unescape(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// A browser supplies only a display name. It never selects a path on the instrument.
+fn waveform_name(query: &str) -> String {
+    let decoded = query.split('&').find_map(|part| part.strip_prefix("name=")).map(unescape).unwrap_or_default();
+    let leaf = decoded.rsplit(['/', '\\']).next().unwrap_or("");
+    let name: String = leaf.chars().filter(|c| !c.is_control()).take(128).collect();
+    if name.trim().is_empty() { "waveform.csv".into() } else { name }
+}
+
 impl Http {
     pub fn open(port: u16) -> Http {
-        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new() }
+        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new(), offer: Offer::default() }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
@@ -580,6 +639,15 @@ impl Http {
             None => eprintln!("oos-ui: web port {} not available", port),
         }
         l
+    }
+
+    pub fn port(&self) -> Option<u16> {
+        self.l.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
+    }
+
+    /// The addresses the identification page names. Set from the listeners that actually came up.
+    pub fn offer(&mut self, o: Offer) {
+        self.offer = o;
     }
 
     /// System > Network > Remote services: the port open (`Some`), or closed with the requests waiting on it.
@@ -675,7 +743,9 @@ impl Http {
             let complete = hdr_end.is_some_and(|e| {
                 let h = String::from_utf8_lossy(&req[..e]).to_ascii_lowercase();
                 let n = h.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
-                let limit = if h.starts_with("post /update") { MAX_UPDATE } else { MAX_OTHER };
+                let first = h.lines().next().unwrap_or("");
+                let upload_path = first.split_whitespace().nth(1).unwrap_or("").split('?').next().unwrap_or("");
+                let limit = if first.starts_with("post ") && upload_path == "/update" { MAX_UPDATE } else if first.starts_with("post ") && upload_path == "/waveform" { MAX_WAVEFORM } else { MAX_OTHER };
                 too_big = n > limit || req.len() > limit + e;
                 too_big || e.checked_add(n).is_some_and(|need| req.len() >= need)
             });
@@ -706,6 +776,27 @@ impl Http {
                     _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
                     "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
+                    "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
+                    "/waveform" if post => {
+                        let slot = query.split('&').find_map(|part| part.strip_prefix("slot=")).and_then(|value| value.parse::<usize>().ok());
+                        let name = waveform_name(query);
+                        let previous = ui.ref_slot();
+                        let result = if let Some(slot) = slot.filter(|s| (1..=10).contains(s)) {
+                            ui.load_waveform_bytes_at(req_body, &name, slot - 1)
+                        } else { Err("Choose a reference slot from R1 to R10.".into()) };
+                        match result {
+                            Ok(()) => {
+                                let hint = if ui.record_mode() { "Use Run/Stop or Single to acquire from this record; Return to live restores the live source." }
+                                    else { "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition." };
+                                ("text/plain; charset=utf-8", format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint).into_bytes())
+                            }
+                            Err(error) => {
+                                ui.ref_slot_set(previous);
+                                failed = true;
+                                ("text/plain; charset=utf-8", error.into_bytes())
+                            }
+                        }
+                    },
                     "/screen.png" | "/screen.jpg" => {
                         let have = header(&text, "if-none-match").map(str::to_string);
                         self.shots.request(s, have, cv, route == "/screen.jpg");
@@ -728,7 +819,7 @@ impl Http {
                         Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
                     },
                     "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
-                    "/lxi/identification" => ("text/xml", lxi_identification().into_bytes()),
+                    "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
                     "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
                         Some(r) => ("application/json", r.into_bytes()),
                         None => ("", Vec::new()),
@@ -783,7 +874,18 @@ fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-fn lxi_identification() -> String {
+fn lxi_identification(o: &Offer) -> String {
+    let mut addrs = String::new();
+    if o.vxi11 {
+        addrs.push_str("<InstrumentAddressString>TCPIP::INSTR</InstrumentAddressString>\n");
+    }
+    if let Some(p) = o.scpi_port {
+        addrs.push_str(&format!("<InstrumentAddressString>TCPIP::{p}::SOCKET</InstrumentAddressString>\n"));
+    }
+    if let Some(port) = o.hislip_port {
+        let device = if port == crate::hislip::PORT { "hislip0".into() } else { format!("hislip0,{port}") };
+        addrs.push_str(&format!("<InstrumentAddressString>TCPIP::{device}::INSTR</InstrumentAddressString>\n"));
+    }
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <LXIDevice xmlns="http://www.lxistandard.org/InstrumentIdentification/1.0">
@@ -793,9 +895,7 @@ fn lxi_identification() -> String {
 <UserDescription>OOS</UserDescription>
 <IdentificationURL>/lxi/identification</IdentificationURL>
 <Interface InterfaceType="LXI" IPType="IPv4" xsi:type="NetworkInformation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-<InstrumentAddressString>TCPIP::INSTR</InstrumentAddressString>
-<InstrumentAddressString>TCPIP::5555::SOCKET</InstrumentAddressString>
-</Interface>
+{addrs}</Interface>
 <LXIVersion>1.5</LXIVersion>
 </LXIDevice>
 "#,
@@ -831,7 +931,7 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
                 ("protocolVersion", J::Str(ver)),
                 ("capabilities", J::obj(&[("tools", J::obj(&[]))])),
                 ("serverInfo", J::obj(&[("name", J::s("oos-ui")), ("version", J::s(env!("CARGO_PKG_VERSION")))])),
-                ("instructions", J::s("Rigol DHO924S running OOS. Use the scpi tool with Rigol-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
+                ("instructions", J::s("DHO924S running OOS. Use the scpi tool with stock-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
             ])
         }
         "ping" => J::obj(&[]),
@@ -856,8 +956,10 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
         "tools/call" => match params.get("name").and_then(J::str) {
             Some("scpi") => {
                 let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
-                let r = scpi.exec_line(ui, cv, c);
-                text(if r.is_empty() { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") })
+                match scpi.exec_message_checked(ui, cv, c) {
+                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") }),
+                    Err(error) => J::obj(&[("isError", J::Bool(true)), ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])]))]),
+                }
             }
             Some("screenshot") => J::obj(&[("content", J::Arr(vec![J::obj(&[("type", J::s("image")), ("mimeType", J::s("image/png")), ("data", J::Str(base64(&crate::store::png_of(cv))))])]))]),
             _ => return Some(err(id, -32602.0, "unknown tool")),
@@ -924,6 +1026,15 @@ mod tests {
         // a link to the page
         assert!(!f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/", false));
         assert!(f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/update", true));
+        assert!(f("Host: 192.168.177.64:8080\r\nOrigin: https://evil.example", "/waveform", true));
+        assert!(f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/ui-state", false));
+    }
+
+    #[test]
+    fn waveform_names_are_display_names() {
+        assert_eq!(waveform_name("name=C%3A%5Ccaptures%5Cclock.wfm"), "clock.wfm");
+        assert_eq!(waveform_name("name=..%2F..%2Fclock%0A.csv"), "clock.csv");
+        assert_eq!(waveform_name("slot=2"), "waveform.csv");
     }
 
     /// One request over a real socket; the server is polled until the answer is complete.
@@ -970,8 +1081,105 @@ mod tests {
         }
     }
 
+    /// An explicitly started, private backend for tools/scpi_validate.py.
+    /// It opens no desktop, hardware device or LAN discovery announcer.
+    #[test]
+    #[ignore = "Owned headless backend for explicit local SCPI acceptance"]
+    fn scpi_validation_fixture() {
+        let var = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+        let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
+        let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16);
+        assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let end = std::time::Instant::now() + Duration::from_secs(var("OOS_VALIDATION_SECONDS", 90));
+        while !ui.quit && std::time::Instant::now() < end {
+            ui.step(0.04);
+            ui.render(&mut cv);
+            scpi.poll(&mut ui, &cv);
+            for command in h.poll(&mut ui, &cv, &mut scpi) { crate::cmd::run(&mut ui, &command); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn get(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, path: &str) -> String {
         request(h, ui, cv, scpi, format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).into_bytes())
+    }
+
+    #[test]
+    fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let store = std::env::temp_dir().join(format!("oos-http-no-write-{}", std::process::id()));
+        ui.store_dir = store.clone();
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let post = |path: &str, body: &[u8]| {
+            let mut data = format!("POST {path} HTTP/1.1\r\nHost: x\r\nOrigin: http://x\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+            data.extend_from_slice(body);
+            data
+        };
+        let mut csv = String::from("Time (s),Volts\n");
+        for k in 0..1000 {
+            csv.push_str(&format!("{},{}\n", k as f64 * 1e-9, (k as f64 * std::f64::consts::TAU / 20.0).sin()));
+        }
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=clock.csv&slot=3", csv.as_bytes()));
+        assert!(reply.starts_with("HTTP/1.1 200") && reply.contains("Loaded clock.csv into R3"), "{reply}");
+        assert!(!ui.record_mode(), "loading into a live session adds a reference overlay");
+        assert_eq!(ui.ref_slot(), 2);
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=no-slot.csv", csv.as_bytes()));
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+        assert_eq!(ui.ref_slot(), 2, "an omitted destination must not replace R1");
+        assert_eq!(ui.ref_shown(), Some(true));
+        assert!(!store.exists(), "an upload is read into memory, not written to a server-selected path");
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.csv&slot=4", b"not a waveform"));
+        assert!(reply.starts_with("HTTP/1.1 409"), "{reply}");
+        assert_eq!(ui.ref_slot(), 2, "failed upload keeps the previous selection");
+        assert_eq!(ui.ref_shown(), Some(true));
+        let mut malformed = Vec::from(&b"OOSW"[..]);
+        malformed.extend_from_slice(&1u32.to_le_bytes());
+        malformed.extend_from_slice(&1u32.to_le_bytes());
+        malformed.extend_from_slice(&u64::MAX.to_le_bytes());
+        malformed.extend_from_slice(&1e-9f64.to_le_bytes());
+        malformed.extend_from_slice(&0f64.to_le_bytes());
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.bin&slot=4", &malformed));
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("32-million-sample import limit"), "{reply}");
+        assert_eq!(ui.ref_slot(), 2);
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=clock.csv", csv.as_bytes()));
+        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+        assert_eq!(ui.ref_slot(), 2, "a file with no slot does not replace R1");
+        assert!(ui.meas_at(crate::model::WaveId::Ref(0), oos_dsp::measure::Meas::Vpp).is_nan());
+        assert!(ui.meas_at(crate::model::WaveId::Ref(2), oos_dsp::measure::Meas::Vpp).is_finite());
+        for slot in ["0", "11", "nope", ""] {
+            let reply = request(&mut h, &mut ui, &cv, &mut scpi, post(&format!("/waveform?slot={slot}"), csv.as_bytes()));
+            assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+        }
+        let state = get(&mut h, &mut ui, &cv, &mut scpi, "/ui-state");
+        let body = state.split("\r\n\r\n").nth(1).unwrap();
+        let parsed = crate::json::parse(body).unwrap();
+        assert_eq!(parsed.get("mode").and_then(crate::json::J::str), Some("live"));
+    }
+
+    #[test]
+    fn waveform_upload_has_its_own_limit_and_origin_protection() {
+        assert_eq!(MAX_WAVEFORM, 128 << 20, "native and browser imports share the parser byte limit");
+        assert!(PAGE.contains("up to 128 MiB") && PAGE.contains("file.size>128*1024*1024"));
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, format!("POST /waveform?name=x.bin HTTP/1.1\r\nContent-Length: {}\r\n\r\n", MAX_WAVEFORM + 1).into_bytes());
+        assert!(reply.starts_with("HTTP/1.1 413"), "{reply}");
+        let reply = request(&mut h, &mut ui, &cv, &mut scpi, b"POST /waveform HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\nContent-Length: 0\r\n\r\n".to_vec());
+        assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
+        assert!(!ui.record_mode());
+        assert!(crate::cmd::remote_ok("workflow live"));
+        assert!(crate::cmd::remote_ok("workflow sim"));
+        assert!(!crate::cmd::remote_ok("workflow quit"));
+        assert!(!crate::cmd::remote_ok("workflow load C:/private/file"));
     }
 
     /// Runs the page's script under Node with a small stand-in for the browser (skipped without `node`) and returns the
@@ -995,6 +1203,8 @@ global.Image = class { set src(v) { this._s = v; setTimeout(() => this.onload &&
 global.URL = { createObjectURL: () => 'blob:x', revokeObjectURL() {} };
 // the scope's side: a PNG has the ETag "t", which If-None-Match then gets 304 for
 global.fetch = (u, o) => {
+  // the remote controls' state poll (/ui-state) is not picture traffic: answered, not logged
+  if (!u.startsWith('/screen')) return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({}), text: () => Promise.resolve(''), blob: () => Promise.resolve({}) });
   const have = (o && o.headers && o.headers['If-None-Match']) || '';
   log.push(u); inm.push(have);
   const png = u.startsWith('/screen.png'), status = png && have == '"t"' ? 304 : 200;
@@ -1016,9 +1226,9 @@ setTimeout(() => {
         let dir = std::env::temp_dir().join(format!("oos-ui-page-{}-{}", std::process::id(), preset.len() + storage_throws as usize));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("page.js"), script).unwrap();
-        std::fs::write(dir.join("run.js"), HARNESS).unwrap();
+        std::fs::write(dir.join("run.cjs"), HARNESS).unwrap();
         let mut cmd = std::process::Command::new("node");
-        cmd.arg(dir.join("run.js")).arg(dir.join("page.js")).env("PRESET", preset);
+        cmd.arg(dir.join("run.cjs")).arg(dir.join("page.js")).env("PRESET", preset);
         if storage_throws {
             cmd.env("THROWS", "1");
         }
@@ -1321,6 +1531,30 @@ setTimeout(() => {
         // ordinary requests still work
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("<Manufacturer>OOS"), "{}", r);
+        assert!(r.contains("TCPIP::INSTR") && r.contains("TCPIP::5555::SOCKET"), "{}", r);
+    }
+
+    #[test]
+    fn identification_names_the_listeners() {
+        let mut h = Http::open(0);
+        h.offer(Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(crate::hislip::PORT) });
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.contains("TCPIP::hislip0::INSTR"), "{}", r);
+        assert!(r.contains("TCPIP::5555::SOCKET"), "{}", r);
+        assert!(!r.contains("TCPIP::INSTR<"), "{}", r);
+        assert!(r.contains("<IdentificationURL>/lxi/identification</IdentificationURL>"), "{}", r);
+    }
+
+    #[test]
+    fn identification_names_custom_hislip_port_without_advertising_the_default() {
+        let xml = lxi_identification(&Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(14880) });
+        assert!(xml.contains("TCPIP::hislip0,14880::INSTR"), "{xml}");
+        assert!(!xml.contains("TCPIP::hislip0::INSTR"), "{xml}");
+        let closed = lxi_identification(&Offer { scpi_port: None, vxi11: false, hislip_port: None });
+        assert!(!closed.contains("InstrumentAddressString"), "{closed}");
     }
 
     #[test]
@@ -1348,6 +1582,34 @@ setTimeout(() => {
         assert_eq!(unescape("a%é1"), "a1");
         assert_eq!(unescape("%€"), String::from_utf8_lossy(&[0xac]));
         assert_eq!(unescape("x%4"), "x%4");
+    }
+
+    #[test]
+    fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
+        let mut ui=crate::ui::Ui::new(crate::wave::Source::Demo{t:0.0});ui.set_offline(true);
+        let mut csv=String::from("Time (s),Volts\n");for i in 0..4000 {csv.push_str(&format!("{},{}\n",i as f64*1e-9,if i%40<20 {-0.5}else{0.5}));}
+        ui.load_waveform_bytes(csv.as_bytes(),"opc.csv").unwrap();ui.m.trig_level=10.0;
+        let cv=crate::gfx::Canvas::new(crate::ui::W,crate::ui::H);let mut scpi=crate::scpi::Scpi::open(0);
+        let reply=mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut ui,&cv,&mut scpi).unwrap();
+        let reply=crate::json::parse(&reply).unwrap();assert_eq!(reply.get("result").unwrap().get("isError"),Some(&crate::json::J::Bool(true)));
+        assert_eq!(ui.m.trig_mode,crate::model::TrigMode::Single,"commands after an unsupported immediate barrier must not execute");
+    }
+
+    #[test]
+    fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let empty = mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR;:MEAS:STRIP?"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(empty.contains("\"text\":\"\""), "{empty}");
+        assert!(!empty.contains("\"text\":\"ok\""));
+        let write = mcp(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(write.contains("\"text\":\"ok\""), "{write}");
+        let compound = mcp(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:STRIP?;*OPC?"}}}"#,
+            &mut ui, &cv, &mut scpi).unwrap();
+        assert!(compound.contains("\"text\":\";1\""), "{compound}");
     }
 
     #[test]
@@ -1387,7 +1649,7 @@ setTimeout(() => {
         q(":BODE:GEN \"10.0.0.9:5025\"");
         assert_eq!(q(":BODE:GEN?"), "10.0.0.9:5025");
         assert_eq!(q(":BODE:DATA?"), "");
-        // built-in generator, Rigol forms
+        // built-in generator, stock forms
         q(":SOUR:FREQ 12345.6");
         q(":SOURce1:VOLTage:LEVel:IMMediate:AMPLitude 0.5");
         q(":SOUR:VOLT:OFFS 0.25");

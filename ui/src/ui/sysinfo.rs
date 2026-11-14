@@ -52,7 +52,14 @@ fn memory() -> Option<(u64, u64)> {
     Some((get("MemAvailable:")?, get("MemTotal:")?))
 }
 
+/// (free, total) bytes of the file system holding `path` (none without `statvfs`, on Windows).
+#[cfg(not(unix))]
+fn disk(_path: &str) -> Option<(u64, u64)> {
+    None
+}
+
 /// (free, total) bytes of the file system holding `path`.
+#[cfg(unix)]
 fn disk(path: &str) -> Option<(u64, u64)> {
     let c = std::ffi::CString::new(path).ok()?;
     let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
@@ -118,7 +125,7 @@ impl Ui {
 
         // ---- column 1: unit and software
         let mut a = vec![Row::Head("Unit".into())];
-        a.push(kv("Model", format!("Rigol {}", c.name)));
+        a.push(kv("Model", c.name.clone()));
         a.push(kv("Serial", p.serial.clone().unwrap_or("-".into())));
         a.push(kv("MAC", p.mac.clone().unwrap_or("-".into())));
         a.push(kv("Series", c.series));

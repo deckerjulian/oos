@@ -22,9 +22,31 @@ pub struct Logger {
     head: String,
 }
 
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_log_headers_name_required_sources_and_pending_values_stay_empty() {
+        let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.meas.clear();ui.m.meas2.clear();
+        ui.m.cat=vec![(90,WaveId::Ref(0),WaveId::Ref(1),WaveId::Ch(2),WaveId::Ch(3)),
+            (92,WaveId::Ref(0),WaveId::Ref(1),WaveId::Ch(2),WaveId::Ch(3))];
+        let header=ui.log_head();
+        assert!(header.contains("R1-R2 Power Quality (W)"),"{header}");
+        assert!(header.contains("R2 Inrush Current (A)"),"{header}");
+        assert!(!header.contains("CH3") && !header.contains("CH4"),"unused sources must not be claimed");
+        let rows=ui.meas_rows();assert_eq!(rows.len(),2);assert!(rows.iter().all(|row|row.v.is_nan()));
+        assert_eq!(ui.wfm_total,0);
+    }
+}
+
 impl Ui {
     fn log_head(&self) -> String {
-        let cols: Vec<String> = self.meas_rows().iter().map(|r| format!("{} CH{} ({})", r.name.replace(',', " "), r.ch + 1, r.unit)).collect();
+        let cols: Vec<String> = self.meas_rows().iter().enumerate().map(|(i,r)| {
+            if i < self.m.meas.len()+self.m.meas2.len() {
+                format!("{} {} ({})",r.name.replace(','," "),self.wave_name(r.src),r.unit)
+            } else { format!("{} ({})",self.results_name(i,r).replace(','," "),r.unit) }
+        }).collect();
         format!("Elapsed (s),Unix time (s),{}", cols.join(","))
     }
 
@@ -39,7 +61,7 @@ impl Ui {
 
     pub(super) fn log_start(&mut self) {
         if self.meas_rows().is_empty() {
-            return self.toast("No measurements: Measure > Add item");
+            return self.toast("No measurements: tap Measure");
         }
         let dir = self.save_dir();
         let p = self.new_file(&dir, "log", "csv");

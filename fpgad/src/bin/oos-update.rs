@@ -855,12 +855,11 @@ fn keygen(a: &Args) {
     );
     {
         use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&out)
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut f = options.open(&out)
             .unwrap_or_else(|e| die(&format!("{}: {}", out.display(), e)));
         f.write_all(text.as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
     }
