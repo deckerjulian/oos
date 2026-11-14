@@ -191,7 +191,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 
 | Interface | Port | Purpose |
 |---|---|---|
-| SCPI over TCP | 5555 | stock-style command subset, see [ui/src/scpi.rs](ui/src/scpi.rs); `:WAVeform:MODE RAW` reads every sample of the record in the screen window |
+| SCPI over TCP | 5555 | [SCPI manual](docs/scpi.md): DHO800/DHO900 subset and OOS extensions; RAW reads retained native CH memory, and references retain their own native timing |
 | VXI-11 | 111, 9009 | on the scope, where port 111 is free: `TCPIP::<ip>::INSTR` |
 | HiSLIP | 4880 | on a computer: the payload is the same SCPI interpreter; `TCPIP::<ip>::hislip0::INSTR` |
 | Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |

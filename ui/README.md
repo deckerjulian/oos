@@ -148,6 +148,10 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
 
 ## SCPI (TCP 5555)
 
+See the [OOS Plus SCPI manual](../docs/scpi.md) for the supported DHO924S-style
+subset, command/result lists, reference/SIM/decoder extensions, binary transfer
+example, asynchronous operation completion and explicit compatibility limits.
+
 A stock-compatible subset, enough for scripts and the openSciLab bridge: `*IDN? *RST *OPC? *CLS`, `:RUN :STOP :SINGle
 :AUToscale :CLEar`, `:CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert`, `:TIMebase[:MAIN]:SCALe|OFFSet`,
 `:TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe :TRIGger:SWEep :TRIGger:STATus?`, `:ACQuire:SRATe?|MDEPth?`,
@@ -155,9 +159,12 @@ A stock-compatible subset, enough for scripts and the openSciLab bridge: `*IDN? 
 `:MEASure:STRip?` (the rows under the plot, plus the DVM and counter when they are on),
 `:MEASure:READout?` (those rows, and the eye figures when the eye page is up),
 `:EYE:ITEM? <figure>` (height, width, unit interval, total jitter, and the other figures on that page),
-`:WAVeform:SOURce|MODE|FORMat(BYTE/WORD/ASCii)|POINts?|PREamble?|DATA?` (the displayed
-record, volts = (code - yorigin - yref) * yinc), `:DISPlay:DATA?` (24-bit BMP of the screen), `:SYSTem:ERRor?`.
+`:WAVeform:SOURce|MODE|FORMat(BYTE/WORD/ASCii)|POINts?|PREamble?|DATA?` (NORM display data,
+RAW retained native CH memory, or full native references; volts = (code - yorigin - yref) * yinc),
+`:DISPlay:DATA?` (24-bit BMP of the screen), `:SYSTem:ERRor?`.
 Remote changes go through the same model as the screen. Tested from a host against the unit on 2026-11-02.
+That historical hardware check does not certify the full stock command set or
+the later extensions; current local coverage and limits are in the manual.
 
 ## Live FPGA source (experimental)
 

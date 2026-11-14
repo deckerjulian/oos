@@ -25,6 +25,18 @@ record sessions; Live restores acquisition.
 Select the reference pill to focus the vertical controls, cursors and automatic
 Eye action. Run, Stop and Single remain the acquisition/replay controls.
 
+Selecting a primary trigger source preserves Run or Stop. A running scope arms
+that source immediately, including a loaded reference; a stopped scope stays
+stopped until Run or Single is pressed. Single remains Single across a source
+change and stops after one accepted capture. Selecting a reference card only
+changes editing focus, and importing a reference with live channels keeps the
+live acquisition context. Use the shared Run/Stop/Single controls and choose a
+reference trigger source when you want stored-record acquisition; returning the
+primary trigger source to CH preserves the same running or stopped state.
+
+The [SCPI manual](scpi.md) documents the same controls, transfer formats and
+supported DHO924S-style commands alongside the OOS extensions.
+
 ## Math and decoding
 
 Open Menu > Math, choose an operation, then choose loaded R sources for A/B.
@@ -111,6 +123,10 @@ panning a stopped record does not manufacture new captures or repeat the full
 analysis. Drawing uses a bounded raster while timing recovery retains native
 samples and edges.
 
+An immutable reference's full-record Eye remains a snapshot of that file.
+Replaying successive viewports does not create independent full-record BER
+observations from the same samples.
+
 Flat data, too few edges and inadequate sampling produce explicit missing/limited
 results. Automatic NRZ recovery is an estimate: a PAM/C-PHY rail is not a validated
 binary eye or a decoded symbol-rate measurement. Explicit rate/clock controls
@@ -124,13 +140,3 @@ Auto deskew aligns nearby transitions on shown sources; use a common known edge
 for calibration. It preserves hidden-source corrections and native file metadata.
 Clear deskew removes the calibration. Decoding and measurement alignment use the
 corrected physical origins rather than modifying waveform sample values.
-
-
-Selecting a primary trigger source preserves Run or Stop. A running scope arms
-that source immediately, including a loaded reference; a stopped scope stays
-stopped until Run or Single is pressed. Single remains Single across a source
-change and stops after one accepted capture. Selecting a reference card only
-changes editing focus, and importing a reference with live channels keeps the
-live acquisition context. Use the shared Run/Stop/Single controls and choose a
-reference trigger source when you want stored-record acquisition; returning the
-primary trigger source to CH preserves the same running or stopped state.
