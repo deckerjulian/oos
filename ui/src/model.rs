@@ -943,6 +943,8 @@ pub struct Model {
     pub math_win: [usize; crate::math::NMATH],
     /// window of the LA lanes while the plot is split (one window: their strip under the plot)
     pub la_win: usize,
+    /// Window of each reference trace in a split (not Stacked).
+    pub ref_win: [usize; NREF],
     pub meas: Vec<(Meas, WaveId)>,
     /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
     pub meas2: Vec<(usize, WaveId, WaveId)>,
@@ -1567,6 +1569,7 @@ impl Default for Model {
             ch_win: [0; NCH],
             math_win: [0; crate::math::NMATH],
             la_win: 0,
+            ref_win: [0; NREF],
             afg_arb_src: 0,
             afg_freq: 1000.0,
             afg_ampl: 1.0,

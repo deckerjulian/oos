@@ -476,6 +476,8 @@ enum Item {
     /// view density (ui/windows.rs): Scope, Full, Split, Four
     WinLayout,
     WinCh(usize),
+    /// window of reference R<n+1> in a split
+    WinRef(usize),
     WinMath(usize),
     WinLa,
     ClearDisp,
@@ -1422,6 +1424,12 @@ impl Ui {
         self.m.ch_win[c].min(self.wins.len().max(1) - 1)
     }
 
+    /// Window of reference `i` in a split: its Windows row; in Stacked its own row.
+    fn ref_win_of(&self, i: usize) -> usize {
+        if self.stacked() { return self.trace_sources().iter().position(|source| *source == workspace::Trace::Reference(i)).unwrap_or(usize::MAX); }
+        self.m.ref_win[i].min(self.wins.len().max(1) - 1)
+    }
+
     fn math_win_of(&self, k: usize) -> usize {
         if self.stacked() { return self.trace_sources().iter().position(|source| *source == workspace::Trace::Math(k)).unwrap_or(usize::MAX); }
         self.m.math_win[k].min(self.wins.len().max(1) - 1)
@@ -1484,6 +1492,15 @@ impl Ui {
         }
         for k in 0..NMATH {
             self.m.math_win[k] = if self.m.math_ch(k).op != MathOp::Off {
+                i += 1;
+                (i - 1) % n
+            } else {
+                0
+            };
+        }
+        // shown references after them, so a loaded R1 gets a window of its own as well
+        for r in 0..NREF {
+            self.m.ref_win[r] = if self.refs[r].as_ref().is_some_and(|x| x.on) {
                 i += 1;
                 (i - 1) % n
             } else {
@@ -2580,7 +2597,7 @@ impl Ui {
                 }
                 self.draw_hist(cv);
                 self.draw_zones(cv);
-                if i == 0 || self.stacked() {
+                if self.wins.len() > 1 || i == 0 || self.stacked() {
                     if self.waves_on() {
                         self.draw_refs_at(cv, self.waves_plot(self.area), self.view(), false);
                     } else { self.draw_refs(cv); }
@@ -3504,6 +3521,8 @@ impl Ui {
             let Some(r) = r else { continue };
             let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
             if !all_sources && self.stacked() && self.trace_sources().get(self.cur_win) != Some(&workspace::Trace::Reference(i)) { continue; }
+            // a split (not Stacked): each reference in the window its Windows row names
+            if !all_sources && !self.stacked() && self.wins.len() > 1 && self.ref_win_of(i) != self.cur_win { continue; }
             if !r.on || r.v.is_empty() || !(r.dt > 0.0) {
                 continue;
             }

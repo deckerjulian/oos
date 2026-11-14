@@ -612,7 +612,12 @@ impl Ui {
         sources
     }
     pub(super) fn source_area(&self, id: WaveId) -> Option<Rect> {
-        if !self.stacked() { return Some(self.wave_area()); }
+        if !self.stacked() {
+            if let WaveId::Ref(i) = id {
+                if self.wins.len() > 1 { return self.wins.get(self.ref_win_of(i)).copied(); }
+            }
+            return Some(self.wave_area());
+        }
         let wanted = match id { WaveId::Ch(c) => Trace::Channel(c), WaveId::Ref(i) => Trace::Reference(i) };
         let index = self.trace_sources().iter().position(|source| *source == wanted)?;
         self.wins.get(index).copied()
@@ -681,8 +686,9 @@ impl Ui {
                 WaveId::Ref(i) => (format!("R{}", i + 1), self.selected_workspace_source() == Some(id)),
             };
             let color = self.wave_color(id);
-            btn(cv, rect, BAR, if selected { color } else { BTN_BORDER });
-            cv.text_in(&self.fonts.sb, rect, 1, &label, color);
+            // the active source is filled in its colour, the others only carry it in their label
+            btn(cv, rect, if selected { color } else { BAR }, if selected { color } else { BTN_BORDER });
+            cv.text_in(&self.fonts.sb, rect, 1, &label, if selected { BAR } else { color });
         }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
         draw(cv, overlay, "Overlay", !self.workspace.stacked);

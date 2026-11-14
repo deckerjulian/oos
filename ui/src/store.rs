@@ -249,6 +249,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("ch_window", m.ch_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("la_window", (m.la_win + 1).to_string());
+    kv("ref_window", m.ref_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("meas", m.meas.iter().map(|&(k, id)| format!("{:?}:{}", k, id.token())).collect::<Vec<_>>().join(" "));
     kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a.token(), b.token())).collect::<Vec<_>>().join(" "));
     if !m.cat.is_empty() {
@@ -561,6 +562,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.ch_win.copy_from_slice(&w);
         }
         "la_window" => m.la_win = p_idx(v, 5)?.checked_sub(1).ok_or("window 0")?,
+        "ref_window" => {
+            let w = p_list(v, crate::model::NREF, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
+            m.ref_win.copy_from_slice(&w);
+        }
         "math_window" => {
             let w = p_list(v, crate::math::NMATH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.math_win.copy_from_slice(&w);
