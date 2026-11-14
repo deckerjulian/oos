@@ -213,6 +213,8 @@ const DEC_BAND: i32 = 28;
 const REF_COLORS: [(&str, Rgb); 5] = [("White", rgb(0xd8, 0xd8, 0xd8)), ("Red", rgb(0xf0, 0x60, 0x60)), ("Green", rgb(0x60, 0xe0, 0x90)), ("Blue", rgb(0x70, 0xa8, 0xf8)), ("Violet", rgb(0xc8, 0x88, 0xf0))];
 
 const NREF: usize = 10;
+/// Measurements on the first Add measurement page; the rest sit behind More so the grid fits the screen.
+const MEAS_PAGE: usize = 35;
 /// Kinds of delay and phase measurement and of second panes, for the setups.
 pub const PAIRS_N: usize = tools::PAIRS.len();
 pub const PANES_N: usize = tables::PANES.len();
@@ -250,6 +252,8 @@ pub enum MenuId {
     Acquire,
     Measure,
     MeasAdd,
+    /// the measurements after the first page of Add measurement
+    MeasAddMore,
     /// delay and phase between two channels
     MeasPair,
     /// digital voltmeter and counter (ui/tools.rs)
@@ -3559,7 +3563,7 @@ impl Ui {
             (MenuId::Pick, Some(p)) => p.menu,
             (m, _) => m,
         };
-        if m == MenuId::MeasAdd {
+        if matches!(m, MenuId::MeasAdd | MenuId::MeasAddMore) {
             MenuId::Measure
         } else {
             m
@@ -3891,7 +3895,8 @@ impl Ui {
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
-            MenuId::MeasAdd => ALL_MEAS.iter().map(|&k| Item::MeasAdd(k)).collect(),
+            MenuId::MeasAdd => ALL_MEAS[..MEAS_PAGE].iter().map(|&k| Item::MeasAdd(k)).chain([Item::Open(MenuId::MeasAddMore)]).collect(),
+            MenuId::MeasAddMore => ALL_MEAS[MEAS_PAGE..].iter().map(|&k| Item::MeasAdd(k)).collect(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
@@ -4537,6 +4542,7 @@ impl Ui {
             MenuId::Acquire => "Acquire".into(),
             MenuId::Measure => "Measure".into(),
             MenuId::MeasAdd => "Add measurement".into(),
+            MenuId::MeasAddMore => "Add measurement (more)".into(),
             MenuId::MeasPair => "Delay and phase (A to B)".into(),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
@@ -4588,6 +4594,7 @@ impl Ui {
             Item::Open(MenuId::ChMore(_)) => "More",
             Item::Open(MenuId::Measure) => "Measure",
             Item::Open(MenuId::MeasAdd) => "Add item",
+            Item::Open(MenuId::MeasAddMore) => "More...",
             Item::Open(MenuId::Cursor) => "Cursor",
             Item::Open(MenuId::Display) => "Display",
             Item::Open(MenuId::Utility) => "System",
@@ -8239,7 +8246,7 @@ mod tests {
             // two buttons in a card: the finger gets half of its height each
             assert!(trg.h / 2 >= 32 && sb.w >= 60 && mb.y > sb.y + sb.h, "{:?} {:?}", sb, mb);
         }
-        for m in [MenuId::Main, MenuId::Trigger, MenuId::Math, MenuId::MeasAdd, MenuId::Utility, MenuId::Channel(0), MenuId::Display, MenuId::Acquire] {
+        for m in [MenuId::Main, MenuId::Trigger, MenuId::Math, MenuId::MeasAdd, MenuId::MeasAddMore, MenuId::Utility, MenuId::Channel(0), MenuId::Display, MenuId::Acquire] {
             ui.open_menu(m);
             let d = ui.dlg_layout().unwrap();
             let fr = ui.frame();
