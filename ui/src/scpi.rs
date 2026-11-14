@@ -3,7 +3,7 @@
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
 //! *IDN? *RST *OPC? *CLS *ESR?, :RUN :STOP :SINGle :TFORce :AUToscale :CLEar,
-//! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|LABel:SHOW|LABel:CONTent,
+//! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|BIAS|LABel:SHOW|LABel:CONTent,
 //! :TIMebase[:MAIN]:SCALe|OFFSet, :TIMebase:DELay:ENABle|SCALe|OFFSet, :TIMebase:VERNier, :TIMebase:HREFerence:MODE, :TIMebase:XY:ENABle,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?,
 //! :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M)|TYPE NORM/PEAK/AVER/HRES|AVERages|ULTRa:MAXFrame,
@@ -898,6 +898,17 @@ impl Scpi {
                         return Some(t(if ch.invert { "1" } else { "0" }));
                     }
                     ch.invert = parse_bool(arg)?;
+                } else if kw(n1, "BIAS") {
+                    // The screen's zero correction, subtracted from the channel reading.
+                    // The DHO programmer manual has no header for it.
+                    if query {
+                        return Some(t(&e(ch.bias as f64)));
+                    }
+                    let Some(v) = num(arg) else {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return Some(None);
+                    };
+                    ch.bias = v;
                 } else if kw(n1, "TCALibrate") {
                     if query {
                         return Some(t(&e(ch.skew as f64)));
@@ -4065,12 +4076,37 @@ mod tests {
     }
 
     #[test]
+    fn channel_zero_bias_shifts_the_reading() {
+        let (mut s, mut ui, cv) = session();
+        for _ in 0..8 {
+            ui.step(0.05);
+        }
+        let before: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? VAVG,CHAN1").parse().unwrap();
+        assert!(before.is_finite() && before < 1e37, "{before}");
+        line(&mut s, &mut ui, &cv, ":CHAN1:BIAS 0.25");
+        for _ in 0..4 {
+            ui.step(0.05);
+        }
+        let after: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? VAVG,CHAN1").parse().unwrap();
+        assert!((before - after - 0.25).abs() < 0.05, "before {before} after {after}");
+    }
+
+    #[test]
     fn acquisition_deskew_reference_color_and_thresholds_round_trip() {
         let (mut s, mut ui, cv) = reference_session();
         line(&mut s, &mut ui, &cv, ":ACQ:TYPE AVER;:ACQ:AVER 100;:ACQ:ULTR:MAXF 100");
         assert_eq!(line(&mut s, &mut ui, &cv, ":ACQ:TYPE?;:ACQ:AVER?;:ACQ:ULTR:MAXF?"), "AVER;64;100");
         line(&mut s, &mut ui, &cv, ":ACQ:TYPE HRES;:ACQ:ULTR:MAXF 0");
         assert_eq!(line(&mut s, &mut ui, &cv, ":ACQ:TYPE?;:ACQ:ULTR:MAXF?"), "HRES;0");
+
+        line(&mut s, &mut ui, &cv, ":CHAN1:BIAS 0.25");
+        let bias: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:BIAS?").parse().unwrap();
+        assert!((bias - 0.25).abs() < 1e-6, "{bias}");
+        line(&mut s, &mut ui, &cv, "*CLS;:CHAN1:BIAS nan");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "a non-finite zero bias is refused");
+        let held_bias: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:BIAS?").parse().unwrap();
+        assert!((held_bias - 0.25).abs() < 1e-6, "{held_bias}");
+        line(&mut s, &mut ui, &cv, ":CHAN1:BIAS 0");
 
         line(&mut s, &mut ui, &cv, ":CHAN1:TCAL 2e-8");
         let skew: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:TCAL?").parse().unwrap();
