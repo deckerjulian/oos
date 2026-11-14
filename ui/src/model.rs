@@ -882,6 +882,8 @@ pub struct Model {
     pub deskew_ch: [f64; NCH],
     pub deskew_ref: [f64; NREF],
     pub active: usize, // channel the vertical knobs act on
+    /// Track cursor B's source. None follows the selected workspace source.
+    pub cur_b_source: Option<WaveId>,
     pub tscale: usize,
     pub delay: f32, // s, horizontal position of the trigger point relative to the centre
     pub trig_src: usize,
@@ -1340,6 +1342,7 @@ impl Default for Model {
             deskew_ch: [0.0; NCH],
             deskew_ref: [0.0; NREF],
             active: 0,
+            cur_b_source: None,
             tscale: t200u,
             delay: 0.0,
             trig_src: 0,

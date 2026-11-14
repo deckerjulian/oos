@@ -369,6 +369,10 @@ def validate(oos, result):
     result.equal("cursor type", oos.query(":CURSor:MANual:TYPE?"), "TIME")
     result.numeric("cursor A time", float(oos.query(":CURSor:MANual:CAX?")), 0.0, absolute=1e-12)
     result.numeric("cursor delta", float(oos.query(":CURSor:MANual:XDELta?")), 1e-6, relative=1e-4)
+    oos.write(":CURSor:MODE TRACk")
+    oos.write(":CURSor:TRACk:SOURce1 CHANnel1")
+    oos.write(":CURSor:TRACk:SOURce2 CHANnel2")
+    result.equal("track cursor sources", oos.query(":CURSor:TRACk:SOURce1?;:CURSor:TRACk:SOURce2?"), "CHAN1;CHAN2")
     oos.write(":CURSor:MODE OFF")
     result.equal("cursors off have no delta", float(oos.query(":CURSor:MANual:XDELta?")), 9.9e37)
 
@@ -376,10 +380,141 @@ def validate(oos, result):
     oos.write(":MEASure:SOURce R1")
     oos.write(":MEASure:ITEM VPP")
     result.equal("measurement source", oos.query(":MEASure:SOURce?"), "R1")
+    oos.write(":MEASure:SETup:PSA CHANnel2")
+    oos.write(":MEASure:SETup:PSB R1")
+    result.equal("phase and delay sources", oos.query(":MEASure:SETup:DSA?;:MEASure:SETup:DSB?"), "CHAN2;R1")
+    oos.write(":MEASure:SOURce R1")
     strip = oos.query(":MEASure:STRip?")
     result.add("measure item is on the readout", strip.startswith("VPP,R1,"), strip=strip)
     oos.write(":MEASure:CLEar")
     result.equal("measure clear empties the readout", oos.query(":MEASure:STRip?"), "")
+
+    oos.write(":CHANnel1:LABel:CONTent Vbus")
+    oos.write(":CHANnel1:UNITs AMPere")
+    oos.write(":CHANnel1:VERNier ON")
+    result.equal("channel label", oos.query(":CHANnel1:LABel:CONTent?"), "Vbus")
+    result.equal("channel units", oos.query(":CHANnel1:UNITs?"), "AMP")
+    oos.write(":CHANnel1:EXPand GND")
+    result.equal("channel expand", oos.query(":CHANnel2:EXPand?"), "GND")
+    oos.write(":CHANnel1:EXPand CENTer")
+    result.equal("channel vernier", oos.query(":CHANnel1:VERNier?"), "1")
+    oos.write(":TIMebase:HREFerence:MODE TRIGger")
+    oos.write(":TIMebase:DELay:ENABle ON")
+    oos.write(":TIMebase:DELay:SCALe 1e-7")
+    oos.write(":TIMebase:XY:ENABle ON")
+    result.equal("zoom and xy", oos.query(":TIMebase:HREFerence:MODE?;:TIMebase:DELay:ENABle?;:TIMebase:XY:ENABle?"), "TRIG;1;1")
+    result.numeric("zoom scale", float(oos.query(":TIMebase:DELay:SCALe?")), 1e-7, relative=1e-3)
+    oos.write(":TIMebase:XY:ENABle OFF")
+    oos.write(":TIMebase:DELay:ENABle OFF")
+
+    oos.write(":MEASure:STATistic:DISPlay ON")
+    oos.write(":MEASure:STATistic:ITEM VPP,R1")
+    result.equal("statistics on", oos.query(":MEASure:STATistic:DISPlay?"), "1")
+    result.add("statistic current is a number",
+               math.isfinite(float(oos.query(":MEASure:STATistic:ITEM? CURRent,VPP,R1"))))
+    oos.write(":MEASure:STATistic:RESet")
+    result.equal("statistic reset", float(oos.query(":MEASure:STATistic:ITEM? CNT,VPP,R1")), 0.0)
+
+    oos.write(":ACQuire:TYPE AVERages")
+    oos.write(":ACQuire:AVERages 100")
+    oos.write(":ACQuire:ULTRa:MAXFrame 100")
+    result.equal("acquire type and averages", oos.query(":ACQuire:TYPE?;:ACQuire:AVERages?;:ACQuire:ULTRa:MAXFrame?"), "AVER;64;100")
+    oos.write(":ACQuire:TYPE HRESolution")
+    result.equal("high resolution acquire", oos.query(":ACQuire:TYPE?"), "HRES")
+    oos.write(":CHANnel1:BIAS 0.25")
+    result.numeric("channel zero bias", float(oos.query(":CHANnel1:BIAS?")), 0.25, relative=1e-6)
+    oos.write(":CHANnel1:BIAS 0")
+    oos.write(":CHANnel1:TCALibrate 2e-8")
+    result.numeric("channel deskew", float(oos.query(":CHANnel1:TCALibrate?")), 2e-8, relative=1e-6)
+    oos.write(":REFerence:COLor 1,RED")
+    result.equal("reference color", oos.query(":REFerence:COLor? 1"), "RED")
+    oos.write(":MASK:ENABle ON")
+    oos.write(":MASK:SOURce CHANnel1")
+    oos.write(":MASK:X 0.5")
+    oos.write(":MASK:Y 0.5")
+    result.equal("mask setup", oos.query(":MASK:ENABle?;:MASK:SOURce?;:MASK:OPERate?"), "1;CHAN1;STOP")
+    result.numeric("mask horizontal tolerance", float(oos.query(":MASK:X?")), 0.5, relative=1e-6)
+    result.numeric("mask vertical tolerance", float(oos.query(":MASK:Y?")), 0.5, relative=1e-6)
+    oos.write(":MASK:ENABle OFF")
+
+    oos.write(":HISTogram:ENABle ON")
+    oos.write(":HISTogram:TYPE VERTical")
+    oos.write(":HISTogram:SOURce CHANnel1")
+    result.equal("histogram setup", oos.query(":HISTogram:ENABle?;:HISTogram:TYPE?;:HISTogram:SOURce?"), "1;VERT;CHAN1")
+    stats = oos.query(":HISTogram:STATistics:RESult?")
+    result.add("histogram result", stats.startswith("Sum:") and "Mean:" in stats, actual=stats)
+    oos.write(":HISTogram:ENABle OFF")
+    result.equal("histogram off", oos.query(":HISTogram:ENABle?"), "0")
+
+    oos.write(":MATH1:DISPlay ON")
+    oos.write(":MATH1:OPERator ADD")
+    oos.write(":MATH1:SOURce1 CHANnel1")
+    oos.write(":MATH1:SOURce2 CHANnel2")
+    oos.write(":MATH1:SCALe 0.2")
+    oos.write(":MATH1:OFFSet 1")
+    result.equal("math setup", oos.query(":MATH1:DISPlay?;:MATH1:OPERator?;:MATH1:SOURce1?;:MATH1:SOURce2?"), "1;ADD;CHAN1;CHAN2")
+    result.numeric("math scale", float(oos.query(":MATH1:SCALe?")), 0.2, relative=1e-6)
+    result.numeric("math offset", float(oos.query(":MATH1:OFFSet?")), 1.0, relative=1e-6)
+    oos.write(":MATH1:FFT:WINDow BLACkman")
+    result.equal("math fft window", oos.query(":MATH1:FFT:WINDow?"), "BLAC")
+    oos.write(":MATH1:DISPlay OFF")
+
+    oos.write(":BUS1:MODE RS232")
+    oos.write(":BUS1:DISPlay ON")
+    oos.write(":BUS1:FORMat ASCii")
+    oos.write(":BUS1:RS232:BAUD 9600")
+    oos.write(":BUS1:RS232:PARity EVEN")
+    result.equal(
+        "bus setup",
+        oos.query(":BUS1:MODE?;:BUS1:DISPlay?;:BUS1:FORMat?;:BUS1:RS232:BAUD?;:BUS1:RS232:PARity?"),
+        "RS232;1;ASC;9600;EVEN",
+    )
+    oos.write(":BUS1:DISPlay OFF")
+
+    oos.write(":DISPlay:TYPE VECTors")
+    oos.write(":DISPlay:GRADing:TIME 0.1")
+    oos.write(":DISPlay:WBRightness 50")
+    oos.write(":DISPlay:GRID HALF")
+    result.equal(
+        "display setup",
+        oos.query(":DISPlay:TYPE?;:DISPlay:GRADing:TIME?;:DISPlay:WBRightness?;:DISPlay:GRID?"),
+        "VECT;0.1;50;HALF",
+    )
+    oos.write(":DISPlay:GBRightness 40")
+    oos.write(":DISPlay:RULers OFF")
+    oos.write(":DISPlay:COLor ON")
+    result.equal(
+        "grid brightness rulers and color grade",
+        oos.query(":DISPlay:GBRightness?;:DISPlay:RULers?;:DISPlay:COLor?"),
+        "40;0;1",
+    )
+    oos.write(":TIMebase:ROLL 0")
+    oos.write(":TIMebase:MODE XY")
+    oos.write(":TIMebase:XY:Z CHANnel3")
+    result.equal(
+        "timebase roll xy and z",
+        oos.query(":TIMebase:ROLL?;:TIMebase:MODE?;:TIMebase:XY:ENABle?;:TIMebase:XY:X?;:TIMebase:XY:Y?;:TIMebase:XY:Z?"),
+        "0;XY;1;CHAN1;CHAN2;CHAN3",
+    )
+    oos.write(":TIMebase:MODE MAIN")
+    oos.write(":TIMebase:XY:Z NONE")
+    oos.write(":MEASure:INDicator ON")
+    result.equal("measurement labels", oos.query(":CURSor:MEASure:INDicator?"), "1")
+    oos.write(":MEASure:INDicator OFF")
+    oos.write(":MEASure:BURSt:IDLE 1e-3")
+    oos.write(":MEASure:OUTSide ABOVe")
+    oos.write(":MEASure:NPERiods 4")
+    oos.write(":MEASure:EDGes DATA")
+    result.equal(
+        "measurement gate",
+        oos.query(":MEASure:OUTSide?;:MEASure:NPERiods?;:MEASure:EDGes?"),
+        "ABOV;4;DATA",
+    )
+    result.numeric("burst idle", float(oos.query(":MEASure:BURSt:IDLE?")), 1e-3, relative=1e-6)
+
+    oos.write(":MEASure:SETup:MIN 20")
+    oos.write(":MEASure:SETup:MAX 80")
+    result.equal("measure thresholds", oos.query(":MEASure:SETup:MIN?;:MEASure:SETup:MAX?"), "20;80")
 
     oos.write(":DVM:ENABle ON")
     oos.write(":DVM:SOURce CHANnel2")

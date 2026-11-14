@@ -201,6 +201,9 @@ pub fn setup_text(m: &Model) -> String {
         kv(&p("invert"), ch.invert.to_string());
     }
     kv("active", m.active.to_string());
+    if let Some(source) = m.cur_b_source {
+        kv("cur_b_source", source.token());
+    }
     kv("tdiv", tscales()[m.tscale].to_string());
     kv("delay", m.delay.to_string());
     kv("trig_src", m.trig_src.to_string());
@@ -494,6 +497,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
     let ntime = tscales().len();
     match k {
         "active" => m.active = p_idx(v, NCH)?,
+        "cur_b_ch" => m.cur_b_source = Some(WaveId::Ch(p_idx(v, NCH)?)),
+        "cur_b_source" => m.cur_b_source = if v == "none" { None } else { Some(WaveId::parse(v)?) },
         "tdiv" => m.tscale = tdiv_index(v)?,
         // setups before the 1/2 ns steps: index into the old ladder (5 ns .. 1000 s)
         "tscale" => m.tscale = legacy_tscale(v, ntime)?,
