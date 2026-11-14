@@ -708,6 +708,8 @@ impl Channel {
 pub struct Model {
     pub ch: [Channel; NCH],
     pub active: usize, // channel the vertical knobs act on
+    /// Track cursor B's channel. None follows the active channel.
+    pub cur_b_ch: Option<usize>,
     pub tscale: usize,
     pub delay: f32, // s, horizontal position of the trigger point relative to the centre
     pub trig_src: usize,
@@ -1060,6 +1062,7 @@ impl Default for Model {
         let mut m = Model {
             ch: std::array::from_fn(|i| c(i == 0)),
             active: 0,
+            cur_b_ch: None,
             tscale: t200u,
             delay: 0.0,
             trig_src: 0,

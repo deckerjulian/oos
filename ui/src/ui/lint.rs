@@ -803,6 +803,30 @@ fn xy_cursors_show_both_axes() {
 }
 
 #[test]
+fn track_cursor_b_follows_its_own_channel() {
+    let mut u = with_two_channels();
+    u.m.cursor = CursorMode::Track;
+    assert_eq!(u.items(MenuId::Cursor).len(), 4);
+    assert_eq!(u.value(Item::CurSrcB), "CH1", "follows the active channel until set");
+    u.adjust(Item::CurSrcB, 1);
+    assert_eq!((u.m.cur_b_ch, u.value(Item::CurSrcB).as_str()), (Some(1), "CH2"));
+    let (ta, _) = u.cursor_times();
+    let mut r = u.last[0].clone().unwrap();
+    r.t0 = ta - 1.0;
+    r.dt = 1.0;
+    r.ch[0] = vec![0.0, 1.0, 2.0];
+    r.ch[1] = vec![0.0, 5.0, 6.0];
+    u.last[0] = Some(r);
+    assert_eq!((u.wave_at_ch(0, ta), u.wave_at_ch(1, ta)), (Some(1.0), Some(5.0)));
+    let v = u.cursor_values();
+    assert_ne!(v[1].1, v[3].1, "Y1 and Y2 read different channels");
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
+    u.render(&mut cv);
+    let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
+    assert_eq!(b.cur_b_ch, Some(1));
+}
+
+#[test]
 fn fine_scale_walks_between_the_steps() {
     let mut u = with_two_channels();
     let v0 = u.m.ch[0].volts_per_div();

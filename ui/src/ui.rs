@@ -466,6 +466,7 @@ enum Item {
     MathLinB,
     MeasClear,
     CurMode,
+    CurSrcB,
     CurA,
     CurB,
     Persist,
@@ -3095,10 +3096,13 @@ impl Ui {
                     let x = a.x + (frac * a.w as f32) as i32;
                     cv.dashed_vline(x, a.y, a.y + a.h - 1, 4, 3, CURSOR);
                     tagbox(cv, x + 2, a.y + a.h - 36, name);
-                    // tracking: a mark where the cursor meets the trace
-                    if let (CursorMode::Track, Some(v)) = (self.m.cursor, self.wave_at(t)) {
-                        let y = self.y_of_volts(self.m.active, v);
-                        cv.dashed_hline(x - 10, x + 10, y, 2, 2, CURSOR);
+                    // tracking: a mark where the cursor meets its source. X2 can follow another channel.
+                    if self.m.cursor == CursorMode::Track {
+                        let c = if name == "X1" { self.m.active } else { self.m.cur_b_ch.unwrap_or(self.m.active) };
+                        if let Some(v) = self.wave_at_ch(c, t) {
+                            let y = self.y_of_volts(c, v);
+                            cv.dashed_hline(x - 10, x + 10, y, 2, 2, CURSOR);
+                        }
                     }
                 }
             }
@@ -3132,17 +3136,18 @@ impl Ui {
             }
             CursorMode::Track => {
                 let (ta, tb) = self.cursor_times();
-                let y = |t: f64| self.wave_at(t);
-                let u = self.m.unit(self.m.active);
-                let txt = |v: Option<f32>| v.map_or("----".to_string(), |v| si(v as f64, u));
-                let dy = y(ta).zip(y(tb)).map(|(a, b)| b - a);
+                let (ca, cb) = (self.m.active, self.m.cur_b_ch.unwrap_or(self.m.active));
+                let (ya, yb) = (self.wave_at_ch(ca, ta), self.wave_at_ch(cb, tb));
+                let (ua, ub) = (self.m.unit(ca), self.m.unit(cb));
+                let txt = |v: Option<f32>, u: &str| v.map_or("----".to_string(), |v| si(v as f64, u));
+                let dy = ya.zip(yb).map(|(a, b)| b - a);
                 vec![
                     ("X1".into(), si(ta, "s")),
-                    ("Y1".into(), txt(y(ta))),
+                    ("Y1".into(), txt(ya, ua)),
                     ("X2".into(), si(tb, "s")),
-                    ("Y2".into(), txt(y(tb))),
+                    ("Y2".into(), txt(yb, ub)),
                     ("\u{394}X".into(), si(tb - ta, "s")),
-                    ("\u{394}Y".into(), txt(dy)),
+                    ("\u{394}Y".into(), txt(dy, if ua == ub { ua } else { "" })),
                 ]
             }
             CursorMode::Time => {
@@ -3894,6 +3899,7 @@ impl Ui {
             MenuId::MeasAdd => ALL_MEAS.iter().map(|&k| Item::MeasAdd(k)).collect(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
+            MenuId::Cursor if self.m.cursor == CursorMode::Track => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurSrcB],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
                 let mut v = vec![Item::Open(MenuId::Windows), Item::Views, Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Backlight, Item::TextSize, Item::ClearDisp];
@@ -4749,6 +4755,7 @@ impl Ui {
             Item::MeasAdd(k) => k.name(),
             Item::MeasClear => "Clear all",
             Item::CurMode => "Mode",
+            Item::CurSrcB => "Cursor B source",
             Item::CurA => "Cursor A",
             Item::CurB => "Cursor B",
             Item::CurC => "Y1",
@@ -4901,6 +4908,7 @@ impl Ui {
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => format!("CH{}", self.meas_src + 1),
             Item::MeasSrcB => format!("CH{}", self.meas_src_b + 1),
+            Item::CurSrcB => format!("CH{}", m.cur_b_ch.unwrap_or(m.active) + 1),
             Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
             Item::LogOn => onoff(self.log.file.is_some()),
@@ -5176,6 +5184,7 @@ impl Ui {
             Item::AcqDepth => m.mdepth = cyc(m.mdepth, mdepths().len(), d),
             Item::MeasSrc => self.meas_src = src_step(self.meas_src, NCH, d),
             Item::MeasSrcB => self.meas_src_b = src_step(self.meas_src_b, NCH, d),
+            Item::CurSrcB => m.cur_b_ch = Some(src_step(m.cur_b_ch.unwrap_or(m.active), NCH, d)),
             Item::DvmOn => m.dvm_on = !m.dvm_on,
             Item::DvmSrc => m.dvm_src = src_step(m.dvm_src, NCH, d),
             Item::DvmMode => m.dvm_mode = (m.dvm_mode as i32 + d).rem_euclid(3) as usize,
@@ -5871,7 +5880,7 @@ impl Ui {
             Item::DecSel => &["D1", "D2", "D3", "D4"],
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
-            Item::MeasSrcB | Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
+            Item::MeasSrcB | Item::CurSrcB | Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
             Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],

@@ -244,10 +244,10 @@ impl Ui {
         v
     }
 
-    /// The value of the active channel at time `t` of the last record.
-    pub(super) fn wave_at(&self, t: f64) -> Option<f32> {
+    /// The value of channel `c` at time `t` of the last record.
+    pub(super) fn wave_at_ch(&self, c: usize, t: f64) -> Option<f32> {
         let r = self.last[0].as_ref()?;
-        let w = &r.ch[self.m.active];
+        let w = &r.ch[c.min(NCH - 1)];
         if w.is_empty() || r.dt <= 0.0 {
             return None;
         }
