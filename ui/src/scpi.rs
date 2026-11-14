@@ -5,8 +5,11 @@
 //! *IDN? *RST *OPC? *CLS *ESR?, :RUN :STOP :SINGle :TFORce :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
-//! :MEASure:ITEM? <item>[,CHANn|Rn[,src]], :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar,
+//! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
+//! :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta,
+//! :DVM:ENABle|SOURce|MODE|CURRent?, :COUNter:ENABle|SOURce|MODE|NDIGits|CURRent?,
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
@@ -768,6 +771,32 @@ impl Scpi {
         }
         if kw(n0, "MEASure") && nodes.len() == 2 {
             let n1 = nodes[1];
+            if kw(n1, "SOURce") {
+                if query {
+                    return t(&wave_tok(ui.meas_source()));
+                }
+                let mut parts = arg.split(',');
+                let Some(word) = parts.next().map(str::trim).filter(|s| !s.is_empty()) else {
+                    self.push_err("-224,\"Illegal parameter value\"".into());
+                    return None;
+                };
+                let Some(a) = self.named_source(word) else { return None };
+                ui.set_meas_source(a);
+                if let Some(word) = parts.next().map(str::trim).filter(|s| !s.is_empty()) {
+                    let Some(b) = self.named_source(word) else { return None };
+                    ui.set_meas_source_b(b);
+                }
+                ui.mark_changed();
+                return None;
+            }
+            if kw(n1, "CLEar") && !query {
+                ui.meas_clear_remote();
+                ui.mark_changed();
+                return None;
+            }
+            if kw(n1, "ITEM") && !query {
+                return self.meas_place(ui, arg);
+            }
             if kw(n1, "REFS") {
                 if query {
                     let ten = ui.m.meas_lpct < 0.15 && ui.m.meas_hpct > 0.85;
@@ -1225,7 +1254,380 @@ impl Scpi {
         if kw(n0, "SYSTem") && nodes.len() == 2 && kw(nodes[1], "ERRor") && query {
             return t(&if self.err.is_empty() { "0,\"No error\"".to_string() } else { self.err.remove(0) });
         }
+        if kw(n0, "CURSor") {
+            return self.cursor_cmd(ui, &nodes[1..], query, arg);
+        }
+        if kw(n0, "DVM") {
+            return self.dvm_cmd(ui, &nodes[1..], query, arg);
+        }
+        if kw(n0, "COUNter") {
+            return self.counter_cmd(ui, &nodes[1..], query, arg);
+        }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
+        None
+    }
+
+    /// Put a measurement on the readout. The query form stays in `meas_item`.
+    fn meas_place(&mut self, ui: &mut Ui, arg: &str) -> Option<Vec<u8>> {
+        let mut parts = arg.split(',');
+        let item = parts.next().unwrap_or("").trim();
+        if item.is_empty() {
+            self.push_err("-224,\"Illegal parameter value\"".into());
+            return None;
+        }
+        let source = |s: &mut Self, word: Option<&str>, fallback: WaveId| -> Option<WaveId> {
+            match word.map(str::trim).filter(|s| !s.is_empty()) {
+                None => Some(fallback),
+                Some(word) => s.named_source(word),
+            }
+        };
+        if let Some(k) = meas_kind(item) {
+            let Some(src) = source(self, parts.next(), ui.meas_source()) else { return None };
+            if ui.meas_add(k, src) {
+                ui.mark_changed();
+            } else {
+                self.push_err("-223,\"Too much data\"".into());
+            }
+            return None;
+        }
+        if let Some(k) = pair_kind(item) {
+            let Some(a) = source(self, parts.next(), ui.meas_source()) else { return None };
+            let Some(b) = source(self, parts.next(), ui.meas_source_b()) else { return None };
+            if ui.meas_add_pair(k, a, b) {
+                ui.mark_changed();
+            } else {
+                self.push_err("-224,\"Illegal parameter value\" sources".into());
+            }
+            return None;
+        }
+        self.push_err(format!("-224,\"Illegal parameter value\" {}", item));
+        None
+    }
+
+    fn cursor_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.is_empty() || (n.len() == 1 && kw(n0, "MODE")) {
+            if n.is_empty() {
+                self.push_err("-113,\"Undefined header\" :CURSor".into());
+                return None;
+            }
+            if query {
+                let s = match ui.m.cursor {
+                    CursorMode::Off => "OFF",
+                    CursorMode::Time | CursorMode::Volt => "MAN",
+                    CursorMode::Track => "TRAC",
+                    CursorMode::Xy => "XY",
+                };
+                return t(s);
+            }
+            let a = arg.trim();
+            ui.m.cursor = if kw(a, "OFF") {
+                CursorMode::Off
+            } else if kw(a, "MANual") {
+                if ui.m.cursor == CursorMode::Volt { CursorMode::Volt } else { CursorMode::Time }
+            } else if kw(a, "TRACk") {
+                CursorMode::Track
+            } else if a.eq_ignore_ascii_case("XY") {
+                CursorMode::Xy
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 2 && kw(n0, "MANual") && kw(n[1], "TYPE") {
+            if query {
+                return t(if ui.m.cursor == CursorMode::Volt { "AMPL" } else { "TIME" });
+            }
+            if kw(arg, "TIME") {
+                ui.m.cursor = CursorMode::Time;
+            } else if kw(arg, "AMPLitude") {
+                ui.m.cursor = CursorMode::Volt;
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            }
+            ui.mark_changed();
+            return None;
+        }
+        // One source: the active channel. Track's second source has nowhere to live, so a different SOURce2 is an error.
+        // Manual X and Y share cur_a/cur_b. XY is the mode that keeps both axes (X in cur_a/cur_b, Y in cur_c/cur_d).
+        if n.len() == 2 && (kw(n0, "MANual") || kw(n0, "TRACk")) && (kw(n[1], "SOURce") || kw(n[1], "SOURce1") || kw(n[1], "SOURce2")) {
+            if query {
+                return t(&format!("CHAN{}", ui.m.active.min(n_ch() - 1) + 1));
+            }
+            if kw(n[1], "SOURce2") && parse_ch(arg).is_some_and(|c| c != ui.m.active) {
+                self.push_err("-224,\"Illegal parameter value\" one cursor source".into());
+                return None;
+            }
+            return match parse_ch(arg) {
+                Some(c) => {
+                    ui.m.active = c;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() != 2 {
+            self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+            return None;
+        }
+        let which = n[1];
+        let xy = kw(n0, "XY");
+        let known = kw(n0, "MANual") || kw(n0, "TRACk") || xy;
+        if !known {
+            self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+            return None;
+        }
+        let x = kw(which, "CAX") || (xy && kw(which, "AX"));
+        let xb = kw(which, "CBX") || (xy && kw(which, "BX"));
+        let y = kw(which, "CAY") || (xy && kw(which, "AY"));
+        let yb = kw(which, "CBY") || (xy && kw(which, "BY"));
+        if x || xb {
+            return self.cursor_axis(ui, query, arg, true, x);
+        }
+        if y || yb {
+            return self.cursor_axis(ui, query, arg, false, y);
+        }
+        if !query {
+            self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+            return None;
+        }
+        let miss = || Some(b"9.9E37".to_vec());
+        let (ta, tb) = (ui.cursor_time_at(ui.m.cur_a), ui.cursor_time_at(ui.m.cur_b));
+        let y_of = |a: bool| {
+            if ui.m.cursor == CursorMode::Xy {
+                ui.cursor_volt_at(if a { ui.m.cur_c } else { ui.m.cur_d })
+            } else if ui.m.cursor == CursorMode::Volt {
+                ui.cursor_volt_at(if a { ui.m.cur_a } else { ui.m.cur_b })
+            } else if matches!(ui.m.cursor, CursorMode::Track | CursorMode::Time) {
+                ui.wave_at(if a { ta } else { tb }).map(|v| v as f64).unwrap_or(f64::NAN)
+            } else {
+                f64::NAN
+            }
+        };
+        if kw(which, "AXValue") {
+            return if ui.m.cursor == CursorMode::Volt || ui.m.cursor == CursorMode::Off { miss() } else { t(&e(ta)) };
+        }
+        if kw(which, "BXValue") {
+            return if ui.m.cursor == CursorMode::Volt || ui.m.cursor == CursorMode::Off { miss() } else { t(&e(tb)) };
+        }
+        if kw(which, "AYValue") {
+            return t(&shown(y_of(true)));
+        }
+        if kw(which, "BYValue") {
+            return t(&shown(y_of(false)));
+        }
+        if kw(which, "XDELta") {
+            return if matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { t(&e(tb - ta)) } else { miss() };
+        }
+        if kw(which, "IXDelta") {
+            let d = (tb - ta).abs();
+            return if d > 0.0 && matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { t(&e(1.0 / d)) } else { miss() };
+        }
+        if kw(which, "YDELta") {
+            let d = y_of(false) - y_of(true);
+            return t(&shown(d));
+        }
+        self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
+        None
+    }
+
+    /// Horizontal (`x`) or vertical cursor. `a` is cursor A.
+    fn cursor_axis(&mut self, ui: &mut Ui, query: bool, arg: &str, x: bool, a: bool) -> Option<Vec<u8>> {
+        let xy = ui.m.cursor == CursorMode::Xy;
+        if query {
+            let frac = if x || !xy {
+                if a { ui.m.cur_a } else { ui.m.cur_b }
+            } else if a {
+                ui.m.cur_c
+            } else {
+                ui.m.cur_d
+            };
+            let v = if x { ui.cursor_time_at(frac) } else { ui.cursor_volt_at(frac) };
+            return Some(e(v).into_bytes());
+        }
+        let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite()) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let frac = if x { ui.cursor_frac_time(v) } else { ui.cursor_frac_volt(v) };
+        if x || !xy {
+            if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+        } else if a {
+            ui.m.cur_c = frac;
+        } else {
+            ui.m.cur_d = frac;
+        }
+        if ui.m.cursor == CursorMode::Off {
+            ui.m.cursor = if x { CursorMode::Time } else { CursorMode::Volt };
+        }
+        ui.mark_changed();
+        None
+    }
+
+    fn dvm_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "ENABle") {
+            if query {
+                return t(if ui.m.dvm_on { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.dvm_on = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "SOURce") {
+            if query {
+                return t(&format!("CHAN{}", ui.m.dvm_src.min(n_ch() - 1) + 1));
+            }
+            return match parse_ch(arg) {
+                Some(c) => {
+                    ui.m.dvm_src = c;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "MODE") {
+            const NAMES: [&str; 3] = ["DC", "ACRMS", "ACDC"];
+            if query {
+                return t(NAMES[ui.m.dvm_mode.min(2)]);
+            }
+            let a = arg.trim();
+            let mode = if kw(a, "DC") {
+                Some(0)
+            } else if kw(a, "ACRMs") || a.eq_ignore_ascii_case("ACRMS") {
+                Some(1)
+            } else if kw(a, "ACDC") || kw(a, "ACDCrms") {
+                Some(2)
+            } else {
+                None
+            };
+            return match mode {
+                Some(m) => {
+                    ui.m.dvm_mode = m;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "CURRent") && query {
+            return t(&shown(ui.dvm_value()));
+        }
+        self.push_err(format!("-113,\"Undefined header\" :DVM:{}", n.join(":")));
+        None
+    }
+
+    fn counter_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "ENABle") {
+            if query {
+                return t(if ui.m.cnt_on { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.m.cnt_on = on;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "SOURce") {
+            if query {
+                return t(&format!("CHAN{}", ui.m.cnt_src.min(n_ch() - 1) + 1));
+            }
+            return match parse_ch(arg) {
+                Some(c) => {
+                    ui.m.cnt_src = c;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "MODE") {
+            const NAMES: [&str; 3] = ["FREQ", "PER", "TOT"];
+            if query {
+                return t(NAMES[ui.m.cnt_mode.min(2)]);
+            }
+            let a = arg.trim();
+            let mode = if kw(a, "FREQuency") {
+                Some(0)
+            } else if kw(a, "PERiod") {
+                Some(1)
+            } else if kw(a, "TOTalize") {
+                Some(2)
+            } else {
+                None
+            };
+            return match mode {
+                Some(m) => {
+                    ui.m.cnt_mode = m;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "NDIGits") {
+            if query {
+                return t(&ui.m.cnt_digits.to_string());
+            }
+            return match arg.trim().parse::<u32>().ok().filter(|d| (3..=7).contains(d)) {
+                Some(d) => {
+                    ui.m.cnt_digits = d;
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "CURRent") && query {
+            return t(&shown(ui.counter_value()));
+        }
+        if n.len() == 2 && kw(n0, "TOTalize") && kw(n[1], "CLEar") && !query {
+            ui.counter_clear();
+            ui.mark_changed();
+            return None;
+        }
+        self.push_err(format!("-113,\"Undefined header\" :COUNter:{}", n.join(":")));
         None
     }
 
@@ -1787,7 +2189,7 @@ impl Scpi {
         }
         // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
         let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
-            None => WaveId::Ch(0),
+            None => ui.meas_source(),
             Some(s) => match self.named_source(s) {
                 Some(id) => id,
                 None => return t("9.9E37"),
@@ -2183,6 +2585,47 @@ mod tests {
         ui.step(0.2);
         assert_eq!(captures(&ui), 1.0, "TFORce must release a waiting Single");
         assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:STAT?"), "STOP");
+    }
+
+    #[test]
+    fn cursors_and_a_readout_round_trip() {
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TIM:MAIN:SCAL 1e-6;:TIM:MAIN:OFFS 0;:CHAN1:SCAL 1;:CHAN1:OFFS 0");
+        line(&mut s, &mut ui, &cv, ":CURS:MODE MAN;:CURS:MAN:TYPE TIME;:CURS:MAN:SOUR CHAN1;:CURS:MAN:CAX 0;:CURS:MAN:CBX 1e-6");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?;:CURS:MAN:TYPE?;:CURS:MAN:SOUR?"), "MAN;TIME;CHAN1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MAN:CAX?"), "0.000000E+00");
+        let dx: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:XDEL?").parse().unwrap();
+        let inv: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:IXD?").parse().unwrap();
+        assert!((dx - 1e-6).abs() < 1e-9, "{dx}");
+        assert!((inv - 1e6).abs() < 1.0, "{inv}");
+
+        line(&mut s, &mut ui, &cv, ":CURS:MAN:TYPE AMPL;:CURS:MAN:CAY 0.5;:CURS:MAN:CBY -0.5");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?;:CURS:MAN:TYPE?"), "MAN;AMPL");
+        let ay: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:AYV?").parse().unwrap();
+        let dy: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:YDEL?").parse().unwrap();
+        assert!((ay - 0.5).abs() < 1e-4, "{ay}");
+        assert!((dy + 1.0).abs() < 1e-3, "{dy}");
+
+        line(&mut s, &mut ui, &cv, ":CURS:MODE XY;:CURS:XY:AX 1e-6;:CURS:XY:AY 0.25");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?"), "XY");
+        let ax: f64 = line(&mut s, &mut ui, &cv, ":CURS:XY:AX?").parse().unwrap();
+        let y: f64 = line(&mut s, &mut ui, &cv, ":CURS:XY:AY?").parse().unwrap();
+        assert!((ax - 1e-6).abs() < 1e-9 && (y - 0.25).abs() < 1e-4, "{ax} {y}");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE OFF;:CURS:MAN:XDEL?"), "9.9E37");
+
+        line(&mut s, &mut ui, &cv, ":MEAS:CLE;:MEAS:SOUR R1;:MEAS:ITEM VPP;:MEAS:ITEM RRDELAY,CHAN1,CHAN2");
+        let strip = line(&mut s, &mut ui, &cv, ":MEAS:STR?");
+        assert!(strip.contains("VPP,R1,"), "{strip}");
+        assert!(strip.contains("RRDELAY,CHAN1,CHAN2,"), "{strip}");
+        let vpp: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? VPP").parse().unwrap();
+        assert!((vpp - 1.0).abs() < 1e-3, "the saved square is 1 Vpp, got {vpp}");
+        line(&mut s, &mut ui, &cv, ":MEAS:CLE");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STR?"), "");
+
+        line(&mut s, &mut ui, &cv, ":DVM:ENAB ON;:DVM:SOUR CHAN2;:DVM:MODE ACRMS;:COUN:ENAB ON;:COUN:MODE PER;:COUN:NDIG 6");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DVM:ENAB?;:DVM:SOUR?;:DVM:MODE?;:COUN:ENAB?;:COUN:MODE?;:COUN:NDIG?"), "1;CHAN2;ACRMS;1;PER;6");
+        assert!(!line(&mut s, &mut ui, &cv, ":DVM:CURR?;:COUN:CURR?").is_empty());
+        line(&mut s, &mut ui, &cv, ":COUN:TOT:CLE");
     }
 
     fn wfm_bytes() -> Vec<u8> {

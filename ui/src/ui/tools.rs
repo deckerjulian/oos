@@ -344,7 +344,7 @@ impl Ui {
         }
     }
 
-    pub(super) fn counter_clear(&mut self) {
+    pub(crate) fn counter_clear(&mut self) {
         self.cnt_total = 0;
         self.cnt_stat = MStat::default();
     }
@@ -425,7 +425,7 @@ impl Ui {
     }
 
     /// The value of the active channel at time `t` of the last record.
-    pub(super) fn wave_at(&self, t: f64) -> Option<f32> {
+    pub(crate) fn wave_at(&self, t: f64) -> Option<f32> {
         let r = self.last[0].as_ref()?;
         let w = &r.ch[self.m.active];
         if w.is_empty() || r.dt <= 0.0 {
@@ -437,9 +437,96 @@ impl Ui {
 
     /// Times of the two cursors.
     pub(super) fn cursor_times(&self) -> (f64, f64) {
+        (self.cursor_time_at(self.m.cur_a), self.cursor_time_at(self.m.cur_b))
+    }
+
+    /// Time at a horizontal cursor fraction (0 is the left edge, 1 the right).
+    pub(crate) fn cursor_time_at(&self, frac: f32) -> f64 {
         let (tpd, delay) = self.view();
-        let t = |c: f32| ((c - 0.5) * HDIV * tpd + delay) as f64;
-        (t(self.m.cur_a), t(self.m.cur_b))
+        ((frac - 0.5) * HDIV * tpd + delay) as f64
+    }
+
+    /// Screen fraction for a time, kept on the graticule.
+    pub(crate) fn cursor_frac_time(&self, t: f64) -> f32 {
+        let (tpd, delay) = self.view();
+        let span = HDIV * tpd;
+        if span == 0.0 {
+            return 0.5;
+        }
+        ((t as f32 - delay) / span + 0.5).clamp(0.0, 1.0)
+    }
+
+    /// Volts at a vertical cursor fraction on the active channel (0 is the top, 1 the bottom).
+    pub(crate) fn cursor_volt_at(&self, frac: f32) -> f64 {
+        let ch = &self.m.ch[self.m.active.min(n_ch() - 1)];
+        ((0.5 - frac) * VDIV * ch.volts_per_div() - ch.offset) as f64
+    }
+
+    pub(crate) fn cursor_frac_volt(&self, v: f64) -> f32 {
+        let ch = &self.m.ch[self.m.active.min(n_ch() - 1)];
+        let span = VDIV * ch.volts_per_div();
+        if span == 0.0 {
+            return 0.5;
+        }
+        (0.5 - (v as f32 + ch.offset) / span).clamp(0.0, 1.0)
+    }
+
+    /// The source `:MEASure:ITEM` uses when the command names none, and the second source of a pair.
+    pub(crate) fn meas_source(&self) -> WaveId {
+        self.meas_src
+    }
+
+    pub(crate) fn meas_source_b(&self) -> WaveId {
+        self.meas_src_b
+    }
+
+    pub(crate) fn set_meas_source(&mut self, id: WaveId) {
+        self.meas_src = id;
+    }
+
+    pub(crate) fn set_meas_source_b(&mut self, id: WaveId) {
+        self.meas_src_b = id;
+    }
+
+    /// Put one measurement on the readout. Already there is a success. False when the list is full.
+    pub(crate) fn meas_add(&mut self, k: Meas, src: WaveId) -> bool {
+        let e = (k, src);
+        if self.m.meas.iter().any(|item| *item == e) {
+            return true;
+        }
+        if !self.meas_make_room() {
+            return false;
+        }
+        self.m.meas.push(e);
+        self.mstat.clear();
+        true
+    }
+
+    /// Put one pair measurement on the readout. False when the sources match or the list is full.
+    pub(crate) fn meas_add_pair(&mut self, k: usize, a: WaveId, b: WaveId) -> bool {
+        if a == b {
+            return false;
+        }
+        let e = (k, a, b);
+        if self.m.meas2.iter().any(|item| *item == e) {
+            return true;
+        }
+        if !self.meas_make_room() {
+            return false;
+        }
+        self.m.meas2.push(e);
+        self.mstat.clear();
+        true
+    }
+
+    /// `:MEASure:CLEar`: the strip, the pair rows, and the catalog rows.
+    pub(crate) fn meas_clear_remote(&mut self) {
+        self.m.meas.clear();
+        self.m.meas2.clear();
+        self.m.cat.clear();
+        self.meas_own.clear();
+        self.meas_cfg = None;
+        self.mstat.clear();
     }
 
     /// File of a mask in the slot of the Storage page, beside the setups.

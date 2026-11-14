@@ -345,6 +345,36 @@ def validate(oos, result):
     page = oos.query_bytes(":WAVeform:DATA?")
     result.equal("raw WORD page length field", page[2:11], b"000000006")
     result.equal("raw WORD page is three high-byte-first points", len(page), 17)
+
+    oos.write(":CURSor:MODE MANual")
+    oos.write(":CURSor:MANual:TYPE TIME")
+    oos.write(":CURSor:MANual:CAX 0")
+    oos.write(":CURSor:MANual:CBX 1e-6")
+    result.equal("cursor mode", oos.query(":CURSor:MODE?"), "MAN")
+    result.equal("cursor type", oos.query(":CURSor:MANual:TYPE?"), "TIME")
+    result.numeric("cursor A time", float(oos.query(":CURSor:MANual:CAX?")), 0.0, absolute=1e-12)
+    result.numeric("cursor delta", float(oos.query(":CURSor:MANual:XDELta?")), 1e-6, relative=1e-4)
+    oos.write(":CURSor:MODE OFF")
+    result.equal("cursors off have no delta", float(oos.query(":CURSor:MANual:XDELta?")), 9.9e37)
+
+    oos.write(":MEASure:CLEar")
+    oos.write(":MEASure:SOURce R1")
+    oos.write(":MEASure:ITEM VPP")
+    result.equal("measurement source", oos.query(":MEASure:SOURce?"), "R1")
+    strip = oos.query(":MEASure:STRip?")
+    result.add("measure item is on the readout", strip.startswith("VPP,R1,"), strip=strip)
+    oos.write(":MEASure:CLEar")
+    result.equal("measure clear empties the readout", oos.query(":MEASure:STRip?"), "")
+
+    oos.write(":DVM:ENABle ON")
+    oos.write(":DVM:SOURce CHANnel2")
+    oos.write(":DVM:MODE ACRMS")
+    oos.write(":COUNter:ENABle ON")
+    oos.write(":COUNter:MODE PERiod")
+    oos.write(":COUNter:NDIGits 6")
+    result.equal("dvm and counter setup",
+                 oos.query(":DVM:ENABle?;:DVM:SOURce?;:DVM:MODE?;:COUNter:ENABle?;:COUNter:MODE?;:COUNter:NDIGits?"),
+                 "1;CHAN2;ACRMS;1;PER;6")
     return {"upload": upload, "before_pan": before, "after_pan": after,
             "armed": armed, "single": single, "running": running, "final_state": held}
 
