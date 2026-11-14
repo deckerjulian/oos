@@ -255,11 +255,6 @@ impl Ui {
         (i >= 0.0 && (i as usize) < w.len()).then(|| w[i as usize]).filter(|v| v.is_finite())
     }
 
-    /// The value of the active channel at time `t` of the last record.
-    pub(super) fn wave_at(&self, t: f64) -> Option<f32> {
-        self.wave_at_ch(self.m.active, t)
-    }
-
     /// Times of the two cursors.
     pub(super) fn cursor_times(&self) -> (f64, f64) {
         let (tpd, delay) = self.view();
