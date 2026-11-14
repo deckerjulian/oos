@@ -1604,7 +1604,7 @@ fn a_bin_in_storage_opens_on_the_slot() {
     let r = u.refs[0].as_ref().expect("R1");
     assert_eq!(r.v, rec.ch[0]);
     assert!((r.dt - rec.dt).abs() < 1e-18);
-    std::fs::write(dir.join("ref1.bin"), b"not a waveformÿþ").unwrap();
+    std::fs::write(dir.join("ref1.bin"), b"not a waveform\xff\xfe").unwrap();
     u.activate(Item::RefImport);
     assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("not a waveform")));
     let _ = std::fs::remove_dir_all(&dir);
