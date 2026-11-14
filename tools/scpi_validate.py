@@ -430,6 +430,18 @@ def validate(oos, result):
     result.equal("math fft window", oos.query(":MATH1:FFT:WINDow?"), "BLAC")
     oos.write(":MATH1:DISPlay OFF")
 
+    oos.write(":BUS1:MODE RS232")
+    oos.write(":BUS1:DISPlay ON")
+    oos.write(":BUS1:FORMat ASCii")
+    oos.write(":BUS1:RS232:BAUD 9600")
+    oos.write(":BUS1:RS232:PARity EVEN")
+    result.equal(
+        "bus setup",
+        oos.query(":BUS1:MODE?;:BUS1:DISPlay?;:BUS1:FORMat?;:BUS1:RS232:BAUD?;:BUS1:RS232:PARity?"),
+        "RS232;1;ASC;9600;EVEN",
+    )
+    oos.write(":BUS1:DISPlay OFF")
+
     oos.write(":MEASure:SETup:MIN 20")
     oos.write(":MEASure:SETup:MAX 80")
     result.equal("measure thresholds", oos.query(":MEASure:SETup:MIN?;:MEASure:SETup:MAX?"), "20;80")

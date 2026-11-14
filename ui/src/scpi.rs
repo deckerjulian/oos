@@ -15,6 +15,7 @@
 //! :MASK:ENABle|SOURce|X|Y|CREate|RESet|OPERate|FAILed?|PASSed?|TOTal?,
 //! :HISTogram:ENABle|TYPE|SOURce, :HISTogram:STATistics:RESult?,
 //! :MATH<n>:DISPlay|OPERator|SOURce1|SOURce2|SCALe|OFFSet|EXPRession, :MATH<n>:FFT:SOURce|WINDow|SCALe, :MATH<n>:FILTer:TYPE|W1|W2,
+//! :BUS<n>:MODE|DISPlay|FORMat|EVENt|THReshold|DATA?, :BUS<n>:RS232:TX|RX|BAUD|PARity|DBITs, :BUS<n>:IIC:SCLK:SOURce|SDA:SOURce, :BUS<n>:SPI:SCLK:SOURce|MOSI:SOURce|SS:SOURce|DBITs,
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
@@ -106,6 +107,54 @@ fn kw(tok: &str, long: &str) -> bool {
 fn suffix(tok: &str) -> (&str, Option<usize>) {
     let i = tok.find(|c: char| c.is_ascii_digit()).unwrap_or(tok.len());
     (&tok[..i], tok[i..].parse().ok())
+}
+
+fn bus_index(tok: &str) -> Option<usize> {
+    let (k, n) = suffix(tok);
+    if kw(k, "BUS") { n.filter(|&n| (1..=DECODERS).contains(&n)).map(|n| n - 1) } else { None }
+}
+
+fn with_bus(ui: &mut Ui, k: usize, f: impl FnOnce(&mut Model)) {
+    let was = ui.m.dec_sel;
+    if k != was {
+        ui.m.dec_select(k);
+    }
+    f(&mut ui.m);
+    if k != was {
+        ui.m.dec_select(was);
+    }
+    ui.mark_changed();
+}
+
+fn proto_token(p: Proto) -> String {
+    match p {
+        Proto::Parallel => "PAR".into(),
+        Proto::Uart => "RS232".into(),
+        Proto::Spi => "SPI".into(),
+        Proto::I2c => "IIC".into(),
+        Proto::Lin => "LIN".into(),
+        Proto::Can => "CAN".into(),
+        other => other.name().chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_uppercase(),
+    }
+}
+
+fn parse_proto(arg: &str) -> Option<Proto> {
+    let a = arg.trim();
+    if kw(a, "PARallel") { return Some(Proto::Parallel); }
+    if kw(a, "RS232") || kw(a, "UART") { return Some(Proto::Uart); }
+    if kw(a, "IIC") || kw(a, "I2C") { return Some(Proto::I2c); }
+    if kw(a, "LIN") { return Some(Proto::Lin); }
+    if kw(a, "SPI") { return Some(Proto::Spi); }
+    if kw(a, "CAN") { return Some(Proto::Can); }
+    PROTOS.into_iter().find(|p| proto_token(*p).eq_ignore_ascii_case(a))
+}
+
+fn nearest_baud(v: f64) -> usize {
+    crate::decode::BAUDS.iter().enumerate().min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0)
+}
+
+fn chan_token(c: usize) -> String {
+    format!("CHAN{}", c.min(NCH - 1) + 1)
 }
 
 fn math_index(tok: &str) -> Option<usize> {
@@ -1558,6 +1607,9 @@ impl Scpi {
         if let Some(k) = math_index(n0) {
             return self.math_cmd(ui, k, &nodes[1..], query, arg);
         }
+        if let Some(k) = bus_index(n0) {
+            return self.bus_cmd(ui, k, &nodes[1..], query, arg);
+        }
         if kw(n0, "DVM") {
             return self.dvm_cmd(ui, &nodes[1..], query, arg);
         }
@@ -2027,6 +2079,237 @@ impl Scpi {
             }
         }
         ui.mark_changed();
+        None
+    }
+
+    /// One of the four decoders. RS232 is the screen's UART. The event table is one window for every bus.
+    fn bus_cmd(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        let cfg = ui.m.dec_slot(k);
+        if n.len() == 1 && kw(n0, "MODE") {
+            if query {
+                return t(&proto_token(cfg.proto));
+            }
+            let Some(p) = parse_proto(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| m.dec_proto = p);
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "DISPlay") {
+            if query {
+                return t(if cfg.on { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    with_bus(ui, k, |m| m.dec_on = on);
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "FORMat") {
+            if query {
+                return t(if cfg.ascii { "ASC" } else { "HEX" });
+            }
+            let ascii = if kw(arg, "HEX") {
+                Some(false)
+            } else if kw(arg, "ASCii") {
+                Some(true)
+            } else {
+                None
+            };
+            let Some(ascii) = ascii else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| m.dec_ascii = ascii);
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "EVENt") {
+            if query {
+                return t(if ui.decode_table_on() { "1" } else { "0" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.set_decode_table(on);
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "THReshold") {
+            if query {
+                return t(&e(cfg.thr as f64));
+            }
+            let num = arg.split(',').next_back().unwrap_or("").trim();
+            let Some(v) = num.parse::<f64>().ok().filter(|v| v.is_finite()) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| m.dec_thr = v as f32);
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "DATA") && query {
+            let prefix = format!("D{} ", k + 1);
+            let rows = ui.events_text().lines().filter(|l| l.split_once(',').is_some_and(|(_, rest)| rest.starts_with(&prefix))).collect::<Vec<_>>().join("\n");
+            let body = format!("{}\n{}", proto_token(cfg.proto), rows);
+            return Some(block(body.as_bytes()));
+        }
+        if n.len() == 2 && kw(n0, "RS232") {
+            return self.bus_rs232(ui, k, n[1], query, arg);
+        }
+        if n.len() == 3 && kw(n0, "IIC") && kw(n[2], "SOURce") && (kw(n[1], "SCLK") || kw(n[1], "SDA")) {
+            let clock = kw(n[1], "SCLK");
+            if query {
+                return t(&chan_token(if clock { cfg.src2 } else { cfg.src }));
+            }
+            let Some(c) = parse_ch(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| {
+                m.dec_proto = Proto::I2c;
+                if clock { m.dec_src2 = c; } else { m.dec_src = c; }
+            });
+            return None;
+        }
+        if n.len() == 3 && kw(n0, "SPI") && kw(n[2], "SOURce") && (kw(n[1], "SCLK") || kw(n[1], "MOSI") || kw(n[1], "SS")) {
+            if query {
+                let s = if kw(n[1], "SCLK") {
+                    chan_token(cfg.src2)
+                } else if kw(n[1], "MOSI") {
+                    chan_token(cfg.src)
+                } else {
+                    cfg.cs.map(chan_token).unwrap_or_else(|| "OFF".into())
+                };
+                return t(&s);
+            }
+            if kw(n[1], "SS") && kw(arg, "OFF") {
+                with_bus(ui, k, |m| {
+                    m.dec_proto = Proto::Spi;
+                    m.dec_cs = None;
+                });
+                return None;
+            }
+            let Some(c) = parse_ch(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| {
+                m.dec_proto = Proto::Spi;
+                if kw(n[1], "SCLK") {
+                    m.dec_src2 = c;
+                } else if kw(n[1], "MOSI") {
+                    m.dec_src = c;
+                } else {
+                    m.dec_cs = Some(c);
+                }
+            });
+            return None;
+        }
+        if n.len() == 2 && kw(n0, "SPI") && kw(n[1], "DBITs") {
+            if query {
+                return t(&format!("{}", cfg.bits));
+            }
+            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (4..=32).contains(v)) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| {
+                m.dec_proto = Proto::Spi;
+                m.dec_bits = v;
+            });
+            return None;
+        }
+        self.push_err(format!("-113,\"Undefined header\" :BUS{}:{}", k + 1, n.join(":")));
+        None
+    }
+
+    fn bus_rs232(&mut self, ui: &mut Ui, k: usize, which: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let cfg = ui.m.dec_slot(k);
+        if kw(which, "TX") || kw(which, "RX") {
+            let rx = kw(which, "RX");
+            if query {
+                return t(&chan_token(if rx { cfg.src2 } else { cfg.src }));
+            }
+            let Some(c) = parse_ch(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| {
+                m.dec_proto = Proto::Uart;
+                if rx { m.dec_src2 = c; } else { m.dec_src = c; }
+            });
+            return None;
+        }
+        if kw(which, "BAUD") {
+            if query {
+                return t(&format!("{}", crate::decode::BAUDS[cfg.baud.min(crate::decode::BAUDS.len() - 1)] as u64));
+            }
+            let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            let i = nearest_baud(v);
+            with_bus(ui, k, |m| {
+                m.dec_proto = Proto::Uart;
+                m.dec_baud = i;
+            });
+            return None;
+        }
+        if kw(which, "PARity") {
+            if query {
+                return t(match cfg.parity {
+                    oos_dsp::decode::Parity::None => "NONE",
+                    oos_dsp::decode::Parity::Odd => "ODD",
+                    oos_dsp::decode::Parity::Even => "EVEN",
+                });
+            }
+            let p = if kw(arg, "NONE") {
+                Some(oos_dsp::decode::Parity::None)
+            } else if kw(arg, "ODD") {
+                Some(oos_dsp::decode::Parity::Odd)
+            } else if kw(arg, "EVEN") {
+                Some(oos_dsp::decode::Parity::Even)
+            } else {
+                None
+            };
+            let Some(p) = p else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| {
+                m.dec_proto = Proto::Uart;
+                m.dec_parity = p;
+            });
+            return None;
+        }
+        if kw(which, "DBITs") {
+            if query {
+                return t(&format!("{}", cfg.bits));
+            }
+            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (5..=9).contains(v)) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            with_bus(ui, k, |m| {
+                m.dec_proto = Proto::Uart;
+                m.dec_bits = v;
+            });
+            return None;
+        }
+        self.push_err(format!("-113,\"Undefined header\" :BUS{}:RS232:{}", k + 1, which));
         None
     }
 
@@ -3759,6 +4042,26 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":MATH1:EXPR?;:MATH1:OPER?"), "2*CH1-CH2;EXPR");
         line(&mut s, &mut ui, &cv, ":MATH1:DISP OFF");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MATH1:DISP?;:MATH1:OPER?"), "0;OFF");
+    }
+
+    #[test]
+    fn a_bus_sets_uart_spi_and_reads_the_event_block() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, "*CLS;:BUS1:MODE RS232;:BUS1:DISP ON;:BUS1:FORM ASC;:BUS1:EVEN ON");
+        line(&mut s, &mut ui, &cv, ":BUS1:RS232:TX CHAN1;:BUS1:RS232:RX CHAN2;:BUS1:RS232:BAUD 9600;:BUS1:RS232:PAR EVEN;:BUS1:RS232:DBIT 8;:BUS1:THR 1.25");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS1:MODE?;:BUS1:DISP?;:BUS1:FORM?;:BUS1:EVEN?"), "RS232;1;ASC;1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS1:RS232:TX?;:BUS1:RS232:RX?;:BUS1:RS232:BAUD?;:BUS1:RS232:PAR?;:BUS1:RS232:DBIT?"), "CHAN1;CHAN2;9600;EVEN;8");
+        let thr: f64 = line(&mut s, &mut ui, &cv, ":BUS1:THR?").parse().unwrap();
+        assert!((thr - 1.25).abs() < 1e-6, "{thr}");
+        line(&mut s, &mut ui, &cv, ":BUS2:MODE SPI;:BUS2:DISP ON;:BUS2:SPI:SCLK:SOUR CHAN2;:BUS2:SPI:MOSI:SOUR CHAN1;:BUS2:SPI:SS:SOUR CHAN3;:BUS2:SPI:DBIT 12");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS2:MODE?;:BUS2:SPI:SCLK:SOUR?;:BUS2:SPI:MOSI:SOUR?;:BUS2:SPI:SS:SOUR?;:BUS2:SPI:DBIT?"), "SPI;CHAN2;CHAN1;CHAN3;12");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS1:MODE?;:BUS1:RS232:BAUD?"), "RS232;9600", "the second bus must not replace the first");
+        line(&mut s, &mut ui, &cv, ":BUS2:SPI:SS:SOUR OFF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS2:SPI:SS:SOUR?"), "OFF");
+        let data = line(&mut s, &mut ui, &cv, ":BUS1:DATA?");
+        assert!(data.starts_with("#9") && data.contains("RS232"), "{data}");
+        line(&mut s, &mut ui, &cv, "*CLS;:BUS1:FORM DEC");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224"), "only hex and ASCII are on this screen");
     }
 
     fn wfm_bytes() -> Vec<u8> {
