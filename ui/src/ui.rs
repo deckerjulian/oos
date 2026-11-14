@@ -926,6 +926,8 @@ pub struct Ui {
     /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
     /// to cards) is copied here during `render`
     pub hdmi_snap_want: bool,
+    /// An external display is attached. Only then does "waveform on the external display" keep the panel bars in Full.
+    hdmi_present: bool,
     pub hdmi_snap: Vec<u32>,
     /// start-up screen (startup.rs) and the last start-up's result (About)
     pub start_up: Option<startup::Screen>,
@@ -1170,6 +1172,7 @@ impl Ui {
             azr: Default::default(),
             cal: Default::default(),
             hdmi_snap_want: false,
+            hdmi_present: false,
             hdmi_snap: Vec::new(),
             start_up: None,
             start_up_last: None,

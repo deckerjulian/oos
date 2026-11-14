@@ -71,7 +71,16 @@ impl Ui {
 
     /// Panel bars hide only for Full while the external display copies the panel.
     pub(crate) fn sync_full(&mut self) {
-        self.full = self.m.density == Density::Full && !self.m.hdmi_wave;
+        // waveform on an external display keeps the panel's bars; with no display attached Full enlarges the panel
+        self.full = self.m.density == Density::Full && !(self.m.hdmi_wave && self.hdmi_present);
+    }
+
+    /// Called when an external display comes or goes, so Full follows it.
+    pub(crate) fn set_hdmi_present(&mut self, present: bool) {
+        if self.hdmi_present != present {
+            self.hdmi_present = present;
+            self.sync_full();
+        }
     }
 
     pub(super) fn win_kind(it: Item) -> Option<Kind> {
@@ -256,6 +265,36 @@ mod tests {
     }
 
     #[test]
+    fn full_screen_enlarges_without_an_external_display_and_goes_back() {
+        // default "waveform on the external display", but no display attached (desktop, or a scope without a monitor)
+        let mut u = ui();
+        assert!(u.m.hdmi_wave);
+        let press = |u: &mut Ui| {
+            render(u);
+            let (_, hit) = u.full_btn();
+            let (x, y) = (hit.x + hit.w / 2, hit.y + hit.h / 2);
+            u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+            u.step(0.08);
+            u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+            render(u);
+        };
+        render(&mut u);
+        let normal = u.grid;
+        press(&mut u);
+        assert!(u.full && u.grid.h > normal.h, "Full must enlarge the plot: {:?} {:?}", u.grid, normal);
+        press(&mut u);
+        assert_eq!((u.m.density, u.full, u.grid), (Density::Scope, false, normal));
+        // a display attached while Full: the panel keeps its bars, the external display shows the waveform
+        press(&mut u);
+        u.set_hdmi_present(true);
+        render(&mut u);
+        assert!(!u.full && u.grid == normal);
+        u.set_hdmi_present(false);
+        render(&mut u);
+        assert!(u.full && u.grid.h > normal.h);
+    }
+
+    #[test]
     fn the_corner_button_stays_where_it_is_dropped() {
         let mut u = ui();
         u.select_option(Item::Hdmi, "Mirror");
@@ -353,6 +392,7 @@ mod tests {
         u.stats_on = true;
         render(&mut u);
         let normal = u.grid;
+        u.set_hdmi_present(true);
         u.hdmi_snap_want = true;
         u.select_option(Item::WinLayout, "Full");
         let mut cv = Canvas::new(W, H);

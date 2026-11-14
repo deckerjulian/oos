@@ -380,6 +380,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         let t0 = Instant::now();
         ui.step(dt);
         let t1 = Instant::now();
+        ui.set_hdmi_present(hdmi.is_some());
         let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
         ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi_wave;
         ui.render(&mut cv);
