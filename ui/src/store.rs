@@ -164,6 +164,9 @@ pub fn setup_text(m: &Model) -> String {
         kv(&p("invert"), ch.invert.to_string());
     }
     kv("active", m.active.to_string());
+    if let Some(c) = m.cur_b_ch {
+        kv("cur_b_ch", c.to_string());
+    }
     kv("tdiv", tscales()[m.tscale].to_string());
     kv("delay", m.delay.to_string());
     kv("trig_src", m.trig_src.to_string());
@@ -415,6 +418,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
     let ntime = tscales().len();
     match k {
         "active" => m.active = p_idx(v, NCH)?,
+        "cur_b_ch" => m.cur_b_ch = Some(p_idx(v, NCH)?),
         "tdiv" => m.tscale = tdiv_index(v)?,
         // setups before the 1/2 ns steps: index into the old ladder (5 ns .. 1000 s)
         "tscale" => m.tscale = p_idx(v, ntime - 2)? + 2,
