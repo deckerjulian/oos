@@ -159,3 +159,13 @@ Auto deskew aligns nearby transitions on shown sources; use a common known edge
 for calibration. It preserves hidden-source corrections and native file metadata.
 Clear deskew removes the calibration. Decoding and measurement alignment use the
 corrected physical origins rather than modifying waveform sample values.
+
+
+The NRZ data-rate row uses a robust UI estimate from qualified transition-run
+lengths, rather than the mean same-polarity PRBS cycle period. It is an estimate,
+not an exact implementation of every DPOJET population rule. Recovered-clock
+rate is a separate result. Both assume one bit per symbol and do not report PAM
+or C-PHY link throughput. The current serial SSC phase model removes its DC
+component, so a local estimated rate can exceed the preset nominal value even
+with DOWN selected. The PCIe-named presets are shaped NRZ test signals, not
+standards-compliant PCIe traffic or compliance generators.
