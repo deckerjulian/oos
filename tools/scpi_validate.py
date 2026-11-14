@@ -486,6 +486,16 @@ def validate(oos, result):
     oos.write(":MEASure:INDicator ON")
     result.equal("measurement labels", oos.query(":CURSor:MEASure:INDicator?"), "1")
     oos.write(":MEASure:INDicator OFF")
+    oos.write(":MEASure:BURSt:IDLE 1e-3")
+    oos.write(":MEASure:OUTSide ABOVe")
+    oos.write(":MEASure:NPERiods 4")
+    oos.write(":MEASure:EDGes DATA")
+    result.equal(
+        "measurement gate",
+        oos.query(":MEASure:OUTSide?;:MEASure:NPERiods?;:MEASure:EDGes?"),
+        "ABOV;4;DATA",
+    )
+    result.numeric("burst idle", float(oos.query(":MEASure:BURSt:IDLE?")), 1e-3, relative=1e-6)
 
     oos.write(":MEASure:SETup:MIN 20")
     oos.write(":MEASure:SETup:MAX 80")

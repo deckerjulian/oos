@@ -11,6 +11,7 @@
 //! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar, :MEASure:INDicator,
 //! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
 //! :MEASure:STATistic:DISPlay|RESet|ITEM, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :MEASure:BURSt:IDLE, :MEASure:OUTSide ABOVe|BELow|BOTH, :MEASure:NPERiods, :MEASure:EDGes CLOCk|DATA,
 //! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta, :CURSor:MEASure:INDicator,
 //! :DVM:ENABle|SOURce|MODE|CURRent?, :COUNter:ENABle|SOURce|MODE|NDIGits|CURRent?,
 //! :MASK:ENABle|SOURce|X|Y|CREate|RESet|OPERate|FAILed?|PASSed?|TOTal?,
@@ -1159,6 +1160,20 @@ impl Scpi {
         if kw(n0, "EYE") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
             return self.eye_item(ui, arg);
         }
+        if kw(n0, "MEASure") && nodes.len() == 3 && kw(nodes[1], "BURSt") && kw(nodes[2], "IDLE") {
+            if query {
+                return t(&e(ui.m.meas_idle));
+            }
+            match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+                Some(v) => {
+                    ui.m.meas_idle = v;
+                    ui.measure_last();
+                    ui.mark_changed();
+                }
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return None;
+        }
         if kw(n0, "MEASure") && nodes.len() == 3 && kw(nodes[1], "STATistic") {
             return self.meas_stat_cmd(ui, nodes[2], query, arg);
         }
@@ -1235,6 +1250,9 @@ impl Scpi {
             }
             if kw(n1, "INDicator") {
                 return self.meas_indicator(ui, query, arg);
+            }
+            if kw(n1, "OUTSide") || kw(n1, "NPERiods") || kw(n1, "EDGes") {
+                return self.meas_gate(ui, n1, query, arg);
             }
             if kw(n1, "TSETup") || kw(n1, "THOLd") {
                 let setup = kw(n1, "TSETup");
@@ -2347,6 +2365,58 @@ impl Scpi {
             };
         }
         self.push_err(format!("-113,\"Undefined header\" :DISPlay:{}", n.join(":")));
+        None
+    }
+
+    /// Burst idle, the side Time Outside counts, how many periods Duration N spans, and which edges it uses.
+    /// The DHO programmer manual has no header for these Measure-menu settings.
+    fn meas_gate(&mut self, ui: &mut Ui, which: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if kw(which, "OUTSide") {
+            if query {
+                return t(match ui.m.meas_out {
+                    oos_dsp::measure::Outside::Above => "ABOV",
+                    oos_dsp::measure::Outside::Below => "BEL",
+                    oos_dsp::measure::Outside::Both => "BOTH",
+                });
+            }
+            ui.m.meas_out = if kw(arg, "ABOVe") {
+                oos_dsp::measure::Outside::Above
+            } else if kw(arg, "BELow") {
+                oos_dsp::measure::Outside::Below
+            } else if kw(arg, "BOTH") {
+                oos_dsp::measure::Outside::Both
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+        } else if kw(which, "NPERiods") {
+            if query {
+                return t(&ui.m.meas_n.to_string());
+            }
+            let Some(n) = arg.trim().parse::<u32>().ok().filter(|n| (1..=32).contains(n)) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.m.meas_n = n;
+        } else if kw(which, "EDGes") {
+            if query {
+                return t(if ui.m.meas_data { "DATA" } else { "CLOC" });
+            }
+            if kw(arg, "CLOCk") {
+                ui.m.meas_data = false;
+            } else if kw(arg, "DATA") {
+                ui.m.meas_data = true;
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            }
+        } else {
+            self.push_err(format!("-113,\"Undefined header\" :MEASure:{}", which));
+            return None;
+        }
+        ui.measure_last();
+        ui.mark_changed();
         None
     }
 
@@ -4243,6 +4313,46 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STAT:DISP?;:MEAS:STR?"), "1;VPP,R1,1.000000E+00");
         line(&mut s, &mut ui, &cv, ":MEAS:STAT:RES");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STAT:ITEM? CNT,VPP,R1"), "0.000000E+00");
+    }
+
+    #[test]
+    fn measurement_gate_changes_burst_outside_and_duration() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, ":TIM:SCAL 1e-3");
+        for _ in 0..8 {
+            ui.step(0.05);
+        }
+        line(&mut s, &mut ui, &cv, "*CLS;:MEAS:BURS:IDLE 0;:MEAS:OUTS BOTH;:MEAS:NPER 1;:MEAS:EDG CLOC");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:OUTS?;:MEAS:NPER?;:MEAS:EDG?"), "BOTH;1;CLOC");
+        let idle: f64 = line(&mut s, &mut ui, &cv, ":MEAS:BURS:IDLE?").parse().unwrap();
+        assert!(idle.abs() < 1e-15, "{idle}");
+        let one: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? NPER,CHAN1").parse().unwrap();
+        line(&mut s, &mut ui, &cv, ":MEAS:NPER 2");
+        let two: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? NPER,CHAN1").parse().unwrap();
+        assert!(one.is_finite() && one < 1e37 && (two / one - 2.0).abs() < 0.15, "one {one} two {two}");
+        line(&mut s, &mut ui, &cv, ":MEAS:NPER 1;:MEAS:EDG DATA");
+        let data: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? NPER,CHAN1").parse().unwrap();
+        assert!((data / one - 0.5).abs() < 0.15, "clock {one} data {data}");
+        let burst: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? BWID,CHAN1").parse().unwrap();
+        assert!(burst.is_finite() && burst < 1e37, "{burst}");
+        line(&mut s, &mut ui, &cv, ":MEAS:BURS:IDLE 1e-6");
+        let split: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? BWID,CHAN1").parse().unwrap();
+        assert!(split > 1e37, "a gap shorter than the half period splits the burst, {split}");
+        let mut csv = String::from("Time (s),Volts\n");
+        for index in 0..2000 {
+            let value = if index % 100 < 10 { 1.0 } else { 0.0 };
+            csv.push_str(&format!("{},{}\n", index as f64 * 1e-6, value));
+        }
+        ui.load_waveform_bytes(csv.as_bytes(), "pulse.csv").unwrap();
+        line(&mut s, &mut ui, &cv, ":MEAS:OUTS ABOV");
+        let above: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? TOUT,R1").parse().unwrap();
+        line(&mut s, &mut ui, &cv, ":MEAS:OUTS BEL");
+        let below: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? TOUT,R1").parse().unwrap();
+        assert!(above > 0.0 && below > above * 5.0, "a 10 % pulse is high briefly, above {above} below {below}");
+        line(&mut s, &mut ui, &cv, ":MEAS:NPER 0;:MEAS:BURS:IDLE -1;:MEAS:EDG BOTH");
+        let err = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(err.starts_with("-224,"), "{err}");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:NPER?;:MEAS:EDG?"), "1;DATA");
     }
 
     #[test]
