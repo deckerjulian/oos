@@ -529,6 +529,58 @@ impl Ui {
         self.mstat.clear();
     }
 
+    pub(crate) fn stats_shown(&self) -> bool {
+        self.stats_on
+    }
+
+    pub(crate) fn set_stats_shown(&mut self, on: bool) {
+        self.stats_on = on;
+    }
+
+    /// `:MEASure:STATistic:RESet`: the history, not the rows.
+    pub(crate) fn stats_reset(&mut self) {
+        self.mstat.clear();
+    }
+
+    /// Count, current value, min, max, mean, and standard deviation of one strip row.
+    /// A row that is not on the strip still has a current value; the history is empty.
+    pub(crate) fn meas_remote_stat(&self, k: Meas, src: WaveId) -> (u64, f64, f64, f64, f64, f64) {
+        let current = self.meas_at(src, k);
+        let idx = self.m.meas.iter().position(|&(kk, id)| kk == k && id == src);
+        self.stat_at(idx, current)
+    }
+
+    pub(crate) fn pair_remote_stat(&self, k: usize, a: WaveId, b: WaveId) -> (u64, f64, f64, f64, f64, f64) {
+        let current = self.pair_at(k, a, b);
+        let idx = self.m.meas2.iter().position(|&(kk, aa, bb)| kk == k && aa == a && bb == b).map(|i| self.m.meas.len() + i);
+        self.stat_at(idx, current)
+    }
+
+    fn stat_at(&self, idx: Option<usize>, current: f64) -> (u64, f64, f64, f64, f64, f64) {
+        let Some(st) = idx.and_then(|i| self.mstat.get(i)).filter(|st| st.n > 0) else {
+            return (0, current, f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+        };
+        let mean = st.sum / st.n as f64;
+        let dev = if st.n > 1 { (st.sumsq / st.n as f64 - mean * mean).max(0.0).sqrt() } else { f64::NAN };
+        (st.n, current, st.min, st.max, mean, dev)
+    }
+
+    pub(crate) fn zoom_set_remote(&mut self, on: bool) {
+        self.set_zoom(on);
+    }
+
+    pub(crate) fn zoom_clamp(&mut self) {
+        self.clamp_zoom();
+    }
+
+    pub(crate) fn xy_on(&self) -> bool {
+        self.xy
+    }
+
+    pub(crate) fn xy_set(&mut self, on: bool) {
+        self.xy = on;
+    }
+
     /// File of a mask in the slot of the Storage page, beside the setups.
     fn mask_path(&self) -> std::path::PathBuf {
         self.setup_path().with_file_name(format!("mask{}.txt", self.store_slot))
