@@ -408,6 +408,15 @@ def validate(oos, result):
     result.numeric("mask vertical tolerance", float(oos.query(":MASK:Y?")), 0.5, relative=1e-6)
     oos.write(":MASK:ENABle OFF")
 
+    oos.write(":HISTogram:ENABle ON")
+    oos.write(":HISTogram:TYPE VERTical")
+    oos.write(":HISTogram:SOURce CHANnel1")
+    result.equal("histogram setup", oos.query(":HISTogram:ENABle?;:HISTogram:TYPE?;:HISTogram:SOURce?"), "1;VERT;CHAN1")
+    stats = oos.query(":HISTogram:STATistics:RESult?")
+    result.add("histogram result", stats.startswith("Sum:") and "Mean:" in stats, actual=stats)
+    oos.write(":HISTogram:ENABle OFF")
+    result.equal("histogram off", oos.query(":HISTogram:ENABle?"), "0")
+
     oos.write(":MEASure:SETup:MIN 20")
     oos.write(":MEASure:SETup:MAX 80")
     result.equal("measure thresholds", oos.query(":MEASure:SETup:MIN?;:MEASure:SETup:MAX?"), "20;80")

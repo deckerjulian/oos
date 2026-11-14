@@ -13,6 +13,7 @@
 //! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta,
 //! :DVM:ENABle|SOURce|MODE|CURRent?, :COUNter:ENABle|SOURce|MODE|NDIGits|CURRent?,
 //! :MASK:ENABle|SOURce|X|Y|CREate|RESet|OPERate|FAILed?|PASSed?|TOTal?,
+//! :HISTogram:ENABle|TYPE|SOURce, :HISTogram:STATistics:RESult?,
 //! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
@@ -1434,6 +1435,9 @@ impl Scpi {
         if kw(n0, "MASK") {
             return self.mask_cmd(ui, &nodes[1..], query, arg);
         }
+        if kw(n0, "HISTogram") {
+            return self.hist_cmd(ui, &nodes[1..], query, arg);
+        }
         if kw(n0, "DVM") {
             return self.dvm_cmd(ui, &nodes[1..], query, arg);
         }
@@ -1903,6 +1907,77 @@ impl Scpi {
             }
         }
         ui.mark_changed();
+        None
+    }
+
+    /// Vertical or horizontal histogram of one live channel. The source is the measurement source, which is what the screen uses.
+    fn hist_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n.first().copied().unwrap_or("");
+        if n.len() == 1 && kw(n0, "ENABle") {
+            if query {
+                return t(if ui.m.hist == Hist::Off { "0" } else { "1" });
+            }
+            return match parse_bool(arg) {
+                Some(on) => {
+                    if on && ui.m.hist == Hist::Off {
+                        ui.m.hist = Hist::Vertical;
+                    } else if !on {
+                        ui.m.hist = Hist::Off;
+                    }
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 1 && kw(n0, "TYPE") {
+            if query {
+                return t(if ui.m.hist == Hist::Horizontal { "HOR" } else { "VERT" });
+            }
+            ui.m.hist = if kw(arg, "HORizontal") {
+                Hist::Horizontal
+            } else if kw(arg, "VERTical") {
+                Hist::Vertical
+            } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.mark_changed();
+            return None;
+        }
+        if n.len() == 1 && kw(n0, "SOURce") {
+            if query {
+                let c = ui.hist_source().unwrap_or(0);
+                return t(&format!("CHAN{}", c + 1));
+            }
+            return match parse_ch(arg) {
+                Some(c) => {
+                    ui.m.ch[c].on = true;
+                    ui.set_meas_source(WaveId::Ch(c));
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if n.len() == 2 && kw(n0, "STATistics") && kw(n[1], "RESult") && query {
+            let blank = "Sum:0,Peaks:0,Max:9.9E37,Min:9.9E37,Pk_Pk:9.9E37,Mean:9.9E37,Median:9.9E37,Mode:9.9E37,Bin width:9.9E37,Sigma:9.9E37";
+            let Some(s) = ui.hist_stat() else { return t(blank) };
+            let num = |v: f64| if v.is_finite() { e(v) } else { "9.9E37".to_string() };
+            let pk = if s.max.is_finite() && s.min.is_finite() { e(s.max - s.min) } else { "9.9E37".to_string() };
+            return t(&format!(
+                "Sum:{},Peaks:{},Max:{},Min:{},Pk_Pk:{},Mean:{},Median:{},Mode:{},Bin width:{},Sigma:{}",
+                s.sum, s.peaks, num(s.max), num(s.min), pk, num(s.mean), num(s.median), num(s.mode), num(s.bin), num(s.sigma)
+            ));
+        }
+        self.push_err(format!("-113,\"Undefined header\" :HISTogram:{}", n.join(":")));
         None
     }
 
@@ -3299,6 +3374,25 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":MASK:PASS?;:MASK:FAIL?;:MASK:TOT?"), "0;0;0");
         line(&mut s, &mut ui, &cv, ":MASK:OPER STOP");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MASK:OPER?"), "STOP");
+    }
+
+    #[test]
+    fn histogram_type_source_and_result() {
+        let (mut s, mut ui, cv) = session();
+        for _ in 0..8 {
+            ui.step(0.05);
+        }
+        line(&mut s, &mut ui, &cv, "*CLS;:HIST:ENAB ON;:HIST:TYPE VERT;:HIST:SOUR CHAN1");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":HIST:ENAB?;:HIST:TYPE?;:HIST:SOUR?"), "1;VERT;CHAN1");
+        line(&mut s, &mut ui, &cv, ":HIST:TYPE HOR");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":HIST:TYPE?"), "HOR");
+        let result = line(&mut s, &mut ui, &cv, ":HIST:STAT:RES?");
+        let sum: u64 = result.split([',', ':']).nth(1).unwrap_or("0").parse().unwrap_or(0);
+        assert!(sum > 0 && result.contains("Mean:") && result.contains("Sigma:"), "{result}");
+        line(&mut s, &mut ui, &cv, ":HIST:ENAB OFF");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":HIST:ENAB?"), "0");
+        let off = line(&mut s, &mut ui, &cv, ":HIST:STAT:RES?");
+        assert!(off.starts_with("Sum:0,"), "{off}");
     }
 
     fn wfm_bytes() -> Vec<u8> {

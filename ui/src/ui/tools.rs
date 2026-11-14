@@ -7,6 +7,19 @@
 use super::*;
 use oos_dsp::measure::{burst_width, delay, duration_n, hold_time_at, phase, setup_hold_violations_at, setup_time_at, skew, time_outside, Analysis, Pair};
 
+/// Statistics of the on-screen histogram, in the source channel's units.
+pub(crate) struct HistStat {
+    pub sum: u64,
+    pub peaks: u64,
+    pub max: f64,
+    pub min: f64,
+    pub mean: f64,
+    pub median: f64,
+    pub mode: f64,
+    pub bin: f64,
+    pub sigma: f64,
+}
+
 /// Edge times are seconds from the first sample. Add the record's t0 so a pair of different records lines up.
 fn shift_edges(a: &Analysis, t0: f64) -> Analysis {
     if t0 == 0.0 {
@@ -599,6 +612,72 @@ impl Ui {
     pub(crate) fn mask_counts_reset(&mut self) {
         self.mask_pass = 0;
         self.mask_fail = 0;
+    }
+
+    /// The channel the histogram reads: the measurement source when that channel is on, otherwise the first channel on.
+    pub(crate) fn hist_source(&self) -> Option<usize> {
+        self.hist_src()
+    }
+
+    /// Histogram statistics in volts (vertical) or seconds (horizontal). None when the histogram is off.
+    pub(crate) fn hist_stat(&self) -> Option<HistStat> {
+        let (bins, mean_px, sd_px) = self.hist_bins()?;
+        let c = self.hist_src()?;
+        let n: u64 = bins.iter().sum();
+        let ch = &self.m.ch[c];
+        let vertical = self.m.hist == Hist::Vertical;
+        let (scale, mid, origin, high_is_low_index) = if vertical {
+            let h = bins.len().max(1) as f64;
+            let vpp = ch.volts_per_div() as f64 / (h / VDIV as f64);
+            (vpp, h / 2.0, -(ch.offset as f64), true)
+        } else {
+            let w = bins.len().max(1) as f64;
+            let (tdiv, delay) = self.view();
+            let spp = tdiv as f64 / (w / HDIV as f64);
+            (spp, w / 2.0, delay as f64, false)
+        };
+        let axis = |pix: f64| {
+            if high_is_low_index { (mid - pix) * scale + origin } else { (pix - mid) * scale + origin }
+        };
+        if n == 0 {
+            return Some(HistStat { sum: 0, peaks: 0, max: f64::NAN, min: f64::NAN, mean: f64::NAN, median: f64::NAN, mode: f64::NAN, bin: scale, sigma: f64::NAN });
+        }
+        let first = bins.iter().position(|&b| b > 0).unwrap() as f64;
+        let last = bins.iter().rposition(|&b| b > 0).unwrap() as f64;
+        let (min_px, max_px) = if high_is_low_index { (last, first) } else { (first, last) };
+        let mut peaks = 0u64;
+        for i in 0..bins.len() {
+            let b = bins[i];
+            if b == 0 {
+                continue;
+            }
+            let left = if i == 0 { 0 } else { bins[i - 1] };
+            let right = bins.get(i + 1).copied().unwrap_or(0);
+            if b > left && b >= right {
+                peaks += 1;
+            }
+        }
+        let mut acc = 0u64;
+        let mut med = 0usize;
+        for (i, &b) in bins.iter().enumerate() {
+            acc += b;
+            if acc * 2 >= n {
+                med = i;
+                break;
+            }
+        }
+        let mode_i = bins.iter().enumerate().max_by_key(|(_, b)| *b).map(|(i, _)| i).unwrap_or(0);
+        Some(HistStat {
+            sum: n,
+            peaks,
+            max: axis(max_px),
+            min: axis(min_px),
+            mean: axis(mean_px),
+            median: axis(med as f64),
+            mode: axis(mode_i as f64),
+            bin: scale,
+            sigma: sd_px * scale,
+        })
     }
 
     /// Horizontal tolerance is 0 to 2 div. Vertical is 0.04 to 4 div. A mask already on screen is rebuilt.
