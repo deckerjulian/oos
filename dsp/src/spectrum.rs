@@ -525,6 +525,39 @@ pub fn channel_power(s: &Spectrum, f_lo: f64, f_hi: f64) -> f64 {
     (0..s.dbv.len()).filter(|&i| (f_lo..=f_hi).contains(&s.freq(i))).map(|i| s.power(i) * k).sum()
 }
 
+/// Adjacent-channel power ratio. The main band is `width` hertz centred on the peak bin. The lower and upper
+/// bands sit one `spacing` below and above that centre, each of the same width. A band that runs off the trace
+/// is clipped to it. `ratio` is (lower + upper) / main, empty when the main power is 0. The dB figures are
+/// 10 log10 of each side over the main.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Acpr {
+    pub ratio: f64,
+    pub lower_db: f64,
+    pub upper_db: f64,
+}
+
+pub fn acpr(s: &Spectrum, width: f64, spacing: f64) -> Acpr {
+    let empty = Acpr { ratio: f64::NAN, lower_db: f64::NAN, upper_db: f64::NAN };
+    let Some(peak) = max_peak(s) else { return empty };
+    if s.dbv.is_empty() || !(width > 0.0) || !(spacing > 0.0) {
+        return empty;
+    }
+    let (lo, hi) = (s.f0, s.freq(s.dbv.len() - 1));
+    let half = width / 2.0;
+    let band = |centre: f64| {
+        let a = (centre - half).max(lo);
+        let b = (centre + half).min(hi);
+        if b > a { channel_power(s, a, b) } else { 0.0 }
+    };
+    let pch = band(peak.f);
+    if !(pch > 0.0) {
+        return empty;
+    }
+    let (pl, pu) = (band(peak.f - spacing), band(peak.f + spacing));
+    let db = |p: f64| if p > 0.0 { 10.0 * (p / pch).log10() } else { f64::NAN };
+    Acpr { ratio: (pl + pu) / pch, lower_db: db(pl), upper_db: db(pu) }
+}
+
 /// Occupied bandwidth: the band (f_lo, f_hi) holding `pct` % of the trace power, with (100 - pct) / 2 % below and
 /// above it (99 % OBW: pct = 99).
 pub fn occupied_bw(s: &Spectrum, pct: f64) -> Option<(f64, f64)> {
