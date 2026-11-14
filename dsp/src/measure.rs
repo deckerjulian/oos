@@ -4,7 +4,7 @@
 //! Automatic measurements (conventions of IEEE 181: top and base from the histogram, 10/50/90 % reference
 //! levels, edges at the 50 % level with 10 % hysteresis, time values averaged over all complete cycles in the record).
 
-use crate::edges::edges;
+use crate::edges::level_edges;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Meas {
@@ -60,7 +60,7 @@ pub enum Meas {
     CycPp,
     CycMax,
     CycMin,
-    /// GCD of mid-crossing spacings (same estimator as the eye diagram).
+    /// Unit interval estimated from the mid edges (`estimated_ui`).
     EstUi,
     /// Sample median.
     Median,
@@ -241,6 +241,11 @@ pub struct Analysis {
     pub fall_slew: f64,
     /// Time of the last sample, seconds from the first.
     pub t_end: f64,
+    /// Time outside level, one value per high span (rising mid edge to the next falling one): first to last time at
+    /// or above the upper reference level, 0 when it never gets there.
+    pub out_hi: Vec<f64>,
+    /// As `out_hi` for low spans, at or below the lower reference level.
+    pub out_lo: Vec<f64>,
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -311,7 +316,7 @@ fn linreg(v: &[f32], dt: f64) -> (f64, f64) {
 /// Histogram over [min, max] with 1000 bins (fewer samples: half the sample count, at least 64). From the middle
 /// bin, the lower half gives base and the upper half gives top: the fullest bin, ties to the outer bin. Max/min
 /// is used instead when the data is flat, a half is empty, a peak sits in the outermost bin (clipping), or a peak
-/// holds fewer samples than `peak_threshold` (a poor peak). A bin's value is its lower edge.
+/// holds fewer samples than `peak_threshold` (a poor peak). A bin's value is its grid point.
 fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
     let minmax = (vmax as f64, vmin as f64);
     let n = f.len();
@@ -319,10 +324,11 @@ fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
         return minmax;
     }
     let nbins = if n > 1000 { 1000 } else { (n / 2).max(64) };
-    let (lo_v, width) = (vmin as f64, (vmax as f64 - vmin as f64) / nbins as f64);
+    // bins are centred on a grid from min to max (first and last bin centred on min and max)
+    let (lo_v, width) = (vmin as f64, (vmax as f64 - vmin as f64) / (nbins - 1) as f64);
     let mut hist = vec![0u64; nbins];
     for &x in f {
-        let b = ((x as f64 - lo_v) / width).floor().max(0.0) as usize;
+        let b = ((x as f64 - lo_v) / width).round().max(0.0) as usize;
         hist[b.min(nbins - 1)] += 1;
     }
     let thr = peak_threshold(&hist, n);
@@ -419,6 +425,8 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         rise_slew: f64::NAN,
         fall_slew: f64::NAN,
         t_end: (v.len() - 1) as f64 * dt,
+        out_hi: Vec::new(),
+        out_lo: Vec::new(),
         t_vmax: imax as f64 * dt,
         t_vmin: imin as f64 * dt,
         rise_time: f64::NAN,
@@ -453,14 +461,14 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         return a;
     }
     let mid = (base + amp * 0.5) as f32;
-    let e = edges(v, mid, (amp * 0.1) as f32);
+    let e = level_edges(v, mid, (amp * 0.05) as f32);
     a.rises = e.iter().filter(|x| x.rising).map(|x| x.t * dt).collect();
     a.falls = e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect();
     let spacings: Vec<f64> = {
         let t = mids(&a);
         t.windows(2).map(|w| w[1] - w[0]).collect()
     };
-    a.est_ui = crate::eye::unit_interval(&spacings).unwrap_or(f64::NAN);
+    a.est_ui = estimated_ui(&mids(&a));
     a.ui_wtd = crate::linecode::unit_interval_runs(&spacings).unwrap_or(f64::NAN);
     if a.rises.len() + a.falls.len() <= 8000 {
         let mid_v = (base + amp * 0.5) as f32;
@@ -473,11 +481,11 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     }
     let lo = (base + lpct * amp) as f32;
     let hi_l = (base + hpct * amp) as f32;
-    // the low and high reference crossings use the same comparator as the mid edges: a band of 5 % of the amplitude
+    // the low and high reference crossings use the same edge finder as the mid edges: a band of 5 % of the amplitude
     // either side of the level, so noise or ringing at 10 % / 90 % does not add or move crossings
-    let band = (amp * 0.1) as f32;
+    let band = (amp * 0.05) as f32;
     let at = |level: f32| {
-        let e = edges(v, level, band);
+        let e = level_edges(v, level, band);
         let r: Vec<f64> = e.iter().filter(|x| x.rising).map(|x| x.t * dt).collect();
         let f: Vec<f64> = e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect();
         (r, f)
@@ -500,20 +508,26 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     a.high_time = mean(&hi);
     a.low_time = mean(&low);
     (a.hi_rises, a.hi_falls, a.lo_rises, a.lo_falls) = (hr, hf, lr, lf);
+    (a.out_hi, a.out_lo) = outside_spans(v, dt, &a);
     if a.rises.len() >= 2 {
         let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, &a.rises);
         (a.cyc_top, a.cyc_base, a.cyc_amp, a.cyc_pp, a.cyc_max, a.cyc_min) = (top, base, amp, pp, mx, mn);
     }
-    // cycle values between the first and last rising edge
-    if a.rises.len() >= 2 {
-        let (s, t) = ((a.rises[0] / dt).ceil() as usize, (a.rises[a.rises.len() - 1] / dt).floor() as usize);
-        let c: Vec<f64> = v[s..=t.min(v.len() - 1)].iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
-        if !c.is_empty() {
-            a.cyc_avg = mean(&c);
-            a.cyc_rms = (c.iter().map(|x| x * x).sum::<f64>() / c.len() as f64).sqrt();
-            a.cyc_area = a.cyc_avg * (a.rises[a.rises.len() - 1] - a.rises[0]) / (a.rises.len() - 1) as f64;
+    // cycle mean, RMS and area: one value per cycle, then the mean of those
+    let (mut avg, mut rms, mut area) = (Vec::new(), Vec::new(), Vec::new());
+    for w in a.cycle_edges().windows(2) {
+        let (t0, t1) = (w[0], w[1]);
+        if !(t1 > t0) {
+            continue;
         }
+        let ar = integral(v, dt, t0, t1);
+        let (s, e) = ((t0 / dt).ceil() as usize, ((t1 / dt).floor() as usize).min(v.len() - 1));
+        let sq: Vec<f64> = v[s..=e.max(s)].iter().filter(|x| x.is_finite()).map(|&x| (x as f64).powi(2)).collect();
+        area.push(ar);
+        avg.push(ar / (t1 - t0));
+        rms.push(mean(&sq).sqrt());
     }
+    (a.cyc_avg, a.cyc_rms, a.cyc_area) = (mean(&avg), mean(&rms), mean(&area));
     a
 }
 
@@ -528,13 +542,20 @@ impl Analysis {
     }
     /// Back-to-back cycle periods between edges of the same polarity as the first mid edge.
     fn periods(&self) -> Vec<f64> {
+        self.cycle_edges().windows(2).map(|w| w[1] - w[0]).collect()
+    }
+    /// Cycle boundaries: the mid edges of the same polarity as the first edge in the record.
+    fn cycle_edges(&self) -> &[f64] {
         let first_rising = match (self.rises.first(), self.falls.first()) {
             (Some(r), Some(f)) => r <= f,
             (Some(_), None) => true,
             _ => false,
         };
-        let e = if first_rising { &self.rises } else { &self.falls };
-        e.windows(2).map(|w| w[1] - w[0]).collect()
+        if first_rising {
+            &self.rises
+        } else {
+            &self.falls
+        }
     }
     /// Mean positive duty cycle, %. Each cycle starts on a rising edge: (next fall - rise) / (next rise - rise).
     fn duty(&self) -> f64 {
@@ -767,17 +788,95 @@ pub fn burst_width(a: &Analysis, idle: f64) -> f64 {
 
 /// Mean duration of the intervals above the high reference, below the low reference, or either.
 pub fn time_outside(a: &Analysis, mode: Outside) -> f64 {
-    let hi = pair_widths(&a.hi_rises, &a.hi_falls);
-    let lo = pair_widths(&a.lo_falls, &a.lo_rises);
     match mode {
-        Outside::Above => mean(&hi),
-        Outside::Below => mean(&lo),
+        Outside::Above => mean(&a.out_hi),
+        Outside::Below => mean(&a.out_lo),
         Outside::Both => {
-            let mut both = hi;
-            both.extend(lo);
+            let mut both = a.out_hi.clone();
+            both.extend_from_slice(&a.out_lo);
             mean(&both)
         }
     }
+}
+
+/// Unit interval from edge times alone. P = the shortest same-polarity period (edge to the edge two later); the mean
+/// of the edge intervals shorter than 0.75 P is the first guess u0. Each interval then counts as 1, 2 or 3 bits (below
+/// 1.5, 2.5, 3.5 u0; longer ones are left out), and the UI is the counted time over the counted bits.
+pub fn estimated_ui(t: &[f64]) -> f64 {
+    if t.len() < 3 {
+        return f64::NAN;
+    }
+    let p = t.windows(3).step_by(2).map(|w| w[2] - w[0]).fold(f64::INFINITY, f64::min);
+    let d: Vec<f64> = t.windows(2).map(|w| w[1] - w[0]).collect();
+    let u0 = mean(&d.iter().copied().filter(|&x| x < 0.75 * p).collect::<Vec<_>>());
+    let (mut time, mut bits) = (0.0, 0.0);
+    for &x in &d {
+        let n = if x < 1.5 * u0 {
+            1.0
+        } else if x < 2.5 * u0 {
+            2.0
+        } else if x < 3.5 * u0 {
+            3.0
+        } else {
+            continue;
+        };
+        time += x;
+        bits += n;
+    }
+    if bits > 0.0 { time / bits } else { f64::NAN }
+}
+
+/// Integral of the straight-line interpolated waveform from `t0` to `t1` (seconds from the first sample).
+fn integral(v: &[f32], dt: f64, t0: f64, t1: f64) -> f64 {
+    let at = |x: f64| {
+        let i = (x.floor().max(0.0) as usize).min(v.len() - 1);
+        let j = (i + 1).min(v.len() - 1);
+        v[i] as f64 + (v[j] as f64 - v[i] as f64) * (x - i as f64)
+    };
+    let (x0, x1) = (t0 / dt, t1 / dt);
+    let (a, b) = (x0.ceil() as usize, (x1.floor() as usize).min(v.len() - 1));
+    if b < a {
+        return (at(x0) + at(x1)) / 2.0 * (x1 - x0) * dt;
+    }
+    let mut s = (at(x0) + v[a] as f64) / 2.0 * (a as f64 - x0);
+    for k in a..b {
+        s += (v[k] as f64 + v[k + 1] as f64) / 2.0;
+    }
+    s += (v[b] as f64 + at(x1)) / 2.0 * (x1 - b as f64);
+    s * dt
+}
+
+/// Per span between consecutive mid edges: the time from the first to the last sample beyond the reference level
+/// (upper level in a high span, lower level in a low span), with straight-line interpolation at both crossings.
+fn outside_spans(v: &[f32], dt: f64, a: &Analysis) -> (Vec<f64>, Vec<f64>) {
+    let amp = a.top - a.base;
+    let (up, lo) = (a.base + a.hpct * amp, a.base + a.lpct * amp);
+    let (mut hi_w, mut lo_w) = (Vec::new(), Vec::new());
+    let last = v.len().saturating_sub(1);
+    for w in edge_seq(a).windows(2) {
+        let ((t0, rising), (t1, _)) = (w[0], w[1]);
+        let (s, e) = (((t0 / dt).floor().max(0.0) as usize).min(last), ((t1 / dt).ceil() as usize).min(last));
+        let lvl = if rising { up } else { lo };
+        let beyond = |x: f32| x.is_finite() && if rising { x as f64 >= lvl } else { x as f64 <= lvl };
+        let width = match ((s..=e).find(|&i| beyond(v[i])), (s..=e).rev().find(|&i| beyond(v[i]))) {
+            (Some(i), Some(j)) => {
+                let cross = |k: usize, m: usize| {
+                    let (yk, ym) = (v[k] as f64, v[m] as f64);
+                    if ym == yk {
+                        m as f64 * dt
+                    } else {
+                        (k as f64 + (lvl - yk) / (ym - yk) * (m as f64 - k as f64)) * dt
+                    }
+                };
+                let ta = if i > s && v[i - 1].is_finite() { cross(i - 1, i) } else { i as f64 * dt };
+                let tb = if j < e && v[j + 1].is_finite() { cross(j, j + 1) } else { j as f64 * dt };
+                tb - ta
+            }
+            _ => 0.0,
+        };
+        if rising { hi_w.push(width) } else { lo_w.push(width) }
+    }
+    (hi_w, lo_w)
 }
 
 /// Mean time from a mid crossing to the one N crossings later. `data` uses either direction; a clock uses rising edges.
@@ -905,7 +1004,7 @@ pub fn setup_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
 }
 
 pub fn setup_time_on(clock: &Analysis, data: &Analysis, latch: Latch) -> f64 {
-    mean(&cycles(clock, data, latch).iter().filter_map(|c| c.0).collect::<Vec<_>>())
+    mean(&setup_hold_times(clock, data, latch).0)
 }
 
 /// Hold: the first data mid after the clock edge minus the edge, when it comes before the next latching edge and
@@ -919,13 +1018,53 @@ pub fn hold_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
 }
 
 pub fn hold_time_on(clock: &Analysis, data: &Analysis, latch: Latch) -> f64 {
-    mean(&cycles(clock, data, latch).iter().filter_map(|c| c.1).collect::<Vec<_>>())
+    mean(&setup_hold_times(clock, data, latch).1)
 }
 
-/// Every setup and hold time, for statistics outside the mean.
+/// Default range of accepted setup and hold times, seconds (min, max), as on the reference scope.
+pub const SETUP_HOLD_WINDOW: (f64, f64) = (0.0, 10e-9);
+
+/// Every setup and hold time with the default range `SETUP_HOLD_WINDOW`.
 pub fn setup_hold_times(clock: &Analysis, data: &Analysis, latch: Latch) -> (Vec<f64>, Vec<f64>) {
-    let c = cycles(clock, data, latch);
-    (c.iter().filter_map(|c| c.0).collect(), c.iter().filter_map(|c| c.1).collect())
+    setup_hold_times_within(clock, data, latch, SETUP_HOLD_WINDOW.0, SETUP_HOLD_WINDOW.1)
+}
+
+/// Every setup and hold time between `min` and `max` (inclusive, seconds; negative values allowed). Clock edges are
+/// those `latch` selects, data edges are every mid crossing of the data. Setup pairs each clock edge with the nearest
+/// data edge before it (clock - data); hold pairs each data edge with the nearest clock edge before it (data - clock).
+/// An edge is used in one pair at most, and a pair counts only when its value is inside the range.
+pub fn setup_hold_times_within(clock: &Analysis, data: &Analysis, latch: Latch, min: f64, max: f64) -> (Vec<f64>, Vec<f64>) {
+    let (c, d) = (latch.edges(clock), mids(data));
+    let (mut setup, mut hold) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < c.len() && j < d.len() {
+        let x = d[j] - c[i];
+        if x < -max {
+            j += 1;
+        } else if x > -min {
+            i += 1;
+        } else if j + 1 < d.len() && d[j + 1] - c[i] < -min {
+            j += 1; // a later data edge is also far enough before this clock edge: take the nearest
+        } else {
+            setup.push(-x);
+            (i, j) = (i + 1, j + 1);
+        }
+    }
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < c.len() && j < d.len() {
+        let x = d[j] - c[i];
+        if x < min {
+            j += 1;
+        } else if x > max {
+            i += 1;
+        } else if i + 2 < c.len() && d[j] - c[i + 1] > min {
+            i += 1; // a later clock edge also comes far enough before this data edge: take the nearest
+        } else {
+            hold.push(x);
+            (i, j) = (i + 1, j + 1);
+        }
+    }
+    (setup, hold)
 }
 
 /// Median spacing of sorted edges; infinite when there are fewer than two.

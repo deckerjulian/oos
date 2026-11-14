@@ -87,8 +87,10 @@ fn high_low_burst_outside_and_n_periods() {
     // 0-100 % edges are 100 ns; the 90 % and 10 % points sit 40 ns off the 50 % width
     assert!(close(a.get(Meas::HighTime), 2.92e-6, 0.02), "{}", a.get(Meas::HighTime));
     assert!(close(a.get(Meas::LowTime), 6.92e-6, 0.02), "{}", a.get(Meas::LowTime));
-    assert!(close(time_outside(&a, Outside::Above), a.high_time, 1e-9));
-    assert!(close(time_outside(&a, Outside::Below), a.low_time, 1e-9));
+    // time outside runs from the first to the last sample past the level in each span, so on clean edges it is the
+    // high / low time up to the interpolation between samples
+    assert!(close(time_outside(&a, Outside::Above), a.high_time, 1e-3), "{}", time_outside(&a, Outside::Above));
+    assert!(close(time_outside(&a, Outside::Below), a.low_time, 1e-3), "{}", time_outside(&a, Outside::Below));
     let both = time_outside(&a, Outside::Both);
     assert!(both > a.high_time && both < a.low_time, "{}", both);
     // gaps are 3 us and 7 us: an idle of one period never pauses long enough to start a burst, 4 us splits on the low gap
@@ -123,9 +125,15 @@ fn skew_setup_and_hold() {
     assert!(skew(&a, &b, Pair(true, true)).is_nan());
     let w = |a: &Analysis, b: &Analysis| skew_within(a, b, Pair(true, true), -200e-6, 200e-6);
     assert!(close(w(&a, &b), 125e-6, 1e-3), "{}", w(&a, &b));
+    // setup and hold are also limited to a range, by default 0..10 ns: no pair here
+    assert!(setup_time(&a, &b).is_nan() && hold_time(&a, &b).is_nan());
     // data lags the clock by 125 us: setup is the rest of the period to the previous data edge, hold is the lag
-    assert!(close(setup_time(&a, &b), 375e-6, 0.02), "{}", setup_time(&a, &b));
-    assert!(close(hold_time(&a, &b), 125e-6, 0.02), "{}", hold_time(&a, &b));
+    let (su, ho) = setup_hold_times_within(&a, &b, Latch::Rise, 0.0, 1e-3);
+    let m = |x: &[f64]| x.iter().sum::<f64>() / x.len() as f64;
+    assert!(close(m(&su), 375e-6, 0.02), "{su:?}");
+    assert!(close(m(&ho), 125e-6, 0.02), "{ho:?}");
+    // one value per pair: every edge is used once
+    assert!(su.len() <= 5 && ho.len() <= 5, "{} {}", su.len(), ho.len());
     assert!(close(w(&b, &a), -125e-6, 1e-3), "{}", w(&b, &a));
     assert_eq!(setup_hold_violations(&a, &b, 0.0, 0.0), 0.0);
     assert!(setup_hold_violations(&a, &b, 400e-6, 0.0) > 0.0);

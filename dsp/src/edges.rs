@@ -110,3 +110,131 @@ mod tests {
         assert!((e[0].t - 25.5).abs() < 1e-3);
     }
 }
+
+/// sin(x)/x interpolation filter: row r gives the waveform at r/8 of a sample before sample i from samples i-4 .. i+3.
+const SINC8: [[f64; 8]; 8] = [
+    [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    [-0.002431213002523691, 0.013571640261943685, -0.0449928600273779, 0.13696806975349318, 0.9559562663298493, -0.07431540814104665, 0.018075864528327656, -0.0029436086272198736],
+    [-0.004559319391205463, 0.025784400964766974, -0.0877010984440858, 0.2910057852332102, 0.8713054198315149, -0.12204652839318442, 0.03118660907193771, -0.005177759860202968],
+    [-0.0060867394809065445, 0.03490663330831012, -0.12218482731532276, 0.45221821499035286, 0.752957912297461, -0.14396752281390945, 0.038379988420729205, -0.006485852327273278],
+    [-0.006777513830684256, 0.039457774230413634, -0.14265809342759894, 0.6098363606597559, 0.6098363606597559, -0.14265809342759894, 0.039457774230413634, -0.006777513830684256],
+    [-0.006485852327273278, 0.038379988420729205, -0.14396752281390945, 0.752957912297461, 0.45221821499035286, -0.12218482731532276, 0.03490663330831012, -0.0060867394809065445],
+    [-0.005177759860202968, 0.03118660907193771, -0.12204652839318442, 0.8713054198315149, 0.2910057852332102, -0.0877010984440858, 0.025784400964766974, -0.004559319391205463],
+    [-0.0029436086272198736, 0.018075864528327656, -0.07431540814104665, 0.9559562663298493, 0.13696806975349318, -0.0449928600273779, 0.013571640261943685, -0.002431213002523691],
+];
+
+/// Crossing of `level` between samples i-1 and i, as a fractional sample index: the waveform is sin(x)/x interpolated
+/// at eighths of a sample, and the crossing lies on a straight line between the two eighths around it. Near the ends
+/// of the record, or with a NaN among the 8 neighbours, plain straight-line interpolation between the two samples.
+fn crossing(v: &[f32], i: usize, level: f64, rising: bool) -> f64 {
+    let (a, b) = (v[i - 1] as f64, v[i] as f64);
+    let linear = || if b != a { (i - 1) as f64 + (level - a) / (b - a) } else { i as f64 };
+    if i < 4 || i + 4 > v.len() || v[i - 4..i + 4].iter().any(|x| !x.is_finite()) {
+        return linear();
+    }
+    let taps = &v[i - 4..i + 4];
+    let mut prev = a;
+    for k in 0..8 {
+        let val: f64 = taps.iter().zip(SINC8[7 - k].iter()).map(|(&x, c)| x as f64 * c).sum();
+        if (rising && val >= level) || (!rising && val <= level) {
+            let lo = (i - 1) as f64 + k as f64 * 0.125;
+            return if val != prev { lo + 0.125 * (level - prev) / (val - prev) } else { lo };
+        }
+        prev = val;
+    }
+    linear()
+}
+
+/// Edges through `level` for measurements, with a hysteresis band of `hyst` on each side of the level. An edge counts
+/// once the signal goes from beyond one side of the band to beyond the other. Its time is the crossing of `level`
+/// (`crossing`); when the signal crosses the level, falls back and crosses again inside the band, the time is the
+/// mean of the first and the last of those crossings. NaN samples are skipped.
+pub fn level_edges(v: &[f32], level: f32, hyst: f32) -> Vec<Edge> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum S {
+        Unknown,
+        Low,
+        UpInBand,   // crossed the level going up, still inside the band
+        UpBack,     // and fell back below the level, still inside the band
+        High,
+        DownInBand,
+        DownBack,
+    }
+    let t = level as f64;
+    let (hi, lo) = (t + hyst as f64, t - hyst as f64);
+    let mut out = Vec::new();
+    let mut s = S::Unknown;
+    let (mut t1, mut t2) = (0.0, 0.0);
+    let mut prev_ok = false;
+    for i in 0..v.len() {
+        let x = v[i] as f64;
+        if !x.is_finite() {
+            prev_ok = false;
+            continue;
+        }
+        let can = prev_ok && i > 0;
+        prev_ok = true;
+        let cross = |rising| if can { crossing(v, i, t, rising) } else { i as f64 };
+        s = match s {
+            S::Unknown => {
+                if x > hi {
+                    S::High
+                } else if x < lo {
+                    S::Low
+                } else {
+                    S::Unknown
+                }
+            }
+            S::Low if x > hi => {
+                out.push(Edge { t: cross(true), rising: true });
+                S::High
+            }
+            S::Low if x > t => {
+                (t1, t2) = (cross(true), cross(true));
+                S::UpInBand
+            }
+            S::UpInBand if x > hi => {
+                out.push(Edge { t: (t1 + t2) / 2.0, rising: true });
+                S::High
+            }
+            S::UpInBand if x < lo => S::Low,
+            S::UpInBand if x < t => S::UpBack,
+            S::UpBack if x < lo => S::Low,
+            S::UpBack if x > hi => {
+                t2 = cross(true);
+                out.push(Edge { t: (t1 + t2) / 2.0, rising: true });
+                S::High
+            }
+            S::UpBack if x > t => {
+                t2 = cross(true);
+                S::UpInBand
+            }
+            S::High if x < lo => {
+                out.push(Edge { t: cross(false), rising: false });
+                S::Low
+            }
+            S::High if x < t => {
+                (t1, t2) = (cross(false), cross(false));
+                S::DownInBand
+            }
+            S::DownInBand if x < lo => {
+                out.push(Edge { t: (t1 + t2) / 2.0, rising: false });
+                S::Low
+            }
+            S::DownInBand if x > hi => S::High,
+            S::DownInBand if x > t => S::DownBack,
+            S::DownBack if x > hi => S::High,
+            S::DownBack if x < lo => {
+                t2 = cross(false);
+                out.push(Edge { t: (t1 + t2) / 2.0, rising: false });
+                S::Low
+            }
+            S::DownBack if x < t => {
+                t2 = cross(false);
+                S::DownInBand
+            }
+            other => other,
+        };
+    }
+    out
+}
