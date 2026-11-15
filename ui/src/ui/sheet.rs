@@ -111,7 +111,7 @@ fn keypad_pick(it: Item) -> bool {
 }
 
 fn destructive(it: Item) -> bool {
-    matches!(it, Item::CurRemove | Item::SrchRemove | Item::RefClear | Item::MeasClear | Item::UpdateRollback | Item::Stock | Item::PowerAct | Item::ClearDisp | Item::DefaultAct)
+    matches!(it, Item::SpecLimitClear | Item::EyeClear | Item::MaskClear | Item::SimDefaults | Item::CurRemove | Item::SrchRemove | Item::RefClear | Item::MeasClear | Item::UpdateRollback | Item::Stock | Item::PowerAct | Item::ClearDisp | Item::DefaultAct)
 }
 
 impl Ui {
@@ -190,6 +190,59 @@ impl Ui {
                 UpdateRollback => Slot::Foot(2),
                 Stock => Slot::Foot(3),
                 _ => Slot::Tab(3),
+            }),
+            M::Spectrum => (&["Spectrum", "Traces", "Limits"], |it| match it {
+                SpecOn | SpecSrc | SpecCenter | SpecSpan | SpecRbw | SpecWin | SpecHarm => Slot::Tab(0),
+                SrcOn => Slot::Foot(0),
+                SpecLimitSet | SpecLimitClear => Slot::Foot(2),
+                SpecAcprW | SpecAcprS | SpecMargin => Slot::Tab(2),
+                _ => Slot::Tab(1),
+            }),
+            M::Eye => (&["Eye", "Jitter", "Filters"], |it| match it {
+                EyeOn | EyePlace | EyeSrc | EyeRate | EyeBer | EyeB => Slot::Tab(0),
+                EyeAct | SrcOn => Slot::Foot(0),
+                EyeHp | EyePnLo | EyePnHi | EyeNpj => Slot::Tab(1),
+                EyeClear => Slot::Foot(2),
+                _ => Slot::Tab(2),
+            }),
+            M::Power => (&["Power"], |it| match it {
+                SrcOn => Slot::Foot(0),
+                _ => Slot::Tab(0),
+            }),
+            M::Storage => (&["Save", "Export"], |it| match it {
+                StoreDest | StoreSlot | StoreSaveSetup | StoreRecall => Slot::Tab(0),
+                _ => Slot::Tab(1),
+            }),
+            M::Mask => (&["Test", "Build"], |it| match it {
+                MaskOn | MaskSrc | MaskInvert | MaskAction => Slot::Tab(0),
+                SrcOn | MaskReset => Slot::Foot(0),
+                MaskClear => Slot::Foot(1),
+                _ => Slot::Tab(1),
+            }),
+            M::Sim => (&["Signal", "Channel", "Jitter", "Output"], |it| match it {
+                SimPreset | SimRate | SimPat | SimHigh | SimLow | SimRise => Slot::Tab(0),
+                SimLive | SimPlay => Slot::Foot(0),
+                SimBw | SimDeemph | SimNoise => Slot::Tab(1),
+                SimRj | SimPj | SimPjHz | SimSsc | Open(M::SimAdvanced) => Slot::Tab(2),
+                SimDefaults => Slot::Foot(3),
+                _ => Slot::Tab(3),
+            }),
+            M::SimAdvanced => (&["Spread spectrum", "Other jitter"], |it| match it {
+                SimSsc | SimSscCenter | SimSscDeviation | SimSscHz => Slot::Tab(0),
+                SimDefaults => Slot::Foot(1),
+                _ => Slot::Tab(1),
+            }),
+            M::La => (&["Logic", "Thresholds"], |it| match it {
+                LaThr(_) | LaUser(_) => Slot::Tab(1),
+                _ => Slot::Tab(0),
+            }),
+            M::LaLines => (&["D0-3", "D4-7", "D8-11", "D12-15"], |it| match it {
+                LaLine(i) => Slot::Tab(i / 4),
+                _ => Slot::Tab(0),
+            }),
+            M::LaPat => (&["D0-3", "D4-7", "D8-11", "D12-15"], |it| match it {
+                LaPat(i) => Slot::Tab(i / 4),
+                _ => Slot::Tab(0),
             }),
             _ => return None,
         })
@@ -507,6 +560,14 @@ impl Ui {
         self.sheet_draw_footer(cv, g.r, &g.foot);
     }
 
+    /// The minus and plus of a Number row, drawn as strokes: the bundled font has the hyphen but no minus sign (U+2212),
+    /// and a hyphen is short and sits high. Both strokes are 2 px thick and as wide as the plus is tall.
+    pub(super) fn draw_sign(cv: &mut Canvas, r: Rect, plus: bool) {
+        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+        cv.fill(Rect::new(cx - 7, cy - 1, 14, 2), TEXT);
+        if plus { cv.fill(Rect::new(cx - 1, cy - 7, 2, 14), TEXT); }
+    }
+
     fn sheet_draw_row(&self, cv: &mut Canvas, row: &SheetRowGeo) {
         let f = self.fonts();
         let it = row.it;
@@ -545,13 +606,13 @@ impl Ui {
             RowKind::Number => {
                 let (mi, mid, pl) = Self::value_parts(c);
                 btn(cv, mi, BTN, BTN_BORDER);
-                cv.text_in(&f.mb, mi, 1, "-", TEXT);
+                Self::draw_sign(cv, mi, false);
                 btn(cv, mid, BTN, BTN_BORDER);
                 cv.set_clip(mid);
                 cv.text_in(&f.m, mid, 1, &self.value(it), TEXT);
                 cv.no_clip();
                 btn(cv, pl, BTN, BTN_BORDER);
-                cv.text_in(&f.mb, pl, 1, "+", TEXT);
+                Self::draw_sign(cv, pl, true);
             }
             RowKind::Toggle => {
                 let on = self.sheet_on(it);
