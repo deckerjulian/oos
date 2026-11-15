@@ -194,10 +194,10 @@ fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
     assert_eq!(u.wins.len(), 2);
     assert!(u.wins[0].bottom() <= u.wins[1].y);
     assert_eq!(u.studio_head_h(), 18);
-    assert_eq!(u.grid.y, u.frame().body.y + 18);
+    assert_eq!(u.grid.y, u.frame().body.y + 40 + 18, "the strip of the waveform, then the tag row");
     // the tag row, the lanes and the bars do not overlap
     let top = u.studio_top();
-    assert!(u.grid.y - 18 >= top.run.bottom());
+    assert!(u.grid.y - 18 - 40 >= top.run.bottom());
     assert!(u.grid.bottom() <= u.frame().bottom.y);
     // the T tag sits at the trigger position: 0 s at the centre with no delay
     u.m.delay = 0.0;
@@ -390,12 +390,15 @@ fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
     tap_in(&mut u, g.add);
     assert_eq!(u.menu, MenuId::MeasAdd);
     u.close_menu();
-    // collapse goes back to the lanes, maximize to the table
-    tap_in(&mut u, g.collapse);
+    // the strip's X goes back to the lanes, its maximize button to the table
+    let strip = |u: &mut Ui, r: Rect| { u.touch_ev(Phase::Down, r.x + r.w / 2, r.y + 20); u.touch_ev(Phase::Up, r.x + r.w / 2, r.y + 20); };
+    let leaf = u.dock_leaf(super::dock::VKind::Measure).unwrap();
+    strip(&mut u, Ui::dock_close_rect(leaf));
     assert_eq!(u.studio.view, StudioView::Waveform);
     assert_eq!(u.grid.w, full);
     u.studio_set_view(StudioView::Docked);
-    tap_in(&mut u, g.maximize);
+    let leaf = u.dock_leaf(super::dock::VKind::Measure).unwrap();
+    strip(&mut u, Rect::new(leaf.right() - 96, leaf.y, 48, 40));
     assert_eq!(u.studio.view, StudioView::Only);
 }
 
@@ -425,23 +428,27 @@ fn studio_list_scrolls_with_the_finger() {
 }
 
 #[test]
-fn studio_floating_panel_shows_the_pinned_ones_moves_docks_and_opens_the_table() {
+fn studio_floating_panel_lists_the_measurements_moves_docks_and_opens_the_table() {
+    // Batch 10: the floating panel is a dock view: its title strip moves it, the X closes it, the strip's maximize
+    // opens the table and a drag to an edge docks it (batch10_tests has the drops)
     let mut u = twelve();
     u.studio_set_view(StudioView::Floating);
     shot(&mut u, "09-floating");
-    let (title, close, dock, all) = u.studio_float_parts().expect("floating panel");
+    let r = u.dock_float_rect(super::dock::VKind::Measure).expect("floating panel");
     let p = u.studio_panel_rect().unwrap();
-    assert!(p.x >= 0 && p.right() <= W && p.y >= TOP.h && p.bottom() <= u.frame().bottom.y);
+    assert!(r.x >= 0 && r.right() <= W && r.y >= TOP.h && r.bottom() <= u.frame().bottom.y);
+    assert!(p.y == r.y + 40 && p.h == r.h - 40, "the panel draws under its strip");
     assert_eq!(u.grid.w, W, "a floating panel takes no room from the lanes");
     // it follows a finger on its title
-    let (x, y) = (title.x + 100, title.y + 12);
+    let (x, y) = (r.x + 100, r.y + 12);
     u.touch_ev(Phase::Down, x, y);
     u.touch_ev(Phase::Move, x - 200, y + 60);
+    u.touch_ev(Phase::Move, x - 200, y + 60);
     u.touch_ev(Phase::Up, x - 200, y + 60);
-    let moved = u.studio_panel_rect().unwrap();
-    assert_eq!((moved.x, moved.y), (p.x - 200, p.y + 60));
+    let moved = u.dock_float_rect(super::dock::VKind::Measure).unwrap();
+    assert_eq!((moved.x, moved.y), (r.x - 200, r.y + 60));
     assert_eq!(u.studio.view, StudioView::Floating, "dragging the title is not a tap");
-    // a touch on the lanes under it is the plot's, not the panel's
+    // a touch on the lanes outside it is the plot's, not the panel's
     let delay = u.m.delay;
     let lane = u.wins[0];
     let (lx, ly) = (lane.x + 40, lane.y + 40);
@@ -449,18 +456,17 @@ fn studio_floating_panel_shows_the_pinned_ones_moves_docks_and_opens_the_table()
     u.touch_ev(Phase::Move, lx + 50, ly);
     u.touch_ev(Phase::Up, lx + 50, ly);
     assert_ne!(u.m.delay, delay, "the lanes still pan");
-    let (_, close, dock, all) = u.studio_float_parts().map(|(t, c, d, a)| (t, c, d, a)).unwrap();
-    tap_in(&mut u, all);
+    // the strip's maximize button: the table
+    let r = u.dock_float_rect(super::dock::VKind::Measure).unwrap();
+    let max = Rect::new(r.right() - 96, r.y, 48, 40);
+    u.touch_ev(Phase::Down, max.x + 24, max.y + 20);
+    u.touch_ev(Phase::Up, max.x + 24, max.y + 20);
     assert_eq!(u.studio.view, StudioView::Only);
     u.studio_set_view(StudioView::Floating);
-    let (_, _, dock2, _) = u.studio_float_parts().unwrap();
-    let _ = dock;
-    tap_in(&mut u, dock2);
-    assert_eq!(u.studio.view, StudioView::Docked);
-    u.studio_set_view(StudioView::Floating);
-    let (_, close2, _, _) = u.studio_float_parts().unwrap();
-    let _ = close;
-    tap_in(&mut u, close2);
+    let r = u.dock_float_rect(super::dock::VKind::Measure).unwrap();
+    let close = Ui::dock_close_rect(r);
+    u.touch_ev(Phase::Down, close.x + 24, close.y + 20);
+    u.touch_ev(Phase::Up, close.x + 24, close.y + 20);
     assert_eq!(u.studio.view, StudioView::Waveform);
 }
 

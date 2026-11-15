@@ -45,6 +45,7 @@ mod wlan;
 mod windows;
 mod workspace;
 mod studio;
+mod dock;
 mod studio_views;
 mod sheet;
 mod addrail;
@@ -74,6 +75,8 @@ mod batch7b_tests;
 mod batch8_tests;
 #[cfg(test)]
 mod batch9_tests;
+#[cfg(test)]
+mod batch10_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -1678,6 +1681,13 @@ impl Ui {
     /// The plot: 10 x 8 divisions between the top bar and the cards; it gets shorter for strip rows (the results
     /// panel is an overlay and takes no room). With the eye open the trace keeps the left part, or the top.
     fn plot_rect(&self) -> Rect {
+        // Studio: the waveform's place in the dock; the other views have places of their own
+        if self.dock_on() {
+            let l = self.dock_wave_rect();
+            let top = self.plot_top();
+            let h = ((self.plot_base() - self.la_strip_h()) / 8 * 8).max(96);
+            return Rect::new(l.x, top, l.w, h);
+        }
         // the logic analyser lanes have their own strip under the graticule: the analog picture shrinks with it
         let avail = self.plot_base() - self.la_strip_h() - self.pane_h();
         let top = self.plot_top();
@@ -1719,6 +1729,7 @@ impl Ui {
 
     /// Height taken under the trace when the eye is stacked there.
     pub(super) fn eye_below(&self) -> i32 {
+        if self.dock_on() { return 0; }
         if self.workspace.eye_float.is_some() || !(self.eye_open() && self.m.eye_place == EyePlace::Under) {
             return 0;
         }
@@ -1732,6 +1743,10 @@ impl Ui {
 
     /// The eye's rectangle: to the right of the trace, or under it.
     pub(super) fn eye_pane_rect(&self) -> Rect {
+        if self.dock_on() {
+            // in the dock: the eye's own place, or the waveform's when it fills the plot
+            return self.dock_content(dock::VKind::Eye).unwrap_or_else(|| { let w = self.dock_wave_rect(); Rect::new(w.x, w.y + dock::STRIP_H, w.w, (w.h - dock::STRIP_H).max(1)) });
+        }
         if let Some(rect) = self.workspace.eye_float { return rect; }
         let wave = self.plot_rect();
         if self.m.eye_place == EyePlace::Full { return wave; }
@@ -1767,6 +1782,7 @@ impl Ui {
     }
 
     fn plot_top(&self) -> i32 {
+        if self.dock_on() { return self.dock_wave_rect().y + dock::STRIP_H + self.studio_head_h(); }
         let y = if self.full_on() { 0 } else { self.frame().body.y };
         let y = if self.m.strip_dock == StripDock::Above { y + self.strip_rows_h() } else { y };
         y + self.studio_head_h()
@@ -1774,6 +1790,7 @@ impl Ui {
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
     fn plot_bottom(&self) -> i32 {
+        if self.dock_on() { return self.dock_wave_rect().bottom() - self.studio_row_h(); }
         if self.full_on() { self.scr.h } else { self.frame().bottom.y - self.studio_row_h() }
     }
 
@@ -2570,6 +2587,7 @@ impl Ui {
         self.ntp_poll();
         self.usb_poll();
         self.ch_hold_poll();
+        self.dock_poll();
         self.counter_poll();
         self.la_probe_poll();
         self.log_tick();
@@ -3144,6 +3162,7 @@ impl Ui {
         self.draw_results(cv);
         self.draw_studio_panel(cv);
         self.draw_table(cv);
+        self.draw_dock(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
         if self.hdmi_snap_want && self.m.density != Density::Full {
@@ -4605,6 +4624,7 @@ impl Ui {
 
     /// Left edge and width of the graticule. A side dock keeps a column for the strip and for a docked card.
     fn plot_span(&self) -> (i32, i32) {
+        if self.dock_on() { let l = self.dock_wave_rect(); return (l.x, l.w); }
         let body = self.frame().body;
         let side = if self.strip_rows() > 0 { STRIP_SIDE } else { 0 } + self.results_side_w();
         let dock = self.studio_dock_w();

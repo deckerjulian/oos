@@ -1023,7 +1023,7 @@ impl Ui {
         match phase {
             Phase::Down => {
                 if self.workspace.popup.is_some() { return false; }
-                let panel = if self.eye_open() && Rect::new(self.eye_pane_rect().x, self.eye_pane_rect().y, self.eye_pane_rect().w, HEADER).contains(x, y)
+                let panel = if self.eye_open() && self.m.layout != Layout::Studio && Rect::new(self.eye_pane_rect().x, self.eye_pane_rect().y, self.eye_pane_rect().w, HEADER).contains(x, y)
                     && !self.eye_pane_close().contains(x, y) { Panel::Eye }
                 else if self.results_rects().is_some_and(|(header, _)| header.contains(x, y)) { Panel::Measurements }
                 else if self.grid.contains(x, y) && !self.menu_open { Panel::Plot }

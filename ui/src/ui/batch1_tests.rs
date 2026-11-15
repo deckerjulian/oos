@@ -205,7 +205,7 @@ fn the_floating_studio_panel_clears_the_corner_buttons_and_the_head_row() {
         let p = u.studio_panel_rect().unwrap();
         let hits = |r: Rect| p.x < r.right() && r.x < p.right() && p.y < r.bottom() && r.y < p.bottom();
         assert!(!hits(u.full_btn().0) && !hits(u.zoom_btn().0), "{at:?} covers a corner button: {p:?}");
-        assert!(p.y >= u.grid.y, "{at:?} stays under the head row");
+        assert!(p.y >= u.dock_region().y, "{at:?} stays under the bar");
     }
     u.studio.panel.at = None;
     shot(&mut u, "b1-studio-floating-corner");

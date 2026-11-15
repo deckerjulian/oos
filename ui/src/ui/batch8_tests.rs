@@ -502,8 +502,9 @@ fn a_floating_panel_stays_off_the_zoom_bar_and_the_docked_panel_closes_with_an_x
     shot(&mut u, "floating-clear-of-zoom-bar");
     u.studio_set_view(super::studio::StudioView::Docked);
     u.step(0.05);
-    let g = u.studio_panel_geo().expect("docked");
-    assert!(g.collapse.w >= 36 && g.collapse.h >= 30);
-    tap_in(&mut u, g.collapse);
+    let close = Ui::dock_close_rect(u.dock_leaf(super::dock::VKind::Measure).expect("docked"));
+    assert!(close.w >= 40 && close.h >= 40);
+    u.handle(Ev::Touch { id: 0, phase: Phase::Down, x: close.x + 24, y: close.y + 20 });
+    u.handle(Ev::Touch { id: 0, phase: Phase::Up, x: close.x + 24, y: close.y + 20 });
     assert_eq!(u.studio.view, super::studio::StudioView::Waveform, "the X closes the panel");
 }

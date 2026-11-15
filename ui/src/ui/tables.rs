@@ -132,6 +132,10 @@ impl Ui {
 
     /// The table window over the plot: rectangle and the rows that fit.
     fn table_rect(&self, n: usize) -> (Rect, usize) {
+        if self.dock_on() {
+            let r = self.dock_content(super::dock::VKind::Table).unwrap_or(Rect::new(0, 0, 1, 1));
+            return (r, ((r.h - HEAD_H - 4) / ROW_H).max(1) as usize);
+        }
         let a = self.over_area();
         let fit = ((a.h - 16 - HEAD_H) / ROW_H).max(1) as usize;
         let rows = n.clamp(1, fit);
@@ -264,6 +268,7 @@ impl Ui {
 
     /// Height the second pane takes from the plot: what its content needs, the plot gets the rest.
     pub(super) fn pane_h(&self) -> i32 {
+        if self.dock_on() { return self.dock_content(super::dock::VKind::Pane).map_or(0, |r| r.h + 4); }
         if self.m.pane == 0 || self.m.view != AView::Scope || self.xy {
             return 0;
         }
@@ -275,6 +280,7 @@ impl Ui {
 
     /// The second pane: under the plot and the lanes.
     pub(super) fn pane_rect(&self) -> Rect {
+        if self.dock_on() { return self.dock_content(super::dock::VKind::Pane).unwrap_or(Rect::new(0, 0, 1, 1)); }
         let g = self.grid;
         Rect::new(g.x, g.y + g.h + 2 + self.eye_below() + self.la_strip_h(), g.w, self.pane_h() - 4)
     }

@@ -133,15 +133,15 @@ impl Ui {
     pub(super) fn studio_sim_geo(&self) -> Option<SimGeo> {
         let p = self.studio_panel_rect().filter(|_| self.m.layout == Layout::Studio && self.studio.view == StudioView::Sim)?;
         let tab_w = (p.w - 16) / 2;
-        let list_y = p.y + 102;
+        let list_y = p.y + 74;
         let play = Rect::new(p.x + 6, p.bottom() - 46, p.w - 12, 38);
         let nav_y = play.y - 36;
         let page = (((nav_y - 4 - list_y) / SIM_ROW).max(1)) as usize;
         Some(SimGeo {
             p,
-            close: Rect::new(p.right() - 42, p.y + 5, 36, 30),
-            presets: Rect::new(p.x + 8, p.y + 62, tab_w, 32),
-            knobs: Rect::new(p.x + 8 + tab_w, p.y + 62, tab_w, 32),
+            close: Rect::new(0, 0, 0, 0),
+            presets: Rect::new(p.x + 8, p.y + 32, tab_w, 32),
+            knobs: Rect::new(p.x + 8 + tab_w, p.y + 32, tab_w, 32),
             list: Rect::new(p.x + 4, list_y, p.w - 8, page as i32 * SIM_ROW),
             page,
             up: Rect::new(p.right() - 82, nav_y, 36, 30),
@@ -161,14 +161,9 @@ impl Ui {
         let p = g.p;
         cv.round(p, 8, CARD_BORDER, 255);
         cv.round(p.inset(1), 7, PANEL_BG, 255);
-        cv.text(&f.lb, p.x + 14, p.y + 27, "SIM", TEXT);
-        chip(cv, g.close, BTN, BTN_BORDER);
-        let (cx, cy) = (g.close.x + g.close.w / 2, g.close.y + g.close.h / 2);
-        cv.line(cx - 5, cy - 5, cx + 5, cy + 5, TEXT);
-        cv.line(cx - 5, cy + 5, cx + 5, cy - 5, TEXT);
         let state = if self.session_is_sim { "on the lanes" } else if self.sim_generating() { "generating" } else { "not playing" };
-        cv.set_clip(Rect::new(p.x + 14, p.y + 34, p.w - 70, 28));
-        cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} \u{b7} {} \u{b7} {}", self.sim_preset_name(), si_short(self.m.sim_rate, "b/s"), state), DIM);
+        cv.set_clip(Rect::new(p.x + 14, p.y + 4, p.w - 28, 24));
+        cv.text(&f.s, p.x + 14, p.y + 21, &format!("{} \u{b7} {} \u{b7} {}", self.sim_preset_name(), si_short(self.m.sim_rate, "b/s"), state), DIM);
         cv.no_clip();
         for (r, label, on) in [(g.presets, "Presets", !self.studio.sim_knobs), (g.knobs, "Knobs", self.studio.sim_knobs)] {
             chip(cv, r, if on { mix(BTN, ACCENT, 40) } else { BTN }, if on { ACCENT } else { BTN_BORDER });
@@ -436,7 +431,7 @@ mod tests {
         let g = u.studio_sim_geo().expect("the SIM panel");
         assert!(g.p.x >= u.grid.right() && g.p.right() <= W && g.p.bottom() <= u.frame().bottom.y, "beside the plot, above the bar");
         assert_eq!(u.studio_panel_rect(), Some(g.p));
-        for r in [g.close, g.presets, g.knobs, g.up, g.down, g.play, g.list] {
+        for r in [g.presets, g.knobs, g.up, g.down, g.play, g.list] {
             assert!(g.p.contains(r.x, r.y) && g.p.contains(r.right() - 1, r.bottom() - 1), "{r:?} inside the panel");
         }
         assert!(!overlaps(g.list, g.up) && !overlaps(g.list, g.play) && !overlaps(g.up, g.play) && !overlaps(g.presets, g.list));
@@ -495,7 +490,9 @@ mod tests {
         // the knobs regenerate through the same path as the menu
         tap_in(&mut u, g.knobs);
         // closing the panel leaves the view and returns to live
-        tap_in(&mut u, g.close);
+        let close = Ui::dock_close_rect(u.dock_leaf(super::dock::VKind::Sim).unwrap());
+        u.handle(Ev::Touch { id: 0, phase: Phase::Down, x: close.x + 24, y: close.y + 20 });
+        u.handle(Ev::Touch { id: 0, phase: Phase::Up, x: close.x + 24, y: close.y + 20 });
         assert_eq!(u.studio.view, StudioView::Waveform);
         assert!(!u.session_is_sim && !u.record_mode());
     }
