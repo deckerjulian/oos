@@ -1822,8 +1822,10 @@ impl Ui {
         let row = self.zoom_readout();
         let (y, h) = (row.y + 2, (row.h - 4).max(20));
         let more = Rect::new(row.right() - 46, y, 40, h);
-        let fit = Rect::new(more.x - 6 - 118, y, 118, h);
-        let center = Rect::new(fit.x - 6 - 136, y, 136, h);
+        // a narrow plot (the eye or SIM beside it) keeps these two as icons
+        let (fit_w, center_w) = if row.w < 620 { (40, 40) } else { (118, 136) };
+        let fit = Rect::new(more.x - 6 - fit_w, y, fit_w, h);
+        let center = Rect::new(fit.x - 6 - center_w, y, center_w, h);
         let zoom = Rect::new(row.x + 6, y, 142, h);
         let tdiv = Rect::new(zoom.right() + 8, y, 118, h);
         Some(ZoomBar { zoom, tdiv, center, fit, more })
@@ -1867,7 +1869,11 @@ impl Ui {
         cv.fill(self.zoom_readout(), BG);
         let open = self.studio.zoom_menu;
         chip(cv, bar.zoom, BTN, BTN_BORDER);
-        cv.text_in(&f.m, Rect::new(bar.zoom.x + 10, bar.zoom.y, bar.zoom.w - 30, bar.zoom.h), 0, &format!("Time zoom {}", zoom_text(self.studio_time_zoom())), TEXT);
+        let amount = zoom_text(self.studio_time_zoom());
+        let room = Rect::new(bar.zoom.x + 10, bar.zoom.y, bar.zoom.w - 30, bar.zoom.h);
+        // a huge zoom ("100000x") takes the smaller font, then drops "Time"
+        let (font, zoom) = [(&f.m, format!("Time zoom {amount}")), (&f.s, format!("Time zoom {amount}")), (&f.s, format!("Zoom {amount}"))].into_iter().find(|(font, t)| font.width(t) <= room.w).unwrap_or((&f.s, format!("Zoom {amount}")));
+        cv.text_in(font, room, 0, &zoom, TEXT);
         chevron_down(cv, bar.zoom.right() - 20, bar.zoom.y + bar.zoom.h / 2 - 2, DIM);
         chip(cv, bar.tdiv, BTN, BTN_BORDER);
         cv.text_in(&f.m, Rect::new(bar.tdiv.x + 10, bar.tdiv.y, bar.tdiv.w - 30, bar.tdiv.h), 0, &format!("{}/div", si_short(tscales()[self.m.zscale] as f64, "s")), TEXT);
@@ -1875,14 +1881,15 @@ impl Ui {
         // Center trigger turns amber while the trigger is out of the window
         let off = self.studio_trigger_off_screen();
         chip(cv, bar.center, BTN, if off { AMBER } else { BTN_BORDER });
-        let (cx, cy) = (bar.center.x + 18, bar.center.y + bar.center.h / 2);
+        let icon_only = bar.center.w < 100;
+        let (cx, cy) = (if icon_only { bar.center.x + bar.center.w / 2 } else { bar.center.x + 18 }, bar.center.y + bar.center.h / 2);
         cv.circle(cx, cy, 7, TEXT);
         cv.circle(cx, cy, 5, BTN);
         cv.circle(cx, cy, 2, TEXT);
-        cv.text_in(&f.m, Rect::new(bar.center.x + 32, bar.center.y, bar.center.w - 34, bar.center.h), 0, "Center trigger", TEXT);
+        if !icon_only { cv.text_in(&f.m, Rect::new(bar.center.x + 32, bar.center.y, bar.center.w - 34, bar.center.h), 0, "Center trigger", TEXT); }
         chip(cv, bar.fit, BTN, BTN_BORDER);
-        icon_expand(cv, bar.fit.x + 18, bar.fit.y + bar.fit.h / 2, TEXT);
-        cv.text_in(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, "Fit record", TEXT);
+        icon_expand(cv, if icon_only { bar.fit.x + bar.fit.w / 2 } else { bar.fit.x + 18 }, bar.fit.y + bar.fit.h / 2, TEXT);
+        if !icon_only { cv.text_in(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, "Fit record", TEXT); }
         chip(cv, bar.more, BTN, if open { ACCENT } else { BTN_BORDER });
         for dx in [-8, 0, 8] { cv.circle(bar.more.x + bar.more.w / 2 + dx, bar.more.y + bar.more.h / 2, 2, TEXT); }
     }
