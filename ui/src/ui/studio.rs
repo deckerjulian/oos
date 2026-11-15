@@ -199,6 +199,7 @@ impl Ui {
         // the view is kept with the setup like the layout; a record view is not (it needs its session)
         let token = self.studio.view.token();
         if self.m.studio_view != token { self.m.studio_view = token.to_string(); }
+        if self.m.layout == Layout::Studio { self.studio_prune_ref_rows(); }
         self.studio_sync();
     }
 
@@ -756,13 +757,42 @@ impl Ui {
             .collect()
     }
 
-    /// The measurements shown as badges: those pinned, or the first three until the user pins one.
+    /// A source that shows a signal now: a channel that is on, a ref that is shown.
+    pub(super) fn studio_source_live(&self, id: WaveId) -> bool {
+        match id {
+            WaveId::Ch(c) => c < n_ch() && self.m.ch[c].on,
+            WaveId::Ref(i) => self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on),
+        }
+    }
+
+    /// The source a measurement reads first.
+    fn studio_key_source(key: MeasKey) -> WaveId {
+        match key { MeasKey::One(_, id) | MeasKey::Pair(_, id, _) | MeasKey::Cat(_, id, _, _, _) => id }
+    }
+
+    /// The measurements shown as badges: those pinned, or the first three until the user pins one. Only those of a
+    /// source that is live: no "CH1 ----" while CH1 is off and a ref is the signal.
     pub(super) fn studio_pinned(&self) -> Vec<MeasKey> {
-        let keys = self.studio_keys();
+        let keys: Vec<MeasKey> = self.studio_keys().into_iter().filter(|k| self.studio_source_live(Self::studio_key_source(*k))).collect();
         match &self.studio.pinned {
             Some(pinned) => keys.into_iter().filter(|k| pinned.contains(k)).collect(),
             None => keys.into_iter().take(3).collect(),
         }
+    }
+
+    /// Measurements of a ref that was hidden or removed leave the list with it.
+    pub(super) fn studio_prune_ref_rows(&mut self) {
+        let gone = |s: &Ui, id: WaveId| matches!(id, WaveId::Ref(_)) && !s.studio_source_live(id);
+        if !(self.m.meas.iter().any(|&(_, id)| gone(self, id)) || self.m.meas2.iter().any(|&(_, a, b)| gone(self, a) || gone(self, b))) { return; }
+        let (meas, meas2) = (self.m.meas.clone(), self.m.meas2.clone());
+        self.m.meas = meas.into_iter().filter(|&(_, id)| !gone(self, id)).collect();
+        self.m.meas2 = meas2.into_iter().filter(|&(_, a, b)| !gone(self, a) && !gone(self, b)).collect();
+        let keys = self.studio_keys();
+        if let Some(p) = &mut self.studio.pinned { p.retain(|k| keys.contains(k)); }
+        self.studio.floated.retain(|k| keys.contains(k));
+        self.studio.popup = None;
+        self.studio.panel.first = 0;
+        self.relayout();
     }
 
     /// The measurements of the floating panel: the pinned ones and those moved there from a badge.

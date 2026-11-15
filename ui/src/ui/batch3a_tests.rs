@@ -238,3 +238,37 @@ fn bottom_bar_shows_the_sources_that_are_on_and_one_plus_ch_chip_for_the_rest() 
     for c in 0..n_ch() { u.m.ch[c].on = true; }
     assert_eq!(u.studio_bottom().add.w, 0);
 }
+
+#[test]
+fn pinned_badges_follow_the_live_source_and_a_hidden_ref_leaves_no_rows() {
+    let mut u = studio();
+    u.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: 0.0, dt: 1e-6, v: (0..1000).map(|i| (i as f32 * 0.05).sin()).collect::<Vec<_>>().into(), vpd: 1.0, offset: 0.0, on: true });
+    u.m.meas.push((Meas::Vpp, WaveId::Ref(0)));
+    let badge_sources = |u: &Ui| u.studio_pinned().into_iter().map(|k| match k { super::studio::MeasKey::One(_, id) => id, _ => unreachable!() }).collect::<Vec<_>>();
+    assert!(badge_sources(&u).contains(&WaveId::Ch(0)));
+    // CH1 off, the ref is the signal: no CH1 badges
+    u.m.ch[0].on = false;
+    u.step(0.05);
+    let s = badge_sources(&u);
+    assert!(!s.is_empty() && s.iter().all(|id| *id == WaveId::Ref(0)), "{s:?}");
+    shot(&mut u, "badges-follow-ref");
+    // the ref is hidden: its rows go, and CH1 comes back with its channel
+    u.refs[0].as_mut().unwrap().on = false;
+    u.step(0.05);
+    u.render(&mut Canvas::new(W, H));
+    assert!(!u.m.meas.iter().any(|&(_, id)| id == WaveId::Ref(0)), "leftover ref rows: {:?}", u.m.meas);
+    u.m.ch[0].on = true;
+    assert!(badge_sources(&u).iter().all(|id| *id == WaveId::Ch(0)));
+}
+
+#[test]
+fn trigger_chip_shows_the_real_trigger_source_in_sim() {
+    let mut u = sim_ui();
+    u.sim_activate(Item::SimPlay);
+    u.wait_sim_generation();
+    for _ in 0..8 { u.step(0.05); }
+    assert!(u.session_is_sim);
+    assert_eq!(u.m.trigger_wave(), WaveId::Ref(u.m.sim_slot));
+    assert_eq!(u.trigger_source_label(), format!("R{}", u.m.sim_slot + 1));
+    shot(&mut u, "trigger-chip-sim");
+}
