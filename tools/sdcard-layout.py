@@ -58,7 +58,10 @@ class Disk:
 def show_head(d):
     mbr = d.read(0, 2)
     print("== LBA 0/1")
-    print(f"   MBR signature 55AA: {'yes' if mbr[510:512] == b'\x55\xaa' else 'no'};  GPT header: {'yes' if mbr[512:520] == b'EFI PART' else 'no'}")
+    # no backslash inside the f-string: that needs Python 3.12, and macOS ships 3.9
+    sig = "yes" if mbr[510:512] == b"\x55\xaa" else "no"
+    gpt = "yes" if mbr[512:520] == b"EFI PART" else "no"
+    print(f"   MBR signature 55AA: {sig};  GPT header: {gpt}")
     idb = d.read(64, 4)
     print("== LBA 64 (IDB: TPL/SPL loader)")
     if not idb:
@@ -127,7 +130,8 @@ def parse_parm(d):
         size = None if mm.group(1) == "-" else int(mm.group(1), 16)
         off = int(mm.group(2), 16)
         parts.append((mm.group(3), PARM_LBA + off, size))
-    print(f"   CMDLINE (other than mtdparts): {re.sub(r'mtdparts=\S+', '', txt.split('CMDLINE:', 1)[-1]).strip()[:200]}")
+    rest = re.sub(r"mtdparts=\S+", "", txt.split("CMDLINE:", 1)[-1]).strip()[:200]
+    print(f"   CMDLINE (other than mtdparts): {rest}")
     return parts
 
 
@@ -148,7 +152,8 @@ def guess(b):
     if b[:8] == b"ANDROID!":
         return "Android boot image"
     if b[:13] == b"boot-recovery" or b[:11] == b"boot-normal":
-        return f"BCB command {b.split(b'\0')[0].decode()!r}"
+        cmd = b.split(b"\0")[0].decode()
+        return f"BCB command {cmd!r}"
     if len(b) > 0x43a and b[0x438:0x43a] == b"\x53\xef":
         return "ext4 filesystem"
     if b.count(0) == len(b):
