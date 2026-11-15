@@ -526,7 +526,7 @@ mod tests {
         assert_eq!((ui.m.run,ui.replay.captures),(RunState::Stop,0));
     }
 }
-struct Popup { rect: Rect, rows: Vec<(String, Action)> }
+pub(super) struct Popup { pub(super) rect: Rect, pub(super) rows: Vec<(String, Action)> }
 #[derive(Default)]
 pub(super) struct Workspace {
     selected_source: Option<WaveId>,
@@ -536,7 +536,7 @@ pub(super) struct Workspace {
     pub measure_float: Option<(i32, i32)>,
     pub measure_dock: Option<StripDock>,
     gesture: Option<Gesture>,
-    popup: Option<Popup>,
+    pub(super) popup: Option<Popup>,
 }
 
 impl Ui {
@@ -659,17 +659,36 @@ impl Ui {
         let stacked = Rect::new(right + 62, y, 58, 30);
         (overlay, stacked, time, trigger, live, panel, Rect::new(126, y, (right - 132).max(0), 30))
     }
-    fn source_pills(&self) -> Vec<(WaveId, Rect)> {
-        let r = self.footer_rects().6;
+    /// Sources that get a pill: every live channel and every loaded or selected reference.
+    fn pill_sources(&self) -> Vec<WaveId> {
         let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on).map(WaveId::Ch).collect();
         sources.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|reference| reference.on || self.ref_sel == i)).map(WaveId::Ref));
-        let count = sources.len().min((r.w / 42).max(1) as usize);
+        sources
+    }
+    /// How many pills fit, and whether the rest goes behind a "+N" pill.
+    fn pill_count(&self, total: usize) -> (usize, bool) {
+        let fit = (self.footer_rects().6.w / 42).max(1) as usize;
+        if total > fit && fit > 1 { (fit - 1, true) } else { (total.min(fit), false) }
+    }
+    pub(super) fn source_pills(&self) -> Vec<(WaveId, Rect)> {
+        let r = self.footer_rects().6;
+        let mut sources = self.pill_sources();
+        let (count, more) = self.pill_count(sources.len());
         let active = self.selected_workspace_source();
         if let Some(index) = sources.iter().position(|id| Some(*id) == active) {
             if index >= count && count > 0 { sources.swap(index, count - 1); }
         }
-        let width = (r.w / count.max(1) as i32).clamp(38, 78);
+        let width = (r.w / (count + more as usize).max(1) as i32).clamp(38, 78);
         sources.into_iter().take(count).enumerate().map(|(i, id)| (id, Rect::new(r.x + i as i32 * width, r.y, width - 4, r.h))).collect()
+    }
+    /// The "+N" pill after the last source pill that opens the Sources popup, when not every source has a pill.
+    pub(super) fn source_overflow(&self) -> Option<(usize, Rect)> {
+        let r = self.footer_rects().6;
+        let total = self.pill_sources().len();
+        let (count, more) = self.pill_count(total);
+        if !more { return None; }
+        let width = (r.w / (count + 1) as i32).clamp(38, 78);
+        Some((total - count, Rect::new(r.x + count as i32 * width, r.y, width - 4, r.h)))
     }
     pub(super) fn compact_cards(&self) -> Cards {
         let mut ch = [Rect::new(0, BOTTOM.y, 0, 30); NCH];
@@ -696,6 +715,7 @@ impl Ui {
             btn(cv, rect, if selected { color } else { BAR }, if selected { color } else { BTN_BORDER });
             cv.text_in(&self.fonts().sb, rect, 1, &label, if selected { BAR } else { color });
         }
+        if let Some((n, rect)) = self.source_overflow() { draw(cv, rect, &format!("+{n}"), false); }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
         draw(cv, overlay, "Overlay", !self.workspace.stacked);
         draw(cv, stacked, "Stacked", self.workspace.stacked);
@@ -721,6 +741,7 @@ impl Ui {
             }
             return true;
         }
+        if let Some((_, rect)) = self.source_overflow() { if rect.contains(x, y) { self.open_sources(rect.x, BOTTOM.y); return true; } }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
         if overlay.contains(x, y) { self.trace_mode(false); }
         else if stacked.contains(x, y) { self.trace_mode(true); }

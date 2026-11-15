@@ -46,3 +46,33 @@ fn overlay_keeps_a_split_and_stacked_leaves_a_consistent_density() {
         assert!(!u.workspace.stacked && u.m.win_layout != WinLayout::One);
     }
 }
+
+fn with_refs(u: &mut Ui, n: usize) {
+    for i in 0..n {
+        u.refs[i] = Some(RefWave { src: 0, color: i, label: format!("source-{i}"), t0: -2e-9, dt: 1e-10,
+            v: ((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>()).into(), vpd: 0.1, offset: 0.0, on: true });
+    }
+}
+
+fn tap(u: &mut Ui, x: i32, y: i32) {
+    u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+    u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+}
+
+#[test]
+fn sources_that_do_not_fit_sit_behind_a_plus_pill_that_opens_the_popup() {
+    let mut u = fresh();
+    assert!(u.source_overflow().is_none());
+    for c in 1..4 { u.activate_live_channel(c); }
+    with_refs(&mut u, NREF);
+    u.relayout();
+    let (hidden, pill) = u.source_overflow().expect("14 sources do not fit");
+    let shown = u.source_pills();
+    assert_eq!(shown.len() + hidden, 4 + NREF);
+    assert!(shown.iter().all(|(_, r)| r.x + r.w <= pill.x), "pills do not overlap the +N pill");
+    let (overlay, ..) = u.footer_rects();
+    assert!(pill.x + pill.w <= overlay.x, "the +N pill stays left of Overlay");
+    tap(&mut u, pill.x + 5, pill.y + 5);
+    let popup = u.workspace.popup.as_ref().expect("Sources popup");
+    assert!(popup.rows.len() >= 4 + NREF, "every source is in the popup");
+}
