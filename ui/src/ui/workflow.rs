@@ -540,32 +540,42 @@ impl Ui {
 
     pub fn waveform_epoch(&self) -> u64 { self.workflow_epoch }
 
-    pub fn return_to_live(&mut self) {
+    /// Ends a reference, Take over or SIM session: the live set-up from before it (`remember_live`) comes back and
+    /// nothing of it stays held, so a later session remembers afresh. Whether a set-up was held.
+    pub(super) fn leave_session(&mut self) -> bool {
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
         self.set_offline(false);
         self.session_is_sim = false;
         self.sim_play = false;
         self.replay = Replay::default();
-        if let Some(saved) = self.workflow_hold.take() {
+        let held = self.workflow_hold.take();
+        let restored = held.is_some();
+        if let Some(saved) = held {
             self.m = saved.model;
             for (i, r) in self.refs.iter_mut().enumerate() {
                 if let Some(r) = r { r.on = saved.visible[i]; }
             }
-        } else {
+        }
+        self.m.floor_live_tdiv();
+        self.last[0] = None;
+        self.cleared = false;
+        self.ph.clear();
+        self.phz.clear();
+        restored
+    }
+
+    pub fn return_to_live(&mut self) {
+        if !self.leave_session() {
             for r in self.refs.iter_mut().flatten() { r.on = false; }
             self.m.ch[0].on = true;
             self.m.run = RunState::Run;
             self.m.zoom = false;
             self.m.view = AView::Scope;
             self.m.meas = Self::default_meas();
+            self.m.floor_live_tdiv();
         }
-        self.m.floor_live_tdiv();
         self.select_workspace_source(WaveId::Ch(self.m.active));
-        self.last[0] = None;
-        self.cleared = false;
-        self.ph.clear();
-        self.phz.clear();
         self.close_menu();
         self.relayout();
         self.settings_changed();

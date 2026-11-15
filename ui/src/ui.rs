@@ -74,6 +74,8 @@ mod monitor;
 mod features;
 #[cfg(test)]
 mod interplay_tests;
+#[cfg(test)]
+mod session_tests;
 pub use views::VIEWS_MAX;
 mod script;
 #[cfg(test)]

@@ -266,14 +266,22 @@ impl Ui {
     pub(crate) fn configure_decoder_source(&mut self, role: usize, source: Option<usize>) -> bool {
         if role > 4 || ((role < 2 || (role == 2 && self.m.dec_proto == Proto::CPHY)) && source.is_none())
             || source.is_some_and(|id| !self.decoder_sources().contains(&id)) { return false; }
-        self.m.dec_la_in = false;
-        match role {
-            0 => self.m.dec_src = source.unwrap(), 1 => self.m.dec_src2 = source.unwrap(),
-            2 => self.m.dec_cs = source, 3 => self.m.dec_src4 = source, _ => self.m.dec_diff = source,
-        }
+        let assign = |m: &mut Model| {
+            m.dec_la_in = false;
+            match role {
+                0 => m.dec_src = source.unwrap(), 1 => m.dec_src2 = source.unwrap(),
+                2 => m.dec_cs = source, 3 => m.dec_src4 = source, _ => m.dec_diff = source,
+            }
+        };
+        assign(&mut self.m);
         if self.m.trig_type == TrigType::Bus {
             if let Some(wave) = decode_wave(self.m.dec_src) {
-                if matches!(wave, WaveId::Ref(_)) != self.record_mode() { self.set_trigger_source(wave, false); }
+                if matches!(wave, WaveId::Ref(_)) != self.record_mode() {
+                    self.set_trigger_source(wave, false);
+                    // a channel ends the reference session and brings back the set-up from before it: the source
+                    // chosen here stays
+                    assign(&mut self.m);
+                }
                 else { self.m.set_trigger_wave(wave, false); }
             }
         }
