@@ -514,13 +514,22 @@ pub struct Tone {
     pub rms: f64,
 }
 
-/// One DFT line of `v` at `f` hertz. Empty when `f` is not a positive frequency the record can hold.
+/// One DFT line of `v` at `f` hertz over the largest whole number of cycles from the record start, with the mean of
+/// that range taken off first, so the DC level of a rail does not leak into the line. Empty when `f` is not a positive
+/// frequency the record can hold.
 pub fn tone_ripple(v: &[f32], dt: f64, f: f64) -> Tone {
     let empty = Tone { pp: f64::NAN, rms: f64::NAN };
     if v.len() < 4 || !(dt > 0.0) || !(f > 0.0) || f >= 0.5 / dt {
         return empty;
     }
-    let (re, im) = dft(v, dt, 0, v.len(), f);
+    let (a, b, _) = whole_cycles(v.len(), dt, f);
+    let fin: Vec<f64> = v[a..b].iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
+    if fin.is_empty() {
+        return empty;
+    }
+    let mean = fin.iter().sum::<f64>() / fin.len() as f64;
+    let ac: Vec<f32> = v[a..b].iter().map(|&x| (x as f64 - mean) as f32).collect();
+    let (re, im) = dft(&ac, dt, 0, ac.len(), f);
     let amp = (re * re + im * im).sqrt();
     Tone { pp: 2.0 * amp, rms: amp / std::f64::consts::SQRT_2 }
 }

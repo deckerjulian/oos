@@ -115,3 +115,22 @@ fn acpr_ratio_and_a_band_that_runs_off_the_trace() {
     assert!(close(a.upper_db, -10.0, 1e-4) && a.lower_db.is_nan(), "{:?}", a);
     assert!(spectrum::acpr(&s, 0.0, 1.0).ratio.is_nan());
 }
+
+
+#[test]
+fn ripple_on_a_dc_rail_leaves_the_dc_out_over_part_cycles() {
+    // 12 V rail with 20 mV peak-peak at 60 Hz: the record ends in the middle of a cycle
+    let dt = 1e-5;
+    for cycles in [10.0, 10.5, 2.5] {
+        let n = (cycles / 60.0 / dt) as usize;
+        let v = sample(|t| 12.0 + 0.01 * (2.0 * PI * 60.0 * t).sin(), 0.0, dt, n);
+        let t = power::tone_ripple(&v, dt, 60.0);
+        assert!(close(t.pp, 0.02, 4e-4) && close(t.rms, 0.01 / 2f64.sqrt(), 2e-4), "{cycles} cycles {t:?}");
+    }
+    // 1 MHz switching ripple, 10 mV peak, 1000.5 cycles
+    let dt = 1e-8;
+    let n = (1000.5 / 1e6 / dt) as usize;
+    let v = sample(|t| 12.0 + 0.01 * (2.0 * PI * 1e6 * t).sin(), 0.0, dt, n);
+    let s = power::switching_ripple(&v, dt, 1e6);
+    assert!(close(s.pp, 0.02, 4e-4), "{s:?}");
+}
