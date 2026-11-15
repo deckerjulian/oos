@@ -831,16 +831,30 @@ fn hall_lines(first: Option<u8>) -> (Vec<bool>, Vec<bool>, Vec<bool>) {
 fn motor_hall_counts_steps_after_a_fault_code_at_the_start() {
     let dt = 1e-5;
     let (a, b, c) = hall_lines(None);
-    let clean = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0);
+    let clean = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 1);
     // 359 steps of 60 electrical degrees over 35 999 sample intervals
     let rpm = 359.0 * 10.0 / (35_999.0 * dt);
     assert!(close(clean.rpm.unwrap(), rpm, 1e-6), "{:?}", clean.rpm);
     for fault in [0b000, 0b111] {
         let (a, b, c) = hall_lines(Some(fault));
-        let s = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0);
+        let s = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 1);
         assert!(close(s.rpm.unwrap_or(0.0), rpm, 1e-6), "{fault:03b}: {:?} {}", s.rpm, s.note);
         assert_eq!(s.direction, oos_dsp::motor::Direction::Forward);
     }
+}
+
+#[test]
+fn motor_hall_speed_and_angle_are_mechanical() {
+    // the Hall sensors see the rotor poles: with 4 pole pairs the shaft turns a quarter of the electrical angle
+    let dt = 1e-5;
+    let (a, b, c) = hall_lines(None);
+    let elec = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 1);
+    let s = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 4);
+    assert!(close(s.rpm.unwrap(), elec.rpm.unwrap() / 4.0, 1e-9), "{:?} {:?}", s.rpm, elec.rpm);
+    assert!(close(s.trend[0].1, elec.trend[0].1 / 4.0, 1e-9), "{:?}", s.trend[0]);
+    let span = |r: &[f64]| r[r.len() - 1] - r[0];
+    assert!(close(span(&elec.rad), (359.0 * 60.0f64).to_radians(), 1e-9), "{}", span(&elec.rad));
+    assert!(close(span(&s.rad), span(&elec.rad) / 4.0, 1e-9), "{}", span(&s.rad));
 }
 
 #[test]

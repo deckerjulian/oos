@@ -311,7 +311,7 @@ impl Ui {
             let m = &self.m;
             let bit = |line: u8| la.words.iter().map(|w| w >> line & 1 == 1).collect::<Vec<_>>();
             let shaft = if m.inv_ang == InvAngle::Hall {
-                motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0)
+                motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0, m.inv_poles.max(1))
             } else {
                 let ix = m.inv_qi.map(|q| bit(q));
                 motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)
