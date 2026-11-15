@@ -558,6 +558,8 @@ pub(super) struct Workspace {
     pub(super) popup: Option<Popup>,
     /// a hold opened the popup while the finger is still down: its lift is not a tap on a row
     pub(super) lift_pending: bool,
+    /// the cursor a tap on its tag picked (`Ui::select_cursor`)
+    pub(super) cursor_sel: Option<usize>,
 }
 
 impl Ui {
@@ -773,8 +775,22 @@ impl Ui {
         else { self.compact_trigger_tap(x, y, trigger); }
         true
     }
+    /// A touch just above or below a chip of the compact bottom bar counts as on it: the chips are 30 px high, the finger
+    /// target is 40 (the bar is 36 px; the rest is the 2 px above it and the screen's edge).
+    pub(super) fn bar_y(&self, y: i32) -> i32 {
+        let bar = self.frame().bottom.y;
+        if self.m.layout != Layout::Default && y >= bar - 2 { y.clamp(bar + 3, bar + 32) } else { y }
+    }
+    /// The zoom bar's buttons are 28 px high; a touch within 20 px of the bar's middle counts as on the buttons (40 px).
+    pub(super) fn zoom_row_y(&self, x: i32, y: i32) -> i32 {
+        let row = self.zoom_readout();
+        let mid = row.y + row.h / 2;
+        if !self.m.zoom || !(row.x..row.right()).contains(&x) || (y - mid).abs() > TOUCH_MIN / 2 { return y; }
+        y.clamp(row.y + 4, row.bottom() - 5)
+    }
     /// A rectangle grown about its centre to at least `TOUCH_MIN` square: what is drawn small keeps a finger-sized hit area.
     pub(super) fn hit40(r: Rect) -> Rect {
+        if r.w <= 0 || r.h <= 0 { return r; }
         let (w, h) = (r.w.max(TOUCH_MIN), r.h.max(TOUCH_MIN));
         Rect::new(r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h)
     }
@@ -957,7 +973,7 @@ impl Ui {
                 let current = match action { Action::Overlay => !self.workspace.stacked, Action::Stacked => self.workspace.stacked, _ => false };
                 if current {
                     // a check at the right end marks the mode in force
-                    let (cx, cy) = (r.x + r.w - 18, r.y + r.h / 2);
+                    let (cx, cy) = (r.x + r.w - 40, r.y + r.h / 2);
                     cv.line(cx, cy, cx + 4, cy + 4, ACCENT); cv.line(cx + 4, cy + 4, cx + 11, cy - 5, ACCENT);
                 }
             }

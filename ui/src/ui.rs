@@ -60,6 +60,7 @@ mod batch2_tests;
 mod batch3a_tests;
 #[cfg(test)]
 mod batch4_tests;
+mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -2230,6 +2231,7 @@ impl Ui {
     }
 
     fn zoom_close_tap(&mut self, x: i32, y: i32) -> bool {
+        let y = self.zoom_row_y(x, y);
         if self.m.zoom && !self.view_on() {
             for (rect, text) in self.zoom_controls() {
                 if !rect.contains(x, y) { continue; }
@@ -4262,10 +4264,12 @@ impl Ui {
         let f = self.fonts();
         let a = self.area;
         cv.set_clip(a);
+        let picked = self.workspace.cursor_sel.and_then(|k| self.cursor_tags().into_iter().find(|t| t.0 == k).map(|t| t.1));
         let tagbox = |cv: &mut Canvas, x: i32, y: i32, s: &str| {
             let r = Rect::new(x, y, f.s.width(s) + 8, 14);
             cv.round(r, 2, CURSOR, 255);
             cv.text_in(&f.s, r, 1, s, DARK_TEXT);
+            if picked == Some(r) { cv.round_outline(Rect::new(r.x - 2, r.y - 2, r.w + 4, r.h + 4), 3, ACCENT); }
         };
         match self.m.cursor {
             CursorMode::Off => {}
@@ -5222,7 +5226,7 @@ impl Ui {
 
     /// Trigger card buttons, one over the other at the right edge (touch): source, sweep; the rest of the card, and with
     /// it the level, opens the menu.
-    fn trig_parts(r: Rect) -> (Rect, Rect) {
+    pub(super) fn trig_parts(r: Rect) -> (Rect, Rect) {
         let (w, h) = (66, (r.h - 12 - 4) / 2);
         let x = r.x + r.w - w - 6;
         (Rect::new(x, r.y + 6, w, h), Rect::new(x, r.y + 6 + h + 4, w, h))
@@ -8934,6 +8938,7 @@ impl Ui {
                 } else if !in_plot {
                     // a finger held on the card of a channel that is on: AC/DC, as the channel key
                     let (chs, _, _) = self.cards();
+                    let y = self.bar_y(y);
                     self.card_hold = chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
                 } else {
                     // an edge strip of the plot swipes between the views (not while a zoom box is armed)
@@ -8980,7 +8985,11 @@ impl Ui {
                     };
                     let m = &self.m;
                     // the cursors stand in the window of the active channel
-                    let cur_hit = |frac: f32, vertical: bool| self.selected_workspace_source().is_some_and(|id| self.workspace_source_visible_here(id)) && cur_hit(frac, vertical);
+                    // the cursors can be grabbed where they are shown: in the lane or window of their source; a time cursor also in
+                    // any other lane, where its band edge stands at the same time
+                    let here = self.cursor_visible_here();
+                    let cur_hit = |frac: f32, vertical: bool| (here || (vertical && self.wins.len() > 1)) && cur_hit(frac, vertical);
+                    let under = if dy.abs() > dx.abs() && !near_left && !m.zoom { self.trace_under(tx0, ty0) } else { None };
                     let overview_drag = if m.zoom {
                         let overview = Self::split_zoom(self.grid).0;
                         if overview.contains(tx0, ty0) {
@@ -9015,6 +9024,9 @@ impl Ui {
                             && (ty0 - lower).abs() < (ty0 - upper).abs() { Drag::Level2 } else { Drag::Level }
                     } else if m.zoom && dy.abs() > dx.abs() {
                         Drag::ZoomVertical
+                    } else if under.is_some() && !(m.bus.on && (self.bus_y() - ty0).abs() <= 18) {
+                        // the trace under the finger moves, not the active channel
+                        match under { Some(WaveId::Ref(i)) => Drag::RefOffset(i), Some(WaveId::Ch(c)) => Drag::Offset(c), None => Drag::Delay }
                     } else if dy.abs() > dx.abs() && self.drag_reference().is_some() {
                         Drag::RefOffset(self.drag_reference().unwrap())
                     } else if dy.abs() > dx.abs() {
@@ -9358,7 +9370,7 @@ impl Ui {
         if self.workspace_popup_tap(x, y) { return; }
         if self.single_btn().contains(x, y) { self.key(key::SINGLE); return; }
         if self.m.layout == Layout::Studio && !self.full_on() && self.studio_tap(x, y) { return; }
-        if self.m.layout == Layout::Minimal && !self.full_on() && self.workspace_footer_tap(x, y) { return; }
+        if self.m.layout == Layout::Minimal && !self.full_on() && self.workspace_footer_tap(x, self.bar_y(y)) { return; }
         if self.power_dlg {
             self.power_dlg = false;
             let (_, [off, restart, _]) = self.pwr_layout();
@@ -9509,12 +9521,6 @@ impl Ui {
         }
         if self.card_layout().refs.is_some_and(|r| r.contains(x, y)) { return self.cycle_active_ref(); }
         if tr.contains(x, y) {
-            // the zoom/delay line: tap it to toggle zoom without opening Horizontal
-            if y >= tr.y + tr.h / 2 {
-                let on = !self.m.zoom;
-                self.set_zoom(on);
-                return;
-            }
             return self.toggle_menu(MenuId::Horizontal);
         }
         if self.record_mode() {
@@ -9539,12 +9545,14 @@ impl Ui {
                 else { self.toggle_menu(MenuId::Trigger); }
                 return;
             }
-            // the buttons are low: each takes its half of the card for the finger
-            if x >= Self::trig_parts(trg).0.x - 6 {
-                return self.adjust(if y < trg.y + trg.h / 2 { Item::TrigSrc } else { Item::TrigMode }, 1);
-            }
+            // the Source and Mode buttons are what is drawn as buttons; the rest of the card opens the trigger page
+            let (sb, mb) = Self::trig_parts(trg);
+            let near = |b: Rect| Rect::new(b.x - 2, b.y - 2, b.w + 4, b.h + 4).contains(x, y);
+            if near(sb) { return self.adjust(Item::TrigSrc, 1); }
+            if near(mb) { return self.adjust(Item::TrigMode, 1); }
             return self.toggle_menu(MenuId::Trigger);
         }
+        if self.plot_tap(x, y) { return; }
         if self.menu_open && self.grid.contains(x, y) {
             self.close_menu();
         }

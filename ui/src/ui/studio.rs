@@ -582,8 +582,8 @@ impl Ui {
         if self.studio_zoom_tap(x, y) { return true; }
         if self.studio_badge_tap(x, y) { return true; }
         if self.studio_panel_tap(x, y) { return true; }
-        if y >= self.frame().bottom.y {
-            self.studio_bottom_tap(x, y);
+        if y >= self.frame().bottom.y - 2 {
+            self.studio_bottom_tap(x, self.bar_y(y));
             return true;
         }
         if y < self.frame().top.bottom() {
@@ -695,6 +695,7 @@ impl Ui {
                 let r = Rect::new((x - 11).clamp(g.x, g.right() - 22), row.y + 1, 22, head - 3);
                 cv.round(r, 3, BAND, 255);
                 cv.text_in(&f.sb, r, 1, name, DARK_TEXT);
+                if self.workspace.cursor_sel == Some(k) { cv.round_outline(Rect::new(r.x - 2, r.y - 2, r.w + 4, r.h + 4), 3, ACCENT); }
                 cv.vline(x, row.bottom() - 2, g.y, BAND);
             }
         }
@@ -2096,6 +2097,7 @@ impl Ui {
             if self.studio_zoom_bar().is_some_and(|b| b.more.contains(x, y)) { return true; }
         }
         if let Some(bar) = self.studio_zoom_bar() {
+            let y = self.zoom_row_y(x, y);
             if self.zoom_readout().contains(x, y) {
                 if bar.zoom.contains(x, y) { self.studio.zoom_menu = true; }
                 else if bar.tdiv.contains(x, y) { self.open_menu(MenuId::Horizontal); }
@@ -2106,7 +2108,7 @@ impl Ui {
             }
         }
         // a lane's channel badge: its display scale while zoomed, its menu otherwise
-        let hit = self.studio.lane_badges.borrow().iter().find(|(_, r)| r.contains(x, y)).map(|&(c, _)| c);
+        let hit = self.studio.lane_badges.borrow().iter().find(|(_, r)| Self::hit40(*r).contains(x, y)).map(|&(c, _)| c);
         if let Some(c) = hit {
             self.select_workspace_source(WaveId::Ch(c));
             if self.studio_zoom_active() { self.studio.yzoom = Some(c); } else { self.toggle_menu(MenuId::Channel(c)); }
