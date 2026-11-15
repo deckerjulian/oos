@@ -1100,6 +1100,28 @@ impl Ui {
     }
 
     /// Recomputes the active analyser from the last record (every captured sample of the window).
+    /// Why a power-quality page would show only zeros: the lines that say so (no signal, no current probe, no whole
+    /// cycle), or `None` when the numbers mean something.
+    fn power_quality_reason(&self, v: &[f32], i: &[f32], q: &power::Quality) -> Option<Vec<String>> {
+        let flat = |x: &[f32]| {
+            let (lo, hi) = x.iter().filter(|a| a.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), &a| (l.min(a), h.max(a)));
+            !(hi - lo > 1e-9)
+        };
+        let (v_name, i_name) = (self.wave_name(self.m.pw_v), self.wave_name(self.m.pw_i));
+        let mut why = Vec::new();
+        if flat(v) { why.push(format!("No voltage: {v_name} shows no signal")); }
+        if flat(i) {
+            let probe = matches!(self.m.pw_i, WaveId::Ch(c) if self.m.ch[c].unit == AmpUnit::A);
+            if probe { why.push(format!("No current: {i_name} reads 0 A, check the current probe")); }
+            else { why.push(format!("No current probe set: {i_name} is not in amps")); }
+        }
+        if why.is_empty() && q.cycles == 0 {
+            why.push("No whole cycle of the voltage in the record".into());
+            why.push("Set the line frequency or a slower time base".into());
+        }
+        (!why.is_empty()).then_some(why)
+    }
+
     pub(super) fn analyzer_update(&mut self) {
         // a source that is off shows nothing: the first channel that is on takes over
         if let Some(on) = (0..NCH).find(|&c| self.m.ch[c].on) {
@@ -1154,13 +1176,16 @@ impl Ui {
                 let i = if matches!(mode, PowerMode::Ripple) { opt(0) } else if matches!(mode, PowerMode::Rail) { Vec::new() } else { taken.v[1].clone() };
                 self.azr.power = match mode {
                     PowerMode::Quality => {
-                        let q = power::quality(&v, &i, dt, None);
-                        vec![
+                        let q = power::quality(&v, &i, dt, if fline > 0.0 { Some(fline) } else { None });
+                        match self.power_quality_reason(&v, &i, &q) {
+                        Some(why) => why,
+                        None => vec![
                             format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")),
                             format!("P {}   S {}   Q {}", si(q.p_real, "W"), si(q.s_apparent, "VA"), si(q.q_reactive, "var")),
                             format!("PF {:.3}   phase {:.1}\u{b0}   f {}", q.pf, q.phase_deg, si(q.freq, "Hz")),
                             format!("crest V {:.2}   crest I {:.2}   {} cycles", q.crest_v, q.crest_i, q.cycles),
-                        ]
+                        ],
+                        }
                     }
                     PowerMode::Harmonics => {
                         let h = power::harmonics(&i, dt, None, 15);

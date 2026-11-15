@@ -243,6 +243,29 @@ fn refs_without_channels_get_a_volt_axis() {
 }
 
 #[test]
+fn power_page_says_why_it_has_no_numbers() {
+    let mut u = fresh(Layout::Default);
+    for c in 0..NCH { u.m.ch[c].on = false; }
+    u.refs[0] = Some(sine_ref(0, 4000, 1e-6));
+    u.refs[1] = Some(sine_ref(1, 4000, 1e-6));
+    u.refs[1].as_mut().unwrap().v = vec![0.0; 4000].into();
+    u.m.view = AView::Power;
+    u.m.pw_mode = PowerMode::Quality;
+    (u.m.pw_v, u.m.pw_i) = (WaveId::Ref(0), WaveId::Ref(1));
+    for _ in 0..3 { u.step(0.05); }
+    u.analyzer_update();
+    let text = u.azr.power.join(" | ");
+    assert!(text.contains("No current probe set"), "{text}");
+    assert!(!text.contains("Vrms 0 V"), "{text}");
+    // with a current, the numbers come back
+    u.refs[1].as_mut().unwrap().v = u.refs[0].as_ref().unwrap().v.clone();
+    for _ in 0..3 { u.step(0.05); }
+    u.analyzer_update();
+    let text = u.azr.power.join(" | ");
+    assert!(text.contains("Vrms") && text.contains("cycles"), "{text}");
+}
+
+#[test]
 fn shots_refs_sim_axis_power() {
     for layout in [Layout::Default, Layout::Studio] {
         let name = format!("{layout:?}").to_lowercase();
