@@ -53,6 +53,8 @@ mod fix_tests;
 mod batch1_tests;
 #[cfg(test)]
 mod batch2_tests;
+#[cfg(test)]
+mod batch3a_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -4318,6 +4320,7 @@ impl Ui {
             record_caption.as_str()
         } else {
             match self.src.name() {
+                "DEMO" | "REPLAY" if self.m.layout == Layout::Studio => "",
                 "DEMO" => "Demo signals",
                 "REPLAY" => "Replay",
                 _ => "",

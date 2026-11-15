@@ -113,7 +113,7 @@ fn studio_top_bar_has_run_single_state_acquisition_and_the_menu_chips() {
     let mut u = studio();
     shot(&mut u, "01-top");
     let t = u.studio_top();
-    let all = [t.badge, t.run, t.single, t.state, t.acq, t.measure, t.cursors, t.view, t.gear];
+    let all = [t.run, t.single, t.acq, t.measure, t.cursors, t.view, t.gear];
     for (i, a) in all.iter().enumerate() {
         assert!(a.x >= 0 && a.right() <= W && a.y >= 0 && a.bottom() <= TOP.h, "chip {i} inside the bar");
         for b in &all[i + 1..] { assert!(!overlaps(*a, *b), "chips do not overlap"); }
@@ -192,7 +192,7 @@ fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
     assert_eq!(u.grid.y, u.frame().body.y + 18);
     // the tag row, the lanes and the bars do not overlap
     let top = u.studio_top();
-    assert!(u.grid.y - 18 >= top.badge.bottom());
+    assert!(u.grid.y - 18 >= top.run.bottom());
     assert!(u.grid.bottom() <= u.frame().bottom.y);
     // the T tag sits at the trigger position: 0 s at the centre with no delay
     u.m.delay = 0.0;

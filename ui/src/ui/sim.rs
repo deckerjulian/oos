@@ -397,7 +397,7 @@ impl Ui {
         self.sim_error.take()
     }
 
-    fn sim_request_ui(&mut self, run: bool) {
+    pub(super) fn sim_request_ui(&mut self, run: bool) {
         if let Err(error) = self.sim_load(run) { self.toast(&format!("SIM: {error}")); }
     }
 

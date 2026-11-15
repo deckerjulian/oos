@@ -101,10 +101,13 @@ pub(super) struct Studio {
 /// The rectangles of the Studio top bar.
 #[derive(Clone, Copy)]
 pub(super) struct StudioTop {
+    /// Live (the way back from a record session), zero wide in live mode
     pub badge: Rect,
+    /// the run / trigger status pill
     pub run: Rect,
     pub single: Rect,
-    pub state: Rect,
+    /// the mini SIM control, zero wide unless the SIM is the source
+    pub sim: Rect,
     pub acq: Rect,
     pub measure: Rect,
     pub cursors: Rect,
@@ -226,6 +229,13 @@ impl Ui {
     /// The chip of the acquisition: the sample rate and depth, or while analysing a file its name first.
     pub(super) fn studio_acq_caption(&self) -> String {
         let (caption, _) = self.acq_caption();
+        // the source is part of the caption: DEMO and REPLAY here, SIM and REF come with the record caption
+        if !self.record_mode() && !matches!(self.src, Source::Hw { .. } | Source::Live { .. }) {
+            let name = match self.src { Source::Demo { .. } => "DEMO", _ => "REPLAY" };
+            return format!("{name} \u{b7} {caption}");
+        }
+        // the SIM chip of the bar already names the SIM
+        let caption = if self.session_is_sim && self.record_mode() { caption.trim_start_matches("SIM {b7} ").to_string() } else { caption };
         if !self.studio_back_badge() { return caption; }
         match self.refs.get(self.active_reference()).and_then(|r| r.as_ref()) {
             Some(r) => {
@@ -259,27 +269,30 @@ impl Ui {
     pub(super) fn studio_top(&self) -> StudioTop {
         let f = self.fonts();
         let top = self.frame().top;
-        let chip = |x: i32, w: i32| Rect::new(x, CHIP_Y, w, CHIP_H);
-        let mut x = top.x + 6;
-        let badge = chip(x, (f.sb.width(self.studio_badge_label()) + 22 + if self.studio_back_badge() { 16 } else { 0 }).max(52));
-        x = badge.right() + 8;
-        let run = chip(x, 78);
-        x = run.right() + 6;
-        let single = chip(x, 86);
-        x = single.right() + 10;
-        let state = chip(x, f.mb.width("TRIG'D").max(f.mb.width("WAIT")) + 22);
-        x = state.right() + 8;
+        // the same sizes as the Default bar: the status pill at the left, small buttons of the bar height
+        let btn_w = |label: &str| (f.mb.width(label) + 28).max(40);
+        let pill = Rect::new(8, 6, 92.max(30 + f.mb.width("TRIG'D") + 12), 28);
+        let single = Rect::new(pill.right() + 4, CHIP_Y, 54, CHIP_H);
+        let mut x = single.right() + 6;
+        // Live: the way back from a loaded file or a SIM, as in the Default bar
+        let badge = if self.record_mode() { Rect::new(x, CHIP_Y, btn_w("Live"), CHIP_H) } else { Rect::new(x, CHIP_Y, 0, CHIP_H) };
+        if badge.w > 0 { x = badge.right() + 6; }
+        // while the SIM is the source: the preset, a tap opens the SIM panel
+        let sim = if self.session_is_sim && self.record_mode() {
+            Rect::new(x, CHIP_Y, (f.mb.width(self.sim_preset_name()) + 56).min(220), CHIP_H)
+        } else { Rect::new(x, CHIP_Y, 0, CHIP_H) };
+        if sim.w > 0 { x = sim.right() + 8; } else { x += 2; }
         // the right group is laid out from the edge
-        let mut r = top.right() - 6;
-        let gear = chip(r - 34, 34);
+        let mut r = top.right() - 8;
+        let gear = Rect::new(r - 40, CHIP_Y, 40, CHIP_H);
         r = gear.x - 6;
-        let view = chip(r - (f.mb.width("View") + 48), f.mb.width("View") + 48);
+        let view = Rect::new(r - btn_w("View"), CHIP_Y, btn_w("View"), CHIP_H);
         r = view.x - 6;
-        let cursors = chip(r - (f.mb.width("Cursors") + 46), f.mb.width("Cursors") + 46);
+        let cursors = Rect::new(r - btn_w("Cursors"), CHIP_Y, btn_w("Cursors"), CHIP_H);
         r = cursors.x - 6;
-        let measure = chip(r - (f.mb.width("Measure") + 46), f.mb.width("Measure") + 46);
-        let acq = chip(x, (measure.x - 10 - x).clamp(60, 250));
-        StudioTop { badge, run, single, state, acq, measure, cursors, view, gear }
+        let measure = Rect::new(r - btn_w("Measure"), CHIP_Y, btn_w("Measure"), CHIP_H);
+        let acq = Rect::new(x, CHIP_Y, (measure.x - 10 - x).max(40), CHIP_H);
+        StudioTop { badge, run: pill, single, sim, acq, measure, cursors, view, gear }
     }
 
     /// Measure and Cursors as the top-bar buttons (`top_buttons`); the others are Studio's own.
@@ -296,52 +309,42 @@ impl Ui {
         let t = self.studio_top();
         let root = self.menu_root();
         let open = |m: MenuId| self.menu_open && root == m;
-        // the source of the waveforms
-        let (_, col) = self.studio_source();
-        let back = self.studio_back_badge();
-        chip(cv, t.badge, BAR, mix(BAR, col, 120));
-        if back { chevron(cv, t.badge.x + 13, t.badge.y + t.badge.h / 2, -1, col); }
-        cv.text_in(&f.sb, Rect::new(t.badge.x + if back { 16 } else { 0 }, t.badge.y, t.badge.w - if back { 16 } else { 0 }, t.badge.h), 1, self.studio_badge_label(), col);
-        // Run is green while the scope runs; Single arms one acquisition
-        let running = !matches!(self.m.run, RunState::Stop) && !matches!(self.m.status, TrigStatus::Stop);
-        if running {
-            chip(cv, t.run, mix(BAR, GREEN, 70), GREEN);
-        } else {
-            chip(cv, t.run, BTN, BTN_BORDER);
+        // one status pill as in the Default bar; a tap is Run / Stop in every layout
+        let (txt, col) = self.run_caption();
+        let r = t.run;
+        cv.round(r, 6, mix(BAR, col, 80), 255);
+        cv.round(r.inset(1), 5, mix(BAR, col, 36), 255);
+        cv.circle(r.x + 16, r.y + 14, 4, col);
+        cv.text_in(&f.mb, Rect::new(r.x + 30, r.y, r.w - 30, r.h), 0, txt, col);
+        btn(cv, t.single, BTN, BTN_BORDER);
+        cv.text_in(&f.s, t.single, 1, "Single", TEXT);
+        if t.badge.w > 0 {
+            btn(cv, t.badge, BTN, ACCENT);
+            cv.text_in(&f.mb, t.badge, 1, "Live", ACCENT);
         }
-        icon_play(cv, t.run.x + 14, t.run.y + t.run.h / 2, TEXT);
-        cv.text_in(&f.mb, Rect::new(t.run.x + 32, t.run.y, t.run.w - 34, t.run.h), 0, "Run", TEXT);
-        chip(cv, t.single, BTN, BTN_BORDER);
-        icon_stop(cv, t.single.x + 13, t.single.y + t.single.h / 2, TEXT);
-        cv.text_in(&f.mb, Rect::new(t.single.x + 31, t.single.y, t.single.w - 33, t.single.h), 0, "Single", TEXT);
-        // trigger state in its own colour
-        let (text, scol) = self.run_caption();
-        chip(cv, t.state, BAR, scol);
-        cv.text_in(&f.mb, t.state, 1, text, scol);
-        // sample rate and depth: opens the page that sets them
+        if t.sim.w > 0 {
+            let on = self.studio.view == StudioView::Sim;
+            btn(cv, t.sim, BTN, if on { ACCENT } else { BTN_BORDER });
+            cv.set_clip(t.sim.inset(2));
+            cv.text_in(&f.sb, Rect::new(t.sim.x + 8, t.sim.y, 30, t.sim.h), 0, "SIM", if on { ACCENT } else { DIM });
+            cv.text_in(&f.mb, Rect::new(t.sim.x + 40, t.sim.y, (t.sim.w - 44).max(1), t.sim.h), 0, self.sim_preset_name(), if on { ACCENT } else { TEXT });
+            cv.no_clip();
+        }
+        // sample rate and depth as plain text (the source in front of them): a tap opens the page that sets them
         let caption = self.studio_acq_caption();
         let acq_open = self.menu_open && root == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
-        chip(cv, t.acq, BTN, if acq_open { ACCENT } else { BTN_BORDER });
-        cv.set_clip(Rect::new(t.acq.x + 4, t.acq.y, (t.acq.w - 28).max(1), t.acq.h));
-        cv.text_in(&f.m, Rect::new(t.acq.x + 10, t.acq.y, (t.acq.w - 32).max(1), t.acq.h), 0, &caption, TEXT);
+        cv.set_clip(Rect::new(t.acq.x, top.y, t.acq.w, top.h));
+        cv.text(&f.mb, t.acq.x, 25, &caption, if acq_open { ACCENT } else { TEXT });
         cv.no_clip();
-        chevron_down(cv, t.acq.right() - 18, t.acq.y + t.acq.h / 2 - 2, DIM);
-        // Measure, Cursors, View, settings
+        // Measure, Cursors, View, settings: the Default button style
         let measuring = open(MenuId::Measure) || self.results_panel();
         let cursors = open(MenuId::Cursor) || self.m.cursor != CursorMode::Off;
         for (r, label, on) in [(t.measure, "Measure", measuring), (t.cursors, "Cursors", cursors), (t.view, "View", self.studio.view_menu)] {
-            let c = if on { ACCENT } else { TEXT };
-            chip(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
-            let cy = r.y + r.h / 2;
-            match label {
-                "Measure" => icon_bars(cv, r.x + 13, cy, c),
-                "Cursors" => icon_cursors(cv, r.x + 13, cy, c),
-                _ => icon_view(cv, r.x + 12, cy, c),
-            }
-            cv.text_in(&f.mb, Rect::new(r.x + 34, r.y, r.w - 36, r.h), 0, label, c);
+            btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
+            cv.text_in(&f.mb, r, 1, label, if on { ACCENT } else { TEXT });
         }
         let gear_on = open(MenuId::Main) || open(MenuId::Utility) || self.m.touch_lock;
-        chip(cv, t.gear, BTN, if gear_on { ACCENT } else { BTN_BORDER });
+        btn(cv, t.gear, BTN, if gear_on { ACCENT } else { BTN_BORDER });
         icon_gear(cv, t.gear.x + t.gear.w / 2, t.gear.y + t.gear.h / 2, if gear_on { ACCENT } else { TEXT }, BTN);
     }
 
@@ -510,17 +513,38 @@ impl Ui {
         false
     }
 
+    /// The status pill: Run / Stop as in every layout. While the SIM panel is open and nothing plays yet, Run plays
+    /// the SIM source (the same action as the panel's Play).
+    pub(super) fn studio_run_stop(&mut self) {
+        if self.studio.view == StudioView::Sim && !self.record_mode() { return self.sim_activate_play(); }
+        self.key(key::RUNSTOP);
+    }
+
+    /// Single: one acquisition, or one SIM frame that is then held.
+    pub(super) fn studio_single(&mut self) {
+        if self.studio.view == StudioView::Sim && !self.record_mode() {
+            if self.sim_generating() { return; }
+            return self.sim_request_ui(false);
+        }
+        self.key(key::SINGLE);
+    }
+
+    fn sim_activate_play(&mut self) {
+        self.sim_activate(Item::SimPlay);
+    }
+
     fn studio_top_tap(&mut self, x: i32, y: i32) {
         let t = self.studio_top();
         let hit = |r: Rect| self.top_hit(r).contains(x, y);
-        if hit(t.badge) {
-            if self.record_mode() { self.return_to_live(); } else { self.workspace_action(workspace::Action::Sources); }
+        if t.badge.w > 0 && hit(t.badge) {
+            self.return_to_live();
         } else if hit(t.run) {
-            self.key(key::RUNSTOP);
+            self.studio_run_stop();
         } else if hit(t.single) {
-            self.key(key::SINGLE);
-        } else if hit(t.state) {
-            self.toggle_menu(MenuId::Trigger);
+            self.studio_single();
+        } else if t.sim.w > 0 && hit(t.sim) {
+            if self.menu_open { self.close_menu(); }
+            self.studio_set_view(StudioView::Sim);
         } else if hit(t.acq) {
             self.toggle_menu(if self.record_mode() { MenuId::Ref } else { MenuId::Acquire });
         } else if hit(t.measure) {
@@ -706,12 +730,18 @@ impl Ui {
         Rect::new(r.right() - 38, r.y + 3, 34, 28)
     }
 
+    /// Where the badges end: before the Meas tab and the eye.
+    fn studio_row_limit(&self) -> i32 {
+        let eye = self.studio_eye().x - 6;
+        if self.measurement_count() > 0 && self.studio.view == StudioView::Waveform { eye - 108 } else { eye }
+    }
+
     /// The row of badges as (measurement, rectangle), as many as fit.
     pub(super) fn studio_badges(&self) -> Vec<(MeasKey, Rect)> {
         let f = self.fonts();
         let row = self.studio_row();
         let rows = self.meas_rows();
-        let limit = self.studio_eye().x - 6;
+        let limit = self.studio_row_limit();
         let mut x = row.x + 4;
         let mut out = Vec::new();
         for key in self.studio_pinned() {
@@ -732,7 +762,7 @@ impl Ui {
         if text.is_empty() { return None; }
         let w = 30 + self.fonts().sb.width(&text) + 10;
         let row = self.studio_row();
-        (after + w <= self.studio_eye().x - 6).then(|| (Rect::new(after, row.y + 3, w, 28), text))
+        (after + w <= self.studio_row_limit()).then(|| (Rect::new(after, row.y + 3, w, 28), text))
     }
 
     pub(super) fn draw_studio_badges(&self, cv: &mut Canvas) {
@@ -762,6 +792,7 @@ impl Ui {
             icon_cursors(cv, r.x + 9, r.y + r.h / 2, BAND);
             cv.text_in(&f.sb, Rect::new(r.x + 28, r.y, r.w - 30, r.h), 0, &text, TEXT);
         }
+        self.draw_studio_tab(cv);
         let eye = self.studio_eye();
         cv.vline(eye.x - 3, row.y + 6, row.bottom() - 6, LINE);
         icon_eye(cv, eye.x + eye.w / 2, eye.y + eye.h / 2, TEXT);
@@ -853,6 +884,10 @@ impl Ui {
         if self.studio_eye().contains(x, y) {
             self.studio.hide_badges = true;
             self.relayout();
+            return true;
+        }
+        if self.studio_tab().is_some_and(|tab| tab.contains(x, y)) {
+            self.studio_set_view(StudioView::Docked);
             return true;
         }
         if let Some((key, _)) = self.studio_badges().into_iter().find(|(_, r)| r.contains(x, y)) {
@@ -1217,7 +1252,7 @@ impl Ui {
         self.draw_studio_offline(cv);
         if self.studio_table_rect().is_some() { return self.draw_studio_table(cv); }
         if self.studio.view == StudioView::Sim { return self.draw_studio_sim(cv); }
-        let Some(p) = self.studio_panel_rect() else { return self.draw_studio_tab(cv) };
+        let Some(p) = self.studio_panel_rect() else { return };
         let f = self.fonts();
         let rows = self.meas_rows();
         let keys = self.studio_keys();
@@ -1282,17 +1317,17 @@ impl Ui {
 
     /// The tab that brings the panel back while only the lanes are shown.
     pub(super) fn studio_tab(&self) -> Option<Rect> {
-        if self.m.layout != Layout::Studio || self.studio.view != StudioView::Waveform || self.studio_head_h() == 0
+        if self.m.layout != Layout::Studio || self.studio.view != StudioView::Waveform || !self.studio_badges_visible()
             || self.measurement_count() == 0 { return None; }
-        let g = self.grid;
-        Some(Rect::new(g.right() - 104, g.y - 17, 102, 16))
+        // in the badge row, left of the eye: nothing hangs under the top bar
+        let eye = self.studio_eye();
+        Some(Rect::new(eye.x - 6 - 102, eye.y, 102, eye.h))
     }
 
     fn draw_studio_tab(&self, cv: &mut Canvas) {
         let Some(r) = self.studio_tab() else { return };
         let f = self.fonts();
-        cv.round(r, 3, BTN_BORDER, 255);
-        cv.round(r.inset(1), 2, BTN, 255);
+        chip(cv, r, BTN, BTN_BORDER);
         cv.text_in(&f.sb, Rect::new(r.x + 8, r.y, r.w - 22, r.h), 0, &format!("Meas \u{b7} {}", self.measurement_count()), TEXT);
         chevron(cv, r.right() - 12, r.y + r.h / 2, 1, TEXT);
     }
@@ -1875,5 +1910,13 @@ impl Ui {
 impl Ui {
     pub(super) fn studio_trigger_off_screen_for_test(&self) -> bool {
         self.studio_trigger_off_screen()
+    }
+}
+
+#[cfg(test)]
+impl Ui {
+    pub(super) fn studio_set_pin_all_for_test(&mut self) {
+        let keys = self.studio_keys();
+        for k in keys.into_iter().take(3) { self.studio_set_pin(k, true); }
     }
 }
