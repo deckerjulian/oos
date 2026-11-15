@@ -8364,6 +8364,8 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
+                self.bus_auto = None;
                 self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
@@ -9347,6 +9349,7 @@ impl Ui {
                 self.m = Model::default();
                 self.m.meas = meas;
                 (self.m.quick, self.m.text_size) = (quick, text_size);
+                self.bus_auto = None;
                 self.clear_measurement_statistics();
                 self.select_workspace_source(WaveId::Ch(self.m.active));
                 self.meas_own.clear();

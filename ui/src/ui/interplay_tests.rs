@@ -124,3 +124,34 @@ fn a_new_decoder_role_takes_a_channel_that_is_on() {
     assert_eq!(u.m.dec_cs, None, "no channel left that is on: no chip select");
     assert!(!u.m.ch[2].on && !u.m.ch[3].on, "nothing switched on");
 }
+
+#[test]
+fn leaving_bus_after_a_recall_leaves_the_recalled_decoder() {
+    // what choosing Bus switched on is switched off when Bus is left (`bus_auto`), but only in the set-up it came
+    // from: a recalled set-up with Bus and its decoder keeps them
+    let mut u = ui();
+    let dir = std::env::temp_dir().join(format!("oos-interplay-bus-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    u.store_dir = dir.clone();
+    u.m.dec_on = false;
+    u.set_trig_type(TrigType::Bus);
+    u.step(0.05);
+    assert!(u.m.dec_on, "Bus switches the decoder on");
+    let mut saved = u.m.clone();
+    for c in 0..NCH { saved.ch[c].on = c < n_ch(); }
+    std::fs::write(u.setup_path(), crate::store::setup_text(&saved)).unwrap();
+    u.recall_setup();
+    u.step(0.05);
+    let on: Vec<bool> = u.m.ch.iter().map(|c| c.on).collect();
+    u.adjust(Item::TrigType, -1);
+    u.step(0.05);
+    assert_ne!(u.m.trig_type, TrigType::Bus);
+    assert!(u.m.dec_on, "the decoder of the recalled set-up stays on");
+    assert_eq!(u.m.ch.iter().map(|c| c.on).collect::<Vec<_>>(), on);
+    // the same after the Default key
+    u.set_trig_type(TrigType::Bus);
+    u.key(key::DEFAULT);
+    assert!(u.bus_auto.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
