@@ -174,3 +174,37 @@ fn studio_eye_opens_beside_the_plot_and_full_is_an_explicit_choice() {
     for _ in 0..3 { d.step(0.05); }
     assert_eq!(d.m.eye_place, EyePlace::Full);
 }
+
+#[test]
+fn compact_view_shrinks_lanes_badges_and_panel_and_toggles_from_the_view_menu_and_the_row() {
+    let mut u = studio();
+    u.studio_set_pin_all_for_test();
+    u.studio_set_view(StudioView::Docked);
+    for _ in 0..3 { u.step(0.05); }
+    let (gap0, row0, panel0, prow0) = (u.wins[1].y - u.wins[0].bottom(), u.studio_row_px(), u.studio_panel_w(), u.studio_panel_row());
+    let plot0 = u.wins[0].w;
+    shot(&mut u, "compact-off");
+    // the View menu has the row
+    u.studio.view_menu = true;
+    let row = u.studio_view_row(super::studio::VIEW_COMPACT);
+    assert!(u.studio_view_rect().contains(row.x, row.y) && u.studio_view_rect().contains(row.right() - 1, row.bottom() - 1));
+    tap_in(&mut u, row);
+    assert!(u.studio.compact);
+    for _ in 0..3 { u.step(0.05); }
+    assert!(u.wins[1].y - u.wins[0].bottom() < gap0, "smaller lane gap");
+    assert!(u.studio_row_px() < row0, "smaller badge row");
+    assert!(u.studio_panel_w() < panel0 && u.studio_panel_row() < prow0, "narrower panel");
+    assert!(u.wins[0].w > plot0, "the lanes get the room");
+    shot(&mut u, "compact-on");
+    // the small toggle in the badge row turns it off again
+    u.studio.view_menu = false;
+    let c = u.studio_compact_chip();
+    assert!(u.studio_row().contains(c.x, c.y));
+    tap_in(&mut u, c);
+    assert!(!u.studio.compact);
+    // Default is not touched by the flag
+    let mut d = Ui::new(Source::Demo { t: 0.0 });
+    d.studio.compact = true;
+    d.step(0.05);
+    assert!(d.m.layout != Layout::Studio && d.split_wins(d.grid).len() == 1);
+}

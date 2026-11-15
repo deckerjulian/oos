@@ -1690,7 +1690,7 @@ impl Ui {
         const GAP: i32 = 6;
         if self.stacked() {
             let n = self.n_wins() as i32;
-            let gap = if n > 8 { 2 } else { 4 };
+            let gap = if n > 8 { 2 } else if self.m.layout == Layout::Studio && self.studio.compact { 1 } else { 4 };
             let h = ((g.h - (n - 1) * gap) / n).max(1);
             return (0..n).map(|row| Rect::new(g.x, g.y + row * (h + gap), g.w, h)).collect();
         }

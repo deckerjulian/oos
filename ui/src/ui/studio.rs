@@ -86,6 +86,8 @@ pub(super) struct Studio {
     pub view_menu: bool,
     /// Full was chosen for the eye (Side is the Studio default: the waveform stays in view)
     pub eye_full: bool,
+    /// Compact view: smaller lane gaps, badge row and measurement panel
+    pub compact: bool,
     pub panel: StudioPanel,
     /// the SIM panel lists the knobs instead of the presets
     pub sim_knobs: bool,
@@ -642,9 +644,15 @@ impl Ui {
 
 /// Height of the row of pinned badges under the lanes.
 const ROW_H: i32 = 34;
+const ROW_H_COMPACT: i32 = 26;
 /// Width of the action popup of a badge, and the height of its rows.
 const POPUP_W: i32 = 300;
 const POPUP_ROW: i32 = 34;
+
+/// Two short stacked bars that move together: the compact view.
+fn icon_compact(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
+    for dy in [-5, 0, 5] { cv.hline(cx - 7, cx + 7, cy + dy, c); }
+}
 
 fn icon_pin(cv: &mut Canvas, x: i32, cy: i32, filled: bool, c: Rgb) {
     // a round head on a needle that leans to the left
@@ -717,25 +725,43 @@ impl Ui {
 
     /// Height the badge row takes from the lanes.
     pub(super) fn studio_row_h(&self) -> i32 {
-        if self.studio_badges_visible() { ROW_H } else { 0 }
+        if self.studio_badges_visible() { self.studio_row_px() } else { 0 }
     }
 
     /// The badge row: under the lanes, as wide as they are.
     pub(super) fn studio_row(&self) -> Rect {
         let (x, w) = self.plot_span();
-        Rect::new(x, self.frame().bottom.y - ROW_H, w, ROW_H)
+        let h = self.studio_row_px();
+        Rect::new(x, self.frame().bottom.y - h, w, h)
+    }
+
+    /// Height of the badge row, and of the chips in it.
+    pub(super) fn studio_row_px(&self) -> i32 { if self.studio.compact { ROW_H_COMPACT } else { ROW_H } }
+    pub(super) fn studio_chip_h(&self) -> i32 { self.studio_row_px() - 6 }
+    /// Width of the measurement panel and height of its rows: smaller in the compact view (not the SIM panel).
+    pub(super) fn studio_panel_w(&self) -> i32 {
+        if self.studio.compact && self.studio.view != StudioView::Sim { 210 } else { MEAS_PANEL_W_FULL }
+    }
+    pub(super) fn studio_panel_row(&self) -> i32 {
+        if self.studio.compact && self.studio.view != StudioView::Sim { 36 } else { PANEL_ROW_FULL }
+    }
+    /// The small switch for the compact view, left of the Meas tab in the badge row.
+    pub(super) fn studio_compact_chip(&self) -> Rect {
+        let eye = self.studio_eye();
+        let tab_w = if self.studio_tab().is_some() { 108 } else { 0 };
+        Rect::new(eye.x - 6 - tab_w - 34, eye.y, 34, eye.h)
     }
 
     /// The eye button at the right end of the row.
     pub(super) fn studio_eye(&self) -> Rect {
         let r = self.studio_row();
-        Rect::new(r.right() - 38, r.y + 3, 34, 28)
+        let h = self.studio_chip_h();
+        Rect::new(r.right() - 38, r.y + (r.h - h) / 2, 34, h)
     }
 
     /// Where the badges end: before the Meas tab and the eye.
     fn studio_row_limit(&self) -> i32 {
-        let eye = self.studio_eye().x - 6;
-        if self.measurement_count() > 0 && self.studio.view == StudioView::Waveform { eye - 108 } else { eye }
+        self.studio_compact_chip().x - 6
     }
 
     /// The row of badges as (measurement, rectangle), as many as fit.
@@ -750,7 +776,7 @@ impl Ui {
             let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)) else { continue };
             let w = 14 + 6 + (f.sb.width("CH4") + 10) + 6 + f.s.width(&r.name) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
             if x + w > limit { break; }
-            out.push((key, Rect::new(x, row.y + 3, w, 28)));
+            out.push((key, Rect::new(x, row.y + (row.h - self.studio_chip_h()) / 2, w, self.studio_chip_h())));
             x += w + 5;
         }
         out
@@ -764,7 +790,7 @@ impl Ui {
         if text.is_empty() { return None; }
         let w = 30 + self.fonts().sb.width(&text) + 10;
         let row = self.studio_row();
-        (after + w <= self.studio_row_limit()).then(|| (Rect::new(after, row.y + 3, w, 28), text))
+        (after + w <= self.studio_row_limit()).then(|| (Rect::new(after, row.y + (row.h - self.studio_chip_h()) / 2, w, self.studio_chip_h()), text))
     }
 
     pub(super) fn draw_studio_badges(&self, cv: &mut Canvas) {
@@ -795,6 +821,9 @@ impl Ui {
             cv.text_in(&f.sb, Rect::new(r.x + 28, r.y, r.w - 30, r.h), 0, &text, TEXT);
         }
         self.draw_studio_tab(cv);
+        let c = self.studio_compact_chip();
+        chip(cv, c, if self.studio.compact { mix(BAR, ACCENT, 60) } else { BTN }, if self.studio.compact { ACCENT } else { BTN_BORDER });
+        icon_compact(cv, c.x + c.w / 2, c.y + c.h / 2, if self.studio.compact { ACCENT } else { TEXT });
         let eye = self.studio_eye();
         cv.vline(eye.x - 3, row.y + 6, row.bottom() - 6, LINE);
         icon_eye(cv, eye.x + eye.w / 2, eye.y + eye.h / 2, TEXT);
@@ -888,6 +917,10 @@ impl Ui {
             self.relayout();
             return true;
         }
+        if self.studio_compact_chip().contains(x, y) {
+            self.studio_set_compact(!self.studio.compact);
+            return true;
+        }
         if self.studio_tab().is_some_and(|tab| tab.contains(x, y)) {
             self.studio_set_view(StudioView::Docked);
             return true;
@@ -916,6 +949,7 @@ pub(super) const STUDIO_VIEWS: [(StudioView, &str); 6] = [
 /// Rows of the View menu after the arrangements: the badges switch and Reset layout.
 pub(super) const VIEW_BADGES: usize = STUDIO_VIEWS.len();
 pub(super) const VIEW_RESET: usize = STUDIO_VIEWS.len() + 1;
+pub(super) const VIEW_COMPACT: usize = STUDIO_VIEWS.len() + 2;
 
 /// A small square wave, the lanes in the pictures of the View menu.
 fn icon_wave(cv: &mut Canvas, r: Rect, c: Rgb) {
@@ -966,7 +1000,7 @@ impl Ui {
     /// The View menu, under the View chip.
     pub(super) fn studio_view_rect(&self) -> Rect {
         let anchor = self.studio_top().view;
-        let h = 40 + 6 * VIEW_ROW + 8 + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
+        let h = 40 + 6 * VIEW_ROW + 8 + 8 + VIEW_ROW + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
         Rect::new((anchor.right() - VIEW_W).max(4), self.frame().top.bottom() + 4, VIEW_W, h)
     }
 
@@ -978,6 +1012,7 @@ impl Ui {
             0..=3 => p.y + 40 + i as i32 * VIEW_ROW,
             4..=5 => p.y + 40 + i as i32 * VIEW_ROW + 8,
             VIEW_BADGES => p.y + 40 + 6 * VIEW_ROW + 16,
+            VIEW_COMPACT => p.y + 40 + 8 * VIEW_ROW + 32,
             _ => p.y + 40 + 7 * VIEW_ROW + 24,
         };
         Rect::new(p.x + 6, y, p.w - 12, VIEW_ROW)
@@ -988,6 +1023,13 @@ impl Ui {
         Rect::new(p.right() - 44, p.y + 4, 38, 32)
     }
 
+    /// Compact view on or off: smaller lane gaps, badge row and measurement panel.
+    pub(super) fn studio_set_compact(&mut self, on: bool) {
+        self.studio.compact = on;
+        self.studio.panel.first = 0;
+        self.relayout();
+    }
+
     /// Back to the arrangement the layout starts with.
     pub(super) fn studio_reset_layout(&mut self) {
         self.studio_set_view(StudioView::Waveform);
@@ -995,6 +1037,7 @@ impl Ui {
         self.studio.pinned = None;
         self.studio.popup = None;
         self.studio.panel = Default::default();
+        self.studio.compact = false;
         self.set_zoom(false);
         self.relayout();
     }
@@ -1040,6 +1083,11 @@ impl Ui {
         let sw = Rect::new(r.right() - 52, r.y + 9, 44, 22);
         cv.round(sw, 11, if on { ACCENT } else { BTN_BORDER }, 255);
         cv.circle(if on { sw.right() - 11 } else { sw.x + 11 }, sw.y + 11, 8, if on { DARK_TEXT } else { DIM });
+        let r = self.studio_view_row(VIEW_COMPACT);
+        cv.text_in(&f.m, Rect::new(r.x + 8, r.y, r.w - 70, r.h), 0, "Compact view", TEXT);
+        let sw = Rect::new(r.right() - 52, r.y + 9, 44, 22);
+        cv.round(sw, 11, if self.studio.compact { ACCENT } else { BTN_BORDER }, 255);
+        cv.circle(if self.studio.compact { sw.right() - 11 } else { sw.x + 11 }, sw.y + 11, 8, if self.studio.compact { DARK_TEXT } else { DIM });
         cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(VIEW_RESET).y - 4, LINE);
         let r = self.studio_view_row(VIEW_RESET);
         let (ix, iy) = (r.x + 24, r.y + r.h / 2);
@@ -1078,6 +1126,8 @@ impl Ui {
         if self.studio_view_row(VIEW_BADGES).contains(x, y) {
             self.studio.hide_badges = !self.studio.hide_badges;
             self.relayout();
+        } else if self.studio_view_row(VIEW_COMPACT).contains(x, y) {
+            self.studio_set_compact(!self.studio.compact);
         } else if self.studio_view_row(VIEW_RESET).contains(x, y) {
             self.studio_reset_layout();
             self.studio.view_menu = false;
@@ -1106,8 +1156,8 @@ impl Ui {
 }
 
 /// Width of the measurement panel, docked or floating, and the height of a row in it.
-const MEAS_PANEL_W: i32 = 270;
-const PANEL_ROW: i32 = 46;
+const MEAS_PANEL_W_FULL: i32 = 270;
+const PANEL_ROW_FULL: i32 = 46;
 /// Rows of the table that has the whole body.
 const TABLE_ROW: i32 = 44;
 
@@ -1164,20 +1214,20 @@ impl Ui {
         match self.studio.view {
             StudioView::Docked | StudioView::Offline | StudioView::Sim => {
                 let (x, w) = self.plot_span();
-                Some(Rect::new(x + w + 4, body.y + 2, MEAS_PANEL_W, bottom - body.y - 4))
+                Some(Rect::new(x + w + 4, body.y + 2, self.studio_panel_w(), bottom - body.y - 4))
             }
             StudioView::Floating => {
                 let h = self.studio_float_h();
                 let g = self.grid;
-                let (mut x, y) = self.studio.panel.at.unwrap_or((g.right() - MEAS_PANEL_W - 8, g.y + 6));
+                let (mut x, y) = self.studio.panel.at.unwrap_or((g.right() - self.studio_panel_w() - 8, g.y + 6));
                 // below the head row (T marker, cursor tags), and never over the full-screen and zoom buttons
                 let top = g.y.max(body.y);
                 let y = y.clamp(top, (bottom - h).max(top));
                 for b in [self.full_btn().0, self.zoom_btn().0] {
                     let b = Rect::new(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
-                    if x + MEAS_PANEL_W > b.x && x < b.right() && y < b.bottom() && y + h > b.y { x = (b.x - MEAS_PANEL_W).max(0); }
+                    if x + self.studio_panel_w() > b.x && x < b.right() && y < b.bottom() && y + h > b.y { x = (b.x - self.studio_panel_w()).max(0); }
                 }
-                Some(Rect::new(x.clamp(0, self.scr.w - MEAS_PANEL_W), y, MEAS_PANEL_W, h))
+                Some(Rect::new(x.clamp(0, self.scr.w - self.studio_panel_w()), y, self.studio_panel_w(), h))
             }
             _ => None,
         }
@@ -1190,20 +1240,20 @@ impl Ui {
     }
 
     fn studio_float_h(&self) -> i32 {
-        40 + 24 + self.studio_float_keys().len().clamp(1, 5) as i32 * PANEL_ROW + 52
+        40 + 24 + self.studio_float_keys().len().clamp(1, 5) as i32 * self.studio_panel_row() + 52
     }
 
     /// Plot width less the docked panel: `plot_span` calls this.
     pub(super) fn studio_dock_w(&self) -> i32 {
-        if self.m.layout == Layout::Studio && self.studio.view.is_docked() { MEAS_PANEL_W + 4 } else { 0 }
+        if self.m.layout == Layout::Studio && self.studio.view.is_docked() { self.studio_panel_w() + 4 } else { 0 }
     }
 
     pub(super) fn studio_panel_geo(&self) -> Option<PanelGeo> {
         let p = self.studio_panel_rect().filter(|_| matches!(self.studio.view, StudioView::Docked | StudioView::Offline))?;
         let list_y = p.y + 66;
-        let rows_h = (p.bottom() - 42 - 6 - 34 - 4 - list_y).max(PANEL_ROW);
-        let page = (rows_h / PANEL_ROW).max(1) as usize;
-        let list = Rect::new(p.x + 4, list_y, p.w - 8, page as i32 * PANEL_ROW);
+        let rows_h = (p.bottom() - 42 - 6 - 34 - 4 - list_y).max(self.studio_panel_row());
+        let page = (rows_h / self.studio_panel_row()).max(1) as usize;
+        let list = Rect::new(p.x + 4, list_y, p.w - 8, page as i32 * self.studio_panel_row());
         let nav_y = list.bottom() + 4;
         Some(PanelGeo {
             p,
@@ -1272,7 +1322,7 @@ impl Ui {
             let first = self.studio_first(listed.len(), g.page);
             cv.set_clip(g.list);
             for (k, &i) in listed.iter().skip(first).take(g.page).enumerate() {
-                let r = Rect::new(g.list.x, g.list.y + k as i32 * PANEL_ROW, g.list.w, PANEL_ROW);
+                let r = Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row());
                 self.draw_panel_row(cv, r, &rows[i], keys.get(i).is_some_and(|k| pinned.contains(k)));
             }
             cv.no_clip();
@@ -1303,7 +1353,7 @@ impl Ui {
             for key in &shown {
                 let Some(i) = self.studio_index(*key).filter(|&i| i < rows.len()) else { continue };
                 if k >= 5 { break; }
-                self.draw_panel_row(cv, Rect::new(p.x + 4, p.y + 64 + k * PANEL_ROW, p.w - 8, PANEL_ROW), &rows[i], true);
+                self.draw_panel_row(cv, Rect::new(p.x + 4, p.y + 64 + k * self.studio_panel_row(), p.w - 8, self.studio_panel_row()), &rows[i], true);
                 k += 1;
             }
             if k == 0 { cv.text(&f.s, p.x + 14, p.y + 64 + 28, "Nothing shown yet", DIM); }
@@ -1460,7 +1510,7 @@ impl Ui {
             else if g.add.contains(x, y) { self.open_meas_list(); }
             else if g.list.contains(x, y) {
                 let first = self.studio_first(listed.len(), g.page);
-                let k = ((y - g.list.y) / PANEL_ROW) as usize;
+                let k = ((y - g.list.y) / self.studio_panel_row()) as usize;
                 if let Some(&i) = listed.get(first + k) {
                     if x >= g.list.right() - 48 {
                         if let Some(&key) = keys.get(i) { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); }
@@ -1477,7 +1527,7 @@ impl Ui {
             else if all.contains(x, y) { self.studio_set_view(StudioView::Only); }
             else if !title.contains(x, y) && y >= p.y + 64 {
                 let shown = self.studio_float_keys();
-                let k = ((y - p.y - 64) / PANEL_ROW) as usize;
+                let k = ((y - p.y - 64) / self.studio_panel_row()) as usize;
                 if let Some(index) = shown.get(k).and_then(|&key| self.studio_index(key)) {
                     if x >= p.right() - 52 {
                         if let Some(&key) = keys.get(index) { self.studio.floated.retain(|f| *f != key); self.studio_set_pin(key, false); }
@@ -1563,7 +1613,7 @@ impl Ui {
                         let rows = self.meas_rows();
                         let sim = self.studio_sim_list().filter(|_| self.studio.view == StudioView::Sim);
                         let total = sim.map_or_else(|| self.studio_listed(&rows).len(), |l| l.3);
-                        let (h, page) = if let Some((_, h, page, _)) = sim { (h, page) } else if let Some(g) = self.studio_panel_geo() { (PANEL_ROW, g.page) } else { (TABLE_ROW, self.studio_table_geo().map_or(1, |g| g.1)) };
+                        let (h, page) = if let Some((_, h, page, _)) = sim { (h, page) } else if let Some(g) = self.studio_panel_geo() { (self.studio_panel_row(), g.page) } else { (TABLE_ROW, self.studio_table_geo().map_or(1, |g| g.1)) };
                         let moved = moved || (y - y0).abs() > 8;
                         if moved {
                             let delta = (y0 - y) / h;
