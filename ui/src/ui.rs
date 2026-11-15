@@ -44,6 +44,7 @@ mod wlan;
 mod windows;
 mod workspace;
 mod studio;
+mod studio_views;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]

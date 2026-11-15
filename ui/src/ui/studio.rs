@@ -26,6 +26,15 @@ pub(super) enum StudioView {
     Floating,
     /// the table of all measurements instead of the lanes
     Only,
+    /// analysing a loaded file: the record navigator on top, the references in lanes, the measurements docked
+    Offline,
+}
+
+impl StudioView {
+    /// The views that run on a record session (a loaded file or a SIM): leaving them returns to live.
+    pub(super) fn is_record(self) -> bool { matches!(self, StudioView::Offline) }
+    /// The views with a panel docked at the right of the lanes.
+    pub(super) fn is_docked(self) -> bool { matches!(self, StudioView::Docked | StudioView::Offline) }
 }
 
 /// The measurements panel (docked at the right, floating or maximized).
@@ -146,6 +155,7 @@ impl Ui {
 
     /// Applies a layout change made in the Display menu: Studio always draws its sources as lanes.
     pub(super) fn studio_sync(&mut self) {
+        self.studio_sync_views();
         if !std::mem::take(&mut self.studio.enter) { return; }
         if self.m.layout == Layout::Studio {
             self.trace_mode(true);
@@ -162,12 +172,54 @@ impl Ui {
         }
     }
 
+    /// Offline waveform analysis: the badge is the way back to live.
+    pub(super) fn studio_back_badge(&self) -> bool {
+        self.m.layout == Layout::Studio && self.studio.view == StudioView::Offline && self.record_mode()
+    }
+
+    pub(super) fn studio_badge_label(&self) -> &'static str {
+        if self.studio_back_badge() { "Live" } else { self.studio_source().0 }
+    }
+
+    /// The chip of the acquisition: the sample rate and depth, or while analysing a file its name first.
+    pub(super) fn studio_acq_caption(&self) -> String {
+        let (caption, _) = self.acq_caption();
+        if !self.studio_back_badge() { return caption; }
+        match self.refs.get(self.active_reference()).and_then(|r| r.as_ref()) {
+            Some(r) => {
+                let name = if r.label.is_empty() { format!("R{}", self.active_reference() + 1) } else { r.label.clone() };
+                format!("{name} \u{b7} {}", caption.trim_start_matches("REF \u{b7} "))
+            }
+            None => "No file loaded".to_string(),
+        }
+    }
+
+    /// Keeps the record views consistent with the session: Offline ends with the record session, and shows
+    /// the navigator (the zoom overview) for a loaded file until the user closes it.
+    pub(super) fn studio_sync_views(&mut self) {
+        if self.m.layout != Layout::Studio || self.studio.view != StudioView::Offline { return; }
+        if !self.record_mode() {
+            self.studio.view = StudioView::Waveform;
+            self.relayout();
+        } else if self.refs.iter().any(Option::is_some) && !self.m.zoom && !self.zoom_user_closed {
+            self.set_zoom(true);
+        }
+    }
+
+    /// A record view ends when the session does (`return_to_live`).
+    pub(super) fn studio_left_record(&mut self) {
+        if self.studio.view.is_record() {
+            self.studio.view = StudioView::Waveform;
+            self.studio.panel.first = 0;
+        }
+    }
+
     pub(super) fn studio_top(&self) -> StudioTop {
         let f = self.fonts();
         let top = self.frame().top;
         let chip = |x: i32, w: i32| Rect::new(x, CHIP_Y, w, CHIP_H);
         let mut x = top.x + 6;
-        let badge = chip(x, (f.sb.width(self.studio_source().0) + 22).max(52));
+        let badge = chip(x, (f.sb.width(self.studio_badge_label()) + 22 + if self.studio_back_badge() { 16 } else { 0 }).max(52));
         x = badge.right() + 8;
         let run = chip(x, 78);
         x = run.right() + 6;
@@ -203,9 +255,11 @@ impl Ui {
         let root = self.menu_root();
         let open = |m: MenuId| self.menu_open && root == m;
         // the source of the waveforms
-        let (label, col) = self.studio_source();
+        let (_, col) = self.studio_source();
+        let back = self.studio_back_badge();
         chip(cv, t.badge, BAR, mix(BAR, col, 120));
-        cv.text_in(&f.sb, t.badge, 1, label, col);
+        if back { chevron(cv, t.badge.x + 13, t.badge.y + t.badge.h / 2, -1, col); }
+        cv.text_in(&f.sb, Rect::new(t.badge.x + if back { 16 } else { 0 }, t.badge.y, t.badge.w - if back { 16 } else { 0 }, t.badge.h), 1, self.studio_badge_label(), col);
         // Run is green while the scope runs; Single arms one acquisition
         let running = !matches!(self.m.run, RunState::Stop) && !matches!(self.m.status, TrigStatus::Stop);
         if running {
@@ -223,7 +277,7 @@ impl Ui {
         chip(cv, t.state, BAR, scol);
         cv.text_in(&f.mb, t.state, 1, text, scol);
         // sample rate and depth: opens the page that sets them
-        let (caption, _) = self.acq_caption();
+        let caption = self.studio_acq_caption();
         let acq_open = self.menu_open && root == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
         chip(cv, t.acq, BTN, if acq_open { ACCENT } else { BTN_BORDER });
         cv.set_clip(Rect::new(t.acq.x + 4, t.acq.y, (t.acq.w - 28).max(1), t.acq.h));
@@ -735,16 +789,21 @@ impl Ui {
 }
 
 /// The View menu: its width and the height of a row.
-const VIEW_W: i32 = 304;
+const VIEW_W: i32 = 340;
 const VIEW_ROW: i32 = 40;
 
 /// What the View menu offers, in order.
-pub(super) const STUDIO_VIEWS: [(StudioView, &str); 4] = [
+pub(super) const STUDIO_VIEWS: [(StudioView, &str); 5] = [
     (StudioView::Waveform, "Waveform focus"),
     (StudioView::Docked, "Docked measurements"),
     (StudioView::Floating, "Floating measurements"),
     (StudioView::Only, "Measurements only"),
+    (StudioView::Offline, "Offline waveform analysis"),
 ];
+
+/// Rows of the View menu after the arrangements: the badges switch and Reset layout.
+pub(super) const VIEW_BADGES: usize = STUDIO_VIEWS.len();
+pub(super) const VIEW_RESET: usize = STUDIO_VIEWS.len() + 1;
 
 /// A small square wave, the lanes in the pictures of the View menu.
 fn icon_wave(cv: &mut Canvas, r: Rect, c: Rgb) {
@@ -777,6 +836,12 @@ fn icon_view_mode(cv: &mut Canvas, r: Rect, view: StudioView, c: Rgb) {
         StudioView::Only => {
             for k in 0..3 { cv.hline(r.x + 4, r.right() - 5, r.y + 5 + k * 6, c); }
         }
+        StudioView::Offline => {
+            // the navigator over the record with its window, the lanes under it
+            cv.hline(r.x + 3, r.right() - 4, r.y + 8, c);
+            cv.round_outline(Rect::new(r.x + 14, r.y + 3, 14, 10), 1, c);
+            icon_wave(cv, Rect::new(r.x + 2, r.y + 12, r.w - 4, r.h - 14), c);
+        }
     }
 }
 
@@ -784,17 +849,19 @@ impl Ui {
     /// The View menu, under the View chip.
     pub(super) fn studio_view_rect(&self) -> Rect {
         let anchor = self.studio_top().view;
-        let h = 40 + 4 * VIEW_ROW + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
+        let h = 40 + 5 * VIEW_ROW + 8 + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
         Rect::new((anchor.right() - VIEW_W).max(4), self.frame().top.bottom() + 4, VIEW_W, h)
     }
 
-    /// Row `i` of the View menu: 0 to 3 the arrangements, 4 the badges switch, 5 Reset layout.
+    /// Row `i` of the View menu: 0 to 3 the measurement arrangements, 4 the record view (a line above it),
+    /// `VIEW_BADGES` the badges switch, `VIEW_RESET` Reset layout.
     pub(super) fn studio_view_row(&self, i: usize) -> Rect {
         let p = self.studio_view_rect();
         let y = match i {
             0..=3 => p.y + 40 + i as i32 * VIEW_ROW,
             4 => p.y + 40 + 4 * VIEW_ROW + 8,
-            _ => p.y + 40 + 5 * VIEW_ROW + 16,
+            VIEW_BADGES => p.y + 40 + 5 * VIEW_ROW + 16,
+            _ => p.y + 40 + 6 * VIEW_ROW + 24,
         };
         Rect::new(p.x + 6, y, p.w - 12, VIEW_ROW)
     }
@@ -806,7 +873,7 @@ impl Ui {
 
     /// Back to the arrangement the layout starts with.
     pub(super) fn studio_reset_layout(&mut self) {
-        self.studio.view = StudioView::Waveform;
+        self.studio_set_view(StudioView::Waveform);
         self.studio.hide_badges = false;
         self.studio.pinned = None;
         self.studio.popup = None;
@@ -849,14 +916,15 @@ impl Ui {
             }
         }
         cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(4).y - 4, LINE);
-        let r = self.studio_view_row(4);
+        cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(VIEW_BADGES).y - 4, LINE);
+        let r = self.studio_view_row(VIEW_BADGES);
         cv.text_in(&f.m, Rect::new(r.x + 8, r.y, r.w - 70, r.h), 0, "Show pinned badges", TEXT);
         let on = !self.studio.hide_badges;
         let sw = Rect::new(r.right() - 52, r.y + 9, 44, 22);
         cv.round(sw, 11, if on { ACCENT } else { BTN_BORDER }, 255);
         cv.circle(if on { sw.right() - 11 } else { sw.x + 11 }, sw.y + 11, 8, if on { DARK_TEXT } else { DIM });
-        cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(5).y - 4, LINE);
-        let r = self.studio_view_row(5);
+        cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(VIEW_RESET).y - 4, LINE);
+        let r = self.studio_view_row(VIEW_RESET);
         let (ix, iy) = (r.x + 24, r.y + r.h / 2);
         cv.circle(ix, iy, 8, TEXT);
         cv.circle(ix, iy, 6, PANEL_BG);
@@ -890,10 +958,10 @@ impl Ui {
                 return true;
             }
         }
-        if self.studio_view_row(4).contains(x, y) {
+        if self.studio_view_row(VIEW_BADGES).contains(x, y) {
             self.studio.hide_badges = !self.studio.hide_badges;
             self.relayout();
-        } else if self.studio_view_row(5).contains(x, y) {
+        } else if self.studio_view_row(VIEW_RESET).contains(x, y) {
             self.studio_reset_layout();
             self.studio.view_menu = false;
         }
@@ -902,10 +970,19 @@ impl Ui {
 
     /// Chooses how the measurements share the screen.
     pub(super) fn studio_set_view(&mut self, view: StudioView) {
+        let was = self.studio.view;
+        // a record view runs on a session of its own: leaving it returns to the live acquisition
+        if was.is_record() && was != view && self.record_mode() { self.return_to_live(); }
         self.studio.view = view;
         self.studio.panel.first = 0;
         self.studio.filter = None;
         self.studio.popup = None;
+        if view != was {
+            match view {
+                StudioView::Offline => self.studio_enter_offline(),
+                _ => {}
+            }
+        }
         self.relayout();
     }
 }
@@ -967,7 +1044,7 @@ impl Ui {
         let body = self.frame().body;
         let bottom = self.frame().bottom.y;
         match self.studio.view {
-            StudioView::Docked => {
+            StudioView::Docked | StudioView::Offline => {
                 let (x, w) = self.plot_span();
                 Some(Rect::new(x + w + 4, body.y + 2, MEAS_PANEL_W, bottom - body.y - 4))
             }
@@ -993,11 +1070,11 @@ impl Ui {
 
     /// Plot width less the docked panel: `plot_span` calls this.
     pub(super) fn studio_dock_w(&self) -> i32 {
-        if self.m.layout == Layout::Studio && self.studio.view == StudioView::Docked { MEAS_PANEL_W + 4 } else { 0 }
+        if self.m.layout == Layout::Studio && self.studio.view.is_docked() { MEAS_PANEL_W + 4 } else { 0 }
     }
 
     pub(super) fn studio_panel_geo(&self) -> Option<PanelGeo> {
-        let p = self.studio_panel_rect().filter(|_| self.studio.view == StudioView::Docked)?;
+        let p = self.studio_panel_rect().filter(|_| matches!(self.studio.view, StudioView::Docked | StudioView::Offline))?;
         let list_y = p.y + 66;
         let rows_h = (p.bottom() - 42 - 6 - 34 - 4 - list_y).max(PANEL_ROW);
         let page = (rows_h / PANEL_ROW).max(1) as usize;
@@ -1047,6 +1124,7 @@ impl Ui {
 
     pub(super) fn draw_studio_panel(&self, cv: &mut Canvas) {
         if self.m.layout != Layout::Studio || self.view_on() { return; }
+        self.draw_studio_offline(cv);
         if self.studio_table_rect().is_some() { return self.draw_studio_table(cv); }
         let Some(p) = self.studio_panel_rect() else { return self.draw_studio_tab(cv) };
         let f = self.fonts();
@@ -1240,6 +1318,7 @@ impl Ui {
 
     /// A tap on the panel or the table. False: it is not on them.
     pub(super) fn studio_panel_tap(&mut self, x: i32, y: i32) -> bool {
+        if self.studio_offline_tap(x, y) { return true; }
         let rows = self.meas_rows();
         let keys = self.studio_keys();
         let listed = self.studio_listed(&rows);

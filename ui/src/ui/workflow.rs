@@ -565,6 +565,7 @@ impl Ui {
         self.cleared = false;
         self.ph.clear();
         self.phz.clear();
+        self.studio_left_record();
         self.close_menu();
         self.relayout();
         self.settings_changed();
