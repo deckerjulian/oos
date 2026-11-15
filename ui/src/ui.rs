@@ -2984,6 +2984,7 @@ impl Ui {
             self.draw_pane_close(cv);
         }
         self.draw_results(cv);
+        self.draw_studio_panel(cv);
         self.draw_table(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
@@ -4381,10 +4382,11 @@ impl Ui {
     fn plot_span(&self) -> (i32, i32) {
         let body = self.frame().body;
         let side = if self.strip_rows() > 0 { STRIP_SIDE } else { 0 } + self.results_side_w();
+        let dock = self.studio_dock_w();
         match self.m.strip_dock {
-            StripDock::Left => (body.x + side, body.w - side),
-            StripDock::Right => (body.x, body.w - side),
-            _ => (body.x, body.w),
+            StripDock::Left => (body.x + side, body.w - side - dock),
+            StripDock::Right => (body.x, body.w - side - dock),
+            _ => (body.x, body.w - dock),
         }
     }
 
@@ -8701,6 +8703,7 @@ impl Ui {
 
     /// A finger in a split plot works in the window it went down in: its channels, its rectangle.
     fn touch_ev(&mut self, ph: Phase, x: i32, y: i32) {
+        if self.studio_touch(ph, x, y) { return; }
         if self.workspace_touch(ph, x, y) { return; }
         if self.wins.len() < 2 {
             return self.touch_in(ph, x, y);

@@ -55,6 +55,9 @@ pub(super) struct Studio {
     /// the View menu is open
     pub view_menu: bool,
     pub panel: StudioPanel,
+    /// the table and the panel list only the measurements of this source
+    pub filter: Option<WaveId>,
+    pub drag: Option<StudioDrag>,
 }
 
 /// The rectangles of the Studio top bar.
@@ -370,6 +373,7 @@ impl Ui {
         if self.studio_view_tap(x, y) { return true; }
         if self.studio_popup_tap(x, y) { return true; }
         if self.studio_badge_tap(x, y) { return true; }
+        if self.studio_panel_tap(x, y) { return true; }
         if y >= self.frame().bottom.y {
             self.studio_bottom_tap(x, y);
             return true;
@@ -883,7 +887,480 @@ impl Ui {
     /// Chooses how the measurements share the screen.
     pub(super) fn studio_set_view(&mut self, view: StudioView) {
         self.studio.view = view;
+        self.studio.panel.first = 0;
+        self.studio.filter = None;
         self.studio.popup = None;
         self.relayout();
+    }
+}
+
+/// Width of the measurement panel, docked or floating, and the height of a row in it.
+const MEAS_PANEL_W: i32 = 270;
+const PANEL_ROW: i32 = 46;
+/// Rows of the table that has the whole body.
+const TABLE_ROW: i32 = 44;
+
+/// A touch that the panel or the table owns, from its first point to its last.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum StudioDrag {
+    /// the list moves with the finger
+    Scroll { y0: i32, first0: usize, moved: bool },
+    /// a touch on a panel or the table that scrolls nothing: it ends in a tap
+    Eat { x0: i32, y0: i32 },
+    /// the floating panel moves with the finger
+    Move { x0: i32, y0: i32, at0: (i32, i32), moved: bool },
+}
+
+/// The parts of the docked panel.
+pub(super) struct PanelGeo {
+    pub p: Rect,
+    pub maximize: Rect,
+    pub collapse: Rect,
+    pub list: Rect,
+    pub page: usize,
+    pub up: Rect,
+    pub down: Rect,
+    pub add: Rect,
+}
+
+fn icon_expand(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
+    cv.line(cx - 6, cy + 6, cx + 6, cy - 6, c);
+    cv.hline(cx + 1, cx + 6, cy - 6, c);
+    cv.vline(cx + 6, cy - 6, cy - 1, c);
+    cv.hline(cx - 6, cx - 1, cy + 6, c);
+    cv.vline(cx - 6, cy + 1, cy + 6, c);
+}
+
+fn icon_arrow(cv: &mut Canvas, cx: i32, cy: i32, up: bool, c: Rgb) {
+    let d = if up { -1 } else { 1 };
+    cv.triangle([(cx - 6, cy - 3 * d), (cx + 6, cy - 3 * d), (cx, cy + 3 * d)], c);
+}
+
+impl Ui {
+    /// Index of the first row of the list that is shown, kept in range.
+    fn studio_first(&self, total: usize, page: usize) -> usize {
+        self.studio.panel.first.min(total.saturating_sub(page))
+    }
+
+    /// The measurements the panel lists: all, or those of the chosen source.
+    pub(super) fn studio_listed(&self, rows: &[tools::MeasRow]) -> Vec<usize> {
+        (0..rows.len()).filter(|&i| self.studio.filter.is_none_or(|id| rows[i].src == id)).collect()
+    }
+
+    pub(super) fn studio_panel_rect(&self) -> Option<Rect> {
+        let body = self.frame().body;
+        let bottom = self.frame().bottom.y;
+        match self.studio.view {
+            StudioView::Docked => {
+                let (x, w) = self.plot_span();
+                Some(Rect::new(x + w + 4, body.y + 2, MEAS_PANEL_W, bottom - body.y - 4))
+            }
+            StudioView::Floating => {
+                let h = self.studio_float_h();
+                let g = self.grid;
+                let (x, y) = self.studio.panel.at.unwrap_or((g.right() - MEAS_PANEL_W - 8, g.y + 6));
+                Some(Rect::new(x.clamp(0, self.scr.w - MEAS_PANEL_W), y.clamp(body.y, (bottom - h).max(body.y)), MEAS_PANEL_W, h))
+            }
+            _ => None,
+        }
+    }
+
+    /// The table of all measurements: the whole body.
+    pub(super) fn studio_table_rect(&self) -> Option<Rect> {
+        let body = self.frame().body;
+        (self.studio.view == StudioView::Only).then(|| Rect::new(0, body.y, self.scr.w, self.frame().bottom.y - body.y))
+    }
+
+    fn studio_float_h(&self) -> i32 {
+        40 + 24 + self.studio_pinned().len().clamp(1, 5) as i32 * PANEL_ROW + 52
+    }
+
+    /// Plot width less the docked panel: `plot_span` calls this.
+    pub(super) fn studio_dock_w(&self) -> i32 {
+        if self.m.layout == Layout::Studio && self.studio.view == StudioView::Docked { MEAS_PANEL_W + 4 } else { 0 }
+    }
+
+    pub(super) fn studio_panel_geo(&self) -> Option<PanelGeo> {
+        let p = self.studio_panel_rect().filter(|_| self.studio.view == StudioView::Docked)?;
+        let list_y = p.y + 66;
+        let rows_h = (p.bottom() - 42 - 6 - 34 - 4 - list_y).max(PANEL_ROW);
+        let page = (rows_h / PANEL_ROW).max(1) as usize;
+        let list = Rect::new(p.x + 4, list_y, p.w - 8, page as i32 * PANEL_ROW);
+        let nav_y = list.bottom() + 4;
+        Some(PanelGeo {
+            p,
+            maximize: Rect::new(p.right() - 82, p.y + 5, 36, 30),
+            collapse: Rect::new(p.right() - 42, p.y + 5, 36, 30),
+            list, page,
+            up: Rect::new(p.right() - 82, nav_y, 36, 30),
+            down: Rect::new(p.right() - 42, nav_y, 36, 30),
+            add: Rect::new(p.x + 6, p.bottom() - 42, p.w - 12, 34),
+        })
+    }
+
+    /// Floating panel: its title bar, close, the Dock and View all buttons.
+    pub(super) fn studio_float_parts(&self) -> Option<(Rect, Rect, Rect, Rect)> {
+        let p = self.studio_panel_rect().filter(|_| self.studio.view == StudioView::Floating)?;
+        Some((Rect::new(p.x, p.y, p.w - 44, 40), Rect::new(p.right() - 42, p.y + 5, 36, 30),
+            Rect::new(p.x + 8, p.bottom() - 46, p.w / 2 - 12, 38), Rect::new(p.x + p.w / 2 + 4, p.bottom() - 46, p.w / 2 - 12, 38)))
+    }
+
+    /// One row of the docked and floating panel: CH badge, the name over the value, the pin.
+    fn draw_panel_row(&self, cv: &mut Canvas, r: Rect, row: &tools::MeasRow, pinned: bool) {
+        let f = self.fonts();
+        let tag = Rect::new(r.x + 8, r.y + 12, f.sb.width("CH4") + 12, 22);
+        cv.round(tag, 5, self.wave_color(row.src), 255);
+        cv.text_in(&f.sb, tag, 1, &self.wave_name(row.src), DARK_TEXT);
+        let x = tag.right() + 12;
+        cv.set_clip(Rect::new(x, r.y, (r.right() - 40 - x).max(1), r.h));
+        cv.text(&f.s, x, r.y + 18, &row.name, LABEL);
+        cv.text(&f.mb, x, r.y + 38, &row.text(), TEXT);
+        cv.no_clip();
+        icon_pin(cv, r.right() - 28, r.y + r.h / 2 + 1, pinned, if pinned { AMBER } else { DIM });
+        cv.hline(r.x + 6, r.right() - 7, r.bottom() - 1, LINE);
+    }
+
+    fn draw_scrollbar(cv: &mut Canvas, list: Rect, first: usize, page: usize, total: usize) {
+        if total <= page { return; }
+        let x = list.right() - 4;
+        cv.vline(x, list.y, list.bottom() - 1, mix(BG, LINE, 120));
+        let h = (list.h as i64 * page as i64 / total as i64).max(16) as i32;
+        let y = list.y + ((list.h - h) as i64 * first as i64 / (total - page).max(1) as i64) as i32;
+        cv.fill(Rect::new(x - 1, y, 3, h), DIM);
+    }
+
+    pub(super) fn draw_studio_panel(&self, cv: &mut Canvas) {
+        if self.m.layout != Layout::Studio || self.view_on() { return; }
+        if self.studio_table_rect().is_some() { return self.draw_studio_table(cv); }
+        let Some(p) = self.studio_panel_rect() else { return self.draw_studio_tab(cv) };
+        let f = self.fonts();
+        let rows = self.meas_rows();
+        let keys = self.studio_keys();
+        let listed = self.studio_listed(&rows);
+        let pinned = self.studio_pinned();
+        cv.round(p, 8, if self.studio.view == StudioView::Floating { BTN_BORDER } else { CARD_BORDER }, 255);
+        cv.round(p.inset(1), 7, PANEL_BG, 255);
+        if let Some(g) = self.studio_panel_geo() {
+            cv.text(&f.lb, p.x + 14, p.y + 27, "Measurements", TEXT);
+            for (r, which) in [(g.maximize, 0), (g.collapse, 1)] {
+                chip(cv, r, BTN, BTN_BORDER);
+                if which == 0 { icon_expand(cv, r.x + r.w / 2, r.y + r.h / 2, TEXT); } else { chevron(cv, r.x + r.w / 2 - 2, r.y + r.h / 2, 1, TEXT); }
+            }
+            cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} total \u{b7} {} pinned", rows.len(), pinned.len()), DIM);
+            let first = self.studio_first(listed.len(), g.page);
+            cv.set_clip(g.list);
+            for (k, &i) in listed.iter().skip(first).take(g.page).enumerate() {
+                let r = Rect::new(g.list.x, g.list.y + k as i32 * PANEL_ROW, g.list.w, PANEL_ROW);
+                self.draw_panel_row(cv, r, &rows[i], keys.get(i).is_some_and(|k| pinned.contains(k)));
+            }
+            cv.no_clip();
+            Self::draw_scrollbar(cv, g.list, first, g.page, listed.len());
+            let end = (first + g.page).min(listed.len());
+            cv.text(&f.s, p.x + 14, g.up.y + 20, &if listed.is_empty() { "0 of 0".to_string() } else { format!("{}-{} of {}", first + 1, end, listed.len()) }, DIM);
+            for (r, up) in [(g.up, true), (g.down, false)] {
+                chip(cv, r, BTN, BTN_BORDER);
+                icon_arrow(cv, r.x + r.w / 2, r.y + r.h / 2, up, TEXT);
+            }
+            chip(cv, g.add, BTN, BTN_BORDER);
+            cv.hline(g.add.x + g.add.w / 2 - 78, g.add.x + g.add.w / 2 - 66, g.add.y + 17, TEXT);
+            cv.vline(g.add.x + g.add.w / 2 - 72, g.add.y + 11, g.add.y + 23, TEXT);
+            cv.text_in(&f.m, Rect::new(g.add.x + 40, g.add.y, g.add.w - 40, g.add.h), 1, "Add measurement", TEXT);
+        } else if let Some((title, close, dock, all)) = self.studio_float_parts() {
+            // the dotted handle shows that the panel can be moved
+            for (dx, dy) in [(0, 0), (6, 0), (12, 0), (0, 6), (6, 6), (12, 6), (0, 12), (6, 12), (12, 12)] {
+                cv.fill(Rect::new(p.x + 14 + dx, p.y + 13 + dy, 2, 2), DIM);
+            }
+            cv.text(&f.lb, p.x + 44, title.y + 27, "Measurements", TEXT);
+            chip(cv, close, BTN, BTN_BORDER);
+            let (cx, cy) = (close.x + close.w / 2, close.y + close.h / 2);
+            cv.line(cx - 5, cy - 5, cx + 5, cy + 5, TEXT);
+            cv.line(cx - 5, cy + 5, cx + 5, cy - 5, TEXT);
+            cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} pinned \u{b7} {} total", pinned.len(), rows.len()), DIM);
+            let mut k = 0;
+            for key in &pinned {
+                let Some(i) = self.studio_index(*key).filter(|&i| i < rows.len()) else { continue };
+                if k >= 5 { break; }
+                self.draw_panel_row(cv, Rect::new(p.x + 4, p.y + 64 + k * PANEL_ROW, p.w - 8, PANEL_ROW), &rows[i], true);
+                k += 1;
+            }
+            if k == 0 { cv.text(&f.s, p.x + 14, p.y + 64 + 28, "Nothing pinned yet", DIM); }
+            chip(cv, dock, BTN, BTN_BORDER);
+            cv.round_outline(Rect::new(dock.x + 12, dock.y + 12, 16, 12), 2, TEXT);
+            cv.vline(dock.x + 23, dock.y + 12, dock.y + 23, TEXT);
+            cv.text_in(&f.m, Rect::new(dock.x + 34, dock.y, dock.w - 34, dock.h), 0, "Dock", TEXT);
+            chip(cv, all, BTN, BTN_BORDER);
+            cv.text_in(&f.m, Rect::new(all.x + 8, all.y, all.w - 22, all.h), 1, &format!("View all {}", rows.len()), TEXT);
+            chevron(cv, all.right() - 14, all.y + all.h / 2, 1, TEXT);
+        }
+    }
+
+    /// The tab that brings the panel back while only the lanes are shown.
+    pub(super) fn studio_tab(&self) -> Option<Rect> {
+        if self.m.layout != Layout::Studio || self.studio.view != StudioView::Waveform || self.studio_head_h() == 0
+            || self.measurement_count() == 0 { return None; }
+        let g = self.grid;
+        Some(Rect::new(g.right() - 104, g.y - 17, 102, 16))
+    }
+
+    fn draw_studio_tab(&self, cv: &mut Canvas) {
+        let Some(r) = self.studio_tab() else { return };
+        let f = self.fonts();
+        cv.round(r, 3, BTN_BORDER, 255);
+        cv.round(r.inset(1), 2, BTN, 255);
+        cv.text_in(&f.sb, Rect::new(r.x + 8, r.y, r.w - 22, r.h), 0, &format!("Meas \u{b7} {}", self.measurement_count()), TEXT);
+        chevron(cv, r.right() - 12, r.y + r.h / 2, 1, TEXT);
+    }
+
+    // ------------------------------------------------------------------------------------------------ the table
+
+    /// The controls of the table view: Waveform, the source filter, Statistics and Add.
+    pub(super) fn studio_table_parts(&self) -> Option<[Rect; 4]> {
+        let t = self.studio_table_rect()?;
+        let y = t.y + 8;
+        let add = Rect::new(t.right() - 100, y, 92, 32);
+        let stats = Rect::new(add.x - 8 - 126, y, 126, 32);
+        let filter = Rect::new(stats.x - 8 - 150, y, 150, 32);
+        let back = Rect::new(filter.x - 8 - 120, y, 120, 32);
+        Some([back, filter, stats, add])
+    }
+
+    /// Rows of the table, the page, and the footer buttons (Reset statistics, up, down).
+    pub(super) fn studio_table_geo(&self) -> Option<(Rect, usize, [Rect; 3])> {
+        let t = self.studio_table_rect()?;
+        let list = Rect::new(t.x + 6, t.y + 48 + 28, t.w - 12, t.h - 48 - 28 - 44);
+        let page = (list.h / TABLE_ROW).max(1) as usize;
+        let y = t.bottom() - 38;
+        let reset = Rect::new(t.right() - 168, y, 160, 32);
+        Some((list, page, [reset, Rect::new(reset.x - 44 - 44, y, 38, 32), Rect::new(reset.x - 44, y, 38, 32)]))
+    }
+
+    /// The source filter in the order the sources first measure something.
+    fn studio_filter_next(&self) -> Option<WaveId> {
+        let rows = self.meas_rows();
+        let mut sources: Vec<WaveId> = Vec::new();
+        for r in &rows { if !sources.contains(&r.src) { sources.push(r.src); } }
+        match self.studio.filter {
+            None => sources.first().copied(),
+            Some(id) => sources.iter().position(|&s| s == id).and_then(|i| sources.get(i + 1)).copied(),
+        }
+    }
+
+    fn draw_studio_table(&self, cv: &mut Canvas) {
+        let (Some(t), Some([back, filter, stats, add]), Some((list, page, [reset, up, down]))) =
+            (self.studio_table_rect(), self.studio_table_parts(), self.studio_table_geo()) else { return };
+        let f = self.fonts();
+        let rows = self.meas_rows();
+        let keys = self.studio_keys();
+        let listed = self.studio_listed(&rows);
+        cv.fill(t, BG);
+        cv.text(&f.lb, t.x + 12, t.y + 30, "Measurements", TEXT);
+        cv.text(&f.s, t.x + 150, t.y + 30, &format!("{} total \u{b7} {} pinned", rows.len(), self.studio_pinned().len()), DIM);
+        chip(cv, back, BTN, BTN_BORDER);
+        icon_wave(cv, Rect::new(back.x + 6, back.y + 8, 26, 16), TEXT);
+        cv.text_in(&f.m, Rect::new(back.x + 36, back.y, back.w - 38, back.h), 0, "Waveform", TEXT);
+        chip(cv, filter, BTN, BTN_BORDER);
+        let label = self.studio.filter.map_or("All channels".to_string(), |id| self.wave_name(id));
+        cv.text_in(&f.m, Rect::new(filter.x + 10, filter.y, filter.w - 30, filter.h), 0, &label, TEXT);
+        chevron_down(cv, filter.right() - 20, filter.y + 14, DIM);
+        let on = self.studio.panel.stats;
+        chip(cv, stats, if on { mix(BTN, ACCENT, 30) } else { BTN }, if on { ACCENT } else { BTN_BORDER });
+        icon_bars(cv, stats.x + 10, stats.y + 16, TEXT);
+        cv.text_in(&f.m, Rect::new(stats.x + 30, stats.y, stats.w - 32, stats.h), 0, "Statistics", TEXT);
+        chip(cv, add, BTN, BTN_BORDER);
+        cv.text_in(&f.m, add, 1, "+ Add", TEXT);
+        // columns: pin, source, measurement, current, then mean, min and max
+        let cols: Vec<(i32, &str)> = if on {
+            vec![(52, "Source"), (136, "Measurement"), (380, "Current"), (560, "Mean"), (710, "Min"), (860, "Max")]
+        } else { vec![(52, "Source"), (136, "Measurement"), (420, "Current")] };
+        let head = Rect::new(t.x + 6, t.y + 48, t.w - 12, 28);
+        cv.fill(head, BAR);
+        for (x, name) in &cols { cv.text_in(&f.mb, Rect::new(head.x + x, head.y, 160, head.h), 0, name, LABEL); }
+        let first = self.studio_first(listed.len(), page);
+        cv.set_clip(list);
+        for (k, &i) in listed.iter().skip(first).take(page).enumerate() {
+            let r = Rect::new(list.x, list.y + k as i32 * TABLE_ROW, list.w, TABLE_ROW);
+            let row = &rows[i];
+            let cy = r.y + r.h / 2;
+            let pinned = keys.get(i).is_some_and(|key| self.studio_is_pinned(*key));
+            icon_pin(cv, r.x + 14, cy + 1, pinned, if pinned { AMBER } else { DIM });
+            let tag = Rect::new(r.x + cols[0].0, r.y + 10, f.sb.width("CH4") + 12, 24);
+            cv.round(tag, 5, self.wave_color(row.src), 255);
+            cv.text_in(&f.sb, tag, 1, &self.wave_name(row.src), DARK_TEXT);
+            cv.text_in(&f.m, Rect::new(r.x + cols[1].0, r.y, 240, r.h), 0, &row.name, TEXT);
+            cv.text_in(&f.mb, Rect::new(r.x + cols[2].0, r.y, 170, r.h), 0, &row.text(), TEXT);
+            if on {
+                let st = self.mstat.get(i).copied().unwrap_or_default();
+                let cell = |v: f64| if st.n == 0 { "----".to_string() } else { row.fmt4(v) };
+                for (c, v) in [(3, st.sum / st.n.max(1) as f64), (4, st.min), (5, st.max)] {
+                    cv.text_in(&f.m, Rect::new(r.x + cols[c].0, r.y, 150, r.h), 0, &cell(v), TEXT);
+                }
+            }
+            cv.hline(r.x, r.right() - 1, r.bottom() - 1, LINE);
+        }
+        cv.no_clip();
+        Self::draw_scrollbar(cv, list, first, page, listed.len());
+        let end = (first + page).min(listed.len());
+        cv.text(&f.m, t.x + 14, t.bottom() - 16, &if listed.is_empty() { "0 of 0".to_string() } else { format!("{}-{} of {}", first + 1, end, listed.len()) }, DIM);
+        for (r, is_up) in [(up, true), (down, false)] {
+            chip(cv, r, BTN, BTN_BORDER);
+            icon_arrow(cv, r.x + r.w / 2, r.y + r.h / 2, is_up, TEXT);
+        }
+        chip(cv, reset, BTN, BTN_BORDER);
+        cv.text_in(&f.m, reset, 1, "Reset statistics", TEXT);
+    }
+
+    // ------------------------------------------------------------------------------------------------ taps
+
+    /// Opens the settings of measurement `index`: its own page, or the measure menu for the kinds without one.
+    fn studio_configure(&mut self, index: usize) {
+        if index < self.m.meas.len() { self.open_meas_cfg(index) } else { self.open_menu(MenuId::Measure) }
+    }
+
+    /// Pages the list by one page.
+    fn studio_page(&mut self, total: usize, page: usize, down: bool) {
+        let first = self.studio_first(total, page);
+        self.studio.panel.first = if down { (first + page).min(total.saturating_sub(page)) } else { first.saturating_sub(page) };
+    }
+
+    /// A tap on the panel or the table. False: it is not on them.
+    pub(super) fn studio_panel_tap(&mut self, x: i32, y: i32) -> bool {
+        let rows = self.meas_rows();
+        let keys = self.studio_keys();
+        let listed = self.studio_listed(&rows);
+        if let Some(g) = self.studio_panel_geo() {
+            if !g.p.contains(x, y) { return false; }
+            if g.maximize.contains(x, y) { self.studio_set_view(StudioView::Only); }
+            else if g.collapse.contains(x, y) { self.studio_set_view(StudioView::Waveform); }
+            else if g.up.contains(x, y) || g.down.contains(x, y) { self.studio_page(listed.len(), g.page, g.down.contains(x, y)); }
+            else if g.add.contains(x, y) { self.open_meas_list(); }
+            else if g.list.contains(x, y) {
+                let first = self.studio_first(listed.len(), g.page);
+                let k = ((y - g.list.y) / PANEL_ROW) as usize;
+                if let Some(&i) = listed.get(first + k) {
+                    if x >= g.list.right() - 48 {
+                        if let Some(&key) = keys.get(i) { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); }
+                    } else { self.studio_configure(i); }
+                }
+            }
+            return true;
+        }
+        if let Some((title, close, dock, all)) = self.studio_float_parts() {
+            let p = self.studio_panel_rect().unwrap();
+            if !p.contains(x, y) { return false; }
+            if close.contains(x, y) { self.studio_set_view(StudioView::Waveform); }
+            else if dock.contains(x, y) { self.studio_set_view(StudioView::Docked); }
+            else if all.contains(x, y) { self.studio_set_view(StudioView::Only); }
+            else if !title.contains(x, y) && y >= p.y + 64 {
+                let pinned = self.studio_pinned();
+                let k = ((y - p.y - 64) / PANEL_ROW) as usize;
+                if let Some(index) = pinned.get(k).and_then(|&key| self.studio_index(key)) {
+                    if x >= p.right() - 52 { if let Some(&key) = keys.get(index) { self.studio_set_pin(key, false); } }
+                    else { self.studio_configure(index); }
+                }
+            }
+            return true;
+        }
+        if let (Some(t), Some([back, filter, stats, add]), Some((list, page, [reset, up, down]))) =
+            (self.studio_table_rect(), self.studio_table_parts(), self.studio_table_geo()) {
+            if !t.contains(x, y) { return false; }
+            if back.contains(x, y) { self.studio_set_view(StudioView::Waveform); }
+            else if filter.contains(x, y) { self.studio.filter = self.studio_filter_next(); self.studio.panel.first = 0; }
+            else if stats.contains(x, y) { self.studio.panel.stats = !self.studio.panel.stats; }
+            else if add.contains(x, y) { self.open_meas_list(); }
+            else if reset.contains(x, y) { self.clear_measurement_statistics(); }
+            else if up.contains(x, y) || down.contains(x, y) { self.studio_page(listed.len(), page, down.contains(x, y)); }
+            else if list.contains(x, y) {
+                let first = self.studio_first(listed.len(), page);
+                let k = ((y - list.y) / TABLE_ROW) as usize;
+                if let Some(&i) = listed.get(first + k) {
+                    if x < list.x + 52 {
+                        if let Some(&key) = keys.get(i) { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); }
+                    } else { self.studio_configure(i); }
+                }
+            }
+            return true;
+        }
+        if let Some(tab) = self.studio_tab() {
+            if Rect::new(tab.x - 4, tab.y - 2, tab.w + 8, tab.h + 6).contains(x, y) {
+                self.studio_set_view(StudioView::Docked);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Touches that move the list or the floating panel. Everything else belongs to the plot (`touch_ev`).
+    pub(super) fn studio_touch(&mut self, ph: Phase, x: i32, y: i32) -> bool {
+        if self.m.layout != Layout::Studio { return false; }
+        match ph {
+            Phase::Down => {
+                self.studio.drag = None;
+                if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
+                    || self.studio.view_menu || self.studio.popup.is_some() || self.load_slot_ask { return false; }
+                let rows = self.meas_rows();
+                if let Some(g) = self.studio_panel_geo() {
+                    if g.list.contains(x, y) {
+                        self.studio.drag = Some(StudioDrag::Scroll { y0: y, first0: self.studio_first(self.studio_listed(&rows).len(), g.page), moved: false });
+                        return true;
+                    }
+                    return false;
+                }
+                if let Some((title, ..)) = self.studio_float_parts() {
+                    if title.contains(x, y) {
+                        let p = self.studio_panel_rect().unwrap();
+                        self.studio.drag = Some(StudioDrag::Move { x0: x, y0: y, at0: (p.x, p.y), moved: false });
+                        return true;
+                    }
+                    return self.studio_panel_rect().is_some_and(|p| p.contains(x, y)) && self.studio_eat(x, y);
+                }
+                if let (Some(t), Some((list, page, _))) = (self.studio_table_rect(), self.studio_table_geo()) {
+                    if list.contains(x, y) {
+                        self.studio.drag = Some(StudioDrag::Scroll { y0: y, first0: self.studio_first(self.studio_listed(&rows).len(), page), moved: false });
+                        return true;
+                    }
+                    return t.contains(x, y) && self.studio_eat(x, y);
+                }
+                false
+            }
+            Phase::Move => {
+                let Some(drag) = self.studio.drag else { return false };
+                match drag {
+                    StudioDrag::Scroll { y0, first0, moved } => {
+                        let rows = self.meas_rows();
+                        let total = self.studio_listed(&rows).len();
+                        let (h, page) = if let Some(g) = self.studio_panel_geo() { (PANEL_ROW, g.page) } else { (TABLE_ROW, self.studio_table_geo().map_or(1, |g| g.1)) };
+                        let moved = moved || (y - y0).abs() > 8;
+                        if moved {
+                            let delta = (y0 - y) / h;
+                            self.studio.panel.first = (first0 as i32 + delta).clamp(0, total.saturating_sub(page) as i32) as usize;
+                        }
+                        self.studio.drag = Some(StudioDrag::Scroll { y0, first0, moved });
+                    }
+                    StudioDrag::Eat { .. } => {}
+                    StudioDrag::Move { x0, y0, at0, moved } => {
+                        let moved = moved || (x - x0).abs().max((y - y0).abs()) > 8;
+                        if moved { self.studio.panel.at = Some((at0.0 + x - x0, at0.1 + y - y0)); }
+                        self.studio.drag = Some(StudioDrag::Move { x0, y0, at0, moved });
+                    }
+                }
+                true
+            }
+            Phase::Up => {
+                let Some(drag) = self.studio.drag.take() else { return false };
+                let moved = match drag {
+                    StudioDrag::Scroll { moved, .. } | StudioDrag::Move { moved, .. } => moved,
+                    StudioDrag::Eat { x0, y0 } => (x - x0).abs().max((y - y0).abs()) > 8,
+                };
+                if !moved { self.tap(x, y); }
+                true
+            }
+        }
+    }
+
+    /// A touch on the table or a floating panel that does nothing by itself: the plot behind must not take it.
+    /// The gesture ends in a tap (`Phase::Up` of the owner below).
+    fn studio_eat(&mut self, x: i32, y: i32) -> bool {
+        self.studio.drag = Some(StudioDrag::Eat { x0: x, y0: y });
+        true
     }
 }

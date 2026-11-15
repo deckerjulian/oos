@@ -331,3 +331,173 @@ fn studio_view_menu_chooses_the_arrangement_the_badges_and_resets() {
     u.tap(20, 300);
     assert!(!u.studio.view_menu && !u.menu_open);
 }
+
+/// Twelve measurements on CH1 and CH2, three of them pinned, as in the mocks.
+fn twelve() -> Ui {
+    let mut u = studio();
+    u.m.meas = [Meas::Freq, Meas::Vpp, Meas::Vrms, Meas::Rise, Meas::PDuty, Meas::Vavg].into_iter().map(|k| (k, WaveId::Ch(0)))
+        .chain([Meas::Freq, Meas::Vpp, Meas::Vrms, Meas::Rise, Meas::Fall, Meas::Vavg].into_iter().map(|k| (k, WaveId::Ch(1)))).collect();
+    u.m.meas2.clear();
+    u.m.cat.clear();
+    u.mstat.clear();
+    u.studio.pinned = None;
+    u.relayout();
+    u
+}
+
+#[test]
+fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
+    let mut u = twelve();
+    let full = u.grid.w;
+    u.studio_set_view(StudioView::Docked);
+    for _ in 0..4 { u.step(0.05); }
+    shot(&mut u, "08-docked");
+    let g = u.studio_panel_geo().expect("docked panel");
+    assert_eq!(u.grid.w, full - 274, "the lanes give their width to the panel");
+    assert!(g.p.x >= u.grid.right() && g.p.right() <= W && g.p.bottom() <= u.frame().bottom.y && g.p.y >= TOP.h);
+    assert!(g.list.bottom() <= g.up.y && g.up.bottom() <= g.add.y && g.add.bottom() <= g.p.bottom());
+    assert!(g.page >= 5, "about six rows to a page, like the mock");
+    // the badges sit under the lanes only, the panel keeps its column
+    assert_eq!(u.studio_row().right(), u.grid.right());
+    // paging down moves by a page and stops at the end
+    let total = 12;
+    tap_in(&mut u, g.down);
+    assert_eq!(u.studio.panel.first, g.page.min(total - g.page));
+    tap_in(&mut u, g.down);
+    tap_in(&mut u, g.down);
+    assert_eq!(u.studio.panel.first, total - g.page);
+    shot(&mut u, "11-scroll");
+    tap_in(&mut u, g.up);
+    assert_eq!(u.studio.panel.first, total - g.page - g.page.min(total - g.page));
+    u.studio.panel.first = 0;
+    // the pin at the right end of a row pins and unpins it
+    assert_eq!(u.studio_pinned().len(), 3);
+    let row = Rect::new(g.list.right() - 30, g.list.y + 3 * PANEL_ROW_TEST + 5, 20, 30);
+    tap_in(&mut u, row);
+    assert_eq!(u.studio_pinned().len(), 4);
+    tap_in(&mut u, row);
+    assert_eq!(u.studio_pinned().len(), 3);
+    // a tap on the name opens the settings of the measurement
+    tap_in(&mut u, Rect::new(g.list.x + 80, g.list.y + 5, 40, 30));
+    assert_eq!(u.meas_cfg, Some(0));
+    u.meas_cfg = None;
+    // + Add measurement opens the chooser
+    tap_in(&mut u, g.add);
+    assert_eq!(u.menu, MenuId::MeasAdd);
+    u.close_menu();
+    // collapse goes back to the lanes, maximize to the table
+    tap_in(&mut u, g.collapse);
+    assert_eq!(u.studio.view, StudioView::Waveform);
+    assert_eq!(u.grid.w, full);
+    u.studio_set_view(StudioView::Docked);
+    tap_in(&mut u, g.maximize);
+    assert_eq!(u.studio.view, StudioView::Only);
+}
+
+const PANEL_ROW_TEST: i32 = 46;
+
+#[test]
+fn studio_list_scrolls_with_the_finger() {
+    let mut u = twelve();
+    u.studio_set_view(StudioView::Docked);
+    let g = u.studio_panel_geo().unwrap();
+    let (x, y) = (g.list.x + 60, g.list.y + g.list.h - 10);
+    u.touch_ev(Phase::Down, x, y);
+    u.touch_ev(Phase::Move, x, y - 60);
+    u.touch_ev(Phase::Move, x, y - 100);
+    u.touch_ev(Phase::Up, x, y - 100);
+    assert_eq!(u.studio.panel.first, 2, "the list follows an upward finger by rows");
+    assert!(u.meas_cfg.is_none(), "a scroll is not a tap");
+    // a drag the other way brings it back
+    u.touch_ev(Phase::Down, x, y - 100);
+    u.touch_ev(Phase::Move, x, y + 10);
+    u.touch_ev(Phase::Up, x, y + 10);
+    assert_eq!(u.studio.panel.first, 0);
+    // a tap through the touch path still reaches the row
+    u.touch_ev(Phase::Down, g.list.x + 60, g.list.y + 5);
+    u.touch_ev(Phase::Up, g.list.x + 60, g.list.y + 5);
+    assert_eq!(u.meas_cfg, Some(0));
+}
+
+#[test]
+fn studio_floating_panel_shows_the_pinned_ones_moves_docks_and_opens_the_table() {
+    let mut u = twelve();
+    u.studio_set_view(StudioView::Floating);
+    shot(&mut u, "09-floating");
+    let (title, close, dock, all) = u.studio_float_parts().expect("floating panel");
+    let p = u.studio_panel_rect().unwrap();
+    assert!(p.x >= 0 && p.right() <= W && p.y >= TOP.h && p.bottom() <= u.frame().bottom.y);
+    assert_eq!(u.grid.w, W, "a floating panel takes no room from the lanes");
+    // it follows a finger on its title
+    let (x, y) = (title.x + 100, title.y + 12);
+    u.touch_ev(Phase::Down, x, y);
+    u.touch_ev(Phase::Move, x - 200, y + 60);
+    u.touch_ev(Phase::Up, x - 200, y + 60);
+    let moved = u.studio_panel_rect().unwrap();
+    assert_eq!((moved.x, moved.y), (p.x - 200, p.y + 60));
+    assert_eq!(u.studio.view, StudioView::Floating, "dragging the title is not a tap");
+    // a touch on the lanes under it is the plot's, not the panel's
+    let delay = u.m.delay;
+    let lane = u.wins[0];
+    let (lx, ly) = (lane.x + 40, lane.y + 40);
+    u.touch_ev(Phase::Down, lx, ly);
+    u.touch_ev(Phase::Move, lx + 50, ly);
+    u.touch_ev(Phase::Up, lx + 50, ly);
+    assert_ne!(u.m.delay, delay, "the lanes still pan");
+    let (_, close, dock, all) = u.studio_float_parts().map(|(t, c, d, a)| (t, c, d, a)).unwrap();
+    tap_in(&mut u, all);
+    assert_eq!(u.studio.view, StudioView::Only);
+    u.studio_set_view(StudioView::Floating);
+    let (_, _, dock2, _) = u.studio_float_parts().unwrap();
+    let _ = dock;
+    tap_in(&mut u, dock2);
+    assert_eq!(u.studio.view, StudioView::Docked);
+    u.studio_set_view(StudioView::Floating);
+    let (_, close2, _, _) = u.studio_float_parts().unwrap();
+    let _ = close;
+    tap_in(&mut u, close2);
+    assert_eq!(u.studio.view, StudioView::Waveform);
+}
+
+#[test]
+fn studio_measurements_only_is_a_table_with_statistics_and_a_source_filter() {
+    let mut u = twelve();
+    u.studio_set_view(StudioView::Only);
+    for _ in 0..6 { u.step(0.05); }
+    assert_eq!(u.studio_row_h(), 0, "the table needs no badge row");
+    shot(&mut u, "10-table");
+    let [back, filter, stats, add] = u.studio_table_parts().unwrap();
+    for (i, a) in [back, filter, stats, add].iter().enumerate() {
+        assert!(a.x >= 0 && a.right() <= W, "control {i} on the screen");
+    }
+    // statistics add the mean, min and max columns
+    assert!(!u.studio.panel.stats);
+    tap_in(&mut u, stats);
+    assert!(u.studio.panel.stats);
+    for _ in 0..6 { u.step(0.05); }
+    shot(&mut u, "12-table-statistics");
+    // the filter walks through the sources and back to all
+    tap_in(&mut u, filter);
+    assert_eq!(u.studio.filter, Some(WaveId::Ch(0)));
+    let rows = u.meas_rows();
+    assert_eq!(u.studio_listed(&rows).len(), 6);
+    tap_in(&mut u, filter);
+    assert_eq!(u.studio.filter, Some(WaveId::Ch(1)));
+    tap_in(&mut u, filter);
+    assert_eq!(u.studio.filter, None);
+    // Reset statistics starts the counting again
+    let (_, _, [reset, ..]) = u.studio_table_geo().unwrap();
+    assert!(u.mstat.iter().any(|s| s.n > 0));
+    tap_in(&mut u, reset);
+    assert!(u.mstat.iter().all(|s| s.n <= 1));
+    // the table has the body: a tap on its empty part does not reach the lanes, Waveform goes back
+    tap_in(&mut u, add);
+    assert_eq!(u.menu, MenuId::MeasAdd);
+    u.close_menu();
+    tap_in(&mut u, back);
+    assert_eq!(u.studio.view, StudioView::Waveform);
+    assert!(u.studio_tab().is_some(), "the tab brings the panel back");
+    let tab = u.studio_tab().unwrap();
+    tap_in(&mut u, tab);
+    assert_eq!(u.studio.view, StudioView::Docked);
+}
