@@ -178,7 +178,7 @@ impl Ui {
                 _ => Slot::Tab(1),
             }),
             M::Math => (&["Function", "Scale"], |it| match it {
-                MathSel | MathFam | MathOpI | MathA | MathB | MathExprEdit | FftWin => Slot::Tab(0),
+                MathOff | MathSel | MathFam | MathOpI | MathA | MathB | MathExprEdit | FftWin => Slot::Tab(0),
                 MathExprI => Slot::Skip,
                 MathAuto => Slot::Foot(1),
                 _ => Slot::Tab(1),

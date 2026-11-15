@@ -22,6 +22,9 @@ const MENU_W: i32 = 210;
 pub(super) enum HoldOn {
     Row(MeasKey),
     Badge(MeasKey),
+    /// a math or reference chip of the bottom bar: a hold opens its quick actions
+    Math(usize),
+    Ref(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -116,6 +119,14 @@ impl Ui {
         Some((bar, Rect::new(bar.right() - 92, bar.y, 92, bar.h)))
     }
 
+    /// The math or reference chip of the bottom bar under a point.
+    pub(super) fn md_chip_at(&self, x: i32, y: i32) -> Option<HoldOn> {
+        if self.m.layout != Layout::Studio || self.full_on() { return None; }
+        let b = self.studio_bottom();
+        if let Some(k) = (0..NMATH).find(|&k| b.math[k].w > 0 && b.math[k].contains(x, y)) { return Some(HoldOn::Math(k)); }
+        self.shown_refs().into_iter().find(|&i| b.refs[i].w > 0 && b.refs[i].contains(x, y)).map(HoldOn::Ref)
+    }
+
     /// The badge strip is the target of a pin: the row under the lanes.
     fn md_strip(&self) -> Option<Rect> {
         self.studio_badges_visible().then(|| self.studio_row())
@@ -193,10 +204,16 @@ impl Ui {
         if self.now - h.at < LONG_PRESS || (h.x - h.x0).abs().max((h.y - h.y0).abs()) > HOLD_SLOP { return; }
         self.studio.md.hold = None;
         self.studio.md.cand = None;
-        self.studio.drag = Some(match h.on {
-            HoldOn::Row(key) => StudioDrag::Reorder { key, x: h.x, y: h.y },
-            HoldOn::Badge(key) => StudioDrag::BadgeDrag { key, x: h.x, y: h.y },
-        });
+        self.studio.drag = match h.on {
+            HoldOn::Row(key) => Some(StudioDrag::Reorder { key, x: h.x, y: h.y }),
+            HoldOn::Badge(key) => Some(StudioDrag::BadgeDrag { key, x: h.x, y: h.y }),
+            chip => {
+                // the quick actions: the lift of this finger is no tap
+                self.workspace.lift_pending = true;
+                self.studio_chip_popup(chip, h.x, h.y);
+                None
+            }
+        };
     }
 
     /// The ring that fills under a finger held on a row or a badge.
@@ -240,6 +257,11 @@ impl Ui {
                 self.studio.md.hdown = Some((x, y, self.studio.panel.hx.clamp(0, self.detail_hmax(g.list.w))));
             }
             return false;
+        }
+        // a math or reference chip: a tap selects it, a hold opens its quick actions
+        if let Some(chip) = self.md_chip_at(x, y) {
+            self.studio.md.hold = Some(Hold { on: chip, x0: x, y0: y, x, y, at: self.now });
+            return self.studio_eat(x, y);
         }
         // a row of the list: a drag scrolls, a clear sideways drag swipes it, a hold picks it up
         if let Some((key, _)) = self.md_row_at(x, y) {

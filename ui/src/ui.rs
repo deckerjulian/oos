@@ -87,6 +87,7 @@ mod batch11d_tests;
 mod batch11_tests;
 mod hotspots;
 mod measdrag;
+mod axis;
 mod measview;
 #[cfg(test)]
 mod batch12_tests;
@@ -530,6 +531,8 @@ enum Item {
     MathFc,
     MathAuto,
     MathSel,
+    /// Studio: turns the selected math channel off (the first row of its menu)
+    MathOff,
     MathBw,
     Open(MenuId),
     ChOn(usize),
@@ -2132,6 +2135,8 @@ impl Ui {
     fn pointer_wheel_motion(&mut self, x: i32, y: i32, steps: i32, zoom_time: bool, vertical: bool) -> bool {
         if self.eye_open() && self.eye_pane_rect().contains(x,y) { return false; }
         if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.m.touch_lock || self.view_on() || !self.grid.contains(x, y) { return false; }
+        // Studio: the wheel on an axis strip changes that scale
+        if self.axis_wheel(x, y, steps) { return true; }
         let lane = self.wins.iter().position(|area| area.contains(x, y));
         let detail = self.m.zoom && lane.is_some();
         // Studio: the wheel over the zoomed view zooms about the pointer (the zoom box is panned by dragging or in the overview)
@@ -3210,6 +3215,7 @@ impl Ui {
         self.draw_view_tiles(cv);
         self.draw_dock(cv);
         self.draw_md_overlays(cv);
+        self.draw_axis_highlight(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
         if self.hdmi_snap_want && self.m.density != Density::Full {
@@ -3897,6 +3903,21 @@ impl Ui {
     }
 
     /// Picks the math scale so that the waveform spans about 6 divisions.
+    /// Studio: the menu of a math channel that is on starts with its Turn off.
+    fn with_math_off(&self, mut v: Vec<Item>) -> Vec<Item> {
+        if self.m.layout == Layout::Studio && self.m.math != MathOp::Off { v.insert(0, Item::MathOff); }
+        v
+    }
+
+    /// Math channel `k` goes off, and so does its chip in the bottom bar.
+    pub(super) fn math_turn_off(&mut self, k: usize) {
+        if k >= NMATH { return; }
+        if k == self.m.math_sel { self.m.math = MathOp::Off; } else { self.m.maths[k].op = MathOp::Off; }
+        self.settings_changed();
+        self.close_menu();
+        self.relayout();
+    }
+
     fn math_autoscale(&mut self) {
         self.math_fit(self.m.math_sel);
     }
@@ -5794,7 +5815,7 @@ impl Ui {
                 (0..n).map(Item::PickOpt).collect()
             }
             MenuId::Math if self.m.math == MathOp::Off => vec![Item::MathSel, Item::MathFam, Item::MathOpI],
-            MenuId::Math if self.m.math == MathOp::Expr => vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathExprI, Item::MathExprEdit, Item::MathScale, Item::MathOffset, Item::MathAuto],
+            MenuId::Math if self.m.math == MathOp::Expr => self.with_math_off(vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathExprI, Item::MathExprEdit, Item::MathScale, Item::MathOffset, Item::MathAuto]),
             MenuId::Math => {
                 let mut v = vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathA];
                 if self.m.math.two_sources() {
@@ -5816,7 +5837,7 @@ impl Ui {
                 if self.m.math != MathOp::Off {
                     v.push(Item::MathAuto);
                 }
-                v
+                self.with_math_off(v)
             }
         }
     }
@@ -6469,7 +6490,7 @@ impl Ui {
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasRemove(_) | Item::MeasClear | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasRemove(_) | Item::MeasClear | Item::ClearDisp | Item::MathOff | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
             Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
@@ -6581,6 +6602,7 @@ impl Ui {
             Item::MathFc => "Frequency",
             Item::MathBw => "Bandwidth",
             Item::MathSel => "Channel",
+            Item::MathOff => "Turn off",
             Item::MathAuto => "Auto scale",
             Item::Open(MenuId::MeasLegacy) => "All / Selected",
             Item::Open(_) => "",
@@ -7744,6 +7766,7 @@ impl Ui {
                     self.shot_request = Some(String::new());
                 }
                 Item::MathAuto => self.math_autoscale(),
+                Item::MathOff => self.math_turn_off(self.m.math_sel),
                 Item::ZoneBox | Item::ZoneShape => {
                     self.zone_arm = Some((self.zone_sel, it == Item::ZoneShape));
                     self.close_menu();
@@ -9057,6 +9080,11 @@ impl Ui {
             if id == 0 {
                 self.touch_ev(ph, x, y);
             }
+            return;
+        }
+        // the second finger on an axis strip: a pinch along that axis
+        if id == 1 && self.m.layout == Layout::Studio && self.studio.axis.touch.is_some() {
+            if ph == Phase::Down { self.axis_pinch_down(x, y); } else { self.axis_pinch_event(ph, x, y); }
             return;
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);

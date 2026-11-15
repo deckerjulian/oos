@@ -232,3 +232,197 @@ fn a_ref_slot_without_data_says_so() {
     assert!(t.contains("R1") && t.contains("empty"), "{t}");
     assert!(t.chars().count() <= 24, "short: {t}");
 }
+
+// ------------------------------------------------------------------------------------------------ math and ref chips
+
+fn chip_rect(u: &Ui, math: bool) -> Rect {
+    let b = u.studio_bottom();
+    if math { b.math[0] } else { b.refs[0] }
+}
+
+fn hold(u: &mut Ui, r: Rect) {
+    let (x, y) = (r.x + r.w / 2, r.y + r.h / 2);
+    touch(u, Phase::Down, x, y);
+    u.step(0.6);
+    touch(u, Phase::Up, x, y);
+    frame(u);
+}
+
+fn popup_rows(u: &Ui) -> Vec<String> {
+    u.workspace.popup.as_ref().map(|p| p.rows.iter().map(|r| r.0.clone()).collect()).unwrap_or_default()
+}
+
+#[test]
+fn a_hold_or_a_right_click_on_a_math_chip_opens_turn_off_and_settings() {
+    let mut u = studio();
+    u.m.math = crate::math::MathOp::Add;
+    frame(&mut u);
+    let r = chip_rect(&u, true);
+    assert!(r.w > 0, "the M1 chip");
+    // a tap only selects
+    tap(&mut u, r);
+    assert!(u.workspace.popup.is_none());
+    // a hold
+    hold(&mut u, r);
+    assert_eq!(popup_rows(&u), ["Turn off", "M1 settings"]);
+    // the lift of the hold did not choose a row; a tap on the first row turns it off
+    let p = u.workspace.popup.as_ref().unwrap();
+    let row = p.row_rect(0);
+    tap(&mut u, row);
+    assert_eq!(u.m.math, crate::math::MathOp::Off, "M1 is off");
+    assert_eq!(u.studio_bottom().math[0].w, 0, "its chip is gone");
+    // a right-click opens the same popup; "M1 settings" opens the math menu
+    u.m.math = crate::math::MathOp::Add;
+    frame(&mut u);
+    let r = chip_rect(&u, true);
+    u.context_menu(r.x + r.w / 2, r.y + r.h / 2);
+    assert_eq!(popup_rows(&u), ["Turn off", "M1 settings"]);
+    let row = u.workspace.popup.as_ref().unwrap().row_rect(1);
+    tap(&mut u, row);
+    assert!(u.menu_open && u.menu == MenuId::Math);
+    // and in Studio the menu itself starts with Turn off
+    assert_eq!(u.menu_items(MenuId::Math).first(), Some(&Item::MathOff));
+    u.activate(Item::MathOff);
+    assert_eq!(u.m.math, crate::math::MathOp::Off);
+    // not in the other layouts
+    let mut v = Ui::new(Source::Demo { t: 0.0 });
+    v.m.math = crate::math::MathOp::Add;
+    assert!(!v.menu_items(MenuId::Math).contains(&Item::MathOff));
+}
+
+#[test]
+fn a_hold_on_a_ref_chip_opens_hide_clear_and_settings() {
+    let mut u = studio();
+    u.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: 0.0, dt: 1e-6, v: (0..1000).map(|i| (i as f32 * 0.05).sin()).collect::<Vec<_>>().into(), vpd: 1.0, offset: 0.0, on: true });
+    frame(&mut u);
+    let r = chip_rect(&u, false);
+    assert!(r.w > 0, "the R1 chip");
+    hold(&mut u, r);
+    assert_eq!(popup_rows(&u), ["Hide", "Clear slot", "R1 settings"]);
+    let row = u.workspace.popup.as_ref().unwrap().row_rect(0);
+    tap(&mut u, row);
+    assert!(u.refs[0].as_ref().is_some_and(|r| !r.on), "hidden, not cleared");
+    // clear the slot
+    u.refs[0].as_mut().unwrap().on = true;
+    frame(&mut u);
+    let r = chip_rect(&u, false);
+    u.context_menu(r.x + r.w / 2, r.y + r.h / 2);
+    let row = u.workspace.popup.as_ref().unwrap().row_rect(1);
+    tap(&mut u, row);
+    assert!(u.refs[0].is_none(), "the slot is clear");
+}
+
+// ------------------------------------------------------------------------------------------------ the axes as handles
+
+fn touch_id(u: &mut Ui, id: i32, phase: Phase, x: i32, y: i32) {
+    u.handle(Ev::Touch { id, phase, x, y });
+    u.step(0.01);
+}
+
+/// Two fingers `gap` apart along an axis, spread to `to` apart.
+fn pinch_at(u: &mut Ui, p: (i32, i32), horizontal: bool, gap: i32, to: i32) {
+    let at = |d: i32| if horizontal { (p.0 + d, p.1) } else { (p.0, p.1 + d) };
+    touch_id(u, 0, Phase::Down, p.0, p.1);
+    touch_id(u, 1, Phase::Down, at(gap).0, at(gap).1);
+    for k in 1..=8 { let d = gap + (to - gap) * k / 8; touch_id(u, 1, Phase::Move, at(d).0, at(d).1); }
+    touch_id(u, 1, Phase::Up, at(to).0, at(to).1);
+    touch_id(u, 0, Phase::Up, p.0, p.1);
+    frame(u);
+}
+
+#[test]
+fn a_pinch_on_the_time_axis_changes_the_time_div_and_the_strip_is_finger_sized() {
+    let mut u = studio();
+    let s = u.axis_time_strip().expect("the time strip");
+    assert!(s.h >= 40, "40 px: {s:?}");
+    let t0 = u.m.tscale;
+    // a spread zooms in: a shorter time/div, in 1-2-5 steps
+    pinch_at(&mut u, (s.x + s.w / 2 - 100, s.y + s.h - 12), true, 80, 260);
+    assert!(u.m.tscale < t0, "spread: {t0} -> {}", u.m.tscale);
+    let t1 = u.m.tscale;
+    pinch_at(&mut u, (s.x + s.w / 2 - 100, s.y + s.h - 12), true, 260, 80);
+    assert!(u.m.tscale > t1, "pinched in: {t1} -> {}", u.m.tscale);
+    // with the zoom on, the main time base changes and the zoom keeps its factor
+    u.m.tscale = u.m.tscale.max(12);
+    u.set_zoom(true);
+    frame(&mut u);
+    let (z, factor) = (u.m.zscale, u.m.tscale as i64 - u.m.zscale as i64);
+    let t0 = u.m.tscale;
+    let s = u.axis_time_strip().unwrap();
+    pinch_at(&mut u, (s.x + s.w / 2 - 100, s.y + s.h - 12), true, 80, 260);
+    assert!(u.m.tscale < t0, "the main time base changed: {t0} -> {}", u.m.tscale);
+    assert_eq!(u.m.tscale as i64 - u.m.zscale as i64, factor, "the zoom keeps its factor ({z})");
+}
+
+#[test]
+fn a_pinch_on_the_volts_labels_changes_the_v_div_of_the_channel() {
+    let mut u = studio();
+    let s = u.axis_volts_strip(0).expect("the volts strip");
+    assert!(s.w >= 40, "40 px: {s:?}");
+    let v0 = u.m.ch[0].vscale;
+    // away from the ground marker of the lane
+    let y = s.y + 24;
+    assert_eq!(u.axis_at(s.x + 30, y), Some(super::axis::Axis::Volts(0)));
+    pinch_at(&mut u, (s.x + 30, y), false, 60, 200);
+    assert!(u.m.ch[0].vscale < v0, "spread: {v0} -> {}", u.m.ch[0].vscale);
+    let v1 = u.m.ch[0].vscale;
+    pinch_at(&mut u, (s.x + 30, y), false, 200, 60);
+    assert!(u.m.ch[0].vscale > v1);
+    // the second lane has its own channel
+    let s2 = u.axis_volts_strip(1).unwrap();
+    assert_eq!(u.axis_at(s2.x + 30, s2.y + 24), Some(super::axis::Axis::Volts(1)));
+}
+
+#[test]
+fn the_wheel_and_a_drag_on_the_axes_work_and_the_strip_lights_up() {
+    let mut u = studio();
+    let t = u.axis_time_strip().unwrap();
+    let t0 = u.m.tscale;
+    assert!(u.pointer_wheel(t.x + t.w / 2, t.y + t.h - 10, 1, false));
+    assert!(u.m.tscale < t0, "wheel on the time axis");
+    let v = u.axis_volts_strip(0).unwrap();
+    let v0 = u.m.ch[0].vscale;
+    assert!(u.pointer_wheel(v.x + 30, v.y + 24, -1, false));
+    assert!(u.m.ch[0].vscale > v0, "wheel on the volts axis");
+    // a drag along the time axis, lit while it is touched
+    let t1 = u.m.tscale;
+    let (x, y) = (t.x + t.w / 2, t.y + t.h - 10);
+    let mut plain = Canvas::new(W, H);
+    u.render(&mut plain);
+    touch(&mut u, Phase::Down, x, y);
+    for k in 1..=6 { touch(&mut u, Phase::Move, x + k * 25, y); }
+    let mut lit = Canvas::new(W, H);
+    u.render(&mut lit);
+    assert!(u.studio.axis.touch.is_some());
+    assert!(lit.px[((t.y + 3) * W + t.x + 200) as usize] != plain.px[((t.y + 3) * W + t.x + 200) as usize], "the strip is lit");
+    shot(&mut u, "axis-lit");
+    touch(&mut u, Phase::Up, x + 150, y);
+    frame(&mut u);
+    assert!(u.m.tscale < t1, "a drag to the right zooms in: {t1} -> {}", u.m.tscale);
+    // and a vertical drag on the volts labels
+    let v1 = u.m.ch[0].vscale;
+    drag(&mut u, (v.x + 30, v.y + 80), (v.x + 30, v.y + 80 - 120));
+    assert!(u.m.ch[0].vscale < v1, "a drag up zooms in");
+}
+
+#[test]
+fn a_pinch_on_the_waveform_itself_does_nothing_and_ctrl_wheel_is_as_it_was() {
+    let mut u = studio();
+    u.m.tscale = u.m.tscale.max(12);
+    u.set_zoom(true);
+    frame(&mut u);
+    let lane = u.wins[0];
+    let (x, y) = (lane.x + lane.w / 2, lane.y + lane.h / 3);
+    assert_eq!(u.axis_at(x, y), None, "not on a strip");
+    let before = (u.m.tscale, u.m.zscale, u.m.ch[0].vscale, u.m.ch[1].vscale);
+    pinch_at(&mut u, (x - 100, y), true, 80, 260);
+    pinch_at(&mut u, (x, y - 60), false, 60, 200);
+    assert_eq!((u.m.tscale, u.m.zscale, u.m.ch[0].vscale, u.m.ch[1].vscale), before);
+    // Ctrl-wheel over the waveform (no zoom): the main time base, as before
+    u.set_zoom(false);
+    frame(&mut u);
+    let lane = u.wins[0];
+    let t0 = u.m.tscale;
+    assert!(u.pointer_wheel(lane.x + lane.w / 2, lane.y + lane.h / 3, 1, true));
+    assert_ne!(u.m.tscale, t0);
+}

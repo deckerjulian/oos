@@ -20,6 +20,8 @@ pub(super) enum Action {
     MeasureFloat, MeasureDock(StripDock), Close,
     /// the quick actions of a channel (its hold popup)
     ChCoupling(usize), ChInvert(usize), ChZero(usize), Autoset,
+    /// the quick actions of a math or reference chip in the Studio bottom bar
+    MathOff(usize), MathSettings(usize), RefClear(usize), RefSettings(usize),
 }
 
 #[cfg(test)]
@@ -859,6 +861,23 @@ impl Ui {
         // sits on the bottom of the plot, above the bar that opened it
         self.popup("Sources", x, self.grid.bottom(), rows);
     }
+    /// The quick actions of a math or reference chip of the Studio bottom bar: what a hold or a right-click opens.
+    pub(super) fn studio_chip_popup(&mut self, chip: super::measdrag::HoldOn, x: i32, y: i32) {
+        use super::measdrag::HoldOn;
+        match chip {
+            HoldOn::Math(k) => {
+                let rows = vec![("Turn off".to_string(), Action::MathOff(k)), (format!("M{} settings", k + 1), Action::MathSettings(k))];
+                self.popup(&format!("M{}", k + 1), x, y, rows);
+            }
+            HoldOn::Ref(i) => {
+                let on = self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on);
+                let rows = vec![(if on { "Hide" } else { "Show" }.to_string(), Action::Source(WaveId::Ref(i))), ("Clear slot".to_string(), Action::RefClear(i)),
+                    (format!("R{} settings", i + 1), Action::RefSettings(i))];
+                self.popup(&format!("R{}", i + 1), x, y, rows);
+            }
+            _ => {}
+        }
+    }
     /// The quick actions of a channel: what a hold on its chip, card, lane badge or marker opens, in every layout.
     pub(super) fn channel_popup(&mut self, c: usize, x: i32, y: i32) {
         if c >= n_ch() || self.m.touch_lock { return; }
@@ -875,6 +894,7 @@ impl Ui {
     /// Mouse right-click and a stationary touch hold take the exact same path.
     pub fn context_menu(&mut self, x: i32, y: i32) {
         if self.m.touch_lock { return; }
+        if let Some(chip) = self.md_chip_at(x, y) { return self.studio_chip_popup(chip, x, y); }
         let eye = self.eye_open() && Rect::new(self.eye_pane_rect().x, self.eye_pane_rect().y, self.eye_pane_rect().w, HEADER).contains(x, y);
         let measurements = self.results_rects().is_some_and(|(head, _)| head.contains(x, y));
         if !eye && !measurements {
@@ -938,6 +958,15 @@ impl Ui {
             Action::EyeLeft => { self.workspace.eye_float = None; self.workspace.eye_left = true; self.eye_set_place(EyePlace::Side); self.relayout(); }
             Action::EyeBelow => { self.workspace.eye_float = None; self.workspace.eye_left = false; self.eye_set_place(EyePlace::Under); self.relayout(); }
             Action::EyeFloat => { self.workspace.eye_float = Some(Rect::new(360, 100, 620, 360)); self.relayout(); }
+            Action::MathOff(k) => self.math_turn_off(k),
+            Action::MathSettings(k) => { self.m.math_select(k); self.open_menu(MenuId::Math); }
+            Action::RefClear(i) => {
+                if i < NREF { self.refs[i] = None; }
+                self.measure_refs();
+                self.analyzer_update();
+                self.relayout();
+            }
+            Action::RefSettings(i) => { self.select_workspace_source(WaveId::Ref(i)); self.open_menu(MenuId::Ref); }
             Action::EyeClose => { self.m.view = AView::Scope; self.workspace.eye_float = None; self.relayout(); }
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));

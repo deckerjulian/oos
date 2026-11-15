@@ -451,7 +451,7 @@ fn studio_floating_panel_lists_the_measurements_moves_docks_and_opens_the_table(
     // a touch on the lanes outside it is the plot's, not the panel's
     let delay = u.m.delay;
     let lane = u.wins[0];
-    let (lx, ly) = (lane.x + 40, lane.y + 40);
+    let (lx, ly) = (lane.x + 120, lane.y + 40);
     u.touch_ev(Phase::Down, lx, ly);
     u.touch_ev(Phase::Move, lx + 50, ly);
     u.touch_ev(Phase::Up, lx + 50, ly);

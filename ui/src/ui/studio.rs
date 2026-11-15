@@ -121,6 +121,8 @@ pub(super) struct Studio {
     pub ov_drag: Option<(i32, i32)>,
     /// the gestures of the measurements list (`measdrag.rs`)
     pub md: super::measdrag::Md,
+    /// the axis strips: a finger on one, a wheel flash (`axis.rs`)
+    pub axis: super::axis::AxisState,
 }
 
 /// The second group of the "+ CH" popup.
@@ -1818,12 +1820,13 @@ impl Ui {
             Phase::Down => {
                 self.studio.drag = None;
                 if self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
-                    || self.studio.view_menu || self.studio.popup.is_some() || self.studio.md.menu.is_some() || self.load_slot_ask { return false; }
+                    || self.studio.view_menu || self.studio.popup.is_some() || self.studio.md.menu.is_some() || self.workspace.popup.is_some() || self.load_slot_ask { return false; }
                 // the Add measurement panel is open: only its tiles can be dragged
                 if self.menu_open { return self.md_down(x, y); }
                 if self.ov_divider_down(x, y) { return true; }
                 if self.dock_down(x, y) { return true; }
                 if self.md_down(x, y) { return true; }
+                if self.axis_down(x, y) { return true; }
                 let rows = self.meas_rows();
                 if self.studio.view == StudioView::Sim {
                     if let Some((_, _, page, _)) = self.studio_sim_list().filter(|(list, ..)| list.contains(x, y)) {
@@ -1859,6 +1862,7 @@ impl Ui {
             }
             Phase::Move => {
                 if self.ov_divider_move(y) { return true; }
+                if self.axis_move(x, y) { return true; }
                 if self.dock_move(x, y) { return true; }
                 if self.md_move(x, y) { return true; }
                 let Some(drag) = self.studio.drag else { return false };
@@ -1886,6 +1890,7 @@ impl Ui {
                 true
             }
             Phase::Up => {
+                self.axis_up();
                 if self.ov_divider_up() { return true; }
                 if self.dock_up(x, y) { return true; }
                 let Some(drag) = self.studio.drag.take() else { return false };
