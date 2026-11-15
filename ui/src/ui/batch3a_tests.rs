@@ -272,3 +272,44 @@ fn trigger_chip_shows_the_real_trigger_source_in_sim() {
     assert_eq!(u.trigger_source_label(), format!("R{}", u.m.sim_slot + 1));
     shot(&mut u, "trigger-chip-sim");
 }
+
+#[test]
+fn the_desktop_setup_file_brings_back_the_layout_and_the_studio_view() {
+    let dir = std::env::temp_dir().join(format!("oos-setup-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // nothing saved yet: a normal start
+    let mut fresh = Ui::new(Source::Demo { t: 0.0 });
+    let mut file = crate::store::SetupFile::new(&dir);
+    assert_eq!(file.restore(&mut fresh), Ok(false));
+    // Studio with the measurements docked, a time base, then saved (the folder is created)
+    let mut u = studio();
+    u.studio_set_view(StudioView::Docked);
+    u.m.tscale = 12;
+    u.render(&mut Canvas::new(W, H));
+    file.save(&u, true);
+    assert!(dir.join(crate::store::SetupFile::NAME).is_file());
+    // a restart: a new interface reads it
+    let mut again = Ui::new(Source::Demo { t: 0.0 });
+    assert_eq!(again.m.layout, Layout::Minimal);
+    let mut file2 = crate::store::SetupFile::new(&dir);
+    assert_eq!(file2.restore(&mut again), Ok(true));
+    assert_eq!(again.m.layout, Layout::Studio);
+    assert_eq!(again.studio.view, StudioView::Docked);
+    assert_eq!(again.m.tscale, 12);
+    for _ in 0..6 { again.step(0.05); }
+    again.render(&mut Canvas::new(W, H));
+    assert!(again.stacked() && again.studio.view == StudioView::Docked);
+    // an unchanged setup writes nothing; a change is written by the next save
+    let before = std::fs::metadata(dir.join(crate::store::SetupFile::NAME)).unwrap().modified().unwrap();
+    file2.save(&again, true);
+    assert_eq!(std::fs::metadata(dir.join(crate::store::SetupFile::NAME)).unwrap().modified().unwrap(), before);
+    again.m.tscale = 10;
+    file2.save(&again, true);
+    assert_eq!(std::fs::read_to_string(dir.join(crate::store::SetupFile::NAME)).unwrap(), crate::store::setup_text(&again.m));
+    // a damaged file is reported, not applied
+    std::fs::write(dir.join(crate::store::SetupFile::NAME), "layout = wide\n").unwrap();
+    let mut third = Ui::new(Source::Demo { t: 0.0 });
+    assert!(crate::store::SetupFile::new(&dir).restore(&mut third).is_err());
+    assert_eq!(third.m.layout, Layout::Minimal);
+    let _ = std::fs::remove_dir_all(&dir);
+}

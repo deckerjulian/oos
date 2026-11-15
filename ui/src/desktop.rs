@@ -154,6 +154,13 @@ pub fn run(mut ui: Ui, args: &[String]) {
     let mut cv = Canvas::new(ui::W, ui::H);
     let mut front_window: Option<front_window::FrontWindow> = None;
     let mut services = lan::Services::open(args);
+    // the layout and the Studio view come back after a restart: the setup of the unit, in the storage folder
+    let mut setup = crate::store::SetupFile::new(&ui.store_dir);
+    match setup.restore(&mut ui) {
+        Ok(true) => eprintln!("oos-ui: settings restored from {}", ui.store_dir.join(crate::store::SetupFile::NAME).display()),
+        Ok(false) => {}
+        Err(e) => eprintln!("oos-ui: {}", e),
+    }
     let mut loader = picker::Loader::new();
     let mut last = Instant::now();
     let mut wheel = 0.0f32;
@@ -234,6 +241,7 @@ pub fn run(mut ui: Ui, args: &[String]) {
             }
         }
         services.poll(&mut ui, &cv);
+        setup.save(&ui, false);
         if let Some((slot, result)) = loader.poll(ui.waveform_epoch()) {
             match result {
                 Ok((traces, name)) => if let Err(error) = ui.commit_waveform_traces_at(traces, &name, slot) { ui.toast(&error); },
@@ -275,6 +283,8 @@ pub fn run(mut ui: Ui, args: &[String]) {
             ui.desktop_panel = Some(false);
         }
     }
+    // the last change reaches the file even when the window closes within two seconds of it
+    setup.save(&ui, true);
 }
 
 #[cfg(test)]
