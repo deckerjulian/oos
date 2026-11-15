@@ -3952,6 +3952,7 @@ impl Ui {
         }
         let half = tdiv * HDIV as f64 / 2.0;
         let (t_left, t_right) = (delay - half, delay + half);
+        let mut badges: Vec<i32> = Vec::new();
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
             let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
@@ -4000,7 +4001,11 @@ impl Ui {
                 prev = Some((x, y));
             }
             if let Some(y) = first {
-                self.draw_ref_badge(cv, area, y, col, i, r);
+                // badges of references that start at the same height are fanned out instead of printed over each other
+                let (lo, hi) = (area.y + 2, (area.y + area.h - 34 - 2).max(area.y + 2));
+                let spot = badge_spot(&badges, y, lo, hi);
+                badges.push(spot);
+                self.draw_ref_badge(cv, area, spot, col, i, r);
             }
         }
         cv.no_clip();
@@ -4278,15 +4283,28 @@ impl Ui {
         }
         let note = self.live_ref_note();
         if !note.is_empty() && !self.view_on() && !self.eye_open() {
-            let y = g.y + g.h - 16;
+            let y = g.y + g.h - 36;
             let fit = Rect::new(g.x + 8, y - 12, 52, 22);
             btn(cv, fit, BTN, ACCENT);
             cv.text_in(&f.s, fit, 1, "Fit", TEXT);
             let lab = Rect::new(fit.x + fit.w + 8, y - 12, (g.x + g.w - fit.x - fit.w - 16).max(1), 22);
             cv.set_clip(lab);
-            cv.text_in(&f.s, lab, 0, &note, LABEL);
+            cv.text_in(&f.s, lab, 0, &self.fit_ref_note(&note, lab.w), LABEL);
             cv.no_clip();
         }
+    }
+
+    /// The "With live" note cut to `width`, naming how many references no longer fit ("+2").
+    fn fit_ref_note(&self, note: &str, width: i32) -> String {
+        let f = self.fonts();
+        if f.s.width(note) <= width { return note.to_string(); }
+        let Some((head, rest)) = note.split_once(" · ") else { return note.to_string() };
+        let parts: Vec<&str> = rest.split("   ").collect();
+        for keep in (0..parts.len()).rev() {
+            let text = if keep == 0 { format!("{head} · +{}", parts.len()) } else { format!("{head} · {}   +{}", parts[..keep].join("   "), parts.len() - keep) };
+            if f.s.width(&text) <= width || keep == 0 { return text; }
+        }
+        note.to_string()
     }
 
     /// Search markers: an amber tick at the top of the plot for every event of the trigger condition.
@@ -6919,6 +6937,8 @@ impl Ui {
                 let all = StripDock::ALL;
                 let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
                 m.strip_dock = all[(i as i32 + d).clamp(0, all.len() as i32 - 1) as usize];
+                // the statistics card follows the dock the strip uses
+                self.workspace.measure_docked = true; self.workspace.measure_float = None;
             }
             Item::DecOn => self.m.dec_on = !self.m.dec_on,
             Item::DecSel => {
@@ -6938,8 +6958,6 @@ impl Ui {
                         }
                     }
                 } else if self.m.pane != 0 && self.pane_h() == 0 {
-                // the statistics card follows the dock the strip uses
-                self.workspace.measure_docked = true; self.workspace.measure_float = None;
                     self.toast("No room for a second pane here: fewer LA lanes or the scope view");
                 }
             }
@@ -9376,6 +9394,12 @@ fn heat_palette() -> &'static [Rgb; 256] {
         }
         p
     })
+}
+
+/// Where a reference badge goes: the wanted height, or the nearest free slot (36 px apart) between `lo` and `hi`.
+fn badge_spot(taken: &[i32], y: i32, lo: i32, hi: i32) -> i32 {
+    (0..8).flat_map(|k| [y + 36 * k, y - 36 * k]).map(|c| c.clamp(lo, hi))
+        .find(|c| taken.iter().all(|t| (t - c).abs() >= 36)).unwrap_or(y.clamp(lo, hi))
 }
 
 fn overlaps(a: Rect, b: Rect) -> bool {

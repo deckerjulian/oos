@@ -142,3 +142,26 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
     u.workspace_action(Action::MeasureDock(StripDock::Left));
     assert!(u.results_docked().is_none());
 }
+
+#[test]
+fn reference_badges_are_fanned_out_and_the_legend_is_cut_with_a_count() {
+    let mut taken = Vec::new();
+    for _ in 0..6 {
+        let spot = badge_spot(&taken, 280, 42, 480);
+        assert!(taken.iter().all(|t: &i32| (t - spot).abs() >= 36), "{spot} overlaps {taken:?}");
+        taken.push(spot);
+    }
+    let mut u = fresh();
+    with_refs(&mut u, NREF);
+    u.relayout();
+    let note = u.live_ref_note();
+    for width in [140, 300, 480, 800] {
+        let cut = u.fit_ref_note(&note, width);
+        assert!(u.fonts().s.width(&cut) <= width || cut.ends_with("+10"), "{cut:?} in {width}");
+        if cut != note { assert!(cut.contains('+'), "{cut:?}"); }
+    }
+    assert_eq!(u.fit_ref_note(&note, 5000), note);
+    // the note and the Fit button sit above the axis labels, not on them
+    let fit = u.live_ref_fit_rect().unwrap();
+    assert!(fit.bottom() <= u.grid.bottom() - 20, "{fit:?} over the axis labels of {:?}", u.grid);
+}
