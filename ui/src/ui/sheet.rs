@@ -165,7 +165,7 @@ impl Ui {
             M::Cursor => (&["Cursors", "Position"], |it| match it { CurType | CurSrc | CurSrcB | CurReadout | CurLink => Slot::Tab(0), CurRemove => Slot::Foot(0), _ => Slot::Tab(1) }),
             M::Search => (&["Edge search"], |it| match it { SrchRemove => Slot::Foot(0), _ => Slot::Tab(0) }),
             M::Ref => (&["Reference", "Scale and files"], |it| match it {
-                RefSel | RefSrc | RefLabel | RefColor => Slot::Tab(0),
+                RefSel | RefSrc | RefLabel | RefColor | RefSaveNext => Slot::Tab(0),
                 RefShow(_) => Slot::Skip,
                 RefSave | RefClear => Slot::Foot(0),
                 _ => Slot::Tab(1),
@@ -311,6 +311,10 @@ impl Ui {
                     Slot::Skip => {}
                 }
             }
+            // the next-free action is offered only when the selected slot is taken
+            if matches!(menu, MenuId::Ref) && self.refs[self.ref_sel].is_none() {
+                for t in &mut tabs { t.rows.retain(|it| *it != Item::RefSaveNext); }
+            }
             // Ref: the ten slots are one Pick, and the shown switch is the one of the selected slot
             if matches!(menu, MenuId::Ref) {
                 let sel = self.ref_sel;
@@ -436,6 +440,17 @@ impl Ui {
     }
 
     /// What a row says: its label.
+    /// The label of the Store button: the slot the picker shows, and "Replace" when it is taken.
+    pub(super) fn ref_store_label(&self) -> String {
+        let (src, sel) = (self.wave_name(WaveId::Ch(self.ref_src)), self.ref_sel);
+        if self.refs[sel].is_some() { format!("Replace R{} with {}", sel + 1, src) } else { format!("Store {} as R{}", src, sel + 1) }
+    }
+
+    pub(super) fn ref_store_next_label(&self) -> String {
+        let i = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
+        format!("Store as R{} (next free)", i + 1)
+    }
+
     fn sheet_label(&self, it: Item) -> String {
         match it {
             Item::SrcOn => {
@@ -443,6 +458,7 @@ impl Ui {
                 if names.is_empty() { "Switch on source".into() } else { format!("Turn on {}", names.join(", ")) }
             }
             Item::RefShow(_) => "Shown".into(),
+            Item::RefSaveNext => self.ref_store_next_label(),
             Item::RowF(measrow::RF::Used | measrow::RF::StMean | measrow::RF::StRange | measrow::RF::StN) => self.measrow_text(it).unwrap_or_default(),
             _ => self.item_label(it).to_string(),
         }
@@ -543,7 +559,7 @@ impl Ui {
             let primary = it == Item::RefSave;
             btn(cv, b, if armed { mix(DLG_BG, RED, 90) } else if red { mix(DLG_BG, RED, 30) } else if primary { mix(DLG_BG, ACCENT, 40) } else { BTN }, if red { RED } else if primary { ACCENT } else { BTN_BORDER });
             let label = if armed { "Tap again to confirm".to_string() } else if it == Item::RefSave {
-                format!("Store {} as R{}", self.wave_name(WaveId::Ch(self.ref_src)), self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1) + 1)
+                self.ref_store_label()
             } else { self.sheet_label(it) };
             cv.text_in(&f.mb, b, 1, &label, if red { RED } else { TEXT });
         }

@@ -104,6 +104,8 @@ mod batch16_tests;
 mod batch17_tests;
 #[cfg(test)]
 mod batch18_tests;
+#[cfg(test)]
+mod batch19_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -137,6 +139,8 @@ pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 const MARK_W: i32 = 26;
 /// Width of the volts axis of the histogram view.
 const HIST_AXIS_W: i32 = 46;
+/// Height of the badge of a reference trace (name row, scale and rate row).
+const REF_BADGE_H: i32 = 40;
 /// Width of the measurement strip when it is docked on the left or the right.
 const STRIP_SIDE: i32 = 220;
 /// Height of the fork's compact bottom bar (Menu, source pills, Overlay / Stacked, time, trigger) that replaces the
@@ -532,6 +536,8 @@ enum Item {
     XyMode,
     RefSrc,
     RefSave,
+    /// Studio: the same, into the next free slot (offered when the selected slot is full)
+    RefSaveNext,
     RefShow(usize),
     RefClear,
     MathOpI,
@@ -3942,9 +3948,16 @@ impl Ui {
         cv.no_clip();
         let f = self.fonts();
         // above the decoder band and the time labels, right of the volt labels
-        let r = if tile { Rect::new(a.x + 8, a.y + 8, f.s.width(&txt) + 16, 20) } else { Rect::new(a.x + 14 + f.s.width("-0.00 mV"), a.y + a.h - 76, f.s.width(&txt) + 16, 20) };
+        // as a view of its own the header starts right of the volts axis, so the two never meet
+        let r = if tile { Self::hist_head_rect(a, ax, f.s.width(&txt) + 16) } else { Rect::new(a.x + 14 + f.s.width("-0.00 mV"), a.y + a.h - 76, f.s.width(&txt) + 16, 20) };
         cv.round(r, 4, PANEL_BG, 230);
         cv.text_in(&f.s, r, 1, &txt, col);
+    }
+
+    /// The header of a histogram view: right of its volts axis and inside the view.
+    pub(super) fn hist_head_rect(a: Rect, ax: i32, w: i32) -> Rect {
+        let x = a.x + ax + 8;
+        Rect::new(x, a.y + 24, w.min((a.right() - x - 4).max(20)), 20)
     }
 
     fn math_scale_text(&self) -> String {
@@ -4327,22 +4340,26 @@ impl Ui {
         let (name, readout) = self.ref_badge_lines(slot, r, maximum);
         let text_w = f.sb.width(&name).max(f.s.width(&readout));
         let bw = (text_w + 12).clamp(36, maximum);
-        let bh = 34;
-        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - self.ref_badge_pad()).max(area.y + 2));
+        let bh = REF_BADGE_H;
+        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - self.ref_badge_pad(area)).max(area.y + 2));
         let x0 = (area.x + 80).min((area.x + area.w - bw - 4).max(area.x + 2));
         let b = Rect::new(x0, y0, bw, bh);
         cv.round(b, 3, col, 255);
         cv.set_clip(b);
         let ink = rgb(0, 0, 0);
-        let row = b.h / 2;
-        cv.text_in(&f.sb, Rect::new(b.x, b.y + 1, b.w, row), 1, &name, ink);
-        cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &readout, ink);
+        // two rows of their own: the name above, the scale and rate below it
+        let row = (b.h - 4) / 2;
+        cv.text_in(&f.sb, Rect::new(b.x, b.y + 2, b.w, row), 1, &name, ink);
+        cv.text_in(&f.s, Rect::new(b.x, b.y + 2 + row, b.w, row), 1, &readout, ink);
         cv.set_clip(area);
     }
 
     /// Room a ref badge keeps clear under it: the time labels along the bottom of the lowest lane.
-    fn ref_badge_pad(&self) -> i32 {
-        if self.stacked() && self.cur_win + 1 < self.wins.len() { 2 } else { self.fonts().s.size + 10 }
+    pub(super) fn ref_badge_pad(&self, lane: Rect) -> i32 {
+        let base = if self.stacked() && self.cur_win + 1 < self.wins.len() { 2 } else { self.fonts().s.size + 10 };
+        // the Fit row and the With live note sit above the time labels of the last lane: the badge stays clear of them
+        // (only a lane that reaches the bottom of the plot is under them)
+        if !self.live_ref_note().is_empty() && !self.view_on() && !self.eye_open() && lane.bottom() >= self.area.bottom() - 4 { base.max(52) } else { base }
     }
 
     fn draw_refs(&self, cv: &mut Canvas) {
@@ -4412,7 +4429,7 @@ impl Ui {
                 // badges of references that start at the same height are fanned out instead of printed over each other
                 // none in the overview of a zoom (it shows the whole record, the detail has the badges)
                 if !all_sources {
-                    let (lo, hi) = (area.y + 2, (area.y + area.h - 34 - self.ref_badge_pad()).max(area.y + 2));
+                    let (lo, hi) = (area.y + 2, (area.y + area.h - REF_BADGE_H - self.ref_badge_pad(area)).max(area.y + 2));
                     let spot = badge_spot(&badges, y, lo, hi);
                     badges.push(spot);
                     self.draw_ref_badge(cv, area, spot, col, i, r);
@@ -5850,7 +5867,7 @@ impl Ui {
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
-            MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
+            MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefSaveNext, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
             MenuId::MeasAdd => Vec::new(),
             MenuId::MeasLegacy => self.measurement_catalog(),
             MenuId::AddPanel => Vec::new(),
@@ -6553,8 +6570,12 @@ impl Ui {
             MenuId::Windows => "Windows".into(),
             MenuId::Utility => "System".into(),
             MenuId::Math => "Math".into(),
-            MenuId::Ref => self.refs[self.ref_sel].as_ref().map_or(format!("Reference R{} · empty", self.ref_sel + 1),
-                |r| format!("Reference R{}{}{}", self.ref_sel + 1, if r.label.is_empty() { "" } else { " · " }, r.label)),
+            MenuId::Ref => self.refs[self.ref_sel].as_ref().map_or(format!("Reference R{} · empty", self.ref_sel + 1), |r| {
+                // a name only when it is one: not empty and not the slot's own name again
+                let own = format!("R{}", self.ref_sel + 1);
+                if r.label.is_empty() || r.label.eq_ignore_ascii_case(&own) { format!("Reference {own}") }
+                else { format!("Reference {own} \u{b7} {}", r.label) }
+            }),
             MenuId::Decode => "Decode".into(),
             MenuId::Bus => "Bus · I2C".into(),
             MenuId::Pick => match self.pick {
@@ -6577,7 +6598,7 @@ impl Ui {
             Item::DecBits => Kind::Value,
             Item::TrigLevel2 | Item::TrigT1 | Item::TrigT2 | Item::VidLine | Item::PatLevel | Item::NthIdle | Item::NthN | Item::Setup | Item::Hold => Kind::Value,
             Item::ChScale(_) | Item::ChOffset(_) | Item::HScale | Item::HDelay | Item::TrigLevel | Item::AcqAvg | Item::CurA | Item::CurB | Item::Intensity | Item::GridBright => Kind::Value,
-            Item::RefSave | Item::RefClear => Kind::Action,
+            Item::RefSave | Item::RefSaveNext | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
             Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasRemove(_) | Item::MeasClear | Item::ClearDisp | Item::MathOff | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
@@ -6680,6 +6701,7 @@ impl Ui {
             Item::XyMode => "Format",
             Item::RefSrc => "Save from",
             Item::RefSave => "Save to next R",
+            Item::RefSaveNext => "Store in the next free R",
             Item::RefShow(i) => ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"][i.min(NREF - 1)],
             Item::RefClear => "Clear all",
             Item::MathOpI => "Operation",
@@ -7790,7 +7812,7 @@ impl Ui {
                     self.meas_cfg = None;
                     self.clear_measurement_statistics();
                 }
-                Item::RefSave => {
+                Item::RefSave | Item::RefSaveNext => {
                     let c = self.ref_src;
                     let rec = self.last[0].clone();
                     let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
@@ -7800,7 +7822,9 @@ impl Ui {
                     });
                     match saved {
                         Some(w) => {
-                            let slot = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
+                            let next = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
+                            // Studio: into the slot the picker shows; the secondary action goes to the next free one
+                            let slot = if self.m.layout == Layout::Studio && it != Item::RefSaveNext { self.ref_sel } else { next };
                             self.m.deskew_ref[slot] = self.m.deskew_ch[c];
                             self.refs[slot] = Some(w);
                             self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));

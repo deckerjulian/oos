@@ -661,7 +661,7 @@ mod performance_and_timing_tests {
         let color = REF_COLORS[0].1;
         ui.draw_ref_badge(&mut canvas, Rect::new(0, 0, 400, 100), 10, color, 0, &wave);
         let rows: Vec<_> = (0..canvas.h).filter(|&y| (0..canvas.w).any(|x| canvas.px[(y * canvas.w + x) as usize] == color)).collect();
-        assert_eq!(rows.last().unwrap() - rows.first().unwrap() + 1, 34);
+        assert_eq!(rows.last().unwrap() - rows.first().unwrap() + 1, REF_BADGE_H);
     }
 
     #[test]

@@ -19,6 +19,8 @@ pub(super) const DB_PER_DIV: f32 = 10.0;
 
 /// Peak list width; left axis; title line and frequency labels of the spectrum.
 const PEAK_W: i32 = 212;
+/// Height of the fixed header row of the peaks list.
+pub(super) const PEAK_HEAD: i32 = 18;
 /// Below this width the spectrum has no column of peaks beside the plot.
 pub(super) const SPEC_NARROW_W: i32 = 420;
 const AXIS_W: i32 = 34;
@@ -123,7 +125,8 @@ impl Ui {
         // the full view: under the full-screen and zoom buttons, which sit at the top of this column
         let below = (self.zoom_btn().1.bottom() + 2).max(a.y + 46);
         let sort = if pane { Rect::new(col_x, a.y + 2, PEAK_W - 50, 36) } else { Rect::new(col_x, below, PEAK_W - 6, 36) };
-        let y = sort.y + sort.h + 2;
+        // a fixed header row of its own (Frequency / Level) between the button and the first line
+        let y = sort.y + sort.h + 2 + PEAK_HEAD;
         SpecBox { title, plot, sort, list: Rect::new(col_x, y, PEAK_W - 6, a.y + a.h - y) }
     }
 
@@ -243,6 +246,12 @@ impl Ui {
         btn(cv, b.sort, BTN, BTN_BORDER);
         cv.text_in(super::fit_font(&[&f.mb, &f.sb, &crate::font::Fonts::get(0).mb], b.sort.w - 8, self.sort_name()), b.sort, 1, self.sort_name(), TEXT);
         let r = b.list;
+        // the header row: above the list, never over a line of it
+        let head = Rect::new(r.x, r.y - PEAK_HEAD, r.w, PEAK_HEAD);
+        cv.fill(head, ROW_ALT);
+        cv.text(&f.s, head.x + 22, head.y + head.h - 5, "Frequency", DIM);
+        let lv = "Level";
+        cv.text(&f.s, head.right() - 4 - f.s.width(lv), head.y + head.h - 5, lv, DIM);
         let n = self.peaks_shown(b) as i32;
         let facts = self.spec_facts(sp);
         let nf = (facts.len() as i32).min((r.h - n * 20) / 17).max(0);
