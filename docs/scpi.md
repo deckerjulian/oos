@@ -197,7 +197,7 @@ The example deliberately stops acquisition and retains that state. It reads one 
 | `:MEASure:CLEar` | Clear standard, pair and catalog selections through the shared statistics reset. |
 | `:MEASure:GATing[?]` | `SCREEN` follows the viewport; `NONE` means Full record. This gate is an OOS extension. |
 | `:MEASure:REFS[?]` | `10/90|20/80` edge thresholds. |
-| `:MEASure:TSETup[?]` / `:THOLd[?]` | Nonnegative seconds used by applicable setup/hold results. |
+| `:MEASure:TSETup[?]` / `:THOLd[?]` | Nonnegative seconds: `SETHOLD` counts the clock edges whose setup or hold is shorter. |
 | `:MEASure:STRip?` | Configured standard/pair/catalog rows, then enabled DVM/counter rows. |
 | `:MEASure:READout?` | Strip rows plus Eye figures when that analysis page is active. |
 | `:EYE:ITEM? <figure>` | Current configured Eye result; does not itself run one-click Auto Eye. |

@@ -347,6 +347,15 @@ mod tests {
         }
     }
 
+    /// A pair tile shows the unit its strip row and SCPI readout carry (Setup + Hold is a count of violations).
+    #[test]
+    fn pair_tiles_have_the_unit_of_their_value() {
+        for k in 0..crate::ui::PAIRS_N {
+            let d = all().find(|(_, d)| d.kind == Kind::Pair(k)).unwrap().1;
+            assert_eq!(d.unit, crate::ui::pair_unit(k), "{}", d.name);
+        }
+    }
+
     /// Every category has tiles, and its groups come in the order it names.
     #[test]
     fn categories_have_their_groups() {

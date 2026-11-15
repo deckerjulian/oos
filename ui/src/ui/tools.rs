@@ -208,17 +208,13 @@ impl Ui {
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
-            let (name, kind, _, _) = PAIRS[k.min(PAIRS.len() - 1)];
+            let name = PAIRS[k.min(PAIRS.len() - 1)].0;
             let val = self.pair_at(k, a, b);
             let tag = |id: WaveId| match id {
                 WaveId::Ch(c) => (c + 1).to_string(),
                 WaveId::Ref(i) => format!("R{}", i + 1),
             };
-            let unit = match kind {
-                PairKind::Phase => "\u{b0}",
-                PairKind::SetupAndHold => "",
-                _ => "s",
-            };
+            let unit = pair_unit(k);
             v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit,
                 computing: self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b) });
         }

@@ -284,6 +284,14 @@ pub const PAIRS_N: usize = tools::PAIRS.len();
 pub fn pair_short_name(k: usize) -> &'static str {
     tools::PAIRS[k.min(PAIRS_N - 1)].0
 }
+/// The unit of a two-source variant: degrees for phase, none for the setup/hold violation count, else seconds.
+pub fn pair_unit(k: usize) -> &'static str {
+    match tools::PAIRS[k.min(PAIRS_N - 1)].1 {
+        tools::PairKind::Phase => "\u{b0}",
+        tools::PairKind::SetupAndHold => "",
+        _ => "s",
+    }
+}
 
 pub(crate) use analysers::{scpi_views, stored_views};
 
