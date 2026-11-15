@@ -188,7 +188,9 @@ fn eye_tab_at(a: Rect, l: &Layout) -> Rect {
     let edge = l.eye.x + l.eye.w;
     let x = (edge - TAB_W).clamp(a.x, (a.x + a.w - TAB_W).max(a.x));
     let (y0, y1) = (l.charts[0].y, l.charts[2].y + l.charts[2].h);
-    let y = (y0 + (y1 - y0 - TAB_H) / 2).clamp(a.y + HEAD_H, (a.y + a.h - TAB_H).max(a.y + HEAD_H));
+    // a narrow pane keeps the charts under the eye: the tab sits in the right margin of the eye, not over a chart
+    let mid = if a.w < 700 { l.eye.y + (l.eye.h - TAB_H) / 2 } else { y0 + (y1 - y0 - TAB_H) / 2 };
+    let y = mid.clamp(a.y + HEAD_H, (a.y + a.h - TAB_H).max(a.y + HEAD_H));
     Rect::new(x, y, TAB_W, TAB_H)
 }
 
@@ -198,7 +200,7 @@ fn layout_stacked(a: Rect) -> Layout {
     let charts_on = a.w >= 280 && a.h >= 240;
     let ch = if charts_on { (a.h * 42 / 100).clamp(120, 200) } else { 0 };
     let eye = Rect::new(a.x, a.y, a.w, (a.h - ch - if ch > 0 { GAP } else { 0 }).max(1));
-    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, (eye.w - EYE_GUTTER - 10).max(1), (eye.h - EYE_TITLE - EYE_FOOT).max(1));
+    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, (eye.w - EYE_GUTTER - 10 - if charts_on { TAB_W - 4 } else { 0 }).max(1), (eye.h - EYE_TITLE - EYE_FOOT).max(1));
     let gy = eye.y + eye.h + if ch > 0 { GAP } else { 0 };
     let (cw, rh) = if ch > 0 { ((a.w - GAP) / 2, (ch - GAP) / 2) } else { (0, 0) };
     let cell = |c: i32, r: i32| {
@@ -912,7 +914,7 @@ impl Ui {
         self.eye_from + (self.eye_to - self.eye_from) * e
     }
 
-    fn eye_tab(&self) -> Rect {
+    pub(super) fn eye_tab(&self) -> Rect {
         eye_tab_at(self.eye_page_rect(), &placed(self.eye_page_rect(), self.eye_column_open()))
     }
 
@@ -1235,8 +1237,10 @@ impl Ui {
             cv.text_in(&f.s, r, 1, &ch.empty, DIM);
             return;
         }
-        cv.text(&f.s, r.x - 3 - f.s.width(&ch.y.0), r.y + 10, &ch.y.0, AXIS_TEXT);
-        cv.text(&f.s, r.x - 3 - f.s.width(&ch.y.1), r.y + r.h - 1, &ch.y.1, AXIS_TEXT);
+        // a wide label stays inside the frame instead of running over its border
+        let lx = |w: i32| (r.x - 3 - w).max(c.x + 3);
+        cv.text(&f.s, lx(f.s.width(&ch.y.0)), r.y + 10, &ch.y.0, AXIS_TEXT);
+        cv.text(&f.s, lx(f.s.width(&ch.y.1)), r.y + r.h - 1, &ch.y.1, AXIS_TEXT);
         cv.text(&f.s, r.x, r.y + r.h + 12, &ch.x.0, AXIS_TEXT);
         cv.text(&f.s, r.x + r.w - f.s.width(&ch.x.1), r.y + r.h + 12, &ch.x.1, AXIS_TEXT);
     }

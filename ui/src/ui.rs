@@ -4151,7 +4151,7 @@ impl Ui {
                     for (frac, name) in [(self.m.cur_c, "Y1"), (self.m.cur_d, "Y2")] {
                         let y = a.y + (frac * a.h as f32) as i32;
                         cv.dashed_hline(a.x, a.x + a.w - 1, y, 4, 3, CURSOR);
-                        tagbox(cv, a.x + a.w - 26, y - 16, name);
+                        tagbox(cv, self.right_tag_x(a, y - 16, f.s.width(name) + 8), y - 16, name);
                     }
                 }
                 let (ta, tb) = self.cursor_times();
@@ -4175,11 +4175,20 @@ impl Ui {
                 for (frac, name) in [(self.m.cur_a, "Y1"), (self.m.cur_b, "Y2")] {
                     let y = a.y + (frac * a.h as f32) as i32;
                     cv.dashed_hline(a.x, a.x + a.w - 1, y, 4, 3, CURSOR);
-                    tagbox(cv, a.x + a.w - 26, y - 16, name);
+                    tagbox(cv, self.right_tag_x(a, y - 16, f.s.width(name) + 8), y - 16, name);
                 }
             }
         }
         cv.no_clip();
+    }
+
+    /// Left edge of a cursor tag at the right end of the plot: where it clears the full-screen and zoom buttons.
+    fn right_tag_x(&self, a: Rect, y: i32, w: i32) -> i32 {
+        let mut x = a.x + a.w - 26;
+        for r in [self.full_btn().0, self.zoom_btn().0] {
+            if x + w > r.x - 2 && x < r.right() + 2 && y < r.bottom() + 2 && y + 14 > r.y - 2 { x = r.x - 6 - w; }
+        }
+        x
     }
 
     /// Cursor read-outs: (label, value) pairs.
@@ -4261,7 +4270,7 @@ impl Ui {
             }
         };
         if !src.is_empty() {
-            backed_text(cv, &f.s, self.full_home().0.x - 8 - f.s.width(src), y, src, DIM);
+            backed_text(cv, &f.s, self.full_home().0.x - 16 - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
         if self.m.touch_lock {

@@ -165,3 +165,27 @@ fn reference_badges_are_fanned_out_and_the_legend_is_cut_with_a_count() {
     let fit = u.live_ref_fit_rect().unwrap();
     assert!(fit.bottom() <= u.grid.bottom() - 20, "{fit:?} over the axis labels of {:?}", u.grid);
 }
+
+#[test]
+fn eye_tab_in_a_side_pane_clears_the_charts_and_cursor_tags_clear_the_corner_buttons() {
+    let hit = |a: Rect, b: Rect| a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom();
+    for place in [workspace::Action::EyeRight, workspace::Action::EyeLeft, workspace::Action::EyeBelow] {
+        let mut u = fresh();
+        u.m.view = AView::Eye;
+        u.relayout();
+        u.workspace_action(place);
+        let page = u.eye_page_rect();
+        let l = eyepage::layout(page, false);
+        if l.charts[0].w == 0 { continue; }
+        let tab = u.eye_tab();
+        for (k, c) in l.charts.iter().enumerate() {
+            if page.w < 700 { assert!(!hit(tab, *c), "tab {tab:?} over chart {k} {c:?}"); }
+        }
+    }
+    let u = fresh();
+    for y in (u.area.y..u.area.bottom()).step_by(3) {
+        let x = u.right_tag_x(u.area, y, 24);
+        let tag = Rect::new(x, y, 24, 14);
+        assert!(!hit(tag, u.full_btn().0) && !hit(tag, u.zoom_btn().0), "tag at y {y} covers a button");
+    }
+}
