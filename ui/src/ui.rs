@@ -77,6 +77,8 @@ mod batch8_tests;
 mod batch9_tests;
 #[cfg(test)]
 mod batch10_tests;
+#[cfg(test)]
+mod batch11_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -6987,6 +6989,8 @@ impl Ui {
                     m.tscale = step(m.tscale, tscales().len(), d);
                     m.tfine = 1.0;
                 }
+                // Studio: the zoom keeps its factor and its place in the overview when the main time base changes
+                let keep = (m.layout == Layout::Studio && m.zoom).then(|| (old / tscales()[m.zscale], (m.zdelay - m.delay) / (old * HDIV)));
                 if m.zscale > m.tscale {
                     m.zscale = m.tscale;
                 }
@@ -6998,6 +7002,11 @@ impl Ui {
                     HExpand::Left => m.delay -= half * (old - new),
                     HExpand::Right => m.delay += half * (old - new),
                     HExpand::Trigger => m.delay *= new / old,
+                }
+                if let Some((factor, place)) = keep {
+                    let want = new / factor;
+                    m.zscale = tscales().iter().enumerate().min_by(|a, b| (a.1 / want).ln().abs().total_cmp(&(b.1 / want).ln().abs())).map_or(0, |(i, _)| i).min(m.tscale);
+                    m.zdelay = m.delay + place * new * HDIV;
                 }
             }
             Item::HDelay => m.delay += d as f32 * m.time_per_div() / 25.0,

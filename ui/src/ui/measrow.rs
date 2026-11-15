@@ -39,6 +39,12 @@ pub(super) enum RF {
     WMin,
     WMax,
     Reset,
+    /// the statistics of the row: mean and spread, range, population (read-only lines)
+    StMean,
+    StRange,
+    StN,
+    /// opens the trend plot of the measurements
+    Trend,
 }
 
 /// What the card offers for a row.
@@ -115,7 +121,8 @@ impl Ui {
         let source = matches!(key, RowKey::One(..)).then_some(it(RF::Source));
         let with = |rows: Vec<Item>| -> Vec<Item> { source.into_iter().chain(rows).collect() };
         let Some(group) = group_of(key) else { return self.measrow_cat_plan(key) };
-        match group {
+        let stats = ("Stats", vec![it(RF::StMean), it(RF::StRange), it(RF::StN), Item::MeasPop, Item::MeasStatReset, it(RF::Trend)]);
+        let mut plan = match group {
             Group::Amp { overshoot } => {
                 let mut rows = vec![it(RF::BaseTop)];
                 if overshoot {
@@ -148,7 +155,16 @@ impl Ui {
                 rows.extend([it(RF::WMin), it(RF::WMax)]);
                 vec![("Edges", rows)]
             }
-        }
+        };
+        plan.push(stats);
+        plan
+    }
+
+    /// The statistics of the row the card is open for, with the row (for its unit).
+    fn rowf_stat(&self) -> Option<(MStat, tools::MeasRow)> {
+        let i = self.meas_cfg? as usize;
+        let row = self.meas_rows().into_iter().nth(i)?;
+        Some((self.mstat.get(i).copied().unwrap_or_default(), row))
     }
 
     /// Every item of the card, for the dialog of Minimal and Default.
@@ -178,7 +194,7 @@ impl Ui {
         Some(match f {
             RF::Reset => Kind::Action,
             RF::Source | RF::BaseTop | RF::OsRef | RF::Gate | RF::Pol | RF::BurstPol | RF::NEdge | RF::Side | RF::From | RF::To | RF::Dir => Kind::Choice,
-            RF::Used => Kind::Action,
+            RF::Used | RF::StMean | RF::StRange | RF::StN | RF::Trend => Kind::Action,
             _ => Kind::Value,
         })
     }
@@ -213,6 +229,10 @@ impl Ui {
             RF::WMin => "Window min",
             RF::WMax => "Window max",
             RF::Reset => "Follow shared",
+            RF::StMean => "Mean",
+            RF::StRange => "Range",
+            RF::StN => "Population",
+            RF::Trend => "Show trend plot",
         })
     }
 
@@ -222,6 +242,17 @@ impl Ui {
             Item::RowF(RF::Used) => {
                 let RowKey::One(kind, id) = self.rowf_key()? else { return None };
                 Some(format!("Edges used: {}", self.meas_edge_coverage_caption(id, kind)))
+            }
+            Item::RowF(f @ (RF::StMean | RF::StRange | RF::StN)) => {
+                let (st, row) = self.rowf_stat()?;
+                if st.n == 0 { return Some(match f { RF::StN => "Population: none yet".into(), RF::StMean => "Mean: waiting for a value".into(), _ => "Range: none yet".into() }); }
+                let mean = st.sum / st.n as f64;
+                let sd = (st.sumsq / st.n as f64 - mean * mean).max(0.0).sqrt();
+                Some(match f {
+                    RF::StMean => format!("Mean {}   \u{3c3} {}", row.fmt(mean), si(sd, row.unit)),
+                    RF::StRange => format!("Min {}   Max {}", row.fmt(st.min), row.fmt(st.max)),
+                    _ => format!("Population: {} value{}", st.n, if st.n == 1 { "" } else { "s" }),
+                })
             }
             _ => None,
         }
@@ -267,7 +298,7 @@ impl Ui {
             RF::Low => c.lo.map_or("Shared".into(), lv),
             RF::High => c.hi.map_or("Shared".into(), lv),
             RF::Hyst => c.hyst.map_or("Shared".into(), |h| if m.meas_lv.absolute { si_short(h, "V") } else { pct(h) }),
-            RF::Used => String::new(),
+            RF::Used | RF::StMean | RF::StRange | RF::StN | RF::Trend => String::new(),
             RF::Idle => match c.idle { None => "Shared".into(), Some(x) if x > 0.0 => si_short(x, "s"), Some(_) => "period".into() },
             RF::BurstPol => if c.burst_fall == Some(true) { "Falling".into() } else { "Rising".into() },
             RF::N => c.n.map_or("Shared".into(), |n| n.to_string()),
@@ -403,7 +434,7 @@ impl Ui {
                 self.rowf_edit(|c| c.out_volts = Some(v));
             }
             RF::From | RF::To | RF::Dir | RF::WMin | RF::WMax => return self.rowf_adjust_pair(f, d),
-            RF::Used | RF::Reset => {}
+            RF::Used | RF::Reset | RF::StMean | RF::StRange | RF::StN | RF::Trend => {}
         }
         true
     }
@@ -466,6 +497,10 @@ impl Ui {
             }
             Item::RowF(RF::Reset) => {
                 self.rowf_edit(|c| *c = RowCfg::default());
+                true
+            }
+            Item::RowF(RF::Trend) => {
+                self.select_option(Item::PaneSel, "Trend");
                 true
             }
             Item::RowF(_) => true,

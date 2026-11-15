@@ -730,16 +730,14 @@ impl Ui {
             return self.dock_down_strip(k, r, x, y, true);
         }
         let lay = self.dock_layout();
-        // the strips' buttons, then the dividers, then the strips
+        // the strips (with their buttons) first: a divider's wide hit area reaches into the strip under it, and a
+        // finger on a title means the view; the divider keeps the gap and the room above it
         for (k, r) in lay.leaves.iter() {
-            if Self::dock_strip(*r).contains(x, y) && self.dock_down_button(*k, *r, x, y) { return true; }
+            if Self::dock_strip(*r).contains(x, y) { return self.dock_down_strip(*k, *r, x, y, false); }
         }
         if let Some(d) = lay.dividers.iter().find(|d| d.hit.contains(x, y)) {
             self.studio.dock.drag = Some(DockDrag::Divider { path: d.path.clone(), dir: d.dir, origin: d.origin, avail: d.avail, lo: d.lo, hi: d.hi });
             return true;
-        }
-        for (k, r) in lay.leaves.iter() {
-            if Self::dock_strip(*r).contains(x, y) { return self.dock_down_strip(*k, *r, x, y, false); }
         }
         false
     }

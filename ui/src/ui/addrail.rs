@@ -278,7 +278,7 @@ impl Ui {
                 _ => format!("Cursors on {}", self.wave_name(self.cursor_source())),
             },
             AddKind::Search => match self.studio.search {
-                Some(sp) => format!("Search 1 on {}: {} events", self.wave_name(sp.src), self.studio_search_events().len()),
+                Some(sp) => { let n = self.studio_search_events().len(); format!("Search 1 on {}: {} event{}", self.wave_name(sp.src), n, if n == 1 { "" } else { "s" }) }
                 None => "No search yet".to_string(),
             },
             AddKind::Table => {
@@ -909,7 +909,8 @@ impl Ui {
         self.studio.search?;
         let f = self.fonts();
         let row = self.studio_row();
-        let text = format!("Search 1 \u{b7} {} events", self.studio_search_events().len());
+        let n = self.studio_search_events().len();
+        let text = format!("Search 1 \u{b7} {} event{}", n, if n == 1 { "" } else { "s" });
         let w = f.sb.width(&text) + 24;
         // a target of 40 px, a little taller than the row
         let h = 40;

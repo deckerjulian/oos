@@ -436,7 +436,7 @@ impl Ui {
                 if names.is_empty() { "Switch on source".into() } else { format!("Turn on {}", names.join(", ")) }
             }
             Item::RefShow(_) => "Shown".into(),
-            Item::RowF(measrow::RF::Used) => self.measrow_text(it).unwrap_or_default(),
+            Item::RowF(measrow::RF::Used | measrow::RF::StMean | measrow::RF::StRange | measrow::RF::StN) => self.measrow_text(it).unwrap_or_default(),
             _ => self.item_label(it).to_string(),
         }
     }

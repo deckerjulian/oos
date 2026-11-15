@@ -383,7 +383,7 @@ fn add_search_makes_an_edge_search_with_level_at_50_percent_and_marks() {
     assert!(ev.windows(2).all(|p| p[0] < p[1]), "in time order");
     // the badge says how many
     let (_, label, _, text) = u.studio_search_chip().expect("badge");
-    assert!(text.contains(&format!("{} events", ev.len())), "{text}");
+    assert!(text.contains(&format!("{} event", ev.len())), "{text}");
     assert!(label.h >= 40);
     // the marks are on the waveform: amber pixels at the top of the plot
     let mut cv = Canvas::new(W, H);
