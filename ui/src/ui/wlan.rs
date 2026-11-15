@@ -422,6 +422,8 @@ pub(super) enum OskFor {
     RefLabel(usize),
     /// the name drawn on the bus
     BusLabel,
+    /// the text the Studio add-measurement list is filtered by
+    Search,
     /// the formula of a math channel
     MathExpr(usize),
     /// System > Date and time (time.rs): another NTP server, a POSIX time zone, the clock by hand
@@ -510,6 +512,14 @@ impl Osk {
         o
     }
 
+    /// The keyboard for the search of the add-measurement list.
+    pub(super) fn for_search(now: &str) -> Osk {
+        let mut o = Osk::new(OskFor::Search);
+        o.text = now.to_string();
+        o.cursor = o.text.chars().count();
+        o
+    }
+
     /// The keyboard for the formula of math channel `k`; the symbols are one layer up.
     pub(super) fn for_expr(k: usize, now: &str) -> Osk {
         let mut o = Osk::new(OskFor::MathExpr(k));
@@ -551,7 +561,7 @@ impl Osk {
         match self.what {
             OskFor::Name => wlan::SSID_MAX,
             OskFor::Pass(_) => wlan::PASS_LEN.1,
-            OskFor::Label(_) | OskFor::RefLabel(_) | OskFor::BusLabel => LABEL_MAX,
+            OskFor::Label(_) | OskFor::RefLabel(_) | OskFor::BusLabel | OskFor::Search => LABEL_MAX,
             OskFor::MathExpr(_) => oos_dsp::expr::EXPR_MAX,
             OskFor::NtpServer => crate::sysconf::SERVER_MAX,
             OskFor::Tz => crate::clock::TZ_MAX,
@@ -702,6 +712,11 @@ impl Ui {
                 }
                 self.wlan.osk = None;
             }
+            OskFor::Search => {
+                let t = o.text.trim().to_string();
+                self.sheet_set_search(&t);
+                self.wlan.osk = None;
+            }
             OskFor::BusLabel => {
                 self.m.bus.label = crate::model::bus_label(&o.text);
                 self.wlan.osk = None;
@@ -802,6 +817,7 @@ impl Ui {
             OskFor::Label(c) => format!("Name of CH{} (empty: CH{})", c + 1, c + 1),
             OskFor::RefLabel(i) => format!("Name of R{} (empty: R{})", i + 1, i + 1),
             OskFor::BusLabel => "Name of the bus (empty: I2C)".to_string(),
+            OskFor::Search => "Find a measurement".to_string(),
             OskFor::MathExpr(k) => format!("Formula of M{}: CH1-4, t, pi, sin cos tan sqrt abs ln log exp min max", k + 1),
             OskFor::NtpServer => "NTP server: a name or an address".to_string(),
             OskFor::Tz => "Time zone, POSIX: CET-1CEST,M3.5.0,M10.5.0/3 or <+04>-4 (4 hours east)".to_string(),

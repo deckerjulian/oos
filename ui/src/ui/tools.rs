@@ -198,7 +198,7 @@ impl Ui {
     }
 
     /// Unit of a measurement: the channel's unit, or volts for a ref (the slot stores volts).
-    fn meas_unit(&self, id: WaveId, k: Meas) -> &'static str {
+    pub(super) fn meas_unit(&self, id: WaveId, k: Meas) -> &'static str {
         match id {
             WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].unit.of(k.unit()),
             WaveId::Ref(_) => k.unit(),

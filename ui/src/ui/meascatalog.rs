@@ -896,6 +896,90 @@ impl Ui {
 
 }
 
+/// The categories of the Studio add list: the six tabs of the catalogue, the last three as one.
+pub(super) const ADD_GROUPS: [&str; 4] = ["Basic", "Jitter", "Power", "Other"];
+
+/// One line of the Studio add list.
+pub(super) struct AddEntry {
+    pub cat: Cat,
+    pub name: &'static str,
+    pub group: usize,
+}
+
+/// What a row of the add list says about its measurement right now.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Preview {
+    Value(String),
+    Computing,
+    /// a channel it reads is off: the fix is to switch it on
+    Off(usize),
+    /// it cannot be measured; why
+    Reason(String),
+}
+
+/// Every measurement of the catalogue once, in the order of its tabs, with its category.
+pub(super) fn add_entries() -> Vec<AddEntry> {
+    let mut v: Vec<AddEntry> = Vec::new();
+    for tab in 0..TABS.len() as u8 {
+        for (_, items) in tab_groups(tab) {
+            for &cat in *items {
+                if !v.iter().any(|e| e.cat == cat) {
+                    v.push(AddEntry { cat, name: meta(cat).name, group: (tab as usize).min(3) });
+                }
+            }
+        }
+    }
+    v
+}
+
+impl Ui {
+    fn add_row(&self) -> [WaveId; 4] {
+        [self.meas_src, self.meas_src_b, self.cat_c, self.cat_d]
+    }
+
+    pub(super) fn add_is_on(&self, c: Cat) -> bool {
+        self.cat_added(c)
+    }
+
+    /// The key of the row `catalog_add` makes for `c`, for pinning it.
+    pub(super) fn add_key(&self, c: Cat) -> super::studio::MeasKey {
+        use super::studio::MeasKey;
+        let [a, b, cc, d] = self.add_row();
+        match meta(c).kind {
+            CatKind::Meas(k) => MeasKey::One(k, a),
+            CatKind::Pair(k) => MeasKey::Pair(k, a, b),
+            CatKind::Wave => MeasKey::Cat(c as u16, a, b, cc, d),
+        }
+    }
+
+    /// The live value of a measurement on the current sources, or why there is none and what fixes it.
+    pub(super) fn add_preview(&self, c: Cat) -> Preview {
+        let row = self.add_row();
+        for &r in catalog_roles(c) {
+            match row[r] {
+                WaveId::Ch(ch) if ch < NCH && !self.m.ch[ch].on => return Preview::Off(ch),
+                WaveId::Ref(i) if self.refs.get(i).is_none_or(|r| r.is_none()) => return Preview::Reason(format!("Reference R{} is empty", i + 1)),
+                _ => {}
+            }
+        }
+        let info = meta(c);
+        let show = |src: WaveId, v: f64, unit: &'static str| Preview::Value(tools::MeasRow { name: String::new(), src, v, unit, computing: false }.text());
+        match info.kind {
+            CatKind::Meas(k) => {
+                let v = self.meas_number(row[0], k);
+                if !v.is_finite() && self.meas_number_computing(row[0], k) { Preview::Computing } else { show(row[0], v, self.meas_unit(row[0], k)) }
+            }
+            CatKind::Pair(k) => show(row[0], self.pair_at(k, row[0], row[1]), info.unit),
+            CatKind::Wave => {
+                let reading = self.catalog_reading(c, row);
+                if reading.computing { Preview::Computing }
+                else if let Some(reason) = reading.reason { Preview::Reason(reason.to_string()) }
+                else { show(row[0], reading.value, info.unit) }
+            }
+        }
+    }
+}
+
 fn screen_rect(view: Rect, r: Rect, scroll: i32) -> Rect {
     Rect::new(view.x + r.x, view.y + r.y - scroll, r.w, r.h)
 }

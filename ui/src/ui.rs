@@ -45,6 +45,9 @@ mod windows;
 mod workspace;
 mod studio;
 mod studio_views;
+mod sheet;
+#[cfg(test)]
+mod sheet_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
@@ -348,6 +351,8 @@ pub enum MenuId {
     Windows,
     /// list of all options of a choice (`Ui::pick` names the item); picking returns to the menu of the item
     Pick,
+    /// Studio: the panels that can be added next to the plot (ui/sheet.rs)
+    AddPanel,
     /// Full legacy measurement and pair catalog, including Selected.
     MeasLegacy,
 }
@@ -1118,6 +1123,7 @@ pub struct Ui {
     /// SIM: Play is moving the timebase window through the selected record
     workspace: workspace::Workspace,
     studio: studio::Studio,
+    sheet: sheet::SheetState,
     pub desktop_panel: Option<bool>,
     /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets no new one)
     analyzed_view: AView,
@@ -1439,6 +1445,7 @@ impl Ui {
             bode: Default::default(),
             workspace: workspace::Workspace::default(),
             studio: studio::Studio::default(),
+            sheet: sheet::SheetState::default(),
             desktop_panel: None,
             analyzed_view: AView::Scope,
             sim_play: false,
@@ -5079,7 +5086,7 @@ impl Ui {
                 }
             }
         }
-        let dlg = self.dlg_layout().map(|d| d.r).filter(|d| overlaps(*d, r));
+        let dlg = self.menu_rect().filter(|d| overlaps(*d, r));
         if let Some(d) = dlg {
             let (left, right) = (d.x - 6, body.right() - 6 - d.right());
             if right >= tw + 16 {
@@ -5520,6 +5527,7 @@ impl Ui {
             MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
             MenuId::MeasAdd => Vec::new(),
             MenuId::MeasLegacy => self.measurement_catalog(),
+            MenuId::AddPanel => Vec::new(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
@@ -6200,6 +6208,7 @@ impl Ui {
             MenuId::Measure => "Measure".into(),
             MenuId::MeasAdd => "Add measurement".into(),
             MenuId::MeasLegacy => "All measurements / Selected".into(),
+            MenuId::AddPanel => "Add panel".into(),
             MenuId::MeasHold => "Add".into(),
             MenuId::MeasPair => format!("Pairs {} to {}", self.pair_source_caption(self.meas_src), self.pair_source_caption(self.meas_src_b)),
             MenuId::Dvm => "DVM and counter".into(),
@@ -7763,6 +7772,7 @@ impl Ui {
             self.close_menu();
         } else {
             self.open_menu(MenuId::MeasAdd);
+            if self.m.layout == Layout::Studio { self.sheet_add_open(); }
         }
     }
 
@@ -7913,6 +7923,8 @@ impl Ui {
             Item::WlanForgetNet => return self.wlan_forget_options(),
             Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
             Item::QuickAct => return QUICKS.iter().map(|q| q.name().to_string()).collect(),
+            // Studio: the ten slots are one list (ui/sheet.rs)
+            Item::RefSel if self.m.layout == Layout::Studio => return (1..=NREF).map(|i| format!("R{i}")).collect(),
             Item::Overclock => return board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
             _ => &[],
         };
@@ -8141,6 +8153,10 @@ impl Ui {
 
     fn draw_menu(&self, cv: &mut Canvas) {
         if !self.menu_open { return; }
+        if self.sheet_active() {
+            self.draw_sheet(cv);
+            return;
+        }
         if self.menu == MenuId::MeasAdd {
             self.draw_catalog(cv);
             return;
@@ -8267,6 +8283,9 @@ impl Ui {
 
     /// Tap inside the menu dialog; false when (x, y) is outside it.
     fn tap_menu(&mut self, x: i32, y: i32) -> bool {
+        if self.sheet_active() {
+            return self.sheet_tap(x, y);
+        }
         if self.menu_open && self.menu == MenuId::MeasAdd {
             return self.catalog_tap(x, y);
         }
@@ -8881,7 +8900,7 @@ impl Ui {
     }
 
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
-        let covered = self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        let covered = self.menu_rect().map_or(false, |d| d.contains(x, y));
         let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !covered
             && !(self.eye_open() && self.eye_pane_rect().contains(x,y));
         // a press on the corner button moves that button; it is not a drag of the trace

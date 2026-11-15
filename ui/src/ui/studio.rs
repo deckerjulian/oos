@@ -563,7 +563,7 @@ impl Ui {
     pub(super) fn studio_tap(&mut self, x: i32, y: i32) -> bool {
         self.studio_sync();
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
-        if self.menu_open && self.dlg_layout().is_some_and(|d| d.r.contains(x, y)) { return false; }
+        if self.menu_open && self.menu_rect().is_some_and(|d| d.contains(x, y)) { return false; }
         if self.studio_view_tap(x, y) { return true; }
         if self.studio.ch_picker {
             let rows = self.studio_ch_picker();
@@ -1055,6 +1055,8 @@ pub(super) const STUDIO_VIEWS: [(StudioView, &str); 6] = [
 pub(super) const VIEW_BADGES: usize = STUDIO_VIEWS.len();
 pub(super) const VIEW_RESET: usize = STUDIO_VIEWS.len() + 1;
 pub(super) const VIEW_COMPACT: usize = STUDIO_VIEWS.len() + 2;
+/// The row that opens the add-panel page.
+pub(super) const VIEW_ADD: usize = STUDIO_VIEWS.len() + 3;
 
 /// A small square wave, the lanes in the pictures of the View menu.
 fn icon_wave(cv: &mut Canvas, r: Rect, c: Rgb) {
@@ -1105,7 +1107,7 @@ impl Ui {
     /// The View menu, under the View chip.
     pub(super) fn studio_view_rect(&self) -> Rect {
         let anchor = self.studio_top().view;
-        let h = 40 + 6 * VIEW_ROW + 8 + 8 + VIEW_ROW + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
+        let h = 40 + 10 * VIEW_ROW + 48;
         Rect::new((anchor.right() - VIEW_W).max(4), self.frame().top.bottom() + 4, VIEW_W, h)
     }
 
@@ -1117,8 +1119,9 @@ impl Ui {
             0..=3 => p.y + 40 + i as i32 * VIEW_ROW,
             4..=5 => p.y + 40 + i as i32 * VIEW_ROW + 8,
             VIEW_BADGES => p.y + 40 + 6 * VIEW_ROW + 16,
-            VIEW_COMPACT => p.y + 40 + 8 * VIEW_ROW + 32,
-            _ => p.y + 40 + 7 * VIEW_ROW + 24,
+            VIEW_COMPACT => p.y + 40 + 7 * VIEW_ROW + 24,
+            VIEW_RESET => p.y + 40 + 8 * VIEW_ROW + 32,
+            _ => p.y + 40 + 9 * VIEW_ROW + 40,
         };
         Rect::new(p.x + 6, y, p.w - 12, VIEW_ROW)
     }
@@ -1201,6 +1204,11 @@ impl Ui {
         cv.fill(Rect::new(ix - 2, iy - 10, 6, 4), PANEL_BG);
         cv.triangle([(ix - 1, iy - 12), (ix - 1, iy - 5), (ix + 5, iy - 9)], TEXT);
         cv.text_in(&f.m, Rect::new(r.x + 48, r.y, r.w - 50, r.h), 0, "Reset layout", TEXT);
+        cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(VIEW_ADD).y - 4, LINE);
+        let r = self.studio_view_row(VIEW_ADD);
+        cv.hline(r.x + 18, r.x + 30, r.y + r.h / 2, TEXT);
+        cv.vline(r.x + 24, r.y + r.h / 2 - 6, r.y + r.h / 2 + 6, TEXT);
+        cv.text_in(&f.m, Rect::new(r.x + 48, r.y, r.w - 50, r.h), 0, "Add panel", TEXT);
     }
 
     /// A tap while the View menu is open: a row does its action, a tap outside closes it. Always taken.
@@ -1236,6 +1244,9 @@ impl Ui {
         } else if self.studio_view_row(VIEW_RESET).contains(x, y) {
             self.studio_reset_layout();
             self.studio.view_menu = false;
+        } else if self.studio_view_row(VIEW_ADD).contains(x, y) {
+            self.studio.view_menu = false;
+            self.open_menu(MenuId::AddPanel);
         }
         true
     }
@@ -1287,6 +1298,8 @@ pub(super) struct PanelGeo {
     pub up: Rect,
     pub down: Rect,
     pub add: Rect,
+    /// the + tile: opens the add-panel page
+    pub plus: Rect,
 }
 
 pub(super) fn icon_expand(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
@@ -1350,13 +1363,14 @@ impl Ui {
 
     /// Plot width less the docked panel: `plot_span` calls this.
     pub(super) fn studio_dock_w(&self) -> i32 {
+        if self.m.layout == Layout::Studio && self.sheet_active() { return self.sheet_dock_w(); }
         if self.m.layout == Layout::Studio && self.studio.view.is_docked() { self.studio_panel_w() + 4 } else { 0 }
     }
 
     pub(super) fn studio_panel_geo(&self) -> Option<PanelGeo> {
         let p = self.studio_panel_rect().filter(|_| matches!(self.studio.view, StudioView::Docked | StudioView::Offline))?;
         let list_y = p.y + 66;
-        let rows_h = (p.bottom() - 42 - 6 - 34 - 4 - list_y).max(self.studio_panel_row());
+        let rows_h = (p.bottom() - 48 - 6 - 34 - 4 - list_y).max(self.studio_panel_row());
         let page = (rows_h / self.studio_panel_row()).max(1) as usize;
         let list = Rect::new(p.x + 4, list_y, p.w - 8, page as i32 * self.studio_panel_row());
         let nav_y = list.bottom() + 4;
@@ -1367,7 +1381,8 @@ impl Ui {
             list, page,
             up: Rect::new(p.right() - 82, nav_y, 36, 30),
             down: Rect::new(p.right() - 42, nav_y, 36, 30),
-            add: Rect::new(p.x + 6, p.bottom() - 42, p.w - 12, 34),
+            add: Rect::new(p.x + 6, p.bottom() - 46, p.w - 12 - 92, 40),
+            plus: Rect::new(p.right() - 90, p.bottom() - 46, 84, 40),
         })
     }
 
@@ -1439,9 +1454,11 @@ impl Ui {
                 icon_arrow(cv, r.x + r.w / 2, r.y + r.h / 2, up, TEXT);
             }
             chip(cv, g.add, BTN, BTN_BORDER);
-            cv.hline(g.add.x + g.add.w / 2 - 78, g.add.x + g.add.w / 2 - 66, g.add.y + 17, TEXT);
-            cv.vline(g.add.x + g.add.w / 2 - 72, g.add.y + 11, g.add.y + 23, TEXT);
-            cv.text_in(&f.m, Rect::new(g.add.x + 40, g.add.y, g.add.w - 40, g.add.h), 1, "Add measurement", TEXT);
+            cv.hline(g.add.x + 10, g.add.x + 22, g.add.y + g.add.h / 2, TEXT);
+            cv.vline(g.add.x + 16, g.add.y + g.add.h / 2 - 6, g.add.y + g.add.h / 2 + 6, TEXT);
+            cv.text_in(&f.m, Rect::new(g.add.x + 28, g.add.y, g.add.w - 30, g.add.h), 1, "Add measurement", TEXT);
+            chip(cv, g.plus, BTN, BTN_BORDER);
+            cv.text_in(&f.m, g.plus, 1, "+ Panel", TEXT);
         } else if let Some((title, close, dock, all)) = self.studio_float_parts() {
             // the dotted handle shows that the panel can be moved
             for (dx, dy) in [(0, 0), (6, 0), (12, 0), (0, 6), (6, 6), (12, 6), (0, 12), (6, 12), (12, 12)] {
@@ -1613,6 +1630,7 @@ impl Ui {
             else if g.collapse.contains(x, y) { self.studio_set_view(StudioView::Waveform); }
             else if g.up.contains(x, y) || g.down.contains(x, y) { self.studio_page(listed.len(), g.page, g.down.contains(x, y)); }
             else if g.add.contains(x, y) { self.open_meas_list(); }
+            else if g.plus.contains(x, y) { self.open_menu(MenuId::AddPanel); }
             else if g.list.contains(x, y) {
                 let first = self.studio_first(listed.len(), g.page);
                 let k = ((y - g.list.y) / self.studio_panel_row()) as usize;
