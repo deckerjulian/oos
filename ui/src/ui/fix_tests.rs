@@ -76,3 +76,21 @@ fn sources_that_do_not_fit_sit_behind_a_plus_pill_that_opens_the_popup() {
     let popup = u.workspace.popup.as_ref().expect("Sources popup");
     assert!(popup.rows.len() >= 4 + NREF, "every source is in the popup");
 }
+
+#[test]
+fn context_menu_stays_inside_the_plot_and_marks_the_trace_mode_in_force() {
+    let mut u = fresh();
+    for (x, y) in [(5, 45), (1020, 595), (500, 250), (1000, 100)] {
+        u.context_menu(x, y);
+        let p = u.workspace.popup.as_ref().unwrap().rect;
+        let g = u.grid;
+        assert!(p.x >= g.x && p.right() <= g.right() && p.y >= g.y && p.bottom() <= g.bottom(), "({x},{y}) {p:?} in {g:?}");
+    }
+    u.context_menu(500, 250);
+    let row = |u: &Ui, i: i32| { let p = u.workspace.popup.as_ref().unwrap().rect; Rect::new(p.x + p.w - 30, p.y + 4 + i * 30, 24, 30) };
+    let ink = |u: &mut Ui, r: Rect| { let mut cv = Canvas::new(W, H); u.render(&mut cv); (r.y..r.y + r.h).flat_map(|y| (r.x..r.x + r.w).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * W + x) as usize] == ACCENT).count() };
+    let (overlay_row, stacked_row) = (row(&u, 0), row(&u, 1));
+    assert!(ink(&mut u, overlay_row) > 0 && ink(&mut u, stacked_row) == 0, "check on Overlay");
+    u.workspace.stacked = true;
+    assert!(ink(&mut u, overlay_row) == 0 && ink(&mut u, stacked_row) > 0, "check on Stacked");
+}

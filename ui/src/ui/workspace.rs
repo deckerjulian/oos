@@ -754,7 +754,10 @@ impl Ui {
     fn popup(&mut self, x: i32, y: i32, rows: Vec<(String, Action)>) {
         let width = 244;
         let height = rows.len() as i32 * 30 + 8;
-        let rect = Rect::new(x.clamp(4, W - width - 4), y.clamp(TOP.h, (BOTTOM.y - height).max(TOP.h)), width, height);
+        // inside the plot, so the popup never covers the bars or runs off the screen
+        let g = self.grid;
+        let (x0, y0) = (g.x + 4, g.y.max(TOP.h));
+        let rect = Rect::new(x.clamp(x0, (g.right() - width - 4).max(x0)), y.clamp(y0, (g.bottom() - height).max(y0)), width, height);
         self.workspace.popup = Some(Popup { rect, rows });
     }
     fn open_sources(&mut self, x: i32, y: i32) {
@@ -850,9 +853,15 @@ impl Ui {
         if let Some(popup) = &self.workspace.popup {
             cv.round(popup.rect, 5, BTN_BORDER, 255);
             cv.round(popup.rect.inset(1), 4, BAR, 255);
-            for (index, (label, _)) in popup.rows.iter().enumerate() {
+            for (index, (label, action)) in popup.rows.iter().enumerate() {
                 let r = Rect::new(popup.rect.x + 5, popup.rect.y + 4 + index as i32 * 30, popup.rect.w - 10, 30);
                 cv.set_clip(r); cv.text(&self.fonts().s, r.x + 7, r.y + 20, label, TEXT); cv.no_clip();
+                let current = match action { Action::Overlay => !self.workspace.stacked, Action::Stacked => self.workspace.stacked, _ => false };
+                if current {
+                    // a check at the right end marks the mode in force
+                    let (cx, cy) = (r.x + r.w - 18, r.y + 15);
+                    cv.line(cx, cy, cx + 4, cy + 4, ACCENT); cv.line(cx + 4, cy + 4, cx + 11, cy - 5, ACCENT);
+                }
             }
         }
         if self.workspace.gesture.is_some_and(|gesture| gesture.moved && gesture.panel != Panel::Plot) {
