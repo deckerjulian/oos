@@ -13,8 +13,9 @@ Single scan only).
 
 ## Now
 
-- The UI publishes `Shared::hold` = stopped and a record is shown (`Source::hw_hold`, every step). A source started
-  in STOP still gets its first record.
+- The UI publishes `Shared::hold` = stopped and a record is shown or the screen was cleared (`Source::hw_hold`, every
+  step). A source started in STOP still gets its first record; a Clear in STOP keeps the thread held (it armed again
+  before, overwrote the stored record and filled the queue).
 - The thread, at the top of the normal batch path: with `hold` it disarms anything armed ahead, arms nothing, answers
   `final_ack` and sleeps 5 ms per pass. Roll, scan, segments, self-cal, the auto set-up levels, counter and DVM keep
   their own paths, as before. RUN or SINGLE clear `hold`; the frames queued before the STOP are dropped then.
@@ -39,6 +40,8 @@ Single scan only).
   measured (Mean of its samples), status STOP; later frames are not taken; RUN releases the hold; without an answer
   the STOP ends after 3 s; a shallow record's STOP holds without a request. Mutation check: without taking records
   while waiting the test fails.
+- `ui/src/ui.rs` `clear_in_stop_keeps_the_hardware_held`: started in STOP, not held until the first record; held
+  after a Clear in STOP; RUN releases it.
 - `ui/src/board/dho/hw.rs` `final_replay_at_stop`: replay only for a compressed deep batch whose newest frame is not
   raw, nothing armed ahead, deep measurements on; with prearm on, such a batch is not armed ahead, so the replay
   stays possible; prearm stays for shallow records and without deep measurements.

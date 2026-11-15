@@ -2728,7 +2728,9 @@ impl Ui {
             self.final_req += 1;
             self.stop_final = Some(self.now + STOP_FINAL_WAIT);
         }
-        let final_done = self.src.hw_hold(!running && self.last[0].is_some(), self.final_req);
+        // held while stopped, unless the screen still waits for a first record (a source started in STOP, as the
+        // record path below takes it); a Clear in STOP leaves the screen empty, not the thread free to arm
+        let final_done = self.src.hw_hold(!running && (self.last[0].is_some() || self.cleared), self.final_req);
         // the protocol watch and XY read every record: no live compression for them (compress.rs)
         self.src.hw_needs_raw(self.needs_raw());
         self.was_running = running;
@@ -11064,6 +11066,43 @@ mod tests {
             assert!((ui.meas(0, Meas::Vmax) - top as f64).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
             assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
         }
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches: Clear in STOP releasing the hold (the hold asked for a record shown): the thread armed while
+    // stopped, overwrote the stored record and filled the queue, which the next RUN took; a source started in STOP
+    // without its first record
+    #[test]
+    fn clear_in_stop_keeps_the_hardware_held() {
+        use super::*;
+        crate::deepmeas::force(Some(false));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        let (n, dt) = (12_500usize, 0.8e-9);
+        let frame = |seq: u64| {
+            let ch = [vec![0.5; n], Vec::new(), Vec::new(), Vec::new()];
+            crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
+        };
+        // started in STOP: not held until the first record is here
+        ui.m.run = RunState::Stop;
+        ui.step(0.05);
+        assert!(!shared.lock().unwrap().hold, "a source started in STOP gets its first record");
+        shared.lock().unwrap().queue.push_back(frame(1));
+        ui.step(0.05);
+        ui.step(0.05);
+        assert!(ui.last[0].is_some() && shared.lock().unwrap().hold);
+        ui.clear_display();
+        for _ in 0..3 {
+            ui.step(0.05);
+        }
+        assert!(ui.last[0].is_none() && shared.lock().unwrap().hold, "Clear in STOP released the hardware");
+        ui.m.run = RunState::Run;
+        ui.step(0.05);
+        assert!(!shared.lock().unwrap().hold);
         crate::deepmeas::force(None);
     }
 
