@@ -102,14 +102,29 @@ pub(super) fn vertical_t(v: &[f32], t0: f64, dt: f64, t_lo: f64, t_hi: f64, _lo:
 }
 
 impl Ui {
-    fn meas_label(&self, cv: &mut Canvas, cx: i32, y: i32, text: &str, col: Rgb) {
+    /// Where a label goes: where it wants to be, else the nearest free place (stepping up and down, then sideways),
+    /// so no two labels cover each other.
+    fn place_label(&self, cx: i32, y: i32, text: &str, taken: &[Rect]) -> Rect {
         let f = self.fonts();
         let a = self.area;
         let w = f.s.width(text) + 10;
-        let x = (cx - w / 2).clamp(a.x + 2, a.x + a.w - w - 2);
         let h = label_h(self);
-        let r = Rect::new(x, (y - h / 2).clamp(a.y + 2, a.y + a.h - h - 2), w, h);
-        cv.round(r, 3, super::PANEL_BG, 225);
+        let at = |cx: i32, y: i32| Rect::new((cx - w / 2).clamp(a.x + 2, (a.x + a.w - w - 2).max(a.x + 2)), (y - h / 2).clamp(a.y + 2, (a.y + a.h - h - 2).max(a.y + 2)), w, h);
+        let free = |r: Rect| !taken.iter().any(|t| r.x < t.right() && t.x < r.right() && r.y < t.bottom() && t.y < r.bottom());
+        for dx in [0, 1, -1, 2, -2, 3, -3] {
+            for dy in [0, 1, -1, 2, -2, 3, -3, 4, -4] {
+                let r = at(cx + dx * (w + 4), y + dy * (h + 2));
+                if free(r) { return r; }
+            }
+        }
+        at(cx, y)
+    }
+
+    /// A label over everything else: a dark backing that no line shows through.
+    fn draw_label(&self, cv: &mut Canvas, r: Rect, text: &str, col: Rgb) {
+        let f = self.fonts();
+        cv.round(r, 3, super::PANEL_BG, 255);
+        cv.round_outline(r, 3, super::mix(super::PANEL_BG, col, 90));
         cv.text_in(&f.s, r, 1, text, col);
     }
 
@@ -162,6 +177,8 @@ impl Ui {
         let a = self.area;
         // voltage spans sit on the first on-screen peak/trough; time spans on the edges; levels across the width
         let (mut rows, mut verts, mut levels) = (0, 0, 0);
+        // the labels are placed after all the lines are drawn, and drawn over them
+        let mut pending: Vec<(i32, i32, String, Rgb)> = Vec::new();
         let (tdiv, delay) = self.view();
         let t_lo = delay as f64 - 5.0 * tdiv as f64;
         let t_hi = delay as f64 + 5.0 * tdiv as f64;
@@ -179,13 +196,13 @@ impl Ui {
                 continue;
             }
             let col = self.label_col(id);
-            let text = format!("{} {}", super::meascatalog::meas_display_name(k), si(v, k.unit()));
+            let text = format!("{} {}", super::meascatalog::meas_short_name(k), si(v, k.unit()));
             let left = t_lo - analysis_t0;
             match mark(k, &ana, left) {
                 Some(Mark::Level(l)) => {
                     let y = self.y_of_id(id, l as f32);
                     cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, col);
-                    self.meas_label(cv, a.x + a.w * (3 + 2 * (levels % 3)) / 10, y - label_h(self) / 2 - 3, &text, col);
+                    pending.push((a.x + a.w * (3 + 2 * (levels % 3)) / 10, y - label_h(self) / 2 - 3, text.clone(), col));
                     levels += 1;
                 }
                 Some(Mark::Vertical(lo, hi)) => {
@@ -199,7 +216,7 @@ impl Ui {
                         cv.line(x, y, x - 4, y + 7 * d, col);
                         cv.line(x, y, x + 4, y + 7 * d, col);
                     }
-                    self.meas_label(cv, x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (label_h(self) + 2), &text, col);
+                    pending.push((x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (label_h(self) + 2), text.clone(), col));
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
@@ -215,12 +232,19 @@ impl Ui {
                         cv.line(x, y, x + head * d, y - 4, col);
                         cv.line(x, y, x + head * d, y + 4, col);
                     }
-                    self.meas_label(cv, (x0 + x1) / 2, y - label_h(self) / 2 - 3, &text, col);
+                    pending.push(((x0 + x1) / 2, y - label_h(self) / 2 - 3, text.clone(), col));
                     rows += 1;
                 }
                 None => {}
             }
         }
+        let mut placed: Vec<Rect> = Vec::new();
+        for (cx, y, text, col) in pending {
+            let r = self.place_label(cx, y, &text, &placed);
+            self.draw_label(cv, r, &text, col);
+            placed.push(r);
+        }
+        if !placed.is_empty() { *self.studio.label_rects.borrow_mut() = placed; }
     }
 }
 

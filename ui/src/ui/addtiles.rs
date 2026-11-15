@@ -40,7 +40,7 @@ impl Ui {
         cv.round(tile, 6, if added { ACCENT } else { BTN_BORDER }, 255);
         cv.round(tile.inset(1), 5, if added { mix(BTN, ACCENT, 28) } else { BTN }, 255);
         let col = if off { DIM } else if added { ACCENT } else { TEXT };
-        self.draw_mark_pub(cv, Rect::new(tile.x + tile.w / 2 - 26, tile.y + 6, 52, 34), info.mark, col);
+        super::caticons::draw_cat_icon(cv, f, Rect::new(tile.x + tile.w / 2 - 36, tile.y + 6, 72, 36), cat, col, if off { DIM } else { ACCENT });
         let lines = super::meascatalog::wrap_lines(&f.s, info.name, tile.w - 10);
         for (i, l) in lines.iter().take(2).enumerate() {
             cv.text_in(&f.s, Rect::new(tile.x + 4, tile.y + 42 + i as i32 * 15, tile.w - 8, 16), 1, l, col);
@@ -88,7 +88,7 @@ impl Ui {
         let pic = Rect::new(card.x + 16, card.y + 16, 110, 72);
         cv.round(pic, 6, BTN_BORDER, 255);
         cv.round(pic.inset(1), 5, BG, 255);
-        self.draw_mark_pub(cv, pic.inset(8), info.mark, ACCENT);
+        super::caticons::draw_cat_icon(cv, f, pic.inset(6), cat, TEXT, ACCENT);
         cv.text(&f.lb, pic.right() + 16, card.y + 38, info.name, TEXT);
         cv.text(&f.s, pic.right() + 16, card.y + 62, &format!("Unit: {}", if info.unit.is_empty() { "none" } else { info.unit }), DIM);
         cv.text(&f.s, pic.right() + 16, card.y + 80, &info.sources, DIM);

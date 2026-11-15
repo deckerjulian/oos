@@ -89,6 +89,7 @@ mod hotspots;
 mod measdrag;
 mod axis;
 mod measview;
+mod caticons;
 mod addtiles;
 #[cfg(test)]
 mod batch12_tests;
@@ -96,6 +97,8 @@ mod batch12_tests;
 mod batch13_tests;
 #[cfg(test)]
 mod batch14_tests;
+#[cfg(test)]
+mod batch16_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};

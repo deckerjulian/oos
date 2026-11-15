@@ -123,6 +123,8 @@ pub(super) struct Studio {
     pub ov_drag: Option<(i32, i32)>,
     /// the gestures of the measurements list (`measdrag.rs`)
     pub md: super::measdrag::Md,
+    /// the rectangles of the labels on the trace drawn last (for the tests)
+    pub label_rects: std::cell::RefCell<Vec<Rect>>,
     /// the axis strips: a finger on one, a wheel flash (`axis.rs`)
     pub axis: super::axis::AxisState,
 }
@@ -1014,7 +1016,7 @@ impl Ui {
         let first = self.studio.badge_first.min(self.studio_pinned().len().saturating_sub(1));
         for key in self.studio_pinned().into_iter().skip(first) {
             let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
-            let w = 14 + 6 + (f.sb.width("CH4") + 10) + 6 + f.s.width(&r.name) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
+            let w = 14 + 6 + (f.sb.width("CH4") + 10) + 6 + f.s.width(&self.studio_badge_name(key, &r.name)) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
             if x + w > limit { break; }
             out.push((key, Rect::new(x, row.y + (row.h - self.studio_chip_h()) / 2, w, self.studio_chip_h())));
             x += w + 5;
@@ -1034,6 +1036,11 @@ impl Ui {
         (after + w <= self.studio_row_limit()).then(|| (Rect::new(after, row.y + (row.h - self.studio_chip_h()) / 2, w, self.studio_chip_h()), text))
     }
 
+    /// The name a badge shows: the short one (Pk-pk, Ampl) for a measurement of one source, as the Default layout has.
+    pub(super) fn studio_badge_name(&self, key: MeasKey, long: &str) -> String {
+        match key { MeasKey::One(k, _) => super::meascatalog::meas_short_name(k).to_string(), _ => long.to_string() }
+    }
+
     pub(super) fn draw_studio_badges(&self, cv: &mut Canvas) {
         if !self.studio_badges_visible() { return; }
         let f = self.fonts();
@@ -1051,7 +1058,7 @@ impl Ui {
             let tag = Rect::new(r.x + 28, r.y + 5, f.sb.width("CH4") + 10, r.h - 10);
             cv.round(tag, 4, col, 255);
             cv.text_in(&f.sb, tag, 1, &self.wave_name(m.src), DARK_TEXT);
-            let x = cv.text(&f.s, tag.right() + 6, cy + 4, &m.name, DIM) + 8;
+            let x = cv.text(&f.s, tag.right() + 6, cy + 4, &self.studio_badge_name(key, &m.name), DIM) + 8;
             cv.set_clip(Rect::new(x, r.y, (r.right() - x - 4).max(1), r.h));
             cv.text(&f.sb, x, cy + 4, &m.text(), TEXT);
             cv.no_clip();

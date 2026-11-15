@@ -229,6 +229,38 @@ pub(super) fn display_of_key(key: &str) -> Option<&'static str> {
     (0..512u16).filter_map(cat_from).find_map(|c| { let m = meta(c); if let CatKind::Meas(k) = m.kind { (k.name() == key).then_some(m.name) } else { None } })
 }
 
+/// A short name for the trace labels and the badges of the bottom row: Pk-pk, Ampl, Max, Min ... The long names are in
+/// the list, the detailed table and the info card.
+pub(super) fn meas_short_name(k: Meas) -> &'static str {
+    match k {
+        Meas::Vpp => "Pk-pk",
+        Meas::Vamp => "Ampl",
+        Meas::Vmax => "Max",
+        Meas::Vmin => "Min",
+        Meas::Vtop => "Top",
+        Meas::Vbase => "Base",
+        Meas::Vavg => "Mean",
+        Meas::Vrms => "RMS",
+        Meas::VrmsAc => "AC RMS",
+        Meas::VavgCyc => "Cyc mean",
+        Meas::VrmsCyc => "Cyc RMS",
+        Meas::Period => "Period",
+        Meas::Freq => "Freq",
+        Meas::Rise => "Rise",
+        Meas::Fall => "Fall",
+        Meas::PWidth => "+Width",
+        Meas::NWidth => "-Width",
+        Meas::PDuty => "+Duty",
+        Meas::NDuty => "-Duty",
+        Meas::Overshoot => "Ovshoot+",
+        Meas::Preshoot => "Ovshoot-",
+        Meas::Area => "Area",
+        Meas::StdDev => "Std dev",
+        Meas::Vmid => "Mid",
+        other => other.name(),
+    }
+}
+
 /// What the info card says about a measurement.
 pub(super) struct CatInfo {
     pub name: &'static str,
@@ -655,7 +687,8 @@ impl Ui {
         cv.round(lay.preview, 6, rgb(0x24, 0x24, 0x28), 255);
         let sel = self.cat_sel();
         let info = meta(sel);
-        self.draw_mark(cv, lay.mark, info.mark, AMBER);
+        super::caticons::draw_cat_icon(cv, self.fonts(), lay.mark, sel, TEXT, AMBER);
+        let _ = info.mark;
         let tx = lay.mark.x + lay.mark.w + 16;
         let tw = lay.preview.x + lay.preview.w - tx - 12;
         cv.text(&f.mb, tx, lay.preview.y + 28, info.name, TEXT);
@@ -711,7 +744,7 @@ impl Ui {
                 cv.round_outline(rect, 5, ACCENT);
             }
             let icon = Rect::new(rect.x + 4, rect.y + 6, 32, rect.h - 12);
-            self.draw_mark(cv, icon, meta(c).mark, BLUE);
+            super::caticons::draw_cat_icon(cv, self.fonts(), icon, c, TEXT, BLUE);
             let (a, b) = split_name(meta(c).name);
             let text_w = rect.w - 46 - if set.is_some() { 52 } else { 0 };
             let text = Rect::new(rect.x + 40, rect.y, text_w, rect.h);
@@ -736,8 +769,6 @@ impl Ui {
             }
         }
     }
-
-    pub(super) fn draw_mark_pub(&self, cv: &mut Canvas, r: Rect, mark: Mark, col: Rgb) { self.draw_mark(cv, r, mark, col) }
 
     fn draw_mark(&self, cv: &mut Canvas, r: Rect, mark: Mark, col: Rgb) {
         let p = |x: f32, y: f32| (r.x + (x * r.w as f32) as i32, r.y + ((1.0 - y) * r.h as f32) as i32);
