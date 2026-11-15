@@ -668,12 +668,8 @@ impl Ui {
             Item::SpecAcprW => si_short(m.spec_acpr_w, "Hz"),
             Item::SpecAcprS => si_short(m.spec_acpr_s, "Hz"),
             Item::IdFind(k) => self.azr.findings.get(k).map_or(String::new(), |f| {
-                // short enough for the row's button (longer text would turn it into a - value + picker)
-                let mut s = format!("CH{} {}", f.channels.first().map_or(0, |c| c + 1), f.summary);
-                if s.chars().count() > 34 {
-                    s = s.chars().take(32).collect::<String>() + "..";
-                }
-                s
+                // the whole text: the row's button draws it in the largest font that fits
+                format!("CH{} {}", f.channels.first().map_or(0, |c| c + 1), f.summary)
             }),
             Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct | Item::IdentifyAct => String::new(),
             Item::SpecMargin => format!("{:.0} dB", self.m.spec_margin),

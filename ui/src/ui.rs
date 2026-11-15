@@ -60,6 +60,8 @@ mod batch2_tests;
 mod batch3a_tests;
 #[cfg(test)]
 mod batch4_tests;
+#[cfg(test)]
+mod batch5_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -3258,16 +3260,21 @@ impl Ui {
             // round times at any delay (a zoom window sits where it is put): the labels are whole steps from the
             // trigger, not the window's centre plus whole divisions
             let step = tdiv as f64 * every as f64;
+            let mut free = i32::MIN;
             for (k, t) in studio_time_ticks(tdiv, delay, every) {
                 let x = a.x + (((t - delay as f64) / tdiv as f64 + HDIV as f64 / 2.0) * a.w as f64 / HDIV as f64).round() as i32;
                 let zero = k == 0;
                 let s = if zero { "0 s".to_string() } else { axis_label(t as f32, step as f32, 0.0, span, "s") };
                 let w = f.s.width(&s);
                 let tx = (x - w / 2).clamp(a.x + 6, a.x + a.w - 6 - w);
+                // a label pushed against an edge must not run into its neighbour
+                if tx < free + 8 { continue; }
+                free = tx + w;
                 backed_text(cv, &f.s, tx, a.y + a.h - 6, &s, if zero { ACCENT } else { AXIS_TEXT });
             }
             return;
         }
+        let mut free = i32::MIN;
         for i in 0..=HDIV as i32 {
             if (i - HDIV as i32 / 2).rem_euclid(every) != 0 {
                 continue;
@@ -3278,6 +3285,8 @@ impl Ui {
             let s = if zero { "0 s".to_string() } else { axis_label(t, tdiv, delay, span, "s") };
             let w = f.s.width(&s);
             let tx = (x - w / 2).clamp(a.x + 6, a.x + a.w - 6 - w);
+            if tx < free + 8 { continue; }
+            free = tx + w;
             backed_text(cv, &f.s, tx, a.y + a.h - 6, &s, if zero { ACCENT } else { AXIS_TEXT });
         }
     }
@@ -3680,8 +3689,8 @@ impl Ui {
         };
         cv.no_clip();
         let f = self.fonts();
-        // above the decoder band and the time labels
-        let r = Rect::new(a.x + 8, a.y + a.h - 76, f.s.width(&txt) + 16, 20);
+        // above the decoder band and the time labels, right of the volt labels
+        let r = Rect::new(a.x + 14 + f.s.width("-0.00 mV"), a.y + a.h - 76, f.s.width(&txt) + 16, 20);
         cv.round(r, 4, PANEL_BG, 230);
         cv.text_in(&f.s, r, 1, &txt, col);
     }
@@ -3763,7 +3772,10 @@ impl Ui {
         let c = self.m.math_ch(k);
         let col = MATH_COLORS[k % MATH_COLORS.len()];
         let f = self.fonts();
-        cv.set_clip(self.area);
+        // the last stacked lane keeps its time labels clear: the trace is clipped above them
+        let mut lane = self.area;
+        if self.stacked() && self.cur_win + 1 == self.wins.len() { lane.h = (lane.h - (f.s.size + 8)).max(f.s.size); }
+        cv.set_clip(lane);
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
         let label;
@@ -4049,7 +4061,7 @@ impl Ui {
         let text_w = f.sb.width(&name).max(f.s.width(&readout));
         let bw = (text_w + 12).clamp(36, maximum);
         let bh = 34;
-        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - 2).max(area.y + 2));
+        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - self.ref_badge_pad()).max(area.y + 2));
         let x0 = (area.x + 80).min((area.x + area.w - bw - 4).max(area.x + 2));
         let b = Rect::new(x0, y0, bw, bh);
         cv.round(b, 3, col, 255);
@@ -4059,6 +4071,11 @@ impl Ui {
         cv.text_in(&f.sb, Rect::new(b.x, b.y + 1, b.w, row), 1, &name, ink);
         cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &readout, ink);
         cv.set_clip(area);
+    }
+
+    /// Room a ref badge keeps clear under it: the time labels along the bottom of the lowest lane.
+    fn ref_badge_pad(&self) -> i32 {
+        if self.stacked() && self.cur_win + 1 < self.wins.len() { 2 } else { self.fonts().s.size + 10 }
     }
 
     fn draw_refs(&self, cv: &mut Canvas) {
@@ -4126,10 +4143,13 @@ impl Ui {
             }
             if let Some(y) = first {
                 // badges of references that start at the same height are fanned out instead of printed over each other
-                let (lo, hi) = (area.y + 2, (area.y + area.h - 34 - 2).max(area.y + 2));
-                let spot = badge_spot(&badges, y, lo, hi);
-                badges.push(spot);
-                self.draw_ref_badge(cv, area, spot, col, i, r);
+                // none in the overview of a zoom (it shows the whole record, the detail has the badges)
+                if !all_sources {
+                    let (lo, hi) = (area.y + 2, (area.y + area.h - 34 - self.ref_badge_pad()).max(area.y + 2));
+                    let spot = badge_spot(&badges, y, lo, hi);
+                    badges.push(spot);
+                    self.draw_ref_badge(cv, area, spot, col, i, r);
+                }
             }
         }
         cv.no_clip();
@@ -4428,7 +4448,10 @@ impl Ui {
             cv.text_in(&f.s, fit, 1, "Fit", TEXT);
             let lab = Rect::new(fit.x + fit.w + 8, y - 12, (g.x + g.w - fit.x - fit.w - 16).max(1), 22);
             cv.set_clip(lab);
-            cv.text_in(&f.s, lab, 0, &self.fit_ref_note(&note, lab.w), LABEL);
+            let text = self.fit_ref_note(&note, lab.w);
+            // over a trace of the last lane: backed, like the time labels
+            cv.blend(Rect::new(lab.x - 3, lab.y + 2, f.s.width(&text) + 6, lab.h - 4), BG, 190);
+            cv.text_in(&f.s, lab, 0, &text, LABEL);
             cv.no_clip();
         }
     }
@@ -7949,6 +7972,11 @@ impl Ui {
         if let Item::RefShow(_) = it {
             return Ctl::Button;
         }
+        // a finding is one wide button; its text takes a smaller font instead of being cut
+        if let Item::IdFind(_) = it {
+            let cur = self.value(it);
+            return Ctl::Seg(vec![cur.clone()], Some(0));
+        }
         if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan) || Self::time_text(it) || Self::remote_text(it) {
             return Ctl::Text;
         }
@@ -8220,10 +8248,10 @@ impl Ui {
                         let r = Rect::new(c.x + k as i32 * (sw + 4), c.y, sw, c.h);
                         if *sel == Some(k) {
                             cv.round(r, 5, ACCENT, 255);
-                            cv.text_in(&f.mb, r, 1, o, DARK_TEXT);
+                            fitted_text(cv, &[&f.mb, &f.m, &f.s], r, o, DARK_TEXT);
                         } else {
                             btn(cv, r, BTN, BTN_BORDER);
-                            cv.text_in(&f.m, r, 1, o, TEXT);
+                            fitted_text(cv, &[&f.m, &f.s], r, o, TEXT);
                         }
                     }
                 }
@@ -9668,6 +9696,22 @@ fn fit_font(fonts: &[&'static Font], room: i32, s: &str) -> &'static Font {
     fonts.iter().copied().find(|f| f.width(s) <= room).unwrap_or(fonts[fonts.len() - 1])
 }
 
+/// `s` centred in `r` in the first of `fonts` that fits; a text too long for the last one goes on two lines of it.
+fn fitted_text(cv: &mut Canvas, fonts: &[&'static Font], r: Rect, s: &str, c: Rgb) {
+    let room = r.w - 12;
+    let f = fit_font(fonts, room, s);
+    if f.width(s) <= room {
+        return cv.text_in(f, r, 1, s, c);
+    }
+    let words: Vec<&str> = s.split(' ').collect();
+    let first = (1..words.len()).rev().find(|&k| f.width(&words[..k].join(" ")) <= room).unwrap_or(1);
+    let (a, b) = (words[..first].join(" "), words[first..].join(" "));
+    cv.set_clip(r);
+    cv.text_in(f, Rect::new(r.x, r.y, r.w, r.h / 2 + 1), 1, &a, c);
+    cv.text_in(f, Rect::new(r.x, r.y + r.h / 2 - 1, r.w, r.h / 2 + 1), 1, &b, c);
+    cv.no_clip();
+}
+
 fn backed_text(cv: &mut Canvas, f: &Font, x: i32, y: i32, s: &str, col: Rgb) -> i32 {
     cv.blend(Rect::new(x - 3, y - f.size + 2, f.width(s) + 6, f.size + 2), BG, 180);
     cv.text(f, x, y, s, col)
@@ -9788,7 +9832,7 @@ fn axis_label(v: f32, step: f32, base: f32, span: f32, unit: &str) -> String {
     let st = (step as f64 / mult).abs();
     let needed = |x: f64| {
         let mut dec = 0;
-        while dec < 3 {
+        while dec < 9 {
             let k = x * 10f64.powi(dec);
             if (k.round() - k).abs() < 1e-3 {
                 break;
@@ -9798,6 +9842,8 @@ fn axis_label(v: f32, step: f32, base: f32, span: f32, unit: &str) -> String {
         dec
     };
     let dec = needed(st).max(needed((base as f64 / mult).abs()));
+    // a step far below one unit of the prefix (a deep zoom) needs digits down to its own size
+    let dec = if st > 0.0 && st < 1.0 { dec.max((-st.log10()).ceil().min(9.0) as i32) } else { dec };
     let x = v as f64 / mult;
     let x = if x.abs() < st * 1e-3 { 0.0 } else { x };
     format!("{:.*} {}{}", dec as usize, x, p, unit)
