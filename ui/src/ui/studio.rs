@@ -414,9 +414,10 @@ impl Ui {
         let shown = self.shown_refs();
         let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).collect();
         let off = (0..n).filter(|&c| !self.m.ch[c].on).count();
-        let add_w = if off > 0 { 62 } else { 0 };
+        // with every channel on the chip stays, as "Add source": math, ref and bus are behind it
+        let add_w = if off > 0 { 62 } else { 100 };
         let on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
-        let small = (shown.len() + maths.len()) as i32 * (REF_CHIP_W + 5) + if off > 0 { add_w + 5 } else { 0 };
+        let small = (shown.len() + maths.len()) as i32 * (REF_CHIP_W + 5) + add_w + 5;
         let room = time.x - 9 - (bottom.x + 4) - small;
         let w_on = if on > 0 { (170).min((room - (on - 1) * 5) / on).max(60) } else { 0 };
         let mut ch = [Rect::new(0, y, 0, h); NCH];
@@ -486,7 +487,8 @@ impl Ui {
         }
         if b.add.w > 0 {
             chip(cv, b.add, BTN, if self.studio.ch_picker { ACCENT } else { BTN_BORDER });
-            cv.text_in(&f.sb, b.add, 1, "+ CH", if self.studio.ch_picker { ACCENT } else { TEXT });
+            let label = if (0..n_ch()).all(|c| self.m.ch[c].on) { "Add source" } else { "+ CH" };
+            cv.text_in(&f.sb, b.add, 1, label, if self.studio.ch_picker { ACCENT } else { TEXT });
         }
         // the sections of the row are told apart by a line
         for x in [b.time.x - 5, b.trig.x - 5] {
@@ -584,7 +586,9 @@ impl Ui {
     pub(super) fn studio_picker_rows(&self) -> Option<(Vec<(usize, Rect)>, Vec<(PickAdd, Rect)>)> {
         if !self.studio.ch_picker { return None; }
         let b = self.studio_bottom();
-        let off: Vec<usize> = (0..n_ch()).filter(|&c| !self.m.ch[c].on).collect();
+        // the channels that are off; with every channel on, all of them (to turn off)
+        let mut off: Vec<usize> = (0..n_ch()).filter(|&c| !self.m.ch[c].on).collect();
+        if off.is_empty() { off = (0..n_ch()).collect(); }
         let (w, row) = (170, 44);
         let sep = if off.is_empty() { 0 } else { 10 };
         let total = (off.len() + PICK_ADDS.len()) as i32 * row + sep;
@@ -624,7 +628,7 @@ impl Ui {
             let badge = Rect::new(r.x + 8, r.y + 10, 42, 24);
             cv.round(badge, 4, mix(BAR, CH_COLORS[c], 200), 255);
             cv.text_in(&f.sb, badge, 1, &format!("CH{}", c + 1), DARK_TEXT);
-            cv.text_in(&f.m, Rect::new(badge.right() + 10, r.y, r.w - 64, r.h), 0, "Turn on", TEXT);
+            cv.text_in(&f.m, Rect::new(badge.right() + 10, r.y, r.w - 64, r.h), 0, if self.m.ch[c].on { "Turn off" } else { "Turn on" }, TEXT);
         }
     }
 
@@ -642,10 +646,11 @@ impl Ui {
                 return true;
             }
             if let Some((c, _)) = rows.into_iter().flatten().find(|(_, r): &(usize, Rect)| r.contains(x, y)) {
-                self.m.ch[c].on = true;
+                let on = !self.m.ch[c].on;
+                self.m.ch[c].on = on;
                 self.settings_changed();
                 self.relayout();
-                self.select_workspace_source(WaveId::Ch(c));
+                if on { self.select_workspace_source(WaveId::Ch(c)); }
                 return true;
             }
             // a tap on the chip that opened it only closes it; any other tap closes it and goes on

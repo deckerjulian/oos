@@ -36,6 +36,8 @@ pub struct Canvas {
     pub w: i32,
     pub h: i32,
     clip: (i32, i32, i32, i32), // x0, y0, x1, y1 (exclusive)
+    /// the clip that `no_clip` returns to and `set_clip` stays inside: the rectangle of the view being drawn
+    base: (i32, i32, i32, i32),
     /// A layer over others (the GPU picture, `gpu.rs`): the top byte of a pixel is its coverage and the colour is
     /// premultiplied by it, so drawing over a cleared (all zero) layer and then putting the layer over a picture gives
     /// what drawing straight onto the picture gives.
@@ -132,7 +134,7 @@ pub fn scale(c: Rgb, t: u32) -> Rgb {
 
 impl Canvas {
     pub fn new(w: i32, h: i32) -> Canvas {
-        Canvas { px: vec![0; (w * h) as usize], w, h, clip: (0, 0, w, h), layer: false, rec: None }
+        Canvas { px: vec![0; (w * h) as usize], w, h, clip: (0, 0, w, h), base: (0, 0, w, h), layer: false, rec: None }
     }
 
     /// From now on the canvas records what is drawn (`rec`), starting empty; or (`on` false) draws pixels again.
@@ -172,10 +174,19 @@ impl Canvas {
     }
 
     pub fn set_clip(&mut self, r: Rect) {
-        self.clip = (r.x.max(0), r.y.max(0), (r.x + r.w).min(self.w), (r.y + r.h).min(self.h));
+        let b = self.base;
+        self.clip = (r.x.max(b.0), r.y.max(b.1), (r.x + r.w).min(b.2), (r.y + r.h).min(b.3));
     }
     pub fn no_clip(&mut self) {
-        self.clip = (0, 0, self.w, self.h);
+        self.clip = self.base;
+    }
+    /// Everything drawn from now on stays inside `r` (a view's rectangle), also after `no_clip`; None lifts it.
+    pub fn set_view_clip(&mut self, r: Option<Rect>) {
+        self.base = match r {
+            Some(r) => (r.x.max(0), r.y.max(0), (r.x + r.w).min(self.w), (r.y + r.h).min(self.h)),
+            None => (0, 0, self.w, self.h),
+        };
+        self.clip = self.base;
     }
 
     fn clipr(&self, r: Rect) -> Option<(i32, i32, i32, i32)> {

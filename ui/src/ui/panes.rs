@@ -19,6 +19,8 @@ pub(super) const DB_PER_DIV: f32 = 10.0;
 
 /// Peak list width; left axis; title line and frequency labels of the spectrum.
 const PEAK_W: i32 = 212;
+/// Below this width the spectrum has no column of peaks beside the plot.
+pub(super) const SPEC_NARROW_W: i32 = 420;
 const AXIS_W: i32 = 34;
 const TITLE_H: i32 = 20;
 const XLABEL_H: i32 = 16;
@@ -109,6 +111,12 @@ impl Ui {
     /// Layout of the spectrum in `a`. In the full view the list starts under the overflow button, in the pane the close
     /// button sits beside the sort button.
     pub(super) fn spec_box(&self, a: Rect, pane: bool) -> SpecBox {
+        // a narrow view keeps the width for the plot: the list of peaks is behind the overflow button's menu
+        if a.w < SPEC_NARROW_W {
+            let title = Rect::new(a.x + AXIS_W, a.y, (a.w - AXIS_W - 8).max(1), TITLE_H);
+            let plot = Rect::new(title.x, a.y + TITLE_H, title.w, a.h - self.spec_wf_h(a, pane) - TITLE_H - XLABEL_H);
+            return SpecBox { title, plot, sort: Rect::new(a.right(), a.y, 0, 0), list: Rect::new(a.right(), a.y, 0, 0) };
+        }
         let col_x = a.x + a.w - PEAK_W;
         let title = Rect::new(a.x + AXIS_W, a.y, a.w - AXIS_W - PEAK_W - 8, TITLE_H);
         let plot = Rect::new(title.x, a.y + TITLE_H, title.w, a.h - self.spec_wf_h(a, pane) - TITLE_H - XLABEL_H);
@@ -231,6 +239,7 @@ impl Ui {
     /// share the whole height, so a short list is a large one, not a gap.
     pub(super) fn draw_peaks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, pane: bool) {
         let f = self.fonts();
+        if b.sort.w == 0 { return; }
         btn(cv, b.sort, BTN, BTN_BORDER);
         cv.text_in(super::fit_font(&[&f.mb, &f.sb, &crate::font::Fonts::get(0).mb], b.sort.w - 8, self.sort_name()), b.sort, 1, self.sort_name(), TEXT);
         let r = b.list;
@@ -914,7 +923,7 @@ impl Ui {
     /// A tap on the pane, or on the sort button of the full view; true when it was used.
     pub(super) fn pane_tap(&mut self, x: i32, y: i32) -> bool {
         if self.m.view == AView::Spectrum && !self.xy_over() && self.azr.spec.is_some() {
-            let b = self.spec_box(self.area, false);
+            let b = self.spec_box(self.view_tile_rect().unwrap_or(self.area), false);
             if b.sort.contains(x, y) {
                 self.sort_toggle();
                 return true;

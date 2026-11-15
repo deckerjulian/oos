@@ -235,9 +235,9 @@ fn bottom_bar_shows_the_sources_that_are_on_and_one_plus_ch_chip_for_the_rest() 
     tap_in(&mut u, rows[0].1);
     assert!(u.m.ch[2].on && u.studio.ch_picker == false);
     assert!(u.studio_bottom().ch[2].w > 0, "CH3 now has its chip");
-    // all channels on: no "+ CH"
+    // all channels on: the chip stays, as "Add source" (math, ref and bus are behind it)
     for c in 0..n_ch() { u.m.ch[c].on = true; }
-    assert_eq!(u.studio_bottom().add.w, 0);
+    assert!(u.studio_bottom().add.w > 0);
 }
 
 #[test]

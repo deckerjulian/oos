@@ -82,6 +82,8 @@ mod batch11b_tests;
 #[cfg(test)]
 mod batch11c_tests;
 #[cfg(test)]
+mod batch11d_tests;
+#[cfg(test)]
 mod batch11_tests;
 mod hotspots;
 mod trigger_controls;
@@ -3187,13 +3189,17 @@ impl Ui {
         }
         let cv = l.over();
         if self.pane_h() > 0 {
+            cv.set_view_clip(self.dock_on().then(|| self.dock_rect(dock::VKind::Pane)).flatten());
             self.draw_pane(cv);
             // in a dock the view's title strip has the close button
             if !self.dock_on() { self.draw_pane_close(cv); }
+            cv.set_view_clip(None);
         }
         self.draw_results(cv);
         self.draw_studio_panel(cv);
+        cv.set_view_clip(self.dock_on().then(|| self.dock_rect(dock::VKind::Table)).flatten());
         self.draw_table(cv);
+        cv.set_view_clip(None);
         self.draw_view_tiles(cv);
         self.draw_dock(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
@@ -3786,14 +3792,15 @@ impl Ui {
         for k in [VKind::Hist, VKind::Xy, VKind::View] {
             if !self.dock_shown(k) { continue; }
             let Some(r) = self.dock_content(k) else { continue };
-            cv.set_clip(r);
+            // whatever the view draws stays in its own rectangle, also where its code lifts the clip
+            cv.set_view_clip(Some(r));
             cv.fill(r, BG);
             match k {
                 VKind::Hist => self.draw_hist_in(cv, r, true),
                 VKind::Xy => { self.area = r; self.draw_xy(cv); self.draw_view_btn(cv); }
                 _ => { self.area = r; self.draw_analyzer(cv); self.draw_view_btn(cv); }
             }
-            cv.no_clip();
+            cv.set_view_clip(None);
         }
         self.area = saved;
     }

@@ -60,6 +60,8 @@ pub(super) const PANE_BUS: usize = 5;
 
 const ROW_H: i32 = 26;
 const HEAD_H: i32 = 40;
+/// Below this width a docked table puts its controls under the title.
+const TABLE_NARROW_W: i32 = 340;
 
 /// One line of an event table.
 #[derive(Clone, Debug, PartialEq)]
@@ -134,7 +136,7 @@ impl Ui {
     fn table_rect(&self, n: usize) -> (Rect, usize) {
         if self.dock_on() {
             let r = self.dock_content(super::dock::VKind::Table).unwrap_or(Rect::new(0, 0, 1, 1));
-            return (r, ((r.h - HEAD_H - 4) / ROW_H).max(1) as usize);
+            return (r, ((r.h - self.head_h(r) - 4) / ROW_H).max(1) as usize);
         }
         let a = self.over_area();
         let fit = ((a.h - 16 - HEAD_H) / ROW_H).max(1) as usize;
@@ -149,10 +151,17 @@ impl Ui {
     }
 
     /// Buttons of the table head: up, down, close.
-    fn table_buttons(r: Rect) -> [Rect; 3] {
-        let b = |i: i32| Rect::new(r.x + r.w - 46 * i, r.y + 2, 42, HEAD_H - 4);
+    pub(super) fn table_buttons(&self, r: Rect) -> [Rect; 3] {
+        // a narrow view: the controls have a row of their own under the title
+        let b = |i: i32| if self.table_narrow(r) { Rect::new(r.x + r.w - 46 * i, r.y + HEAD_H, 44, 40) } else { Rect::new(r.x + r.w - 46 * i, r.y + 2, 42, HEAD_H - 4) };
         [b(3), b(2), b(1)]
     }
+
+    /// A docked table too narrow for the title and the controls on one row.
+    pub(super) fn table_narrow(&self, r: Rect) -> bool { self.dock_on() && r.w < TABLE_NARROW_W }
+
+    /// Height of the head of the table: the title, and in a narrow view the row of controls too.
+    pub(super) fn head_h(&self, r: Rect) -> i32 { if self.table_narrow(r) { HEAD_H + 40 } else { HEAD_H } }
 
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
         let Some(k) = self.table else { return };
@@ -172,7 +181,7 @@ impl Ui {
                 else { format!("Search {} · {}", self.trigger_source_label(), total) },
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
-        for (b, t) in Self::table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]) {
+        for (b, t) in self.table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]) {
             btn(cv, *b, BTN, BTN_BORDER);
             cv.text_in(&f.mb, *b, 1, t, TEXT);
         }
@@ -182,10 +191,10 @@ impl Ui {
             } else if k == TableKind::Decode && self.decode_busy() { "Decoding the full reference record..." }
             else if k == TableKind::Search && self.reference_search_busy() { "Searching the full reference record…" }
             else { "nothing found in this record" };
-            cv.text(&f.s, r.x + 12, r.y + HEAD_H + 18, empty, DIM);
+            cv.text(&f.s, r.x + 12, r.y + self.head_h(r) + 18, empty, DIM);
         }
         for (i, e) in rows.iter().enumerate() {
-            let y = r.y + HEAD_H + i as i32 * ROW_H;
+            let y = r.y + self.head_h(r) + i as i32 * ROW_H;
             cv.hline(r.x + 8, r.x + r.w - 9, y, LINE);
             cv.text(&f.s, r.x + 12, y + 18, &si(e.t, "s"), LABEL);
             cv.text(&f.s, r.x + 110, y + 18, &e.who, DIM);
@@ -203,7 +212,7 @@ impl Ui {
         if !r.contains(x, y) {
             return false;
         }
-        let [up, down, close] = Self::table_buttons(r);
+        let [up, down, close] = self.table_buttons(r);
         let last = total.saturating_sub(fit);
         self.table_top = self.table_top.min(last);
         if close.contains(x, y) {
@@ -212,8 +221,8 @@ impl Ui {
             self.table_top = self.table_top.saturating_sub(fit);
         } else if down.contains(x, y) {
             self.table_top = (self.table_top + fit).min(last);
-        } else if y >= r.y + HEAD_H {
-            let i = self.table_top + ((y - r.y - HEAD_H) / ROW_H) as usize;
+        } else if y >= r.y + self.head_h(r) {
+            let i = self.table_top + ((y - r.y - self.head_h(r)) / ROW_H) as usize;
             if let Some(t) = events.as_ref().and_then(|events| events.get(i).copied()).or_else(|| rows.get(i).map(|event| event.t)) {
                 self.go_to_time(t);
             }
