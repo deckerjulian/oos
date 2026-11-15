@@ -86,6 +86,9 @@ mod batch11d_tests;
 #[cfg(test)]
 mod batch11_tests;
 mod hotspots;
+mod measdrag;
+#[cfg(test)]
+mod batch12_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -2621,6 +2624,7 @@ impl Ui {
         self.usb_poll();
         self.ch_hold_poll();
         self.dock_poll();
+        self.md_tick();
         self.counter_poll();
         self.la_probe_poll();
         self.log_tick();
@@ -3202,6 +3206,7 @@ impl Ui {
         cv.set_view_clip(None);
         self.draw_view_tiles(cv);
         self.draw_dock(cv);
+        self.draw_md_overlays(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
         if self.hdmi_snap_want && self.m.density != Density::Full {

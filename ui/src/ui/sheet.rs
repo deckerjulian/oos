@@ -845,7 +845,7 @@ impl Ui {
         self.sheet.search.clear();
     }
 
-    fn sheet_pick_source(&mut self, id: WaveId) {
+    pub(super) fn sheet_pick_source(&mut self, id: WaveId) {
         let name = self.wave_name(id);
         self.select_option(Item::MeasSrc, &name);
     }

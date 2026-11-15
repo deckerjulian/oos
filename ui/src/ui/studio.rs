@@ -117,6 +117,8 @@ pub(super) struct Studio {
     pub dock: super::dock::Dock,
     /// the divider under the overview strip is held: (finger y, strip height) at the press
     pub ov_drag: Option<(i32, i32)>,
+    /// the gestures of the measurements list (`measdrag.rs`)
+    pub md: super::measdrag::Md,
 }
 
 /// The second group of the "+ CH" popup.
@@ -656,6 +658,7 @@ impl Ui {
             // a tap on the chip that opened it only closes it; any other tap closes it and goes on
             if self.studio_bottom().add.contains(x, y) { return true; }
         }
+        if self.md_menu_tap(x, y) { return true; }
         if self.studio_popup_tap(x, y) { return true; }
         if let Some(k) = self.dock_float_at(x, y) { return self.dock_float_tap(k, x, y); }
         if self.studio_zoom_tap(x, y) { return true; }
@@ -1359,6 +1362,8 @@ impl Ui {
     }
 }
 
+/// Below this width the footer of the panel stacks its two buttons narrower, with shorter labels.
+pub(super) const NARROW_PANEL_W: i32 = 250;
 /// Width of the measurement panel, docked or floating, and the height of a row in it.
 const MEAS_PANEL_W_FULL: i32 = 270;
 const PANEL_ROW_FULL: i32 = 46;
@@ -1374,6 +1379,14 @@ pub(super) enum StudioDrag {
     Eat { x0: i32, y0: i32 },
     /// the floating panel moves with the finger
     Move { x0: i32, y0: i32, at0: (i32, i32), moved: bool },
+    /// a row swiped sideways
+    Swipe { key: MeasKey, x0: i32, y0: i32 },
+    /// a row held and dragged to reorder or pin
+    Reorder { key: MeasKey, x: i32, y: i32 },
+    /// a badge held and dragged
+    BadgeDrag { key: MeasKey, x: i32, y: i32 },
+    /// a tile of the Add measurement panel dragged to a channel
+    Tile { k: usize, x0: i32, y0: i32, x: i32, y: i32, moved: bool },
 }
 
 /// The parts of the docked panel.
@@ -1450,8 +1463,9 @@ impl Ui {
             list, page,
             up: Rect::new(p.right() - 82, nav_y, 36, 30),
             down: Rect::new(p.right() - 42, nav_y, 36, 30),
-            add: Rect::new(p.x + 6, p.bottom() - 46, p.w - 12 - 92, 40),
-            plus: Rect::new(p.right() - 90, p.bottom() - 46, 84, 40),
+            // a narrow panel: the + Panel button shrinks to its plus and the other gets a short label (see the draw)
+            add: Rect::new(p.x + 6, p.bottom() - 46, p.w - 12 - if p.w < NARROW_PANEL_W { 52 } else { 92 }, 40),
+            plus: if p.w < NARROW_PANEL_W { Rect::new(p.right() - 50, p.bottom() - 46, 44, 40) } else { Rect::new(p.right() - 90, p.bottom() - 46, 84, 40) },
         })
     }
 
@@ -1463,17 +1477,20 @@ impl Ui {
     }
 
     /// One row of the docked and floating panel: CH badge, the name over the value, the pin.
-    fn draw_panel_row(&self, cv: &mut Canvas, r: Rect, row: &tools::MeasRow, pinned: bool) {
+    pub(super) fn draw_panel_row(&self, cv: &mut Canvas, r: Rect, row: &tools::MeasRow, pinned: bool) {
         let f = self.fonts();
         let tag = Rect::new(r.x + 8, r.y + 12, f.sb.width("CH4") + 12, 22);
         cv.round(tag, 5, self.wave_color(row.src), 255);
         cv.text_in(&f.sb, tag, 1, &self.wave_name(row.src), DARK_TEXT);
         let x = tag.right() + 12;
-        cv.set_clip(Rect::new(x, r.y, (r.right() - 40 - x).max(1), r.h));
+        cv.set_clip(Rect::new(x, r.y, (r.right() - 88 - x).max(1), r.h));
         cv.text(&f.s, x, r.y + 18, &row.name, LABEL);
         cv.text(&f.mb, x, r.y + 38, &row.text(), TEXT);
         cv.no_clip();
-        icon_pin(cv, r.right() - 28, r.y + r.h / 2 + 1, pinned, if pinned { AMBER } else { DIM });
+        let (pin, menu) = Self::md_row_buttons(r);
+        icon_pin(cv, pin.x + pin.w / 2 - 6, r.y + r.h / 2 + 1, pinned, if pinned { AMBER } else { DIM });
+        // the row's menu: three dots
+        for k in -1..=1 { cv.circle(menu.x + menu.w / 2, r.y + r.h / 2 + 7 * k, 2, DIM); }
         cv.hline(r.x + 6, r.right() - 7, r.bottom() - 1, LINE);
     }
 
@@ -1507,7 +1524,19 @@ impl Ui {
             cv.set_clip(g.list);
             for (k, &i) in listed.iter().skip(first).take(g.page).enumerate() {
                 let r = Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row());
-                self.draw_panel_row(cv, r, &rows[i], keys.get(i).is_some_and(|k| pinned.contains(k)));
+                // a row that is swiped or springs back slides left over a red Remove
+                let md = &self.studio.md;
+                let off = match (keys.get(i), md.swipe, md.spring) {
+                    (Some(a), Some((b, dx)), _) if *a == b => dx,
+                    (Some(a), _, Some((b, dx))) if *a == b => dx as i32,
+                    _ => 0,
+                };
+                if off < 0 {
+                    let rev = Rect::new((r.right() + off).max(r.x), r.y, (-off).min(r.w), r.h);
+                    cv.fill(rev, mix(PANEL_BG, RED, 150));
+                    cv.text_in(&f.mb, rev, 1, "Remove", TEXT);
+                }
+                self.draw_panel_row(cv, Rect::new(r.x + off, r.y, r.w, r.h), &rows[i], keys.get(i).is_some_and(|k| pinned.contains(k)));
             }
             cv.no_clip();
             Self::draw_scrollbar(cv, g.list, first, g.page, listed.len());
@@ -1520,9 +1549,10 @@ impl Ui {
             chip(cv, g.add, BTN, BTN_BORDER);
             cv.hline(g.add.x + 10, g.add.x + 22, g.add.y + g.add.h / 2, TEXT);
             cv.vline(g.add.x + 16, g.add.y + g.add.h / 2 - 6, g.add.y + g.add.h / 2 + 6, TEXT);
-            cv.text_in(&f.m, Rect::new(g.add.x + 28, g.add.y, g.add.w - 30, g.add.h), 1, "Add measurement", TEXT);
+            let add_label = if g.add.w < 168 { "Add" } else { "Add measurement" };
+            cv.text_in(&f.m, Rect::new(g.add.x + 28, g.add.y, g.add.w - 30, g.add.h), 1, add_label, TEXT);
             chip(cv, g.plus, BTN, BTN_BORDER);
-            cv.text_in(&f.m, g.plus, 1, "+ Panel", TEXT);
+            cv.text_in(&f.m, g.plus, 1, if g.plus.w < 60 { "+" } else { "+ Panel" }, TEXT);
         } else if let Some((title, close, dock, all)) = self.studio_float_parts() {
             // the dotted handle shows that the panel can be moved
             for (dx, dy) in [(0, 0), (6, 0), (12, 0), (0, 6), (6, 6), (12, 6), (0, 12), (6, 12), (12, 12)] {
@@ -1702,6 +1732,7 @@ impl Ui {
         let listed = self.studio_listed(&rows);
         if let Some(g) = self.studio_panel_geo() {
             if !g.p.contains(x, y) { return false; }
+            if self.md_undo_tap(x, y) { return true; }
             if g.maximize.contains(x, y) { self.studio_set_view(StudioView::Only); }
             else if g.collapse.contains(x, y) { self.studio_set_view(StudioView::Waveform); }
             else if g.up.contains(x, y) || g.down.contains(x, y) { self.studio_page(listed.len(), g.page, g.down.contains(x, y)); }
@@ -1711,7 +1742,11 @@ impl Ui {
                 let first = self.studio_first(listed.len(), g.page);
                 let k = ((y - g.list.y) / self.studio_panel_row()) as usize;
                 if let Some(&i) = listed.get(first + k) {
-                    if x >= g.list.right() - 48 {
+                    let row = Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row());
+                    let (pin, menu) = Self::md_row_buttons(row);
+                    if menu.contains(x, y) {
+                        if let Some(&key) = keys.get(i) { self.studio.md.menu = Some(key); }
+                    } else if pin.contains(x, y) {
                         if let Some(&key) = keys.get(i) { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); }
                     } else { self.studio_configure(i); }
                 }
@@ -1771,10 +1806,13 @@ impl Ui {
         match ph {
             Phase::Down => {
                 self.studio.drag = None;
-                if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
-                    || self.studio.view_menu || self.studio.popup.is_some() || self.load_slot_ask { return false; }
+                if self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
+                    || self.studio.view_menu || self.studio.popup.is_some() || self.studio.md.menu.is_some() || self.load_slot_ask { return false; }
+                // the Add measurement panel is open: only its tiles can be dragged
+                if self.menu_open { return self.md_down(x, y); }
                 if self.ov_divider_down(x, y) { return true; }
                 if self.dock_down(x, y) { return true; }
+                if self.md_down(x, y) { return true; }
                 let rows = self.meas_rows();
                 if self.studio.view == StudioView::Sim {
                     if let Some((_, _, page, _)) = self.studio_sim_list().filter(|(list, ..)| list.contains(x, y)) {
@@ -1811,6 +1849,7 @@ impl Ui {
             Phase::Move => {
                 if self.ov_divider_move(y) { return true; }
                 if self.dock_move(x, y) { return true; }
+                if self.md_move(x, y) { return true; }
                 let Some(drag) = self.studio.drag else { return false };
                 match drag {
                     StudioDrag::Scroll { y0, first0, moved } => {
@@ -1826,6 +1865,7 @@ impl Ui {
                         self.studio.drag = Some(StudioDrag::Scroll { y0, first0, moved });
                     }
                     StudioDrag::Eat { .. } => {}
+                    StudioDrag::Swipe { .. } | StudioDrag::Reorder { .. } | StudioDrag::BadgeDrag { .. } | StudioDrag::Tile { .. } => {}
                     StudioDrag::Move { x0, y0, at0, moved } => {
                         let moved = moved || (x - x0).abs().max((y - y0).abs()) > 8;
                         if moved { self.studio.panel.at = Some((at0.0 + x - x0, at0.1 + y - y0)); }
@@ -1838,7 +1878,10 @@ impl Ui {
                 if self.ov_divider_up() { return true; }
                 if self.dock_up(x, y) { return true; }
                 let Some(drag) = self.studio.drag.take() else { return false };
+                if self.md_up(drag, x, y) { return true; }
                 let moved = match drag {
+                    StudioDrag::Swipe { .. } | StudioDrag::Reorder { .. } | StudioDrag::BadgeDrag { .. } => true,
+                    StudioDrag::Tile { moved, .. } => moved,
                     StudioDrag::Scroll { moved, .. } | StudioDrag::Move { moved, .. } => moved,
                     StudioDrag::Eat { x0, y0 } => (x - x0).abs().max((y - y0).abs()) > 8,
                 };

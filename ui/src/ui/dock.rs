@@ -558,6 +558,20 @@ impl Ui {
     }
     pub(super) fn dock_grip_rect(r: Rect) -> Rect { Rect::new(r.right() - GRIP, r.bottom() - GRIP, GRIP, GRIP) }
 
+    /// The title that fits a narrow strip: the name, else its short form, else the short form with an ellipsis.
+    pub(super) fn dock_title_fit(&self, k: VKind, name: &str, avail: i32) -> String {
+        let f = self.fonts();
+        if f.lb.width(name) <= avail { return name.to_string(); }
+        let short = match k {
+            VKind::Measure => "Meas".to_string(),
+            _ => name.split([' ', '(']).next().unwrap_or(name).to_string(),
+        };
+        if f.lb.width(&short) <= avail { return short; }
+        let mut s: String = short.chars().collect();
+        while !s.is_empty() && f.lb.width(&format!("{s}\u{2026}")) > avail { s.pop(); }
+        if s.is_empty() { String::new() } else { format!("{s}\u{2026}") }
+    }
+
     pub(super) fn dock_name(&self, k: VKind) -> String {
         match k {
             VKind::Wave => if self.view_on() || self.eye_open() && self.m.eye_place == EyePlace::Full { self.view_name().to_string() } else { "Waveform".to_string() },
@@ -972,8 +986,10 @@ impl Ui {
         let close = Self::dock_close_rect(r);
         let extra = self.dock_extra_rect(k, r);
         let right = extra.map_or(close.x, |e| e.x);
-        cv.set_clip(Rect::new(s.x + 36, s.y, (right - s.x - 40).max(1), s.h));
-        cv.text_in(&f.lb, Rect::new(s.x + 36, s.y, (right - s.x - 40).max(1), s.h), 0, &name, TEXT);
+        let avail = (right - s.x - 40).max(1);
+        let name = self.dock_title_fit(k, &name, avail);
+        cv.set_clip(Rect::new(s.x + 36, s.y, avail, s.h));
+        cv.text_in(&f.lb, Rect::new(s.x + 36, s.y, avail, s.h), 0, &name, TEXT);
         cv.no_clip();
         if let Some(e) = extra {
             chip(cv, Rect::new(e.x + 7, e.y + 6, 34, 28), BTN, BTN_BORDER);

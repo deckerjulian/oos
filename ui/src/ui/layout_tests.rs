@@ -375,9 +375,9 @@ fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
     tap_in(&mut u, g.up);
     assert_eq!(u.studio.panel.first, total - g.page - g.page.min(total - g.page));
     u.studio.panel.first = 0;
-    // the pin at the right end of a row pins and unpins it
+    // the pin left of the row menu pins and unpins it
     assert_eq!(u.studio_pinned().len(), 3);
-    let row = Rect::new(g.list.right() - 30, g.list.y + 3 * PANEL_ROW_TEST + 5, 20, 30);
+    let row = Rect::new(g.list.right() - 76, g.list.y + 3 * PANEL_ROW_TEST + 5, 20, 30);
     tap_in(&mut u, row);
     assert_eq!(u.studio_pinned().len(), 4);
     tap_in(&mut u, row);
