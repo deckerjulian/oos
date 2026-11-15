@@ -334,6 +334,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("color_grade", m.color_grade.to_string());
     kv("dots", m.dots.to_string());
     kv("layout", m.layout.name().to_ascii_lowercase());
+    kv("studio_view", m.studio_view.clone());
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
@@ -721,6 +722,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "color_grade" => m.color_grade = p_bool(v)?,
         "dots" => m.dots = p_bool(v)?,
         "layout" => m.layout = Layout::parse(v).ok_or_else(|| format!("bad layout {v}"))?,
+        "studio_view" => m.studio_view = if ["waveform", "docked", "floating", "only"].contains(&v) { v.to_string() } else { return Err(format!("bad studio view {v}")) },
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "views" => {
             let n = p_list(v, 2, |x| x.parse::<usize>().map_err(|e| e.to_string()))?;

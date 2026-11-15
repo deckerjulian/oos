@@ -33,6 +33,23 @@ pub(super) enum StudioView {
 }
 
 impl StudioView {
+    /// The name kept in the setup: the views of a record session are kept as the plain waveform.
+    pub(super) fn token(self) -> &'static str {
+        match self {
+            StudioView::Docked => "docked",
+            StudioView::Floating => "floating",
+            StudioView::Only => "only",
+            _ => "waveform",
+        }
+    }
+    pub(super) fn from_token(s: &str) -> StudioView {
+        match s {
+            "docked" => StudioView::Docked,
+            "floating" => StudioView::Floating,
+            "only" => StudioView::Only,
+            _ => StudioView::Waveform,
+        }
+    }
     /// The views that run on a record session (a loaded file or a SIM): leaving them returns to live.
     pub(super) fn is_record(self) -> bool { matches!(self, StudioView::Offline | StudioView::Sim) }
     /// The views with a panel docked at the right of the lanes.
@@ -58,6 +75,8 @@ pub(super) struct Studio {
     pub enter: bool,
     /// the measurements shown as badges; None until one is pinned or unpinned: the first three
     pub pinned: Option<Vec<MeasKey>>,
+    /// measurements moved to the floating panel from a badge popup: listed there beside the pinned ones
+    pub floated: Vec<MeasKey>,
     /// the badge row is hidden (eye button, View > Show pinned badges)
     pub hide_badges: bool,
     /// the badge whose action popup is open
@@ -151,9 +170,18 @@ pub(super) fn chip(cv: &mut Canvas, r: Rect, fill: Rgb, border: Rgb) {
 }
 
 impl Ui {
+    /// After the settings of the last run were read (main.rs): Studio comes back with its view and its lanes.
+    pub fn restore_view_state(&mut self) {
+        self.studio.view = StudioView::from_token(&self.m.studio_view);
+        self.studio.enter = self.m.layout == Layout::Studio;
+    }
+
     /// Start of a frame: the lanes draw their badges again, and a layout change made in the Display menu is applied.
     pub(super) fn studio_frame_start(&mut self) {
         self.studio.lane_badges.get_mut().clear();
+        // the view is kept with the setup like the layout; a record view is not (it needs its session)
+        let token = self.studio.view.token();
+        if self.m.studio_view != token { self.m.studio_view = token.to_string(); }
         self.studio_sync();
     }
 
@@ -163,6 +191,12 @@ impl Ui {
         if !std::mem::take(&mut self.studio.enter) { return; }
         if self.m.layout == Layout::Studio {
             self.trace_mode(true);
+            // Studio is entered with its bars: a full-screen state left from another layout would hide them
+            if self.m.density == Density::Full {
+                self.m.density = Density::Scope;
+                self.apply_density();
+                self.relayout();
+            }
         }
     }
 
@@ -522,14 +556,18 @@ impl Ui {
         cv.set_clip(Rect::new(g.x - 12, row.y, g.w + 24, g.h + head));
         // the shaded band between two time cursors
         if matches!(self.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) {
-            let xs = [self.m.cur_a, self.m.cur_b].map(|frac| g.x + (frac * g.w as f32) as i32);
+            // a cursor keeps its time while zoomed: its fraction may lie outside the view, then it is not drawn
+            let fr = [self.m.cur_a, self.m.cur_b];
+            let xs = fr.map(|frac| g.x + (frac.clamp(0.0, 1.0) * g.w as f32) as i32);
             let (x0, x1) = (xs[0].min(xs[1]), xs[0].max(xs[1]));
             cv.set_clip(Rect::new(g.x, g.y, g.w, g.h));
+            let off_same_side = (fr[0] < 0.0 && fr[1] < 0.0) || (fr[0] > 1.0 && fr[1] > 1.0);
             for &lane in &self.wins {
-                cv.blend(Rect::new(x0, lane.y, (x1 - x0).max(1), lane.h), BAND, 46);
+                if !off_same_side { cv.blend(Rect::new(x0, lane.y, (x1 - x0).max(1), lane.h), BAND, 46); }
             }
             cv.set_clip(Rect::new(g.x - 12, row.y, g.w + 24, g.h + head));
-            for (x, name) in [(xs[0], "C1"), (xs[1], "C2")] {
+            for (k, (x, name)) in [(xs[0], "C1"), (xs[1], "C2")].into_iter().enumerate() {
+                if !(0.0..=1.0).contains(&fr[k]) { continue; }
                 let r = Rect::new((x - 11).clamp(g.x, g.right() - 22), row.y + 1, 22, head - 3);
                 cv.round(r, 3, BAND, 255);
                 cv.text_in(&f.sb, r, 1, name, DARK_TEXT);
@@ -596,6 +634,12 @@ impl Ui {
             Some(pinned) => keys.into_iter().filter(|k| pinned.contains(k)).collect(),
             None => keys.into_iter().take(3).collect(),
         }
+    }
+
+    /// The measurements of the floating panel: the pinned ones and those moved there from a badge.
+    pub(super) fn studio_float_keys(&self) -> Vec<MeasKey> {
+        let pinned = self.studio_pinned();
+        self.studio_keys().into_iter().filter(|k| pinned.contains(k) || self.studio.floated.contains(k)).collect()
     }
 
     pub(super) fn studio_is_pinned(&self, key: MeasKey) -> bool {
@@ -767,7 +811,13 @@ impl Ui {
         match hit {
             Some(0) => if index < self.m.meas.len() { self.open_meas_cfg(index) } else { self.open_menu(MenuId::Measure) },
             Some(1) => self.studio_set_pin(key, false),
-            Some(2) => { self.studio_set_pin(key, false); self.studio.view = StudioView::Floating; self.relayout(); }
+            Some(2) => {
+                // only this measurement moves: off the badges, into the floating panel; the view stays unless no panel shows
+                self.studio_set_pin(key, false);
+                if !self.studio.floated.contains(&key) { self.studio.floated.push(key); }
+                if self.studio.view == StudioView::Waveform { self.studio.view = StudioView::Floating; }
+                self.relayout();
+            }
             Some(3) => {
                 self.studio_set_pin(key, false);
                 self.remove_measurement(index);
@@ -1062,8 +1112,15 @@ impl Ui {
             StudioView::Floating => {
                 let h = self.studio_float_h();
                 let g = self.grid;
-                let (x, y) = self.studio.panel.at.unwrap_or((g.right() - MEAS_PANEL_W - 8, g.y + 6));
-                Some(Rect::new(x.clamp(0, self.scr.w - MEAS_PANEL_W), y.clamp(body.y, (bottom - h).max(body.y)), MEAS_PANEL_W, h))
+                let (mut x, y) = self.studio.panel.at.unwrap_or((g.right() - MEAS_PANEL_W - 8, g.y + 6));
+                // below the head row (T marker, cursor tags), and never over the full-screen and zoom buttons
+                let top = g.y.max(body.y);
+                let y = y.clamp(top, (bottom - h).max(top));
+                for b in [self.full_btn().0, self.zoom_btn().0] {
+                    let b = Rect::new(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
+                    if x + MEAS_PANEL_W > b.x && x < b.right() && y < b.bottom() && y + h > b.y { x = (b.x - MEAS_PANEL_W).max(0); }
+                }
+                Some(Rect::new(x.clamp(0, self.scr.w - MEAS_PANEL_W), y, MEAS_PANEL_W, h))
             }
             _ => None,
         }
@@ -1076,7 +1133,7 @@ impl Ui {
     }
 
     fn studio_float_h(&self) -> i32 {
-        40 + 24 + self.studio_pinned().len().clamp(1, 5) as i32 * PANEL_ROW + 52
+        40 + 24 + self.studio_float_keys().len().clamp(1, 5) as i32 * PANEL_ROW + 52
     }
 
     /// Plot width less the docked panel: `plot_span` calls this.
@@ -1134,7 +1191,9 @@ impl Ui {
     }
 
     pub(super) fn draw_studio_panel(&self, cv: &mut Canvas) {
-        if self.m.layout != Layout::Studio || self.view_on() { return; }
+        if self.m.layout != Layout::Studio { return; }
+        // an analysis view fills the plot area: the docked panel stays beside it, a floating panel and the table do not
+        if self.view_on() && !self.studio.view.is_docked() { return; }
         self.draw_studio_offline(cv);
         if self.studio_table_rect().is_some() { return self.draw_studio_table(cv); }
         if self.studio.view == StudioView::Sim { return self.draw_studio_sim(cv); }
@@ -1181,15 +1240,16 @@ impl Ui {
             let (cx, cy) = (close.x + close.w / 2, close.y + close.h / 2);
             cv.line(cx - 5, cy - 5, cx + 5, cy + 5, TEXT);
             cv.line(cx - 5, cy + 5, cx + 5, cy - 5, TEXT);
-            cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} pinned \u{b7} {} total", pinned.len(), rows.len()), DIM);
+            let shown = self.studio_float_keys();
+            cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} shown \u{b7} {} total", shown.len(), rows.len()), DIM);
             let mut k = 0;
-            for key in &pinned {
+            for key in &shown {
                 let Some(i) = self.studio_index(*key).filter(|&i| i < rows.len()) else { continue };
                 if k >= 5 { break; }
                 self.draw_panel_row(cv, Rect::new(p.x + 4, p.y + 64 + k * PANEL_ROW, p.w - 8, PANEL_ROW), &rows[i], true);
                 k += 1;
             }
-            if k == 0 { cv.text(&f.s, p.x + 14, p.y + 64 + 28, "Nothing pinned yet", DIM); }
+            if k == 0 { cv.text(&f.s, p.x + 14, p.y + 64 + 28, "Nothing shown yet", DIM); }
             chip(cv, dock, BTN, BTN_BORDER);
             cv.round_outline(Rect::new(dock.x + 12, dock.y + 12, 16, 12), 2, TEXT);
             cv.vline(dock.x + 23, dock.y + 12, dock.y + 23, TEXT);
@@ -1359,10 +1419,12 @@ impl Ui {
             else if dock.contains(x, y) { self.studio_set_view(StudioView::Docked); }
             else if all.contains(x, y) { self.studio_set_view(StudioView::Only); }
             else if !title.contains(x, y) && y >= p.y + 64 {
-                let pinned = self.studio_pinned();
+                let shown = self.studio_float_keys();
                 let k = ((y - p.y - 64) / PANEL_ROW) as usize;
-                if let Some(index) = pinned.get(k).and_then(|&key| self.studio_index(key)) {
-                    if x >= p.right() - 52 { if let Some(&key) = keys.get(index) { self.studio_set_pin(key, false); } }
+                if let Some(index) = shown.get(k).and_then(|&key| self.studio_index(key)) {
+                    if x >= p.right() - 52 {
+                        if let Some(&key) = keys.get(index) { self.studio.floated.retain(|f| *f != key); self.studio_set_pin(key, false); }
+                    }
                     else { self.studio_configure(index); }
                 }
             }

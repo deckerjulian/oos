@@ -533,6 +533,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             Ok(m) => {
                 ui.m = m;
                 ui.sync_full();
+                ui.restore_view_state();
                 eprintln!("oos-ui: settings restored from {}", SETUP_FILE);
             }
             Err(e) => eprintln!("oos-ui: {}: {}", SETUP_FILE, e),
