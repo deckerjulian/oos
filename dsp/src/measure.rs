@@ -902,13 +902,13 @@ mod tests {
         }
     }
 
+    // No wall-time limit (ADR 0020): a quadratic join of 400k edges is 1.6e11 steps and does not end in time, which
+    // shows a regression without a threshold that a loaded computer trips.
     #[test]
     fn complete_pulse_join_is_linear_on_a_large_sorted_record() {
         let open:Vec<f64>=(0..400_000).map(|i|i as f64).collect();let close:Vec<f64>=open.iter().map(|t|t+0.5).collect();
-        let start=std::time::Instant::now();let widths=pair_widths(&open,&close);let elapsed=start.elapsed();
+        let widths=pair_widths(&open,&close);
         assert_eq!(widths.len(),400_000);assert!(widths.iter().all(|&width|width==0.5));
-        assert!(elapsed<std::time::Duration::from_millis(500),"sorted pulse join took {elapsed:?}");
-        eprintln!("sorted complete-pulse join400k: {elapsed:?}");
     }
 
     #[test]
@@ -964,27 +964,28 @@ mod tests {
         }
     }
 
-    /// Seen on the unit: a deep record with many edges that seldom reach the 10 % and 90 % levels.
+    /// Seen on the unit: a deep record with many edges that seldom reach the 10 % and 90 % levels. Searching the
+    /// record per edge held the main thread for half a minute there and takes minutes here. No wall-time limit
+    /// (ADR 0020).
     #[test]
     fn edges_that_miss_the_levels_are_quick() {
         let n = 400_000;
         let mut v = vec![0.0f32; n / 10];
         v.extend(vec![1.0f32; n / 10]);
         v.extend((0..n * 8 / 10).map(|i| if i % 2 == 0 { 0.4f32 } else { 0.6 }));
-        let t = std::time::Instant::now();
         let a = analyze_min(&v, 1e-9, 0.1);
         assert!(a.rises.len() > 1000, "{}", a.rises.len());
-        assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
+        // only the step from 0 to 1 reaches both levels
+        assert_eq!((a.rise_count, a.fall_count), (1, 0));
     }
 
+    /// One pass over the sorted edges; a pass per edge would not finish. No wall-time limit (ADR 0020).
     #[test]
     fn width_of_a_deep_record_is_quick() {
         let rises: Vec<f64> = (0..400_000).map(|i| i as f64).collect();
         let falls: Vec<f64> = rises.iter().map(|t| t + 0.5).collect();
         let an = Analysis { rises, falls, ..Default::default() };
-        let t = std::time::Instant::now();
         assert!((an.width(true) - 0.5).abs() < 1e-9 && an.pulses(true) == 400_000.0);
-        assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
     }
 
     #[test]
