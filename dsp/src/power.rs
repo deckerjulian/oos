@@ -307,7 +307,8 @@ pub fn switching(vds: &[f32], id: &[f32], dt: f64, thr_pct: f64) -> Switching {
 }
 
 /// Least-squares slope of the samples between the 10 % and 90 % crossings of one edge direction.
-/// The search stays between the neighbouring mid crossings.
+/// The search stays between the neighbouring mid crossings, found by bisection in the sorted list of all of them (a
+/// scan of the list per edge took 1.2 s for 20 000 edges).
 fn edge_slope(x: &[f32], dt: f64, a: &crate::measure::Analysis, rising: bool) -> f64 {
     let amp = a.top - a.base;
     if !a.valid || !(amp > 0.0) || !(dt > 0.0) {
@@ -321,8 +322,11 @@ fn edge_slope(x: &[f32], dt: f64, a: &crate::measure::Analysis, rising: bool) ->
     let mut slopes = Vec::new();
     for &te in edges {
         let i = (te / dt) as usize + 1;
-        let prev = all.iter().rev().find(|&&t| t < te).map(|t| (t / dt) as usize).unwrap_or(0);
-        let next = all.iter().find(|&&t| t > te).map(|t| (t / dt) as usize + 1).unwrap_or(x.len());
+        // the last mid crossing before this edge and the first after it
+        let before = all.partition_point(|&t| t < te);
+        let after = all.partition_point(|&t| t <= te);
+        let prev = before.checked_sub(1).map(|k| (all[k] / dt) as usize).unwrap_or(0);
+        let next = all.get(after).map(|t| (t / dt) as usize + 1).unwrap_or(x.len());
         let (t0, t1) = if rising {
             (crossing(x, prev.max(1), i, lo, true), crossing(x, i.saturating_sub(1), next, hi, true))
         } else {
@@ -682,4 +686,57 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
         r.turn_on = f64::NAN;
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bisection finds the neighbours the scan of the whole list found: the same slopes on a noisy record.
+    #[test]
+    fn edge_slope_matches_the_scan() {
+        fn scan(x: &[f32], dt: f64, a: &crate::measure::Analysis, rising: bool) -> f64 {
+            let amp = a.top - a.base;
+            let mut all = a.rises.clone();
+            all.extend_from_slice(&a.falls);
+            all.sort_by(f64::total_cmp);
+            let edges = if rising { &a.rises } else { &a.falls };
+            let (lo, hi) = (a.base + 0.1 * amp, a.base + 0.9 * amp);
+            let mut slopes = Vec::new();
+            for &te in edges {
+                let i = (te / dt) as usize + 1;
+                let prev = all.iter().rev().find(|&&t| t < te).map(|t| (t / dt) as usize).unwrap_or(0);
+                let next = all.iter().find(|&&t| t > te).map(|t| (t / dt) as usize + 1).unwrap_or(x.len());
+                let (t0, t1) = if rising {
+                    (crossing(x, prev.max(1), i, lo, true), crossing(x, i.saturating_sub(1), next, hi, true))
+                } else {
+                    (crossing(x, prev.max(1), i, hi, false), crossing(x, i.saturating_sub(1), next, lo, false))
+                };
+                let (Some(t0), Some(t1)) = (t0, t1) else { continue };
+                if let Some(s) = ls_slope(x, dt, t0, t1) {
+                    slopes.push(s);
+                }
+            }
+            if slopes.is_empty() { f64::NAN } else { slopes.iter().sum::<f64>() / slopes.len() as f64 }
+        }
+        // trapezoids with uneven plateaus and some noise; a few runts that miss a level
+        let mut s = 9u32;
+        let mut v = Vec::new();
+        for k in 0..200 {
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            let top = if k % 17 == 0 { 0.6 } else { 1.0 };
+            let (on, off) = (20 + (s >> 26) as usize, 20 + (s >> 20 & 31) as usize);
+            v.extend((0..8).map(|i| top * i as f32 / 8.0));
+            v.extend(std::iter::repeat_n(top, on));
+            v.extend((0..8).map(|i| top * (1.0 - i as f32 / 8.0)));
+            v.extend(std::iter::repeat_n(0.0, off));
+        }
+        crate::sim::add_noise(&mut v, 0.02, 4);
+        let a = analyze(&v, 1e-9);
+        assert!(a.rises.len() > 150, "{}", a.rises.len());
+        for rising in [true, false] {
+            let (got, want) = (edge_slope(&v, 1e-9, &a, rising), scan(&v, 1e-9, &a, rising));
+            assert!(got.is_finite() && got == want, "{rising}: {got} {want}");
+        }
+    }
 }
