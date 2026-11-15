@@ -62,6 +62,7 @@ impl Ui {
                 self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
             }
         }
+        if self.m.win_layout != WinLayout::One { self.workspace.stacked = false; }
         self.sync_full();
         if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
             self.spread_wins();

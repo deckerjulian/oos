@@ -632,9 +632,15 @@ impl Ui {
         }
     }
     pub(super) fn trace_mode(&mut self, stacked: bool) {
-        self.workspace.stacked = stacked;
-        self.m.win_layout = WinLayout::One;
         self.workspace.popup = None;
+        // a split already gives every source its own window: Overlay keeps it, Stacked replaces it
+        if !stacked && self.m.win_layout != WinLayout::One { self.workspace.stacked = false; return; }
+        self.workspace.stacked = stacked;
+        if stacked && matches!(self.m.density, Density::Split | Density::Four) {
+            self.m.density = Density::Scope;
+            self.apply_density();
+        }
+        self.m.win_layout = WinLayout::One;
         self.relayout();
         self.dirty_map = true;
     }
