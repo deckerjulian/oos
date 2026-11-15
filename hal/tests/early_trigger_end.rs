@@ -4,11 +4,13 @@
 //! The early end of the trigger wait for new settings (upstream f1b2d6c) on the fork's generic batch path
 //! (`acquire_batch_until` over `plain_step`), against the host model of the FPGA (docs/fork/upstream-audit.md, P3
 //! guard 3). Break it catches: a merge that edits upstream's Poll body and drops the `stop()` check from the fork's
-//! copy, so a settings change in NORMAL without a trigger waits the full 2 s again.
+//! copy, so a settings change in NORMAL without a trigger waits the full 2 s again. The stop request is counted, not
+//! timed (ADR 0020).
 
 use oos_hal::dho::bus::DmaBuf;
 use oos_hal::dho::seg::sim::{engine, Engine};
 use oos_hal::dho::seq::{acquire_batch_until, Settings, State, NEW_SETTINGS};
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 #[test]
@@ -19,14 +21,16 @@ fn the_trigger_wait_ends_for_new_settings() {
     // no trigger: the model records no frame, the done flag never comes
     let (_eng, mut bar, mut c2h) = engine(Engine::new(0, 1_000_000_000_000, 0, p.ratio));
     let mut dma = DmaBuf::new();
-    let t = Instant::now();
-    let stop_at = Duration::from_millis(30);
-    let r = acquire_batch_until(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, || t.elapsed() >= stop_at);
-    let took = t.elapsed();
+    // new settings arrive at the third look at `stop`
+    let asked = Cell::new(0u32);
+    let stop = || {
+        asked.set(asked.get() + 1);
+        asked.get() >= 3
+    };
+    let r = acquire_batch_until(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, stop);
     assert_eq!(r, Err(NEW_SETTINGS.to_string()));
-    assert!(took >= stop_at, "{:?}", took);
-    // the check runs every ~10 ms; the full wait would be 2 s. Generous for a loaded host.
-    assert!(took < Duration::from_millis(500), "{:?}", took);
+    // the wait ended at the first yes, not at its 2 s time-out
+    assert_eq!(asked.get(), 3);
 }
 
 #[test]
