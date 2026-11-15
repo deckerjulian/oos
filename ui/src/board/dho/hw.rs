@@ -1947,8 +1947,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // once per compress::RAW_PERIOD (each read cost 7-9 % of the frames at 1 channel on the unit)
                     let raw_frame = if raw_newest(&b, &p) && count > 0 && comp_last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD) {
                         comp_last = Some(std::time::Instant::now());
+                        // the flag first: a guard taken in the argument would be held for the whole decode
+                        let mc = out.lock().unwrap().cores;
                         match seq::read_raw_again(&mut state, &b, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                            Ok(()) => Some(decode_with(raw_dma.data(), &seq::raw_settings(&b), &p, 0, out.lock().unwrap().cores.then_some(&mut cores))),
+                            Ok(()) => Some(decode_with(raw_dma.data(), &seq::raw_settings(&b), &p, 0, mc.then_some(&mut cores))),
                             Err(e) => {
                                 status(format!("raw read of the newest frame: {}", e));
                                 None
@@ -1966,8 +1968,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let raw_frame = match deep {
                         Some(ds) if raw_frame.is_none() => {
                             deep_last = Some(std::time::Instant::now());
+                            let mc = out.lock().unwrap().cores;
                             match seq::read_raw_again(&mut state, &ds, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                                Ok(()) => Some(decode_with(raw_dma.data(), &ds, &p, 0, out.lock().unwrap().cores.then_some(&mut cores))),
+                                Ok(()) => Some(decode_with(raw_dma.data(), &ds, &p, 0, mc.then_some(&mut cores))),
                                 Err(e) => {
                                     status(format!("raw read of the deep window: {}", e));
                                     None
