@@ -2073,9 +2073,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let mut skip = 0usize;
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
+                        // the record of measurements: with the ADC-core correction, as on the path without batches
+                        let mc = out.lock().unwrap().cores;
                         let newest = match raw_frame {
                             Some(f) => Frame { stamp, seq: n, ..f },
-                            None => Frame { stamp, ..decode(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n) },
+                            None => {
+                                let last = &dma.data()[(avail - 1) * fb..avail * fb];
+                                Frame { stamp, ..decode_with(last, &b, &p, n, mc.then_some(&mut cores)) }
+                            }
                         };
                         let next = pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
                         let next = next.or_else(|| (pool_made < POOL).then(|| {
