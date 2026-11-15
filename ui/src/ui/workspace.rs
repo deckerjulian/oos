@@ -607,7 +607,8 @@ impl Ui {
         (self.workspace.stacked || self.m.layout == Layout::Studio) && !self.xy && matches!(self.m.view, AView::Scope | AView::Eye)
     }
     pub(super) fn trace_sources(&self) -> Vec<Trace> {
-        let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on).map(Trace::Channel).collect();
+        // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane
+        let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on && !self.record_mode()).map(Trace::Channel).collect();
         sources.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(Trace::Reference));
         sources.extend((0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).map(Trace::Math));
         sources

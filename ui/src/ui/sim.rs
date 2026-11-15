@@ -410,6 +410,7 @@ impl Ui {
         let lane = self.sim_lane();
         let count = serial::sample_count(&lane)?;
         let continuing=self.session_is_sim && !self.replay.sim_initial_armed;
+        if !continuing { self.sim_pick_free_slot(lane.name); }
         let mut request = self.sim_capture_request(lane, self.m.sim_slot, continuing, false, run);
         if let Some(Err(error))=&request.bus_trigger { return Err((*error).into()); }
         if request.bus_trigger.is_some() && run && !continuing {
@@ -431,6 +432,15 @@ impl Ui {
             self.toast(&format!("Generating {} ({:.1} M samples)", lane.name, count as f64 / 1e6));
         }
         Ok(())
+    }
+
+    /// A new simulation does not overwrite a ref the user loaded: it moves to the first free slot. With every slot in
+    /// use it keeps the chosen one, and the toast at the end says which ref it replaced. A slot that holds the output
+    /// of an earlier run of the same preset is simply reused.
+    fn sim_pick_free_slot(&mut self, preset: &str) {
+        let slot = self.m.sim_slot;
+        if self.refs.get(slot).and_then(Option::as_ref).is_none_or(|r| r.label == preset) { return; }
+        if let Some(free) = (0..NREF).find(|&i| self.refs[i].is_none()) { self.m.sim_slot = free; }
     }
 
     pub(super) fn sim_poll(&mut self) {
@@ -528,6 +538,7 @@ impl Ui {
         let dt = serial::dt_of(&lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
         let vpd = nearest_vdiv((span / 4.0) as f32);
+        let replaced = self.refs[slot].as_ref().filter(|r| !continuing && r.label != lane.name).map(|r| r.label.clone());
         self.refs[slot] = Some(RefWave {
             src: 0,
             color: 0,
@@ -543,7 +554,8 @@ impl Ui {
         if self.offline { self.offline_ref = slot; }
         // Required CH bus auxiliaries remain accepted immutable snapshots.
         let retained_channels=bus_decode.as_ref().map_or([false;NCH],|decoded|decoded.channels);
-        for c in 0..NCH {self.m.ch[c].on=retained_channels[c];}
+        // The SIM never switches an input off; the inputs its bus decode needs are switched on.
+        for c in 0..NCH {self.m.ch[c].on|=retained_channels[c];}
         self.m.la.on = false;
         let rec_s = n as f64 * dt;
         let bit = nearest_tscale(8.0 / lane.bits_per_s / HDIV as f64);
@@ -589,7 +601,10 @@ impl Ui {
         self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
-        self.toast(&format!("{} to R{}", lane.name, slot + 1));
+        match replaced {
+            Some(old) => self.toast(&format!("{} to R{}, replacing {}", lane.name, slot + 1, old)),
+            None => self.toast(&format!("{} to R{}", lane.name, slot + 1)),
+        }
     }
 
     pub(crate) fn sim_preset_name(&self) -> &'static str {
@@ -996,7 +1011,7 @@ mod tests {
         assert!((r.dt - 1.0 / (8.0 * 16e9)).abs() < 1e-18);
         assert_eq!(u.m.eye_src, WaveId::Ref(2));
         assert!((u.m.eye_rate - 16e9).abs() < 1.0);
-        assert!(!u.m.ch.iter().any(|c| c.on), "SIM is a reference, not the analog channels");
+        assert!(u.m.ch[0].on, "SIM is a reference and does not switch the analog channels off");
         assert!(u.last[0].is_none());
         assert_eq!(u.meas_src, WaveId::Ref(2));
         assert!(u.m.zoom);
@@ -1090,7 +1105,7 @@ mod tests {
         u.m.run = RunState::Run;
         u.step(1.0 / 60.0);
         assert!(u.last[0].is_none(), "Run with analog off must not acquire");
-        assert!(!u.m.ch.iter().any(|c| c.on));
+        assert!(u.m.ch[0].on, "the inputs keep their state; Run in a record session still does not acquire");
         u.return_to_live();
         u.m.tscale = 0;
         u.m.ch[0].on = true;

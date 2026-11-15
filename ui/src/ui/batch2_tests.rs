@@ -87,6 +87,47 @@ fn trigger_pill_shows_the_level_the_trigger_page_shows() {
 }
 
 #[test]
+fn sim_keeps_a_loaded_ref_and_every_channel() {
+    let mut u = fresh(Layout::Default);
+    u.refs[0] = Some(sine_ref(0, 2000, 1e-6));
+    u.refs[0].as_mut().unwrap().label = "mine.csv".into();
+    u.m.ch[0].on = true; u.m.ch[1].on = true;
+    u.m.sim_slot = 0;
+    u.sim_play_set(true).unwrap();
+    u.wait_sim_generation();
+    assert_eq!(u.refs[0].as_ref().unwrap().label, "mine.csv", "the loaded ref is not overwritten");
+    assert_eq!(u.m.sim_slot, 1, "the SIM took the first free slot");
+    assert!(u.refs[1].is_some() && u.session_is_sim);
+    assert!(u.m.ch[0].on && u.m.ch[1].on, "the SIM does not turn channels off");
+    let toast = u.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+    assert!(toast.ends_with("to R2"), "{toast}");
+}
+
+#[test]
+fn sim_with_every_slot_full_says_which_ref_it_replaced() {
+    let mut u = fresh(Layout::Default);
+    for i in 0..NREF { u.refs[i] = Some(sine_ref(i, 200, 1e-6)); u.refs[i].as_mut().unwrap().label = format!("file{i}.csv"); }
+    u.m.sim_slot = 0;
+    u.sim_play_set(true).unwrap();
+    u.wait_sim_generation();
+    let toast = u.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+    assert!(toast.contains("to R1, replacing file0.csv"), "{toast}");
+}
+
+#[test]
+fn restarting_the_sim_reuses_its_own_slot() {
+    let mut u = fresh(Layout::Default);
+    u.sim_play_set(true).unwrap();
+    u.wait_sim_generation();
+    assert_eq!(u.m.sim_slot, 0);
+    u.return_to_live();
+    u.sim_play_set(true).unwrap();
+    u.wait_sim_generation();
+    assert_eq!(u.m.sim_slot, 0, "the earlier output of the same preset is not a loaded ref");
+    assert!(u.refs[1].is_none());
+}
+
+#[test]
 fn shots_refs_sim_axis_power() {
     for layout in [Layout::Default, Layout::Studio] {
         let name = format!("{layout:?}").to_lowercase();

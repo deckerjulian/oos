@@ -329,7 +329,7 @@ mod tests {
         let mut play = ui();
         play.activate(Item::SimPlay);
         play.wait_sim_generation();
-        assert!(play.m.ch.iter().all(|channel| !channel.on), "SIM plays a stored reference");
+        assert!(play.m.ch[0].on, "SIM plays a stored reference and leaves the inputs as they were");
         assert!(play.refs[play.m.sim_slot].is_some());
 
         let mut u = ui();
