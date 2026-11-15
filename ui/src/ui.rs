@@ -45,6 +45,8 @@ mod windows;
 mod workspace;
 #[cfg(test)]
 mod layout_tests;
+#[cfg(test)]
+mod fix_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};

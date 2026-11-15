@@ -13,7 +13,7 @@ enum Panel { Plot, Eye, Measurements }
 #[derive(Clone, Copy)]
 struct Gesture { panel: Panel, origin: Rect, x: i32, y: i32, at: f64, moved: bool, held: bool }
 #[derive(Clone)]
-enum Action {
+pub(super) enum Action {
     Overlay, Stacked, Sources, Source(WaveId), Trigger(WaveId), Menu(MenuId),
     ZoomReset, ZoomClose, FitRecord, Live, Single, Run, Panel,
     EyeRight, EyeLeft, EyeBelow, EyeFloat, EyeClose,
@@ -631,7 +631,7 @@ impl Ui {
             _ => None,
         }
     }
-    fn trace_mode(&mut self, stacked: bool) {
+    pub(super) fn trace_mode(&mut self, stacked: bool) {
         self.workspace.stacked = stacked;
         self.m.win_layout = WinLayout::One;
         self.workspace.popup = None;
@@ -776,16 +776,18 @@ impl Ui {
         }
         true
     }
-    fn workspace_action(&mut self, action: Action) {
+    pub(super) fn workspace_action(&mut self, action: Action) {
         match action {
             Action::Overlay => self.trace_mode(false), Action::Stacked => self.trace_mode(true),
             Action::Sources => self.open_sources(56, BOTTOM.y),
             Action::Source(WaveId::Ch(c)) => {
+                if self.m.ch[c].on && self.trace_sources().len() <= 1 { self.toast("Keep one source on"); return; }
                 if self.m.ch[c].on { self.m.ch[c].on = false; self.settings_changed(); }
                 else { self.activate_live_channel(c); }
                 self.relayout();
             }
             Action::Source(WaveId::Ref(i)) => {
+                if self.refs[i].as_ref().is_some_and(|r| r.on) && self.trace_sources().len() <= 1 { self.toast("Keep one source on"); return; }
                 if let Some(reference) = &mut self.refs[i] { reference.on = !reference.on; }
                 self.select_workspace_source(WaveId::Ref(i));
                 self.relayout();
