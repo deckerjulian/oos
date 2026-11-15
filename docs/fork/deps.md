@@ -16,6 +16,17 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
   `busybox-static`, its version recorded in `busybox.version` of each build), the kernel base archive
   (`kernel/src/SHA256SUMS`) and Rust crates (`Cargo.lock`).
 
+## Rust crates
+
+What runs on the scope, `oos-hal` and `oos-dsp` depend on `libc` and the crates of the tree only; `tools/check.sh
+target` fails otherwise ([ADR 0021](../adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
+A build that only runs on a computer may use its platform's crates; each is listed here:
+
+| Crate | Build | For | Versions |
+|---|---|---|---|
+| `minifb` | Windows desktop (`cfg(windows)`) | the window and its keyboard and mouse input (`ui/src/desktop.rs`) | `ui/Cargo.toml`, `ui/Cargo.lock` |
+| `windows-sys` | Windows desktop (`cfg(windows)`) | network interfaces, sockets, file dialogs (`ui/src/announce/windows.rs`, `ui/src/desktop/`) | `ui/Cargo.toml`, `ui/Cargo.lock` |
+
 ## Checking for updates
 
 `tools/deps-check.sh` reads each line's release listing and prints the pinned and the newest release (no release

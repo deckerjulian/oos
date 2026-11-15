@@ -1,0 +1,35 @@
+# Editor settings for the tree (docs/adr/process/0019). tools/check.sh text checks the rules a tool can check.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 120
+
+[*.{rs,py,toml}]
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# shell and C keep the indentation of the file (several use tabs); a new shell script uses 4 spaces
+[*.sh]
+indent_size = 4
+
+[gpu/*.{c,h}]
+indent_style = tab
+
+[Makefile]
+indent_style = tab
+
+# taken from elsewhere: kept in their own format
+[{LICENSE,kernel/modules/**,kernel/patches/**,rootfs/initramfs/lib/firmware/**}]
+trim_trailing_whitespace = false
+insert_final_newline = unset
+indent_style = unset
+indent_size = unset
+max_line_length = unset

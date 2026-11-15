@@ -34,7 +34,8 @@ OOS builds on the work of these projects. Thank you to everyone behind them:
 - **[linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)** and Realtek, for the
   firmware of the WLAN stick.
 - **[Rust](https://www.rust-lang.org)** and the **[libc](https://github.com/rust-lang/libc)** crate, the only dependency
-  of the OOS code.
+  of the OOS code on the scope. The Windows desktop build also uses **[minifb](https://github.com/emoon/rust_minifb)**
+  and **[windows-sys](https://github.com/microsoft/windows-rs)** for its window and network.
 - **[Roboto](https://github.com/googlefonts/roboto-classic)**, the typeface of the screen.
 
 Sources and licences of the kernel parts are listed in [kernel/README.md](kernel/README.md).
@@ -861,15 +862,17 @@ OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and `par
 
 ## Development
 
-Each crate builds on its own. The hardware code is Linux-only, so check it for the target as well:
+Each crate builds on its own. The hardware code is Linux-only, so it is checked for the target as well.
+`tools/check.sh` runs every check CI runs (the tests of all crates, the target build, the decoder builds, the file
+and script checks); `tools/check.sh test` runs one layer of them:
 
 ```sh
-(cd hal && cargo test)
-(cd dsp && cargo test)
-(cd ui && cargo test)
-(cd fpgad && cargo test)
+tools/check.sh
+(cd ui && cargo test)                                 # one crate
 (cd ui && cargo check --target aarch64-unknown-linux-musl)
 ```
+
+Coding agents, and people new to the tree, start with [AGENTS.md](AGENTS.md).
 
 Tests that need the calibration files of a real unit are skipped without them. To run them, copy `/rigol/data` of your
 scope to `local/cal-full` and `local/cal` (the folder `local/` stays out of git). `OOS_CAL_DIR` overrides this for most of

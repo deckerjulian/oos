@@ -2,6 +2,7 @@
 
 | Tool | Touches the scope? | Purpose |
 |---|---|---|
+| `check.sh [layer ...]` | no | every host check CI runs, layer by layer (fmt, clippy, text, syntax, test, target, decoders); `check.sh list` names them ([ADR 0020](../docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)) |
 | `sdcard-clone.sh list / read / write / verify` | card in the Mac's reader | clone the boot SD card to an image and onto the second card; refuses non-removable, virtual and system disks; `write` asks you to type the disk id |
 | `sdcard-layout.py IMAGE [--extract DIR] [--compare DIR]` | no (reads an image or `/dev/rdiskN`) | IDB, vendor storage (MAC), PARM partition table, partition contents |
 | `device-test.py --host IP` | over the network, read-only on the card | acceptance test of a running OOS with nobody at the scope; `--sim` runs it against `oos-ui --serve` on this computer |
