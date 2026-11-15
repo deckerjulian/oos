@@ -900,10 +900,14 @@ impl Ui {
             let pm = mg.phase.map_or("phase margin -".to_string(), |(v, hz)| format!("phase margin {:.0}\u{b0} at {}", v, si_short(hz, "Hz")));
             cv.text(&f.s, a.x + 6, pt + 30, &format!("{}, {}", gm, pm), TEXT);
         }
-        let w = f.s.width(&status) + 16;
-        let r = Rect::new(a.x + a.w - w - 8, a.y + 22, w, 20);
+        // right-aligned, but left of the full-screen, zoom and more buttons in the corner, and inside the plot
+        let right = (self.full_home().0.x - 8).min(a.x + a.w - 8);
+        let w = (f.s.width(&status) + 16).min((right - a.x - 8).max(40));
+        let r = Rect::new(right - w, a.y + 22, w, 20);
         cv.round(r, 4, PANEL_BG, 230);
+        cv.set_clip(r);
         cv.text_in(&f.s, r, 1, &status, TEXT);
+        cv.no_clip();
     }
 }
 
