@@ -1829,6 +1829,9 @@ impl Ui {
 pub(super) enum ZoomRow {
     Minus,
     Plus,
+    /// vertical zoom in and out
+    VPlus,
+    VMinus,
     Tdiv,
     Fit,
     Center,
@@ -1846,6 +1849,9 @@ pub(super) struct ZoomBar {
     /// [+] and [-]: one step of the 1-2-5 sequence in and out
     pub plus: Rect,
     pub minus: Rect,
+    /// the vertical zoom: [Y+] and [Y-], one step of the display scale of the zoomed lanes (an empty rectangle when there is no room)
+    pub vplus: Rect,
+    pub vminus: Rect,
     /// "(20x zoom)"
     pub readout: Rect,
     /// [x]: zoom off
@@ -1881,7 +1887,7 @@ impl Ui {
         let close = Rect::new(row.right() - 46, y, 40, h);
         let more = Rect::new(close.x - 6 - 40, y, 40, h);
         // a narrow plot (the eye or SIM beside it) keeps these two as icons
-        let (fit_w, center_w) = if row.w < 620 { (40, 40) } else { (118, 136) };
+        let (fit_w, center_w) = if row.w < 760 { (40, 40) } else { (118, 136) };
         let fit = Rect::new(more.x - 6 - fit_w, y, fit_w, h);
         let center = Rect::new(fit.x - 6 - center_w, y, center_w, h);
         let f = self.fonts();
@@ -1889,10 +1895,14 @@ impl Ui {
         let tdiv = Rect::new(label.right() + 6, y, 118, h);
         let plus = Rect::new(tdiv.right() + 6, y, 40, h);
         let minus = Rect::new(plus.right() + 6, y, 40, h);
+        // the vertical zoom comes after the time zoom, when the chips on the right leave the room
+        let vplus = Rect::new(minus.right() + 12, y, 40, h);
+        let vminus = Rect::new(vplus.right() + 6, y, 40, h);
+        let (vplus, vminus) = if vminus.right() + 8 <= center.x { (vplus, vminus) } else { (Rect::new(0, 0, 0, 0), Rect::new(0, 0, 0, 0)) };
         // the readout takes what is left before the chips on the right; it is not drawn when there is no room
-        let rx = minus.right() + 8;
+        let rx = if vminus.w > 0 { vminus.right() } else { minus.right() } + 8;
         let readout = Rect::new(rx, y, (center.x - 8 - rx).clamp(0, 120), h);
-        Some(ZoomBar { label, tdiv, plus, minus, readout, close, center, fit, more })
+        Some(ZoomBar { label, tdiv, plus, minus, vplus, vminus, readout, close, center, fit, more })
     }
 
     /// The trigger is outside the zoomed window.
@@ -1941,6 +1951,14 @@ impl Ui {
             let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
             cv.hline(cx - 6, cx + 6, cy, TEXT);
             if plus { cv.vline(cx, cy - 6, cy + 6, TEXT); }
+        }
+        for (r, plus) in [(bar.vplus, true), (bar.vminus, false)] {
+            if r.w == 0 { continue; }
+            chip(cv, r, BTN, BTN_BORDER);
+            let (cx, cy) = (r.x + r.w / 2 - 7, r.y + r.h / 2);
+            cv.hline(cx - 5, cx + 5, cy, TEXT);
+            if plus { cv.vline(cx, cy - 5, cy + 5, TEXT); }
+            cv.text_in(&f.sb, Rect::new(r.x + r.w / 2 + 4, r.y, r.w / 2 - 6, r.h), 1, "Y", DIM);
         }
         let readout = format!("({} zoom)", zoom_text(self.studio_time_zoom()));
         if bar.readout.w >= f.s.width(&readout) { cv.text_in(&f.s, bar.readout, 0, &readout, DIM); }
@@ -2106,6 +2124,8 @@ impl Ui {
         match row {
             ZoomRow::Minus => self.zoom_horizontal_step(1, area, 0.5),
             ZoomRow::Plus => self.zoom_horizontal_step(-1, area, 0.5),
+            ZoomRow::VPlus => self.zoom_vertical_step(1, area, 0.5),
+            ZoomRow::VMinus => self.zoom_vertical_step(-1, area, 0.5),
             ZoomRow::Tdiv => { self.studio.zoom_menu = false; self.open_menu(MenuId::Horizontal); }
             ZoomRow::Fit => self.reset_zoom(),
             ZoomRow::Center => self.studio_center_trigger(),
@@ -2179,6 +2199,8 @@ impl Ui {
                 if bar.readout.contains(x, y) { self.studio.zoom_menu = true; }
                 else if bar.plus.contains(x, y) { self.studio_zoom_do(ZoomRow::Plus); }
                 else if bar.minus.contains(x, y) { self.studio_zoom_do(ZoomRow::Minus); }
+                else if bar.vplus.contains(x, y) { self.studio_zoom_do(ZoomRow::VPlus); }
+                else if bar.vminus.contains(x, y) { self.studio_zoom_do(ZoomRow::VMinus); }
                 else if bar.close.contains(x, y) { self.studio_zoom_do(ZoomRow::Close); }
                 else if bar.tdiv.contains(x, y) { self.open_menu(MenuId::Horizontal); }
                 else if bar.center.contains(x, y) { self.studio_center_trigger(); }
