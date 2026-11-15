@@ -2603,8 +2603,8 @@ impl Ui {
         self.hist_pos = None;
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
-        // a measurement still out belongs to the record cleared away
-        (self.meas_n, self.meas_want) = (self.meas_n + 1, false);
+        // a measurement still out, or a record waiting for the worker, belongs to what was cleared away
+        (self.meas_n, self.meas_want, self.meas_pending) = (self.meas_n + 1, false, None);
         self.ana = Default::default();
         self.clear_measurement_statistics();
         self.mask_counts_reset();
@@ -10784,6 +10784,59 @@ mod tests {
             let avg = ui.meas(0, Meas::Vavg);
             assert!((avg - high as f64 / 4.0).abs() < 0.03, "Mean live at {} s/div, round {}: {}", tdiv, round, avg);
         }
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches: Clear keeping the raw deep record that waits for the busy worker. The next record asked for a
+    // measurement and the worker took the record cleared away: its values were kept and shown for the pair records
+    // after the Clear (held, deepmeas.rs).
+    #[test]
+    fn clear_drops_the_record_waiting_for_the_worker() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.measure_in_background();
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, depth: usize, high: f32| {
+            let v: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { high } else { 0.0 }).collect();
+            let dt = window * 1.2 / n as f64;
+            let ch = [v, Vec::new(), Vec::new(), Vec::new()];
+            crate::board::Frame { seq, dt, pre: n / 2, ch, envelope, acq: (1e9, depth), ..Default::default() }
+        };
+        // steps until the worker has answered what the record asked for (however slow the computer)
+        let wait = |ui: &mut Ui| {
+            let t = std::time::Instant::now();
+            loop {
+                ui.step(0.02);
+                if (!ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want) || t.elapsed().as_secs() > 20 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        // a raw deep record waits for the busy worker
+        ui.meas_bg.as_mut().unwrap().busy = true;
+        shared.lock().unwrap().queue.push_back(frame(1, false, 10_000_000, 2.0));
+        ui.step(0.02);
+        assert!(ui.meas_pending.is_some());
+        ui.clear_display();
+        // the worker is free and a shallow record comes: it is the one measured
+        ui.meas_bg.as_mut().unwrap().busy = false;
+        shared.lock().unwrap().queue.push_back(frame(2, false, 100_000, 4.0));
+        wait(&mut ui);
+        // a deep pair record: its measurement stays that of the last record measured
+        shared.lock().unwrap().queue.push_back(frame(3, true, 10_000_000, 1.0));
+        wait(&mut ui);
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 1.0).abs() < 0.03, "Mean held after the Clear: {}", avg);
         crate::deepmeas::force(None);
     }
 
