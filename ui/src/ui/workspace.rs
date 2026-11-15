@@ -499,7 +499,7 @@ mod tests {
             assert_eq!(cv.px[(105 * W + 10) as usize], color, "{mode:?}: the horizontal source pill uses the reference color");
         }
         ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(1))).collect();
-        ui.m.strip_dock = StripDock::Under;
+        ui.m.strip_dock = StripDock::Below;
         ui.relayout();
         let mut cv = Canvas::new(W, H);
         assert!(ui.draw_paged_measurement_strip(&mut cv));
@@ -781,7 +781,7 @@ impl Ui {
                  ("Float Eye".into(), Action::EyeFloat), ("Eye settings".into(), Action::Menu(MenuId::Eye)), ("Close Eye".into(), Action::EyeClose)]
         } else if measurements {
             vec![("Float measurements".into(), Action::MeasureFloat), ("Dock right".into(), Action::MeasureDock(StripDock::Right)),
-                 ("Dock below".into(), Action::MeasureDock(StripDock::Under)), ("Dock left".into(), Action::MeasureDock(StripDock::Left)),
+                 ("Dock below".into(), Action::MeasureDock(StripDock::Below)), ("Dock left".into(), Action::MeasureDock(StripDock::Left)),
                  ("Add measurements".into(), Action::Menu(MenuId::MeasAdd))]
         } else {
             let mut rows = vec![("Overlay traces".into(), Action::Overlay), ("Stacked traces".into(), Action::Stacked),
@@ -955,7 +955,7 @@ impl Ui {
                         Panel::Eye if bottom => self.workspace_action(Action::EyeBelow),
                         Panel::Measurements if right => self.workspace_action(Action::MeasureDock(StripDock::Right)),
                         Panel::Measurements if left => self.workspace_action(Action::MeasureDock(StripDock::Left)),
-                        Panel::Measurements if bottom => self.workspace_action(Action::MeasureDock(StripDock::Under)),
+                        Panel::Measurements if bottom => self.workspace_action(Action::MeasureDock(StripDock::Below)),
                         Panel::Measurements if top => self.workspace_action(Action::MeasureDock(StripDock::Above)),
                         _ => {},
                     }

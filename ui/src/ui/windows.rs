@@ -1,9 +1,10 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! View densities on the Windows row: Scope, Full, Split and Four, shared by the 1024×600 panel and a scaled window
-//! of it. Split is a number pane under the plot, or two stacked traces. Four is the existing four-up. The expand
-//! button moves between Scope and Full. The external display's existing choice sits on this row: mirror copies the
+//! The Windows page, as in oos-next: Layout (One, Side by side, Stacked, Four), Full screen and Strip. Under them the
+//! density (Scope, Full, Split, Four) is still what the panel runs on, shared by the 1024×600 panel and a scaled
+//! window of it; Layout and Full screen choose it. Split is a number pane under the plot, or two stacked or side by
+//! side traces. Four is the existing four-up. The expand button moves between Scope and Full. The external display's existing choice sits on this row: mirror copies the
 //! panel, waveform puts the plot on the display and leaves the panel for controls. The same four densities apply to
 //! that plot. The layout itself is in `Ui::split_wins`, the drawing goes window by window in `Ui::render`.
 
@@ -14,11 +15,12 @@ const REF_NAMES: [&str; NREF] = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
 const MATH_NAMES: [&str; 8] = ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"];
 
 impl Ui {
-    /// The Windows row: the density, the external display, and while Split or Four has more than one window the
-    /// window of every channel and math channel that is on. Split also chooses what is under the plot.
+    /// The Windows page: the layout, full screen, the strip, the external display, and while the plot has more than
+    /// one window the window of every channel and math channel that is on. Scope and Split also choose what is
+    /// under the plot.
     pub(super) fn win_items(&self) -> Vec<Item> {
-        let mut v = vec![Item::WinLayout, Item::Hdmi];
-        if self.m.density == Density::Split {
+        let mut v = vec![Item::WinLayout, Item::FullScreen, Item::StripPos, Item::Hdmi];
+        if matches!(self.m.density, Density::Scope | Density::Split) {
             v.push(Item::PaneSel);
         }
         if self.m.win_layout != WinLayout::One {
@@ -59,7 +61,7 @@ impl Ui {
             }
             Density::Split => {
                 self.m.pane = self.m.split_pane;
-                self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
+                self.m.win_layout = if self.m.pane != 0 { WinLayout::One } else if prev == WinLayout::Cols { WinLayout::Cols } else { WinLayout::Rows };
             }
         }
         if self.m.win_layout != WinLayout::One { self.workspace.stacked = false; }
@@ -69,6 +71,27 @@ impl Ui {
             if self.m.zoom {
                 self.toast("Windows show while zoom is off");
             }
+        }
+    }
+
+    /// The Layout row. One leaves Full and an open number pane as they are; the others are Split (two windows) and Four.
+    fn set_layout(&mut self, l: WinLayout) {
+        match l {
+            WinLayout::One => {
+                if self.m.density == Density::Four || (self.m.density == Density::Split && self.m.pane == 0) {
+                    self.m.density = Density::Scope;
+                }
+            }
+            WinLayout::Cols | WinLayout::Rows => {
+                self.m.density = Density::Split;
+                self.m.split_pane = 0;
+            }
+            WinLayout::Quad => self.m.density = Density::Four,
+        }
+        self.apply_density();
+        // the two windows are spread already; across or one above the other is the choice made here
+        if matches!(l, WinLayout::Cols | WinLayout::Rows) && self.m.win_layout != WinLayout::One {
+            self.m.win_layout = l;
         }
     }
 
@@ -88,7 +111,7 @@ impl Ui {
 
     pub(super) fn win_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::WinLayout | Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => Some(Kind::Choice),
+            Item::WinLayout | Item::FullScreen | Item::StripPos | Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => Some(Kind::Choice),
             _ => None,
         }
     }
@@ -96,7 +119,9 @@ impl Ui {
     pub(super) fn win_label(it: Item) -> Option<&'static str> {
         Some(match it {
             Item::Open(MenuId::Windows) => "Windows",
-            Item::WinLayout => "Density",
+            Item::WinLayout => "Layout",
+            Item::FullScreen => "Full screen",
+            Item::StripPos => "Strip",
             Item::WinCh(c) => CH_NAMES.get(c).copied().unwrap_or("CH"),
             Item::WinRef(i) => REF_NAMES.get(i).copied().unwrap_or("R"),
             Item::WinMath(k) => MATH_NAMES.get(k).copied().unwrap_or("M"),
@@ -107,7 +132,9 @@ impl Ui {
 
     pub(super) fn win_value(&self, it: Item) -> Option<String> {
         Some(match it {
-            Item::WinLayout => self.m.density.label().to_string(),
+            Item::WinLayout => self.m.win_layout.label().to_string(),
+            Item::FullScreen => if self.m.density == Density::Full { "On" } else { "Off" }.to_string(),
+            Item::StripPos => self.m.strip_dock.label().to_string(),
             Item::WinCh(c) => (self.m.ch_win[c].min(self.m.win_layout.count() - 1) + 1).to_string(),
             Item::WinRef(i) => (self.m.ref_win[i].min(self.m.win_layout.count() - 1) + 1).to_string(),
             Item::WinMath(k) => (self.m.math_win[k].min(self.m.win_layout.count() - 1) + 1).to_string(),
@@ -118,7 +145,9 @@ impl Ui {
 
     pub(super) fn win_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
-            Item::WinLayout => Density::ALL.iter().map(|d| d.label().to_string()).collect(),
+            Item::WinLayout => WinLayout::ALL.iter().map(|l| l.label().to_string()).collect(),
+            Item::FullScreen => vec!["Off".into(), "On".into()],
+            Item::StripPos => StripDock::ALL.iter().map(|p| p.label().to_string()).collect(),
             Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect(),
             _ => return None,
         })
@@ -129,10 +158,19 @@ impl Ui {
         let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         match it {
             Item::WinLayout => {
-                let all = Density::ALL;
-                let i = all.iter().position(|&l| l == self.m.density).unwrap_or(0);
-                self.m.density = all[cyc(i, all.len())];
-                self.apply_density();
+                let all = WinLayout::ALL;
+                let i = all.iter().position(|&l| l == self.m.win_layout).unwrap_or(0);
+                self.set_layout(all[cyc(i, all.len())]);
+            }
+            Item::FullScreen => self.toggle_expand(),
+            Item::StripPos => {
+                let all = StripDock::ALL;
+                let i = all.iter().position(|&p| p == self.m.strip_dock).unwrap_or(0);
+                self.m.strip_dock = all[cyc(i, all.len())];
+                // the statistics card follows the dock the strip uses
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
+                self.relayout();
             }
             Item::WinCh(c) => self.m.ch_win[c] = cyc(self.m.ch_win[c].min(n - 1), n),
             Item::WinRef(i) => self.m.ref_win[i] = cyc(self.m.ref_win[i].min(n - 1), n),
@@ -187,7 +225,7 @@ mod tests {
     #[test]
     fn a_new_layout_spreads_the_channels_and_each_draws_in_its_window() {
         let mut u = ui();
-        u.select_option(Item::WinLayout, "Split");
+        u.select_option(Item::WinLayout, "Stacked");
         assert_eq!(u.m.density, Density::Split);
         assert_eq!(u.m.win_layout, WinLayout::Rows);
         assert_eq!(&u.m.ch_win[..n_ch()], &(0..n_ch()).map(|c| c % 2).collect::<Vec<_>>()[..]);
@@ -204,7 +242,7 @@ mod tests {
         assert_eq!(u.value(Item::WinCh(1)), "1");
         assert_eq!(u.ch_area(1), a);
         // back to one window: everything in it, whatever the per-channel choice says
-        u.select_option(Item::WinLayout, "Scope");
+        u.select_option(Item::WinLayout, "One");
         render(&mut u);
         assert_eq!(u.wins.len(), 1);
         assert!((0..n_ch()).all(|c| u.ch_area(c) == u.area));
@@ -225,12 +263,12 @@ mod tests {
     #[test]
     fn page_lists_the_signals_only_while_split() {
         let mut u = ui();
-        assert_eq!(u.win_items(), vec![Item::WinLayout, Item::Hdmi]);
-        u.select_option(Item::WinLayout, "Split");
+        assert_eq!(u.win_items(), vec![Item::WinLayout, Item::FullScreen, Item::StripPos, Item::Hdmi, Item::PaneSel]);
+        u.select_option(Item::WinLayout, "Stacked");
         let v = u.win_items();
         assert!(v.contains(&Item::PaneSel));
         assert!(v.contains(&Item::WinCh(0)) && !v.iter().any(|i| matches!(i, Item::WinMath(_))));
-        for it in [Item::WinLayout, Item::WinCh(0), Item::Hdmi, Item::PaneSel] {
+        for it in [Item::WinLayout, Item::FullScreen, Item::StripPos, Item::WinCh(0), Item::Hdmi, Item::PaneSel] {
             let opts = u.options(it);
             for o in opts.iter().rev().chain(opts.iter()) {
                 u.select_option(it, o);
@@ -372,11 +410,11 @@ mod tests {
     fn densities_are_scope_full_split_and_four() {
         let mut u = ui();
         u.select_option(Item::Hdmi, "Mirror");
-        assert_eq!(u.options(Item::WinLayout), vec!["Scope", "Full", "Split", "Four"]);
-        u.select_option(Item::WinLayout, "Full");
+        assert_eq!(u.options(Item::WinLayout), vec!["One", "Side by side", "Stacked", "Four"]);
+        u.select_option(Item::FullScreen, "On");
         render(&mut u);
         assert!(u.full && u.wins.len() == 1 && u.grid.y == 0);
-        u.select_option(Item::WinLayout, "Split");
+        u.select_option(Item::WinLayout, "Stacked");
         render(&mut u);
         assert!(!u.full && u.wins.len() == 2 && u.wins[1].y > u.wins[0].y && u.wins[0].x == u.wins[1].x);
         assert_eq!(u.value(Item::PaneSel), "Traces");
@@ -392,15 +430,17 @@ mod tests {
         render(&mut u);
         assert_eq!(u.wins.len(), 4);
         assert_eq!(u.pane_h(), 0);
-        u.select_option(Item::WinLayout, "Scope");
+        u.select_option(Item::WinLayout, "One");
         render(&mut u);
         assert_eq!((u.wins.len(), u.pane_h()), (1, 0));
-        // Split comes back to the lower pane it had
-        u.select_option(Item::WinLayout, "Split");
+        // the pane row in Scope opens a lower pane again, and Stacked leaves it for two traces
+        u.select_option(Item::PaneSel, "Trend");
         render(&mut u);
-        assert_eq!(u.value(Item::PaneSel), "Trend");
-        assert_eq!(u.wins.len(), 1);
+        assert_eq!((u.value(Item::WinLayout), u.m.density, u.wins.len()), ("One".to_string(), Density::Split, 1));
         assert!(u.pane_h() > 0);
+        u.select_option(Item::WinLayout, "Stacked");
+        render(&mut u);
+        assert_eq!((u.m.pane, u.wins.len(), u.pane_h()), (0, 2, 0));
     }
 
     #[test]
@@ -414,7 +454,7 @@ mod tests {
         let normal = u.grid;
         u.set_hdmi_present(true);
         u.hdmi_snap_want = true;
-        u.select_option(Item::WinLayout, "Full");
+        u.select_option(Item::FullScreen, "On");
         let mut cv = Canvas::new(W, H);
         u.render(&mut cv);
         assert_eq!(u.m.density, Density::Full);
@@ -430,7 +470,7 @@ mod tests {
         let snap_at = ((head.y - TOP.h) * W + head.x + 8) as usize;
         assert_eq!(u.hdmi_snap.len(), (W * (BOTTOM.y - TOP.h)) as usize);
         assert_ne!(u.hdmi_snap[snap_at], cv.px[at], "Full leaves the statistics card off the external plot");
-        u.select_option(Item::WinLayout, "Scope");
+        u.select_option(Item::FullScreen, "Off");
         u.render(&mut cv);
         assert_eq!(u.hdmi_snap[snap_at], cv.px[at], "Scope copies the plot, strip and card");
         u.select_option(Item::WinLayout, "Four");
@@ -438,7 +478,7 @@ mod tests {
         assert_eq!(u.wins.len(), 4);
         assert!(u.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= BOTTOM.y));
         assert!(!u.full);
-        u.select_option(Item::WinLayout, "Split");
+        u.select_option(Item::WinLayout, "Stacked");
         u.select_option(Item::PaneSel, "Results");
         u.render(&mut cv);
         assert!(u.pane_h() > 0 && u.wins.len() == 1 && !u.full);
@@ -483,11 +523,123 @@ mod tests {
         assert_eq!((back.win_layout, back.density, back.split_pane, back.ch_win, back.math_win), (u.m.win_layout, u.m.density, u.m.split_pane, u.m.ch_win, u.m.math_win));
         // a setup written before the density row
         let old = crate::store::parse_setup("windows = Cols\npane = 0\n").unwrap();
-        assert_eq!((old.density, old.win_layout), (Density::Split, WinLayout::Rows));
+        assert_eq!((old.density, old.win_layout), (Density::Split, WinLayout::Cols));
         let quad = crate::store::parse_setup("windows = Quad\n").unwrap();
         assert_eq!((quad.density, quad.win_layout), (Density::Four, WinLayout::Quad));
         let pane = crate::store::parse_setup("pane = 2\n").unwrap();
         assert_eq!((pane.density, pane.pane, pane.split_pane), (Density::Split, 2, 2));
+    }
+
+    #[test]
+    fn the_page_has_the_rows_and_labels_of_oos_next() {
+        let mut u = ui();
+        let v = u.win_items();
+        assert_eq!(&v[..4], &[Item::WinLayout, Item::FullScreen, Item::StripPos, Item::Hdmi]);
+        assert_eq!((Ui::label(Item::WinLayout), Ui::label(Item::FullScreen), Ui::label(Item::StripPos)), ("Layout", "Full screen", "Strip"));
+        assert_eq!(u.options(Item::WinLayout), ["One", "Side by side", "Stacked", "Four"]);
+        assert_eq!(u.options(Item::FullScreen), ["Off", "On"]);
+        assert_eq!(u.options(Item::StripPos), ["Below plot", "Left", "Right", "Above plot", "Hidden"]);
+        // side by side is a layout of its own: two windows across, in the density Split
+        u.select_option(Item::WinLayout, "Side by side");
+        render(&mut u);
+        assert_eq!((u.m.win_layout, u.m.density, u.wins.len()), (WinLayout::Cols, Density::Split, 2));
+        assert!(u.wins[1].x > u.wins[0].x && u.wins[0].y == u.wins[1].y);
+        // Stacked and back keep the two windows; One returns to Scope
+        u.select_option(Item::WinLayout, "Stacked");
+        assert_eq!((u.m.win_layout, u.m.density), (WinLayout::Rows, Density::Split));
+        u.select_option(Item::WinLayout, "One");
+        assert_eq!((u.m.win_layout, u.m.density), (WinLayout::One, Density::Scope));
+        // full screen is the Full density
+        assert_eq!(u.value(Item::FullScreen), "Off");
+        u.select_option(Item::FullScreen, "On");
+        render(&mut u);
+        assert_eq!((u.m.density, u.value(Item::FullScreen)), (Density::Full, "On".to_string()));
+        assert!(u.full && u.grid.y == 0);
+        u.select_option(Item::FullScreen, "Off");
+        assert_eq!((u.m.density, u.full), (Density::Scope, false));
+    }
+
+    #[test]
+    fn one_strip_setting_with_a_hidden_position() {
+        let mut u = ui();
+        u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0))];
+        u.m.cursor = CursorMode::Off;
+        u.relayout();
+        assert_eq!((u.m.strip_dock, u.value(Item::StripPos)), (StripDock::Below, "Below plot".to_string()));
+        let shown = u.grid;
+        assert!(u.strip_rows() > 0 && u.strip_rect().is_some());
+        // the Windows row, the Measure row and the card's menu write the same field
+        u.select_option(Item::StripPos, "Left");
+        assert_eq!((u.m.strip_dock, u.value(Item::StripDock)), (StripDock::Left, "Left".to_string()));
+        u.select_option(Item::StripDock, "Right");
+        assert_eq!(u.value(Item::StripPos), "Right");
+        u.workspace_action(workspace::Action::MeasureDock(StripDock::Above));
+        assert_eq!(u.value(Item::StripPos), "Above plot");
+        // Hidden: no rows, no strip, the plot takes the room
+        u.select_option(Item::StripPos, "Hidden");
+        u.relayout();
+        assert_eq!((u.m.strip_dock, u.strip_rows(), u.strip_rect()), (StripDock::Hidden, 0, None));
+        assert_eq!(u.value(Item::StripDock), "Hidden");
+        assert!(u.grid.h > shown.h && u.grid.x == 0 && u.grid.w == W, "{:?} vs {:?}", u.grid, shown);
+        assert!(!u.paged_strip());
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        // the page cycles round from the last position
+        u.adjust(Item::StripPos, 1);
+        assert_eq!(u.m.strip_dock, StripDock::Below);
+    }
+
+    #[test]
+    fn the_strip_and_the_windows_round_trip_in_the_setup_under_oos_next_keys() {
+        let mut m = Model::default();
+        for p in StripDock::ALL {
+            m.strip_dock = p;
+            let t = crate::store::setup_text(&m);
+            assert!(t.lines().any(|l| l == format!("strip = {:?}", p)), "{:?}", p);
+            assert!(!t.lines().any(|l| l.starts_with("strip_dock")));
+            assert_eq!(crate::store::parse_setup(&t).unwrap().strip_dock, p);
+        }
+        // an oos-next file: the names are the same
+        let n = crate::store::parse_setup("windows = Quad\nstrip = Hidden\n").unwrap();
+        assert_eq!((n.win_layout, n.density, n.strip_dock), (WinLayout::Quad, Density::Four, StripDock::Hidden));
+        // an OOS-plus setup from before: its own key, and Under for Below
+        let o = crate::store::parse_setup("density = Split\nwindows = Cols\nstrip_dock = Under\n").unwrap();
+        assert_eq!((o.density, o.win_layout, o.strip_dock), (Density::Split, WinLayout::Cols, StripDock::Below));
+        let o = crate::store::parse_setup("density = Full\nstrip_dock = Right\n").unwrap();
+        assert_eq!((o.density, o.strip_dock), (Density::Full, StripDock::Right));
+        assert!(crate::store::parse_setup("strip = Under").is_err());
+    }
+
+    /// The Windows page and every strip position as pictures, when OOS_SHOT_DIR names a folder.
+    #[test]
+    fn windows_page_and_strip_pictures() {
+        let Ok(dir) = std::env::var("OOS_SHOT_DIR") else { return };
+        let dir = std::path::PathBuf::from(dir);
+        let mut u = ui();
+        u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0)), (Meas::Vrms, WaveId::Ch(1))];
+        u.m.cursor = CursorMode::Time;
+        let mut shot = |u: &mut Ui, name: &str| {
+            let mut cv = Canvas::new(W, H);
+            u.render(&mut cv);
+            let _ = std::fs::write(dir.join(name), crate::store::png_of(&cv));
+        };
+        u.open_menu(MenuId::Windows);
+        shot(&mut u, "windows-page.png");
+        u.select_option(Item::WinLayout, "Side by side");
+        shot(&mut u, "windows-page-cols.png");
+        u.select_option(Item::WinLayout, "One");
+        u.close_menu();
+        for (p, name) in [(StripDock::Below, "strip-below"), (StripDock::Left, "strip-left"), (StripDock::Right, "strip-right"), (StripDock::Above, "strip-above"), (StripDock::Hidden, "strip-hidden")] {
+            u.m.strip_dock = p;
+            u.relayout();
+            shot(&mut u, &format!("{name}.png"));
+        }
+        u.m.layout = Layout::Minimal;
+        for (p, name) in [(StripDock::Below, "minimal-below"), (StripDock::Hidden, "minimal-hidden")] {
+            u.m.strip_dock = p;
+            u.relayout();
+            shot(&mut u, &format!("{name}.png"));
+        }
     }
 
     #[test]

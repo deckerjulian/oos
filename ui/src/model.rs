@@ -774,6 +774,15 @@ impl WinLayout {
             WinLayout::Quad => 4,
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WinLayout::One => "One",
+            WinLayout::Cols => "Side by side",
+            WinLayout::Rows => "Stacked",
+            WinLayout::Quad => "Four",
+        }
+    }
 }
 
 /// How much of the 1024×600 picture the plot takes. The same four apply to the panel and to a scaled window of it,
@@ -811,24 +820,27 @@ pub enum Grid {
     None,
 }
 
-/// Where the measurement strip is drawn. Under is below the graticule.
+/// Where the measurement strip is drawn: below the graticule, on a side, above it, or not at all (Hidden). The one
+/// setting behind Measure > Dock, Display > Windows > Strip and the card's context menu; the setup key is `strip`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StripDock {
-    Under,
+    Below,
     Left,
     Right,
     Above,
+    Hidden,
 }
 
 impl StripDock {
-    pub const ALL: [StripDock; 4] = [StripDock::Under, StripDock::Left, StripDock::Right, StripDock::Above];
+    pub const ALL: [StripDock; 5] = [StripDock::Below, StripDock::Left, StripDock::Right, StripDock::Above, StripDock::Hidden];
 
     pub fn label(self) -> &'static str {
         match self {
-            StripDock::Under => "Under",
+            StripDock::Below => "Below plot",
             StripDock::Left => "Left",
             StripDock::Right => "Right",
-            StripDock::Above => "Above",
+            StripDock::Above => "Above plot",
+            StripDock::Hidden => "Hidden",
         }
     }
 }
@@ -1574,7 +1586,7 @@ impl Default for Model {
             pane: 0,
             split_pane: 0,
             meas_labels: false,
-            strip_dock: StripDock::Under,
+            strip_dock: StripDock::Below,
             trend_sel: [0, 0],
             dec_on: false,
             dec_src: 2,

@@ -153,7 +153,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1))];
     };
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
-    walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Split")), "Windows split", &mut out);
+    walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Stacked")), "Windows split", &mut out);
     walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Four")), "Windows four", &mut out);
     walk(&|| open(Bode, &|u| u.m.bode_gen = bode::FREE), "Bode free sweep", &mut out);
     walk(&|| open(Bode, &|u| { u.m.bode_gen = bode::FREE; u.m.bode_sw_in = 0 }), "Bode free sweep no input", &mut out);
@@ -2452,7 +2452,7 @@ fn the_measurement_strip_docks_on_four_sides() {
     let mut u = with_two_channels();
     u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0)), (Meas::Vrms, WaveId::Ch(1))];
     u.m.cursor = CursorMode::Time;
-    u.m.strip_dock = StripDock::Under;
+    u.m.strip_dock = StripDock::Below;
     u.relayout();
     let under = u.grid;
     assert_eq!((under.x, under.w, under.y), (0, W, PLOT_Y));
@@ -2500,38 +2500,38 @@ fn the_measurement_strip_docks_on_four_sides() {
     u.full = false;
 
     // the control on the Measure page picks the side
-    u.m.strip_dock = StripDock::Under;
+    u.m.strip_dock = StripDock::Below;
     u.open_menu(MenuId::Measure);
-    let hit = |ui: &Ui, k: usize| -> (i32, i32) {
-        let d = ui.dlg_layout().unwrap();
-        let row = d.rows.iter().find(|r| r.it == Item::StripDock).expect("dock row");
-        let Ctl::Seg(opts, sel) = &row.ctl else { panic!("dock is a row of buttons") };
-        assert_eq!(opts.as_slice(), ["Under", "Left", "Right", "Above"]);
-        assert_eq!(*sel, Some(StripDock::ALL.iter().position(|&s| s == ui.m.strip_dock).unwrap()));
-        let n = opts.len() as i32;
-        let sw = (row.ctrl.w - (n - 1) * 4) / n;
-        (row.ctrl.x + k as i32 * (sw + 4) + sw / 2, row.ctrl.y + row.ctrl.h / 2)
-    };
-    for (k, side) in StripDock::ALL.into_iter().enumerate() {
-        let (x, y) = hit(&u, k);
-        u.tap(x, y);
+    // five positions with the oos-next names are too wide for a row of buttons: the row is a pick list
+    let d = u.dlg_layout().unwrap();
+    let row = d.rows.iter().find(|r| r.it == Item::StripDock).expect("dock row");
+    assert!(matches!(row.ctl, Ctl::Pick));
+    assert_eq!(u.options(Item::StripDock), ["Below plot", "Left", "Right", "Above plot", "Hidden"]);
+    for side in StripDock::ALL {
+        u.select_option(Item::StripDock, side.label());
         assert_eq!(u.m.strip_dock, side);
         assert!(u.menu_open);
     }
     // the ends stay put
-    u.m.strip_dock = StripDock::Under;
+    u.m.strip_dock = StripDock::Below;
     u.adjust(Item::StripDock, -1);
-    assert_eq!(u.m.strip_dock, StripDock::Under);
-    u.m.strip_dock = StripDock::Above;
+    assert_eq!(u.m.strip_dock, StripDock::Below);
+    u.m.strip_dock = StripDock::Hidden;
     u.adjust(Item::StripDock, 1);
-    assert_eq!(u.m.strip_dock, StripDock::Above);
+    assert_eq!(u.m.strip_dock, StripDock::Hidden);
+    u.m.strip_dock = StripDock::Above;
 
     let text = crate::store::setup_text(&u.m);
-    assert!(text.contains("strip_dock = Above"));
+    assert!(text.contains("strip = Above"));
     assert_eq!(crate::store::parse_setup(&text).unwrap().strip_dock, StripDock::Above);
-    let old: String = text.lines().filter(|l| !l.starts_with("strip_dock")).collect::<Vec<_>>().join("\n");
-    assert_eq!(crate::store::parse_setup(&old).unwrap().strip_dock, StripDock::Under);
+    let old: String = text.lines().filter(|l| !l.starts_with("strip")).collect::<Vec<_>>().join("\n");
+    assert_eq!(crate::store::parse_setup(&old).unwrap().strip_dock, StripDock::Below);
     assert!(crate::store::parse_setup("strip_dock = Beside").is_err());
+    // a setup from before the shared strip setting: the key was `strip_dock` and Below was Under
+    assert_eq!(crate::store::parse_setup("strip_dock = Under").unwrap().strip_dock, StripDock::Below);
+    assert_eq!(crate::store::parse_setup("strip_dock = Left").unwrap().strip_dock, StripDock::Left);
+    assert_eq!(crate::store::parse_setup("strip = Hidden").unwrap().strip_dock, StripDock::Hidden);
+    assert!(!text.contains("strip_dock"));
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
     let _ = std::fs::create_dir_all(&dir);
@@ -2541,7 +2541,7 @@ fn the_measurement_strip_docks_on_four_sides() {
         let _ = crate::store::write(&dir.join(n), &crate::store::png_of(&cv));
     };
     u.close_menu();
-    for (side, name) in [(StripDock::Under, "strip-under.png"), (StripDock::Left, "strip-left.png"), (StripDock::Right, "strip-right.png"), (StripDock::Above, "strip-above.png")] {
+    for (side, name) in [(StripDock::Below, "strip-under.png"), (StripDock::Left, "strip-left.png"), (StripDock::Right, "strip-right.png"), (StripDock::Above, "strip-above.png")] {
         u.m.strip_dock = side;
         shot(&mut u, name);
         let g = u.grid;

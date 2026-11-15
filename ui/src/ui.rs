@@ -396,6 +396,8 @@ enum Item {
     SearchSave,
     StoreBin,
     PaneSel,
+    FullScreen,
+    StripPos,
     DecOn,
     DecSrc,
     DecBaud,
@@ -1552,6 +1554,7 @@ impl Ui {
     }
 
     fn strip_rows(&self) -> i32 {
+        if self.m.strip_dock == StripDock::Hidden { return 0; }
         let dvm = (self.m.dvm_on || self.m.cnt_on) as i32;
         // Studio shows measurements and cursor read-outs as badges and in its panel
         if self.studio_owns_measurements() { return dvm; }
@@ -1642,7 +1645,7 @@ impl Ui {
 
     /// Height for the graticule and the LA strip together (above a strip that sits under the plot).
     fn plot_base(&self) -> i32 {
-        let under = if self.m.strip_dock == StripDock::Under { self.strip_rows_h() } else { 0 };
+        let under = if self.m.strip_dock == StripDock::Below { self.strip_rows_h() } else { 0 };
         self.plot_bottom() - 2 - self.plot_top() - under
     }
 
@@ -4366,7 +4369,7 @@ impl Ui {
 
     /// The measurement card in a dock (Minimal layout), when it was docked rather than floated.
     fn results_docked(&self) -> Option<StripDock> {
-        (self.m.compact() && self.workspace.measure_docked && self.workspace.measure_float.is_none() && self.results_panel()).then_some(self.m.strip_dock)
+        (self.m.compact() && self.workspace.measure_docked && self.workspace.measure_float.is_none() && self.results_panel()).then_some(self.m.strip_dock).filter(|d| *d != StripDock::Hidden)
     }
 
     /// Width a side-docked measurement card takes from the plot.
@@ -4376,7 +4379,7 @@ impl Ui {
 
     /// Height a card docked under or above the plot takes: the header and two rows, paged.
     fn results_band_h(&self) -> i32 {
-        if !matches!(self.results_docked(), Some(StripDock::Under | StripDock::Above)) { return 0; }
+        if !matches!(self.results_docked(), Some(StripDock::Below | StripDock::Above)) { return 0; }
         let total = self.measurement_count();
         let n = total.min(2) as i32;
         let nav = if total > n as usize { 38 } else { 0 };
@@ -4628,8 +4631,8 @@ impl Ui {
             Some(StripDock::Left) => (fr.body.x + strip_side + 2, body_top),
             Some(StripDock::Right) => (fr.body.right() - strip_side - rw - 2, body_top),
             Some(StripDock::Above) => (plot_x + (plot_w - rw) / 2, body_top + strip_h + 2),
-            Some(StripDock::Under) => (plot_x + (plot_w - rw) / 2, bottom - strip_h - panel_h - 2),
-            None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32),
+            Some(StripDock::Below) => (plot_x + (plot_w - rw) / 2, bottom - strip_h - panel_h - 2),
+            Some(StripDock::Hidden) | None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32),
         };
         let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
         // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
@@ -6980,6 +6983,8 @@ impl Ui {
             }
             Item::PaneSel => {
                 self.m.pane = (self.m.pane as i32 + d).rem_euclid(tables::PANES.len() as i32) as usize;
+                // a pane chosen from the Windows page in Scope makes it Split
+                if self.m.density == Density::Scope && self.m.pane != 0 { self.m.density = Density::Split; }
                 if self.m.density == Density::Split {
                     self.m.split_pane = self.m.pane;
                     let prev = self.m.win_layout;

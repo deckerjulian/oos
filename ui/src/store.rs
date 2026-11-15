@@ -325,7 +325,7 @@ pub fn setup_text(m: &Model) -> String {
     }
     kv("pane", m.pane.to_string());
     kv("meas_labels", m.meas_labels.to_string());
-    kv("strip_dock", name(m.strip_dock));
+    kv("strip", name(m.strip_dock));
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());
     kv("auto_roll", m.auto_roll.to_string());
@@ -643,7 +643,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_sel" => m.dec_sel = p_idx(v, DECODERS)?,
         "pane" => m.pane = p_idx(v, crate::ui::PANES_N)?,
         "meas_labels" => m.meas_labels = p_bool(v)?,
-        "strip_dock" => m.strip_dock = p_enum(v, &StripDock::ALL)?,
+        "strip" => m.strip_dock = p_enum(v, &StripDock::ALL)?,
+        // before the strip setting was shared with Display > Windows the key was `strip_dock` and Below was called Under
+        "strip_dock" => m.strip_dock = p_enum(if v == "Under" { "Below" } else { v }, &StripDock::ALL)?,
         "trend_sel" => {
             let f: Vec<&str> = v.split_whitespace().collect();
             let [a, b] = f[..] else { return Err("trend_sel: two values".into()) };
@@ -1017,10 +1019,6 @@ pub fn parse_setup(text: &str) -> Result<Model, String> {
             WinLayout::One if m.pane != 0 => Density::Split,
             WinLayout::One => Density::Scope,
         };
-        // two across is not a density; the split is two stacked traces
-        if m.win_layout == WinLayout::Cols {
-            m.win_layout = WinLayout::Rows;
-        }
         if m.density == Density::Split {
             m.split_pane = m.pane;
         }

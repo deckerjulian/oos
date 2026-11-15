@@ -138,6 +138,7 @@ impl Ui {
     }
 
     pub(super) fn paged_strip(&self) -> bool {
+        if self.m.strip_dock == StripDock::Hidden { return false; }
         if self.results_panel() || self.results_pane_on() || self.studio_owns_measurements() { return false; }
         match self.m.strip_dock {
             StripDock::Left | StripDock::Right => {
@@ -287,7 +288,7 @@ impl Ui {
 
     pub(super) fn results_page_size(&self) -> usize {
         // rows are taller at the larger text sizes: count with the row the card draws, so a page stays in the plot
-        if matches!(self.results_docked(), Some(StripDock::Under | StripDock::Above)) { return 2; }
+        if matches!(self.results_docked(), Some(StripDock::Below | StripDock::Above)) { return 2; }
         let row = self.results_row(0);
         ((self.over_area().h - 98).max(row) / row).clamp(1, 8) as usize
     }
@@ -355,7 +356,7 @@ mod tests {
             visited.extend(first..end);
         }
         assert_eq!(visited.len(), 73);
-        for dock in StripDock::ALL {
+        for dock in StripDock::ALL.into_iter().filter(|d| *d != StripDock::Hidden) {
             ui.m.strip_dock = dock;
             ui.relayout();
             let mut canvas = Canvas::new(W, H);
@@ -425,7 +426,7 @@ mod tests {
         ui.m.zoom = false;
         for placement in [EyePlace::Side, EyePlace::Under] {
             ui.m.eye_place = placement;
-            for dock in StripDock::ALL {
+            for dock in StripDock::ALL.into_iter().filter(|d| *d != StripDock::Hidden) {
                 ui.m.strip_dock = dock;
                 ui.meas_page = 0;
                 ui.relayout();

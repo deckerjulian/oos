@@ -112,7 +112,7 @@ fn a_floating_measurement_card_never_covers_the_zoom_bar_or_the_corner_buttons()
 
 #[test]
 fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
-    for dock in StripDock::ALL {
+    for dock in StripDock::ALL.into_iter().filter(|d| *d != StripDock::Hidden) {
         let mut u = fresh();
         u.workspace_action(Action::MeasureDock(dock));
         u.relayout();
@@ -130,7 +130,7 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
     // Statistics respects the Dock choice of the Measure menu
     let mut u = fresh();
     u.stats_on = true;
-    u.m.strip_dock = StripDock::Under;
+    u.m.strip_dock = StripDock::Below;
     let before = u.grid;
     u.adjust(Item::StripDock, 1);
     u.relayout();
