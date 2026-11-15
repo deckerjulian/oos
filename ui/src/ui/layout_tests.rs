@@ -516,7 +516,7 @@ fn studio_zoom_has_a_toolbar_an_overview_and_a_menu() {
     shot(&mut u, "13-zoom");
     let bar = u.studio_zoom_bar().expect("toolbar");
     let row = u.zoom_readout();
-    for (i, r) in [bar.zoom, bar.tdiv, bar.center, bar.fit, bar.more].iter().enumerate() {
+    for (i, r) in [bar.label, bar.tdiv, bar.plus, bar.minus, bar.close, bar.center, bar.fit, bar.more].iter().enumerate() {
         assert!(r.x >= row.x && r.right() <= row.right() && r.y >= row.y && r.bottom() <= row.bottom(), "chip {i} in the strip");
     }
     assert!(bar.tdiv.right() <= bar.center.x, "the chips do not overlap");

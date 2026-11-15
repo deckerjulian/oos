@@ -163,6 +163,22 @@ impl Ui {
         self.cached_pair(k, a, b)
     }
 
+    /// A measurement whose source is off (an analog channel, or a ref that is not drawn) is configured but not shown:
+    /// it returns when the source is turned on again.
+    pub(super) fn meas_source_hidden(&self, id: WaveId) -> bool {
+        match id {
+            WaveId::Ch(c) => c < NCH && !self.m.ch[c].on,
+            WaveId::Ref(i) => !self.record_mode() && self.ref_shown_slot(i) == Some(false),
+        }
+    }
+
+    pub(super) fn meas_row_hidden(&self, row: &MeasRow) -> bool { self.meas_source_hidden(row.src) }
+
+    /// How many rows the readouts show (the rows of sources that are off are not counted).
+    pub(super) fn meas_shown_count(&self) -> usize {
+        self.meas_rows().iter().filter(|r| !self.meas_row_hidden(r)).count()
+    }
+
     /// All measurements, in the order of the statistics.
     pub(super) fn meas_rows(&self) -> Vec<MeasRow> {
         let mut v: Vec<MeasRow> = self

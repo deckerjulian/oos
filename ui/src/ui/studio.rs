@@ -879,7 +879,7 @@ impl Ui {
         let mut x = row.x + 4;
         let mut out = Vec::new();
         for key in self.studio_pinned() {
-            let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)) else { continue };
+            let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
             let w = 14 + 6 + (f.sb.width("CH4") + 10) + 6 + f.s.width(&r.name) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
             if x + w > limit { break; }
             out.push((key, Rect::new(x, row.y + (row.h - self.studio_chip_h()) / 2, w, self.studio_chip_h())));
@@ -1324,7 +1324,7 @@ impl Ui {
 
     /// The measurements the panel lists: all, or those of the chosen source.
     pub(super) fn studio_listed(&self, rows: &[tools::MeasRow]) -> Vec<usize> {
-        (0..rows.len()).filter(|&i| self.studio.filter.is_none_or(|id| rows[i].src == id)).collect()
+        (0..rows.len()).filter(|&i| !self.meas_row_hidden(&rows[i]) && self.studio.filter.is_none_or(|id| rows[i].src == id)).collect()
     }
 
     pub(super) fn studio_panel_rect(&self) -> Option<Rect> {
@@ -1439,7 +1439,7 @@ impl Ui {
                 chip(cv, r, BTN, BTN_BORDER);
                 if which == 0 { icon_expand(cv, r.x + r.w / 2, r.y + r.h / 2, TEXT); } else { chevron(cv, r.x + r.w / 2 - 2, r.y + r.h / 2, 1, TEXT); }
             }
-            cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} total \u{b7} {} pinned", rows.len(), pinned.len()), DIM);
+            cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} total \u{b7} {} pinned", self.meas_shown_count(), pinned.len()), DIM);
             let first = self.studio_first(listed.len(), g.page);
             cv.set_clip(g.list);
             for (k, &i) in listed.iter().skip(first).take(g.page).enumerate() {
@@ -1534,7 +1534,7 @@ impl Ui {
     fn studio_filter_next(&self) -> Option<WaveId> {
         let rows = self.meas_rows();
         let mut sources: Vec<WaveId> = Vec::new();
-        for r in &rows { if !sources.contains(&r.src) { sources.push(r.src); } }
+        for r in rows.iter().filter(|r| !self.meas_row_hidden(r)) { if !sources.contains(&r.src) { sources.push(r.src); } }
         match self.studio.filter {
             None => sources.first().copied(),
             Some(id) => sources.iter().position(|&s| s == id).and_then(|i| sources.get(i + 1)).copied(),
@@ -1550,7 +1550,7 @@ impl Ui {
         let listed = self.studio_listed(&rows);
         cv.fill(t, BG);
         cv.text(&f.lb, t.x + 12, t.y + 30, "Measurements", TEXT);
-        cv.text(&f.s, t.x + 150, t.y + 30, &format!("{} total \u{b7} {} pinned", rows.len(), self.studio_pinned().len()), DIM);
+        cv.text(&f.s, t.x + 150, t.y + 30, &format!("{} total \u{b7} {} pinned", self.meas_shown_count(), self.studio_pinned().len()), DIM);
         chip(cv, back, BTN, BTN_BORDER);
         icon_wave(cv, Rect::new(back.x + 6, back.y + 8, 26, 16), TEXT);
         cv.text_in(&f.m, Rect::new(back.x + 36, back.y, back.w - 38, back.h), 0, "Waveform", TEXT);
@@ -1791,8 +1791,17 @@ pub(super) enum ZoomRow {
 /// The chips of the zoom toolbar.
 #[derive(Clone, Copy)]
 pub(super) struct ZoomBar {
-    pub zoom: Rect,
+    /// the "Zoom" caption
+    pub label: Rect,
+    /// the time/div field of the zoomed view
     pub tdiv: Rect,
+    /// [+] and [-]: one step of the 1-2-5 sequence in and out
+    pub plus: Rect,
+    pub minus: Rect,
+    /// "(20x zoom)"
+    pub readout: Rect,
+    /// [x]: zoom off
+    pub close: Rect,
     pub center: Rect,
     pub fit: Rect,
     pub more: Rect,
@@ -1821,14 +1830,21 @@ impl Ui {
         if !self.studio_zoom_active() { return None; }
         let row = self.zoom_readout();
         let (y, h) = (row.y + 2, (row.h - 4).max(20));
-        let more = Rect::new(row.right() - 46, y, 40, h);
+        let close = Rect::new(row.right() - 46, y, 40, h);
+        let more = Rect::new(close.x - 6 - 40, y, 40, h);
         // a narrow plot (the eye or SIM beside it) keeps these two as icons
         let (fit_w, center_w) = if row.w < 620 { (40, 40) } else { (118, 136) };
         let fit = Rect::new(more.x - 6 - fit_w, y, fit_w, h);
         let center = Rect::new(fit.x - 6 - center_w, y, center_w, h);
-        let zoom = Rect::new(row.x + 6, y, 142, h);
-        let tdiv = Rect::new(zoom.right() + 8, y, 118, h);
-        Some(ZoomBar { zoom, tdiv, center, fit, more })
+        let f = self.fonts();
+        let label = Rect::new(row.x + 8, y, f.mb.width("Zoom") + 6, h);
+        let tdiv = Rect::new(label.right() + 6, y, 118, h);
+        let plus = Rect::new(tdiv.right() + 6, y, 40, h);
+        let minus = Rect::new(plus.right() + 6, y, 40, h);
+        // the readout takes what is left before the chips on the right; it is not drawn when there is no room
+        let rx = minus.right() + 8;
+        let readout = Rect::new(rx, y, (center.x - 8 - rx).clamp(0, 120), h);
+        Some(ZoomBar { label, tdiv, plus, minus, readout, close, center, fit, more })
     }
 
     /// The trigger is outside the zoomed window.
@@ -1868,16 +1884,22 @@ impl Ui {
         let f = self.fonts();
         cv.fill(self.zoom_readout(), BG);
         let open = self.studio.zoom_menu;
-        chip(cv, bar.zoom, BTN, BTN_BORDER);
-        let amount = zoom_text(self.studio_time_zoom());
-        let room = Rect::new(bar.zoom.x + 10, bar.zoom.y, bar.zoom.w - 30, bar.zoom.h);
-        // a huge zoom ("100000x") takes the smaller font, then drops "Time"
-        let (font, zoom) = [(&f.m, format!("Time zoom {amount}")), (&f.s, format!("Time zoom {amount}")), (&f.s, format!("Zoom {amount}"))].into_iter().find(|(font, t)| font.width(t) <= room.w).unwrap_or((&f.s, format!("Zoom {amount}")));
-        cv.text_in(font, room, 0, &zoom, TEXT);
-        chevron_down(cv, bar.zoom.right() - 20, bar.zoom.y + bar.zoom.h / 2 - 2, DIM);
+        cv.text_in(&f.mb, bar.label, 0, "Zoom", TEXT);
         chip(cv, bar.tdiv, BTN, BTN_BORDER);
         cv.text_in(&f.m, Rect::new(bar.tdiv.x + 10, bar.tdiv.y, bar.tdiv.w - 30, bar.tdiv.h), 0, &format!("{}/div", si_short(tscales()[self.m.zscale] as f64, "s")), TEXT);
         chevron_down(cv, bar.tdiv.right() - 20, bar.tdiv.y + bar.tdiv.h / 2 - 2, DIM);
+        for (r, plus) in [(bar.plus, true), (bar.minus, false)] {
+            chip(cv, r, BTN, BTN_BORDER);
+            let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+            cv.hline(cx - 6, cx + 6, cy, TEXT);
+            if plus { cv.vline(cx, cy - 6, cy + 6, TEXT); }
+        }
+        let readout = format!("({} zoom)", zoom_text(self.studio_time_zoom()));
+        if bar.readout.w >= f.s.width(&readout) { cv.text_in(&f.s, bar.readout, 0, &readout, DIM); }
+        chip(cv, bar.close, BTN, BTN_BORDER);
+        let (cx, cy) = (bar.close.x + bar.close.w / 2, bar.close.y + bar.close.h / 2);
+        cv.line(cx - 5, cy - 5, cx + 5, cy + 5, TEXT);
+        cv.line(cx - 5, cy + 5, cx + 5, cy - 5, TEXT);
         // Center trigger turns amber while the trigger is out of the window
         let off = self.studio_trigger_off_screen();
         chip(cv, bar.center, BTN, if off { AMBER } else { BTN_BORDER });
@@ -2106,7 +2128,10 @@ impl Ui {
         if let Some(bar) = self.studio_zoom_bar() {
             let y = self.zoom_row_y(x, y);
             if self.zoom_readout().contains(x, y) {
-                if bar.zoom.contains(x, y) { self.studio.zoom_menu = true; }
+                if bar.readout.contains(x, y) { self.studio.zoom_menu = true; }
+                else if bar.plus.contains(x, y) { self.studio_zoom_do(ZoomRow::Plus); }
+                else if bar.minus.contains(x, y) { self.studio_zoom_do(ZoomRow::Minus); }
+                else if bar.close.contains(x, y) { self.studio_zoom_do(ZoomRow::Close); }
                 else if bar.tdiv.contains(x, y) { self.open_menu(MenuId::Horizontal); }
                 else if bar.center.contains(x, y) { self.studio_center_trigger(); }
                 else if bar.fit.contains(x, y) { self.reset_zoom(); }

@@ -182,7 +182,7 @@ impl Ui {
 
     pub(super) fn measurement_navigation_tap(&mut self, x: i32, y: i32) -> bool {
         if let Some((prev, next)) = self.page_buttons() {
-            let total = if matches!(self.m.strip_dock, StripDock::Left | StripDock::Right) { self.strip_side_lines().len() } else { self.meas_rows().len() };
+            let total = if matches!(self.m.strip_dock, StripDock::Left | StripDock::Right) { self.strip_side_lines().len() } else { self.meas_shown_count() };
             let (_, _, pages) = self.page_bounds(total, self.measurement_page_size());
             if prev.contains(x, y) || next.contains(x, y) {
                 self.meas_page = if prev.contains(x, y) { self.meas_page.min(pages - 1).saturating_sub(1) } else { (self.meas_page + 1).min(pages - 1) };
@@ -190,7 +190,7 @@ impl Ui {
             }
         }
         if let Some((_, body)) = self.results_rects() {
-            let total = self.meas_rows().len();
+            let total = self.meas_shown_count();
             let fit = self.results_page_size();
             if total > fit && !self.results_min {
                 let (prev, next) = Self::results_page_buttons(body);
@@ -231,7 +231,7 @@ impl Ui {
                 }
             }
             _ => {
-                let rows = self.meas_rows();
+                let rows: Vec<tools::MeasRow> = self.meas_rows().into_iter().filter(|r| !self.meas_row_hidden(r)).collect();
                 let (first, end, _) = self.page_bounds(rows.len(), size);
                 let y0 = self.strip_band_y();
                 for (row, part) in rows[first..end].chunks(tools::STRIP_PER_ROW).enumerate() {

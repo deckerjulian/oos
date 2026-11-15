@@ -443,8 +443,11 @@ fn panning_the_zoom_never_changes_the_main_time_base() {
     touch(&mut u, Phase::Up, mid + 80, o.y + 20);
     assert!(u.m.zdelay != before, "the box moved in the overview");
     assert!(same(&u), "a drag of the box in the overview");
-    // wheel: on the zoom view and on the overview, plain
-    for (x, y) in [(z.x + 200, z.y + 100), (o.x + 200, o.y + 40)] {
+    // wheel on the zoom view zooms about the pointer (Studio); on the overview it pans the box
+    let zs = u.m.zscale;
+    assert!(u.pointer_wheel(z.x + 200, z.y + 100, 1, false));
+    assert!(u.m.zscale != zs && same(&u), "the wheel over the zoom view changes the zoom only");
+    for (x, y) in [(o.x + 200, o.y + 40)] {
         let zd = u.m.zdelay;
         assert!(u.pointer_wheel(x, y, 2, false));
         assert!(u.m.zdelay != zd, "the wheel moves the box");

@@ -367,6 +367,7 @@ impl Ui {
         self.meas_rows()
             .iter()
             .enumerate()
+            .filter(|(_, r)| !self.meas_row_hidden(r))
             .map(|(i, r)| {
                 let st = self.mstat.get(i).copied().unwrap_or_default();
                 let n = st.n.max(1) as f64;
@@ -400,7 +401,7 @@ impl Ui {
     }
 
     fn results_scroll(&mut self, d: i32) {
-        let n = self.meas_rows().len();
+        let n = self.meas_shown_count();
         let r = self.pane_rect();
         let (fit, _) = Self::results_fit(r, n);
         let last = n.saturating_sub(fit);
@@ -835,8 +836,8 @@ impl Ui {
             }
         }
         if self.m.pane == tables::PANE_RESULTS {
-            let (fit, _) = Self::results_fit(r, self.meas_rows().len());
-            if self.meas_rows().len() > fit {
+            let (fit, _) = Self::results_fit(r, self.meas_shown_count());
+            if self.meas_shown_count() > fit {
                 for (b, t) in Self::results_scroll_btns(r).iter().zip(["Up", "Dn"]) {
                     btn(cv, *b, BTN, BTN_BORDER);
                     cv.text_in(&self.fonts().mb, *b, 1, t, TEXT);
@@ -881,11 +882,11 @@ impl Ui {
                 }
             }
             tables::PANE_RESULTS => {
-                let (fit, _) = Self::results_fit(r, self.meas_rows().len());
+                let (fit, _) = Self::results_fit(r, self.meas_shown_count());
                 let [up, down] = Self::results_scroll_btns(r);
-                if self.meas_rows().len() > fit && up.contains(x, y) {
+                if self.meas_shown_count() > fit && up.contains(x, y) {
                     self.results_scroll(-(fit as i32));
-                } else if self.meas_rows().len() > fit && down.contains(x, y) {
+                } else if self.meas_shown_count() > fit && down.contains(x, y) {
                     self.results_scroll(fit as i32);
                 }
             }
@@ -898,7 +899,7 @@ impl Ui {
     /// A finger drawn over the results table moves it by the rows it passed.
     pub(super) fn pane_swipe(&mut self, x0: i32, y0: i32, y1: i32) {
         if self.pane_h() > 0 && self.m.pane == tables::PANE_RESULTS && self.pane_rect().contains(x0, y0) {
-            let (_, pitch) = Self::results_fit(self.pane_rect(), self.meas_rows().len());
+            let (_, pitch) = Self::results_fit(self.pane_rect(), self.meas_shown_count());
             self.results_scroll((y0 - y1) / pitch.max(1));
         }
     }

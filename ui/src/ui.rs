@@ -62,6 +62,8 @@ mod batch3a_tests;
 mod batch4_tests;
 #[cfg(test)]
 mod batch5_tests;
+#[cfg(test)]
+mod batch6_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -899,6 +901,8 @@ enum Drag {
     RefOffset(usize),
     Delay,
     Overview,
+    /// a new zoom box drawn on the empty overview (Studio)
+    ZoomNew,
     ZoomLeft,
     ZoomRight,
     ZoomVertical,
@@ -1562,7 +1566,7 @@ impl Ui {
     fn meas_groups(&self) -> Vec<WaveId> {
         let mut v = Vec::new();
         for id in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)).chain(self.m.cat.iter().map(|e| meascatalog::primary_source(*e))) {
-            if !v.contains(&id) {
+            if !v.contains(&id) && !self.meas_source_hidden(id) {
                 v.push(id);
             }
         }
@@ -2005,6 +2009,8 @@ impl Ui {
         if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.m.touch_lock || self.view_on() || !self.grid.contains(x, y) { return false; }
         let lane = self.wins.iter().position(|area| area.contains(x, y));
         let detail = self.m.zoom && lane.is_some();
+        // Studio: the wheel over the zoomed view zooms about the pointer (the zoom box is panned by dragging or in the overview)
+        let zoom_time = zoom_time || (detail && !vertical && self.m.layout == Layout::Studio);
         if self.m.zoom && lane.is_none() && !Self::split_zoom(self.grid).0.contains(x, y) { return false; }
         let source = if self.stacked() { lane.and_then(|lane| self.trace_sources().get(lane).copied()) } else { None };
         match source {
@@ -3264,7 +3270,7 @@ impl Ui {
             for (k, t) in studio_time_ticks(tdiv, delay, every) {
                 let x = a.x + (((t - delay as f64) / tdiv as f64 + HDIV as f64 / 2.0) * a.w as f64 / HDIV as f64).round() as i32;
                 let zero = k == 0;
-                let s = if zero { "0 s".to_string() } else { axis_label(t as f32, step as f32, 0.0, span, "s") };
+                let s = if zero { "0 s".to_string() } else { axis_label64(t, step as f32, 0.0, span, "s") };
                 let w = f.s.width(&s);
                 let tx = (x - w / 2).clamp(a.x + 6, a.x + a.w - 6 - w);
                 // a label pushed against an edge must not run into its neighbour
@@ -3280,9 +3286,9 @@ impl Ui {
                 continue;
             }
             let x = a.x + (i as f32 * a.w as f32 / HDIV).round() as i32;
-            let t = delay + (i as f32 - HDIV / 2.0) * tdiv;
-            let zero = t.abs() < tdiv * 1e-3;
-            let s = if zero { "0 s".to_string() } else { axis_label(t, tdiv, delay, span, "s") };
+            let t = delay as f64 + (i as f64 - HDIV as f64 / 2.0) * tdiv as f64;
+            let zero = t.abs() < tdiv as f64 * 1e-3;
+            let s = if zero { "0 s".to_string() } else { axis_label64(t, tdiv, delay, span, "s") };
             let w = f.s.width(&s);
             let tx = (x - w / 2).clamp(a.x + 6, a.x + a.w - 6 - w);
             if tx < free + 8 { continue; }
@@ -4823,7 +4829,7 @@ impl Ui {
         if self.results_min {
             return;
         }
-        let rows = self.meas_rows();
+        let rows: Vec<(usize, tools::MeasRow)> = self.meas_rows().into_iter().enumerate().filter(|(_, r)| !self.meas_row_hidden(r)).collect();
         let pitch = self.results_row(rows.len() as i32);
         let (one, two) = self.lay().res_pitch;
         // baselines: 16 and 35 px into a row at the normal text size
@@ -4831,14 +4837,14 @@ impl Ui {
         let (first, end) = self.results_page_range(rows.len());
         let cols = self.results_cols();
         let cw = body.w / cols as i32;
-        for (page_row, (i, r)) in rows.iter().enumerate().skip(first).take(end - first).enumerate() {
+        for (page_row, (i, r)) in rows.iter().skip(first).take(end - first).enumerate() {
             // the rows of a card docked under or above the plot run in columns
             let body = Rect::new(body.x + (page_row % cols) as i32 * cw, body.y, cw, body.h);
             let by = body.y + (page_row / cols) as i32 * pitch;
             cv.hline(body.x + 8, body.x + body.w - 9, by, LINE);
-            let st = self.mstat.get(i).copied().unwrap_or_default();
+            let st = self.mstat.get(*i).copied().unwrap_or_default();
             let mean = st.sum / st.n.max(1) as f64;
-            let name = self.results_name(i, r);
+            let name = self.results_name(*i, r);
             let value = r.text();
             let value_x = body.x + body.w - 10 - f.sb.width(&value);
             let sd = if st.n > 1 {
@@ -9028,6 +9034,7 @@ impl Ui {
                             let right = (tx0 - edge(m.zdelay + half)).abs();
                             Some(if left < 20 && left <= right { Drag::ZoomLeft }
                                  else if right < 20 { Drag::ZoomRight }
+                                 else if self.m.layout == Layout::Studio && { let (xa, xb) = self.zoom_window_x(overview); tx0 < xa || tx0 > xb } { Drag::ZoomNew }
                                  else { Drag::Overview })
                         } else { None }
                     } else { None };
@@ -9087,6 +9094,7 @@ impl Ui {
                         _ => 0.0,
                     };
                     let start_cur = match drag {
+                        Drag::ZoomNew => { let o = Self::split_zoom(self.grid).0; self.m.delay + (tx0 - o.x - o.w / 2) as f32 / (o.w as f32 / HDIV) * self.m.time_per_div() }
                         Drag::ZoomLeft => self.m.zdelay + tscales()[self.m.zscale] * HDIV * 0.5,
                         Drag::ZoomRight => self.m.zdelay - tscales()[self.m.zscale] * HDIV * 0.5,
                         Drag::CursorA => self.m.cur_a,
@@ -9128,6 +9136,19 @@ impl Ui {
                     Drag::Overview => {
                         let overview = Self::split_zoom(self.grid).0;
                         self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
+                        self.clamp_zoom(); self.settings_changed();
+                    }
+                    Drag::ZoomNew => {
+                        let overview = Self::split_zoom(self.grid).0;
+                        let time = self.m.delay + (x.clamp(overview.x, overview.right()) - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
+                        let (t0, t1) = (t.start_cur.min(time), t.start_cur.max(time));
+                        if t1 - t0 < 4.0 * self.m.time_per_div() * HDIV / overview.w.max(1) as f32 { return; }
+                        // the finest step whose window holds the box, and not slower than the main time base
+                        let scales = tscales();
+                        let mut z = 0;
+                        while z < self.m.tscale && scales[z] * HDIV < (t1 - t0) * 0.999 { z += 1; }
+                        self.m.zscale = z;
+                        self.m.zdelay = (t0 + t1) * 0.5;
                         self.clamp_zoom(); self.settings_changed();
                     }
                     Drag::ZoomLeft | Drag::ZoomRight => {
@@ -9826,6 +9847,11 @@ fn studio_time_ticks(tdiv: f32, delay: f32, every: i32) -> Vec<(i64, f64)> {
 /// Axis label with the SI prefix of the axis `span` and as many decimals as `step` and `base` (offset / delay)
 /// need: "-1.0 µs", "500 mV", "3.25 V".
 fn axis_label(v: f32, step: f32, base: f32, span: f32, unit: &str) -> String {
+    axis_label64(v as f64, step, base, span, unit)
+}
+
+/// `axis_label` for a time that does not fit an f32 (a deep zoom far from the trigger).
+fn axis_label64(v: f64, step: f32, base: f32, span: f32, unit: &str) -> String {
     let prefixes = [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"), (1e-6, "\u{b5}"), (1e-9, "n"), (1e-12, "p")];
     let a = span.abs().max(step.abs()) as f64;
     let (mult, p) = prefixes.iter().copied().find(|(m, _)| a >= *m * 0.9995).unwrap_or((1e-12, "p"));
@@ -9844,7 +9870,7 @@ fn axis_label(v: f32, step: f32, base: f32, span: f32, unit: &str) -> String {
     let dec = needed(st).max(needed((base as f64 / mult).abs()));
     // a step far below one unit of the prefix (a deep zoom) needs digits down to its own size
     let dec = if st > 0.0 && st < 1.0 { dec.max((-st.log10()).ceil().min(9.0) as i32) } else { dec };
-    let x = v as f64 / mult;
+    let x = v / mult;
     let x = if x.abs() < st * 1e-3 { 0.0 } else { x };
     format!("{:.*} {}{}", dec as usize, x, p, unit)
 }
