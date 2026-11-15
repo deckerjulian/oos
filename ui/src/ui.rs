@@ -8350,6 +8350,11 @@ impl Ui {
                 for e in &bad {
                     eprintln!("oos-ui: recall {}: left out: {}", p.display(), e);
                 }
+                // a set-up is a live one, as with the Default key: a reference or SIM session ends first, so a Live
+                // afterwards does not bring back the set-up from before it over the recalled one
+                if self.record_mode() {
+                    self.leave_session();
+                }
                 if let Ok(t) = &text { self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF)); }
                 (m.run, m.status) = (self.m.run, self.m.status);
                 // the text size is a preference of this screen, not part of a set-up

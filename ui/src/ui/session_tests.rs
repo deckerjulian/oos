@@ -88,3 +88,37 @@ fn take_over_and_live_bring_back_the_live_setup() {
         assert_eq!((live_setup(&u), u.m.view), before, "with live: {with_live}");
     }
 }
+
+/// A storage directory of this test alone.
+fn store(u: &mut Ui, name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("oos-session-{}-{}", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    u.store_dir = dir.clone();
+    dir
+}
+
+#[test]
+fn a_setup_recalled_in_sim_is_what_live_keeps() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let dir = store(&mut u, "recall");
+    u.m.tscale = 20;
+    u.step(0.05);
+    let mut saved = u.m.clone();
+    saved.tscale = 25;
+    saved.ch[3].on = true;
+    saved.meas = vec![(Meas::Rise, WaveId::Ch(3))];
+    std::fs::write(u.setup_path(), crate::store::setup_text(&saved)).unwrap();
+    u.sim_play_set(true).unwrap();
+    u.wait_sim_generation();
+    u.step(0.05);
+    assert!(u.record_mode());
+    u.recall_setup();
+    u.step(0.05);
+    let recalled = live_setup(&u);
+    assert_eq!((recalled.1, recalled.2.clone()), (25, saved.meas.clone()));
+    u.return_to_live();
+    u.step(0.05);
+    assert_eq!(live_setup(&u), recalled, "Live keeps the recalled set-up");
+    let _ = std::fs::remove_dir_all(&dir);
+}
