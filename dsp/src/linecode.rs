@@ -338,27 +338,46 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
     out
 }
 
-/// MLT-3: cycling −A / 0 / +A; a transition is a 1, a hold is a 0.
-pub fn mlt3(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<Packet> {
-    let e = edges(v, thr, hyst);
+/// MLT-3: cycling −A / 0 / +A; every change of level is a 1, a hold is a 0. The line is sliced to its three levels
+/// with two comparators at ±A/2 around the middle of its outer levels (the 1st and 99th percentile), each with the
+/// hysteresis `hyst` (at most A/2); one threshold sees only half of the changes. `_thr` is not used: the slicing
+/// levels come from the signal.
+pub fn mlt3(v: &[f32], dt: f64, bitrate: f64, _thr: f32, hyst: f32) -> Vec<Packet> {
+    let mut f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    if f.len() < 8 {
+        return Vec::new();
+    }
+    let (p_lo, p_hi) = (f.len() / 100, f.len() - 1 - f.len() / 100);
+    let lo = *f.select_nth_unstable_by(p_lo, f32::total_cmp).1;
+    let hi = *f.select_nth_unstable_by(p_hi, f32::total_cmp).1;
+    let (mid, a) = (0.5 * (lo + hi), 0.5 * (hi - lo));
+    if !(a > 0.0) {
+        return Vec::new();
+    }
+    let h = hyst.clamp(0.0, 0.5 * a);
+    // a change of level is a crossing of either comparator, in time order
+    let (upper, lower) = (edges(v, mid + 0.5 * a, h), edges(v, mid - 0.5 * a, h));
+    let mut e: Vec<f64> = upper.into_iter().chain(lower).map(|x| x.t).collect();
+    e.sort_by(f64::total_cmp);
     if e.len() < 3 {
         return Vec::new();
     }
-    let spacings: Vec<f64> = e.windows(2).map(|w| (w[1].t - w[0].t) * dt).collect();
+    let spacings: Vec<f64> = e.windows(2).map(|w| (w[1] - w[0]) * dt).collect();
     let ui = if bitrate > 0.0 { 1.0 / bitrate } else { eye::unit_interval(&spacings).unwrap_or(0.0) };
     if !(ui > dt) {
         return Vec::new();
     }
     let mut bits = Vec::new();
     let mut k = 0usize;
-    let t0 = e[0].t * dt;
-    let t_end = e[e.len() - 1].t * dt;
+    let t0 = e[0] * dt;
+    let t_end = e[e.len() - 1] * dt;
     let mut t = t0;
     while t + ui <= t_end + ui {
-        while k + 1 < e.len() && e[k + 1].t * dt <= t + 0.5 * ui {
+        while k + 1 < e.len() && e[k + 1] * dt <= t + 0.5 * ui {
             k += 1;
         }
-        let changed = k > 0 && (e[k].t * dt - t).abs() < 0.5 * ui;
+        // the first change, where the bit grid starts, is a 1 as well
+        let changed = (e[k] * dt - t).abs() < 0.5 * ui;
         bits.push((t / dt, changed));
         t += ui;
     }
@@ -456,5 +475,27 @@ mod tests {
         let p = manchester(&v, dt, 1.0 / bit_t, 0.5, 0.05);
         assert!(p.iter().any(|x| x.kind == Kind::Data && x.value == 0xd5), "{:?}", p);
         let _ = t;
+    }
+
+    #[test]
+    fn mlt3_counts_every_change_of_level() {
+        // bytes LSB first, a 1 steps the level 0, +1, 0, -1; 10 samples per bit after one idle bit
+        let bytes = [0xffu8, 0xff, 0x55, 0xd5, 0x0f, 0xa3];
+        let cycle = [0.0f32, 1.0, 0.0, -1.0];
+        let mut v = vec![0.0f32; 10];
+        let mut at = 0usize;
+        for b in bytes {
+            for k in 0..8 {
+                if b >> k & 1 == 1 {
+                    at += 1;
+                }
+                v.extend(std::iter::repeat_n(cycle[at % 4], 10));
+            }
+        }
+        for (rate, thr) in [(1e7, 0.0), (1e7, 0.5), (0.0, 0.0)] {
+            let p = mlt3(&v, 1e-8, rate, thr, 0.1);
+            let got: Vec<u32> = p.iter().filter(|x| x.kind == Kind::Data).map(|x| x.value).collect();
+            assert_eq!(got, bytes.map(u32::from), "rate {rate} threshold {thr}");
+        }
     }
 }
