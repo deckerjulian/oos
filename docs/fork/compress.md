@@ -66,8 +66,9 @@ The compressed frames are only drawn. `drawpipe::draw_frame` sends a frame of th
 envelope, not roll or scan, at most 1 M deep) through the dense path: trigger refinement on the pairs with an even
 smoothing length (`compress::smooth_len`, whole pairs), then `compress::deposit_pairs` (per column the span of the
 pairs whose centre lies in it, joined to the nearest end of the last pair before it; in dots mode no join). The
-per-frame statistics (`framestats`) skip these frames; the raw newest frame of each batch counts through the record
-path.
+per-frame statistics skip these frames, both those of the deposit workers (`framestats`) and those of the fast path
+(`Ui::fast_draw_all`, which also leaves out Mean, RMS, Std dev and AC RMS of deep pairs); the raw newest frame of each
+batch counts through the record path.
 
 Visible difference in dots mode: a raw frame deposits one dot per sample (brightness follows dwell), a pair frame one
 span per column (brightness uniform along the span), as the record path already draws pairs in dots mode.
@@ -129,6 +130,8 @@ off.
   - `perf_guard_compressed_frame` (ignored, `tools/perf-guard.sh`): compressed frame <= 0.25 x raw frame.
 - `ui/src/board/dho/hw.rs` `live_compression_plan_by_time_base`: k, frame bytes and frames per batch from 1 us/div to
   1 ms/div, 1 and 2 channels; off at 100 ns/div, in Single, above 1 M.
+- `ui/src/ui.rs` `statistics_of_the_fast_path_leave_out_what_pairs_cannot_give`: frames of the fast path add Max but
+  not Mean or Std dev of deep pairs, and nothing of live-compression pairs.
 - `fpgad/src/compcheck.rs`: the report names PASS, a different layout, or FAIL.
 
 ## On-unit verification

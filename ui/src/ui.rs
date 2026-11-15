@@ -3211,7 +3211,7 @@ impl Ui {
         let placed = crate::fastdraw::par_map(&frames, |f| fast_plan(m, w, h, f, fold));
         let t1 = std::time::Instant::now();
         let mut trig = 0;
-        for p in &placed {
+        for (p, f) in placed.iter().zip(&frames) {
             trig += p.triggered as usize;
             if let FastPlan::Raw { class: Some(k), off, .. } = p.plan {
                 self.fast_edges[k] += 1;
@@ -3219,9 +3219,14 @@ impl Ui {
                     self.fast_off = (self.fast_off.0 + off, self.fast_off.1.max(off));
                 }
             }
-            if rows_ready {
+            // as the deposit workers (`framestats::fold_frame`): nothing of live-compression pairs (the raw newest
+            // frame of the batch counts), of other min/max pairs only what pairs give (Max, Min, Pk-pk)
+            if rows_ready && !crate::compress::live(f) {
                 for (i, &(k, src)) in self.m.meas.iter().enumerate() {
                     let Some(c) = src.ch() else { continue };
+                    if f.envelope && crate::framestats::needs_samples(k) {
+                        continue;
+                    }
                     if let Some(v) = p.fold[c].and_then(|f| f.get(k)).filter(|v| v.is_finite()) {
                         self.mstat[i].add(v);
                     }
@@ -12565,6 +12570,51 @@ mod tests {
             assert!((a - b).abs() < 1e-5, "{:?}: fold {} measure {}", k, a, b);
         }
         assert!(fo.get(Meas::Freq).is_none());
+    }
+
+    // Break it catches: the fast path folding Mean, RMS, Std dev and AC RMS of min/max pairs into the statistics
+    // (deep pairs: the value shown is NaN while the statistics count pair values), or anything of live-compression
+    // pairs (only their raw newest frame counts), where the deposit workers (`framestats::fold_frame`) leave them out
+    #[test]
+    fn statistics_of_the_fast_path_leave_out_what_pairs_cannot_give() {
+        use super::*;
+        crate::deepmeas::force(Some(false));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        ui.m.trig_level = 0.0;
+        ui.m.ch[0].offset = 0.0;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0)), (Meas::Vmax, WaveId::Ch(0)), (Meas::StdDev, WaveId::Ch(0))];
+        ui.m.meas2.clear();
+        let n = 20_000usize;
+        let dt = 1e-5 * 1.2 / n as f64;
+        // a fifth of the time high: the mean (-0.6) is far from that of the pairs (0)
+        let frame = |seq: u64, envelope: bool, depth: usize| {
+            let v: Vec<f32> = (0..n).map(|k| if (k + n / 2) % 1000 < 200 { 1.0 } else { -1.0 }).collect();
+            let ch = [v, Vec::new(), Vec::new(), Vec::new()];
+            crate::board::Frame { seq, dt, pre: n / 2, ch, envelope, acq: (1.0 / dt, depth), ..Default::default() }
+        };
+        let counts = |ui: &Ui| ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>();
+        // deep pairs: the newest is the record (Max measured), the fast path draws the other nine
+        shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [0, 1, 0]);
+        shared.lock().unwrap().queue.extend((1..=10).map(|s| frame(s, true, 10_000_000)));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [0, 11, 0], "Max of every frame, no Mean or Std dev of pairs");
+        // live-compression pairs: a raw record, then pair frames; only the raw one counts
+        ui.clear_display();
+        ui.m.run = RunState::Run;
+        shared.lock().unwrap().queue.push_back(frame(11, false, n));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [1, 1, 1]);
+        shared.lock().unwrap().queue.extend((12..=21).map(|s| frame(s, true, n)));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [1, 1, 1], "values of live-compression pairs counted");
+        crate::deepmeas::force(None);
     }
 
     /// The fast path takes what fits into its time budget: the newest frames, the older ones are counted as dropped.
