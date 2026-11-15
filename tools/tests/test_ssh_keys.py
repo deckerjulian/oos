@@ -33,6 +33,8 @@ def public(byte=1, comment="offline test"):
 
 class HostKeys(unittest.TestCase):
     def setUp(self):
+        # local/ is ignored by git: a fresh checkout (CI) does not have it
+        (ROOT / "local").mkdir(exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "local")
         self.root = Path(self.tmp.name)
         self.file = self.root / "public.pub"
