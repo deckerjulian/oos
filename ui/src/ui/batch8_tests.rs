@@ -179,6 +179,9 @@ fn every_page_has_a_picture_a_line_and_targets_of_40_px() {
 fn measure_math_and_ref_open_the_pages_they_have_and_back_returns() {
     let mut u = studio();
     open_kind(&mut u, AddKind::Measure);
+    // Measure is a page (picture, line, Choose); Choose opens the list
+    let choose = foot(&u, super::addrail::RailAct::Choose);
+    tap_in(&mut u, choose);
     assert_eq!(u.menu, MenuId::MeasAdd);
     assert!(u.sheet_active());
     let b = u.sheet_chrome().1.expect("back");
