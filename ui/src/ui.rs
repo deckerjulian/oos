@@ -101,6 +101,8 @@ mod batch14_tests;
 mod batch16_tests;
 #[cfg(test)]
 mod batch17_tests;
+#[cfg(test)]
+mod batch18_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -2230,9 +2232,11 @@ impl Ui {
 
     /// Zoom: overview on top, a readout row (with Close), zoomed view below.
     pub(super) fn split_zoom(&self, g: Rect) -> (Rect, Rect) {
+        let gap = 32;
         // Studio: the overview has the height the user gave it
         let top = if self.m.layout == Layout::Studio { self.studio_ov_h(g) } else { 96 };
-        let gap = 32;
+        // short: the overview goes first, the lanes and the zoom bar keep their room
+        let top = if self.m.layout == Layout::Studio { let room = (g.h - gap - 96).max(0); if room < 40 { 0 } else { top.min(room) } } else { top };
         (Rect::new(g.x, g.y, g.w, top), Rect::new(g.x, g.y + top + gap, g.w, (g.h - top - gap) / 8 * 8))
     }
 
@@ -2653,6 +2657,7 @@ impl Ui {
         self.ch_hold_poll();
         self.dock_poll();
         self.md_tick();
+        if self.m.layout == Layout::Studio && self.azr.spec.is_none() && self.last[0].is_some() && (self.m.pane == tables::PANE_SPECTRUM || self.m.view == AView::Spectrum) { self.analyzer_update(); }
         self.studio_delay_clamp();
         self.counter_poll();
         self.la_probe_poll();
@@ -4727,6 +4732,8 @@ impl Ui {
             return;
         }
         let a = self.area;
+        // the markers take the colour of the channel that is searched
+        let mark_col = match &self.studio.search { Some(spec) if self.m.layout == Layout::Studio => self.wave_color(spec.src), _ => AMBER };
         let events = self.search_events();
         let (scale, delay) = self.view();
         let left = delay as f64 - scale as f64 * HDIV as f64 * 0.5;
@@ -4738,8 +4745,8 @@ impl Ui {
             let next = events.partition_point(|&time| time < left + (column + 1) as f64 * per_pixel);
             if next > first {
                 let x = a.x + column;
-                cv.triangle([(x - 4, a.y + 1), (x + 4, a.y + 1), (x, a.y + 8)], AMBER);
-                cv.dashed_vline(x, a.y + 9, a.y + a.h - 1, 2, 6, mix(BG, AMBER, 90));
+                cv.triangle([(x - 4, a.y + 1), (x + 4, a.y + 1), (x, a.y + 8)], mark_col);
+                cv.dashed_vline(x, a.y + 9, a.y + a.h - 1, 2, 6, mix(BG, mark_col, 90));
             }
             first = next;
         }
@@ -5356,7 +5363,7 @@ impl Ui {
     /// cover it (it never hides dialog controls).
     /// A message that reports something done: it gets a tick, not the warning triangle.
     pub(super) fn toast_is_success(s: &str) -> bool {
-        s.ends_with(" added") || s.ends_with(" removed") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ")
+        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ")
     }
 
     fn draw_toast(&self, cv: &mut Canvas) {
@@ -6509,6 +6516,7 @@ impl Ui {
             MenuId::La => self.la_title(),
             MenuId::LaLines => "Logic analyser \u{b7} lines shown".into(),
             MenuId::LaPat => "Pattern \u{b7} D0-D15".into(),
+            MenuId::Main if self.m.layout == Layout::Studio => "Settings".into(),
             MenuId::Main => "Menu".into(),
             MenuId::Channel(c) => format!("CH{}", c + 1),
             MenuId::Horizontal => "Horizontal".into(),

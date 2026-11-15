@@ -869,6 +869,7 @@ impl Ui {
                 let rows = vec![("Turn off".to_string(), Action::MathOff(k)), (format!("M{} settings", k + 1), Action::MathSettings(k))];
                 self.popup(&format!("M{}", k + 1), x, y, rows);
             }
+            HoldOn::Chan(c) => self.channel_popup(c, x, y),
             HoldOn::Ref(i) => {
                 let on = self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on);
                 let rows = vec![(if on { "Hide" } else { "Show" }.to_string(), Action::Source(WaveId::Ref(i))), ("Clear slot".to_string(), Action::RefClear(i)),
@@ -887,7 +888,8 @@ impl Ui {
         if board().couplings().contains(&to) { rows.push((format!("Coupling {}, set {}", ch.coupling.name(), to.name()), Action::ChCoupling(c))); }
         rows.push((format!("Invert {}", if ch.invert { "On, set Off" } else { "Off, set On" }), Action::ChInvert(c)));
         rows.push(("Zero offset".into(), Action::ChZero(c)));
-        if ch.on { rows.push(("Turn off".into(), Action::Source(WaveId::Ch(c)))); }
+        // Studio: the first row is the one people look for
+        if ch.on { if self.m.layout == Layout::Studio { rows.insert(0, ("Turn off".into(), Action::Source(WaveId::Ch(c)))); } else { rows.push(("Turn off".into(), Action::Source(WaveId::Ch(c)))); } }
         rows.push((format!("CH{} settings", c + 1), Action::Menu(MenuId::Channel(c))));
         self.popup(&format!("CH{}", c + 1), x, y, rows);
     }

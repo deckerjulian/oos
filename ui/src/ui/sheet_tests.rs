@@ -101,9 +101,8 @@ fn the_plot_stays_visible_beside_the_sheet() {
     u.open_menu(MenuId::Trigger);
     u.step(0.05);
     let during = u.plot_rect();
-    assert!(during.right() <= u.sheet_rect().x, "the plot ends where the sheet begins");
-    assert!(during.w >= 440, "{during:?} still a plot");
-    assert!(before.w > during.w);
+    // the sheet floats over the docks: the plot keeps its size
+    assert_eq!(during, before);
     u.close_menu();
     u.step(0.05);
     assert_eq!(u.plot_rect(), before, "closing gives the room back");

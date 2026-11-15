@@ -81,8 +81,12 @@ fn with_several_sources_each_has_one_header_and_the_rows_are_grouped() {
     let g = u.studio_panel_geo().unwrap();
     let mut cv = Canvas::new(W, H);
     u.render(&mut cv);
-    let pitch = u.studio_panel_row();
-    let band = |k: i32| Rect::new(g.list.x + 8, g.list.y + k * pitch, 60, 14);
+    let layout = u.panel_layout(&rows, &listed, 0, g.list);
+    assert_eq!(layout.len(), 4);
+    // only the first row of a group has the band
+    let body = u.studio_row_body();
+    assert_eq!(layout.iter().map(|(_, r)| r.h).collect::<Vec<_>>(), [body + 14, body, body + 14, body]);
+    let band = |k: usize| Rect::new(layout[k].1.x + 8, layout[k].1.y, 60, 14);
     let (c0, c1) = (u.wave_color(WaveId::Ch(0)), u.wave_color(WaveId::Ch(1)));
     assert!(count(&cv, band(0), c0) > 5, "the header CH1 over the first group");
     assert_eq!(count(&cv, band(1), c0), 0, "no second header in the same group");

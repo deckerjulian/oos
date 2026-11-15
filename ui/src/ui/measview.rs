@@ -30,6 +30,23 @@ impl Ui {
         self.relayout();
     }
 
+    /// The rows of the list that are on the page, each with its rectangle. A row that starts the group of a source (or the
+    /// page) has a band for the header; the others are as high as their body. `pos` indexes `listed`.
+    pub(super) fn panel_layout(&self, rows: &[tools::MeasRow], listed: &[usize], first: usize, list: Rect) -> Vec<(usize, Rect)> {
+        let body = self.studio_row_body();
+        let multi = self.studio_multi_source();
+        let mut y = list.y;
+        let mut out = Vec::new();
+        for pos in first..listed.len() {
+            let group_first = multi && (pos == first || rows[listed[pos - 1]].src != rows[listed[pos]].src);
+            let h = if self.studio_detailed() { DETAIL_ROW } else { body + if group_first { super::studio::GROUP_BAND } else { 0 } };
+            if y + h > list.bottom() { break; }
+            out.push((pos, Rect::new(list.x, y, list.w, h)));
+            y += h;
+        }
+        out
+    }
+
     /// Statistics are on for all rows (the Statistics switch) or for some.
     pub(super) fn studio_stats_any(&self) -> bool {
         self.studio.panel.stats || !self.studio.md.stats_rows.is_empty()

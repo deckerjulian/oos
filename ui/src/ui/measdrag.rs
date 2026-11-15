@@ -25,6 +25,8 @@ pub(super) enum HoldOn {
     /// a math or reference chip of the bottom bar: a hold opens its quick actions
     Math(usize),
     Ref(usize),
+    /// a channel chip of the bottom bar: its hold opens the quick actions of the channel
+    Chan(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -99,10 +101,9 @@ impl Ui {
         let listed = self.studio_listed(&rows);
         let keys = self.studio_keys();
         let first = self.studio_first(listed.len(), g.page);
-        let k = ((y - g.list.y) / self.studio_panel_row()) as usize;
-        let i = *listed.get(first + k)?;
-        let key = *keys.get(i)?;
-        Some((key, Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row())))
+        let (pos, r) = self.panel_layout(&rows, &listed, first, g.list).into_iter().find(|(_, r)| r.contains(x, y))?;
+        let key = *keys.get(listed[pos])?;
+        Some((key, r))
     }
 
     /// The rectangle of a measurement's row in the docked list, when it is on the page.
@@ -112,8 +113,7 @@ impl Ui {
         let listed = self.studio_listed(&rows);
         let keys = self.studio_keys();
         let first = self.studio_first(listed.len(), g.page);
-        let k = listed.iter().skip(first).take(g.page).position(|&i| keys.get(i) == Some(&key))?;
-        Some(Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row()))
+        self.panel_layout(&rows, &listed, first, g.list).into_iter().find(|(pos, _)| keys.get(listed[*pos]) == Some(&key)).map(|(_, r)| r)
     }
 
     /// The pin and the menu button of a row: two targets of 44 px at its right end.
@@ -133,8 +133,9 @@ impl Ui {
     pub(super) fn md_chip_at(&self, x: i32, y: i32) -> Option<HoldOn> {
         if self.m.layout != Layout::Studio || self.full_on() { return None; }
         let b = self.studio_bottom();
-        if let Some(k) = (0..NMATH).find(|&k| b.math[k].w > 0 && b.math[k].contains(x, y)) { return Some(HoldOn::Math(k)); }
-        self.shown_refs().into_iter().find(|&i| b.refs[i].w > 0 && b.refs[i].contains(x, y)).map(HoldOn::Ref)
+        if let Some(k) = (0..NMATH).find(|&k| b.math[k].w > 0 && Self::hit40(b.math[k]).contains(x, y)) { return Some(HoldOn::Math(k)); }
+        if let Some(c) = (0..n_ch()).find(|&c| b.ch[c].w > 0 && Self::hit40(b.ch[c]).contains(x, y)) { return Some(HoldOn::Chan(c)); }
+        self.shown_refs().into_iter().find(|&i| b.refs[i].w > 0 && Self::hit40(b.refs[i]).contains(x, y)).map(HoldOn::Ref)
     }
 
     /// The badge strip is the target of a pin: the row under the lanes.
@@ -387,9 +388,10 @@ impl Ui {
         let listed = self.studio_listed(&rows);
         let keys = self.studio_keys();
         let first = self.studio_first(listed.len(), g.page);
-        let pitch = self.studio_panel_row();
-        let slot = ((y - g.list.y + pitch / 2) / pitch).max(0) as usize;
-        Some(listed.get(first + slot).and_then(|&i| keys.get(i)).copied())
+        // before the row whose middle is below the finger
+        let layout = self.panel_layout(&rows, &listed, first, g.list);
+        let at = layout.iter().find(|(_, r)| y < r.y + r.h / 2).map(|(pos, _)| listed[*pos]);
+        Some(at.and_then(|i| keys.get(i)).copied())
     }
 
     // ------------------------------------------------------------------------------------------------ tiles
@@ -548,9 +550,9 @@ impl Ui {
                     let listed = self.studio_listed(&rows);
                     let keys = self.studio_keys();
                     let first = self.studio_first(listed.len(), g.page);
-                    let slot = before.and_then(|b| listed.iter().skip(first).take(g.page).position(|&i| keys.get(i) == Some(&b)))
-                        .unwrap_or(listed.len().saturating_sub(first).min(g.page));
-                    let ly = g.list.y + slot as i32 * self.studio_panel_row();
+                    let layout = self.panel_layout(&rows, &listed, first, g.list);
+                    let ly = before.and_then(|b| layout.iter().find(|(pos, _)| keys.get(listed[*pos]) == Some(&b)).map(|(_, r)| r.y))
+                        .unwrap_or_else(|| layout.last().map_or(g.list.y, |(_, r)| r.bottom()));
                     cv.fill(Rect::new(g.list.x + 4, ly - 1, g.list.w - 8, 3), ACCENT);
                 }
                 // the row follows the finger
@@ -560,7 +562,7 @@ impl Ui {
                     let r = Rect::new(x - w / 2, y - self.studio_panel_row() / 2, w, self.studio_panel_row());
                     cv.round(r, 6, ACCENT, 255);
                     cv.round(r.inset(1), 5, PANEL_BG, 235);
-                    self.draw_panel_row(cv, r, row, self.studio_is_pinned(key));
+                    self.draw_panel_row(cv, r, row, self.studio_is_pinned(key), 0);
                 }
             }
             Some(StudioDrag::BadgeDrag { key, x, y }) => {

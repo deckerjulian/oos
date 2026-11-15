@@ -10,7 +10,7 @@ use super::*;
 pub(super) const TILE_H: i32 = 84;
 pub(super) const TILE_COLS: i32 = 2;
 const CARD_W: i32 = 470;
-const CARD_H: i32 = 340;
+const CARD_H: i32 = 392;
 
 impl Ui {
     /// The "i" of a tile: a 40 px target in its top right corner.
@@ -48,6 +48,11 @@ impl Ui {
         if added {
             let (x, y) = (tile.x + 10, tile.y + 12);
             for d in [0, 1] { cv.line(x, y + d, x + 4, y + 5 + d, ACCENT); cv.line(x + 4, y + 5 + d, x + 11, y - 5 + d, ACCENT); }
+            // its value now, as the list has it
+            let rows = self.meas_rows();
+            if let Some(row) = self.studio_index(self.add_key(cat)).and_then(|i| rows.get(i)) {
+                if row.v.is_finite() { cv.text(&f.sb, tile.x + 26, tile.y + 17, &row.text(), ACCENT); }
+            }
         }
         // the "i": a circle with a stem
         let i = Self::tile_info_rect(tile);
@@ -99,8 +104,9 @@ impl Ui {
         let w = card.w - 32;
         let mut y = card.y + 108;
         for (head, body) in [("What it is", info.blurb.to_string()), ("How it is computed", info.how.clone()), ("Settings", info.settings.clone())] {
-            cv.text(&f.sb, card.x + 16, y, head, LABEL);
-            y += 6;
+            y += 8;
+            cv.text(&f.mb, card.x + 16, y, head, TEXT);
+            y += 8;
             for l in super::meascatalog::wrap_lines(&f.s, &body, w) {
                 y += 16;
                 cv.text(&f.s, card.x + 16, y, &l, TEXT);

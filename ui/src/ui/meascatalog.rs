@@ -286,6 +286,30 @@ pub(super) fn cat_info(c: Cat) -> CatInfo {
         Mark::Loop => "Combines two sources sample by sample (voltage with current, or two phases) and works on the product or the phase between them.",
         Mark::Slope => "Takes the slope of the signal between two levels and reports it per second.",
     }.to_string();
+    // a line of its own where the picture's is not exact enough
+    let how = match c {
+        Cat::Maximum => "The highest sample in the gate (the screen, or the whole record). It is one sample, so a spike counts.".to_string(),
+        Cat::Minimum => "The lowest sample in the gate (the screen, or the whole record). It is one sample, so a dip counts.".to_string(),
+        Cat::PeakToPeak => "The highest sample minus the lowest sample in the gate.".to_string(),
+        Cat::Amplitude => "The top level minus the base level. Both come from the histogram of the samples, so a spike or a little ringing does not move them.".to_string(),
+        Cat::Top => "The most common level in the upper half of the histogram of the samples: where the signal sits when it is high.".to_string(),
+        Cat::Base => "The most common level in the lower half of the histogram of the samples: where the signal sits when it is low.".to_string(),
+        Cat::Mean => "The average of all the samples in the gate, in volts, DC included.".to_string(),
+        Cat::Rms => "The square root of the average of the squared samples: the effective value, DC included.".to_string(),
+        Cat::Rise => "The time the edge takes to go from the 10% to the 90% level between base and top, averaged over the rising edges in the gate.".to_string(),
+        Cat::Fall => "The time the edge takes to go from the 90% to the 10% level between top and base, averaged over the falling edges in the gate.".to_string(),
+        Cat::Period => "The time between two successive rising edges at the middle level (halfway between base and top), averaged over the cycles in the gate.".to_string(),
+        Cat::Frequency => "One divided by the period, with the period measured between successive rising edges at the middle level.".to_string(),
+        Cat::PosWidth => "The time from a rising edge to the next falling edge, both at the middle level, averaged over the pulses in the gate.".to_string(),
+        Cat::NegWidth => "The time from a falling edge to the next rising edge, both at the middle level, averaged over the pulses in the gate.".to_string(),
+        Cat::PosDuty => "The positive width divided by the period, in percent.".to_string(),
+        Cat::NegDuty => "The negative width divided by the period, in percent.".to_string(),
+        Cat::PosOvershoot => "How far the highest peak after a rising edge rises above the top level, as a percent of the amplitude.".to_string(),
+        Cat::NegOvershoot => "How far the lowest point after a falling edge falls below the base level, as a percent of the amplitude.".to_string(),
+        Cat::Delay => "The time from an edge of source A to the nearest edge of the same kind on source B, at the middle level of each.".to_string(),
+        Cat::Phase => "The delay between source A and source B divided by the period of A, in degrees.".to_string(),
+        _ => how,
+    };
     let sources = match m.need { Need::One => "Reads one source".to_string(), Need::Two => "Reads two sources: A and B".to_string() };
     CatInfo { name: m.name, blurb: m.blurb, mark: m.mark, unit: m.unit, how,
         settings: "Gate (screen or whole record), levels and edge options are on the settings card of the measurement: its row menu, Settings.".into(), sources }

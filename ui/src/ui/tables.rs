@@ -232,8 +232,12 @@ impl Ui {
 
     /// The view centred on a time of the record.
     pub(super) fn go_to_time(&mut self, t: f64) {
+        // Studio stops the scope and jumps; the others ask for it
+        let mut stopped = false;
         if self.m.run == RunState::Run {
-            return self.toast("Stop the scope to go to an event");
+            if self.m.layout != Layout::Studio { return self.toast("Stop the scope to go to an event"); }
+            self.key(key::RUNSTOP);
+            stopped = true;
         }
         if self.m.zoom {
             if self.m.trig_ref.is_some() {
@@ -251,7 +255,7 @@ impl Ui {
         }
         if self.m.trig_ref.is_some() { self.refresh_stopped_reference(); }
         else { self.settings_changed(); }
-        self.toast(&format!("At {}", si(t, "s")));
+        self.toast(&if stopped { "Stopped to jump".to_string() } else { format!("At {}", si(t, "s")) });
     }
 
     /// The events as CSV into the storage directory.

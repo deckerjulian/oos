@@ -261,12 +261,14 @@ impl Ui {
     fn sheet_main_spec(&self) -> SheetSpec {
         use Item::*;
         use MenuId as M;
-        let names = ["Setup", "Analyze", "Analysers", "More"];
+        let names = ["Setup", "Tools", "Analysis views", "More"];
         let place = |it: Item| -> Slot {
             match it {
-                AutosetAct | DefaultAct | ClearDisp | ForceAct | Open(M::Horizontal) | Open(M::Display) | NavHist => Slot::Tab(0),
-                NavBack | NavFwd => Slot::Foot(0),
-                Open(M::Math) | Open(M::Ref) | Open(M::Decode) | Open(M::Mask) | Open(M::Zone) | Open(M::Sim) | Open(M::Dvm) => Slot::Tab(1),
+                AutosetAct | ClearDisp | ForceAct | Open(M::Horizontal) | Open(M::Display) | NavHist => Slot::Tab(0),
+                // the factory reset is on its own, in the footer, and asks first
+                NavBack | NavFwd | DefaultAct => Slot::Foot(0),
+                // math, ref and bus live behind + CH; the tools of the plot behind + Add
+                Open(M::Mask) | Open(M::Zone) | Open(M::Sim) | Open(M::Dvm) => Slot::Tab(1),
                 Open(M::Spectrum) | Open(M::Eye) | Open(M::Power) | Open(M::Bode) | Open(M::BwTest) | IdentifyAct | Open(M::Magnetic) => Slot::Tab(2),
                 Open(M::Inverter) | Open(M::Dpt) | Open(M::Afg) | Open(M::La) | Open(M::Logger) | Open(M::Storage) | Open(M::Utility) => Slot::Tab(3),
                 LockAct | PowerAct => Slot::Foot(3),
@@ -500,6 +502,10 @@ impl Ui {
     pub(super) fn sheet_draw_chrome(&self, cv: &mut Canvas, title: &str) {
         let f = self.fonts();
         let (r, back, close) = self.sheet_chrome();
+        // it floats over the docks: a shadow on its left and under it
+        if self.dock_on() {
+            for d in 1..=8 { cv.blend(Rect::new(r.x - d * 2, r.y + d, 2, r.h), BG, (70 - d * 7) as u32); }
+        }
         cv.round(r, 8, ACCENT, 255);
         cv.round(r.inset(2), 7, DLG_BG, 255);
         let left = back.map_or(r.x + 14, |b| b.right() + 8);
@@ -1001,6 +1007,13 @@ impl Ui {
         if !was && self.add_is_on(cat) {
             let key = self.add_key(cat);
             self.studio_set_pin(key, true);
+            // the toast says what it reads, not only that it was added
+            let rows = self.meas_rows();
+            if let Some(row) = self.studio_index(key).and_then(|i| rows.get(i)) {
+                if row.v.is_finite() && !row.computing {
+                    self.toast(&format!("{} {} \u{b7} {}", row.name, self.wave_name(row.src), row.text()));
+                }
+            }
         }
     }
 

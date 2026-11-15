@@ -425,7 +425,8 @@ impl Ui {
     pub(super) fn dock_region(&self) -> Rect {
         let fr = self.frame();
         let (y0, y1) = if self.full_on() { (0, self.scr.h) } else { (fr.body.y, fr.bottom.y) };
-        let w = (fr.body.w - self.sheet_dock_w()).max(1);
+        // the side sheet floats over the docks: the waveform keeps its size
+        let w = fr.body.w.max(1);
         Rect::new(fr.body.x, y0, w, (y1 - y0).max(1))
     }
 
