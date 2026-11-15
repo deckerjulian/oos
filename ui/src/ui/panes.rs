@@ -562,6 +562,37 @@ const TREND_WINDOWS: [f64; 16] = [10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0
 /// Width of the value card and of the y labels of a chart.
 const CARD_W: i32 = 128;
 const YLABEL_W: i32 = 68;
+/// Narrower than this the plot leaves the card out and shows the values on a line under the title.
+const PLOT_MIN_W: i32 = 220;
+const SUMMARY_H: i32 = 22;
+/// Two charts go one over the other when side by side each would be narrower than this.
+const CHART_MIN_W: i32 = 420;
+const CHART_MIN_H: i32 = 150;
+
+/// How long ago, as an axis label: whole seconds, minutes or hours where they are whole.
+fn trend_ago(s: f64) -> String {
+    let n = |v: f64| if (v - v.round()).abs() < 1e-6 { format!("{v:.0}") } else { format!("{v:.1}") };
+    if s >= 3600.0 && (s / 3600.0).fract() == 0.0 { format!("-{} h", n(s / 3600.0)) }
+    else if s >= 120.0 { format!("-{} min", n(s / 60.0)) }
+    else { format!("-{} s", n(s)) }
+}
+
+/// The time labels under a trend plot `w` wide, as (x from the plot's left, text): as many divisions as fit with a gap
+/// between the labels, the last one "now".
+pub(super) fn trend_time_labels(window: f64, w: i32, width: impl Fn(&str) -> i32) -> Vec<(i32, String)> {
+    for n in [5, 4, 2, 1] {
+        let texts: Vec<String> = (0..=n).map(|i| if i == n { "now".to_string() } else { trend_ago(window * (n - i) as f64 / n as f64) }).collect();
+        let widest = texts.iter().map(|s| width(s)).max().unwrap_or(0);
+        // the end labels sit inside the plot, so a division holds one whole label and half of the next
+        if n > 1 && widest * 3 / 2 + 10 > (w - 1) / n { continue; }
+        return texts.into_iter().enumerate().map(|(i, s)| {
+            let tw = width(&s);
+            let x = (i as i32 * (w - 1) / n - tw / 2).clamp(0, (w - tw).max(0));
+            (x, s)
+        }).collect();
+    }
+    Vec::new()
+}
 
 /// A stretch of time of a trend: its mean, smallest and largest value.
 #[derive(Clone, Copy, Debug)]
@@ -709,10 +740,26 @@ impl Ui {
             .collect()
     }
 
-    /// The charts side by side.
-    fn chart_rects(r: Rect, n: usize) -> Vec<Rect> {
-        let w = (r.w - 8 * (n as i32 - 1).max(0)) / (n as i32).max(1);
+    /// The charts side by side, or one over the other where the pane is too narrow for two plots next to each other.
+    pub(super) fn chart_rects(r: Rect, n: usize) -> Vec<Rect> {
+        let gaps = 8 * (n as i32 - 1).max(0);
+        if n > 1 && (r.w - gaps) / (n as i32) < CHART_MIN_W && (r.h - gaps) / (n as i32) >= CHART_MIN_H {
+            let h = (r.h - gaps) / n as i32;
+            return (0..n as i32).map(|i| Rect::new(r.x, r.y + i * (h + 8), r.w, h)).collect();
+        }
+        let w = (r.w - gaps) / (n as i32).max(1);
         (0..n as i32).map(|i| Rect::new(r.x + i * (w + 8), r.y, w, r.h)).collect()
+    }
+
+    /// The plot of a chart and, when the value card fits at its right, the card. Without the card the values are a
+    /// line under the title.
+    pub(super) fn chart_parts(c: Rect) -> (Rect, Option<Rect>) {
+        if c.w - YLABEL_W - CARD_W - 8 >= PLOT_MIN_W {
+            let g = Rect::new(c.x + YLABEL_W, c.y + TITLE_H, c.w - YLABEL_W - CARD_W - 8, c.h - TITLE_H - XLABEL_H);
+            return (g, Some(Rect::new(c.x + c.w - CARD_W - 2, c.y + 2, CARD_W, c.h - 4)));
+        }
+        let top = TITLE_H + SUMMARY_H;
+        (Rect::new(c.x + YLABEL_W, c.y + top, c.w - YLABEL_W - 10, c.h - top - XLABEL_H), None)
     }
 
     fn draw_trends(&self, cv: &mut Canvas, r: Rect) {
@@ -735,9 +782,11 @@ impl Ui {
         let col = self.wave_color(row.src);
         let x = cv.text(&f.sb, c.x + 8, c.y + 15, &self.wave_name(row.src), col);
         cv.text(&f.sb, x + 8, c.y + 15, &row.name, TEXT);
-        let g = Rect::new(c.x + YLABEL_W, c.y + TITLE_H, c.w - YLABEL_W - CARD_W - 8, c.h - TITLE_H - XLABEL_H);
-        let card = Rect::new(c.x + c.w - CARD_W - 2, c.y + 2, CARD_W, c.h - 4);
-        self.draw_trend_card(cv, card, row, t);
+        let (g, card) = Self::chart_parts(c);
+        match card {
+            Some(card) => self.draw_trend_card(cv, card, row, t),
+            None => self.draw_trend_summary(cv, Rect::new(c.x + 8, c.y + TITLE_H, c.w - 16, SUMMARY_H), row, t),
+        }
         let Some((t, (lo, hi, tick))) = t.and_then(|t| t.scale.map(|s| (t, s))) else {
             chart_grid(cv, g, 5, 4);
             cv.text_in(&f.s, g, 1, "collecting values", DIM);
@@ -757,11 +806,8 @@ impl Ui {
             cv.text(&f.s, g.x - 5 - f.s.width(&s), (y + 4).clamp(g.y + 9, g.y + g.h), &s, AXIS_TEXT);
             v += tick;
         }
-        for i in 0..=5 {
-            let s = if i == 5 { "now".to_string() } else { format!("-{:.0} s", window * (5 - i) as f64 / 5.0) };
-            let w = f.s.width(&s);
-            let x = g.x + i * (g.w - 1) / 5 - w / 2;
-            cv.text(&f.s, x.clamp(g.x, g.x + g.w - w), g.y + g.h + 13, &s, AXIS_TEXT);
+        for (x, s) in trend_time_labels(window, g.w, |s| f.s.width(s)) {
+            cv.text(&f.s, g.x + x, g.y + g.h + 13, &s, AXIS_TEXT);
         }
         cv.set_clip(Rect::new(g.x + 1, g.y + 1, g.w - 2, g.h - 2));
         let x_of = |tp: f64| g.x + g.w - 1 - ((now - tp) / window * (g.w - 1) as f64).round() as i32;
@@ -799,6 +845,22 @@ impl Ui {
             let y = r.y + 40 + body / 3 + (k as i32 + 1) * (body * 2 / 3) / 3 + 4;
             cv.text(&f.s, r.x + 8, y, l, DIM);
             cv.text(&f.sb, r.x + r.w - 8 - f.sb.width(v), y, v, LABEL);
+        }
+    }
+
+    /// The values on one line under the title, for a chart too narrow for the card: the latest value in its colour,
+    /// then the largest and smallest of the history while they fit.
+    fn draw_trend_summary(&self, cv: &mut Canvas, r: Rect, row: &tools::MeasRow, t: Option<&Trend>) {
+        let f = self.fonts();
+        let y = r.y + 15;
+        let now = row.fmt4(row.v);
+        let mut x = cv.text(&f.s, r.x, y, "Now", DIM) + 6;
+        x = cv.text(&f.sb, x, y, &now, self.wave_color(row.src)) + 14;
+        let (lo, hi) = t.and_then(|t| t.range).map_or(("----".to_string(), "----".to_string()), |(a, b)| (row.fmt4(a), row.fmt4(b)));
+        for (l, v) in [("Max", hi), ("Min", lo)] {
+            if x + f.s.width(l) + 6 + f.sb.width(&v) > r.x + r.w { break; }
+            x = cv.text(&f.s, x, y, l, DIM) + 6;
+            x = cv.text(&f.sb, x, y, &v, LABEL) + 14;
         }
     }
 
@@ -862,7 +924,7 @@ impl Ui {
             return false;
         }
         let r = self.pane_rect();
-        if Self::pane_close(r).contains(x, y) {
+        if !self.dock_on() && Self::pane_close(r).contains(x, y) {
             self.m.pane = 0;
             self.m.split_pane = 0;
             // Split with no number pane is the two stacked traces

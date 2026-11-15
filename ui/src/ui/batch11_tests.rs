@@ -68,6 +68,49 @@ fn a_measurement_card_has_a_stats_page_with_mean_range_population_and_trend() {
 }
 
 #[test]
+fn opening_the_trend_keeps_the_statistics() {
+    let mut u = studio();
+    for _ in 0..20 { u.step(0.05); }
+    let n0 = u.mstat.first().map_or(0, |s| s.n);
+    assert!(n0 > 0);
+    u.open_meas_cfg(0);
+    assert!(u.measrow_activate(Item::RowF(RF::Trend)));
+    u.adjust(Item::TrendSel(0), 1);
+    assert!(u.mstat.first().map_or(0, |s| s.n) >= n0, "the population restarted");
+}
+
+#[test]
+fn trend_time_labels_never_overlap() {
+    let width = |s: &str| s.chars().count() as i32 * 7;
+    for w in (40..900).step_by(7) {
+        for window in [10.0, 15.0, 75.0, 150.0, 600.0, 3600.0, 7200.0] {
+            let l = panes::trend_time_labels(window, w, width);
+            assert!(!l.is_empty());
+            assert_eq!(l.last().unwrap().1, "now");
+            for p in l.windows(2) {
+                if l.len() > 2 { assert!(p[0].0 + width(&p[0].1) + 4 <= p[1].0, "w {w} window {window}: {l:?}"); }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_narrow_tall_trend_pane_stacks_the_charts_and_keeps_the_plot_wide() {
+    // the size of a trend view docked at the right of the waveform
+    let r = Rect::new(0, 0, 510, 480);
+    let c = Ui::chart_rects(r, 2);
+    assert!(c[0].w == r.w && c[0].bottom() <= c[1].y, "{c:?}");
+    let (g, card) = Ui::chart_parts(c[0]);
+    assert!(card.is_some() && g.w >= 220, "{g:?}");
+    // narrower still: the values go on a line under the title and the plot keeps the width
+    let (g, card) = Ui::chart_parts(Rect::new(0, 0, 300, 200));
+    assert!(card.is_none() && g.w >= 200, "{g:?}");
+    // a wide lower pane keeps them side by side
+    let c = Ui::chart_rects(Rect::new(0, 0, 1200, 180), 2);
+    assert_eq!(c[0].y, c[1].y);
+}
+
+#[test]
 fn a_press_on_a_title_strip_under_a_divider_moves_the_view() {
     let mut u = studio();
     u.studio_set_view(StudioView::Docked);

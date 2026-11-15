@@ -3159,7 +3159,8 @@ impl Ui {
         let cv = l.over();
         if self.pane_h() > 0 {
             self.draw_pane(cv);
-            self.draw_pane_close(cv);
+            // in a dock the view's title strip has the close button
+            if !self.dock_on() { self.draw_pane_close(cv); }
         }
         self.draw_results(cv);
         self.draw_studio_panel(cv);
@@ -7403,6 +7404,12 @@ impl Ui {
         // moving the strip does not change what was measured
         if it == Item::StripDock {
             self.relayout();
+            return;
+        }
+        // nor does the pane that shows the values, or which values a trend chart shows
+        if matches!(it, Item::PaneSel | Item::TrendSel(_)) {
+            self.relayout();
+            if self.m.run == RunState::Run { self.dirty_map = true; }
             return;
         }
         self.settings_changed();
