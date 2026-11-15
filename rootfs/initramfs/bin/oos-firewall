@@ -4,7 +4,8 @@
 # oos-firewall: inbound only from the prefixes of `net.allow` (oos-conf, docs/network.md 6), before any service of
 # the image listens. Loopback, answers to what the scope sent (DHCP, DNS, NTP) and IPv6 neighbour discovery always
 # pass; everything else that comes in is dropped. Outbound is not limited. No `net.allow` or an empty one: no firewall,
-# as before. A list of which nothing parses closes everything but loopback rather than opening it.
+# as before. A list of which nothing parses closes everything but loopback rather than opening it, and so does a
+# ruleset nft refuses (an entry the checks here let through): a typo in the list must not open the scope.
 # The word `onlink6` in the list admits the IPv6 prefixes on the link: the routes without a gateway the kernel made
 # from the router's advertisements, /48 to /128, not fe80::/64 (a shorter one, `2000::/3` from a rogue router, would
 # open the scope to the internet). They change with the provider: `watch` checks them every 10 s, puts them in the
@@ -29,13 +30,22 @@ if [ "${1:-}" = --prefixes ]; then prefixes; exit 0; fi
 [ -n "$allow" ] || exit 0
 v4=; v6=; bad=; on6=
 octet() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -le 255 ]; }
+# IPv6: groups of 1 to 4 hex digits, eight of them or fewer with one `::` (`2001:db8:::1` made nft refuse everything)
+v6ok() {
+	echo "$1" | awk -F: '{
+		d = gsub(/::/, "&"); if (d > 1 || $0 ~ /:::/) exit 1
+		n = 0
+		for (i = 1; i <= NF; i++) { if ($i == "") continue; if ($i !~ /^[0-9A-Fa-f]+$/ || length($i) > 4) exit 1; n++ }
+		if (d ? n > 7 : n != 8) exit 1
+	}'
+}
 for w in $(echo "$allow" | tr ',' ' '); do
-	a=${w%%/*}; n=${w#*/}; [ "$n" = "$w" ] && n=
+	# `a/` with nothing after the slash is no prefix length (nft refused the ruleset for it)
+	a=${w%%/*}; n=; case "$w" in */*) n=${w#*/}; [ -n "$n" ] || n=none;; esac
 	case "$a" in
 	onlink6) on6=1;;
 	*:*)
-		# IPv6: hex digits and colons, nft checks the rest
-		if echo "$a" | grep -Eq '^[0-9A-Fa-f:]+$' && { [ -z "$n" ] || { echo "$n" | grep -Eq '^[0-9]+$' && [ "$n" -le 128 ]; }; }; then
+		if v6ok "$a" && { [ -z "$n" ] || { echo "$n" | grep -Eq '^[0-9]+$' && [ "$n" -le 128 ]; }; }; then
 			v6="$v6${v6:+, }$w"
 		else bad="$bad $w"; fi;;
 	*)
@@ -105,6 +115,10 @@ if /bin/nft -f /tmp/oos-firewall.nft; then
 	fi
 	log "inbound only from ${v4}${v4:+${v6:+, }}${v6}${on6log}"
 else
-	log "nft refused the ruleset (/tmp/oos-firewall.nft): NO firewall"
+	# closed rather than open: loopback only, as for a list of which nothing parses
+	log "nft refused the ruleset (/tmp/oos-firewall.nft): inbound closed except loopback"
+	v4=; v6=; on6=
+	rules > /tmp/oos-firewall-closed.nft
+	/bin/nft -f /tmp/oos-firewall-closed.nft || log "nft refused the closed ruleset too: NO firewall"
 	exit 1
 fi

@@ -277,8 +277,11 @@ setting on the scope.
 **Firewall** (`oos-firewall`, nftables, table `inet oos_fw`, before SSH and oos-ui start). Inbound passes: loopback,
 answers to what the scope sent (DHCP, DNS, NTP; connection tracking), IPv6 neighbour discovery, DHCP replies, and
 anything from a listed prefix. The rest is dropped, on Ethernet and WLAN alike. Outbound is not limited. An entry that
-does not parse is left out and logged (`/tmp/oos-net.log`, kernel log); a list of which nothing parses closes everything
-but loopback rather than opening it. `nft` is a static build in the image (`rootfs/build-nft.sh`, nftables 1.1.3).
+does not parse is left out and logged (`/tmp/oos-net.log`, kernel log): an IPv4 address of four numbers up to 255, an
+IPv6 address of up to eight groups of 1 to 4 hex digits with at most one `::`, each with an optional `/length`. A
+list of which nothing parses closes everything but loopback rather than opening it, and so does a ruleset nft refuses
+anyway.
+`nft` is a static build in the image (`rootfs/build-nft.sh`, nftables 1.1.3).
 The link-local fallback address (169.254.x.y) is only reachable from a listed prefix: add `169.254.0.0/16` to
 `net.allow` for a computer on a direct cable.
 

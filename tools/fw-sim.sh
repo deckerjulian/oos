@@ -90,6 +90,27 @@ grep -q 'IPv6 prefixes on the link: 2001:db8:6:1::/64' /c/watch.log || fail "wat
 conf "net.allow = 192.0.2.0/24"
 timeout 3 /bin/oos-firewall watch || fail "watch without onlink6 does not end"
 
+echo "== a typo in net.allow"
+# each of these made nft refuse the whole ruleset, which left the scope without a firewall
+conf "net.allow = 192.0.2.0/ 198.51.100.0/24 2001:db8:::1 2001:db8::1::2 1:2:3:4:5:6:7:8:9 2001:db8::/64 ::1"
+r=$(/bin/oos-firewall --print 2> /c/typo.log)
+echo "$r" | grep -q 'ip saddr { 198.51.100.0/24 } accept' || fail "typo: IPv4 kept: $r"
+echo "$r" | grep -q 'ip6 saddr { 2001:db8::/64, ::1 } accept' || fail "typo: IPv6 kept: $r"
+grep -q 'left out: 192.0.2.0/ 2001:db8:::1 2001:db8::1::2 1:2:3:4:5:6:7:8:9' /c/typo.log || fail "typo log: $(cat /c/typo.log)"
+/bin/oos-firewall 2> /dev/null || fail "typo: apply"
+
+echo "== nft refuses the ruleset: closed, not open"
+mv /bin/nft /bin/nft.real
+printf '#!/bin/sh\ngrep -q saddr "$2" && exit 1\nexec /bin/nft.real "$@"\n' > /bin/nft
+chmod +x /bin/nft
+conf "net.allow = 192.0.2.0/24"
+/bin/oos-firewall 2> /c/refused.log && fail "a refused ruleset reported as applied"
+mv /bin/nft.real /bin/nft
+t=$(nft list table inet oos_fw)
+echo "$t" | grep -q 'policy drop' || fail "closed: no drop policy: $t"
+echo "$t" | grep -q 'saddr' && fail "closed: a prefix is let in: $t"
+grep -q 'inbound closed except loopback' /c/refused.log || fail "closed log: $(cat /c/refused.log)"
+
 echo "== DHCP lease: time zone, IPv6 kept"
 ip link add d0 type dummy && ip link set d0 up
 n=0; until ip -6 addr show dev d0 | grep -q 'inet6 fe80'; do sleep 1; n=$((n + 1)); [ $n -ge 5 ] && break; done
