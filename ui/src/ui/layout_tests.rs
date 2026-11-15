@@ -300,7 +300,7 @@ fn studio_view_menu_chooses_the_arrangement_the_badges_and_resets() {
     shot(&mut u, "07-view-menu");
     let p = u.studio_view_rect();
     assert!(p.x >= 0 && p.right() <= W && p.bottom() < u.frame().bottom.y);
-    for i in 0..7 { assert!(p.contains(u.studio_view_row(i).x + 2, u.studio_view_row(i).y + 2), "row {i} inside the menu"); }
+    for i in 0..8 { assert!(p.contains(u.studio_view_row(i).x + 2, u.studio_view_row(i).y + 2), "row {i} inside the menu"); }
     // the chip that opened it closes it
     tap_in(&mut u, view);
     assert!(!u.studio.view_menu);

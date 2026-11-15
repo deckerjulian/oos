@@ -28,13 +28,15 @@ pub(super) enum StudioView {
     Only,
     /// analysing a loaded file: the record navigator on top, the references in lanes, the measurements docked
     Offline,
+    /// the SIM panel docked at the right of the lanes
+    Sim,
 }
 
 impl StudioView {
     /// The views that run on a record session (a loaded file or a SIM): leaving them returns to live.
-    pub(super) fn is_record(self) -> bool { matches!(self, StudioView::Offline) }
+    pub(super) fn is_record(self) -> bool { matches!(self, StudioView::Offline | StudioView::Sim) }
     /// The views with a panel docked at the right of the lanes.
-    pub(super) fn is_docked(self) -> bool { matches!(self, StudioView::Docked | StudioView::Offline) }
+    pub(super) fn is_docked(self) -> bool { matches!(self, StudioView::Docked | StudioView::Offline | StudioView::Sim) }
 }
 
 /// The measurements panel (docked at the right, floating or maximized).
@@ -64,6 +66,8 @@ pub(super) struct Studio {
     /// the View menu is open
     pub view_menu: bool,
     pub panel: StudioPanel,
+    /// the SIM panel lists the knobs instead of the presets
+    pub sim_knobs: bool,
     /// the table and the panel list only the measurements of this source
     pub filter: Option<WaveId>,
     pub drag: Option<StudioDrag>,
@@ -102,11 +106,11 @@ const CHIP_H: i32 = 30;
 const CHIP_Y: i32 = 5;
 
 /// A play triangle, 12 px high, left edge at `x`.
-fn icon_play(cv: &mut Canvas, x: i32, cy: i32, c: Rgb) {
+pub(super) fn icon_play(cv: &mut Canvas, x: i32, cy: i32, c: Rgb) {
     cv.triangle([(x, cy - 6), (x, cy + 6), (x + 11, cy)], c);
 }
 
-fn icon_stop(cv: &mut Canvas, x: i32, cy: i32, c: Rgb) {
+pub(super) fn icon_stop(cv: &mut Canvas, x: i32, cy: i32, c: Rgb) {
     cv.fill(Rect::new(x, cy - 5, 10, 10), c);
 }
 
@@ -793,12 +797,13 @@ const VIEW_W: i32 = 340;
 const VIEW_ROW: i32 = 40;
 
 /// What the View menu offers, in order.
-pub(super) const STUDIO_VIEWS: [(StudioView, &str); 5] = [
+pub(super) const STUDIO_VIEWS: [(StudioView, &str); 6] = [
     (StudioView::Waveform, "Waveform focus"),
     (StudioView::Docked, "Docked measurements"),
     (StudioView::Floating, "Floating measurements"),
     (StudioView::Only, "Measurements only"),
     (StudioView::Offline, "Offline waveform analysis"),
+    (StudioView::Sim, "SIM"),
 ];
 
 /// Rows of the View menu after the arrangements: the badges switch and Reset layout.
@@ -842,6 +847,11 @@ fn icon_view_mode(cv: &mut Canvas, r: Rect, view: StudioView, c: Rgb) {
             cv.round_outline(Rect::new(r.x + 14, r.y + 3, 14, 10), 1, c);
             icon_wave(cv, Rect::new(r.x + 2, r.y + 12, r.w - 4, r.h - 14), c);
         }
+        StudioView::Sim => {
+            icon_wave(cv, Rect::new(r.x + 2, r.y + 2, r.w - 14, r.h - 4), c);
+            cv.vline(r.right() - 11, r.y, r.bottom() - 1, c);
+            cv.triangle([(r.right() - 9, r.y + r.h / 2 - 5), (r.right() - 9, r.y + r.h / 2 + 5), (r.right() - 3, r.y + r.h / 2)], c);
+        }
     }
 }
 
@@ -849,19 +859,19 @@ impl Ui {
     /// The View menu, under the View chip.
     pub(super) fn studio_view_rect(&self) -> Rect {
         let anchor = self.studio_top().view;
-        let h = 40 + 5 * VIEW_ROW + 8 + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
+        let h = 40 + 6 * VIEW_ROW + 8 + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
         Rect::new((anchor.right() - VIEW_W).max(4), self.frame().top.bottom() + 4, VIEW_W, h)
     }
 
-    /// Row `i` of the View menu: 0 to 3 the measurement arrangements, 4 the record view (a line above it),
+    /// Row `i` of the View menu: 0 to 3 the measurement arrangements, 4 and 5 the record views (a line above them),
     /// `VIEW_BADGES` the badges switch, `VIEW_RESET` Reset layout.
     pub(super) fn studio_view_row(&self, i: usize) -> Rect {
         let p = self.studio_view_rect();
         let y = match i {
             0..=3 => p.y + 40 + i as i32 * VIEW_ROW,
-            4 => p.y + 40 + 4 * VIEW_ROW + 8,
-            VIEW_BADGES => p.y + 40 + 5 * VIEW_ROW + 16,
-            _ => p.y + 40 + 6 * VIEW_ROW + 24,
+            4..=5 => p.y + 40 + i as i32 * VIEW_ROW + 8,
+            VIEW_BADGES => p.y + 40 + 6 * VIEW_ROW + 16,
+            _ => p.y + 40 + 7 * VIEW_ROW + 24,
         };
         Rect::new(p.x + 6, y, p.w - 12, VIEW_ROW)
     }
@@ -980,6 +990,7 @@ impl Ui {
         if view != was {
             match view {
                 StudioView::Offline => self.studio_enter_offline(),
+                StudioView::Sim => self.studio_enter_sim(),
                 _ => {}
             }
         }
@@ -1016,7 +1027,7 @@ pub(super) struct PanelGeo {
     pub add: Rect,
 }
 
-fn icon_expand(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
+pub(super) fn icon_expand(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
     cv.line(cx - 6, cy + 6, cx + 6, cy - 6, c);
     cv.hline(cx + 1, cx + 6, cy - 6, c);
     cv.vline(cx + 6, cy - 6, cy - 1, c);
@@ -1024,14 +1035,14 @@ fn icon_expand(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
     cv.vline(cx - 6, cy + 1, cy + 6, c);
 }
 
-fn icon_arrow(cv: &mut Canvas, cx: i32, cy: i32, up: bool, c: Rgb) {
+pub(super) fn icon_arrow(cv: &mut Canvas, cx: i32, cy: i32, up: bool, c: Rgb) {
     let d = if up { -1 } else { 1 };
     cv.triangle([(cx - 6, cy - 3 * d), (cx + 6, cy - 3 * d), (cx, cy + 3 * d)], c);
 }
 
 impl Ui {
     /// Index of the first row of the list that is shown, kept in range.
-    fn studio_first(&self, total: usize, page: usize) -> usize {
+    pub(super) fn studio_first(&self, total: usize, page: usize) -> usize {
         self.studio.panel.first.min(total.saturating_sub(page))
     }
 
@@ -1044,7 +1055,7 @@ impl Ui {
         let body = self.frame().body;
         let bottom = self.frame().bottom.y;
         match self.studio.view {
-            StudioView::Docked | StudioView::Offline => {
+            StudioView::Docked | StudioView::Offline | StudioView::Sim => {
                 let (x, w) = self.plot_span();
                 Some(Rect::new(x + w + 4, body.y + 2, MEAS_PANEL_W, bottom - body.y - 4))
             }
@@ -1113,7 +1124,7 @@ impl Ui {
         cv.hline(r.x + 6, r.right() - 7, r.bottom() - 1, LINE);
     }
 
-    fn draw_scrollbar(cv: &mut Canvas, list: Rect, first: usize, page: usize, total: usize) {
+    pub(super) fn draw_scrollbar(cv: &mut Canvas, list: Rect, first: usize, page: usize, total: usize) {
         if total <= page { return; }
         let x = list.right() - 4;
         cv.vline(x, list.y, list.bottom() - 1, mix(BG, LINE, 120));
@@ -1126,6 +1137,7 @@ impl Ui {
         if self.m.layout != Layout::Studio || self.view_on() { return; }
         self.draw_studio_offline(cv);
         if self.studio_table_rect().is_some() { return self.draw_studio_table(cv); }
+        if self.studio.view == StudioView::Sim { return self.draw_studio_sim(cv); }
         let Some(p) = self.studio_panel_rect() else { return self.draw_studio_tab(cv) };
         let f = self.fonts();
         let rows = self.meas_rows();
@@ -1311,7 +1323,7 @@ impl Ui {
     }
 
     /// Pages the list by one page.
-    fn studio_page(&mut self, total: usize, page: usize, down: bool) {
+    pub(super) fn studio_page(&mut self, total: usize, page: usize, down: bool) {
         let first = self.studio_first(total, page);
         self.studio.panel.first = if down { (first + page).min(total.saturating_sub(page)) } else { first.saturating_sub(page) };
     }
@@ -1319,6 +1331,7 @@ impl Ui {
     /// A tap on the panel or the table. False: it is not on them.
     pub(super) fn studio_panel_tap(&mut self, x: i32, y: i32) -> bool {
         if self.studio_offline_tap(x, y) { return true; }
+        if self.studio.view == StudioView::Sim { return self.studio_sim_tap(x, y); }
         let rows = self.meas_rows();
         let keys = self.studio_keys();
         let listed = self.studio_listed(&rows);
@@ -1393,6 +1406,13 @@ impl Ui {
                 if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
                     || self.studio.view_menu || self.studio.popup.is_some() || self.load_slot_ask { return false; }
                 let rows = self.meas_rows();
+                if self.studio.view == StudioView::Sim {
+                    if let Some((_, _, page, _)) = self.studio_sim_list().filter(|(list, ..)| list.contains(x, y)) {
+                        self.studio.drag = Some(StudioDrag::Scroll { y0: y, first0: self.studio_first(self.studio_sim_list().map_or(0, |l| l.3), page), moved: false });
+                        return true;
+                    }
+                    return self.studio_panel_rect().is_some_and(|p| p.contains(x, y)) && self.studio_eat(x, y);
+                }
                 if let Some(g) = self.studio_panel_geo() {
                     if g.list.contains(x, y) {
                         self.studio.drag = Some(StudioDrag::Scroll { y0: y, first0: self.studio_first(self.studio_listed(&rows).len(), g.page), moved: false });
@@ -1422,8 +1442,9 @@ impl Ui {
                 match drag {
                     StudioDrag::Scroll { y0, first0, moved } => {
                         let rows = self.meas_rows();
-                        let total = self.studio_listed(&rows).len();
-                        let (h, page) = if let Some(g) = self.studio_panel_geo() { (PANEL_ROW, g.page) } else { (TABLE_ROW, self.studio_table_geo().map_or(1, |g| g.1)) };
+                        let sim = self.studio_sim_list().filter(|_| self.studio.view == StudioView::Sim);
+                        let total = sim.map_or_else(|| self.studio_listed(&rows).len(), |l| l.3);
+                        let (h, page) = if let Some((_, h, page, _)) = sim { (h, page) } else if let Some(g) = self.studio_panel_geo() { (PANEL_ROW, g.page) } else { (TABLE_ROW, self.studio_table_geo().map_or(1, |g| g.1)) };
                         let moved = moved || (y - y0).abs() > 8;
                         if moved {
                             let delta = (y0 - y) / h;
@@ -1454,7 +1475,7 @@ impl Ui {
 
     /// A touch on the table or a floating panel that does nothing by itself: the plot behind must not take it.
     /// The gesture ends in a tap (`Phase::Up` of the owner below).
-    fn studio_eat(&mut self, x: i32, y: i32) -> bool {
+    pub(super) fn studio_eat(&mut self, x: i32, y: i32) -> bool {
         self.studio.drag = Some(StudioDrag::Eat { x0: x, y0: y });
         true
     }
