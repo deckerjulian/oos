@@ -3133,6 +3133,15 @@ impl Ui {
         }
     }
 
+    /// (V/div, offset, unit, colour) of the ref that labels the volt axis when no channel is shown here: the selected
+    /// ref, else the first one this window holds.
+    fn ref_axis_source(&self) -> Option<(f32, f32, &'static str, Rgb)> {
+        let here: Vec<usize> = self.shown_refs().into_iter().filter(|&i| self.workspace_source_visible_here(WaveId::Ref(i))).collect();
+        let i = here.iter().copied().find(|&i| self.selected_workspace_source() == Some(WaveId::Ref(i))).or(here.first().copied())?;
+        let r = self.refs[i].as_ref()?;
+        Some((r.vpd, r.offset, "V", self.wave_color(WaveId::Ref(i))))
+    }
+
     /// Axis labels inside the plot: volts of the active channel along the left edge (not on the top and bottom
     /// lines, where the status line and the time labels are), times along the bottom edge. A volt label is left out
     /// rather than drawn over another label, the status line, the time labels, the mask pill or the decode band; it
@@ -3141,11 +3150,15 @@ impl Ui {
         let f = self.fonts();
         let a = self.area;
         let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) { Some(self.m.active) } else { (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i)) };
-        if let Some(c) = c {
-            let ch = &self.m.ch[c];
+        // with no channel to label, the shown ref gives the axis (R1 in the lane or window that holds it)
+        let axis = match c {
+            Some(c) => { let ch = &self.m.ch[c]; Some((ch.volts_per_div(), ch.offset, ch.unit.name(), CH_COLORS[c])) }
+            None => self.ref_axis_source(),
+        };
+        if let Some((base_vpd, base_offset, unit, color)) = axis {
             let (factor, center) = self.zoom_vertical_transform(a);
-            let vpd = ch.volts_per_div() / factor;
-            let offset = ch.offset - center * ch.volts_per_div();
+            let vpd = base_vpd / factor;
+            let offset = base_offset - center * base_vpd;
             let span = (VDIV / 2.0 * vpd).abs() + offset.abs();
             let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
             if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
@@ -3168,13 +3181,13 @@ impl Ui {
             for j in 1..VDIV as i32 {
                 let y = a.y + (j as f32 * a.h as f32 / VDIV).round() as i32;
                 let v = (VDIV / 2.0 - j as f32) * vpd - offset;
-                let s = axis_label(v, vpd, offset, span, ch.unit.name());
+                let s = axis_label(v, vpd, offset, span, unit);
                 let r = Rect::new(x - 3, y + 4 - f.s.size, f.s.width(&s) + 6, f.s.size + 4);
                 if taken.iter().any(|t| overlaps(*t, r)) {
                     continue;
                 }
                 taken.push(r);
-                backed_text(cv, &f.s, x, y + 4, &s, scale(CH_COLORS[c], 210));
+                backed_text(cv, &f.s, x, y + 4, &s, scale(color, 210));
             }
         }
         if self.stacked() && self.cur_win + 1 < self.wins.len() { return; }
