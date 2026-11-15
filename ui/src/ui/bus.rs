@@ -15,6 +15,8 @@ use oos_dsp::decode::{i2c_at, Kind as DecKind, Packet};
 
 /// The bus trace. Kept off the channel palette so the line stays its own colour.
 const BUS: Rgb = rgb(0xc4, 0x8a, 0x2a);
+/// The fill of a packet with an error: a dark red, so the white text on it stays readable.
+const BUS_ERR_FILL: Rgb = rgb(0x70, 0x18, 0x18);
 
 /// One cached display window and at most one in-flight decode. Exact full-record
 /// decode/trigger results use reference_decode, independently of this plot limit.
@@ -248,7 +250,7 @@ impl Ui {
             let fill = if p.ok {
                 scale(BUS, 70)
             } else {
-                rgb(0x70, 0x18, 0x18)
+                BUS_ERR_FILL
             };
             cv.fill(Rect::new(x0 + 3, top, (x1 - x0 - 6).max(1), h), fill);
             cv.line(x0, top + h / 2, x0 + 3, top, base);

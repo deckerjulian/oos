@@ -222,6 +222,12 @@ const GRID_AXIS: Rgb = rgb(0x38, 0x38, 0x3b);
 /// graticule: dots of the division lines, frame / centre axes / ticks (the classic dotted scope look)
 const GRID_DOT: Rgb = rgb(0x68, 0x68, 0x6b);
 const GRID_FRAME: Rgb = rgb(0x64, 0x64, 0x67);
+/// the measurement page: the box of the picked measurement, a step lighter than a button so it reads as one panel
+const PREVIEW_BG: Rgb = rgb(0x24, 0x24, 0x28);
+/// the measurement page: the header row of a group, between a button and its border
+const GROUP_HEAD: Rgb = rgb(0x2a, 0x2a, 0x2e);
+/// the self-cal banner over the plot: a dark amber, so it is not taken for a dialog while the inputs must stay free
+const CAL_BANNER: Rgb = rgb(0x30, 0x22, 0x08);
 
 /// Averaging counts of Acquire > Averages.
 /// Stops of the density scale, rare to frequent (`heat_palette`).

@@ -23,8 +23,9 @@ Ideas for functions may come from anywhere; a look or an arrangement is not copi
 ## Consequences
 
 - Colours are set only through the constants at the top of `ui/src/ui.rs` (`BG`, `DLG_BG`, `ACCENT`, `BTN` ...); a
-  colour literal in a page needs a reason.
-- A new page is checked at the three text sizes with everything switched on (`tools/layout-check.sh`, ADR 0014).
+  colour of one page only is a named constant with a comment that says why (`BUS` in `ui/src/ui/bus.rs`), not a
+  literal in the drawing code.
+- A new page is checked at the three text sizes with everything switched on (`ui/tools/layout-check.sh`, ADR 0014).
 
 ## References
 

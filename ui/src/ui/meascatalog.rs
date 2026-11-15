@@ -270,7 +270,7 @@ impl Ui {
         cv.text_in(&f.s, sel_r, 1, &format!("Selected ({})", self.measurement_count()), TEXT);
         chevron(cv, lay.selected.x + lay.selected.w - 14, lay.selected.y + lay.selected.h / 2, 1, DIM);
         // the measurement that is picked: sign, name, what it is, and Add / Remove
-        cv.round(lay.preview, 6, rgb(0x24, 0x24, 0x28), 255);
+        cv.round(lay.preview, 6, PREVIEW_BG, 255);
         let sel = self.cat_sel();
         let info = sel;
         self.draw_mark(cv, lay.mark, info.mark, AMBER);
@@ -311,7 +311,7 @@ impl Ui {
         let open = self.cat_open[self.cat_tab as usize];
         for g in &lay.groups {
             let rect = screen_rect(lay.view, g.r, scroll);
-            cv.rect(rect, rgb(0x2a, 0x2a, 0x2e));
+            cv.rect(rect, GROUP_HEAD);
             let name = tab_groups(self.cat_tab).get(g.n as usize).map(|g| g.0).unwrap_or("");
             cv.text_in(&f.s, Rect::new(rect.x + 10, rect.y, rect.w - 36, rect.h), 0, name, LABEL);
             if open & (1 << g.n) != 0 {
