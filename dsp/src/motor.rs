@@ -344,6 +344,14 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64) -> Shaft
             continue;
         }
         in_fault = false;
+        if !have {
+            // the record started on a fault code: the first valid code is where counting starts
+            prev = cur;
+            acc = hall_deg(cur).map_or(0.0, f64::to_radians);
+            have = true;
+            rad[k] = acc;
+            continue;
+        }
         if let Some(dir) = hall_step(prev, cur) {
             if dir != 0 {
                 edges += 1;

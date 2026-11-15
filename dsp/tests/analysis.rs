@@ -816,6 +816,33 @@ fn motor_quadrature_speed_and_swapped_direction() {
     assert!(close(swapped.rpm.unwrap(), -rpm, 1e-6), "{}", swapped.rpm.unwrap());
 }
 
+/// Forward Hall sequence: 100 samples per state, so 600 per electrical revolution; `first` replaces sample 0.
+fn hall_lines(first: Option<u8>) -> (Vec<bool>, Vec<bool>, Vec<bool>) {
+    let seq = [0b100u8, 0b110, 0b010, 0b011, 0b001, 0b101];
+    let mut codes: Vec<u8> = (0..60).flat_map(|_| seq.iter().flat_map(|&s| std::iter::repeat_n(s, 100))).collect();
+    if let Some(c) = first {
+        codes[0] = c;
+    }
+    let line = |bit: u8| codes.iter().map(|x| x & bit != 0).collect::<Vec<_>>();
+    (line(4), line(2), line(1))
+}
+
+#[test]
+fn motor_hall_counts_steps_after_a_fault_code_at_the_start() {
+    let dt = 1e-5;
+    let (a, b, c) = hall_lines(None);
+    let clean = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0);
+    // 359 steps of 60 electrical degrees over 35 999 sample intervals
+    let rpm = 359.0 * 10.0 / (35_999.0 * dt);
+    assert!(close(clean.rpm.unwrap(), rpm, 1e-6), "{:?}", clean.rpm);
+    for fault in [0b000, 0b111] {
+        let (a, b, c) = hall_lines(Some(fault));
+        let s = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0);
+        assert!(close(s.rpm.unwrap_or(0.0), rpm, 1e-6), "{fault:03b}: {:?} {}", s.rpm, s.note);
+        assert_eq!(s.direction, oos_dsp::motor::Direction::Forward);
+    }
+}
+
 #[test]
 fn motor_torque_and_bus_give_mechanical_power_and_efficiency() {
     let (rpm, dt, n) = (600.0, 1e-4, 4000);
