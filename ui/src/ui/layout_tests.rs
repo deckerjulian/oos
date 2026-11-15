@@ -501,3 +501,111 @@ fn studio_measurements_only_is_a_table_with_statistics_and_a_source_filter() {
     tap_in(&mut u, tab);
     assert_eq!(u.studio.view, StudioView::Docked);
 }
+
+/// Studio zoomed in on the trigger, five times.
+fn zoomed() -> Ui {
+    let mut u = twelve();
+    u.m.run = RunState::Stop;
+    u.set_zoom(true);
+    u.m.zscale = u.m.tscale.saturating_sub(3);
+    u.m.zdelay = 0.0;
+    u.relayout();
+    u
+}
+
+#[test]
+fn studio_zoom_has_a_toolbar_an_overview_and_a_menu() {
+    let mut u = zoomed();
+    shot(&mut u, "13-zoom");
+    let bar = u.studio_zoom_bar().expect("toolbar");
+    let row = u.zoom_readout();
+    for (i, r) in [bar.zoom, bar.tdiv, bar.center, bar.fit, bar.more].iter().enumerate() {
+        assert!(r.x >= row.x && r.right() <= row.right() && r.y >= row.y && r.bottom() <= row.bottom(), "chip {i} in the strip");
+    }
+    assert!(bar.tdiv.right() <= bar.center.x, "the chips do not overlap");
+    // the overview is over the toolbar, the zoomed lanes under it
+    let (overview, detail) = Ui::split_zoom(u.grid);
+    assert!(overview.bottom() <= row.y && row.bottom() <= detail.y);
+    // the factor is the ratio of the two time bases
+    assert!((u.studio_time_zoom() - u.m.time_per_div() / tscales()[u.m.zscale]).abs() < 1e-3);
+    // the hint of a pinch shows the factor under the fingers (mock 08)
+    u.pinch.active = true;
+    u.pinch.detail = true;
+    shot(&mut u, "18-zoom-pinch");
+    u.pinch.active = false;
+    // + and - on the menu step the zoom, Center trigger and Fit record move the window
+    tap_in(&mut u, bar.more);
+    assert!(u.studio.zoom_menu);
+    shot(&mut u, "14-zoom-menu");
+    let before = u.m.zscale;
+    let plus = u.studio_zoom_rows().into_iter().find(|(r, _)| *r == studio::ZoomRow::Plus).unwrap().1;
+    tap_in(&mut u, plus);
+    assert!(u.m.zscale < before, "Plus zooms in");
+    let minus = u.studio_zoom_rows().into_iter().find(|(r, _)| *r == studio::ZoomRow::Minus).unwrap().1;
+    tap_in(&mut u, minus);
+    assert_eq!(u.m.zscale, before);
+    // a tap outside closes the menu and nothing else
+    u.tap(20, 40 + 4);
+    assert!(!u.studio.zoom_menu && u.m.zoom);
+    u.m.zdelay = 3.0 * u.m.time_per_div();
+    assert!(u.studio_trigger_off_screen_for_test());
+    tap_in(&mut u, bar.center);
+    assert_eq!(u.m.zdelay, 0.0);
+    u.m.zscale = before.saturating_sub(2);
+    tap_in(&mut u, bar.fit);
+    assert_eq!(u.m.zscale, u.m.tscale, "Fit record shows the whole record again");
+    // the time/div chip opens Horizontal, Close zoom is on the menu
+    tap_in(&mut u, bar.tdiv);
+    assert_eq!(u.menu, MenuId::Horizontal);
+    u.close_menu();
+    tap_in(&mut u, bar.more);
+    let close = u.studio_zoom_rows().into_iter().find(|(r, _)| *r == studio::ZoomRow::Close).unwrap().1;
+    tap_in(&mut u, close);
+    assert!(!u.m.zoom && !u.studio.zoom_menu);
+}
+
+#[test]
+fn studio_zoom_overview_window_drags_and_a_lane_badge_scales_vertically() {
+    let mut u = zoomed();
+    for _ in 0..4 { u.step(0.05); }
+    shot(&mut u, "15-zoom-navigator");
+    // the overview window moves with a finger on it (the existing gesture, restyled)
+    let (overview, _) = Ui::split_zoom(u.grid);
+    let before = u.m.zdelay;
+    let (x, y) = (overview.x + overview.w / 2, overview.y + 45);
+    u.touch_ev(Phase::Down, x, y);
+    u.touch_ev(Phase::Move, x + 80, y);
+    u.touch_ev(Phase::Up, x + 80, y);
+    assert!(u.m.zdelay > before, "the window follows the finger to later time");
+    // a pan in the detail lanes moves the time too
+    let lane = u.wins[0];
+    let before = u.m.zdelay;
+    u.touch_ev(Phase::Down, lane.x + 300, lane.y + 60);
+    u.touch_ev(Phase::Move, lane.x + 360, lane.y + 60);
+    shot(&mut u, "16-zoom-pan");
+    u.touch_ev(Phase::Up, lane.x + 360, lane.y + 60);
+    assert!(u.m.zdelay < before, "the content follows the finger");
+    // a channel badge opens the display scale of its lane
+    u.render(&mut Canvas::new(W, H));
+    let (c, badge) = u.studio.lane_badges.borrow()[1];
+    assert_eq!(c, 1);
+    tap_in(&mut u, badge);
+    assert_eq!(u.studio.yzoom, Some(1));
+    let (_, minus, plus, reset) = u.studio_yzoom_parts().unwrap();
+    tap_in(&mut u, plus);
+    tap_in(&mut u, plus);
+    assert_eq!(u.zoom_vfactor, 4.0);
+    shot(&mut u, "17-zoom-vertical");
+    tap_in(&mut u, minus);
+    assert_eq!(u.zoom_vfactor, 2.0);
+    tap_in(&mut u, reset);
+    assert_eq!(u.zoom_vfactor, 1.0);
+    u.tap(300, 120);
+    assert!(u.studio.yzoom.is_none());
+    // outside the zoom a badge opens the channel menu
+    u.set_zoom(false);
+    u.render(&mut Canvas::new(W, H));
+    let badge = u.studio.lane_badges.borrow()[0].1;
+    tap_in(&mut u, badge);
+    assert_eq!(u.menu, MenuId::Channel(0));
+}

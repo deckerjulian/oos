@@ -58,6 +58,12 @@ pub(super) struct Studio {
     /// the table and the panel list only the measurements of this source
     pub filter: Option<WaveId>,
     pub drag: Option<StudioDrag>,
+    /// the zoom toolbar menu is open
+    pub zoom_menu: bool,
+    /// the display scale popup of this channel's lane is open
+    pub yzoom: Option<usize>,
+    /// where the lanes drew their channel badges last frame
+    pub lane_badges: std::cell::RefCell<Vec<(usize, Rect)>>,
 }
 
 /// The rectangles of the Studio top bar.
@@ -132,6 +138,12 @@ pub(super) fn chip(cv: &mut Canvas, r: Rect, fill: Rgb, border: Rgb) {
 }
 
 impl Ui {
+    /// Start of a frame: the lanes draw their badges again, and a layout change made in the Display menu is applied.
+    pub(super) fn studio_frame_start(&mut self) {
+        self.studio.lane_badges.get_mut().clear();
+        self.studio_sync();
+    }
+
     /// Applies a layout change made in the Display menu: Studio always draws its sources as lanes.
     pub(super) fn studio_sync(&mut self) {
         if !std::mem::take(&mut self.studio.enter) { return; }
@@ -372,6 +384,7 @@ impl Ui {
         if self.menu_open && self.dlg_layout().is_some_and(|d| d.r.contains(x, y)) { return false; }
         if self.studio_view_tap(x, y) { return true; }
         if self.studio_popup_tap(x, y) { return true; }
+        if self.studio_zoom_tap(x, y) { return true; }
         if self.studio_badge_tap(x, y) { return true; }
         if self.studio_panel_tap(x, y) { return true; }
         if y >= self.frame().bottom.y {
@@ -435,6 +448,7 @@ impl Ui {
         let a = self.area;
         let col = CH_COLORS[c];
         let r = Rect::new(a.x + 3, y - 9, 44, 18);
+        self.studio.lane_badges.borrow_mut().push((c, r));
         cv.round(r, 4, col, 255);
         cv.round(r.inset(1), 3, BG, 255);
         cv.text_in(&self.fonts().sb, r, 1, &format!("CH{}", c + 1), col);
@@ -648,6 +662,8 @@ impl Ui {
 
     /// What floats over the lanes and the bars: the badge popup.
     pub(super) fn draw_studio_floating(&self, cv: &mut Canvas) {
+        self.draw_studio_zoom_menu(cv);
+        self.draw_studio_yzoom(cv);
         let (Some(key), Some(p)) = (self.studio.popup, self.studio_popup_rect()) else { return };
         let f = self.fonts();
         let rows = self.meas_rows();
@@ -1362,5 +1378,320 @@ impl Ui {
     fn studio_eat(&mut self, x: i32, y: i32) -> bool {
         self.studio.drag = Some(StudioDrag::Eat { x0: x, y0: y });
         true
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------- zoom
+
+/// The rows of the Zoom & navigation menu.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum ZoomRow {
+    Minus,
+    Plus,
+    Tdiv,
+    Fit,
+    Center,
+    ResetY,
+    Close,
+}
+
+/// The chips of the zoom toolbar.
+#[derive(Clone, Copy)]
+pub(super) struct ZoomBar {
+    pub zoom: Rect,
+    pub tdiv: Rect,
+    pub center: Rect,
+    pub fit: Rect,
+    pub more: Rect,
+}
+
+const ZMENU_W: i32 = 300;
+
+/// A zoom factor as the toolbar writes it: "5x", "2.5x", "12x".
+fn zoom_text(n: f32) -> String {
+    let n = if n.is_finite() { n.max(1.0) } else { 1.0 };
+    if n >= 9.95 { format!("{:.0}\u{d7}", n) } else { format!("{:.1}\u{d7}", n).replace(".0\u{d7}", "\u{d7}") }
+}
+
+impl Ui {
+    /// Studio's zoom bar sits in the strip between the overview and the zoomed lanes.
+    pub(super) fn studio_zoom_active(&self) -> bool {
+        self.m.layout == Layout::Studio && self.m.zoom && !self.xy && !self.view_on()
+    }
+
+    /// How many times the detail view magnifies time against the main view.
+    pub(super) fn studio_time_zoom(&self) -> f32 {
+        self.m.time_per_div() / tscales()[self.m.zscale].max(1e-12)
+    }
+
+    pub(super) fn studio_zoom_bar(&self) -> Option<ZoomBar> {
+        if !self.studio_zoom_active() { return None; }
+        let row = self.zoom_readout();
+        let (y, h) = (row.y + 2, (row.h - 4).max(20));
+        let more = Rect::new(row.right() - 46, y, 40, h);
+        let fit = Rect::new(more.x - 6 - 118, y, 118, h);
+        let center = Rect::new(fit.x - 6 - 136, y, 136, h);
+        let zoom = Rect::new(row.x + 6, y, 142, h);
+        let tdiv = Rect::new(zoom.right() + 8, y, 118, h);
+        Some(ZoomBar { zoom, tdiv, center, fit, more })
+    }
+
+    /// The trigger is outside the zoomed window.
+    fn studio_trigger_off_screen(&self) -> bool {
+        let (tz, dz) = self.view();
+        dz.abs() > tz * HDIV / 2.0
+    }
+
+    pub(super) fn studio_zoom_menu_rect(&self) -> Option<Rect> {
+        let bar = self.studio_zoom_bar().filter(|_| self.studio.zoom_menu)?;
+        let h = 40 + 44 + 44 + 36 + 8 + 4 * 38 + 8;
+        Some(Rect::new((bar.more.right() - ZMENU_W).max(4), bar.more.bottom() + 6, ZMENU_W, h))
+    }
+
+    /// The rows of the menu with their rectangles.
+    pub(super) fn studio_zoom_rows(&self) -> Vec<(ZoomRow, Rect)> {
+        let Some(p) = self.studio_zoom_menu_rect() else { return Vec::new() };
+        let x = p.x + 8;
+        let w = p.w - 16;
+        let mut y = p.y + 40;
+        let mut out = vec![
+            (ZoomRow::Minus, Rect::new(p.right() - 8 - 48 - 100 - 48 - 8, y + 4, 48, 36)),
+            (ZoomRow::Plus, Rect::new(p.right() - 8 - 48, y + 4, 48, 36)),
+        ];
+        y += 44;
+        out.push((ZoomRow::Tdiv, Rect::new(x, y + 2, w, 40)));
+        y += 44 + 36 + 8;
+        for row in [ZoomRow::Fit, ZoomRow::Center, ZoomRow::ResetY, ZoomRow::Close] {
+            out.push((row, Rect::new(x, y, w, 38)));
+            y += 38;
+        }
+        out
+    }
+
+    pub(super) fn draw_studio_zoom_bar(&self, cv: &mut Canvas) {
+        let Some(bar) = self.studio_zoom_bar() else { return };
+        let f = self.fonts();
+        cv.fill(self.zoom_readout(), BG);
+        let open = self.studio.zoom_menu;
+        chip(cv, bar.zoom, BTN, BTN_BORDER);
+        cv.text_in(&f.m, Rect::new(bar.zoom.x + 10, bar.zoom.y, bar.zoom.w - 30, bar.zoom.h), 0, &format!("Time zoom {}", zoom_text(self.studio_time_zoom())), TEXT);
+        chevron_down(cv, bar.zoom.right() - 20, bar.zoom.y + bar.zoom.h / 2 - 2, DIM);
+        chip(cv, bar.tdiv, BTN, BTN_BORDER);
+        cv.text_in(&f.m, Rect::new(bar.tdiv.x + 10, bar.tdiv.y, bar.tdiv.w - 30, bar.tdiv.h), 0, &format!("{}/div", si_short(tscales()[self.m.zscale] as f64, "s")), TEXT);
+        chevron_down(cv, bar.tdiv.right() - 20, bar.tdiv.y + bar.tdiv.h / 2 - 2, DIM);
+        // Center trigger turns amber while the trigger is out of the window
+        let off = self.studio_trigger_off_screen();
+        chip(cv, bar.center, BTN, if off { AMBER } else { BTN_BORDER });
+        let (cx, cy) = (bar.center.x + 18, bar.center.y + bar.center.h / 2);
+        cv.circle(cx, cy, 7, TEXT);
+        cv.circle(cx, cy, 5, BTN);
+        cv.circle(cx, cy, 2, TEXT);
+        cv.text_in(&f.m, Rect::new(bar.center.x + 32, bar.center.y, bar.center.w - 34, bar.center.h), 0, "Center trigger", TEXT);
+        chip(cv, bar.fit, BTN, BTN_BORDER);
+        icon_expand(cv, bar.fit.x + 18, bar.fit.y + bar.fit.h / 2, TEXT);
+        cv.text_in(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, "Fit record", TEXT);
+        chip(cv, bar.more, BTN, if open { ACCENT } else { BTN_BORDER });
+        for dx in [-8, 0, 8] { cv.circle(bar.more.x + bar.more.w / 2 + dx, bar.more.y + bar.more.h / 2, 2, TEXT); }
+    }
+
+    /// The window in the overview: shaded, framed, with a grip at each end.
+    pub(super) fn draw_studio_window(&self, cv: &mut Canvas, o: Rect, xa: i32, xb: i32) {
+        let w = Rect::new(xa, o.y, (xb - xa).max(2), o.h);
+        cv.blend(w, BAND, 50);
+        cv.rect(w, BAND);
+        for edge in [xa, xb] {
+            let r = Rect::new(edge - 7, o.y + o.h / 2 - 14, 14, 28);
+            cv.round(r, 4, BAND, 255);
+            for k in [-3, 0, 3] { cv.vline(edge + k, r.y + 7, r.bottom() - 8, DARK_TEXT); }
+        }
+    }
+
+    /// The menu of the zoom toolbar's last chip.
+    pub(super) fn draw_studio_zoom_menu(&self, cv: &mut Canvas) {
+        let Some(p) = self.studio_zoom_menu_rect() else { return };
+        let f = self.fonts();
+        cv.round(p, 8, BTN_BORDER, 255);
+        cv.round(p.inset(1), 7, PANEL_BG, 255);
+        if let Some(bar) = self.studio_zoom_bar() {
+            let x = bar.more.x + bar.more.w / 2;
+            cv.triangle([(x - 7, p.y + 1), (x + 7, p.y + 1), (x, p.y - 6)], BTN_BORDER);
+            cv.triangle([(x - 6, p.y + 2), (x + 6, p.y + 2), (x, p.y - 4)], PANEL_BG);
+        }
+        cv.text(&f.lb, p.x + 14, p.y + 28, "Zoom & navigation", TEXT);
+        cv.hline(p.x + 8, p.right() - 9, p.y + 38, LINE);
+        let mut linked_y = p.y + 40 + 44 + 44;
+        for (row, r) in self.studio_zoom_rows() {
+            let cy = r.y + r.h / 2;
+            match row {
+                ZoomRow::Minus | ZoomRow::Plus => {
+                    chip(cv, r, BTN, BTN_BORDER);
+                    cv.hline(r.x + r.w / 2 - 6, r.x + r.w / 2 + 6, cy, TEXT);
+                    if row == ZoomRow::Plus { cv.vline(r.x + r.w / 2, cy - 6, cy + 6, TEXT); }
+                    if row == ZoomRow::Minus {
+                        cv.text(&f.m, p.x + 14, cy + 5, "Time zoom", TEXT);
+                        let v = Rect::new(r.right() + 6, r.y, 100, r.h);
+                        chip(cv, v, BTN, BTN_BORDER);
+                        cv.text_in(&f.mb, v, 1, &zoom_text(self.studio_time_zoom()), TEXT);
+                    }
+                }
+                ZoomRow::Tdiv => {
+                    chip(cv, r, BTN, BTN_BORDER);
+                    cv.text_in(&f.m, Rect::new(r.x + 12, r.y, r.w - 40, r.h), 0, &format!("{}/div", si_short(tscales()[self.m.zscale] as f64, "s")), TEXT);
+                    chevron_down(cv, r.right() - 22, cy - 2, DIM);
+                    linked_y = r.bottom() + 2;
+                }
+                _ => {
+                    if row == ZoomRow::Fit { cv.hline(p.x + 8, p.right() - 9, r.y - 4, LINE); }
+                    let label = match row { ZoomRow::Fit => "Fit record", ZoomRow::Center => "Center trigger", ZoomRow::ResetY => "Reset vertical zoom", _ => "Close zoom" };
+                    let (ix, iy) = (r.x + 18, cy);
+                    match row {
+                        ZoomRow::Fit => icon_expand(cv, ix, iy, TEXT),
+                        ZoomRow::Center => { cv.circle(ix, iy, 7, TEXT); cv.circle(ix, iy, 5, PANEL_BG); cv.circle(ix, iy, 2, TEXT); }
+                        ZoomRow::ResetY => { cv.vline(ix, iy - 7, iy + 7, TEXT); icon_arrow(cv, ix, iy - 8, true, TEXT); icon_arrow(cv, ix, iy + 8, false, TEXT); }
+                        _ => { cv.line(ix - 5, iy - 5, ix + 5, iy + 5, TEXT); cv.line(ix - 5, iy + 5, ix + 5, iy - 5, TEXT); }
+                    }
+                    cv.text_in(&f.m, Rect::new(r.x + 42, r.y, r.w - 44, r.h), 0, label, TEXT);
+                }
+            }
+        }
+        // the lanes of Studio always share one time axis
+        cv.circle(p.x + 28, linked_y + 18, 5, DIM);
+        cv.circle(p.x + 36, linked_y + 18, 5, DIM);
+        cv.text(&f.m, p.x + 52, linked_y + 23, "Time axes linked", LABEL);
+    }
+
+    /// The display scale popup of a lane (a tap on its channel badge while zoomed).
+    pub(super) fn studio_yzoom_rect(&self) -> Option<Rect> {
+        let c = self.studio.yzoom?;
+        let (_, badge) = self.studio.lane_badges.borrow().iter().find(|(k, _)| *k == c).copied()?;
+        let h = 40 + 46 + 44;
+        let y = badge.y.min(self.frame().bottom.y - h - 4).max(self.frame().top.bottom() + 4);
+        Some(Rect::new(badge.right() + 8, y, 250, h))
+    }
+
+    /// Minus, plus and Reset Y of that popup.
+    pub(super) fn studio_yzoom_parts(&self) -> Option<(Rect, Rect, Rect, Rect)> {
+        let p = self.studio_yzoom_rect()?;
+        Some((Rect::new(p.right() - 38, p.y + 4, 32, 32), Rect::new(p.x + 10, p.y + 44, 48, 36),
+            Rect::new(p.right() - 58, p.y + 44, 48, 36), Rect::new(p.x + 10, p.y + 40 + 46, p.w - 20, 36)))
+    }
+
+    pub(super) fn draw_studio_yzoom(&self, cv: &mut Canvas) {
+        let (Some(p), Some((close, minus, plus, reset)), Some(c)) = (self.studio_yzoom_rect(), self.studio_yzoom_parts(), self.studio.yzoom) else { return };
+        let f = self.fonts();
+        cv.round(p, 8, BTN_BORDER, 255);
+        cv.round(p.inset(1), 7, PANEL_BG, 255);
+        cv.text(&f.mb, p.x + 12, p.y + 26, &format!("CH{} display scale", c + 1), TEXT);
+        let (cx, cy) = (close.x + close.w / 2, close.y + close.h / 2);
+        cv.line(cx - 5, cy - 5, cx + 5, cy + 5, TEXT);
+        cv.line(cx - 5, cy + 5, cx + 5, cy - 5, TEXT);
+        for (r, plus_sign) in [(minus, false), (plus, true)] {
+            chip(cv, r, BTN, BTN_BORDER);
+            cv.hline(r.x + r.w / 2 - 6, r.x + r.w / 2 + 6, r.y + r.h / 2, TEXT);
+            if plus_sign { cv.vline(r.x + r.w / 2, r.y + r.h / 2 - 6, r.y + r.h / 2 + 6, TEXT); }
+        }
+        cv.text_in(&f.mb, Rect::new(minus.right(), minus.y, plus.x - minus.right(), minus.h), 1, &format!("Y zoom {}", zoom_text(self.zoom_vfactor)), TEXT);
+        chip(cv, reset, BTN, BTN_BORDER);
+        cv.text_in(&f.m, reset, 1, "Reset Y", TEXT);
+    }
+
+    /// What the zoomed lanes say about their own state: the vertical zoom, and a hint while a gesture is on.
+    pub(super) fn draw_studio_zoom_overlay(&self, cv: &mut Canvas) {
+        if !self.studio_zoom_active() { return; }
+        let f = self.fonts();
+        let lane_tag = |cv: &mut Canvas, lane: Rect, text: &str| {
+            let w = f.sb.width(text) + 16;
+            let r = Rect::new(self.right_tag_x(lane, lane.y + 6, w) - w + 26, lane.y + 6, w, 20);
+            cv.round(r, 5, BTN_BORDER, 255);
+            cv.round(r.inset(1), 4, PANEL_BG, 255);
+            cv.text_in(&f.sb, r, 1, text, TEXT);
+        };
+        if (self.zoom_vfactor - 1.0).abs() > 1e-3 {
+            for &lane in &self.wins { lane_tag(cv, lane, &format!("Y zoom {}", zoom_text(self.zoom_vfactor))); }
+        }
+        // the hint of the gesture under the finger
+        let lane = self.wave_area();
+        let (cx, cy) = (lane.x + lane.w / 2, lane.y + lane.h / 3);
+        let hint = if self.pinch.active { Some(format!("Time zoom \u{b7} {}", zoom_text(self.studio_time_zoom()))) }
+            else if self.touch.down && self.touch.drag == Drag::Delay { Some("Pan time".to_string()) } else { None };
+        if let Some(text) = hint {
+            let r = Rect::new(cx - f.m.width(&text) / 2 - 12, cy - 14, f.m.width(&text) + 24, 28);
+            cv.round(r, 6, BTN_BORDER, 255);
+            cv.round(r.inset(1), 5, PANEL_BG, 255);
+            cv.text_in(&f.m, r, 1, &text, TEXT);
+        }
+    }
+
+    pub(super) fn studio_zoom_do(&mut self, row: ZoomRow) {
+        let area = self.wave_area();
+        match row {
+            ZoomRow::Minus => self.zoom_horizontal_step(1, area, 0.5),
+            ZoomRow::Plus => self.zoom_horizontal_step(-1, area, 0.5),
+            ZoomRow::Tdiv => { self.studio.zoom_menu = false; self.open_menu(MenuId::Horizontal); }
+            ZoomRow::Fit => self.reset_zoom(),
+            ZoomRow::Center => self.studio_center_trigger(),
+            ZoomRow::ResetY => { self.zoom_vfactor = 1.0; self.zoom_vcenter = 0.0; self.dirty_map = true; }
+            ZoomRow::Close => { self.studio.zoom_menu = false; self.set_zoom(false); }
+        }
+    }
+
+    /// Puts the trigger in the middle of the zoomed window.
+    pub(super) fn studio_center_trigger(&mut self) {
+        self.m.zdelay = 0.0;
+        self.clamp_zoom();
+        self.settings_changed();
+    }
+
+    /// Taps on the zoom bar, its menu, the display scale popup and the lane badges. False: none of them.
+    pub(super) fn studio_zoom_tap(&mut self, x: i32, y: i32) -> bool {
+        if self.studio.yzoom.is_some() {
+            let parts = self.studio_yzoom_parts();
+            let inside = self.studio_yzoom_rect().is_some_and(|p| p.contains(x, y));
+            if let (Some((close, minus, plus, reset)), true) = (parts, inside) {
+                let area = self.wave_area();
+                if close.contains(x, y) { self.studio.yzoom = None; }
+                else if minus.contains(x, y) { self.zoom_vertical_step(-1, area, 0.5); }
+                else if plus.contains(x, y) { self.zoom_vertical_step(1, area, 0.5); }
+                else if reset.contains(x, y) { self.studio_zoom_do(ZoomRow::ResetY); }
+                return true;
+            }
+            self.studio.yzoom = None;
+            return true;
+        }
+        if self.studio.zoom_menu {
+            let inside = self.studio_zoom_menu_rect().is_some_and(|p| p.contains(x, y));
+            if inside {
+                if let Some((row, _)) = self.studio_zoom_rows().into_iter().find(|(_, r)| r.contains(x, y)) { self.studio_zoom_do(row); }
+                return true;
+            }
+            self.studio.zoom_menu = false;
+            // a tap on the chip that opened it only closes it
+            if self.studio_zoom_bar().is_some_and(|b| b.more.contains(x, y)) { return true; }
+        }
+        if let Some(bar) = self.studio_zoom_bar() {
+            if self.zoom_readout().contains(x, y) {
+                if bar.zoom.contains(x, y) { self.studio.zoom_menu = true; }
+                else if bar.tdiv.contains(x, y) { self.open_menu(MenuId::Horizontal); }
+                else if bar.center.contains(x, y) { self.studio_center_trigger(); }
+                else if bar.fit.contains(x, y) { self.reset_zoom(); }
+                else if bar.more.contains(x, y) { self.studio.zoom_menu = true; }
+                return true;
+            }
+        }
+        // a lane's channel badge: its display scale while zoomed, its menu otherwise
+        let hit = self.studio.lane_badges.borrow().iter().find(|(_, r)| r.contains(x, y)).map(|&(c, _)| c);
+        if let Some(c) = hit {
+            self.select_workspace_source(WaveId::Ch(c));
+            if self.studio_zoom_active() { self.studio.yzoom = Some(c); } else { self.toggle_menu(MenuId::Channel(c)); }
+            return true;
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+impl Ui {
+    pub(super) fn studio_trigger_off_screen_for_test(&self) -> bool {
+        self.studio_trigger_off_screen()
     }
 }

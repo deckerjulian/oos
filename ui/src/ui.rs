@@ -2864,7 +2864,7 @@ impl Ui {
     /// background, graticule and masks go under the traces, everything else over them, and the traces become jobs
     /// for the GPU (`gpu.rs`). The order of the drawing is the same either way.
     pub fn render_layers(&mut self, l: &mut Layers) {
-        self.studio_sync();
+        self.studio_frame_start();
         self.relayout();
         if let Some(o) = l.over.as_deref_mut() {
             o.no_clip();
@@ -2894,9 +2894,13 @@ impl Ui {
             cv.set_clip(o);
             cv.blend(Rect::new(o.x, o.y, (xa - o.x).max(0), o.h), BG, 170);
             cv.blend(Rect::new(xb, o.y, (o.x + o.w - xb).max(0), o.h), BG, 170);
-            cv.rect(Rect::new(xa, o.y, (xb - xa).max(2), o.h), ACCENT);
-            for edge in [xa, xb] {
-                cv.round(Rect::new(edge - 3, o.y + o.h / 2 - 12, 7, 24), 3, ACCENT, 255);
+            if self.m.layout == Layout::Studio {
+                self.draw_studio_window(cv, o, xa, xb);
+            } else {
+                cv.rect(Rect::new(xa, o.y, (xb - xa).max(2), o.h), ACCENT);
+                for edge in [xa, xb] {
+                    cv.round(Rect::new(edge - 3, o.y + o.h / 2 - 12, 7, 24), 3, ACCENT, 255);
+                }
             }
             cv.no_clip();
             for &lane in &self.wins { self.draw_grid(l.under, lane); }
@@ -2958,7 +2962,7 @@ impl Ui {
         let cv = l.over();
         if self.m.zoom && !self.xy && !self.view_on() {
             let (tz, dz) = self.view();
-            self.draw_zoom_readout(cv, tz, dz);
+            if self.m.layout == Layout::Studio { self.draw_studio_zoom_bar(cv); } else { self.draw_zoom_readout(cv, tz, dz); }
         }
         if self.eye_open() {
             // eye_pane_rect maps Full to the plot while retaining floating panes.
@@ -2967,6 +2971,7 @@ impl Ui {
         self.draw_cal_banner(cv);
         self.draw_info(cv);
         self.draw_studio_overlay(cv);
+        self.draw_studio_zoom_overlay(cv);
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
         if !(self.eye_open() && self.m.eye_place==EyePlace::Full && self.workspace.eye_float.is_none()) {
