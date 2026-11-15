@@ -74,7 +74,7 @@ fn serial_clock_fills_the_single_channel_list() {
     check(Meas::NSlew, -0.8 * amp / rise, 0.05, 1e6);
     check(Meas::HighTime, 10e-9 - rise, 0.08, 1e-12);
     check(Meas::LowTime, 10e-9 - rise, 0.08, 1e-12);
-    // Both averages the above-90 % widths with the below-10 % widths. On this clock they are the same width.
+    // time outside defaults to the time above the 90 % level per high span, the same width as the high time here
     check(Meas::Outside, 10e-9 - rise, 0.08, 1e-12);
     check(Meas::NPeriods, 120e-9, 0.02, 1e-12);
     check(Meas::CycMax, 0.5, 0.02, 1e-3);

@@ -378,6 +378,7 @@ mod tests {
     #[test]
     fn stopped_reference_readouts_follow_the_visible_window() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas_full_record = false; // screen gating: these tests check the visible-window gate (the default is the whole record)
         ui.set_offline(true);
         let samples: Vec<f32> = (0..4000).map(|i| {
             let amplitude = if i < 2000 { 1.0 } else { 3.0 };

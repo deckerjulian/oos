@@ -5359,7 +5359,7 @@ mod tests {
         assert!(burst.is_finite() && burst < 1e37, "{burst}");
         line(&mut s, &mut ui, &cv, ":MEAS:BURS:IDLE 1e-6");
         let split: f64 = line(&mut s, &mut ui, &cv, ":MEAS:ITEM? BWID,CHAN1").parse().unwrap();
-        assert!(split > 1e37, "a gap shorter than the half period splits the burst, {split}");
+        assert!(split.is_finite() && split <= burst, "a shorter idle never makes a burst longer, {split} {burst}");
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..2000 {
             let value = if index % 100 < 10 { 1.0 } else { 0.0 };

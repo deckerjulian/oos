@@ -1004,6 +1004,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
 /// line and the key; unknown keys are ignored.
 pub fn parse_setup(text: &str) -> Result<Model, String> {
     let mut m = Model::default();
+    // a setup from before the gate setting measured the visible window; keep it that way
+    m.meas_full_record = false;
     for (ln, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {

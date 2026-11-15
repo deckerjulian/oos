@@ -1410,6 +1410,7 @@ mod measurement_gate_tests {
 
     fn sources() -> Ui {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas_full_record = false; // screen gating: these tests check the visible-window gate (the default is the whole record)
         ui.m.run = RunState::Stop;
         ui.m.zoom = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-9).abs() < 1e-12).unwrap();
@@ -1435,6 +1436,7 @@ mod measurement_gate_tests {
         let dt = 20e-12;
         for center in [0.0, 2f64.powi(-20)] {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            ui.m.meas_full_record = false; // screen gating: these tests check the visible-window gate (the default is the whole record)
             ui.m.run = RunState::Stop;
             ui.m.zoom = false;
             ui.m.tscale = 0;
@@ -1469,6 +1471,7 @@ mod measurement_gate_tests {
     #[test]
     fn screen_gate_keeps_real_near_boundary_samples_without_rounding_the_view() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas_full_record = false; // screen gating: these tests check the visible-window gate (the default is the whole record)
         ui.m.zoom = false;
         ui.m.tscale = 0;
         ui.m.tfine = 200e-12f32 / tscales()[0];

@@ -60,7 +60,7 @@ pub enum Meas {
     CycPp,
     CycMax,
     CycMin,
-    /// Unit interval estimated from the mid edges (`estimated_ui`).
+    /// Unit interval from the mid edges (`unit_interval_bits`).
     EstUi,
     /// Sample median.
     Median,
@@ -468,7 +468,7 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         let t = mids(&a);
         t.windows(2).map(|w| w[1] - w[0]).collect()
     };
-    a.est_ui = estimated_ui(&mids(&a));
+    a.est_ui = unit_interval_bits(&mids(&a));
     a.ui_wtd = crate::linecode::unit_interval_runs(&spacings).unwrap_or(f64::NAN);
     if a.rises.len() + a.falls.len() <= 8000 {
         let mid_v = (base + amp * 0.5) as f32;
@@ -649,7 +649,7 @@ impl Analysis {
             Meas::HighTime => self.high_time,
             Meas::LowTime => self.low_time,
             Meas::Burst => burst_width(self, 0.0),
-            Meas::Outside => time_outside(self, Outside::Both),
+            Meas::Outside => time_outside(self, Outside::Above),
             Meas::NPeriods => duration_n(self, 6, false),
             Meas::CycAmp => self.cyc_amp,
             Meas::CycTop => self.cyc_top,
@@ -824,6 +824,25 @@ pub fn estimated_ui(t: &[f64]) -> f64 {
         bits += n;
     }
     if bits > 0.0 { time / bits } else { f64::NAN }
+}
+
+/// Unit interval as time over bits: every edge interval holds a whole number of bits, counted against the
+/// `estimated_ui` first guess, and the UI is the total time over the total bit count (refined once with that UI).
+pub fn unit_interval_bits(t: &[f64]) -> f64 {
+    let mut ui = estimated_ui(t);
+    for _ in 0..2 {
+        if !(ui > 0.0) {
+            return f64::NAN;
+        }
+        let (mut time, mut bits) = (0.0, 0.0);
+        for w in t.windows(2) {
+            let d = w[1] - w[0];
+            time += d;
+            bits += (d / ui).round().max(1.0);
+        }
+        ui = time / bits;
+    }
+    ui
 }
 
 /// Integral of the straight-line interpolated waveform from `t0` to `t1` (seconds from the first sample).

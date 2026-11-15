@@ -691,7 +691,8 @@ mod tests{
         assert!(rate.value>15.9e9&&rate.value<16.1e9,"accepted data, not the pending1G SIM setting");
         assert_eq!(meta(Cat::DataRate).unit,"b/s");assert_eq!(meta(Cat::BitRate).unit,"b/s");
         let a=ui.meas_analysis(WaveId::Ref(0)).unwrap().0;
-        assert!(rate.value/a.get(Meas::Freq)>3.8&&rate.value/a.get(Meas::Freq)<4.2);
+        // about 4 bits per mean clock-like cycle (Freq is the mean of each cycle's 1/T, so it is checked by period)
+        assert!(rate.value*a.period()>3.8&&rate.value*a.period()<4.2,"{}",rate.value*a.period());
         assert!((a.est_ui*rate.value-1.0).abs()<1e-12);assert!((a.pll_ui*clock.value-1.0).abs()<0.001);
         let area=ui.wave_area();let(x,y)=(area.x+area.w/3,area.y+area.h/2);
         for _ in 0..11 {ui.handle(Ev::Wheel{x,y,steps:32,ctrl:false,shift:false,alt:false});}

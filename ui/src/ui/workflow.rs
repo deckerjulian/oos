@@ -134,6 +134,7 @@ mod tests {
 
     fn replay() -> Ui {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.meas_full_record = false; // screen gating: these tests check the visible-window gate (the default is the whole record)
         u.remember_live();
         u.offline = true;
         u.offline_ref = 0;
@@ -411,12 +412,13 @@ mod tests {
         u.refs[3] = Some(RefWave { src: 0, color: 1, label: String::new(), t0: 0.0, dt: 1e-9, v: square(80).into(), vpd: 0.2, offset: 0.0, on: true });
         u.refs[4] = Some(RefWave { src: 0, color: 2, label: String::new(), t0: 0.0, dt: 1e-9, v: square(200).into(), vpd: 0.2, offset: 0.0, on: false });
         u.measure_last();
-        let before = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
+        // delay rise-rise (row 0): a 40 ns skew is outside the default +/-10 ns skew window
+        let before = u.pair_at(0, WaveId::Ch(0), WaveId::Ch(1));
         assert!((before - 40e-9).abs() < 2e-9, "{before}");
         assert!(u.items(MenuId::Horizontal).contains(&Item::AutoDeskew));
         assert!(u.items(MenuId::ChMore(0)).contains(&Item::AutoDeskew));
         u.activate(Item::AutoDeskew);
-        let after = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
+        let after = u.pair_at(0, WaveId::Ch(0), WaveId::Ch(1));
         assert!(after.abs() < 2e-9, "{after}");
         let edge = |id| {
             let (a, t0) = u.meas_analysis(id).unwrap();
@@ -426,7 +428,7 @@ mod tests {
         assert!((ch - rf).abs() < 2e-9, "channel {ch} reference {rf}");
         assert_eq!(u.m.deskew_ref[4], 0.0, "a hidden reference is left where it is");
         u.activate(Item::AutoDeskew);
-        assert!(u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1)).abs() < 2e-9, "running it again does not walk the traces");
+        assert!(u.pair_at(0, WaveId::Ch(0), WaveId::Ch(1)).abs() < 2e-9, "running it again does not walk the traces");
         u.m.ch[1].on = false;
         u.refs[3].as_mut().unwrap().on = false;
         u.m.deskew_ch = [0.0; NCH];

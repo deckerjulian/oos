@@ -1276,7 +1276,7 @@ pub struct Model {
     pub bode_addr: String,
     /// loop gain, PSRR, or the linear Vout/Vin ratio
     pub bode_mode: oos_dsp::bode::Mode,
-    /// burst idle (0 = one period), which side Time Outside counts, and Duration N
+    /// burst idle (0 = the default, `BURST_IDLE`), which side Time Outside counts, and Duration N
     pub meas_idle: f64,
     pub meas_out: oos_dsp::measure::Outside,
     pub meas_n: u32,
@@ -1675,13 +1675,15 @@ impl Default for Model {
             hw_stamp: 0,
             bode_addr: "192.168.1.100:5555".into(),
             bode_mode: oos_dsp::bode::Mode::Loop,
-            meas_idle: 0.0,
-            meas_out: oos_dsp::measure::Outside::Both,
-            meas_n: 2,
+            // the reference scope's defaults: 50 us burst idle, time outside above the upper level, N = 6 periods,
+            // measured on the whole record
+            meas_idle: oos_dsp::measure::BURST_IDLE,
+            meas_out: oos_dsp::measure::Outside::Above,
+            meas_n: 6,
             meas_data: false,
             meas_lpct: 0.1,
             meas_hpct: 0.9,
-            meas_full_record: false,
+            meas_full_record: true,
             meas_tsetup: 0.0,
             meas_thold: 0.0,
             spec_acpr_w: 1e6,

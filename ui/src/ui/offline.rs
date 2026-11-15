@@ -264,7 +264,9 @@ mod tests {
     use super::*;
 
     fn ui() -> Ui {
-        Ui::new(Source::Demo { t: 0.0 })
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.meas_full_record = false; // screen gating: these tests check the visible-window gate (the default is the whole record)
+        u
     }
 
     #[test]
