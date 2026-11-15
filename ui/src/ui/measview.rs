@@ -138,16 +138,16 @@ impl Ui {
 
     /// The little switch in the strip of the measurements panel: its two modes, the one that is on lit.
     pub(super) fn draw_view_switch(&self, cv: &mut Canvas, e: Rect) {
-        let b = Rect::new(e.x + 4, e.y + 6, 44, 28);
+        let b = Rect::new(e.x + 4, e.y + 2, 44, 22);
         chip(cv, b, BTN, BTN_BORDER);
-        let (l, t) = (Rect::new(b.x + 2, b.y + 2, 20, 24), Rect::new(b.x + 22, b.y + 2, 20, 24));
+        let (l, t) = (Rect::new(b.x + 2, b.y + 2, 20, 18), Rect::new(b.x + 22, b.y + 2, 20, 18));
         let det = self.m.studio_detail;
         cv.round(if det { t } else { l }, 4, ACCENT, 255);
         let (cl, ct) = (if det { TEXT } else { DARK_TEXT }, if det { DARK_TEXT } else { TEXT });
         // list: three lines; table: a grid
-        for k in 0..3 { cv.hline(l.x + 4, l.right() - 5, l.y + 7 + k * 5, cl); }
-        cv.rect(Rect::new(t.x + 4, t.y + 6, 12, 12), ct);
-        cv.hline(t.x + 4, t.x + 15, t.y + 12, ct);
-        cv.vline(t.x + 10, t.y + 6, t.y + 17, ct);
+        for k in 0..3 { cv.hline(l.x + 4, l.right() - 5, l.y + 4 + k * 5, cl); }
+        cv.rect(Rect::new(t.x + 4, t.y + 3, 12, 12), ct);
+        cv.hline(t.x + 4, t.x + 15, t.y + 9, ct);
+        cv.vline(t.x + 10, t.y + 3, t.y + 14, ct);
     }
 }

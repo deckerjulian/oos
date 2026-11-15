@@ -63,6 +63,12 @@ pub(super) struct Md {
     pub stats_rows: Vec<MeasKey>,
     /// a finger down on the detailed table: where, and how far it was scrolled
     pub hdown: Option<(i32, i32, i32)>,
+    /// the badges were just hidden: a small bar with Undo, since when
+    pub hide_undo: Option<f64>,
+    /// the info card of a measurement (the catalogue entry) is open
+    pub info: Option<super::meascatalog::Cat>,
+    /// a tile that needs a channel that is off was tapped: a second tap soon after turns the channel on
+    pub need_tap: Option<(super::meascatalog::Cat, f64)>,
 }
 
 /// Rows of the row menu.
@@ -77,8 +83,10 @@ pub(super) enum RowAct {
     StatsAll,
     /// Measure > Labels on trace: the levels and spans drawn on the waveform
     Labels,
+    /// the info card of the measurement
+    About,
 }
-const ROW_ACTS: [RowAct; 8] = [RowAct::Settings, RowAct::Pin, RowAct::Up, RowAct::Down, RowAct::Remove, RowAct::Stats, RowAct::StatsAll, RowAct::Labels];
+const ROW_ACTS: [RowAct; 9] = [RowAct::Settings, RowAct::Pin, RowAct::Up, RowAct::Down, RowAct::Remove, RowAct::Stats, RowAct::StatsAll, RowAct::Labels, RowAct::About];
 
 impl Ui {
     // ------------------------------------------------------------------------------------------------ geometry
@@ -198,6 +206,7 @@ impl Ui {
     /// Every frame: the Undo bar times out, a short swipe springs back, a held finger picks the row or badge up.
     pub(super) fn md_tick(&mut self) {
         if self.studio.md.undo.is_some_and(|u| self.now - u.at > UNDO_S) { self.studio.md.undo = None; }
+        if self.studio.md.hide_undo.is_some_and(|t| self.now - t > UNDO_S) { self.studio.md.hide_undo = None; }
         if let Some((key, off)) = self.studio.md.spring {
             let off = off * 0.6;
             self.studio.md.spring = if off.abs() < 2.0 { None } else { Some((key, off)) };
@@ -235,15 +244,18 @@ impl Ui {
         // a tile of the Add measurement panel: it follows the finger once it has moved
         if self.menu_open && self.menu == MenuId::MeasAdd && self.sheet_active() {
             let g = self.sheet_add_geo();
-            if let Some(&(k, _)) = g.rows.iter().find(|(_, r)| r.contains(x, y)) {
+            if let Some(&(k, _)) = g.rows.iter().find(|(_, r)| r.contains(x, y) && !Self::tile_info_rect(*r).contains(x, y)) {
                 self.studio.drag = Some(StudioDrag::Tile { k, x0: x, y0: y, x, y, moved: false });
                 return true;
             }
             return false;
         }
         if self.menu_open || self.studio.view == StudioView::Sim { return false; }
-        // the Undo bar is a button
+        // the Undo bars are buttons
         if let Some((bar, _)) = self.md_undo_bar() {
+            if bar.contains(x, y) { return self.studio_eat(x, y); }
+        }
+        if let Some((bar, _)) = self.md_hide_bar() {
             if bar.contains(x, y) { return self.studio_eat(x, y); }
         }
         // a badge: a tap opens its popup, a hold picks it up
@@ -449,12 +461,28 @@ impl Ui {
             }
             RowAct::StatsAll => { self.studio.panel.stats = !self.studio.panel.stats; self.relayout(); }
             RowAct::Labels => { self.m.meas_labels = !self.m.meas_labels; self.dirty_map = true; }
+            RowAct::About => self.md_about(key),
         }
         true
     }
 
+    /// The bar that follows hiding the badges: where it is, and its Undo button.
+    pub(super) fn md_hide_bar(&self) -> Option<(Rect, Rect)> {
+        self.studio.md.hide_undo?;
+        let w = 300;
+        let top = self.frame().top.bottom() + 6;
+        let bar = Rect::new((self.scr.w - w) / 2, top, w, BAR_H);
+        Some((bar, Rect::new(bar.right() - 92, bar.y, 92, bar.h)))
+    }
+
     /// A tap on the Undo bar. True when it was on the bar (a tap on the button brings the row back).
     pub(super) fn md_undo_tap(&mut self, x: i32, y: i32) -> bool {
+        if let Some((bar, button)) = self.md_hide_bar() {
+            if bar.contains(x, y) {
+                if button.contains(x, y) { self.studio.hide_badges = false; self.studio.md.hide_undo = None; self.relayout(); }
+                return true;
+            }
+        }
         let Some((bar, button)) = self.md_undo_bar() else { return false };
         if !bar.contains(x, y) { return false; }
         if button.contains(x, y) { self.md_undo(); }
@@ -467,6 +495,13 @@ impl Ui {
     pub(super) fn draw_md_overlays(&self, cv: &mut Canvas) {
         if self.m.layout != Layout::Studio { return; }
         let f = self.fonts();
+        if let Some((bar, button)) = self.md_hide_bar() {
+            cv.round(bar, 6, BTN_BORDER, 255);
+            cv.round(bar.inset(1), 5, PANEL_BG, 255);
+            cv.text_in(&f.s, Rect::new(bar.x + 10, bar.y, button.x - bar.x - 14, bar.h), 0, "Measurements hidden", TEXT);
+            btn(cv, button.inset(4), BTN, ACCENT);
+            cv.text_in(&f.mb, button, 1, "Undo", ACCENT);
+        }
         if let (Some((bar, button)), Some(u)) = (self.md_undo_bar(), self.studio.md.undo) {
             cv.round(bar, 6, BTN_BORDER, 255);
             cv.round(bar.inset(1), 5, PANEL_BG, 255);
@@ -494,6 +529,7 @@ impl Ui {
                     RowAct::Stats => (if self.studio.md.stats_rows.contains(&key) { "Hide statistics (row)" } else { "Show statistics (row)" }, TEXT),
                     RowAct::StatsAll => (if self.studio.panel.stats { "Hide statistics (all)" } else { "Show statistics (all)" }, TEXT),
                     RowAct::Labels => (if self.m.meas_labels { "Labels on trace: on" } else { "Labels on trace: off" }, TEXT),
+                    RowAct::About => ("About this measurement", TEXT),
                 };
                 if *act == RowAct::Remove { cv.hline(p.x + 8, p.right() - 9, r.y - 1, LINE); }
                 cv.text_in(&f.m, Rect::new(r.x + 12, r.y, r.w - 14, r.h), 0, label, col);

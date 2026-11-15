@@ -13,7 +13,9 @@ use super::studio::{chip, StudioView};
 use std::rc::Rc;
 
 /// Height of the title strip of a view: the whole strip is the grip, and the X in it is a 44 x 40 target.
-pub(super) const STRIP_H: i32 = 40;
+pub(super) const STRIP_H: i32 = 26;
+/// The buttons of a strip are 40 px targets: they reach down over the top of the content, invisibly.
+pub(super) const STRIP_HIT: i32 = 40;
 /// Space between two docked views, and the thickness of the divider hit area.
 pub(super) const GAP: i32 = 4;
 pub(super) const DIV_HIT: i32 = 44;
@@ -537,10 +539,10 @@ impl Ui {
         self.dock_rect(VKind::Wave).unwrap_or_else(|| self.dock_region())
     }
 
-    pub(super) fn dock_close_rect(r: Rect) -> Rect { Rect::new(r.right() - 48, r.y, 48, STRIP_H.min(r.h)) }
+    pub(super) fn dock_close_rect(r: Rect) -> Rect { Rect::new(r.right() - 48, r.y, 48, STRIP_HIT.min(r.h)) }
     fn dock_extra_rect(&self, k: VKind, r: Rect) -> Option<Rect> {
         (k == VKind::Measure && self.studio.view != StudioView::Only && self.studio.view != StudioView::Offline)
-            .then(|| Rect::new(r.right() - 96, r.y, 48, STRIP_H.min(r.h)))
+            .then(|| Rect::new(r.right() - 96, r.y, 48, STRIP_HIT.min(r.h)))
     }
     /// The edges of a floating panel a finger at (x, y) would drag: the corner, the sides and the bottom. The top is
     /// the strip, which moves the panel.
@@ -562,7 +564,7 @@ impl Ui {
     pub(super) fn dock_view_rect(&self, k: VKind, r: Rect) -> Option<Rect> {
         if k != VKind::Measure || !matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline) { return None; }
         let base = self.dock_extra_rect(k, r).map_or(Self::dock_close_rect(r).x, |e| e.x);
-        Some(Rect::new(base - 52, r.y, 52, STRIP_H.min(r.h)))
+        Some(Rect::new(base - 52, r.y, 52, STRIP_HIT.min(r.h)))
     }
     pub(super) fn dock_grip_rect(r: Rect) -> Rect { Rect::new(r.right() - GRIP, r.bottom() - GRIP, GRIP, GRIP) }
 
@@ -1004,30 +1006,30 @@ impl Ui {
         cv.fill(s, if lifted { mix(BAR, ACCENT, 18) } else { BAR });
         cv.hline(s.x, s.right() - 1, s.bottom() - 1, LINE);
         // the dotted grip shows that the strip moves the view
-        for (dx, dy) in [(0, 0), (6, 0), (12, 0), (0, 6), (6, 6), (12, 6), (0, 12), (6, 12), (12, 12)] {
-            cv.fill(Rect::new(s.x + 12 + dx, s.y + 11 + dy, 2, 2), DIM);
+        for (dx, dy) in [(0, 0), (5, 0), (10, 0), (0, 5), (5, 5), (10, 5), (0, 10), (5, 10), (10, 10)] {
+            cv.fill(Rect::new(s.x + 8 + dx, s.y + 6 + dy, 2, 2), DIM);
         }
         let name = self.dock_name(k);
         let close = Self::dock_close_rect(r);
         let extra = self.dock_extra_rect(k, r);
         let view = self.dock_view_rect(k, r);
         let right = view.map_or(extra.map_or(close.x, |e| e.x), |v| v.x);
-        let avail = (right - s.x - 40).max(1);
+        let avail = (right - s.x - 30).max(1);
         let name = self.dock_title_fit(k, &name, avail);
-        cv.set_clip(Rect::new(s.x + 36, s.y, avail, s.h));
-        cv.text_in(&f.lb, Rect::new(s.x + 36, s.y, avail, s.h), 0, &name, TEXT);
+        cv.set_clip(Rect::new(s.x + 26, s.y, avail, s.h));
+        cv.text_in(&f.mb, Rect::new(s.x + 26, s.y, avail, s.h), 0, &name, TEXT);
         cv.no_clip();
         if let Some(v) = view { self.draw_view_switch(cv, v); }
         if let Some(e) = extra {
-            chip(cv, Rect::new(e.x + 7, e.y + 6, 34, 28), BTN, BTN_BORDER);
-            super::studio::icon_expand(cv, e.x + e.w / 2, e.y + e.h / 2, TEXT);
+            chip(cv, Rect::new(e.x + 12, s.y + 2, 26, 22), BTN, BTN_BORDER);
+            super::studio::icon_expand(cv, e.x + e.w / 2, s.y + s.h / 2, TEXT);
         }
         let dim = k == VKind::Wave && !self.view_on() && !(self.eye_open() && self.m.eye_place == EyePlace::Full);
-        chip(cv, Rect::new(close.x + 7, close.y + 6, 34, 28), BTN, BTN_BORDER);
-        let (cx, cy) = (close.x + close.w / 2, close.y + close.h / 2);
+        chip(cv, Rect::new(close.x + 12, s.y + 2, 26, 22), BTN, BTN_BORDER);
+        let (cx, cy) = (close.x + close.w / 2, s.y + s.h / 2);
         let c = if dim { DIM } else { TEXT };
-        cv.line(cx - 5, cy - 5, cx + 5, cy + 5, c);
-        cv.line(cx - 5, cy + 5, cx + 5, cy - 5, c);
+        cv.line(cx - 4, cy - 4, cx + 4, cy + 4, c);
+        cv.line(cx - 4, cy + 4, cx + 4, cy - 4, c);
         if floating {
             // the resize corner, and the edges beside it
             cv.fill(Rect::new(r.right() - 3, r.y + STRIP_H + 24, 2, (r.h - STRIP_H - 60).max(0)), DIM);

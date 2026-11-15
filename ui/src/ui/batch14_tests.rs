@@ -517,3 +517,174 @@ fn a_wide_spectrum_view_has_the_peak_list_and_numbered_markers() {
     assert!(b.list.w > 0 && b.sort.w > 0, "the Peaks by frequency list is there when wide");
     shot(&mut u, "spectrum-wide");
 }
+
+// Batch 15: badges --------------------------------------------------------------------------------- hide and show
+
+#[test]
+fn hiding_the_badges_leaves_a_button_and_an_undo_and_showing_them_needs_no_menu() {
+    let mut u = studio();
+    u.studio_set_view(StudioView::Waveform);
+    frame(&mut u);
+    assert!(u.studio_badges_visible() && !u.studio_badges().is_empty());
+    let eye = u.studio_eye();
+    tap(&mut u, eye);
+    assert!(!u.studio_badges_visible(), "hidden");
+    let show = u.studio_bottom().show.expect("a button in the bottom bar");
+    assert!(show.w >= 40 && show.h >= 36, "{show:?}");
+    // the Undo of the hide action
+    let (bar, undo) = u.md_hide_bar().expect("the Undo bar");
+    assert!(bar.w > 0);
+    tap(&mut u, undo);
+    assert!(u.studio_badges_visible(), "undone");
+    // hide again and use the button
+    let eye = u.studio_eye();
+    tap(&mut u, eye);
+    assert!(!u.studio_badges_visible());
+    let show = u.studio_bottom().show.unwrap();
+    tap(&mut u, show);
+    assert!(u.studio_badges_visible(), "shown again without the View menu");
+    assert!(u.studio_bottom().show.is_none());
+}
+
+// Batch 15: the horizontal position --------------------------------------------------------------- drift
+
+#[test]
+fn the_horizontal_position_cannot_drift_far_away_and_a_double_tap_on_the_time_axis_centres_it() {
+    let mut u = studio();
+    // pan while the time base is huge, then zoom in: the position stayed where the pan left it
+    u.m.tscale = tscales().len() - 3;
+    frame(&mut u);
+    u.m.delay = -202.0;
+    for _ in 0..3 { frame(&mut u); }
+    for _ in 0..40 { u.axis_step(super::axis::Axis::Time, -1); }
+    for _ in 0..3 { frame(&mut u); }
+    let lim = 50.0 * HDIV * u.m.time_per_div();
+    assert!(u.m.delay.abs() <= lim * 1.001, "the position is kept near the trigger: {} vs {}", u.m.delay, lim);
+    // a double tap on the time axis: centre
+    u.m.delay = lim * 0.5;
+    frame(&mut u);
+    let s = u.axis_time_strip().unwrap();
+    let (x, y) = (s.x + s.w / 2, s.y + s.h - 10);
+    for _ in 0..2 { touch(&mut u, Phase::Down, x, y); touch(&mut u, Phase::Up, x, y); }
+    frame(&mut u);
+    assert_eq!(u.m.delay, 0.0, "centred by the double tap");
+}
+
+// Batch 15: the slim strip ------------------------------------------------------------------------- 26 px
+
+#[test]
+fn the_strip_of_a_view_is_slim_and_its_buttons_are_still_forty_pixels() {
+    let mut u = studio();
+    frame(&mut u);
+    let w = u.dock_leaf(VKind::Wave).unwrap();
+    let s = Ui::dock_strip(w);
+    assert!(s.h <= 26 && s.h >= 24, "slim: {}", s.h);
+    let c = Ui::dock_close_rect(w);
+    assert!(c.h >= 40 && c.w >= 40, "the X target: {c:?}");
+    let m = u.dock_leaf(VKind::Measure).unwrap();
+    let sw = u.dock_view_rect(VKind::Measure, m).unwrap();
+    assert!(sw.h >= 40);
+    let content = u.dock_content(VKind::Wave).unwrap();
+    assert_eq!(content.y, w.y + s.h, "the content starts right under the strip");
+    shot(&mut u, "slim-strip");
+    // a drag from anywhere on the strip still moves the view; a tap on the X closes
+    let (x, y) = (s.x + s.w / 2, s.y + s.h / 2);
+    touch(&mut u, Phase::Down, x, y);
+    for k in 1..=8 { touch(&mut u, Phase::Move, x + k * 3, y + k * 20); }
+    assert!(matches!(u.studio.dock.drag, Some(super::dock::DockDrag::Move { .. })), "picked up");
+    touch(&mut u, Phase::Up, x + 24, y + 160);
+    frame(&mut u);
+    // the cursor tags and the trigger tag are not under it
+    u.m.cursor = CursorMode::Time;
+    for _ in 0..3 { frame(&mut u); }
+    let lane = u.wins[0];
+    let strip = Ui::dock_strip(u.dock_rect(VKind::Wave).unwrap());
+    assert!(lane.y >= strip.bottom(), "the lane starts under the strip: {lane:?} {strip:?}");
+}
+
+// Batch 15: the Add measurement panel ------------------------------------------------------------- tiles, no computing
+
+fn add_open(u: &mut Ui) {
+    u.open_meas_list();
+    for _ in 0..3 { frame(u); }
+}
+
+#[test]
+fn browsing_the_add_list_computes_nothing_and_shows_no_values() {
+    let mut u = studio();
+    u.m.meas.clear();
+    u.m.cat.clear();
+    for _ in 0..3 { frame(&mut u); }
+    let before = u.catalog_jobs_submitted();
+    add_open(&mut u);
+    // every group, the Jitter one full of eye analyses
+    for group in 0..4 {
+        u.sheet.add_group = group;
+        for _ in 0..4 { frame(&mut u); }
+        let g = u.sheet_add_geo();
+        let entries = u.sheet_add_entries();
+        for &(k, _) in &g.rows {
+            // nothing but whether the sources are there
+            assert!(matches!(u.add_preview(entries[k].cat), super::meascatalog::Preview::Value(ref v) if v.is_empty()) || matches!(u.add_preview(entries[k].cat), super::meascatalog::Preview::Off(_) | super::meascatalog::Preview::Reason(_)));
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    for _ in 0..3 { frame(&mut u); }
+    assert_eq!(u.catalog_jobs_submitted(), before, "no analysis was started while browsing");
+    assert!(u.m.meas.is_empty() && u.m.cat.is_empty(), "nothing was added");
+}
+
+#[test]
+fn the_add_list_is_a_grid_of_tiles_with_an_info_button_and_a_tap_adds() {
+    let mut u = studio();
+    u.m.meas.clear();
+    add_open(&mut u);
+    let g = u.sheet_add_geo();
+    assert!(g.rows.len() >= 6);
+    let xs: std::collections::BTreeSet<i32> = g.rows.iter().map(|r| r.1.x).collect();
+    let ys: std::collections::BTreeSet<i32> = g.rows.iter().map(|r| r.1.y).collect();
+    assert_eq!(xs.len(), 2, "two columns");
+    assert!(ys.len() >= 3, "rows of tiles");
+    for &(_, t) in &g.rows {
+        assert!(t.h >= 60 && Ui::tile_info_rect(t).w >= 40 && Ui::tile_info_rect(t).h >= 40, "40 px info target");
+    }
+    shot(&mut u, "add-tiles");
+    // a tap adds
+    let &(k, tile) = &g.rows[0];
+    let cat = u.sheet_add_entries()[k].cat;
+    tap(&mut u, Rect::new(tile.x + 6, tile.y + 44, tile.w - 50, 30));
+    assert!(u.add_is_on(cat), "added by a tap");
+    // a tap on the added tile shows its card, where Remove is
+    tap(&mut u, Rect::new(tile.x + 6, tile.y + 44, tile.w - 50, 30));
+    assert!(u.studio.md.info == Some(cat) && u.add_is_on(cat), "the card, not a removal");
+    shot(&mut u, "info-card");
+    let card = u.info_card_rect();
+    tap(&mut u, Ui::info_card_action(card));
+    assert!(!u.add_is_on(cat) && u.studio.md.info.is_none(), "removed from the card");
+}
+
+#[test]
+fn the_info_card_opens_from_a_tile_and_from_a_row() {
+    let mut u = studio();
+    add_open(&mut u);
+    let g = u.sheet_add_geo();
+    let &(k, tile) = &g.rows[1];
+    let cat = u.sheet_add_entries()[k].cat;
+    tap(&mut u, Ui::tile_info_rect(tile));
+    assert_eq!(u.studio.md.info, Some(cat));
+    let info = super::meascatalog::cat_info(cat);
+    assert!(!info.how.is_empty() && !info.blurb.is_empty() && !info.sources.is_empty());
+    let card = u.info_card_rect();
+    tap(&mut u, super::Ui::info_card_close(card));
+    assert!(u.studio.md.info.is_none());
+    // from a row of the measurements: About this measurement
+    u.close_menu();
+    for _ in 0..3 { frame(&mut u); }
+    let g = u.studio_panel_geo().unwrap();
+    let (_, menu) = Ui::md_row_buttons(Rect::new(g.list.x, g.list.y, g.list.w, u.studio_panel_row()));
+    tap(&mut u, menu);
+    let p = u.md_menu_rect().expect("the row menu");
+    tap(&mut u, Ui::md_menu_row(p, 8));
+    assert!(u.studio.md.info.is_some(), "the card of the first row");
+    shot(&mut u, "info-card-row");
+}

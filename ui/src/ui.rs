@@ -89,6 +89,7 @@ mod hotspots;
 mod measdrag;
 mod axis;
 mod measview;
+mod addtiles;
 #[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
@@ -2647,6 +2648,7 @@ impl Ui {
         self.ch_hold_poll();
         self.dock_poll();
         self.md_tick();
+        self.studio_delay_clamp();
         self.counter_poll();
         self.la_probe_poll();
         self.log_tick();
@@ -3241,6 +3243,7 @@ impl Ui {
             self.draw_bottom(cv);
         }
         self.draw_menu(cv);
+        self.draw_info_card(cv);
         self.draw_toast(cv);
         self.draw_overlay(cv);
         self.workspace_draw(cv);

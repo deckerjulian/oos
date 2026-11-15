@@ -194,10 +194,10 @@ fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
     assert_eq!(u.wins.len(), 2);
     assert!(u.wins[0].bottom() <= u.wins[1].y);
     assert_eq!(u.studio_head_h(), 18);
-    assert_eq!(u.grid.y, u.frame().body.y + 40 + 18, "the strip of the waveform, then the tag row");
+    assert_eq!(u.grid.y, u.frame().body.y + super::dock::STRIP_H + 18, "the strip of the waveform, then the tag row");
     // the tag row, the lanes and the bars do not overlap
     let top = u.studio_top();
-    assert!(u.grid.y - 18 - 40 >= top.run.bottom());
+    assert!(u.grid.y - 18 - super::dock::STRIP_H >= top.run.bottom());
     assert!(u.grid.bottom() <= u.frame().bottom.y);
     // the T tag sits at the trigger position: 0 s at the centre with no delay
     u.m.delay = 0.0;
@@ -437,7 +437,7 @@ fn studio_floating_panel_lists_the_measurements_moves_docks_and_opens_the_table(
     let r = u.dock_float_rect(super::dock::VKind::Measure).expect("floating panel");
     let p = u.studio_panel_rect().unwrap();
     assert!(r.x >= 0 && r.right() <= W && r.y >= TOP.h && r.bottom() <= u.frame().bottom.y);
-    assert!(p.y == r.y + 40 && p.h == r.h - 40, "the panel draws under its strip");
+    assert!(p.y == r.y + super::dock::STRIP_H && p.h == r.h - super::dock::STRIP_H, "the panel draws under its strip");
     assert_eq!(u.grid.w, W, "a floating panel takes no room from the lanes");
     // it follows a finger on its title
     let (x, y) = (r.x + 100, r.y + 12);

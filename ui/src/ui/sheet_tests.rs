@@ -357,8 +357,11 @@ fn the_add_flow_picks_the_source_first_then_one_tap_adds() {
     let keys = u.studio_pinned();
     assert!(keys.iter().any(|k| u.studio_index(*k).is_some_and(|i| i + 1 == u.measurement_count())), "pinned");
     shot(&mut u, "add-measurement");
-    // a second tap removes it again
+    // a second tap shows its card, where Remove is
     tap_in(&mut u, row);
+    assert!(u.studio.md.info.is_some());
+    let card = u.info_card_rect();
+    tap_in(&mut u, Ui::info_card_action(card));
     assert_eq!(u.measurement_count(), n0);
 }
 
@@ -369,7 +372,7 @@ fn every_row_of_the_add_list_has_a_preview_and_filters_work() {
     u.sheet_add_open();
     let g = u.sheet_add_geo();
     assert!(g.rows.len() >= 5, "a screenful: {}", g.rows.len());
-    for (_, r) in &g.rows { assert_eq!(r.h, SHEET_ROW); assert!(r.x >= u.sheet_rect().x && r.right() <= u.sheet_rect().right()); }
+    for (_, r) in &g.rows { assert!(r.h >= 60); assert!(r.x >= u.sheet_rect().x && r.right() <= u.sheet_rect().right()); }
     // categories: four chips, each with entries; Power needs sources, so it may say why
     for (i, c) in g.groups.iter().enumerate() {
         assert!(c.h >= 40 && c.w >= 40, "chip {i}");
@@ -403,12 +406,12 @@ fn an_unavailable_item_says_why_and_offers_the_fix_in_place() {
     let (_, row) = *g.rows.iter().find(|r| super::meascatalog::Preview::Off(1) == u.add_preview(entries[r.0].cat)).expect("an item that needs CH2");
     shot(&mut u, "add-measurement-unavailable");
     let n0 = u.measurement_count();
-    // a tap on the name only says why
+    // a tap on the tile only says why
     u.tap(row.x + 20, row.y + row.h / 2);
     assert_eq!(u.measurement_count(), n0);
     assert!(!u.m.ch[1].on);
-    // the fix button turns the channel on, in place; the page stays
-    u.tap(row.right() - 20, row.y + row.h / 2);
+    // a second tap is the fix: it turns the channel on, in place; the page stays
+    u.tap(row.x + 20, row.y + row.h / 2);
     assert!(u.m.ch[1].on, "Turn on CH2");
     assert_eq!(u.menu, MenuId::MeasAdd);
     assert!(!matches!(u.add_preview(entries[g.rows[0].0].cat), super::meascatalog::Preview::Off(_)));

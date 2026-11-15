@@ -170,6 +170,8 @@ pub(super) struct StudioBottom {
     pub math: [Rect; NMATH],
     /// "+ CH": the channels that are off, in one chip (zero wide when every channel is on)
     pub add: Rect,
+    /// the button that shows the measurement badges again while they are hidden
+    pub show: Option<Rect>,
     pub time: Rect,
     pub trig: Rect,
     pub panel: Option<Rect>,
@@ -425,7 +427,8 @@ impl Ui {
         // with every channel on the chip stays, as "Add source": math, ref and bus are behind it
         let add_w = if off > 0 { 62 } else { 100 };
         let on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
-        let small = (shown.len() + maths.len()) as i32 * (REF_CHIP_W + 5) + add_w + 5;
+        let show_w = if self.studio_badges_hidden() { 46 } else { 0 };
+        let small = (shown.len() + maths.len()) as i32 * (REF_CHIP_W + 5) + add_w + 5 + show_w;
         let room = time.x - 9 - (bottom.x + 4) - small;
         let w_on = if on > 0 { (170).min((room - (on - 1) * 5) / on).max(60) } else { 0 };
         let mut ch = [Rect::new(0, y, 0, h); NCH];
@@ -446,7 +449,8 @@ impl Ui {
             x += REF_CHIP_W + 5;
         }
         let add = Rect::new(x, y, add_w, h);
-        StudioBottom { ch, refs, math, add, time, trig, panel }
+        let show = (show_w > 0).then(|| Rect::new(add.right() + 6, bottom.y, 40, bottom.h));
+        StudioBottom { ch, refs, math, add, show, time, trig, panel }
     }
 
     pub(super) fn studio_cards(&self) -> Cards {
@@ -497,6 +501,10 @@ impl Ui {
             chip(cv, b.add, BTN, if self.studio.ch_picker { ACCENT } else { BTN_BORDER });
             let label = if (0..n_ch()).all(|c| self.m.ch[c].on) { "Add source" } else { "+ CH" };
             cv.text_in(&f.sb, b.add, 1, label, if self.studio.ch_picker { ACCENT } else { TEXT });
+        }
+        if let Some(r) = b.show {
+            chip(cv, Rect::new(r.x, r.y + 3, r.w, CHIP_H), BTN, BTN_BORDER);
+            icon_eye(cv, r.x + r.w / 2, r.y + r.h / 2, TEXT);
         }
         // the sections of the row are told apart by a line
         for x in [b.time.x - 5, b.trig.x - 5] {
@@ -551,8 +559,19 @@ impl Ui {
         self.draw_studio_ch_picker(cv);
     }
 
+    /// The badges are hidden and there are some to show: the bottom bar keeps a button for them.
+    pub(super) fn studio_badges_hidden(&self) -> bool {
+        self.m.layout == Layout::Studio && self.studio.hide_badges && self.studio.view != StudioView::Only && !self.studio_pinned().is_empty()
+    }
+
     fn studio_bottom_tap(&mut self, x: i32, y: i32) {
         let b = self.studio_bottom();
+        if b.show.is_some_and(|r| r.contains(x, y)) {
+            self.studio.hide_badges = false;
+            self.studio.md.hide_undo = None;
+            self.relayout();
+            return;
+        }
         if b.add.w > 0 && b.add.contains(x, y) {
             self.studio.ch_picker = !self.studio.ch_picker;
             return;
@@ -661,6 +680,8 @@ impl Ui {
     /// A tap in Studio's own bars and panels. False: the tap belongs to the plot, a menu or a dialog.
     pub(super) fn studio_tap(&mut self, x: i32, y: i32) -> bool {
         self.studio_sync();
+        // the info card is above everything, the Add panel included
+        if self.info_card_tap(x, y) { return true; }
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
         if self.menu_open && self.menu_rect().is_some_and(|d| d.contains(x, y)) { return false; }
         if self.studio_view_tap(x, y) { return true; }
@@ -683,6 +704,7 @@ impl Ui {
             if self.studio_bottom().add.contains(x, y) { return true; }
         }
         if self.md_menu_tap(x, y) { return true; }
+        if self.md_hide_bar().is_some_and(|(bar, _)| bar.contains(x, y)) && self.md_undo_tap(x, y) { return true; }
         if self.studio_popup_tap(x, y) { return true; }
         if let Some(k) = self.dock_float_at(x, y) { return self.dock_float_tap(k, x, y); }
         if self.studio_zoom_tap(x, y) { return true; }
@@ -1135,6 +1157,7 @@ impl Ui {
         if self.studio_search_chip_tap(x, y) { return true; }
         if self.studio_eye().contains(x, y) {
             self.studio.hide_badges = true;
+            self.studio.md.hide_undo = Some(self.now);
             self.relayout();
             return true;
         }
@@ -1847,10 +1870,14 @@ impl Ui {
         match ph {
             Phase::Down => {
                 self.studio.drag = None;
+                // the info card is modal
+                if self.studio.md.info.is_some() { return self.studio_eat(x, y); }
                 if self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
                     || self.studio.view_menu || self.studio.popup.is_some() || self.studio.md.menu.is_some() || self.workspace.popup.is_some() || self.load_slot_ask { return false; }
                 // the Add measurement panel is open: only its tiles can be dragged
                 if self.menu_open { return self.md_down(x, y); }
+                // the bars with an Undo are above the strips of the views
+                if [self.md_hide_bar(), self.md_undo_bar()].into_iter().flatten().any(|(bar, _)| bar.contains(x, y)) { return self.studio_eat(x, y); }
                 if self.ov_divider_down(x, y) { return true; }
                 if self.dock_down(x, y) { return true; }
                 if self.md_down(x, y) { return true; }

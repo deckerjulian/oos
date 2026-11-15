@@ -150,7 +150,7 @@ enum Need {
 }
 
 #[derive(Clone, Copy)]
-enum Mark {
+pub(super) enum Mark {
     Pulse,
     Square,
     Edge,
@@ -227,6 +227,47 @@ pub(super) fn meas_display_name(k: Meas) -> &'static str {
 #[cfg(test)]
 pub(super) fn display_of_key(key: &str) -> Option<&'static str> {
     (0..512u16).filter_map(cat_from).find_map(|c| { let m = meta(c); if let CatKind::Meas(k) = m.kind { (k.name() == key).then_some(m.name) } else { None } })
+}
+
+/// What the info card says about a measurement.
+pub(super) struct CatInfo {
+    pub name: &'static str,
+    pub blurb: &'static str,
+    pub mark: Mark,
+    pub unit: &'static str,
+    /// how it is computed, in plain words
+    pub how: String,
+    /// the settings that change it
+    pub settings: String,
+    /// which sources it reads
+    pub sources: String,
+}
+
+pub(super) fn cat_info(c: Cat) -> CatInfo {
+    let m = meta(c);
+    let how = match m.mark {
+        Mark::Pulse => "Takes the top and base levels from a histogram of the samples (the two most common levels), and works from them: amplitude is top minus base, overshoot is measured against them.",
+        Mark::Square => "Finds the mid crossings (halfway between base and top, with a little hysteresis) and measures from one crossing to the next, one cycle at a time, then averages the cycles on the screen. Needs at least one whole cycle.",
+        Mark::Edge => "Finds every rising and falling edge between the low and high reference levels (10% and 90% unless changed) and measures the time or the slope between those crossings.",
+        Mark::Eye => "Recovers the bit clock from the transitions, folds the record into an eye diagram, and measures the opening or fits the jitter model to the edges. Needs several clean edges; the jitter model needs many more.",
+        Mark::Bars => "Sorts the samples into a histogram and reads the result from the bins.",
+        Mark::Loop => "Combines two sources sample by sample (voltage with current, or two phases) and works on the product or the phase between them.",
+        Mark::Slope => "Takes the slope of the signal between two levels and reports it per second.",
+    }.to_string();
+    let sources = match m.need { Need::One => "Reads one source".to_string(), Need::Two => "Reads two sources: A and B".to_string() };
+    CatInfo { name: m.name, blurb: m.blurb, mark: m.mark, unit: m.unit, how,
+        settings: "Gate (screen or whole record), levels and edge options are on the settings card of the measurement: its row menu, Settings.".into(), sources }
+}
+
+/// The catalogue entry of a measurement of the list.
+pub(super) fn cat_of_key(key: super::studio::MeasKey) -> Option<Cat> {
+    use super::studio::MeasKey;
+    (0..512u16).filter_map(cat_from).find(|&c| match (key, meta(c).kind) {
+        (MeasKey::One(k, _), CatKind::Meas(m)) => k == m,
+        (MeasKey::Pair(k, _, _), CatKind::Pair(m)) => k == m,
+        (MeasKey::Cat(id, ..), CatKind::Wave) => id == c as u16,
+        _ => false,
+    })
 }
 
 pub(super) fn cat_from(n: u16) -> Option<Cat> {
@@ -696,6 +737,8 @@ impl Ui {
         }
     }
 
+    pub(super) fn draw_mark_pub(&self, cv: &mut Canvas, r: Rect, mark: Mark, col: Rgb) { self.draw_mark(cv, r, mark, col) }
+
     fn draw_mark(&self, cv: &mut Canvas, r: Rect, mark: Mark, col: Rgb) {
         let p = |x: f32, y: f32| (r.x + (x * r.w as f32) as i32, r.y + ((1.0 - y) * r.h as f32) as i32);
         let stroke = |cv: &mut Canvas, pts: &[(f32, f32)]| {
@@ -994,21 +1037,9 @@ impl Ui {
                 _ => {}
             }
         }
-        let info = meta(c);
-        let show = |src: WaveId, v: f64, unit: &'static str| Preview::Value(tools::MeasRow { name: String::new(), src, v, unit, computing: false, reason: String::new() }.text());
-        match info.kind {
-            CatKind::Meas(k) => {
-                let v = self.meas_number(row[0], k);
-                if !v.is_finite() && self.meas_number_computing(row[0], k) { Preview::Computing } else { show(row[0], v, self.meas_unit(row[0], k)) }
-            }
-            CatKind::Pair(k) => show(row[0], self.pair_at(k, row[0], row[1]), info.unit),
-            CatKind::Wave => {
-                let reading = self.catalog_reading(c, row);
-                if reading.computing { Preview::Computing }
-                else if let Some(reason) = reading.reason { Preview::Reason(reason.to_string()) }
-                else { show(row[0], reading.value, info.unit) }
-            }
-        }
+        // Nothing is measured while browsing: a candidate only says whether its sources are there. The value
+        // appears in the list once it is added.
+        Preview::Value(String::new())
     }
 }
 

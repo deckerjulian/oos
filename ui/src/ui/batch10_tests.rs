@@ -82,7 +82,7 @@ fn every_view_has_a_title_strip_with_its_name_and_a_close_x() {
     for k in [VKind::Wave, VKind::Measure, VKind::Pane] {
         let r = u.dock_rect(k).unwrap_or_else(|| panic!("{k:?} on the screen"));
         let s = Ui::dock_strip(r);
-        assert!(s.h >= 40, "{k:?} strip is {} px", s.h);
+        assert!(s.h >= 24 && s.h <= 26, "{k:?} strip is {} px", s.h);
         let c = Ui::dock_close_rect(r);
         assert!(c.w >= 40 && c.h >= 40, "{k:?} close X {c:?}");
         assert!(!u.dock_name(k).is_empty());
@@ -104,7 +104,7 @@ fn every_view_has_a_title_strip_with_its_name_and_a_close_x() {
     u.studio_apply_panel(PanelKind::Eye);
     u.step(0.05);
     let r = leaf(&u, VKind::Eye);
-    assert!(Ui::dock_strip(r).h >= 40 && Ui::dock_close_rect(r).w >= 40 && u.dock_name(VKind::Eye) == "Eye diagram");
+    assert!(Ui::dock_strip(r).h >= 24 && Ui::dock_close_rect(r).w >= 40 && u.dock_name(VKind::Eye) == "Eye diagram");
     let c = Ui::dock_close_rect(r);
     touch(&mut u, Phase::Down, c.x + 20, c.y + 20);
     touch(&mut u, Phase::Up, c.x + 20, c.y + 20);
@@ -122,12 +122,12 @@ fn the_decode_table_and_the_sim_panel_have_strips_too() {
     u.table = Some(tables::TableKind::Search);
     u.step(0.05);
     assert!(u.dock_content(VKind::Table).is_some() && u.dock_name(VKind::Table) == "Search events");
-    assert!(Ui::dock_strip(leaf(&u, VKind::Table)).h >= 40);
+    assert!(Ui::dock_strip(leaf(&u, VKind::Table)).h >= 24);
     u.table = None;
     u.studio_set_view(StudioView::Sim);
     u.step(0.05);
     assert_eq!(u.dock_name(VKind::Sim), "SIM");
-    assert!(Ui::dock_strip(leaf(&u, VKind::Sim)).h >= 40);
+    assert!(Ui::dock_strip(leaf(&u, VKind::Sim)).h >= 24);
     // the waveform's plot sits inside its leaf, under the strip
     let (w, g) = (leaf(&u, VKind::Wave), u.grid);
     assert!(g.y >= w.y + STRIP_H && g.bottom() <= w.bottom() && g.x >= w.x && g.right() <= w.right(), "{g:?} in {w:?}");

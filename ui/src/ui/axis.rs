@@ -42,6 +42,8 @@ pub(super) struct AxisState {
     pub touch: Option<AxisTouch>,
     /// a wheel turn lights the strip for a moment
     pub flash: Option<(Axis, f64)>,
+    /// when and where the last finger went down on the time strip (a second one soon after centres the trigger)
+    pub last_down: Option<(f64, i32)>,
 }
 
 impl Ui {
@@ -119,6 +121,15 @@ impl Ui {
     pub(super) fn axis_down(&mut self, x: i32, y: i32) -> bool {
         self.studio.axis.touch = None;
         let Some(axis) = self.axis_at(x, y) else { return false };
+        // a double tap on the time axis puts the trigger back in the middle
+        if axis == Axis::Time {
+            if self.studio.axis.last_down.is_some_and(|(t, px)| self.now - t < 0.45 && (px - x).abs() < 40) {
+                self.studio.axis.last_down = None;
+                self.axis_center_delay();
+                return self.studio_eat(x, y);
+            }
+            self.studio.axis.last_down = Some((self.now, x));
+        }
         self.studio.axis.touch = Some(AxisTouch { axis, x0: x, y0: y, x, y, p1: None, ref_spread: 0 });
         self.studio_eat(x, y)
     }
@@ -126,6 +137,8 @@ impl Ui {
     /// The second finger: a pinch on the strip. True when it joined one.
     pub(super) fn axis_pinch_down(&mut self, x: i32, y: i32) -> bool {
         let Some(mut t) = self.studio.axis.touch else { return false };
+        // a pinch or a drag is no tap: the next press is not the second of a double tap
+        self.studio.axis.last_down = None;
         t.p1 = Some((x, y));
         t.ref_spread = Self::axis_spread(t.axis, (t.x, t.y), (x, y));
         self.studio.axis.touch = Some(t);
@@ -164,6 +177,7 @@ impl Ui {
     /// The first finger moved. True while a strip has it (a drag along the axis, or the first finger of a pinch).
     pub(super) fn axis_move(&mut self, x: i32, y: i32) -> bool {
         let Some(mut t) = self.studio.axis.touch else { return false };
+        if (x - t.x0).abs().max((y - t.y0).abs()) > 8 { self.studio.axis.last_down = None; }
         t.x = x;
         t.y = y;
         self.studio.axis.touch = Some(t);
@@ -185,6 +199,27 @@ impl Ui {
     }
 
     pub(super) fn axis_up(&mut self) { self.studio.axis.touch = None; }
+
+    /// The horizontal position back to the trigger.
+    pub(super) fn axis_center_delay(&mut self) {
+        self.m.delay = 0.0;
+        if self.m.zoom { self.m.zdelay = 0.0; self.clamp_zoom(); }
+        self.settings_changed();
+        self.dirty_map = true;
+        self.toast("Trigger centred");
+    }
+
+    /// Every frame: the horizontal position stays within 50 screens of the trigger. A pan at a huge time base that was
+    /// followed by zooming in left the screen at minus 200 seconds.
+    pub(super) fn studio_delay_clamp(&mut self) {
+        if self.m.layout != Layout::Studio || self.record_mode() { return; }
+        let lim = 50.0 * HDIV * self.m.time_per_div();
+        if lim.is_finite() && lim > 0.0 && self.m.delay.abs() > lim {
+            self.m.delay = self.m.delay.clamp(-lim, lim);
+            if self.m.zoom { self.clamp_zoom(); }
+            self.dirty_map = true;
+        }
+    }
 
     // ------------------------------------------------------------------------------------------------ drawing
 

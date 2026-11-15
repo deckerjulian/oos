@@ -871,12 +871,14 @@ impl Ui {
         let groups = (0..ADD_GROUPS.len()).map(|i| Rect::new(r.x + PAD + i as i32 * (gw + 4), y0 + 46, gw, 40)).collect();
         let find = Rect::new(r.x + PAD + 4 * (gw + 4), y0 + 46, gw, 40);
         let list_y = y0 + 90;
-        let fit = (((r.bottom() - SHEET_FOOT - list_y) / SHEET_ROW).max(1) as usize).min(SHEET_MAX_ROWS);
+        // a grid of tiles, two across: a picture and a name each
+        let fit = Self::tile_fit(self.tiles_avail(list_y));
         let entries = self.sheet_add_entries();
         let pages = entries.len().div_ceil(fit).max(1);
         let page = self.sheet_page(None).min(pages - 1);
-        let rows = (page * fit..entries.len().min((page + 1) * fit)).enumerate()
-            .map(|(i, k)| (k, Rect::new(r.x + PAD, list_y + i as i32 * SHEET_ROW, w, SHEET_ROW))).collect();
+        let list = Rect::new(r.x + PAD, list_y, w, r.bottom() - SHEET_FOOT - list_y);
+        let rows: Vec<(usize, Rect)> = (page * fit..entries.len().min((page + 1) * fit)).enumerate()
+            .map(|(i, k)| (k, Self::tile_rect(list, i))).collect();
         let [prev, next] = self.sheet_pager(page, pages);
         AddGeo { chips, groups, find, rows, page, pages, prev, next }
     }
@@ -919,47 +921,8 @@ impl Ui {
             let (r, _, _) = self.sheet_chrome();
             cv.text_in(&f.m, Rect::new(r.x + PAD, r.y + SHEET_HEAD + 90, r.w - 2 * PAD, 44), 0, "Nothing matches", DIM);
         }
-        for &(k, row) in &g.rows {
-            let e = &entries[k];
-            let added = self.add_is_on(e.cat);
-            let preview = self.add_preview(e.cat);
-            cv.hline(row.x, row.right() - 1, row.bottom() - 1, mix(DLG_BG, LINE, 160));
-            let mut x = row.x + 4;
-            if added {
-                let (kx, ky) = (row.x + 8, row.y + row.h / 2);
-                cv.line(kx, ky, kx + 4, ky + 4, ACCENT);
-                cv.line(kx + 4, ky + 4, kx + 11, ky - 5, ACCENT);
-                cv.line(kx, ky + 1, kx + 4, ky + 5, ACCENT);
-                cv.line(kx + 4, ky + 5, kx + 11, ky - 4, ACCENT);
-                x = row.x + 26;
-            }
-            let (sub, fix, value): (Option<String>, Option<Rect>, Option<String>) = match &preview {
-                Preview::Value(v) => (None, None, Some(v.clone())),
-                Preview::Computing => (None, None, Some("...".into())),
-                Preview::Off(ch) => (Some(format!("Needs CH{} on", ch + 1)), Some(Rect::new(row.right() - 112, row.y + 6, 110, 32)), None),
-                Preview::Reason(s) => (Some(s.clone()), None, None),
-            };
-            let vw = value.as_ref().map_or(0, |v| f.mb.width(v) + 8).max(if fix.is_some() { 118 } else { 0 });
-            let name_w = row.right() - x - vw - 6;
-            cv.set_clip(Rect::new(x, row.y, name_w.max(1), row.h));
-            let col = if sub.is_some() { DIM } else if added { ACCENT } else { TEXT };
-            match &sub {
-                Some(s) => {
-                    cv.text(&f.m, x, row.y + 19, e.name, col);
-                    cv.text(&f.s, x, row.y + 37, s, if fix.is_some() { AMBER } else { DIM });
-                }
-                None => cv.text_in(&f.m, Rect::new(x, row.y, name_w.max(1), row.h), 0, e.name, col),
-            }
-            cv.no_clip();
-            if let Some(v) = value {
-                cv.text_in(&f.mb, Rect::new(row.right() - vw - 2, row.y, vw, row.h), 2, &v, if added { ACCENT } else { TEXT });
-            }
-            if let Some(b) = fix {
-                btn(cv, b, BTN, ACCENT);
-                if let Preview::Off(ch) = preview {
-                    cv.text_in(&f.s, b, 1, &format!("Turn on CH{}", ch + 1), TEXT);
-                }
-            }
+        for &(k, tile) in &g.rows {
+            self.draw_add_tile(cv, tile, entries[k].cat);
         }
         self.draw_sheet_pager(cv, g.page, g.pages);
     }
@@ -1000,21 +963,30 @@ impl Ui {
             }
         }
         let entries = self.sheet_add_entries();
-        for &(k, row) in &g.rows {
-            if !row.contains(x, y) {
+        for &(k, tile) in &g.rows {
+            if !tile.contains(x, y) {
                 continue;
             }
             let cat = entries[k].cat;
+            // the "i": the info card
+            if Self::tile_info_rect(tile).contains(x, y) {
+                self.studio.md.info = Some(cat);
+                break;
+            }
             match self.add_preview(cat) {
                 Preview::Off(ch) => {
-                    if x >= row.right() - 116 {
-                        // the fix, in place
+                    // the first tap says why; a second one soon after is the fix, in place
+                    if self.studio.md.need_tap.is_some_and(|(c, t)| c == cat && self.now - t < 3.0) {
+                        self.studio.md.need_tap = None;
                         self.select_option(Item::ChOn(ch), "On");
                     } else {
-                        self.toast(&format!("Needs CH{} on", ch + 1));
+                        self.studio.md.need_tap = Some((cat, self.now));
+                        self.toast(&format!("Needs CH{} on: tap again to turn it on", ch + 1));
                     }
                 }
                 Preview::Reason(s) => self.toast(&s),
+                // an added tile shows its card, where Remove is
+                _ if self.add_is_on(cat) => self.studio.md.info = Some(cat),
                 _ => self.sheet_add_toggle(cat),
             }
             break;
