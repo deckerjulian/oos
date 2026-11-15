@@ -86,6 +86,8 @@ pub(super) struct Studio {
     pub view_menu: bool,
     /// Full was chosen for the eye (Side is the Studio default: the waveform stays in view)
     pub eye_full: bool,
+    /// the "+ CH" picker (channels that are off) is open
+    pub ch_picker: bool,
     /// Compact view: smaller lane gaps, badge row and measurement panel
     pub compact: bool,
     pub panel: StudioPanel,
@@ -125,6 +127,10 @@ pub(super) struct StudioBottom {
     pub ch: [Rect; NCH],
     /// a small chip for each shown ref: a tap makes it the active source
     pub refs: [Rect; NREF],
+    /// a small chip for each math channel that is on
+    pub math: [Rect; NMATH],
+    /// "+ CH": the channels that are off, in one chip (zero wide when every channel is on)
+    pub add: Rect,
     pub time: Rect,
     pub trig: Rect,
     pub panel: Option<Rect>,
@@ -362,26 +368,34 @@ impl Ui {
         let trig_w = 196;
         let trig = Rect::new(right - trig_w, y, trig_w, h);
         let time = Rect::new(trig.x - 9 - 150, y, 150, h);
-        // the channels share what is left of the row, an off channel a little less than one that is on
+        // the sources that are on get a chip; the channels that are off share one "+ CH" chip
         let shown = self.shown_refs();
-        let room = time.x - 9 - (bottom.x + 4) - shown.len() as i32 * (REF_CHIP_W + 5);
+        let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).collect();
+        let off = (0..n).filter(|&c| !self.m.ch[c].on).count();
+        let add_w = if off > 0 { 62 } else { 0 };
         let on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
-        let (w_on, w_off) = (170, 118);
-        let want = on * w_on + (n as i32 - on) * w_off + (n as i32 - 1) * 5;
+        let small = (shown.len() + maths.len()) as i32 * (REF_CHIP_W + 5) + if off > 0 { add_w + 5 } else { 0 };
+        let room = time.x - 9 - (bottom.x + 4) - small;
+        let w_on = if on > 0 { (170).min((room - (on - 1) * 5) / on).max(60) } else { 0 };
         let mut ch = [Rect::new(0, y, 0, h); NCH];
         let mut x = bottom.x + 4;
         for (c, r) in ch.iter_mut().enumerate().take(n) {
-            let w = if self.m.ch[c].on { w_on } else { w_off };
-            let w = if want > room { w * room / want } else { w };
-            *r = Rect::new(x, y, w, h);
-            x += w + 5;
+            if !self.m.ch[c].on { continue; }
+            *r = Rect::new(x, y, w_on, h);
+            x += w_on + 5;
         }
         let mut refs = [Rect::new(0, y, 0, h); NREF];
         for &i in &shown {
             refs[i] = Rect::new(x, y, REF_CHIP_W, h);
             x += REF_CHIP_W + 5;
         }
-        StudioBottom { ch, refs, time, trig, panel }
+        let mut math = [Rect::new(0, y, 0, h); NMATH];
+        for &k in &maths {
+            math[k] = Rect::new(x, y, REF_CHIP_W, h);
+            x += REF_CHIP_W + 5;
+        }
+        let add = Rect::new(x, y, add_w, h);
+        StudioBottom { ch, refs, math, add, time, trig, panel }
     }
 
     pub(super) fn studio_cards(&self) -> Cards {
@@ -399,6 +413,7 @@ impl Ui {
         let root = if self.menu_open { Some(self.menu_root()) } else { None };
         for c in 0..n_ch() {
             let r = b.ch[c];
+            if r.w == 0 { continue; }
             let (col, ch) = (CH_COLORS[c], &self.m.ch[c]);
             let sel = root == Some(MenuId::Channel(c));
             let border = if sel { ACCENT } else if ch.on { col } else { BTN_BORDER };
@@ -419,6 +434,17 @@ impl Ui {
             let active = self.selected_workspace_source() == Some(WaveId::Ref(i));
             chip(cv, r, BTN, if active { ACCENT } else { col });
             cv.text_in(&f.sb, r, 1, &format!("R{}", i + 1), col);
+        }
+        for k in 0..NMATH {
+            let r = b.math[k];
+            if r.w == 0 { continue; }
+            let col = MATH_COLORS[k % MATH_COLORS.len()];
+            chip(cv, r, BTN, if self.m.math_sel == k && self.selected_workspace_source().is_none() { ACCENT } else { col });
+            cv.text_in(&f.sb, r, 1, &format!("M{}", k + 1), col);
+        }
+        if b.add.w > 0 {
+            chip(cv, b.add, BTN, if self.studio.ch_picker { ACCENT } else { BTN_BORDER });
+            cv.text_in(&f.sb, b.add, 1, "+ CH", if self.studio.ch_picker { ACCENT } else { TEXT });
         }
         // the sections of the row are told apart by a line
         for x in [b.time.x - 5, b.trig.x - 5] {
@@ -470,10 +496,19 @@ impl Ui {
             chip(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.s, r, 1, "Panel", if on { ACCENT } else { TEXT });
         }
+        self.draw_studio_ch_picker(cv);
     }
 
     fn studio_bottom_tap(&mut self, x: i32, y: i32) {
         let b = self.studio_bottom();
+        if b.add.w > 0 && b.add.contains(x, y) {
+            self.studio.ch_picker = !self.studio.ch_picker;
+            return;
+        }
+        if let Some(k) = (0..NMATH).find(|&k| b.math[k].w > 0 && b.math[k].contains(x, y)) {
+            self.m.math_select(k);
+            return;
+        }
         for c in 0..n_ch() {
             if !b.ch[c].contains(x, y) { continue; }
             if !self.m.ch[c].on {
@@ -496,12 +531,52 @@ impl Ui {
         }
     }
 
+    /// The picker over the "+ CH" chip: one row per channel that is off.
+    pub(super) fn studio_ch_picker(&self) -> Option<Vec<(usize, Rect)>> {
+        if !self.studio.ch_picker { return None; }
+        let b = self.studio_bottom();
+        let off: Vec<usize> = (0..n_ch()).filter(|&c| !self.m.ch[c].on).collect();
+        if off.is_empty() { return None; }
+        let (w, row) = (150, 44);
+        let top = self.frame().bottom.y - 8 - off.len() as i32 * row - 8;
+        let x = b.add.x.min(self.scr.w - w - 4);
+        Some(off.into_iter().enumerate().map(|(i, c)| (c, Rect::new(x + 4, top + 4 + i as i32 * row, w - 8, row))).collect())
+    }
+
+    fn draw_studio_ch_picker(&self, cv: &mut Canvas) {
+        let Some(rows) = self.studio_ch_picker() else { return };
+        let f = self.fonts();
+        let (first, last) = (rows[0].1, rows[rows.len() - 1].1);
+        let p = Rect::new(first.x - 4, first.y - 4, first.w + 8, last.bottom() - first.y + 8);
+        cv.round(p, 8, BTN_BORDER, 255);
+        cv.round(p.inset(1), 7, PANEL_BG, 255);
+        for (c, r) in rows {
+            let badge = Rect::new(r.x + 8, r.y + 10, 42, 24);
+            cv.round(badge, 4, mix(BAR, CH_COLORS[c], 200), 255);
+            cv.text_in(&f.sb, badge, 1, &format!("CH{}", c + 1), DARK_TEXT);
+            cv.text_in(&f.m, Rect::new(badge.right() + 10, r.y, r.w - 64, r.h), 0, "Turn on", TEXT);
+        }
+    }
+
     /// A tap in Studio's own bars and panels. False: the tap belongs to the plot, a menu or a dialog.
     pub(super) fn studio_tap(&mut self, x: i32, y: i32) -> bool {
         self.studio_sync();
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
         if self.menu_open && self.dlg_layout().is_some_and(|d| d.r.contains(x, y)) { return false; }
         if self.studio_view_tap(x, y) { return true; }
+        if self.studio.ch_picker {
+            let rows = self.studio_ch_picker();
+            self.studio.ch_picker = false;
+            if let Some((c, _)) = rows.into_iter().flatten().find(|(_, r)| r.contains(x, y)) {
+                self.m.ch[c].on = true;
+                self.settings_changed();
+                self.relayout();
+                self.select_workspace_source(WaveId::Ch(c));
+                return true;
+            }
+            // a tap on the chip that opened it only closes it; any other tap closes it and goes on
+            if self.studio_bottom().add.contains(x, y) { return true; }
+        }
         if self.studio_popup_tap(x, y) { return true; }
         if self.studio_zoom_tap(x, y) { return true; }
         if self.studio_badge_tap(x, y) { return true; }

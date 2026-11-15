@@ -149,19 +149,16 @@ fn studio_bottom_bar_has_a_chip_per_channel_the_time_base_and_the_trigger() {
     shot(&mut u, "02-bottom");
     let b = u.studio_bottom();
     assert_eq!(u.studio_cards().time, b.time);
-    let mut all: Vec<Rect> = b.ch.to_vec();
-    all.extend([b.time, b.trig]);
-    assert_eq!(all.len(), n_ch() + 2);
+    // the channels that are on have a chip; the ones that are off share "+ CH"
+    let mut all: Vec<Rect> = b.ch.iter().copied().filter(|r| r.w > 0).collect();
+    assert_eq!(all.len(), 2);
+    all.extend([b.add, b.time, b.trig]);
     for (i, a) in all.iter().enumerate() {
         assert!(a.w > 0 && a.x >= 0 && a.right() <= W && a.y >= u.frame().bottom.y && a.bottom() <= H, "chip {i} inside the bar");
         for o in &all[i + 1..] { assert!(!overlaps(*a, *o), "chips do not overlap"); }
     }
-    assert!(b.ch[1].w > b.ch[2].w, "a channel that is on is wider than one that is off");
-    // an off channel comes on with its page, an on channel opens its page
-    tap_in(&mut u, b.ch[2]);
-    assert!(u.m.ch[2].on);
-    assert_eq!(u.menu, MenuId::Channel(2));
-    u.close_menu();
+    assert!(b.ch[2].w == 0 && b.ch[3].w == 0, "no chips for channels that are off");
+    // an on channel opens its page
     let b = u.studio_bottom();
     tap_in(&mut u, b.ch[0]);
     assert_eq!(u.menu, MenuId::Channel(0));

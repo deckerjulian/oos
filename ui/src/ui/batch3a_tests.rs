@@ -208,3 +208,33 @@ fn compact_view_shrinks_lanes_badges_and_panel_and_toggles_from_the_view_menu_an
     d.step(0.05);
     assert!(d.m.layout != Layout::Studio && d.split_wins(d.grid).len() == 1);
 }
+
+#[test]
+fn bottom_bar_shows_the_sources_that_are_on_and_one_plus_ch_chip_for_the_rest() {
+    let mut u = studio();
+    let b = u.studio_bottom();
+    // CH1 and CH2 are on: two channel chips, one "+ CH" for CH3 and CH4, no "Off" chips
+    assert!(b.ch[0].w > 0 && b.ch[1].w > 0 && b.ch[2].w == 0 && b.ch[3].w == 0);
+    assert!(b.add.w > 0);
+    shot(&mut u, "bottom-sources");
+    // a ref and a math channel that are shown get chips
+    u.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: 0.0, dt: 1e-6, v: vec![0.0f32; 100].into(), vpd: 1.0, offset: 0.0, on: true });
+    u.m.math_select(0); u.m.math = MathOp::Add;
+    let b = u.studio_bottom();
+    assert!(b.refs[0].w > 0 && b.math[0].w > 0 && b.math[1].w == 0, "refs and math that are on");
+    let all = [b.ch[0], b.ch[1], b.refs[0], b.math[0], b.add, b.time, b.trig];
+    for (i, a) in all.iter().enumerate() { for c in &all[i + 1..] { assert!(!overlaps(*a, *c), "{a:?} {c:?}"); } }
+    shot(&mut u, "bottom-sources-ref-math");
+    // the chip opens a picker of the channels that are off; a row turns one on
+    tap_in(&mut u, b.add);
+    let rows = u.studio_ch_picker().expect("the picker");
+    assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), [2, 3]);
+    shot(&mut u, "bottom-picker");
+    assert!(!u.m.ch[2].on);
+    tap_in(&mut u, rows[0].1);
+    assert!(u.m.ch[2].on && u.studio.ch_picker == false);
+    assert!(u.studio_bottom().ch[2].w > 0, "CH3 now has its chip");
+    // all channels on: no "+ CH"
+    for c in 0..n_ch() { u.m.ch[c].on = true; }
+    assert_eq!(u.studio_bottom().add.w, 0);
+}
