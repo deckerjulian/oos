@@ -425,7 +425,7 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         lin_slope,
         lin_int,
         pam: crate::linecode::pam4_levels(&f, vmin, vmax),
-        bits: f.iter().filter(|&&x| x >= 0.5 * (vmin + vmax)).count() as f64,
+        bits: f64::NAN,
         pll_ui: f64::NAN,
         ui_wtd: f64::NAN,
         fold_rms: f64::NAN,
@@ -445,6 +445,7 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     };
     a.est_ui = crate::eye::unit_interval(&spacings).unwrap_or(f64::NAN);
     a.ui_wtd = crate::linecode::unit_interval_runs(&spacings).unwrap_or(f64::NAN);
+    a.bits = ones(&e, v.len(), dt, a.est_ui);
     if a.rises.len() + a.falls.len() <= 8000 {
         let mid_v = (base + amp * 0.5) as f32;
         if let Some(c) = crate::eye::recover_clock_pll(v, dt, mid_v, (amp * 0.1) as f32, None, 0.0, true) {
@@ -623,6 +624,28 @@ impl Analysis {
     fn hpct_or_default(&self) -> f64 {
         if self.hpct > 0.0 { self.hpct } else { 0.9 }
     }
+}
+
+/// Bits above the mid level, sliced once per unit interval `ui` (s) at the bit centres. The bit grid starts again at
+/// every mid crossing, so a small error in `ui` does not add up over a long record: a run between two crossings holds
+/// round(length / ui) bits, high after a rising crossing. NaN without a unit interval.
+fn ones(e: &[crate::edges::Edge], n: usize, dt: f64, ui: f64) -> f64 {
+    let (Some(first), Some(last)) = (e.first(), e.last()) else { return f64::NAN };
+    if !(ui > 0.0) || n == 0 {
+        return f64::NAN;
+    }
+    let bits = |a: f64, b: f64| ((b - a) * dt / ui).round().max(0.0);
+    // before the first crossing the level is the one that crossing leaves
+    let mut count = if first.rising { 0.0 } else { bits(0.0, first.t) };
+    for w in e.windows(2) {
+        if w[0].rising {
+            count += bits(w[0].t, w[1].t);
+        }
+    }
+    if last.rising {
+        count += bits(last.t, (n - 1) as f64);
+    }
+    count
 }
 
 /// Rising and falling crossings of `level` with the hysteresis `hyst` of the mid crossings, seconds from the first

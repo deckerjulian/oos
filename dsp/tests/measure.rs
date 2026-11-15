@@ -164,6 +164,28 @@ fn est_ui_median_mode_and_linreg() {
 }
 
 #[test]
+fn ones_count_bits_not_samples() {
+    // NRZ, 10 samples per bit: alternating, and a pseudo-random pattern with runs of one to four bits
+    let nrz = |bits: &[bool]| -> Vec<f32> {
+        bits.iter().flat_map(|&b| std::iter::repeat_n(if b { 1.0 } else { 0.0 }, 10)).collect()
+    };
+    let alt: Vec<bool> = (0..100).map(|i| i % 2 == 0).collect();
+    assert_eq!(analyze(&nrz(&alt), 1e-9).get(Meas::Bits), 50.0);
+    let mut x = 11u32;
+    let mut bits = Vec::new();
+    while bits.len() < 500 {
+        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+        let run = 1 + (x >> 28) as usize % 4;
+        let level = bits.last().is_none_or(|&b: &bool| !b);
+        bits.extend(std::iter::repeat_n(level, run));
+    }
+    let mut v = nrz(&bits);
+    add_noise(&mut v, 0.02, 9);
+    let a = analyze(&v, 1e-9);
+    assert_eq!(a.get(Meas::Bits), bits.iter().filter(|&&b| b).count() as f64, "UI {}", a.get(Meas::EstUi));
+}
+
+#[test]
 fn delay_and_phase() {
     let dt = 1e-6;
     let fa = PulseTrain::square(1e3, 0.0, 1.0, 1e-6);
