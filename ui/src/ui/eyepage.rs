@@ -967,6 +967,7 @@ impl Ui {
 
     pub(super) fn eye_set_place(&mut self, place: EyePlace) {
         let previous = self.m.eye_place;
+        self.studio.eye_full = place == EyePlace::Full;
         if place == EyePlace::Full { self.workspace.eye_float = None; self.workspace.eye_left = false; }
         self.m.eye_place = place;
         if place == EyePlace::Under && self.eye_below() == 0 {

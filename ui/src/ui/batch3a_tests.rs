@@ -114,3 +114,63 @@ fn run_stop_and_single_play_hold_and_capture_the_sim() {
     tap_in(&mut u, t.sim);
     assert_eq!(u.studio.view, StudioView::Sim);
 }
+
+fn sim_eye(preset: &str) -> Ui {
+    let mut u = studio();
+    u.store_dir = std::env::temp_dir().join("oos-batch3a-eye");
+    assert!(u.sim_preset_set(preset));
+    u.studio_set_view(StudioView::Sim);
+    u.sim_activate(Item::SimPlay);
+    u.wait_sim_generation();
+    for _ in 0..10 { u.step(0.05); u.wait_sim_generation(); }
+    u
+}
+
+fn wait_eye(u: &mut Ui) -> bool {
+    for _ in 0..600 {
+        u.step(0.05); u.wait_sim_generation(); std::thread::sleep(std::time::Duration::from_millis(50));
+        if u.azr.eye.is_some() { return true; }
+    }
+    false
+}
+
+#[test]
+fn eye_on_a_stopped_sim_ref_computes_instead_of_waiting_for_edges() {
+    // PCIe 5.0 at 32 Gb/s into R1, then Stop holds the frame: no new record arrives to trigger the analysis
+    let mut u = sim_eye("PCIe 5.0");
+    assert_eq!(u.m.eye_src, WaveId::Ref(u.m.sim_slot));
+    u.key(key::RUNSTOP);
+    for _ in 0..5 { u.step(0.05); }
+    assert!(!u.sim_playing());
+    u.m.view = AView::Eye;
+    u.step(0.05);
+    assert!(wait_eye(&mut u), "the eye of a held SIM frame is computed: {:?}", u.azr.page.status);
+    assert!(!u.azr.page.status[0].starts_with("Waiting"), "{:?}", u.azr.page.status);
+}
+
+#[test]
+fn studio_eye_opens_beside_the_plot_and_full_is_an_explicit_choice() {
+    let mut u = sim_eye("PCIe 3.0");
+    u.key(key::RUNSTOP);
+    u.m.eye_place = EyePlace::Full;
+    u.m.view = AView::Eye;
+    for _ in 0..3 { u.step(0.05); }
+    assert_eq!(u.m.eye_place, EyePlace::Side, "Studio opens the eye next to the plot");
+    let pane = u.eye_pane_rect();
+    assert!(!u.wins.is_empty() && u.wins[0].w > 200, "the waveform lane stays: {:?}", u.wins);
+    assert!(u.wins[0].right() <= pane.x + 1 || u.wins[0].bottom() <= pane.y + 1, "beside or under, not over it");
+    shot(&mut u, "eye-side");
+    // Full by choice stays Full, also when the eye is opened again
+    u.eye_set_place(EyePlace::Full);
+    assert_eq!(u.m.eye_place, EyePlace::Full);
+    u.m.view = AView::Scope; u.step(0.05);
+    u.m.view = AView::Eye; u.step(0.05);
+    assert_eq!(u.m.eye_place, EyePlace::Full);
+    // Default and Minimal are not touched
+    let mut d = Ui::new(Source::Demo { t: 0.0 });
+    d.m.layout = Layout::Default;
+    d.m.eye_place = EyePlace::Full;
+    d.m.view = AView::Eye;
+    for _ in 0..3 { d.step(0.05); }
+    assert_eq!(d.m.eye_place, EyePlace::Full);
+}

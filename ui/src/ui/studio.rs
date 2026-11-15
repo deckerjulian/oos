@@ -84,6 +84,8 @@ pub(super) struct Studio {
     pub view: StudioView,
     /// the View menu is open
     pub view_menu: bool,
+    /// Full was chosen for the eye (Side is the Studio default: the waveform stays in view)
+    pub eye_full: bool,
     pub panel: StudioPanel,
     /// the SIM panel lists the knobs instead of the presets
     pub sim_knobs: bool,
