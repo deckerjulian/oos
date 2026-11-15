@@ -125,7 +125,7 @@ impl Ui {
             &format!("{} · {} · {:?}", self.trigger_source_label(), self.m.trig_type.name(), self.m.trig_mode), ACCENT);
         let levels = if matches!(self.m.trig_type, TrigType::Runt | TrigType::Slope | TrigType::Window) {
             format!("{} … {}", si_short(self.m.trig_level2 as f64, "V"), si_short(self.m.trig_level as f64, "V"))
-        } else { si_short(self.m.trig_level as f64, "V") };
+        } else { si_short(self.trig_level_shown() as f64, "V") };
         cv.text(&self.fonts().s, rect.x + 7, rect.y + 25, &levels, TEXT);
         cv.no_clip();
     }

@@ -51,6 +51,8 @@ mod layout_tests;
 mod fix_tests;
 #[cfg(test)]
 mod batch1_tests;
+#[cfg(test)]
+mod batch2_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -2763,7 +2765,7 @@ impl Ui {
         } else {
             parts.push(match m.trig_line() {
                 Some(n) => format!("Trig D{}", n),
-                None => format!("Trig {} {}", self.trigger_source_label(), si_short(m.trig_level as f64, "V")),
+                None => format!("Trig {} {}", self.trigger_source_label(), si_short(self.trig_level_shown() as f64, "V")),
             });
             let st = match m.status {
                 TrigStatus::Triggered => "TRIG'D",
@@ -5814,26 +5816,7 @@ impl Ui {
         if p == Proto::Spi {
             m.ch[1].on = true;
         }
-        // a trigger that holds the demo bus still: I2C start (first SDA fall after idle), SPI CS falling
-        match p {
-            Proto::I2c => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
-            }
-            Proto::Spi => {
-                (m.trig_type, m.trig_src, m.slope, m.trig_level) = (TrigType::Edge, 1, Slope::Fall, 1.65);
-            }
-            // CAN start of frame / LIN break: first falling edge after the bus idle
-            Proto::I2s => {
-                (m.trig_type, m.trig_src, m.slope, m.trig_level) = (TrigType::Edge, 0, Slope::Fall, 1.65);
-            }
-            Proto::Mil1553 => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (TrigType::NthEdge, 2, Slope::Rise, 3e-6, 1, 2.0);
-            }
-            Proto::Can | Proto::Lin => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
-            }
-            _ => {}
-        }
+        // the trigger is not touched: choosing a protocol only configures the decoder
         self.dirty_map = true;
     }
 
@@ -5978,13 +5961,11 @@ impl Ui {
         }
         if self.set_reference_trigger_type(t) { return; }
         if t == TrigType::Bus {
-            // the decoder defines the protocol: switch it on with its demo sources and a value its traffic contains
-            self.m.dec_on = true;
-            let p = self.m.dec_proto;
-            self.set_dec_proto(p);
+            // the decoder's protocol defines the bus: the starting match is a value its traffic contains.
+            // Choosing the trigger type neither switches a decoder on nor touches its sources or any channel.
             let m = &mut self.m;
             m.trig_type = t;
-            (m.trig_bus, m.trig_bus_val) = match p {
+            (m.trig_bus, m.trig_bus_val) = match m.dec_proto {
                 Proto::Can => (BusWhat::Id, 0x123),
                 Proto::Lin => (BusWhat::Id, 0x21),
                 Proto::I2c => (BusWhat::Id, 0x50),
@@ -6004,58 +5985,56 @@ impl Ui {
         }
         let m = &mut self.m;
         m.trig_type = t;
-        let on = |c: usize, m: &mut Model| m.ch[c].on = true;
+        // Only fields of the trigger itself change: a source that is still valid stays, and no channel is switched on.
+        let keep = |m: &Model, c: usize| if c < NCH && m.ch[c].on { c } else { (0..NCH).find(|&k| m.ch[k].on).unwrap_or(c.min(NCH - 1)) };
+        m.trig_src = keep(m, m.trig_src);
+        let src = m.trig_src;
+        let second = |m: &Model| {
+            let c = m.trig_src2;
+            if c != src && c < NCH && m.ch[c].on { c }
+            else { (0..NCH).find(|&k| k != src && m.ch[k].on).unwrap_or(if c != src && c < NCH { c } else { (src + 1) % NCH }) }
+        };
         match t {
             TrigType::Bus => {} // handled above
             TrigType::Edge => {
-                m.trig_src = 0;
                 m.trig_level = 1.5;
             }
             TrigType::Pulse => {
-                on(3, m);
-                (m.trig_src, m.trig_pol, m.trig_when, m.trig_t1, m.trig_level) = (3, Pol::Pos, WhenKind::Lt, 30e-6, 1.65);
+                (m.trig_pol, m.trig_when, m.trig_t1, m.trig_level) = (Pol::Pos, WhenKind::Lt, 30e-6, 1.65);
             }
             TrigType::Slope => {
-                (m.trig_src, m.slope, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) = (0, Slope::Rise, WhenKind::Gt, 1e-6, 2.0, 0.5);
+                (m.slope, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) = (Slope::Rise, WhenKind::Gt, 1e-6, 2.0, 0.5);
             }
             TrigType::Video => {
-                on(1, m);
-                (m.trig_src, m.trig_level) = (1, 0.15);
-                m.ch[1].vscale = VSCALES.iter().position(|&v| (v - 0.2).abs() < 1e-6).unwrap_or(8);
-                m.ch[1].offset = -0.5;
+                m.trig_level = 0.15;
             }
             TrigType::Pattern => {
-                on(3, m);
                 m.pat = std::array::from_fn(|i| if i == 0 { Bit::H } else if i == NCH - 1 { Bit::R } else { Bit::X });
-                m.trig_src = 0;
             }
             TrigType::Duration => {
                 m.pat = std::array::from_fn(|i| if i == 0 { Bit::H } else { Bit::X });
-                (m.trig_src, m.trig_when, m.trig_t1) = (0, WhenKind::Gt, 200e-6);
+                (m.trig_when, m.trig_t1) = (WhenKind::Gt, 200e-6);
             }
             TrigType::Timeout => {
-                (m.trig_src, m.slope, m.trig_t1, m.trig_level) = (0, Slope::Rise, 1.2e-3, 1.5);
+                (m.slope, m.trig_t1, m.trig_level) = (Slope::Rise, 1.2e-3, 1.5);
             }
             TrigType::Runt => {
-                (m.trig_src, m.trig_pol, m.trig_when, m.trig_level, m.trig_level2) = (0, Pol::Pos, WhenKind::Off, 2.0, 0.5);
+                (m.trig_pol, m.trig_when, m.trig_level, m.trig_level2) = (Pol::Pos, WhenKind::Off, 2.0, 0.5);
             }
             TrigType::Window => {
-                on(1, m);
-                (m.trig_src, m.win_mode, m.trig_level, m.trig_level2) = (1, WinMode::Enter, 0.5, -0.5);
+                (m.win_mode, m.trig_level, m.trig_level2) = (WinMode::Enter, 0.5, -0.5);
             }
             TrigType::Delay => {
-                on(3, m);
-                (m.trig_src, m.slope, m.trig_src2, m.trig_slope2, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) =
-                    (0, Slope::Rise, 3, Slope::Rise, WhenKind::Gt, 40e-6, 1.5, 1.65);
+                let s2 = second(m);
+                (m.slope, m.trig_src2, m.trig_slope2, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) =
+                    (Slope::Rise, s2, Slope::Rise, WhenKind::Gt, 40e-6, 1.5, 1.65);
             }
             TrigType::SetupHold => {
-                on(2, m);
-                on(3, m);
-                (m.trig_src, m.trig_src2, m.trig_slope2, m.setup, m.hold, m.trig_level, m.trig_level2) = (2, 3, Slope::Rise, 2e-6, 2e-6, 1.65, 1.65);
+                let s2 = second(m);
+                (m.trig_src2, m.trig_slope2, m.setup, m.hold, m.trig_level, m.trig_level2) = (s2, Slope::Rise, 2e-6, 2e-6, 1.65, 1.65);
             }
             TrigType::NthEdge => {
-                on(2, m);
-                (m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (2, Slope::Fall, 50e-6, 1, 1.65);
+                (m.slope, m.nth_idle, m.nth_n, m.trig_level) = (Slope::Fall, 50e-6, 1, 1.65);
             }
         }
         if m.trig_type != TrigType::Runt && m.trig_when == WhenKind::Off {
@@ -9720,6 +9699,8 @@ mod tests {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
             ui.m.dec_on = true;
             ui.set_dec_proto(proto);
+            // a trigger that holds the demo bus still: the first falling edge after the bus idle
+            (ui.m.trig_type, ui.m.trig_src, ui.m.slope, ui.m.nth_idle, ui.m.nth_n, ui.m.trig_level) = (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
             for _ in 0..20 {
                 ui.step(1.0 / 30.0);
@@ -9746,7 +9727,8 @@ mod tests {
         use oos_dsp::decode::Kind;
         for id in [0x123u32, 0x18da_f110] {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
-            ui.m.dec_proto = Proto::Can;
+            ui.m.dec_on = true;
+            ui.set_dec_proto(Proto::Can);
             ui.set_trig_type(TrigType::Bus);
             ui.m.trig_bus_val = id;
             ui.m.tscale = tscales().iter().position(|&t| (t - 50e-6).abs() < 1e-9).unwrap();
@@ -9790,7 +9772,8 @@ mod tests {
             let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
             for what in [BusWhat::Id, BusWhat::Data, BusWhat::Frame, BusWhat::Error] {
                 let mut ui = Ui::new(Source::Demo { t: 0.0 });
-                ui.m.dec_proto = proto;
+                ui.m.dec_on = true;
+                ui.set_dec_proto(proto);
                 ui.set_trig_type(TrigType::Bus);
                 let id_default = ui.m.trig_bus_val;
                 ui.m.trig_bus = what;
@@ -9843,7 +9826,8 @@ mod tests {
         let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
         for (what, val) in [(BusWhat::Id, None), (BusWhat::Id, Some(0x4B)), (BusWhat::Data, Some(0x40)), (BusWhat::Frame, None), (BusWhat::Error, None)] {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
-            ui.m.dec_proto = Proto::Usb;
+            ui.m.dec_on = true;
+            ui.set_dec_proto(Proto::Usb);
             ui.set_trig_type(TrigType::Bus);
             assert_eq!((ui.m.dec_src, ui.m.dec_cs, ui.m.trig_bus, ui.m.trig_bus_val), (2, Some(3), BusWhat::Id, 5));
             assert!(ui.decode_items().contains(&Item::DecUsbSpeed) && ui.decode_items().contains(&Item::DecCs));
@@ -10369,6 +10353,9 @@ mod tests {
         use super::*;
         for &t in TRIG_TYPES.iter() {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            for c in 0..NCH { ui.m.ch[c].on = true; }
+            // the starting values are for these sources of the demo signals
+            (ui.m.trig_src, ui.m.trig_src2) = match t { TrigType::Pulse => (3, 1), TrigType::Video | TrigType::Window => (1, 3), TrigType::Delay => (0, 3), TrigType::SetupHold => (2, 3), TrigType::NthEdge => (2, 3), _ => (0, 3) };
             ui.set_trig_type(t);
             ui.m.trig_mode = TrigMode::Normal;
             let mut hits = 0;

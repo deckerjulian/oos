@@ -428,7 +428,7 @@ impl Ui {
         x = cv.text(&f.mb, x, r.y + 20, &self.trigger_source_label(), col) + 6;
         let levels = if matches!(self.m.trig_type, TrigType::Runt | TrigType::Slope | TrigType::Window) {
             format!("{} / {}", si_short(self.m.trig_level2 as f64, "V"), si_short(self.m.trig_level as f64, "V"))
-        } else { si_short(self.m.trig_level as f64, "V") };
+        } else { si_short(self.trig_level_shown() as f64, "V") };
         if edge && self.m.slope != Slope::Either {
             // the arrow of the edge: up for rising, down for falling
             let (top, bot) = (r.y + 9, r.y + 21);
