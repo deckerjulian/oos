@@ -1974,8 +1974,9 @@ mod tests {
         assert!(wave.w > eye.w && eye.w > 250, "wave {:?} eye {:?}", wave, eye);
         let (x, y) = (eye.x + 20, eye.y + 12);
         ui.context_menu(x, y);
-        let popup_x = x.clamp(4, W - 244 - 4);
-        let popup_y = y.clamp(TOP.h, (BOTTOM.y - (6 * 30 + 8)).max(TOP.h));
+        let popup = ui.workspace.popup.as_ref().unwrap().rect;
+        let popup_x = popup.x;
+        let popup_y = popup.y;
         ui.tap(popup_x + 24, popup_y + 4 + 2 * 30 + 15); // Dock Eye below.
         ui.render(&mut Canvas::new(W, H));
         let (wave, eye) = (ui.grid, ui.eye_pane_rect());

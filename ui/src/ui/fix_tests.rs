@@ -189,3 +189,10 @@ fn eye_tab_in_a_side_pane_clears_the_charts_and_cursor_tags_clear_the_corner_but
         assert!(!hit(tag, u.full_btn().0) && !hit(tag, u.zoom_btn().0), "tag at y {y} covers a button");
     }
 }
+
+/// Centre of the row `label` of the open workspace popup (it sits inside the plot, so tests ask it).
+pub(super) fn row_xy(u: &Ui, label: &str) -> (i32, i32) {
+    let p = u.workspace.popup.as_ref().expect("a popup is open");
+    let i = p.rows.iter().position(|(l, _)| l.starts_with(label)).expect("row in popup");
+    (p.rect.x + 30, p.rect.y + 4 + i as i32 * 30 + 15)
+}

@@ -406,11 +406,11 @@ fn screen_in_order_on(scr: Screen) {
 fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.tap(80, BOTTOM.y + 15);
-    u.tap(110, BOTTOM.y - 49); // Sources: Logic analyser, immediately above Generator.
+    let (x, y) = fix_tests::row_xy(&u, "Logic analyser"); u.tap(x, y); // Sources: Logic analyser, immediately above Generator.
     assert!(u.m.la.on && u.menu_open && u.menu == MenuId::La);
     u.close_menu();
     u.tap(80, BOTTOM.y + 15);
-    u.tap(110, BOTTOM.y - 19);
+    let (x, y) = fix_tests::row_xy(&u, "Generator"); u.tap(x, y);
     assert!(u.menu_open && u.menu == MenuId::Afg);
     assert!(!u.m.afg_on, "a card must not switch an output on");
 }
