@@ -1007,6 +1007,55 @@ pub fn bus_label(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(10).collect::<String>().trim().to_string()
 }
 
+/// Shared reference levels for measurements besides the rise/fall low and high (`Model::meas_lpct` / `meas_hpct`).
+/// Percent values are fractions of amplitude. In volts mode `volts` are the rise low, middle and high.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct MeasLevels {
+    /// Levels are volts, not percent of amplitude.
+    pub absolute: bool,
+    /// The low and high are set by hand (shows Custom), not by the 10/90 or 20/80 preset.
+    pub custom: bool,
+    /// Rise middle level, percent.
+    pub mid: f64,
+    /// Hysteresis, percent of amplitude.
+    pub hyst: f64,
+    pub volts: [f64; 3],
+    /// Hysteresis in volts.
+    pub vhyst: f64,
+    /// Fall edges use their own levels.
+    pub sep_fall: bool,
+    /// Fall low, middle and high, percent.
+    pub fall: [f64; 3],
+    pub fall_volts: [f64; 3],
+    pub base_top: oos_dsp::measure::BaseTop,
+}
+
+impl Default for MeasLevels {
+    fn default() -> Self {
+        MeasLevels { absolute: false, custom: false, mid: 0.5, hyst: 0.05, volts: [-1.0, 0.0, 1.0], vhyst: 0.03, sep_fall: false,
+            fall: [0.1, 0.5, 0.9], fall_volts: [-1.0, 0.0, 1.0], base_top: oos_dsp::measure::BaseTop::Auto }
+    }
+}
+
+impl Model {
+    /// The levels the measurements use. `lpct` / `hpct` are the percent rise low and high (a row may set its own).
+    pub fn meas_levels(&self, lpct: f64, hpct: f64) -> oos_dsp::measure::Levels {
+        let l = &self.meas_lv;
+        let rise = if l.absolute { l.volts } else { [lpct, l.mid, hpct] };
+        let fall = match (l.sep_fall, l.absolute) {
+            (false, _) => rise,
+            (true, true) => l.fall_volts,
+            (true, false) => l.fall,
+        };
+        oos_dsp::measure::Levels { absolute: l.absolute, rise, fall, hyst: if l.absolute { l.vhyst } else { l.hyst }, base_top: l.base_top }
+    }
+
+    /// The shared levels with the percent low and high of `meas_lpct` / `meas_hpct`.
+    pub fn shared_levels(&self) -> oos_dsp::measure::Levels {
+        self.meas_levels(self.meas_lpct, self.meas_hpct)
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct Model {
     pub ch: [Channel; NCH],
@@ -1285,6 +1334,8 @@ pub struct Model {
     /// Rise/fall low and high as fractions of amplitude (0.1/0.9 or 0.2/0.8).
     pub meas_lpct: f64,
     pub meas_hpct: f64,
+    /// The rest of the shared reference levels: middle, hysteresis, volts, separate fall levels, top/base method.
+    pub meas_lv: MeasLevels,
     /// False measures the visible time window; true measures each source's complete stored record.
     pub meas_full_record: bool,
     /// SetupAndHold limits (s). Zero means any negative setup or hold.
@@ -1678,6 +1729,7 @@ impl Default for Model {
             // the reference scope's defaults: 50 us burst idle, time outside above the upper level, N = 6 periods,
             // measured on the whole record
             meas_idle: oos_dsp::measure::BURST_IDLE,
+            meas_lv: MeasLevels::default(),
             meas_out: oos_dsp::measure::Outside::Above,
             meas_n: 6,
             meas_data: false,

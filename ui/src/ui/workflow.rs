@@ -488,7 +488,7 @@ impl Ui {
         let gate = (!self.m.meas_full_record).then(|| { let (scale, delay) = self.view(); (scale.to_bits(), delay.to_bits()) });
         format!("{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}", self.m.meas, (&self.m.meas2, &self.m.cat),
             (self.m.meas_full_record, self.m.meas_lpct.to_bits(), self.m.meas_hpct.to_bits(), self.m.meas_idle.to_bits(),
-                self.m.meas_n, self.m.meas_data, self.m.meas_out, self.m.meas_tsetup.to_bits(), self.m.meas_thold.to_bits()),
+                self.m.meas_n, self.m.meas_data, self.m.meas_out, self.m.meas_tsetup.to_bits(), self.m.meas_thold.to_bits(), self.m.meas_lv),
             refs, channels, gate, self.m.trigger(), self.m.trigger_wave(),
             (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val, self.m.trig_nrej,
                 self.m.deskew_ch.map(f64::to_bits), self.m.deskew_ref.map(f64::to_bits)))

@@ -150,7 +150,7 @@ pub struct Scpi {
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
-fn kw(tok: &str, long: &str) -> bool {
+pub(crate) fn kw(tok: &str, long: &str) -> bool {
     let t = tok.to_ascii_uppercase();
     let short: String = long.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect();
     t == long.to_ascii_uppercase() || t == short
@@ -1490,6 +1490,9 @@ impl Scpi {
         if kw(n0, "TIMebase") {
             return self.timebase_more(ui, &nodes[1..], query, arg);
         }
+        if kw(n0, "MEASure") && nodes.len() >= 3 && kw(nodes[1], "LEVel") {
+            return self.meas_level_cmd(ui, &nodes[2..], query, arg);
+        }
         if kw(n0, "MEASure") && nodes.len() == 2 {
             let n1 = nodes[1];
             if kw(n1, "GATing") {
@@ -2053,6 +2056,17 @@ impl Scpi {
         }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
         None
+    }
+
+    /// `:MEASure:LEVel:...`: the shared reference levels of the measurements (`Ui::meas_level_command`).
+    fn meas_level_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        match ui.meas_level_command(n, query, arg) {
+            Ok(r) => r.map(String::into_bytes),
+            Err(e) => {
+                self.push_err(e);
+                None
+            }
+        }
     }
 
     /// Upper (`high`) or lower threshold, as a percent of the waveform, the same pair `:MEASure:REFS` sets.

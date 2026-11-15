@@ -264,7 +264,8 @@ impl Ui {
     pub(super) fn meas_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::MeasIdle | Item::MeasN | Item::MeasTsetup | Item::MeasThold => Kind::Value,
-            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate => Kind::Choice,
+            Item::MeasLow | Item::MeasMid | Item::MeasHigh | Item::MeasHyst | Item::MeasFallLow | Item::MeasFallMid | Item::MeasFallHigh => Kind::Value,
+            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate | Item::MeasLvType | Item::MeasBaseTop | Item::MeasSepFall => Kind::Choice,
             _ => return None,
         })
     }
@@ -275,7 +276,17 @@ impl Ui {
             Item::MeasOutside => "Outside",
             Item::MeasN => "N periods",
             Item::MeasEdges => "Edges",
-            Item::MeasRefs => "Refs",
+            Item::MeasRefs => "Preset",
+            Item::MeasLvType => "Level type",
+            Item::MeasLow => "Low",
+            Item::MeasMid => "Mid",
+            Item::MeasHigh => "High",
+            Item::MeasHyst => "Hysteresis",
+            Item::MeasBaseTop => "Base / top",
+            Item::MeasSepFall => "Fall levels",
+            Item::MeasFallLow => "Fall low",
+            Item::MeasFallMid => "Fall mid",
+            Item::MeasFallHigh => "Fall high",
             Item::MeasGate => "Gate",
             Item::MeasTsetup => "Tsetup",
             Item::MeasThold => "Thold",
@@ -283,14 +294,27 @@ impl Ui {
         })
     }
 
-    pub(super) fn meas_value(&self, it: Item) -> Option<String> {
+    pub(crate) fn meas_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
             Item::MeasIdle => if m.meas_idle > 0.0 { si_short(m.meas_idle, "s") } else { "period".into() },
             Item::MeasOutside => format!("{:?}", m.meas_out),
             Item::MeasN => m.meas_n.to_string(),
             Item::MeasEdges => if m.meas_data { "Data".into() } else { "Clock".into() },
-            Item::MeasRefs => format!("{:.0}/{:.0}", m.meas_lpct * 100.0, m.meas_hpct * 100.0),
+            Item::MeasRefs => if m.meas_lv.absolute { "-".into() } else { meas_preset_name(m).into() },
+            Item::MeasLvType => if m.meas_lv.absolute { "Volts".into() } else { "Percent".into() },
+            Item::MeasLow | Item::MeasMid | Item::MeasHigh | Item::MeasFallLow | Item::MeasFallMid | Item::MeasFallHigh => {
+                let (fall, i) = level_slot(it);
+                let l = &m.meas_lv;
+                if l.absolute { si_short(if fall { l.fall_volts[i] } else { l.volts[i] }, "V") }
+                else {
+                    let v = if fall { l.fall[i] } else if i == 0 { m.meas_lpct } else if i == 1 { l.mid } else { m.meas_hpct };
+                    format!("{:.0}%", v * 100.0)
+                }
+            }
+            Item::MeasHyst => if m.meas_lv.absolute { si_short(m.meas_lv.vhyst, "V") } else { format!("{:.0}%", m.meas_lv.hyst * 100.0) },
+            Item::MeasBaseTop => m.meas_lv.base_top.label().into(),
+            Item::MeasSepFall => if m.meas_lv.sep_fall { "Separate".into() } else { "Same as rise".into() },
             Item::MeasGate => self.measurement_gate_label().into(),
             Item::MeasTsetup => si_short(m.meas_tsetup, "s"),
             Item::MeasThold => si_short(m.meas_thold, "s"),
@@ -302,13 +326,16 @@ impl Ui {
         Some(match it {
             Item::MeasOutside => ["Above", "Below", "Both"].iter().map(|s| s.to_string()).collect(),
             Item::MeasEdges => vec!["Clock".into(), "Data".into()],
-            Item::MeasRefs => vec!["10/90".into(), "20/80".into()],
+            Item::MeasRefs => vec!["10/90".into(), "20/80".into(), "Custom".into()],
+            Item::MeasLvType => vec!["Percent".into(), "Volts".into()],
+            Item::MeasBaseTop => oos_dsp::measure::BaseTop::ALL.iter().map(|b| b.label().to_string()).collect(),
+            Item::MeasSepFall => vec!["Same as rise".into(), "Separate".into()],
             Item::MeasGate => vec!["Screen".into(), "Full record".into()],
             _ => return None,
         })
     }
 
-    pub(super) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
+    pub(crate) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
         match it {
             Item::MeasGate => {
                 if d.rem_euclid(2) != 0 { self.set_measurement_full_record(!self.m.meas_full_record); }
@@ -338,18 +365,159 @@ impl Ui {
             Item::MeasN => self.m.meas_n = (self.m.meas_n as i32 + d).clamp(1, 32) as u32,
             Item::MeasEdges => self.m.meas_data = !self.m.meas_data,
             Item::MeasRefs => {
-                if self.m.meas_lpct < 0.15 {
-                    self.m.meas_lpct = 0.2;
-                    self.m.meas_hpct = 0.8;
+                if self.m.meas_lv.absolute { return true; }
+                let cur = match meas_preset_name(&self.m) { "10/90" => 0, "20/80" => 1, _ => 2 };
+                match (cur + d).rem_euclid(3) {
+                    0 => (self.m.meas_lpct, self.m.meas_hpct, self.m.meas_lv.mid, self.m.meas_lv.custom) = (0.1, 0.9, 0.5, false),
+                    1 => (self.m.meas_lpct, self.m.meas_hpct, self.m.meas_lv.mid, self.m.meas_lv.custom) = (0.2, 0.8, 0.5, false),
+                    _ => self.m.meas_lv.custom = true,
+                }
+                self.measure_last();
+            }
+            Item::MeasLvType => {
+                if d.rem_euclid(2) != 0 { self.m.meas_lv.absolute = !self.m.meas_lv.absolute; self.measure_last(); }
+            }
+            Item::MeasBaseTop => {
+                let all = oos_dsp::measure::BaseTop::ALL;
+                let i = all.iter().position(|&b| b == self.m.meas_lv.base_top).unwrap_or(0);
+                self.m.meas_lv.base_top = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
+                self.measure_last();
+            }
+            Item::MeasSepFall => {
+                if d.rem_euclid(2) != 0 {
+                    self.m.meas_lv.sep_fall = !self.m.meas_lv.sep_fall;
+                    if self.m.meas_lv.sep_fall {
+                        // start from the rise levels
+                        self.m.meas_lv.fall = [self.m.meas_lpct, self.m.meas_lv.mid, self.m.meas_hpct];
+                        self.m.meas_lv.fall_volts = self.m.meas_lv.volts;
+                    }
+                    self.measure_last();
+                }
+            }
+            Item::MeasHyst => {
+                let l = &mut self.m.meas_lv;
+                if l.absolute { l.vhyst = ladder(l.vhyst, d, true).max(1e-4); } else { l.hyst = ((l.hyst * 100.0).round() + d as f64).clamp(1.0, 50.0) / 100.0; }
+                self.measure_last();
+            }
+            Item::MeasLow | Item::MeasMid | Item::MeasHigh | Item::MeasFallLow | Item::MeasFallMid | Item::MeasFallHigh => {
+                let (fall, i) = level_slot(it);
+                let absolute = self.m.meas_lv.absolute;
+                let mut t = if absolute { if fall { self.m.meas_lv.fall_volts } else { self.m.meas_lv.volts } }
+                    else if fall { self.m.meas_lv.fall } else { [self.m.meas_lpct, self.m.meas_lv.mid, self.m.meas_hpct] };
+                t[i] = if absolute { ladder(t[i], d, false) } else { ((t[i] * 100.0).round() + d as f64) / 100.0 };
+                // low < mid < high, and percent levels stay inside 1..99 %
+                let ordered = t[0] < t[1] && t[1] < t[2] && (absolute || (t[0] >= 0.01 && t[2] <= 0.99));
+                if !ordered { return true; }
+                if absolute {
+                    if fall { self.m.meas_lv.fall_volts = t } else { self.m.meas_lv.volts = t }
+                } else if fall {
+                    self.m.meas_lv.fall = t;
                 } else {
-                    self.m.meas_lpct = 0.1;
-                    self.m.meas_hpct = 0.9;
+                    (self.m.meas_lpct, self.m.meas_lv.mid, self.m.meas_hpct) = (t[0], t[1], t[2]);
+                    if i != 1 { self.m.meas_lv.custom = true; }
                 }
                 self.measure_last();
             }
             _ => return false,
         }
         true
+    }
+
+    /// A shared level in percent (0..100), or in volts when the levels are volts. Hysteresis is a level item too.
+    pub(crate) fn meas_level_get(&self, it: Item) -> f64 {
+        let l = &self.m.meas_lv;
+        if it == Item::MeasHyst { return if l.absolute { l.vhyst } else { l.hyst * 100.0 }; }
+        let (fall, i) = level_slot(it);
+        if l.absolute { return if fall { l.fall_volts[i] } else { l.volts[i] }; }
+        100.0 * if fall { l.fall[i] } else if i == 0 { self.m.meas_lpct } else if i == 1 { l.mid } else { self.m.meas_hpct }
+    }
+
+    /// Sets a shared level (percent 1..99 or volts). False when the value would break low < mid < high.
+    pub(crate) fn meas_level_set(&mut self, it: Item, v: f64) -> bool {
+        if !v.is_finite() { return false; }
+        let absolute = self.m.meas_lv.absolute;
+        if it == Item::MeasHyst {
+            if absolute { if v <= 0.0 { return false; } self.m.meas_lv.vhyst = v; }
+            else { if !(1.0..=50.0).contains(&v) { return false; } self.m.meas_lv.hyst = v / 100.0; }
+            self.measure_last();
+            return true;
+        }
+        let (fall, i) = level_slot(it);
+        let mut t = if absolute { if fall { self.m.meas_lv.fall_volts } else { self.m.meas_lv.volts } }
+            else if fall { self.m.meas_lv.fall } else { [self.m.meas_lpct, self.m.meas_lv.mid, self.m.meas_hpct] };
+        t[i] = if absolute { v } else { v / 100.0 };
+        if !(t[0] < t[1] && t[1] < t[2] && (absolute || (t[0] >= 0.01 && t[2] <= 0.99))) { return false; }
+        if absolute {
+            if fall { self.m.meas_lv.fall_volts = t } else { self.m.meas_lv.volts = t }
+        } else if fall {
+            self.m.meas_lv.fall = t;
+        } else {
+            (self.m.meas_lpct, self.m.meas_lv.mid, self.m.meas_hpct) = (t[0], t[1], t[2]);
+            if i != 1 { self.m.meas_lv.custom = true; }
+        }
+        self.measure_last();
+        true
+    }
+
+    /// `:MEASure:LEVel:...`: the shared reference levels of the measurements. TYPE PERCent|VOLTs, PRESet 10/90|20/80|CUSTom,
+    /// LOW / MID / HIGH (percent, or volts for TYPE VOLTs), HYSTeresis, BASEtop AUTO|MINMax|MEAN|MODE,
+    /// FALL:SEParate ON|OFF and FALL:LOW / MID / HIGH.
+    pub(crate) fn meas_level_command(&mut self, n: &[&str], query: bool, arg: &str) -> Result<Option<String>, String> {
+        let t = |s: &str| Ok(Some(s.to_string()));
+        let a = arg.trim();
+        let bad = || Err(format!("-224,\"Illegal parameter value\" {}", arg));
+        let (fall, w) = if n.len() == 2 && crate::scpi::kw(n[0], "FALL") { (true, n[1]) } else if n.len() == 1 { (false, n[0]) } else {
+            return Err("-113,\"Undefined header\"".into());
+        };
+        if fall && crate::scpi::kw(w, "SEParate") {
+            if query { return t(if self.m.meas_lv.sep_fall { "1" } else { "0" }); }
+            let on = match a.to_ascii_uppercase().as_str() { "ON" | "1" => true, "OFF" | "0" => false, _ => return bad() };
+            if on != self.m.meas_lv.sep_fall { self.meas_adjust(Item::MeasSepFall, 1); }
+            self.mark_changed();
+            return Ok(None);
+        }
+        let level = match (fall, w) {
+            (false, w) if crate::scpi::kw(w, "LOW") => Some(Item::MeasLow),
+            (false, w) if crate::scpi::kw(w, "MID") => Some(Item::MeasMid),
+            (false, w) if crate::scpi::kw(w, "HIGH") => Some(Item::MeasHigh),
+            (true, w) if crate::scpi::kw(w, "LOW") => Some(Item::MeasFallLow),
+            (true, w) if crate::scpi::kw(w, "MID") => Some(Item::MeasFallMid),
+            (true, w) if crate::scpi::kw(w, "HIGH") => Some(Item::MeasFallHigh),
+            (false, w) if crate::scpi::kw(w, "HYSTeresis") => Some(Item::MeasHyst),
+            _ => None,
+        };
+        if let Some(it) = level {
+            if query { return t(&format!("{}", self.meas_level_get(it))); }
+            let Some(v) = a.parse::<f64>().ok() else { return bad() };
+            if !self.meas_level_set(it, v) { return bad(); }
+            self.mark_changed();
+            return Ok(None);
+        }
+        if fall { return bad(); }
+        if crate::scpi::kw(w, "TYPE") {
+            if query { return t(if self.m.meas_lv.absolute { "VOLT" } else { "PERC" }); }
+            let want = if crate::scpi::kw(a, "PERCent") { false } else if crate::scpi::kw(a, "VOLTs") { true } else { return bad() };
+            if want != self.m.meas_lv.absolute { self.meas_adjust(Item::MeasLvType, 1); }
+            self.mark_changed();
+            return Ok(None);
+        }
+        if crate::scpi::kw(w, "PRESet") {
+            if query { return t(&self.meas_value(Item::MeasRefs).unwrap_or_default().to_ascii_uppercase()); }
+            let i = match a.replace(' ', "").to_ascii_uppercase().as_str() { "10/90" | "1090" => 0, "20/80" | "2080" => 1, "CUSTOM" | "CUST" => 2, _ => return bad() };
+            let cur = self.meas_value(Item::MeasRefs).map_or(2, |v| match v.as_str() { "10/90" => 0, "20/80" => 1, _ => 2 });
+            self.meas_adjust(Item::MeasRefs, i - cur);
+            self.mark_changed();
+            return Ok(None);
+        }
+        if crate::scpi::kw(w, "BASEtop") {
+            if query { return t(match self.m.meas_lv.base_top { oos_dsp::measure::BaseTop::Auto => "AUTO", oos_dsp::measure::BaseTop::MinMax => "MINM", oos_dsp::measure::BaseTop::Mean => "MEAN", oos_dsp::measure::BaseTop::Mode => "MODE" }); }
+            let want = if crate::scpi::kw(a, "AUTO") { 0 } else if crate::scpi::kw(a, "MINMax") { 1 } else if crate::scpi::kw(a, "MEAN") { 2 } else if crate::scpi::kw(a, "MODE") { 3 } else { return bad() };
+            let cur = oos_dsp::measure::BaseTop::ALL.iter().position(|&b| b == self.m.meas_lv.base_top).unwrap_or(0) as i32;
+            self.meas_adjust(Item::MeasBaseTop, want - cur);
+            self.mark_changed();
+            return Ok(None);
+        }
+        bad()
     }
 
     /// Refuse a full selection explicitly rather than silently removing an older measurement.
@@ -1301,4 +1469,36 @@ mod counter_tests {
         assert_eq!(q(&mut ui, ":COUNter:CURRent?").parse::<f64>().unwrap(), 0.0);
         assert_eq!(q(&mut ui, ":COUNter:NDIGits 9;:COUNter:NDIGits?"), "6", "out of range: kept");
     }
+}
+
+/// (fall, index into low / mid / high) of a level item.
+fn level_slot(it: Item) -> (bool, usize) {
+    match it {
+        Item::MeasLow => (false, 0),
+        Item::MeasMid => (false, 1),
+        Item::MeasHigh => (false, 2),
+        Item::MeasFallLow => (true, 0),
+        Item::MeasFallMid => (true, 1),
+        _ => (true, 2),
+    }
+}
+
+/// The preset the percent levels are at: 10/90, 20/80 or Custom.
+fn meas_preset_name(m: &Model) -> &'static str {
+    let (l, h) = (m.meas_lpct, m.meas_hpct);
+    if m.meas_lv.custom { "Custom" }
+    else if (l - 0.1).abs() < 1e-9 && (h - 0.9).abs() < 1e-9 { "10/90" }
+    else if (l - 0.2).abs() < 1e-9 && (h - 0.8).abs() < 1e-9 { "20/80" }
+    else { "Custom" }
+}
+
+/// `v` moved `d` steps along 1-2-5 values from 0.1 mV to 500 V (positive only when `positive`, else both signs and 0).
+fn ladder(v: f64, d: i32, positive: bool) -> f64 {
+    let mut l: Vec<f64> = (-4..=2).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
+    if !positive {
+        let neg: Vec<f64> = l.iter().rev().map(|x| -x).collect();
+        l = neg.into_iter().chain(std::iter::once(0.0)).chain(l).collect();
+    }
+    let i = (0..l.len()).min_by(|&a, &b| (l[a] - v).abs().total_cmp(&(l[b] - v).abs())).unwrap_or(0);
+    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
 }

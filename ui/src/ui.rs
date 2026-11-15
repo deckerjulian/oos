@@ -64,6 +64,8 @@ mod batch4_tests;
 mod batch5_tests;
 #[cfg(test)]
 mod batch6_tests;
+#[cfg(test)]
+mod batch7_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -318,6 +320,10 @@ pub enum MenuId {
     MeasHold,
     /// delay and phase between two channels
     MeasPair,
+    /// shared reference levels (the Studio sheet has them on a tab of Measure)
+    MeasLevels,
+    /// separate fall levels
+    MeasFall,
     /// digital voltmeter and counter (ui/tools.rs)
     Dvm,
     Cursor,
@@ -571,6 +577,17 @@ enum Item {
     MeasN,
     MeasEdges,
     MeasRefs,
+    /// Levels: percent or volts, low, middle, high, hysteresis, top/base method, fall levels
+    MeasLvType,
+    MeasLow,
+    MeasMid,
+    MeasHigh,
+    MeasHyst,
+    MeasBaseTop,
+    MeasSepFall,
+    MeasFallLow,
+    MeasFallMid,
+    MeasFallHigh,
     MeasGate,
     MeasTsetup,
     MeasThold,
@@ -5555,8 +5572,16 @@ impl Ui {
                 v
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
+            MenuId::MeasLevels => vec![Item::MeasLvType, Item::MeasRefs, Item::MeasLow, Item::MeasMid, Item::MeasHigh, Item::MeasHyst, Item::MeasBaseTop, Item::Open(MenuId::MeasFall)],
+            MenuId::MeasFall => vec![Item::MeasSepFall, Item::MeasFallLow, Item::MeasFallMid, Item::MeasFallHigh],
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => { let mut v = vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear]; if self.m.layout == Layout::Studio { v.retain(|i| *i != Item::StripDock); } v }
+            MenuId::Measure => { let mut v = vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear]; if self.m.layout == Layout::Studio {
+                // the sheet has the levels on a tab of their own; the other layouts open them from one row
+                v.retain(|i| *i != Item::StripDock);
+                let at = v.iter().position(|i| *i == Item::Open(MenuId::MeasLevels)).unwrap_or(0);
+                v.splice(at..=at, self.items(MenuId::MeasLevels));
+            }
+            v }
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
@@ -6248,6 +6273,8 @@ impl Ui {
             MenuId::AddPanel => "Add panel".into(),
             MenuId::MeasHold => "Add".into(),
             MenuId::MeasPair => format!("Pairs {} to {}", self.pair_source_caption(self.meas_src), self.pair_source_caption(self.meas_src_b)),
+            MenuId::MeasLevels => "Measurement levels".into(),
+            MenuId::MeasFall => "Fall levels".into(),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
             MenuId::Cursor => format!("Cursor · {}", self.selected_workspace_source().map_or("No source".into(), |id| self.wave_name(id))),
@@ -6305,6 +6332,8 @@ impl Ui {
             Item::Open(MenuId::Display) => "Display",
             Item::Open(MenuId::Utility) => "System",
             Item::Open(MenuId::MeasPair) => "Channel pair",
+            Item::Open(MenuId::MeasFall) => "Fall levels",
+            Item::Open(MenuId::MeasLevels) => "Levels",
             Item::Open(MenuId::Dvm) => "DVM / counter",
             Item::Open(MenuId::Logger) => "Data logger",
             Item::Open(MenuId::Network) => "Network",
@@ -11066,7 +11095,7 @@ mod tests {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let rest = vec![
-            Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear,
+            Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear,
         ];
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);

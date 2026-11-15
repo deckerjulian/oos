@@ -52,6 +52,13 @@ impl Ui {
             WaveId::Ref(i) => self.reference_measurement_key(i)?,
         };
         key.low = own.low.to_bits(); key.high = own.high.to_bits();
+        // a row's own low and high replace the shared rise ones (percent mode); the fall levels follow unless they are separate
+        if !key.lv.absolute {
+            let follow = key.lv.fall == key.lv.rise;
+            key.lv.rise[0] = own.low;
+            key.lv.rise[2] = own.high;
+            if follow { key.lv.fall = key.lv.rise; }
+        }
         key.idle = own.idle.to_bits(); key.outside = own.side as u8;
         key.periods = own.n; key.data = own.data; key.basic = false;
         Some((Key { source, analysis: key }, t0))
@@ -96,7 +103,7 @@ impl Ui {
             }
         };
         Some(RefMeasureJob { source: key.source, key: k, samples, dt: f64::from_bits(k.dt),
-            min_amp: 0.4 * f32::from_bits(k.vpd) as f64, low: f64::from_bits(k.low), high: f64::from_bits(k.high),
+            min_amp: 0.4 * f32::from_bits(k.vpd) as f64, lv: k.lv,
             own: true, analysis })
     }
 
@@ -126,8 +133,8 @@ impl Ui {
         }
         if key.analysis.hi - key.analysis.lo <= BACKGROUND_MEASUREMENT_POINTS {
             let Some(job) = self.own_job(key) else { return f64::NAN };
-            let analysis = job.analysis.unwrap_or_else(|| Arc::new(oos_dsp::measure::analyze_refs(
-                job.samples.slice(), job.dt, job.min_amp, job.low, job.high)));
+            let analysis = job.analysis.unwrap_or_else(|| Arc::new(oos_dsp::measure::analyze_levels(
+                job.samples.slice(), job.dt, job.min_amp, &job.lv)));
             let readings = scalar_readings(&analysis, key.analysis);
             let value = readings[index];
             self.cache_own_result(key, analysis, readings);

@@ -354,6 +354,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
     kv("meas_cfg", format!("{} {:?} {} {} {} {} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }, m.meas_lpct, m.meas_hpct, m.meas_tsetup, m.meas_thold));
+    // the other shared reference levels: volts mode, custom, mid, hysteresis, volts, volts hysteresis, separate fall, fall, fall volts, top/base
+    let l = &m.meas_lv;
+    kv("meas_levels", format!("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {:?}", l.absolute as u8, l.custom as u8, l.mid, l.hyst, l.volts[0], l.volts[1], l.volts[2], l.vhyst,
+        l.sep_fall as u8, l.fall[0], l.fall[1], l.fall[2], l.fall_volts[0], l.fall_volts[1], l.fall_volts[2], l.base_top));
     kv("meas_full_record", m.meas_full_record.to_string());
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     kv("bode_mode", name(m.bode_mode));
@@ -898,6 +902,23 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             for (r, s) in m.dec_la.iter_mut().zip(&w[1..]) {
                 *r = if *s == "-" { None } else { Some(s.parse::<u8>().map_err(|_| format!("dec_la: {:?}", v))?.min(15)) };
             }
+        }
+        "meas_levels" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            if w.len() != 16 {
+                return Err("meas_levels: 16 values".into());
+            }
+            let f = |i: usize| w[i].parse::<f64>().map_err(|e| e.to_string());
+            let l = &mut m.meas_lv;
+            l.absolute = p_bool(w[0])?;
+            l.custom = p_bool(w[1])?;
+            (l.mid, l.hyst) = (f(2)?, f(3)?);
+            l.volts = [f(4)?, f(5)?, f(6)?];
+            l.vhyst = f(7)?;
+            l.sep_fall = p_bool(w[8])?;
+            l.fall = [f(9)?, f(10)?, f(11)?];
+            l.fall_volts = [f(12)?, f(13)?, f(14)?];
+            l.base_top = p_enum(w[15], &oos_dsp::measure::BaseTop::ALL)?;
         }
         "meas_full_record" => m.meas_full_record = p_bool(v)?,
         "meas_cfg" => {

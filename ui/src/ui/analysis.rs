@@ -31,6 +31,8 @@ pub(super) struct RefMeasureKey {
     vpd: u32,
     low: u64,
     high: u64,
+    /// All reference levels (rise low and high set by a row replace those of the shared set).
+    lv: oos_dsp::measure::Levels,
     epoch: u64,
     revision: u64,
     full: bool,
@@ -55,8 +57,7 @@ struct RefMeasureJob {
     samples: MeasureSamples,
     dt: f64,
     min_amp: f64,
-    low: f64,
-    high: f64,
+    lv: oos_dsp::measure::Levels,
     own: bool,
     analysis: Option<Arc<oos_dsp::measure::Analysis>>,
 }
@@ -108,7 +109,7 @@ impl RefMeasureWorker {
         std::thread::Builder::new().name("reference-measurements".into()).spawn(move || {
             while let Ok(job) = requests.recv() {
                 let analysis = job.analysis.unwrap_or_else(|| Arc::new(if job.key.basic { basic_analysis(crate::board::BasicStats::of(job.samples.slice())) }
-                    else { oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high) }));
+                    else { oos_dsp::measure::analyze_levels(job.samples.slice(), job.dt, job.min_amp, &job.lv) }));
                 let readings = scalar_readings(&analysis, job.key);
                 if results.send(RefMeasureResult { source: job.source, key: job.key, analysis, readings, own: job.own }).is_err() { break; }
             }
@@ -287,7 +288,7 @@ impl Ui {
         if hi < lo + 2 { return None; }
         let key = RefMeasureKey { samples: r.v.as_ptr() as usize, len: r.v.len(), lo, hi,
             dt: r.dt.to_bits(), t0: t0.to_bits(), vpd: r.vpd.to_bits(),
-            low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), epoch: self.workflow_epoch,
+            low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), lv: self.m.shared_levels(), epoch: self.workflow_epoch,
             revision: if self.session_is_sim && self.m.sim_slot == slot { self.replay.sim_revision } else { 0 }, full: self.m.meas_full_record, basic: false,
             idle: self.m.meas_idle.to_bits(), outside: self.m.meas_out as u8, periods: self.m.meas_n, data: self.m.meas_data,
             conditioning: (0, false, 0), capture: 0 };
@@ -306,15 +307,15 @@ impl Ui {
             let worker = worker.get_or_insert_with(RefMeasureWorker::open);
             if !worker.busy {
                 let job = RefMeasureJob { source: WaveId::Ref(slot), key, samples: MeasureSamples::Owned(r.v[key.lo..key.hi].to_vec()), dt: r.dt,
-                    min_amp: 0.4 * r.vpd as f64, low: self.m.meas_lpct, high: self.m.meas_hpct, own: false, analysis: None };
+                    min_amp: 0.4 * r.vpd as f64, lv: self.m.shared_levels(), own: false, analysis: None };
                 if worker.input.try_send(job).is_ok() { worker.busy = true; worker.submitted += 1; }
             }
             return None;
         }
         let mut cache = self.azr.ref_measure[slot].borrow_mut();
         if cache.as_ref().is_none_or(|cached| cached.key != key) {
-            let analysis = oos_dsp::measure::analyze_refs(&r.v[key.lo..key.hi], r.dt,
-                0.4 * r.vpd as f64, self.m.meas_lpct, self.m.meas_hpct);
+            let analysis = oos_dsp::measure::analyze_levels(&r.v[key.lo..key.hi], r.dt,
+                0.4 * r.vpd as f64, &self.m.shared_levels());
             let readings = scalar_readings(&analysis, key);
             *cache = Some(RefMeasureCache { key, analysis: Arc::new(analysis), readings });
         }
@@ -340,7 +341,7 @@ impl Ui {
         let (samples, t0, dt) = self.measurement_channel_samples(record, channel)?;
         Some((RefMeasureKey { samples: samples.as_ptr() as usize, len: samples.len(), lo: 0, hi: samples.len(),
             dt: dt.to_bits(), t0: t0.to_bits(), vpd: self.m.ch[channel].volts_per_div().to_bits(),
-            low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), epoch: self.workflow_epoch,
+            low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), lv: self.m.shared_levels(), epoch: self.workflow_epoch,
             revision: record.raw.as_ref().map_or(self.wfm_total, |raw| raw.frame.seq), full: self.m.meas_full_record, basic,
             idle: self.m.meas_idle.to_bits(), outside: self.m.meas_out as u8, periods: self.m.meas_n, data: self.m.meas_data,
             conditioning: (self.m.ch[channel].coupling as u8, self.m.ch[channel].invert, self.m.ch[channel].bw),
@@ -404,13 +405,13 @@ impl Ui {
                     MeasureSamples::Native { frame: Arc::clone(&raw.frame), channel, lo, hi: lo + samples.len() }
                 } else { MeasureSamples::Owned(samples.to_vec()) };
                 let job = RefMeasureJob { source: WaveId::Ch(channel), key, samples: input, dt,
-                    min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64, low: self.m.meas_lpct, high: self.m.meas_hpct, own: false, analysis: None };
+                    min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64, lv: self.m.shared_levels(), own: false, analysis: None };
                 if worker.input.try_send(job).is_ok() { worker.busy = true; worker.submitted += 1; }
             }
             return None;
         }
-        let analysis = Arc::new(oos_dsp::measure::analyze_refs(samples, dt, 0.4 * self.m.ch[channel].volts_per_div() as f64,
-            self.m.meas_lpct, self.m.meas_hpct));
+        let analysis = Arc::new(oos_dsp::measure::analyze_levels(samples, dt, 0.4 * self.m.ch[channel].volts_per_div() as f64,
+            &self.m.shared_levels()));
         let readings = scalar_readings(&analysis, key);
         *self.azr.ch_measure[channel].borrow_mut() = Some(RefMeasureCache { key, analysis: Arc::clone(&analysis), readings });
         Some((analysis, t0))

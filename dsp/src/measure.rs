@@ -272,9 +272,21 @@ pub enum BaseTop {
     Mode,
 }
 
+impl BaseTop {
+    pub const ALL: [BaseTop; 4] = [BaseTop::Auto, BaseTop::MinMax, BaseTop::Mean, BaseTop::Mode];
+    pub fn label(self) -> &'static str {
+        match self {
+            BaseTop::Auto => "Auto",
+            BaseTop::MinMax => "Min-max",
+            BaseTop::Mean => "Histogram mean",
+            BaseTop::Mode => "Histogram mode",
+        }
+    }
+}
+
 /// The reference levels and how top and base are found. `rise` and `fall` are (low, mid, high): fractions of
 /// amplitude, or volts when `absolute`. `hyst` is the edge hysteresis: a fraction of amplitude or volts.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Levels {
     pub absolute: bool,
     pub rise: [f64; 3],
@@ -282,6 +294,14 @@ pub struct Levels {
     pub hyst: f64,
     pub base_top: BaseTop,
 }
+
+/// Equal when every number has the same bits, so a set can be part of a cache key.
+impl PartialEq for Levels {
+    fn eq(&self, other: &Levels) -> bool {
+        self.bits() == other.bits()
+    }
+}
+impl Eq for Levels {}
 
 impl Levels {
     /// Percent levels: `lpct` / `hpct` with the middle at 50 %, the same fall levels, 5 % hysteresis.
