@@ -1467,3 +1467,54 @@ fn eye_ber_subrate_common_mode_and_ssc() {
     let data = Clock { edges: (0..32).map(|k| k as f64 * 3e-6).collect(), ..clock };
     assert!(!eye::is_clock(&data));
 }
+
+/// The sliding window of `phase_noise` gives what a window summed afresh for every bin gave (O(N²): 1.7 s for 131k
+/// unit intervals), on a trend with tones (lines left out), noise and a slow wander.
+#[test]
+fn phase_noise_window_matches_the_direct_sum() {
+    fn direct(trend: &[f32], period: f64, f_lo: f64, f_hi: f64) -> f64 {
+        let (df, spec) = eye::tie_spectrum(trend, period);
+        let lines = eye::pj_lines(df, &spec, spec.len());
+        let marked: Vec<usize> = lines.into_iter().map(|(f, _)| (f / df).round() as usize).collect();
+        let (lo, hi) = (f_lo.min(f_hi), f_lo.max(f_hi));
+        let (mut acc, mut any) = (0.0, false);
+        for k in 1..spec.len() {
+            let f = k as f64 * df;
+            if f < lo || f > hi || marked.contains(&k) {
+                continue;
+            }
+            let lf = f.log10();
+            let (mut s, mut c) = (0.0, 0usize);
+            let k0 = ((k as f64) / 10f64.powf(0.05)).floor() as usize;
+            let k1 = ((k as f64) * 10f64.powf(0.05)).ceil() as usize;
+            for j in k0.max(1)..=k1.min(spec.len() - 1) {
+                if ((j as f64 * df).log10() - lf).abs() <= 0.05 {
+                    s += spec[j];
+                    c += 1;
+                }
+            }
+            let v = if c == 0 { spec[k] } else { s / c as f64 };
+            acc += v * v;
+            any = true;
+        }
+        if any { acc.sqrt() } else { f64::NAN }
+    }
+    let period = 1e-9;
+    let mut x = 3u32;
+    for n in [64usize, 1000, 4096, 10_000] {
+        let trend: Vec<f32> = (0..n)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                let noise = ((x >> 8) as f64 / (1u32 << 24) as f64 - 0.5) * 1e-12;
+                let t = k as f64;
+                let tones = 3e-12 * (2.0 * PI * t / 37.0).sin() + 1e-12 * (2.0 * PI * t / 5.3).sin();
+                (noise + tones + 2e-12 * (t / n as f64)) as f32
+            })
+            .collect();
+        for (lo, hi) in [(1.0, 1.0 / period), (1.0 / (period * n as f64 / 4.0), 1.0 / (period * 8.0)), (2e6, 3e6)] {
+            let (got, want) = (eye::phase_noise(&trend, period, lo, hi), direct(&trend, period, lo, hi));
+            let same = got.is_nan() && want.is_nan() || (got - want).abs() <= 1e-9 * want.abs();
+            assert!(same, "n {n} {lo}..{hi}: {got} {want}");
+        }
+    }
+}
