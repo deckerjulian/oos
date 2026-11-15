@@ -626,7 +626,7 @@ impl Ui {
         cv.text_in(&self.fonts().mb, Rect::new(a.x + a.w, a.y, 26, a.h), 1, "to", TEXT);
     }
     pub(super) fn stacked(&self) -> bool {
-        (self.workspace.stacked || self.m.layout == Layout::Studio) && !self.xy && matches!(self.m.view, AView::Scope | AView::Eye)
+        (self.workspace.stacked || self.m.layout == Layout::Studio) && !self.xy_over() && matches!(self.m.view, AView::Scope | AView::Eye)
     }
     pub(super) fn trace_sources(&self) -> Vec<Trace> {
         // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane

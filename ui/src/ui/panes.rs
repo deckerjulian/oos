@@ -162,7 +162,7 @@ impl Ui {
         for i in (0..=HDIV as i32).rev() {
             let s = si_short(f0 + (f1 - f0) * i as f64 / HDIV as f64, "Hz");
             let w = f.s.width(&s);
-            let x = (g.x + i * (g.w - 1) / HDIV as i32 - w / 2).clamp(g.x - AXIS_W + 2, g.x + g.w - w);
+            let x = (g.x + i * (g.w - 1) / HDIV as i32 - w / 2).clamp(g.x - AXIS_W + 2, (g.x + g.w - w).max(g.x - AXIS_W + 2));
             if x + w + 10 <= free || i == HDIV as i32 {
                 cv.text(&f.s, x, g.y + g.h + 13, &s, AXIS_TEXT);
                 free = x;
@@ -913,7 +913,7 @@ impl Ui {
 
     /// A tap on the pane, or on the sort button of the full view; true when it was used.
     pub(super) fn pane_tap(&mut self, x: i32, y: i32) -> bool {
-        if self.m.view == AView::Spectrum && !self.xy && self.azr.spec.is_some() {
+        if self.m.view == AView::Spectrum && !self.xy_over() && self.azr.spec.is_some() {
             let b = self.spec_box(self.area, false);
             if b.sort.contains(x, y) {
                 self.sort_toggle();

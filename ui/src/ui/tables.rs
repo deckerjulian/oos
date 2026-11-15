@@ -263,7 +263,7 @@ impl Ui {
     /// The Results pane shows measurements and cursors, so the strip under the plot need not. With LA lanes, which share
     /// that room and may leave none for the pane, the strip stays.
     pub(super) fn results_pane_on(&self) -> bool {
-        self.m.pane == PANE_RESULTS && self.m.view == AView::Scope && !self.xy && !self.m.la_on()
+        self.m.pane == PANE_RESULTS && self.m.view == AView::Scope && !self.xy_over() && !self.m.la_on()
     }
 
     /// Height the second pane takes from the plot: what its content needs, the plot gets the rest.

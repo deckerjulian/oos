@@ -20,6 +20,9 @@ pub(super) const DIV_HIT: i32 = 44;
 /// Smallest docked views, strip included.
 const MIN_W: i32 = 150;
 const MIN_H: i32 = STRIP_H + 80;
+/// The measurement list stays usable small: a few rows, and it scrolls.
+const MEAS_MIN_W: i32 = 180;
+const MEAS_MIN_H: i32 = STRIP_H + 100;
 const WAVE_MIN_W: i32 = 300;
 const WAVE_MIN_H: i32 = 210;
 /// A drag starts when the finger has moved this far.
@@ -28,6 +31,11 @@ const DRAG_PX: i32 = 12;
 const FLOAT_MIN_W: i32 = 220;
 const FLOAT_MIN_H: i32 = 170;
 const GRIP: i32 = 44;
+/// The edges of a floating panel that resize it.
+const EDGE: i32 = 20;
+const E_L: u8 = 1;
+const E_R: u8 = 2;
+const E_B: u8 = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum VKind {
@@ -37,21 +45,29 @@ pub(super) enum VKind {
     Pane,
     Table,
     Sim,
+    /// the waveform histogram
+    Hist,
+    /// the XY picture
+    Xy,
+    /// the analysers that replace the waveform elsewhere (spectrum, Bode, power, ...)
+    View,
 }
 
-pub(super) const KINDS: [VKind; 6] = [VKind::Wave, VKind::Measure, VKind::Eye, VKind::Pane, VKind::Table, VKind::Sim];
+pub(super) const NK: usize = 9;
+pub(super) const KINDS: [VKind; NK] = [VKind::Wave, VKind::Measure, VKind::Eye, VKind::Pane, VKind::Table, VKind::Sim, VKind::Hist, VKind::Xy, VKind::View];
 
 impl VKind {
     pub(super) fn idx(self) -> usize { KINDS.iter().position(|k| *k == self).unwrap_or(0) }
     fn ch(self) -> char {
-        match self { VKind::Wave => 'W', VKind::Measure => 'M', VKind::Eye => 'E', VKind::Pane => 'P', VKind::Table => 'T', VKind::Sim => 'S' }
+        match self { VKind::Wave => 'W', VKind::Measure => 'M', VKind::Eye => 'E', VKind::Pane => 'P', VKind::Table => 'T', VKind::Sim => 'S', VKind::Hist => 'I', VKind::Xy => 'X', VKind::View => 'A' }
     }
     fn from_ch(c: char) -> Option<VKind> { KINDS.into_iter().find(|k| k.ch() == c) }
-    /// The views that can float: the waveform is the instrument's main picture, the SIM panel and the record
-    /// navigator belong to their session.
-    pub(super) fn floatable(self) -> bool { !matches!(self, VKind::Wave | VKind::Sim) }
-    fn min_w(self) -> i32 { if self == VKind::Wave { WAVE_MIN_W } else { MIN_W } }
-    fn min_h(self) -> i32 { if self == VKind::Wave { WAVE_MIN_H } else { MIN_H } }
+    /// Every view can float; one view always stays docked (`dock_can_float`).
+    pub(super) fn floatable(self) -> bool { true }
+    fn min_w(self) -> i32 { match self { VKind::Wave => WAVE_MIN_W, VKind::Measure => MEAS_MIN_W, _ => MIN_W } }
+    fn min_h(self) -> i32 { match self { VKind::Wave => WAVE_MIN_H, VKind::Measure => MEAS_MIN_H, _ => MIN_H } }
+    /// Smallest floating panel.
+    fn float_min(self) -> (i32, i32) { if self == VKind::Wave { (WAVE_MIN_W, WAVE_MIN_H + STRIP_H) } else { (FLOAT_MIN_W, FLOAT_MIN_H) } }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -203,7 +219,7 @@ pub(super) enum DockDrag {
     /// a divider moves: the split at `path`, the room it divides along `dir` from `origin`
     Divider { path: Vec<bool>, dir: Dir, origin: i32, avail: i32, lo: i32, hi: i32 },
     /// the corner of a floating panel
-    Resize { kind: VKind, x0: i32, y0: i32, r0: Rect },
+    Resize { kind: VKind, x0: i32, y0: i32, r0: Rect, edges: u8 },
 }
 
 /// Where a dragged view would land.
@@ -221,9 +237,9 @@ pub(super) struct Dock {
     /// the arrangement the user made; None is the default one
     pub tree: Option<Node>,
     /// where each floating view is (kept while it is docked)
-    pub float_rect: [Option<Rect>; 6],
+    pub float_rect: [Option<Rect>; NK],
     /// which views float (the measurements follow the View menu: `StudioView::Floating`)
-    pub float_on: [bool; 6],
+    pub float_on: [bool; NK],
     /// the floating views, the one on top last
     pub z: Vec<VKind>,
     /// counts every change of the arrangement: the layout cache and the setup text follow it
@@ -237,8 +253,8 @@ pub(super) struct Dock {
 #[derive(Clone, PartialEq)]
 pub(super) struct DockKey {
     region: Rect,
-    shown: u8,
-    floating: u8,
+    shown: u16,
+    floating: u16,
     ver: u32,
     panel_w: i32,
     under: bool,
@@ -309,6 +325,10 @@ fn insert_default(base: Node, k: VKind, region: Rect, panel_w: i32, under: bool)
             let ratio = ((region.w - panel_w - GAP) as f32 / (region.w - GAP).max(1) as f32).clamp(0.3, 0.85);
             Node::Split { dir: Dir::H, ratio, a: Box::new(base), b: leaf }
         }
+        VKind::Hist | VKind::Xy | VKind::View => {
+            let n = Node::Split { dir: Dir::H, ratio: 0.58, a: Box::new(Node::Leaf(VKind::Wave)), b: leaf };
+            if base.contains(VKind::Wave) { base.replace(VKind::Wave, &n) } else { Node::Split { dir: Dir::H, ratio: 0.58, a: Box::new(base), b: Box::new(Node::Leaf(k)) } }
+        }
         VKind::Eye => {
             let n = Node::Split { dir: if under { Dir::V } else { Dir::H }, ratio: 0.58, a: Box::new(Node::Leaf(VKind::Wave)), b: leaf };
             if base.contains(VKind::Wave) { base.replace(VKind::Wave, &n) } else { Node::Split { dir: Dir::H, ratio: 0.58, a: Box::new(base), b: Box::new(Node::Leaf(k)) } }
@@ -368,15 +388,29 @@ impl Ui {
             VKind::Measure => matches!(v, StudioView::Docked | StudioView::Floating | StudioView::Only | StudioView::Offline),
             VKind::Sim => v == StudioView::Sim,
             VKind::Eye => v != StudioView::Only && self.eye_open() && self.m.eye_place != EyePlace::Full,
-            VKind::Pane => v != StudioView::Only && self.m.pane != 0 && self.m.view == AView::Scope && !self.xy,
+            VKind::Pane => v != StudioView::Only && self.m.pane != 0 && self.m.view == AView::Scope,
+            VKind::Hist => v != StudioView::Only && self.m.hist != Hist::Off,
+            VKind::Xy => v != StudioView::Only && self.xy,
+            VKind::View => v != StudioView::Only && !self.xy_over() && !matches!(self.m.view, AView::Scope | AView::Eye),
             VKind::Table => v != StudioView::Only && self.table.is_some(),
         }
     }
 
     pub(super) fn dock_floating(&self, k: VKind) -> bool {
-        if !k.floatable() { return false; }
-        if k == VKind::Measure { return self.studio.view == StudioView::Floating; }
+        if k == VKind::Measure {
+            return self.studio.view == StudioView::Floating || (self.studio.view == StudioView::Offline && self.studio.dock.float_on[k.idx()]);
+        }
         self.studio.dock.float_on[k.idx()]
+    }
+
+    /// The views that are on and docked (in a split).
+    pub(super) fn dock_docked_count(&self) -> usize { KINDS.into_iter().filter(|k| self.dock_docked(*k)).count() }
+
+    /// May this view float: not when it is the last one docked, so the tree is never empty.
+    pub(super) fn dock_can_float(&self, k: VKind) -> bool {
+        if self.studio.view == StudioView::Only { return false; }
+        if k == VKind::Measure && !matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline) { return false; }
+        self.dock_floating(k) || self.dock_docked_count() > 1
     }
 
     fn dock_docked(&self, k: VKind) -> bool { self.dock_shown(k) && !self.dock_floating(k) }
@@ -409,7 +443,7 @@ impl Ui {
 
     pub(super) fn dock_layout(&self) -> Rc<DockLayout> {
         let region = self.dock_region();
-        let mask = |f: &dyn Fn(VKind) -> bool| KINDS.iter().fold(0u8, |m, k| m | ((f(*k) as u8) << k.idx()));
+        let mask = |f: &dyn Fn(VKind) -> bool| KINDS.iter().fold(0u16, |m, k| m | ((f(*k) as u16) << k.idx()));
         let key = DockKey {
             region,
             shown: mask(&|k| self.dock_shown(k)),
@@ -445,32 +479,34 @@ impl Ui {
         if !self.dock_shown(k) || !self.dock_floating(k) { return None; }
         let reg = self.dock_float_region();
         let r = self.studio.dock.float_rect[k.idx()].unwrap_or_else(|| self.dock_default_float(k));
-        Some(self.dock_fit_float(r, reg))
+        Some(self.dock_fit_float(k, r, reg))
     }
 
     fn dock_default_float(&self, k: VKind) -> Rect {
         let reg = self.dock_float_region();
-        let (w, h) = match k { VKind::Measure => (self.studio_panel_w() + 40, 300), VKind::Eye => (400, 300), _ => (420, 240) };
+        let (w, h) = match k { VKind::Measure => (self.studio_panel_w() + 40, 300), VKind::Eye => (400, 300), VKind::Wave => (reg.w * 6 / 10, reg.h * 7 / 10), _ => (420, 240) };
         // the old position of the floating measurements keeps meaning
         let (x, y) = if k == VKind::Measure { self.studio.panel.at.unwrap_or((reg.right() - w - 8, reg.y + 56)) } else { (reg.right() - w - 8, reg.y + 56) };
         Rect::new(x, y, w, h)
     }
 
-    pub(super) fn dock_fit_float(&self, r: Rect, reg: Rect) -> Rect {
-        let w = r.w.clamp(FLOAT_MIN_W, reg.w.max(FLOAT_MIN_W));
-        let h = r.h.clamp(FLOAT_MIN_H, reg.h.max(FLOAT_MIN_H));
+    pub(super) fn dock_fit_float(&self, k: VKind, r: Rect, reg: Rect) -> Rect {
+        let (mw, mh) = k.float_min();
+        let w = r.w.clamp(mw, reg.w.max(mw));
+        let h = r.h.clamp(mh, reg.h.max(mh));
         let x = r.x.clamp(reg.x, (reg.right() - w).max(reg.x));
         let mut y = r.y.clamp(reg.y, (reg.bottom() - h).max(reg.y));
         // never over the corner buttons of the plot: beside them
         let mut x = x;
-        {
+        // the waveform's own buttons are in it, not under it
+        if k != VKind::Wave {
             for b in [self.full_btn().0, self.zoom_btn().0] {
                 let b = Rect::new(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
                 if x + w > b.x && x < b.right() && y < b.bottom() && y + h > b.y { x = (b.x - w).max(reg.x); }
             }
         }
         // never over the zoom bar: under it
-        if self.studio_zoom_active() && !self.view_on() {
+        if k != VKind::Wave && self.studio_zoom_active() && !self.view_on() {
             let bar = self.zoom_readout();
             if x < bar.right() && x + w > bar.x && y < bar.bottom() + 2 && y + h > bar.y {
                 y = (bar.bottom() + 2).min((reg.bottom() - h).max(reg.y));
@@ -494,13 +530,29 @@ impl Ui {
 
     /// The waveform's rectangle, strip included. The table of the measurements alone has none: the whole room.
     pub(super) fn dock_wave_rect(&self) -> Rect {
-        self.dock_leaf(VKind::Wave).unwrap_or_else(|| self.dock_region())
+        self.dock_rect(VKind::Wave).unwrap_or_else(|| self.dock_region())
     }
 
     pub(super) fn dock_close_rect(r: Rect) -> Rect { Rect::new(r.right() - 48, r.y, 48, STRIP_H.min(r.h)) }
     fn dock_extra_rect(&self, k: VKind, r: Rect) -> Option<Rect> {
         (k == VKind::Measure && self.studio.view != StudioView::Only && self.studio.view != StudioView::Offline)
             .then(|| Rect::new(r.right() - 96, r.y, 48, STRIP_H.min(r.h)))
+    }
+    /// The edges of a floating panel a finger at (x, y) would drag: the corner, the sides and the bottom. The top is
+    /// the strip, which moves the panel.
+    pub(super) fn dock_edges_at(r: Rect, x: i32, y: i32) -> Option<u8> {
+        if Self::dock_grip_rect(r).contains(x, y) { return Some(E_R | E_B); }
+        if y < r.y + STRIP_H { return None; }
+        let mut e = 0;
+        if x >= r.right() - EDGE { e |= E_R; } else if x < r.x + EDGE { e |= E_L; }
+        if y >= r.bottom() - EDGE { e |= E_B; }
+        (e != 0).then_some(e)
+    }
+
+    /// The handle in the middle of a divider: a 44 px square, wider along the divider.
+    pub(super) fn divider_handle_hit(d: &Divider) -> Rect {
+        let (cx, cy) = (d.line.x + d.line.w / 2, d.line.y + d.line.h / 2);
+        if d.dir == Dir::H { Rect::new(cx - 22, cy - 30, 44, 60) } else { Rect::new(cx - 30, cy - 22, 60, 44) }
     }
     pub(super) fn dock_grip_rect(r: Rect) -> Rect { Rect::new(r.right() - GRIP, r.bottom() - GRIP, GRIP, GRIP) }
 
@@ -519,6 +571,9 @@ impl Ui {
             }.to_string(),
             VKind::Table => if self.table == Some(tables::TableKind::Search) { "Search events".to_string() } else { "Decode table".to_string() },
             VKind::Sim => "SIM".to_string(),
+            VKind::Hist => "Histogram".to_string(),
+            VKind::Xy => "XY".to_string(),
+            VKind::View => self.view_name().to_string(),
         }
     }
 
@@ -599,27 +654,28 @@ impl Ui {
         let float_at = || {
             let r = self.dock_float_rect(kind).unwrap_or_else(|| self.dock_default_float(kind));
             let want = Rect::new(x - grab.0, y - grab.1, if floating { r.w } else { own.w.clamp(FLOAT_MIN_W, 420) }, if floating { r.h } else { own.h.clamp(FLOAT_MIN_H, 320) });
-            self.dock_fit_float(want, reg)
+            self.dock_fit_float(kind, want, reg)
         };
+        let can_float = self.dock_can_float(kind);
         let leaf_at = lay.leaves.iter().find(|(_, r)| r.contains(x, y)).copied();
         let Some((tk, tr)) = leaf_at.filter(|_| self.studio.view != StudioView::Only) else {
-            return if kind.floatable() { let r = float_at(); (Drop::Float(r), r) } else { (Drop::Stay, own) };
+            return if can_float { let r = float_at(); (Drop::Float(r), r) } else { (Drop::Stay, own) };
         };
         // a floating panel over the point takes it: the point is on the panel, not on the view under it
         if tk == kind {
             return match drop_zone(tr, x, y) {
-                Zone::Ring | Zone::Centre if kind.floatable() => { let r = float_at(); (Drop::Float(r), r) }
+                Zone::Ring | Zone::Centre if can_float => { let r = float_at(); (Drop::Float(r), r) }
                 _ => (Drop::Stay, tr),
             };
         }
         // a floating view can take the place of a view that can float, not of the waveform
-        let swap_ok = !floating || (tk.floatable() && (tk != VKind::Measure || matches!(self.studio.view, StudioView::Docked | StudioView::Floating)));
+        let swap_ok = !floating || (tk != VKind::Measure || matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline));
         match drop_zone(tr, x, y) {
             Zone::Edge(s) => (Drop::Split(tk, s), half_of(tr, s)),
             Zone::Centre if swap_ok => (Drop::Swap(tk), tr),
-            Zone::Centre if kind.floatable() => { let r = float_at(); (Drop::Float(r), r) }
+            Zone::Centre if can_float => { let r = float_at(); (Drop::Float(r), r) }
             Zone::Centre => (Drop::Stay, own),
-            Zone::Ring => if kind.floatable() { let r = float_at(); (Drop::Float(r), r) } else { (Drop::Stay, own) },
+            Zone::Ring => if can_float { let r = float_at(); (Drop::Float(r), r) } else { (Drop::Stay, own) },
         }
     }
 
@@ -630,8 +686,7 @@ impl Ui {
         match drop {
             Drop::Stay => {}
             Drop::Float(r) => {
-                if !kind.floatable() { return; }
-                if kind == VKind::Measure && !matches!(self.studio.view, StudioView::Docked | StudioView::Floating) { return; }
+                if !self.dock_can_float(kind) { return; }
                 // the others rearrange around the hole
                 let tree = self.dock_effective(region).without(kind);
                 self.studio.dock.tree = tree.or(Some(Node::Leaf(VKind::Wave)));
@@ -645,7 +700,7 @@ impl Ui {
                     self.studio.dock.tree = Some(tree.swapped(kind, t));
                 } else {
                     // the floating view takes the place of the docked one, which floats where the other was
-                    if !t.floatable() || (t == VKind::Measure && !matches!(self.studio.view, StudioView::Docked | StudioView::Floating)) { return; }
+                    if t == VKind::Measure && !matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline) { return; }
                     let rect = self.dock_float_rect(kind).unwrap_or_else(|| self.dock_default_float(kind));
                     self.studio.dock.tree = Some(tree.replace(t, &Node::Leaf(kind)));
                     self.dock_set_float(kind, false);
@@ -672,6 +727,7 @@ impl Ui {
         if k == VKind::Measure {
             if on && self.studio.view == StudioView::Docked { self.studio.view = StudioView::Floating; }
             if !on && self.studio.view == StudioView::Floating { self.studio.view = StudioView::Docked; }
+            if self.studio.view == StudioView::Offline { self.studio.dock.float_on[k.idx()] = on; }
         } else {
             self.studio.dock.float_on[k.idx()] = on;
         }
@@ -699,6 +755,9 @@ impl Ui {
             VKind::Eye => { if self.m.view == AView::Eye { self.adjust(Item::EyeOn, 1); } }
             VKind::Pane => { self.m.pane = 0; self.m.split_pane = 0; }
             VKind::Table => self.table = None,
+            VKind::Hist => self.m.hist = Hist::Off,
+            VKind::Xy => { self.xy = false; self.close_menu(); }
+            VKind::View => self.view_exit(),
         }
         self.studio.dock.float_on[k.idx()] = false;
         self.dock_changed();
@@ -723,8 +782,8 @@ impl Ui {
             let Some(r) = self.dock_float_rect(k) else { continue };
             if !r.contains(x, y) { continue; }
             self.dock_raise(k);
-            if Self::dock_grip_rect(r).contains(x, y) {
-                self.studio.dock.drag = Some(DockDrag::Resize { kind: k, x0: x, y0: y, r0: r });
+            if let Some(edges) = Self::dock_edges_at(r, x, y) {
+                self.studio.dock.drag = Some(DockDrag::Resize { kind: k, x0: x, y0: y, r0: r, edges });
                 return true;
             }
             return self.dock_down_strip(k, r, x, y, true);
@@ -732,6 +791,11 @@ impl Ui {
         let lay = self.dock_layout();
         // the strips (with their buttons) first: a divider's wide hit area reaches into the strip under it, and a
         // finger on a title means the view; the divider keeps the gap and the room above it
+        // the handle in the middle of a divider is a target of its own, over the strips beside it
+        if let Some(d) = lay.dividers.iter().find(|d| Self::divider_handle_hit(d).contains(x, y)) {
+            self.studio.dock.drag = Some(DockDrag::Divider { path: d.path.clone(), dir: d.dir, origin: d.origin, avail: d.avail, lo: d.lo, hi: d.hi });
+            return true;
+        }
         for (k, r) in lay.leaves.iter() {
             if Self::dock_strip(*r).contains(x, y) { return self.dock_down_strip(*k, *r, x, y, false); }
         }
@@ -784,7 +848,7 @@ impl Ui {
                     // a floating panel follows the finger at once
                     let reg = self.dock_float_region();
                     let r = self.dock_float_rect(kind).unwrap_or_else(|| self.dock_default_float(kind));
-                    let moved = self.dock_fit_float(Rect::new(x - grab.0, y - grab.1, r.w, r.h), reg);
+                    let moved = self.dock_fit_float(kind, Rect::new(x - grab.0, y - grab.1, r.w, r.h), reg);
                     self.studio.dock.float_rect[kind.idx()] = Some(moved);
                     self.studio.dock.ver = self.studio.dock.ver.wrapping_add(1);
                 }
@@ -797,10 +861,14 @@ impl Ui {
                 self.studio.dock.tree = Some(t);
                 self.dock_changed();
             }
-            DockDrag::Resize { kind, x0, y0, r0 } => {
+            DockDrag::Resize { kind, x0, y0, r0, edges } => {
                 let reg = self.dock_float_region();
-                let want = Rect::new(r0.x, r0.y, r0.w + x - x0, r0.h + y - y0);
-                self.studio.dock.float_rect[kind.idx()] = Some(self.dock_fit_float(want, reg));
+                let (mw, mh) = kind.float_min();
+                let (dx, dy) = (x - x0, y - y0);
+                let w = (r0.w + if edges & E_R != 0 { dx } else if edges & E_L != 0 { -dx } else { 0 }).max(mw);
+                let h = (r0.h + if edges & E_B != 0 { dy } else { 0 }).max(mh);
+                let nx = if edges & E_L != 0 { r0.right() - w } else { r0.x };
+                self.studio.dock.float_rect[kind.idx()] = Some(self.dock_fit_float(kind, Rect::new(nx, r0.y, w, h), reg));
                 self.dock_changed();
             }
         }
@@ -880,7 +948,10 @@ impl Ui {
         cv.line(cx - 5, cy - 5, cx + 5, cy + 5, c);
         cv.line(cx - 5, cy + 5, cx + 5, cy - 5, c);
         if floating {
-            // the resize corner
+            // the resize corner, and the edges beside it
+            cv.fill(Rect::new(r.right() - 3, r.y + STRIP_H + 24, 2, (r.h - STRIP_H - 60).max(0)), DIM);
+            cv.fill(Rect::new(r.x + 1, r.y + STRIP_H + 24, 2, (r.h - STRIP_H - 60).max(0)), DIM);
+            cv.fill(Rect::new(r.x + 24, r.bottom() - 3, (r.w - 70).max(0), 2), DIM);
             let g = Self::dock_grip_rect(r);
             for i in 0..3 { cv.line(g.right() - 8 - i * 5, g.bottom() - 6, g.right() - 6, g.bottom() - 8 - i * 5, DIM); }
         }
@@ -891,14 +962,21 @@ impl Ui {
         if !self.dock_on() { return; }
         let lay = self.dock_layout();
         let moving = match &self.studio.dock.drag { Some(DockDrag::Move { kind, .. }) => Some(*kind), _ => None };
-        for d in &lay.dividers {
-            cv.fill(d.line, BG);
-            let (cx, cy) = (d.line.x + d.line.w / 2, d.line.y + d.line.h / 2);
-            if d.dir == Dir::H { cv.fill(Rect::new(cx - 1, cy - 14, 2, 28), LINE); } else { cv.fill(Rect::new(cx - 14, cy - 1, 28, 2), LINE); }
-        }
+        for d in &lay.dividers { cv.fill(d.line, BG); }
         for (k, r) in &lay.leaves {
             self.draw_dock_strip(cv, *k, *r, false, moving == Some(*k));
             cv.rect(*r, if moving == Some(*k) { ACCENT } else { CARD_BORDER });
+        }
+        // the divider handles: a small grip in the middle of the 44 px touch area
+        let dragging = matches!(self.studio.dock.drag, Some(DockDrag::Divider { .. }));
+        for d in &lay.dividers {
+            let (cx, cy) = (d.line.x + d.line.w / 2, d.line.y + d.line.h / 2);
+            let h = if d.dir == Dir::H { Rect::new(cx - 6, cy - 22, 12, 44) } else { Rect::new(cx - 22, cy - 6, 44, 12) };
+            cv.round(h, 5, if dragging { ACCENT } else { BTN_BORDER }, 255);
+            cv.round(h.inset(1), 4, BTN, 255);
+            for i in -1..=1 {
+                if d.dir == Dir::H { cv.fill(Rect::new(cx - 1, cy + i * 8 - 1, 2, 2), DIM); } else { cv.fill(Rect::new(cx + i * 8 - 1, cy - 1, 2, 2), DIM); }
+            }
         }
         let z = &self.studio.dock.z;
         let mut order: Vec<VKind> = KINDS.into_iter().filter(|k| !z.contains(k)).collect();
@@ -945,6 +1023,7 @@ impl Ui {
             }
             VKind::Pane => { self.pane_tap(x, y); }
             VKind::Table => { self.table_tap(x, y); }
+            VKind::Xy | VKind::View => { if self.view_btn().contains(x, y) { self.toggle_menu(MenuId::ViewMore); } }
             _ => {}
         }
         true

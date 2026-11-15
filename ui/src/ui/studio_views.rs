@@ -86,7 +86,7 @@ impl Ui {
             return;
         }
         // the navigator: the overview of the whole record carries its span
-        if self.m.zoom && !self.xy && self.refs.iter().any(Option::is_some) {
+        if self.m.zoom && !self.xy_over() && self.refs.iter().any(Option::is_some) {
             if let Some(text) = self.studio_record_tag() {
                 let (o, _) = Self::split_zoom(self.grid);
                 let w = f.sb.width(&text) + 16;

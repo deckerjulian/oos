@@ -270,7 +270,7 @@ fn floating_views_never_cover_the_bars_or_the_zoom_bar_and_can_be_resized() {
     // float the eye and push it at the top bar, the bottom bar and the zoom bar
     drag_view(&mut u, VKind::Eye, (w.x + w.w * 31 / 100, w.y + w.h / 2));
     assert!(u.dock_floating(VKind::Eye), "the eye floats");
-    for target in [(300, 0), (300, 700), (600, 330), (10, 10), (1020, 590)] {
+    for target in [(300, 0), (300, 700), (700, 330), (10, 10), (1020, 590)] {
         let g = grip(&u, VKind::Eye);
         drag(&mut u, g, target);
         let f = u.dock_float_rect(VKind::Eye).unwrap();

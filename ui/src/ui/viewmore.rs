@@ -8,9 +8,19 @@ use crate::gfx::Canvas;
 
 impl Ui {
     /// A view other than the waveform fills the plot. The eye has its own bar and is not one of these.
+    /// A view other than the waveform fills the plot. Studio docks them as views of their own instead (`view_tile`),
+    /// beside the waveform, which stays.
     pub(super) fn view_on(&self) -> bool {
+        !self.dock_on() && self.view_tile()
+    }
+
+    /// XY or an analyser is on.
+    pub(super) fn view_tile(&self) -> bool {
         self.xy || !matches!(self.m.view, AView::Scope | AView::Eye)
     }
+
+    /// XY replaces the waveform, except in Studio where it is a view of its own.
+    pub(super) fn xy_over(&self) -> bool { self.xy && !self.dock_on() }
 
     pub(super) fn view_name(&self) -> &'static str {
         if self.xy {
@@ -29,7 +39,15 @@ impl Ui {
         }
     }
 
+    /// The tile that holds the XY picture or the analyser (Studio): its content rectangle.
+    pub(super) fn view_tile_rect(&self) -> Option<Rect> {
+        if !self.dock_on() { return None; }
+        let k = if self.xy { super::dock::VKind::Xy } else { super::dock::VKind::View };
+        self.dock_content(k)
+    }
+
     pub(super) fn view_btn(&self) -> Rect {
+        if let Some(t) = self.view_tile_rect() { return Rect::new(t.right() - 48, t.y + 6, 42, 36); }
         Rect::new(self.area.x + self.area.w - 48, self.area.y + 6, 42, 36)
     }
 
@@ -59,7 +77,7 @@ impl Ui {
 
     pub(super) fn view_more_items(&self) -> Vec<Item> {
         let mut v = Vec::new();
-        if !self.xy {
+        if !self.xy_over() {
             match self.m.view {
                 AView::Eye => v.push(Item::EyeClear),
                 AView::Spectrum => v.push(Item::SpecPeak),

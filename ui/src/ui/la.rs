@@ -494,7 +494,7 @@ impl Ui {
     /// where the lanes are in a window).
     pub(super) fn la_strip_h(&self) -> i32 {
         let n = self.m.la.lines().len();
-        if self.m.la_on() && n > 0 && matches!(self.m.view, AView::Scope | AView::Eye) && !self.xy && self.n_wins() == 1 {
+        if self.m.la_on() && n > 0 && matches!(self.m.view, AView::Scope | AView::Eye) && !self.xy_over() && self.n_wins() == 1 {
             self.la_fit(n).0
         } else {
             0

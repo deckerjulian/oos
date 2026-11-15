@@ -78,6 +78,8 @@ mod batch9_tests;
 #[cfg(test)]
 mod batch10_tests;
 #[cfg(test)]
+mod batch11b_tests;
+#[cfg(test)]
 mod batch11_tests;
 mod hotspots;
 mod trigger_controls;
@@ -1722,7 +1724,7 @@ impl Ui {
 
     /// The eye is showing next to the trace (it does not replace the waveform).
     pub(super) fn eye_open(&self) -> bool {
-        self.m.view == AView::Eye && !self.xy
+        self.m.view == AView::Eye && !self.xy_over()
     }
 
     pub(super) fn eye_side(&self) -> bool {
@@ -2358,7 +2360,7 @@ impl Ui {
             self.reset_zoom();
             return true;
         }
-        if self.m.zoom && !self.xy && !self.view_on() && self.zoom_close().contains(x, y) {
+        if self.m.zoom && !self.xy_over() && !self.view_on() && self.zoom_close().contains(x, y) {
             self.set_zoom(false);
             return true;
         }
@@ -2954,7 +2956,7 @@ impl Ui {
             && m.segments == 0
             && !m.mask_on
             && !m.zoom
-            && !self.xy
+            && !self.xy_over()
             && m.z_src.is_none()
             && !m.zones.iter().any(|z| z.usable())
             && board().slow_mode(m) == crate::board::Slow::Off
@@ -3055,7 +3057,7 @@ impl Ui {
         l.under.no_clip();
         l.under.clear(BG);
         let g = self.grid;
-        if self.m.zoom && !self.xy {
+        if self.m.zoom && !self.xy_over() {
             let (o, _) = Self::split_zoom(g);
             self.draw_grid(l.under, o);
             self.traces(l, o, false, true);
@@ -3103,7 +3105,7 @@ impl Ui {
                     self.traces(l, self.area, true, false);
                 }
                 let cv = l.over();
-                self.draw_hist(cv);
+                if !self.dock_on() { self.draw_hist(cv); }
                 self.draw_zones(cv);
                 if self.wins.len() > 1 || i == 0 || self.stacked() {
                     if self.waves_on() {
@@ -3133,7 +3135,7 @@ impl Ui {
             self.area = self.wave_area();
         }
         let cv = l.over();
-        if self.m.zoom && !self.xy && !self.view_on() {
+        if self.m.zoom && !self.xy_over() && !self.view_on() {
             let (tz, dz) = self.view();
             if self.m.layout == Layout::Studio { self.draw_studio_zoom_bar(cv); } else { self.draw_zoom_readout(cv, tz, dz); }
         }
@@ -3165,6 +3167,7 @@ impl Ui {
         self.draw_results(cv);
         self.draw_studio_panel(cv);
         self.draw_table(cv);
+        self.draw_view_tiles(cv);
         self.draw_dock(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
@@ -3747,14 +3750,38 @@ impl Ui {
         Some((bins, mean, var.sqrt()))
     }
 
+    /// Studio: the views that are not the waveform (histogram, XY, analysers) each draw in the rectangle of their own
+    /// view. What they draw is the same as in the other layouts, only in another rectangle.
+    fn draw_view_tiles(&mut self, cv: &mut Canvas) {
+        if !self.dock_on() { return; }
+        use dock::VKind;
+        let saved = self.area;
+        for k in [VKind::Hist, VKind::Xy, VKind::View] {
+            if !self.dock_shown(k) { continue; }
+            let Some(r) = self.dock_content(k) else { continue };
+            cv.set_clip(r);
+            cv.fill(r, BG);
+            match k {
+                VKind::Hist => self.draw_hist_in(cv, r, true),
+                VKind::Xy => { self.area = r; self.draw_xy(cv); self.draw_view_btn(cv); }
+                _ => { self.area = r; self.draw_analyzer(cv); self.draw_view_btn(cv); }
+            }
+            cv.no_clip();
+        }
+        self.area = saved;
+    }
+
+    fn draw_hist(&self, cv: &mut Canvas) { self.draw_hist_in(cv, self.area, false) }
+
     /// Histogram overlay: bars along the left edge (vertical) or the bottom (horizontal), mean and sigma in units.
-    fn draw_hist(&self, cv: &mut Canvas) {
+    /// As a view of its own (`tile`) it fills `a`.
+    fn draw_hist_in(&self, cv: &mut Canvas, a: Rect, tile: bool) {
         let Some((bins, mean, sd)) = self.hist_bins() else { return };
         let Some(c) = self.hist_src().filter(|&c| self.shows(c)) else { return };
-        let a = self.area;
         let col = CH_COLORS[c];
         let peak = bins.iter().copied().max().unwrap_or(0).max(1) as f64;
-        let depth = (a.w / 5).max(40) as f64;
+        let depth = if tile { (a.w * 9 / 10).max(40) as f64 } else { (a.w / 5).max(40) as f64 };
+        let hdepth = if tile { a.h as f64 * 0.85 / 0.6 } else { depth };
         cv.set_clip(a);
         let ch = &self.m.ch[c];
         let txt = match self.m.hist {
@@ -3769,7 +3796,7 @@ impl Ui {
                     }
                 }
                 // pixel row -> volts
-                let (factor, center) = self.zoom_vertical_transform(a);
+                let (factor, center) = self.zoom_vertical_transform(self.area);
                 let h = bins.len().max(1) as f64;
                 let vpp = ch.volts_per_div() as f64 * VDIV as f64 / h / factor as f64;
                 let mv = (h / 2.0 - mean) * vpp + center as f64 * ch.volts_per_div() as f64 - ch.offset as f64;
@@ -3778,7 +3805,7 @@ impl Ui {
             _ => {
                 let n = bins.len().max(1) as i32;
                 for (x, &b) in bins.iter().enumerate() {
-                    let len = (b as f64 / peak * depth * 0.6).round() as i32;
+                    let len = (b as f64 / peak * hdepth * 0.6).round() as i32;
                     let (x0, x1) = (x as i32 * a.w / n, (x as i32 + 1) * a.w / n);
                     if len > 0 {
                         cv.blend(Rect::new(a.x + x0, a.y + a.h - len, (x1 - x0).max(1), len), col, 150);
@@ -3793,7 +3820,7 @@ impl Ui {
         cv.no_clip();
         let f = self.fonts();
         // above the decoder band and the time labels, right of the volt labels
-        let r = Rect::new(a.x + 14 + f.s.width("-0.00 mV"), a.y + a.h - 76, f.s.width(&txt) + 16, 20);
+        let r = if tile { Rect::new(a.x + 8, a.y + 8, f.s.width(&txt) + 16, 20) } else { Rect::new(a.x + 14 + f.s.width("-0.00 mV"), a.y + a.h - 76, f.s.width(&txt) + 16, 20) };
         cv.round(r, 4, PANEL_BG, 230);
         cv.text_in(&f.s, r, 1, &txt, col);
     }
@@ -7358,7 +7385,7 @@ impl Ui {
                 self.m.zdelay += d as f32 * tscales()[self.m.zscale] / 25.0;
                 self.clamp_zoom();
             }
-            Item::XyMode => self.xy = !self.xy,
+            Item::XyMode => self.xy = !self.xy_over(),
             Item::BootMode => self.boot_mode_toggle(),
             Item::Overclock => self.overclock_step(d),
             Item::ColorGrade => self.m.color_grade = !self.m.color_grade,
@@ -9625,10 +9652,10 @@ impl Ui {
             return;
         }
         if self.zoom_close_tap(x, y) { return; }
-        if self.view_on() && self.view_btn().contains(x, y) {
+        if (self.view_on() || self.view_tile_rect().is_some()) && self.view_btn().contains(x, y) {
             return self.toggle_menu(MenuId::ViewMore);
         }
-        if !self.menu_open && self.m.view == AView::Eye && !self.xy && (self.eye_tap(x, y) || self.eye_column_tap(x, y)) {
+        if !self.menu_open && self.m.view == AView::Eye && !self.xy_over() && (self.eye_tap(x, y) || self.eye_column_tap(x, y)) {
             return;
         }
         if self.table_tap(x, y) || self.pane_tap(x, y) {

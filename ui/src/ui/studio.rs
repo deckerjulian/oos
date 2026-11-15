@@ -1290,6 +1290,7 @@ impl Ui {
         // a record view runs on a session of its own: leaving it returns to the live acquisition
         if was.is_record() && was != view && self.record_mode() { self.return_to_live(); }
         self.studio.view = view;
+        if view != StudioView::Offline { self.studio.dock.float_on[super::dock::VKind::Measure.idx()] = false; }
         self.dock_view_changed();
         self.studio.panel.first = 0;
         self.studio.filter = None;
@@ -1849,7 +1850,7 @@ fn zoom_text(n: f32) -> String {
 impl Ui {
     /// Studio's zoom bar sits in the strip between the overview and the zoomed lanes.
     pub(super) fn studio_zoom_active(&self) -> bool {
-        self.m.layout == Layout::Studio && self.m.zoom && !self.xy && !self.view_on()
+        self.m.layout == Layout::Studio && self.m.zoom && !self.xy_over() && !self.view_on()
     }
 
     /// How many times the detail view magnifies time against the main view.
