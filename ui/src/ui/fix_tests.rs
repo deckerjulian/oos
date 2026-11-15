@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Regression tests for the compact chrome audit (PR #8; Display > Bottom bar = compact).
 use super::*;
 use super::workspace::Action;

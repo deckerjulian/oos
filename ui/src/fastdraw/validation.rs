@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Independent bounded search oracles and an opt-in host CPU timing fixture.
 use super::*;
 

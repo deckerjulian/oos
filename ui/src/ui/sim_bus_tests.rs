@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Generated bus data must qualify before replacing the accepted SIM record.
 //! The controlled worker keeps the pending phase deterministic: no timing sleeps,
 //! random PRBS payloads, native GUI, or live SCPI endpoint are involved.

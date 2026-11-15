@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 """Offline SSH provisioning tests. No sockets, listeners or hardware access."""
 import base64
 import importlib.util

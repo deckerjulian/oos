@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Selected-source Eye setup and bounded immutable-reference analysis.
 use super::*;
 use std::sync::mpsc;

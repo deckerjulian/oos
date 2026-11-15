@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Explicit real-file acceptance. These tests open no native window or service.
 use super::*;
 use std::{path::Path, sync::Arc, time::{Duration, Instant}};

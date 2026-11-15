@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Batch 5: overlapping and clipped text in the analysis views. OOS_SHOTS=<dir> writes a picture of each scene.
 use super::*;
 

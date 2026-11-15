@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Fresh SIM bus records are decoded before they become an accepted reference.
 use super::*;
 use super::super::reference_decode::{BorrowedWave,decode_borrowed,sources};

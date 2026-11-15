@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Batch 2: hidden side effects and wrong data (trigger type, SIM, ref math, setup refs, ref sources, axes, power).
 use super::*;
 
