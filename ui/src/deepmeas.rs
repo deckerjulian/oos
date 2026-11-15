@@ -79,11 +79,12 @@ pub fn deep_raw_frame(f: &Frame) -> bool {
 }
 
 /// Points of the raw screen window `hw` reads for a deep record (screen and a quarter screen each side, at least 4096
-/// points, within the record), and whether its `channels` fit `MAX_BYTES`.
+/// points, within the record), and whether its `channels` fit `MAX_BYTES`. The thread's budget counts the interleave
+/// ratio (`hz::ratio`): three channels are read as four.
 pub fn fits(rate: f64, tdiv: f64, memsel: usize, channels: usize) -> bool {
     let screen = (tdiv * HDIV as f64 * rate).ceil() as usize;
     let n = (screen + 2 * (screen / 4).max(4096)).min(memsel);
-    2 * n * channels.max(1) <= MAX_BYTES
+    2 * n * channels.max(1).next_power_of_two() <= MAX_BYTES
 }
 
 /// Whether the UI leaves the newest record unmeasured: raw deep reads are asked for and running, and the record is
@@ -91,6 +92,11 @@ pub fn fits(rate: f64, tdiv: f64, memsel: usize, channels: usize) -> bool {
 /// record (at most about `PERIOD` old).
 pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
     let Some(f) = f.filter(|f| deep_pairs(f)) else { return false };
+    // the thread reads no raw window while the LA records (`deep_raw_settings` in board/dho/hw.rs): holding for one
+    // would freeze the measurements
+    if m.la_on() {
+        return false;
+    }
     let channels = f.ch.iter().filter(|v| !v.is_empty()).count();
     m.run == RunState::Run && want(m).is_some_and(|w| !w.every) && fits(f.acq.0, m.hw_time_per_div() as f64, f.acq.1, channels)
 }
@@ -161,6 +167,12 @@ mod tests {
         m.trig_mode = TrigMode::Auto;
         // 125 M: 250 MB, beyond the budget: the pair measurement stays
         assert!(!hold(&m, Some(&Frame { acq: (1.25e9, 125_000_000), ..deep(true) })));
+        // the LA on: the thread reads no raw window, so nothing is held for one
+        if crate::ui::la::available() {
+            m.la.on = true;
+            assert!(!hold(&m, Some(&deep(true))), "LA on");
+            m.la.on = false;
+        }
         force(None);
     }
 
@@ -170,6 +182,9 @@ mod tests {
         assert!(!fits(1.25e9, 1e-3, 10_000_000, 2));
         assert!(fits(625e6, 1e-3, 5_000_000, 2));
         assert!(!fits(1.25e9, 10e-3, 125_000_000, 1));
+        // three channels are read as four (the interleave ratio): 3.5 M points are 28 MB, not 21 MB
+        assert!(!fits(1.25e9, 1e-3, 3_500_000, 3));
+        assert!(fits(1.25e9, 1e-3, 3_000_000, 3));
         let t = std::time::Instant::now();
         let w = Want { every: false };
         let small = PERIOD_BYTES / 2;
