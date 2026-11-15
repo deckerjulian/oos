@@ -1870,6 +1870,8 @@ impl Ui {
 
     /// The window in the overview: shaded, framed, with a grip at each end.
     pub(super) fn draw_studio_window(&self, cv: &mut Canvas, o: Rect, xa: i32, xb: i32) {
+        // a thin window (a large zoom of a long record) stays a visible bar
+        let (xa, xb) = if xb - xa < 6 { let m = (xa + xb) / 2; (m - 3, m + 3) } else { (xa, xb) };
         let w = Rect::new(xa, o.y, (xb - xa).max(2), o.h);
         cv.blend(w, BAND, 50);
         cv.rect(w, BAND);
@@ -1983,6 +1985,13 @@ impl Ui {
         if (self.zoom_vfactor - 1.0).abs() > 1e-3 {
             for &lane in &self.wins { lane_tag(cv, lane, &format!("Y zoom {}", zoom_text(self.zoom_vfactor))); }
         }
+        if let (Some(hint), Some(&lane)) = (self.studio_zoom_samples_hint(), self.wins.last()) {
+            let w = f.sb.width(&hint) + 16;
+            let r = Rect::new(lane.x + 52, lane.bottom() - 52, w, 20);
+            cv.round(r, 5, BTN_BORDER, 255);
+            cv.round(r.inset(1), 4, PANEL_BG, 255);
+            cv.text_in(&f.sb, r, 1, &hint, AMBER);
+        }
         // the hint of the gesture under the finger
         let lane = self.wave_area();
         let (cx, cy) = (lane.x + lane.w / 2, lane.y + lane.h / 3);
@@ -2013,7 +2022,33 @@ impl Ui {
     pub(super) fn studio_center_trigger(&mut self) {
         self.m.zdelay = 0.0;
         self.clamp_zoom();
+        if self.m.zdelay != 0.0 {
+            // the trigger is outside the main window: the window comes to it, so the box can too
+            self.m.delay = 0.0;
+            self.m.zdelay = 0.0;
+            self.clamp_zoom();
+        }
+        self.dirty_map = true;
         self.settings_changed();
+    }
+
+    /// Seconds between the samples of the record the zoom shows (the held or captured record, or the ref of a SIM or file).
+    pub(super) fn studio_zoom_sample_dt(&self) -> Option<f64> {
+        if self.record_mode() {
+            return self.refs.get(self.active_reference()).and_then(Option::as_ref).map(|r| r.dt).filter(|dt| *dt > 0.0);
+        }
+        let rec = self.last[0].as_ref()?;
+        let dt = rec.raw.as_ref().map_or(rec.dt, |raw| raw.frame.dt);
+        (dt > 0.0).then_some(dt)
+    }
+
+    /// The hint when the zoom asks for more than the record has: how many samples there are in a division.
+    pub(super) fn studio_zoom_samples_hint(&self) -> Option<String> {
+        if !self.studio_zoom_active() { return None; }
+        let per_div = tscales()[self.m.zscale] as f64 / self.studio_zoom_sample_dt()?;
+        // below about one sample in three pixels of a division the picture is the samples themselves
+        (per_div < (self.wins.first().map_or(self.grid.w, |w| w.w) as f64 / HDIV as f64) / 3.0)
+            .then(|| if per_div < 10.0 { format!("{per_div:.1} samples/div") } else { format!("{per_div:.0} samples/div") })
     }
 
     /// Taps on the zoom bar, its menu, the display scale popup and the lane badges. False: none of them.

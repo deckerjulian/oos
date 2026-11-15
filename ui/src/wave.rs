@@ -780,11 +780,13 @@ pub struct Phosphor {
     pub w: usize,
     pub h: usize,
     pub map: [Vec<u16>; NCH],
+    /// the dots of a dots-only draw are 3 x 3 (the zoom shows real samples, not lines through too few of them)
+    pub fat: bool,
 }
 
 impl Phosphor {
     pub fn new(w: usize, h: usize) -> Phosphor {
-        Phosphor { w, h, map: Default::default() }.init()
+        Phosphor { w, h, map: Default::default(), fat: false }.init()
     }
     fn init(mut self) -> Phosphor {
         for c in 0..NCH {
@@ -853,6 +855,7 @@ impl Phosphor {
         let cy = ht / 2.0;
         let x_of = |k: usize| -> f32 { (((rec_t0 + k as f64 * dt - vdelay) / tdiv) * ppd_x + wd as f64 / 2.0) as f32 };
         let y_of = |val: f32| -> f32 { cy - (val + ch.offset) / vpd * ppd_y };
+        let fat = self.fat;
         let map = &mut self.map[c];
         let (wi, hi) = (self.w as i32, self.h as i32);
         let mut prev: Option<(f32, f32)> = None;
@@ -869,6 +872,16 @@ impl Phosphor {
             let p = (x_of(k), y_of(val));
             if m.dots {
                 let (x, y) = (p.0.floor() as i32, p.1.round() as i32);
+                if fat {
+                    for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                        let (px, py) = (x + dx, y + dy);
+                        if (0..wi).contains(&px) && (0..hi).contains(&py) {
+                            let idx = (py * wi + px) as usize;
+                            map[idx] = map[idx].saturating_add(w);
+                        }
+                    }
+                    continue;
+                }
                 if (0..wi).contains(&x) && (0..hi).contains(&y) {
                     let idx = (y * wi + x) as usize;
                     map[idx] = map[idx].saturating_add(w);

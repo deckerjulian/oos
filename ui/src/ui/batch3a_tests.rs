@@ -1,6 +1,7 @@
 //! Batch 3A: the Studio top bar, SIM follows Run / Stop / Single, sources shown, compact view, saved desktop settings, zoom.
 use super::studio::StudioView;
 use super::*;
+use super::{axis_label, studio_time_ticks};
 
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
@@ -312,4 +313,174 @@ fn the_desktop_setup_file_brings_back_the_layout_and_the_studio_view() {
     assert!(crate::store::SetupFile::new(&dir).restore(&mut third).is_err());
     assert_eq!(third.m.layout, Layout::Minimal);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn scale_index(t: f32) -> usize { tscales().iter().position(|&s| (s / t - 1.0).abs() < 1e-3).expect("a time scale") }
+
+/// The owner's two cases on the demo source: main 500 us/div with zoom 2.5x, main 50 ms/div with zoom 250x.
+fn zoomed_demo(main: f32, zoom: f32, zdelay: f32) -> Ui {
+    let mut u = studio();
+    u.m.tscale = scale_index(main);
+    u.m.delay = 0.0;
+    for _ in 0..8 { u.step(0.05); }
+    u.set_zoom(true);
+    u.m.zscale = scale_index(zoom);
+    u.m.zdelay = zdelay;
+    u.clamp_zoom();
+    u.relayout();
+    for _ in 0..8 { u.step(0.05); }
+    u
+}
+
+#[test]
+fn shots_zoom_cases() {
+    let mut a = zoomed_demo(500e-6, 200e-6, 0.439e-3);
+    shot(&mut a, "zoom-a");
+    let mut b = zoomed_demo(50e-3, 200e-6, 0.439e-3);
+    shot(&mut b, "zoom-b");
+}
+
+#[test]
+fn zoom_axis_labels_are_round_at_any_delay() {
+    // the owner's case: 200 us/div in a window put at 0.439 ms
+    let ticks = studio_time_ticks(200e-6, 0.439e-3, 1);
+    assert_eq!(ticks.first().map(|t| t.0), Some(-2), "first label -0.4 ms, not -0.561 ms");
+    for (k, t) in &ticks { assert!((t - *k as f64 * 200e-6).abs() < 1e-9, "{k} {t}"); }
+    let labels: Vec<String> = ticks.iter().map(|&(k, t)| if k == 0 { "0 s".into() } else { axis_label(t as f32, 200e-6, 0.0, 1.439e-3, "s") }).collect();
+    assert_eq!(labels, ["-0.4 ms", "-0.2 ms", "0 s", "0.2 ms", "0.4 ms", "0.6 ms", "0.8 ms", "1.0 ms", "1.2 ms", "1.4 ms"]);
+    // a window with the trigger in the middle has the labels the main axis has
+    let c = studio_time_ticks(200e-6, 0.0, 1);
+    assert_eq!(c.len(), 11);
+    assert_eq!((c[0].0, c[10].0), (-5, 5));
+    // 2.5x at 500 us/div and 250x at 50 ms/div read the same way
+    assert!(studio_time_ticks(50e-3, 0.439e-3, 1).iter().all(|&(k, t)| (t - k as f64 * 50e-3).abs() < 1e-5));
+}
+
+#[test]
+fn zoom_detail_shows_real_samples_not_invented_ramps() {
+    // 50 ms/div main: the record has 3.6 kpts at 7.2 kSa/s; the zoom at 200 us/div has 1.4 samples per division
+    let mut u = zoomed_demo(50e-3, 200e-6, 0.439e-3);
+    assert!(u.studio_zoom_active());
+    let dt = u.studio_zoom_sample_dt().unwrap();
+    assert!((dt - 50e-3 * 10.0 / 3600.0).abs() < 1e-9, "dt {dt}");
+    assert!(u.zoom_sparse(dt), "the zoom asks for more than the record has");
+    let hint = u.studio_zoom_samples_hint().expect("the hint");
+    assert!(hint.ends_with("samples/div") && hint.starts_with("1.4"), "{hint}");
+    assert!(u.phz.fat, "samples are drawn as dots");
+    // the dots are separate: no pixel column of the trace is filled between two samples far apart
+    let lane = u.wins[0];
+    let map = &u.phz.map[0];
+    let lit_cols = (0..u.phz.w).filter(|&x| (0..u.phz.h).any(|y| map[y * u.phz.w + x] > 0)).count();
+    assert!(lit_cols < u.phz.w / 2, "a line through the samples would light every column: {lit_cols} of {}", u.phz.w);
+    shot(&mut u, "zoom-b");
+    // the zoom of a record with enough samples is a line and has no hint
+    let a = zoomed_demo(500e-6, 200e-6, 0.439e-3);
+    assert!(!a.zoom_sparse(a.studio_zoom_sample_dt().unwrap()) && a.studio_zoom_samples_hint().is_none() && !a.phz.fat);
+    let _ = lane;
+}
+
+#[test]
+fn zoom_factor_time_per_div_and_the_overview_window_agree() {
+    for (main, zoom, factor) in [(500e-6, 200e-6, 2.5f32), (50e-3, 200e-6, 250.0), (50e-3, 5e-3, 10.0)] {
+        let u = zoomed_demo(main, zoom, 0.0);
+        assert!((u.studio_time_zoom() / factor - 1.0).abs() < 0.01, "{} vs {factor}", u.studio_time_zoom());
+        let (pct, f) = u.zoom_box();
+        assert!((f / factor - 1.0).abs() < 0.01);
+        assert!((pct - 50.0).abs() < 0.5, "centered box is at 50 %: {pct}");
+        let (o, _) = Ui::split_zoom(u.grid);
+        let (xa, xb) = u.zoom_window_x(o);
+        let want = o.w as f32 / factor;
+        assert!(((xb - xa) as f32 - want).abs() <= 1.5, "window {} px, {} expected", xb - xa, want);
+    }
+    // a 250x window is a thin line in the overview: drawn at least as a visible bar
+    let mut u = zoomed_demo(50e-3, 200e-6, 0.0);
+    shot(&mut u, "zoom-thin-window");
+}
+
+#[test]
+fn center_trigger_puts_t_in_the_middle_of_the_zoom_window() {
+    for (main, zoom) in [(500e-6, 200e-6), (50e-3, 200e-6)] {
+        let mut u = zoomed_demo(main, zoom, 0.439e-3);
+        assert!(u.studio_trigger_off_screen_for_test() || u.m.zdelay != 0.0);
+        let g = u.grid;
+        assert!((u.studio_x_of_time(0.0) - (g.x + g.w / 2)).abs() > 20, "T starts off centre");
+        u.studio_center_trigger();
+        assert_eq!(u.m.zdelay, 0.0);
+        assert!((u.studio_x_of_time(0.0) - (g.x + g.w / 2)).abs() <= 1, "T at {} of {}", u.studio_x_of_time(0.0), g.w);
+    }
+    // also when the main window was moved away from the trigger: the box can only follow the window
+    let mut u = zoomed_demo(500e-6, 200e-6, 0.0);
+    u.m.delay = 4e-3;
+    u.m.zdelay = 4e-3;
+    u.clamp_zoom();
+    u.studio_center_trigger();
+    assert_eq!(u.m.zdelay, 0.0);
+    let (pct, _) = u.zoom_box();
+    assert!((pct - 50.0).abs() < 0.5);
+}
+
+#[test]
+fn panning_the_zoom_never_changes_the_main_time_base() {
+    let mut u = zoomed_demo(500e-6, 200e-6, 0.0);
+    let (tscale, tfine, delay) = (u.m.tscale, u.m.tfine, u.m.delay);
+    let (o, z) = Ui::split_zoom(u.grid);
+    let same = |u: &Ui| (u.m.tscale, u.m.tfine, u.m.delay) == (tscale, tfine, delay);
+    // a drag in the zoom view pans the box
+    let zdelay = u.m.zdelay;
+    touch(&mut u, Phase::Down, z.x + 300, z.y + 100);
+    touch(&mut u, Phase::Move, z.x + 400, z.y + 100);
+    touch(&mut u, Phase::Move, z.x + 500, z.y + 100);
+    touch(&mut u, Phase::Up, z.x + 500, z.y + 100);
+    assert!(u.m.zdelay != zdelay, "the box moved");
+    assert!(same(&u), "a drag in the zoom view: main {} {}", u.m.tscale, u.m.delay);
+    // a drag of the box in the overview
+    let (xa, xb) = u.zoom_window_x(o);
+    let mid = (xa + xb) / 2;
+    let before = u.m.zdelay;
+    touch(&mut u, Phase::Down, mid, o.y + 20);
+    touch(&mut u, Phase::Move, mid + 40, o.y + 20);
+    touch(&mut u, Phase::Move, mid + 80, o.y + 20);
+    touch(&mut u, Phase::Up, mid + 80, o.y + 20);
+    assert!(u.m.zdelay != before, "the box moved in the overview");
+    assert!(same(&u), "a drag of the box in the overview");
+    // wheel: on the zoom view and on the overview, plain
+    for (x, y) in [(z.x + 200, z.y + 100), (o.x + 200, o.y + 40)] {
+        let zd = u.m.zdelay;
+        assert!(u.pointer_wheel(x, y, 2, false));
+        assert!(u.m.zdelay != zd, "the wheel moves the box");
+        assert!(same(&u), "wheel at {x},{y} must not touch the main time base");
+    }
+    // the toolbar buttons, the knobs: zoom width and pan
+    u.adjust(Item::ZDelay, 3);
+    assert!(same(&u));
+    u.adjust(Item::ZScale, -1);
+    assert!(same(&u), "the zoom width knob changes only the zoom");
+    // magnification in the zoom view (Ctrl-wheel) changes the zoom time/div only
+    let z0 = u.m.zscale;
+    assert!(u.pointer_wheel(z.x + 300, z.y + 100, 1, true));
+    assert!(u.m.zscale != z0 && same(&u));
+    // only a pinch / Ctrl-wheel on the overview changes the main time/div
+    assert!(u.pointer_wheel(o.x + 300, o.y + 40, 1, true));
+    assert!(u.m.tscale != tscale, "the overview magnifies the main time base");
+}
+
+#[test]
+fn drawing_a_box_turns_the_zoom_on_framed_to_it() {
+    let mut u = studio();
+    for _ in 0..8 { u.step(0.05); }
+    assert!(!u.m.zoom);
+    let g = u.grid;
+    u.arm_zoom_area();
+    touch(&mut u, Phase::Down, g.x + 400, g.y + 100);
+    touch(&mut u, Phase::Move, g.x + 500, g.y + 200);
+    touch(&mut u, Phase::Move, g.x + 600, g.y + 300);
+    touch(&mut u, Phase::Up, g.x + 600, g.y + 300);
+    assert!(u.m.zoom, "the box turned the zoom on");
+    let (tdiv, zdiv) = (u.m.time_per_div(), tscales()[u.m.zscale]);
+    assert!(zdiv < tdiv);
+}
+
+fn touch(u: &mut Ui, phase: Phase, x: i32, y: i32) {
+    u.handle(Ev::Touch { id: 0, phase, x, y });
+    for _ in 0..1 { u.step(0.01); }
 }

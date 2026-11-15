@@ -2029,8 +2029,14 @@ impl Ui {
             self.clamp_zoom();
         } else {
             let shift = steps as f32 * self.m.time_per_div() * 0.5;
-            self.m.delay -= shift;
-            if self.m.zoom { self.m.zdelay -= shift; self.clamp_zoom(); }
+            if self.m.layout == Layout::Studio && self.m.zoom {
+                // Studio: panning the overview moves the zoom box only; the main time base and delay stay
+                self.m.zdelay -= shift;
+                self.clamp_zoom();
+            } else {
+                self.m.delay -= shift;
+                if self.m.zoom { self.m.zdelay -= shift; self.clamp_zoom(); }
+            }
         }
         self.dirty_map = true;
         true
@@ -2126,6 +2132,31 @@ impl Ui {
     pub fn web_la_csv(&self) -> Result<String, String> {
         let la = self.last[0].as_ref().and_then(|r| r.la.as_ref()).filter(|_| self.m.la_on()).ok_or("No logic analyser record")?;
         Ok(crate::store::la_csv(la, &self.m.la.lines()))
+    }
+
+    /// The zoom window in the overview as the screen x of its two edges: its width is the overview's over the zoom
+    /// factor, its place the zoom delay against the main delay.
+    pub(super) fn zoom_window_x(&self, o: Rect) -> (i32, i32) {
+        let (tz, dz) = (tscales()[self.m.zscale], self.m.zdelay);
+        let ppx = o.w as f32 / HDIV;
+        let tdiv = self.m.time_per_div();
+        let xa = o.x + (o.w as f32 / 2.0 + ((dz - tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
+        let xb = o.x + (o.w as f32 / 2.0 + ((dz + tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
+        (xa, xb)
+    }
+
+    /// Where the zoom window is as a share of the record in the overview, 0 to 100 %, and its magnification.
+    pub(super) fn zoom_box(&self) -> (f32, f32) {
+        let tdiv = self.m.time_per_div();
+        let pct = 50.0 + (self.m.zdelay - self.m.delay) / (tdiv * HDIV) * 100.0;
+        (pct, tdiv / tscales()[self.m.zscale])
+    }
+
+    /// The zoom asks for more resolution than the record has: a sample is more than 3 px from the next. Studio then draws
+    /// the samples there are as dots, not lines through them (a 1 kHz square wave must not turn into ramps).
+    pub(super) fn zoom_sparse(&self, dt: f64) -> bool {
+        self.m.layout == Layout::Studio && self.m.zoom && dt > 0.0
+            && (self.phz.w.max(1) as f64 / HDIV as f64) * dt / tscales()[self.m.zscale] as f64 > 3.0
     }
 
     /// Keeps the zoom window inside the main window and not slower than the main time base.
@@ -2569,8 +2600,11 @@ impl Ui {
                         }
                         let mainv = (self.m.time_per_div(), self.m.delay);
                         let zv = (tscales()[self.m.zscale], self.m.zdelay);
-                        let zoom_model = self.zoom_display_model();
+                        let mut zoom_model = self.zoom_display_model();
                         let detail = self.captured_record_view(&rec, zv);
+                        let sparse = self.zoom_sparse(detail.as_deref().map_or(rec.dt, |d| d.dt));
+                        zoom_model.dots |= sparse;
+                        self.phz.fat = sparse;
                         let t1 = std::time::Instant::now();
                         let zw = self.z_weights(&rec);
                         for c in 0..NCH {
@@ -2661,8 +2695,11 @@ impl Ui {
             self.phz.clear();
             let mainv = (self.m.time_per_div(), self.m.delay);
             let zv = (tscales()[self.m.zscale], self.m.zdelay);
-            let zoom_model = self.zoom_display_model();
+            let mut zoom_model = self.zoom_display_model();
             let detail = self.captured_view(zv);
+            let sparse = self.zoom_sparse(detail.as_deref().map_or_else(|| self.last[0].as_ref().map_or(1.0, |r| r.dt), |d| d.dt));
+            zoom_model.dots |= sparse;
+            self.phz.fat = sparse;
             if let Some(rec) = self.last[0].clone() {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
@@ -2911,11 +2948,7 @@ impl Ui {
             self.traces(l, o, false, true);
             self.draw_refs_at(l.over(), o, (self.m.time_per_div(), self.m.delay), true);
             // zoom window in the overview: dim the rest, frame the window
-            let (tz, dz) = self.view();
-            let ppx = o.w as f32 / HDIV;
-            let tdiv = self.m.time_per_div();
-            let xa = o.x + (o.w as f32 / 2.0 + ((dz - tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
-            let xb = o.x + (o.w as f32 / 2.0 + ((dz + tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
+            let (xa, xb) = self.zoom_window_x(o);
             let cv = l.over();
             cv.set_clip(o);
             cv.blend(Rect::new(o.x, o.y, (xa - o.x).max(0), o.h), BG, 170);
@@ -3208,6 +3241,20 @@ impl Ui {
         let span = (HDIV / 2.0 * tdiv).abs() + delay.abs();
         // a narrow window (side by side) labels every second division, the centre always
         let every = if a.w < 700 { 2 } else { 1 };
+        if self.m.layout == Layout::Studio {
+            // round times at any delay (a zoom window sits where it is put): the labels are whole steps from the
+            // trigger, not the window's centre plus whole divisions
+            let step = tdiv as f64 * every as f64;
+            for (k, t) in studio_time_ticks(tdiv, delay, every) {
+                let x = a.x + (((t - delay as f64) / tdiv as f64 + HDIV as f64 / 2.0) * a.w as f64 / HDIV as f64).round() as i32;
+                let zero = k == 0;
+                let s = if zero { "0 s".to_string() } else { axis_label(t as f32, step as f32, 0.0, span, "s") };
+                let w = f.s.width(&s);
+                let tx = (x - w / 2).clamp(a.x + 6, a.x + a.w - 6 - w);
+                backed_text(cv, &f.s, tx, a.y + a.h - 6, &s, if zero { ACCENT } else { AXIS_TEXT });
+            }
+            return;
+        }
         for i in 0..=HDIV as i32 {
             if (i - HDIV as i32 / 2).rem_euclid(every) != 0 {
                 continue;
@@ -9687,6 +9734,16 @@ fn holdoff_step(h: f32, d: i32) -> f32 {
     steps.retain(|&s| s <= 10.0);
     let i = steps.iter().position(|&s| s >= h * 0.999).unwrap_or(steps.len() - 1) as i32;
     steps[(i + d).clamp(0, steps.len() as i32 - 1) as usize]
+}
+
+/// The labelled times of the time axis, as (whole steps from the trigger, seconds): the window is `delay` +- 5 divisions
+/// of `tdiv`; a step is `every` divisions. Whole steps, so a window put anywhere has round labels.
+fn studio_time_ticks(tdiv: f32, delay: f32, every: i32) -> Vec<(i64, f64)> {
+    let step = tdiv as f64 * every as f64;
+    let half = tdiv as f64 * HDIV as f64 / 2.0;
+    let (left, right) = (delay as f64 - half, delay as f64 + half);
+    let first = (left / step - 1e-6).ceil() as i64;
+    (first..).map(|k| (k, k as f64 * step)).take_while(|&(_, t)| t <= right + step * 1e-6).collect()
 }
 
 /// Axis label with the SI prefix of the axis `span` and as many decimals as `step` and `base` (offset / delay)
