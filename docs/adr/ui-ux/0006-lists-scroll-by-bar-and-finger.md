@@ -14,8 +14,8 @@ long a list is or where one is in it, and on a touch screen a list is expected t
 ## Decision
 
 Every list that can be longer than its window has a scroll bar beside it and follows a finger drawn over it. The thumb
-can be dragged; a press on the track jumps there. A press that does not move (less than 10 px along the list) is still a tap on what
-is under it. There are no Up / Down buttons.
+can be dragged; a press on the track jumps there. A press that does not move (less than 10 px along the list) is still a
+tap on what is under it. There are no Up / Down buttons.
 
 A list's position is limited to its valid range whenever it is read, not only when it is changed.
 

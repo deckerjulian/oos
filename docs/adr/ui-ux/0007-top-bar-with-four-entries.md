@@ -18,6 +18,10 @@ Reference menu, where the loaded file is used.
 A function gets a place in the top bar only when it is used all the time while measuring; a function that belongs to
 one menu is a row of that menu.
 
+While the screen shows a recording instead of the acquisition (record mode: offline waveforms, a taken-over record,
+SIM), a Live button stands before the four; it is the way back to the acquisition and goes away with it. (Added
+2026-11-15: the button was there before this record, `Ui::top_buttons`, and the record had missed it.)
+
 ## Consequences
 
 - The bar keeps its room for what it shows all the time.
@@ -26,4 +30,4 @@ one menu is a row of that menu.
 
 ## References
 
-`ui/src/ui.rs` (`main_groups`, the top bar), CHANGELOG ("Top bar").
+`ui/src/ui.rs` (`main_groups`, `top_buttons`), CHANGELOG ("Top bar").
