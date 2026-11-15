@@ -94,3 +94,18 @@ fn context_menu_stays_inside_the_plot_and_marks_the_trace_mode_in_force() {
     u.workspace.stacked = true;
     assert!(ink(&mut u, overlay_row) == 0 && ink(&mut u, stacked_row) > 0, "check on Stacked");
 }
+
+#[test]
+fn a_floating_measurement_card_never_covers_the_zoom_bar_or_the_corner_buttons() {
+    let mut u = fresh();
+    u.set_zoom(true);
+    for place in [None, Some((W - 220, TOP.h + 32)), Some((600, 60)), Some((W - 40, 140))] {
+        u.workspace_action(Action::MeasureFloat);
+        if place.is_some() { u.workspace.measure_float = place; }
+        let (head, body) = u.results_rects().unwrap();
+        let card = Rect::new(head.x, head.y, head.w, head.h + body.h);
+        let hits = |r: Rect| card.x < r.right() && r.x < card.right() && card.y < r.bottom() && r.y < card.bottom();
+        assert!(!hits(u.full_btn().0) && !hits(u.zoom_btn().0), "{place:?} covers a corner button: {card:?}");
+        assert!(!hits(u.zoom_readout()), "{place:?} covers the zoom bar: {card:?}");
+    }
+}

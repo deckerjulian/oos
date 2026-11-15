@@ -4564,7 +4564,14 @@ impl Ui {
             Some(StripDock::Under) => ((sw - rw) / 2, bottom - panel_h - 4),
             None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32),
         };
-        let (x, y) = self.workspace.measure_float.unwrap_or(default);
+        let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
+        // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
+        let floating = self.workspace.measure_dock.is_none();
+        for r in if floating { vec![self.full_btn().0, self.zoom_btn().0] } else { Vec::new() } {
+            let r = Rect::new(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
+            if x + rw > r.x && x < r.right() && y < r.bottom() && y + panel_h > r.y { x = (r.x - rw).max(0); }
+        }
+        if floating && self.m.zoom && !self.view_on() { y = y.max(self.zoom_readout().bottom() + 2); }
         // Expanding a collapsed panel or changing its page must never put the
         // body and navigation beyond the touchable workspace.
         let x = x.clamp(0, sw - rw);
