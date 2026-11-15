@@ -138,7 +138,7 @@ impl Ui {
     }
 
     pub(super) fn paged_strip(&self) -> bool {
-        if self.results_panel() || self.results_pane_on() { return false; }
+        if self.results_panel() || self.results_pane_on() || self.studio_owns_measurements() { return false; }
         match self.m.strip_dock {
             StripDock::Left | StripDock::Right => {
                 let room = self.strip_column().h - 42;

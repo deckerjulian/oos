@@ -1526,7 +1526,7 @@ impl Ui {
 
     /// Measurement results in a panel on the right instead of the strip under the grid.
     fn results_panel(&self) -> bool {
-        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty())
+        self.stats_on && !self.studio_owns_measurements() && !(self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty())
     }
 
     /// Channels with measurements, in the order of their first measurement (one strip row each).
@@ -1553,6 +1553,8 @@ impl Ui {
 
     fn strip_rows(&self) -> i32 {
         let dvm = (self.m.dvm_on || self.m.cnt_on) as i32;
+        // Studio shows measurements and cursor read-outs as badges and in its panel
+        if self.studio_owns_measurements() { return dvm; }
         if self.results_pane_on() {
             return dvm;
         }
@@ -1658,7 +1660,7 @@ impl Ui {
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
     fn plot_bottom(&self) -> i32 {
-        if self.full_on() { self.scr.h } else { self.frame().bottom.y }
+        if self.full_on() { self.scr.h } else { self.frame().bottom.y - self.studio_row_h() }
     }
 
     /// Waveform windows in use: one while zoom, XY or an analysis view has the plot.
@@ -2998,6 +3000,7 @@ impl Ui {
         self.draw_toast(cv);
         self.draw_overlay(cv);
         self.workspace_draw(cv);
+        self.draw_studio_floating(cv);
         self.frames += 1;
     }
 
@@ -4419,7 +4422,7 @@ impl Ui {
     /// One line of the strip when it is a column: channel pill on the first line of a group.
     fn strip_side_lines(&self) -> Vec<StripLine> {
         let mut lines = Vec::new();
-        let in_pane = self.results_pane_on();
+        let in_pane = self.results_pane_on() || self.studio_owns_measurements();
         if !self.results_panel() && !in_pane {
             let rows = self.meas_rows();
             for id in self.meas_groups() {
@@ -4487,7 +4490,7 @@ impl Ui {
             cv.round(r, 3, col, 255);
             cv.text_in(&f.sb, r, 1, label, DARK_TEXT);
         };
-        let in_pane = self.results_pane_on();
+        let in_pane = self.results_pane_on() || self.studio_owns_measurements();
         if !self.results_panel() && !in_pane {
             let rows = self.meas_rows();
             for id in self.meas_groups() {

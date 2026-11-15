@@ -5,10 +5,40 @@
 //! `tools`, zoom: `Ui::split_zoom`); Studio only arranges and re-skins it.
 use super::*;
 
+/// One measurement as a badge or a panel row remembers it: by what it measures, so it survives other measurements
+/// being added or removed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum MeasKey {
+    One(Meas, WaveId),
+    Pair(usize, WaveId, WaveId),
+    Cat(u16, WaveId, WaveId, WaveId, WaveId),
+}
+
+/// How the measurements share the screen (View menu).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(super) enum StudioView {
+    /// the lanes and the pinned badges only
+    #[default]
+    Waveform,
+    /// the panel at the right of the lanes
+    Docked,
+    /// the panel over the lanes
+    Floating,
+    /// the table of all measurements instead of the lanes
+    Only,
+}
+
 #[derive(Default)]
 pub(super) struct Studio {
     /// the layout was just chosen: the lanes are stacked at the next frame (`studio_sync`)
     pub enter: bool,
+    /// the measurements shown as badges; None until one is pinned or unpinned: the first three
+    pub pinned: Option<Vec<MeasKey>>,
+    /// the badge row is hidden (eye button, View > Show pinned badges)
+    pub hide_badges: bool,
+    /// the badge whose action popup is open
+    pub popup: Option<MeasKey>,
+    pub view: StudioView,
 }
 
 /// The rectangles of the Studio top bar.
@@ -223,6 +253,7 @@ impl Ui {
         let f = self.fonts();
         let bottom = self.frame().bottom;
         cv.fill(bottom, BAR);
+        self.draw_studio_badges(cv);
         cv.hline(bottom.x, bottom.right() - 1, bottom.y, LINE);
         let b = self.studio_bottom();
         let root = if self.menu_open { Some(self.menu_root()) } else { None };
@@ -320,6 +351,8 @@ impl Ui {
         self.studio_sync();
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
         if self.menu_open && self.dlg_layout().is_some_and(|d| d.r.contains(x, y)) { return false; }
+        if self.studio_popup_tap(x, y) { return true; }
+        if self.studio_badge_tap(x, y) { return true; }
         if y >= self.frame().bottom.y {
             self.studio_bottom_tap(x, y);
             return true;
@@ -425,5 +458,239 @@ impl Ui {
             cv.triangle([(r.right() + 1, r.y + r.h / 2), (r.right() - 4, r.y + 2), (r.right() - 4, r.bottom() - 2)], AMBER);
         }
         cv.no_clip();
+    }
+}
+
+/// Height of the row of pinned badges under the lanes.
+const ROW_H: i32 = 34;
+/// Width of the action popup of a badge, and the height of its rows.
+const POPUP_W: i32 = 300;
+const POPUP_ROW: i32 = 34;
+
+fn icon_pin(cv: &mut Canvas, x: i32, cy: i32, filled: bool, c: Rgb) {
+    // a round head on a needle that leans to the left
+    cv.line(x + 6, cy - 1, x + 1, cy + 6, c);
+    cv.circle(x + 8, cy - 3, 3, c);
+    if filled {
+        cv.fill(Rect::new(x + 4, cy - 1, 8, 2), c);
+    } else {
+        cv.circle(x + 8, cy - 3, 1, BTN);
+        cv.hline(x + 4, x + 11, cy - 1, c);
+    }
+}
+
+fn icon_eye(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
+    cv.round_outline(Rect::new(cx - 8, cy - 5, 17, 11), 5, c);
+    cv.circle(cx, cy, 2, c);
+}
+
+impl Ui {
+    /// The measurements in the order of the list: single, pair, catalogue.
+    pub(super) fn studio_keys(&self) -> Vec<MeasKey> {
+        let m = &self.m;
+        m.meas.iter().map(|&(k, id)| MeasKey::One(k, id))
+            .chain(m.meas2.iter().map(|&(k, a, b)| MeasKey::Pair(k, a, b)))
+            .chain(m.cat.iter().map(|&(i, a, b, c, d)| MeasKey::Cat(i, a, b, c, d)))
+            .collect()
+    }
+
+    /// The measurements shown as badges: those pinned, or the first three until the user pins one.
+    pub(super) fn studio_pinned(&self) -> Vec<MeasKey> {
+        let keys = self.studio_keys();
+        match &self.studio.pinned {
+            Some(pinned) => keys.into_iter().filter(|k| pinned.contains(k)).collect(),
+            None => keys.into_iter().take(3).collect(),
+        }
+    }
+
+    pub(super) fn studio_is_pinned(&self, key: MeasKey) -> bool {
+        self.studio_pinned().contains(&key)
+    }
+
+    pub(super) fn studio_set_pin(&mut self, key: MeasKey, on: bool) {
+        let mut pinned = self.studio_pinned();
+        pinned.retain(|k| *k != key);
+        if on { pinned.push(key); }
+        self.studio.pinned = Some(pinned);
+        self.relayout();
+    }
+
+    /// Index of a measurement in the list (`meas_rows`).
+    pub(super) fn studio_index(&self, key: MeasKey) -> Option<usize> {
+        self.studio_keys().iter().position(|k| *k == key)
+    }
+
+    pub(super) fn studio_owns_measurements(&self) -> bool {
+        self.m.layout == Layout::Studio
+    }
+
+    /// Whether the row under the lanes is there: pinned measurements, or the cursor read-out, unless hidden.
+    pub(super) fn studio_badges_visible(&self) -> bool {
+        self.m.layout == Layout::Studio && !self.studio.hide_badges && self.studio.view != StudioView::Only
+            && (!self.studio_pinned().is_empty() || self.m.cursor != CursorMode::Off)
+    }
+
+    /// Height the badge row takes from the lanes.
+    pub(super) fn studio_row_h(&self) -> i32 {
+        if self.studio_badges_visible() { ROW_H } else { 0 }
+    }
+
+    /// The badge row: under the lanes, as wide as they are.
+    pub(super) fn studio_row(&self) -> Rect {
+        let (x, w) = self.plot_span();
+        Rect::new(x, self.frame().bottom.y - ROW_H, w, ROW_H)
+    }
+
+    /// The eye button at the right end of the row.
+    pub(super) fn studio_eye(&self) -> Rect {
+        let r = self.studio_row();
+        Rect::new(r.right() - 38, r.y + 3, 34, 28)
+    }
+
+    /// The row of badges as (measurement, rectangle), as many as fit.
+    pub(super) fn studio_badges(&self) -> Vec<(MeasKey, Rect)> {
+        let f = self.fonts();
+        let row = self.studio_row();
+        let rows = self.meas_rows();
+        let limit = self.studio_eye().x - 6;
+        let mut x = row.x + 4;
+        let mut out = Vec::new();
+        for key in self.studio_pinned() {
+            let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)) else { continue };
+            let w = 14 + 6 + (f.sb.width("CH4") + 10) + 6 + f.s.width(&r.name) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
+            if x + w > limit { break; }
+            out.push((key, Rect::new(x, row.y + 3, w, 28)));
+            x += w + 5;
+        }
+        out
+    }
+
+    /// What the cursors read, as one chip after the badges: the differences only.
+    fn studio_cursor_chip(&self, after: i32) -> Option<(Rect, String)> {
+        if self.m.cursor == CursorMode::Off { return None; }
+        let text = self.cursor_values().into_iter().filter(|(l, _)| l.contains('\u{394}'))
+            .map(|(l, v)| format!("{l} {v}")).collect::<Vec<_>>().join("   ");
+        if text.is_empty() { return None; }
+        let w = 30 + self.fonts().sb.width(&text) + 10;
+        let row = self.studio_row();
+        (after + w <= self.studio_eye().x - 6).then(|| (Rect::new(after, row.y + 3, w, 28), text))
+    }
+
+    pub(super) fn draw_studio_badges(&self, cv: &mut Canvas) {
+        if !self.studio_badges_visible() { return; }
+        let f = self.fonts();
+        let row = self.studio_row();
+        cv.fill(row, BG);
+        let rows = self.meas_rows();
+        let mut end = row.x + 4;
+        for (key, r) in self.studio_badges() {
+            let Some(m) = self.studio_index(key).and_then(|i| rows.get(i)) else { continue };
+            let col = self.wave_color(m.src);
+            chip(cv, r, BTN, if self.studio.popup == Some(key) { ACCENT } else { BTN_BORDER });
+            let cy = r.y + r.h / 2;
+            icon_pin(cv, r.x + 8, cy, true, TEXT);
+            let tag = Rect::new(r.x + 28, r.y + 5, f.sb.width("CH4") + 10, r.h - 10);
+            cv.round(tag, 4, col, 255);
+            cv.text_in(&f.sb, tag, 1, &self.wave_name(m.src), DARK_TEXT);
+            let x = cv.text(&f.s, tag.right() + 6, cy + 4, &m.name, DIM) + 8;
+            cv.set_clip(Rect::new(x, r.y, (r.right() - x - 4).max(1), r.h));
+            cv.text(&f.sb, x, cy + 4, &m.text(), TEXT);
+            cv.no_clip();
+            end = r.right() + 5;
+        }
+        if let Some((r, text)) = self.studio_cursor_chip(end) {
+            chip(cv, r, BAR, BTN_BORDER);
+            icon_cursors(cv, r.x + 9, r.y + r.h / 2, BAND);
+            cv.text_in(&f.sb, Rect::new(r.x + 28, r.y, r.w - 30, r.h), 0, &text, TEXT);
+        }
+        let eye = self.studio_eye();
+        cv.vline(eye.x - 3, row.y + 6, row.bottom() - 6, LINE);
+        icon_eye(cv, eye.x + eye.w / 2, eye.y + eye.h / 2, TEXT);
+    }
+
+    /// The popup of a badge: where it is.
+    pub(super) fn studio_popup_rect(&self) -> Option<Rect> {
+        let key = self.studio.popup?;
+        let (_, anchor) = self.studio_badges().into_iter().find(|(k, _)| *k == key)?;
+        let h = 40 + 3 * POPUP_ROW + 10 + POPUP_ROW + 6;
+        let x = (anchor.x + anchor.w / 2 - POPUP_W / 2).clamp(4, self.scr.w - POPUP_W - 4);
+        Some(Rect::new(x, anchor.y - h - 8, POPUP_W, h))
+    }
+
+    /// Row `i` of the popup: 0 Configure, 1 Unpin, 2 Float, 3 Remove.
+    pub(super) fn studio_popup_row(p: Rect, i: i32) -> Rect {
+        let y = p.y + 40 + i * POPUP_ROW + if i == 3 { 10 } else { 0 };
+        Rect::new(p.x + 4, y, p.w - 8, POPUP_ROW)
+    }
+
+    /// What floats over the lanes and the bars: the badge popup.
+    pub(super) fn draw_studio_floating(&self, cv: &mut Canvas) {
+        let (Some(key), Some(p)) = (self.studio.popup, self.studio_popup_rect()) else { return };
+        let f = self.fonts();
+        let rows = self.meas_rows();
+        let Some(m) = self.studio_index(key).and_then(|i| rows.get(i)) else { return };
+        cv.round(p, 8, BTN_BORDER, 255);
+        cv.round(p.inset(1), 7, PANEL_BG, 255);
+        if let Some((_, a)) = self.studio_badges().into_iter().find(|(k, _)| *k == key) {
+            let x = a.x + a.w / 2;
+            cv.triangle([(x - 7, p.bottom() - 1), (x + 7, p.bottom() - 1), (x, p.bottom() + 6)], BTN_BORDER);
+            cv.triangle([(x - 6, p.bottom() - 2), (x + 6, p.bottom() - 2), (x, p.bottom() + 4)], PANEL_BG);
+        }
+        let tag = Rect::new(p.x + 10, p.y + 9, f.sb.width("CH4") + 10, 22);
+        cv.round(tag, 4, self.wave_color(m.src), 255);
+        cv.text_in(&f.sb, tag, 1, &self.wave_name(m.src), DARK_TEXT);
+        let x = cv.text(&f.mb, tag.right() + 8, p.y + 25, &m.name, TEXT) + 10;
+        cv.text(&f.mb, x, p.y + 25, &m.text(), TEXT);
+        let (cx, cy) = (p.right() - 24, p.y + 20);
+        cv.line(cx - 5, cy - 5, cx + 5, cy + 5, TEXT);
+        cv.line(cx - 5, cy + 5, cx + 5, cy - 5, TEXT);
+        cv.hline(p.x + 8, p.right() - 9, p.y + 38, LINE);
+        for (i, (label, col)) in [("Configure...", TEXT), ("Unpin from waveform", TEXT), ("Move to floating panel", TEXT), ("Remove measurement", RED)].into_iter().enumerate() {
+            let r = Self::studio_popup_row(p, i as i32);
+            if i == 3 { cv.hline(p.x + 8, p.right() - 9, r.y - 5, LINE); }
+            let (ix, iy) = (r.x + 18, r.y + r.h / 2);
+            match i {
+                0 => icon_gear(cv, ix, iy, col, PANEL_BG),
+                1 => { icon_pin(cv, ix - 6, iy, false, col); cv.line(ix - 8, iy + 8, ix + 8, iy - 8, col); }
+                2 => { cv.round_outline(Rect::new(ix - 8, iy - 6, 14, 12), 2, col); cv.line(ix, iy, ix + 8, iy - 8, col); }
+                _ => { cv.round_outline(Rect::new(ix - 7, iy - 5, 13, 13), 2, col); cv.hline(ix - 9, ix + 8, iy - 7, col); }
+            }
+            cv.text_in(&f.mb, Rect::new(r.x + 42, r.y, r.w - 44, r.h), 0, label, col);
+        }
+    }
+
+    /// A tap while a badge popup is open: it either does one of its actions or closes it. Always taken.
+    fn studio_popup_tap(&mut self, x: i32, y: i32) -> bool {
+        let Some(key) = self.studio.popup else { return false };
+        let Some(p) = self.studio_popup_rect() else { self.studio.popup = None; return false };
+        self.studio.popup = None;
+        if !p.contains(x, y) { return true; }
+        let hit = (0..4).find(|&i| Self::studio_popup_row(p, i).contains(x, y));
+        let Some(index) = self.studio_index(key) else { return true };
+        match hit {
+            Some(0) => if index < self.m.meas.len() { self.open_meas_cfg(index) } else { self.open_menu(MenuId::Measure) },
+            Some(1) => self.studio_set_pin(key, false),
+            Some(2) => { self.studio_set_pin(key, false); self.studio.view = StudioView::Floating; self.relayout(); }
+            Some(3) => {
+                self.studio_set_pin(key, false);
+                self.remove_measurement(index);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// A tap in the badge row: the eye hides it, a badge opens its popup.
+    fn studio_badge_tap(&mut self, x: i32, y: i32) -> bool {
+        if !self.studio_badges_visible() || !self.studio_row().contains(x, y) { return false; }
+        if self.studio_eye().contains(x, y) {
+            self.studio.hide_badges = true;
+            self.relayout();
+            return true;
+        }
+        if let Some((key, _)) = self.studio_badges().into_iter().find(|(_, r)| r.contains(x, y)) {
+            self.studio.popup = Some(key);
+        }
+        true
     }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Display > Layout: the stock OOS bars (Default), the compact OOS-plus bars (Minimal) and Studio.
+use super::studio::{MeasKey, StudioView};
 use super::*;
 
 fn shown(layout: Layout) -> (Ui, Canvas) {
@@ -202,4 +203,90 @@ fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
     u.m.layout = Layout::Studio;
     u.m.zoom = true;
     assert_eq!(u.studio_head_h(), 0, "the zoom view brings its own toolbar");
+}
+
+fn badges() -> Ui {
+    let mut u = studio();
+    u.m.meas.clear();
+    u.m.meas2.clear();
+    u.m.cat.clear();
+    u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(0)), (Meas::Vrms, WaveId::Ch(0)), (Meas::Rise, WaveId::Ch(0)),
+        (Meas::Freq, WaveId::Ch(1)), (Meas::Vpp, WaveId::Ch(1))];
+    u.studio.pinned = Some(vec![MeasKey::One(Meas::Freq, WaveId::Ch(0)), MeasKey::One(Meas::Vpp, WaveId::Ch(0)), MeasKey::One(Meas::Vpp, WaveId::Ch(1))]);
+    u.relayout();
+    u
+}
+
+#[test]
+fn studio_pinned_badges_sit_under_the_lanes_and_the_eye_hides_them() {
+    let mut u = badges();
+    shot(&mut u, "04-badges");
+    let row = u.studio_row();
+    assert_eq!(row.bottom(), u.frame().bottom.y);
+    assert!(u.grid.bottom() <= row.y, "the lanes end above the badges");
+    let list = u.studio_badges();
+    assert_eq!(list.len(), 3);
+    for (_, r) in &list { assert!(row.contains(r.x, r.y) && r.right() <= u.studio_eye().x, "badge inside the row"); }
+    // the row is paid for by the lanes: hiding the badges gives the height back (mock 02)
+    let with = u.grid.h;
+    let eye = u.studio_eye();
+    tap_in(&mut u, eye);
+    assert!(u.studio.hide_badges);
+    assert_eq!(u.studio_row_h(), 0);
+    assert!(u.grid.h > with);
+    shot(&mut u, "05-badges-hidden");
+}
+
+#[test]
+fn studio_badge_popup_configures_unpins_floats_and_removes() {
+    let mut u = badges();
+    let vpp = MeasKey::One(Meas::Vpp, WaveId::Ch(0));
+    let open = |u: &mut Ui, key: MeasKey| {
+        let r = u.studio_badges().into_iter().find(|(k, _)| *k == key).unwrap().1;
+        tap_in(u, r);
+        assert_eq!(u.studio.popup, Some(key));
+        u.studio_popup_rect().unwrap()
+    };
+    // a tap outside closes it and does nothing else
+    let p = open(&mut u, vpp);
+    shot(&mut u, "06-badge-actions");
+    u.tap(p.x + 2, p.y - 80);
+    assert!(u.studio.popup.is_none() && u.m.meas.len() == 6);
+    // Configure opens the measurement's own settings
+    let p = open(&mut u, vpp);
+    tap_in(&mut u, Ui::studio_popup_row(p, 0));
+    assert_eq!(u.meas_cfg, Some(1));
+    u.meas_cfg = None;
+    // Unpin leaves the measurement in the list
+    let p = open(&mut u, vpp);
+    tap_in(&mut u, Ui::studio_popup_row(p, 1));
+    assert!(!u.studio_is_pinned(vpp) && u.m.meas.contains(&(Meas::Vpp, WaveId::Ch(0))));
+    assert_eq!(u.studio_badges().len(), 2);
+    // Move to floating panel unpins and shows the panel over the lanes
+    let key = MeasKey::One(Meas::Freq, WaveId::Ch(0));
+    let p = open(&mut u, key);
+    tap_in(&mut u, Ui::studio_popup_row(p, 2));
+    assert!(!u.studio_is_pinned(key));
+    assert_eq!(u.studio.view, StudioView::Floating);
+    // Remove takes the measurement out of the list, and its pin with it
+    let key = MeasKey::One(Meas::Vpp, WaveId::Ch(1));
+    let p = open(&mut u, key);
+    tap_in(&mut u, Ui::studio_popup_row(p, 3));
+    assert!(!u.m.meas.contains(&(Meas::Vpp, WaveId::Ch(1))) && u.m.meas.len() == 5);
+    assert!(u.studio_pinned().is_empty());
+}
+
+#[test]
+fn studio_pins_survive_other_measurements_coming_and_going() {
+    let mut u = badges();
+    let freq = MeasKey::One(Meas::Freq, WaveId::Ch(1));
+    u.studio_set_pin(freq, true);
+    assert_eq!(u.studio_pinned().len(), 4);
+    u.remove_measurement(0);
+    assert_eq!(u.studio_pinned().len(), 3, "the pin of the removed one is gone, the others stay");
+    assert!(u.studio_is_pinned(freq));
+    // until a pin is chosen the first three measurements are the badges
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    assert_eq!(u.studio_pinned().len(), 3);
 }
