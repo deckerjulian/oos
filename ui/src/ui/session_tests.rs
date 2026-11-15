@@ -63,3 +63,28 @@ fn a_channel_key_in_sim_brings_back_the_live_setup() {
     assert_eq!(live_setup(&u), before, "not SIM's time base and measurements");
     assert_eq!((u.m.trigger_wave(), u.m.run), (WaveId::Ch(1), RunState::Run), "CH2 acquires");
 }
+
+#[test]
+fn take_over_and_live_bring_back_the_live_setup() {
+    // left by the top bar's Live, and by Record = With live in the Reference menu
+    for with_live in [false, true] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.ch[0].on = false;
+        u.m.ch[1].on = true;
+        u.m.active = 1;
+        u.m.meas = vec![(Meas::Freq, WaveId::Ch(1)), (Meas::Rise, WaveId::Ch(1))];
+        u.m.view = AView::Spectrum;
+        u.m.tscale = 10;
+        u.step(0.05);
+        u.refs[0] = Some(square_ref());
+        let before = (live_setup(&u), u.m.view);
+        // Reference menu > Record: Take over
+        u.adjust(Item::Offline, 1);
+        u.step(0.05);
+        assert!(u.record_mode());
+        if with_live { u.adjust(Item::Offline, -1); } else { u.return_to_live(); }
+        u.step(0.05);
+        assert!(!u.record_mode() && u.workflow_hold.is_none());
+        assert_eq!((live_setup(&u), u.m.view), before, "with live: {with_live}");
+    }
+}

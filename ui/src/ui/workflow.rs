@@ -567,12 +567,12 @@ impl Ui {
 
     pub fn return_to_live(&mut self) {
         if !self.leave_session() {
+            // a session entered without `remember_live` (OOS started with --offline): `set_offline` gave back the
+            // channels and the time base it held; an input shows and acquires, the measurements and the page stay
             for r in self.refs.iter_mut().flatten() { r.on = false; }
-            self.m.ch[0].on = true;
+            if !(0..n_ch()).any(|c| self.m.ch[c].on) { self.m.ch[0].on = true; }
             self.m.run = RunState::Run;
             self.m.zoom = false;
-            self.m.view = AView::Scope;
-            self.m.meas = Self::default_meas();
             self.m.floor_live_tdiv();
         }
         self.select_workspace_source(WaveId::Ch(self.m.active));

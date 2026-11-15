@@ -84,9 +84,14 @@ impl Ui {
 
     pub(super) fn apply_look(&mut self, look: RefLook) {
         match look {
-            RefLook::Live => self.set_offline(false),
+            // the live set-up from before the session comes back, as with the top bar's Live
+            RefLook::Live => {
+                self.leave_session();
+                self.relayout();
+            }
             RefLook::TakeOver => {
                 if !self.offline {
+                    self.remember_live();
                     self.set_offline(true);
                 }
                 self.look = RefLook::TakeOver;
@@ -96,6 +101,7 @@ impl Ui {
             }
             RefLook::Waves => {
                 if !self.offline {
+                    self.remember_live();
                     self.set_offline(true);
                 }
                 self.look = RefLook::Waves;
