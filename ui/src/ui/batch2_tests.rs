@@ -128,6 +128,38 @@ fn restarting_the_sim_reuses_its_own_slot() {
 }
 
 #[test]
+fn math_with_a_ref_source_fits_its_scale() {
+    let mut u = fresh(Layout::Default);
+    only_ch1(&mut u);
+    u.refs[0] = Some(sine_ref(0, 6000, 1e-6));
+    u.m.math = MathOp::Sub;
+    u.m.math_a = 0;
+    u.m.math_b = MATH_REF_BASE;
+    for _ in 0..3 { u.step(0.05); }
+    let scale = math_scales()[u.m.math_scale];
+    assert!(scale >= 0.1, "CH1 - R1 spans volts, scale {scale}");
+    let w = u.math_wave();
+    let (lo, hi) = w.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    assert!(((hi - lo) as f64) / scale < 12.0, "the trace fits the screen: {} divisions", (hi - lo) as f64 / scale);
+}
+
+#[test]
+fn math_scale_set_by_the_user_is_not_refitted_and_a_flat_result_keeps_a_sane_scale() {
+    let mut u = fresh(Layout::Default);
+    only_ch1(&mut u);
+    u.refs[0] = Some(sine_ref(0, 6000, 1e-6));
+    u.m.math = MathOp::Sub;
+    u.m.math_a = MATH_REF_BASE;
+    u.m.math_b = MATH_REF_BASE;
+    for _ in 0..3 { u.step(0.05); }
+    let flat = math_scales()[u.m.math_scale];
+    assert!(flat >= 5e-3, "R1 - R1 is flat but not shown at {flat} V/div");
+    u.m.math_scale = 20;
+    for _ in 0..3 { u.step(0.05); }
+    assert_eq!(u.m.math_scale, 20, "an explicit scale stands");
+}
+
+#[test]
 fn shots_refs_sim_axis_power() {
     for layout in [Layout::Default, Layout::Studio] {
         let name = format!("{layout:?}").to_lowercase();

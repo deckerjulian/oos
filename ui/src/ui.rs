@@ -2421,6 +2421,7 @@ impl Ui {
         self.cursor_follow_view();
         self.poll_reference_measurements();
         self.poll_catalog_measurements();
+        self.math_fit_tick();
         self.sim_poll();
         self.eye_auto_poll();
         self.relayout();
@@ -3630,21 +3631,30 @@ impl Ui {
 
     /// Picks the math scale so that the waveform spans about 6 divisions.
     fn math_autoscale(&mut self) {
-        if self.m.math == MathOp::Fft {
-            self.m.math_scale = 3;
-            self.m.math_offset = 0.0;
-            return;
+        self.math_fit(self.m.math_sel);
+    }
+
+    /// Fits the scale and offset of math channel `k` to its result. A result that is flat (a source minus itself) is
+    /// not stretched to nanovolts: the scale stays within 1/100 of the V/div of the sources it was made from.
+    fn math_fit(&mut self, k: usize) {
+        let mut c = self.m.math_ch(k);
+        if c.op == MathOp::Fft {
+            (c.scale, c.offset) = (3, 0.0);
+        } else {
+            let w = self.math_wave_of(k);
+            let (mn, mx) = w.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+            let sc = math_scales();
+            if mx < mn {
+                c.scale = sc.iter().position(|&x| x >= 1.0).unwrap_or(0);
+            } else {
+                let floor = if c.op.unit() == "V" { self.math_source_vpd(k) as f64 / 100.0 } else { 0.0 };
+                let want = ((mx - mn) as f64 / 6.0).max(1e-9).max(floor);
+                c.scale = sc.iter().position(|&x| x >= want).unwrap_or(sc.len() - 1);
+                c.offset = -((mx + mn) as f64 / 2.0 / sc[c.scale]) as f32;
+            }
         }
-        let w = self.math_wave();
-        let (mn, mx) = w.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-        let sc = math_scales();
-        if mx < mn {
-            self.m.math_scale = sc.iter().position(|&x| x >= 1.0).unwrap_or(0);
-            return;
-        }
-        let want = ((mx - mn) as f64 / 6.0).max(1e-9);
-        self.m.math_scale = sc.iter().position(|&x| x >= want).unwrap_or(sc.len() - 1);
-        self.m.math_offset = -((mx + mn) as f64 / 2.0 / sc[self.m.math_scale]) as f32;
+        if k == self.m.math_sel { (self.m.math_scale, self.m.math_offset) = (c.scale, c.offset); }
+        self.m.maths[k] = c;
     }
 
     fn draw_math(&self, cv: &mut Canvas) {
@@ -7546,6 +7556,7 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
                 if self.mask.is_none() {

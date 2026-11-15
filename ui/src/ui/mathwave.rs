@@ -17,6 +17,13 @@ struct Worker { tx: mpsc::SyncSender<Job>, rx: mpsc::Receiver<Answer>, busy: boo
 pub(super) struct State {
     cache: [Option<(u64, Result<Arc<Signal>, &'static str>)>; NMATH],
     worker: Option<Worker>,
+    /// (operation, source A, source B, scale) of each channel at the last tick, and which channels wait to be refitted
+    sig: [Option<(String, usize, usize, usize)>; NMATH],
+    fit_pending: [bool; NMATH],
+}
+impl State {
+    /// After a recall: the setup's own scales stand, the next tick starts tracking again.
+    pub(super) fn forget_fit(&mut self) { self.sig = Default::default(); self.fit_pending = [false; NMATH]; }
 }
 
 impl Worker {
@@ -83,6 +90,40 @@ fn compute_job(job: &Job) -> Result<Signal, &'static str> {
 }
 
 impl Ui {
+    /// A new operation or source refits that channel's scale and offset to its result (as Autoscale does), whichever
+    /// way it was set (menu, SCPI). A scale set in the same step wins; a channel whose record is not ready waits.
+    pub(super) fn math_fit_tick(&mut self) {
+        for k in 0..NMATH {
+            let c = self.m.math_ch(k);
+            let sig = (format!("{:?}", c.op), c.a, c.b, c.scale);
+            {
+                let mut st = self.math_state.borrow_mut();
+                match st.sig[k].replace(sig.clone()) {
+                    Some(old) if old.3 != sig.3 => st.fit_pending[k] = false,
+                    Some(old) if old.0 != sig.0 || old.1 != sig.1 || old.2 != sig.2 => st.fit_pending[k] = true,
+                    _ => {}
+                }
+                if !st.fit_pending[k] { continue; }
+                if c.op == MathOp::Off || c.op == MathOp::Fft { st.fit_pending[k] = false; continue; }
+            }
+            if matches!(self.math_record(k), Ok(Some(_))) {
+                self.math_fit(k);
+                let (scale, mut st) = (self.m.math_ch(k).scale, self.math_state.borrow_mut());
+                st.fit_pending[k] = false;
+                if let Some(s) = st.sig[k].as_mut() { s.3 = scale; }
+            }
+        }
+    }
+
+    /// The largest V/div among the sources math channel `k` reads (1 V/div when it reads none).
+    pub(super) fn math_source_vpd(&self, k: usize) -> f32 {
+        let ids = self.math_inputs(k).unwrap_or_default();
+        let v = ids.iter().filter_map(|&id| if id < NCH { Some(self.m.ch[id].volts_per_div()) }
+            else if id >= MATH_REF_BASE { self.refs.get(id - MATH_REF_BASE).and_then(|r| r.as_ref()).map(|r| r.vpd) } else { None })
+            .fold(0.0f32, f32::max);
+        if v > 0.0 { v } else { 1.0 }
+    }
+
     pub(super) fn math_source_ids(&self, below: usize) -> Vec<usize> {
         (0..n_ch()).chain(NCH..NCH + below.min(NMATH))
             .chain((0..NREF).filter(|&r| self.refs[r].is_some()).map(|r| MATH_REF_BASE + r)).collect()
