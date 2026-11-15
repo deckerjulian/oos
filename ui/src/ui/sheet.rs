@@ -64,6 +64,7 @@ enum Slot {
 /// What the sheet remembers between frames: the tab, the page of a long list, the filter of the add flow.
 #[derive(Default)]
 pub(super) struct SheetState {
+    pub add: super::addrail::AddUi,
     menu: Option<MenuId>,
     tab: usize,
     page_key: Option<(MenuId, Option<Item>)>,
@@ -103,16 +104,6 @@ pub(super) enum PanelKind {
     Sim,
 }
 
-pub(super) const PANEL_KINDS: [(PanelKind, &str, &str); 8] = [
-    (PanelKind::Measurements, "Measurements table", "All values, docked"),
-    (PanelKind::Decode, "Decode table", "Packets under the plot"),
-    (PanelKind::Spectrum, "Spectrum", "FFT under the plot"),
-    (PanelKind::Eye, "Eye", "Eye diagram beside the plot"),
-    (PanelKind::Histogram, "Histogram", "Vertical, in the plot"),
-    (PanelKind::Trend, "Trend", "Values over time"),
-    (PanelKind::Cursor, "Cursor readout", "Cursors on, with values"),
-    (PanelKind::Sim, "SIM", "Generated signals"),
-];
 
 /// Items whose list is a keypad or a file list with its own handling: the classic picker keeps them.
 fn keypad_pick(it: Item) -> bool {
@@ -120,7 +111,7 @@ fn keypad_pick(it: Item) -> bool {
 }
 
 fn destructive(it: Item) -> bool {
-    matches!(it, Item::RefClear | Item::MeasClear | Item::UpdateRollback | Item::Stock | Item::PowerAct | Item::ClearDisp | Item::DefaultAct)
+    matches!(it, Item::CurRemove | Item::SrchRemove | Item::RefClear | Item::MeasClear | Item::UpdateRollback | Item::Stock | Item::PowerAct | Item::ClearDisp | Item::DefaultAct)
 }
 
 impl Ui {
@@ -171,7 +162,8 @@ impl Ui {
                 AutoDeskew | ClearDeskew => Slot::Foot(0),
                 _ => Slot::Tab(0),
             }),
-            M::Cursor => (&["Cursor"], |_| Slot::Tab(0)),
+            M::Cursor => (&["Cursors", "Position"], |it| match it { CurType | CurSrc | CurSrcB | CurReadout | CurLink => Slot::Tab(0), CurRemove => Slot::Foot(0), _ => Slot::Tab(1) }),
+            M::Search => (&["Edge search"], |it| match it { SrchRemove => Slot::Foot(0), _ => Slot::Tab(0) }),
             M::Ref => (&["Reference", "Scale and files"], |it| match it {
                 RefSel | RefSrc | RefLabel | RefColor => Slot::Tab(0),
                 RefShow(_) => Slot::Skip,
@@ -397,14 +389,14 @@ impl Ui {
     }
 
     /// Chrome shared by every page: Back (always at the left), the close button, the header rectangle.
-    fn sheet_chrome(&self) -> (Rect, Option<Rect>, Rect) {
+    pub(super) fn sheet_chrome(&self) -> (Rect, Option<Rect>, Rect) {
         let r = self.sheet_rect();
         let back = self.sheet_has_back().then(|| Rect::new(r.x + 8, r.y + 4, 76, 44));
         (r, back, Rect::new(r.right() - 52, r.y + 4, 44, 44))
     }
 
     fn sheet_has_back(&self) -> bool {
-        self.parent.is_some() || self.menu == MenuId::Pick || !self.menu_history.is_empty()
+        (self.menu == MenuId::AddPanel && self.sheet.add.kind.is_some()) || self.parent.is_some() || self.menu == MenuId::Pick || !self.menu_history.is_empty()
     }
 
     /// Geometry of an items page.
@@ -452,7 +444,7 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ drawing
 
-    fn sheet_draw_chrome(&self, cv: &mut Canvas, title: &str) {
+    pub(super) fn sheet_draw_chrome(&self, cv: &mut Canvas, title: &str) {
         let f = self.fonts();
         let (r, back, close) = self.sheet_chrome();
         cv.round(r, 8, ACCENT, 255);
@@ -590,6 +582,10 @@ impl Ui {
 
     /// The Back button: to the page before, or out of a picker.
     fn sheet_back(&mut self) {
+        if self.menu == MenuId::AddPanel && self.sheet.add.kind.is_some() {
+            self.sheet.add.kind = None;
+            return;
+        }
         if self.menu == MenuId::Pick {
             return self.close_picker();
         }
@@ -977,17 +973,6 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ add panel
 
-    /// The tiles of the add-panel page: two columns of four.
-    pub(super) fn sheet_panel_tiles(&self) -> Vec<(PanelKind, Rect)> {
-        let (r, _, _) = self.sheet_chrome();
-        let w = (r.w - 2 * PAD - 8) / 2;
-        let h = ((r.h - SHEET_HEAD - 8 - 4 * 8) / 4).clamp(60, 92);
-        PANEL_KINDS.iter().enumerate().map(|(i, (k, _, _))| {
-            let (col, row) = ((i % 2) as i32, (i / 2) as i32);
-            (*k, Rect::new(r.x + PAD + col * (w + 8), r.y + SHEET_HEAD + 8 + row * (h + 8), w, h))
-        }).collect()
-    }
-
     /// Whether the panel of a tile is on the screen.
     pub(super) fn panel_shown(&self, k: PanelKind) -> bool {
         match k {
@@ -1002,33 +987,14 @@ impl Ui {
         }
     }
 
-    pub(super) fn draw_sheet_add_panel(&self, cv: &mut Canvas) {
-        let f = self.fonts();
-        self.sheet_draw_chrome(cv, "Add panel");
-        for ((_, name, sub), (k, r)) in PANEL_KINDS.iter().zip(self.sheet_panel_tiles()) {
-            let on = self.panel_shown(k);
-            btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
-            let font = if f.mb.width(name) + 16 <= r.w { &f.mb } else { &f.m };
-            cv.set_clip(r);
-            cv.text(font, r.x + 10, r.y + r.h / 2 - 2, name, TEXT);
-            cv.text(&f.s, r.x + 10, r.y + r.h / 2 + 20, if on { "On screen" } else { sub }, if on { ACCENT } else { DIM });
-            cv.no_clip();
-        }
-    }
-
-    pub(super) fn sheet_add_panel_tap(&mut self, x: i32, y: i32) -> bool {
-        for (k, r) in self.sheet_panel_tiles() {
-            if r.contains(x, y) {
-                self.studio_add_panel(k);
-                break;
-            }
-        }
-        true
-    }
-
     /// Opens a panel docked, with the pages that already exist; the sheet closes so the panel is seen.
     pub(super) fn studio_add_panel(&mut self, k: PanelKind) {
         self.close_menu();
+        self.studio_apply_panel(k);
+    }
+
+    /// The panel of a kind on the screen; the Add panel calls this and stays open.
+    pub(super) fn studio_apply_panel(&mut self, k: PanelKind) {
         match k {
             PanelKind::Measurements => self.studio_set_view(StudioView::Docked),
             PanelKind::Decode => {

@@ -102,11 +102,24 @@ pub(super) struct Studio {
     pub yzoom: Option<usize>,
     /// where the lanes drew their channel badges last frame
     pub lane_badges: std::cell::RefCell<Vec<(usize, Rect)>>,
+    /// Studio was the layout at the last frame: coming into it applies the entry rules (`studio_sync`)
+    pub was: bool,
+    /// Search 1 (Add > Search): its own source, level and slope
+    pub search: Option<super::addrail::SearchSpec>,
+    /// the event the next / previous buttons stand on
+    pub search_at: usize,
+    pub search_cache: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<f64>>)>>,
+    /// the cursor readouts go to the badge row, not onto the graticule
+    pub cur_badge: bool,
+    /// moving one cursor moves the other with it
+    pub cur_linked: bool,
 }
 
 /// The rectangles of the Studio top bar.
 #[derive(Clone, Copy)]
 pub(super) struct StudioTop {
+    /// the Add panel button
+    pub add: Rect,
     /// Live (the way back from a record session), zero wide in live mode
     pub badge: Rect,
     /// the run / trigger status pill
@@ -196,6 +209,10 @@ impl Ui {
     /// Start of a frame: the lanes draw their badges again, and a layout change made in the Display menu is applied.
     pub(super) fn studio_frame_start(&mut self) {
         self.studio.lane_badges.get_mut().clear();
+        // coming into Studio by any road (menu, recalled setup, restart) applies its entry rules: its bars show
+        let is = self.m.layout == Layout::Studio;
+        if is && !self.studio.was { self.studio.enter = true; }
+        self.studio.was = is;
         // the view is kept with the setup like the layout; a record view is not (it needs its session)
         let token = self.studio.view.token();
         if self.m.studio_view != token { self.m.studio_view = token.to_string(); }
@@ -302,8 +319,10 @@ impl Ui {
         let cursors = Rect::new(r - btn_w("Cursors"), CHIP_Y, btn_w("Cursors"), CHIP_H);
         r = cursors.x - 6;
         let measure = Rect::new(r - btn_w("Measure"), CHIP_Y, btn_w("Measure"), CHIP_H);
-        let acq = Rect::new(x, CHIP_Y, (measure.x - 10 - x).max(40), CHIP_H);
-        StudioTop { badge, run: pill, single, sim, acq, measure, cursors, view, gear }
+        r = measure.x - 6;
+        let add = Rect::new(r - btn_w("+ Add"), CHIP_Y, btn_w("+ Add"), CHIP_H);
+        let acq = Rect::new(x, CHIP_Y, (add.x - 10 - x).max(40), CHIP_H);
+        StudioTop { add, badge, run: pill, single, sim, acq, measure, cursors, view, gear }
     }
 
     /// Measure and Cursors as the top-bar buttons (`top_buttons`); the others are Studio's own.
@@ -350,7 +369,8 @@ impl Ui {
         // Measure, Cursors, View, settings: the Default button style
         let measuring = open(MenuId::Measure) || self.results_panel();
         let cursors = open(MenuId::Cursor) || self.m.cursor != CursorMode::Off;
-        for (r, label, on) in [(t.measure, "Measure", measuring), (t.cursors, "Cursors", cursors), (t.view, "View", self.studio.view_menu)] {
+        let adding = self.menu_open && matches!(self.menu, MenuId::AddPanel);
+        for (r, label, on) in [(t.add, "+ Add", adding), (t.measure, "Measure", measuring), (t.cursors, "Cursors", cursors), (t.view, "View", self.studio.view_menu)] {
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, label, if on { ACCENT } else { TEXT });
         }
@@ -627,10 +647,12 @@ impl Ui {
             self.studio_set_view(StudioView::Sim);
         } else if hit(t.acq) {
             self.toggle_menu(if self.record_mode() { MenuId::Ref } else { MenuId::Acquire });
+        } else if hit(t.add) {
+            if self.menu_open && self.menu == MenuId::AddPanel { self.close_menu(); } else { self.open_menu(MenuId::AddPanel); self.sheet.add.kind = None; }
         } else if hit(t.measure) {
             self.open_meas_list();
         } else if hit(t.cursors) {
-            self.toggle_menu(MenuId::Cursor);
+            self.studio_cursors_tap();
         } else if hit(t.view) {
             if self.menu_open { self.close_menu(); }
             self.studio.popup = None;
@@ -826,7 +848,7 @@ impl Ui {
     /// Whether the row under the lanes is there: pinned measurements, or the cursor read-out, unless hidden.
     pub(super) fn studio_badges_visible(&self) -> bool {
         self.m.layout == Layout::Studio && !self.studio.hide_badges && self.studio.view != StudioView::Only
-            && (!self.studio_pinned().is_empty() || self.m.cursor != CursorMode::Off)
+            && (!self.studio_pinned().is_empty() || self.m.cursor != CursorMode::Off || self.studio.search.is_some())
     }
 
     /// Height the badge row takes from the lanes.
@@ -876,7 +898,7 @@ impl Ui {
         let row = self.studio_row();
         let rows = self.meas_rows();
         let limit = self.studio_row_limit();
-        let mut x = row.x + 4;
+        let mut x = row.x + 4 + self.studio_search_w();
         let mut out = Vec::new();
         for key in self.studio_pinned() {
             let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
@@ -889,9 +911,10 @@ impl Ui {
     }
 
     /// What the cursors read, as one chip after the badges: the differences only.
-    fn studio_cursor_chip(&self, after: i32) -> Option<(Rect, String)> {
+    pub(super) fn studio_cursor_chip(&self, after: i32) -> Option<(Rect, String)> {
         if self.m.cursor == CursorMode::Off { return None; }
-        let text = self.cursor_values().into_iter().filter(|(l, _)| l.contains('\u{394}'))
+        let badge = self.studio.cur_badge;
+        let text = self.cursor_values().into_iter().filter(|(l, _)| badge || l.contains('\u{394}'))
             .map(|(l, v)| format!("{l} {v}")).collect::<Vec<_>>().join("   ");
         if text.is_empty() { return None; }
         let w = 30 + self.fonts().sb.width(&text) + 10;
@@ -905,7 +928,8 @@ impl Ui {
         let row = self.studio_row();
         cv.fill(row, BG);
         let rows = self.meas_rows();
-        let mut end = row.x + 4;
+        self.draw_studio_search_chip(cv);
+        let mut end = row.x + 4 + self.studio_search_w();
         for (key, r) in self.studio_badges() {
             let Some(m) = self.studio_index(key).and_then(|i| rows.get(i)) else { continue };
             let col = self.wave_color(m.src);
@@ -1018,6 +1042,7 @@ impl Ui {
     /// A tap in the badge row: the eye hides it, a badge opens its popup.
     fn studio_badge_tap(&mut self, x: i32, y: i32) -> bool {
         if !self.studio_badges_visible() || !self.studio_row().contains(x, y) { return false; }
+        if self.studio_search_chip_tap(x, y) { return true; }
         if self.studio_eye().contains(x, y) {
             self.studio.hide_badges = true;
             self.relayout();
@@ -1341,7 +1366,12 @@ impl Ui {
                 let (mut x, y) = self.studio.panel.at.unwrap_or((g.right() - self.studio_panel_w() - 8, g.y + 6));
                 // below the head row (T marker, cursor tags), and never over the full-screen and zoom buttons
                 let top = g.y.max(body.y);
-                let y = y.clamp(top, (bottom - h).max(top));
+                let mut y = y.clamp(top, (bottom - h).max(top));
+                // and never over the zoom bar: the panel goes under it
+                if self.studio_zoom_active() {
+                    let bar = self.zoom_readout();
+                    if y < bar.bottom() + 2 && y + h > bar.y { y = (bar.bottom() + 2).min((bottom - h).max(top)); }
+                }
                 for b in [self.full_btn().0, self.zoom_btn().0] {
                     let b = Rect::new(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
                     if x + self.studio_panel_w() > b.x && x < b.right() && y < b.bottom() && y + h > b.y { x = (b.x - self.studio_panel_w()).max(0); }
@@ -1437,7 +1467,12 @@ impl Ui {
             cv.text(&f.lb, p.x + 14, p.y + 27, "Measurements", TEXT);
             for (r, which) in [(g.maximize, 0), (g.collapse, 1)] {
                 chip(cv, r, BTN, BTN_BORDER);
-                if which == 0 { icon_expand(cv, r.x + r.w / 2, r.y + r.h / 2, TEXT); } else { chevron(cv, r.x + r.w / 2 - 2, r.y + r.h / 2, 1, TEXT); }
+                if which == 0 { icon_expand(cv, r.x + r.w / 2, r.y + r.h / 2, TEXT); } else {
+                    // the close X: back to the waveform alone
+                    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+                    cv.line(cx - 5, cy - 5, cx + 5, cy + 5, TEXT);
+                    cv.line(cx - 5, cy + 5, cx + 5, cy - 5, TEXT);
+                }
             }
             cv.text(&f.s, p.x + 14, p.y + 56, &format!("{} total \u{b7} {} pinned", self.meas_shown_count(), pinned.len()), DIM);
             let first = self.studio_first(listed.len(), g.page);

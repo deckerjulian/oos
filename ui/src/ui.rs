@@ -47,6 +47,7 @@ mod workspace;
 mod studio;
 mod studio_views;
 mod sheet;
+mod addrail;
 #[cfg(test)]
 mod sheet_tests;
 #[cfg(test)]
@@ -69,6 +70,8 @@ mod batch6_tests;
 mod batch7_tests;
 #[cfg(test)]
 mod batch7b_tests;
+#[cfg(test)]
+mod batch8_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -377,6 +380,8 @@ pub enum MenuId {
     AddPanel,
     /// Full legacy measurement and pair catalog, including Selected.
     MeasLegacy,
+    /// Studio: the settings of the Edge search added from the Add panel (ui/addrail.rs)
+    Search,
 }
 
 /// Buttons of the top bar.
@@ -622,6 +627,22 @@ enum Item {
     CurMode,
     CurA,
     CurB,
+    /// Studio cursor settings (ui/addrail.rs): type, source, second source, readout place, linked, remove
+    CurType,
+    CurSrc,
+    CurSrcB,
+    CurReadout,
+    CurLink,
+    CurRemove,
+    /// Studio Edge search settings (ui/addrail.rs)
+    SrchSrc,
+    SrchSlope,
+    SrchLevel,
+    Srch50,
+    SrchFromTrig,
+    SrchToTrig,
+    SrchEvent,
+    SrchRemove,
     Persist,
     Intensity,
     GridStyle,
@@ -3018,6 +3039,7 @@ impl Ui {
             cv.blend(Rect::new(xb, o.y, (o.x + o.w - xb).max(0), o.h), BG, 170);
             if self.m.layout == Layout::Studio {
                 self.draw_studio_window(cv, o, xa, xb);
+                self.draw_studio_overview_cursors(cv, o);
             } else {
                 cv.rect(Rect::new(xa, o.y, (xb - xa).max(2), o.h), ACCENT);
                 for edge in [xa, xb] {
@@ -4375,6 +4397,7 @@ impl Ui {
                 }
             }
         }
+        self.draw_studio_cursor_readouts(cv, a);
         cv.no_clip();
     }
 
@@ -4518,7 +4541,7 @@ impl Ui {
 
     /// Search markers: an amber tick at the top of the plot for every event of the trigger condition.
     fn draw_search(&self, cv: &mut Canvas) {
-        if !self.search_on {
+        if !self.search_on && self.studio_search_marks().is_none() {
             return;
         }
         let a = self.area;
@@ -5616,6 +5639,8 @@ impl Ui {
             MenuId::MeasAdd => Vec::new(),
             MenuId::MeasLegacy => self.measurement_catalog(),
             MenuId::AddPanel => Vec::new(),
+            MenuId::Search => self.addrail_search_items(),
+            MenuId::Cursor if self.m.layout == Layout::Studio => self.addrail_cursor_items(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
@@ -5839,6 +5864,7 @@ impl Ui {
 
     /// Search: times (s, relative to the trigger) of all events of the trigger condition in the record shown.
     fn search_events(&self) -> std::sync::Arc<Vec<f64>> {
+        if let Some(marks) = self.studio_search_marks() { return marks; }
         if self.m.trig_type == TrigType::Bus && (Self::decoder_uses_refs(&self.m)
             || self.m.deskew_ch.iter().any(|&shift| shift != 0.0)) {
             return self.decoder_trigger_hits(&self.m).unwrap_or_default();
@@ -6296,7 +6322,8 @@ impl Ui {
             MenuId::Measure => "Measure".into(),
             MenuId::MeasAdd => "Add measurement".into(),
             MenuId::MeasLegacy => "All measurements / Selected".into(),
-            MenuId::AddPanel => "Add panel".into(),
+            MenuId::AddPanel => "Add".into(),
+            MenuId::Search => "Search 1".into(),
             MenuId::MeasHold => "Add".into(),
             MenuId::MeasPair => format!("Pairs {} to {}", self.pair_source_caption(self.meas_src), self.pair_source_caption(self.meas_src_b)),
             MenuId::MeasLevels => "Measurement levels".into(),
@@ -6325,7 +6352,7 @@ impl Ui {
 
     fn kind(it: Item) -> Kind {
         if matches!(it, Item::AutoDeskew | Item::ClearDeskew) { return Kind::Action; }
-        if let Some(k) = Self::meas_kind(it).or_else(|| Self::measrow_kind(it)).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::bus_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
+        if let Some(k) = Self::addrail_kind(it).or_else(|| Self::meas_kind(it)).or_else(|| Self::measrow_kind(it)).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::bus_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
             return k;
         }
         match it {
@@ -6346,7 +6373,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::measrow_label(it)).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::bus_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
+        if let Some(l) = Self::addrail_label(it).or_else(|| Self::meas_cfg_label(it)).or_else(|| Self::measrow_label(it)).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::bus_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
             return l;
         }
         match it {
@@ -6612,7 +6639,7 @@ impl Ui {
         // the desktop build reports its own web port and listeners (wlan.rs `net_value`)
         if it == Item::NetWeb && cfg!(windows) && !self.lan_status.is_empty() { return self.net_value(it); }
         if it == Item::CatSourceD { return self.wave_name(self.cat_d); }
-        if let Some(v) = self.meas_value(it).or_else(|| self.measrow_value(it)).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
+        if let Some(v) = self.addrail_value(it).or_else(|| self.meas_value(it)).or_else(|| self.measrow_value(it)).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -6833,7 +6860,7 @@ impl Ui {
             }
             return;
         }
-        if self.bus_adjust(it, d) || self.meas_adjust(it, d) || self.measrow_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
+        if self.addrail_adjust(it, d) || self.bus_adjust(it, d) || self.meas_adjust(it, d) || self.measrow_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
             return;
         }
         if matches!(it, Item::TrigSrc | Item::TrigSrc2) {
@@ -7363,6 +7390,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
+        if self.addrail_activate(it) { return; }
         if self.measrow_activate(it) { return; }
         if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.sim_activate(it) || self.afg_activate(it) || self.time_activate(it)) {
             return;
@@ -7798,6 +7826,7 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                if self.m.layout == Layout::Studio { self.studio.enter = true; }
                 self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
@@ -7921,7 +7950,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.meas_options(it).or_else(|| self.measrow_options(it)).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.bus_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
+        if let Some(o) = self.addrail_options(it).or_else(|| self.meas_options(it)).or_else(|| self.measrow_options(it)).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.bus_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -9286,8 +9315,16 @@ impl Ui {
                         }
                         .clamp(0.0, 1.0);
                         match t.drag {
-                            Drag::CursorA => self.m.cur_a = v,
-                            Drag::CursorB => self.m.cur_b = v,
+                            Drag::CursorA => {
+                                let moved = v - self.m.cur_a;
+                                self.m.cur_a = v;
+                                if self.studio.cur_linked && self.m.layout == Layout::Studio { self.m.cur_b = (self.m.cur_b + moved).clamp(0.0, 1.0); }
+                            }
+                            Drag::CursorB => {
+                                let moved = v - self.m.cur_b;
+                                self.m.cur_b = v;
+                                if self.studio.cur_linked && self.m.layout == Layout::Studio { self.m.cur_a = (self.m.cur_a + moved).clamp(0.0, 1.0); }
+                            }
                             Drag::CursorC => self.m.cur_c = v,
                             Drag::CursorD => self.m.cur_d = v,
                             _ => {},

@@ -417,7 +417,7 @@ fn an_unavailable_item_says_why_and_offers_the_fix_in_place() {
 // ------------------------------------------------------------------------------------------------ add panel
 
 #[test]
-fn add_panel_is_in_the_view_menu_and_offers_all_eight() {
+fn add_panel_is_in_the_view_menu_and_lists_every_kind() {
     let mut u = studio();
     let t = u.studio_top().view;
     tap_in(&mut u, t);
@@ -427,15 +427,14 @@ fn add_panel_is_in_the_view_menu_and_offers_all_eight() {
     tap_in(&mut u, row);
     assert_eq!(u.menu, MenuId::AddPanel);
     assert!(u.sheet_active() && !u.studio.view_menu);
-    let tiles = u.sheet_panel_tiles();
-    assert_eq!(tiles.len(), 8);
-    let names: Vec<&str> = PANEL_KINDS.iter().map(|p| p.1).collect();
-    assert_eq!(names, ["Measurements table", "Decode table", "Spectrum", "Eye", "Histogram", "Trend", "Cursor readout", "SIM"]);
-    for (i, (_, r)) in tiles.iter().enumerate() {
-        assert!(r.w >= 40 && r.h >= 40, "tile {i}");
+    let g = u.rail_geo();
+    let names: Vec<&str> = super::addrail::ADD_KINDS.iter().map(|p| p.1).collect();
+    assert_eq!(names, ["Cursors", "Measure", "Search", "Results table", "Plot", "Math", "Ref"]);
+    assert_eq!(g.rows.len(), 7);
+    for (i, (_, r)) in g.rows.iter().enumerate() {
+        assert!(r.w >= 40 && r.h >= 44, "row {i}");
         let sheet = u.sheet_rect();
-        assert!(r.x >= sheet.x && r.right() <= sheet.right() && r.bottom() <= sheet.bottom(), "tile {i} inside");
-        for (j, (_, q)) in tiles.iter().enumerate().take(i) { assert!(r.right() <= q.x || q.right() <= r.x || r.bottom() <= q.y || q.bottom() <= r.y, "tiles {i} {j} apart"); }
+        assert!(r.x >= sheet.x && r.right() <= sheet.right() && r.bottom() <= sheet.bottom(), "row {i} inside");
     }
     shot(&mut u, "add-panel");
 }
@@ -444,8 +443,7 @@ fn add_panel_is_in_the_view_menu_and_offers_all_eight() {
 fn each_panel_opens_docked_with_the_pages_that_exist() {
     let open = |u: &mut Ui, kind: PanelKind| {
         u.open_menu(MenuId::AddPanel);
-        let (_, r) = u.sheet_panel_tiles().into_iter().find(|t| t.0 == kind).unwrap();
-        tap_in(u, r);
+        u.studio_add_panel(kind);
         assert!(!u.menu_open, "the sheet closes so the panel is seen");
         for _ in 0..6 { u.step(0.05); }
     };

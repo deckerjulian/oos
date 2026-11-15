@@ -113,7 +113,7 @@ fn studio_top_bar_has_run_single_state_acquisition_and_the_menu_chips() {
     let mut u = studio();
     shot(&mut u, "01-top");
     let t = u.studio_top();
-    let all = [t.run, t.single, t.acq, t.measure, t.cursors, t.view, t.gear];
+    let all = [t.run, t.single, t.acq, t.add, t.measure, t.cursors, t.view, t.gear];
     for (i, a) in all.iter().enumerate() {
         assert!(a.x >= 0 && a.right() <= W && a.y >= 0 && a.bottom() <= TOP.h, "chip {i} inside the bar");
         for b in &all[i + 1..] { assert!(!overlaps(*a, *b), "chips do not overlap"); }
@@ -133,8 +133,16 @@ fn studio_top_bar_has_run_single_state_acquisition_and_the_menu_chips() {
     tap_in(&mut u, t.gear);
     assert_eq!(u.menu, MenuId::Main);
     u.close_menu();
+    // Cursors: the first tap puts the cursors on (no menu), the next opens their settings (batch 8)
+    tap_in(&mut u, t.cursors);
+    assert_eq!(u.m.cursor, CursorMode::Track);
+    assert!(!u.menu_open);
     tap_in(&mut u, t.cursors);
     assert_eq!(u.menu, MenuId::Cursor);
+    u.close_menu();
+    // Add opens the Add panel
+    tap_in(&mut u, t.add);
+    assert_eq!(u.menu, MenuId::AddPanel);
     u.close_menu();
     tap_in(&mut u, t.measure);
     assert!(u.menu_open);

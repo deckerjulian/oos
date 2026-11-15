@@ -990,7 +990,7 @@ fn split_name(name: &str) -> (&str, Option<&str>) {
     (&name[..i], Some(&name[i + 1..]))
 }
 
-fn wrap_lines(f: &Font, text: &str, width: i32) -> Vec<String> {
+pub(super) fn wrap_lines(f: &Font, text: &str, width: i32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cur = String::new();
     for word in text.split(' ') {
