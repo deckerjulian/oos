@@ -2492,11 +2492,16 @@ fn measurement_queries_read_a_channel_or_a_ref() {
     };
     put_ref(&mut u, 0, 0.0, 1e-9, edge(&[100, 200]));
     put_ref(&mut u, 1, 0.0, 1e-9, edge(&[90, 190]));
+    // A is the data, B the clock, as on the measurement page
+    let setup = ask(&mut s, &mut u, ":MEAS:ITEM? SETUP,R2,R1").parse::<f64>().unwrap();
+    assert!((setup - 10e-9).abs() < 1e-12, "{}", setup);
+    let hold = ask(&mut s, &mut u, ":MEAS:ITEM? HOLD,R2,R1").parse::<f64>().unwrap();
+    assert!((hold - 30e-9).abs() < 1e-12, "{}", hold);
     ask(&mut s, &mut u, ":MEAS:TSET 20e-9");
     ask(&mut s, &mut u, ":MEAS:THOL 5e-9");
-    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 2.0);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R2,R1").parse::<f64>().unwrap(), 2.0);
     ask(&mut s, &mut u, ":MEAS:TSET 5e-9");
-    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 0.0);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R2,R1").parse::<f64>().unwrap(), 0.0);
 
     let pdt = 1e-4;
     let tone = |amp: f64, shift: f64| -> Vec<f32> {

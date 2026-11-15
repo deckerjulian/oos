@@ -29,14 +29,15 @@ fn shifted(a: &Analysis, t0: f64) -> Analysis {
     Analysis { valid:a.valid, rises:a.rises.iter().map(|time|time+t0).collect(),
         falls:a.falls.iter().map(|time|time+t0).collect(), ..Default::default() }
 }
+// Setup and hold: A is the data, B the clock (the tiles and SCPI say so); the dsp functions take the clock first.
 fn compute(job: &Job) -> f64 {
     let (_,kind,ea,eb)=PAIRS[job.key.kind];
     let (a,b)=(shifted(&job.a,job.ta),shifted(&job.b,job.tb));
     match kind {
         PairKind::Delay=>delay(&a,&b,Pair(ea,eb)), PairKind::Phase=>phase(&a,&b,Pair(ea,eb)),
-        PairKind::Skew=>skew(&a,&b,Pair(ea,eb)), PairKind::Setup=>setup_time_at(&a,&b,ea),
-        PairKind::Hold=>hold_time_at(&a,&b,ea),
-        PairKind::SetupAndHold=>setup_hold_violations_at(&a,&b,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),ea),
+        PairKind::Skew=>skew(&a,&b,Pair(ea,eb)), PairKind::Setup=>setup_time_at(&b,&a,ea),
+        PairKind::Hold=>hold_time_at(&b,&a,ea),
+        PairKind::SetupAndHold=>setup_hold_violations_at(&b,&a,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),ea),
     }
 }
 impl Worker {
@@ -151,5 +152,17 @@ mod tests {
         ui.refs[1].as_mut().unwrap().t0+=5e-9;
         let value=wait(&mut ui,0);assert!((value-8e-9).abs()<1e-15,"{value}");
         assert!(ui.azr.measure_pairs.borrow().cache.len()<=MEAS_MAX);
+    }
+    #[test]
+    fn setup_and_hold_take_the_data_from_a_and_the_clock_from_b() {
+        // as the tiles say: B (the clock) moves 3 ns after each edge of A (the data), which holds for 20 ns
+        let mut ui=fixture();
+        for (kind,want) in [(12,3e-9),(13,17e-9),(15,3e-9),(16,17e-9)] {
+            let value=wait(&mut ui,kind);assert!((value-want).abs()<1e-12,"{} {value}",PAIRS[kind].0);
+        }
+        ui.m.meas_tsetup=2e-9;ui.m.meas_thold=16e-9;
+        assert_eq!(wait(&mut ui,14),0.0);
+        ui.m.meas_tsetup=4e-9;
+        assert!(wait(&mut ui,14)>0.0);
     }
 }

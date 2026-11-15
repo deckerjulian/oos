@@ -35,9 +35,9 @@ impl Ui {
         self.meas_number(id, k)
     }
 
-    /// Rising-clock edges that miss the configured setup or hold limit.
-    pub(crate) fn fact_setup_hold(&self, clk: WaveId, data: WaveId) -> f64 {
-        self.pair_at(14, clk, data)
+    /// Rising-clock edges that miss the configured setup or hold limit; the data is source A, the clock source B.
+    pub(crate) fn fact_setup_hold(&self, data: WaveId, clk: WaveId) -> f64 {
+        self.pair_at(14, data, clk)
     }
 
     fn grid(&self, req: &[WaveId], opt: &[Option<WaveId>]) -> Option<(f64, f64, Vec<Vec<f32>>, Vec<Option<Vec<f32>>>)> {

@@ -4372,15 +4372,16 @@ impl Scpi {
                     return t("9.9E37");
                 }
             };
-            let (clock, data) = match waves.as_slice() {
+            // A is the data, B the clock, as for SETUP and HOLD and on the measurement page
+            let (data, clock) = match waves.as_slice() {
                 [] => ui.meas_pair_sources(),
-                [clock, data] => (*clock, *data),
+                [data, clock] => (*data, *clock),
                 _ => {
                     self.push_err("-224,\"Illegal parameter value\"".into());
                     return t("9.9E37");
                 }
             };
-            return t(&shown(ui.fact_setup_hold(clock, data)));
+            return t(&shown(ui.fact_setup_hold(data, clock)));
         }
         // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
         let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
