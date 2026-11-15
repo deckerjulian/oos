@@ -49,6 +49,8 @@ mod studio_views;
 mod layout_tests;
 #[cfg(test)]
 mod fix_tests;
+#[cfg(test)]
+mod batch1_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -1038,6 +1040,8 @@ pub struct Ui {
     full: bool,
     /// Top left of the corner button after a drag. None keeps it at the top right of the plot.
     full_at: Option<(i32, i32)>,
+    /// The time view (zoomed or not, s/div, delay) the time cursors were last placed in (`cursor_follow_view`).
+    cursor_view: Option<(bool, f32, f32)>,
     vmaxz: [u32; NCH],
     rng: Rng,
     trace_bus: std::cell::RefCell<bus::Cache>,
@@ -1367,6 +1371,7 @@ impl Ui {
             cur_win: 0,
             full: false,
             full_at: None,
+            cursor_view: None,
             vmaxz: [1; NCH],
             trace_bus: Default::default(),
             rng: Rng::new(0x9e3779b97f4a7c15),
@@ -2411,6 +2416,7 @@ impl Ui {
     // ------------------------------------------------------------------ acquisition per frame
 
     pub fn step(&mut self, dt_wall: f64) {
+        self.cursor_follow_view();
         self.poll_reference_measurements();
         self.poll_catalog_measurements();
         self.sim_poll();
@@ -4177,6 +4183,8 @@ impl Ui {
                 }
                 let (ta, tb) = self.cursor_times();
                 for (frac, name, t) in [(self.m.cur_a, "X1", ta), (self.m.cur_b, "X2", tb)] {
+                    // a cursor that the zoomed view does not show keeps its time and is not drawn
+                    if !(0.0..=1.0).contains(&frac) { continue; }
                     let x = a.x + (frac * a.w as f32) as i32;
                     cv.dashed_vline(x, a.y, a.y + a.h - 1, 4, 3, CURSOR);
                     tagbox(cv, x + 2, a.y + a.h - 36, name);
@@ -4382,9 +4390,10 @@ impl Ui {
     fn results_band_h(&self) -> i32 {
         if !matches!(self.results_docked(), Some(StripDock::Below | StripDock::Above)) { return 0; }
         let total = self.measurement_count();
-        let n = total.min(2) as i32;
-        let nav = if total > n as usize { 38 } else { 0 };
-        30 + if self.results_min { 0 } else { n * self.results_row(total as i32) + nav + 4 } + 4
+        let page = self.results_page_size();
+        let lines = total.min(page).div_ceil(self.results_cols()) as i32;
+        let nav = if total > page { 38 } else { 0 };
+        30 + if self.results_min { 0 } else { lines * self.results_row(total as i32) + nav + 4 } + 4
     }
 
     /// Left edge and width of the graticule. A side dock keeps a column for the strip and for a docked card.
@@ -4617,11 +4626,12 @@ impl Ui {
         }
         let a = self.over_area();
         let total = self.measurement_count();
-        let n = total.min(self.results_page_size()) as i32;
-        let nav = if total > n as usize { 38 } else { 0 };
+        let page = self.results_page_size();
+        let n = total.min(page).div_ceil(self.results_cols()) as i32;
+        let nav = if total > page { 38 } else { 0 };
         let body_h = if self.results_min { 0 } else { n * self.results_row(total as i32) + nav + 4 };
         let panel_h = 30 + body_h;
-        let rw = self.lay().results_w;
+        let rw = self.lay().results_w * self.results_cols() as i32;
         let fr = self.frame();
         let (top, bottom, sw) = (fr.top.bottom(), fr.bottom.y, self.scr.w);
         let docked = self.results_docked();
@@ -4695,8 +4705,12 @@ impl Ui {
         // baselines: 16 and 35 px into a row at the normal text size
         let (y1, y2) = (one - 6, two - 7);
         let (first, end) = self.results_page_range(rows.len());
+        let cols = self.results_cols();
+        let cw = body.w / cols as i32;
         for (page_row, (i, r)) in rows.iter().enumerate().skip(first).take(end - first).enumerate() {
-            let by = body.y + page_row as i32 * pitch;
+            // the rows of a card docked under or above the plot run in columns
+            let body = Rect::new(body.x + (page_row % cols) as i32 * cw, body.y, cw, body.h);
+            let by = body.y + (page_row / cols) as i32 * pitch;
             cv.hline(body.x + 8, body.x + body.w - 9, by, LINE);
             let st = self.mstat.get(i).copied().unwrap_or_default();
             let mean = st.sum / st.n.max(1) as f64;
@@ -4714,7 +4728,7 @@ impl Ui {
             cv.text(&f.sb, value_x, by + y1, &value, self.wave_color(r.src));
             if st.n > 1 {
                 cv.set_clip(Rect::new(body.x + 10, by + y1 + 4, (sd_x - body.x - 15).max(1), pitch - y1 - 4));
-                cv.text(&f.s, body.x + 10, by + y2, &format!("\u{3bc} {}", r.fmt(mean)), DIM);
+                cv.text(&f.s, body.x + 10, by + y2, &format!("avg {}", r.fmt(mean)), DIM);
                 cv.no_clip();
                 cv.text(&f.s, sd_x, by + y2, &sd, DIM);
             }
@@ -5376,7 +5390,7 @@ impl Ui {
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear],
+            MenuId::Measure => { let mut v = vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasRefs, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear]; if self.m.layout == Layout::Studio { v.retain(|i| *i != Item::StripDock); } v }
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
@@ -7854,6 +7868,24 @@ impl Ui {
                 let from = self.meas_src;
                 let n = self.copy_measurements(from, to);
                 self.toast(&format!("{} measurement{} copied {} -> {}", n, if n == 1 { "" } else { "s" }, self.wave_name(from), want));
+            }
+            return;
+        }
+        if it == Item::EyePlace {
+            // a placement choice always places the eye, also the one it already has while it floats
+            if let Some(place) = [(EyePlace::Full, "Full"), (EyePlace::Side, "Side"), (EyePlace::Under, "Under")].into_iter().find(|(_, l)| *l == want).map(|(p, _)| p) {
+                self.workspace.eye_float = None;
+                self.eye_set_place(place);
+                self.relayout();
+            }
+            return;
+        }
+        if it == Item::StripDock {
+            // every dock choice docks the card, also the one already selected after it was floated
+            if let Some(dock) = StripDock::ALL.into_iter().find(|d| d.label() == want) {
+                self.m.strip_dock = dock;
+                self.workspace.measure_docked = true; self.workspace.measure_float = None;
+                self.relayout();
             }
             return;
         }

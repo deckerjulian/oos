@@ -699,6 +699,14 @@ impl Ui {
 
     /// Adjusts an analyser item; false = not an analyser item.
     pub(super) fn ana_adjust(&mut self, it: Item, d: i32) -> bool {
+        if it == Item::EyePlace {
+            // Full, Side and Under also bring a floated eye back into its place (`eye_set_place` only clears it for Full)
+            let all = [EyePlace::Full, EyePlace::Side, EyePlace::Under];
+            let i = all.iter().position(|&p| p == self.m.eye_place).unwrap_or(0);
+            self.workspace.eye_float = None;
+            self.eye_set_place(all[(i as i32 + d).rem_euclid(all.len() as i32) as usize]);
+            return true;
+        }
         if let Item::IdFind(k) = it {
             if let Some(f) = self.azr.findings.get(k).cloned() {
                 self.apply_finding(&f);

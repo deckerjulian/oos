@@ -570,6 +570,22 @@ impl Ui {
         (frac as f64 - 0.5) * HDIV as f64 * tpd as f64 + delay as f64
     }
 
+    /// Keeps the time cursors at their times while the zoom changes the view: a screen fraction means another time
+    /// in a new view. A cursor outside the new view gets a fraction beyond 0..1 and is not drawn.
+    pub(super) fn cursor_follow_view(&mut self) {
+        let (tpd, delay) = self.view();
+        let now = (self.m.zoom, tpd, delay);
+        let was = std::mem::replace(&mut self.cursor_view, Some(now));
+        let Some((was_zoom, wtpd, wdelay)) = was else { return };
+        if (was_zoom, wtpd, wdelay) == now || !(was_zoom || self.m.zoom) || !matches!(self.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { return; }
+        let (old_span, new_span) = (HDIV as f64 * wtpd as f64, HDIV as f64 * tpd as f64);
+        if !(old_span > 0.0 && new_span > 0.0 && old_span.is_finite() && new_span.is_finite()) { return; }
+        for frac in [&mut self.m.cur_a, &mut self.m.cur_b] {
+            let t = (*frac as f64 - 0.5) * old_span + wdelay as f64;
+            *frac = (((t - delay as f64) / new_span + 0.5).clamp(-2.0e4, 2.0e4)) as f32;
+        }
+    }
+
     /// Screen fraction for a time, kept on the graticule.
     pub(crate) fn cursor_frac_time(&self, t: f64) -> f32 {
         let (tpd, delay) = self.view();

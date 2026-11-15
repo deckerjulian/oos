@@ -286,9 +286,15 @@ impl Ui {
         true
     }
 
+    /// Columns of a card docked under or above the plot: the rows sit side by side in the width the plot has.
+    pub(super) fn results_cols(&self) -> usize {
+        if !matches!(self.results_docked(), Some(StripDock::Below | StripDock::Above)) { return 1; }
+        ((self.plot_span().1 - 12) / self.lay().results_w).clamp(1, 4) as usize
+    }
+
     pub(super) fn results_page_size(&self) -> usize {
         // rows are taller at the larger text sizes: count with the row the card draws, so a page stays in the plot
-        if matches!(self.results_docked(), Some(StripDock::Below | StripDock::Above)) { return 2; }
+        if matches!(self.results_docked(), Some(StripDock::Below | StripDock::Above)) { return 2 * self.results_cols(); }
         let row = self.results_row(0);
         ((self.over_area().h - 98).max(row) / row).clamp(1, 8) as usize
     }
