@@ -72,6 +72,8 @@ mod batch7_tests;
 mod batch7b_tests;
 #[cfg(test)]
 mod batch8_tests;
+#[cfg(test)]
+mod batch9_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -1273,6 +1275,10 @@ pub struct Ui {
     /// files the Import slot picker is showing
     ref_files: Vec<std::path::PathBuf>,
     xy: bool,
+    /// the XY plot's X and Y channels (the Add panel sets them; the default is CH1 against CH2)
+    xy_src: [usize; 2],
+    /// the histogram's own channel (the Add panel sets it; None follows the measurement source)
+    hist_ch: Option<usize>,
     knob_t: [f64; 16],
     pub now: f64,
     pub frames: u64,
@@ -1563,6 +1569,8 @@ impl Ui {
             ref_src: 0,
             ref_files: Vec::new(),
             xy: false,
+            xy_src: [0, 1],
+            hist_ch: None,
             pinch: Pinch { active: false, p0: (0, 0), p1: (0, 0), ref_dx: 0, ref_dy: 0, area: Rect::new(0, 0, 0, 0), detail: false },
             knob_t: [0.0; 16],
             now: 0.0,
@@ -1675,7 +1683,8 @@ impl Ui {
         let top = self.plot_top();
         let (plot_x, plot_w) = self.plot_span();
         if self.eye_open() && self.eye_side() && self.workspace.eye_float.is_none() {
-            let wave_w = (plot_w * 58 / 100).clamp(360, plot_w - 300);
+            let hi = (plot_w - 300).max(0);
+            let wave_w = (plot_w * 58 / 100).clamp(360.min(hi), hi);
             let h = (avail / 8 * 8).max(160);
             return Rect::new(if self.workspace.eye_left { plot_x + plot_w - wave_w } else { plot_x }, top, wave_w, h);
         }
@@ -3676,6 +3685,9 @@ impl Ui {
 
     /// Histogram source: the measurement source if it is on, else the first channel on.
     fn hist_src(&self) -> Option<usize> {
+        if let Some(c) = self.hist_ch.filter(|&c| c < n_ch() && self.m.ch[c].on) {
+            return Some(c);
+        }
         if let WaveId::Ch(c) = self.meas_src {
             if c < n_ch() && self.m.ch[c].on {
                 return Some(c);
@@ -4225,9 +4237,10 @@ impl Ui {
     }
 
     fn draw_xy(&self, cv: &mut Canvas) {
-        // CH1 = X, CH2 = Y in a square of 8 x 8 div in the middle of the grid
+        // the X and Y channels (CH1 and CH2 unless the Add panel chose others) in a square of 8 x 8 div in the middle of the grid
         let Some(rec) = &self.last[0] else { return };
-        let (a, b) = (&rec.ch[0], &rec.ch[1]);
+        let (xc, yc) = (self.xy_src[0].min(n_ch() - 1), self.xy_src[1].min(n_ch() - 1));
+        let (a, b) = (&rec.ch[xc], &rec.ch[yc]);
         let f = self.fonts();
         let side = self.area.h;
         let sq = Rect::new(self.area.x + (self.area.w - side) / 2, self.area.y, side, side);
@@ -4236,12 +4249,12 @@ impl Ui {
         cv.vline(sq.x + side / 2, sq.y, sq.y + side - 1, GRID_LINE);
         cv.hline(sq.x, sq.x + side - 1, sq.y + side / 2, GRID_LINE);
         if a.is_empty() || b.is_empty() {
-            cv.text_in(&f.m, sq, 1, "XY needs CH1 and CH2", DIM);
+            cv.text_in(&f.m, sq, 1, &format!("XY needs CH{} and CH{}", xc + 1, yc + 1), DIM);
             return;
         }
         cv.set_clip(sq);
         let ppd = side as f32 / 8.0;
-        let (ca, cb) = (&self.m.ch[0], &self.m.ch[1]);
+        let (ca, cb) = (&self.m.ch[xc], &self.m.ch[yc]);
         let col = rgb(0x9c, 0xf0, 0x9c);
         for k in 0..a.len().min(b.len()) {
             if !a[k].is_finite() || !b[k].is_finite() {
@@ -4254,7 +4267,7 @@ impl Ui {
             cv.pixel(x, y + 1, col, 70);
         }
         cv.no_clip();
-        cv.text(&f.s, sq.x + 6, sq.y + 16, "XY  X = CH1  Y = CH2", col);
+        cv.text(&f.s, sq.x + 6, sq.y + 16, &format!("XY  X = CH{}  Y = CH{}", xc + 1, yc + 1), col);
     }
 
     fn draw_markers(&self, cv: &mut Canvas) {

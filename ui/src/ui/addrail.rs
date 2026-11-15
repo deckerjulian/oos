@@ -48,7 +48,7 @@ pub(super) const TABLES: [(&str, &str); 3] = [
 
 /// Plot types of the Plot page.
 pub(super) const PLOTS: [(&str, &str, PanelKind); 5] = [
-    ("XY", "CH1 against CH2: one signal drawn over the other.", PanelKind::Cursor),
+    ("XY", "One channel against another: pick X and Y.", PanelKind::Cursor),
     ("Eye", "An eye diagram beside the waveform.", PanelKind::Eye),
     ("Histogram", "How often each level occurs, drawn in the waveform.", PanelKind::Histogram),
     ("Spectrum", "The frequency content, under the waveform.", PanelKind::Spectrum),
@@ -62,6 +62,10 @@ pub(super) struct AddUi {
     pub table: usize,
     pub plot: usize,
     pub src: Option<WaveId>,
+    /// the second source of a page: the Y of XY
+    pub src_b: Option<WaveId>,
+    /// the measurement chip of the Trend page
+    pub meas: usize,
 }
 
 /// The buttons at the foot of a page.
@@ -70,6 +74,8 @@ pub(super) enum RailAct {
     Add,
     Remove,
     Settings,
+    /// Measure: open the list of measurements
+    Choose,
 }
 
 /// The Edge search of Studio: its own source, level and slope (0 rising, 1 falling, 2 either).
@@ -87,6 +93,12 @@ pub(super) struct RailGeo {
     pub desc: Rect,
     pub types: Vec<(usize, Rect)>,
     pub srcs: Vec<(WaveId, Rect)>,
+    /// the second row of sources (the Y of XY)
+    pub srcs_b: Vec<(WaveId, Rect)>,
+    /// the measurement chips of the Trend page
+    pub meas: Vec<(usize, Rect)>,
+    /// the labels of the source rows ("X", "Y"), with the room they take at the left
+    pub src_labels: Vec<(&'static str, Rect)>,
     pub note: Rect,
     pub foot: Vec<(RailAct, Rect)>,
 }
@@ -113,23 +125,74 @@ impl Ui {
             .or_else(|| shown.first().copied())
     }
 
-    fn rail_has_sources(&self, kind: AddKind) -> bool { matches!(kind, AddKind::Cursors | AddKind::Search) }
+    /// The source rows of a page: a label for the row ("" for none) and the waves it offers. Cursors and Search
+    /// pick one source; the plots pick what they draw: XY has X and Y, Trend a source and a measurement.
+    fn rail_src_rows(&self, kind: AddKind) -> Vec<(&'static str, Vec<WaveId>)> {
+        let shown = self.sheet_shown_sources();
+        let chans: Vec<WaveId> = shown.iter().copied().filter(|id| matches!(id, WaveId::Ch(_))).collect();
+        match kind {
+            AddKind::Cursors | AddKind::Search => vec![("", shown)],
+            AddKind::Plot => match self.sheet.add.plot.min(PLOTS.len() - 1) {
+                0 => vec![("X", chans.clone()), ("Y", chans)],
+                2 | 4 => vec![("", chans)],
+                _ => vec![("", shown)],
+            },
+            _ => Vec::new(),
+        }
+    }
+
+    /// What the chips of a Plot page say is chosen: the tapped one, else what the plot uses now, else the first on.
+    pub(super) fn rail_plot_choice(&self, row: usize) -> Option<WaveId> {
+        let rows = self.rail_src_rows(AddKind::Plot);
+        let cands = &rows.get(row)?.1;
+        let plot = self.sheet.add.plot.min(PLOTS.len() - 1);
+        let tapped = if row == 0 { self.sheet.add.src } else { self.sheet.add.src_b };
+        let now = match (plot, row) {
+            (0, 0) => Some(WaveId::Ch(self.xy_src[0])),
+            (0, _) => Some(WaveId::Ch(self.xy_src[1])),
+            (1, _) => Some(self.m.eye_src),
+            (2, _) => self.hist_src().map(WaveId::Ch),
+            (3, _) => Some(self.m.spec_src),
+            _ => Some(self.cursor_source()),
+        };
+        tapped.filter(|s| cands.contains(s))
+            .or(now.filter(|s| cands.contains(s)))
+            .or_else(|| {
+                // Y defaults to a channel other than X
+                let x = if row == 1 { self.rail_plot_choice(0) } else { None };
+                cands.iter().copied().find(|c| Some(*c) != x).or_else(|| cands.first().copied())
+            })
+    }
+
+    /// The measurement chips of the Trend page.
+    pub(super) const TREND_MEAS: [Meas; 4] = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Vavg];
+
+    fn rail_has_meas_chips(&self, kind: AddKind) -> bool {
+        kind == AddKind::Plot && self.sheet.add.plot.min(PLOTS.len() - 1) == 4
+    }
+
+    fn rail_has_sources(&self, kind: AddKind) -> bool { !self.rail_src_rows(kind).is_empty() }
 
     pub(super) fn rail_geo(&self) -> RailGeo {
         let (r, _, _) = self.sheet_chrome();
         let w = r.w - 2 * PAD;
         let x = r.x + PAD;
-        let mut g = RailGeo { rows: Vec::new(), preview: Rect::new(0, 0, 0, 0), desc: Rect::new(0, 0, 0, 0), types: Vec::new(), srcs: Vec::new(), note: Rect::new(0, 0, 0, 0), foot: Vec::new() };
+        let mut g = RailGeo { rows: Vec::new(), preview: Rect::new(0, 0, 0, 0), desc: Rect::new(0, 0, 0, 0), types: Vec::new(), srcs: Vec::new(), srcs_b: Vec::new(), meas: Vec::new(), src_labels: Vec::new(), note: Rect::new(0, 0, 0, 0), foot: Vec::new() };
         let Some(kind) = self.sheet.add.kind else {
             g.rows = ADD_KINDS.iter().enumerate().map(|(i, (k, _, _))| (*k, Rect::new(x, r.y + SHEET_HEAD + 6 + i as i32 * (RAIL_ROW + 2), w, RAIL_ROW))).collect();
             return g;
         };
+        let (names, _) = self.rail_types(kind);
+        // the picture gives way a little when the page has two rows of sources
+        let rows = self.rail_src_rows(kind);
+        let below = (names.len() as i32 + 2) / 3 * 44 + rows.len() as i32 * 44 + if self.rail_has_meas_chips(kind) { 44 } else { 0 } + 46;
+        let avail = r.h - SHEET_HEAD - 6 - 6 - 40 - SHEET_FOOT - below;
+        let ph = avail.clamp(60, 88);
         let mut y = r.y + SHEET_HEAD + 6;
-        g.preview = Rect::new(x, y, w, 88);
-        y += 94;
+        g.preview = Rect::new(x, y, w, ph);
+        y += ph + 6;
         g.desc = Rect::new(x, y, w, 36);
         y += 40;
-        let (names, _) = self.rail_types(kind);
         if !names.is_empty() {
             let cols = 3;
             let cw = (w - (cols - 1) * 4) / cols;
@@ -138,11 +201,23 @@ impl Ui {
             }
             y += (names.len() as i32 + cols - 1) / cols * 44 + 4;
         }
-        if self.rail_has_sources(kind) {
-            let shown = self.sheet_shown_sources();
-            let n = shown.len().clamp(1, 8) as i32;
+        let src_rows = self.rail_src_rows(kind);
+        if !src_rows.is_empty() {
+            let labelled = src_rows.len() > 1 && !src_rows[0].0.is_empty();
+            let lw = if labelled { 22 } else { 0 };
+            for (k, (label, cands)) in src_rows.iter().enumerate() {
+                let n = cands.len().clamp(1, 8) as i32;
+                let cw = (w - lw - (n - 1) * 4) / n;
+                let row: Vec<(WaveId, Rect)> = cands.iter().take(8).enumerate().map(|(i, &id)| (id, Rect::new(x + lw + i as i32 * (cw + 4), y, cw, 40))).collect();
+                if labelled { g.src_labels.push((*label, Rect::new(x, y, lw, 40))); }
+                if k == 0 { g.srcs = row; } else { g.srcs_b = row; }
+                y += 44;
+            }
+        }
+        if self.rail_has_meas_chips(kind) {
+            let n = Self::TREND_MEAS.len() as i32;
             let cw = (w - (n - 1) * 4) / n;
-            g.srcs = shown.iter().take(8).enumerate().map(|(i, &id)| (id, Rect::new(x + i as i32 * (cw + 4), y, cw, 40))).collect();
+            g.meas = (0..Self::TREND_MEAS.len()).map(|i| (i, Rect::new(x + i as i32 * (cw + 4), y, cw, 40))).collect();
             y += 44;
         }
         g.note = Rect::new(x, y + 2, w, 44);
@@ -169,6 +244,7 @@ impl Ui {
                 if self.rail_plot_menu(self.sheet.add.plot).is_some() { vec![RailAct::Settings, RailAct::Remove] } else { vec![RailAct::Remove] }
             }
             AddKind::Cursors | AddKind::Search | AddKind::Table | AddKind::Plot => vec![RailAct::Add],
+            AddKind::Measure => vec![RailAct::Choose],
             _ => Vec::new(),
         }
     }
@@ -210,6 +286,7 @@ impl Ui {
                 if self.rail_table_shown(i) { "On the screen".to_string() } else if i == 2 && self.value(Item::DecOn) != "On" { "Needs a decoder: turn one on in Menu".to_string() } else { String::new() }
             }
             AddKind::Plot => if self.rail_plot_shown(self.sheet.add.plot) { "On the screen".to_string() } else { String::new() },
+            AddKind::Measure => match self.measurement_count() { 0 => "No measurements yet".to_string(), 1 => "1 measurement on the screen".to_string(), n => format!("{n} measurements on the screen") },
             _ => String::new(),
         }
     }
@@ -255,11 +332,24 @@ impl Ui {
             }
             cv.text_in(&f.sb, r, 1, names[i], if on { TEXT } else { DIM });
         }
-        let chosen = self.rail_source();
-        for &(sid, r) in &g.srcs {
-            let on = Some(sid) == chosen;
-            if on { cv.round(r, 5, self.wave_color(sid), 255); } else { btn(cv, r, BTN, self.wave_color(sid)); }
-            cv.text_in(&f.mb, r, 1, &self.wave_name(sid), if on { DARK_TEXT } else { TEXT });
+        let is_plot = kind == AddKind::Plot;
+        let chosen = if is_plot { self.rail_plot_choice(0) } else { self.rail_source() };
+        let chosen_b = if is_plot { self.rail_plot_choice(1) } else { None };
+        for (row, pick) in [(&g.srcs, chosen), (&g.srcs_b, chosen_b)] {
+            for &(sid, r) in row {
+                let on = Some(sid) == pick;
+                if on { cv.round(r, 5, self.wave_color(sid), 255); } else { btn(cv, r, BTN, self.wave_color(sid)); }
+                cv.text_in(&f.mb, r, 1, &self.wave_name(sid), if on { DARK_TEXT } else { TEXT });
+            }
+        }
+        for &(label, r) in &g.src_labels {
+            cv.text_in(&f.sb, r, 1, label, DIM);
+        }
+        let mchosen = self.sheet.add.meas.min(Self::TREND_MEAS.len() - 1);
+        for &(i, r) in &g.meas {
+            let on = i == mchosen;
+            if on { cv.round(r, 5, rgb(0x2e, 0x2e, 0x32), 255); cv.round_outline(r, 5, ACCENT); } else { btn(cv, r, BTN, BTN_BORDER); }
+            cv.text_in(&f.sb, r, 1, Self::TREND_MEAS[i].name(), if on { TEXT } else { DIM });
         }
         if self.rail_has_sources(kind) && g.srcs.is_empty() {
             cv.text_in(&f.m, Rect::new(g.note.x, g.note.y - 44, g.note.w, 40), 0, "No source is on: turn on a channel", DIM);
@@ -274,8 +364,8 @@ impl Ui {
         }
         for &(act, b) in &g.foot {
             let red = act == RailAct::Remove;
-            btn(cv, b, if red { mix(DLG_BG, RED, 30) } else if act == RailAct::Add { mix(BTN, ACCENT, 60) } else { BTN }, if red { RED } else if act == RailAct::Add { ACCENT } else { BTN_BORDER });
-            let label = match act { RailAct::Add => "Add", RailAct::Remove => "Remove", RailAct::Settings => "Settings" };
+            btn(cv, b, if red { mix(DLG_BG, RED, 30) } else if matches!(act, RailAct::Add | RailAct::Choose) { mix(BTN, ACCENT, 60) } else { BTN }, if red { RED } else if matches!(act, RailAct::Add | RailAct::Choose) { ACCENT } else { BTN_BORDER });
+            let label = match act { RailAct::Add => "Add", RailAct::Remove => "Remove", RailAct::Settings => "Settings", RailAct::Choose => "Choose a measurement" };
             cv.text_in(&f.mb, b, 1, label, if red { RED } else { TEXT });
         }
     }
@@ -311,7 +401,7 @@ impl Ui {
             AddKind::Search => "Marks every edge of the source on the waveform and counts them. Level and slope are set to the signal.".into(),
             AddKind::Table => TABLES[self.sheet.add.table.min(TABLES.len() - 1)].1.into(),
             AddKind::Plot => PLOTS[self.sheet.add.plot.min(PLOTS.len() - 1)].1.into(),
-            AddKind::Measure => "Values read from a waveform.".into(),
+            AddKind::Measure => "Amplitude, frequency, rise time and more, read from a waveform. Pick one and it joins the readout.".into(),
             AddKind::Math => "A waveform calculated from others.".into(),
             AddKind::Ref => "A waveform kept to compare with.".into(),
         }
@@ -407,6 +497,18 @@ impl Ui {
             "spectrum" => {
                 curve(cv, yellow, &|t: f32| -0.75 + 0.1 * (t * 53.0).sin().abs() + if (t - 0.2).abs() < 0.012 { 1.2 } else if (t - 0.4).abs() < 0.012 { 0.7 } else if (t - 0.6).abs() < 0.012 { 0.4 } else { 0.0 });
             }
+            "measure" => {
+                curve(cv, yellow, &square);
+                // the levels a rise time is read between, and the readout that carries the value
+                let (lo, hi) = (mid + (amp * 0.8) as i32, mid - (amp * 0.8) as i32);
+                for y in [hi, lo] { cv.dashed_hline(i.x + 3, i.right() - 4, y, 3, 3, mix(BG, TEXT, 120)); }
+                let b = Rect::new(i.right() - 98, i.y + 6, 92, 16);
+                cv.round(b, 3, BAR, 255);
+                cv.text_in(&f.s, b, 1, "Pk-Pk 1.6 V", TEXT);
+                let b = Rect::new(i.x + 6, i.bottom() - 22, 80, 16);
+                cv.round(b, 3, BAR, 255);
+                cv.text_in(&f.s, b, 1, "Freq 1 kHz", TEXT);
+            }
             "trend" => {
                 curve(cv, yellow, &|t: f32| 0.5 * (t * 7.0).sin() + 0.2 * (t * 23.0).sin() - 0.1);
             }
@@ -423,31 +525,75 @@ impl Ui {
             return true;
         };
         if let Some(&(i, _)) = g.types.iter().find(|(_, r)| r.contains(x, y)) {
-            if kind == AddKind::Table { self.sheet.add.table = i; } else { self.sheet.add.plot = i; }
+            if kind == AddKind::Table { self.sheet.add.table = i; } else {
+                if self.sheet.add.plot != i { (self.sheet.add.src, self.sheet.add.src_b) = (None, None); }
+                self.sheet.add.plot = i;
+            }
             return true;
         }
         if let Some(&(id, _)) = g.srcs.iter().find(|(_, r)| r.contains(x, y)) {
             self.sheet.add.src = Some(id);
+            self.rail_plot_live(kind);
+            return true;
+        }
+        if let Some(&(id, _)) = g.srcs_b.iter().find(|(_, r)| r.contains(x, y)) {
+            self.sheet.add.src_b = Some(id);
+            self.rail_plot_live(kind);
+            return true;
+        }
+        if let Some(&(i, _)) = g.meas.iter().find(|(_, r)| r.contains(x, y)) {
+            self.sheet.add.meas = i;
+            self.rail_plot_live(kind);
             return true;
         }
         if let Some(&(act, _)) = g.foot.iter().find(|(_, r)| r.contains(x, y)) { self.rail_do(kind, act); }
         true
     }
 
-    /// A row of the first page: Measure, Math and Ref open the page that already exists, the others get their own.
+    /// A row of the first page: Math and Ref open the page that already exists, the others get their own.
     fn rail_open(&mut self, k: AddKind) {
         match k {
-            AddKind::Measure => {
-                self.ensure_meas_own();
-                self.open_submenu(MenuId::MeasAdd);
-                self.sheet_add_open();
-            }
             AddKind::Math => self.open_submenu(MenuId::Math),
             AddKind::Ref => self.open_submenu(MenuId::Ref),
             _ => {
                 self.sheet.add.kind = Some(k);
-                self.sheet.add.src = None;
+                (self.sheet.add.src, self.sheet.add.src_b) = (None, None);
             }
+        }
+    }
+
+    /// The Choose button of the Measure page: the list of measurements, in the same sheet.
+    fn rail_measure_choose(&mut self) {
+        self.ensure_meas_own();
+        self.open_submenu(MenuId::MeasAdd);
+        self.sheet_add_open();
+    }
+
+    /// A source tapped while its plot is on the screen changes the plot at once.
+    fn rail_plot_live(&mut self, kind: AddKind) {
+        if kind == AddKind::Plot && self.rail_plot_shown(self.sheet.add.plot) {
+            self.rail_plot_apply_sources(self.sheet.add.plot);
+            self.relayout();
+        }
+    }
+
+    /// Gives the plot the sources the chips show: XY its X and Y, the histogram its channel, the eye and the
+    /// spectrum their source, Trend a measurement of the source in its first chart.
+    pub(super) fn rail_plot_apply_sources(&mut self, i: usize) {
+        let (a, b) = (self.rail_plot_choice(0), self.rail_plot_choice(1));
+        match i {
+            0 => {
+                if let (Some(WaveId::Ch(x)), Some(WaveId::Ch(y))) = (a, b) { self.xy_src = [x, y]; }
+            }
+            1 => if let Some(id) = a { if id != self.m.eye_src { let n = self.wave_name(id); self.select_option(Item::EyeSrc, &n); } },
+            2 => if let Some(WaveId::Ch(c)) = a { self.hist_ch = Some(c); },
+            3 => if let Some(id) = a { if id != self.m.spec_src { let n = self.wave_name(id); self.select_option(Item::SpecSrc, &n); } },
+            _ => if let Some(src) = a {
+                let k = Self::TREND_MEAS[self.sheet.add.meas.min(Self::TREND_MEAS.len() - 1)];
+                if self.meas_add(k, src).is_ok() {
+                    if let Some(p) = self.m.meas.iter().position(|e| *e == (k, src)) { self.m.trend_sel[0] = 2 + p; }
+                }
+            },
         }
     }
 
@@ -461,7 +607,8 @@ impl Ui {
             (AddKind::Search, RailAct::Remove) => self.studio_search_remove(),
             (AddKind::Table, RailAct::Add) => self.rail_table_add(self.sheet.add.table),
             (AddKind::Table, RailAct::Remove) => self.rail_table_remove(self.sheet.add.table),
-            (AddKind::Plot, RailAct::Add) => self.rail_plot_add(self.sheet.add.plot),
+            (AddKind::Plot, RailAct::Add) => { self.rail_plot_apply_sources(self.sheet.add.plot); self.rail_plot_add(self.sheet.add.plot) }
+            (AddKind::Measure, RailAct::Choose) => self.rail_measure_choose(),
             (AddKind::Plot, RailAct::Remove) => self.rail_plot_remove(self.sheet.add.plot),
             (AddKind::Plot, RailAct::Settings) => if let Some(m) = self.rail_plot_menu(self.sheet.add.plot) { self.open_submenu(m); },
             _ => {}
