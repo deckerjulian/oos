@@ -828,48 +828,44 @@ pub fn hold_time_at(clock: &Analysis, data: &Analysis, rise: bool) -> f64 {
     mean(&hold_times(clock, data, rise))
 }
 
-fn setup_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
+/// Setup and hold of every selected clock edge: empty where no data edge lies before (setup) or after (hold) it.
+fn setup_hold_per_edge(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<(Option<f64>, Option<f64>)> {
     let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
-    let mut j = 0usize;
-    let mut s = Vec::new();
+    let (mut before, mut after) = (0usize, 0usize);
+    let mut out = Vec::with_capacity(c.len());
     for &tc in c {
-        while j < d.len() && d[j] < tc {
-            j += 1;
+        while before < d.len() && d[before] < tc {
+            before += 1;
         }
-        if j > 0 {
-            s.push(tc - d[j - 1]);
+        while after < d.len() && d[after] <= tc {
+            after += 1;
         }
+        let setup = (before > 0).then(|| tc - d[before - 1]);
+        let hold = d.get(after).map(|&t| t - tc);
+        out.push((setup, hold));
     }
-    s
+    out
+}
+
+fn setup_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
+    setup_hold_per_edge(clock, data, rise).into_iter().filter_map(|x| x.0).collect()
 }
 
 fn hold_times(clock: &Analysis, data: &Analysis, rise: bool) -> Vec<f64> {
-    let (c, d) = (if rise { &clock.rises } else { &clock.falls }, mids(data));
-    let mut j = 0usize;
-    let mut s = Vec::new();
-    for &tc in c {
-        while j < d.len() && d[j] <= tc {
-            j += 1;
-        }
-        if j < d.len() {
-            s.push(d[j] - tc);
-        }
-    }
-    s
+    setup_hold_per_edge(clock, data, rise).into_iter().filter_map(|x| x.1).collect()
 }
 
-/// Clock edges whose setup is below `tsetup` or hold below `thold`.
+/// Clock edges whose setup is below `tsetup` or hold below `thold`. A clock edge without a data edge before or after
+/// it is judged on the time it has.
 pub fn setup_hold_violations(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64) -> f64 {
     setup_hold_violations_at(clock, data, tsetup, thold, true)
 }
 
 pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64, rise: bool) -> f64 {
-    let (su, ho) = (setup_times(clock, data, rise), hold_times(clock, data, rise));
-    if su.len() != ho.len() {
-        let n = su.len().min(ho.len());
-        return su[..n].iter().zip(&ho[..n]).filter(|(&s, &h)| s < tsetup || h < thold).count() as f64;
-    }
-    su.iter().zip(&ho).filter(|(&s, &h)| s < tsetup || h < thold).count() as f64
+    setup_hold_per_edge(clock, data, rise)
+        .into_iter()
+        .filter(|&(s, h)| s.is_some_and(|s| s < tsetup) || h.is_some_and(|h| h < thold))
+        .count() as f64
 }
 
 #[cfg(test)]
@@ -1017,5 +1013,19 @@ mod tests {
         assert!((setup_time(&clk, &data) - 1.5e-9).abs() < 1e-12);
         assert_eq!(setup_hold_violations(&clk, &data, 1.2e-9, 1.2e-9), 1.0);
         assert_eq!(setup_hold_violations(&clk, &data, 2e-9, 3e-9), 2.0);
+    }
+
+    #[test]
+    fn setup_hold_violations_pair_by_clock_edge() {
+        let ns = 1e-9;
+        // the first clock edge has no data edge before it: no setup, but a hold of 3 ns
+        let clk = Analysis { valid: true, rises: vec![5.0 * ns, 10.0 * ns, 20.0 * ns], ..Analysis::default() };
+        let (rises, falls) = (vec![8.0 * ns, 19.0 * ns], vec![12.0 * ns, 22.0 * ns]);
+        let data = Analysis { valid: true, rises, falls, ..Analysis::default() };
+        // 10 ns: setup 2, hold 2 (< 2.5); 20 ns: setup 1 (< 1.5), hold 2 (< 2.5)
+        assert_eq!(setup_hold_violations(&clk, &data, 1.5 * ns, 2.5 * ns), 2.0);
+        // the last clock edge has no data edge after it: its setup still counts
+        let clk = Analysis { valid: true, rises: vec![10.0 * ns, 25.0 * ns], ..Analysis::default() };
+        assert_eq!(setup_hold_violations(&clk, &data, 4.0 * ns, 0.0), 2.0);
     }
 }
