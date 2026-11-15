@@ -618,7 +618,8 @@ pub struct Rail {
 }
 
 /// `reference` None uses the histogram top. `clock` splits overshoot, undershoot and the DC mean into cycles
-/// (rising mid crossings) and reports the mean of those. `vin` None takes the turn-on maximum over the whole record.
+/// (rising mid crossings) that lie inside `v` and reports the mean of those; with none, the whole record counts.
+/// `vin` None takes the turn-on maximum over the whole record.
 pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clock: Option<&[f32]>) -> Rail {
     let mut r = Rail { overshoot: f64::NAN, undershoot: f64::NAN, dc: f64::NAN, turn_on: f64::NAN };
     if v.len() < 2 || !(dt > 0.0) {
@@ -634,10 +635,11 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
         Some(c) if c.len() >= 4 => {
             let ck = analyze(c, dt);
             if ck.rises.len() >= 2 {
+                // only the cycles inside the rail: a longer clock goes on past its end
                 ck.rises.windows(2).filter_map(|w| {
                     let s = (w[0] / dt).ceil() as usize;
                     let e = (w[1] / dt).floor() as usize;
-                    (e > s).then_some((s, e.min(v.len() - 1)))
+                    (e > s && e < v.len()).then_some((s, e))
                 }).collect()
             } else {
                 Vec::new()

@@ -183,7 +183,7 @@ pub fn clock_from_edges(e: Vec<f64>, nominal_rate: Option<f64>) -> Option<Clock>
 /// Samples more than `uis` unit intervals from every clock edge become NaN, so idle time between strobe
 /// bursts is not folded into the eye.
 pub fn gate_around_clock(v: &[f32], dt: f64, c: &Clock, uis: f64) -> Vec<f32> {
-    if !(dt > 0.0) || !(c.period > 0.0) || c.edges.is_empty() {
+    if v.is_empty() || !(dt > 0.0) || !(c.period > 0.0) || c.edges.is_empty() {
         return v.to_vec();
     }
     let n = v.len();

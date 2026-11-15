@@ -311,6 +311,8 @@ fn eye_folds_data_on_a_strobe_clock() {
     assert!(m.width > 0.5 * ui, "{:?}", m);
     let idle = eye::gate_around_clock(&dq, dt, &clk, 1.5);
     assert_eq!(idle.iter().filter(|x| x.is_finite()).count(), dq.len());
+    // an empty record against a clock is an empty result, not a panic
+    assert!(eye::gate_around_clock(&[], dt, &clk, 1.5).is_empty());
 }
 
 #[test]

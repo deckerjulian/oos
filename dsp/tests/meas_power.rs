@@ -85,6 +85,19 @@ fn switching_slew_rds_ripple_turn_times_capacitance_and_rail() {
     assert!(close(r.overshoot, 1.0, 1e-9) && close(r.undershoot, 1.0, 1e-9) && close(r.dc, 5.0, 1e-9) && close(r.turn_on, 6.0, 1e-9), "{:?}", r);
 }
 
+#[test]
+fn rail_with_a_clock_longer_than_the_rail_uses_the_cycles_inside_it() {
+    // 100 rail samples, a clock of 1000 samples with a period of 50 rising at 24.5, 74.5, 124.5, ...
+    let mut v = vec![1.0f32; 100];
+    v[30] = 1.5;
+    let clk: Vec<f32> = (0..1000).map(|i| if (i / 25) % 2 == 0 { 0.0 } else { 1.0 }).collect();
+    let r = power::rail(&v, 1e-6, Some(1.0), None, Some(&clk));
+    // only the cycle of samples 25..=74 lies inside the rail; it holds the spike
+    assert!(close(r.overshoot, 0.5, 1e-6) && close(r.dc, 1.0 + 0.5 / 50.0, 1e-6), "{:?}", r);
+    let r = power::rail(&v[..10], 1e-6, Some(1.0), None, Some(&clk));
+    assert!(close(r.overshoot, 0.0, 1e-9) && close(r.dc, 1.0, 1e-9), "no cycle inside: the whole record {:?}", r);
+}
+
 
 #[test]
 fn bode_psrr_negates_the_gain_and_impedance_is_the_ratio() {
