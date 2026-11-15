@@ -226,6 +226,8 @@ pub struct Analysis {
     /// Rise/fall thresholds as fractions of amplitude (IEEE-181 default 0.1 / 0.9).
     pub lpct: f64,
     pub hpct: f64,
+    /// The middle threshold as a fraction of amplitude (0 = the default 0.5).
+    pub mpct: f64,
     pub est_ui: f64,
     pub median: f64,
     pub mode: f64,
@@ -256,10 +258,58 @@ fn mean(v: &[f64]) -> f64 {
     }
 }
 
-fn refs(lpct: f64, hpct: f64) -> (f64, f64) {
-    let lo = if lpct.is_finite() && lpct > 0.0 && lpct < 0.5 { lpct } else { 0.1 };
-    let hi = if hpct.is_finite() && hpct > 0.5 && hpct < 1.0 { hpct } else { 0.9 };
-    if hi > lo { (lo, hi) } else { (0.1, 0.9) }
+/// How top and base are found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BaseTop {
+    /// Histogram modes, max and min when the histogram has no clear peaks.
+    #[default]
+    Auto,
+    /// Highest and lowest sample.
+    MinMax,
+    /// Mean of the samples above (top) and below (base) the middle of max and min.
+    Mean,
+    /// Histogram modes only; max and min when the data is flat or a peak is in the outermost bin.
+    Mode,
+}
+
+/// The reference levels and how top and base are found. `rise` and `fall` are (low, mid, high): fractions of
+/// amplitude, or volts when `absolute`. `hyst` is the edge hysteresis: a fraction of amplitude or volts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Levels {
+    pub absolute: bool,
+    pub rise: [f64; 3],
+    pub fall: [f64; 3],
+    pub hyst: f64,
+    pub base_top: BaseTop,
+}
+
+impl Levels {
+    /// Percent levels: `lpct` / `hpct` with the middle at 50 %, the same fall levels, 5 % hysteresis.
+    pub fn percent(lpct: f64, hpct: f64) -> Levels {
+        Levels { absolute: false, rise: [lpct, 0.5, hpct], fall: [lpct, 0.5, hpct], hyst: 0.05, base_top: BaseTop::Auto }
+    }
+
+    /// The levels as numbers for a cache key.
+    pub fn bits(&self) -> [u64; 10] {
+        let b = |x: f64| x.to_bits();
+        [self.absolute as u64 | (self.base_top as u64) << 8, b(self.rise[0]), b(self.rise[1]), b(self.rise[2]), b(self.fall[0]),
+            b(self.fall[1]), b(self.fall[2]), b(self.hyst), 0, 0]
+    }
+
+    /// Volts for the rise and fall triples and the hysteresis, given the top and base. A triple that is not
+    /// ordered low < mid < high (or outside 0..1 as a percent) falls back to 10 / 50 / 90 %.
+    fn resolve(&self, base: f64, amp: f64) -> ([f64; 3], [f64; 3], f64) {
+        let ok = |t: &[f64; 3]| t.iter().all(|x| x.is_finite()) && t[0] < t[1] && t[1] < t[2] && (self.absolute || (t[0] > 0.0 && t[2] < 1.0));
+        let conv = |t: &[f64; 3]| {
+            if ok(t) {
+                if self.absolute { *t } else { t.map(|x| base + x * amp) }
+            } else {
+                [0.1, 0.5, 0.9].map(|x| base + x * amp)
+            }
+        };
+        let h = if self.hyst.is_finite() && self.hyst > 0.0 { if self.absolute { self.hyst } else { self.hyst * amp } } else { 0.05 * amp };
+        (conv(&self.rise), conv(&self.fall), h)
+    }
 }
 
 fn median_samples(f: &[f32]) -> f64 {
@@ -317,7 +367,7 @@ fn linreg(v: &[f32], dt: f64) -> (f64, f64) {
 /// bin, the lower half gives base and the upper half gives top: the fullest bin, ties to the outer bin. Max/min
 /// is used instead when the data is flat, a half is empty, a peak sits in the outermost bin (clipping), or a peak
 /// holds fewer samples than `peak_threshold` (a poor peak). A bin's value is its grid point.
-fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
+fn top_base(f: &[f32], vmin: f32, vmax: f32, poor_peak_check: bool) -> (f64, f64) {
     let minmax = (vmax as f64, vmin as f64);
     let n = f.len();
     if !(vmax > vmin) || n == 0 {
@@ -346,7 +396,7 @@ fn top_base(f: &[f32], vmin: f32, vmax: f32) -> (f64, f64) {
     let lo = pick(&mut (0..=mid.min(nbins - 1)).rev());
     let hi = pick(&mut (mid.min(nbins - 1)..nbins));
     let (Some(lo), Some(hi)) = (lo, hi) else { return minmax };
-    let bad = |i: usize, outer: usize| hist[i] == 0 || i == outer || (hist[i] as f64) < thr;
+    let bad = |i: usize, outer: usize| hist[i] == 0 || i == outer || (poor_peak_check && (hist[i] as f64) < thr);
     if bad(lo, 0) || bad(hi, nbins - 1) {
         return minmax;
     }
@@ -378,6 +428,28 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
 
 /// IEEE-181 uses 10/90. The menu also offers 20/80 (`lpct` / `hpct` as fractions of amplitude).
 pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
+    analyze_levels(v, dt, min_amp, &Levels::percent(lpct, hpct))
+}
+
+/// Top and base by `method`.
+fn top_base_by(f: &[f32], vmin: f32, vmax: f32, method: BaseTop) -> (f64, f64) {
+    match method {
+        BaseTop::Auto => top_base(f, vmin, vmax, true),
+        BaseTop::Mode => top_base(f, vmin, vmax, false),
+        BaseTop::MinMax => (vmax as f64, vmin as f64),
+        BaseTop::Mean => {
+            let mid = (vmin as f64 + vmax as f64) / 2.0;
+            let (mut hs, mut hn, mut ls, mut ln) = (0.0, 0usize, 0.0, 0usize);
+            for &x in f {
+                if x as f64 >= mid { hs += x as f64; hn += 1 } else { ls += x as f64; ln += 1 }
+            }
+            if hn == 0 || ln == 0 { (vmax as f64, vmin as f64) } else { (hs / hn as f64, ls / ln as f64) }
+        }
+    }
+}
+
+/// The measurements of a record with the reference levels and the top / base method of `lv`.
+pub fn analyze_levels(v: &[f32], dt: f64, min_amp: f64, lv: &Levels) -> Analysis {
     // the finite samples: the record itself when it has no gap (a copy of 100 kpts per channel otherwise)
     let own: Vec<f32>;
     let f: &[f32] = if v.iter().all(|x| x.is_finite()) {
@@ -409,8 +481,12 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     // trapezoid rule: the area over the record, and the mean is that area over the record's span
     let trap = sum - (f[0] as f64 + f[f.len() - 1] as f64) / 2.0;
     let avg = trap / (n - 1.0);
-    let (top, base) = top_base(f, vmin, vmax);
-    let (lpct, hpct) = refs(lpct, hpct);
+    let (top, base) = top_base_by(f, vmin, vmax, lv.base_top);
+    let amp0 = top - base;
+    let (rl, fl, hyst) = lv.resolve(base, amp0);
+    // the rise thresholds as fractions of amplitude, for the Analysis
+    let frac = |x: f64| if amp0 > 0.0 { (x - base) / amp0 } else { f64::NAN };
+    let (lpct, mpct, hpct) = (frac(rl[0]), frac(rl[1]), frac(rl[2]));
     let (lin_slope, lin_int) = linreg(v, dt);
     let mut a = Analysis {
         valid: true,
@@ -444,6 +520,7 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         cyc_min: f64::NAN,
         lpct,
         hpct,
+        mpct,
         est_ui: f64::NAN,
         median: median_samples(&f),
         mode: hist_mode(&f, vmin, vmax),
@@ -460,10 +537,11 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     if amp <= 0.0 || amp < min_amp {
         return a;
     }
-    let mid = (base + amp * 0.5) as f32;
-    let e = level_edges(v, mid, (amp * 0.05) as f32);
+    let mid = rl[1] as f32;
+    let e = level_edges(v, mid, hyst as f32);
     a.rises = e.iter().filter(|x| x.rising).map(|x| x.t * dt).collect();
-    a.falls = e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect();
+    a.falls = if fl[1] == rl[1] { e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect() }
+        else { level_edges(v, fl[1] as f32, hyst as f32).iter().filter(|x| !x.rising).map(|x| x.t * dt).collect() };
     let spacings: Vec<f64> = {
         let t = mids(&a);
         t.windows(2).map(|w| w[1] - w[0]).collect()
@@ -471,7 +549,7 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     a.est_ui = unit_interval_bits(&mids(&a));
     a.ui_wtd = crate::linecode::unit_interval_runs(&spacings).unwrap_or(f64::NAN);
     if a.rises.len() + a.falls.len() <= 8000 {
-        let mid_v = (base + amp * 0.5) as f32;
+        let mid_v = mid;
         if let Some(c) = crate::eye::recover_clock_pll(v, dt, mid_v, (amp * 0.1) as f32, None, 0.0, true) {
             a.pll_ui = c.period;
         }
@@ -479,27 +557,29 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
             a.fold_rms = crate::linecode::fold_rms(v, dt, a.est_ui);
         }
     }
-    let lo = (base + lpct * amp) as f32;
-    let hi_l = (base + hpct * amp) as f32;
+    let (lo, hi_l) = (rl[0] as f32, rl[2] as f32);
+    let (flo, fhi_l) = (fl[0] as f32, fl[2] as f32);
     // the low and high reference crossings use the same edge finder as the mid edges: a band of 5 % of the amplitude
     // either side of the level, so noise or ringing at 10 % / 90 % does not add or move crossings
-    let band = (amp * 0.05) as f32;
+    let band = hyst as f32;
     let at = |level: f32| {
         let e = level_edges(v, level, band);
         let r: Vec<f64> = e.iter().filter(|x| x.rising).map(|x| x.t * dt).collect();
         let f: Vec<f64> = e.iter().filter(|x| !x.rising).map(|x| x.t * dt).collect();
         (r, f)
     };
-    let (hr, hf) = at(hi_l);
-    let (lr, lf) = at(lo);
+    let (hr, _) = at(hi_l);
+    let (lr, _) = at(lo);
+    let (_, hf) = at(fhi_l);
+    let (_, lf) = at(flo);
     // one result per transition: a low crossing pairs with the next high crossing when no other low crossing is between
     let rt = pair_widths(&lr, &hr);
     let ft = pair_widths(&hf, &lf);
-    let dv = (hi_l - lo) as f64;
+    let (dv, fdv) = ((hi_l - lo) as f64, (fhi_l - flo) as f64);
     a.rise_time = mean(&rt);
     a.fall_time = mean(&ft);
     a.rise_slew = mean(&rt.iter().map(|w| dv / w).collect::<Vec<_>>());
-    a.fall_slew = mean(&ft.iter().map(|w| -dv / w).collect::<Vec<_>>());
+    a.fall_slew = mean(&ft.iter().map(|w| -fdv / w).collect::<Vec<_>>());
     a.rise_count = rt.len();
     a.fall_count = ft.len();
     // high time, low time and time outside are measured at the same reference crossings
@@ -607,7 +687,7 @@ impl Analysis {
             Meas::Vbase => self.base,
             Meas::Vamp => amp,
             Meas::Vupper => self.base + self.hpct_or_default() * amp,
-            Meas::Vmid => self.base + 0.5 * amp,
+            Meas::Vmid => self.base + if self.mpct > 0.0 { self.mpct } else { 0.5 } * amp,
             Meas::Vlower => self.base + self.lpct_or_default() * amp,
             Meas::Vavg => self.avg,
             Meas::Vrms => self.rms,
@@ -722,7 +802,7 @@ fn cycle_levels(v: &[f32], dt: f64, rises: &[f64]) -> (f64, f64, f64, f64, f64, 
         if !(hi > lo) {
             continue;
         }
-        let (t, b) = top_base(&samp, lo, hi);
+        let (t, b) = top_base(&samp, lo, hi, true);
         top.push(t);
         base.push(b);
         amp.push(t - b);
@@ -1270,6 +1350,97 @@ mod tests {
         assert!(close_abs(a10.rise_time, 80e-9, 5e-9), "{}", a10.rise_time);
         assert!(close_abs(a20.rise_time, 60e-9, 5e-9), "{}", a20.rise_time);
         assert!(a20.rise_time < a10.rise_time);
+    }
+
+    fn trapezoid() -> Vec<f32> {
+        let mut v = vec![0.0f32; 20];
+        for _ in 0..3 {
+            v.extend((0..100).map(|i| i as f32 / 99.0));
+            v.extend(vec![1.0; 80]);
+            v.extend((0..100).map(|i| 1.0 - i as f32 / 99.0));
+            v.extend(vec![0.0; 80]);
+        }
+        v
+    }
+
+    #[test]
+    fn default_levels_equal_the_percent_call() {
+        let v = trapezoid();
+        let a = analyze_refs(&v, 1e-9, 0.0, 0.1, 0.9);
+        let b = analyze_levels(&v, 1e-9, 0.0, &Levels::percent(0.1, 0.9));
+        assert_eq!((a.rise_time, a.fall_time, a.top, a.base, a.rises.clone()), (b.rise_time, b.fall_time, b.top, b.base, b.rises.clone()));
+    }
+
+    #[test]
+    fn custom_mid_moves_the_edge_time_and_vmid() {
+        let v = trapezoid();
+        let mut lv = Levels::percent(0.1, 0.9);
+        let a = analyze_levels(&v, 1e-9, 0.0, &lv);
+        lv.rise[1] = 0.3;
+        lv.fall[1] = 0.3;
+        let b = analyze_levels(&v, 1e-9, 0.0, &lv);
+        assert!(b.rises[0] < a.rises[0] - 15e-9, "{} {}", a.rises[0], b.rises[0]);
+        assert!((b.get(Meas::Vmid) - 0.3).abs() < 1e-6 && (a.get(Meas::Vmid) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn absolute_levels_are_volts_and_match_the_same_percent() {
+        let v = trapezoid();
+        let pct = analyze_levels(&v, 1e-9, 0.0, &Levels::percent(0.2, 0.8));
+        let abs = analyze_levels(&v, 1e-9, 0.0, &Levels { absolute: true, rise: [0.2, 0.5, 0.8], fall: [0.2, 0.5, 0.8], hyst: 0.05, base_top: BaseTop::Auto });
+        assert!((pct.rise_time - abs.rise_time).abs() < 1e-12 && (pct.fall_time - abs.fall_time).abs() < 1e-12);
+        let narrow = analyze_levels(&v, 1e-9, 0.0, &Levels { absolute: true, rise: [0.4, 0.5, 0.6], fall: [0.4, 0.5, 0.6], hyst: 0.01, base_top: BaseTop::Auto });
+        assert!(close_abs(narrow.rise_time, 20e-9, 3e-9), "{}", narrow.rise_time);
+    }
+
+    #[test]
+    fn separate_fall_levels_only_change_the_fall() {
+        let v = trapezoid();
+        let a = analyze_levels(&v, 1e-9, 0.0, &Levels::percent(0.1, 0.9));
+        let mut lv = Levels::percent(0.1, 0.9);
+        lv.fall = [0.2, 0.5, 0.8];
+        let b = analyze_levels(&v, 1e-9, 0.0, &lv);
+        assert_eq!(a.rise_time, b.rise_time);
+        assert!(b.fall_time < a.fall_time - 15e-9, "{} {}", a.fall_time, b.fall_time);
+    }
+
+    #[test]
+    fn invalid_levels_fall_back_to_ten_ninety() {
+        let v = trapezoid();
+        let a = analyze_levels(&v, 1e-9, 0.0, &Levels::percent(0.1, 0.9));
+        let b = analyze_levels(&v, 1e-9, 0.0, &Levels { rise: [0.7, 0.5, 0.2], ..Levels::percent(0.1, 0.9) });
+        assert_eq!(a.rise_time, b.rise_time);
+    }
+
+    #[test]
+    fn base_top_methods_differ_on_overshoot() {
+        // a square wave with a short overshoot spike on every high span
+        let mut v = Vec::new();
+        for _ in 0..8 {
+            v.extend(vec![-0.2f32; 3]);
+            v.extend(vec![0.0f32; 97]);
+            v.extend(vec![1.5f32; 3]);
+            v.extend(vec![1.0f32; 97]);
+        }
+        let by = |m| analyze_levels(&v, 1e-9, 0.0, &Levels { base_top: m, ..Levels::percent(0.1, 0.9) });
+        let (mm, mode, mean, auto) = (by(BaseTop::MinMax), by(BaseTop::Mode), by(BaseTop::Mean), by(BaseTop::Auto));
+        assert!(mm.top == 1.5 && mm.base == -0.2f32 as f64);
+        assert!((mode.top - 1.0).abs() < 0.01 && mode.base.abs() < 0.01, "{} {}", mode.top, mode.base);
+        assert!((auto.top - mode.top).abs() < 1e-9);
+        assert!(mean.top > 1.0 && mean.top < 1.1, "{}", mean.top);
+        assert!(mean.base < 0.0 && mean.base > -0.1, "{}", mean.base);
+    }
+
+    #[test]
+    fn hysteresis_ignores_ripple_on_the_middle_level() {
+        // a rising edge with ripple around the middle: a wide hysteresis band counts it once
+        let mut v = vec![0.0f32; 20];
+        v.extend([0.2, 0.48, 0.52, 0.47, 0.53, 0.8, 1.0]);
+        v.extend(vec![1.0; 20]);
+        let narrow = analyze_levels(&v, 1e-9, 0.0, &Levels { hyst: 0.005, ..Levels::percent(0.1, 0.9) });
+        let wide = analyze_levels(&v, 1e-9, 0.0, &Levels { hyst: 0.1, ..Levels::percent(0.1, 0.9) });
+        assert!(narrow.rises.len() > wide.rises.len(), "{} {}", narrow.rises.len(), wide.rises.len());
+        assert_eq!(wide.rises.len(), 1);
     }
 
     fn close_abs(x: f64, want: f64, abs: f64) -> bool {
