@@ -58,6 +58,8 @@ mod batch1_tests;
 mod batch2_tests;
 #[cfg(test)]
 mod batch3a_tests;
+#[cfg(test)]
+mod batch4_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -279,8 +281,10 @@ const FREQ_KEYS: [&str; 18] = ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "
 /// Keys of the hex keypad picker.
 const KEYPAD: [&str; 19] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
 
-/// A channel key on the front panel held this many seconds: AC/DC (`Ui::panel_key`).
-pub const LONG_PRESS: f64 = 0.6;
+/// The one long-press time: a finger held this long opens the hold action of what it is on (a channel's quick actions,
+/// the Measure short menu, the plot's actions); a channel key on the front panel held as long switches AC/DC
+/// (`Ui::panel_key`). A ring fills under the finger meanwhile (`Ui::press_ring`).
+pub const LONG_PRESS: f64 = 0.5;
 
 pub const KEY_NAMES: [(&str, u8); 30] = [
     ("navfwd", 0x06), ("navplay", 0x07), ("navback", 0x08),
@@ -7744,7 +7748,7 @@ impl Ui {
     }
 
     /// How long a finger stays down on Measure before the short menu opens. A shorter press is a tap.
-    const MEAS_HOLD_S: f64 = 0.45;
+    pub(super) const MEAS_HOLD_S: f64 = LONG_PRESS;
 
     /// Usual measurements, in the order the Add meas shortcut offers them. Anything left follows `ALL_MEAS`.
     const USUAL_MEAS: [Meas; 6] = [Meas::Vpp, Meas::Freq, Meas::Period, Meas::Vrms, Meas::Vavg, Meas::Rise];
@@ -8484,8 +8488,8 @@ impl Ui {
         }
     }
 
-    /// A channel key held for `LONG_PRESS`: AC/DC once; letting it go then does nothing more. The same for a finger
-    /// held on a channel's card: then the finger's lift is no tap.
+    /// A channel key held for `LONG_PRESS`: AC/DC once; letting it go then does nothing more. A finger held on a
+    /// channel's card opens that channel's quick actions (never a silent AC/DC); the lift is no tap.
     fn ch_hold_poll(&mut self) {
         if let Some((c, t)) = self.card_hold {
             let still = self.touch.down && (self.touch.x - self.touch.x0).abs() < 16 && (self.touch.y - self.touch.y0).abs() < 16;
@@ -8493,8 +8497,10 @@ impl Ui {
                 self.card_hold = None;
             } else if self.now - t >= LONG_PRESS {
                 self.card_hold = None;
+                let (x, y) = (self.touch.x0, self.touch.y0);
                 self.touch.down = false;
-                self.toggle_ac_dc(c);
+                self.channel_popup(c, x, y);
+                self.workspace.lift_pending = true;
             }
         }
         if let Some((c, t, false)) = self.ch_hold {
@@ -11008,7 +11014,7 @@ mod tests {
         ui.close_menu();
         // press and hold: the short menu, then the shortcut on release
         ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
-        ui.step(0.5);
+        ui.step(LONG_PRESS + 0.05);
         assert!(ui.menu_open && ui.menu == MenuId::MeasHold);
         assert_eq!(ui.items(MenuId::MeasHold), vec![Item::AddMeas]);
         assert_eq!(ui.item_label(Item::AddMeas), "Add meas");
@@ -11128,19 +11134,21 @@ mod tests {
         // scripts and the remote: every press at once
         ui.key(key::CH1);
         assert!(ui.m.ch[0].on);
-        // a finger held on the channel's card: AC/DC, and lifting it opens no menu
+        // a finger held on the channel's card: its quick actions (no silent AC/DC), and lifting it opens no menu
         ui.close_menu();
         let (x, y) = mid(ui.cards().0[0]);
         ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
         ui.step(LONG_PRESS + 0.05);
-        assert_eq!(ui.m.ch[0].coupling, Coupling::Ac);
+        assert_eq!(ui.m.ch[0].coupling, Coupling::Dc, "a hold never flips the coupling");
+        assert!(ui.workspace.popup.is_some(), "the quick actions are open");
         ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
         assert!(!ui.menu_open, "no tap after a long touch");
+        ui.dismiss_context();
         // a short one is a tap
         ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
         ui.step(0.1);
         ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
-        assert!(ui.menu_open && ui.menu == MenuId::Channel(0) && ui.m.ch[0].coupling == Coupling::Ac);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(0) && ui.m.ch[0].coupling == Coupling::Dc);
     }
 
     /// Every front-panel key function is in the start menu, and every menu is reachable by its key and by touch.

@@ -87,7 +87,7 @@ fn context_menu_stays_inside_the_plot_and_marks_the_trace_mode_in_force() {
         assert!(p.x >= g.x && p.right() <= g.right() && p.y >= g.y && p.bottom() <= g.bottom(), "({x},{y}) {p:?} in {g:?}");
     }
     u.context_menu(500, 250);
-    let row = |u: &Ui, i: i32| { let p = u.workspace.popup.as_ref().unwrap().rect; Rect::new(p.x + p.w - 30, p.y + 4 + i * 30, 24, 30) };
+    let row = |u: &Ui, i: i32| { let r = u.workspace.popup.as_ref().unwrap().row_rect(i as usize); Rect::new(r.right() - 26, r.y, 24, r.h) };
     let ink = |u: &mut Ui, r: Rect| { let mut cv = Canvas::new(W, H); u.render(&mut cv); (r.y..r.y + r.h).flat_map(|y| (r.x..r.x + r.w).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * W + x) as usize] == ACCENT).count() };
     let (overlay_row, stacked_row) = (row(&u, 0), row(&u, 1));
     assert!(ink(&mut u, overlay_row) > 0 && ink(&mut u, stacked_row) == 0, "check on Overlay");
@@ -194,5 +194,6 @@ fn eye_tab_in_a_side_pane_clears_the_charts_and_cursor_tags_clear_the_corner_but
 pub(super) fn row_xy(u: &Ui, label: &str) -> (i32, i32) {
     let p = u.workspace.popup.as_ref().expect("a popup is open");
     let i = p.rows.iter().position(|(l, _)| l.starts_with(label)).expect("row in popup");
-    (p.rect.x + 30, p.rect.y + 4 + i as i32 * 30 + 15)
+    let r = p.row_rect(i);
+    (r.x + 30, r.y + r.h / 2)
 }

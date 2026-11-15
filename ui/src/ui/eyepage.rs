@@ -1978,7 +1978,9 @@ mod tests {
         let popup = ui.workspace.popup.as_ref().unwrap().rect;
         let popup_x = popup.x;
         let popup_y = popup.y;
-        ui.tap(popup_x + 24, popup_y + 4 + 2 * 30 + 15); // Dock Eye below.
+        let row = ui.workspace.popup.as_ref().unwrap().row_rect(2);
+        let _ = (popup_x, popup_y);
+        ui.tap(row.x + 24, row.y + row.h / 2); // Dock Eye below.
         ui.render(&mut Canvas::new(W, H));
         let (wave, eye) = (ui.grid, ui.eye_pane_rect());
         assert_eq!(ui.m.eye_place, EyePlace::Under);
