@@ -160,7 +160,7 @@ impl Ui {
 
     /// The numbered buttons in the top bar, left of the menu buttons, while there is more than one view.
     pub(super) fn view_box(&self) -> Option<Rect> {
-        if self.m.views < 2 {
+        if self.m.views < 2 || self.m.layout == Layout::Studio {
             return None;
         }
         let first = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x);

@@ -673,6 +673,33 @@ impl Quick {
     }
 }
 
+/// Display > Layout. Default: the stock OOS top bar and cards. Minimal: the compact OOS-plus bars. Studio: the compact
+/// bars with a source chip per channel, stacked lanes and pinned measurement badges (`ui/studio.rs`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Layout {
+    Default,
+    Minimal,
+    Studio,
+}
+
+pub const LAYOUTS: [Layout; 3] = [Layout::Default, Layout::Minimal, Layout::Studio];
+
+impl Layout {
+    /// The name in the menu and in the setup file (lower case there).
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::Default => "Default",
+            Layout::Minimal => "Minimal",
+            Layout::Studio => "Studio",
+        }
+    }
+
+    /// A setup value, `default`, `minimal` or `studio`.
+    pub fn parse(s: &str) -> Option<Layout> {
+        LAYOUTS.into_iter().find(|l| l.name().eq_ignore_ascii_case(s))
+    }
+}
+
 /// What an HDMI monitor shows. Mirror: the panel picture, scaled. Waveform: a settings line and the waveform area,
 /// scaled. Layout: the whole screen laid out again at the monitor's size, sharp, with the traces stretched; it costs a
 /// second render per monitor frame (about 5 to 10 ms on the unit at 1920 x 1080), so the panel may get fewer frames.
@@ -1158,8 +1185,9 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
-    /// Display > Layout: true = the compact OOS-plus bars (Minimal), false = the stock OOS top bar and cards (Default)
-    pub minimal: bool,
+    /// Display > Layout: the stock OOS bars (Default), the compact OOS-plus bars (Minimal) or Studio (lanes, pinned
+    /// measurement badges, one chip per channel)
+    pub layout: Layout,
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
@@ -1582,7 +1610,7 @@ impl Default for Model {
             color_grade: false,
             // samples joined as lines by default
             dots: false,
-            minimal: true,
+            layout: Layout::Minimal,
             hdmi: HdmiMode::Waveform,
             views: 1,
             view_cur: 0,
@@ -1756,6 +1784,11 @@ impl Default for Model {
 }
 
 impl Model {
+    /// The compact bars (Minimal and Studio) instead of the stock ones.
+    pub fn compact(&self) -> bool {
+        self.layout != Layout::Default
+    }
+
     /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
     pub fn apply_sim_preset(&mut self) {
         let l = oos_dsp::serial::LANES[self.sim_preset.min(oos_dsp::serial::LANES.len() - 1)];

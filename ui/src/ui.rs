@@ -43,6 +43,7 @@ mod viewmore;
 mod wlan;
 mod windows;
 mod workspace;
+mod studio;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
@@ -1105,6 +1106,7 @@ pub struct Ui {
     bode: bode::State,
     /// SIM: Play is moving the timebase window through the selected record
     workspace: workspace::Workspace,
+    studio: studio::Studio,
     pub desktop_panel: Option<bool>,
     sim_play: bool,
     sim_generation: Option<sim::Generation>,
@@ -1422,6 +1424,7 @@ impl Ui {
             start_up_last: None,
             bode: Default::default(),
             workspace: workspace::Workspace::default(),
+            studio: studio::Studio::default(),
             desktop_panel: None,
             sim_play: false,
             sim_generation: None,
@@ -1576,7 +1579,7 @@ impl Ui {
     /// Top bar, waveform area and bottom bar of the screen.
     pub fn frame(&self) -> Frame {
         let mut f = Frame::of(self.scr);
-        if !self.m.minimal {
+        if !self.m.compact() {
             return f;
         }
         // the compact bottom bar: the body takes what the cards would have had
@@ -2858,6 +2861,7 @@ impl Ui {
     /// background, graticule and masks go under the traces, everything else over them, and the traces become jobs
     /// for the GPU (`gpu.rs`). The order of the drawing is the same either way.
     pub fn render_layers(&mut self, l: &mut Layers) {
+        self.studio_sync();
         self.relayout();
         if let Some(o) = l.over.as_deref_mut() {
             o.no_clip();
@@ -4349,7 +4353,7 @@ impl Ui {
 
     /// The measurement card in a dock (Minimal layout), when it was docked rather than floated.
     fn results_docked(&self) -> Option<StripDock> {
-        (self.m.minimal && self.workspace.measure_docked && self.workspace.measure_float.is_none() && self.results_panel()).then_some(self.m.strip_dock)
+        (self.m.compact() && self.workspace.measure_docked && self.workspace.measure_float.is_none() && self.results_panel()).then_some(self.m.strip_dock)
     }
 
     /// Width a side-docked measurement card takes from the plot.
@@ -4702,6 +4706,7 @@ impl Ui {
 
     /// Run state pill at the left of the top bar (wider for the larger text sizes).
     fn run_pill(&self) -> Rect {
+        if self.m.layout == Layout::Studio { return self.studio_top().run; }
         Rect::new(8, 6, 92.max(30 + self.fonts().mb.width("TRIG'D") + 12), 28)
     }
 
@@ -4732,9 +4737,10 @@ impl Ui {
 
     /// Single button right of the run state pill (moves over when the pill grows with the text size).
     fn single_btn(&self) -> Rect {
+        if self.m.layout == Layout::Studio { return self.studio_top().single; }
         let p = self.run_pill();
         // the Default layout has no Single button (the front-panel key), the caption follows the pill as in stock OOS
-        if !self.m.minimal {
+        if !self.m.compact() {
             return Rect::new(p.right() + 2, Self::SINGLE_BTN.y, 0, Self::SINGLE_BTN.h);
         }
         Rect::new(p.right() + 4, Self::SINGLE_BTN.y, Self::SINGLE_BTN.w, Self::SINGLE_BTN.h)
@@ -4743,6 +4749,7 @@ impl Ui {
     /// Top-bar buttons, right-aligned before the network box: what is used most, and the menus without a front-panel key
     /// (Display, Storage, System). Everything else is in the start menu.
     fn top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
+        if self.m.layout == Layout::Studio { return self.studio_top_buttons(); }
         let f = self.fonts();
         let mut all = vec![
             (TopBtn::Load, "Load file"),
@@ -4753,7 +4760,7 @@ impl Ui {
             (TopBtn::Menu(MenuId::Storage), "Storage"),
             (TopBtn::System, "System"),
         ];
-        if !self.m.minimal {
+        if !self.m.compact() {
             // stock OOS buttons; Load and SIM stay in the Sources menu and Menu > Analysis
             all.retain(|(b, _)| !matches!(b, TopBtn::Load | TopBtn::Menu(MenuId::Sim)));
         }
@@ -4870,6 +4877,7 @@ impl Ui {
     }
 
     fn draw_top(&self, cv: &mut Canvas) {
+        if self.m.layout == Layout::Studio { return self.draw_studio_top(cv); }
         let f = self.fonts();
         let top = self.frame().top;
         cv.fill(top, BAR);
@@ -5003,7 +5011,7 @@ impl Ui {
     /// All bottom cards. LA and generator sit behind the channels, wide like them when they are on and the channels keep
     /// room for their text, else narrow.
     fn card_layout(&self) -> Cards {
-        if self.m.minimal { self.compact_cards() } else { self.classic_card_layout() }
+        if self.m.layout == Layout::Studio { self.studio_cards() } else if self.m.compact() { self.compact_cards() } else { self.classic_card_layout() }
     }
 
     /// The stock OOS bottom row (Display > Layout > Default).
@@ -5114,7 +5122,7 @@ impl Ui {
     }
 
     fn draw_bottom(&self, cv: &mut Canvas) {
-        if self.m.minimal { self.draw_workspace_footer(cv) } else { self.draw_classic_bottom(cv) }
+        if self.m.layout == Layout::Studio { self.draw_studio_bottom(cv) } else if self.m.compact() { self.draw_workspace_footer(cv) } else { self.draw_classic_bottom(cv) }
     }
 
     /// The stock OOS cards: Menu, channels, LA, generator, TIME and trigger (Display > Layout > Default).
@@ -6488,7 +6496,7 @@ impl Ui {
             Item::TrigNoise => onoff(m.trig_nrej),
             Item::TrigCoup => m.trig_coup.name().into(),
             Item::Dots => onoff(m.dots),
-            Item::Layout => if m.minimal { "Minimal".into() } else { "Default".into() },
+            Item::Layout => m.layout.name().into(),
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
@@ -6849,7 +6857,9 @@ impl Ui {
                 self.dirty_map = true;
             }
             Item::Layout => {
-                m.minimal = !m.minimal;
+                let i = LAYOUTS.iter().position(|&l| l == m.layout).unwrap_or(0);
+                m.layout = LAYOUTS[cyc(i, LAYOUTS.len(), d)];
+                if m.layout == Layout::Studio { self.studio.enter = true; }
                 self.dirty_map = true;
             }
             Item::Hdmi => {
@@ -7704,7 +7714,7 @@ impl Ui {
             Item::GridStyle => &["Full", "Light", "None"],
             Item::GridFrame | Item::TrigNoise => &["Off", "On"],
             Item::Dots | Item::ZoneOn => &["Off", "On"],
-            Item::Layout => &["Default", "Minimal"],
+            Item::Layout => &["Default", "Minimal", "Studio"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
             Item::ZoneSel => &["Z1", "Z2"],
@@ -9147,7 +9157,8 @@ impl Ui {
         if !box_button { self.zoom_arm = false; }
         if self.workspace_popup_tap(x, y) { return; }
         if self.single_btn().contains(x, y) { self.key(key::SINGLE); return; }
-        if self.m.minimal && !self.full_on() && self.workspace_footer_tap(x, y) { return; }
+        if self.m.layout == Layout::Studio && !self.full_on() && self.studio_tap(x, y) { return; }
+        if self.m.layout == Layout::Minimal && !self.full_on() && self.workspace_footer_tap(x, y) { return; }
         if self.power_dlg {
             self.power_dlg = false;
             let (_, [off, restart, _]) = self.pwr_layout();

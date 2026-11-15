@@ -604,7 +604,7 @@ impl Ui {
         cv.text_in(&self.fonts().mb, Rect::new(a.x + a.w, a.y, 26, a.h), 1, "to", TEXT);
     }
     pub(super) fn stacked(&self) -> bool {
-        self.workspace.stacked && !self.xy && matches!(self.m.view, AView::Scope | AView::Eye)
+        (self.workspace.stacked || self.m.layout == Layout::Studio) && !self.xy && matches!(self.m.view, AView::Scope | AView::Eye)
     }
     pub(super) fn trace_sources(&self) -> Vec<Trace> {
         let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on).map(Trace::Channel).collect();

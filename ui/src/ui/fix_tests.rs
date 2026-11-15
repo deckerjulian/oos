@@ -138,7 +138,7 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
     assert_ne!(u.grid, before);
     // Default layout keeps the stock overlay
     let mut u = fresh();
-    u.m.minimal = false;
+    u.m.layout = Layout::Default;
     u.workspace_action(Action::MeasureDock(StripDock::Left));
     assert!(u.results_docked().is_none());
 }
