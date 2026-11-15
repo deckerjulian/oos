@@ -86,6 +86,11 @@ fn trigger_pill_shows_the_level_the_trigger_page_shows() {
     }
 }
 
+fn ref_look_state(u: &Ui, i: usize) -> (bool, f32, f32, usize, String) {
+    let r = u.refs[i].as_ref().unwrap();
+    (r.on, r.vpd, r.offset, r.color, r.label.clone())
+}
+
 #[test]
 fn sim_keeps_a_loaded_ref_and_every_channel() {
     let mut u = fresh(Layout::Default);
@@ -157,6 +162,38 @@ fn math_scale_set_by_the_user_is_not_refitted_and_a_flat_result_keeps_a_sane_sca
     u.m.math_scale = 20;
     for _ in 0..3 { u.step(0.05); }
     assert_eq!(u.m.math_scale, 20, "an explicit scale stands");
+}
+
+#[test]
+fn setup_save_and_recall_keep_how_a_ref_looks() {
+    let mut u = fresh(Layout::Default);
+    let dir = std::env::temp_dir().join(format!("oos-b2-setup-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    u.store_dir = dir.clone();
+    u.refs[0] = Some(sine_ref(0, 2000, 1e-6));
+    u.refs[2] = Some(sine_ref(2, 2000, 1e-6));
+    { let r = u.refs[0].as_mut().unwrap(); r.on = false; r.vpd = 2.0; r.offset = -0.3; r.color = 3; r.label = "Probe A".into(); }
+    let saved = (ref_look_state(&u, 0), ref_look_state(&u, 2));
+    u.activate(Item::StoreSaveSetup);
+    { let r = u.refs[0].as_mut().unwrap(); r.on = true; r.vpd = 0.5; r.offset = 0.0; r.color = 0; r.label = "x".into(); }
+    { let r = u.refs[2].as_mut().unwrap(); r.vpd = 5.0; r.label = "y".into(); }
+    u.recall_setup();
+    assert_eq!((ref_look_state(&u, 0), ref_look_state(&u, 2)), saved);
+    // an old setup has no ref lines: the refs stay as they are
+    std::fs::write(dir.join("setup1.txt"), crate::store::setup_text(&u.m)).unwrap();
+    u.refs[0].as_mut().unwrap().vpd = 4.0;
+    u.recall_setup();
+    assert_eq!(u.refs[0].as_ref().unwrap().vpd, 4.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ref_look_lines_round_trip_and_ignore_nonsense() {
+    let looks = vec![Some(crate::store::RefLook { on: Some(true), vdiv: Some(0.5), offset: Some(-1.0), color: Some(2), label: Some("a b".into()) }), None];
+    assert_eq!(crate::store::parse_ref_looks(&crate::store::ref_setup_text(&looks), 2), looks);
+    let bad = crate::store::parse_ref_looks("ref1.vdiv = -3\nref99.on = true\nref1.on = maybe\nref2 = 1\n", 2);
+    assert_eq!(bad[0], Some(crate::store::RefLook::default()));
+    assert_eq!(bad[1], None);
 }
 
 #[test]

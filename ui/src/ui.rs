@@ -7388,7 +7388,7 @@ impl Ui {
                 }
                 Item::StoreSaveSetup => {
                     let p = self.setup_path();
-                    let r = crate::store::write(&p, crate::store::setup_text(&self.m).as_bytes());
+                    let r = crate::store::write(&p, format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes());
                     self.toast_saved(&p, r);
                 }
                 Item::StoreRecall => self.recall_setup(),
@@ -7542,12 +7542,34 @@ impl Ui {
         dir.join(format!("setup{}.txt", self.store_slot))
     }
 
+    /// The `ref<N>.*` lines of a setup: how each loaded ref slot looks (on/off, scale, offset, colour, name).
+    fn ref_setup_text(&self) -> String {
+        let looks: Vec<_> = self.refs.iter().map(|r| r.as_ref().map(|r| crate::store::RefLook {
+            on: Some(r.on), vdiv: Some(r.vpd), offset: Some(r.offset), color: Some(r.color), label: Some(r.label.clone()),
+        })).collect();
+        crate::store::ref_setup_text(&looks)
+    }
+
+    /// Applies the saved look to the ref slots that hold a waveform now (the samples are not in a setup).
+    fn apply_ref_looks(&mut self, looks: &[Option<crate::store::RefLook>]) {
+        for (r, l) in self.refs.iter_mut().zip(looks) {
+            let (Some(r), Some(l)) = (r.as_mut(), l) else { continue };
+            if let Some(v) = l.on { r.on = v; }
+            if let Some(v) = l.vdiv { r.vpd = v; }
+            if let Some(v) = l.offset { r.offset = v; }
+            if let Some(v) = l.color { r.color = v.min(REF_COLORS.len() - 1); }
+            if let Some(v) = &l.label { r.label = v.clone(); }
+        }
+    }
+
     /// Loads setup<slot>.txt of the storage directory; the acquisition state (run / stop) stays as it is.
     fn recall_setup(&mut self) {
         let p = self.setup_path();
-        let parsed = std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| crate::store::parse_setup(&t));
+        let text = std::fs::read_to_string(&p).map_err(|e| e.to_string());
+        let parsed = text.as_ref().map_err(|e| e.clone()).and_then(|t| crate::store::parse_setup(t));
         match parsed {
             Ok(mut m) => {
+                if let Ok(t) = &text { self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF)); }
                 (m.run, m.status) = (self.m.run, self.m.status);
                 // the text size is a preference of this screen, not part of a set-up
                 m.text_size = self.m.text_size;

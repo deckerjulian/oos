@@ -1031,6 +1031,54 @@ pub fn parse_setup(text: &str) -> Result<Model, String> {
     Ok(m)
 }
 
+/// Display state of a ref slot, kept in a setup file as `ref<N>.<key>` lines. The samples are not part of a setup:
+/// a recall restores how the slot looks, and applies it to the slot when that holds a waveform.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct RefLook {
+    pub on: Option<bool>,
+    pub vdiv: Option<f32>,
+    pub offset: Option<f32>,
+    pub color: Option<usize>,
+    pub label: Option<String>,
+}
+
+/// `ref<N>.*` lines for the loaded slots (`None` = empty slot, nothing is written).
+pub fn ref_setup_text(looks: &[Option<RefLook>]) -> String {
+    let mut s = String::new();
+    for (i, l) in looks.iter().enumerate() {
+        let Some(l) = l else { continue };
+        let mut kv = |k: &str, v: String| s.push_str(&format!("ref{}.{} = {}\n", i + 1, k, v));
+        if let Some(v) = l.on { kv("on", v.to_string()); }
+        if let Some(v) = l.vdiv { kv("vdiv", v.to_string()); }
+        if let Some(v) = l.offset { kv("offset", v.to_string()); }
+        if let Some(v) = l.color { kv("color", v.to_string()); }
+        if let Some(v) = &l.label { kv("name", v.replace(['\r', '\n'], " ")); }
+    }
+    s
+}
+
+/// The `ref<N>.*` lines of a setup file; a setup from before they existed gives all `None`.
+pub fn parse_ref_looks(text: &str, n: usize) -> Vec<Option<RefLook>> {
+    let mut out: Vec<Option<RefLook>> = vec![None; n];
+    for line in text.lines() {
+        let Some((k, v)) = line.trim().split_once('=') else { continue };
+        let Some(rest) = k.trim().strip_prefix("ref") else { continue };
+        let Some((idx, key)) = rest.split_once('.') else { continue };
+        let Some(i) = idx.parse::<usize>().ok().and_then(|i| i.checked_sub(1)).filter(|&i| i < n) else { continue };
+        let v = v.trim();
+        let l = out[i].get_or_insert_with(RefLook::default);
+        match key {
+            "on" => l.on = v.parse().ok(),
+            "vdiv" => l.vdiv = v.parse().ok().filter(|x: &f32| x.is_finite() && *x > 0.0),
+            "offset" => l.offset = v.parse().ok().filter(|x: &f32| x.is_finite()),
+            "color" => l.color = v.parse().ok(),
+            "name" => l.label = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------------------------- waveform CSV
 
 /// CSV of the enabled channels of a record: `Time (s),CH1 (V),...`, one row per sample, time relative to the
