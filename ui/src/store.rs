@@ -342,6 +342,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("layout", m.layout.name().to_ascii_lowercase());
     kv("studio_view", m.studio_view.clone());
     if !m.studio_dock.is_empty() { kv("studio_dock", m.studio_dock.clone()); }
+    if m.studio_ov != 0 { kv("studio_ov", m.studio_ov.to_string()); }
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
@@ -747,6 +748,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "layout" => m.layout = Layout::parse(v).ok_or_else(|| format!("bad layout {v}"))?,
         "studio_view" => m.studio_view = if ["waveform", "docked", "floating", "only"].contains(&v) { v.to_string() } else { return Err(format!("bad studio view {v}")) },
         "studio_dock" => m.studio_dock = v.to_string(),
+        "studio_ov" => m.studio_ov = v.parse::<i32>().ok().filter(|h| (0..=2000).contains(h)).ok_or_else(|| format!("bad studio_ov {v}"))?,
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "views" => {
             let n = p_list(v, 2, |x| x.parse::<usize>().map_err(|e| e.to_string()))?;

@@ -535,7 +535,7 @@ fn studio_zoom_has_a_toolbar_an_overview_and_a_menu() {
     }
     assert!(bar.tdiv.right() <= bar.center.x, "the chips do not overlap");
     // the overview is over the toolbar, the zoomed lanes under it
-    let (overview, detail) = Ui::split_zoom(u.grid);
+    let (overview, detail) = u.split_zoom(u.grid);
     assert!(overview.bottom() <= row.y && row.bottom() <= detail.y);
     // the factor is the ratio of the two time bases
     assert!((u.studio_time_zoom() - u.m.time_per_div() / tscales()[u.m.zscale]).abs() < 1e-3);
@@ -581,7 +581,7 @@ fn studio_zoom_overview_window_drags_and_a_lane_badge_scales_vertically() {
     for _ in 0..4 { u.step(0.05); }
     shot(&mut u, "15-zoom-navigator");
     // the overview window moves with a finger on it (the existing gesture, restyled)
-    let (overview, _) = Ui::split_zoom(u.grid);
+    let (overview, _) = u.split_zoom(u.grid);
     let before = u.m.zdelay;
     let (x, y) = (overview.x + overview.w / 2, overview.y + 45);
     u.touch_ev(Phase::Down, x, y);

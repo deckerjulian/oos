@@ -77,7 +77,7 @@ fn vertical_zoom_is_shared_by_detail_lanes_and_has_exact_forward_inverse_mapping
     for stack in [false,true] {
         let mut ui=mixed();ui.set_zoom(true);if stack {stacked(&mut ui);}
         ui.zoom_vfactor=4.0;ui.zoom_vcenter=0.75;
-        let overview=Ui::split_zoom(ui.grid).0;
+        let overview=ui.split_zoom(ui.grid).0;
         assert_eq!(ui.zoom_vertical_transform(overview),(1.0,0.0));
         for area in ui.wins.iter().copied() {
             assert_eq!(ui.zoom_vertical_transform(area),(4.0,0.75));
@@ -142,7 +142,7 @@ fn detail_pinch_and_ctrl_wheel_keep_time_anchor_without_source_mutations() {
 fn overview_resize_keeps_opposite_edge_fixed_after_scale_snapping() {
     for left in [true,false] {
         let mut ui=mixed();ui.set_zoom(true);
-        let area=Ui::split_zoom(ui.grid).0;
+        let area=ui.split_zoom(ui.grid).0;
         let half=ui.view().0*HDIV*0.5;
         let edge=if left {ui.m.zdelay-half}else{ui.m.zdelay+half};
         let fixed=if left {ui.m.zdelay+half}else{ui.m.zdelay-half};
@@ -157,7 +157,7 @@ fn overview_resize_keeps_opposite_edge_fixed_after_scale_snapping() {
 #[test]
 fn overview_pinch_changes_main_timebase_and_close_retains_that_explicit_change() {
     let mut ui=mixed();ui.set_zoom(true);
-    let old=ui.m.tscale;let a=Ui::split_zoom(ui.grid).0;
+    let old=ui.m.tscale;let a=ui.split_zoom(ui.grid).0;
     let (x,y)=(a.x+a.w/3,a.y+a.h/2);
     pointer(&mut ui,Phase::Down,x,y);
     ui.handle(Ev::Touch{id:1,phase:Phase::Down,x:x+200,y});
@@ -349,7 +349,7 @@ fn ctrl_wheel_anchors_main_detail_and_overview_for_reference_native_and_mixed_re
         ui.records=11;ui.wfm_total=11;ui.replay.captures=7;ui.m.run=RunState::Stop;
         ui.relayout();if surface!=0 {ui.set_zoom(true);}if stack {stacked(&mut ui);}
         let selected=if source==1 {WaveId::Ch(0)} else {WaveId::Ref(0)};
-        let area=if surface==2 {Ui::split_zoom(ui.grid).0} else {ui.source_area(selected).unwrap()};
+        let area=if surface==2 {ui.split_zoom(ui.grid).0} else {ui.source_area(selected).unwrap()};
         let (x,y)=(area.x+area.w/3,area.y+area.h/3);
         let fraction=(x-area.x) as f64/area.w as f64;
         let before=if surface==1 {ui.view()} else {(ui.m.time_per_div(),ui.m.delay)};

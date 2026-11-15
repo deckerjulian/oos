@@ -284,7 +284,7 @@ fn cursors_show_in_the_overview_and_in_the_zoom_view() {
     // put the cursors where the zoom window is, so the overview and the zoom view both hold them
     let mut cv = Canvas::new(W, H);
     u.render(&mut cv);
-    let (o, _) = Ui::split_zoom(u.grid);
+    let (o, _) = u.split_zoom(u.grid);
     let (ta, tb) = u.cursor_times();
     let tdiv = u.m.time_per_div();
     let x_of = |t: f64| o.x + (o.w as f32 / 2.0 + (t as f32 - u.m.delay) / tdiv * (o.w as f32 / HDIV)) as i32;

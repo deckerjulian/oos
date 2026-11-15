@@ -80,6 +80,8 @@ mod batch10_tests;
 #[cfg(test)]
 mod batch11b_tests;
 #[cfg(test)]
+mod batch11c_tests;
+#[cfg(test)]
 mod batch11_tests;
 mod hotspots;
 mod trigger_controls;
@@ -2018,7 +2020,7 @@ impl Ui {
             return None;
         }
         if self.m.zoom {
-            let (o, z) = Self::split_zoom(self.grid);
+            let (o, z) = self.split_zoom(self.grid);
             if o.contains(x, y) {
                 return Some((o, self.m.time_per_div(), self.m.delay));
             }
@@ -2049,7 +2051,7 @@ impl Ui {
     }
 
     pub(super) fn zoom_vertical_transform(&self, area: Rect) -> (f32, f32) {
-        let detail = Self::split_zoom(self.grid).1;
+        let detail = self.split_zoom(self.grid).1;
         if self.m.zoom && !self.view_on() && area.y >= detail.y && area.y < detail.y + detail.h {
             (self.zoom_vfactor, self.zoom_vcenter)
         } else { (1.0, 0.0) }
@@ -2090,6 +2092,20 @@ impl Ui {
         self.clamp_zoom();
     }
 
+    /// Studio: the zoom box of the overview gets wider (steps < 0) or narrower (steps > 0) about the time under x.
+    pub(super) fn overview_box_step(&mut self, steps: i32, x: i32) {
+        let o = self.split_zoom(self.grid).0;
+        let ppx = o.w as f32 / HDIV;
+        let t = self.m.delay + (x - o.x - o.w / 2) as f32 / ppx * self.m.time_per_div();
+        let old = tscales()[self.m.zscale];
+        let z = (self.m.zscale as i64 - steps.signum() as i64 * steps.unsigned_abs() as i64).clamp(0, (tscales().len() - 1) as i64) as usize;
+        self.m.zscale = z.min(self.m.tscale);
+        let new = tscales()[self.m.zscale];
+        self.m.zdelay = t + (self.m.zdelay - t) * new / old;
+        self.clamp_zoom();
+        self.settings_changed();
+    }
+
     fn zoom_horizontal_step(&mut self, direction: i32, _area: Rect, fraction: f32) {
         let divisions = (fraction as f64 - 0.5) * HDIV as f64;
         let anchor = self.m.zdelay as f64 + divisions * tscales()[self.m.zscale] as f64;
@@ -2111,8 +2127,18 @@ impl Ui {
         let lane = self.wins.iter().position(|area| area.contains(x, y));
         let detail = self.m.zoom && lane.is_some();
         // Studio: the wheel over the zoomed view zooms about the pointer (the zoom box is panned by dragging or in the overview)
-        let zoom_time = zoom_time || (detail && !vertical && self.m.layout == Layout::Studio);
-        if self.m.zoom && lane.is_none() && !Self::split_zoom(self.grid).0.contains(x, y) { return false; }
+        // Studio: the wheel over the overview changes the width of the zoom box about the pointer; over the zoomed
+        // waveform it leaves the zoom alone (the zoom is the box's business: drag the box or the content)
+        if self.m.layout == Layout::Studio && self.m.zoom && !vertical {
+            if detail { return false; }
+            // (Ctrl-wheel on the overview keeps changing the main time base)
+            if !zoom_time && self.split_zoom(self.grid).0.contains(x, y) {
+                self.overview_box_step(steps.clamp(-32, 32), x);
+                self.dirty_map = true;
+                return true;
+            }
+        }
+        if self.m.zoom && lane.is_none() && !self.split_zoom(self.grid).0.contains(x, y) { return false; }
         let source = if self.stacked() { lane.and_then(|lane| self.trace_sources().get(lane).copied()) } else { None };
         match source {
             Some(workspace::Trace::Channel(c)) => self.select_workspace_source(WaveId::Ch(c)),
@@ -2123,7 +2149,7 @@ impl Ui {
         let steps = steps.clamp(-32, 32);
         if zoom_time {
             let area = if detail { self.wins[lane.unwrap()] }
-                else if self.m.zoom { Self::split_zoom(self.grid).0 }
+                else if self.m.zoom { self.split_zoom(self.grid).0 }
                 else { lane.map(|index| self.wins[index]).unwrap_or(self.area) };
             let fraction = ((x - area.x) as f32 / area.w.max(1) as f32).clamp(0.0, 1.0);
             for _ in 0..steps.unsigned_abs() {
@@ -2170,15 +2196,16 @@ impl Ui {
     }
 
     /// Zoom: overview on top, a readout row (with Close), zoomed view below.
-    fn split_zoom(g: Rect) -> (Rect, Rect) {
-        let top = 96;
+    pub(super) fn split_zoom(&self, g: Rect) -> (Rect, Rect) {
+        // Studio: the overview has the height the user gave it
+        let top = if self.m.layout == Layout::Studio { self.studio_ov_h(g) } else { 96 };
         let gap = 32;
         (Rect::new(g.x, g.y, g.w, top), Rect::new(g.x, g.y + top + gap, g.w, (g.h - top - gap) / 8 * 8))
     }
 
     /// The strip between the overview and the zoomed view.
     fn zoom_readout(&self) -> Rect {
-        let (o, z) = Self::split_zoom(self.grid);
+        let (o, z) = self.split_zoom(self.grid);
         Rect::new(o.x, o.y + o.h, o.w, (z.y - o.y - o.h).max(1))
     }
 
@@ -2198,7 +2225,7 @@ impl Ui {
         let g = self.plot_rect();
         // Stacked is a display format for the detail view. The shared overview
         // remains intact when horizontal zoom is enabled.
-        let detail = if self.m.zoom { Self::split_zoom(g).1 } else { g };
+        let detail = if self.m.zoom { self.split_zoom(g).1 } else { g };
         let wins = self.split_wins(detail);
         let w0 = wins[0];
         if self.view_pass {
@@ -2208,7 +2235,7 @@ impl Ui {
             self.grid = g;
             self.layout_zoom = self.m.zoom;
             if self.m.zoom {
-                let (o, _) = Self::split_zoom(g);
+                let (o, _) = self.split_zoom(g);
                 self.ph = Phosphor::new(o.w as usize, o.h as usize);
                 self.phz = Phosphor::new(w0.w as usize, w0.h as usize);
             } else {
@@ -3058,7 +3085,7 @@ impl Ui {
         l.under.clear(BG);
         let g = self.grid;
         if self.m.zoom && !self.xy_over() {
-            let (o, _) = Self::split_zoom(g);
+            let (o, _) = self.split_zoom(g);
             self.draw_grid(l.under, o);
             self.traces(l, o, false, true);
             self.draw_refs_at(l.over(), o, (self.m.time_per_div(), self.m.delay), true);
@@ -4521,7 +4548,7 @@ impl Ui {
                     ("X1".into(), si(ta as f64, "s")),
                     ("X2".into(), si(tb as f64, "s")),
                     ("\u{394}X".into(), si(d as f64, "s")),
-                    ("1/\u{394}X".into(), si(1.0 / d.abs() as f64, "Hz")),
+                    ("1/\u{394}X".into(), Self::inv_dt(d as f64)),
                 ]
             }
             CursorMode::Volt => {
@@ -9019,6 +9046,7 @@ impl Ui {
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
         let modal = self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
+        let detail_y = self.split_zoom(self.grid).1.y;
         let p = &mut self.pinch;
         if id == 1 {
             match ph {
@@ -9026,7 +9054,7 @@ impl Ui {
                     if !modal && self.touch.down && map.is_some_and(|(area, _, _)| area.contains(x, y)) {
                         p.active = true;
                         p.area = map.unwrap().0;
-                        p.detail = self.m.zoom && p.area.y >= Self::split_zoom(self.grid).1.y;
+                        p.detail = self.m.zoom && p.area.y >= detail_y;
                         p.p0 = (self.touch.x, self.touch.y);
                         p.p1 = (x, y);
                         p.ref_dx = (p.p1.0 - p.p0.0).abs();
@@ -9084,12 +9112,18 @@ impl Ui {
         let midpoint = ((p.p0.0 + p.p1.0) as f32 * 0.5, (p.p0.1 + p.p1.1) as f32 * 0.5);
         let fx = ((midpoint.0 - area.x as f32) / area.w.max(1) as f32).clamp(0.0, 1.0);
         let fy = ((midpoint.1 - area.y as f32) / area.h.max(1) as f32).clamp(0.0, 1.0);
+        let studio_zoom = self.m.layout == Layout::Studio && self.m.zoom;
         if dt != 0 {
-            if detail { self.zoom_horizontal_step(dt, area, fx); }
+            if studio_zoom {
+                // the overview: the width of the zoom box; the zoomed waveform: nothing
+                if !detail { self.overview_box_step(-dt, midpoint.0 as i32); }
+            }
+            else if detail { self.zoom_horizontal_step(dt, area, fx); }
             else { self.main_horizontal_step(dt, fx); }
         }
         if dv != 0 {
-            if detail { self.zoom_vertical_step(-dv, area, fy); }
+            if studio_zoom && detail {}
+            else if detail { self.zoom_vertical_step(-dv, area, fy); }
             else if !self.m.zoom {
                 match self.selected_workspace_source() {
                     Some(WaveId::Ref(i)) => { self.ref_sel = i; self.adjust(Item::RefVpd, dv); }
@@ -9195,7 +9229,7 @@ impl Ui {
                     let cur_hit = |frac: f32, vertical: bool| (here || (vertical && self.wins.len() > 1)) && cur_hit(frac, vertical);
                     let under = if dy.abs() > dx.abs() && !near_left && !m.zoom { self.trace_under(tx0, ty0) } else { None };
                     let overview_drag = if m.zoom {
-                        let overview = Self::split_zoom(self.grid).0;
+                        let overview = self.split_zoom(self.grid).0;
                         if overview.contains(tx0, ty0) {
                             let ppd = overview.w as f32 / HDIV;
                             let half = tscales()[m.zscale] * HDIV * 0.5;
@@ -9264,7 +9298,7 @@ impl Ui {
                         _ => 0.0,
                     };
                     let start_cur = match drag {
-                        Drag::ZoomNew => { let o = Self::split_zoom(self.grid).0; self.m.delay + (tx0 - o.x - o.w / 2) as f32 / (o.w as f32 / HDIV) * self.m.time_per_div() }
+                        Drag::ZoomNew => { let o = self.split_zoom(self.grid).0; self.m.delay + (tx0 - o.x - o.w / 2) as f32 / (o.w as f32 / HDIV) * self.m.time_per_div() }
                         Drag::ZoomLeft => self.m.zdelay + tscales()[self.m.zscale] * HDIV * 0.5,
                         Drag::ZoomRight => self.m.zdelay - tscales()[self.m.zscale] * HDIV * 0.5,
                         Drag::CursorA => self.m.cur_a,
@@ -9304,12 +9338,12 @@ impl Ui {
                         }
                     }
                     Drag::Overview => {
-                        let overview = Self::split_zoom(self.grid).0;
+                        let overview = self.split_zoom(self.grid).0;
                         self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                         self.clamp_zoom(); self.settings_changed();
                     }
                     Drag::ZoomNew => {
-                        let overview = Self::split_zoom(self.grid).0;
+                        let overview = self.split_zoom(self.grid).0;
                         let time = self.m.delay + (x.clamp(overview.x, overview.right()) - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                         let (t0, t1) = (t.start_cur.min(time), t.start_cur.max(time));
                         if t1 - t0 < 4.0 * self.m.time_per_div() * HDIV / overview.w.max(1) as f32 { return; }
@@ -9322,7 +9356,7 @@ impl Ui {
                         self.clamp_zoom(); self.settings_changed();
                     }
                     Drag::ZoomLeft | Drag::ZoomRight => {
-                        let overview = Self::split_zoom(self.grid).0;
+                        let overview = self.split_zoom(self.grid).0;
                         let time = self.m.delay + (x - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                         let span = if t.drag == Drag::ZoomLeft { t.start_cur - time } else { time - t.start_cur };
                         let wanted = (span / HDIV).max(tscales()[0]);
@@ -10870,7 +10904,7 @@ mod tests {
         let row = ui.zoom_readout();
         let c = ui.zoom_close();
         assert!(c.x >= row.x && c.x + c.w <= row.x + row.w && c.y >= row.y && c.y + c.h <= row.y + row.h, "close {:?} readout {:?}", c, row);
-        let (o, z) = Ui::split_zoom(ui.grid);
+        let (o, z) = ui.split_zoom(ui.grid);
         assert!(c.y >= o.y + o.h && c.y + c.h <= z.y, "close {:?} between {:?} and {:?}", c, o, z);
         assert_ne!(cv.px[((c.y + c.h / 2) * W + c.x + c.w / 2) as usize], BG);
         ui.tap(c.x + c.w / 2, c.y + c.h / 2);

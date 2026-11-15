@@ -33,6 +33,8 @@ const FLOAT_MIN_H: i32 = 170;
 const GRIP: i32 = 44;
 /// The edges of a floating panel that resize it.
 const EDGE: i32 = 20;
+/// Least height of the overview strip: the zoom box and its handles.
+const OV_MIN: i32 = 40;
 const E_L: u8 = 1;
 const E_R: u8 = 2;
 const E_B: u8 = 4;
@@ -626,6 +628,42 @@ impl Ui {
         self.studio.dock = d;
     }
 
+    // ------------------------------------------------------------------------------------------------ overview height
+
+    /// Height of the overview strip: what the user dragged it to, between the box (40 px) and 60 % of the plot.
+    pub(super) fn studio_ov_h(&self, g: Rect) -> i32 {
+        let h = if self.m.studio_ov == 0 { 96 } else { self.m.studio_ov };
+        h.clamp(OV_MIN, (g.h * 6 / 10).max(OV_MIN))
+    }
+
+    /// The divider under the overview strip: its 44 px hit area and the handle in the middle of it.
+    pub(super) fn ov_divider(&self) -> Option<(Rect, Rect)> {
+        if !self.dock_on() || !self.m.zoom || self.view_on() || self.studio.view == StudioView::Only || self.dock_floating(VKind::Wave) { return None; }
+        let o = self.split_zoom(self.grid).0;
+        let (cx, y) = (o.x + o.w / 2, o.bottom());
+        Some((Rect::new(cx - 30, y - 22, 60, 44), Rect::new(cx - 22, y - 6, 44, 12)))
+    }
+
+    pub(super) fn ov_divider_down(&mut self, x: i32, y: i32) -> bool {
+        self.studio.ov_drag = None;
+        let Some((hit, _)) = self.ov_divider() else { return false };
+        if !hit.contains(x, y) { return false; }
+        self.studio.ov_drag = Some((y, self.studio_ov_h(self.grid)));
+        true
+    }
+
+    pub(super) fn ov_divider_move(&mut self, y: i32) -> bool {
+        let Some((y0, h0)) = self.studio.ov_drag else { return false };
+        let want = h0 + y - y0;
+        self.m.studio_ov = self.studio_ov_h_of(want);
+        self.relayout();
+        true
+    }
+
+    fn studio_ov_h_of(&self, want: i32) -> i32 { want.clamp(OV_MIN, (self.grid.h * 6 / 10).max(OV_MIN)) }
+
+    pub(super) fn ov_divider_up(&mut self) -> bool { self.studio.ov_drag.take().is_some() }
+
     /// Keeps the setup text current: called every frame, it only writes when the arrangement changed.
     pub(super) fn dock_sync_setup(&mut self) {
         if self.studio.dock.synced == Some(self.studio.dock.ver) { return; }
@@ -960,6 +998,12 @@ impl Ui {
     /// The strips of the docked views, the dividers, the floating views' frames and strips, and the drop preview.
     pub(super) fn draw_dock(&self, cv: &mut Canvas) {
         if !self.dock_on() { return; }
+        if let Some((_, h)) = self.ov_divider() {
+            let on = self.studio.ov_drag.is_some();
+            cv.round(h, 5, if on { ACCENT } else { BTN_BORDER }, 255);
+            cv.round(h.inset(1), 4, BTN, 255);
+            for i in -1..=1 { cv.fill(Rect::new(h.x + h.w / 2 + i * 8 - 1, h.y + h.h / 2 - 1, 2, 2), DIM); }
+        }
         let lay = self.dock_layout();
         let moving = match &self.studio.dock.drag { Some(DockDrag::Move { kind, .. }) => Some(*kind), _ => None };
         for d in &lay.dividers { cv.fill(d.line, BG); }

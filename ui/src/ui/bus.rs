@@ -14,7 +14,7 @@ use crate::model::{n_ch, si, BusKind, WaveId};
 use oos_dsp::decode::{i2c_at, Kind as DecKind, Packet};
 
 /// The bus trace. Kept off the channel palette so the line stays its own colour.
-const BUS: Rgb = rgb(0xc4, 0x8a, 0x2a);
+pub(super) const BUS: Rgb = rgb(0xc4, 0x8a, 0x2a);
 
 /// One cached display window and at most one in-flight decode. Exact full-record
 /// decode/trigger results use reference_decode, independently of this plot limit.

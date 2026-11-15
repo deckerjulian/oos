@@ -1255,6 +1255,8 @@ pub struct Model {
     pub studio_view: String,
     /// Studio's docking arrangement (`ui/dock.rs`): the split tree and the floating views; empty is the default
     pub studio_dock: String,
+    /// height of the zoom overview strip in Studio, px (0 = the default)
+    pub studio_ov: i32,
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
@@ -1689,6 +1691,7 @@ impl Default for Model {
             layout: Layout::Minimal,
             studio_view: "waveform".into(),
             studio_dock: String::new(),
+            studio_ov: 0,
             hdmi: HdmiMode::Waveform,
             views: 1,
             view_cur: 0,

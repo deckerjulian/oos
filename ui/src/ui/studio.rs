@@ -115,6 +115,22 @@ pub(super) struct Studio {
     pub cur_linked: bool,
     /// the docking tree and the floating views (`dock.rs`)
     pub dock: super::dock::Dock,
+    /// the divider under the overview strip is held: (finger y, strip height) at the press
+    pub ov_drag: Option<(i32, i32)>,
+}
+
+/// The second group of the "+ CH" popup.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum PickAdd {
+    Math,
+    Ref,
+    Bus,
+}
+pub(super) const PICK_ADDS: [PickAdd; 3] = [PickAdd::Math, PickAdd::Ref, PickAdd::Bus];
+impl PickAdd {
+    pub(super) fn label(self) -> &'static str {
+        match self { PickAdd::Math => "Add math", PickAdd::Ref => "Add ref", PickAdd::Bus => "Add bus" }
+    }
 }
 
 /// The rectangles of the Studio top bar.
@@ -559,23 +575,51 @@ impl Ui {
 
     /// The picker over the "+ CH" chip: one row per channel that is off.
     pub(super) fn studio_ch_picker(&self) -> Option<Vec<(usize, Rect)>> {
+        let (chans, _) = self.studio_picker_rows()?;
+        (!chans.is_empty()).then_some(chans)
+    }
+
+    /// The popup of the "+ CH" chip: the channels that are off, then (set apart by a line) Add math, Add ref and
+    /// Add bus. Rows 44 px high, the panel over the chip.
+    pub(super) fn studio_picker_rows(&self) -> Option<(Vec<(usize, Rect)>, Vec<(PickAdd, Rect)>)> {
         if !self.studio.ch_picker { return None; }
         let b = self.studio_bottom();
         let off: Vec<usize> = (0..n_ch()).filter(|&c| !self.m.ch[c].on).collect();
-        if off.is_empty() { return None; }
-        let (w, row) = (150, 44);
-        let top = self.frame().bottom.y - 8 - off.len() as i32 * row - 8;
+        let (w, row) = (170, 44);
+        let sep = if off.is_empty() { 0 } else { 10 };
+        let total = (off.len() + PICK_ADDS.len()) as i32 * row + sep;
+        let top = self.frame().bottom.y - 8 - total - 8;
         let x = b.add.x.min(self.scr.w - w - 4);
-        Some(off.into_iter().enumerate().map(|(i, c)| (c, Rect::new(x + 4, top + 4 + i as i32 * row, w - 8, row))).collect())
+        let chans = off.iter().enumerate().map(|(i, &c)| (c, Rect::new(x + 4, top + 4 + i as i32 * row, w - 8, row))).collect();
+        let y0 = top + 4 + off.len() as i32 * row + sep;
+        let extras = PICK_ADDS.iter().enumerate().map(|(i, &k)| (k, Rect::new(x + 4, y0 + i as i32 * row, w - 8, row))).collect();
+        Some((chans, extras))
+    }
+
+    /// What a row of the popup's second group opens: the flows of the + Add panel and the analysis menus.
+    fn studio_pick_add(&mut self, k: PickAdd) {
+        match k {
+            PickAdd::Math => self.open_submenu(MenuId::Math),
+            PickAdd::Ref => self.open_submenu(MenuId::Ref),
+            PickAdd::Bus => self.open_submenu(MenuId::Decode),
+        }
     }
 
     fn draw_studio_ch_picker(&self, cv: &mut Canvas) {
-        let Some(rows) = self.studio_ch_picker() else { return };
+        let Some((rows, extras)) = self.studio_picker_rows() else { return };
         let f = self.fonts();
-        let (first, last) = (rows[0].1, rows[rows.len() - 1].1);
-        let p = Rect::new(first.x - 4, first.y - 4, first.w + 8, last.bottom() - first.y + 8);
+        let first = rows.first().map_or(extras[0].1, |r| r.1);
+        let last = extras[extras.len() - 1].1;
+        let p = Rect::new(first.x - 4, first.y - 4, first.w + 8, last.bottom() - first.y + 8 + if rows.is_empty() { 0 } else { 0 });
         cv.round(p, 8, BTN_BORDER, 255);
         cv.round(p.inset(1), 7, PANEL_BG, 255);
+        if !rows.is_empty() { cv.hline(extras[0].1.x + 6, extras[0].1.right() - 6, extras[0].1.y - 5, LINE); }
+        for (k, r) in &extras {
+            let col = match k { PickAdd::Math => MATH_COLORS[0], PickAdd::Ref => REF_COLORS[0].1, PickAdd::Bus => super::bus::BUS };
+            let badge = Rect::new(r.x + 8, r.y + 10, 6, 24);
+            cv.round(badge, 3, col, 255);
+            cv.text_in(&f.m, Rect::new(badge.right() + 10, r.y, r.w - 30, r.h), 0, k.label(), TEXT);
+        }
         for (c, r) in rows {
             let badge = Rect::new(r.x + 8, r.y + 10, 42, 24);
             cv.round(badge, 4, mix(BAR, CH_COLORS[c], 200), 255);
@@ -591,9 +635,13 @@ impl Ui {
         if self.menu_open && self.menu_rect().is_some_and(|d| d.contains(x, y)) { return false; }
         if self.studio_view_tap(x, y) { return true; }
         if self.studio.ch_picker {
-            let rows = self.studio_ch_picker();
+            let (rows, extras) = self.studio_picker_rows().unzip();
             self.studio.ch_picker = false;
-            if let Some((c, _)) = rows.into_iter().flatten().find(|(_, r)| r.contains(x, y)) {
+            if let Some((k, _)) = extras.into_iter().flatten().find(|(_, r): &(PickAdd, Rect)| r.contains(x, y)) {
+                self.studio_pick_add(k);
+                return true;
+            }
+            if let Some((c, _)) = rows.into_iter().flatten().find(|(_, r): &(usize, Rect)| r.contains(x, y)) {
                 self.m.ch[c].on = true;
                 self.settings_changed();
                 self.relayout();
@@ -1720,6 +1768,7 @@ impl Ui {
                 self.studio.drag = None;
                 if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
                     || self.studio.view_menu || self.studio.popup.is_some() || self.load_slot_ask { return false; }
+                if self.ov_divider_down(x, y) { return true; }
                 if self.dock_down(x, y) { return true; }
                 let rows = self.meas_rows();
                 if self.studio.view == StudioView::Sim {
@@ -1755,6 +1804,7 @@ impl Ui {
                 false
             }
             Phase::Move => {
+                if self.ov_divider_move(y) { return true; }
                 if self.dock_move(x, y) { return true; }
                 let Some(drag) = self.studio.drag else { return false };
                 match drag {
@@ -1780,6 +1830,7 @@ impl Ui {
                 true
             }
             Phase::Up => {
+                if self.ov_divider_up() { return true; }
                 if self.dock_up(x, y) { return true; }
                 let Some(drag) = self.studio.drag.take() else { return false };
                 let moved = match drag {

@@ -654,12 +654,19 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ cursors
 
+    /// 1/dt as a frequency; "----" when the cursors sit on the same time.
+    pub(super) fn inv_dt(dt: f64) -> String {
+        if dt.is_finite() && dt.abs() >= 1e-15 { si(1.0 / dt.abs(), "Hz") } else { "----".into() }
+    }
+
     /// One tap: two waveform cursors on the chosen trace (the selected one when none is given).
     pub(super) fn studio_cursors_add(&mut self, src: Option<WaveId>) {
         if let Some(s) = src { self.set_cursor_source(s); }
         self.m.cur_b_source = None;
         self.m.cursor = CursorMode::Track;
-        (self.m.cur_a, self.m.cur_b, self.m.cur_c, self.m.cur_d) = (0.3, 0.7, 0.3, 0.7);
+        // apart: a third and two thirds of the visible span
+        (self.m.cur_a, self.m.cur_b, self.m.cur_c, self.m.cur_d) = (1.0 / 3.0, 2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0);
+        self.cursor_view = None;
         self.settings_changed();
         self.relayout();
     }
@@ -759,7 +766,7 @@ impl Ui {
         let mut lines: Vec<String> = Vec::new();
         if vertical {
             let dt = tb - ta;
-            lines.push(format!("\u{394}t {}   1/\u{394}t {}", si(dt, "s"), si(1.0 / dt.abs().max(1e-30), "Hz")));
+            lines.push(format!("\u{394}t {}   1/\u{394}t {}", si(dt, "s"), Self::inv_dt(dt)));
         }
         if let Some(dv) = dv {
             let mut line = format!("\u{394}v {}", si(dv, unit));

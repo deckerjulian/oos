@@ -48,7 +48,7 @@ mod tests {
         assert!(ui.stacked() && ui.m.zoom);
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
         assert_eq!(ui.wins.len(), ui.trace_sources().len());
-        let (overview, detail) = Ui::split_zoom(ui.grid);
+        let (overview, detail) = ui.split_zoom(ui.grid);
         for &lane in &ui.wins {
             assert_eq!((lane.x, lane.w), (detail.x, detail.w));
             assert!(lane.y >= detail.y && lane.y + lane.h <= detail.y + detail.h);
@@ -66,7 +66,7 @@ mod tests {
         ui.trace_mode(false);
         assert!(ui.m.zoom && !ui.stacked());
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
-        assert_eq!(ui.wins, vec![Ui::split_zoom(ui.grid).1]);
+        assert_eq!(ui.wins, vec![ui.split_zoom(ui.grid).1]);
         ui.render(&mut cv);
     }
 
@@ -161,7 +161,7 @@ mod tests {
         ui.touch_ev(Phase::Up, x + 60, y);
         assert!(ui.m.zdelay < before, "detail content follows the rightward finger");
         let before = ui.m.zdelay;
-        let overview = Ui::split_zoom(ui.grid).0;
+        let overview = ui.split_zoom(ui.grid).0;
         let (x, y) = (overview.x + overview.w / 2 + 100, overview.y + 45);
         ui.touch_ev(Phase::Down, x, y);
         ui.touch_ev(Phase::Move, x + 40, y);

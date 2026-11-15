@@ -88,7 +88,7 @@ impl Ui {
         // the navigator: the overview of the whole record carries its span
         if self.m.zoom && !self.xy_over() && self.refs.iter().any(Option::is_some) {
             if let Some(text) = self.studio_record_tag() {
-                let (o, _) = Self::split_zoom(self.grid);
+                let (o, _) = self.split_zoom(self.grid);
                 let w = f.sb.width(&text) + 16;
                 // under the lane tags of the overview, clear of its buttons
                 let r = Rect::new(o.x + (o.w - w) / 2, o.bottom() - 26, w, 20);
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(u.studio_panel_geo().map(|g| g.p), Some(panel));
         assert!(u.m.meas.iter().all(|&(_, id)| matches!(id, WaveId::Ref(_))), "the measurements read the records");
         // the tag over the navigator sits inside the overview
-        let (o, _) = Ui::split_zoom(u.grid);
+        let (o, _) = u.split_zoom(u.grid);
         assert!(o.w > 0 && u.studio_record_tag().unwrap().contains("Whole record"));
         shot(&mut u, "21-offline-analysis");
         // Live in the badge returns to the live acquisition the existing way

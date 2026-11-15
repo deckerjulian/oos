@@ -90,7 +90,7 @@ fn the_studio_zoom_bar_has_scale_plus_minus_readout_and_close() {
 #[test]
 fn the_overview_box_pans_resizes_and_is_drawn_anew() {
     let mut u = zoomed(Layout::Studio);
-    let o = Ui::split_zoom(u.grid).0;
+    let o = u.split_zoom(u.grid).0;
     let main = (u.m.tscale, u.m.tfine, u.m.delay);
     let (xa, xb) = u.zoom_window_x(o);
     let y = o.y + 30;
@@ -119,19 +119,16 @@ fn the_overview_box_pans_resizes_and_is_drawn_anew() {
 }
 
 #[test]
-fn the_wheel_over_the_zoomed_view_zooms_about_the_cursor() {
+fn the_wheel_over_the_zoomed_view_no_longer_zooms() {
     let mut u = zoomed(Layout::Studio);
-    let z = Ui::split_zoom(u.grid).1;
+    let z = u.split_zoom(u.grid).1;
     let (tscale, delay) = (u.m.tscale, u.m.delay);
     let x = z.x + z.w * 3 / 4;
     let y = z.y + 40;
-    let area = u.wins[0];
-    let frac = (x - area.x) as f64 / area.w as f64;
-    let at = |u: &Ui| u.m.zdelay as f64 + (frac - 0.5) * HDIV as f64 * tscales()[u.m.zscale] as f64;
-    let (t0, z0) = (at(&u), u.m.zscale);
-    assert!(u.pointer_wheel(x, y, 1, false));
-    assert!(u.m.zscale != z0, "the wheel zooms");
-    assert!((at(&u) - t0).abs() < tscales()[u.m.zscale] as f64 * 0.05, "the time under the cursor stays: {} vs {}", at(&u), t0);
+    let (z0, d0) = (u.m.zscale, u.m.zdelay);
+    // the zoom is the box's business: the wheel over the zoomed waveform leaves it alone
+    assert!(!u.pointer_wheel(x, y, 1, false));
+    assert_eq!((u.m.zscale, u.m.zdelay), (z0, d0), "the wheel does not zoom");
     assert_eq!((u.m.tscale, u.m.delay), (tscale, delay));
 }
 

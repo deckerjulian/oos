@@ -387,7 +387,7 @@ fn zoom_factor_time_per_div_and_the_overview_window_agree() {
         let (pct, f) = u.zoom_box();
         assert!((f / factor - 1.0).abs() < 0.01);
         assert!((pct - 50.0).abs() < 0.5, "centered box is at 50 %: {pct}");
-        let (o, _) = Ui::split_zoom(u.grid);
+        let (o, _) = u.split_zoom(u.grid);
         let (xa, xb) = u.zoom_window_x(o);
         let want = o.w as f32 / factor;
         assert!(((xb - xa) as f32 - want).abs() <= 1.5, "window {} px, {} expected", xb - xa, want);
@@ -423,7 +423,7 @@ fn center_trigger_puts_t_in_the_middle_of_the_zoom_window() {
 fn panning_the_zoom_never_changes_the_main_time_base() {
     let mut u = zoomed_demo(500e-6, 200e-6, 0.0);
     let (tscale, tfine, delay) = (u.m.tscale, u.m.tfine, u.m.delay);
-    let (o, z) = Ui::split_zoom(u.grid);
+    let (o, z) = u.split_zoom(u.grid);
     let same = |u: &Ui| (u.m.tscale, u.m.tfine, u.m.delay) == (tscale, tfine, delay);
     // a drag in the zoom view pans the box
     let zdelay = u.m.zdelay;
@@ -443,14 +443,14 @@ fn panning_the_zoom_never_changes_the_main_time_base() {
     touch(&mut u, Phase::Up, mid + 80, o.y + 20);
     assert!(u.m.zdelay != before, "the box moved in the overview");
     assert!(same(&u), "a drag of the box in the overview");
-    // wheel on the zoom view zooms about the pointer (Studio); on the overview it pans the box
-    let zs = u.m.zscale;
-    assert!(u.pointer_wheel(z.x + 200, z.y + 100, 1, false));
-    assert!(u.m.zscale != zs && same(&u), "the wheel over the zoom view changes the zoom only");
+    // the wheel over the zoom view leaves the zoom alone (Studio); on the overview it changes the box width
+    let (zs, zd0) = (u.m.zscale, u.m.zdelay);
+    assert!(!u.pointer_wheel(z.x + 200, z.y + 100, 1, false));
+    assert!((u.m.zscale, u.m.zdelay) == (zs, zd0) && same(&u), "the wheel over the zoom view does nothing");
     for (x, y) in [(o.x + 200, o.y + 40)] {
-        let zd = u.m.zdelay;
+        let zs = u.m.zscale;
         assert!(u.pointer_wheel(x, y, 2, false));
-        assert!(u.m.zdelay != zd, "the wheel moves the box");
+        assert!(u.m.zscale != zs, "the wheel changes the box width");
         assert!(same(&u), "wheel at {x},{y} must not touch the main time base");
     }
     // the toolbar buttons, the knobs: zoom width and pan
@@ -458,10 +458,10 @@ fn panning_the_zoom_never_changes_the_main_time_base() {
     assert!(same(&u));
     u.adjust(Item::ZScale, -1);
     assert!(same(&u), "the zoom width knob changes only the zoom");
-    // magnification in the zoom view (Ctrl-wheel) changes the zoom time/div only
+    // the zoom view does not magnify by the wheel, Ctrl included
     let z0 = u.m.zscale;
-    assert!(u.pointer_wheel(z.x + 300, z.y + 100, 1, true));
-    assert!(u.m.zscale != z0 && same(&u));
+    assert!(!u.pointer_wheel(z.x + 300, z.y + 100, 1, true));
+    assert!(u.m.zscale == z0 && same(&u));
     // only a pinch / Ctrl-wheel on the overview changes the main time/div
     assert!(u.pointer_wheel(o.x + 300, o.y + 40, 1, true));
     assert!(u.m.tscale != tscale, "the overview magnifies the main time base");
