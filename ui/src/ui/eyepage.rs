@@ -113,7 +113,8 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
     let fig = Rect::new(a.x, bottom - fh, lw, fh);
     let jit = Rect::new(rx, bottom - jh, rw, jh);
     let eye = Rect::new(a.x, a.y, lw, a.h - fh - if fh > 0 { GAP } else { 0 });
-    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, eye.w - EYE_GUTTER - 10, eye.h - EYE_TITLE - EYE_FOOT);
+    // the tab on the right edge of the eye has its own margin
+    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, eye.w - EYE_GUTTER - 10 - (TAB_W - 4), eye.h - EYE_TITLE - EYE_FOOT);
     let head = Rect::new(rx, a.y, rw - 54, HEAD_H);
     let (gy, gh) = (a.y + HEAD_H, a.h - HEAD_H - jh - if jh > 0 { GAP } else { 0 });
     let (cw, ch) = ((rw - GAP) / 2, (gh - GAP) / 2);
@@ -124,7 +125,7 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
         Rect::new(x, y, w, h)
     };
     let charts = [cell(0, 0), cell(1, 0), cell(0, 1), cell(1, 1)];
-    let plots = charts.map(|c| Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, c.w - CHART_GUTTER - 6, (c.h - CHART_TITLE - CHART_FOOT).max(1)));
+    let plots = charts.map(|c| Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, c.w - CHART_GUTTER - 10, (c.h - CHART_TITLE - CHART_FOOT).max(1)));
     Layout { eye, plot, head, charts, plots, fig, jit, fig_rows, jit_rows }
 }
 
@@ -217,7 +218,7 @@ fn layout_stacked(a: Rect) -> Layout {
         if c.w < 40 {
             return Rect::new(c.x, c.y, 0, 0);
         }
-        Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, (c.w - CHART_GUTTER - 6).max(1), (c.h - CHART_TITLE - CHART_FOOT).max(1))
+        Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, (c.w - CHART_GUTTER - 10).max(1), (c.h - CHART_TITLE - CHART_FOOT).max(1))
     });
     Layout {
         eye,
@@ -1231,7 +1232,15 @@ impl Ui {
         let f = self.fonts();
         cv.round(c, 4, BAR, 255);
         cv.round_outline(c, 4, CARD_BORDER);
-        cv.text(&f.sb, c.x + 6, c.y + 13, &ch.title, TEXT);
+        // a title wider than the card takes the smaller font, then loses its last words (never a cut word)
+        let room = c.w - 12;
+        let mut title = ch.title.clone();
+        let font = if f.sb.width(&title) <= room { &f.sb } else { &f.s };
+        while font.width(&title) > room {
+            let Some((head, _)) = title.trim_end().rsplit_once(' ') else { break };
+            title = head.trim_end().trim_end_matches(" at").to_string();
+        }
+        cv.text(font, c.x + 6, c.y + 13, &title, TEXT);
         cv.fill(r, BG);
         cv.rect(r, GRID_AXIS);
         if !ch.empty.is_empty() {
@@ -1292,9 +1301,14 @@ impl Ui {
         let n = (b.ui.len() as i32 - 1).max(1);
         let x = |k: usize| r.x + 1 + k as i32 * (r.w - 3) / n;
         let f = self.fonts();
-        let x0 = r.x + r.w / 2 - 44;
-        let x1 = cv.text(&f.s, x0, r.y + r.h + 12, "counted", MEASURED);
-        cv.text(&f.s, x1 + 8, r.y + r.h + 12, "model", MODELLED);
+        // the legend sits between the axis ends ("0", "1 UI"); a plot too narrow for all three leaves it out
+        let (lo, hi) = (r.x + f.s.width("0") + 8, r.x + r.w - f.s.width("1 UI") - 8);
+        let legend = f.s.width("counted") + 8 + f.s.width("model");
+        if legend <= hi - lo {
+            let x0 = (r.x + r.w / 2 - legend / 2).clamp(lo, hi - legend);
+            let x1 = cv.text(&f.s, x0, r.y + r.h + 12, "counted", MEASURED);
+            cv.text(&f.s, x1 + 8, r.y + r.h + 12, "model", MODELLED);
+        }
         for (curve, c) in [(&b.model, MODELLED), (&b.measured, MEASURED)] {
             let mut prev: Option<(i32, i32)> = None;
             for (k, &l) in curve.iter().enumerate() {
@@ -1335,7 +1349,12 @@ impl Ui {
                     Kind::Missing => DIM,
                 };
                 cv.text(&f.s, x, y, c.label, DIM);
-                cv.text(&f.s, x + LABEL_W, y, &c.value, tone);
+                // a long value starts earlier, after its label, and stops at the end of its column
+                let (end, w) = (x + cw - 6, f.s.width(&c.value));
+                let vx = if x + LABEL_W + w <= end { x + LABEL_W } else { (end - w).max(x + f.s.width(c.label) + 8) };
+                cv.set_clip(Rect::new(x, y - ROW, end - x, ROW + 4));
+                cv.text(&f.s, vx, y, &c.value, tone);
+                cv.no_clip();
             }
         }
     }

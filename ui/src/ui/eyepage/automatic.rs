@@ -154,7 +154,7 @@ fn show_quality(page: &mut Page, summary: &Summary) {
         if summary.warning.is_empty() { "" } else { " (limited)" });
     // Preserve the second line's measured/model/upper-limit state.
     if !summary.warning.is_empty() {
-        page.stats.push(cell("Quality", summary.warning.clone(), Kind::Missing));
+        page.stats.push(cell("Quality", summary.warning.replace("samples/UI", "sa/UI"), Kind::Missing));
     }
 }
 
