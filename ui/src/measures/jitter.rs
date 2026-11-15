@@ -241,7 +241,8 @@ fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64) -> Op
         height: meas.height,
         width: meas.width,
         height_ber: meas.height_at(ber),
-        width_ber: oos_dsp::eye::eye_width_at(&j, clk.period, ber),
+        // eye_width_at is in unit intervals (the eye page shows UI); the tile is in seconds
+        width_ber: oos_dsp::eye::eye_width_at(&j, clk.period, ber) * clk.period,
         q: meas.q_factor,
         s1: meas.sigma_one,
         s0: meas.sigma_zero,
@@ -249,4 +250,40 @@ fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64) -> Op
         ssc_hz: oos_dsp::eye::ssc_rate(&clk),
         tnt: oos_dsp::eye::tnt_ratio(v, dt, &clk),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Eye Width@BER has the unit of its tile, seconds: the unit interval left after TJ@BER, not a fraction of it.
+    #[test]
+    fn eye_width_at_ber_is_seconds() {
+        // PRBS-11 at 1 Gb/s, 20 samples per bit, 4-sample edges, edge times jittered by up to ±10 ps
+        let dt = 50e-12;
+        let bits = oos_dsp::linecode::prbs11(3000);
+        let mut s = 5u32;
+        let mut v = Vec::new();
+        let mut level = 0.0f32;
+        for &b in &bits {
+            let to = if b { 1.0 } else { 0.0 };
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            let shift = ((s >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.4;
+            for k in 0..20 {
+                let u = ((k as f32 - shift) / 4.0).clamp(0.0, 1.0);
+                v.push(level + (to - level) * u);
+            }
+            level = to;
+        }
+        let m = Model::default();
+        let row = [WaveId::Ch(0); 4];
+        let waves = [(WaveId::Ch(0), v)];
+        let x = Ctx { model: &m, t0: 0.0, dt, row, waves: &waves };
+        let r = Jitter.compute(&x, &[EYE_WIDTH_BER, TJ_BER, BIT_RATE]);
+        let get = |id| r.values.iter().find(|v| v.0 == id).unwrap().1;
+        let (ew, tj, ui) = (get(EYE_WIDTH_BER), get(TJ_BER), 1.0 / get(BIT_RATE));
+        assert!((ui - 1e-9).abs() < 1e-12, "UI {ui}");
+        assert!(tj.is_finite() && tj > 0.0 && tj < ui, "TJ {tj}");
+        assert!((ew - (ui - tj)).abs() < 1e-15, "EW {ew}, UI {ui}, TJ {tj}");
+    }
 }
