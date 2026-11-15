@@ -335,10 +335,14 @@ impl Source {
     }
 
     /// STOP for the hardware thread (`Shared::hold`): whether it may arm, and the newest final-frame request. True when
-    /// that request is done and every frame before it was taken (always for other sources).
+    /// that request is done and every frame before it was taken (always for other sources). The release (RUN, SINGLE)
+    /// drops what was queued during the hold: the thread does so on its next pass, but the UI takes frames at once.
     pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
+            if g.hold && !hold {
+                g.queue.clear();
+            }
             (g.hold, g.final_req) = (hold, req);
             return g.final_ack >= req && g.queue.is_empty();
         }

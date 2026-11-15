@@ -11106,6 +11106,43 @@ mod tests {
         crate::deepmeas::force(None);
     }
 
+    // Break it catches: RUN after STOP taking a frame queued before the RUN (the batch in progress at the STOP) as the
+    // first record of the run, before the thread dropped the queue on its next pass
+    #[test]
+    fn run_after_stop_takes_no_frame_from_before() {
+        use super::*;
+        crate::deepmeas::force(Some(false));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        let (n, dt) = (12_500usize, 0.8e-9);
+        let frame = |seq: u64| {
+            let ch = [vec![0.5; n], Vec::new(), Vec::new(), Vec::new()];
+            crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
+        };
+        let seq = |ui: &Ui| ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
+        shared.lock().unwrap().queue.push_back(frame(1));
+        ui.step(0.05);
+        ui.m.run = RunState::Stop;
+        ui.step(0.05);
+        assert!(shared.lock().unwrap().hold);
+        // the batch in progress at the STOP is read and queued; the UI takes nothing in STOP
+        shared.lock().unwrap().queue.push_back(frame(2));
+        ui.step(0.05);
+        assert_eq!(seq(&ui), Some(1));
+        ui.m.run = RunState::Run;
+        ui.step(0.05);
+        assert_eq!(seq(&ui), Some(1), "a frame acquired before the RUN became the first record of the run");
+        // what the thread acquires after the RUN is taken
+        shared.lock().unwrap().queue.push_back(frame(3));
+        ui.step(0.05);
+        assert_eq!(seq(&ui), Some(3));
+        crate::deepmeas::force(None);
+    }
+
     // Break it catches (deepmeas.rs): with raw deep reads on, a pair record measured between two raw ones (Mean back
     // to NaN, statistics counting pair records), a raw deep record not measured, the hold active in Stop or Single
     #[test]
