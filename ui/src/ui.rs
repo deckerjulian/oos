@@ -3001,6 +3001,7 @@ impl Ui {
         self.draw_overlay(cv);
         self.workspace_draw(cv);
         self.draw_studio_floating(cv);
+        self.draw_studio_view_menu(cv);
         self.frames += 1;
     }
 

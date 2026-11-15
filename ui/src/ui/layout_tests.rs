@@ -290,3 +290,44 @@ fn studio_pins_survive_other_measurements_coming_and_going() {
     u.m.layout = Layout::Studio;
     assert_eq!(u.studio_pinned().len(), 3);
 }
+
+#[test]
+fn studio_view_menu_chooses_the_arrangement_the_badges_and_resets() {
+    let mut u = badges();
+    let view = u.studio_top().view;
+    tap_in(&mut u, view);
+    assert!(u.studio.view_menu);
+    shot(&mut u, "07-view-menu");
+    let p = u.studio_view_rect();
+    assert!(p.x >= 0 && p.right() <= W && p.bottom() < u.frame().bottom.y);
+    for i in 0..6 { assert!(p.contains(u.studio_view_row(i).x + 2, u.studio_view_row(i).y + 2), "row {i} inside the menu"); }
+    // the chip that opened it closes it
+    tap_in(&mut u, view);
+    assert!(!u.studio.view_menu);
+    // each arrangement, one at a time; a tap closes the menu
+    tap_in(&mut u, view);
+    for (i, (v, _)) in studio::STUDIO_VIEWS.into_iter().enumerate() {
+        if !u.studio.view_menu { tap_in(&mut u, view); }
+        let row = u.studio_view_row(i);
+        tap_in(&mut u, row);
+        assert_eq!(u.studio.view, v);
+        assert!(!u.studio.view_menu);
+    }
+    // the badge switch keeps the menu open
+    tap_in(&mut u, view);
+    u.studio.view = StudioView::Docked;
+    let row = u.studio_view_row(4);
+    tap_in(&mut u, row);
+    assert!(u.studio.hide_badges && u.studio.view_menu);
+    tap_in(&mut u, row);
+    assert!(!u.studio.hide_badges);
+    // Reset layout: the focus view, the badges, the default pins
+    u.studio.pinned = Some(Vec::new());
+    let row = u.studio_view_row(5);
+    tap_in(&mut u, row);
+    assert_eq!((u.studio.view, u.studio.hide_badges, u.studio.pinned.is_none(), u.studio.view_menu), (StudioView::Waveform, false, true, false));
+    // a tap outside only closes the menu
+    tap_in(&mut u, view);
+    u.tap(20, 300);
+    assert!(!u.studio.view_menu && !u.menu_open);
+}

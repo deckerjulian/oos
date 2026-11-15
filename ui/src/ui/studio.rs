@@ -28,6 +28,19 @@ pub(super) enum StudioView {
     Only,
 }
 
+/// The measurements panel (docked at the right, floating or maximized).
+#[derive(Default)]
+pub(super) struct StudioPanel {
+    /// first row of the page shown
+    pub first: usize,
+    /// folded to its title
+    pub collapsed: bool,
+    /// where the floating panel is
+    pub at: Option<(i32, i32)>,
+    /// the table shows mean, min and max
+    pub stats: bool,
+}
+
 #[derive(Default)]
 pub(super) struct Studio {
     /// the layout was just chosen: the lanes are stacked at the next frame (`studio_sync`)
@@ -39,6 +52,9 @@ pub(super) struct Studio {
     /// the badge whose action popup is open
     pub popup: Option<MeasKey>,
     pub view: StudioView,
+    /// the View menu is open
+    pub view_menu: bool,
+    pub panel: StudioPanel,
 }
 
 /// The rectangles of the Studio top bar.
@@ -202,7 +218,7 @@ impl Ui {
         // Measure, Cursors, View, settings
         let measuring = open(MenuId::Measure) || self.results_panel();
         let cursors = open(MenuId::Cursor) || self.m.cursor != CursorMode::Off;
-        for (r, label, on) in [(t.measure, "Measure", measuring), (t.cursors, "Cursors", cursors), (t.view, "View", open(MenuId::Display))] {
+        for (r, label, on) in [(t.measure, "Measure", measuring), (t.cursors, "Cursors", cursors), (t.view, "View", self.studio.view_menu)] {
             let c = if on { ACCENT } else { TEXT };
             chip(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             let cy = r.y + r.h / 2;
@@ -351,6 +367,7 @@ impl Ui {
         self.studio_sync();
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
         if self.menu_open && self.dlg_layout().is_some_and(|d| d.r.contains(x, y)) { return false; }
+        if self.studio_view_tap(x, y) { return true; }
         if self.studio_popup_tap(x, y) { return true; }
         if self.studio_badge_tap(x, y) { return true; }
         if y >= self.frame().bottom.y {
@@ -382,7 +399,9 @@ impl Ui {
         } else if hit(t.cursors) {
             self.toggle_menu(MenuId::Cursor);
         } else if hit(t.view) {
-            self.toggle_menu(MenuId::Display);
+            if self.menu_open { self.close_menu(); }
+            self.studio.popup = None;
+            self.studio.view_menu = true;
         } else if hit(t.gear) {
             if self.m.touch_lock { self.key(key::TOUCHLOCK); } else { self.toggle_menu(MenuId::Main); }
         }
@@ -692,5 +711,179 @@ impl Ui {
             self.studio.popup = Some(key);
         }
         true
+    }
+}
+
+/// The View menu: its width and the height of a row.
+const VIEW_W: i32 = 304;
+const VIEW_ROW: i32 = 40;
+
+/// What the View menu offers, in order.
+pub(super) const STUDIO_VIEWS: [(StudioView, &str); 4] = [
+    (StudioView::Waveform, "Waveform focus"),
+    (StudioView::Docked, "Docked measurements"),
+    (StudioView::Floating, "Floating measurements"),
+    (StudioView::Only, "Measurements only"),
+];
+
+/// A small square wave, the lanes in the pictures of the View menu.
+fn icon_wave(cv: &mut Canvas, r: Rect, c: Rgb) {
+    let (lo, hi) = (r.bottom() - 4, r.y + 4);
+    let mut x = r.x + 2;
+    let mut y = lo;
+    for step in [5, 5, 5, 5, 5, 5] {
+        cv.hline(x, x + step, y, c);
+        x += step;
+        let next = if y == lo { hi } else { lo };
+        cv.vline(x, y.min(next), y.max(next), c);
+        y = next;
+        if x >= r.right() - 6 { break; }
+    }
+}
+
+fn icon_view_mode(cv: &mut Canvas, r: Rect, view: StudioView, c: Rgb) {
+    cv.round_outline(r, 3, c);
+    match view {
+        StudioView::Waveform => icon_wave(cv, r.inset(2), c),
+        StudioView::Docked => {
+            icon_wave(cv, Rect::new(r.x + 2, r.y + 2, r.w - 14, r.h - 4), c);
+            cv.vline(r.right() - 11, r.y, r.bottom() - 1, c);
+            for k in 0..3 { cv.hline(r.right() - 9, r.right() - 4, r.y + 5 + k * 5, c); }
+        }
+        StudioView::Floating => {
+            icon_wave(cv, r.inset(2), c);
+            cv.round_outline(Rect::new(r.right() - 16, r.bottom() - 12, 13, 9), 1, c);
+        }
+        StudioView::Only => {
+            for k in 0..3 { cv.hline(r.x + 4, r.right() - 5, r.y + 5 + k * 6, c); }
+        }
+    }
+}
+
+impl Ui {
+    /// The View menu, under the View chip.
+    pub(super) fn studio_view_rect(&self) -> Rect {
+        let anchor = self.studio_top().view;
+        let h = 40 + 4 * VIEW_ROW + 8 + VIEW_ROW + 8 + VIEW_ROW + 8;
+        Rect::new((anchor.right() - VIEW_W).max(4), self.frame().top.bottom() + 4, VIEW_W, h)
+    }
+
+    /// Row `i` of the View menu: 0 to 3 the arrangements, 4 the badges switch, 5 Reset layout.
+    pub(super) fn studio_view_row(&self, i: usize) -> Rect {
+        let p = self.studio_view_rect();
+        let y = match i {
+            0..=3 => p.y + 40 + i as i32 * VIEW_ROW,
+            4 => p.y + 40 + 4 * VIEW_ROW + 8,
+            _ => p.y + 40 + 5 * VIEW_ROW + 16,
+        };
+        Rect::new(p.x + 6, y, p.w - 12, VIEW_ROW)
+    }
+
+    pub(super) fn studio_view_close(&self) -> Rect {
+        let p = self.studio_view_rect();
+        Rect::new(p.right() - 44, p.y + 4, 38, 32)
+    }
+
+    /// Back to the arrangement the layout starts with.
+    pub(super) fn studio_reset_layout(&mut self) {
+        self.studio.view = StudioView::Waveform;
+        self.studio.hide_badges = false;
+        self.studio.pinned = None;
+        self.studio.popup = None;
+        self.studio.panel = Default::default();
+        self.set_zoom(false);
+        self.relayout();
+    }
+
+    pub(super) fn draw_studio_view_menu(&self, cv: &mut Canvas) {
+        if !self.studio.view_menu { return; }
+        let f = self.fonts();
+        let p = self.studio_view_rect();
+        cv.round(p, 8, BTN_BORDER, 255);
+        cv.round(p.inset(1), 7, PANEL_BG, 255);
+        let top = self.studio_top().view;
+        let x = top.x + top.w / 2;
+        cv.triangle([(x - 7, p.y + 1), (x + 7, p.y + 1), (x, p.y - 6)], BTN_BORDER);
+        cv.triangle([(x - 6, p.y + 2), (x + 6, p.y + 2), (x, p.y - 4)], PANEL_BG);
+        cv.text(&f.lb, p.x + 16, p.y + 28, "View", TEXT);
+        let c = self.studio_view_close();
+        let (cx, cy) = (c.x + c.w / 2, c.y + c.h / 2);
+        cv.line(cx - 6, cy - 6, cx + 6, cy + 6, TEXT);
+        cv.line(cx - 6, cy + 6, cx + 6, cy - 6, TEXT);
+        cv.hline(p.x + 8, p.right() - 9, p.y + 38, LINE);
+        for (i, (view, label)) in STUDIO_VIEWS.into_iter().enumerate() {
+            let r = self.studio_view_row(i);
+            let on = self.studio.view == view;
+            if on {
+                cv.round(r, 6, ACCENT, 255);
+                cv.round(r.inset(1), 5, mix(PANEL_BG, ACCENT, 28), 255);
+            }
+            icon_view_mode(cv, Rect::new(r.x + 8, r.y + 8, 42, 24), view, TEXT);
+            cv.text_in(&f.m, Rect::new(r.x + 62, r.y, r.w - 100, r.h), 0, label, TEXT);
+            if on {
+                let (kx, ky) = (r.right() - 24, r.y + r.h / 2);
+                cv.line(kx, ky, kx + 4, ky + 4, ACCENT);
+                cv.line(kx + 4, ky + 4, kx + 11, ky - 5, ACCENT);
+                cv.line(kx, ky + 1, kx + 4, ky + 5, ACCENT);
+                cv.line(kx + 4, ky + 5, kx + 11, ky - 4, ACCENT);
+            }
+        }
+        cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(4).y - 4, LINE);
+        let r = self.studio_view_row(4);
+        cv.text_in(&f.m, Rect::new(r.x + 8, r.y, r.w - 70, r.h), 0, "Show pinned badges", TEXT);
+        let on = !self.studio.hide_badges;
+        let sw = Rect::new(r.right() - 52, r.y + 9, 44, 22);
+        cv.round(sw, 11, if on { ACCENT } else { BTN_BORDER }, 255);
+        cv.circle(if on { sw.right() - 11 } else { sw.x + 11 }, sw.y + 11, 8, if on { DARK_TEXT } else { DIM });
+        cv.hline(p.x + 8, p.right() - 9, self.studio_view_row(5).y - 4, LINE);
+        let r = self.studio_view_row(5);
+        let (ix, iy) = (r.x + 24, r.y + r.h / 2);
+        cv.circle(ix, iy, 8, TEXT);
+        cv.circle(ix, iy, 6, PANEL_BG);
+        cv.fill(Rect::new(ix - 2, iy - 10, 6, 4), PANEL_BG);
+        cv.triangle([(ix - 1, iy - 12), (ix - 1, iy - 5), (ix + 5, iy - 9)], TEXT);
+        cv.text_in(&f.m, Rect::new(r.x + 48, r.y, r.w - 50, r.h), 0, "Reset layout", TEXT);
+    }
+
+    /// A tap while the View menu is open: a row does its action, a tap outside closes it. Always taken.
+    pub(super) fn studio_view_tap(&mut self, x: i32, y: i32) -> bool {
+        if !self.studio.view_menu { return false; }
+        let p = self.studio_view_rect();
+        let chip = self.top_hit(self.studio_top().view);
+        if chip.contains(x, y) {
+            // the chip that opened it closes it again
+            self.studio.view_menu = false;
+            return true;
+        }
+        if !p.contains(x, y) {
+            self.studio.view_menu = false;
+            return true;
+        }
+        if self.studio_view_close().contains(x, y) {
+            self.studio.view_menu = false;
+            return true;
+        }
+        for (i, (view, _)) in STUDIO_VIEWS.into_iter().enumerate() {
+            if self.studio_view_row(i).contains(x, y) {
+                self.studio_set_view(view);
+                self.studio.view_menu = false;
+                return true;
+            }
+        }
+        if self.studio_view_row(4).contains(x, y) {
+            self.studio.hide_badges = !self.studio.hide_badges;
+            self.relayout();
+        } else if self.studio_view_row(5).contains(x, y) {
+            self.studio_reset_layout();
+            self.studio.view_menu = false;
+        }
+        true
+    }
+
+    /// Chooses how the measurements share the screen.
+    pub(super) fn studio_set_view(&mut self, view: StudioView) {
+        self.studio.view = view;
+        self.studio.popup = None;
+        self.relayout();
     }
 }
