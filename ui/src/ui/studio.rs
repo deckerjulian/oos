@@ -115,6 +115,8 @@ pub(super) struct Studio {
     pub cur_badge: bool,
     /// moving one cursor moves the other with it
     pub cur_linked: bool,
+    /// the first pinned measurement shown as a badge (the Meas tab pages through them)
+    pub badge_first: usize,
     /// the docking tree and the floating views (`dock.rs`)
     pub dock: super::dock::Dock,
     /// the divider under the overview strip is held: (finger y, strip height) at the press
@@ -606,10 +608,28 @@ impl Ui {
         Some((chans, extras))
     }
 
+    /// A new math channel starts useful: the first free one, an addition of the first channel that is on and the next
+    /// one (or the same, for one), so its trace is on the screen at once.
+    pub(super) fn studio_math_start(&mut self) {
+        let free = if self.m.math == MathOp::Off { Some(self.m.math_sel) } else { (0..NMATH).find(|&k| self.m.math_ch(k).op == MathOp::Off) };
+        let Some(k) = free else { return };
+        if k != self.m.math_sel { self.m.math_select(k); }
+        let on: Vec<usize> = (0..n_ch()).filter(|&c| self.m.ch[c].on).collect();
+        let Some(&a) = on.first() else { return };
+        let b = on.get(1).copied().unwrap_or(a);
+        self.m.math = MathOp::Add;
+        self.math_fam = MathOp::Add.family();
+        (self.m.math_a, self.m.math_b) = (a, b);
+        self.m.math_offset = 0.0;
+        self.math_autoscale();
+        self.settings_changed();
+        self.relayout();
+    }
+
     /// What a row of the popup's second group opens: the flows of the + Add panel and the analysis menus.
     fn studio_pick_add(&mut self, k: PickAdd) {
         match k {
-            PickAdd::Math => self.open_submenu(MenuId::Math),
+            PickAdd::Math => { self.studio_math_start(); self.open_submenu(MenuId::Math); }
             PickAdd::Ref => self.open_submenu(MenuId::Ref),
             PickAdd::Bus => self.open_submenu(MenuId::Decode),
         }
@@ -969,7 +989,8 @@ impl Ui {
         let limit = self.studio_row_limit();
         let mut x = row.x + 4 + self.studio_search_w();
         let mut out = Vec::new();
-        for key in self.studio_pinned() {
+        let first = self.studio.badge_first.min(self.studio_pinned().len().saturating_sub(1));
+        for key in self.studio_pinned().into_iter().skip(first) {
             let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
             let w = 14 + 6 + (f.sb.width("CH4") + 10) + 6 + f.s.width(&r.name) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
             if x + w > limit { break; }
@@ -1118,11 +1139,18 @@ impl Ui {
             return true;
         }
         if self.studio_compact_chip().contains(x, y) {
-            self.studio_set_compact(!self.studio.compact);
+            // with no panel to make compact, the list button opens the measurements
+            if self.studio.view == StudioView::Waveform { self.studio_set_view(StudioView::Docked); } else { self.studio_set_compact(!self.studio.compact); }
             return true;
         }
         if self.studio_tab().is_some_and(|tab| tab.contains(x, y)) {
-            self.studio_set_view(StudioView::Docked);
+            // more pinned measurements than the row holds: the tab pages through them; otherwise it opens the list
+            let total = self.studio_pinned().len();
+            let shown = self.studio_badges().len();
+            let first = self.studio.badge_first.min(total.saturating_sub(1));
+            if first + shown < total { self.studio.badge_first = first + shown.max(1); }
+            else if first > 0 { self.studio.badge_first = 0; }
+            else { self.studio_set_view(StudioView::Docked); }
             return true;
         }
         if let Some((key, _)) = self.studio_badges().into_iter().find(|(_, r)| r.contains(x, y)) {

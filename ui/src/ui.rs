@@ -93,6 +93,8 @@ mod measview;
 mod batch12_tests;
 #[cfg(test)]
 mod batch13_tests;
+#[cfg(test)]
+mod batch14_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
@@ -124,6 +126,8 @@ pub mod la;
 pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
+/// Width of the volts axis of the histogram view.
+const HIST_AXIS_W: i32 = 46;
 /// Width of the measurement strip when it is docked on the left or the right.
 const STRIP_SIDE: i32 = 220;
 /// Height of the fork's compact bottom bar (Menu, source pills, Overlay / Stacked, time, trigger) that replaces the
@@ -1997,6 +2001,16 @@ impl Ui {
         (r, Rect::new(r.x - 5, r.y, r.w + 10, 40))
     }
 
+    /// Studio: the trigger tag and its value move left of the corner buttons when its level is as high as they are.
+    pub(super) fn trigger_tag_x(&self, x1: i32, y: i32) -> i32 {
+        if self.m.layout != Layout::Studio { return x1; }
+        let mut x1 = x1;
+        for b in [self.full_btn().1, self.zoom_btn().1] {
+            if y + 10 > b.y && y - 10 < b.bottom() && x1 + 26 > b.x { x1 = x1.min(b.x - 34 - MARK_W); }
+        }
+        x1
+    }
+
     fn draw_zoom_btn(&self, cv: &mut Canvas) {
         let (r, _) = self.zoom_btn();
         let armed = self.m.zoom;
@@ -3821,6 +3835,36 @@ impl Ui {
 
     fn draw_hist(&self, cv: &mut Canvas) { self.draw_hist_in(cv, self.area, false) }
 
+    /// The axes of the histogram view: volts at the left on the division lines of the lane, a count scale along the top.
+    fn draw_hist_axes(&self, cv: &mut Canvas, a: Rect, (ax, ly, lh): (i32, i32, i32), c: usize, peak: u64) {
+        let f = self.fonts();
+        let ch = &self.m.ch[c];
+        let lane = self.source_area(WaveId::Ch(c)).unwrap_or(a);
+        let (factor, center) = self.zoom_vertical_transform(lane);
+        let vpd = ch.volts_per_div() / factor;
+        let offset = ch.offset - center * ch.volts_per_div();
+        let span = (VDIV / 2.0 * vpd).abs() + offset.abs();
+        cv.vline(a.x + ax, a.y + ly, a.y + ly + lh, GRID_AXIS);
+        let mut free = i32::MIN;
+        for j in 0..=VDIV as i32 {
+            let y = a.y + ly + j * lh / VDIV as i32;
+            cv.hline(a.x + ax - 4, a.x + ax, y, GRID_AXIS);
+            let v = (VDIV / 2.0 - j as f32) * vpd - offset;
+            let s = axis_label(v, vpd, offset, span, self.m.unit(c));
+            let ty = (y + 4).clamp(a.y + 12, a.bottom() - 2);
+            if ty < free + f.s.size { continue; }
+            free = ty;
+            cv.text(&f.s, a.x + 2, ty, &s, AXIS_TEXT);
+        }
+        // the count scale: nought at the axis, the largest bin at the end of the longest bar
+        let top = a.y + (ly - 14).max(2);
+        let end = a.x + ax + ((a.w - ax) * 9 / 10).max(40);
+        cv.hline(a.x + ax, end, top + 12, GRID_AXIS);
+        cv.text(&f.s, a.x + ax + 2, top + 10, "0", AXIS_TEXT);
+        let label = format!("count {peak}");
+        cv.text(&f.s, (end - f.s.width(&label)).max(a.x + ax + 14), top + 10, &label, AXIS_TEXT);
+    }
+
     /// Histogram overlay: bars along the left edge (vertical) or the bottom (horizontal), mean and sigma in units.
     /// As a view of its own (`tile`) it fills `a`.
     fn draw_hist_in(&self, cv: &mut Canvas, a: Rect, tile: bool) {
@@ -3828,7 +3872,11 @@ impl Ui {
         let Some(c) = self.hist_src().filter(|&c| self.shows(c)) else { return };
         let col = CH_COLORS[c];
         let peak = bins.iter().copied().max().unwrap_or(0).max(1) as f64;
-        let depth = if tile { (a.w * 9 / 10).max(40) as f64 } else { (a.w / 5).max(40) as f64 };
+        // as a view of its own: a volts axis at the left, on the lines of the lane it reads, and a count scale
+        let ax = if tile && self.m.hist == Hist::Vertical { HIST_AXIS_W } else { 0 };
+        let lane = if tile { self.source_area(WaveId::Ch(c)).unwrap_or(a) } else { a };
+        let (ly, lh) = if tile && self.m.hist == Hist::Vertical { ((lane.y - a.y).max(0), lane.h.min(a.h)) } else { (0, a.h) };
+        let depth = if tile { ((a.w - ax) * 9 / 10).max(40) as f64 } else { (a.w / 5).max(40) as f64 };
         let hdepth = if tile { a.h as f64 * 0.85 / 0.6 } else { depth };
         cv.set_clip(a);
         let ch = &self.m.ch[c];
@@ -3838,11 +3886,12 @@ impl Ui {
                 let n = bins.len().max(1) as i32;
                 for (r, &b) in bins.iter().enumerate() {
                     let len = (b as f64 / peak * depth).round() as i32;
-                    let (y0, y1) = (r as i32 * a.h / n, (r as i32 + 1) * a.h / n);
+                    let (y0, y1) = (ly + r as i32 * lh / n, ly + (r as i32 + 1) * lh / n);
                     if len > 0 {
-                        cv.blend(Rect::new(a.x, a.y + y0, len, (y1 - y0).max(1)), col, 150);
+                        cv.blend(Rect::new(a.x + ax, a.y + y0, len, (y1 - y0).max(1)), col, 150);
                     }
                 }
+                if tile { self.draw_hist_axes(cv, a, (ax, ly, lh), c, peak as u64); }
                 // pixel row -> volts
                 let (factor, center) = self.zoom_vertical_transform(self.area);
                 let h = bins.len().max(1) as f64;
@@ -4228,7 +4277,7 @@ impl Ui {
         let rate = if r.dt.is_finite() && r.dt > 0.0 {
             si_short(1.0 / r.dt, "Sa/s")
         } else {
-            "\u{2014}".into()
+            "-".into()
         };
         (scale, rate)
     }
@@ -4403,7 +4452,7 @@ impl Ui {
         let lvl = self.trig_level_shown();
         if self.m.trig_ref.is_none() && self.m.ch[ts].on && self.shows(ts) && self.m.trig_line().is_none() && self.trigger_absolute_level_visible(false) {
             let y = self.y_of_volts(ts, lvl).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
-            let x1 = a.x + a.w - MARK_W;
+            let x1 = self.trigger_tag_x(a.x + a.w - MARK_W, y);
             let r = Rect::new(x1 + 8, y - 8, 16, 16);
             cv.round(r, 3, ACCENT, 255);
             cv.triangle([(x1 + 9, y - 6), (x1 + 2, y), (x1 + 9, y + 6)], ACCENT);
@@ -4427,7 +4476,7 @@ impl Ui {
             let source = if secondary { self.m.trigger_wave2() } else { self.m.trigger_wave() };
             if source == WaveId::Ch(c) && self.m.ch[c].on && self.shows(c) && self.trigger_absolute_level_visible(secondary) {
                 let y = self.y_of_volts(c, self.m.trig_level2).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
-                let x1 = a.x + a.w - MARK_W;
+                let x1 = self.trigger_tag_x(a.x + a.w - MARK_W, y);
                 let r = Rect::new(x1 + 8, y - 8, 16, 16);
                 cv.round(r, 3, mix(BG, ACCENT, 170), 255);
                 cv.triangle([(x1 + 9, y - 6), (x1 + 2, y), (x1 + 9, y + 6)], mix(BG, ACCENT, 170));
@@ -5297,6 +5346,11 @@ impl Ui {
 
     /// Messages as an amber pill at the top centre of the plot; next to or under an open menu dialog that would
     /// cover it (it never hides dialog controls).
+    /// A message that reports something done: it gets a tick, not the warning triangle.
+    pub(super) fn toast_is_success(s: &str) -> bool {
+        s.ends_with(" added") || s.ends_with(" removed") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ")
+    }
+
     fn draw_toast(&self, cv: &mut Canvas) {
         let Some((s, _)) = &self.toast else { return };
         let f = self.fonts();
@@ -5326,6 +5380,14 @@ impl Ui {
         }
         cv.round(r, 6, mix(BAR, AMBER, 110), 255);
         cv.round(r.inset(1), 5, mix(BAR, AMBER, 34), 255);
+        if Self::toast_is_success(s) {
+            // done, not a warning: a tick in green
+            cv.round(r, 6, mix(BAR, GREEN, 110), 255);
+            cv.round(r.inset(1), 5, mix(BAR, GREEN, 34), 255);
+            for d in [0, 1] { cv.line(r.x + 11, r.y + 15 + d, r.x + 16, r.y + 20 + d, GREEN); cv.line(r.x + 16, r.y + 20 + d, r.x + 25, r.y + 8 + d, GREEN); }
+            cv.text(&f.mb, r.x + 32, r.y + 19, s, GREEN);
+            return;
+        }
         cv.triangle([(r.x + 11, r.y + 20), (r.x + 25, r.y + 20), (r.x + 18, r.y + 7)], AMBER);
         cv.vline(r.x + 18, r.y + 11, r.y + 15, DARK_TEXT);
         cv.pixel(r.x + 18, r.y + 18, DARK_TEXT, 255);
@@ -6687,7 +6749,7 @@ impl Ui {
             Item::MaskLoad => "Load mask",
             Item::MathLinA => "A",
             Item::MathLinB => "B",
-            Item::MeasAdd(k) => k.name(),
+            Item::MeasAdd(k) => meascatalog::meas_display_name(k),
             Item::MeasCfg(_) => "Set",
             Item::MeasClear => "Clear all",
             Item::MeasRemove(_) => "Remove",
@@ -7647,7 +7709,7 @@ impl Ui {
                             self.meas_cfg = self.meas_cfg.map(|n| n - 1);
                         }
                         self.clear_measurement_statistics();
-                        self.toast(&format!("{} {} removed", k.name(), self.wave_name(self.meas_src)));
+                        self.toast(&format!("{} {} removed", meascatalog::meas_display_name(k), self.wave_name(self.meas_src)));
                         return;
                     } else {
                         if !self.meas_make_room() { return; }
@@ -7663,7 +7725,7 @@ impl Ui {
                         }
                     }
                     self.ensure_meas_own();
-                    self.toast(&format!("{} {} added", k.name(), self.wave_name(self.meas_src)));
+                    self.toast(&format!("{} {} added", meascatalog::meas_display_name(k), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
                 Item::CntClear => self.counter_clear(),

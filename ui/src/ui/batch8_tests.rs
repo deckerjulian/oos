@@ -111,7 +111,7 @@ fn the_add_button_opens_a_panel_that_stays_open_for_several_adds() {
     open_add(&mut u);
     assert!(u.sheet_active());
     let g = u.rail_geo();
-    assert_eq!(g.rows.len(), 7);
+    assert_eq!(g.rows.len(), 8);
     for (i, (_, r)) in g.rows.iter().enumerate() { assert!(r.h >= 44 && r.w >= 40, "row {i}"); }
     u.step(0.05);
     assert!(u.plot_rect().right() <= u.sheet_rect().x, "the waveform stays visible beside the panel");

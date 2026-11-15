@@ -429,8 +429,8 @@ fn add_panel_is_in_the_view_menu_and_lists_every_kind() {
     assert!(u.sheet_active() && !u.studio.view_menu);
     let g = u.rail_geo();
     let names: Vec<&str> = super::addrail::ADD_KINDS.iter().map(|p| p.1).collect();
-    assert_eq!(names, ["Cursors", "Measure", "Search", "Results table", "Plot", "Math", "Ref"]);
-    assert_eq!(g.rows.len(), 7);
+    assert_eq!(names, ["Cursors", "Measure", "Search", "Results table", "Plot", "Math", "Ref", "Bus"]);
+    assert_eq!(g.rows.len(), 8);
     for (i, (_, r)) in g.rows.iter().enumerate() {
         assert!(r.w >= 40 && r.h >= 44, "row {i}");
         let sheet = u.sheet_rect();

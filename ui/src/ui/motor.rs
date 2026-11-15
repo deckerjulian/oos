@@ -451,7 +451,7 @@ impl Ui {
             lines.push(format!("D {}   Q {}   zero {}", num(Some(q.d), ""), num(Some(q.q), ""), num(Some(q.zero), "")));
             lines.push(format!("f {}", if q.freq > 0.0 { num(Some(q.freq), "Hz") } else { "----".into() }));
             if q.from_vector {
-                lines.push("\u{3b8} from the phase vector".into());
+                lines.push("Angle from the phase vector".into());
             }
             cv.set_clip(a);
             let plot = Rect::new(a.x, a.y + 78, a.w - 168, a.h - 86);
@@ -508,7 +508,7 @@ impl Ui {
                 }
                 prev = Some((x, y));
             }
-            cv.text(&f.s, sq.x + 4, sq.y + 14, "\u{3b1} \u{3b2}", DIM);
+            cv.text(&f.s, sq.x + 4, sq.y + 14, "alpha beta", DIM);
             cv.no_clip();
         }
         if !self.azr.inv_note.is_empty() {

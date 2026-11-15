@@ -1151,6 +1151,8 @@ impl Ui {
             None if matches!(view, AView::Magnetic | AView::Inverter | AView::Dpt) || self.view_reads_ref(view) => Self::blank_record(),
             None => return,
         };
+        // Studio: the eye and the spectrum pane run side by side
+        if view == AView::Eye && self.dock_on() && self.m.pane == tables::PANE_SPECTRUM && self.pane_h() > 0 { self.spectrum_update(&rec, true); }
         match view {
             AView::Spectrum => self.spectrum_update(&rec, beside),
             AView::Eye => self.eye_update(&rec),

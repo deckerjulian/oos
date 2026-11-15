@@ -392,7 +392,7 @@ impl Ui {
             VKind::Measure => matches!(v, StudioView::Docked | StudioView::Floating | StudioView::Only | StudioView::Offline),
             VKind::Sim => v == StudioView::Sim,
             VKind::Eye => v != StudioView::Only && self.eye_open() && self.m.eye_place != EyePlace::Full,
-            VKind::Pane => v != StudioView::Only && self.m.pane != 0 && self.m.view == AView::Scope,
+            VKind::Pane => v != StudioView::Only && self.m.pane != 0 && matches!(self.m.view, AView::Scope | AView::Eye),
             VKind::Hist => v != StudioView::Only && self.m.hist != Hist::Off,
             VKind::Xy => v != StudioView::Only && self.xy,
             VKind::View => v != StudioView::Only && !self.xy_over() && !matches!(self.m.view, AView::Scope | AView::Eye),
@@ -662,8 +662,14 @@ impl Ui {
     pub(super) fn ov_divider(&self) -> Option<(Rect, Rect)> {
         if !self.dock_on() || !self.m.zoom || self.view_on() || self.studio.view == StudioView::Only || self.dock_floating(VKind::Wave) { return None; }
         let o = self.split_zoom(self.grid).0;
-        let (cx, y) = (o.x + o.w / 2, o.bottom());
-        Some((Rect::new(cx - 30, y - 22, 60, 44), Rect::new(cx - 22, y - 6, 44, 12)))
+        let y = o.bottom();
+        // the grip stays clear of the buttons of the zoom bar under it
+        let bar = self.studio_zoom_bar();
+        let busy: Vec<Rect> = bar.map(|b| vec![b.label, b.tdiv, b.plus, b.minus, b.vplus, b.vminus, b.readout, b.center, b.fit, b.more, b.close]).unwrap_or_default();
+        let clear = |cx: i32| { let hit = Rect::new(cx - 30, y - 40, 60, 42); !busy.iter().any(|r| r.w > 0 && hit.x < r.right() && r.x < hit.right() && hit.y < r.bottom() && r.y < hit.bottom()) };
+        let cx = [o.x + o.w / 2, o.x + o.w * 62 / 100, o.x + o.w * 38 / 100, o.x + o.w * 25 / 100, o.x + o.w * 75 / 100].into_iter().find(|&c| clear(c)).unwrap_or(o.x + o.w / 2);
+        // the grip lies in the bottom of the overview strip, above the buttons of the zoom bar
+        Some((Rect::new(cx - 30, y - 40, 60, 42), Rect::new(cx - 22, y - 14, 44, 12)))
     }
 
     pub(super) fn ov_divider_down(&mut self, x: i32, y: i32) -> bool {

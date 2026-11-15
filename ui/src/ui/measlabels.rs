@@ -179,7 +179,7 @@ impl Ui {
                 continue;
             }
             let col = self.label_col(id);
-            let text = format!("{} {}", k.name(), si(v, k.unit()));
+            let text = format!("{} {}", super::meascatalog::meas_display_name(k), si(v, k.unit()));
             let left = t_lo - analysis_t0;
             match mark(k, &ana, left) {
                 Some(Mark::Level(l)) => {

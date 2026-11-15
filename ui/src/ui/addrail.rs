@@ -26,10 +26,11 @@ pub(super) enum AddKind {
     Plot,
     Math,
     Ref,
+    Bus,
 }
 
 /// What the first page lists: the kind, its name and the line under it.
-pub(super) const ADD_KINDS: [(AddKind, &str, &str); 7] = [
+pub(super) const ADD_KINDS: [(AddKind, &str, &str); 8] = [
     (AddKind::Cursors, "Cursors", "Two cursors read time and level"),
     (AddKind::Measure, "Measure", "Amplitude, period, rise time and more"),
     (AddKind::Search, "Search", "Mark every edge on the waveform"),
@@ -37,6 +38,7 @@ pub(super) const ADD_KINDS: [(AddKind, &str, &str); 7] = [
     (AddKind::Plot, "Plot", "XY, eye, histogram, spectrum, trend"),
     (AddKind::Math, "Math", "A waveform calculated from others"),
     (AddKind::Ref, "Ref", "Keep a waveform to compare with"),
+    (AddKind::Bus, "Bus", "Decode a serial bus"),
 ];
 
 /// Table types of the Results table page: name and what it shows.
@@ -380,6 +382,7 @@ impl Ui {
             AddKind::Plot => (0..PLOTS.len()).any(|i| self.rail_plot_shown(i)),
             AddKind::Math => self.m.math != MathOp::Off,
             AddKind::Ref => self.refs.iter().any(Option::is_some),
+            AddKind::Bus => (0..DECODERS).any(|k| self.m.dec_is_on(k)),
         }
     }
 
@@ -392,6 +395,7 @@ impl Ui {
             AddKind::Measure => "measure",
             AddKind::Math => "math",
             AddKind::Ref => "ref",
+            AddKind::Bus => "bus",
         }
     }
 
@@ -404,6 +408,7 @@ impl Ui {
             AddKind::Measure => "Amplitude, frequency, rise time and more, read from a waveform. Pick one and it joins the readout.".into(),
             AddKind::Math => "A waveform calculated from others.".into(),
             AddKind::Ref => "A waveform kept to compare with.".into(),
+            AddKind::Bus => "Decode I2C, SPI, UART and the other serial buses.".into(),
         }
     }
 
@@ -553,8 +558,9 @@ impl Ui {
     /// A row of the first page: Math and Ref open the page that already exists, the others get their own.
     fn rail_open(&mut self, k: AddKind) {
         match k {
-            AddKind::Math => self.open_submenu(MenuId::Math),
+            AddKind::Math => { self.studio_math_start(); self.open_submenu(MenuId::Math); }
             AddKind::Ref => self.open_submenu(MenuId::Ref),
+            AddKind::Bus => self.open_submenu(MenuId::Decode),
             _ => {
                 self.sheet.add.kind = Some(k);
                 (self.sheet.add.src, self.sheet.add.src_b) = (None, None);

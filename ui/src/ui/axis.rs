@@ -10,7 +10,9 @@ use super::studio::StudioDrag;
 const STRIP: i32 = 40;
 const VOLTS_W: i32 = 44;
 /// A drag changes the scale one step for this much travel.
-const STEP_PX: i32 = 36;
+const STEP_PX: i32 = 60;
+/// ... and one drag event never moves more than this many steps.
+const MAX_STEPS: i32 = 2;
 /// How long the strip stays lit after a wheel turn.
 const FLASH_S: f64 = 0.4;
 
@@ -167,18 +169,19 @@ impl Ui {
         self.studio.axis.touch = Some(t);
         if t.p1.is_some() { self.axis_pinch_steps(); return true; }
         // a drag: right and up zoom in, left and down out; one step for every STEP_PX
-        let (travel, along) = match t.axis { Axis::Time => (x - t.x0, true), Axis::Volts(_) => (t.y0 - y, false) };
-        let _ = along;
-        if travel.abs() >= STEP_PX {
-            self.axis_step(t.axis, if travel > 0 { -1 } else { 1 });
+        let travel = match t.axis { Axis::Time => x - t.x0, Axis::Volts(_) => t.y0 - y };
+        let steps = (travel.abs() / STEP_PX).min(MAX_STEPS);
+        if steps > 0 {
+            for _ in 0..steps { self.axis_step(t.axis, if travel > 0 { -1 } else { 1 }); }
+            // keep the rest of the travel for the next step; what a clamp left over is dropped
+            let used = if travel.abs() / STEP_PX > MAX_STEPS { travel.abs() } else { steps * STEP_PX };
             let mut t = t;
-            t.x0 = x;
-            t.y0 = y;
+            match t.axis { Axis::Time => t.x0 += travel.signum() * used, Axis::Volts(_) => t.y0 -= travel.signum() * used }
             self.studio.axis.touch = Some(t);
         }
         // only a clear move along the axis is the gesture; a small one is still a tap
         let moved = (x - t.x0).abs().max((y - t.y0).abs()) > 8;
-        moved || travel.abs() >= STEP_PX || false
+        moved || steps > 0
     }
 
     pub(super) fn axis_up(&mut self) { self.studio.axis.touch = None; }

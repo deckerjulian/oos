@@ -216,6 +216,19 @@ fn tab_groups(tab: u8) -> &'static [(&'static str, &'static [Cat])] {
     }
 }
 
+/// The name of a measurement for people: the one the add list uses ("Amplitude"), not the scope's key ("Vamp").
+pub(super) fn meas_display_name(k: Meas) -> &'static str {
+    static NAMES: std::sync::OnceLock<Vec<(Meas, &'static str)>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| (0..512u16).filter_map(cat_from).filter_map(|c| { let m = meta(c); if let CatKind::Meas(k) = m.kind { Some((k, m.name)) } else { None } }).collect())
+        .iter().find(|(m, _)| *m == k).map_or_else(|| k.name(), |(_, n)| n)
+}
+
+/// The display name of the measurement whose key is `key` ("Vamp" is "Amplitude"); None for a name that is not a key.
+#[cfg(test)]
+pub(super) fn display_of_key(key: &str) -> Option<&'static str> {
+    (0..512u16).filter_map(cat_from).find_map(|c| { let m = meta(c); if let CatKind::Meas(k) = m.kind { (k.name() == key).then_some(m.name) } else { None } })
+}
+
 pub(super) fn cat_from(n: u16) -> Option<Cat> {
     listed().into_iter().find(|c| *c as u16 == n)
 }
@@ -1172,9 +1185,9 @@ mod tests {
         ui.catalog_add(Cat::Amplitude);
         ui.catalog_add(Cat::LowTime);
         let rows = ready_rows(&mut ui);
-        let amp = rows.iter().find(|r| r.name == "Vamp").expect("amplitude");
+        let amp = rows.iter().find(|r| r.name == "Amplitude").expect("amplitude");
         assert!((amp.v - 2.0).abs() < 0.15, "amplitude {}", amp.v);
-        assert!(rows.iter().any(|r| r.name == "Low time" && r.v.is_finite()), "low time");
+        assert!(rows.iter().any(|r| r.name == "Low Time" && r.v.is_finite()), "low time");
         ui.catalog_add(Cat::DataRate);
         let rate = ready_rows(&mut ui).into_iter().find(|r| r.name == "NRZ Data Rate").unwrap();
         assert!(rate.v.is_finite() && rate.v > 0.0, "{}", rate.v);

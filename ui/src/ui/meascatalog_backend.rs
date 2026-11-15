@@ -124,7 +124,7 @@ impl Ui{
         let mut state=self.azr.catalog_measurements.borrow_mut();
         let reading_of=|result:&Result<Batch,&'static str>|match result{
             Ok(values)=>{let value=values.iter().find(|(id,_)|*id==c).map_or(f64::NAN,|(_,v)|*v);
-                Reading{value,computing:false,reason:if value.is_finite(){None}else if family(c)==Family::Rate{Some("NRZ UI unrecoverable; need transitions and at least 2 samples/UI")}else if family(c)==Family::Eye{Some("needs \u{2265}3 edges")}else{None},quality:values.quality}},
+                Reading{value,computing:false,reason:if value.is_finite(){None}else if family(c)==Family::Rate{Some("NRZ UI unrecoverable; need transitions and at least 2 samples/UI")}else if family(c)==Family::Eye{Some("needs more edges")}else{None},quality:values.quality}},
             Err(reason)=>Reading{value:f64::NAN,computing:false,reason:Some(*reason),quality}};
         if let Some(answer)=state.cache.iter().find(|answer|answer.key==key){return reading_of(&answer.result);}
         let tuple=(c as u16,row[0],row[1],row[2],row[3]);

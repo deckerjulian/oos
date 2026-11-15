@@ -963,6 +963,8 @@ impl Ui {
 
     pub(super) fn eye_pane_close(&self) -> Rect {
         let a = self.eye_pane_rect();
+        // Studio: the strip of the view has the X
+        if self.dock_on() { return Rect::new(a.x + a.w, a.y, 0, 0); }
         let full=self.full_btn().0;
         let right=if full.y<a.y+workspace::HEADER && full.y+full.h>a.y && full.x>a.x && full.x<a.x+a.w {full.x-8} else {a.x+a.w-2};
         Rect::new(right-48, a.y + 1, 48, workspace::HEADER - 2)
@@ -1054,6 +1056,8 @@ impl Ui {
 
     pub(super) fn eye_place_control(&self) -> Rect {
         let a = self.eye_pane_rect();
+        // Studio: the eye is a view of its own, there is no placement to choose
+        if self.dock_on() { return Rect::new(a.x + 96, a.y + 1, 0, 0); }
         Rect::new(a.x + 96, a.y + 1, 48, workspace::HEADER - 2)
     }
 
@@ -1084,17 +1088,23 @@ impl Ui {
         cv.text(&self.fonts().sb, pick.x + 5, a.y + 18, &format!("Eye {}", source), self.wave_color(self.m.eye_src));
         chevron_down(cv, pick.x + pick.w - 14, pick.y + pick.h / 2 - 2, DIM);
         let place = self.eye_place_control();
-        btn(cv, place, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts().s, place, 1, &self.value(Item::EyePlace), TEXT);
-        let settings = Rect::new(place.x + place.w + 4, pick.y, (close.x - place.x - place.w - 8).max(1), pick.h);
+        if place.w > 0 {
+            btn(cv, place, BTN, BTN_BORDER);
+            cv.text_in(&self.fonts().s, place, 1, &self.value(Item::EyePlace), TEXT);
+        }
+        let studio = self.dock_on();
+        let settings = if studio { Rect::new(pick.right() + 4, pick.y, (a.right() - 6 - pick.right() - 4).max(1), pick.h) }
+            else { Rect::new(place.x + place.w + 4, pick.y, (close.x - place.x - place.w - 8).max(1), pick.h) };
         btn(cv, settings, BTN, BTN_BORDER);
         cv.set_clip(Rect::new(settings.x + 5, settings.y, (settings.w - 23).max(1), settings.h));
         let scope = self.azr.eye_auto.snapshot_caption().unwrap_or_else(|| self.eye_source_mode_label().into());
         cv.text(&self.fonts().s, settings.x + 5, a.y + 18, &format!("{} · {}", scope, rate), TEXT);
         cv.no_clip();
         chevron_down(cv, settings.x + settings.w - 14, settings.y + settings.h / 2 - 2, DIM);
-        btn(cv, close, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts().s, close, 1, "Close", TEXT);
+        if close.w > 0 {
+            btn(cv, close, BTN, BTN_BORDER);
+            cv.text_in(&self.fonts().s, close, 1, "Close", TEXT);
+        }
     }
 
     pub(super) fn draw_eye(&self, cv: &mut Canvas) {
@@ -1192,12 +1202,16 @@ impl Ui {
         let r = l.plot;
         cv.fill(r, BAR);
         // half a UI per time line, the crossings stand out
+        let mut axis_free = i32::MIN;
         for k in 0..=4 {
             let x = r.x + k * (r.w - 1) / 4;
             cv.vline(x, r.y, r.y + r.h - 1, if k % 2 == 1 { GRID_AXIS } else { GRID_LINE });
             let s = ["-0.5", "0", "0.5", "1", "1.5 UI"][k as usize];
             let w = f.s.width(s);
             let tx = if k == 4 { x - w } else if k == 0 { x } else { x - w / 2 };
+            // a narrow plot leaves out the label that would run into the one before ("1" and "1.5 UI")
+            if tx < axis_free + 6 { continue; }
+            axis_free = tx + w;
             cv.text(&f.s, tx, r.y + r.h + 13, s, AXIS_TEXT);
         }
         if let Some(e) = &self.azr.eye {

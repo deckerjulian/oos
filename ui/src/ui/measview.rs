@@ -6,6 +6,10 @@ use super::*;
 use super::studio::{chip, icon_pin, MeasKey, StudioView};
 
 /// The columns of the detailed table: name and width. Sigma and Count go first when the room is short.
+/// Widths when the panel is narrow: the source is a colour bar, so Name, Value and Mean fit.
+pub(super) const DETAIL_NARROW_W: [i32; 8] = [14, 92, 80, 76, 76, 76, 70, 60];
+/// Below this width the table uses them.
+pub(super) const DETAIL_NARROW_BELOW: i32 = 330;
 pub(super) const DETAIL_COLS: [(&str, i32); 8] = [("Source", 58), ("Name", 104), ("Value", 90), ("Mean", 84), ("Min", 84), ("Max", 84), ("\u{3c3}", 76), ("Count", 64)];
 /// Row height of the detailed table.
 pub(super) const DETAIL_ROW: i32 = 38;
@@ -45,10 +49,11 @@ impl Ui {
 
     /// The columns that are shown for a table `w` wide: (index in `DETAIL_COLS`, x, width), and the total width.
     pub(super) fn detail_cols(w: i32) -> (Vec<(usize, i32, i32)>, i32) {
-        let all: i32 = DETAIL_COLS.iter().map(|c| c.1).sum();
+        let width = |i: usize| if w < DETAIL_NARROW_BELOW { DETAIL_NARROW_W[i] } else { DETAIL_COLS[i].1 };
+        let all: i32 = (0..DETAIL_COLS.len()).map(width).sum();
         let keep = if all <= w { DETAIL_COLS.len() } else { DETAIL_COLS.len() - 2 };
         let mut x = 0;
-        let cols = (0..keep).map(|i| { let c = (i, x, DETAIL_COLS[i].1); x += DETAIL_COLS[i].1; c }).collect();
+        let cols = (0..keep).map(|i| { let c = (i, x, width(i)); x += width(i); c }).collect();
         (cols, x)
     }
 
@@ -84,6 +89,7 @@ impl Ui {
         cv.fill(head, BAR);
         cv.set_clip(head);
         for &(i, x, w) in &cols {
+            if i == 0 && w < 30 { continue; }
             cv.text_in(&f.sb, Rect::new(head.x + x - hx + 6, head.y, w - 6, head.h), 0, DETAIL_COLS[i].0, LABEL);
         }
         cv.no_clip();
@@ -97,13 +103,20 @@ impl Ui {
                 let cell = Rect::new(r.x + x - hx + 6, r.y, w - 8, r.h);
                 let dash = || "----".to_string();
                 match c {
+                    0 if w < 30 => cv.round(Rect::new(r.x + x - hx + 3, r.y + 7, 6, 24), 3, self.wave_color(row.src), 255),
                     0 => {
                         let tag = Rect::new(cell.x, r.y + 7, f.sb.width("CH4") + 12, 24);
                         cv.round(tag, 5, self.wave_color(row.src), 255);
                         cv.text_in(&f.sb, tag, 1, &self.wave_name(row.src), DARK_TEXT);
-                        if pinned { icon_pin(cv, tag.right() + 12, r.y + r.h / 2 + 1, true, AMBER); }
                     }
-                    1 => cv.text_in(&f.m, cell, 0, &row.name, TEXT),
+                    // the pin comes after the name, in a place of its own
+                    1 => {
+                        let text = Rect::new(cell.x, cell.y, (cell.w - 16).max(1), cell.h);
+                        cv.set_clip(Rect::new(text.x, text.y, text.w, text.h));
+                        cv.text_in(&f.m, text, 0, &row.name, TEXT);
+                        cv.no_clip();
+                        if pinned { icon_pin(cv, cell.right() - 8, r.y + r.h / 2 + 1, true, AMBER); }
+                    }
                     2 => cv.text_in(&f.mb, cell, 0, &row.text(), TEXT),
                     3 => cv.text_in(&f.m, cell, 0, &stats.map_or_else(dash, |s| row.fmt4(s.0)), TEXT),
                     4 => cv.text_in(&f.m, cell, 0, &stats.map_or_else(dash, |s| row.fmt4(s.1)), TEXT),

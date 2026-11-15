@@ -695,7 +695,8 @@ stat.push(value, current);
             let (lo, hi) = (summary.vmin, summary.vmax);
             let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo, hi) } else { (0.0, 1.0) };
             self.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: if trace.label.is_empty() { name.into() } else { trace.label }, t0: trace.t0, dt: trace.dt, v: (trace.v).into(),
-                vpd: ((hi - lo).abs() / 6.0).max(1e-6), offset: -0.5 * (hi + lo), on: true });
+                vpd: Self::nice_ref_vpd(((hi - lo).abs() / 6.0).max(1e-6)),
+                offset: -Self::nice_ref_vpd(((hi - lo).abs() / 6.0).max(1e-6)) * ((0.5 * (hi + lo)) / Self::nice_ref_vpd(((hi - lo).abs() / 6.0).max(1e-6))).round() as f32, on: true });
         }
         self.ref_sel = first;
         if reference_session {
@@ -722,6 +723,15 @@ stat.push(value, current);
         self.relayout();
         self.toast(&format!("Loaded {} into R{}", name, first + 1));
         Ok(())
+    }
+
+    /// A volts/div for a loaded ref on the 1-2-5 ladder (the next one up, so the trace fits): its lane gets the same
+    /// round axis labels as a channel (0 V, 0.25 V), not 0.55662 V.
+    pub(super) fn nice_ref_vpd(want: f32) -> f32 {
+        if !(want.is_finite() && want > 0.0) { return 1.0; }
+        let e = want.log10().floor();
+        let base = 10f32.powf(e);
+        [1.0, 2.0, 5.0, 10.0].into_iter().map(|m| m * base).find(|&v| v >= want * 0.999).unwrap_or(10.0 * base)
     }
 
     /// Sample rate and length of the references drawn on the live screen, and whether each one meets the current time window.

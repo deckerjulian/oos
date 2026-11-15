@@ -10,7 +10,7 @@ use super::*;
 /// A swipe starts after this much horizontal movement, when it is more horizontal than vertical.
 pub(super) const SWIPE_START: i32 = 16;
 /// How long the Undo bar stays.
-pub(super) const UNDO_S: f64 = 4.0;
+pub(super) const UNDO_S: f64 = 6.0;
 /// A finger that moves more than this cancels a hold.
 const HOLD_SLOP: i32 = 12;
 /// Height of the Undo bar and of the rows of the row menu.
@@ -75,8 +75,10 @@ pub(super) enum RowAct {
     Remove,
     Stats,
     StatsAll,
+    /// Measure > Labels on trace: the levels and spans drawn on the waveform
+    Labels,
 }
-const ROW_ACTS: [RowAct; 7] = [RowAct::Settings, RowAct::Pin, RowAct::Up, RowAct::Down, RowAct::Remove, RowAct::Stats, RowAct::StatsAll];
+const ROW_ACTS: [RowAct; 8] = [RowAct::Settings, RowAct::Pin, RowAct::Up, RowAct::Down, RowAct::Remove, RowAct::Stats, RowAct::StatsAll, RowAct::Labels];
 
 impl Ui {
     // ------------------------------------------------------------------------------------------------ geometry
@@ -446,6 +448,7 @@ impl Ui {
                 self.relayout();
             }
             RowAct::StatsAll => { self.studio.panel.stats = !self.studio.panel.stats; self.relayout(); }
+            RowAct::Labels => { self.m.meas_labels = !self.m.meas_labels; self.dirty_map = true; }
         }
         true
     }
@@ -490,6 +493,7 @@ impl Ui {
                     RowAct::Remove => ("Remove", RED),
                     RowAct::Stats => (if self.studio.md.stats_rows.contains(&key) { "Hide statistics (row)" } else { "Show statistics (row)" }, TEXT),
                     RowAct::StatsAll => (if self.studio.panel.stats { "Hide statistics (all)" } else { "Show statistics (all)" }, TEXT),
+                    RowAct::Labels => (if self.m.meas_labels { "Labels on trace: on" } else { "Labels on trace: off" }, TEXT),
                 };
                 if *act == RowAct::Remove { cv.hline(p.x + 8, p.right() - 9, r.y - 1, LINE); }
                 cv.text_in(&f.m, Rect::new(r.x + 12, r.y, r.w - 14, r.h), 0, label, col);
@@ -556,7 +560,7 @@ impl Ui {
         match self.studio_index(key).and_then(|i| self.meas_rows().into_iter().nth(i)) {
             Some(r) => format!("{} {}", self.wave_name(r.src), r.name),
             None => match key {
-                MeasKey::One(k, id) => format!("{} {}", self.wave_name(id), k.name()),
+                MeasKey::One(k, id) => format!("{} {}", self.wave_name(id), super::meascatalog::meas_display_name(k)),
                 _ => "measurement".to_string(),
             },
         }

@@ -55,7 +55,7 @@ impl Ui {
                 if m.mag_plot == MagPlot::BH && m.mag_ae > 0.0 && m.mag_le > 0.0 {
                     "B-H".into()
                 } else {
-                    "I-\u{3c8}".into()
+                    "I-psi".into()
                 }
             }
             Item::MagCur => format!("{}", m.mag_cur),
@@ -68,8 +68,8 @@ impl Ui {
         match it {
             Item::MagOn => v(&["Off", "On"]),
             Item::MagV | Item::MagI => Some(self.wave_names()),
-            Item::MagPlot if self.m.mag_ae > 0.0 && self.m.mag_le > 0.0 => v(&["I-\u{3c8}", "B-H"]),
-            Item::MagPlot => v(&["I-\u{3c8}"]),
+            Item::MagPlot if self.m.mag_ae > 0.0 && self.m.mag_le > 0.0 => v(&["I-psi", "B-H"]),
+            Item::MagPlot => v(&["I-psi"]),
             _ => None,
         }
     }
@@ -194,7 +194,7 @@ impl Ui {
                 }
             }
             let f = &self.fonts();
-            let (xl, yl) = if bh { ("B", "H") } else { ("\u{3c8}", "i") };
+            let (xl, yl) = if bh { ("B", "H") } else { ("psi", "i") };
             cv.text(&f.s, a.x + 8, a.y + a.h - 4, xl, DIM);
             cv.text(&f.s, a.x + 8, a.y + 16, yl, DIM);
             if let Some(lp) = loops.last().filter(|l| !l.is_empty()) {
@@ -230,7 +230,7 @@ impl Ui {
                 lines.push(format!("sine check {}", si(ls, "H")));
             }
             lines.push(format!("Bpk {}   Hpk {}", num(g.b_peak, "T"), num(g.h_peak, "A/m")));
-            lines.push(format!("\u{3bc}r {}", num(g.mu_r, "")));
+            lines.push(format!("\u{b5}r {}", num(g.mu_r, "")));
             let loss = if g.copper > 0.0 && g.loss.is_some() {
                 format!("loss {}   copper {}", num(g.loss, "W"), si(g.copper, "W"))
             } else {

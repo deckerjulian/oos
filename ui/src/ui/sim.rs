@@ -1049,10 +1049,11 @@ mod tests {
         let rows = u.meas_rows();
         assert_eq!(rows.len(), 12);
         for want in ["Vpp", "Freq", "Period", "Rise time", "Fall time", "+Duty", "Vamp", "Overshoot", "+Width", "-Width", "+Rate", "+Edges"] {
-            let row = rows.iter().find(|r| r.name == want).unwrap_or_else(|| panic!("missing {want}"));
+            let shown = super::meascatalog::display_of_key(want).unwrap_or(want);
+            let row = rows.iter().find(|r| r.name == shown).unwrap_or_else(|| panic!("missing {want}"));
             assert!(!row.v.is_infinite(), "{want} {}", row.v);
         }
-        let vpp = rows.iter().find(|r| r.name == "Vpp").unwrap().v;
+        let vpp = rows.iter().find(|r| r.name == "Peak-to-Peak").unwrap().v;
         assert!(vpp > 0.5 && vpp < 1.2, "vpp {}", vpp);
         assert!(!u.m.meas_labels, "labels are opt-in so initial SIM does not hide the waveform");
         let mut cv = Canvas::new(W, H);

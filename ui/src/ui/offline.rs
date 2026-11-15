@@ -146,7 +146,7 @@ impl Ui {
                 let sr = 1.0 / r.dt;
                 return (format!("{kind} \u{b7} {} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
             }
-            return (format!("{kind} \u{b7} \u{2014}"), false);
+            return (format!("{kind} \u{b7} -"), false);
         }
         let captured = self.last[0].as_ref().and_then(|r| {
             if let Some(raw) = r.raw.as_ref() {
