@@ -25,6 +25,15 @@ pub(super) struct StudioTop {
     pub gear: Rect,
 }
 
+/// The rectangles of the Studio bottom bar.
+#[derive(Clone, Copy)]
+pub(super) struct StudioBottom {
+    pub ch: [Rect; NCH],
+    pub time: Rect,
+    pub trig: Rect,
+    pub panel: Option<Rect>,
+}
+
 const CHIP_H: i32 = 30;
 const CHIP_Y: i32 = 5;
 
@@ -174,18 +183,136 @@ impl Ui {
             }
             cv.text_in(&f.mb, Rect::new(r.x + 34, r.y, r.w - 36, r.h), 0, label, c);
         }
-        let gear_on = open(MenuId::Main) || open(MenuId::Utility);
+        let gear_on = open(MenuId::Main) || open(MenuId::Utility) || self.m.touch_lock;
         chip(cv, t.gear, BTN, if gear_on { ACCENT } else { BTN_BORDER });
         icon_gear(cv, t.gear.x + t.gear.w / 2, t.gear.y + t.gear.h / 2, if gear_on { ACCENT } else { TEXT }, BTN);
     }
 
-    /// The bottom bar in Studio: for now the compact cards (replaced in the next step).
+    /// The rectangles of the Studio bottom bar: a chip per channel, the time base and the trigger.
+    pub(super) fn studio_bottom(&self) -> StudioBottom {
+        let bottom = self.frame().bottom;
+        let (y, h) = (bottom.y + 3, CHIP_H);
+        let n = n_ch();
+        let mut right = bottom.right() - 4;
+        let panel = self.desktop_panel.map(|_| { right -= 46; let r = Rect::new(right, y, 46, h); right -= 4; r });
+        let trig_w = 196;
+        let trig = Rect::new(right - trig_w, y, trig_w, h);
+        let time = Rect::new(trig.x - 9 - 150, y, 150, h);
+        // the channels share what is left of the row, an off channel a little less than one that is on
+        let room = time.x - 9 - (bottom.x + 4);
+        let on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
+        let (w_on, w_off) = (170, 118);
+        let want = on * w_on + (n as i32 - on) * w_off + (n as i32 - 1) * 5;
+        let mut ch = [Rect::new(0, y, 0, h); NCH];
+        let mut x = bottom.x + 4;
+        for (c, r) in ch.iter_mut().enumerate().take(n) {
+            let w = if self.m.ch[c].on { w_on } else { w_off };
+            let w = if want > room { w * room / want } else { w };
+            *r = Rect::new(x, y, w, h);
+            x += w + 5;
+        }
+        StudioBottom { ch, time, trig, panel }
+    }
+
     pub(super) fn studio_cards(&self) -> Cards {
-        self.compact_cards()
+        let b = self.studio_bottom();
+        Cards { ch: b.ch, la: None, gen: None, time: b.time, trig: b.trig }
     }
 
     pub(super) fn draw_studio_bottom(&self, cv: &mut Canvas) {
-        self.draw_workspace_footer(cv);
+        let f = self.fonts();
+        let bottom = self.frame().bottom;
+        cv.fill(bottom, BAR);
+        cv.hline(bottom.x, bottom.right() - 1, bottom.y, LINE);
+        let b = self.studio_bottom();
+        let root = if self.menu_open { Some(self.menu_root()) } else { None };
+        for c in 0..n_ch() {
+            let r = b.ch[c];
+            let (col, ch) = (CH_COLORS[c], &self.m.ch[c]);
+            let sel = root == Some(MenuId::Channel(c));
+            let border = if sel { ACCENT } else if ch.on { col } else { BTN_BORDER };
+            chip(cv, r, if ch.on { BTN } else { BAR }, border);
+            // the channel badge: filled while the channel is on
+            let badge = Rect::new(r.x + 8, r.y + 5, 42, 20);
+            cv.round(badge, 4, if ch.on { col } else { mix(BAR, col, 70) }, 255);
+            cv.text_in(&f.sb, badge, 1, &format!("CH{}", c + 1), if ch.on { DARK_TEXT } else { mix(BAR, col, 200) });
+            let text = if ch.on { format!("{}/div", si_short(ch.volts_per_div() as f64, ch.unit.name())) } else { "Off".into() };
+            cv.set_clip(Rect::new(badge.right() + 2, r.y, (r.right() - 18 - badge.right() - 2).max(1), r.h));
+            cv.text_in(&f.mb, Rect::new(badge.right() + 8, r.y, (r.right() - 20 - badge.right() - 8).max(1), r.h), 0, &text, if ch.on { TEXT } else { DIM });
+            cv.no_clip();
+            chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM);
+        }
+        // the sections of the row are told apart by a line
+        for x in [b.time.x - 5, b.trig.x - 5] {
+            cv.vline(x, bottom.y + 6, bottom.bottom() - 6, LINE);
+        }
+        // time base
+        let r = b.time;
+        chip(cv, r, BTN, if root == Some(MenuId::Horizontal) { ACCENT } else { BTN_BORDER });
+        let cy = r.y + r.h / 2;
+        cv.hline(r.x + 10, r.x + 24, cy, TEXT);
+        cv.line(r.x + 10, cy, r.x + 14, cy - 3, TEXT);
+        cv.line(r.x + 10, cy, r.x + 14, cy + 3, TEXT);
+        cv.line(r.x + 24, cy, r.x + 20, cy - 3, TEXT);
+        cv.line(r.x + 24, cy, r.x + 20, cy + 3, TEXT);
+        cv.text_in(&f.mb, Rect::new(r.x + 32, r.y, r.w - 52, r.h), 0, &format!("{}/div", si_short(self.m.time_per_div() as f64, "s")), TEXT);
+        chevron_down(cv, r.right() - 16, cy - 2, DIM);
+        // trigger: the slope, the source and the level
+        let r = b.trig;
+        chip(cv, r, BTN, if root == Some(MenuId::Trigger) { ACCENT } else { BTN_BORDER });
+        let source = self.m.trigger_wave();
+        let col = self.wave_color(source);
+        let edge = matches!(self.m.trig_type, TrigType::Edge | TrigType::Slope | TrigType::Timeout | TrigType::NthEdge | TrigType::Delay);
+        let mut x = r.x + 9;
+        cv.set_clip(r.inset(2));
+        if edge {
+            draw_slope(cv, x, r.y + 7, self.m.slope, col);
+            x += 20;
+        } else {
+            x = cv.text(&f.sb, x, r.y + 20, &self.m.trig_type.name().to_uppercase(), LABEL) + 6;
+        }
+        x = cv.text(&f.mb, x, r.y + 20, &self.trigger_source_label(), col) + 6;
+        let levels = if matches!(self.m.trig_type, TrigType::Runt | TrigType::Slope | TrigType::Window) {
+            format!("{} / {}", si_short(self.m.trig_level2 as f64, "V"), si_short(self.m.trig_level as f64, "V"))
+        } else { si_short(self.m.trig_level as f64, "V") };
+        if edge && self.m.slope != Slope::Either {
+            // the arrow of the edge: up for rising, down for falling
+            let (top, bot) = (r.y + 9, r.y + 21);
+            cv.vline(x + 3, top, bot, TEXT);
+            let (tip, base) = if self.m.slope == Slope::Rise { (top, top + 4) } else { (bot, bot - 4) };
+            cv.line(x + 3, tip, x, base, TEXT);
+            cv.line(x + 3, tip, x + 6, base, TEXT);
+            x += 12;
+        }
+        cv.text(&f.mb, x, r.y + 20, &levels, TEXT);
+        cv.no_clip();
+        chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM);
+        if let Some(r) = b.panel {
+            let on = self.desktop_panel == Some(true);
+            chip(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
+            cv.text_in(&f.s, r, 1, "Panel", if on { ACCENT } else { TEXT });
+        }
+    }
+
+    fn studio_bottom_tap(&mut self, x: i32, y: i32) {
+        let b = self.studio_bottom();
+        for c in 0..n_ch() {
+            if !b.ch[c].contains(x, y) { continue; }
+            if !self.m.ch[c].on {
+                self.m.ch[c].on = true;
+                self.settings_changed();
+                self.relayout();
+            }
+            self.select_workspace_source(WaveId::Ch(c));
+            return self.toggle_menu(MenuId::Channel(c));
+        }
+        if b.time.contains(x, y) {
+            self.toggle_menu(MenuId::Horizontal);
+        } else if b.trig.contains(x, y) {
+            self.toggle_menu(MenuId::Trigger);
+        } else if b.panel.is_some_and(|r| r.contains(x, y)) {
+            self.desktop_panel = self.desktop_panel.map(|open| !open);
+        }
     }
 
     /// A tap in Studio's own bars and panels. False: the tap belongs to the plot, a menu or a dialog.
@@ -193,6 +320,10 @@ impl Ui {
         self.studio_sync();
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
         if self.menu_open && self.dlg_layout().is_some_and(|d| d.r.contains(x, y)) { return false; }
+        if y >= self.frame().bottom.y {
+            self.studio_bottom_tap(x, y);
+            return true;
+        }
         if y < self.frame().top.bottom() {
             self.studio_top_tap(x, y);
             return true;
@@ -220,7 +351,7 @@ impl Ui {
         } else if hit(t.view) {
             self.toggle_menu(MenuId::Display);
         } else if hit(t.gear) {
-            self.toggle_menu(MenuId::Main);
+            if self.m.touch_lock { self.key(key::TOUCHLOCK); } else { self.toggle_menu(MenuId::Main); }
         }
     }
 }

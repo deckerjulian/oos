@@ -138,3 +138,38 @@ fn studio_top_bar_has_run_single_state_acquisition_and_the_menu_chips() {
     // Load file and SIM stay in the menus, not in the bar
     assert!(!u.top_buttons().iter().any(|b| b.1 == "SIM" || b.1.starts_with("Load")));
 }
+
+#[test]
+fn studio_bottom_bar_has_a_chip_per_channel_the_time_base_and_the_trigger() {
+    let mut u = studio();
+    shot(&mut u, "02-bottom");
+    let b = u.studio_bottom();
+    assert_eq!(u.studio_cards().time, b.time);
+    let mut all: Vec<Rect> = b.ch.to_vec();
+    all.extend([b.time, b.trig]);
+    assert_eq!(all.len(), n_ch() + 2);
+    for (i, a) in all.iter().enumerate() {
+        assert!(a.w > 0 && a.x >= 0 && a.right() <= W && a.y >= u.frame().bottom.y && a.bottom() <= H, "chip {i} inside the bar");
+        for o in &all[i + 1..] { assert!(!overlaps(*a, *o), "chips do not overlap"); }
+    }
+    assert!(b.ch[1].w > b.ch[2].w, "a channel that is on is wider than one that is off");
+    // an off channel comes on with its page, an on channel opens its page
+    tap_in(&mut u, b.ch[2]);
+    assert!(u.m.ch[2].on);
+    assert_eq!(u.menu, MenuId::Channel(2));
+    u.close_menu();
+    let b = u.studio_bottom();
+    tap_in(&mut u, b.ch[0]);
+    assert_eq!(u.menu, MenuId::Channel(0));
+    u.close_menu();
+    tap_in(&mut u, b.time);
+    assert_eq!(u.menu, MenuId::Horizontal);
+    u.close_menu();
+    tap_in(&mut u, b.trig);
+    assert_eq!(u.menu, MenuId::Trigger);
+    u.close_menu();
+    // all four channels on still fit
+    for c in 0..n_ch() { u.m.ch[c].on = true; }
+    let b = u.studio_bottom();
+    assert!(b.ch[n_ch() - 1].right() < b.time.x && b.trig.right() <= W);
+}
