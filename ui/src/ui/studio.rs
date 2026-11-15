@@ -67,6 +67,8 @@ pub(super) struct StudioPanel {
     pub at: Option<(i32, i32)>,
     /// the table shows mean, min and max
     pub stats: bool,
+    /// the detailed table is scrolled sideways by this much
+    pub hx: i32,
 }
 
 #[derive(Default)]
@@ -815,7 +817,7 @@ fn icon_compact(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
     for dy in [-5, 0, 5] { cv.hline(cx - 7, cx + 7, cy + dy, c); }
 }
 
-fn icon_pin(cv: &mut Canvas, x: i32, cy: i32, filled: bool, c: Rgb) {
+pub(super) fn icon_pin(cv: &mut Canvas, x: i32, cy: i32, filled: bool, c: Rgb) {
     // a round head on a needle that leans to the left
     cv.line(x + 6, cy - 1, x + 1, cy + 6, c);
     cv.circle(x + 8, cy - 3, 3, c);
@@ -933,7 +935,10 @@ impl Ui {
         if self.studio.compact && self.studio.view != StudioView::Sim { 210 } else { MEAS_PANEL_W_FULL }
     }
     pub(super) fn studio_panel_row(&self) -> i32 {
-        if self.studio.compact && self.studio.view != StudioView::Sim { 36 } else { PANEL_ROW_FULL }
+        if self.studio_detailed() { return super::measview::DETAIL_ROW; }
+        let base = if self.studio.compact && self.studio.view != StudioView::Sim { 36 } else { PANEL_ROW_FULL };
+        // a row with statistics has a small line more
+        if self.studio_stats_any() && self.studio.view != StudioView::Sim { base + super::measview::STATS_LINE } else { base }
     }
     /// The small switch for the compact view, left of the Meas tab in the badge row.
     pub(super) fn studio_compact_chip(&self) -> Rect {
@@ -1385,6 +1390,8 @@ pub(super) enum StudioDrag {
     Reorder { key: MeasKey, x: i32, y: i32 },
     /// a badge held and dragged
     BadgeDrag { key: MeasKey, x: i32, y: i32 },
+    /// the detailed table dragged sideways
+    HScroll { x0: i32, hx0: i32 },
     /// a tile of the Add measurement panel dragged to a channel
     Tile { k: usize, x0: i32, y0: i32, x: i32, y: i32, moved: bool },
 }
@@ -1519,10 +1526,12 @@ impl Ui {
         cv.round(p, 8, if self.studio.view == StudioView::Floating { BTN_BORDER } else { CARD_BORDER }, 255);
         cv.round(p.inset(1), 7, PANEL_BG, 255);
         if let Some(g) = self.studio_panel_geo() {
-            cv.text(&f.s, p.x + 14, p.y + 19, &format!("{} total \u{b7} {} pinned", self.meas_shown_count(), pinned.len()), DIM);
+            let detailed = self.studio_detailed();
+            if !detailed { cv.text(&f.s, p.x + 14, p.y + 19, &format!("{} total \u{b7} {} pinned", self.meas_shown_count(), pinned.len()), DIM); }
             let first = self.studio_first(listed.len(), g.page);
+            if detailed { self.draw_panel_detail(cv, &g, &rows, &keys, &listed, first); }
             cv.set_clip(g.list);
-            for (k, &i) in listed.iter().skip(first).take(g.page).enumerate() {
+            for (k, &i) in listed.iter().skip(first).take(if detailed { 0 } else { g.page }).enumerate() {
                 let r = Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row());
                 // a row that is swiped or springs back slides left over a red Remove
                 let md = &self.studio.md;
@@ -1537,6 +1546,7 @@ impl Ui {
                     cv.text_in(&f.mb, rev, 1, "Remove", TEXT);
                 }
                 self.draw_panel_row(cv, Rect::new(r.x + off, r.y, r.w, r.h), &rows[i], keys.get(i).is_some_and(|k| pinned.contains(k)));
+                if keys.get(i).is_some_and(|k| self.studio_stats_on(*k)) { self.draw_panel_stats_line(cv, Rect::new(r.x + off, r.y, r.w, r.h), i, &rows[i]); }
             }
             cv.no_clip();
             Self::draw_scrollbar(cv, g.list, first, g.page, listed.len());
@@ -1744,7 +1754,8 @@ impl Ui {
                 if let Some(&i) = listed.get(first + k) {
                     let row = Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row());
                     let (pin, menu) = Self::md_row_buttons(row);
-                    if menu.contains(x, y) {
+                    if self.studio_detailed() { self.studio_configure(i); }
+                    else if menu.contains(x, y) {
                         if let Some(&key) = keys.get(i) { self.studio.md.menu = Some(key); }
                     } else if pin.contains(x, y) {
                         if let Some(&key) = keys.get(i) { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); }
@@ -1865,7 +1876,7 @@ impl Ui {
                         self.studio.drag = Some(StudioDrag::Scroll { y0, first0, moved });
                     }
                     StudioDrag::Eat { .. } => {}
-                    StudioDrag::Swipe { .. } | StudioDrag::Reorder { .. } | StudioDrag::BadgeDrag { .. } | StudioDrag::Tile { .. } => {}
+                    StudioDrag::Swipe { .. } | StudioDrag::Reorder { .. } | StudioDrag::BadgeDrag { .. } | StudioDrag::Tile { .. } | StudioDrag::HScroll { .. } => {}
                     StudioDrag::Move { x0, y0, at0, moved } => {
                         let moved = moved || (x - x0).abs().max((y - y0).abs()) > 8;
                         if moved { self.studio.panel.at = Some((at0.0 + x - x0, at0.1 + y - y0)); }
@@ -1880,7 +1891,7 @@ impl Ui {
                 let Some(drag) = self.studio.drag.take() else { return false };
                 if self.md_up(drag, x, y) { return true; }
                 let moved = match drag {
-                    StudioDrag::Swipe { .. } | StudioDrag::Reorder { .. } | StudioDrag::BadgeDrag { .. } => true,
+                    StudioDrag::Swipe { .. } | StudioDrag::Reorder { .. } | StudioDrag::BadgeDrag { .. } | StudioDrag::HScroll { .. } => true,
                     StudioDrag::Tile { moved, .. } => moved,
                     StudioDrag::Scroll { moved, .. } | StudioDrag::Move { moved, .. } => moved,
                     StudioDrag::Eat { x0, y0 } => (x - x0).abs().max((y - y0).abs()) > 8,

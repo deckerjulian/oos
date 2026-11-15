@@ -56,6 +56,10 @@ pub(super) struct Md {
     pub undo: Option<Undo>,
     /// the row menu (the tap equivalent of the gestures)
     pub menu: Option<MeasKey>,
+    /// rows that show their statistics although the Statistics switch is off
+    pub stats_rows: Vec<MeasKey>,
+    /// a finger down on the detailed table: where, and how far it was scrolled
+    pub hdown: Option<(i32, i32, i32)>,
 }
 
 /// Rows of the row menu.
@@ -66,8 +70,10 @@ pub(super) enum RowAct {
     Up,
     Down,
     Remove,
+    Stats,
+    StatsAll,
 }
-const ROW_ACTS: [RowAct; 5] = [RowAct::Settings, RowAct::Pin, RowAct::Up, RowAct::Down, RowAct::Remove];
+const ROW_ACTS: [RowAct; 7] = [RowAct::Settings, RowAct::Pin, RowAct::Up, RowAct::Down, RowAct::Remove, RowAct::Stats, RowAct::StatsAll];
 
 impl Ui {
     // ------------------------------------------------------------------------------------------------ geometry
@@ -75,7 +81,7 @@ impl Ui {
     /// The row of the docked list under a point: the measurement and the rectangle of the row.
     pub(super) fn md_row_at(&self, x: i32, y: i32) -> Option<(MeasKey, Rect)> {
         let g = self.studio_panel_geo()?;
-        if !g.list.contains(x, y) { return None; }
+        if !g.list.contains(x, y) || self.studio_detailed() { return None; }
         let rows = self.meas_rows();
         let listed = self.studio_listed(&rows);
         let keys = self.studio_keys();
@@ -228,6 +234,13 @@ impl Ui {
                 return self.studio_eat(x, y);
             }
         }
+        // the detailed table: a sideways drag scrolls it
+        if self.studio_detailed() {
+            if let Some(g) = self.studio_panel_geo().filter(|g| g.list.contains(x, y)) {
+                self.studio.md.hdown = Some((x, y, self.studio.panel.hx.clamp(0, self.detail_hmax(g.list.w))));
+            }
+            return false;
+        }
         // a row of the list: a drag scrolls, a clear sideways drag swipes it, a hold picks it up
         if let Some((key, _)) = self.md_row_at(x, y) {
             if let Some(g) = self.studio_panel_geo() {
@@ -246,6 +259,19 @@ impl Ui {
     pub(super) fn md_move(&mut self, x: i32, y: i32) -> bool {
         if let Some(h) = &mut self.studio.md.hold { h.x = x; h.y = y; }
         match self.studio.drag {
+            Some(StudioDrag::Scroll { .. }) if self.studio.md.hdown.is_some() => {
+                let (x0, y0, hx0) = self.studio.md.hdown.unwrap_or_default();
+                if (x - x0).abs() > 8 && (x - x0).abs() > (y - y0).abs() {
+                    self.studio.drag = Some(StudioDrag::HScroll { x0, hx0 });
+                    self.studio.md.hdown = None;
+                }
+                false
+            }
+            Some(StudioDrag::HScroll { x0, hx0 }) => {
+                let max = self.studio_panel_geo().map_or(0, |g| self.detail_hmax(g.list.w));
+                self.studio.panel.hx = (hx0 - (x - x0)).clamp(0, max);
+                true
+            }
             Some(StudioDrag::Scroll { .. }) => {
                 if let Some((key, x0, y0)) = self.studio.md.cand {
                     let (dx, dy) = (x - x0, y - y0);
@@ -283,7 +309,9 @@ impl Ui {
     pub(super) fn md_up(&mut self, drag: StudioDrag, x: i32, y: i32) -> bool {
         self.studio.md.hold = None;
         self.studio.md.cand = None;
+        self.studio.md.hdown = None;
         match drag {
+            StudioDrag::HScroll { .. } => true,
             StudioDrag::Swipe { key, x0, .. } => {
                 let dx = (x - x0).min(0);
                 self.studio.md.swipe = None;
@@ -391,6 +419,11 @@ impl Ui {
             RowAct::Up => self.md_step(key, false),
             RowAct::Down => self.md_step(key, true),
             RowAct::Remove => self.md_remove(key),
+            RowAct::Stats => {
+                if let Some(p) = self.studio.md.stats_rows.iter().position(|k| *k == key) { self.studio.md.stats_rows.remove(p); } else { self.studio.md.stats_rows.push(key); }
+                self.relayout();
+            }
+            RowAct::StatsAll => { self.studio.panel.stats = !self.studio.panel.stats; self.relayout(); }
         }
         true
     }
@@ -433,6 +466,8 @@ impl Ui {
                     RowAct::Up => ("Move up", TEXT),
                     RowAct::Down => ("Move down", TEXT),
                     RowAct::Remove => ("Remove", RED),
+                    RowAct::Stats => (if self.studio.md.stats_rows.contains(&key) { "Hide statistics (row)" } else { "Show statistics (row)" }, TEXT),
+                    RowAct::StatsAll => (if self.studio.panel.stats { "Hide statistics (all)" } else { "Show statistics (all)" }, TEXT),
                 };
                 if *act == RowAct::Remove { cv.hline(p.x + 8, p.right() - 9, r.y - 1, LINE); }
                 cv.text_in(&f.m, Rect::new(r.x + 12, r.y, r.w - 14, r.h), 0, label, col);

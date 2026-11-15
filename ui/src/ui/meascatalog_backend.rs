@@ -36,8 +36,10 @@ enum Owner{Reference(Weak<Vec<f32>>),Native(Weak<crate::board::Frame>),Small(usi
 struct Version{id:WaveId,owner:Owner,version:u64}
 impl Owner{fn same(&self,other:&Self)->bool{match(self,other){(Self::Reference(a),Self::Reference(b))=>Weak::ptr_eq(a,b),(Self::Native(a),Self::Native(b))=>Weak::ptr_eq(a,b),(Self::Small(a,ac,ag),Self::Small(b,bc,bg))=>a==b&&ac==bc&&ag==bg,_=>false}}}
 struct Job{key:Key,row:Row,inputs:Vec<Input>,model:Model,capture:u64,stats_epoch:u64}
+#[derive(Clone)]
 struct Batch{values:Vec<(Cat,f64)>,quality:&'static str}
 impl std::ops::Deref for Batch{type Target=[(Cat,f64)];fn deref(&self)->&Self::Target{&self.values}}
+#[derive(Clone)]
 struct Finished{key:Key,result:Result<Batch,&'static str>,capture:u64,stats_epoch:u64}
 struct Worker{send:mpsc::SyncSender<Job>,receive:mpsc::Receiver<Finished>,busy:bool,submitted:usize}
 impl Worker{fn new()->Self{let(send,requests)=mpsc::sync_channel::<Job>(1);let(results,receive)=mpsc::sync_channel(1);
@@ -46,7 +48,7 @@ impl Worker{fn new()->Self{let(send,requests)=mpsc::sync_channel::<Job>(1);let(r
         if results.send(Finished{key:job.key,result,capture:job.capture,stats_epoch:job.stats_epoch}).is_err(){break;}
     }).expect("start catalog worker");Self{send,receive,busy:false,submitted:0}}}
 #[derive(Default)]
-pub(in crate::ui) struct State{versions:Vec<Version>,next_version:u64,cache:VecDeque<Finished>,pending:VecDeque<(Key,Row)>,worker:Option<Worker>,stats_epoch:u64,stats:Vec<(Row,u64,Key,u64)>,small:Vec<(WaveId,usize,u64,u64,Arc<Vec<f32>>)>}
+pub(in crate::ui) struct State{versions:Vec<Version>,next_version:u64,cache:VecDeque<Finished>,pending:VecDeque<(Key,Row)>,last:Vec<Finished>,worker:Option<Worker>,stats_epoch:u64,stats:Vec<(Row,u64,Key,u64)>,small:Vec<(WaveId,usize,u64,u64,Arc<Vec<f32>>)>}
 pub(in crate::ui) struct Reading{pub value:f64,pub computing:bool,pub reason:Option<&'static str>,pub quality:&'static str}
 impl State{
     fn version(&mut self,id:WaveId,owner:Owner)->u64{
@@ -120,15 +122,19 @@ impl Ui{
         let quality=if family(c)==Family::Eye{"NRZ estimate / jitter model"}else if family(c)==Family::Rate{"NRZ UI estimate"}else{"Derived from scaled source roles"};
         let(key,inputs)=match self.catalog_snapshot(c,row){Ok(value)=>value,Err(reason)=>return Reading{value:f64::NAN,computing:false,reason:Some(reason),quality}};
         let mut state=self.azr.catalog_measurements.borrow_mut();
-        if let Some(answer)=state.cache.iter().find(|answer|answer.key==key){return match &answer.result{
+        let reading_of=|result:&Result<Batch,&'static str>|match result{
             Ok(values)=>{let value=values.iter().find(|(id,_)|*id==c).map_or(f64::NAN,|(_,v)|*v);
-                Reading{value,computing:false,reason:if !value.is_finite()&&family(c)==Family::Rate{Some("NRZ UI unrecoverable; need transitions and at least 2 samples/UI")}else{None},quality:values.quality}},
-            Err(reason)=>Reading{value:f64::NAN,computing:false,reason:Some(*reason),quality}};}
+                Reading{value,computing:false,reason:if value.is_finite(){None}else if family(c)==Family::Rate{Some("NRZ UI unrecoverable; need transitions and at least 2 samples/UI")}else if family(c)==Family::Eye{Some("needs \u{2265}3 edges")}else{None},quality:values.quality}},
+            Err(reason)=>Reading{value:f64::NAN,computing:false,reason:Some(*reason),quality}};
+        if let Some(answer)=state.cache.iter().find(|answer|answer.key==key){return reading_of(&answer.result);}
         let tuple=(c as u16,row[0],row[1],row[2],row[3]);
         if !state.pending.iter().any(|(old,_)|*old==key){state.pending.push_back((key.clone(),tuple));while state.pending.len()>tools::MEAS_MAX{state.pending.pop_front();}}
-        let stats_epoch=state.stats_epoch;
+        let stats_epoch=state.stats_epoch;let want_roles=key.roles.clone();let want_key=key.clone();
         let worker=state.worker.get_or_insert_with(Worker::new);
         if !worker.busy{let job=Job{key,row:tuple,inputs,model:self.m.clone(),capture:self.wfm_total,stats_epoch};if worker.send.try_send(job).is_ok(){worker.busy=true;worker.submitted+=1;}}
+        // The sources change with every acquisition while an eye or jitter analysis takes longer than that: the last
+        // answer for the same roles is shown meanwhile (one capture old) instead of "Computing" for ever.
+        if let Some(old)=state.last.iter().find(|old|old.key.family==family(c)&&old.key.roles==want_roles&&old.stats_epoch==state.stats_epoch&&same_gate(&old.key,&want_key)){return reading_of(&old.result);}
         Reading{value:f64::NAN,computing:true,reason:None,quality}
     }
     pub(in crate::ui) fn catalog_measurement_busy(&self)->bool{let pending=self.azr.catalog_measurements.borrow().pending.iter().map(|(_,r)|*r).collect::<Vec<_>>();
@@ -142,6 +148,8 @@ impl Ui{
         let finished={let mut state=self.azr.catalog_measurements.borrow_mut();state.worker.as_mut().and_then(|worker|worker.receive.try_recv().ok().map(|answer|{worker.busy=false;answer}))};
         let mut changed=false;
         if let Some(answer)=finished{
+            {let mut state=self.azr.catalog_measurements.borrow_mut();
+                state.last.retain(|old|old.key.family!=answer.key.family||old.key.roles!=answer.key.roles);state.last.push(answer.clone());state.last.truncate(tools::MEAS_MAX);}
             let rows=self.m.cat.clone();let current=rows.iter().any(|&(id,a,b,c,d)|cat_from(id).is_some_and(|cat|self.catalog_snapshot(cat,[a,b,c,d]).is_ok_and(|(key,_)|key==answer.key)));
             let mut accepted=Vec::new();
             {let mut state=self.azr.catalog_measurements.borrow_mut();state.pending.retain(|(key,_)|*key!=answer.key);
@@ -160,6 +168,13 @@ impl Ui{
         if let Some((_,(id,a,b,c,d)))=next{if let Some(cat)=cat_from(id){let _=self.catalog_reading(cat,[a,b,c,d]);}}
         if changed{self.finish_deferred_capture_statistics();self.dirty_map=true;}
     }
+}
+/// An older answer may stand in while a new one is computed only for live channels whose gate, settings and conditioning
+/// are the same: the data of the next acquisition differs, nothing else does. A ref or a changed gate never reuses one.
+fn same_gate(old:&Key,new:&Key)->bool{
+    old.epoch==new.epoch&&old.settings==new.settings&&old.full==new.full&&old.roles==new.roles&&old.sources.len()==new.sources.len()
+        &&old.roles.iter().all(|id|matches!(id,WaveId::Ch(_)))
+        &&old.sources.iter().zip(&new.sources).all(|(a,b)|a.id==b.id&&a.lo==b.lo&&a.hi==b.hi&&a.len==b.len&&a.dt==b.dt&&a.conditioning==b.conditioning)
 }
 fn snap(x:f64)->f64{if(x-x.round()).abs()<1e-7{x.round()}else{x}}
 #[derive(Debug)]

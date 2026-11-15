@@ -887,7 +887,26 @@ impl Ui {
 
     pub(super) fn cat_row(&self,id:u16,a:WaveId,b:WaveId,c:WaveId,d:WaveId)->Option<tools::MeasRow>{
         let cat=cat_from(id)?;let info=meta(cat);let reading=self.catalog_reading(cat,[a,b,c,d]);
-        Some(tools::MeasRow{name:info.name.into(),src:[a,b,c,d][catalog_roles(cat)[0]],v:reading.value,unit:info.unit,computing:reading.computing})
+        let roles=catalog_roles(cat).iter().map(|&r|[a,b,c,d][r]).collect::<Vec<_>>();
+        let reason=if reading.computing||reading.value.is_finite(){String::new()}else{reading.reason.map_or(String::new(),|r|self.short_reason(r,&roles))};
+        Some(tools::MeasRow{name:info.name.into(),src:[a,b,c,d][catalog_roles(cat)[0]],v:reading.value,unit:info.unit,computing:reading.computing,reason})
+    }
+
+    /// A few words for a row that has no value: which source is missing, or what the analysis needs.
+    fn short_reason(&self,r:&str,roles:&[WaveId])->String{
+        let missing=|f:&dyn Fn(WaveId)->bool|roles.iter().copied().find(|&id|f(id)).map(|id|self.wave_name(id));
+        match r{
+            "Reference source empty"=>missing(&|id|matches!(id,WaveId::Ref(i) if self.refs.get(i).is_none_or(|s|s.is_none()))).map_or("ref empty".into(),|n|format!("{n} empty")),
+            "Channel source is off"=>missing(&|id|matches!(id,WaveId::Ch(c) if c>=n_ch()||!self.m.ch[c].on)).map_or("source off".into(),|n|format!("{n} off")),
+            "No acquired record"=>"no record yet".into(),
+            "Invalid waveform source"=>"bad source".into(),
+            "No samples in measurement gate"=>"gate holds no samples".into(),
+            "Catalog sources do not overlap"=>"sources do not overlap".into(),
+            "Source outside common physical interval"=>"sources do not overlap".into(),
+            _ if r.starts_with("NRZ UI unrecoverable")=>"needs edges, 2+ samples/UI".into(),
+            _ if r.chars().count()>28=>format!("{}\u{2026}",r.chars().take(27).collect::<String>()),
+            _=>r.into(),
+        }
     }
     #[cfg(test)]
     fn cat_number(&self,c:Cat,a:WaveId,b:WaveId,csrc:WaveId,d:WaveId)->f64{
@@ -963,7 +982,7 @@ impl Ui {
             }
         }
         let info = meta(c);
-        let show = |src: WaveId, v: f64, unit: &'static str| Preview::Value(tools::MeasRow { name: String::new(), src, v, unit, computing: false }.text());
+        let show = |src: WaveId, v: f64, unit: &'static str| Preview::Value(tools::MeasRow { name: String::new(), src, v, unit, computing: false, reason: String::new() }.text());
         match info.kind {
             CatKind::Meas(k) => {
                 let v = self.meas_number(row[0], k);

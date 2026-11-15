@@ -83,6 +83,8 @@ pub(super) struct MeasRow {
     pub v: f64,
     pub unit: &'static str,
     pub computing: bool,
+    /// why there is no value (short): a ref slot that is empty, too few edges; empty when there is none to give
+    pub reason: String,
 }
 
 impl MeasRow {
@@ -103,7 +105,7 @@ impl MeasRow {
     fn fmt_digits(&self, v: f64, digits: usize) -> String {
         if self.computing { "Computing".into() }
         else if !v.is_finite() {
-            "----".into()
+            if self.reason.is_empty() { "----".into() } else { self.reason.clone() }
         } else if self.unit == "\u{b0}" {
             format!("{:.1}\u{b0}", v)
         } else {
@@ -192,7 +194,7 @@ impl Ui {
             .iter()
             .map(|&(k, id)| {
                 let val = self.meas_number(id, k);
-                MeasRow { name: k.name().to_string(), src: id, v: val, unit: self.meas_unit(id, k), computing: !val.is_finite() && self.meas_number_computing(id, k) }
+                MeasRow { name: k.name().to_string(), src: id, v: val, unit: self.meas_unit(id, k), computing: !val.is_finite() && self.meas_number_computing(id, k), reason: String::new() }
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
@@ -208,7 +210,7 @@ impl Ui {
                 _ => "s",
             };
             v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit,
-                computing: self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b) });
+                computing: self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b), reason: String::new() });
         }
         for &(id, a, b, c, d) in &self.m.cat {
             if let Some(row) = self.cat_row(id, a, b, c, d) {

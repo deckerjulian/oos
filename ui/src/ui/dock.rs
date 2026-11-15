@@ -212,6 +212,8 @@ pub(super) enum Press {
     Strip { kind: VKind, x0: i32, y0: i32, x: i32, y: i32, t0: f64, grab: (i32, i32) },
     /// the X, or the extra button of a strip (Measurements: maximize); acts on the lift
     Button { kind: VKind, close: bool },
+    /// the List / Detailed switch of the measurements panel
+    View { kind: VKind },
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -556,6 +558,12 @@ impl Ui {
         let (cx, cy) = (d.line.x + d.line.w / 2, d.line.y + d.line.h / 2);
         if d.dir == Dir::H { Rect::new(cx - 22, cy - 30, 44, 60) } else { Rect::new(cx - 30, cy - 22, 60, 44) }
     }
+    /// The switch between the list and the table, left of the expand button of the measurements panel.
+    pub(super) fn dock_view_rect(&self, k: VKind, r: Rect) -> Option<Rect> {
+        if k != VKind::Measure || !matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline) { return None; }
+        let base = self.dock_extra_rect(k, r).map_or(Self::dock_close_rect(r).x, |e| e.x);
+        Some(Rect::new(base - 52, r.y, 52, STRIP_H.min(r.h)))
+    }
     pub(super) fn dock_grip_rect(r: Rect) -> Rect { Rect::new(r.right() - GRIP, r.bottom() - GRIP, GRIP, GRIP) }
 
     /// The title that fits a narrow strip: the name, else its short form, else the short form with an ellipsis.
@@ -867,6 +875,10 @@ impl Ui {
             self.studio.dock.press = Some(Press::Button { kind: k, close: false });
             return true;
         }
+        if self.dock_view_rect(k, r).is_some_and(|e| e.contains(x, y)) {
+            self.studio.dock.press = Some(Press::View { kind: k });
+            return true;
+        }
         false
     }
 
@@ -891,7 +903,7 @@ impl Ui {
             }
             return true;
         }
-        if matches!(self.studio.dock.press, Some(Press::Button { .. })) { return true; }
+        if matches!(self.studio.dock.press, Some(Press::Button { .. } | Press::View { .. })) { return true; }
         let Some(d) = self.studio.dock.drag.clone() else { return false };
         match d {
             DockDrag::Move { kind, grab, .. } => {
@@ -956,6 +968,13 @@ impl Ui {
                 }
                 true
             }
+            (Some(Press::View { kind }), None) => {
+                if self.dock_rect(kind).and_then(|r| self.dock_view_rect(kind, r)).is_some_and(|e| e.contains(x, y)) {
+                    let on = !self.m.studio_detail;
+                    self.studio_set_detailed(on);
+                }
+                true
+            }
             (Some(Press::Strip { .. }), None) => true,
             (None, None) => false,
         }
@@ -985,12 +1004,14 @@ impl Ui {
         let name = self.dock_name(k);
         let close = Self::dock_close_rect(r);
         let extra = self.dock_extra_rect(k, r);
-        let right = extra.map_or(close.x, |e| e.x);
+        let view = self.dock_view_rect(k, r);
+        let right = view.map_or(extra.map_or(close.x, |e| e.x), |v| v.x);
         let avail = (right - s.x - 40).max(1);
         let name = self.dock_title_fit(k, &name, avail);
         cv.set_clip(Rect::new(s.x + 36, s.y, avail, s.h));
         cv.text_in(&f.lb, Rect::new(s.x + 36, s.y, avail, s.h), 0, &name, TEXT);
         cv.no_clip();
+        if let Some(v) = view { self.draw_view_switch(cv, v); }
         if let Some(e) = extra {
             chip(cv, Rect::new(e.x + 7, e.y + 6, 34, 28), BTN, BTN_BORDER);
             super::studio::icon_expand(cv, e.x + e.w / 2, e.y + e.h / 2, TEXT);
