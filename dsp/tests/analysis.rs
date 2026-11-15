@@ -902,6 +902,28 @@ fn double_pulse_one_pulse_no_dead_time_and_inverted_current() {
     assert!(neg.td_on.is_none());
 }
 
+#[test]
+fn double_pulse_load_current_is_the_current_at_turn_off_while_it_ramps() {
+    // an inductive load: Id ramps 0 -> 20 A over the first pulse, freewheels, and the second pulse switches 20 A
+    let dt = 1e-9;
+    let n = 13_000;
+    let gate = [(0.0, 0.0), (1e-6, 0.0), (1.02e-6, 10.0), (6e-6, 10.0), (6.02e-6, 0.0), (10e-6, 0.0), (10.02e-6, 10.0), (12e-6, 10.0), (12.02e-6, 0.0)];
+    let id = [(0.0, 0.0), (1.1e-6, 0.0), (6.05e-6, 20.0), (6.15e-6, 0.0), (10.05e-6, 0.0), (10.15e-6, 20.0), (12e-6, 22.0), (12.1e-6, 0.0)];
+    let vds = [(0.0, 400.0), (1.05e-6, 400.0), (1.15e-6, 1.0), (6.1e-6, 1.0), (6.2e-6, 400.0), (10.05e-6, 400.0), (10.15e-6, 1.0), (12e-6, 1.0)];
+    let g = sample(|t| pwl(&gate, t), 0.0, dt, n);
+    let i = sample(|t| pwl(&id, t), 0.0, dt, n);
+    let v = sample(|t| pwl(&vds, t), 0.0, dt, n);
+    let p = oos_dsp::dpt::measure(&v, &i, Some(&g), oos_dsp::dpt::Fourth::Off, dt, 10.0);
+    // the gate leaves 90 % at 6.002 µs, where the ramp is at 19.8 A
+    assert!(close(p.il.unwrap(), 19.8, 0.1), "il {:?}", p.il);
+    // both current edges run 0 <-> 20 A in 100 ns: 10-90 % of the switched current is 80 ns
+    assert!(close(p.tr.unwrap(), 80e-9, 2e-9), "tr {:?}", p.tr);
+    assert!(close(p.tf.unwrap(), 80e-9, 2e-9), "tf {:?}", p.tf);
+    // the current falls from 20 A at 6.05 µs and passes 90 % of I_L at 6.061 µs, 59 ns after the gate's 90 %
+    assert!(close(p.td_off.unwrap(), 59e-9, 2e-9), "td off {:?}", p.td_off);
+    assert!(close(p.i_over.unwrap(), 22.0 - 19.8, 0.1), "Ipeak - I_L {:?}", p.i_over);
+}
+
 // ------------------------------------------------------------------------------------------------ identify
 
 use oos_dsp::decode::Parity;
