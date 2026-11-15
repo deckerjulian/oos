@@ -3171,8 +3171,9 @@ impl Ui {
         let window = view.0 * HDIV as f64;
         let rec = crate::board::to_record(&std::sync::Arc::new(f), &self.m, 3600, window, view.1 - window / 2.0);
         self.last[0] = Some(rec);
+        // the record counted when it came in RUN: its values for the view, not a new one for the statistics, the trend
+        // and the catalog (as `refresh_stopped_measurements`)
         self.measure_last();
-        self.meas_new = true;
     }
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
@@ -11017,6 +11018,52 @@ mod tests {
         ui.m.run = RunState::Stop;
         steps(&mut ui, 1);
         assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches: the stored record read again in STOP (`stop_replay`) counted as a new record in the statistics,
+    // the trend and the catalog, once at the STOP and once for every view after it
+    #[test]
+    fn stop_reads_the_record_again_without_counting_it() {
+        use super::*;
+        crate::deepmeas::force(Some(false));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        ui.m.trig_level = 0.0;
+        ui.m.ch[0].offset = 0.0;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vmax, WaveId::Ch(0))];
+        ui.m.meas2.clear();
+        let (n, dt) = (12_500usize, 0.8e-9);
+        let frame = |seq: u64, top: f32| {
+            let v: Vec<f32> = (0..n).map(|k| if (k + n / 2) % 1000 < 200 { top } else { -1.0 }).collect();
+            let ch = [v, Vec::new(), Vec::new(), Vec::new()];
+            crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
+        };
+        // what the thread answers for the view shown in STOP: the stored record read again
+        let replay = |seq: u64, top: f32| crate::board::Frame { fixed_ti: Some((n / 2) as f64), ..frame(seq, top) };
+        shared.lock().unwrap().queue.push_back(frame(1, 1.0));
+        ui.step(0.05);
+        assert_eq!(ui.mstat[0].n, 1);
+        ui.m.run = RunState::Stop;
+        ui.step(0.05);
+        assert!(shared.lock().unwrap().stop_view.is_some(), "the UI asks for the view read again");
+        shared.lock().unwrap().replay = Some(replay(2, 1.0));
+        ui.step(0.05);
+        assert_eq!(ui.mstat[0].n, 1, "the record of the STOP counted again");
+        // a new view: the statistics start over, the record read again for it is shown and measured, not counted
+        for (k, top) in [(1, 1.5), (-1, 2.0)] {
+            ui.adjust(Item::HScale, k);
+            ui.step(0.05);
+            shared.lock().unwrap().replay = Some(replay(3, top));
+            ui.step(0.05);
+            assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
+            assert!((ui.meas(0, Meas::Vmax) - top as f64).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
+            assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
+        }
         crate::deepmeas::force(None);
     }
 
