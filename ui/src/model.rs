@@ -1158,6 +1158,8 @@ pub struct Model {
     pub color_grade: bool,
     /// draw the samples as dots instead of connected lines (pseudo dot mode)
     pub dots: bool,
+    /// Display > Layout: true = the compact OOS-plus bars (Minimal), false = the stock OOS top bar and cards (Default)
+    pub minimal: bool,
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
@@ -1578,8 +1580,9 @@ impl Default for Model {
             zscale: 0,
             zdelay: 0.0,
             color_grade: false,
-            // samples as dots by default
-            dots: true,
+            // samples joined as lines by default
+            dots: false,
+            minimal: true,
             hdmi: HdmiMode::Waveform,
             views: 1,
             view_cur: 0,
