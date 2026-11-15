@@ -146,7 +146,7 @@ impl Ui {
                 _ => Slot::Tab(1),
             }),
             M::Measure => (&["Settings", "Sources", "Parameters", "Levels"], |it| match it {
-                MeasGate | MeasStats | MeasLabels | Open(M::MeasPair) | Open(M::Dvm) => Slot::Tab(0),
+                MeasGate | Open(M::MeasStat) | MeasLabels | Open(M::MeasPair) | Open(M::Dvm) => Slot::Tab(0),
                 MeasSrc | MeasSrcB | MeasCopyTo => Slot::Tab(1),
                 MeasLvType | MeasRefs | MeasLow | MeasMid | MeasHigh | MeasHyst | MeasBaseTop => Slot::Tab(3),
                 Open(M::MeasFall) => Slot::Foot(3),
@@ -155,6 +155,7 @@ impl Ui {
                 _ => Slot::Tab(2),
             }),
             M::MeasFall => (&["Fall levels"], |_| Slot::Tab(0)),
+            M::MeasStat => (&["Statistics"], |it| match it { MeasStatReset => Slot::Foot(0), _ => Slot::Tab(0) }),
             M::Display => (&["Waveform", "Grid and views", "Screen"], |it| match it {
                 Persist | ColorGrade | Intensity | Dots | Histogram | XyMode | ZInput | TrendSel(_) => Slot::Tab(0),
                 Open(M::Windows) | Views | GridStyle | GridBright | GridFrame | Layout => Slot::Tab(1),

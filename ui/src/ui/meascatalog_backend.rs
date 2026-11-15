@@ -60,7 +60,7 @@ impl State{
 fn settings(m:&Model,f:Family)->Vec<u64>{
     let mut v=vec![];let mut put=|x:f64|v.push(x.to_bits());
     match f{
-        Family::Eye=>{for x in[m.eye_rate,m.eye_ber,m.eye_pn_lo,m.eye_pn_hi,m.eye_notch]{put(x);}v.extend([m.eye_hp as u64,m.eye_npj as u64]);}
+        Family::Eye=>{for x in[m.eye_rate,m.eye_ber,m.eye_pn_lo,m.eye_pn_hi,m.eye_notch,m.eye_pll_bw]{put(x);}v.extend([m.eye_hp as u64,m.eye_npj as u64]);}
         Family::Common=>v.push(m.eye_hp as u64),
         Family::Magnetic=>for x in[m.mag_n,m.mag_ae,m.mag_le,m.mag_rcu]{put(x);},
         Family::LineRipple|Family::Quality|Family::Harmonics|Family::Ratio=>put(m.pw_fline),Family::SwRipple=>put(m.pw_fsw),
@@ -234,7 +234,7 @@ struct EyeSnap {
     tnt: f64,
 }
 
-fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64) -> Option<EyeSnap> {
+fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64, pll_bw: f64) -> Option<EyeSnap> {
     if v.len() < 16 || !(dt > 0.0) {
         return None;
     }
@@ -250,7 +250,7 @@ fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64) -> Op
     if !(hi > lo) {
         return None;
     }
-    let (summary, clk) = super::super::eyepage::automatic::infer(v, dt, (rate>0.0).then_some(rate), false).ok()?;
+    let (summary, clk) = super::super::eyepage::automatic::infer(v, dt, (rate>0.0).then_some(rate), false, pll_bw).ok()?;
     let tie = oos_dsp::eye::tie(&clk.edges, &clk);
     let j = oos_dsp::eye::jitter(&tie);
     let mut means = oos_dsp::eye::EdgeMeans::default();
@@ -451,7 +451,7 @@ impl Evaluator {
 
     fn eye_num(&self, id: WaveId, f: impl FnOnce(&EyeSnap) -> f64) -> f64 {
         let Some((v, _, dt)) = self.wave_vec(id) else { return f64::NAN };
-        if self.eye.borrow().is_none() { *self.eye.borrow_mut() = Some(eye_of(&v, dt, self.model.eye_ber, self.model.eye_pn_lo, self.model.eye_pn_hi,self.model.eye_rate)); }
+        if self.eye.borrow().is_none() { *self.eye.borrow_mut() = Some(eye_of(&v, dt, self.model.eye_ber, self.model.eye_pn_lo, self.model.eye_pn_hi,self.model.eye_rate, self.model.eye_pll_bw)); }
         self.eye.borrow().as_ref().and_then(|e| e.as_ref()).map(f).unwrap_or(f64::NAN)
     }
 
@@ -709,4 +709,17 @@ mod tests{
         for cat in[Cat::DataRate,Cat::UnitInterval]{let r=wait(&mut ui,cat);assert!(r.value.is_nan()&&r.reason.is_some());}
     }
 
+}
+
+/// What a catalogue row's settings card offers: 1 eye and jitter (the Eye page settings), 2 power (the Power page
+/// settings), 3 a common-mode row (the highpass), 0 nothing.
+pub(in crate::ui) fn card_group(id: u16) -> u8 {
+    let Some(c) = super::meascatalog::cat_from(id) else { return 0 };
+    match family(c) {
+        Family::Eye => 1,
+        Family::Common => 3,
+        Family::Quality | Family::Harmonics | Family::Inrush | Family::InputC | Family::Turn | Family::Switch | Family::Ripple | Family::LineRipple
+            | Family::SwRipple | Family::Ratio | Family::Rail | Family::RailTurn => 2,
+        _ => 0,
+    }
 }

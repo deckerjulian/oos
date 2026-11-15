@@ -154,13 +154,14 @@ impl Ui {
     /// Every item of the card, for the dialog of Minimal and Default.
     pub(super) fn measrow_items(&self) -> Vec<Item> {
         let mut v: Vec<Item> = self.measrow_plan().into_iter().flat_map(|(_, rows)| rows).collect();
-        v.push(Item::RowF(RF::Reset));
+        if !matches!(self.rowf_key(), Some(RowKey::Cat(..))) { v.push(Item::RowF(RF::Reset)); }
         v
     }
 
     /// The card as a page of the Studio sheet.
     pub(super) fn measrow_sheet_tabs(&self) -> Vec<SheetTab> {
-        self.measrow_plan().into_iter().map(|(name, rows)| SheetTab { name, rows, foot: vec![Item::RowF(RF::Reset)] }).collect()
+        let cat = matches!(self.rowf_key(), Some(RowKey::Cat(..)));
+        self.measrow_plan().into_iter().map(|(name, rows)| SheetTab { name, rows, foot: if cat { Vec::new() } else { vec![Item::RowF(RF::Reset)] } }).collect()
     }
 
     pub(super) fn measrow_title(&self) -> String {
@@ -458,6 +459,11 @@ impl Ui {
 
     pub(super) fn measrow_activate(&mut self, it: Item) -> bool {
         match it {
+            Item::MeasStatReset => {
+                self.clear_measurement_statistics();
+                self.toast("Statistics reset");
+                true
+            }
             Item::RowF(RF::Reset) => {
                 self.rowf_edit(|c| *c = RowCfg::default());
                 true
@@ -493,8 +499,15 @@ impl Ui {
 
 
 impl Ui {
-    /// The card of a catalogue (eye, jitter, power) row.
-    fn measrow_cat_plan(&self, _key: RowKey) -> Vec<(&'static str, Vec<Item>)> {
-        Vec::new()
+    /// The card of a catalogue row (eye, jitter, power): the settings its readings use. They are the shared settings of
+    /// the Eye and Power pages, so a change here is the same change there.
+    fn measrow_cat_plan(&self, key: RowKey) -> Vec<(&'static str, Vec<Item>)> {
+        let RowKey::Cat(id, ..) = key else { return Vec::new() };
+        match super::meascatalog::backend::card_group(id) {
+            1 => vec![("Jitter", vec![Item::EyeRate, Item::EyeBer, Item::EyePll, Item::EyePnLo, Item::EyePnHi, Item::EyeNotch, Item::EyeHp])],
+            2 => vec![("Power", vec![Item::PowFline, Item::PowFsw, Item::PowRef])],
+            3 => vec![("Common mode", vec![Item::EyeHp])],
+            _ => Vec::new(),
+        }
     }
 }

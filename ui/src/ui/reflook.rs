@@ -394,6 +394,11 @@ impl Ui {
         }
         self.ensure_meas_own();
         self.meas_cfg = Some(index as u16);
+        if self.measrow_plan().is_empty() {
+            self.meas_cfg = None;
+            self.toast("No settings for this measurement");
+            return;
+        }
         if self.menu_open && self.menu != MenuId::MeasRow {
             self.open_submenu(MenuId::MeasRow);
         } else {

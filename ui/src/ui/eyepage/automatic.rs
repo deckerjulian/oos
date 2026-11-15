@@ -40,6 +40,7 @@ struct Job {
     clock: Option<WaveSamp>,
     rail: Option<WaveSamp>,
     requested_rate: Option<f64>,
+    pll_bw: f64,
     settings: FactSettings,
 }
 
@@ -112,7 +113,7 @@ impl State {
     }
 }
 
-pub(in crate::ui) fn infer(v: &[f32], dt: f64, requested: Option<f64>, explicit_clock: bool) -> Result<(Summary, eye::Clock), String> {
+pub(in crate::ui) fn infer(v: &[f32], dt: f64, requested: Option<f64>, explicit_clock: bool, pll_bw: f64) -> Result<(Summary, eye::Clock), String> {
     if v.len() < 8 || !dt.is_finite() || dt <= 0.0 { return Err("Need at least 8 samples with a valid interval".into()); }
     let st = stats(v, dt);
     let span = st.vmax - st.vmin;
@@ -128,7 +129,7 @@ pub(in crate::ui) fn infer(v: &[f32], dt: f64, requested: Option<f64>, explicit_
         return Err("Recovered UI is below 2 samples: set a known rate/clock or use a faster record".into());
     }
     let clock = if explicit_clock { mean_clock }
-        else { eye::recover_clock_pll(v, dt, threshold, hysteresis, Some(mean_clock.rate()), 0.0, true).unwrap_or(mean_clock) };
+        else { eye::recover_clock_pll(v, dt, threshold, hysteresis, Some(mean_clock.rate()), pll_bw, true).unwrap_or(mean_clock) };
     let warning = if samples_per_ui < 10.0 { format!("Limited sampling: {:.1} samples/UI", samples_per_ui) }
         else if span < 0.05 { "Low amplitude: check signal/noise before interpreting jitter".into() }
         else { String::new() };
@@ -141,7 +142,7 @@ pub(super) fn probe_rate(v: &[f32], dt: f64) -> Option<f64> {
     if count < 8 { return None; }
     let mut rates = Vec::new();
     for start in [0, v.len().saturating_sub(count) / 2, v.len().saturating_sub(count)] {
-        if let Ok((summary, _)) = infer(&v[start..start + count], dt, None, false) { rates.push(summary.rate); }
+        if let Ok((summary, _)) = infer(&v[start..start + count], dt, None, false, 0.0) { rates.push(summary.rate); }
         if v.len() <= count { break; }
     }
     rates.sort_by(f64::total_cmp);
@@ -178,7 +179,7 @@ fn compute(mut job: Job) -> Result<Computed, String> {
     let rail_wave = job.rail.take().map(|rail| eye_on_grid(rail, t0, dt, n));
     checkpoint!("aligned");
     let recovery_wave = clock_wave.as_deref().unwrap_or(&data);
-    let (summary, clock) = infer(recovery_wave, dt, job.requested_rate, clock_wave.is_some())?;
+    let (summary, clock) = infer(recovery_wave, dt, job.requested_rate, clock_wave.is_some(), job.pll_bw)?;
     // A strobe folds on its own edges and measures its jitter inside each burst (bursts start at any phase).
     let (strobe_fold, clock) = if clock_wave.is_some() { (Some(eye::strobe_clock(&clock)), eye::strobe_ideal(&clock)) } else { (None, clock) };
     checkpoint!(format!("clock rate={} edges={}", summary.rate, clock.edges.len()));
@@ -295,7 +296,7 @@ impl Ui {
 
     fn auto_eye_key_for(&self, snapshot: bool) -> Option<Key> {
         let mut key = vec![self.waveform_epoch(), self.m.eye_from_record as u64,
-            if self.m.eye_from_record { 0 } else { self.m.eye_rate.to_bits() }];
+            if self.m.eye_from_record { 0 } else { self.m.eye_rate.to_bits() }, self.m.eye_pll_bw.to_bits()];
         if !self.auto_eye_identity(self.m.eye_src, &mut key, snapshot) { return None; }
         for companion in [self.m.eye_b, self.m.eye_rail] {
             key.push(companion.is_some() as u64);
@@ -419,14 +420,14 @@ impl Ui {
             let clock = self.m.eye_b.and_then(|id| self.eye_samples(rec, id));
             let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id));
             let job = Job { key, context: context.clone(), captures: captures.clone(), source_name: self.wave_name(self.m.eye_src), data, clock, rail,
-                requested_rate: requested, settings: FactSettings::from(&self.m) };
+                requested_rate: requested, pll_bw: self.m.eye_pll_bw, settings: FactSettings::from(&self.m) };
             let worker = self.azr.eye_auto.worker.as_mut().unwrap();
             if worker.send.try_send(job).is_ok() { worker.busy = true; self.azr.eye_auto.submitted += 1; }
             self.auto_eye_waiting(&context, &captures);
             return true;
         }
         let Some(wave) = self.eye_samples(rec, self.m.eye_b.unwrap_or(self.m.eye_src)) else { return true };
-        match infer(&wave.v, wave.dt, requested, self.m.eye_b.is_some()) {
+        match infer(&wave.v, wave.dt, requested, self.m.eye_b.is_some(), self.m.eye_pll_bw) {
             Ok((mut summary, _)) => {
                 if self.m.eye_from_record {
                     // Noise changes the fitted mean slightly between captures;

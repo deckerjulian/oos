@@ -553,7 +553,7 @@ impl Ui {
 
     pub(super) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::SpecAcprW | Item::SpecAcprS | Item::EyeRate | Item::EyeBer | Item::EyePnLo | Item::EyePnHi | Item::EyeNotch | Item::PowFline | Item::PowFsw | Item::PowRef => Kind::Value,
+            Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::SpecAcprW | Item::SpecAcprS | Item::EyeRate | Item::EyeBer | Item::EyePnLo | Item::EyePnHi | Item::EyeNotch | Item::EyePll | Item::PowFline | Item::PowFsw | Item::PowRef => Kind::Value,
             Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct | Item::IdentifyAct => Kind::Action,
             Item::SpecMargin => Kind::Value,
             Item::ProtoWatch => Kind::Choice,
@@ -597,6 +597,7 @@ impl Ui {
             Item::EyeNpj => "NPJ",
             Item::EyeRail => "Rail",
             Item::EyeNotch => "Notch",
+            Item::EyePll => "PLL bandwidth",
             Item::EyeClear => "Clear eye",
             Item::PowV => "Voltage",
             Item::PowI => "Current",
@@ -660,6 +661,7 @@ impl Ui {
             Item::EyeNpj => onoff(m.eye_npj),
             Item::EyeRail => m.eye_rail.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::EyeNotch => if m.eye_notch > 0.0 { si_short(m.eye_notch, "Hz") } else { "off".into() },
+            Item::EyePll => if m.eye_pll_bw > 0.0 { si_short(m.eye_pll_bw, "Hz") } else { "auto".into() },
             Item::PowMode => power_page(m.pw_mode).into(),
             Item::PowFline => if m.pw_fline > 0.0 { si_short(m.pw_fline, "Hz") } else { "auto".into() },
             Item::PowFsw => if m.pw_fsw > 0.0 { si_short(m.pw_fsw, "Hz") } else { "auto".into() },
@@ -805,6 +807,7 @@ impl Ui {
             Item::EyePnHi => m.eye_pn_hi = step_ladder(m.eye_pn_hi, d).max(1.0),
             Item::EyeNpj => m.eye_npj = !m.eye_npj,
             Item::EyeNotch => m.eye_notch = step_ladder(m.eye_notch, d),
+            Item::EyePll => m.eye_pll_bw = step_ladder(m.eye_pll_bw, d),
             Item::SpecAcprW => m.spec_acpr_w = step_ladder(m.spec_acpr_w.max(1.0), d).max(1.0),
             Item::SpecAcprS => m.spec_acpr_s = step_ladder(m.spec_acpr_s.max(1.0), d).max(1.0),
             Item::PowFline => m.pw_fline = step_ladder(m.pw_fline, d),

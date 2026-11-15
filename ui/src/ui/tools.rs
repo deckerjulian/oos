@@ -145,10 +145,8 @@ impl Ui {
         let Some(index) = self.m.cat.iter().position(|row| *row == entry) else { return };
         let index = self.m.meas.len() + self.m.meas2.len() + index;
         self.mstat.resize(self.measurement_count(), MStat::default());
-        let stat = &mut self.mstat[index];
-        if stat.n == 0 { stat.min = value; stat.max = value; }
-        stat.n += 1; stat.sum += value; stat.sumsq += value * value;
-        stat.min = stat.min.min(value); stat.max = stat.max.max(value);
+        let current = self.m.meas_pop_current;
+        self.mstat[index].push(value, current);
     }
 
     /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
@@ -266,6 +264,8 @@ impl Ui {
             Item::MeasIdle | Item::MeasN | Item::MeasTsetup | Item::MeasThold => Kind::Value,
             Item::MeasLow | Item::MeasMid | Item::MeasHigh | Item::MeasHyst | Item::MeasFallLow | Item::MeasFallMid | Item::MeasFallHigh => Kind::Value,
             Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate | Item::MeasLvType | Item::MeasBaseTop | Item::MeasSepFall => Kind::Choice,
+            Item::MeasPop | Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax => Kind::Choice,
+            Item::MeasStatReset => Kind::Action,
             _ => return None,
         })
     }
@@ -288,6 +288,11 @@ impl Ui {
             Item::MeasFallMid => "Fall mid",
             Item::MeasFallHigh => "Fall high",
             Item::MeasGate => "Gate",
+            Item::MeasPop => "Population",
+            Item::MeasShowSd => "Show \u{3c3}",
+            Item::MeasShowMin => "Show min",
+            Item::MeasShowMax => "Show max",
+            Item::MeasStatReset => "Reset statistics",
             Item::MeasTsetup => "Tsetup",
             Item::MeasThold => "Thold",
             _ => return None,
@@ -316,6 +321,10 @@ impl Ui {
             Item::MeasBaseTop => m.meas_lv.base_top.label().into(),
             Item::MeasSepFall => if m.meas_lv.sep_fall { "Separate".into() } else { "Same as rise".into() },
             Item::MeasGate => self.measurement_gate_label().into(),
+            Item::MeasPop => if m.meas_pop_current { "Current".into() } else { "Accumulated".into() },
+            Item::MeasShowSd => (if m.meas_show[0] { "On" } else { "Off" }).into(),
+            Item::MeasShowMin => (if m.meas_show[1] { "On" } else { "Off" }).into(),
+            Item::MeasShowMax => (if m.meas_show[2] { "On" } else { "Off" }).into(),
             Item::MeasTsetup => si_short(m.meas_tsetup, "s"),
             Item::MeasThold => si_short(m.meas_thold, "s"),
             _ => return None,
@@ -331,12 +340,28 @@ impl Ui {
             Item::MeasBaseTop => oos_dsp::measure::BaseTop::ALL.iter().map(|b| b.label().to_string()).collect(),
             Item::MeasSepFall => vec!["Same as rise".into(), "Separate".into()],
             Item::MeasGate => vec!["Screen".into(), "Full record".into()],
+            Item::MeasPop => vec!["Accumulated".into(), "Current".into()],
+            Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax => vec!["Off".into(), "On".into()],
             _ => return None,
         })
     }
 
     pub(crate) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
         match it {
+            Item::MeasPop => {
+                if d.rem_euclid(2) != 0 {
+                    self.m.meas_pop_current = !self.m.meas_pop_current;
+                    // the history of the other population does not apply
+                    self.clear_measurement_statistics();
+                }
+            }
+            Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax => {
+                if d.rem_euclid(2) != 0 {
+                    let i = match it { Item::MeasShowSd => 0, Item::MeasShowMin => 1, _ => 2 };
+                    self.m.meas_show[i] = !self.m.meas_show[i];
+                    self.relayout();
+                }
+            }
             Item::MeasGate => {
                 if d.rem_euclid(2) != 0 { self.set_measurement_full_record(!self.m.meas_full_record); }
             }

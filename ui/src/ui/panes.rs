@@ -303,9 +303,9 @@ pub(super) fn tests_result_cols(w: i32) -> Vec<i32> {
 }
 
 /// The cells of a results row.
-struct ResultRow {
+pub(super) struct ResultRow {
     ch: WaveId,
-    cells: [String; 8],
+    pub(super) cells: [String; 8],
     now: f64,
     lo: f64,
     hi: f64,
@@ -363,7 +363,7 @@ impl Ui {
         }
     }
 
-    fn result_rows(&self) -> Vec<ResultRow> {
+    pub(super) fn result_rows(&self) -> Vec<ResultRow> {
         self.meas_rows()
             .iter()
             .enumerate()
@@ -376,7 +376,9 @@ impl Ui {
                 let val = |v: f64| if st.n == 0 { "----".to_string() } else { r.fmt4(v) };
                 // a pair names both channels
                 let src = self.m.meas2.get(i.wrapping_sub(self.m.meas.len())).map_or(self.wave_name(r.src), |p| format!("{}-{}", self.wave_name(p.1), self.wave_name(p.2)));
-                ResultRow { ch: r.src, cells: [src, r.name.clone(), r.fmt4(r.v), val(mean), val(st.min), val(st.max), val(sd), fmt_count(st.n as f64)], now: r.v, lo: st.min, hi: st.max }
+                let show = self.m.meas_show;
+                let keep = |i: usize, s: String| if show[i] { s } else { String::new() };
+                ResultRow { ch: r.src, cells: [src, r.name.clone(), r.fmt4(r.v), val(mean), keep(1, val(st.min)), keep(2, val(st.max)), keep(0, val(sd)), fmt_count(st.n as f64)], now: r.v, lo: st.min, hi: st.max }
             })
             .collect()
     }
@@ -437,6 +439,7 @@ impl Ui {
         let x0 = t.x + 12;
         let head_y = t.y + BAND_H - 6;
         for (k, c) in RESULT_COLS.iter().enumerate().take(x.len() - 1) {
+            if (4..=6).contains(&k) && !self.m.meas_show[[1, 2, 0][k - 4]] { continue; }
             // words on the left, numbers on the right of their column
             let tx = if k < 2 || k == 8 { x0 + x[k] } else { x0 + x[k + 1] - 8 - f.s.width(c.0) };
             cv.text(&f.s, tx, head_y, c.0, DIM);

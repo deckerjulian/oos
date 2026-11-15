@@ -223,7 +223,7 @@ fn the_gate_of_a_row_is_its_own() {
 
 use super::measrow::RF;
 use super::studio::StudioView;
-use super::sheet::{SHEET_MAX_ROWS, SHEET_ROW};
+use super::sheet::{RowKind, SHEET_MAX_ROWS, SHEET_ROW};
 
 fn card(l: Layout, rows: &[(Meas, WaveId)], pairs: &[(usize, WaveId, WaveId)]) -> Ui {
     let mut u = fresh(l);
@@ -410,4 +410,167 @@ fn pictures_of_the_cards() {
     let mut d = card(Layout::Default, &[(Meas::Rise, r0)], &[(0, r0, r1)]);
     d.open_meas_cfg(1);
     shot(&mut d, "b7b-dialog-default");
+}
+
+// ------------------------------------------------------------------------------------------------ statistics
+
+#[test]
+fn the_population_decides_whether_a_new_acquisition_adds_to_the_history() {
+    let mut acc = MStat::default();
+    let mut cur = MStat::default();
+    for v in [1.0, 2.0, 6.0] {
+        acc.push(v, false);
+        cur.push(v, true);
+    }
+    assert_eq!((acc.n, acc.sum, acc.min, acc.max), (3, 9.0, 1.0, 6.0));
+    assert_eq!((cur.n, cur.sum, cur.min, cur.max), (1, 6.0, 6.0, 6.0), "current is the latest acquisition only");
+}
+
+#[test]
+fn statistics_settings_are_a_page_with_a_reset_and_follow_the_toggles() {
+    let mut u = fresh(Layout::Studio);
+    u.open_menu(MenuId::Measure);
+    let spec = u.sheet_spec(MenuId::Measure).unwrap();
+    assert_eq!(spec.tabs[0].rows, [Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasStat), Item::MeasLabels]);
+    u.open_menu(MenuId::MeasStat);
+    let spec = u.sheet_spec(MenuId::MeasStat).unwrap();
+    assert_eq!(spec.tabs[0].rows, [Item::MeasStats, Item::MeasPop, Item::MeasShowSd, Item::MeasShowMin, Item::MeasShowMax]);
+    assert_eq!(spec.tabs[0].foot, [Item::MeasStatReset]);
+    assert_eq!(u.value(Item::MeasPop), "Accumulated");
+    assert_eq!((u.value(Item::MeasShowSd), u.value(Item::MeasShowMin), u.value(Item::MeasShowMax)), ("On".into(), "On".into(), "On".into()));
+    // the population: Current starts a new history
+    u.mstat = vec![MStat { n: 5, sum: 5.0, ..Default::default() }];
+    u.adjust(Item::MeasPop, 1);
+    assert!(u.m.meas_pop_current && u.mstat.is_empty(), "the history of the other population is dropped");
+    // the toggles are Toggle rows on the sheet
+    let g = u.sheet_geo().unwrap();
+    assert!(g.rows.iter().filter(|r| matches!(r.it, Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax)).all(|r| r.kind == RowKind::Toggle));
+    let sd = g.rows.iter().find(|r| r.it == Item::MeasShowSd).unwrap().ctrl;
+    tap_in(&mut u, sd);
+    assert_eq!(u.m.meas_show, [false, true, true]);
+    // the reset button of the footer
+    u.mstat = vec![MStat { n: 9, ..Default::default() }];
+    let g = u.sheet_geo().unwrap();
+    tap_in(&mut u, g.foot[0].1);
+    assert!(u.mstat.is_empty());
+    shot(&mut u, "b7b-card-statistics");
+}
+
+#[test]
+fn statistics_settings_are_saved_and_have_scpi() {
+    let mut u = fresh(Layout::Default);
+    let cv = Canvas::new(u.scr.w, u.scr.h);
+    let mut s = crate::scpi::Scpi::open(0);
+    let mut q = |u: &mut Ui, c: &str| String::from_utf8(s.exec_line(u, &cv, c)).unwrap().trim().to_string();
+    assert_eq!(q(&mut u, ":MEASure:STATistic:POPulation?"), "ACC");
+    assert_eq!(q(&mut u, ":MEASure:STATistic:SHOW?"), "SDEV,MIN,MAX");
+    q(&mut u, ":MEASure:STATistic:POPulation CURRent;:MEASure:STATistic:SHOW MIN,MAX");
+    assert_eq!(q(&mut u, ":MEASure:STATistic:POPulation?;:MEASure:STATistic:SHOW?"), "CURR;MIN,MAX");
+    assert!(u.m.meas_pop_current && u.m.meas_show == [false, true, true]);
+    let text = crate::store::setup_text(&u.m);
+    assert!(text.contains("meas_stat = 1 0 1 1"), "{text}");
+    let back = crate::store::parse_setup(&text).unwrap();
+    assert!(back.meas_pop_current && back.meas_show == [false, true, true]);
+    // the defaults write nothing
+    assert!(!crate::store::setup_text(&Model::default()).contains("meas_stat"));
+    q(&mut u, ":MEASure:STATistic:SHOW NONE");
+    assert_eq!(q(&mut u, ":MEASure:STATistic:SHOW?"), "NONE");
+    q(&mut u, ":MEASure:STATistic:POPulation BOGUS");
+    assert!(u.m.meas_pop_current, "a bad value is refused");
+}
+
+#[test]
+fn the_studio_table_and_the_results_pane_follow_the_shown_columns() {
+    let r0 = WaveId::Ref(0);
+    let mut u = card(Layout::Studio, &[(Meas::Period, r0), (Meas::Vpp, r0)], &[]);
+    u.studio_set_view(StudioView::Only);
+    u.studio.panel.stats = true;
+    u.mstat = vec![MStat { n: 3, sum: 3.0, sumsq: 4.0, min: 0.5, max: 2.0 }; 2];
+    shot(&mut u, "b7b-table-all");
+    u.m.meas_show = [false, true, false];
+    shot(&mut u, "b7b-table-min");
+    // the results pane of Default hides the cells of columns that are off
+    let mut d = card(Layout::Default, &[(Meas::Vpp, r0)], &[]);
+    d.stats_on = true;
+    d.mstat = vec![MStat { n: 3, sum: 3.0, sumsq: 4.0, min: 0.5, max: 2.0 }];
+    let all = d.result_rows();
+    assert!(all[0].cells.iter().all(|c| !c.is_empty()), "{:?}", all[0].cells);
+    d.m.meas_show = [false, true, false];
+    let rows = d.result_rows();
+    assert!(rows[0].cells[6].is_empty() && rows[0].cells[5].is_empty() && !rows[0].cells[4].is_empty());
+}
+
+// ------------------------------------------------------------------------------------------------ eye, jitter and power rows
+
+use super::meascatalog::Cat;
+
+fn cat_row(c: Cat) -> (u16, WaveId, WaveId, WaveId, WaveId) {
+    (c as u16, WaveId::Ref(0), WaveId::Ref(0), WaveId::Ref(0), WaveId::Ref(0))
+}
+
+#[test]
+fn eye_jitter_and_power_rows_open_a_card_of_the_settings_they_use() {
+    let mut u = card(Layout::Studio, &[], &[]);
+    u.m.cat = vec![cat_row(Cat::TjBer), cat_row(Cat::PowerQuality), cat_row(Cat::DcCommon), cat_row(Cat::Speed)];
+    u.open_meas_cfg(0);
+    assert_eq!(u.menu, MenuId::MeasRow);
+    assert_eq!(rows_of(&u), [Item::EyeRate, Item::EyeBer, Item::EyePll, Item::EyePnLo, Item::EyePnHi, Item::EyeNotch, Item::EyeHp]);
+    let spec = u.sheet_spec(MenuId::MeasRow).unwrap();
+    assert_eq!(spec.tabs.len(), 1);
+    assert!(spec.tabs[0].rows.len() <= SHEET_MAX_ROWS && spec.tabs[0].foot.is_empty(), "the card edits the shared settings: no Follow shared");
+    shot(&mut u, "b7b-card-jitter");
+    // a change on the card is the change of the Eye page
+    let before = u.m.eye_ber;
+    u.adjust(Item::EyeBer, 1);
+    assert_ne!(u.m.eye_ber, before);
+    u.open_meas_cfg(1);
+    assert_eq!(rows_of(&u), [Item::PowFline, Item::PowFsw, Item::PowRef]);
+    shot(&mut u, "b7b-card-power");
+    u.adjust(Item::PowFline, 1);
+    assert!(u.m.pw_fline > 0.0);
+    u.open_meas_cfg(2);
+    assert_eq!(rows_of(&u), [Item::EyeHp]);
+    // a row with no setting says so and opens nothing
+    u.close_menu();
+    u.open_meas_cfg(3);
+    assert!(!u.menu_open && u.meas_cfg.is_none());
+    // the dialog of Minimal has them too
+    let mut m = card(Layout::Minimal, &[], &[]);
+    m.m.cat = vec![cat_row(Cat::Tie)];
+    m.open_meas_cfg(0);
+    let d = m.dlg_layout().unwrap();
+    assert_eq!(d.rows.len(), 7);
+    assert!(d.rows.iter().all(|r| r.ctrl.h >= 40) && d.close.h >= 40);
+}
+
+#[test]
+fn the_pll_loop_bandwidth_is_a_setting_and_reaches_the_clock_recovery() {
+    let mut u = fresh(Layout::Default);
+    assert_eq!(u.m.eye_pll_bw, 0.0);
+    assert_eq!(u.value(Item::EyePll), "auto");
+    assert_eq!(u.item_label(Item::EyePll), "PLL bandwidth");
+    u.adjust(Item::EyePll, 1);
+    assert!(u.m.eye_pll_bw > 0.0);
+    assert_ne!(u.value(Item::EyePll), "auto");
+    assert!(u.items(MenuId::Eye).contains(&Item::EyePll));
+    // a clock with a slow drift: a narrow loop follows it less than a wide one
+    let n = 4000;
+    let mut v = Vec::with_capacity(n);
+    let mut phase = 0.0f64;
+    for i in 0..n {
+        phase += 1.0 / 20.0 * (1.0 + 0.002 * (i as f64 * 0.01).sin());
+        v.push(if phase.fract() < 0.5 { 0.0 } else { 1.0 });
+    }
+    let ties = |bw: f64| {
+        let c = oos_dsp::eye::recover_clock_pll(&v, 1e-10, 0.5, 0.1, None, bw, true).unwrap();
+        let e: Vec<f64> = oos_dsp::eye::tie(&c.edges, &c);
+        e.iter().fold(0.0f64, |a, x| a.max(x.abs()))
+    };
+    assert!(ties(1e3) > ties(1e8), "a narrow loop leaves more error: {} vs {}", ties(1e3), ties(1e8));
+    // it is saved
+    u.m.eye_pll_bw = 2.5e6;
+    let text = crate::store::setup_text(&u.m);
+    assert!(text.contains("eye_pll = 2500000"), "{text}");
+    assert_eq!(crate::store::parse_setup(&text).unwrap().eye_pll_bw, 2.5e6);
+    assert!(!crate::store::setup_text(&Model::default()).contains("eye_pll"));
 }

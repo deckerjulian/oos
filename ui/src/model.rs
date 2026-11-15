@@ -1301,6 +1301,8 @@ pub struct Model {
     pub eye_rail: Option<WaveId>,
     /// Hz removed from the TIE as a sine; 0 = none
     pub eye_notch: f64,
+    /// Closed-loop bandwidth of the recovered PLL clock in Hz; 0 follows the bit rate / 1667.
+    pub eye_pll_bw: f64,
     /// 30 kHz high-pass on the common mode
     pub eye_hp: bool,
     /// power analysis: voltage and current source, page
@@ -1338,6 +1340,10 @@ pub struct Model {
     pub meas_hpct: f64,
     /// The rest of the shared reference levels: middle, hysteresis, volts, separate fall levels, top/base method.
     pub meas_lv: MeasLevels,
+    /// Statistics population: false accumulates every acquisition since the reset, true is the latest acquisition only.
+    pub meas_pop_current: bool,
+    /// Statistics columns shown: standard deviation, minimum, maximum.
+    pub meas_show: [bool; 3],
     /// False measures the visible time window; true measures each source's complete stored record.
     pub meas_full_record: bool,
     /// SetupAndHold limits (s). Zero means any negative setup or hold.
@@ -1710,6 +1716,7 @@ impl Default for Model {
             eye_b: None,
             eye_rail: None,
             eye_notch: 0.0,
+            eye_pll_bw: 0.0,
             eye_hp: true,
             pw_v: WaveId::Ch(0),
             pw_i: WaveId::Ch(1),
@@ -1733,6 +1740,8 @@ impl Default for Model {
             // measured on the whole record
             meas_idle: oos_dsp::measure::BURST_IDLE,
             meas_lv: MeasLevels::default(),
+            meas_pop_current: false,
+            meas_show: [true; 3],
             meas_out: oos_dsp::measure::Outside::Above,
             meas_n: 6,
             meas_data: false,

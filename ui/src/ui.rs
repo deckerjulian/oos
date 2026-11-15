@@ -323,6 +323,8 @@ pub enum MenuId {
     MeasHold,
     /// delay and phase between two channels
     MeasPair,
+    /// statistics: on or off, population, columns, reset
+    MeasStat,
     /// the settings card of one measurement row (ui/measrow.rs)
     MeasRow,
     /// shared reference levels (the Studio sheet has them on a tab of Measure)
@@ -405,6 +407,19 @@ struct MStat {
     max: f64,
 }
 
+impl MStat {
+    /// Adds one acquisition's value. With the current population only the latest acquisition is kept.
+    fn push(&mut self, v: f64, current: bool) {
+        if current { *self = MStat::default(); }
+        if self.n == 0 { self.min = v; self.max = v; }
+        self.n += 1;
+        self.sum += v;
+        self.sumsq += v * v;
+        self.min = self.min.min(v);
+        self.max = self.max.max(v);
+    }
+}
+
 #[derive(Clone)]
 struct RefWave {
     src: usize,
@@ -467,6 +482,12 @@ enum Item {
     ZScale,
     ZDelay,
     MeasStats,
+    /// statistics population and the columns shown
+    MeasPop,
+    MeasShowSd,
+    MeasShowMin,
+    MeasShowMax,
+    MeasStatReset,
     MeasLabels,
     /// where the measurement strip sits
     StripDock,
@@ -651,6 +672,8 @@ enum Item {
     EyeNpj,
     EyeRail,
     EyeNotch,
+    /// closed-loop bandwidth of the recovered clock (0 = auto)
+    EyePll,
     PowOn,
     PowV,
     PowI,
@@ -2788,16 +2811,8 @@ impl Ui {
                 }
                 let v = row.v;
                 if v.is_finite() {
-                    let st = &mut self.mstat[i];
-                    if st.n == 0 {
-                        st.min = v;
-                        st.max = v;
-                    }
-                    st.n += 1;
-                    st.sum += v;
-                    st.sumsq += v * v;
-                    st.min = st.min.min(v);
-                    st.max = st.max.max(v);
+                    let current = self.m.meas_pop_current;
+                    self.mstat[i].push(v, current);
                 }
             }
         }
@@ -5584,7 +5599,7 @@ impl Ui {
             MenuId::MeasLevels => vec![Item::MeasLvType, Item::MeasRefs, Item::MeasLow, Item::MeasMid, Item::MeasHigh, Item::MeasHyst, Item::MeasBaseTop, Item::Open(MenuId::MeasFall)],
             MenuId::MeasFall => vec![Item::MeasSepFall, Item::MeasFallLow, Item::MeasFallMid, Item::MeasFallHigh],
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => { let mut v = vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear]; if self.m.layout == Layout::Studio {
+            MenuId::Measure => { let mut v = vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasStat), Item::MeasLabels, Item::StripDock, Item::MeasClear]; if self.m.layout == Layout::Studio {
                 // the sheet has the levels on a tab of their own; the other layouts open them from one row
                 v.retain(|i| *i != Item::StripDock);
                 let at = v.iter().position(|i| *i == Item::Open(MenuId::MeasLevels)).unwrap_or(0);
@@ -5593,6 +5608,7 @@ impl Ui {
             v }
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::MeasRow => self.measrow_items(),
+            MenuId::MeasStat => vec![Item::MeasStats, Item::MeasPop, Item::MeasShowSd, Item::MeasShowMin, Item::MeasShowMax, Item::MeasStatReset],
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
@@ -5612,7 +5628,7 @@ impl Ui {
             }
             MenuId::Storage => vec![Item::StoreDest, Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StoreFfSave, Item::StoreFfLoad, Item::StorePng],
             MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecAcprW, Item::SpecAcprS, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
-            MenuId::Eye => vec![Item::EyeAct, Item::EyeOn, Item::EyePlace, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyeClear],
+            MenuId::Eye => vec![Item::EyeAct, Item::EyeOn, Item::EyePlace, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyePll, Item::EyeClear],
             MenuId::Power => {
                 let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
                 match self.m.pw_mode {
@@ -6285,6 +6301,7 @@ impl Ui {
             MenuId::MeasPair => format!("Pairs {} to {}", self.pair_source_caption(self.meas_src), self.pair_source_caption(self.meas_src_b)),
             MenuId::MeasLevels => "Measurement levels".into(),
             MenuId::MeasRow => self.measrow_title(),
+            MenuId::MeasStat => "Statistics".into(),
             MenuId::MeasFall => "Fall levels".into(),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
@@ -6345,6 +6362,7 @@ impl Ui {
             Item::Open(MenuId::MeasPair) => "Channel pair",
             Item::Open(MenuId::MeasFall) => "Fall levels",
             Item::Open(MenuId::MeasLevels) => "Levels",
+            Item::Open(MenuId::MeasStat) => "Statistics",
             Item::Open(MenuId::Dvm) => "DVM / counter",
             Item::Open(MenuId::Logger) => "Data logger",
             Item::Open(MenuId::Network) => "Network",
@@ -11110,7 +11128,7 @@ mod tests {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let rest = vec![
-            Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasClear,
+            Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasStat), Item::MeasLabels, Item::StripDock, Item::MeasClear,
         ];
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);

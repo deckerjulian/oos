@@ -10,7 +10,7 @@
 //! :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M)|TYPE NORM/PEAK/AVER/HRES|AVERages|ULTRa:MAXFrame,
 //! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar, :MEASure:INDicator,
 //! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
-//! :MEASure:STATistic:DISPlay|RESet|ITEM, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
+//! :MEASure:STATistic:DISPlay|RESet|POPulation|SHOW|ITEM, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
 //! :MEASure:BURSt:IDLE, :MEASure:OUTSide ABOVe|BELow|BOTH, :MEASure:NPERiods, :MEASure:EDGes CLOCk|DATA,
 //! :CURSor:MODE OFF|MAN|TRAC|XY, :CURSor:MANual:TYPE TIME|AMPLitude, :CAX|:CBX|:CAY|:CBY, :AXValue|:AYValue|:BXValue|:BYValue, :XDELta|:IXDelta|:YDELta, :CURSor:MEASure:INDicator,
 //! :DVM:ENABle|SOURce|MODE|CURRent?, :COUNter:ENABle|SOURce|MODE|NDIGits|CURRent?,
@@ -2117,6 +2117,37 @@ impl Scpi {
         }
         if kw(which, "RESet") && !query {
             ui.stats_reset();
+            return None;
+        }
+        if kw(which, "POPulation") {
+            if query {
+                return t(if ui.m.meas_pop_current { "CURR" } else { "ACC" });
+            }
+            let want = if kw(arg.trim(), "CURRent") { true } else if kw(arg.trim(), "ACCumulated") { false } else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            if want != ui.m.meas_pop_current { ui.m.meas_pop_current = want; ui.stats_reset(); }
+            ui.mark_changed();
+            return None;
+        }
+        // the columns of the statistics: any of SDEViation, MINimum, MAXimum, or NONE
+        if kw(which, "SHOW") {
+            if query {
+                let s = ui.m.meas_show;
+                let v: Vec<&str> = [(s[0], "SDEV"), (s[1], "MIN"), (s[2], "MAX")].into_iter().filter(|x| x.0).map(|x| x.1).collect();
+                return t(&if v.is_empty() { "NONE".to_string() } else { v.join(",") });
+            }
+            let mut show = [false; 3];
+            for part in arg.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                if kw(part, "SDEViation") { show[0] = true; } else if kw(part, "MINimum") { show[1] = true; } else if kw(part, "MAXimum") { show[2] = true; }
+                else if !kw(part, "NONE") {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                }
+            }
+            ui.m.meas_show = show;
+            ui.mark_changed();
             return None;
         }
         if !kw(which, "ITEM") {

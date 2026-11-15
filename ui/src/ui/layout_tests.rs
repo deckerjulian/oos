@@ -253,7 +253,7 @@ fn studio_badge_popup_configures_unpins_floats_and_removes() {
     let p = open(&mut u, vpp);
     tap_in(&mut u, Ui::studio_popup_row(p, 0));
     assert_eq!(u.meas_cfg, Some(1));
-    u.meas_cfg = None;
+    u.close_menu();
     // Unpin leaves the measurement in the list
     let p = open(&mut u, vpp);
     tap_in(&mut u, Ui::studio_popup_row(p, 1));
@@ -377,7 +377,7 @@ fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
     // a tap on the name opens the settings of the measurement
     tap_in(&mut u, Rect::new(g.list.x + 80, g.list.y + 5, 40, 30));
     assert_eq!(u.meas_cfg, Some(0));
-    u.meas_cfg = None;
+    u.close_menu();
     // + Add measurement opens the chooser
     tap_in(&mut u, g.add);
     assert_eq!(u.menu, MenuId::MeasAdd);

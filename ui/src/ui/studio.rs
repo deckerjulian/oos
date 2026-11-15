@@ -1564,9 +1564,15 @@ impl Ui {
         cv.text_in(&f.m, Rect::new(stats.x + 30, stats.y, stats.w - 32, stats.h), 0, "Statistics", TEXT);
         chip(cv, add, BTN, BTN_BORDER);
         cv.text_in(&f.m, add, 1, "+ Add", TEXT);
-        // columns: pin, source, measurement, current, then mean, min and max
+        // columns: pin, source, measurement, current, then mean and the minimum, maximum and deviation the settings show
+        let show = self.m.meas_show;
         let cols: Vec<(i32, &str)> = if on {
-            vec![(52, "Source"), (136, "Measurement"), (380, "Current"), (560, "Mean"), (710, "Min"), (860, "Max")]
+            let mut v = vec![(52, "Source"), (136, "Measurement"), (380, "Current"), (540, "Mean")];
+            let mut x = 540;
+            for (name, i) in [("Min", 1usize), ("Max", 2), ("\u{3c3}", 0)] {
+                if show[i] { x += 120; v.push((x, name)); }
+            }
+            v
         } else { vec![(52, "Source"), (136, "Measurement"), (420, "Current")] };
         let head = Rect::new(t.x + 6, t.y + 48, t.w - 12, 28);
         cv.fill(head, BAR);
@@ -1587,8 +1593,15 @@ impl Ui {
             if on {
                 let st = self.mstat.get(i).copied().unwrap_or_default();
                 let cell = |v: f64| if st.n == 0 { "----".to_string() } else { row.fmt4(v) };
-                for (c, v) in [(3, st.sum / st.n.max(1) as f64), (4, st.min), (5, st.max)] {
-                    cv.text_in(&f.m, Rect::new(r.x + cols[c].0, r.y, 150, r.h), 0, &cell(v), TEXT);
+                let mean = st.sum / st.n.max(1) as f64;
+                let sd = (st.sumsq / st.n.max(1) as f64 - mean * mean).max(0.0).sqrt();
+                let mut values = vec![mean];
+                for (v, i) in [(st.min, 1usize), (st.max, 2), (sd, 0)] {
+                    if show[i] { values.push(v); }
+                }
+                for (k, v) in values.into_iter().enumerate() {
+                    let Some(col) = cols.get(3 + k) else { break };
+                    cv.text_in(&f.m, Rect::new(r.x + col.0, r.y, 118, r.h), 0, &cell(v), TEXT);
                 }
             }
             cv.hline(r.x, r.right() - 1, r.bottom() - 1, LINE);

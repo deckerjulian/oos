@@ -360,6 +360,9 @@ pub fn setup_text(m: &Model) -> String {
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
     kv("meas_cfg", format!("{} {:?} {} {} {} {} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }, m.meas_lpct, m.meas_hpct, m.meas_tsetup, m.meas_thold));
+    if m.meas_pop_current || m.meas_show != [true; 3] {
+        kv("meas_stat", format!("{} {} {} {}", m.meas_pop_current as u8, m.meas_show[0] as u8, m.meas_show[1] as u8, m.meas_show[2] as u8));
+    }
     // the other shared reference levels: volts mode, custom, mid, hysteresis, volts, volts hysteresis, separate fall, fall, fall volts, top/base
     let l = &m.meas_lv;
     kv("meas_levels", format!("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {:?}", l.absolute as u8, l.custom as u8, l.mid, l.hyst, l.volts[0], l.volts[1], l.volts[2], l.vhyst,
@@ -368,6 +371,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     kv("bode_mode", name(m.bode_mode));
     kv("eye_more", format!("{} {} {} {} {} {} {} {}", m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, if m.eye_npj { 1 } else { 0 }, opt(m.eye_rail), m.eye_notch, opt(m.eye_b), if m.eye_hp { 1 } else { 0 }));
+    if m.eye_pll_bw > 0.0 { kv("eye_pll", m.eye_pll_bw.to_string()); }
     kv("power_more", format!("{} {} {} {} {}", m.pw_fline, m.pw_fsw, opt(m.pw_vin), m.pw_ref.map(|v| v.to_string()).unwrap_or_else(|| "-".into()), opt(m.pw_clk)));
     kv("magnetic", format!("{} {} {} {} {} {} {:?} {}", m.mag_v.token(), m.mag_i.token(), m.mag_n, m.mag_ae, m.mag_le, m.mag_rcu, m.mag_plot, m.mag_cur));
     let opt = |c: Option<WaveId>| c.map_or("off".into(), |c| c.token());
@@ -814,6 +818,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             // older files have no third field: the rate was entered, not measured
             m.eye_from_record = w.get(2).is_some_and(|s| *s != "0");
         }
+        "eye_pll" => m.eye_pll_bw = v.trim().parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0).ok_or("eye_pll: Hz")?,
         "eye_place" => m.eye_place = p_enum(v, &[EyePlace::Full, EyePlace::Side, EyePlace::Under])?,
         "power" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -935,6 +940,12 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             l.base_top = p_enum(w[15], &oos_dsp::measure::BaseTop::ALL)?;
         }
         "meas_full_record" => m.meas_full_record = p_bool(v)?,
+        "meas_stat" => {
+            let w: Vec<&str> = v.split_whitespace().collect();
+            let [pop, sd, min, max] = w[..] else { return Err("meas_stat: population sd min max".into()) };
+            m.meas_pop_current = p_bool(pop)?;
+            m.meas_show = [p_bool(sd)?, p_bool(min)?, p_bool(max)?];
+        }
         "meas_cfg" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 4 && w.len() != 8 {

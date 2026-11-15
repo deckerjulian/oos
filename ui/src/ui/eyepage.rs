@@ -696,7 +696,7 @@ impl Ui {
             h = h.rotate_left(13) ^ data_identity ^ i as u64;
             h = h.rotate_left(13) ^ r.vpd.to_bits() as u64 ^ ((r.offset.to_bits() as u64) << 32);
         }
-        for setting in [self.m.eye_ber, self.m.eye_pn_lo, self.m.eye_pn_hi, self.m.eye_notch] {
+        for setting in [self.m.eye_ber, self.m.eye_pn_lo, self.m.eye_pn_hi, self.m.eye_notch, self.m.eye_pll_bw] {
             h = h.rotate_left(13) ^ setting.to_bits();
         }
         h ^= (self.m.eye_npj as u64) | ((self.m.eye_hp as u64) << 1) | ((self.m.eye_from_record as u64) << 2);
@@ -791,7 +791,7 @@ impl Ui {
         // An idle live bus keeps its accumulated eye. A replacement reference
         // without edges must not display the previous reference's results.
         let recovered = if self.azr.eye_auto.enabled && clk_id.is_none() {
-            eye::recover_clock_pll(recov, dt, thr, hyst, rate, 0.0, true)
+            eye::recover_clock_pll(recov, dt, thr, hyst, rate, self.m.eye_pll_bw, true)
         } else { eye::recover_clock(recov, dt, thr, hyst, rate) };
         let Some(clk) = recovered else {
             if reference_changed { self.invalidate_reference_eye(); }

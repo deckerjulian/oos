@@ -494,11 +494,9 @@ impl Ui {
                 self.m.deskew_ch.map(f64::to_bits), self.m.deskew_ref.map(f64::to_bits)))
     }
 
-    fn add_capture_statistic(stat: &mut MStat, value: f64) {
+    fn add_capture_statistic(stat: &mut MStat, value: f64, current: bool) {
         if !value.is_finite() { return; }
-        if stat.n == 0 { stat.min = value; stat.max = value; }
-        stat.n += 1; stat.sum += value; stat.sumsq += value * value;
-        stat.min = stat.min.min(value); stat.max = stat.max.max(value);
+stat.push(value, current);
     }
 
     /// Finish only rows pending for this exact accepted record and measurement
@@ -511,7 +509,7 @@ impl Ui {
         pending.rows.retain(|&index| {
             let Some(row) = rows.get(index) else { return false };
             if row.computing { return true; }
-            Self::add_capture_statistic(&mut self.mstat[index], row.v);
+            Self::add_capture_statistic(&mut self.mstat[index], row.v, self.m.meas_pop_current);
             false
         });
         if !pending.rows.is_empty() { self.replay.deferred_statistics = Some(pending); }
@@ -897,9 +895,10 @@ impl Ui {
         let rows = self.meas_rows();
         self.mstat.resize(rows.len(), MStat::default());
         let mut pending = Vec::new();
+        let current = self.m.meas_pop_current;
         for (index, (row, stat)) in rows.iter().zip(&mut self.mstat).enumerate() {
             if row.computing { pending.push(index); }
-            else { Self::add_capture_statistic(stat, row.v); }
+            else { Self::add_capture_statistic(stat, row.v, current); }
         }
         self.replay.deferred_statistics = (!pending.is_empty()).then(|| DeferredCaptureStatistics {
             capture: self.replay.captures, context: self.capture_statistics_context(), rows: pending });
