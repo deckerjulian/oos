@@ -29,12 +29,31 @@ fn analysis_key(mut key: RefMeasureKey) -> RefMeasureKey {
 }
 
 impl Ui {
-    fn own_params(&self, kind: Meas, owner: WaveId) -> Option<MeasOwn> {
-        let own = self.meas_own.get(&(kind, owner)).copied()?;
-        if !(own.refs_set || (kind == Meas::Burst && own.idle_set)
-            || (kind == Meas::Outside && own.side_set)
-            || (kind == Meas::NPeriods && (own.n_set || own.data_set))) { return None; }
+    /// The gate in use while a row's key or samples are made: the row's own, else the shared one.
+    pub(in crate::ui) fn gate_full(&self) -> bool {
+        self.row_gate.get().unwrap_or(self.m.meas_full_record)
+    }
+
+    fn with_gate<R>(&self, gate: Option<bool>, f: impl FnOnce() -> R) -> R {
+        let old = self.row_gate.replace(gate);
+        let result = f();
+        self.row_gate.set(old);
+        result
+    }
+
+    /// The row settings of a single-source row, over the shared ones.
+    pub(super) fn row_cfg_one(&self, kind: Meas, owner: WaveId) -> crate::model::RowCfg {
+        self.m.row_cfg(RowKey::One(kind, owner)).unwrap_or_default()
+    }
+
+    /// The row's own analysis settings (levels, base / top, outside level, gate), if it has any.
+    pub(in crate::ui) fn own_params(&self, kind: Meas, owner: WaveId) -> Option<MeasOwn> {
+        let cfg = self.row_cfg_one(kind, owner);
+        let legacy = self.meas_own.get(&(kind, owner)).copied().filter(|own| own.refs_set || (kind == Meas::Burst && own.idle_set)
+            || (kind == Meas::Outside && own.side_set) || (kind == Meas::NPeriods && (own.n_set || own.data_set)));
+        if legacy.is_none() && !cfg.changes_analysis() { return None; }
         let shared = MeasOwn::shared(&self.m);
+        let own = legacy.unwrap_or(shared);
         Some(MeasOwn {
             low: if own.refs_set { own.low } else { shared.low },
             high: if own.refs_set { own.high } else { shared.high },
@@ -42,23 +61,69 @@ impl Ui {
             side: if own.side_set { own.side } else { shared.side },
             n: if own.n_set { own.n } else { shared.n },
             data: if own.data_set { own.data } else { shared.data },
+            cfg,
             ..own
         })
     }
 
-    fn own_key(&self, source: WaveId, own: MeasOwn) -> Option<(Key, f64)> {
-        let (mut key, t0) = match source {
-            WaveId::Ch(c) => self.channel_measurement_key(c, false)?,
-            WaveId::Ref(i) => self.reference_measurement_key(i)?,
+    /// The settings of a reading that are taken from the analysis afterwards (cycle edges, overshoot reference, burst
+    /// and N-period options). None when the row has none that apply to `kind`.
+    pub(super) fn row_opts(&self, kind: Meas, owner: WaveId) -> Option<oos_dsp::measure::RowOpts> {
+        use oos_dsp::measure::{EdgePol, NEdge, Outside, RowOpts};
+        let c = self.row_cfg_one(kind, owner);
+        let applies = match kind {
+            Meas::Period | Meas::Freq | Meas::PDuty | Meas::NDuty => c.pol.is_some() || c.off.is_some() || c.step.is_some(),
+            Meas::PWidth | Meas::NWidth => c.off.is_some() || c.step.is_some(),
+            Meas::Overshoot | Meas::Preshoot => c.os_top.is_some() || c.os_base.is_some(),
+            Meas::Burst => c.burst_fall.is_some() || c.idle.is_some(),
+            Meas::Outside => c.side.is_some(),
+            Meas::NPeriods => c.n.is_some() || c.n_off.is_some() || c.n_step.is_some() || c.n_edge.is_some(),
+            _ => false,
         };
+        if !applies { return None; }
+        let shared = self.meas_own.get(&(kind, owner)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
+        let (idle, side, n, data) = (
+            if shared.idle_set { shared.idle } else { self.m.meas_idle },
+            if shared.side_set { shared.side } else { self.m.meas_out },
+            if shared.n_set { shared.n } else { self.m.meas_n },
+            if shared.data_set { shared.data } else { self.m.meas_data },
+        );
+        Some(RowOpts {
+            pol: match c.pol { Some(1) => EdgePol::Rise, Some(2) => EdgePol::Fall, _ => EdgePol::First },
+            offset: c.off.unwrap_or(0),
+            step: c.step.unwrap_or(1).max(1),
+            os_top: c.os_top,
+            os_base: c.os_base,
+            idle: c.idle.unwrap_or(idle),
+            burst_falling: c.burst_fall.unwrap_or(false),
+            side: match c.side { Some(0) => Outside::Above, Some(1) => Outside::Below, Some(_) => Outside::Both, None => side },
+            n: c.n.unwrap_or(n).max(1),
+            n_edge: match c.n_edge { Some(1) => NEdge::Fall, Some(2) => NEdge::Both, Some(_) => NEdge::Rise, None => if data { NEdge::Both } else { NEdge::Rise } },
+            n_offset: c.n_off.unwrap_or(0),
+            n_step: c.n_step.unwrap_or(1).max(1),
+        })
+    }
+
+    fn own_key(&self, source: WaveId, own: MeasOwn) -> Option<(Key, f64)> {
+        let c = own.cfg;
+        let (mut key, t0) = self.with_gate(c.gate_full, || match source {
+            WaveId::Ch(c) => self.channel_measurement_key(c, false),
+            WaveId::Ref(i) => self.reference_measurement_key(i),
+        })?;
         key.low = own.low.to_bits(); key.high = own.high.to_bits();
         // a row's own low and high replace the shared rise ones (percent mode); the fall levels follow unless they are separate
+        let follow = key.lv.fall == key.lv.rise;
         if !key.lv.absolute {
-            let follow = key.lv.fall == key.lv.rise;
             key.lv.rise[0] = own.low;
             key.lv.rise[2] = own.high;
-            if follow { key.lv.fall = key.lv.rise; }
         }
+        // the row's own levels: percent of amplitude, or volts in the volts mode
+        if let Some(l) = c.lo { key.lv.rise[0] = l; key.low = l.to_bits(); }
+        if let Some(h) = c.hi { key.lv.rise[2] = h; key.high = h.to_bits(); }
+        if follow { key.lv.fall = key.lv.rise; }
+        if let Some(h) = c.hyst { key.lv.hyst = h; }
+        if let Some(b) = c.base_top { key.lv.base_top = b; }
+        if let Some(v) = c.out_volts { key.lv.out_volts = v; }
         key.idle = own.idle.to_bits(); key.outside = own.side as u8;
         key.periods = own.n; key.data = own.data; key.basic = false;
         Some((Key { source, analysis: key }, t0))
@@ -82,6 +147,10 @@ impl Ui {
     }
 
     fn own_job(&self, key: Key) -> Option<RefMeasureJob> {
+        self.with_gate(Some(key.analysis.full), || self.own_job_inner(key))
+    }
+
+    fn own_job_inner(&self, key: Key) -> Option<RefMeasureJob> {
         let analysis = self.reusable_own_analysis(key);
         let k = key.analysis;
         let samples = if analysis.is_some() { MeasureSamples::Owned(Vec::new()) } else {
@@ -123,7 +192,18 @@ impl Ui {
         }
     }
 
+    /// A single-source row's reading with its own settings: its own analysis (levels, base / top, gate), then the
+    /// settings that apply to the analysis afterwards.
     pub(in crate::ui) fn measurement_with_own(&self, source: WaveId, kind: Meas, owner: WaveId) -> f64 {
+        let value = self.measurement_with_own_raw(source, kind, owner);
+        let Some(opts) = self.row_opts(kind, owner) else { return value };
+        match self.meas_number_analysis_raw(source, kind, owner) {
+            Some((analysis, _)) => analysis.get_row(kind, &opts),
+            None => f64::NAN,
+        }
+    }
+
+    fn measurement_with_own_raw(&self, source: WaveId, kind: Meas, owner: WaveId) -> f64 {
         let Some(own) = self.own_params(kind, owner) else { return self.meas_at(source, kind) };
         let Some((key, t0)) = self.own_key(source, own) else { return f64::NAN };
         let index = ALL_MEAS.iter().position(|&entry| entry == kind).unwrap();
@@ -187,9 +267,13 @@ impl Ui {
     /// Labels only use the matching row analysis; an evicted large analysis may
     /// omit annotations while its numeric value remains cached and available.
     pub(in crate::ui) fn meas_number_analysis(&self, source: WaveId, kind: Meas) -> Option<(Arc<oos_dsp::measure::Analysis>, f64)> {
-        let Some(own) = self.own_params(kind, source) else { return self.meas_analysis(source) };
+        self.meas_number_analysis_raw(source, kind, source)
+    }
+
+    fn meas_number_analysis_raw(&self, source: WaveId, kind: Meas, owner: WaveId) -> Option<(Arc<oos_dsp::measure::Analysis>, f64)> {
+        let Some(own) = self.own_params(kind, owner) else { return self.meas_analysis(source) };
         let (key, t0) = self.own_key(source, own)?;
-        let _ = self.measurement_with_own(source, kind, source);
+        let _ = self.measurement_with_own_raw(source, kind, owner);
         self.reusable_own_analysis(key).map(|analysis| (analysis, t0))
     }
 }

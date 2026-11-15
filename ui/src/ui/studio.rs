@@ -997,7 +997,7 @@ impl Ui {
         let hit = (0..4).find(|&i| Self::studio_popup_row(p, i).contains(x, y));
         let Some(index) = self.studio_index(key) else { return true };
         match hit {
-            Some(0) => if index < self.m.meas.len() { self.open_meas_cfg(index) } else { self.open_menu(MenuId::Measure) },
+            Some(0) => self.open_meas_cfg(index),
             Some(1) => self.studio_set_pin(key, false),
             Some(2) => {
                 // only this measurement moves: off the badges, into the floating panel; the view stays unless no panel shows
@@ -1608,8 +1608,8 @@ impl Ui {
     // ------------------------------------------------------------------------------------------------ taps
 
     /// Opens the settings of measurement `index`: its own page, or the measure menu for the kinds without one.
-    fn studio_configure(&mut self, index: usize) {
-        if index < self.m.meas.len() { self.open_meas_cfg(index) } else { self.open_menu(MenuId::Measure) }
+    pub(super) fn studio_configure(&mut self, index: usize) {
+        self.open_meas_cfg(index)
     }
 
     /// Pages the list by one page.

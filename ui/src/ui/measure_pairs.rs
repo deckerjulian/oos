@@ -3,7 +3,7 @@
 use super::*;
 use super::analysis::RefMeasureKey;
 use super::tools::{PairKind, PAIRS, MEAS_MAX};
-use oos_dsp::measure::{Analysis, Latch, Pair, delay, phase, skew, setup_time_at, hold_time_at, setup_hold_violations_at, setup_time_on, hold_time_on, setup_hold_violations_on};
+use oos_dsp::measure::{Analysis, EdgeSel, PairOpts, SearchDir, ToSel, delay_opts, phase_opts, skew_opts, setup_time_opts, hold_time_opts, setup_hold_violations_opts};
 use std::{collections::VecDeque, sync::{Arc, mpsc}};
 
 const DIRECT_EDGES: usize = 8_192;
@@ -17,8 +17,10 @@ struct Key {
     bi: (RefMeasureKey, usize),
     setup: u64,
     hold: u64,
+    /// the row's edge pairing and window (from, to, direction, window)
+    pairing: [u64; 3],
 }
-struct Job { key: Key, a: Arc<Analysis>, b: Arc<Analysis>, ta: f64, tb: f64 }
+struct Job { key: Key, opts: PairOpts, a: Arc<Analysis>, b: Arc<Analysis>, ta: f64, tb: f64 }
 struct Worker { input: mpsc::SyncSender<Job>, output: mpsc::Receiver<(Key,f64)>, busy: bool, submitted: usize }
 #[derive(Default)]
 pub(super) struct State { cache: VecDeque<(Key,f64)>, pending: VecDeque<Key>, worker: Option<Worker> }
@@ -30,16 +32,24 @@ fn shifted(a: &Analysis, t0: f64) -> Analysis {
         falls:a.falls.iter().map(|time|time+t0).collect(), ..Default::default() }
 }
 fn compute(job: &Job) -> f64 {
-    let (_,kind,ea,eb)=PAIRS[job.key.kind];
+    let (_,kind,_,_)=PAIRS[job.key.kind];
     let (a,b)=(shifted(&job.a,job.ta),shifted(&job.b,job.tb));
+    let o=&job.opts;
     match kind {
-        PairKind::Delay=>delay(&a,&b,Pair(ea,eb)), PairKind::Phase=>phase(&a,&b,Pair(ea,eb)),
-        PairKind::Skew=>skew(&a,&b,Pair(ea,eb)), PairKind::Setup=>setup_time_at(&a,&b,ea),
-        PairKind::Hold=>hold_time_at(&a,&b,ea),
-        PairKind::SetupAndHold=>setup_hold_violations_at(&a,&b,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),ea),
-        PairKind::SetupBoth=>setup_time_on(&a,&b,Latch::Both), PairKind::HoldBoth=>hold_time_on(&a,&b,Latch::Both),
-        PairKind::SetupAndHoldBoth=>setup_hold_violations_on(&a,&b,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),Latch::Both),
+        PairKind::Delay=>delay_opts(&a,&b,o), PairKind::Phase=>phase_opts(&a,&b,o),
+        PairKind::Skew=>skew_opts(&a,&b,o),
+        PairKind::Setup|PairKind::SetupBoth=>setup_time_opts(&a,&b,o),
+        PairKind::Hold|PairKind::HoldBoth=>hold_time_opts(&a,&b,o),
+        PairKind::SetupAndHold|PairKind::SetupAndHoldBoth=>setup_hold_violations_opts(&a,&b,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),o),
     }
+}
+/// The edge choice of a pair row as a number for a cache key.
+fn pairing_bits(o: &PairOpts) -> [u64; 3] {
+    let from = match o.from { EdgeSel::Rise => 0u64, EdgeSel::Fall => 1, EdgeSel::Both => 2 };
+    let to = match o.to { ToSel::Rise => 0u64, ToSel::Fall => 1, ToSel::Both => 2, ToSel::Same => 3, ToSel::Opposite => 4 };
+    let dir = (o.dir == SearchDir::Last) as u64;
+    [from | to << 4 | dir << 8 | (o.min.is_some() as u64) << 9 | (o.max.is_some() as u64) << 10,
+        o.min.unwrap_or(0.0).to_bits(), o.max.unwrap_or(0.0).to_bits()]
 }
 impl Worker {
     fn open() -> Self {
@@ -61,16 +71,32 @@ impl State {
     }
 }
 impl Ui {
+    /// The edges a pair row pairs: the edge flags of the reading, then the settings of the row.
+    pub(super) fn pair_opts(&self,kind:usize,a:WaveId,b:WaveId)->PairOpts {
+        let kind=kind.min(PAIRS.len()-1);
+        let (_,pk,ea,eb)=PAIRS[kind];
+        let mut o=match pk {
+            PairKind::SetupBoth|PairKind::HoldBoth|PairKind::SetupAndHoldBoth=>PairOpts{from:EdgeSel::Both,to:ToSel::Both,dir:SearchDir::First,min:None,max:None},
+            PairKind::Setup|PairKind::Hold|PairKind::SetupAndHold=>PairOpts{to:ToSel::Both,..PairOpts::rise_fall(ea,eb)},
+            _=>PairOpts::rise_fall(ea,eb),
+        };
+        let c=self.m.row_cfg(RowKey::Pair(kind,a,b)).unwrap_or_default();
+        if let Some(x)=c.from{o.from=[EdgeSel::Rise,EdgeSel::Fall,EdgeSel::Both][x.min(2) as usize];}
+        if let Some(x)=c.to{o.to=[ToSel::Rise,ToSel::Fall,ToSel::Both,ToSel::Same,ToSel::Opposite][x.min(4) as usize];}
+        if let Some(x)=c.dir{o.dir=if x==1{SearchDir::Last}else{SearchDir::First};}
+        (o.min,o.max)=(c.wmin.or(o.min),c.wmax.or(o.max));
+        o
+    }
     fn pair_key(&self,kind:usize,a:WaveId,b:WaveId)->Option<Key> {
         Some(Key{kind:kind.min(PAIRS.len()-1),a,b,ai:self.measurement_identity(a)?,bi:self.measurement_identity(b)?,
-            setup:self.m.meas_tsetup.to_bits(),hold:self.m.meas_thold.to_bits()})
+            setup:self.m.meas_tsetup.to_bits(),hold:self.m.meas_thold.to_bits(),pairing:pairing_bits(&self.pair_opts(kind,a,b))})
     }
     pub(super) fn cached_pair(&self,kind:usize,a:WaveId,b:WaveId)->f64 {
         let (Some((aa,ta)),Some((bb,tb)))=(self.meas_analysis(a),self.meas_analysis(b)) else{return f64::NAN};
         let Some(key)=self.pair_key(kind,a,b) else{return f64::NAN};
         let mut state=self.azr.measure_pairs.borrow_mut();
         if let Some((_,value))=state.cache.iter().find(|(old,_)|*old==key){return *value;}
-        let job=Job{key,a:aa,b:bb,ta,tb};
+        let job=Job{key,opts:self.pair_opts(kind,a,b),a:aa,b:bb,ta,tb};
         if job.a.rises.len()+job.a.falls.len()+job.b.rises.len()+job.b.falls.len()<=DIRECT_EDGES {
             let value=compute(&job);state.put(key,value);return value;
         }

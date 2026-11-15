@@ -247,7 +247,7 @@ impl Ui {
     }
 
     pub(super) fn measurement_bounds(&self, len: usize, t0: f64, dt: f64) -> (usize, usize) {
-        if self.m.meas_full_record { return (0, len); }
+        if self.gate_full() { return (0, len); }
         let (scale, delay) = self.view();
         let half = scale as f64 * HDIV as f64 * 0.5;
         let index = |time: f64| {
@@ -289,7 +289,7 @@ impl Ui {
         let key = RefMeasureKey { samples: r.v.as_ptr() as usize, len: r.v.len(), lo, hi,
             dt: r.dt.to_bits(), t0: t0.to_bits(), vpd: r.vpd.to_bits(),
             low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), lv: self.m.shared_levels(), epoch: self.workflow_epoch,
-            revision: if self.session_is_sim && self.m.sim_slot == slot { self.replay.sim_revision } else { 0 }, full: self.m.meas_full_record, basic: false,
+            revision: if self.session_is_sim && self.m.sim_slot == slot { self.replay.sim_revision } else { 0 }, full: self.gate_full(), basic: false,
             idle: self.m.meas_idle.to_bits(), outside: self.m.meas_out as u8, periods: self.m.meas_n, data: self.m.meas_data,
             conditioning: (0, false, 0), capture: 0 };
         Some((key, t0 + lo as f64 * r.dt))
@@ -342,7 +342,7 @@ impl Ui {
         Some((RefMeasureKey { samples: samples.as_ptr() as usize, len: samples.len(), lo: 0, hi: samples.len(),
             dt: dt.to_bits(), t0: t0.to_bits(), vpd: self.m.ch[channel].volts_per_div().to_bits(),
             low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), lv: self.m.shared_levels(), epoch: self.workflow_epoch,
-            revision: record.raw.as_ref().map_or(self.wfm_total, |raw| raw.frame.seq), full: self.m.meas_full_record, basic,
+            revision: record.raw.as_ref().map_or(self.wfm_total, |raw| raw.frame.seq), full: self.gate_full(), basic,
             idle: self.m.meas_idle.to_bits(), outside: self.m.meas_out as u8, periods: self.m.meas_n, data: self.m.meas_data,
             conditioning: (self.m.ch[channel].coupling as u8, self.m.ch[channel].invert, self.m.ch[channel].bw),
             capture: self.wfm_total }, t0))

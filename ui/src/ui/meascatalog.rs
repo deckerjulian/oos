@@ -547,7 +547,6 @@ impl Ui {
     }
 
     fn catalog_set_on(&self, rect: Rect, c: Cat) -> Option<Rect> {
-        let CatKind::Meas(_) = meta(c).kind else { return None };
         self.cat_added(c).then(|| Rect::new(rect.x + rect.w - 52, rect.y + (rect.h - 40) / 2, 48, 40))
     }
 
@@ -806,11 +805,12 @@ impl Ui {
                     if let Some(c) = cat_from(it.n) {
                         if let Some(set) = self.catalog_set_on(rect, c) {
                             if set.contains(x, y) {
-                                if let CatKind::Meas(k) = meta(c).kind {
-                                    if let Some(i) = self.m.meas.iter().position(|&(mk, id)| mk == k && id == self.meas_src) {
-                                        self.open_meas_cfg(i);
-                                    }
-                                }
+                                let found = match meta(c).kind {
+                                    CatKind::Meas(k) => self.m.meas.iter().position(|&(mk, id)| mk == k && id == self.meas_src),
+                                    CatKind::Pair(k) => self.m.meas2.iter().position(|e| e.0 == k && e.1 == self.meas_src && e.2 == self.meas_src_b).map(|i| self.m.meas.len() + i),
+                                    CatKind::Wave => self.m.cat.iter().position(|e| e.0 == c as u16 && e.1 == self.meas_src && e.2 == self.meas_src_b && e.3 == self.cat_c && e.4 == self.cat_d).map(|i| self.m.meas.len() + self.m.meas2.len() + i),
+                                };
+                                if let Some(i) = found { self.open_meas_cfg(i); }
                                 return true;
                             }
                         }

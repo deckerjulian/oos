@@ -17,8 +17,8 @@ use crate::store;
 /// The most views.
 pub const VIEWS_MAX: usize = 4;
 /// Keys of a setup (store.rs) that belong to a view, besides `xy` and `full` (fields of the Ui).
-const KEYS: [&str; 21] = [
-    "windows", "ch_window", "math_window", "la_window", "meas", "meas2", "dvm", "counter", "cursor", "cur_a", "cur_b", "cur_c", "cur_d", "pane", "meas_labels", "trend_sel", "zoom", "zoom_tdiv", "zdelay", "hist", "view",
+const KEYS: [&str; 22] = [
+    "windows", "ch_window", "math_window", "la_window", "meas", "meas2", "row_cfg", "dvm", "counter", "cursor", "cur_a", "cur_b", "cur_c", "cur_d", "pane", "meas_labels", "trend_sel", "zoom", "zoom_tdiv", "zdelay", "hist", "view",
 ];
 /// The strip at each edge of the plot where a horizontal swipe switches views (px).
 pub(super) const EDGE: i32 = 18;
@@ -66,6 +66,7 @@ impl Ui {
         } else {
             slot
         };
+        self.m.row_cfg.clear();
         for part in slot.split(';').map(str::trim).filter(|p| !p.is_empty()) {
             let Some((k, v)) = part.split_once('=') else { continue };
             let (k, v) = (k.trim(), v.trim());

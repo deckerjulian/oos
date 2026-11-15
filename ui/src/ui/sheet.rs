@@ -246,6 +246,10 @@ impl Ui {
         }
         let spec = if menu == MenuId::Main {
             self.sheet_main_spec()
+        } else if menu == MenuId::MeasRow {
+            let tabs = self.measrow_sheet_tabs();
+            if tabs.is_empty() { return None; }
+            SheetSpec { tabs, first: 0 }
         } else {
             let (names, place) = self.sheet_plan(menu)?;
             let mut tabs: Vec<SheetTab> = names.iter().map(|n| SheetTab { name: n, rows: Vec::new(), foot: Vec::new() }).collect();
@@ -386,6 +390,7 @@ impl Ui {
                 if names.is_empty() { "Switch on source".into() } else { format!("Turn on {}", names.join(", ")) }
             }
             Item::RefShow(_) => "Shown".into(),
+            Item::RowF(measrow::RF::Used) => self.measrow_text(it).unwrap_or_default(),
             _ => self.item_label(it).to_string(),
         }
     }

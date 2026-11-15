@@ -6,6 +6,9 @@
 
 use crate::edges::level_edges;
 
+mod rowopts;
+pub use rowopts::*;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Meas {
     Vmax,
@@ -293,6 +296,8 @@ pub struct Levels {
     pub fall: [f64; 3],
     pub hyst: f64,
     pub base_top: BaseTop,
+    /// Level of the time-outside-level spans in volts; NaN uses the high and low reference levels.
+    pub out_volts: f64,
 }
 
 /// Equal when every number has the same bits, so a set can be part of a cache key.
@@ -306,14 +311,14 @@ impl Eq for Levels {}
 impl Levels {
     /// Percent levels: `lpct` / `hpct` with the middle at 50 %, the same fall levels, 5 % hysteresis.
     pub fn percent(lpct: f64, hpct: f64) -> Levels {
-        Levels { absolute: false, rise: [lpct, 0.5, hpct], fall: [lpct, 0.5, hpct], hyst: 0.05, base_top: BaseTop::Auto }
+        Levels { absolute: false, rise: [lpct, 0.5, hpct], fall: [lpct, 0.5, hpct], hyst: 0.05, base_top: BaseTop::Auto, out_volts: f64::NAN }
     }
 
     /// The levels as numbers for a cache key.
     pub fn bits(&self) -> [u64; 10] {
         let b = |x: f64| x.to_bits();
         [self.absolute as u64 | (self.base_top as u64) << 8, b(self.rise[0]), b(self.rise[1]), b(self.rise[2]), b(self.fall[0]),
-            b(self.fall[1]), b(self.fall[2]), b(self.hyst), 0, 0]
+            b(self.fall[1]), b(self.fall[2]), b(self.hyst), b(self.out_volts), 0]
     }
 
     /// Volts for the rise and fall triples and the hysteresis, given the top and base. A triple that is not
@@ -608,7 +613,7 @@ pub fn analyze_levels(v: &[f32], dt: f64, min_amp: f64, lv: &Levels) -> Analysis
     a.high_time = mean(&hi);
     a.low_time = mean(&low);
     (a.hi_rises, a.hi_falls, a.lo_rises, a.lo_falls) = (hr, hf, lr, lf);
-    (a.out_hi, a.out_lo) = outside_spans(v, dt, &a);
+    (a.out_hi, a.out_lo) = outside_spans(v, dt, &a, lv.out_volts);
     if a.rises.len() >= 2 {
         let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, &a.rises);
         (a.cyc_top, a.cyc_base, a.cyc_amp, a.cyc_pp, a.cyc_max, a.cyc_min) = (top, base, amp, pp, mx, mn);
@@ -658,10 +663,10 @@ impl Analysis {
         }
     }
     /// Mean positive duty cycle, %. Each cycle starts on a rising edge: (next fall - rise) / (next rise - rise).
-    fn duty(&self) -> f64 {
+    fn duty_list(&self, rising_start: bool) -> Vec<f64> {
         let e = edge_seq(self);
         let mut d = Vec::new();
-        let mut k = e.iter().position(|x| x.1).unwrap_or(e.len());
+        let mut k = e.iter().position(|x| x.1 == rising_start).unwrap_or(e.len());
         while k + 2 < e.len() {
             let (t0, t1, t2) = (e[k].0, e[k + 1].0, e[k + 2].0);
             if t2 > t0 {
@@ -669,11 +674,17 @@ impl Analysis {
             }
             k += 2;
         }
-        mean(&d)
+        d
+    }
+    fn duty(&self) -> f64 {
+        mean(&self.duty_list(true))
     }
     /// Mean width of complete positive (rise -> fall) or negative (fall -> rise) pulses. One pass over the sorted edges:
     /// a deep record has a hundred thousand of them, and this runs for every frame.
     fn width(&self, pos: bool) -> f64 {
+        mean(&self.width_list(pos))
+    }
+    fn width_list(&self, pos: bool) -> Vec<f64> {
         let (a, b) = if pos { (&self.rises, &self.falls) } else { (&self.falls, &self.rises) };
         let (mut w, mut j) = (Vec::new(), 0);
         for (i, &s) in a.iter().enumerate() {
@@ -686,7 +697,7 @@ impl Analysis {
                 w.push(e - s);
             }
         }
-        mean(&w)
+        w
     }
     fn pulses(&self, pos: bool) -> f64 {
         let (a, b) = if pos { (&self.rises, &self.falls) } else { (&self.falls, &self.rises) };
@@ -856,6 +867,11 @@ pub const BURST_IDLE: f64 = 50e-6;
 /// seconds without edges (or by the end of the record). `idle` <= 0 uses `BURST_IDLE`. A clock that never pauses for
 /// `idle` has no burst.
 pub fn burst_width(a: &Analysis, idle: f64) -> f64 {
+    burst_width_pol(a, idle, true)
+}
+
+/// `burst_width` for bursts that start on a rising edge and end on a falling one, or the other way round.
+pub fn burst_width_pol(a: &Analysis, idle: f64, start_rising: bool) -> f64 {
     let idle = if idle > 0.0 && idle.is_finite() { idle } else { BURST_IDLE };
     let e = edge_seq(a);
     if e.len() < 2 {
@@ -863,7 +879,7 @@ pub fn burst_width(a: &Analysis, idle: f64) -> f64 {
     }
     let (mut widths, mut prev, mut i) = (Vec::new(), 0.0, 0usize);
     'bursts: while i < e.len() {
-        while i < e.len() && !(e[i].1 && e[i].0 - prev >= idle) {
+        while i < e.len() && !(e[i].1 == start_rising && e[i].0 - prev >= idle) {
             prev = e[i].0;
             i += 1;
         }
@@ -872,7 +888,7 @@ pub fn burst_width(a: &Analysis, idle: f64) -> f64 {
         }
         let start = e[i].0;
         for j in i..e.len() {
-            if !e[j].1 {
+            if e[j].1 != start_rising {
                 let next = e.get(j + 1).map_or(a.t_end, |x| x.0);
                 if next - e[j].0 > idle {
                     widths.push(e[j].0 - start);
@@ -967,9 +983,9 @@ fn integral(v: &[f32], dt: f64, t0: f64, t1: f64) -> f64 {
 
 /// Per span between consecutive mid edges: the time from the first to the last sample beyond the reference level
 /// (upper level in a high span, lower level in a low span), with straight-line interpolation at both crossings.
-fn outside_spans(v: &[f32], dt: f64, a: &Analysis) -> (Vec<f64>, Vec<f64>) {
+fn outside_spans(v: &[f32], dt: f64, a: &Analysis, volts: f64) -> (Vec<f64>, Vec<f64>) {
     let amp = a.top - a.base;
-    let (up, lo) = (a.base + a.hpct * amp, a.base + a.lpct * amp);
+    let (up, lo) = if volts.is_finite() { (volts, volts) } else { (a.base + a.hpct * amp, a.base + a.lpct * amp) };
     let (mut hi_w, mut lo_w) = (Vec::new(), Vec::new());
     let last = v.len().saturating_sub(1);
     for w in edge_seq(a).windows(2) {
@@ -1027,7 +1043,11 @@ pub fn delay(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
 /// Phase of B relative to A in degrees, 0..360: for every selected edge of B inside a cycle of A (from one selected
 /// edge of A to the next), (B - cycle start) / cycle length x 360. The mean over all such edges.
 pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
-    let (ea, eb) = (edge_list(a, p.0), edge_list(b, p.1));
+    mean(&phase_values(edge_list(a, p.0), edge_list(b, p.1)))
+}
+
+/// The phase of every B edge of `eb` inside a cycle of `ea` (one selected edge of A to the next), degrees.
+pub(crate) fn phase_values(ea: &[f64], eb: &[f64]) -> Vec<f64> {
     let (mut d, mut j) = (Vec::new(), 0usize);
     for w in ea.windows(2) {
         while j < eb.len() && eb[j] < w[0] {
@@ -1038,7 +1058,7 @@ pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
             j += 1;
         }
     }
-    mean(&d)
+    d
 }
 
 fn edge_list<'a>(a: &'a Analysis, rising: bool) -> &'a [f64] {
@@ -1057,7 +1077,11 @@ pub fn skew(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
 /// early for the window moves to the next B, too late moves to the next A, and a later A nearer to the same B wins.
 /// Edges outside the window are never paired.
 pub fn skew_within(a: &Analysis, b: &Analysis, p: Pair, min: f64, max: f64) -> f64 {
-    let (ea, eb) = (edge_list(a, p.0), edge_list(b, p.1));
+    mean(&skew_values(edge_list(a, p.0), edge_list(b, p.1), min, max))
+}
+
+/// Every paired skew of the edge lists `ea` and `eb` (see `skew_within`).
+pub(crate) fn skew_values(ea: &[f64], eb: &[f64], min: f64, max: f64) -> Vec<f64> {
     let (mut d, mut i, mut j) = (Vec::new(), 0usize, 0usize);
     while i < ea.len() && j < eb.len() {
         let mut x = eb[j] - ea[i];
@@ -1082,7 +1106,7 @@ pub fn skew_within(a: &Analysis, b: &Analysis, p: Pair, min: f64, max: f64) -> f
         i += 1;
         j += 1;
     }
-    mean(&d)
+    d
 }
 
 /// The clock edges that latch data: rising, falling, or both (DDR strobes such as DQS).
@@ -1153,7 +1177,11 @@ pub fn setup_hold_times(clock: &Analysis, data: &Analysis, latch: Latch) -> (Vec
 /// data edge before it (clock - data); hold pairs each data edge with the nearest clock edge before it (data - clock).
 /// An edge is used in one pair at most, and a pair counts only when its value is inside the range.
 pub fn setup_hold_times_within(clock: &Analysis, data: &Analysis, latch: Latch, min: f64, max: f64) -> (Vec<f64>, Vec<f64>) {
-    let (c, d) = (latch.edges(clock), mids(data));
+    setup_hold_core(&latch.edges(clock), &mids(data), min, max)
+}
+
+/// `setup_hold_times_within` on given clock and data edge lists.
+pub(crate) fn setup_hold_core(c: &[f64], d: &[f64], min: f64, max: f64) -> (Vec<f64>, Vec<f64>) {
     let (mut setup, mut hold) = (Vec::new(), Vec::new());
     let (mut i, mut j) = (0usize, 0usize);
     while i < c.len() && j < d.len() {
@@ -1407,9 +1435,9 @@ mod tests {
     fn absolute_levels_are_volts_and_match_the_same_percent() {
         let v = trapezoid();
         let pct = analyze_levels(&v, 1e-9, 0.0, &Levels::percent(0.2, 0.8));
-        let abs = analyze_levels(&v, 1e-9, 0.0, &Levels { absolute: true, rise: [0.2, 0.5, 0.8], fall: [0.2, 0.5, 0.8], hyst: 0.05, base_top: BaseTop::Auto });
+        let abs = analyze_levels(&v, 1e-9, 0.0, &Levels { absolute: true, rise: [0.2, 0.5, 0.8], fall: [0.2, 0.5, 0.8], hyst: 0.05, base_top: BaseTop::Auto, out_volts: f64::NAN });
         assert!((pct.rise_time - abs.rise_time).abs() < 1e-12 && (pct.fall_time - abs.fall_time).abs() < 1e-12);
-        let narrow = analyze_levels(&v, 1e-9, 0.0, &Levels { absolute: true, rise: [0.4, 0.5, 0.6], fall: [0.4, 0.5, 0.6], hyst: 0.01, base_top: BaseTop::Auto });
+        let narrow = analyze_levels(&v, 1e-9, 0.0, &Levels { absolute: true, rise: [0.4, 0.5, 0.6], fall: [0.4, 0.5, 0.6], hyst: 0.01, base_top: BaseTop::Auto, out_volts: f64::NAN });
         assert!(close_abs(narrow.rise_time, 20e-9, 3e-9), "{}", narrow.rise_time);
     }
 

@@ -33,6 +33,8 @@ pub(super) struct MeasOwn {
     pub side_set: bool,
     pub n_set: bool,
     pub data_set: bool,
+    /// The per-row settings of the model (levels, edges, counting, pairing): None follows the shared ones.
+    pub cfg: crate::model::RowCfg,
 }
 
 impl MeasOwn {
@@ -49,23 +51,9 @@ impl MeasOwn {
             side_set: false,
             n_set: false,
             data_set: false,
+            cfg: crate::model::RowCfg::default(),
         }
     }
-}
-
-/// Geometry of the settings dialog. Source and reference levels are always there.
-pub(super) struct CfgGeom {
-    pub panel: Rect,
-    pub close: Rect,
-    pub source_m: Rect,
-    pub source_p: Rect,
-    pub refs: Rect,
-    pub idle_m: Option<Rect>,
-    pub idle_p: Option<Rect>,
-    pub side: Option<Rect>,
-    pub n_m: Option<Rect>,
-    pub n_p: Option<Rect>,
-    pub edges: Option<Rect>,
 }
 
 impl Ui {
@@ -397,109 +385,24 @@ impl Ui {
         }
     }
 
+    /// Opens the settings card of the selected measurement `index` (single, pair or catalogue row): a page of the Studio
+    /// sheet, or a dialog in Minimal and Default.
     pub(super) fn open_meas_cfg(&mut self, index: usize) {
-        if index >= self.m.meas.len() {
+        if index >= self.measurement_count() {
             self.meas_cfg = None;
             return;
         }
         self.ensure_meas_own();
         self.meas_cfg = Some(index as u16);
-    }
-
-    pub(super) fn cfg_geom(&self) -> Option<CfgGeom> {
-        let index = self.meas_cfg? as usize;
-        let (k, _) = *self.m.meas.get(index)?;
-        let extras = match k {
-            Meas::Rise | Meas::Fall => 1,
-            Meas::Burst => 1,
-            Meas::Outside => 1,
-            Meas::NPeriods => 2,
-            _ => 0,
-        };
-        let rows = 2 + extras;
-        let h = 52 + rows * 48 + 16;
-        let panel = Rect::new((W - 480) / 2, (H - h) / 2, 480, h);
-        let close = Rect::new(panel.x + panel.w - 48, panel.y + 8, 36, 28);
-        let row = |n: i32| Rect::new(panel.x + 168, panel.y + 48 + n * 48, 280, 36);
-        let source = row(0);
-        let refs = row(1);
-        let (idle_m, idle_p, side, n_m, n_p, edges) = match k {
-            Meas::Burst => {
-                let idle = row(2);
-                (Some(Rect::new(idle.x, idle.y, 44, idle.h)), Some(Rect::new(idle.x + idle.w - 44, idle.y, 44, idle.h)), None, None, None, None)
-            }
-            Meas::Outside => (None, None, Some(row(2)), None, None, None),
-            Meas::NPeriods => {
-                let n = row(2);
-                let edges = row(3);
-                (None, None, None, Some(Rect::new(n.x, n.y, 44, n.h)), Some(Rect::new(n.x + n.w - 44, n.y, 44, n.h)), Some(edges))
-            }
-            _ => (None, None, None, None, None, None),
-        };
-        Some(CfgGeom {
-            panel,
-            close,
-            source_m: Rect::new(source.x, source.y, 44, source.h),
-            source_p: Rect::new(source.x + source.w - 44, source.y, 44, source.h),
-            refs,
-            idle_m,
-            idle_p,
-            side,
-            n_m,
-            n_p,
-            edges,
-        })
-    }
-
-    pub(super) fn draw_meas_cfg(&self, cv: &mut Canvas) {
-        let Some(g) = self.cfg_geom() else { return };
-        let index = self.meas_cfg.unwrap() as usize;
-        let Some(&(k, id)) = self.m.meas.get(index) else { return };
-        let own = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
-        let f = &self.fonts();
-        cv.round(g.panel, 8, ACCENT, 255);
-        cv.round(g.panel.inset(2), 7, DLG_BG, 255);
-        cv.text(&f.mb, g.panel.x + 16, g.panel.y + 26, &format!("{} settings", k.name()), TEXT);
-        btn(cv, g.close, BTN, BTN_BORDER);
-        cv.text_in(&f.sb, g.close, 1, "X", TEXT);
-        self.cfg_caption(cv, g.panel, 0, "Source");
-        self.cfg_caption(cv, g.panel, 1, "Reference");
-        let source = Rect::new(g.source_m.x, g.source_m.y, g.source_p.x + g.source_p.w - g.source_m.x, g.source_m.h);
-        self.draw_stepper(cv, g.source_m, g.source_p, source, &self.wave_name(id));
-        let (low, high) = if own.refs_set { (own.low, own.high) } else { (self.m.meas_lpct, self.m.meas_hpct) };
-        btn(cv, g.refs, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, g.refs, 1, &format!("{:.0}/{:.0}", low * 100.0, high * 100.0), TEXT);
-        if matches!(k,Meas::Rise|Meas::Fall) {
-            self.cfg_caption(cv,g.panel,2,"Edges used");
-            let text=self.meas_edge_coverage_caption(id,k);
-            cv.text_in(&f.s,Rect::new(g.panel.x+168,g.panel.y+144,280,36),1,&text,DIM);
-        }
-        if let (Some(mi), Some(pl)) = (g.idle_m, g.idle_p) {
-            self.cfg_caption(cv, g.panel, 2, "Idle");
-            let idle = if own.idle_set { own.idle } else { self.m.meas_idle };
-            let text = if idle > 0.0 { si_short(idle, "s") } else { "period".into() };
-            self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &text);
-        }
-        if let Some(side) = g.side {
-            self.cfg_caption(cv, g.panel, 2, "Outside");
-            let which = if own.side_set { own.side } else { self.m.meas_out };
-            btn(cv, side, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, side, 1, &format!("{:?}", which), TEXT);
-        }
-        if let (Some(mi), Some(pl)) = (g.n_m, g.n_p) {
-            self.cfg_caption(cv, g.panel, 2, "N periods");
-            let n = if own.n_set { own.n } else { self.m.meas_n };
-            self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &n.to_string());
-        }
-        if let Some(edges) = g.edges {
-            self.cfg_caption(cv, g.panel, 3, "Edges");
-            let data = if own.data_set { own.data } else { self.m.meas_data };
-            btn(cv, edges, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, edges, 1, if data { "Data" } else { "Clock" }, TEXT);
+        if self.menu_open && self.menu != MenuId::MeasRow {
+            self.open_submenu(MenuId::MeasRow);
+        } else {
+            self.open_menu(MenuId::MeasRow);
         }
     }
 
-    fn meas_edge_coverage_caption(&self,id:WaveId,kind:Meas)->String {
+
+    pub(super) fn meas_edge_coverage_caption(&self,id:WaveId,kind:Meas)->String {
         let Some((analysis,_))=self.meas_number_analysis(id,kind) else {
             return if self.meas_number_computing(id,kind){"Computing"}else{"Not retained"}.into();
         };
@@ -507,93 +410,6 @@ impl Ui {
             else {(analysis.fall_count,analysis.falls.len())};
         if used==0 {format!("0 / {total}; unavailable")}
         else {format!("{used} / {total} qualified")}
-    }
-
-    fn cfg_caption(&self, cv: &mut Canvas, panel: Rect, n: i32, text: &str) {
-        cv.text(&self.fonts().s, panel.x + 16, panel.y + 72 + n * 48, text, LABEL);
-    }
-
-    fn draw_stepper(&self, cv: &mut Canvas, minus: Rect, plus: Rect, full: Rect, value: &str) {
-        let f = &self.fonts();
-        btn(cv, minus, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, minus, 1, "-", TEXT);
-        btn(cv, plus, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, plus, 1, "+", TEXT);
-        let mid = Rect::new(minus.x + minus.w + 4, full.y, (plus.x - minus.x - minus.w - 8).max(20), full.h);
-        btn(cv, mid, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, mid, 1, value, TEXT);
-    }
-
-    pub(super) fn meas_cfg_tap(&mut self, x: i32, y: i32) -> bool {
-        let Some(g) = self.cfg_geom() else { return false };
-        if !g.panel.contains(x, y) {
-            self.meas_cfg = None;
-            return true;
-        }
-        if g.close.contains(x, y) {
-            self.meas_cfg = None;
-            return true;
-        }
-        if g.source_m.contains(x, y) {
-            self.meas_cfg_source(-1);
-        } else if g.source_p.contains(x, y) {
-            self.meas_cfg_source(1);
-        } else if g.refs.contains(x, y) {
-            self.meas_cfg_refs();
-        } else if g.idle_m.is_some_and(|r| r.contains(x, y)) {
-            self.meas_cfg_idle(-1);
-        } else if g.idle_p.is_some_and(|r| r.contains(x, y)) {
-            self.meas_cfg_idle(1);
-        } else if g.side.is_some_and(|r| r.contains(x, y)) {
-            self.meas_cfg_side();
-        } else if g.n_m.is_some_and(|r| r.contains(x, y)) {
-            self.meas_cfg_n(-1);
-        } else if g.n_p.is_some_and(|r| r.contains(x, y)) {
-            self.meas_cfg_n(1);
-        } else if g.edges.is_some_and(|r| r.contains(x, y)) {
-            self.meas_cfg_edges();
-        }
-        true
-    }
-
-    fn cfg_entry(&mut self) -> Option<(usize, Meas, WaveId)> {
-        let index = self.meas_cfg? as usize;
-        let (k, id) = *self.m.meas.get(index)?;
-        self.ensure_meas_own();
-        Some((index, k, id))
-    }
-
-    fn meas_cfg_source(&mut self, d: i32) {
-        let Some((index, k, id)) = self.cfg_entry() else { return };
-        let srcs = self.meas_sources();
-        let at = srcs.iter().position(|s| *s == id).unwrap_or(0);
-        let next = srcs[(at as i32 + d).rem_euclid(srcs.len() as i32) as usize];
-        if next == id {
-            return;
-        }
-        if self.m.meas.iter().enumerate().any(|(j, e)| j != index && *e == (k, next)) {
-            self.toast("That measurement is already on this source");
-            return;
-        }
-        let own = self.meas_own.remove(&(k, id));
-        self.m.meas[index].1 = next;
-        if let Some(own) = own {
-            self.meas_own.insert((k, next), own);
-        }
-        self.clear_measurement_statistics();
-    }
-
-    fn meas_sources(&self) -> Vec<WaveId> {
-        let mut v: Vec<WaveId> = (0..n_ch()).map(WaveId::Ch).collect();
-        for i in 0..NREF {
-            if self.refs[i].is_some() {
-                v.push(WaveId::Ref(i));
-            }
-        }
-        if v.is_empty() {
-            v.push(WaveId::Ch(0));
-        }
-        v
     }
 
     pub(crate) fn set_meas_refs(&mut self, index: usize, low: f64, high: f64) {
@@ -606,66 +422,6 @@ impl Ui {
             own.low = low;
             own.high = high;
             own.refs_set = true;
-        }
-        self.clear_measurement_statistics();
-    }
-
-    fn meas_cfg_refs(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
-        let low = if cur.refs_set { cur.low } else { self.m.meas_lpct };
-        let (low, high) = if low < 0.15 { (0.2, 0.8) } else { (0.1, 0.9) };
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.low = low;
-            own.high = high;
-            own.refs_set = true;
-        }
-        self.clear_measurement_statistics();
-    }
-
-    fn meas_cfg_idle(&mut self, d: i32) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self.meas_own.get(&(k, id)).map(|o| if o.idle_set { o.idle } else { self.m.meas_idle }).unwrap_or(self.m.meas_idle);
-        let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
-        let i = l.iter().position(|&v| v >= cur * 0.999).unwrap_or(0);
-        let v = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.idle = v;
-            own.idle_set = true;
-        }
-        self.clear_measurement_statistics();
-    }
-
-    fn meas_cfg_side(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let all = [oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both];
-        let cur = self.meas_own.get(&(k, id)).map(|o| if o.side_set { o.side } else { self.m.meas_out }).unwrap_or(self.m.meas_out);
-        let i = all.iter().position(|&x| x == cur).unwrap_or(2);
-        let v = all[(i as i32 + 1).rem_euclid(all.len() as i32) as usize];
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.side = v;
-            own.side_set = true;
-        }
-        self.clear_measurement_statistics();
-    }
-
-    fn meas_cfg_n(&mut self, d: i32) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self.meas_own.get(&(k, id)).map(|o| if o.n_set { o.n } else { self.m.meas_n }).unwrap_or(self.m.meas_n);
-        let v = (cur as i32 + d).clamp(1, 32) as u32;
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.n = v;
-            own.n_set = true;
-        }
-        self.clear_measurement_statistics();
-    }
-
-    fn meas_cfg_edges(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self.meas_own.get(&(k, id)).map(|o| if o.data_set { o.data } else { self.m.meas_data }).unwrap_or(self.m.meas_data);
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.data = !cur;
-            own.data_set = true;
         }
         self.clear_measurement_statistics();
     }
@@ -786,8 +542,11 @@ mod tests {
         u.key(key::MEASURE);
         let vpp = u.catalog_set_rect(Meas::Vpp).expect("a place to open Vpp settings");
         u.tap(vpp.x + vpp.w / 2, vpp.y + vpp.h / 2);
-        let g = u.cfg_geom().expect("Vpp has a settings dialog");
-        assert!(g.source_m.w > 0 && g.refs.w > 0 && g.idle_m.is_none());
+        assert_eq!(u.menu, MenuId::MeasRow, "Vpp has a settings card");
+        let plan: Vec<Item> = u.measrow_plan().into_iter().flat_map(|(_, rows)| rows).collect();
+        assert!(plan.contains(&Item::RowF(measrow::RF::Gate)) && !plan.contains(&Item::RowF(measrow::RF::Idle)));
+        u.close_menu();
+        u.key(key::MEASURE);
         u.meas_cfg = None;
         let mut opened = false;
         for _ in 0..12 {
@@ -811,14 +570,13 @@ mod tests {
             let down = u.catalog_scroll_down().expect("scroll");
             u.tap(down.x + 4, down.y + 4);
         }
-        let g = u.cfg_geom().expect("Burst has a settings dialog");
-        assert!(g.refs.w > 0 && g.idle_m.is_some(), "Burst keeps its own idle");
-        u.meas_cfg_tap(g.idle_p.unwrap().x + 4, g.idle_p.unwrap().y + 4);
-        let burst_idle = u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle;
-        let vpp_own = u.meas_own.get(&(Meas::Vpp, WaveId::Ch(0))).unwrap();
-        assert!(!vpp_own.idle_set);
-        assert!(u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle_set);
-        assert_ne!(burst_idle, vpp_own.idle);
+        assert_eq!(u.menu, MenuId::MeasRow, "Burst has a settings card");
+        let plan: Vec<Item> = u.measrow_plan().into_iter().flat_map(|(_, rows)| rows).collect();
+        assert!(plan.contains(&Item::RowF(measrow::RF::Idle)), "Burst keeps its own idle");
+        u.adjust(Item::RowF(measrow::RF::Idle), 1);
+        let own = u.m.row_cfg(crate::model::RowKey::One(Meas::Burst, WaveId::Ch(0))).expect("the burst row has its own idle");
+        assert!(own.idle.is_some());
+        assert!(u.m.row_cfg(crate::model::RowKey::One(Meas::Vpp, WaveId::Ch(0))).is_none(), "Vpp keeps following");
     }
 
     #[test]
@@ -849,8 +607,9 @@ mod tests {
         for (index,kind)in[Meas::Rise,Meas::Fall].into_iter().enumerate(){
             u.open_meas_cfg(index);let caption=u.meas_edge_coverage_caption(WaveId::Ref(0),kind);
             assert!(caption.starts_with("0 /")&&caption.contains("unavailable"),"{caption}");assert!(u.meas_number(WaveId::Ref(0),kind).is_nan());
-            let geometry=u.cfg_geom().unwrap();assert!(geometry.panel.h>=212);
-            assert!(u.fonts().s.width(&caption)<=280);
+            let plan: Vec<Item> = u.measrow_plan().into_iter().flat_map(|(_, rows)| rows).collect();
+            assert!(plan.contains(&Item::RowF(measrow::RF::Used)), "the card shows the edges used");
+            assert!(u.fonts().s.width(&u.measrow_text(Item::RowF(measrow::RF::Used)).unwrap()) <= sheet::SHEET_W - 24);
         }
     }
 

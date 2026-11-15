@@ -269,6 +269,12 @@ pub fn setup_text(m: &Model) -> String {
     if !m.cat.is_empty() {
         kv("cat", m.cat.iter().map(|&(k, a, b, c, d)| format!("{}:{}:{}:{}:{}", k, a.token(), b.token(), c.token(), d.token())).collect::<Vec<_>>().join(" "));
     }
+    {
+        // per-row settings of the rows that are still selected
+        let keys = m.row_keys();
+        let rows: Vec<String> = m.row_cfg.iter().filter(|(k, c)| keys.contains(k) && !c.is_default()).map(|(k, c)| format!("{}|{}", k.text(), c.text())).collect();
+        if !rows.is_empty() { kv("row_cfg", rows.join(" ")); }
+    }
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
     kv("counter", format!("{} {} {} {}", m.cnt_on, m.cnt_src, m.cnt_mode, m.cnt_digits));
     for c in 0..NCH {
@@ -633,6 +639,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 out.push(row);
             }
             m.cat = out;
+        }
+        "row_cfg" => {
+            let mut out = Vec::new();
+            for e in v.split_whitespace() {
+                let (k, c) = e.split_once('|').ok_or_else(|| format!("not row|settings: {}", e))?;
+                out.push((crate::model::RowKey::parse(k)?, crate::model::RowCfg::parse(c)?));
+            }
+            m.row_cfg = out;
         }
         "dvm" => {
             let f: Vec<&str> = v.split_whitespace().collect();

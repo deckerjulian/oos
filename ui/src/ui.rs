@@ -25,6 +25,7 @@ pub mod bode;
 mod sim;
 mod offline;
 mod reflook;
+mod measrow;
 mod workflow;
 mod deskew;
 pub mod startup;
@@ -66,6 +67,8 @@ mod batch5_tests;
 mod batch6_tests;
 #[cfg(test)]
 mod batch7_tests;
+#[cfg(test)]
+mod batch7b_tests;
 mod hotspots;
 mod trigger_controls;
 mod scpi_operations;
@@ -320,6 +323,8 @@ pub enum MenuId {
     MeasHold,
     /// delay and phase between two channels
     MeasPair,
+    /// the settings card of one measurement row (ui/measrow.rs)
+    MeasRow,
     /// shared reference levels (the Studio sheet has them on a tab of Measure)
     MeasLevels,
     /// separate fall levels
@@ -530,6 +535,8 @@ enum Item {
     AddMeas,
     /// settings of one added measurement, index into `m.meas`
     MeasCfg(u16),
+    /// a field of the measurement settings card
+    RowF(measrow::RF),
     MeasPair(usize),
     MeasSrcB,
     DvmOn,
@@ -1165,6 +1172,8 @@ pub struct Ui {
     look: reflook::RefLook,
     /// Settings of each added measurement. Missing keys follow the shared measure menu.
     meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
+    /// The gate a row measures with while its key or samples are made (None: the shared one).
+    row_gate: std::cell::Cell<Option<bool>>,
     /// Settings dialog open on this index of `m.meas`.
     meas_cfg: Option<u16>,
     /// Reference named on the card that replaces the trigger card, and read by the DVM and the counter.
@@ -1483,6 +1492,7 @@ impl Ui {
             offline: false,
             look: reflook::RefLook::Live,
             meas_own: std::collections::HashMap::new(),
+            row_gate: std::cell::Cell::new(None),
             meas_cfg: None,
             offline_ref: 0,
             offline_hold: None,
@@ -3099,7 +3109,6 @@ impl Ui {
             self.draw_bottom(cv);
         }
         self.draw_menu(cv);
-        self.draw_meas_cfg(cv);
         self.draw_toast(cv);
         self.draw_overlay(cv);
         self.workspace_draw(cv);
@@ -5583,6 +5592,7 @@ impl Ui {
             }
             v }
             MenuId::MeasHold => vec![Item::AddMeas],
+            MenuId::MeasRow => self.measrow_items(),
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
@@ -6274,6 +6284,7 @@ impl Ui {
             MenuId::MeasHold => "Add".into(),
             MenuId::MeasPair => format!("Pairs {} to {}", self.pair_source_caption(self.meas_src), self.pair_source_caption(self.meas_src_b)),
             MenuId::MeasLevels => "Measurement levels".into(),
+            MenuId::MeasRow => self.measrow_title(),
             MenuId::MeasFall => "Fall levels".into(),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
@@ -6297,7 +6308,7 @@ impl Ui {
 
     fn kind(it: Item) -> Kind {
         if matches!(it, Item::AutoDeskew | Item::ClearDeskew) { return Kind::Action; }
-        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::bus_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
+        if let Some(k) = Self::meas_kind(it).or_else(|| Self::measrow_kind(it)).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::bus_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
             return k;
         }
         match it {
@@ -6318,7 +6329,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::bus_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
+        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::measrow_label(it)).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::bus_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
             return l;
         }
         match it {
@@ -6583,7 +6594,7 @@ impl Ui {
         // the desktop build reports its own web port and listeners (wlan.rs `net_value`)
         if it == Item::NetWeb && cfg!(windows) && !self.lan_status.is_empty() { return self.net_value(it); }
         if it == Item::CatSourceD { return self.wave_name(self.cat_d); }
-        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
+        if let Some(v) = self.meas_value(it).or_else(|| self.measrow_value(it)).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
             return v;
         }
         let m = &self.m;
@@ -6804,7 +6815,7 @@ impl Ui {
             }
             return;
         }
-        if self.bus_adjust(it, d) || self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
+        if self.bus_adjust(it, d) || self.meas_adjust(it, d) || self.measrow_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
             return;
         }
         if matches!(it, Item::TrigSrc | Item::TrigSrc2) {
@@ -7315,6 +7326,11 @@ impl Ui {
 
     fn clear_measurement_statistics(&mut self) {
         self.mstat.clear();
+        // the settings of a row that is no longer selected go with it
+        if !self.m.row_cfg.is_empty() {
+            let keys = self.m.row_keys();
+            self.m.row_cfg.retain(|(k, _)| keys.contains(k));
+        }
         self.replay.clear_deferred_statistics();
         self.reset_catalog_statistics();
     }
@@ -7329,6 +7345,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
+        if self.measrow_activate(it) { return; }
         if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.sim_activate(it) || self.afg_activate(it) || self.time_activate(it)) {
             return;
         }
@@ -7886,7 +7903,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.bus_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
+        if let Some(o) = self.meas_options(it).or_else(|| self.measrow_options(it)).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.bus_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
             return o;
         }
         let v: &[&str] = match it {
@@ -8427,6 +8444,7 @@ impl Ui {
     }
 
     fn close_menu(&mut self) {
+        if self.menu == MenuId::MeasRow { self.meas_cfg = None; }
         self.menu_open = false;
         self.menu = MenuId::Main;
         self.parent = None;
@@ -9466,9 +9484,6 @@ impl Ui {
         }
         if self.wlan.osk.is_some() {
             return self.osk_tap(x, y);
-        }
-        if self.meas_cfg_tap(x, y) {
-            return;
         }
         if self.dialog.is_some() {
             self.dialog = None;

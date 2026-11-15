@@ -1047,7 +1047,7 @@ impl Model {
             (true, true) => l.fall_volts,
             (true, false) => l.fall,
         };
-        oos_dsp::measure::Levels { absolute: l.absolute, rise, fall, hyst: if l.absolute { l.vhyst } else { l.hyst }, base_top: l.base_top }
+        oos_dsp::measure::Levels { absolute: l.absolute, rise, fall, hyst: if l.absolute { l.vhyst } else { l.hyst }, base_top: l.base_top, out_volts: f64::NAN }
     }
 
     /// The shared levels with the percent low and high of `meas_lpct` / `meas_hpct`.
@@ -1134,6 +1134,8 @@ pub struct Model {
     pub meas2: Vec<(usize, WaveId, WaveId)>,
     /// Catalog results that are not a `Meas` row: id, source A, source B, third source, fourth source.
     pub cat: Vec<(u16, WaveId, WaveId, WaveId, WaveId)>,
+    /// Per-row measurement settings; a row without an entry follows the shared Measure settings.
+    pub row_cfg: Vec<(RowKey, RowCfg)>,
     pub dvm_on: bool,
     pub dvm_src: usize,
     pub dvm_mode: usize,
@@ -1600,6 +1602,7 @@ impl Default for Model {
             grid: Grid::Full,
             meas: Vec::new(),
             meas2: Vec::new(),
+            row_cfg: Vec::new(),
             cat: Vec::new(),
             dvm_on: false,
             dvm_src: 0,
@@ -2581,5 +2584,154 @@ mod platform_tests {
         assert_eq!(d[d.len() - 1].1, oos_hal::model::Limits::standard().max_mem[0], "the list ends at the largest depth");
         assert!(board().couplings().contains(&Coupling::Dc), "the fallback of fit_platform");
         assert!(n_ch() <= NCH && gen_count() <= NGEN);
+    }
+}
+
+/// A measurement row as the setup, the badges and the per-row settings remember it: by what it measures.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum RowKey {
+    One(Meas, WaveId),
+    Pair(usize, WaveId, WaveId),
+    Cat(u16, WaveId, WaveId, WaveId, WaveId),
+}
+
+impl RowKey {
+    /// Setup text: `m:Vpp:1`, `p:4:1:2`, `c:id:a:b:c:d`.
+    pub fn text(&self) -> String {
+        match *self {
+            RowKey::One(k, id) => format!("m:{:?}:{}", k, id.token()),
+            RowKey::Pair(k, a, b) => format!("p:{}:{}:{}", k, a.token(), b.token()),
+            RowKey::Cat(k, a, b, c, d) => format!("c:{}:{}:{}:{}:{}", k, a.token(), b.token(), c.token(), d.token()),
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<RowKey, String> {
+        let f: Vec<&str> = s.split(':').collect();
+        let bad = || format!("not a measurement row: {}", s);
+        match f[..] {
+            ["m", k, id] => Ok(RowKey::One(ALL_MEAS.iter().copied().find(|m| format!("{:?}", m) == k).ok_or_else(bad)?, WaveId::parse(id)?)),
+            ["p", k, a, b] => Ok(RowKey::Pair(k.parse::<usize>().map_err(|_| bad())?, WaveId::parse(a)?, WaveId::parse(b)?)),
+            ["c", k, a, b, c, d] => Ok(RowKey::Cat(k.parse::<u16>().map_err(|_| bad())?, WaveId::parse(a)?, WaveId::parse(b)?, WaveId::parse(c)?, WaveId::parse(d)?)),
+            _ => Err(bad()),
+        }
+    }
+}
+
+/// Settings that belong to one measurement row. None follows the shared Measure settings (or the reading's own
+/// default): every field starts as None. Setting a field changes that row only.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct RowCfg {
+    /// edge that starts a cycle: 0 first edge of the record, 1 rising, 2 falling
+    pub pol: Option<u8>,
+    /// cycles skipped, and every n-th cycle counted
+    pub off: Option<u32>,
+    pub step: Option<u32>,
+    /// manual overshoot reference, volts
+    pub os_top: Option<f64>,
+    pub os_base: Option<f64>,
+    /// low / high reference level (percent as a fraction, or volts) and hysteresis
+    pub lo: Option<f64>,
+    pub hi: Option<f64>,
+    pub hyst: Option<f64>,
+    pub base_top: Option<oos_dsp::measure::BaseTop>,
+    /// gate: true the whole record, false the screen
+    pub gate_full: Option<bool>,
+    pub burst_fall: Option<bool>,
+    pub idle: Option<f64>,
+    /// time outside: 0 above, 1 below, 2 both; and its own level in volts
+    pub side: Option<u8>,
+    pub out_volts: Option<f64>,
+    pub n: Option<u32>,
+    pub n_off: Option<u32>,
+    pub n_step: Option<u32>,
+    /// edges an N-period duration counts: 0 rising, 1 falling, 2 both
+    pub n_edge: Option<u8>,
+    /// edge pair: from 0 rise, 1 fall, 2 both; to 0 rise, 1 fall, 2 both, 3 same, 4 opposite; direction 0 first, 1 last
+    pub from: Option<u8>,
+    pub to: Option<u8>,
+    pub dir: Option<u8>,
+    pub wmin: Option<f64>,
+    pub wmax: Option<f64>,
+}
+
+impl RowCfg {
+    pub fn is_default(&self) -> bool {
+        *self == RowCfg::default()
+    }
+
+    /// A field that changes the analysis of the record (levels, top / base, outside level, gate), not just the
+    /// reading taken from it.
+    pub fn changes_analysis(&self) -> bool {
+        self.lo.is_some() || self.hi.is_some() || self.hyst.is_some() || self.base_top.is_some() || self.out_volts.is_some() || self.gate_full.is_some()
+    }
+
+    /// Setup text: `name=value,name=value`.
+    pub fn text(&self) -> String {
+        let mut v: Vec<String> = Vec::new();
+        macro_rules! put { ($f:ident, $n:literal) => { if let Some(x) = self.$f { v.push(format!("{}={}", $n, x)); } }; }
+        put!(pol, "pol"); put!(off, "off"); put!(step, "step"); put!(os_top, "ostop"); put!(os_base, "osbase");
+        put!(lo, "lo"); put!(hi, "hi"); put!(hyst, "hyst");
+        if let Some(b) = self.base_top { v.push(format!("bt={:?}", b)); }
+        if let Some(g) = self.gate_full { v.push(format!("gate={}", g as u8)); }
+        if let Some(g) = self.burst_fall { v.push(format!("bfall={}", g as u8)); }
+        put!(idle, "idle"); put!(side, "side"); put!(out_volts, "ovolts"); put!(n, "n"); put!(n_off, "noff"); put!(n_step, "nstep");
+        put!(n_edge, "nedge"); put!(from, "from"); put!(to, "to"); put!(dir, "dir"); put!(wmin, "wmin"); put!(wmax, "wmax");
+        v.join(",")
+    }
+
+    pub fn parse(s: &str) -> Result<RowCfg, String> {
+        let mut c = RowCfg::default();
+        for e in s.split(',').filter(|e| !e.is_empty()) {
+            let (k, v) = e.split_once('=').ok_or_else(|| format!("not name=value: {}", e))?;
+            let f = |v: &str| v.parse::<f64>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", e));
+            let u = |v: &str, max: u32| v.parse::<u32>().ok().filter(|x| *x <= max).ok_or_else(|| format!("out of range: {}", e));
+            match k {
+                "pol" => c.pol = Some(u(v, 2)? as u8),
+                "off" => c.off = Some(u(v, 1_000_000)?),
+                "step" => c.step = Some(u(v, 1_000_000)?.max(1)),
+                "ostop" => c.os_top = Some(f(v)?),
+                "osbase" => c.os_base = Some(f(v)?),
+                "lo" => c.lo = Some(f(v)?),
+                "hi" => c.hi = Some(f(v)?),
+                "hyst" => c.hyst = Some(f(v)?),
+                "bt" => c.base_top = Some(oos_dsp::measure::BaseTop::ALL.iter().copied().find(|b| format!("{:?}", b) == v).ok_or_else(|| format!("unknown method: {}", v))?),
+                "gate" => c.gate_full = Some(v == "1"),
+                "bfall" => c.burst_fall = Some(v == "1"),
+                "idle" => c.idle = Some(f(v)?),
+                "side" => c.side = Some(u(v, 2)? as u8),
+                "ovolts" => c.out_volts = Some(f(v)?),
+                "n" => c.n = Some(u(v, 32)?.max(1)),
+                "noff" => c.n_off = Some(u(v, 1_000_000)?),
+                "nstep" => c.n_step = Some(u(v, 1_000_000)?.max(1)),
+                "nedge" => c.n_edge = Some(u(v, 2)? as u8),
+                "from" => c.from = Some(u(v, 2)? as u8),
+                "to" => c.to = Some(u(v, 4)? as u8),
+                "dir" => c.dir = Some(u(v, 1)? as u8),
+                "wmin" => c.wmin = Some(f(v)?),
+                "wmax" => c.wmax = Some(f(v)?),
+                _ => return Err(format!("unknown row setting: {}", k)),
+            }
+        }
+        Ok(c)
+    }
+}
+
+impl Model {
+    pub fn row_cfg(&self, key: RowKey) -> Option<RowCfg> {
+        self.row_cfg.iter().find(|(k, _)| *k == key).map(|(_, c)| *c)
+    }
+
+    /// Sets the settings of a row; an all-follow set removes the entry.
+    pub fn set_row_cfg(&mut self, key: RowKey, cfg: RowCfg) {
+        self.row_cfg.retain(|(k, _)| *k != key);
+        if !cfg.is_default() { self.row_cfg.push((key, cfg)); }
+    }
+
+    /// The keys of every selected row.
+    pub fn row_keys(&self) -> Vec<RowKey> {
+        self.meas.iter().map(|&(k, id)| RowKey::One(k, id))
+            .chain(self.meas2.iter().map(|&(k, a, b)| RowKey::Pair(k, a, b)))
+            .chain(self.cat.iter().map(|&(k, a, b, c, d)| RowKey::Cat(k, a, b, c, d)))
+            .collect()
     }
 }

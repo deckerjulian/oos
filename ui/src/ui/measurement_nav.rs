@@ -63,7 +63,7 @@ impl Ui {
                 let x = 208 + i as i32 % 2 * 390;
                 let y = 170 + i as i32 / 2 * 43;
                 rows.push(Row { it: item, label: Rect::new(0,0,0,0), ctrl: Rect::new(x,y,300,40), ctl: Ctl::Button });
-                if (index as usize) < self.m.meas.len() {
+                {
                     rows.push(Row { it: Item::MeasCfg(index), label: Rect::new(0,0,0,0), ctrl: Rect::new(x+304,y,74,40), ctl: Ctl::Button });
                 }
                 continue;

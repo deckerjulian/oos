@@ -1493,7 +1493,7 @@ fn meas_preset_name(m: &Model) -> &'static str {
 }
 
 /// `v` moved `d` steps along 1-2-5 values from 0.1 mV to 500 V (positive only when `positive`, else both signs and 0).
-fn ladder(v: f64, d: i32, positive: bool) -> f64 {
+pub(super) fn ladder(v: f64, d: i32, positive: bool) -> f64 {
     let mut l: Vec<f64> = (-4..=2).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
     if !positive {
         let neg: Vec<f64> = l.iter().rev().map(|x| -x).collect();
