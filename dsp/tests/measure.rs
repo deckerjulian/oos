@@ -99,6 +99,23 @@ fn high_low_burst_outside_and_n_periods() {
 }
 
 #[test]
+fn high_and_low_time_ignore_noise_on_slow_edges() {
+    // trapezoid: 200-sample edges, 300-sample plateaus, 2 % noise. Above 90 %: 20 + 300 + 20 samples, below 10 % the same
+    let one: Vec<f32> = (0..200)
+        .map(|i| i as f32 / 200.0)
+        .chain(std::iter::repeat_n(1.0, 300))
+        .chain((0..200).map(|i| 1.0 - i as f32 / 200.0))
+        .chain(std::iter::repeat_n(0.0, 300))
+        .collect();
+    let mut v: Vec<f32> = one.iter().copied().cycle().take(20 * one.len()).collect();
+    add_noise(&mut v, 0.01, 5);
+    let a = analyze(&v, 1.0);
+    assert!(close(a.get(Meas::HighTime), 340.0, 0.03), "{}", a.get(Meas::HighTime));
+    assert!(close(a.get(Meas::LowTime), 340.0, 0.03), "{}", a.get(Meas::LowTime));
+    assert!(close(a.get(Meas::Outside), 340.0, 0.03), "{}", a.get(Meas::Outside));
+}
+
+#[test]
 fn cycle_levels_of_a_sine() {
     let dt = 1e-6;
     let v = sample(|t| 1.5 * (2.0 * std::f64::consts::PI * 1e3 * t).sin() + 0.5, 0.0, dt, 20_000);

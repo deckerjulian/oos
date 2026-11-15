@@ -476,8 +476,8 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     a.rise_count = rt.len();
     a.fall_count = ft.len();
     // keep the high and low reference crossings: high time, low time and time outside are measured there
-    let (hr, hf) = level_times(v, hi_l, dt);
-    let (lr, lf) = level_times(v, lo, dt);
+    let (hr, hf) = level_times(v, hi_l, (amp * 0.1) as f32, dt);
+    let (lr, lf) = level_times(v, lo, (amp * 0.1) as f32, dt);
     let hi = pair_widths(&hr, &hf);
     let low = pair_widths(&lf, &lr);
     a.high_time = mean(&hi);
@@ -625,23 +625,15 @@ impl Analysis {
     }
 }
 
-/// Rising and falling crossings of `level`, seconds from the first sample.
-fn level_times(v: &[f32], level: f32, dt: f64) -> (Vec<f64>, Vec<f64>) {
+/// Rising and falling crossings of `level` with the hysteresis `hyst` of the mid crossings, seconds from the first
+/// sample. Without it, noise on a slow edge crosses the level many times and makes tiny pulses.
+fn level_times(v: &[f32], level: f32, hyst: f32, dt: f64) -> (Vec<f64>, Vec<f64>) {
     let (mut rises, mut falls) = (Vec::new(), Vec::new());
-    for i in 1..v.len() {
-        let (a, b) = (v[i - 1], v[i]);
-        if !(a.is_finite() && b.is_finite()) || a == b {
-            continue;
-        }
-        let hit_up = a < level && b >= level;
-        let hit_dn = a > level && b <= level;
-        if hit_up || hit_dn {
-            let t = ((i - 1) as f64 + ((level - a) / (b - a)) as f64) * dt;
-            if hit_up {
-                rises.push(t);
-            } else {
-                falls.push(t);
-            }
+    for e in edges(v, level, hyst) {
+        if e.rising {
+            rises.push(e.t * dt);
+        } else {
+            falls.push(e.t * dt);
         }
     }
     (rises, falls)
