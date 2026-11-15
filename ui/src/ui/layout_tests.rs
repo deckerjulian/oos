@@ -94,6 +94,9 @@ fn studio() -> Ui {
 
 fn shot(u: &mut Ui, name: &str) {
     let mut cv = Canvas::new(W, H);
+    // the maps are filled for the lanes that the first frame lays out
+    u.render(&mut cv);
+    for _ in 0..6 { u.step(0.05); }
     u.render(&mut cv);
     if let Some(dir) = std::env::var_os("OOS_SHOTS") {
         std::fs::write(std::path::Path::new(&dir).join(format!("studio-{name}.png")), crate::store::png_of(&cv)).unwrap();
@@ -172,4 +175,31 @@ fn studio_bottom_bar_has_a_chip_per_channel_the_time_base_and_the_trigger() {
     for c in 0..n_ch() { u.m.ch[c].on = true; }
     let b = u.studio_bottom();
     assert!(b.ch[n_ch() - 1].right() < b.time.x && b.trig.right() <= W);
+}
+
+#[test]
+fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
+    let mut u = studio();
+    u.m.cursor = CursorMode::Time;
+    u.m.cur_a = 0.62;
+    u.m.cur_b = 0.80;
+    shot(&mut u, "03-plot");
+    // one lane per channel that is on, one under the other, inside the plot under the tag row
+    assert_eq!(u.wins.len(), 2);
+    assert!(u.wins[0].bottom() <= u.wins[1].y);
+    assert_eq!(u.studio_head_h(), 18);
+    assert_eq!(u.grid.y, u.frame().body.y + 18);
+    // the tag row, the lanes and the bars do not overlap
+    let top = u.studio_top();
+    assert!(u.grid.y - 18 >= top.badge.bottom());
+    assert!(u.grid.bottom() <= u.frame().bottom.y);
+    // the T tag sits at the trigger position: 0 s at the centre with no delay
+    u.m.delay = 0.0;
+    assert_eq!(u.studio_x_of_time(0.0), u.grid.x + u.grid.w / 2);
+    // Default and Minimal keep their plot exactly
+    u.m.layout = Layout::Minimal;
+    assert_eq!(u.studio_head_h(), 0);
+    u.m.layout = Layout::Studio;
+    u.m.zoom = true;
+    assert_eq!(u.studio_head_h(), 0, "the zoom view brings its own toolbar");
 }

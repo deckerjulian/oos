@@ -1652,7 +1652,8 @@ impl Ui {
 
     fn plot_top(&self) -> i32 {
         let y = if self.full_on() { 0 } else { self.frame().body.y };
-        if self.m.strip_dock == StripDock::Above { y + self.strip_rows_h() } else { y }
+        let y = if self.m.strip_dock == StripDock::Above { y + self.strip_rows_h() } else { y };
+        y + self.studio_head_h()
     }
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
@@ -2963,6 +2964,7 @@ impl Ui {
         }
         self.draw_cal_banner(cv);
         self.draw_info(cv);
+        self.draw_studio_overlay(cv);
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
         if !(self.eye_open() && self.m.eye_place==EyePlace::Full && self.workspace.eye_float.is_none()) {
@@ -4058,6 +4060,7 @@ impl Ui {
             }
             let y = self.y_of_volts(c, 0.0).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
             let col = CH_COLORS[c];
+            if self.m.layout == Layout::Studio { self.studio_lane_badge(cv, c, y); continue; }
             let r = Rect::new(a.x + 2, y - 8, 16, 16);
             cv.round(r, 3, col, 255);
             cv.triangle([(a.x + 17, y - 6), (a.x + 24, y), (a.x + 17, y + 6)], col);

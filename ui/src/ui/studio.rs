@@ -355,3 +355,75 @@ impl Ui {
         }
     }
 }
+
+/// The cursor band and its C1 / C2 tags.
+const BAND: Rgb = rgb(0x2d, 0xd4, 0xcf);
+/// Height of the row above the lanes that carries the T marker and the cursor tags.
+const HEAD_H: i32 = 18;
+
+impl Ui {
+    /// Studio keeps a row above the lanes for the trigger position and the cursor tags.
+    pub(super) fn studio_head_h(&self) -> i32 {
+        if self.m.layout == Layout::Studio && !self.m.zoom && !self.full_on() { HEAD_H } else { 0 }
+    }
+
+    /// Screen x of a time (relative to the trigger) in the main view of the plot.
+    pub(super) fn studio_x_of_time(&self, t: f64) -> i32 {
+        let g = self.grid;
+        let (tpd, delay) = self.view();
+        g.x + ((0.5 + (t - delay as f64) / (HDIV as f64 * tpd as f64)) * g.w as f64).round() as i32
+    }
+
+    /// The channel badge at the left edge of a lane, on the channel's ground line (`draw_markers`).
+    pub(super) fn studio_lane_badge(&self, cv: &mut Canvas, c: usize, y: i32) {
+        let a = self.area;
+        let col = CH_COLORS[c];
+        let r = Rect::new(a.x + 3, y - 9, 44, 18);
+        cv.round(r, 4, col, 255);
+        cv.round(r.inset(1), 3, BG, 255);
+        cv.text_in(&self.fonts().sb, r, 1, &format!("CH{}", c + 1), col);
+    }
+
+    /// The T marker over the lanes, the cursor tags and the shaded band between the cursors.
+    pub(super) fn draw_studio_overlay(&self, cv: &mut Canvas) {
+        let head = self.studio_head_h();
+        if head == 0 || self.view_on() || self.eye_open() { return; }
+        let f = self.fonts();
+        let g = self.grid;
+        let row = Rect::new(g.x, g.y - head, g.w, head);
+        cv.set_clip(Rect::new(g.x - 12, row.y, g.w + 24, g.h + head));
+        // the shaded band between two time cursors
+        if matches!(self.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) {
+            let xs = [self.m.cur_a, self.m.cur_b].map(|frac| g.x + (frac * g.w as f32) as i32);
+            let (x0, x1) = (xs[0].min(xs[1]), xs[0].max(xs[1]));
+            cv.set_clip(Rect::new(g.x, g.y, g.w, g.h));
+            for &lane in &self.wins {
+                cv.blend(Rect::new(x0, lane.y, (x1 - x0).max(1), lane.h), BAND, 46);
+            }
+            cv.set_clip(Rect::new(g.x - 12, row.y, g.w + 24, g.h + head));
+            for (x, name) in [(xs[0], "C1"), (xs[1], "C2")] {
+                let r = Rect::new((x - 11).clamp(g.x, g.right() - 22), row.y + 1, 22, head - 3);
+                cv.round(r, 3, BAND, 255);
+                cv.text_in(&f.sb, r, 1, name, DARK_TEXT);
+                cv.vline(x, row.bottom() - 2, g.y, BAND);
+            }
+        }
+        // T: where the trigger is in the record, dashed through every lane; at an edge when it is off the screen
+        let tx = self.studio_x_of_time(0.0);
+        let r = Rect::new(tx.clamp(g.x + 11, g.right() - 11) - 11, row.y + 1, 22, head - 3);
+        cv.round(r, 3, AMBER, 255);
+        cv.round(r.inset(1), 2, BG, 255);
+        cv.text_in(&f.sb, r, 1, "T", AMBER);
+        if (g.x..g.right()).contains(&tx) {
+            cv.triangle([(tx - 3, r.bottom()), (tx + 3, r.bottom()), (tx, r.bottom() + 3)], AMBER);
+            for &lane in &self.wins {
+                cv.dashed_vline(tx, lane.y, lane.y + lane.h - 1, 4, 4, AMBER);
+            }
+        } else if tx < g.x {
+            cv.triangle([(r.x - 1, r.y + r.h / 2), (r.x + 4, r.y + 2), (r.x + 4, r.bottom() - 2)], AMBER);
+        } else {
+            cv.triangle([(r.right() + 1, r.y + r.h / 2), (r.right() - 4, r.y + 2), (r.right() - 4, r.bottom() - 2)], AMBER);
+        }
+        cv.no_clip();
+    }
+}
