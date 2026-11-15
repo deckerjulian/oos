@@ -696,7 +696,7 @@ impl Ui {
         let mut ch = [Rect::new(0, BOTTOM.y, 0, 30); NCH];
         for (id, rect) in self.source_pills() { if let WaveId::Ch(c) = id { ch[c] = rect; } }
         let (_, _, time, trig, _, _, _) = self.footer_rects();
-        Cards { ch, la: None, gen: None, time, trig }
+        Cards { ch, la: None, gen: None, refs: None, time, trig }
     }
     pub(super) fn draw_workspace_footer(&self, cv: &mut Canvas) {
         cv.fill(BOTTOM, BAR);

@@ -5068,9 +5068,11 @@ impl Ui {
         let n_off = n as i32 - n_on;
         let caps = &oos_hal::model::platform().caps;
         let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
+        let ref_card = !self.record_mode() && !self.shown_refs().is_empty();
         let start = row.x;
         let room = |wide: bool| {
-            let a: i32 = aux.iter().filter(|a| a.0).map(|a| if a.1 && wide { AUX_WIDE } else { AUX_NARROW } + 7).sum();
+            let a: i32 = aux.iter().filter(|a| a.0).map(|a| if a.1 && wide { AUX_WIDE } else { AUX_NARROW } + 7).sum::<i32>()
+                + if ref_card { AUX_NARROW + 7 } else { 0 };
             row.right() - start - n_off * (56 + 7) - n_on * 7 - a - (130 + 7) - 222
         };
         let wide = n_on == 0 || room(true) / n_on.max(1) >= CH_MIN;
@@ -5095,6 +5097,7 @@ impl Ui {
             })
         };
         let (la, gen) = (next(aux[0]), next(aux[1]));
+        let refs = ref_card.then(|| { let r = Rect::new(x, y, AUX_NARROW, h); x += AUX_NARROW + 7; r });
         let rest = row.right() - x - 7;
         let tw = ((rest as f32 * 0.42) as i32).min(rest - 222).max(130);
         let tw = tw.min(TIME_CARD_MAX);
@@ -5102,7 +5105,7 @@ impl Ui {
         // a wide screen: TIME and trigger keep their largest size and move to the right edge, the room stays between
         // the channels and them (as in the top bar)
         let x = row.right() - trw - 7 - tw;
-        Cards { ch, la, gen, time: Rect::new(x, y, tw, h), trig: Rect::new(x + tw + 7, y, trw, h) }
+        Cards { ch, la, gen, refs, time: Rect::new(x, y, tw, h), trig: Rect::new(x + tw + 7, y, trw, h) }
     }
 
     /// The big digits of a card while `s` fits `room`, else the next size: nothing is cut off with every card on.
@@ -5142,6 +5145,38 @@ impl Ui {
 
     /// A card like the channels': on, wide with its values; on, narrow with a full dot; off, with a ring.
     #[allow(clippy::too_many_arguments)]
+    /// The refs that are shown over the live channels, in slot order.
+    pub(super) fn shown_refs(&self) -> Vec<usize> {
+        (0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).collect()
+    }
+
+    /// REF card of the Default bottom row: the active ref; a tap makes the next shown ref the active source.
+    fn draw_ref_card(&self, cv: &mut Canvas, r: Rect) {
+        let f = self.fonts();
+        let shown = self.shown_refs();
+        let active = shown.iter().copied().find(|&i| self.selected_workspace_source() == Some(WaveId::Ref(i)));
+        let col = active.map_or(LABEL, |i| self.wave_color(WaveId::Ref(i)));
+        cv.round(r, 7, if active.is_some() { col } else { CARD_BORDER }, 255);
+        cv.round(r.inset(2), 5, BAR, 255);
+        cv.set_clip(r.inset(3));
+        cv.text_in(&f.sb, Rect::new(r.x, r.y + 8, r.w, 18), 1, "REF", if active.is_some() { col } else { LABEL });
+        let name = active.map_or_else(|| format!("{} on", shown.len()), |i| format!("R{}", i + 1));
+        cv.text_in(&f.mb, Rect::new(r.x, r.y + 30, r.w, 24), 1, &name, TEXT);
+        cv.no_clip();
+    }
+
+    /// Makes the next shown ref the active source (cursors, measurements and the cards follow it).
+    pub(super) fn cycle_active_ref(&mut self) {
+        let shown = self.shown_refs();
+        let Some(&first) = shown.first() else { return };
+        let next = match self.selected_workspace_source() {
+            Some(WaveId::Ref(i)) => shown.iter().copied().find(|&k| k > i).unwrap_or(first),
+            _ => first,
+        };
+        self.select_workspace_source(WaveId::Ref(next));
+        self.toast(&format!("Active source R{}", next + 1));
+    }
+
     fn draw_aux_card(&self, cv: &mut Canvas, r: Rect, name: &str, col: Rgb, on: bool, sel: bool, big: &str, sub: &str) {
         let f = self.fonts();
         cv.round(r, 7, if sel || on { col } else { CARD_BORDER }, 255);
@@ -5231,6 +5266,7 @@ impl Ui {
             let (big, sub) = self.afg_card_text();
             self.draw_aux_card(cv, r, "GEN", GEN_COLOR, self.m.afg_on, root == Some(MenuId::Afg), &big, &sub);
         }
+        if let Some(r) = self.card_layout().refs { self.draw_ref_card(cv, r); }
         // time base (sample rate and depth are in the top bar)
         let r = tr;
         let sel = root == Some(MenuId::Horizontal);
@@ -9372,6 +9408,7 @@ impl Ui {
             // only the page: an output does not come on by touching a card
             return self.toggle_menu(MenuId::Afg);
         }
+        if self.card_layout().refs.is_some_and(|r| r.contains(x, y)) { return self.cycle_active_ref(); }
         if tr.contains(x, y) {
             // the zoom/delay line: tap it to toggle zoom without opening Horizontal
             if y >= tr.y + tr.h / 2 {
@@ -9440,6 +9477,8 @@ struct Cards {
     ch: [Rect; NCH],
     la: Option<Rect>,
     gen: Option<Rect>,
+    /// the REF card of the Default bottom row: only while a ref is shown over the live channels
+    refs: Option<Rect>,
     time: Rect,
     trig: Rect,
 }

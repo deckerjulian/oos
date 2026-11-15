@@ -197,6 +197,38 @@ fn ref_look_lines_round_trip_and_ignore_nonsense() {
 }
 
 #[test]
+fn default_layout_has_a_ref_card_that_makes_a_ref_active() {
+    let mut u = fresh(Layout::Default);
+    assert!(u.card_layout().refs.is_none(), "no ref, no card");
+    u.refs[1] = Some(sine_ref(1, 2000, 1e-6));
+    u.refs[3] = Some(sine_ref(3, 2000, 1e-6));
+    u.relayout();
+    let r = u.card_layout().refs.expect("a shown ref gives a REF card");
+    for c in u.card_layout().ch { if c.w > 0 { assert!(c.right() <= r.x, "the card does not overlap the channels"); } }
+    u.tap(r.x + r.w / 2, r.y + r.h / 2);
+    assert_eq!(u.selected_workspace_source(), Some(WaveId::Ref(1)));
+    u.tap(r.x + r.w / 2, r.y + r.h / 2);
+    assert_eq!(u.selected_workspace_source(), Some(WaveId::Ref(3)));
+    u.tap(r.x + r.w / 2, r.y + r.h / 2);
+    assert_eq!(u.selected_workspace_source(), Some(WaveId::Ref(1)));
+}
+
+#[test]
+fn studio_bottom_bar_has_a_chip_per_shown_ref() {
+    let mut u = fresh(Layout::Studio);
+    u.refs[0] = Some(sine_ref(0, 2000, 1e-6));
+    u.refs[2] = Some(sine_ref(2, 2000, 1e-6));
+    u.refs[2].as_mut().unwrap().on = false;
+    u.relayout();
+    let b = u.studio_bottom();
+    assert!(b.refs[0].w > 0 && b.refs[2].w == 0, "only shown refs get a chip");
+    assert!(b.refs[0].x >= b.ch[n_ch() - 1].right() && b.refs[0].right() <= b.time.x);
+    u.tap(b.refs[0].x + 5, b.refs[0].y + 5);
+    assert_eq!(u.selected_workspace_source(), Some(WaveId::Ref(0)));
+    assert_eq!(u.ref_sel, 0);
+}
+
+#[test]
 fn shots_refs_sim_axis_power() {
     for layout in [Layout::Default, Layout::Studio] {
         let name = format!("{layout:?}").to_lowercase();

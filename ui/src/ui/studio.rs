@@ -116,10 +116,14 @@ pub(super) struct StudioTop {
 #[derive(Clone, Copy)]
 pub(super) struct StudioBottom {
     pub ch: [Rect; NCH],
+    /// a small chip for each shown ref: a tap makes it the active source
+    pub refs: [Rect; NREF],
     pub time: Rect,
     pub trig: Rect,
     pub panel: Option<Rect>,
 }
+
+const REF_CHIP_W: i32 = 42;
 
 const CHIP_H: i32 = 30;
 const CHIP_Y: i32 = 5;
@@ -352,7 +356,8 @@ impl Ui {
         let trig = Rect::new(right - trig_w, y, trig_w, h);
         let time = Rect::new(trig.x - 9 - 150, y, 150, h);
         // the channels share what is left of the row, an off channel a little less than one that is on
-        let room = time.x - 9 - (bottom.x + 4);
+        let shown = self.shown_refs();
+        let room = time.x - 9 - (bottom.x + 4) - shown.len() as i32 * (REF_CHIP_W + 5);
         let on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
         let (w_on, w_off) = (170, 118);
         let want = on * w_on + (n as i32 - on) * w_off + (n as i32 - 1) * 5;
@@ -364,12 +369,17 @@ impl Ui {
             *r = Rect::new(x, y, w, h);
             x += w + 5;
         }
-        StudioBottom { ch, time, trig, panel }
+        let mut refs = [Rect::new(0, y, 0, h); NREF];
+        for &i in &shown {
+            refs[i] = Rect::new(x, y, REF_CHIP_W, h);
+            x += REF_CHIP_W + 5;
+        }
+        StudioBottom { ch, refs, time, trig, panel }
     }
 
     pub(super) fn studio_cards(&self) -> Cards {
         let b = self.studio_bottom();
-        Cards { ch: b.ch, la: None, gen: None, time: b.time, trig: b.trig }
+        Cards { ch: b.ch, la: None, gen: None, refs: None, time: b.time, trig: b.trig }
     }
 
     pub(super) fn draw_studio_bottom(&self, cv: &mut Canvas) {
@@ -395,6 +405,13 @@ impl Ui {
             cv.text_in(&f.mb, Rect::new(badge.right() + 8, r.y, (r.right() - 20 - badge.right() - 8).max(1), r.h), 0, &text, if ch.on { TEXT } else { DIM });
             cv.no_clip();
             chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM);
+        }
+        for i in self.shown_refs() {
+            let r = b.refs[i];
+            let col = self.wave_color(WaveId::Ref(i));
+            let active = self.selected_workspace_source() == Some(WaveId::Ref(i));
+            chip(cv, r, BTN, if active { ACCENT } else { col });
+            cv.text_in(&f.sb, r, 1, &format!("R{}", i + 1), col);
         }
         // the sections of the row are told apart by a line
         for x in [b.time.x - 5, b.trig.x - 5] {
@@ -459,6 +476,9 @@ impl Ui {
             }
             self.select_workspace_source(WaveId::Ch(c));
             return self.toggle_menu(MenuId::Channel(c));
+        }
+        if let Some(i) = self.shown_refs().into_iter().find(|&i| b.refs[i].contains(x, y)) {
+            return self.select_workspace_source(WaveId::Ref(i));
         }
         if b.time.contains(x, y) {
             self.toggle_menu(MenuId::Horizontal);
