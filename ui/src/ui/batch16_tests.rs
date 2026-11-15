@@ -83,8 +83,9 @@ fn the_tile_grid_shows_the_pictures_on_two_pages() {
     for _ in 0..3 { frame(&mut u); }
     shot(&mut u, "tiles-page1");
     let g = u.sheet_add_geo();
-    assert!(g.pages >= 2);
-    tap(&mut u, g.next);
+    assert!(u.tile_scroll_max() > 0);
+    u.studio.md.tile_scroll = g.list.h;
+    for _ in 0..2 { frame(&mut u); }
     shot(&mut u, "tiles-page2");
     u.sheet.add_group = 1;
     shot(&mut u, "tiles-jitter");

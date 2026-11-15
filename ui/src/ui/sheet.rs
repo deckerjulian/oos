@@ -391,7 +391,7 @@ impl Ui {
     /// The row type of an item, from the control the classic dialog would give it.
     pub(super) fn sheet_row_kind(&self, it: Item) -> RowKind {
         let w = SHEET_W - 2 * PAD - LABEL_W;
-        if it == Item::TrigType {
+        if it == Item::TrigType || it == Item::RefColor {
             return RowKind::Choice;
         }
         if let Item::RefShow(_) = it {
@@ -416,6 +416,11 @@ impl Ui {
                 Some(i) => { v.push("More".into()); (v, Some(i)) }
                 None => { v.push(cur); (v, Some(3)) }
             };
+        }
+        if it == Item::RefColor {
+            // the five slot colours as one choice (drawn as swatches)
+            let sel = self.refs.get(self.ref_sel).and_then(Option::as_ref).map(|r| r.color.min(REF_COLORS.len() - 1));
+            return (REF_COLORS.iter().map(|c| c.0.to_string()).collect(), sel);
         }
         match self.ctl(it, SHEET_W - 2 * PAD - LABEL_W) {
             Ctl::Seg(o, s) => (o, s),
@@ -491,8 +496,10 @@ impl Ui {
             0 => Vec::new(),
             1 => vec![(foot[0], Rect::new(r.x + PAD, y, w, 44))],
             _ => {
-                let half = (w - 8) / 2;
-                vec![(foot[0], Rect::new(r.x + PAD, y, half, 44)), (foot[1], Rect::new(r.x + PAD + half + 8, y, half, 44))]
+                // the danger button is narrower and set apart from the main one
+                let danger = destructive(foot[1]) && !destructive(foot[0]);
+                let (a, b) = if danger { (w * 58 / 100, w * 30 / 100) } else { ((w - 8) / 2, (w - 8) / 2) };
+                vec![(foot[0], Rect::new(r.x + PAD, y, a, 44)), (foot[1], Rect::new(r.right() - PAD - b, y, b, 44))]
             }
         }
     }
@@ -531,8 +538,13 @@ impl Ui {
         cv.hline(r.x + 6, r.right() - 7, r.bottom() - SHEET_FOOT, LINE);
         for &(it, b) in foot {
             let red = destructive(it);
-            btn(cv, b, if red { mix(DLG_BG, RED, 30) } else { BTN }, if red { RED } else { BTN_BORDER });
-            let label = self.sheet_label(it);
+            let armed = self.studio.md.armed.is_some_and(|(a, t)| a == it && self.now - t < 3.0);
+            // the main action is the accent one (Store); a danger button is red and says when it waits for its second tap
+            let primary = it == Item::RefSave;
+            btn(cv, b, if armed { mix(DLG_BG, RED, 90) } else if red { mix(DLG_BG, RED, 30) } else if primary { mix(DLG_BG, ACCENT, 40) } else { BTN }, if red { RED } else if primary { ACCENT } else { BTN_BORDER });
+            let label = if armed { "Tap again to confirm".to_string() } else if it == Item::RefSave {
+                format!("Store {} as R{}", self.wave_name(WaveId::Ch(self.ref_src)), self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1) + 1)
+            } else { self.sheet_label(it) };
             cv.text_in(&f.mb, b, 1, &label, if red { RED } else { TEXT });
         }
     }
@@ -592,6 +604,12 @@ impl Ui {
                 let sw = (c.w - (n - 1) * 4) / n;
                 for (k, o) in opts.iter().enumerate() {
                     let r = Rect::new(c.x + k as i32 * (sw + 4), c.y, sw, c.h);
+                    if it == Item::RefColor {
+                        // slot colour as swatches
+                        cv.round(r, 5, REF_COLORS[k.min(REF_COLORS.len() - 1)].1, 255);
+                        if sel == Some(k) { cv.round_outline(r.inset(-1), 6, TEXT); cv.round_outline(r, 5, DARK_TEXT); }
+                        continue;
+                    }
                     if sel == Some(k) {
                         cv.round(r, 5, ACCENT, 255);
                         cv.text_in(&f.sb, r, 1, o, DARK_TEXT);
@@ -695,6 +713,12 @@ impl Ui {
         }
         for &(it, b) in &g.foot {
             if b.contains(x, y) {
+                // a danger button asks first: the second tap within 3 s does it
+                if destructive(it) && !self.studio.md.armed.is_some_and(|(a, t)| a == it && self.now - t < 3.0) {
+                    self.studio.md.armed = Some((it, self.now));
+                    return true;
+                }
+                self.studio.md.armed = None;
                 self.activate(it);
                 return true;
             }
@@ -880,13 +904,16 @@ impl Ui {
         // a grid of tiles, two across: a picture and a name each
         let fit = Self::tile_fit(self.tiles_avail(list_y));
         let entries = self.sheet_add_entries();
-        let pages = entries.len().div_ceil(fit).max(1);
-        let page = self.sheet_page(None).min(pages - 1);
-        let list = Rect::new(r.x + PAD, list_y, w, r.bottom() - SHEET_FOOT - list_y);
-        let rows: Vec<(usize, Rect)> = (page * fit..entries.len().min((page + 1) * fit)).enumerate()
-            .map(|(i, k)| (k, Self::tile_rect(list, i))).collect();
-        let [prev, next] = self.sheet_pager(page, pages);
-        AddGeo { chips, groups, find, rows, page, pages, prev, next }
+        let _ = fit;
+        // the grid scrolls inside its category: no pages, no pager
+        let list = Rect::new(r.x + PAD, list_y, w, r.bottom() - 8 - list_y);
+        let scroll = self.studio.md.tile_scroll.clamp(0, self.tile_scroll_max_of(entries.len(), list.h));
+        let rows: Vec<(usize, Rect)> = (0..entries.len())
+            .map(|k| (k, Self::tile_rect(Rect::new(list.x, list.y - scroll, list.w, list.h), k)))
+            .filter(|(_, t)| t.bottom() > list.y && t.y < list.bottom())
+            .collect();
+        let none = Rect::new(0, 0, 0, 0);
+        AddGeo { chips, groups, find, rows, page: 0, pages: 1, prev: none, next: none, list }
     }
 
     pub(super) fn draw_sheet_add(&self, cv: &mut Canvas) {
@@ -927,10 +954,18 @@ impl Ui {
             let (r, _, _) = self.sheet_chrome();
             cv.text_in(&f.m, Rect::new(r.x + PAD, r.y + SHEET_HEAD + 90, r.w - 2 * PAD, 44), 0, "Nothing matches", DIM);
         }
+        cv.set_clip(g.list);
         for &(k, tile) in &g.rows {
             self.draw_add_tile(cv, tile, entries[k].cat);
         }
-        self.draw_sheet_pager(cv, g.page, g.pages);
+        cv.no_clip();
+        // a scrollbar, since there is no pager
+        let total = entries.len().div_ceil(super::addtiles::TILE_COLS as usize) as i32 * super::addtiles::TILE_H;
+        if total > g.list.h {
+            let (x, th) = (g.list.right() - 3, (g.list.h * g.list.h / total).max(20));
+            let ty = g.list.y + (g.list.h - th) * self.studio.md.tile_scroll.clamp(0, (total - g.list.h).max(1)) / (total - g.list.h).max(1);
+            cv.fill(Rect::new(x, ty, 2, th), DIM);
+        }
     }
 
     pub(super) fn sheet_add_tap(&mut self, x: i32, y: i32) -> bool {
@@ -945,6 +980,7 @@ impl Ui {
             if c.contains(x, y) {
                 self.sheet.add_group = i;
                 self.sheet.search.clear();
+                self.studio.md.tile_scroll = 0;
                 self.sheet_set_page(None, 0);
                 return true;
             }
@@ -958,16 +994,7 @@ impl Ui {
             }
             return true;
         }
-        if g.pages > 1 {
-            if g.prev.contains(x, y) && g.page > 0 {
-                self.sheet_set_page(None, g.page - 1);
-                return true;
-            }
-            if g.next.contains(x, y) && g.page + 1 < g.pages {
-                self.sheet_set_page(None, g.page + 1);
-                return true;
-            }
-        }
+
         let entries = self.sheet_add_entries();
         for &(k, tile) in &g.rows {
             if !tile.contains(x, y) {
@@ -1071,6 +1098,8 @@ impl Ui {
 
 /// The parts of the add-measurement page.
 pub(super) struct AddGeo {
+    /// the room of the tile grid
+    pub list: Rect,
     pub chips: Vec<(WaveId, Rect)>,
     pub groups: Vec<Rect>,
     pub find: Rect,

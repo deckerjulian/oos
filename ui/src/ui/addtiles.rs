@@ -19,6 +19,15 @@ impl Ui {
     /// How many tiles one page of the panel holds.
     pub(super) fn tile_fit(avail_h: i32) -> usize { ((avail_h / TILE_H).max(1) * TILE_COLS) as usize }
 
+    /// How far the grid can scroll.
+    pub(super) fn tile_scroll_max_of(&self, entries: usize, list_h: i32) -> i32 {
+        ((entries.div_ceil(TILE_COLS as usize) as i32) * TILE_H - list_h).max(0)
+    }
+    pub(super) fn tile_scroll_max(&self) -> i32 {
+        let g = self.sheet_add_geo();
+        self.tile_scroll_max_of(self.sheet_add_entries().len(), g.list.h)
+    }
+
     pub(super) fn tile_rect(list: Rect, i: usize) -> Rect {
         let w = (list.w - 4) / TILE_COLS;
         let (col, row) = (i as i32 % TILE_COLS, i as i32 / TILE_COLS);

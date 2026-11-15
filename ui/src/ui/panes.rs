@@ -204,7 +204,7 @@ impl Ui {
     }
 
     /// Facts beside the peaks in the list: first what the view would otherwise not say.
-    fn spec_facts(&self, sp: &spectrum::Spectrum) -> Vec<(String, String)> {
+    pub(super) fn spec_facts(&self, sp: &spectrum::Spectrum) -> Vec<(String, String)> {
         let db = |x: f64, u: &str| format!("{:.1} {}", x, u);
         let mut v = Vec::new();
         if self.azr.limit.is_some() {
@@ -278,11 +278,36 @@ impl Ui {
         let y0 = r.y + n * pitch + if n == 0 { 20 } else { 0 };
         let room = r.y + r.h - y0;
         let step = if nf > 0 { (room / nf).min(if pane { 40 } else { 24 }) } else { 0 };
-        for (k, (l, v)) in facts.iter().take(nf as usize).enumerate() {
+        // a list that does not fit pages: a tap on it shows the next facts
+        let first = if nf > 0 && facts.len() > nf as usize { self.studio.facts_first.min(facts.len() - 1) } else { 0 };
+        if nf > 0 && facts.len() > nf as usize {
+            cv.text(&f.s, r.x + r.w - 12, r.y + r.h - 2, "\u{b7}\u{b7}\u{b7}", DIM);
+        }
+        cv.set_clip(r);
+        for (k, (l, v)) in facts.iter().skip(first).take(nf as usize).enumerate() {
             let y = y0 + k as i32 * step + (step + 9) / 2;
             cv.text(&f.s, r.x + 4, y, l, DIM);
             cv.text(&f.s, r.x + r.w - 4 - f.s.width(v), y, v, LABEL);
         }
+        cv.no_clip();
+    }
+
+    /// How many facts fit under the peaks of a list `r` (the same count `draw_peaks` uses).
+    pub(super) fn spec_facts_fit(&self, b: &SpecBox) -> usize {
+        let n = self.peaks_shown(b) as i32;
+        ((b.list.h - n * 20) / 17).max(0) as usize
+    }
+
+    /// A tap on the list of a spectrum that has more facts than room: the next ones.
+    pub(super) fn spec_facts_page(&mut self, b: &SpecBox, x: i32, y: i32) -> bool {
+        if !b.list.contains(x, y) { return false; }
+        let Some(sp) = self.azr.spec.clone() else { return false };
+        let total = self.spec_facts(&sp).len();
+        let fit = self.spec_facts_fit(b).max(1);
+        if total <= fit { return false; }
+        let next = self.studio.facts_first + fit;
+        self.studio.facts_first = if next >= total { 0 } else { next };
+        true
     }
 }
 
@@ -951,6 +976,7 @@ impl Ui {
                 let b = self.spec_box(r, true);
                 if b.sort.contains(x, y) {
                     self.sort_toggle();
+                } else if self.spec_facts_page(&b, x, y) {
                 } else if b.title.contains(x, y) {
                     self.toggle_menu(MenuId::Spectrum);
                 }

@@ -71,6 +71,12 @@ pub(super) struct Md {
     pub info: Option<super::meascatalog::Cat>,
     /// a tile that needs a channel that is off was tapped: a second tap soon after turns the channel on
     pub need_tap: Option<(super::meascatalog::Cat, f64)>,
+    /// a danger button of a sheet footer was tapped once: the next tap within 3 s does it
+    pub armed: Option<(Item, f64)>,
+    /// the Add tiles scroll by this many pixels, and a drag that scrolled them is no tap
+    pub tile_scroll: i32,
+    pub tile_drag: Option<(i32, i32)>,
+    pub tile_scrolled: bool,
 }
 
 /// Rows of the row menu.
@@ -329,6 +335,17 @@ impl Ui {
             Some(StudioDrag::Reorder { key, .. }) => { self.studio.drag = Some(StudioDrag::Reorder { key, x, y }); true }
             Some(StudioDrag::BadgeDrag { key, .. }) => { self.studio.drag = Some(StudioDrag::BadgeDrag { key, x, y }); true }
             Some(StudioDrag::Tile { k, x0, y0, moved, .. }) => {
+                // a mostly vertical drag scrolls the tiles; a sideways one carries the tile to a trace
+                if let Some((sy0, s0)) = self.studio.md.tile_drag {
+                    let max = self.tile_scroll_max();
+                    self.studio.md.tile_scroll = (s0 - (y - sy0)).clamp(0, max);
+                    self.studio.md.tile_scrolled = true;
+                    return true;
+                }
+                if !moved && (y - y0).abs() > SWIPE_START && (y - y0).abs() > (x - x0).abs() {
+                    self.studio.md.tile_drag = Some((y0, self.studio.md.tile_scroll));
+                    return true;
+                }
                 let moved = moved || (x - x0).abs().max((y - y0).abs()) > SWIPE_START;
                 self.studio.drag = Some(StudioDrag::Tile { k, x0, y0, x, y, moved });
                 true
@@ -363,6 +380,9 @@ impl Ui {
                 true
             }
             StudioDrag::Tile { k, moved, .. } => {
+                let scrolled = std::mem::take(&mut self.studio.md.tile_scrolled);
+                self.studio.md.tile_drag = None;
+                if scrolled { return true; }
                 if !moved { return false; }
                 self.md_drop_tile(k, x, y);
                 true

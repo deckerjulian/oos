@@ -239,3 +239,142 @@ fn the_status_pill_has_a_glyph_for_what_a_tap_does() {
     let differs = (g.y..g.bottom()).any(|y| (g.x..g.right()).any(|x| run.px[(y * W + x) as usize] != stop.px[(y * W + x) as usize]));
     assert!(differs);
 }
+
+// ------------------------------------------------------------------------------------------------ the rest
+
+#[test]
+fn full_screen_keeps_the_status_pill_and_an_exit_chip() {
+    let mut u = studio();
+    assert!(u.full_chrome_rects().is_none());
+    u.toggle_expand();
+    for _ in 0..3 { frame(&mut u); }
+    assert!(u.full_on());
+    let (pill, exit) = u.full_chrome_rects().expect("the pill and the exit chip");
+    assert!(Ui::hit40(pill).h >= 40 && Ui::hit40(exit).h >= 40);
+    shot(&mut u, "full-screen");
+    // the pill is Run / Stop
+    let run = u.m.run;
+    tap(&mut u, pill);
+    assert_ne!(u.m.run, run, "the pill still runs and stops");
+    // the exit chip leaves full screen
+    tap(&mut u, exit);
+    assert!(!u.full_on());
+}
+
+#[test]
+fn a_danger_button_in_a_footer_asks_before_it_acts_and_stands_apart() {
+    let mut u = studio();
+    // the factory reset
+    u.open_menu(MenuId::Main);
+    for _ in 0..3 { frame(&mut u); }
+    let g = u.sheet_geo().unwrap();
+    let (_, reset) = *g.foot.iter().find(|(it, _)| *it == Item::DefaultAct).expect("the factory reset is in the footer");
+    u.m.tscale = 3;
+    tap(&mut u, reset);
+    assert_eq!(u.m.tscale, 3, "the first tap only asks");
+    assert!(u.studio.md.armed.is_some());
+    tap(&mut u, reset);
+    assert_ne!(u.m.tscale, 3, "the second tap does it");
+    // the reference sheet: Store is the main button, Clear all is set apart and asks
+    // (the factory reset changed the layout: a fresh Studio)
+    let mut u = studio();
+    u.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: 0.0, dt: 1e-6, v: (0..100).map(|i| i as f32).collect::<Vec<_>>().into(), vpd: 1.0, offset: 0.0, on: true });
+    u.open_menu(MenuId::Ref);
+    for _ in 0..3 { frame(&mut u); }
+    let g = u.sheet_geo().unwrap();
+    let save = g.foot.iter().find(|(it, _)| *it == Item::RefSave).expect("Store").1;
+    let clear = g.foot.iter().find(|(it, _)| *it == Item::RefClear).expect("Clear all").1;
+    assert!(clear.x - save.right() >= 16, "set apart: {save:?} {clear:?}");
+    assert!(matches!(u.sheet_row_kind(Item::RefColor), super::sheet::RowKind::Choice), "swatches");
+    shot(&mut u, "reference-sheet");
+    tap(&mut u, clear);
+    assert!(u.refs[0].is_some(), "asked first");
+    tap(&mut u, clear);
+    assert!(u.refs.iter().all(Option::is_none), "cleared on the second tap");
+}
+
+#[test]
+fn the_add_hub_has_no_math_ref_or_bus_and_the_tiles_scroll_without_a_pager() {
+    for k in super::addrail::ADD_KINDS.iter() { assert!(!matches!(k.0, super::addrail::AddKind::Math | super::addrail::AddKind::Ref | super::addrail::AddKind::Bus)); }
+    let mut u = studio();
+    u.open_meas_list();
+    for _ in 0..3 { frame(&mut u); }
+    let g = u.sheet_add_geo();
+    assert_eq!(g.pages, 1, "no pager");
+    assert!(g.find.w >= 40, "Find stays");
+    let before = g.rows.len();
+    let total = u.sheet_add_entries().len();
+    assert!(total > before, "more tiles than the grid shows: {total} vs {before}");
+    let n0 = u.measurement_count();
+    let (x, y) = (g.list.x + 40, g.list.y + 100);
+    touch(&mut u, Phase::Down, x, y);
+    for k in 1..=6 { touch(&mut u, Phase::Move, x, y - 14 * k); }
+    touch(&mut u, Phase::Up, x, y - 84);
+    frame(&mut u);
+    assert!(u.studio.md.tile_scroll > 0, "scrolled");
+    assert_eq!(u.measurement_count(), n0, "a scroll adds nothing");
+    shot(&mut u, "tiles-scroll");
+}
+
+#[test]
+fn a_view_is_not_docked_where_it_would_leave_the_waveform_too_short() {
+    let mut u = studio();
+    u.studio_apply_panel(super::sheet::PanelKind::Eye);
+    for _ in 0..3 { frame(&mut u); }
+    let w = u.dock_leaf(VKind::Wave).unwrap();
+    u.dock_apply(VKind::Eye, super::dock::Drop::Split(VKind::Wave, super::dock::Side::Bottom));
+    for _ in 0..3 { frame(&mut u); }
+    let w2 = u.dock_leaf(VKind::Wave).unwrap();
+    assert!(w2.h < w.h, "the first split is fine: {} -> {}", w.h, w2.h);
+    u.studio_apply_panel(super::sheet::PanelKind::Histogram);
+    for _ in 0..3 { frame(&mut u); }
+    let w3 = u.dock_leaf(VKind::Wave).unwrap();
+    let (drop, _) = u.dock_drop_at(VKind::Hist, w3.x + w3.w / 2, w3.bottom() - 10, (0, 0));
+    assert_eq!(drop, super::dock::Drop::Stay, "another split would leave {} px", w3.h / 2);
+}
+
+#[test]
+fn cursors_read_at_the_top_left_of_the_lane_and_hide_when_both_are_off_screen() {
+    let mut u = studio();
+    u.m.run = RunState::Stop;
+    u.m.cursor = CursorMode::Time;
+    u.m.cur_a = 0.3;
+    u.m.cur_b = 0.7;
+    for _ in 0..4 { frame(&mut u); }
+    let lane = u.wins[0];
+    let box_top = Rect::new(lane.x + 52, lane.y + 6, 60, 3);
+    let mut on = Canvas::new(W, H);
+    u.render(&mut on);
+    let ink = |cv: &Canvas| (box_top.y..box_top.bottom()).flat_map(|y| (box_top.x..box_top.right()).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * W + x) as usize] == CURSOR).count();
+    assert!(ink(&on) > 20, "the box at the top left of the lane");
+    shot(&mut u, "cursors");
+    u.m.cur_a = 1.4;
+    u.m.cur_b = 1.8;
+    for _ in 0..3 { frame(&mut u); }
+    let mut off = Canvas::new(W, H);
+    u.render(&mut off);
+    assert_eq!(ink(&off), 0, "hidden: both cursors are off the screen");
+}
+
+#[test]
+fn the_zoom_bar_buttons_get_short_labels_when_the_width_allows() {
+    let mut u = studio();
+    u.set_zoom(true);
+    for _ in 0..4 { frame(&mut u); }
+    let bar = u.studio_zoom_bar().unwrap();
+    assert!(bar.fit.w >= 60 && bar.fit.w < 100, "room for Fit and Centre: {}", bar.fit.w);
+    assert!(bar.center.w >= 60 && bar.center.w < 100);
+}
+
+#[test]
+fn the_spectrum_facts_page_when_they_do_not_fit() {
+    let mut u = studio();
+    u.studio_apply_panel(super::sheet::PanelKind::Spectrum);
+    for _ in 0..8 { frame(&mut u); }
+    let b = u.spec_box(Rect::new(0, 0, 520, 150), true);
+    let total = u.spec_facts(&u.azr.spec.clone().unwrap()).len();
+    assert!(total > u.spec_facts_fit(&b), "more facts than room");
+    assert_eq!(u.studio.facts_first, 0);
+    assert!(u.spec_facts_page(&b, b.list.x + 5, b.list.y + 5));
+    assert!(u.studio.facts_first > 0, "the next facts");
+}

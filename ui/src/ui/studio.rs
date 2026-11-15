@@ -123,6 +123,8 @@ pub(super) struct Studio {
     pub ov_drag: Option<(i32, i32)>,
     /// the gestures of the measurements list (`measdrag.rs`)
     pub md: super::measdrag::Md,
+    /// the first fact of the spectrum list that is shown (the list pages when it does not fit)
+    pub facts_first: usize,
     /// the rectangles of the labels on the trace drawn last (for the tests)
     pub label_rects: std::cell::RefCell<Vec<Rect>>,
     /// the axis strips: a finger on one, a wheel flash (`axis.rs`)
@@ -840,7 +842,7 @@ impl Ui {
                 if !off_same_side { cv.blend(Rect::new(x0, lane.y, (x1 - x0).max(1), lane.h), BAND, 46); }
             }
             cv.set_clip(Rect::new(g.x - 12, row.y, g.w + 24, g.h + head));
-            for (k, (x, name)) in [(xs[0], "C1"), (xs[1], "C2")].into_iter().enumerate() {
+            for (k, (x, name)) in [(xs[0], "X1"), (xs[1], "X2")].into_iter().enumerate() {
                 if !(0.0..=1.0).contains(&fr[k]) { continue; }
                 let r = Rect::new((x - 11).clamp(g.x, g.right() - 22), row.y + 1, 22, head - 3);
                 cv.round(r, 3, BAND, 255);
@@ -1967,6 +1969,8 @@ impl Ui {
                 self.studio.drag = None;
                 // the info card is modal
                 if self.studio.md.info.is_some() { return self.studio_eat(x, y); }
+                // full screen: its few buttons
+                if self.m.layout == Layout::Studio && self.full_on() && self.full_chrome_rects().is_some_and(|(a, b)| Self::hit40(a).contains(x, y) || Self::hit40(b).contains(x, y)) { return self.studio_eat(x, y); }
                 if self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
                     || self.studio.view_menu || self.studio.popup.is_some() || self.studio.md.menu.is_some() || self.workspace.popup.is_some() || self.load_slot_ask { return false; }
                 // the Add measurement panel is open: only its tiles can be dragged
@@ -2130,7 +2134,7 @@ impl Ui {
         let close = Rect::new(row.right() - 46, y, 40, h);
         let more = Rect::new(close.x - 6 - 40, y, 40, h);
         // a narrow plot (the eye or SIM beside it) keeps these two as icons
-        let (fit_w, center_w) = if row.w < 760 { (40, 40) } else { (118, 136) };
+        let (fit_w, center_w) = if row.w < 560 { (40, 40) } else if row.w < 760 { (72, 92) } else { (118, 136) };
         let fit = Rect::new(more.x - 6 - fit_w, y, fit_w, h);
         let center = Rect::new(fit.x - 6 - center_w, y, center_w, h);
         let f = self.fonts();
@@ -2212,15 +2216,16 @@ impl Ui {
         // Center trigger turns amber while the trigger is out of the window
         let off = self.studio_trigger_off_screen();
         chip(cv, bar.center, BTN, if off { AMBER } else { BTN_BORDER });
-        let icon_only = bar.center.w < 100;
+        let icon_only = bar.center.w < 60;
+        let short = bar.center.w < 100;
         let (cx, cy) = (if icon_only { bar.center.x + bar.center.w / 2 } else { bar.center.x + 18 }, bar.center.y + bar.center.h / 2);
         cv.circle(cx, cy, 7, TEXT);
         cv.circle(cx, cy, 5, BTN);
         cv.circle(cx, cy, 2, TEXT);
-        if !icon_only { cv.text_in(&f.m, Rect::new(bar.center.x + 32, bar.center.y, bar.center.w - 34, bar.center.h), 0, "Center trigger", TEXT); }
+        if !icon_only { cv.text_in(&f.m, Rect::new(bar.center.x + 32, bar.center.y, bar.center.w - 34, bar.center.h), 0, if short { "Centre" } else { "Center trigger" }, TEXT); }
         chip(cv, bar.fit, BTN, BTN_BORDER);
         icon_expand(cv, if icon_only { bar.fit.x + bar.fit.w / 2 } else { bar.fit.x + 18 }, bar.fit.y + bar.fit.h / 2, TEXT);
-        if !icon_only { cv.text_in(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, "Fit record", TEXT); }
+        if !icon_only { cv.text_in(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, if short { "Fit" } else { "Fit record" }, TEXT); }
         chip(cv, bar.more, BTN, if open { ACCENT } else { BTN_BORDER });
         for dx in [-8, 0, 8] { cv.circle(bar.more.x + bar.more.w / 2 + dx, bar.more.y + bar.more.h / 2, 2, TEXT); }
     }

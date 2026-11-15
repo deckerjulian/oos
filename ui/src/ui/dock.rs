@@ -740,7 +740,13 @@ impl Ui {
         // a floating view can take the place of a view that can float, not of the waveform
         let swap_ok = !floating || (tk != VKind::Measure || matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline));
         match drop_zone(tr, x, y) {
-            Zone::Edge(s) => (Drop::Split(tk, s), half_of(tr, s)),
+            Zone::Edge(s) => {
+                // refused when either view would be left smaller than its least size (a short waveform above all)
+                let half = half_of(tr, s);
+                let (rest_w, rest_h) = match s { Side::Left | Side::Right => (tr.w - half.w - GAP, tr.h), _ => (tr.w, tr.h - half.h - GAP) };
+                if rest_w < tk.min_w() || rest_h < tk.min_h() || half.w < kind.min_w() || half.h < kind.min_h() { (Drop::Stay, own) }
+                else { (Drop::Split(tk, s), half) }
+            }
             Zone::Centre if swap_ok => (Drop::Swap(tk), tr),
             Zone::Centre if can_float => { let r = float_at(); (Drop::Float(r), r) }
             Zone::Centre => (Drop::Stay, own),

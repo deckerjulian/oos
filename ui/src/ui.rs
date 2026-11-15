@@ -90,6 +90,7 @@ mod measdrag;
 mod axis;
 mod measview;
 mod caticons;
+mod fullchrome;
 mod addtiles;
 #[cfg(test)]
 mod batch12_tests;
@@ -1982,6 +1983,11 @@ impl Ui {
     fn draw_full_btn(&self, cv: &mut Canvas) {
         let (r, _) = self.full_btn();
         let on = self.full_on();
+        if self.m.layout == Layout::Studio {
+            let f = self.fonts();
+            let label = if on { "Exit" } else { "Full" };
+            cv.text(&f.s, r.x - f.s.width(label) - 6, r.y + r.h / 2 + 4, label, if on { AMBER } else { DIM });
+        }
         cv.round(r, 5, if on { mix(PANEL_BG, AMBER, 40) } else { PANEL_BG }, 230);
         cv.round_outline(r, 5, if on { AMBER } else { mix(BTN_BORDER, AMBER, 90) });
         // four corner brackets: at the corners pointing in to enlarge, near the middle pointing out to go back
@@ -2022,6 +2028,11 @@ impl Ui {
     fn draw_zoom_btn(&self, cv: &mut Canvas) {
         let (r, _) = self.zoom_btn();
         let armed = self.m.zoom;
+        // Studio: a word beside each corner icon, so full screen and zoom are not taken for each other
+        if self.m.layout == Layout::Studio {
+            let f = self.fonts();
+            cv.text(&f.s, r.x - f.s.width("Zoom") - 6, r.y + r.h / 2 + 4, "Zoom", if armed { AMBER } else { DIM });
+        }
         cv.round(r, 5, PANEL_BG, 220);
         cv.round_outline(r, 5, if armed { AMBER } else { BTN_BORDER });
         let col = if armed { AMBER } else { TEXT };
@@ -3242,6 +3253,7 @@ impl Ui {
         self.draw_dock(cv);
         self.draw_md_overlays(cv);
         self.draw_axis_highlight(cv);
+        self.draw_full_chrome(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
         if self.hdmi_snap_want && self.m.density != Density::Full {
@@ -9751,6 +9763,7 @@ impl Ui {
         if !box_button { self.zoom_arm = false; }
         if self.workspace_popup_tap(x, y) { return; }
         if self.single_btn().contains(x, y) { self.key(key::SINGLE); return; }
+        if self.m.layout == Layout::Studio && self.full_on() && self.full_chrome_tap(x, y) { return; }
         if self.m.layout == Layout::Studio && !self.full_on() && self.studio_tap(x, y) { return; }
         if self.m.layout == Layout::Minimal && !self.full_on() && self.workspace_footer_tap(x, self.bar_y(y)) { return; }
         if self.power_dlg {

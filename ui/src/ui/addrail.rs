@@ -30,15 +30,12 @@ pub(super) enum AddKind {
 }
 
 /// What the first page lists: the kind, its name and the line under it.
-pub(super) const ADD_KINDS: [(AddKind, &str, &str); 8] = [
+pub(super) const ADD_KINDS: [(AddKind, &str, &str); 5] = [
     (AddKind::Cursors, "Cursors", "Two cursors read time and level"),
     (AddKind::Measure, "Measure", "Amplitude, period, rise time and more"),
     (AddKind::Search, "Search", "Mark every edge on the waveform"),
     (AddKind::Table, "Results table", "Measurements, search events, decode"),
     (AddKind::Plot, "Plot", "XY, eye, histogram, spectrum, trend"),
-    (AddKind::Math, "Math", "A waveform calculated from others"),
-    (AddKind::Ref, "Ref", "Keep a waveform to compare with"),
-    (AddKind::Bus, "Bus", "Decode a serial bus"),
 ];
 
 /// Table types of the Results table page: name and what it shows.
@@ -782,11 +779,15 @@ impl Ui {
         if lines.is_empty() { return; }
         let w = lines.iter().map(|l| f.s.width(l)).max().unwrap_or(0) + 16;
         let h = 8 + lines.len() as i32 * 16;
-        let cx = if vertical { a.x + ((self.m.cur_a + self.m.cur_b) * 0.5 * a.w as f32) as i32 } else { a.x + a.w / 2 };
-        let r = Rect::new((cx - w / 2).clamp(a.x + 2, (a.right() - w - 2).max(a.x + 2)), a.bottom() - h - 8, w, h);
+        // both time cursors outside the view: nothing to read here
+        let off = |fr: f32| !(0.0..=1.0).contains(&fr);
+        if vertical && off(self.m.cur_a) && off(self.m.cur_b) { return; }
+        // at the top left of the lane (right of its volts labels), with the colour of its channel
+        let r = Rect::new(a.x + 50, a.y + 6, w + 8, h);
         cv.round(r, 4, CURSOR, 255);
         cv.round(r.inset(1), 3, BAR, 255);
-        for (i, l) in lines.iter().enumerate() { cv.text(&f.s, r.x + 8, r.y + 16 + i as i32 * 16, l, TEXT); }
+        cv.fill(Rect::new(r.x + 3, r.y + 4, 4, r.h - 8), self.wave_color(source));
+        for (i, l) in lines.iter().enumerate() { cv.text(&f.s, r.x + 14, r.y + 16 + i as i32 * 16, l, TEXT); }
     }
 
     /// The cursors in the overview of a zoomed view: a line at each cursor's time.
@@ -797,11 +798,11 @@ impl Ui {
         let tdiv = self.m.time_per_div();
         if !(tdiv > 0.0) { return; }
         let ppx = o.w as f32 / HDIV;
-        for (t, name) in [(ta, "A"), (tb, "B")] {
+        for (t, name) in [(ta, "X1"), (tb, "X2")] {
             let x = o.x + (o.w as f32 / 2.0 + (t as f32 - self.m.delay) / tdiv * ppx) as i32;
             if x < o.x || x >= o.right() { continue; }
             cv.dashed_vline(x, o.y, o.bottom() - 1, 4, 3, CURSOR);
-            let b = Rect::new(x + 2, o.y + 2, 16, 14);
+            let b = Rect::new(x + 2, o.y + 2, 24, 14);
             cv.round(b, 2, CURSOR, 255);
             cv.text_in(&f.s, b, 1, name, DARK_TEXT);
         }

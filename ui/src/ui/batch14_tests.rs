@@ -361,15 +361,12 @@ fn the_histogram_view_has_a_volts_axis_and_a_count_scale() {
 // 15 ----------------------------------------------------------------------------------------------- add panel
 
 #[test]
-fn the_add_panel_has_a_bus_entry_that_opens_decode() {
-    assert!(super::addrail::ADD_KINDS.iter().any(|k| k.1 == "Bus"));
+fn the_add_panel_has_no_bus_entry_since_the_channel_popup_adds_it() {
+    assert!(!super::addrail::ADD_KINDS.iter().any(|k| k.1 == "Bus" || k.1 == "Math" || k.1 == "Ref"));
     let mut u = studio();
     u.open_menu(MenuId::AddPanel);
     frame(&mut u);
-    let (_, r) = u.rail_geo().rows.into_iter().find(|(k, _)| *k == super::addrail::AddKind::Bus).expect("a Bus row");
-    assert!(r.h >= 40);
-    tap(&mut u, r);
-    assert!(u.menu_open && u.menu == MenuId::Decode, "{:?}", u.menu);
+    assert!(u.rail_geo().rows.iter().all(|(k, _)| *k != super::addrail::AddKind::Bus));
 }
 
 #[test]
