@@ -377,7 +377,7 @@ fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
     u.studio.panel.first = 0;
     // the pin left of the row menu pins and unpins it
     assert_eq!(u.studio_pinned().len(), 3);
-    let row = Rect::new(g.list.right() - 76, g.list.y + 3 * PANEL_ROW_TEST + 5, 20, 30);
+    let row = Rect::new(g.list.right() - 76, g.list.y + 3 * u.studio_panel_row() + 5, 20, 30);
     tap_in(&mut u, row);
     assert_eq!(u.studio_pinned().len(), 4);
     tap_in(&mut u, row);
@@ -411,14 +411,14 @@ fn studio_list_scrolls_with_the_finger() {
     let g = u.studio_panel_geo().unwrap();
     let (x, y) = (g.list.x + 60, g.list.y + g.list.h - 10);
     u.touch_ev(Phase::Down, x, y);
-    u.touch_ev(Phase::Move, x, y - 60);
-    u.touch_ev(Phase::Move, x, y - 100);
-    u.touch_ev(Phase::Up, x, y - 100);
+    u.touch_ev(Phase::Move, x, y - 70);
+    u.touch_ev(Phase::Move, x, y - 130);
+    u.touch_ev(Phase::Up, x, y - 130);
     assert_eq!(u.studio.panel.first, 2, "the list follows an upward finger by rows");
     assert!(u.meas_cfg.is_none(), "a scroll is not a tap");
     // a drag the other way brings it back
     u.touch_ev(Phase::Down, x, y - 100);
-    u.touch_ev(Phase::Move, x, y + 10);
+    u.touch_ev(Phase::Move, x, y + 40);
     u.touch_ev(Phase::Up, x, y + 10);
     assert_eq!(u.studio.panel.first, 0);
     // a tap through the touch path still reaches the row

@@ -7,10 +7,10 @@ use super::studio::{chip, icon_pin, MeasKey, StudioView};
 
 /// The columns of the detailed table: name and width. Sigma and Count go first when the room is short.
 /// Widths when the panel is narrow: the source is a colour bar, so Name, Value and Mean fit.
-pub(super) const DETAIL_NARROW_W: [i32; 8] = [14, 92, 80, 76, 76, 76, 70, 60];
+pub(super) const DETAIL_NARROW_W: [i32; 8] = [30, 86, 76, 70, 76, 76, 70, 60];
 /// Below this width the table uses them.
 pub(super) const DETAIL_NARROW_BELOW: i32 = 330;
-pub(super) const DETAIL_COLS: [(&str, i32); 8] = [("Source", 58), ("Name", 104), ("Value", 90), ("Mean", 84), ("Min", 84), ("Max", 84), ("\u{3c3}", 76), ("Count", 64)];
+pub(super) const DETAIL_COLS: [(&str, i32); 8] = [("Source", 34), ("Name", 104), ("Value", 90), ("Mean", 84), ("Min", 84), ("Max", 84), ("\u{3c3}", 76), ("Count", 64)];
 /// Row height of the detailed table.
 pub(super) const DETAIL_ROW: i32 = 38;
 /// Extra height of a list row for the line of statistics.
@@ -83,13 +83,13 @@ impl Ui {
     pub(super) fn draw_panel_detail(&self, cv: &mut Canvas, g: &studio::PanelGeo, rows: &[tools::MeasRow], keys: &[MeasKey], listed: &[usize], first: usize) {
         let f = self.fonts();
         let (cols, total) = Self::detail_cols(g.list.w);
+        let multi = self.studio_multi_source();
         let hx = self.studio.panel.hx.clamp(0, (total - g.list.w).max(0));
         // the head: the names of the columns, scrolled with the rows
         let head = Rect::new(g.list.x, g.p.y + 2, g.list.w, 26);
         cv.fill(head, BAR);
         cv.set_clip(head);
         for &(i, x, w) in &cols {
-            if i == 0 && w < 30 { continue; }
             cv.text_in(&f.sb, Rect::new(head.x + x - hx + 6, head.y, w - 6, head.h), 0, DETAIL_COLS[i].0, LABEL);
         }
         cv.no_clip();
@@ -103,11 +103,12 @@ impl Ui {
                 let cell = Rect::new(r.x + x - hx + 6, r.y, w - 8, r.h);
                 let dash = || "----".to_string();
                 match c {
-                    0 if w < 30 => cv.round(Rect::new(r.x + x - hx + 3, r.y + 7, 6, 24), 3, self.wave_color(row.src), 255),
+                    // the source: a thin bar of its colour; its name only with several sources, in the first row of a group
                     0 => {
-                        let tag = Rect::new(cell.x, r.y + 7, f.sb.width("CH4") + 12, 24);
-                        cv.round(tag, 5, self.wave_color(row.src), 255);
-                        cv.text_in(&f.sb, tag, 1, &self.wave_name(row.src), DARK_TEXT);
+                        cv.round(Rect::new(r.x + x - hx + 3, r.y + 6, 4, r.h - 12), 2, self.wave_color(row.src), 255);
+                        if multi && (first + k == 0 || rows[listed[first + k - 1]].src != row.src) {
+                            cv.text(&f.sb, r.x + x - hx + 9, r.y + 14, &self.wave_name(row.src), self.wave_color(row.src));
+                        }
                     }
                     // the pin comes after the name, in a place of its own
                     1 => {

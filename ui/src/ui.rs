@@ -99,6 +99,8 @@ mod batch13_tests;
 mod batch14_tests;
 #[cfg(test)]
 mod batch16_tests;
+#[cfg(test)]
+mod batch17_tests;
 mod trigger_controls;
 mod scpi_operations;
 pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};

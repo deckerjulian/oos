@@ -180,6 +180,8 @@ pub(super) struct StudioBottom {
 }
 
 const REF_CHIP_W: i32 = 42;
+/// Height a list row gets for the header of its source.
+pub(super) const GROUP_BAND: i32 = 14;
 
 const CHIP_H: i32 = 30;
 const CHIP_Y: i32 = 5;
@@ -983,6 +985,8 @@ impl Ui {
     pub(super) fn studio_panel_row(&self) -> i32 {
         if self.studio_detailed() { return super::measview::DETAIL_ROW; }
         let base = if self.studio.compact && self.studio.view != StudioView::Sim { 36 } else { PANEL_ROW_FULL };
+        // room for a source header over the first row of a group
+        let base = if self.studio_multi_source() && self.studio.view != StudioView::Sim { base + GROUP_BAND } else { base };
         // a row with statistics has a small line more
         if self.studio_stats_any() && self.studio.view != StudioView::Sim { base + super::measview::STATS_LINE } else { base }
     }
@@ -1016,7 +1020,7 @@ impl Ui {
         let first = self.studio.badge_first.min(self.studio_pinned().len().saturating_sub(1));
         for key in self.studio_pinned().into_iter().skip(first) {
             let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
-            let w = 14 + 6 + (f.sb.width("CH4") + 10) + 6 + f.s.width(&self.studio_badge_name(key, &r.name)) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
+            let w = 16 + f.s.width(&self.studio_badge_name(key, &r.name)) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
             if x + w > limit { break; }
             out.push((key, Rect::new(x, row.y + (row.h - self.studio_chip_h()) / 2, w, self.studio_chip_h())));
             x += w + 5;
@@ -1054,11 +1058,9 @@ impl Ui {
             let col = self.wave_color(m.src);
             chip(cv, r, BTN, if self.studio.popup == Some(key) { ACCENT } else { BTN_BORDER });
             let cy = r.y + r.h / 2;
-            icon_pin(cv, r.x + 8, cy, true, TEXT);
-            let tag = Rect::new(r.x + 28, r.y + 5, f.sb.width("CH4") + 10, r.h - 10);
-            cv.round(tag, 4, col, 255);
-            cv.text_in(&f.sb, tag, 1, &self.wave_name(m.src), DARK_TEXT);
-            let x = cv.text(&f.s, tag.right() + 6, cy + 4, &self.studio_badge_name(key, &m.name), DIM) + 8;
+            // the source is a bar of its colour at the edge of the badge; a badge in the bar is pinned by being there
+            cv.round(Rect::new(r.x + 3, r.y + 4, 4, r.h - 8), 2, col, 255);
+            let x = cv.text(&f.s, r.x + 14, cy + 4, &self.studio_badge_name(key, &m.name), DIM) + 8;
             cv.set_clip(Rect::new(x, r.y, (r.right() - x - 4).max(1), r.h));
             cv.text(&f.sb, x, cy + 4, &m.text(), TEXT);
             cv.no_clip();
@@ -1491,7 +1493,22 @@ impl Ui {
 
     /// The measurements the panel lists: all, or those of the chosen source.
     pub(super) fn studio_listed(&self, rows: &[tools::MeasRow]) -> Vec<usize> {
-        (0..rows.len()).filter(|&i| !self.meas_row_hidden(&rows[i]) && self.studio.filter.is_none_or(|id| rows[i].src == id)).collect()
+        let mut v: Vec<usize> = (0..rows.len()).filter(|&i| !self.meas_row_hidden(&rows[i]) && self.studio.filter.is_none_or(|id| rows[i].src == id)).collect();
+        // with several sources the rows are grouped by source, in the order the sources first appear
+        let mut order: Vec<WaveId> = Vec::new();
+        for &i in &v { if !order.contains(&rows[i].src) { order.push(rows[i].src); } }
+        if order.len() > 1 { v.sort_by_key(|&i| order.iter().position(|s| *s == rows[i].src).unwrap_or(0)); }
+        v
+    }
+
+    /// Several sources measure something: the list shows a header per source and the table names it in the first row.
+    pub(super) fn studio_multi_source(&self) -> bool {
+        let mut seen: Vec<WaveId> = Vec::new();
+        for key in self.studio_keys() {
+            let s = Self::studio_key_source(key);
+            if self.studio_source_live(s) && !seen.contains(&s) { seen.push(s); }
+        }
+        seen.len() > 1 && self.studio.filter.is_none()
     }
 
     /// The measurement panel (docked or floating) and the SIM panel: the room under their title strip, in the dock.
@@ -1546,13 +1563,14 @@ impl Ui {
     /// One row of the docked and floating panel: CH badge, the name over the value, the pin.
     pub(super) fn draw_panel_row(&self, cv: &mut Canvas, r: Rect, row: &tools::MeasRow, pinned: bool) {
         let f = self.fonts();
-        let tag = Rect::new(r.x + 8, r.y + 12, f.sb.width("CH4") + 12, 22);
-        cv.round(tag, 5, self.wave_color(row.src), 255);
-        cv.text_in(&f.sb, tag, 1, &self.wave_name(row.src), DARK_TEXT);
-        let x = tag.right() + 12;
+        // the source is a thin bar of its colour at the left edge; its name is in the header of the group
+        let band = if self.studio_multi_source() && self.studio.view != StudioView::Sim { GROUP_BAND } else { 0 };
+        let y0 = r.y + band;
+        cv.round(Rect::new(r.x + 3, y0 + 5, 4, (r.bottom() - y0 - 12).max(8)), 2, self.wave_color(row.src), 255);
+        let x = r.x + 16;
         cv.set_clip(Rect::new(x, r.y, (r.right() - 88 - x).max(1), r.h));
-        cv.text(&f.s, x, r.y + 18, &row.name, LABEL);
-        cv.text(&f.mb, x, r.y + 38, &row.text(), TEXT);
+        cv.text(&f.s, x, y0 + 18, &row.name, LABEL);
+        cv.text(&f.mb, x, y0 + 38, &row.text(), TEXT);
         cv.no_clip();
         let (pin, menu) = Self::md_row_buttons(r);
         icon_pin(cv, pin.x + pin.w / 2 - 6, r.y + r.h / 2 + 1, pinned, if pinned { AMBER } else { DIM });
@@ -1604,6 +1622,11 @@ impl Ui {
                     let rev = Rect::new((r.right() + off).max(r.x), r.y, (-off).min(r.w), r.h);
                     cv.fill(rev, mix(PANEL_BG, RED, 150));
                     cv.text_in(&f.mb, rev, 1, "Remove", TEXT);
+                }
+                // the first row of a source: its header, the one place the name is written
+                if self.studio_multi_source() && (first + k == 0 || k == 0 || rows[listed[first + k - 1]].src != rows[i].src) {
+                    let n = listed.iter().filter(|&&j| rows[j].src == rows[i].src).count();
+                    cv.text(&f.sb, r.x + 8, r.y + 11, &format!("{} \u{b7} {}", self.wave_name(rows[i].src), n), self.wave_color(rows[i].src));
                 }
                 self.draw_panel_row(cv, Rect::new(r.x + off, r.y, r.w, r.h), &rows[i], keys.get(i).is_some_and(|k| pinned.contains(k)));
                 if keys.get(i).is_some_and(|k| self.studio_stats_on(*k)) { self.draw_panel_stats_line(cv, Rect::new(r.x + off, r.y, r.w, r.h), i, &rows[i]); }

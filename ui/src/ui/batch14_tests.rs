@@ -311,7 +311,7 @@ fn the_detailed_table_keeps_name_value_and_mean_in_a_narrow_panel_and_the_pin_af
     assert!(mean.1 + mean.2 <= 262, "Mean fits without scrolling: {cols:?}");
     assert!(total >= 262);
     // wide: the source has its tag column
-    assert!(Ui::detail_cols(600).0[0].2 >= 50);
+    assert!(Ui::detail_cols(600).0[0].2 >= 30);
     // the pin sits in the name column, at its right end
     let mut u = studio();
     let s = u.dock_rect(VKind::Measure).and_then(|r| u.dock_view_rect(VKind::Measure, r)).unwrap();
