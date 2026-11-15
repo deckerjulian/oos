@@ -287,6 +287,7 @@ impl Ui {
 
     pub(super) fn results_page_size(&self) -> usize {
         // rows are taller at the larger text sizes: count with the row the card draws, so a page stays in the plot
+        if matches!(self.results_docked(), Some(StripDock::Under | StripDock::Above)) { return 2; }
         let row = self.results_row(0);
         ((self.over_area().h - 98).max(row) / row).clamp(1, 8) as usize
     }

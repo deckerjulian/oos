@@ -534,7 +534,8 @@ pub(super) struct Workspace {
     pub eye_float: Option<Rect>,
     pub eye_left: bool,
     pub measure_float: Option<(i32, i32)>,
-    pub measure_dock: Option<StripDock>,
+    /// the measurement card sits in the strip dock (`m.strip_dock`) instead of floating
+    pub measure_docked: bool,
     gesture: Option<Gesture>,
     pub(super) popup: Option<Popup>,
 }
@@ -837,12 +838,13 @@ impl Ui {
             Action::EyeClose => { self.m.view = AView::Scope; self.workspace.eye_float = None; self.relayout(); }
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));
-                self.workspace.measure_dock = None;
+                self.workspace.measure_docked = false;
                 self.stats_on = true; self.results_min = false; self.relayout();
             }
             Action::MeasureDock(dock) => {
                 self.workspace.measure_float = None;
-                self.workspace.measure_dock = Some(dock);
+                self.workspace.measure_docked = true;
+                self.m.strip_dock = dock;
                 self.stats_on = true;
                 self.relayout();
             }
@@ -933,7 +935,7 @@ impl Ui {
                 let top = (r.y + y - gesture.y).clamp(TOP.h, (BOTTOM.y - r.h.min(BOTTOM.y - TOP.h)).max(TOP.h));
                 match gesture.panel {
                     Panel::Eye => { self.workspace.eye_float = Some(Rect::new(left, top, r.w.max(320).min(W), r.h.max(180).min(BOTTOM.y - top))); self.relayout(); }
-                    Panel::Measurements => { self.workspace.measure_float = Some((left, top)); self.workspace.measure_dock = None; self.relayout(); }
+                    Panel::Measurements => { self.workspace.measure_float = Some((left, top)); self.workspace.measure_docked = false; self.relayout(); }
                     _ => {},
                 }
                 true
@@ -1015,7 +1017,7 @@ impl Ui {
     pub(crate) fn reset_workspace_for_import(&mut self) {
         self.cancel_pointer(); self.workspace.popup = None;
         self.workspace.eye_float = None; self.workspace.eye_left = false;
-        self.workspace.measure_dock = None;
+        self.workspace.measure_docked = false;
         self.workspace.measure_float = None; self.stats_on = false;
         self.m.pane = 0; self.m.win_layout = WinLayout::One;
         self.m.density = if self.full_on() { Density::Full } else { Density::Scope };

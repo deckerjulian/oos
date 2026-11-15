@@ -4313,23 +4313,41 @@ impl Ui {
         }
     }
 
-    /// Height the strip takes when it sits under the plot or above the trace.
+    /// Height the strip takes when it sits under the plot or above the trace, with the measurement card if that is
+    /// docked there too.
     fn strip_rows_h(&self) -> i32 {
         let rows = self.strip_rows();
-        if rows == 0 { 0 } else { rows * self.lay().strip_row + 4 }
+        (if rows == 0 { 0 } else { rows * self.lay().strip_row + 4 }) + self.results_band_h()
     }
 
-    /// Left edge and width of the graticule. A side dock keeps a column for the strip.
+    /// The measurement card in a dock (Minimal layout), when it was docked rather than floated.
+    fn results_docked(&self) -> Option<StripDock> {
+        (self.m.minimal && self.workspace.measure_docked && self.workspace.measure_float.is_none() && self.results_panel()).then_some(self.m.strip_dock)
+    }
+
+    /// Width a side-docked measurement card takes from the plot.
+    fn results_side_w(&self) -> i32 {
+        if matches!(self.results_docked(), Some(StripDock::Left | StripDock::Right)) { self.lay().results_w + 6 } else { 0 }
+    }
+
+    /// Height a card docked under or above the plot takes: the header and two rows, paged.
+    fn results_band_h(&self) -> i32 {
+        if !matches!(self.results_docked(), Some(StripDock::Under | StripDock::Above)) { return 0; }
+        let total = self.measurement_count();
+        let n = total.min(2) as i32;
+        let nav = if total > n as usize { 38 } else { 0 };
+        30 + if self.results_min { 0 } else { n * self.results_row(total as i32) + nav + 4 } + 4
+    }
+
+    /// Left edge and width of the graticule. A side dock keeps a column for the strip and for a docked card.
     fn plot_span(&self) -> (i32, i32) {
         let body = self.frame().body;
-        if self.strip_rows() > 0 {
-            match self.m.strip_dock {
-                StripDock::Left => return (body.x + STRIP_SIDE, body.w - STRIP_SIDE),
-                StripDock::Right => return (body.x, body.w - STRIP_SIDE),
-                _ => {}
-            }
+        let side = if self.strip_rows() > 0 { STRIP_SIDE } else { 0 } + self.results_side_w();
+        match self.m.strip_dock {
+            StripDock::Left => (body.x + side, body.w - side),
+            StripDock::Right => (body.x, body.w - side),
+            _ => (body.x, body.w),
         }
-        (body.x, body.w)
     }
 
     /// Top of the rows when the strip runs across the screen.
@@ -4557,16 +4575,20 @@ impl Ui {
         let rw = self.lay().results_w;
         let fr = self.frame();
         let (top, bottom, sw) = (fr.top.bottom(), fr.bottom.y, self.scr.w);
-        let default = match self.workspace.measure_dock {
-            Some(StripDock::Left) => (4, top + 4),
-            Some(StripDock::Right) => (sw - rw - 4, top + 4),
-            Some(StripDock::Above) => ((sw - rw) / 2, top + 4),
-            Some(StripDock::Under) => ((sw - rw) / 2, bottom - panel_h - 4),
+        let docked = self.results_docked();
+        let strip_side = if self.strip_rows() > 0 { STRIP_SIDE } else { 0 };
+        let strip_h = { let rows = self.strip_rows(); if rows == 0 { 0 } else { rows * self.lay().strip_row + 4 } };
+        let (body_top, plot_x, plot_w) = (if self.full_on() { 0 } else { fr.body.y }, self.plot_span().0, self.plot_span().1);
+        let default = match docked {
+            Some(StripDock::Left) => (fr.body.x + strip_side + 2, body_top),
+            Some(StripDock::Right) => (fr.body.right() - strip_side - rw - 2, body_top),
+            Some(StripDock::Above) => (plot_x + (plot_w - rw) / 2, body_top + strip_h + 2),
+            Some(StripDock::Under) => (plot_x + (plot_w - rw) / 2, bottom - strip_h - panel_h - 2),
             None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32),
         };
         let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
         // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
-        let floating = self.workspace.measure_dock.is_none();
+        let floating = docked.is_none();
         for r in if floating { vec![self.full_btn().0, self.zoom_btn().0] } else { Vec::new() } {
             let r = Rect::new(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
             if x + rw > r.x && x < r.right() && y < r.bottom() && y + panel_h > r.y { x = (r.x - rw).max(0); }
@@ -6916,6 +6938,8 @@ impl Ui {
                         }
                     }
                 } else if self.m.pane != 0 && self.pane_h() == 0 {
+                // the statistics card follows the dock the strip uses
+                self.workspace.measure_docked = true; self.workspace.measure_float = None;
                     self.toast("No room for a second pane here: fewer LA lanes or the scope view");
                 }
             }

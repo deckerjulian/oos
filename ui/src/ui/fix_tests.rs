@@ -109,3 +109,36 @@ fn a_floating_measurement_card_never_covers_the_zoom_bar_or_the_corner_buttons()
         assert!(!hits(u.zoom_readout()), "{place:?} covers the zoom bar: {card:?}");
     }
 }
+
+#[test]
+fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
+    for dock in StripDock::ALL {
+        let mut u = fresh();
+        u.workspace_action(Action::MeasureDock(dock));
+        u.relayout();
+        assert_eq!(u.m.strip_dock, dock, "one dock state");
+        let (head, body) = u.results_rects().unwrap();
+        let card = Rect::new(head.x, head.y, head.w, head.h + body.h);
+        let g = u.grid;
+        let apart = card.x >= g.right() || g.x >= card.right() || card.y >= g.bottom() || g.y >= card.bottom();
+        assert!(apart, "{dock:?}: card {card:?} overlaps the plot {g:?}");
+        let (full, zoom) = (u.full_btn().0, u.zoom_btn().0);
+        let hits = |r: Rect| card.x < r.right() && r.x < card.right() && card.y < r.bottom() && r.y < card.bottom();
+        assert!(!hits(full) && !hits(zoom), "{dock:?} covers a corner button");
+        assert!(card.y >= TOP.h && card.bottom() <= BOTTOM.y + 1 && card.x >= 0 && card.right() <= W, "{dock:?} {card:?} on screen");
+    }
+    // Statistics respects the Dock choice of the Measure menu
+    let mut u = fresh();
+    u.stats_on = true;
+    u.m.strip_dock = StripDock::Under;
+    let before = u.grid;
+    u.adjust(Item::StripDock, 1);
+    u.relayout();
+    assert!(u.results_docked().is_some());
+    assert_ne!(u.grid, before);
+    // Default layout keeps the stock overlay
+    let mut u = fresh();
+    u.m.minimal = false;
+    u.workspace_action(Action::MeasureDock(StripDock::Left));
+    assert!(u.results_docked().is_none());
+}
