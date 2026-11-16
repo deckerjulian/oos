@@ -89,8 +89,9 @@ pub fn mean_words(frames: &[&[u16]]) -> Vec<u16> {
     (0..len).map(|i| (frames.iter().map(|f| f[i] as u64).sum::<u64>() / n) as u16).collect()
 }
 
-/// Bits the accumulator of `n` frames of 16-bit words needs.
-pub fn acc_bits(n: u32) -> u32 {
+/// Bits the accumulator of `n` frames of 16-bit words needs (the tests hold the widths against it).
+#[cfg(test)]
+fn acc_bits(n: u32) -> u32 {
     16 + n.max(1).next_power_of_two().trailing_zeros()
 }
 

@@ -249,8 +249,9 @@ impl Sha512 {
     }
 }
 
-/// SHA-512 of one buffer.
-pub fn sha512(data: &[u8]) -> [u8; 64] {
+/// SHA-512 of one buffer (the tests check the streaming hasher against it).
+#[cfg(test)]
+fn sha512(data: &[u8]) -> [u8; 64] {
     let mut s = Sha512::new();
     s.update(data);
     s.finish()

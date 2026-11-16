@@ -190,11 +190,6 @@ pub fn ber_err(a: u32, b: u32) -> u32 {
     (a & 0xffff).wrapping_add((b & 0xffff) << 14)
 }
 
-/// The bit-error counts (for the log only): `(a >> 16) + ((b >> 2) & 0x3fffc000)` [N].
-pub fn ber_count(a: u32, b: u32) -> u32 {
-    (a >> 16).wrapping_add((b >> 2) & 0x3fff_c000)
-}
-
 /// ADC sync delay: ADC reg 0x06 = (s & ~0x700) | d << 8, written without XOR mask [N][O].
 pub fn sync_delay(sh: &mut Shadows, d: u32) -> Wr {
     sh.adc06 = (sh.adc06 & !0x700) | ((d & 7) as u16) << 8;
