@@ -1979,7 +1979,8 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
 }
 
 /// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`, one directory per
-/// text size (`OOS_TEXT_SIZE=Large` for one of them; `OOS_SIZE=1920x1080` for another screen than the panel).
+/// text size (`OOS_TEXT_SIZE=Large` for one of them; `OOS_SIZE=1920x1080` for another screen than the panel;
+/// `OOS_LAYOUT=Studio` for another Display > Layout than the default).
 #[test]
 #[ignore]
 fn gallery() {
@@ -1997,6 +1998,9 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
     let new = || {
         let mut u = demo_on(scr);
         u.m.text_size = ts;
+        if let Some(l) = std::env::var("OOS_LAYOUT").ok().and_then(|n| LAYOUTS.into_iter().find(|l| l.name().eq_ignore_ascii_case(&n))) {
+            u.m.layout = l;
+        }
         u.relayout();
         u
     };
