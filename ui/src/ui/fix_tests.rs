@@ -20,6 +20,20 @@ fn the_last_visible_source_cannot_be_switched_off() {
     assert!(u.m.ch[0].on && u.trace_sources().len() == 1, "CH1 stays on");
 }
 
+#[test]
+fn a_channel_switched_on_from_sources_leaves_the_trigger_and_run_stop() {
+    for run in [RunState::Stop, RunState::Run] {
+        let mut u = fresh();
+        u.m.set_trigger_wave(WaveId::Ch(0), false);
+        u.m.run = run;
+        let level = u.m.trig_level;
+        u.workspace_action(Action::Source(WaveId::Ch(2)));
+        u.step(0.05);
+        assert!(u.m.ch[2].on && u.m.active == 2, "CH3 on and selected");
+        assert_eq!((u.m.trigger_wave(), u.m.run, u.m.trig_level), (WaveId::Ch(0), run, level), "as the channel key");
+    }
+}
+
 fn two_channels() -> Ui {
     let mut u = fresh();
     u.activate_live_channel(1);

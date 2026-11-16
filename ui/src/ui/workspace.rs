@@ -822,7 +822,14 @@ impl Ui {
             Action::Source(WaveId::Ch(c)) => {
                 if self.m.ch[c].on && self.trace_sources().len() <= 1 { self.toast("Keep one source on"); return; }
                 if self.m.ch[c].on { self.m.ch[c].on = false; self.settings_changed(); }
-                else { self.activate_live_channel(c); }
+                else if self.record_mode() { self.activate_live_channel(c); }
+                else {
+                    // in Live as the channel key: the channel goes on, the trigger and Run/Stop stay
+                    self.m.ch[c].on = true;
+                    self.select_workspace_source(WaveId::Ch(c));
+                    if self.m.run == RunState::Run { self.m.floor_live_tdiv(); }
+                    self.settings_changed();
+                }
                 self.relayout();
             }
             Action::Source(WaveId::Ref(i)) => {
