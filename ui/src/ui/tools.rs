@@ -1144,7 +1144,7 @@ impl Ui {
     }
 
     /// Waveforms Import slot can open: the slot's own files, then Storage. Same extensions as `load`.
-    fn ref_wave_candidates(&self) -> Vec<std::path::PathBuf> {
+    pub(super) fn ref_wave_candidates(&self) -> Vec<std::path::PathBuf> {
         let slot = self.ref_sel + 1;
         let mut v = Vec::new();
         let mut add = |p: std::path::PathBuf| {
@@ -1201,6 +1201,27 @@ impl Ui {
                 self.ref_load_path(&p);
             }
             _ => self.open_picker(Item::RefImport),
+        }
+    }
+
+    /// Studio "Load file…" into slot R<n>: the desktop build opens its native file explorer (the destination is the slot),
+    /// the scope lists the waveform files of its storage and loads the one that is tapped.
+    pub(super) fn studio_load_file(&mut self, slot: usize) {
+        self.ref_sel = slot.min(NREF - 1);
+        if self.desktop_panel.is_some() {
+            self.cancel_bus_candidate(true);
+            self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
+            self.close_menu();
+            self.load_slot_ask = false;
+            self.load_destination = Some(self.ref_sel);
+            self.open_wave_request = true;
+            return;
+        }
+        self.ref_files = self.ref_wave_candidates();
+        if self.ref_files.is_empty() {
+            self.toast("No CSV, BIN, WFM, TRC, ISF, TR0 or WFMX in storage");
+        } else {
+            self.open_picker(Item::RefImport);
         }
     }
 

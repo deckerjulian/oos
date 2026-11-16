@@ -109,7 +109,7 @@ pub(super) enum PanelKind {
 
 /// Items whose list is a keypad or a file list with its own handling: the classic picker keeps them.
 fn keypad_pick(it: Item) -> bool {
-    matches!(it, Item::TrigBusVal | Item::AfgFreqEntry | Item::WlanNet | Item::WlanForgetNet | Item::NtpServer | Item::TimeZone | Item::RemName | Item::RefImport | Item::MeasCopyTo)
+    matches!(it, Item::TrigBusVal | Item::AfgFreqEntry | Item::WlanNet | Item::WlanForgetNet | Item::NtpServer | Item::TimeZone | Item::RemName | Item::MeasCopyTo)
 }
 
 fn destructive(it: Item) -> bool {
@@ -167,7 +167,7 @@ impl Ui {
             M::Cursor => (&["Cursors", "Position"], |it| match it { CurType | CurSrc | CurSrcB | CurReadout | CurLink => Slot::Tab(0), CurRemove => Slot::Foot(0), _ => Slot::Tab(1) }),
             M::Search => (&["Edge search"], |it| match it { SrchRemove => Slot::Foot(0), _ => Slot::Tab(0) }),
             M::Ref => (&["Reference", "Scale and files"], |it| match it {
-                RefSel | RefSrc | RefLabel | RefColor | RefSaveNext => Slot::Tab(0),
+                RefSel | RefSrc | RefLabel | RefColor | RefSaveNext | RefImport => Slot::Tab(0),
                 RefShow(_) => Slot::Skip,
                 RefSave | RefClear => Slot::Foot(0),
                 _ => Slot::Tab(1),
@@ -222,9 +222,9 @@ impl Ui {
                 _ => Slot::Tab(1),
             }),
             M::Sim => (&["Signal", "Channel", "Jitter", "Show"], |it| match it {
-                SimPreset | SimSlot | SimRate | SimPat | SimHigh | SimLow | SimRise => Slot::Tab(0),
+                SimPreset | SimSlot | SimRate | SimPat | SimHigh | SimLow | SimLoad => Slot::Tab(0),
                 SimAddRef | SimPlay => Slot::Foot(0),
-                SimBw | SimDeemph | SimNoise => Slot::Tab(1),
+                SimRise | SimBw | SimDeemph | SimNoise => Slot::Tab(1),
                 SimRj | SimPj | SimPjHz | SimSsc | Open(M::SimAdvanced) => Slot::Tab(2),
                 SimLive | SimDefaults => Slot::Foot(3),
                 _ => Slot::Tab(3),
@@ -443,6 +443,8 @@ impl Ui {
                 if names.is_empty() { "Switch on source".into() } else { format!("Turn on {}", names.join(", ")) }
             }
             Item::SimAddRef => format!("Add to R{}", self.m.sim_slot + 1),
+            Item::SimLoad => format!("Load file into R{}…", self.m.sim_slot + 1),
+            Item::RefImport => format!("Load file into R{}…", self.ref_sel + 1),
             Item::RefShow(_) => "Shown".into(),
             Item::RefSaveNext => self.ref_store_next_label(),
             Item::RowF(measrow::RF::Used | measrow::RF::StMean | measrow::RF::StRange | measrow::RF::StN) => self.measrow_text(it).unwrap_or_default(),

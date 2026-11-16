@@ -213,7 +213,9 @@ pub(super) struct StudioBottom {
     pub panel: Option<Rect>,
 }
 
-const REF_CHIP_W: i32 = 42;
+/// A source pill is at most as wide as a channel pill was and shrinks to this; the pills are 5 px apart.
+const PILL_MAX_W: i32 = 170;
+const PILL_MIN_W: i32 = 18;
 /// The "+N" chip of the badge row.
 pub(super) const OVERFLOW_W: i32 = 46;
 /// Height a list row gets for the header of its source.
@@ -504,47 +506,44 @@ impl Ui {
         let bottom = self.frame().bottom;
         let (y, h) = (bottom.y + 3, CHIP_H);
         let ph = h;
-        let f = self.fonts();
-        // a ref or math pill is as wide as the name it carries under its own, at least 42
-        let ref_w = |i: usize| (f.s.width(&self.studio_ref_detail(i)) + 12).clamp(REF_CHIP_W, 96);
-        let math_w = |k: usize| (f.s.width(self.m.math_ch(k).op.name()) + 12).clamp(REF_CHIP_W, 96);
         let n = n_ch();
         let mut right = bottom.right() - 4;
         let panel = self.desktop_panel.map(|_| { right -= 46; let r = Rect::new(right, y, 46, h); right -= 4; r });
         let trig_w = 196;
         let trig = Rect::new(right - trig_w, y, trig_w, h);
         let time = Rect::new(trig.x - 9 - 150, y, 150, h);
-        // the sources that are on get a chip; the channels that are off share one "+ CH" chip
+        // the sources that are on get a pill; the channels that are off share one "+ CH" chip
         let shown = self.shown_refs();
         let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).collect();
         let off = (0..n).filter(|&c| !self.m.ch[c].on).count();
         // with every channel on the chip stays, as "Add source": math, ref and bus are behind it
         let add_w = if off > 0 { 62 } else { 100 };
-        let on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
+        // SIM plays refs, not the live channels: their pills are not on the bar then (Live brings them back)
+        let chans: Vec<usize> = if self.studio_ch_pills_hidden() { Vec::new() } else { (0..n).filter(|&c| self.m.ch[c].on).collect() };
         let show_w = if self.studio_badges_hidden() { 46 } else { 0 };
         let caps = &oos_hal::model::platform().caps;
         let la_w = if caps.la { 52 } else { 0 };
         let gen_w = if caps.has_gen() { if self.m.afg_on { 124 } else { 56 } } else { 0 };
         let aux_w = [la_w, gen_w].iter().filter(|w| **w > 0).map(|w| w + 5).sum::<i32>();
-        let small = shown.iter().map(|&i| ref_w(i) + 5).sum::<i32>() + maths.iter().map(|&k| math_w(k) + 5).sum::<i32>() + add_w + 5 + show_w + aux_w;
-        let room = time.x - 9 - (bottom.x + 4) - small;
-        let w_on = if on > 0 { (170).min((room - (on - 1) * 5) / on).max(60) } else { 0 };
+        // the source pills (channels, refs, math) share what the fixed chips leave, by count
+        let count = (chans.len() + shown.len() + maths.len()) as i32;
+        let room = time.x - 9 - (bottom.x + 4) - (add_w + 5 + show_w + aux_w);
+        let pw = Self::studio_pill_width(room, count);
         let mut ch = [Rect::new(0, y, 0, ph); NCH];
         let mut x = bottom.x + 4;
-        for (c, r) in ch.iter_mut().enumerate().take(n) {
-            if !self.m.ch[c].on { continue; }
-            *r = Rect::new(x, y, w_on, ph);
-            x += w_on + 5;
+        for &c in &chans {
+            ch[c] = Rect::new(x, y, pw, ph);
+            x += pw + 5;
         }
         let mut refs = [Rect::new(0, y, 0, ph); NREF];
         for &i in &shown {
-            refs[i] = Rect::new(x, y, ref_w(i), ph);
-            x += ref_w(i) + 5;
+            refs[i] = Rect::new(x, y, pw, ph);
+            x += pw + 5;
         }
         let mut math = [Rect::new(0, y, 0, ph); NMATH];
         for &k in &maths {
-            math[k] = Rect::new(x, y, math_w(k), ph);
-            x += math_w(k) + 5;
+            math[k] = Rect::new(x, y, pw, ph);
+            x += pw + 5;
         }
         let add = Rect::new(x, y, add_w, h);
         let mut ax = add.right() + 5;
@@ -552,6 +551,18 @@ impl Ui {
         let gen = (gen_w > 0).then(|| { let r = Rect::new(ax, y, gen_w, h); ax += gen_w + 5; r });
         let show = (show_w > 0).then(|| Rect::new(ax + 1, bottom.y, 40, bottom.h));
         StudioBottom { ch, refs, math, add, show, la, gen, time, trig, panel }
+    }
+
+    /// The live channels are not what SIM plays (it plays refs), so Studio shows no channel pills while it runs.
+    pub(super) fn studio_ch_pills_hidden(&self) -> bool {
+        self.m.layout == Layout::Studio && self.sim_mode()
+    }
+
+    /// The width of a source pill: `count` pills (5 px apart) share `room`, none wider than a channel pill was and none
+    /// narrower than the smallest that still carries its name, so many pills shrink and a few stay roomy.
+    pub(super) fn studio_pill_width(room: i32, count: i32) -> i32 {
+        if count <= 0 { return PILL_MAX_W; }
+        ((room - (count - 1) * 5) / count).clamp(PILL_MIN_W, PILL_MAX_W)
     }
 
     pub(super) fn studio_cards(&self) -> Cards {
@@ -574,27 +585,38 @@ impl Ui {
             let sel = root == Some(MenuId::Channel(c));
             let border = if sel { ACCENT } else if ch.on { col } else { BTN_BORDER };
             chip(cv, r, if ch.on { BTN } else { BAR }, border);
-            // the channel badge: filled while the channel is on
-            // on / off: a dot in the corner
+            // the channel badge: filled while the channel is on; on / off: a dot in the corner
             cv.circle(r.x + 5, r.y + 5, 3, if ch.on { GREEN } else { DIM });
-            let badge = Rect::new(r.x + 8, r.y + 5, 42, 20);
+            cv.set_clip(r);
+            // a narrow pill keeps the badge alone (CH1, then 1), a wider one adds the scale, the coupling line and the chevron
+            let label = format!("CH{}", c + 1);
+            let bw = if r.w >= 70 { 42 } else { (f.sb.width(&label) + 8).min(r.w - 4).max(8) };
+            let (label, bw) = if f.sb.width(&label) + 4 <= bw { (label, bw) } else { ((c + 1).to_string(), bw) };
+            let chev = r.w >= 110;
+            let badge = if r.w >= 70 { Rect::new(r.x + 8, r.y + 5, bw, 20) } else { Rect::new(r.x + (r.w - bw) / 2, r.y + 8, bw, 18) };
             cv.round(badge, 4, if ch.on { col } else { mix(BAR, col, 70) }, 255);
-            cv.text_in(&f.sb, badge, 1, &format!("CH{}", c + 1), if ch.on { DARK_TEXT } else { mix(BAR, col, 200) });
-            let text = if ch.on { format!("{}/div", si_short(ch.volts_per_div() as f64, ch.unit.name())) } else { "Off".into() };
-            let (tx, tw) = (badge.right() + 8, (r.right() - 20 - badge.right() - 8).max(1));
-            cv.set_clip(Rect::new(badge.right() + 2, r.y, (r.right() - 18 - badge.right() - 2).max(1), r.h));
-            // the second small line: coupling, probe and offset in the channel colour, dimmer; the offset goes first, then
-            // the probe, and a pill too narrow for even the coupling keeps the one line
-            let two_lines = f.mb.size + f.s.size <= TWO_LINE_MAX;
-            match Some(self.studio_ch_detail(c, tw)).filter(|d| ch.on && two_lines && f.s.width(d) <= tw) {
-                Some(d) => {
-                    cv.text(&f.mb, tx, r.y + 13, &text, TEXT);
-                    cv.text(&f.s, tx, r.y + 25, &d, mix(BAR, col, 170));
+            cv.text_in(&f.sb, badge, 1, &label, if ch.on { DARK_TEXT } else { mix(BAR, col, 200) });
+            if r.w >= 70 {
+                let full = if ch.on { format!("{}/div", si_short(ch.volts_per_div() as f64, ch.unit.name())) } else { "Off".into() };
+                let short = if ch.on { si_short(ch.volts_per_div() as f64, ch.unit.name()) } else { "Off".into() };
+                let (tx, tw) = (badge.right() + 8, (r.right() - if chev { 20 } else { 4 } - badge.right() - 8).max(1));
+                cv.set_clip(Rect::new(badge.right() + 2, r.y, (tw + 6).min(r.right() - badge.right() - 2).max(1), r.h));
+                // the second small line: coupling, probe and offset in the channel colour, dimmer; the offset goes first, then
+                // the probe, then the line itself, and the scale loses its "/div" before it is dropped
+                let two_lines = f.mb.size + f.s.size <= TWO_LINE_MAX;
+                let text = if f.mb.width(&full) <= tw { full } else { short };
+                if f.mb.width(&text) <= tw {
+                    match Some(self.studio_ch_detail(c, tw)).filter(|d| ch.on && two_lines && f.s.width(d) <= tw) {
+                        Some(d) => {
+                            cv.text(&f.mb, tx, r.y + 13, &text, TEXT);
+                            cv.text(&f.s, tx, r.y + 25, &d, mix(BAR, col, 170));
+                        }
+                        None => cv.text_in(&f.mb, Rect::new(tx, r.y, tw, r.h), 0, &text, if ch.on { TEXT } else { DIM }),
+                    }
                 }
-                None => cv.text_in(&f.mb, Rect::new(tx, r.y, tw, r.h), 0, &text, if ch.on { TEXT } else { DIM }),
             }
             cv.no_clip();
-            chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM);
+            if chev { chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM); }
         }
         for i in self.shown_refs() {
             let r = b.refs[i];
@@ -714,12 +736,17 @@ impl Ui {
     }
 
     /// The text of a ref or math pill: its name, and under it a small line (the signal, the operation) when it fits.
+    /// A narrow pill drops that line, and a narrower one the letter of its name ("R10" becomes "10").
     fn studio_pill_text(&self, cv: &mut Canvas, r: Rect, name: &str, detail: &str, col: Rgb) {
         let f = self.fonts();
-        if detail.is_empty() || f.sb.size + f.s.size > TWO_LINE_MAX || f.s.width(detail) > r.w - 6 { return cv.text_in(&f.sb, r, 1, name, col); }
-        cv.set_clip(r.inset(2));
-        cv.text(&f.sb, r.x + (r.w - f.sb.width(name)) / 2, r.y + 13, name, col);
-        cv.text(&f.s, r.x + (r.w - f.s.width(detail)) / 2, r.y + 25, detail, mix(BAR, col, 170));
+        let name = if f.sb.width(name) + 4 <= r.w { name } else { &name[1..] };
+        cv.set_clip(r.inset(1));
+        if detail.is_empty() || f.sb.size + f.s.size > TWO_LINE_MAX || f.s.width(detail) > r.w - 6 {
+            cv.text_in(&f.sb, r, 1, name, col);
+        } else {
+            cv.text(&f.sb, r.x + (r.w - f.sb.width(name)) / 2, r.y + 13, name, col);
+            cv.text(&f.s, r.x + (r.w - f.s.width(detail)) / 2, r.y + 25, detail, mix(BAR, col, 170));
+        }
         cv.no_clip();
     }
 

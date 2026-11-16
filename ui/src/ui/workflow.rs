@@ -671,7 +671,10 @@ stat.push(value, current);
         // A fresh, untouched live default gets useful reference readouts on its first import.
         let initialize_measurements = self.refs.iter().all(Option::is_none)
             && self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
-        let reference_session = self.record_mode();
+        // a file loaded while SIM plays refs joins the playback; it does not end it
+        let sim_refs_playing = !self.sim_refs.is_empty();
+        let count = traces.len();
+        let reference_session = self.record_mode() && !sim_refs_playing;
         self.cancel_bus_candidate(true);
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         // Initial SIM generation is still in Live until its first result. Any
@@ -723,6 +726,13 @@ stat.push(value, current);
         } else {
             self.select_workspace_source(WaveId::Ref(first));
             self.dirty_map = true;
+        }
+        if sim_refs_playing {
+            for slot in first..first + count {
+                if !self.sim_refs.contains(&slot) { self.sim_refs.push(slot); }
+            }
+            self.sim_refs.sort_unstable();
+            self.measure_refs();
         }
         self.relayout();
         self.toast(&format!("Loaded {} into R{}", name, first + 1));

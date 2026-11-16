@@ -146,6 +146,8 @@ impl Ui {
             Item::SimShow,
             Item::SimDefaults,
         ];
+        // Studio only: the sheet offers a file for the SIM slot
+        if self.m.layout == Layout::Studio { items.insert(items.iter().position(|it| *it == Item::SimAddRef).map_or(0, |i| i + 1), Item::SimLoad); }
         if self.record_mode() { items.insert(0, Item::SimLive); }
         items
     }
@@ -157,7 +159,7 @@ impl Ui {
 
     pub(super) fn sim_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SimPlay | Item::SimAddRef | Item::SimLive | Item::SimDefaults => Kind::Action,
+            Item::SimPlay | Item::SimAddRef | Item::SimLoad | Item::SimLive | Item::SimDefaults => Kind::Action,
             Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => Kind::Choice,
             Item::SimRate | Item::SimHigh | Item::SimLow | Item::SimRise | Item::SimBw | Item::SimDeemph | Item::SimNoise | Item::SimRj | Item::SimPj | Item::SimPjHz
             | Item::SimSscDeviation | Item::SimSscHz | Item::SimDcd | Item::SimCorrRj | Item::SimCorrHz => Kind::Value,
@@ -191,6 +193,7 @@ impl Ui {
             Item::SimSlot => "Slot",
             Item::SimPlay => "Run simulation mode",
             Item::SimAddRef => "Add to ref",
+            Item::SimLoad => "Load file...",
             Item::SimLive => "Live",
             Item::SimShow => "Show",
             Item::SimDefaults => "Defaults",
@@ -221,7 +224,7 @@ impl Ui {
             Item::SimPj => si_short(m.sim_pj, "s"),
             Item::SimPjHz => if m.sim_pj > 0.0 { si_short(m.sim_pjhz, "Hz") } else { "off".into() },
             Item::SimSlot => format!("R{}", m.sim_slot + 1),
-            Item::SimPlay | Item::SimAddRef => String::new(),
+            Item::SimPlay | Item::SimAddRef | Item::SimLoad => String::new(),
             Item::SimDefaults => String::new(),
             Item::SimShow => match &self.refs[m.sim_slot] {
                 None => "empty".into(),
@@ -293,6 +296,7 @@ impl Ui {
         match it {
             Item::SimLive => self.return_to_live(),
             Item::SimAddRef => self.sim_add_to_ref(),
+            Item::SimLoad => self.studio_load_file(self.m.sim_slot),
             Item::SimPlay if self.sim_generating() => {
                 if self.session_is_sim && self.m.run==RunState::Run { self.record_key(key::RUNSTOP); }
                 else { self.sim_cancel_generation(); }

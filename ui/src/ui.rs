@@ -105,6 +105,8 @@ mod batch23_tests;
 #[cfg(test)]
 mod batch24_tests;
 #[cfg(test)]
+mod batch25_tests;
+#[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
 mod batch13_tests;
@@ -987,6 +989,8 @@ enum Item {
     CatSourceD,
     /// SIM sheet: write the signal to the chosen ref (no SIM mode)
     SimAddRef,
+    /// Studio SIM sheet: a waveform file into the SIM slot (and into playback)
+    SimLoad,
 }
 
 #[derive(PartialEq)]
@@ -6602,6 +6606,7 @@ impl Ui {
             MenuId::Pick => match self.pick {
                 Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
                 Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
+                Some(p) if p.it == Item::RefImport && self.m.layout == Layout::Studio => format!("Load file into R{}", self.ref_sel + 1),
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
@@ -7813,6 +7818,7 @@ impl Ui {
                     None => self.toast("No waveform to save"),
                 },
                 Item::RefExport => self.ref_export(),
+                Item::RefImport if self.m.layout == Layout::Studio => self.studio_load_file(self.ref_sel),
                 Item::RefImport => self.ref_import(),
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
