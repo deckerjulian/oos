@@ -22,7 +22,7 @@ keeps further dependencies out of what runs on the scope.
 - The desktop build serves HiSLIP (TCP 4880, or `--hislip-port`) and leaves VXI-11 closed.
 - Both serve the raw socket (5555) and the web remote (8080) with `GET /lxi/identification`.
 - Discovery is written in the tree: on the scope an mDNS responder with DNS-SD (`ui/src/mdns.rs`, RFC 6762 / 6763) in
-  a thread of its own, under a name from model and serial (`dho924s-204527.local`); on a computer the announcer
+  a thread of its own, under a name from model and serial (`dho924s-123456.local`); on a computer the announcer
   (`ui/src/announce.rs`). Only a service that is listening is announced.
 
 ## Alternatives

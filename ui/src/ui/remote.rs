@@ -8,7 +8,7 @@
 //! authenticated shell, is off unless the image or the user switches it on.
 //!
 //! The last row: the mDNS responder (`crate::mdns`, on by default: it answers on the local link only) next to the
-//! scope's name on the network, `dho924s-204527.local` (`net.name`). The name is also the kernel's host name, which
+//! scope's name on the network, `dho924s-123456.local` (`net.name`). The name is also the kernel's host name, which
 //! the DHCP client sends (rcS, oos-wlan).
 //!
 //! Below it: Allowed, the address prefixes that may reach the scope (`net.allow`, docs/network.md 6), and Firewall,
@@ -83,7 +83,7 @@ impl Ui {
         }
     }
 
-    /// The name from model and serial number (`dho924s-204527`).
+    /// The name from model and serial number (`dho924s-123456`).
     fn name_default() -> String {
         let p = oos_hal::model::platform();
         mdns::default_name(&p.caps.name, p.serial.as_deref())

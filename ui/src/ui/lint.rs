@@ -180,7 +180,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
     walk(&|| open(Network, &|u| { u.eth_link = true; u.eth.speed = Some(100); u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())] }), "Network 100M", &mut out);
     // the longest name on the network, and the longest default (DHO924S with six digits)
     walk(&|| open(Remote, &|u| { u.sys.net_name = "x".repeat(63); u.net = "192.168.177.164".into() }), "Remote long name", &mut out);
-    walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-204527".into()), "Remote default name", &mut out);
+    walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-123456".into()), "Remote default name", &mut out);
     // the longest address list, the network beside it, and a change waiting for the next start
     walk(&|| open(Remote, &|u| { u.sys.set_net_allow(Some(&"2001:db8:aaaa:bbbb::/64 ".repeat(6))); u.remote.lans = vec!["192.168.177.0/24".into(), "10.20.0.0/24".into()] }), "Remote long allow list", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);

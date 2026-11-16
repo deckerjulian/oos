@@ -13,7 +13,7 @@
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet, remote.ssh,
 //!                           # remote.mdns)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
-//! net.name = dho924s-204527 # the scope's name on the network (host name, <name>.local); written at the first start
+//! net.name = dho924s-123456 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
 //! backlight = 100            # Display > Backlight, percent (10..100)
 //! net.allow = 192.168.1.0/24 # System > Network > Remote services > Allowed (netacl.rs; rcS reads it, docs/network.md 6)

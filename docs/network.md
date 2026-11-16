@@ -171,13 +171,13 @@ the log` when the firewall or SSH could not follow it.
 ### 4.1 The scope by name: mDNS and DNS-SD
 
 The sixth row of the page: **mDNS** (on by default) and **Name**, which shows where the scope is reached,
-`dho924s-204527.local`. A computer on the same network opens the web remote at `http://dho924s-204527.local:8080`,
+`dho924s-123456.local`. A computer on the same network opens the web remote at `http://dho924s-123456.local:8080`,
 also when the scope only has a link-local address (169.254.x.y, a cable straight to a computer without DHCP), and
-VISA reaches it at `TCPIP::dho924s-204527.local::INSTR`. macOS, iOS, Linux with Avahi and Windows 10 and newer resolve
+VISA reaches it at `TCPIP::dho924s-123456.local::INSTR`. macOS, iOS, Linux with Avahi and Windows 10 and newer resolve
 `.local` names by themselves.
 
 **The name.** At the first start oos-ui makes it from the model and the last six digits of the serial number
-(`dho924s-204527`) and writes it to `/oos/system.conf` (`net.name`). The Name picker offers it, the name set, and
+(`dho924s-123456`) and writes it to `/oos/system.conf` (`net.name`). The Name picker offers it, the name set, and
 Other: the keyboard takes 1 to 63 letters, digits and hyphens (one DNS label, not starting or ending with a hyphen;
 upper case is taken as lower case). The name is also the kernel's host name: rcS sets it at power-on and the DHCP
 client sends it (`udhcpc -x hostname:`), so a router lists the scope by it. A new name counts for mDNS at once, for the
@@ -199,7 +199,7 @@ and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the 
 | `_vxi-11._tcp.local` | PTR, SRV, TXT | VXI-11: port 111 |
 | `_ssh._tcp.local` | PTR, SRV, TXT | SSH (section 7): port 22, only while oos-ssh listens (`remote.ssh = on`, `net.allow` set, firewall loaded; looked at once a second, so it follows a change of Allowed) |
 
-The instance name a computer lists is `Rigol DHO924S OOS (204527)` (with a name of its own: `Rigol DHO924S OOS
+The instance name a computer lists is `Rigol DHO924S OOS (123456)` (with a name of its own: `Rigol DHO924S OOS
 (lab-scope-3)`). A service switched off is not announced; its records get a goodbye. A name of the scope without the
 type asked for is answered with an NSEC record of the types it has (A, so a question for AAAA gets a quick "none").
 
@@ -210,18 +210,18 @@ host already has the name, the scope takes `<name>-2`, `<name>-3` and so on, and
 records are announced and one for each conflict:
 
 ```
-oos-ui: mDNS: dho924s-204527.local on eth0 wlan0, services _http._tcp _scpi-raw._tcp _vxi-11._tcp
-oos-ui: mDNS: dho924s-204527.local is taken (dho924s-204527.local type 1), now dho924s-204527-2.local
+oos-ui: mDNS: dho924s-123456.local on eth0 wlan0, services _http._tcp _scpi-raw._tcp _vxi-11._tcp
+oos-ui: mDNS: dho924s-123456.local is taken (dho924s-123456.local type 1), now dho924s-123456-2.local
 ```
 
 Questions with the unicast-response bit get a unicast answer; a question from a port other than 5353 (a plain DNS
 resolver) gets a legacy unicast answer with its id and question and a TTL of at most 10 s, so these work as well:
 
 ```
-dig @224.0.0.251 -p 5353 dho924s-204527.local
+dig @224.0.0.251 -p 5353 dho924s-123456.local
 dig @224.0.0.251 -p 5353 -x 169.254.7.9
 dns-sd -B _scpi-raw._tcp            (macOS: browse; avahi-browse -r _scpi-raw._tcp on Linux)
-dns-sd -G v4v6 dho924s-204527.local
+dns-sd -G v4v6 dho924s-123456.local
 ```
 
 **Switching it off.** mDNS = Off (`remote.mdns = off`) sends a goodbye (TTL 0) for every record and closes port 5353;
@@ -259,7 +259,7 @@ remote.telnet = on
 remote.ssh = off
 ssh.password = on
 remote.mdns = on              # mDNS and DNS-SD (4.1)
-net.name = dho924s-204527     # the name on the network, written at the first start
+net.name = dho924s-123456     # the name on the network, written at the first start
 graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
 ```
 
