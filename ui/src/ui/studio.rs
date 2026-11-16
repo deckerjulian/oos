@@ -379,10 +379,15 @@ impl Ui {
     /// The top bar at the first tier (full labels) that leaves the acquisition caption room, else the shortest: labels
     /// shorten before anything is dropped, and every button stays reachable.
     pub(super) fn studio_top(&self) -> StudioTop {
+        // the status caption gets the room it needs (up to 260 px) before the buttons give up width; when no tier
+        // has that much, the one with the most room is used and the caption is shortened to it
+        let need = (self.fonts().mb.width(&self.studio_acq_caption()) + 6).clamp(120, 260);
         let mut t = self.studio_top_tier(0);
+        let mut best = t.acq.w;
         for tier in 1..TOP_TIERS {
-            if t.acq.w >= 120 { break; }
-            t = self.studio_top_tier(tier);
+            if t.acq.w >= need { break; }
+            let n = self.studio_top_tier(tier);
+            if n.acq.w > best || n.acq.w >= need { best = n.acq.w; t = n; }
         }
         t
     }
@@ -480,9 +485,7 @@ impl Ui {
         // sample rate and depth as plain text (the source in front of them): a tap opens the page that sets them
         let caption = self.studio_acq_caption();
         let acq_open = self.menu_open && root == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
-        cv.set_clip(Rect::new(t.acq.x, top.y, t.acq.w, top.h));
-        cv.text(&f.mb, t.acq.x, 25, &caption, if acq_open { ACCENT } else { TEXT });
-        cv.no_clip();
+        cv.text_fit(&f.mb, Rect::new(t.acq.x, 11, t.acq.w, 18), 0, &caption, if acq_open { ACCENT } else { TEXT });
         // Measure, Cursors, View, settings: the Default button style
         let measuring = open(MenuId::Measure) || self.results_panel();
         let cursors = open(MenuId::Cursor) || self.m.cursor != CursorMode::Off;
@@ -684,7 +687,9 @@ impl Ui {
         cv.line(r.x + 10, cy, r.x + 14, cy + 3, TEXT);
         cv.line(r.x + 24, cy, r.x + 20, cy - 3, TEXT);
         cv.line(r.x + 24, cy, r.x + 20, cy + 3, TEXT);
-        cv.text_in(&f.mb, Rect::new(r.x + 32, r.y, r.w - 52, r.h), 0, &format!("{}{}/div", if self.m.zoom { "Main " } else { "" }, si_short(self.m.time_per_div() as f64, "s")), TEXT);
+        let scale = format!("{}/div", si_short(self.m.time_per_div() as f64, "s"));
+        let label = if self.m.zoom && f.mb.width(&format!("Main {scale}")) <= r.w - 52 { format!("Main {scale}") } else { scale };
+        cv.text_fit(&f.mb, Rect::new(r.x + 32, r.y, r.w - 52, r.h), 0, &label, TEXT);
         chevron_down(cv, r.right() - 16, cy - 2, DIM);
         // trigger: the slope, the source and the level
         let r = b.trig;
@@ -1003,7 +1008,7 @@ impl Ui {
 /// The cursor band and its C1 / C2 tags.
 pub(super) const BAND: Rgb = rgb(0x2d, 0xd4, 0xcf);
 /// Height of the T marker and the cursor tags, drawn on the top edge of the scale (no row of their own).
-const TAG_H: i32 = 15;
+const TAG_H: i32 = 24;
 
 impl Ui {
     /// Studio draws the trigger position and the cursor tags on the top edge of the scale.
@@ -1014,7 +1019,7 @@ impl Ui {
     /// Where a T or cursor tag centred on `x` sits: inside the scale, on its top edge.
     pub(super) fn studio_tag_rect(&self, x: i32) -> Rect {
         let g = self.grid;
-        Rect::new(x.clamp(g.x + 11, g.right() - 11) - 11, g.y + 1, 22, TAG_H)
+        Rect::new(x.clamp(g.x + 12, g.right() - 12) - 12, g.y + 1, 24, TAG_H)
     }
 
     /// Screen x of a time (relative to the trigger) in the main view of the plot.
@@ -1028,7 +1033,7 @@ impl Ui {
     pub(super) fn studio_lane_badge(&self, cv: &mut Canvas, c: usize, y: i32) {
         let a = self.area;
         let col = CH_COLORS[c];
-        let r = Rect::new(a.x + 3, y - 9, 44, 18);
+        let r = Rect::new(a.x + 3, y - 12, 44, 24);
         self.studio.lane_badges.borrow_mut().push((c, r));
         cv.round(r, 4, col, 255);
         cv.round(r.inset(1), 3, BG, 255);
@@ -1942,13 +1947,14 @@ impl Ui {
         let right = r.right() - 92;
         let value = row.text();
         let vw = f.mb.width(&value);
-        cv.set_clip(Rect::new(x, r.y, (right - x).max(1), r.h));
-        cv.set_clip(Rect::new(x, r.y, (right - vw - 6 - x).max(1), r.h));
+        let outer = cv.save_clip();
+        cv.clip_within(Rect::new(x, r.y, (right - vw - 6 - x).max(1), r.h));
         cv.text(&f.s, x, y0 + 18, &row.name, LABEL);
-        cv.set_clip(Rect::new(x, r.y, (right - x).max(1), r.h));
+        cv.restore_clip(outer);
+        cv.clip_within(Rect::new(x, r.y, (right - x).max(1), r.h));
         cv.text(&f.mb, (right - vw).max(x), y0 + 20, &value, TEXT);
         cv.text(&f.sb, x, y0 + 38, &self.wave_name(row.src), self.wave_color(row.src));
-        cv.no_clip();
+        cv.restore_clip(outer);
         let (pin, menu) = Self::md_row_buttons(r);
         icon_pin(cv, pin.x + pin.w / 2 - 6, r.y + r.h / 2 + 1, pinned, if pinned { AMBER } else { DIM });
         // the row's menu: three dots
@@ -2536,7 +2542,7 @@ impl Ui {
         let open = self.studio.zoom_menu;
         cv.text_in(&f.mb, bar.label, 0, "Zoom", TEXT);
         chip(cv, bar.tdiv, BTN, BTN_BORDER);
-        cv.text_in(&f.m, Rect::new(bar.tdiv.x + 10, bar.tdiv.y, bar.tdiv.w - 30, bar.tdiv.h), 0, &format!("{}/div", si_short(tscales()[self.m.zscale] as f64, "s")), TEXT);
+        cv.text_fit(&f.m, Rect::new(bar.tdiv.x + 10, bar.tdiv.y, bar.tdiv.w - 30, bar.tdiv.h), 0, &format!("{}/div", si_short(tscales()[self.m.zscale] as f64, "s")), TEXT);
         chevron_down(cv, bar.tdiv.right() - 20, bar.tdiv.y + bar.tdiv.h / 2 - 2, DIM);
         for (r, plus) in [(bar.plus, true), (bar.minus, false)] {
             chip(cv, r, BTN, BTN_BORDER);
@@ -2567,10 +2573,10 @@ impl Ui {
         cv.circle(cx, cy, 7, TEXT);
         cv.circle(cx, cy, 5, BTN);
         cv.circle(cx, cy, 2, TEXT);
-        if !icon_only { cv.text_in(&f.m, Rect::new(bar.center.x + 32, bar.center.y, bar.center.w - 34, bar.center.h), 0, if short { "Centre" } else { "Center trigger" }, TEXT); }
+        if !icon_only { cv.text_fit(&f.m, Rect::new(bar.center.x + 32, bar.center.y, bar.center.w - 34, bar.center.h), 0, if short { "Centre" } else { "Center trigger" }, TEXT); }
         chip(cv, bar.fit, BTN, BTN_BORDER);
         icon_expand(cv, if icon_only { bar.fit.x + bar.fit.w / 2 } else { bar.fit.x + 18 }, bar.fit.y + bar.fit.h / 2, TEXT);
-        if !icon_only { cv.text_in(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, if short { "Fit" } else { "Fit record" }, TEXT); }
+        if !icon_only { cv.text_fit(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, if short { "Fit" } else { "Fit record" }, TEXT); }
         chip(cv, bar.more, BTN, if open { ACCENT } else { BTN_BORDER });
         for dx in [-8, 0, 8] { cv.circle(bar.more.x + bar.more.w / 2 + dx, bar.more.y + bar.more.h / 2, 2, TEXT); }
     }
@@ -2684,7 +2690,7 @@ impl Ui {
         let f = self.fonts();
         let lane_tag = |cv: &mut Canvas, lane: Rect, text: &str| {
             let w = f.sb.width(text) + 16;
-            let r = Rect::new(self.right_tag_x(lane, lane.y + 6, w) - w + 26, lane.y + 6, w, 20);
+            let r = Rect::new(self.right_tag_x(lane, lane.y + 6, w) - w + 26, lane.y + 4, w, 24);
             cv.round(r, 5, BTN_BORDER, 255);
             cv.round(r.inset(1), 4, PANEL_BG, 255);
             cv.text_in(&f.sb, r, 1, text, TEXT);

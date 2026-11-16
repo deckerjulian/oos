@@ -888,7 +888,7 @@ impl Ui {
             }
         }
         if lay.scroll_up.is_some_and(|r| r.contains(x, y)) {
-            self.cat_scroll = self.cat_scroll.saturating_sub(80);
+            self.cat_scroll = (self.cat_scroll - 80).max(0);
             return true;
         }
         if lay.scroll_down.is_some_and(|r| r.contains(x, y)) {

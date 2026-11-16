@@ -40,6 +40,12 @@ impl MenuGeo {
 
 impl Ui {
     /// The text on a button of the Menu.
+    /// Width of the label column: the widest group name at the text size in use, never under `GROUP_LABEL_W`.
+    pub(super) fn group_label_w(&self) -> i32 {
+        let widest = self.main_groups().iter().map(|g| self.fonts().sb.width(g.0)).max().unwrap_or(0);
+        GROUP_LABEL_W.max(widest + 12)
+    }
+
     pub(super) fn menu_cell_label(&self, it: Item) -> String {
         use Item::*;
         use MenuId as M;
@@ -92,8 +98,9 @@ impl Ui {
     }
 
     /// Buttons per row in a Menu `w` wide (the sheet): as many as keep a button at least `CELL_MIN_W` wide, up to six.
-    pub(super) fn menu_cols(w: i32) -> i32 {
-        let gw = w - 2 * PAD - GROUP_LABEL_W - 6;
+    pub(super) fn menu_cols(w: i32) -> i32 { Self::menu_cols_with(w, GROUP_LABEL_W) }
+    fn menu_cols_with(w: i32, label_w: i32) -> i32 {
+        let gw = w - 2 * PAD - label_w - 6;
         ((gw + GAP) / (CELL_MIN_W + GAP)).clamp(1, MAX_COLS)
     }
 
@@ -115,7 +122,7 @@ impl Ui {
         let y = f.top.bottom();
         let w = self.scr.w - 16;
         let avail = (f.bottom.y - y).max(SHEET_HEAD + SHEET_FOOT);
-        let want = SHEET_HEAD + 4 + self.menu_content_h(Self::menu_cols(w)) + 6;
+        let want = SHEET_HEAD + 4 + self.menu_content_h(Self::menu_cols_with(w, self.group_label_w())) + 6;
         Rect::new(8, y, w, want.min(avail))
     }
 
@@ -124,9 +131,9 @@ impl Ui {
     pub(super) fn menu_geo(&self) -> MenuGeo {
         let r = self.sheet_rect();
         let view = Rect::new(r.x + PAD, r.y + SHEET_HEAD + 4, r.w - 2 * PAD, (r.bottom() - r.y - SHEET_HEAD - 10).max(CELL_H));
-        let cols = Self::menu_cols(r.w);
-        let gx = view.x + GROUP_LABEL_W;
-        let gw = view.w - GROUP_LABEL_W - 6;
+        let cols = Self::menu_cols_with(r.w, self.group_label_w());
+        let gx = view.x + self.group_label_w();
+        let gw = view.w - self.group_label_w() - 6;
         let cw = (gw - (cols - 1) * GAP) / cols;
         let all = self.main_groups();
         let height = |n: usize| { let rows = (n as i32 + cols - 1) / cols; rows * CELL_H + (rows - 1) * GAP };
@@ -140,7 +147,7 @@ impl Ui {
                 let (c, row) = (i as i32 % cols, i as i32 / cols);
                 (it, Rect::new(gx + c * (cw + GAP), view.y + y - scroll + row * (CELL_H + GAP), cw, CELL_H))
             }).collect();
-            groups.push(MenuGroupGeo { name, label: Rect::new(view.x, view.y + y - scroll, GROUP_LABEL_W - 6, CELL_H), items: cells });
+            groups.push(MenuGroupGeo { name, label: Rect::new(view.x, view.y + y - scroll, self.group_label_w() - 6, CELL_H), items: cells });
             y += h + GROUP_GAP;
         }
         MenuGeo { r, view, groups, content_h }
@@ -154,7 +161,7 @@ impl Ui {
         cv.set_clip(g.view);
         for (n, grp) in g.groups.iter().enumerate() {
             if grp.label.bottom() >= g.view.y && grp.label.y <= g.view.bottom() {
-                cv.text_in(&f.sb, grp.label, 0, grp.name, LABEL);
+                cv.text_fit(&f.sb, grp.label, 0, grp.name, LABEL);
             }
             if n > 0 {
                 let y = grp.label.y - GROUP_GAP / 2 - 1;
@@ -205,12 +212,15 @@ impl Ui {
         let open = matches!(it, Item::Open(_));
         let label = if armed { "Tap again".to_string() } else { self.menu_cell_label(it) };
         let room = c.w - 32 - if open { 16 } else { 6 };
-        let font = if f.m.width(&label) <= room { &f.m } else { &f.s };
-        // the label is cut at the edge of the button and of the body of the sheet
+        // a label that does not fit in the larger font goes in the smaller one, then on two lines; the body of the sheet
+        // cuts it at its edges
+        let outer = cv.save_clip();
         let (top, bottom) = (c.y.max(view.y), c.bottom().min(view.bottom()));
-        cv.set_clip(Rect::new(c.x + 30, top, room + 2, (bottom - top).max(0)));
-        cv.text_in(font, Rect::new(c.x + 30, c.y, room, c.h), 0, &label, ink);
-        cv.set_clip(view);
+        cv.clip_within(Rect::new(c.x + 30, top, room + 2, (bottom - top).max(0)));
+        if f.m.width(&label) <= room { cv.text_in(&f.m, Rect::new(c.x + 30, c.y, room, c.h), 0, &label, ink); }
+        else if f.s.width(&label) <= room { cv.text_in(&f.s, Rect::new(c.x + 30, c.y, room, c.h), 0, &label, ink); }
+        else { fitted_text(cv, &[&f.s], Rect::new(c.x + 28, c.y, room + 6, c.h), &label, ink); }
+        cv.restore_clip(outer);
         if open {
             chevron(cv, c.right() - 12, c.y + c.h / 2, 1, if on { ink } else { DIM });
         }

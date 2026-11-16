@@ -113,6 +113,8 @@ mod batch26_tests;
 #[cfg(test)]
 mod batch27_tests;
 #[cfg(test)]
+mod uiaudit_tests;
+#[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
 mod batch13_tests;
@@ -2060,8 +2062,10 @@ impl Ui {
     pub(super) fn trigger_tag_x(&self, x1: i32, y: i32) -> i32 {
         if self.m.layout != Layout::Studio { return x1; }
         let mut x1 = x1;
+        // the corner buttons carry a word at their left ("Zoom CH1"): the tag keeps clear of that too
+        let word = self.fonts().s.width("Zoom CH4") + 10;
         for b in [self.full_btn().1, self.zoom_btn().1] {
-            if y + 10 > b.y && y - 10 < b.bottom() && x1 + 26 > b.x { x1 = x1.min(b.x - 34 - MARK_W); }
+            if y + 10 > b.y && y - 10 < b.bottom() && x1 + 26 > b.x - word + 34 { x1 = x1.min(b.x - word - MARK_W); }
         }
         x1
     }
@@ -4775,7 +4779,7 @@ impl Ui {
         let note = self.live_ref_note();
         if !note.is_empty() && !self.view_on() && !self.eye_open() {
             let y = g.y + g.h - 36;
-            let fit = Rect::new(g.x + 8, y - 12, 52, 22);
+            let fit = Rect::new(g.x + 8, y - 13, 52, 24);
             btn(cv, fit, BTN, ACCENT);
             cv.text_in(&f.s, fit, 1, "Fit", TEXT);
             let lab = Rect::new(fit.x + fit.w + 8, y - 12, (g.x + g.w - fit.x - fit.w - 16).max(1), 22);
@@ -4984,8 +4988,17 @@ impl Ui {
                     let pitch = (row(y).right() - 2 - vx) / part.len() as i32;
                     for (i, r) in part.iter().enumerate() {
                         let x = vx + i as i32 * pitch;
-                        let x2 = cv.text(&f.s, x, y + base, &r.name, DIM) + 8;
-                        cv.text(&f.sb, x2, y + base, &r.text(), col);
+                        // name and value share the cell; at the larger text sizes the name is shortened, then dropped, and
+                        // the value is cut last, so nothing runs over the edge of the screen
+                        let (txt, cell) = (r.text(), (pitch - 6).min(row(y).right() - 2 - x));
+                        let nroom = cell - f.sb.width(&txt) - 8;
+                        let mut x2 = x;
+                        if nroom >= 24 {
+                            let shown = f.s.width(&r.name).min(nroom);
+                            cv.text_fit(&f.s, Rect::new(x, y, nroom, bh), 0, &r.name, DIM);
+                            x2 = x + shown + 8;
+                        }
+                        cv.text_fit(&f.sb, Rect::new(x2, y, (x + cell - x2).max(8), bh), 0, &txt, col);
                     }
                     y += self.lay().strip_row;
                 }
@@ -6600,8 +6613,8 @@ impl Ui {
             MenuId::Trigger => "Trigger".into(),
             MenuId::Acquire => "Acquire".into(),
             MenuId::Measure => "Measure".into(),
-            MenuId::MeasAdd => "Add measurement".into(),
-            MenuId::MeasLegacy => "All measurements / Selected".into(),
+            MenuId::MeasAdd => "Add measurements".into(),
+            MenuId::MeasLegacy => "All measurements".into(),
             MenuId::AddPanel => "Add".into(),
             MenuId::Search => "Search 1".into(),
             MenuId::MeasHold => "Add".into(),
@@ -8515,11 +8528,23 @@ impl Ui {
             // the whole catalogue in one grid: narrower columns where the larger text sizes would run off the screen
             if n > 54 { (7, ((self.scr.w - 72) / 7).min(l.grid_col - 20), DLG_ROW + 2, 8) } else { (6, ((self.scr.w - 64) / 6).min(l.grid_col), DLG_ROW + 2, 8) }
         } else if grid { (4, l.grid_col, DLG_ROW + 2, 8) } else if n > 5 { (2, l.dlg_col, DLG_ROW, 16) } else { (1, l.dlg_col, DLG_ROW, 16) };
-        let nrows = (n + cols - 1) / cols;
+        let fr = self.frame();
+        // the dialog stays between the top and the bottom bar: rows are pressed together (never below the control
+        // height), then, when that is not enough, the list gets another column while the screen has room for it
+        let avail = fr.bottom.y - 4 - (fr.top.bottom() + 4);
+        let (mut cols, mut rh) = (cols, rh);
+        let mut nrows = (n + cols - 1) / cols;
+        while nrows > 0 {
+            let fit = (avail - DLG_HEAD - 6) / nrows;
+            if DLG_HEAD + nrows * rh + 6 <= avail { break; }
+            if fit > DLG_CTRL { rh = fit; break; }
+            if grid || 24 + (cols + 1) * cw + cols * gap > self.scr.w - 2 * METRICS.edge || cols >= n { rh = fit.max(DLG_CTRL); break; }
+            cols += 1;
+            nrows = (n + cols - 1) / cols;
+        }
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
         let (ax, top) = self.menu_anchor();
-        let fr = self.frame();
         let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
         let y = if top { fr.top.bottom() + 4 } else { (fr.bottom.y - 4 - h).max(fr.top.bottom() + 4) };
         let r = Rect::new(x, y, w, h);
@@ -8547,8 +8572,10 @@ impl Ui {
 
     /// Start menu: one row of up to 6 buttons per group, the group label left of it; above the Menu button.
     fn main_layout(&self) -> Dlg {
-        let (lw, cw, gap) = (104, 140, 6);
-        let groups = self.main_groups();
+        let (gap, groups) = (6, self.main_groups());
+        // the label column follows the widest group name (larger text); the buttons give up width for it
+        let lw = groups.iter().map(|g| self.fonts().sb.width(g.0) + 20).max().unwrap_or(0).max(104);
+        let cw = 140.min((self.scr.w - 2 * METRICS.edge - 24 - lw - 5 * gap) / 6);
         // six buttons per line; a longer group continues on the next line (label on its first line only)
         const PER_LINE: usize = 6;
         let lines: usize = groups.iter().map(|g| g.1.len().div_ceil(PER_LINE).max(1)).sum();
@@ -8634,13 +8661,13 @@ impl Ui {
         }
         self.draw_measurement_groups(cv);
         for (r, name) in &d.heads {
-            cv.text_in(&f.sb, *r, 0, name, DIM);
+            cv.text_fit(&f.sb, Rect::new(r.x, r.y, r.w - 6, r.h), 0, name, DIM);
         }
         for (i, row) in d.rows.iter().enumerate() {
             let focus = i == self.focus;
             let kind = Self::kind(row.it);
             if row.label.w > 0 && kind != Kind::Action {
-                cv.text_in(&f.s, row.label, 0, self.item_label(row.it), if focus { ACCENT } else { LABEL });
+                cv.text_fit(&f.s, row.label, 0, self.item_label(row.it), if focus { ACCENT } else { LABEL });
             }
             let c = row.ctrl;
             match &row.ctl {
@@ -8699,14 +8726,15 @@ impl Ui {
                         None if kind == Kind::Action => self.item_label(row.it).to_string(),
                         None => self.value(row.it),
                     };
-                    let (tf, tr, _) = self.btn_text(c, matches!(row.it, Item::Open(_)), &txt);
+                    let (tf, tr, fits) = self.btn_text(c, matches!(row.it, Item::Open(_)), &txt);
+                    let ink = if added { DARK_TEXT } else { TEXT };
                     if added {
                         cv.round(c, 5, ACCENT, 255);
-                        cv.text_in(tf, tr, 1, &txt, DARK_TEXT);
                     } else {
                         btn(cv, c, BTN, if focus { ACCENT } else { BTN_BORDER });
-                        cv.text_in(tf, tr, 1, &txt, TEXT);
                     }
+                    // a label too long for its button goes on two lines (the last resort is "..."), never over the edge
+                    if fits && std::ptr::eq(tf, &f.mb) { cv.text_in(tf, tr, 1, &txt, ink); } else { fitted_text(cv, &[&f.mb], tr, &txt, ink); }
                     if let Item::Open(_) = row.it {
                         chevron(cv, c.x + c.w - 14, c.y + c.h / 2, 1, DIM);
                     }
@@ -10147,10 +10175,11 @@ fn fitted_text(cv: &mut Canvas, fonts: &[&'static Font], r: Rect, s: &str, c: Rg
     let words: Vec<&str> = s.split(' ').collect();
     let first = (1..words.len()).rev().find(|&k| f.width(&words[..k].join(" ")) <= room).unwrap_or(1);
     let (a, b) = (words[..first].join(" "), words[first..].join(" "));
-    cv.set_clip(r);
-    cv.text_in(f, Rect::new(r.x, r.y, r.w, r.h / 2 + 1), 1, &a, c);
-    cv.text_in(f, Rect::new(r.x, r.y + r.h / 2 - 1, r.w, r.h / 2 + 1), 1, &b, c);
-    cv.no_clip();
+    let outer = cv.save_clip();
+    cv.clip_within(r);
+    cv.text_fit(f, Rect::new(r.x + 4, r.y, r.w - 8, r.h / 2 + 1), 1, &a, c);
+    cv.text_fit(f, Rect::new(r.x + 4, r.y + r.h / 2 - 1, r.w - 8, r.h / 2 + 1), 1, &b, c);
+    cv.restore_clip(outer);
 }
 
 fn backed_text(cv: &mut Canvas, f: &Font, x: i32, y: i32, s: &str, col: Rgb) -> i32 {

@@ -813,7 +813,7 @@ stat.push(value, current);
             return None;
         }
         let g = self.grid;
-        Some(Rect::new(g.x + 8, g.y + g.h - 48, 52, 22))
+        Some(Rect::new(g.x + 8, g.y + g.h - 49, 52, 24))
     }
 
     pub(super) fn reference_slice(&self, slot: usize) -> Option<(&[f32], f64, f64)> {

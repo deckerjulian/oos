@@ -521,6 +521,8 @@ impl Ui {
         cv.round(r.inset(2), 7, DLG_BG, 255);
         let left = back.map_or(r.x + 14, |b| b.right() + 8);
         let mut t = title.to_string();
+        // a title that is too long for the bar loses its detail (the path after "Storage"), not its name
+        if f.mb.width(&t) > close.x - left - 6 { if let Some((name, _)) = t.split_once(" \u{b7} ") { t = name.to_string(); } }
         while f.mb.width(&t) > close.x - left - 6 && t.chars().count() > 2 {
             let mut c = t.chars();
             c.next();
@@ -928,7 +930,7 @@ impl Ui {
 
     pub(super) fn draw_sheet_add(&self, cv: &mut Canvas) {
         let f = self.fonts();
-        self.sheet_draw_chrome(cv, "Add measurement");
+        self.sheet_draw_chrome(cv, "Add measurements");
         let g = self.sheet_add_geo();
         if g.chips.is_empty() {
             let (r, _, _) = self.sheet_chrome();

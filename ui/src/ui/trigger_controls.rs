@@ -121,14 +121,19 @@ impl Ui {
 
     pub(super) fn draw_compact_trigger(&self, cv: &mut Canvas, rect: Rect) {
         btn(cv, rect, BAR, if self.menu_open && self.menu_root() == MenuId::Trigger { ACCENT } else { CARD_BORDER });
-        cv.set_clip(rect.inset(3));
-        cv.text(&self.fonts().sb, rect.x + 7, rect.y + 12,
-            &format!("{} · {} · {:?}", self.trigger_source_label(), self.m.trig_type.name(), self.m.trig_mode), ACCENT);
+        let outer = cv.save_clip();
+        cv.clip_within(rect.inset(3));
+        // the caption gives up its last part (the mode) before it is cut, and ends in "..." as a last resort
+        let room = rect.w - 14;
+        let full = format!("{} · {} · {:?}", self.trigger_source_label(), self.m.trig_type.name(), self.m.trig_mode);
+        let short = format!("{} · {}", self.trigger_source_label(), self.m.trig_type.name());
+        let caption = if self.fonts().sb.width(&full) <= room { full } else { short };
+        cv.text_fit(&self.fonts().sb, Rect::new(rect.x + 7, rect.y, room, 15), 0, &caption, ACCENT);
         let levels = if matches!(self.m.trig_type, TrigType::Runt | TrigType::Slope | TrigType::Window) {
             format!("{} … {}", si_short(self.m.trig_level2 as f64, "V"), si_short(self.m.trig_level as f64, "V"))
         } else { si_short(self.trig_level_shown() as f64, "V") };
-        cv.text(&self.fonts().s, rect.x + 7, rect.y + 25, &levels, TEXT);
-        cv.no_clip();
+        cv.text_fit(&self.fonts().s, Rect::new(rect.x + 7, rect.y + 14, room, 14), 0, &levels, TEXT);
+        cv.restore_clip(outer);
     }
 
     pub(super) fn compact_trigger_tap(&mut self, x: i32, y: i32, rect: Rect) -> bool {

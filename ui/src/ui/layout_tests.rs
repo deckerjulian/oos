@@ -196,7 +196,7 @@ fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
     assert!(u.studio_tags_on());
     assert_eq!(u.grid.y, u.frame().body.y + super::dock::STRIP_H, "the strip of the waveform, then the scale: no tag row");
     let t = u.studio_tag_rect(u.studio_x_of_time(0.0));
-    assert!(t.y > u.grid.y && t.bottom() < u.grid.y + 20, "T sits inside the scale, on its top edge");
+    assert!(t.y > u.grid.y && t.bottom() < u.grid.y + 26, "T sits inside the scale, on its top edge");
     // the tag row, the lanes and the bars do not overlap
     let top = u.studio_top();
     assert!(u.grid.y - super::dock::STRIP_H >= top.run.bottom());

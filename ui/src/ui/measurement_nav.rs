@@ -91,7 +91,7 @@ impl Ui {
             let rect = Self::measurement_group_rect(i);
             let selected = i == self.meas_category;
             btn(cv, rect, if selected { ACCENT } else { BTN }, if selected { ACCENT } else { BTN_BORDER });
-            cv.text_in(&self.fonts().mb, rect, 1, label, if selected { DARK_TEXT } else { TEXT });
+            fitted_text(cv, &[&self.fonts().mb, &self.fonts().sb], rect, label, if selected { DARK_TEXT } else { TEXT });
         }
         let source_count = self.measurement_count();
         let line = format!("{} selected", source_count);

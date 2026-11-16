@@ -45,6 +45,11 @@ pub struct Canvas {
     /// Recording (System > Graphics = GPU, `Canvas::record`): the drawing becomes commands for the GPU instead of
     /// pixels; `px` stays as it was.
     pub rec: Option<Box<Rec>>,
+    /// test-only drawing log (ui/uiaudit_tests.rs)
+    #[cfg(test)]
+    pub au: Option<Vec<Au>>,
+    #[cfg(test)]
+    pub au_bound: Option<Rect>,
 }
 
 /// The kinds of `Cmd` (its low byte of `kind`; the high byte is the font of a glyph, the mirroring of a corner).
@@ -134,7 +139,7 @@ pub fn scale(c: Rgb, t: u32) -> Rgb {
 
 impl Canvas {
     pub fn new(w: i32, h: i32) -> Canvas {
-        Canvas { px: vec![0; (w * h) as usize], w, h, clip: (0, 0, w, h), base: (0, 0, w, h), layer: false, rec: None }
+        Canvas { px: vec![0; (w * h) as usize], w, h, clip: (0, 0, w, h), base: (0, 0, w, h), layer: false, rec: None, #[cfg(test)] au: None, #[cfg(test)] au_bound: None }
     }
 
     /// From now on the canvas records what is drawn (`rec`), starting empty; or (`on` false) draws pixels again.
@@ -179,6 +184,18 @@ impl Canvas {
     }
     pub fn no_clip(&mut self) {
         self.clip = self.base;
+    }
+    /// The clip now in force, to hand back to `restore_clip` after drawing something that sets its own.
+    pub fn save_clip(&self) -> (i32, i32, i32, i32) {
+        self.clip
+    }
+    pub fn restore_clip(&mut self, c: (i32, i32, i32, i32)) {
+        self.clip = c;
+    }
+    /// Narrows the clip in force to `r` (never widens it); pair with `save_clip` / `restore_clip`.
+    pub fn clip_within(&mut self, r: Rect) {
+        let c = self.clip;
+        self.clip = (r.x.max(c.0), r.y.max(c.1), (r.x + r.w).min(c.2), (r.y + r.h).min(c.3));
     }
     /// Everything drawn from now on stays inside `r` (a view's rectangle), also after `no_clip`; None lifts it.
     pub fn set_view_clip(&mut self, r: Option<Rect>) {
@@ -232,6 +249,8 @@ impl Canvas {
     /// The pixels `px` (rows of `r.w`) with their top left corner at `r.x`, `r.y`, inside the clip; with `key` its
     /// zero pixels are left out.
     pub fn image(&mut self, r: Rect, px: &[u32], key: bool) {
+        #[cfg(test)]
+        self.au_push(Au::Fill { r, opaque: !key, c: 0, clip: (0, 0, 0, 0) });
         let Some(c) = self.clipr(r) else { return };
         if px.len() < (r.w * r.h) as usize {
             return;
@@ -255,6 +274,8 @@ impl Canvas {
     }
 
     pub fn fill(&mut self, r: Rect, c: Rgb) {
+        #[cfg(test)]
+        self.au_push(Au::Fill { r, opaque: true, c, clip: (0, 0, 0, 0) });
         if self.rec.is_some() {
             if let Some(cl) = self.clipr(r) {
                 self.cmd(cl, CMD_RECT, 0, 0, 0, 0, 0xff00_0000 | (c & 0xff_ffff));
@@ -274,6 +295,8 @@ impl Canvas {
         if a >= 255 {
             return self.fill(r, c);
         }
+        #[cfg(test)]
+        self.au_push(Au::Fill { r, opaque: false, c, clip: (0, 0, 0, 0) });
         if a == 0 {
             return;
         }
@@ -350,6 +373,8 @@ impl Canvas {
 
     /// Filled rounded rectangle with alpha.
     pub fn round(&mut self, r: Rect, rad: i32, c: Rgb, a: u32) {
+        #[cfg(test)]
+        self.au_push(Au::Round { r, rad, c, a, clip: (0, 0, 0, 0) });
         let rad = rad.min(r.h / 2).min(r.w / 2);
         if rad <= 0 {
             return self.blend(r, c, a);
@@ -499,6 +524,8 @@ impl Canvas {
 
     /// Draws `s` with the baseline at `y`; returns the pen x after the text.
     pub fn text(&mut self, f: &Font, x: i32, y: i32, s: &str, c: Rgb) -> i32 {
+        #[cfg(test)]
+        self.au_text(f, x, y, s, c);
         if self.rec.is_some() {
             let mut x = x;
             for ch in s.chars() {
@@ -546,6 +573,18 @@ impl Canvas {
         x
     }
 
+    /// Like `text_in`, but text wider than `r` is shortened with "..." so that it stays inside the box.
+    pub fn text_fit(&mut self, f: &Font, r: Rect, align: i32, s: &str, c: Rgb) {
+        if f.width(s) <= r.w {
+            return self.text_in(f, r, align, s, c);
+        }
+        let mut t = s.to_string();
+        while !t.is_empty() && f.width(&format!("{t}...")) > r.w {
+            t.pop();
+        }
+        let t = format!("{}...", t.trim_end());
+        self.text_in(f, r, align, &t, c);
+    }
     /// Text vertically centred in `r`; align 0 = left, 1 = centre, 2 = right.
     pub fn text_in(&mut self, f: &Font, r: Rect, align: i32, s: &str, c: Rgb) {
         let tw = f.width(s);
@@ -554,6 +593,8 @@ impl Canvas {
             1 => r.x + (r.w - tw) / 2,
             _ => r.x + r.w - tw,
         };
+        #[cfg(test)]
+        { self.au_bound = Some(r); }
         let cap = f.size * 72 / 100;
         self.text(f, tx, r.y + (r.h + cap) / 2, s, c);
     }
@@ -709,5 +750,54 @@ mod tests {
         f.scale(&[5, 6], &mut d, 4);
         assert_eq!(d, [9, 9, 9, 9, 5, 5, 6, 6, 5, 5, 6, 6, 9, 9, 9, 9]);
         f.scale(&[5, 6], &mut d[..6], 4);
+    }
+}
+
+/// Test-only drawing log used by ui/uiaudit_tests.rs.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub enum Au {
+    Text { s: String, ink: Option<(i32, i32, i32, i32)>, adv: (i32, i32), bound: Option<Rect>, clip: (i32, i32, i32, i32), size: i32, c: Rgb, missing: Vec<char> },
+    Fill { r: Rect, opaque: bool, c: Rgb, clip: (i32, i32, i32, i32) },
+    Round { r: Rect, rad: i32, c: Rgb, a: u32, clip: (i32, i32, i32, i32) },
+}
+
+#[cfg(test)]
+impl Canvas {
+    pub fn au_start(&mut self) {
+        self.au = Some(Vec::new());
+    }
+    fn au_push(&mut self, mut e: Au) {
+        let cl = self.clip;
+        match &mut e {
+            Au::Fill { clip, .. } | Au::Round { clip, .. } => *clip = cl,
+            _ => {}
+        }
+        if let Some(v) = self.au.as_mut() {
+            v.push(e);
+        }
+    }
+    fn au_text(&mut self, f: &Font, x: i32, y: i32, s: &str, c: Rgb) {
+        if self.au.is_none() {
+            return;
+        }
+        let mut ink: Option<(i32, i32, i32, i32)> = None;
+        let mut px = x;
+        let mut missing = Vec::new();
+        for ch in s.chars() {
+            let g = f.glyph(ch);
+            if (ch as u32) >= 127 && g.cp != ch as u32 {
+                missing.push(ch);
+            }
+            if g.w > 0 && g.h > 0 {
+                let (gx, gy) = (px + g.x0, y + g.y0);
+                let b = (gx, gy, gx + g.w, gy + g.h);
+                ink = Some(match ink { None => b, Some(a) => (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)) });
+            }
+            px += g.adv;
+        }
+        let bound = self.au_bound.take();
+        let clip = self.clip;
+        self.au.as_mut().unwrap().push(Au::Text { s: s.to_string(), ink, adv: (x, px), bound, clip, size: f.size, c, missing });
     }
 }

@@ -220,10 +220,11 @@ impl Ui {
     fn draw_sim_knob(&self, cv: &mut Canvas, r: Rect, it: Item) {
         let f = self.fonts();
         let (minus, plus) = Self::sim_steps(r);
-        cv.set_clip(Rect::new(r.x, r.y, (minus.x - r.x - 4).max(1), r.h));
+        let outer = cv.save_clip();
+        cv.clip_within(Rect::new(r.x, r.y, (minus.x - r.x - 4).max(1), r.h));
         cv.text(&f.s, r.x + 12, r.y + 17, Self::sim_label(it).unwrap_or(""), LABEL);
         cv.text(&f.mb, r.x + 12, r.y + 37, &self.sim_value(it).unwrap_or_default(), TEXT);
-        cv.no_clip();
+        cv.restore_clip(outer);
         for (b, is_plus) in [(minus, false), (plus, true)] {
             chip(cv, b, BTN, BTN_BORDER);
             cv.hline(b.x + b.w / 2 - 6, b.x + b.w / 2 + 6, b.y + b.h / 2, TEXT);

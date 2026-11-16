@@ -87,11 +87,13 @@ impl Ic<'_> {
     }
     fn tag(&mut self, s: &str) {
         let w = self.f.s.width(s);
+        if w > self.r.w - 2 { return; } // a tag that does not fit is left out rather than cut
         let (x, y) = (self.r.right() - w - 1, self.r.y + self.f.s.size * 3 / 4);
         let c = self.acc;
         self.cv.text(&self.f.s, x, y, s, c);
     }
     fn tag_l(&mut self, s: &str) {
+        if self.f.s.width(s) > self.r.w - 2 { return; }
         let y = self.r.y + self.f.s.size * 3 / 4;
         let c = self.acc;
         self.cv.text(&self.f.s, self.r.x + 1, y, s, c);
@@ -157,7 +159,8 @@ impl Ic<'_> {
 
 /// Draws the figure of `c` in `r`: the waveform in `col`, what is measured in `acc`. Nothing leaves `r`.
 pub(super) fn draw_cat_icon(cv: &mut Canvas, f: &Fonts, r: Rect, c: Cat, col: Rgb, acc: Rgb) {
-    cv.set_clip(r);
+    let outer = cv.save_clip();
+    cv.clip_within(r);
     let mut g = Ic { cv, f, r, col, acc };
     use Cat::*;
     match c {
@@ -291,5 +294,5 @@ pub(super) fn draw_cat_icon(cv: &mut Canvas, f: &Fonts, r: Rect, c: Cat, col: Rg
         DiodeDdt => { g.stroke(&[(0.04, 0.6), (0.3, 0.6), (0.4, 0.16), (0.55, 0.3), (0.7, 0.5), (0.94, 0.5)]); g.mark((0.3, 0.6), (0.4, 0.6)); g.mark((0.4, 0.6), (0.4, 0.16)); g.tag("dI/dt"); }
         Qoss => { g.stroke(&[(0.04, 0.15), (0.5, 0.8), (0.94, 0.8)]); g.shade(0.06, 0.5, 0.15, 0.5); g.tag("Qoss"); }
     }
-    g.cv.no_clip();
+    g.cv.restore_clip(outer);
 }

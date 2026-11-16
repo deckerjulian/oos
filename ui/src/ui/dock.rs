@@ -676,7 +676,7 @@ impl Ui {
         let clear = |cx: i32| { let hit = Rect::new(cx - 30, y - 40, 60, 42); !busy.iter().any(|r| r.w > 0 && hit.x < r.right() && r.x < hit.right() && hit.y < r.bottom() && r.y < hit.bottom()) };
         let cx = [o.x + o.w / 2, o.x + o.w * 62 / 100, o.x + o.w * 38 / 100, o.x + o.w * 25 / 100, o.x + o.w * 75 / 100].into_iter().find(|&c| clear(c)).unwrap_or(o.x + o.w / 2);
         // the grip lies in the bottom of the overview strip, above the buttons of the zoom bar
-        Some((Rect::new(cx - 30, y - 40, 60, 42), Rect::new(cx - 22, y - 14, 44, 12)))
+        Some((Rect::new(cx - 30, y - 40, 60, 42), Rect::new(cx - 22, y - 26, 44, 24)))
     }
 
     pub(super) fn ov_divider_down(&mut self, x: i32, y: i32) -> bool {
@@ -1036,11 +1036,11 @@ impl Ui {
         cv.no_clip();
         if let Some(v) = view { self.draw_view_switch(cv, v); }
         if let Some(e) = extra {
-            chip(cv, Rect::new(e.x + 12, s.y + 2, 26, 22), BTN, BTN_BORDER);
+            chip(cv, Rect::new(e.x + 12, s.y + 1, 26, 24), BTN, BTN_BORDER);
             super::studio::icon_expand(cv, e.x + e.w / 2, s.y + s.h / 2, TEXT);
         }
         let dim = k == VKind::Wave && !self.view_on() && !(self.eye_open() && self.m.eye_place == EyePlace::Full);
-        chip(cv, Rect::new(close.x + 12, s.y + 2, 26, 22), BTN, BTN_BORDER);
+        chip(cv, Rect::new(close.x + 12, s.y + 1, 26, 24), BTN, BTN_BORDER);
         let (cx, cy) = (close.x + close.w / 2, s.y + s.h / 2);
         let c = if dim { DIM } else { TEXT };
         cv.line(cx - 4, cy - 4, cx + 4, cy + 4, c);
@@ -1075,7 +1075,7 @@ impl Ui {
         let dragging = matches!(self.studio.dock.drag, Some(DockDrag::Divider { .. }));
         for d in &lay.dividers {
             let (cx, cy) = (d.line.x + d.line.w / 2, d.line.y + d.line.h / 2);
-            let h = if d.dir == Dir::H { Rect::new(cx - 6, cy - 22, 12, 44) } else { Rect::new(cx - 22, cy - 6, 44, 12) };
+            let h = if d.dir == Dir::H { Rect::new(cx - 12, cy - 22, 24, 44) } else { Rect::new(cx - 22, cy - 12, 44, 24) };
             cv.round(h, 5, if dragging { ACCENT } else { BTN_BORDER }, 255);
             cv.round(h.inset(1), 4, BTN, 255);
             for i in -1..=1 {
