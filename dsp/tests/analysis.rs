@@ -220,15 +220,9 @@ use oos_dsp::eye::{self, Eye};
 use oos_dsp::sim::Logic;
 
 /// PRBS7 (x^7 + x^6 + 1) bit sequence.
+/// PRBS7 from its eighth bit (the start the eye tests were written with).
 fn prbs7(n: usize) -> Vec<bool> {
-    let mut s = 0x7fu8;
-    (0..n)
-        .map(|_| {
-            let b = ((s >> 6) ^ (s >> 5)) & 1;
-            s = ((s << 1) | b) & 0x7f;
-            b == 1
-        })
-        .collect()
+    oos_dsp::hss::prbs_bits(7, n + 7).unwrap()[7..].iter().map(|&b| b == 1).collect()
 }
 
 /// NRZ 0/1 V waveform of `bits` at `rate`, `spu` samples per UI, linear transitions of `tr` UI, each edge displaced by

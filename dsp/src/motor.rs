@@ -5,7 +5,7 @@
 //! Speed, acceleration, direction and angle come from a shaft source; torque and the electrical pair are optional.
 //! `oos-dsp` has no logic-analyser type: quadrature and Hall arrive as boolean samples.
 
-use crate::power::{freq_of, whole_cycles};
+use crate::power::{freq_of, mean_finite, whole_cycles};
 use std::f64::consts::PI;
 
 /// Sign of the mean shaft speed. Stopped is below 1 rpm.
@@ -584,17 +584,6 @@ fn hall_step(prev: u8, cur: u8) -> Option<i32> {
     } else {
         Some(0)
     }
-}
-
-fn mean_finite(x: &[f32]) -> Option<f64> {
-    let (mut s, mut n) = (0.0, 0usize);
-    for &v in x {
-        if v.is_finite() {
-            s += v as f64;
-            n += 1;
-        }
-    }
-    (n > 0).then_some(s / n as f64)
 }
 
 fn mean_product(v: &[f32], i: &[f32]) -> Option<f64> {

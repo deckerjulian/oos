@@ -6,7 +6,7 @@
 use oos_dsp::decode::{Kind, Packet};
 use oos_dsp::decode_ext3::gen::{self, DccFrame, SentFrame};
 use oos_dsp::decode_ext3::*;
-use oos_dsp::sim::{add_noise, sample, Levels, Logic};
+use oos_dsp::sim::{add_noise, sample, Levels};
 
 fn kv(p: &[Packet]) -> Vec<(Kind, u32, bool)> {
     p.iter().map(|x| (x.kind, x.value, x.ok)).collect()
@@ -23,11 +23,6 @@ const ID: Kind = Kind::Id { ext: false, rtr: false };
 fn levels(l: &Levels, dt: f64) -> Vec<f32> {
     let end = l.seg.last().map_or(0.0, |s| s.0);
     sample(|t| l.v(t), 0.0, dt, (end / dt) as usize)
-}
-
-fn logic(l: &Logic, dt: f64, extra: f64) -> Vec<f32> {
-    let end = l.seg.last().map_or(0.0, |s| s.0);
-    sample(|t| l.v(t), 0.0, dt, ((end + extra) / dt) as usize)
 }
 
 // ------------------------------------------------------------------------------------------------- ARINC 429
@@ -142,7 +137,7 @@ fn sent_frames_with_pause_and_tick_tolerance() {
     for (tick, nominal) in [(3e-6, Some(3e-6)), (3.45e-6, Some(3e-6)), (3e-6, None), (10e-6, None)] {
         let l = gen::sent(&fr, tick, 0.0, 5.0);
         let dt = tick / 10.0;
-        let mut v = logic(&l, dt, 10.0 * tick);
+        let mut v = l.sample(dt, 10.0 * tick);
         add_noise(&mut v, 0.1, 3);
         let p = sent(&v, dt, nominal, 6, 2.5, 0.5);
         assert_eq!(skv(&p), sent_want(&fr, (tick * 1e9).round() as u32), "tick {} nominal {:?}", tick, nominal);
@@ -151,11 +146,11 @@ fn sent_frames_with_pause_and_tick_tolerance() {
         assert_eq!(p[2].value2, Some(6));
     }
     // a tick 30 % off the nominal: not taken for a sync
-    let v = logic(&gen::sent(&fr, 3.9e-6, 0.0, 5.0), 0.3e-6, 0.0);
+    let v = gen::sent(&fr, 3.9e-6, 0.0, 5.0).sample(0.3e-6, 0.0);
     assert!(sent(&v, 0.3e-6, Some(3e-6), 6, 2.5, 0.5).is_empty());
     // fewer data nibbles
     let fr3 = vec![SentFrame { status: 1, data: vec![0x1, 0x2, 0x3], crc: None, pause: 20 }, SentFrame { status: 2, data: vec![0xf, 0xe, 0xd], crc: None, pause: 0 }];
-    let v = logic(&gen::sent(&fr3, 3e-6, 0.0, 5.0), 0.3e-6, 0.0);
+    let v = gen::sent(&fr3, 3e-6, 0.0, 5.0).sample(0.3e-6, 0.0);
     assert_eq!(skv(&sent(&v, 0.3e-6, Some(3e-6), 3, 2.5, 0.5)), sent_want(&fr3, 3000));
 }
 
@@ -166,14 +161,14 @@ fn sent_crc_error_invalid_nibble_and_cut_frames() {
     fr[1].crc = Some(good ^ 1);
     let tick = 3e-6;
     let dt = tick / 8.0;
-    let v = logic(&gen::sent(&fr, tick, 0.0, 5.0), dt, 0.0);
+    let v = gen::sent(&fr, tick, 0.0, 5.0).sample(dt, 0.0);
     let p = sent(&v, dt, Some(tick), 6, 2.5, 0.5);
     let crcs: Vec<(u32, bool)> = p.iter().filter(|x| x.kind == Kind::Crc).map(|x| (x.value, x.ok)).collect();
     assert_eq!(crcs, [(sent_crc(&fr[0].data, false) as u32, true), (good as u32 ^ 1, false), (sent_crc(&fr[2].data, false) as u32, true), (sent_crc(&fr[3].data, false) as u32, true)]);
     // a nibble of 30 ticks (value 18) in the second frame: an error with the nominal tick, skipped without one
     let mut t = gen::sent_ticks(&frames());
     t[9 + 3] = 30; // frame 2 (after 9 intervals): sync, status, data 1, data 2
-    let v = logic(&gen::sent_logic(&t, tick, 0.0, 5.0), dt, 0.0);
+    let v = gen::sent_logic(&t, tick, 0.0, 5.0).sample(dt, 0.0);
     let p = sent(&v, dt, Some(tick), 6, 2.5, 0.5);
     let k = skv(&p);
     assert_eq!(k[..4], sent_want(&frames()[..1], 3000)[..]);
@@ -182,7 +177,7 @@ fn sent_crc_error_invalid_nibble_and_cut_frames() {
     let p = sent(&v, dt, None, 6, 2.5, 0.5);
     assert_eq!(skv(&p), [sent_want(&frames()[..1], 3000), sent_want(&frames()[2..], 3000)].concat());
     // a record that ends inside a frame: no error
-    let w = logic(&gen::sent(&frames(), tick, 0.0, 5.0), dt, 0.0);
+    let w = gen::sent(&frames(), tick, 0.0, 5.0).sample(dt, 0.0);
     let half = &w[..w.len() * 3 / 5];
     assert!(sent(half, dt, Some(tick), 6, 2.5, 0.5).iter().all(|x| x.ok));
 }
@@ -478,7 +473,7 @@ fn dcc_xor_and_baseline_packets() {
     assert_eq!(dcc_xor(&[0x28, 0x00, 0x28]), 0x00);
     let fr = dcc_frames();
     let dt = DCC_ONE_HALF / 8.0;
-    let mut v = logic(&gen::dcc(&fr, 0.0, 3.3), dt, 200e-6);
+    let mut v = gen::dcc(&fr, 0.0, 3.3).sample(dt, 200e-6);
     add_noise(&mut v, 0.05, 9);
     let p = dcc(&v, dt, 1.65, 0.3);
     assert_eq!(kv(&p), dcc_want(&fr));
@@ -493,12 +488,12 @@ fn dcc_bad_xor_and_cut_packet() {
     let mut fr = dcc_frames();
     fr[0].xor = Some(0x3C ^ 0xFF);
     let dt = DCC_ONE_HALF / 8.0;
-    let v = logic(&gen::dcc(&fr, 0.0, 3.3), dt, 200e-6);
+    let v = gen::dcc(&fr, 0.0, 3.3).sample(dt, 200e-6);
     let p = dcc(&v, dt, 1.65, 0.3);
     let crcs: Vec<(u32, bool)> = p.iter().filter(|x| x.kind == Kind::Crc).map(|x| (x.value, x.ok)).collect();
     assert_eq!(crcs, [(0x3C ^ 0xFF, false), (0x00, true)]);
     // a record that ends inside the first packet: no partial decode
-    let full = logic(&gen::dcc(&dcc_frames()[..1], 0.0, 3.3), dt, 200e-6);
+    let full = gen::dcc(&dcc_frames()[..1], 0.0, 3.3).sample(dt, 200e-6);
     let cut = &full[..full.len() / 2];
     assert!(dcc(cut, dt, 1.65, 0.3).is_empty());
 }

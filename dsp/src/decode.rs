@@ -318,15 +318,7 @@ mod tests {
 
 /// CRC-15/CAN (polynomial 0x4599) over a bit stream (SOF .. last data bit, unstuffed).
 pub fn can_crc15(bits: &[bool]) -> u16 {
-    let mut crc: u16 = 0;
-    for &b in bits {
-        let top = (crc >> 14) & 1 == 1;
-        crc = (crc << 1) & 0x7fff;
-        if top != b {
-            crc ^= 0x4599;
-        }
-    }
-    crc
+    crate::decode_ext::crc_msb(bits.iter().copied(), 15, 0x4599, 0) as u16
 }
 
 /// CAN 2.0A/B data and remote frames at `bitrate`. `invert` = false: logic level as on the RX/TX pin (dominant low,

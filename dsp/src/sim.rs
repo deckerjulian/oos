@@ -217,6 +217,14 @@ impl Logic {
         let f = if self.tr > 0.0 { ((t - s) / self.tr).clamp(0.0, 1.0) } else { 1.0 };
         x(p) + (x(l) - x(p)) * f
     }
+    /// Time of the last level change (0 without one).
+    pub fn end(&self) -> f64 {
+        self.seg.last().map_or(0.0, |s| s.0)
+    }
+    /// The waveform from t = 0 until `extra` after the last level change, at `dt`.
+    pub fn sample(&self, dt: f64, extra: f64) -> Vec<f32> {
+        sample(|t| self.v(t), 0.0, dt, ((self.end() + extra) / dt) as usize)
+    }
 }
 
 /// UART frames (idle high, start bit, `bits` data bits LSB first, optional parity, 1 stop bit), `gap` idle bit

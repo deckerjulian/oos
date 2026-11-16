@@ -22,7 +22,7 @@ fn tag(label: &'static str, t0: f64, t1: f64, ok: bool) -> Packet {
 }
 
 /// Bitwise CRC, MSB first, without reflection or final XOR (`poly` may include the x^len term).
-fn crc_msb(bits: impl IntoIterator<Item = bool>, len: u32, poly: u32, init: u32) -> u32 {
+pub(crate) fn crc_msb(bits: impl IntoIterator<Item = bool>, len: u32, poly: u32, init: u32) -> u32 {
     let mask = if len >= 32 { u32::MAX } else { (1u32 << len) - 1 };
     let mut crc = init & mask;
     for b in bits {

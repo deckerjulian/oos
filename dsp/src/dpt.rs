@@ -437,7 +437,7 @@ fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Opt
         crossing(id, a, b, il, true)
     } else {
         // diode current crossing zero downward, into reverse: -i crosses 0 upward
-        crossing_f(&rev, a, b, 0.0, true)
+        crossing(&rev, a, b, 0.0, true)
     };
     let Some(t0) = t0 else { return };
     let i1 = bound(t1w).min(rev.len());
@@ -454,7 +454,7 @@ fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Opt
         return;
     }
     out.irrm = Some(peak);
-    let tend = crossing_f(&rev, bound(t_peak), i1, 0.1 * peak, false);
+    let tend = crossing(&rev, bound(t_peak), i1, 0.1 * peak, false);
     let Some(tend) = tend else { return };
     if !(tend > t0) {
         return;
@@ -485,15 +485,6 @@ fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Opt
         })
         .collect();
     out.err = Some(integrate(&prod, t0, tend, dt));
-}
-
-fn crossing_f(x: &[f64], a: usize, b: usize, level: f64, up: bool) -> Option<f64> {
-    let b = b.min(x.len());
-    (a.max(1)..b).find_map(|k| {
-        let (p, q) = (x[k - 1], x[k]);
-        let hit = if up { p < level && q >= level } else { p > level && q <= level };
-        (hit && p.is_finite() && q.is_finite() && q != p).then(|| (k - 1) as f64 + (level - p) / (q - p))
-    })
 }
 
 fn dead_time(out: &mut Pulse, low: &[f32], high: &[f32], pct: f64, dt: f64) {

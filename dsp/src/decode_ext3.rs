@@ -287,14 +287,8 @@ pub fn usb_crc5(bits: &[bool]) -> u8 {
 /// USB CRC16 of data packets: x^16 + x^15 + x^2 + 1 over the payload bytes (LSB first), preset to ones, inverted;
 /// sent low byte first.
 pub fn usb_crc16(data: &[u8]) -> u16 {
-    let r = data.iter().fold(0xffffu16, |mut r, &d| {
-        r ^= d as u16;
-        for _ in 0..8 {
-            r = if r & 1 != 0 { r >> 1 ^ 0xa001 } else { r >> 1 };
-        }
-        r
-    });
-    r ^ 0xffff
+    // the Modbus CRC (same polynomial, preset and bit order), inverted
+    !crate::decode_ext::modbus_crc(data)
 }
 
 /// Line state of the USB pair.

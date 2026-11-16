@@ -198,13 +198,25 @@ pub struct Switching {
     pub transitions: Vec<Transition>,
 }
 
-/// First crossing of `level` in direction `up` within samples [a, b) (fractional index).
-pub(crate) fn crossing(x: &[f32], a: usize, b: usize, level: f64, up: bool) -> Option<f64> {
+/// First crossing of `level` in direction `up` within samples [a, b) (fractional index), of f32 or f64 samples.
+pub(crate) fn crossing<T: Copy + Into<f64>>(x: &[T], a: usize, b: usize, level: f64, up: bool) -> Option<f64> {
     (a.max(1)..b.min(x.len())).find_map(|k| {
-        let (p, q) = (x[k - 1] as f64, x[k] as f64);
+        let (p, q): (f64, f64) = (x[k - 1].into(), x[k].into());
         let hit = if up { p < level && q >= level } else { p > level && q <= level };
         (hit && p.is_finite() && q.is_finite()).then(|| (k - 1) as f64 + (level - p) / (q - p))
     })
+}
+
+/// Mean of the finite samples; None without one.
+pub(crate) fn mean_finite(x: &[f32]) -> Option<f64> {
+    let (mut s, mut n) = (0.0, 0usize);
+    for &v in x {
+        if v.is_finite() {
+            s += v as f64;
+            n += 1;
+        }
+    }
+    (n > 0).then_some(s / n as f64)
 }
 
 /// ∫ p dt between fractional sample indices a and b (trapezoid, linear interpolation at the ends).

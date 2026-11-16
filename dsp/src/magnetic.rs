@@ -238,14 +238,7 @@ fn voltage_cycles(v: &[f32], dt: f64) -> Option<(f64, Vec<f64>)> {
 }
 
 fn mean_finite(x: &[f32]) -> f64 {
-    let (mut s, mut n) = (0.0, 0usize);
-    for &v in x {
-        if v.is_finite() {
-            s += v as f64;
-            n += 1;
-        }
-    }
-    if n == 0 { f64::NAN } else { s / n as f64 }
+    crate::power::mean_finite(x).unwrap_or(f64::NAN)
 }
 
 fn at(x: &[f32], t: f64) -> f64 {

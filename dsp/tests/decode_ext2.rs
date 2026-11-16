@@ -10,7 +10,7 @@ use oos_dsp::sim::{add_noise, sample, Logic};
 
 /// Samples logic waveforms to a common length (until shortly after the last change of any of them).
 fn waves(ls: &[&Logic], dt: f64) -> Vec<Vec<f32>> {
-    let end = ls.iter().filter_map(|l| l.seg.last().map(|s| s.0)).fold(0.0, f64::max);
+    let end = ls.iter().map(|l| l.end()).fold(0.0, f64::max);
     let n = (end / dt) as usize + 200;
     ls.iter().map(|l| sample(|t| l.v(t), 0.0, dt, n)).collect()
 }

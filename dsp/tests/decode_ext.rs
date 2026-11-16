@@ -52,14 +52,6 @@ fn e(l: &str, v: u32, ok: bool) -> (String, u32, bool) {
     (l.to_string(), v, ok)
 }
 
-fn end(l: &Logic) -> f64 {
-    l.seg.last().map_or(0.0, |s| s.0)
-}
-
-fn wave(l: &Logic, dt: f64, extra: f64) -> Vec<f32> {
-    sample(|t| l.v(t), 0.0, dt, ((end(l) + extra) / dt) as usize)
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 
 #[test]
@@ -106,7 +98,7 @@ fn uart_baud_detects_standard_and_odd_rates() {
         let bytes: Vec<u8> = (0..40).map(|_| r() as u8).collect();
         let l = oos_dsp::sim::uart_logic(&bytes, rate, 8, None, 0.5, 0.0, 3.3);
         let dt = 1.0 / rate / 13.7;
-        let mut v = wave(&l, dt, 5.0 / rate);
+        let mut v = l.sample(dt, 5.0 / rate);
         add_noise(&mut v, 0.1, 5);
         assert_eq!(uart_baud(&v, dt, 1.65, 0.4), Some(rate), "rate {}", rate);
     }
@@ -115,10 +107,10 @@ fn uart_baud_detects_standard_and_odd_rates() {
     let bytes: Vec<u8> = (0..30).map(|_| r() as u8).collect();
     let l = oos_dsp::sim::uart_logic(&bytes, rate, 8, Some(true), 1.0, 0.0, 5.0);
     let dt = 1.0 / rate / 20.0;
-    let est = uart_baud(&wave(&l, dt, 5.0 / rate), dt, 2.5, 0.4).unwrap();
+    let est = uart_baud(&l.sample(dt, 5.0 / rate), dt, 2.5, 0.4).unwrap();
     assert!((est - rate).abs() / rate < 0.005, "{}", est);
     // a lone glitch does not count as the bit time
-    let mut v = wave(&oos_dsp::sim::uart_logic(b"Hello, world", 9600.0, 8, None, 1.0, 0.0, 3.3), 1e-6, 1e-3);
+    let mut v = oos_dsp::sim::uart_logic(b"Hello, world", 9600.0, 8, None, 1.0, 0.0, 3.3).sample(1e-6, 1e-3);
     for x in &mut v[3..5] {
         *x = 0.0;
     }
@@ -138,7 +130,7 @@ fn uart9_multidrop_on_rs485_pair() {
     }
     let l = w.done();
     let dt = 1.0 / baud / 16.0;
-    let d = wave(&l, dt, 5.0 / baud);
+    let d = l.sample(dt, 5.0 / baud);
     // A = 2.5 + d, B = 2.5 - d, 2 V common mode hum and independent noise on both wires
     let hum = |i: usize| 2.0 * (i as f32 * 0.003).sin();
     let mut a: Vec<f32> = d.iter().enumerate().map(|(i, x)| 2.5 + x + hum(i)).collect();
@@ -173,7 +165,7 @@ fn dmx512_dimmer_frame_and_rdm() {
     gen::dmx(&mut w, RDM_SC, &set[1..]);
     gen::dmx(&mut w, RDM_SC, &bad[1..]);
     let dt = 0.25e-6;
-    let mut v = wave(&w.done(), dt, 100e-6);
+    let mut v = w.done().sample(dt, 100e-6);
     add_noise(&mut v, 0.3, 9);
     let p = dmx512(&v, dt, 2.5, 0.5, false);
     assert_eq!(p.iter().filter(|x| x.kind == Kind::Break).count(), 4);
@@ -210,7 +202,7 @@ fn dmx512_short_break_and_bad_stop_bits() {
     w.uart(0x7f, 8, Parity::None, 1, DMX_BAUD); // one stop bit only, next start bit follows at once
     w.uart(0x01, 8, Parity::None, 2, DMX_BAUD);
     let dt = 0.25e-6;
-    let p = dmx512(&wave(&w.done(), dt, 50e-6), dt, 2.5, 0.5, false);
+    let p = dmx512(&w.done().sample(dt, 50e-6), dt, 2.5, 0.5, false);
     assert_eq!(p.iter().filter(|x| x.kind == Kind::Break).count(), 1);
     assert_eq!(p.iter().filter(|x| x.kind == Kind::Data).map(|x| (x.value, x.ok)).collect::<Vec<_>>(), [(0x7f, false), (0x01, true)]);
 }
@@ -238,7 +230,7 @@ fn modbus_rtu_frames() {
         w.level(true, 5.0 * 11.0 / baud);
     }
     let dt = 1.0 / baud / 16.0;
-    let mut v = wave(&w.done(), dt, 20.0 / baud);
+    let mut v = w.done().sample(dt, 20.0 / baud);
     add_noise(&mut v, 0.2, 4);
     let p = modbus_rtu(&v, dt, baud, Parity::Even, 1.65, 0.4, false);
     let want = vec![
@@ -306,7 +298,7 @@ fn modbus_ascii_frames() {
         w.level(true, 30.0 / baud);
     }
     let dt = 1.0 / baud / 10.0;
-    let p = modbus_ascii(&wave(&w.done(), dt, 20.0 / baud), dt, baud, 7, Parity::Even, 1.65, 0.4, false);
+    let p = modbus_ascii(&w.done().sample(dt, 20.0 / baud), dt, baud, 7, Parity::Even, 1.65, 0.4, false);
     let want = vec![
         e("S", 0, true),
         e("A", 0x11, true),
@@ -359,7 +351,7 @@ fn onewire_read_rom_and_functions() {
     ops.extend([Ow::Reset { presence: true }, Ow::Write(0xcc), Ow::Write(0xbe), Ow::Read(0x50), Ow::Read(0x05)]);
     let l = gen::onewire_logic(&ops, 0.0, 3.3);
     let dt = 0.5e-6;
-    let mut v = wave(&l, dt, 100e-6);
+    let mut v = l.sample(dt, 100e-6);
     add_noise(&mut v, 0.2, 3);
     let p = onewire(&v, dt, 1.65, 0.6, false);
     let (s_lo, s_hi) = ser(&rom);
@@ -409,12 +401,12 @@ fn onewire_search_rom_and_errors() {
     w.level(false, 200e-6);
     w.level(true, 100e-6);
     let mut l = w.done();
-    let t0 = end(&l) + 50e-6;
+    let t0 = l.end() + 50e-6;
     for (t, b) in gen::onewire_logic(&ops, 0.0, 5.0).seg {
         l.push(t0 + t, b);
     }
     let dt = 0.25e-6;
-    let p = onewire(&wave(&l, dt, 50e-6), dt, 2.5, 0.5, false);
+    let p = onewire(&l.sample(dt, 50e-6), dt, 2.5, 0.5, false);
     let (s_lo, _) = ser(&rom);
     let (b_lo, _) = ser(&bad);
     assert_eq!(
@@ -452,7 +444,7 @@ fn onewire_overdrive_switch() {
     ops.extend([Ow::Write(0xbe), Ow::Read(0x12), Ow::Speed(false), Ow::Reset { presence: true }, Ow::Write(0xcc)]);
     let l = gen::onewire_logic(&ops, 0.0, 3.3);
     let dt = 0.1e-6;
-    let mut v = wave(&l, dt, 100e-6);
+    let mut v = l.sample(dt, 100e-6);
     add_noise(&mut v, 0.1, 8);
     let p = onewire(&v, dt, 1.65, 0.4, false);
     let (s_lo, _) = ser(&rom);
@@ -518,7 +510,7 @@ fn ds2482_bridge_to_onewire() {
     let rate = 400e3;
     let (sda, scl) = i2c_logic(&x, rate, 0.0, 3.3);
     let dt = 0.1e-6;
-    let n = ((end(&sda) + 5e-6) / dt) as usize;
+    let n = ((sda.end() + 5e-6) / dt) as usize;
     let a = sample(|t| sda.v(t), 0.0, dt, n);
     let c = sample(|t| scl.v(t), 0.0, dt, n);
     let p = ds2482(&i2c(&a, &c, 1.65, 0.3));
@@ -585,7 +577,7 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
     let (nom, dat) = (500e3, 2e6);
     let l = gen::can_fd_logic(&frames, nom, dat, 0.0, 3.3);
     let dt = 1.0 / 40e6;
-    let mut v = wave(&l, dt, 20.0 / nom);
+    let mut v = l.sample(dt, 20.0 / nom);
     add_noise(&mut v, 0.1, 21);
     let p = can_fd(&v, dt, nom, dat, 1.65, 0.3, false);
     assert_eq!(ids(&p), vec![(0x123, false, false), (0x1234_567, true, false), (0x7ff, false, false), (0x055, false, false), (0x0f0, false, false), (0x1fff_ffff, true, false), (0, false, false), (0x100, false, false)]);
@@ -625,7 +617,7 @@ fn can_fd_corrupted_bits_fail() {
         for &(b, d) in bits {
             w.level(b, d);
         }
-        wave(&w.done(), dt, 10.0 / nom)
+        w.done().sample(dt, 10.0 / nom)
     };
     let p = can_fd(&mk(&good), dt, nom, dat, 1.65, 0.3, false);
     assert_eq!(oks(&p, "CRC"), [true]);
@@ -653,7 +645,7 @@ fn can_fd_on_can_h_1m_5m() {
     let (nom, dat) = (1e6, 5e6);
     let l = gen::can_fd_logic(&f, nom, dat, 3.5, 2.5);
     let dt = 1.0 / 100e6;
-    let mut v = wave(&l, dt, 10.0 / nom);
+    let mut v = l.sample(dt, 10.0 / nom);
     add_noise(&mut v, 0.05, 2);
     let p = can_fd(&v, dt, nom, dat, 3.0, 0.2, true);
     assert_eq!(ids(&p), vec![(0x3c1, true, false)]);
@@ -691,7 +683,7 @@ fn flexray_frames_on_rxd() {
     let tb = 1e-7;
     let l = bits_logic(&bits, tb, 20, 0.0, 3.3);
     let dt = tb / 8.0;
-    let mut v = wave(&l, dt, 20.0 * tb);
+    let mut v = l.sample(dt, 20.0 * tb);
     add_noise(&mut v, 0.2, 6);
     let p = flexray(&v, dt, 10e6, 1.65, 0.4, false);
     assert_eq!(vals(&p, "TSS"), [11, 11, 11]);
@@ -745,7 +737,7 @@ fn flexray_crc_errors() {
     let dt = tb / 8.0;
     let run = |flip: usize| {
         let l = bits_logic(&fr_logic(&f, 5, Some(flip)), tb, 20, 0.0, 3.3);
-        flexray(&wave(&l, dt, 20.0 * tb), dt, 10e6, 1.65, 0.4, false)
+        flexray(&l.sample(dt, 20.0 * tb), dt, 10e6, 1.65, 0.4, false)
     };
     // bit index of byte k, bit j (MSB = 0): TSS 5 + FSS 1 + 10 per byte + BSS 2
     let at = |k: usize, j: usize| 5 + 1 + 10 * k + 2 + j;
@@ -769,7 +761,7 @@ fn flexray_frames_cut_by_the_record() {
     let frames = vec![fr(0x40, 1, vec![0, 0, 0x01, 0, 0x10, 0, 0, 0], false); 3];
     let tb = 1e-7;
     let dt = tb / 8.0;
-    let v = wave(&bits_logic(&fr_logic(&frames, 11, None), tb, 20, 0.0, 3.3), dt, 20.0 * tb);
+    let v = bits_logic(&fr_logic(&frames, 11, None), tb, 20, 0.0, 3.3).sample(dt, 20.0 * tb);
     // frames of 11 + 1 + 10 * 16 + 2 bits, 20 idle bits apart, the first after 20 idle bits
     let len = 11.0 + 1.0 + 160.0 + 2.0 + 20.0;
     for cut in [30.0, 60.0, 95.0, 120.0, 150.0] {
