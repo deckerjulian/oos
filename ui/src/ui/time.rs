@@ -177,6 +177,9 @@ impl Ui {
     /// At the start on the unit: the settings file, the time zone for the kernel, whether the clock was set already.
     pub fn load_system(&mut self, path: std::path::PathBuf) {
         self.sys = sysconf::SysConf::load(&path);
+        if let Some(name) = self.keep_one_decoder() {
+            eprintln!("oos-ui: {}: decoders.off leaves out every decoder, {} stays", path.display(), name);
+        }
         self.sys_path = Some(path);
         self.net_name_init();
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();

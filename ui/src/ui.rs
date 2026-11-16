@@ -7797,11 +7797,11 @@ impl Ui {
             Item::DecThr => self.m.dec_thr += d as f32 * self.decoder_vpd() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
             Item::DecProto => {
-                // only the decoders System > Features offers
+                // only the decoders System > Features offers (none: a hand-edited system.conf, see `load_system`)
                 let on = self.protos_on();
-                let i = on.iter().position(|&x| x == self.m.dec_proto).unwrap_or(0);
-                if let Some(&p) = on.get(cyc(i, on.len(), d)) {
-                    self.set_dec_proto(p);
+                if !on.is_empty() {
+                    let i = on.iter().position(|&x| x == self.m.dec_proto).unwrap_or(0);
+                    self.set_dec_proto(on[cyc(i, on.len(), d)]);
                 }
             }
             Item::DecUsbSpeed => self.m.dec_uspeed = cyc(self.m.dec_uspeed, crate::decode::USB_SPEEDS.len(), d),

@@ -54,6 +54,17 @@ impl Ui {
         !self.sys.decoders_off.iter().any(|x| *x == k)
     }
 
+    /// A `decoders.off` that leaves out every decoder (a hand-edited system.conf) keeps the one in use, as System >
+    /// Features keeps one: its name then.
+    pub(super) fn keep_one_decoder(&mut self) -> Option<&'static str> {
+        if !self.protos_on().is_empty() {
+            return None;
+        }
+        let k = self.m.dec_proto.key();
+        self.sys.decoders_off.retain(|x| *x != k);
+        Some(self.m.dec_proto.name())
+    }
+
     /// The decoders offered, in the order of the picker.
     pub(super) fn protos_on(&self) -> Vec<Proto> {
         PROTOS.iter().copied().filter(|&p| self.proto_on(p)).collect()
@@ -199,5 +210,24 @@ mod tests {
         // and back
         u.select_option(Item::FeatOn(i), "On");
         assert!(u.feature_on("magnetic"));
+    }
+
+    // Break it catches: a hand-edited system.conf that leaves out every decoder, which System > Features does not
+    // allow, made Decode > Protocol divide by zero
+    #[test]
+    fn a_system_conf_without_any_decoder_keeps_one() {
+        let all = PROTOS.iter().map(|p| p.key()).collect::<Vec<_>>().join(" ");
+        let (c, bad) = crate::sysconf::SysConf::parse(&format!("decoders.off = {}\n", all));
+        assert!(bad.is_empty());
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.sys.decoders_off = c.decoders_off.clone();
+        u.open_menu(MenuId::Decode);
+        u.adjust(Item::DecProto, 1);
+        u.adjust(Item::DecProto, -1);
+        // as it is loaded at the start: the decoder in use stays
+        let proto = u.m.dec_proto;
+        assert_eq!(u.keep_one_decoder(), Some(proto.name()));
+        assert_eq!(u.protos_on(), vec![proto]);
+        assert_eq!(u.keep_one_decoder(), None);
     }
 }
