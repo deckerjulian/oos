@@ -9359,6 +9359,13 @@ impl Ui {
                         m.floor_live_tdiv();
                     }
                     self.open_menu(MenuId::Channel(c));
+                } else if m.n_on() > 1 && m.active != c {
+                    // several channels on: the first press only selects the channel, so the knobs act on it; the
+                    // next press opens its menu. Another channel's menu would show the wrong channel: it closes.
+                    m.active = c;
+                    if self.menu_open && matches!(self.menu, MenuId::Channel(_)) {
+                        self.close_menu();
+                    }
                 } else if self.menu_open && self.menu == MenuId::Channel(c) {
                     m.ch[c].on = false;
                     self.menu_open = false;
@@ -10295,6 +10302,14 @@ impl Ui {
                 if !self.m.ch[c].on {
                     self.m.ch[c].on = true;
                     self.settings_changed();
+                } else if self.m.n_on() > 1 && self.m.active != c {
+                    // as the channel key: with several channels on, the first tap only selects; the next opens the
+                    // menu. Another channel's menu would show the wrong channel: it closes.
+                    self.m.active = c;
+                    if self.menu_open && matches!(self.menu, MenuId::Channel(_)) {
+                        self.close_menu();
+                    }
+                    return self.select_workspace_source(WaveId::Ch(c));
                 }
                 self.m.active = c;
                 return self.toggle_menu(MenuId::Channel(c));
@@ -13279,6 +13294,45 @@ mod tests {
                 assert!(r.x + r.w + 14 + w <= room, "{:?} {} {}", ts, main, w);
             }
         }
+    }
+
+    /// With several channels on, the key of a channel that is not selected only selects it; the next press opens its
+    /// menu, the one after that switches it off. Another channel's menu closes, other menus stay.
+    #[test]
+    fn a_channel_key_first_selects_when_several_are_on() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.step(0.033);
+        assert!(ui.m.ch[0].on && ui.m.n_on() == 1 && ui.m.active == 0);
+        ui.key(key::CH1 + 1);
+        assert!(ui.m.ch[1].on && ui.m.active == 1 && ui.menu_open && ui.menu == MenuId::Channel(1));
+        ui.key(key::CH1);
+        assert!(ui.m.ch[0].on && ui.m.active == 0 && !ui.menu_open, "select only, CH2's menu closes");
+        ui.key(key::CH1);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(0), "selected: the menu opens");
+        ui.key(key::CH1);
+        assert!(!ui.m.ch[0].on && ui.m.active == 1, "menu open: off");
+        // one channel on: its key opens the menu at once, as before
+        ui.key(key::CH1 + 1);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(1));
+        // a menu that is not a channel's stays while the key selects
+        ui.key(key::CH1);
+        assert!(ui.m.ch[0].on && ui.m.active == 0);
+        ui.open_menu(MenuId::Display);
+        ui.key(key::CH1 + 1);
+        assert!(ui.m.active == 1 && ui.menu_open && ui.menu == MenuId::Display);
+        // a tap on a channel's card does the same: select first, then the menu
+        ui.close_menu();
+        let card = |ui: &Ui, c: usize| mid(ui.cards().0[c]);
+        let (x, y) = card(&ui, 0);
+        ui.tap(x, y);
+        assert!(ui.m.active == 0 && !ui.menu_open, "tap: select only");
+        let (x, y) = card(&ui, 0);
+        ui.tap(x, y);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(0), "tap again: the menu");
+        let (x, y) = card(&ui, 1);
+        ui.tap(x, y);
+        assert!(ui.m.active == 1 && !ui.menu_open, "CH1's menu closes when CH2 is selected");
     }
 
     /// A channel key held on the front panel: AC/DC, nothing else; a short press does what the key does, when it is

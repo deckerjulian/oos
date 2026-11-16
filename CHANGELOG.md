@@ -174,6 +174,10 @@ New:
 
 Changed:
 
+- Channel keys with several channels on: the first press on a channel that is not selected only selects it, so V/div
+  and position act on it without its menu covering the screen; the next press opens the menu, the one after that
+  switches the channel off, as before. A channel menu that is open closes when another channel is selected. A tap on
+  a channel's card selects and opens the menu the same way (a tap with the menu open still closes it).
 - Mean, RMS, Std dev and Area of deep records (above 1 M points, shown as min/max pairs) are measured again: the
   screen window is read raw once in a while (`meas.deep_raw`, now on by default; `meas.deep_raw = off` turns it
   off). 0.711 Vrms for a 2 Vpp sine at 10 to 125 M on the DHO924S. The reads come less often for a larger window,

@@ -1,4 +1,6 @@
 key ch3
+# CH1 off: with several channels on, the first press selects, the second opens its menu, the third switches off
+key ch1
 key ch1
 key ch1
 knob hscale +2
