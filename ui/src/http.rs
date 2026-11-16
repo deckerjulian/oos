@@ -1598,8 +1598,20 @@ setTimeout(() => {
         }
     }
 
+    /// The long poll as a hang guard, a minute instead of the tests' second: a debug PNG takes most of a second, more
+    /// on a busy computer, and a request that waited out the long poll before the first picture was made got an empty
+    /// 200. The clients of these tests wait as long (`PICTURE_WAIT`).
+    fn slow_encoder_guard(h: &Http) {
+        h.shots.lock().long_poll = Some(PICTURE_WAIT);
+    }
+
+    /// How long a test's client waits for its picture: a hang guard, not a time the test depends on.
+    const PICTURE_WAIT: Duration = Duration::from_secs(60);
+
     fn live_picture_hand_over(frames_first: bool) {
         let mut h = Http::open(0);
+        // the request waits for its picture however long the encoder takes (`slow_encoder_guard`)
+        slow_encoder_guard(&h);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
@@ -1626,7 +1638,7 @@ setTimeout(() => {
         }
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(PICTURE_WAIT)).unwrap();
             let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
@@ -1673,13 +1685,14 @@ setTimeout(() => {
     fn live_picture_with_the_gpu_is_a_picture_read_back() {
         let _sends = sends();
         let mut h = Http::open(0);
+        slow_encoder_guard(&h);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(PICTURE_WAIT)).unwrap();
             let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
