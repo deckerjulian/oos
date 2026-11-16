@@ -51,6 +51,8 @@ How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on t
 - [frontpanel.md](protocols/frontpanel.md): UART frames, key and knob codes, LEDs.
 - [horizontal-config.md](protocols/horizontal-config.md): time base, memory depth, channel set, acquire mode.
 - [la.md](protocols/la.md): logic analyzer D0..D15: enable, sample rate, thresholds, read-out.
+- [mho-acquisition.md](protocols/mho-acquisition.md): MHO900: start-up of the acquisition board, register blocks,
+  ADC bridge, read-out format, measurements (not yet verified on hardware).
 - [pll.md](protocols/pll.md): sample clock: LMX2582 and LMK04828.
 - [record-play.md](protocols/record-play.md): the record -> play chain and the read-out after an own arm.
 - [roll-mode.md](protocols/roll-mode.md): roll and scan mode at slow time bases.

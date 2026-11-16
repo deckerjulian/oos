@@ -124,6 +124,10 @@ New:
   ADR 0028): screen, touch, network, web remote, SCPI and storage with the demo signal, nothing driven on the
   acquisition board. `OOS_BOARD=mho boot/build-dev-image.sh`; the Rust crates take the feature `board-mho`. Built from
   an owner's platform probe of an MHO954; not yet started on a unit.
+- MHO900 acquisition board described (docs/protocols/mho-acquisition.md, `hal/src/mho/acq.rs`, the MHO900 section of
+  docs/hardware/overview.html): start-up order, register blocks, the ADCs' SPI bridge, the read-out and sample format
+  (the DHO's) and how measurements get their data. Taken from how the stock MHO900 system uses the board; not yet
+  verified on hardware, nothing of it is driven.
 - `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
   numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,

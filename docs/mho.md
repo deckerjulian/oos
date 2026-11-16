@@ -91,7 +91,14 @@ on this board. What keeps it small:
 
 ## Next: the acquisition
 
-Everything in porting.md's table "What does not carry over", measured on a unit at the bench: how the SoC loads the
-Kintex-7 (the GPIO sequence and where the bitstream comes from: OOS may read the unit's own file under `/rigol/FPGA` at
-run time, it cannot ship it), the register map behind `10ee:7024`, the JESD204 ADCs and their clock, the front ends and
-their select lines, the calibration files, the generator board and the front panel.
+[protocols/mho-acquisition.md](protocols/mho-acquisition.md) describes the acquisition board as the stock MHO900 system
+uses it (**not yet verified on hardware**), and `hal/src/mho/acq.rs` keeps it as data: the start-up order (supplies on
+GPIO0_A1, GPIO0_A2 and GPIO1_A0, the LMK04821 clock, the Kintex-7 image per hardware code, PCIe), the register blocks,
+the ADCs' SPI bridge at 0x3000 and the read-out format. The main result for a port: the register window, the
+read-out stream, the run and read-out registers of the SCU and the sample format (7500 codes per division around
+32768, the DHO's interleave) are the DHO800/DHO900's. OOS's decode and its measurements therefore carry over once the
+board delivers frames.
+
+Still to be measured on a unit at the bench: the clock and ADC settings, the JESD204 link, the front ends and their
+select lines, the calibration files, the generator board and the front panel. Nothing of it is turned on before it
+has run on a unit (ADR 0010); `Target::acquisition` stays false until then.
