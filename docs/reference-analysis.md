@@ -59,6 +59,13 @@ completion, stopped reads and panning never count as another acquisition.
 Load file adds a reference alongside live channels without replacing measurements,
 run state or the timebase. Take over and Offline waveforms enter explicit stored-
 record sessions; Live restores acquisition.
+A session (Take over, Offline waveforms, a reference trigger source or SIM) ends
+the same way however it is left: Live, Record = With live, a channel key, a
+channel as primary trigger source or a channel switched on in Sources bring back
+the live set-up from before it (channels, timebase, measurements, page), and the
+channel chosen then goes on. A set-up recalled during a session ends it first and
+is the one that stays. In Live, switching a channel on in Sources leaves the
+trigger source and Run/Stop as they are.
 Select the reference pill to focus the vertical controls, cursors and automatic
 Eye action. Run, Stop and Single remain the acquisition/replay controls.
 
