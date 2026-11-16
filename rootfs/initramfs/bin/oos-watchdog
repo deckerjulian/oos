@@ -1,0 +1,126 @@
+#!/bin/sh
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Hardware watchdog (dw_wdt at ff848000, /dev/watchdog): busybox `watchdog` asks for 30 s and writes every 5 s. When the
+# kernel hangs hard enough that this process no longer runs, the SoC resets and the loader starts again. A panic restarts
+# by itself (rcS sets `kernel.panic=10` after stock selection is durable); this covers what never reaches a panic.
+# rcS starts it before oos-ui; it does not depend on oos-ui and stays up when oos-ui restarts. A busybox `watchdog` that exits is started again, for as long as
+# the system runs: after 1 s, doubling up to 60 s while it keeps exiting, back to 1 s once it ran 10 min. Each restart
+# is logged to the kernel log. A pause longer than 30 s after an exit without magic close ends in a reset, which is the
+# intended outcome when the kicker keeps getting killed.
+#
+# The RK3399 node has no reset line, so dw_wdt cannot stop the counter: once started it runs until the SoC resets.
+# A magic close (busybox `watchdog` writes 'V' on SIGTERM, e.g. from busybox init at reboot) hands the pings back to the
+# kernel, which keeps them up while it runs. An exit without it (SIGKILL, OOM) resets the SoC 30 s later unless the
+# loop below opens the device again first.
+# - reboot or panic: PSCI SYSTEM_RESET, a global soft reset of the SoC, clears the watchdog as well; the stock Android
+#   the loader may start next (boot magic KRNL) starts with it off.
+# - kexec start (oos-update trial): the counter keeps running into the new kernel. Its dw_wdt finds it enabled at probe,
+#   and with CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y and CONFIG_WATCHDOG_OPEN_TIMEOUT=0 the kernel pings it until this
+#   script opens it again. Nothing pings between the last ping before the jump and the watchdog's registration in the new
+#   kernel (after the initramfs is unpacked); what is left of the hardware period (at most 2^31 cycles of pclk_wdt) must
+#   cover that. If it does not, the SoC resets and the boot simply starts again. The `before open` line measures it.
+# Verified on a DHO804: the hardware maximum is 21.5 s (the driver logs `No valid TOPs array specified` and uses the
+# fixed TOPs; the watchdog core pings the hardware on until the 30 s run out); a warm reboot clears the counter; a
+# killed kicker reset the unit 41 s later.
+# A kexec start (oos-update, docs/update.md) takes the device over for its last ping right before the jump: it writes
+# /tmp/oos-watchdog.handoff and sends USR1. This script then kills its busybox `watchdog` with SIGKILL (no magic close:
+# busybox writes 'V' on SIGTERM, which would leave the kernel pinging), reaps it, acknowledges with
+# /tmp/oos-watchdog.ack (a copy of the request: the updater opens the device only after it) and waits until the
+# request is gone. Then it starts the kicker again at once, without backoff. The backoff sleep runs in the background
+# and is waited for, so USR1 ends it at once. An updater that dies holding the request leaves the
+# watchdog running unpinged: the SoC resets, it is never fed forever.
+# Log: /tmp/oos-watchdog.log.
+dev=${OOS_WATCHDOG_DEV:-/dev/watchdog}
+kmsg=${OOS_KMSG:-/dev/kmsg}
+for i in $(seq 1 20); do [ -c "$dev" ] && break; sleep 0.1; done
+[ -c "$dev" ] || { echo "oos-watchdog: no $dev, the hardware watchdog stays off" | tee -a "$kmsg"; exit 1; }
+# Diagnostics before the device is opened, one line to the kernel log: whether the hardware counter already runs (cr bit
+# 0 from the driver's debugfs registers; sysfs `state` cannot tell: it only shows whether user space opened the device,
+# so it reads `inactive` before the open even when the hardware runs), its period and the hardware maximum. After a warm
+# reboot that was not a kexec start, `hw running` means the PSCI system reset did not clear the watchdog; `hw stopped`
+# means it did. The maximum (2^31 cycles of pclk_wdt, fixed TOPs assumed; param1 is logged) bounds the kexec gap.
+dbg=${OOS_DEBUGFS:-/sys/kernel/debug}
+if [ "$dbg" = /sys/kernel/debug ] && ! grep -q " $dbg debugfs " /proc/mounts 2>/dev/null; then
+	mount -t debugfs debugfs "$dbg" 2>/dev/null
+fi
+sysw=/sys/class/watchdog/watchdog0
+rd() { cat "$1" 2>/dev/null || echo -; }
+reg() { awk -v n="$1" '$1 == n { print $3 }' "$dbg/ff848000.watchdog/registers" 2>/dev/null; }
+kexec=$(tr ' ' '\n' < "${OOS_CMDLINE:-/proc/cmdline}" | grep '^oos\.kexec=' || echo no)
+cr=$(reg cr) torr=$(reg torr) p1=$(reg param1)
+rate=$(cat "$dbg/clk/pclk_wdt/clk_rate" 2>/dev/null)
+if [ -z "$cr" ]; then
+	hw="hw unknown (no debugfs registers)"
+else
+	hw="hw $([ $((cr & 1)) = 1 ] && echo running || echo stopped)"
+	[ $(((cr >> 1) & 1)) = 1 ] && hw="$hw, irq mode (reset after 2 periods)"
+	if [ "${rate:-0}" -gt 0 ] 2>/dev/null; then
+		hw="$hw, $(awk -v c=$((1 << (16 + (torr & 15)))) -v m=$((1 << 31)) -v rate="$rate" 'BEGIN { printf "period %.1f s, max %.1f s at %d Hz", c / rate, m / rate, rate }')"
+	else
+		hw="$hw, pclk_wdt rate unknown"
+	fi
+fi
+echo "oos-watchdog: before open: $hw; cr ${cr:--} torr ${torr:--} param1 ${p1:--}; sysfs state $(rd $sysw/state) timeout $(rd $sysw/timeout) timeleft $(rd $sysw/timeleft) bootstatus $(rd $sysw/bootstatus); kexec start: $kexec" | tee -a "$kmsg"
+# the kicker must not lose to a busy system or be the OOM killer's choice; both are inherited by busybox `watchdog`
+echo -1000 > /proc/self/oom_score_adj || echo "oos-watchdog: oom_score_adj not set"
+renice -n -20 -p $$ > /dev/null || echo "oos-watchdog: priority not raised"
+echo "oos-watchdog: $dev, timeout 30 s, ping every 5 s" | tee -a "$kmsg"
+up() { cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; }
+control=${OOS_WATCHDOG_CONTROL:-/tmp/oos-watchdog}
+handoff=0
+kicker=
+pause=
+# USR1: whatever runs (the kicker, a backoff sleep) is ended here, so no request waits for it
+request() {
+	handoff=1
+	[ -z "$kicker" ] || kill -KILL "$kicker" 2>/dev/null
+	[ -z "$pause" ] || kill "$pause" 2>/dev/null
+}
+# the kicker is gone: acknowledge, hold the device free while the request exists, then go on without backoff
+hand_over() {
+	# A new USR1, including during acknowledgement cleanup, must survive this handoff.
+	handoff=0
+	cat "$control.handoff" > "$control.ack.new" 2>/dev/null && mv "$control.ack.new" "$control.ack"
+	echo "oos-watchdog: kexec handoff, kicker stopped" | tee -a "$kmsg"
+	while [ "$handoff" = 0 ] && [ -e "$control.handoff" ]; do sleep 0.1; done
+	rm -f "$control.ack" "$control.ack.new"
+	delay=1
+	echo "oos-watchdog: kexec start returned, kicker started again" | tee -a "$kmsg"
+}
+trap request USR1
+rm -f "$control.ack" "$control.ack.new"
+echo $$ > "$control.pid" || exit 1
+delay=1
+while :; do
+	if [ "$handoff" = 1 ]; then
+		hand_over
+		continue
+	fi
+	t0=$(up)
+	watchdog -F -T 30 -t 5 "$dev" &
+	kicker=$!
+	# a request can come between starting the kicker and knowing its pid
+	[ "$handoff" = 0 ] || request
+	wait "$kicker"
+	rc=$?
+	if [ "$handoff" = 1 ]; then
+		# wait returns on USR1, maybe before the killed kicker is gone: reap it before the acknowledgement
+		wait "$kicker" 2>/dev/null
+		kicker=
+		continue
+	fi
+	kicker=
+	ran=$(($(up) - t0))
+	[ $ran -ge 600 ] && delay=1
+	echo "oos-watchdog: busybox watchdog exited ($rc) after $ran s, starting it again in $delay s" | tee -a "$kmsg"
+	# no window for USR1: before `pause` is set the check below sees the flag, after it the trap kills the sleep
+	sleep $delay &
+	pause=$!
+	[ "$handoff" = 0 ] || kill $pause 2>/dev/null
+	wait $pause
+	kill $pause 2>/dev/null
+	pause=
+	delay=$((delay * 2))
+	[ $delay -gt 60 ] && delay=60
+done

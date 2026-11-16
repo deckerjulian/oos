@@ -20,8 +20,16 @@
 //!
 //! Only an image that knows how to finish such a start can take it: its package says so with the signed line
 //! `trial kexec` (`LINE`), which `oos-update pack` writes. Older packages install the direct way.
+//!
+//! The hardware watchdog keeps running across the jump (`watchdog`): kexec-tools is told to skip purgatory's checksum
+//! (`-i`), the updater pings the watchdog right before the jump, and the payload has a ceiling (`MAX_PAYLOAD`).
 
 use super::card::check_image;
+
+#[cfg(any(target_os = "linux", test))]
+mod watchdog;
+#[cfg(target_os = "linux")]
+pub use watchdog::preflight as preflight_watchdog;
 
 /// The signed package line of an image that finishes its own install after a kexec start.
 pub const LINE: (&str, &str) = ("trial", "kexec");
@@ -58,6 +66,23 @@ pub fn segments_from(log: &str) -> u64 {
     }
     // a table at an address is at most a few MiB long
     SEGMENTS_FROM.max((top + (16 << 20)).div_ceil(1 << 30) << 30)
+}
+
+/// The most a kexec start may load (kernel, initramfs with the package, tree). Between the last ping before the jump
+/// and the new kernel's watchdog driver nothing pings dw_wdt, and its hardware period is 21.5 s; the kernel unpacks the
+/// initramfs in that gap. Measured on a DHO804 with 81 MiB: the watchdog was open again 12.2 s after the jump. A larger
+/// payload needs that measured again (docs/update.md, "The watchdog and kexec").
+pub const MAX_PAYLOAD: usize = 85 << 20;
+
+/// Does a kexec start of this size fit the watchdog's time?
+pub fn fits(kernel: usize, initrd: usize, tree: usize) -> Result<(), String> {
+    match kernel.checked_add(initrd).and_then(|n| n.checked_add(tree)) {
+        Some(n) if n <= MAX_PAYLOAD => Ok(()),
+        _ => Err(format!(
+            "kexec start of more than {} MiB: the hardware watchdog could reset the scope before the new kernel pings it; --no-kexec writes it directly, without the trial start",
+            MAX_PAYLOAD >> 20
+        )),
+    }
 }
 
 /// The tree the running kernel got from the loader (or from the kexec start before).
@@ -142,9 +167,10 @@ pub struct Flags {
 /// The command line of the kexec start: the running one (the loader built it from the same device tree) with the word
 /// for the install.
 pub fn cmdline(running: &str, f: Flags) -> String {
+    // Restart policy belongs to the new rcS, after its stock-selection check: drop the old build's panic settings.
     // initramfs_async=0: the package is unpacked before any driver probes, not alongside them
-    let mut w: Vec<&str> =
-        running.split_whitespace().filter(|w| !w.starts_with(KEY) && !w.starts_with("initramfs_async=")).collect();
+    let drop = |w: &str| ["initramfs_async=", "panic=", "softlockup_panic="].iter().any(|k| w.starts_with(k));
+    let mut w: Vec<&str> = running.split_whitespace().filter(|w| !w.starts_with(KEY) && !drop(w)).collect();
     w.push("initramfs_async=0");
     let mut v = String::from(KEY);
     v.push_str("install");
@@ -201,6 +227,7 @@ mod sys {
     /// Load kernel and initramfs for the next `start` (kexec_file_load; the kernel keeps its own device tree).
     pub fn load(kernel: &[u8], initrd: &[u8], cmdline: &str) -> Result<(), String> {
         use std::os::fd::AsRawFd;
+        super::fits(kernel.len(), initrd.len(), 0)?;
         let k = memfd("oos-kexec-kernel", kernel)?;
         let i = memfd("oos-kexec-initrd", initrd)?;
         let c = std::ffi::CString::new(cmdline).map_err(|_| "command line with a NUL")?;
@@ -212,8 +239,6 @@ mod sys {
         Ok(())
     }
 
-    /// Load kernel, initramfs and device tree for the next `start`, through kexec-tools (`kexec_load`, which takes a
-    /// tree; `-c`: kexec-tools 2.0.32 would take kexec_file_load and drop the tree without a word).
     /// The running kernel's log (klogctl), for `segments_from`.
     fn kernel_log() -> String {
         let mut b = vec![0u8; 1 << 20];
@@ -223,7 +248,13 @@ mod sys {
         String::from_utf8_lossy(&b).into_owned()
     }
 
+    /// Load kernel, initramfs and device tree for the next `start`, through kexec-tools (`kexec_load`, which takes a
+    /// tree; `-c`: kexec-tools 2.0.32 would take kexec_file_load and drop the tree without a word). `-i`: purgatory
+    /// skips its SHA-256 over the segments, which runs with the MMU and the caches off and took longer than the
+    /// watchdog's 21.5 s for about 85 MB. The package in the initramfs carries its own signature, which the started
+    /// image checks before it installs anything.
     pub fn load_with_tree(kernel: &[u8], initrd: &[u8], tree: &[u8], cmdline: &str) -> Result<(), String> {
+        super::fits(kernel.len(), initrd.len(), tree.len())?;
         let dir = std::path::Path::new("/tmp/oos-kexec");
         let _ = std::fs::remove_dir_all(dir);
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
@@ -234,7 +265,7 @@ mod sys {
             let p = |n: &str| dir.join(n).display().to_string();
             let from = super::segments_from(&kernel_log());
             let o = std::process::Command::new(super::TOOL)
-                .args(["-c", &format!("--mem-min=0x{:x}", from), "-l", &p("Image"), &format!("--initrd={}", p("initrd")), &format!("--dtb={}", p("tree.dtb")), &format!("--command-line={}", cmdline)])
+                .args(["-c", "-i", &format!("--mem-min=0x{:x}", from), "-l", &p("Image"), &format!("--initrd={}", p("initrd")), &format!("--dtb={}", p("tree.dtb")), &format!("--command-line={}", cmdline)])
                 .output()
                 .map_err(|e| format!("{}: {}", super::TOOL, e))?;
             if !o.status.success() {
@@ -261,11 +292,11 @@ mod sys {
         std::fs::read_to_string("/sys/kernel/kexec_loaded").is_ok_and(|s| s.trim() == "1")
     }
 
-    /// Start the loaded kernel. Returns only on failure. The caller has synced and unmounted (the kernel does not).
+    /// Start the loaded kernel, with the watchdog pinged right before (`watchdog::start`). Returns only on failure.
+    /// The caller has synced and unmounted (the kernel does not) and checked `preflight_watchdog` before it stopped
+    /// anything.
     pub fn start() -> String {
-        unsafe { libc::sync() };
-        let r = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_KEXEC) };
-        format!("reboot(KEXEC) returned {}: {}", r, std::io::Error::last_os_error())
+        super::watchdog::start()
     }
 }
 
@@ -339,6 +370,22 @@ mod tests {
         assert_eq!(segments_from(log), 1 << 30, "the ITS' register frame near 4 GiB is no table");
         assert_eq!(segments_from(""), 1 << 30, "no log: 1 GiB");
         assert_eq!(segments_from("GICv3: CPU0: using allocated LPI pending table @0x0000000050000000"), 2 << 30);
+    }
+
+    #[test]
+    fn payload_ceiling() {
+        // the unit's changed-tree start: kernel, initramfs with the package, tree
+        assert!(fits(27_159_040, 57_624_748, 94_618).is_ok());
+        assert!(fits(MAX_PAYLOAD - 1, 0, 1).is_ok());
+        assert!(fits(MAX_PAYLOAD, 1, 0).is_err());
+        assert!(fits(usize::MAX, 1, 0).is_err());
+        assert!(fits(1, usize::MAX - 1, 1).is_err());
+    }
+
+    #[test]
+    fn restart_policy_is_not_inherited() {
+        let c = cmdline("console=tty0 panic=10 softlockup_panic=1 panic=-1", Flags::default());
+        assert_eq!(c, "console=tty0 initramfs_async=0 oos.kexec=install");
     }
 
     #[test]

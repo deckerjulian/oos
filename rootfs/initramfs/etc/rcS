@@ -7,12 +7,28 @@ st() { printf '%s\t%s\t%s\t%s\n' "$(cut -d' ' -f1 /proc/uptime)" "$1" "$2" "$3" 
 st ok Linux "$(uname -r)"
 # 0) one-shot first, before any other OOS program runs: put the stock boot magic back, so a start that hangs from
 #    here on (also a new build on trial, docs/update.md) is followed by stock Android at the next power-on
-/bin/oos-oneshot
+# 0a) automatic restarts (docs/adr/system/0027-automatic-restart-after-the-boot-selection.md), only once the boot magic
+#     is durably KRNL: a restart then leads to stock (or to OOS armed again after a confirmed start), never back into an
+#     image that fails before this line. A panic restarts after 10 s; the hardware watchdog (oos-watchdog: 30 s,
+#     pinged every 5 s, log /tmp/oos-watchdog.log) resets the SoC when the kernel hangs without a panic. Before
+#     anything that may take long, and independent of oos-ui. Without KRNL a panic halts, as before
+if /bin/oos-oneshot; then
+	echo 10 > /proc/sys/kernel/panic
+	# Set this build's policy here too: kexec drops the old build's panic settings.
+	echo 1 > /proc/sys/kernel/softlockup_panic
+	(setsid sh -c '/bin/oos-watchdog >> /tmp/oos-watchdog.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+else
+	echo "rcS: boot selection not restored, no automatic restart" > /dev/kmsg
+	st warn boot "stock boot selection unconfirmed; watchdog and panic restart are off"
+fi
 # 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log) and the
 #     signed updates (oos-update, docs/update.md): count this start of an image on trial right here, so that a hang
 #     in anything below still counts; one that already started once without being confirmed is rolled back (log
 #     /tmp/oos-update.log)
 /bin/oos-mount-data > /tmp/oos-data.log 2>&1
+# 0b2) a kernel oops/panic of the last start (pstore, kept across the warm reset) to /oos/crash/<n> (oos-crash-save),
+#      in the background: a slow or blocked write never delays oos-ui. It adds a `Crash record` warning to $ST itself
+(setsid sh -c "/bin/oos-crash-save $ST >> /tmp/oos-crash.log 2>&1" < /dev/null > /dev/null 2>&1 &)
 [ -x /bin/oos-update ] && /bin/oos-update boot >> /tmp/oos-update.log 2>&1
 # 0c) the stock partition, read only: oos-ui reads the model and the serial number from it when it starts
 /bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1

@@ -123,7 +123,9 @@ from `/etc/oos-board` ([porting.md](porting.md)):
 
 1. `Linux` (uptime at the start of rcS).
 2. `oos-oneshot` (boot magic back to `KRNL`), as the very first program, so a hanging new build on trial is followed
-   by stock at the next power-on (`update.md`), then the start count of 4c. Then **`oos-fpgad fpga-boot`**: only the
+   by stock at the next power-on (`update.md`); only when it succeeded the automatic restarts (panic restart and the
+   hardware watchdog `oos-watchdog`, below), then `/oos`, the
+   crash records of the last start in the background (`oos-crash-save`, below) and the start count of 4c. Then **`oos-fpgad fpga-boot`**: only the
    BOOT command (spidev1.0, slot 0x400000), its uptime to `/tmp/oos-fpga-booted`. The bitstream loads while the rest of
    rcS runs; the fixed 3 s FPGA wait is counted from this command.
 3. Network in the background (`udhcpc -t 5` would block the start-up up to 15 s without a DHCP answer), SSH when
@@ -152,3 +154,49 @@ The FPGA self-checks (0x1008 bit 29, 0x1210) are part of the cold boot; the ADC 
 Time until acquisition, measured with the status file on a DHO924S: 8.1 s from the kernel's clock (Linux 3 s, calibration
 files 0.9 s, sample clock 0.4 s, AFEs 2.7 s, the rest 1.1 s). Sample clock and AFEs run during the 3 s FPGA wait; `/oos/fpga-wait`
 overrides it for trials.
+
+## Restart after a panic or a hang
+
+The scope runs unattended, so a kernel that stops restarts by itself, but only once a restart cannot lead back into
+the image that failed ([ADR 0027](adr/system/0027-automatic-restart-after-the-boot-selection.md)). Verified on a DHO804
+(sysrq panic, killed kicker, warm reboot) with `panic=10` on the command line, before the restart moved behind
+`oos-oneshot`; the gating itself is tested in `tools/selfheal-sim.sh`, not yet on hardware.
+
+- rcS arms both only when `oos-oneshot` succeeded: any restore write and sync must succeed, and a complete,
+  successful read with `dd iflag=direct` must show `KRNL` (also for an already-stock selection). A restored sector
+  must also match the intended sector in full:
+  `echo 10 > /proc/sys/kernel/panic`, then `oos-watchdog`. Before that line, and when the magic could not be
+  restored, a panic halts as it always did, and `/tmp/oos-boot.status` carries a boot warning. rcS sets
+  `kernel.softlockup_panic` in the same branch; neither panic setting is armed in `OOS_BOOTARGS`, and kexec discards
+  the old build's `panic=` and `softlockup_panic=` words: a soft lockup panics; hard lockups and tasks hung for
+  120 s already did (kernel config). On the unit: back with SSH 39 s after `echo c > /proc/sysrq-trigger`.
+- Hardware watchdog: `dw_wdt` at `ff848000` (enabled in `rk3399-base.dtsi`). rcS starts `oos-watchdog` right after a
+  successful `oos-oneshot`: busybox `watchdog -F -T 30 -t 5`, nice -20, `oom_score_adj` -1000. If it exits it is started again
+  for as long as the system runs: after 1 s, doubling up to 60 s, back to 1 s after 10 min of running; each restart is
+  logged to the kernel log. The backoff sleep is interruptible, so a kexec handoff (`update.md`) is answered at once. It does not depend on oos-ui. The hardware period is at most 21.5 s (2^31 cycles of
+  `pclk_wdt` at 100 MHz); the watchdog core pings the hardware on until the 30 s since the last user ping run out. On
+  the unit a killed kicker reset the SoC 41 s later. Log: `/tmp/oos-watchdog.log`. Before it opens the device it logs
+  one `before open:` line (also in the kernel log): whether the hardware counter already runs (control register from
+  the driver's debugfs), its period, the hardware maximum, sysfs `state`/`timeout`/`timeleft`/`bootstatus` and whether
+  this is a kexec start.
+- The device tree gives the watchdog no reset line, so the kernel cannot stop it once started. A reboot or a panic
+  restart (PSCI system reset) clears it with the SoC (on the unit: `hw stopped` after a warm reboot), so a stock
+  Android start after it sees it off. A kexec start keeps it running: nothing services it between the last ping before
+  the jump and the registration of `dw_wdt` in the new kernel; from then on the kernel pings it
+  (`CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED`) until `oos-watchdog` opens it again. If the rest of the hardware period does
+  not cover that gap, the SoC resets and the previous build starts again.
+- Which system comes back follows the boot magic: OOS in persist mode, else stock Android. A build on trial that
+  panics is rolled back at its next start (`update.md`).
+- A panic before `oos-oneshot` (kernel, initramfs, the first lines of rcS) halts, as before: `OOSK` is still set
+  there, and a restart would start the same image again with neither the trial count nor the rollback run. A kexec
+  start carries the running watchdog into the new kernel; a hang there resets the SoC into the previous build, which
+  `recovery` still holds. If `oos-oneshot` fails in a kexec start, the new kernel keeps pinging the inherited watchdog
+  itself (`CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED`), so hangs then go undetected.
+- Crash records: ramoops keeps the oops/panic record and the console across a warm reset, not across a power cut.
+  rcS starts `oos-crash-save` in the background, so a slow write never delays oos-ui. Only with 4 MiB free on `/oos`,
+  it copies `dmesg-ramoops-*` and the last 64 KiB of `console-ramoops` into `/oos/crash/.tmp`, checks every copy,
+  fsyncs each file and the directory, compares each file with its source, renames it to `/oos/crash/<n>/` and fsyncs
+  `/oos/crash` and `/oos` (the parent of a newly created crash directory). Only then are the pstore entries removed and the oldest directories beyond 4 pruned. Any failure
+  leaves pstore as it was. A `.tmp` from an interrupted save is kept as `.partial-<n>` and counts towards the 4. The
+  start-up screen shows a `Crash record` warning; log `/tmp/oos-crash.log`. A watchdog reset leaves no dmesg record,
+  so nothing is saved for it. `tools/selfheal-sim.sh` runs both scripts against a fake pstore and device.

@@ -7,6 +7,10 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- The scope restarts by itself after a panic (10 s) or a hang (hardware watchdog, 30 s), also across a kexec start of an
+  update. The panic record and the console tail are saved to `/oos/crash`, and the start-up screen warns of it before
+  the copy starts. Restarts are armed only after the stock boot selection is back on the card; until then a panic halts
+  as before and the start-up screen says so (DHO804: a panic back in 39 s, a hang reset after 41 s).
 - System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
   stored. A change takes effect at once, without a restart:

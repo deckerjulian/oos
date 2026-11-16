@@ -45,7 +45,8 @@ OOS has no loader of its own, so nothing counts the starts before rcS. An image 
    stopped. Then what writes to memory on its own stops: every network link goes down (the Ethernet controller has
    no shutdown hook, its receive DMA would write packets into memory of the next kernel) and the display subsystem is
    unbound (it lets go of the VOPs and their IOMMUs, which the next kernel cannot take over otherwise). `/oos` is
-   remounted read only, then the kernel starts.
+   remounted read only, then the updater takes the hardware watchdog over, pings it, and the kernel starts ("The
+   watchdog and kexec" below). That the handoff will work is checked under the lock, before anything is stopped.
 4. The new image's rcS: `oos-oneshot`, `/oos` mounted, then `oos-update boot` finds the word and the package and
    runs the ordinary install from there: rollback slot, `recovery`, read back, `OOSK`. This start is no trial start:
    its device tree and loader path are the old build's, and the display comes up from another state. The watcher
@@ -91,6 +92,38 @@ GICv3 keeps its LPI and ITS tables across kexec (it cannot be given new ones); t
 writes to them, and `/proc/iomem` does not show them. On the unit they lie at 0x2400000 and 0xa320000..0xa400000,
 where kexec-tools put the 55 MB initramfs at first: the new kernel found it damaged ("rootfs image is not initramfs
 (uncompression error)", read from pstore after a start with `panic=5`), with every other bus master stopped as well.
+
+### The watchdog and kexec
+
+`oos-watchdog` keeps dw_wdt running ([boot.md](boot.md), "Restart after a panic or a hang"), and it runs on across the
+jump: the node has no reset line, so the kexec shutdown cannot stop it. Nothing pings it from the last ping before
+the jump until the new kernel registers `dw_wdt`; that gap must fit into the 21.5 s hardware period. Verified on a
+DHO804: with checks on, a start with another device tree reset the SoC about 26 s after the jump (filmed: black, then
+the stock loader's logo), four times out of four, while the same-tree path started. Without a running watchdog the
+same starts work. Purgatory's SHA-256 over about 85 MB of segments runs with the MMU and the caches off and outlasts
+the period; a checksum mismatch is ruled out only indirectly.
+
+- kexec-tools gets `-i`: purgatory skips that checksum. `kexec_file_load` (same tree) has none on arm64. The package
+  in the initramfs keeps its signature, which the started image checks before it installs anything.
+- The updater syncs while the normal kicker still feeds, then pings right before `reboot(KEXEC)`. The device can
+  be open only once, so it takes it over from `oos-watchdog`: it writes `/tmp/oos-watchdog.handoff` (its pid) and sends USR1 to the pid in `/tmp/oos-watchdog.pid`;
+  the supervisor kills its busybox `watchdog` with SIGKILL (on SIGTERM busybox writes the magic `V`, and the kernel
+  would then ping on its own), reaps it, acknowledges with `/tmp/oos-watchdog.ack` (a copy of the request) and waits;
+  a backoff sleep does not delay this, and a new request interrupts a cancelled handoff even during acknowledgement
+  cleanup. The updater waits for that acknowledgement, then opens the device (EBUSY retried; 2 s for both), writes one
+  byte (a ping, never `V`) and starts the kernel. If anything fails or `reboot(KEXEC)` returns, it closes the device
+  without `V` and removes the request; the supervisor starts its kicker again at once. An updater that dies holding
+  the request leaves the watchdog unpinged: the SoC resets.
+- Before anything is stopped, under the update lock: no request may be left (one of an updater that is gone is
+  removed), and `/tmp/oos-watchdog.pid` must name a running `/bin/oos-watchdog`. A build without `/dev/watchdog`
+  starts without the ping, and says so.
+- At most 85 MiB of kernel, initramfs (with the package) and tree (`kexec::MAX_PAYLOAD`), for both paths: the kernel
+  unpacks the initramfs in the gap. Above it the install refuses the kexec start; `--no-kexec` writes it directly.
+
+Measured on a DHO804 with an 81 MiB start (kernel 27 MB, initramfs 58 MB): "Booting Linux" 6.9 s after the jump,
+`dw_wdt` probed 11.3 s, `oos-watchdog` open 12.2 s after it. The final ping comes at most about 1 s after the jump
+marker, so at least 9 s of the period are left. Same tree and another tree both installed and confirmed. A larger
+payload or a slower kernel start needs that measured again.
 
 `oos-update kexec-check FILE` loads a package's kernel and initramfs and unloads them again, nothing written, no
 restart: it shows that the running kernel takes the image for a kexec start.

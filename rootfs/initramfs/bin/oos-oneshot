@@ -6,6 +6,8 @@
 # the start of `boot` with "OOSK"; this script puts "KRNL" back so the next power-on boots stock Android.
 # It also clears a leftover "boot-recovery" in `misc` (not evaluated by this loader).
 # Checks first that the device is the board's SD card and that its PARM table has the stock layout (/etc/oos-board).
+# Exit status 0 only after a checked, uncached read of KRNL: rcS arms the automatic restarts only then
+# (docs/adr/system/0027-automatic-restart-after-the-boot-selection.md).
 . "${OOS_BOARD_FILE:-/etc/oos-board}"
 dev=${OOS_DEV:-/dev/mmcblk0}
 log=${OOS_LOG:-/dev/kmsg}
@@ -14,7 +16,20 @@ BCB_LBA=$OOS_BCB_LBA
 for i in $(seq 1 50); do { [ -b $dev ] || [ -f $dev ]; } && break; sleep 0.2; done
 { [ -b $dev ] || [ -f $dev ]; } || { echo "oos-oneshot: no $dev" > $log; exit 1; }
 [ -n "${OOS_TEST:-}" ] || readlink -f /sys/block/mmcblk0/device | grep -q "$OOS_CARD_CONTROLLER" || { echo "oos-oneshot: mmcblk0 is not the SD card, skipped" > $log; exit 1; }
-parm=$(dd if=$dev bs=512 skip=$OOS_PARM_LBA count=2 2>/dev/null | tr -d '\000' | tr 'A-F' 'a-f')
+# Keep complete sectors: a failed or short read must never supply a safety decision or a partial restore.
+fail() { echo "oos-oneshot: $1" > "$log"; exit 1; }
+work=$(mktemp -d /tmp/oos-oneshot.XXXXXX) || fail "cannot create temporary directory"
+trap 'rm -rf "$work"' EXIT
+sector() {
+	# The initramfs uses Ubuntu busybox-static with FEATURE_DD_IBS_OBS (iflag=direct).
+	dd if="$dev" bs=512 skip="$1" count=1 iflag=direct of="$work/sector" 2>/dev/null \
+		|| fail "$2 read FAILED"
+	[ "$(wc -c < "$work/sector")" -eq 512 ] || fail "$2 short read"
+}
+dd if="$dev" bs=512 skip="$OOS_PARM_LBA" count=2 iflag=direct of="$work/parm" 2>/dev/null \
+	|| fail "partition table read FAILED"
+[ "$(wc -c < "$work/parm")" -eq 1024 ] || fail "partition table short read"
+parm=$(tr -d '\000' < "$work/parm" | tr 'A-F' 'a-f')
 case "$parm" in
 	P[Aa]RM*) ;;
 	*) echo "oos-oneshot: unexpected partition table, skipped" > $log; exit 1;;
@@ -25,21 +40,28 @@ for mark in $OOS_PARM_MARKS; do
 		*) echo "oos-oneshot: unexpected partition table, skipped" > $log; exit 1;;
 	esac
 done
-magic=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 2>/dev/null | head -c 4)
+sector "$BOOT_LBA" "boot magic"
+magic=$(head -c 4 "$work/sector")
 case "$magic" in
 	OOSK)
-		dd if=$dev bs=512 skip=$BOOT_LBA count=1 of=/tmp/bootsec 2>/dev/null
-		{ printf 'KRNL'; tail -c 508 /tmp/bootsec; } > /tmp/bootsec.new
-		dd if=/tmp/bootsec.new of=$dev bs=512 seek=$BOOT_LBA count=1 conv=notrunc,fsync 2>/dev/null; sync
-		now=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 2>/dev/null | head -c 4)
-		[ "$now" = KRNL ] && echo "oos-oneshot: boot magic restored, next power-on boots stock" > $log \
-		                  || echo "oos-oneshot: RESTORE FAILED ($now)" > $log;;
-	KRNL) echo "oos-oneshot: boot already valid (stock boots next time)" > $log;;
-	*) echo "oos-oneshot: unexpected boot magic '$magic', left alone" > $log;;
+		{ printf 'KRNL' && tail -c 508 "$work/sector"; } > "$work/new" || fail "RESTORE preparation FAILED"
+		dd if="$work/new" of="$dev" bs=512 seek="$BOOT_LBA" count=1 conv=notrunc,fsync 2>/dev/null \
+			|| fail "RESTORE write or fsync FAILED"
+		sync || fail "RESTORE sync FAILED"
+		sector "$BOOT_LBA" "RESTORE"
+		now=$(head -c 4 "$work/sector")
+		[ "$now" = KRNL ] || fail "RESTORE FAILED ($now)"
+		cmp -s "$work/new" "$work/sector" || fail "RESTORE sector differs"
+		echo "oos-oneshot: boot magic restored, next power-on boots stock" > "$log"; ok=1;;
+	KRNL) echo "oos-oneshot: boot already valid (stock boots next time)" > "$log"; ok=1;;
+	*) fail "unexpected boot magic '$magic', left alone";;
 esac
-cmd=$(dd if=$dev bs=512 skip=$BCB_LBA count=1 2>/dev/null | head -c 13)
+sector "$BCB_LBA" "misc"
+cmd=$(head -c 13 "$work/sector")
 if [ "$cmd" = "boot-recovery" ]; then
-	dd if=$dev bs=512 skip=$BCB_LBA count=1 of=/tmp/bcb 2>/dev/null
-	{ head -c 32 /dev/zero; tail -c 480 /tmp/bcb; } > /tmp/bcb.new
-	dd if=/tmp/bcb.new of=$dev bs=512 seek=$BCB_LBA count=1 conv=notrunc,fsync 2>/dev/null; sync
+	{ head -c 32 /dev/zero && tail -c 480 "$work/sector"; } > "$work/new" || fail "misc preparation FAILED"
+	dd if="$work/new" of="$dev" bs=512 seek="$BCB_LBA" count=1 conv=notrunc,fsync 2>/dev/null \
+		|| fail "misc write or fsync FAILED"
+	sync || fail "misc sync FAILED"
 fi
+[ "${ok:-0}" = 1 ]
