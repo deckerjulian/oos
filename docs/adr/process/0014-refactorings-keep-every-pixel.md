@@ -34,5 +34,5 @@ A change that is not meant to change behaviour has to show that it does not, by 
 
 ## References
 
-`ui/tools/layout-check.sh`, `tools/plan-matrix.sh`, [CONTRIBUTING.md](../../../CONTRIBUTING.md),
-[local-validation.md](../../local-validation.md).
+`ui/tools/layout-check.sh`, `tools/plan-matrix.sh`, [CONTRIBUTING.md](../../../CONTRIBUTING.md). (Corrected
+2026-11-16: a link to `docs/local-validation.md`, a work log that was removed, is gone.)

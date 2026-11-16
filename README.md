@@ -296,7 +296,8 @@ For development, run the checkout and automatically restart after saving source 
 .\run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880
 ```
 
-Rust compiles changed code automatically. The window includes front-panel buttons and knob controls.
+Rust compiles changed code automatically; the running window stays until a build succeeds, and the watcher then
+replaces only its own process. The window includes front-panel buttons and knob controls; F6 shows or hides them.
 Use **Reference > Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
 also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R10** cards.
 **SIM** (start menu, Analysis) starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.

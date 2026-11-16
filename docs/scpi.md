@@ -2,7 +2,7 @@
 
 OOS implements a **subset of Rigol DHO800/DHO900 SCPI**, including commands used by DHO924S scripts, plus OOS analysis extensions. A script works when its commands, parameters and transfer assumptions are in this reference. OOS does not implement the complete stock firmware command set, impersonate Rigol, or speak TekScope's command dialect. `*IDN?` identifies OOS.
 
-This reference describes the repository implementation. Primary Rigol syntax was checked against the [DHO800/DHO900 Programming Guide](https://download.rigol.com/en/Manual/Digital%20Oscilloscope/DHO800/DHO800900_ProgrammingGuide_EN.pdf), including trigger MODE and waveform preamble definitions. Local backend tests establish the implemented behavior; they do not establish physical instrument or VISA-driver certification. See [local validation](local-validation.md).
+This reference describes the repository implementation. Primary Rigol syntax was checked against the [DHO800/DHO900 Programming Guide](https://download.rigol.com/en/Manual/Digital%20Oscilloscope/DHO800/DHO800900_ProgrammingGuide_EN.pdf), including trigger MODE and waveform preamble definitions. Host tests against the interpreter establish the implemented behavior; they do not establish physical instrument or VISA-driver certification.
 
 ## Connection and syntax
 
@@ -338,9 +338,9 @@ These canonical long spellings are accepted case-insensitively. Some additionall
 
 
 
-## Additional controller commands (frozen PR41 revision3374f6b)
+## Additional controller commands
 
-These commands are implemented by the same model and acquisition router above. They extend the documented subset; their presence does not imply support for every sibling command in the Rigol guide. Reference tokens in Math, decoder roles and Track cursors are OOS extensions. The primary Rigol guide covers the corresponding command families in sections3.4,3.6,3.8,3.13,3.15–3.17 and3.26. Explicit unsupported states return an error or the existing invalid numeric sentinel rather than a fabricated measurement.
+These commands are implemented by the same model and acquisition router above. They extend the documented subset; their presence does not imply support for every sibling command in the Rigol guide. Reference tokens in Math, decoder roles and Track cursors are OOS extensions. The primary Rigol guide covers the corresponding command families in sections 3.4, 3.6, 3.8, 3.13, 3.15–3.17 and 3.26. Explicit unsupported states return an error or the existing invalid numeric sentinel rather than a fabricated measurement.
 
 ### Channels, acquisition and display
 

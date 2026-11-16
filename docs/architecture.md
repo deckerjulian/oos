@@ -101,7 +101,7 @@ Threads:
 | scpi, http, hislip, announce | SCPI on 5555, web remote on 8080 (polled by the main thread), HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
 | web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
-| ntp | SNTP exchange and clock step when Time from NTP is on (`sntp`, `ui/time.rs`; `network.md`) |
+| ntp | SNTP exchange and clock step when Time from NTP is on (`ui/src/sntp.rs`, the page in `ui/src/ui/time.rs`; `network.md`) |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
 `Live` (read-out loop), `Hw` (real acquisitions of the board; on the DHO800/DHO900 the TPU trigger is set to the

@@ -41,7 +41,8 @@ guide does not say in which order.
 - Each new stock command needs the guide's section next to it in the reference; each extension needs a name that does
   not collide with a stock one.
 - Tests against the interpreter show what OOS does; they do not show that a VISA driver or a stock script behaves the
-  same on the stock firmware ([local-validation.md](../../local-validation.md)).
+  same on the stock firmware ([scpi.md](../../scpi.md); corrected 2026-11-16, the link pointed to a work log that was
+  removed).
 
 ## References
 
