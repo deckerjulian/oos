@@ -80,8 +80,12 @@ impl CalFiles {
     /// Reads `cal_adc.hex` (OOS's own self-cal result first, as `adc::CalAdc::load` does) and `cal_ddr.hex` (OOS never
     /// makes one) from `dir` (on the unit `/rigol/data`), read only.
     pub fn load(dir: &str) -> CalFiles {
+        Self::load_from(Some(crate::dho::calfile::OOS_CAL_DIR), dir)
+    }
+
+    fn load_from(own: Option<&str>, dir: &str) -> CalFiles {
         let mut notes = Vec::new();
-        let adc = read_first(Some(crate::dho::calfile::OOS_CAL_DIR), dir, "cal_adc.hex", |d| payload(d).is_some() && CalAdc::from_file_bytes(d).is_some(), &mut notes)
+        let adc = read_first(own, dir, "cal_adc.hex", |d| CalAdc::from_file_bytes(d).is_some(), &mut notes)
             .and_then(|d| CalAdc::from_file_bytes(&d));
         let ddr = read_first(None, dir, "cal_ddr.hex", |d| DdrCal::from_file_bytes(d).is_some(), &mut notes).and_then(|d| DdrCal::from_file_bytes(&d));
         CalFiles { adc, ddr, notes }
@@ -91,6 +95,26 @@ impl CalFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adc_boot_and_runtime_share_acceptance() {
+        let dir = std::env::temp_dir().join(format!("oos-adc-acceptance-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ds = dir.to_str().unwrap();
+        let good = crate::dho::calfile::build(&vec![7; 0x738], (2000, 1, 1, 0, 0, 0));
+        let mut header = good.clone();
+        header[0] ^= 1;
+        let mut payload = good.clone();
+        payload[28] ^= 1;
+        let wrong_size = crate::dho::calfile::build(&[7; 4], (2000, 1, 1, 0, 0, 0));
+        for (d, valid) in [(&good, true), (&header, false), (&payload, false), (&wrong_size, false)] {
+            std::fs::write(dir.join("cal_adc.hex"), d).unwrap();
+            assert_eq!(CalFiles::load_from(None, ds).adc.is_some(), valid, "cold boot");
+            assert_eq!(CalAdc::from_file_bytes(d).is_some(), valid, "runtime parser");
+            assert_eq!(CalAdc::load(ds).is_ok(), valid, "runtime load");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     /// A container as found on the unit (header words of the unit's cal_ddr.hex).
     pub fn container(p: &[u8]) -> Vec<u8> {

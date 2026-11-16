@@ -123,7 +123,8 @@ Verified on the unit: after start in mode 0, 0x1058 holds the mode-0 fine word, 
 
 Container as all `/rigol/data/cal_*.hex` (`self-cal.md` 7.1): 20-byte header part, u32 payload length, u32 crc32(payload),
 payload. The file holds exactly 1848 (0x738) payload bytes. Location order: `/oos/cal`, `/rigol/data`,
-`/rigol/data/default` (the cold boot reads the last two only, `self-cal.md` 14.10).
+`/rigol/data/default`, at runtime and cold boot (`self-cal.md` 14.10). Both loaders require the header CRC,
+payload CRC and 1848-byte payload size to match; an invalid copy is skipped and the next location tried.
 
 ### 3.1 Layout (offsets in the payload, little-endian)
 
