@@ -103,6 +103,8 @@ mod batch22_tests;
 #[cfg(test)]
 mod batch23_tests;
 #[cfg(test)]
+mod batch24_tests;
+#[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
 mod batch13_tests;
@@ -1262,6 +1264,8 @@ pub struct Ui {
     /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets no new one)
     analyzed_view: AView,
     sim_play: bool,
+    /// SIM mode playing offline refs (file or Add to R<n>) as live acquisitions: the slots in play.
+    sim_refs: Vec<usize>,
     sim_generation: Option<sim::Generation>,
     sim_error: Option<String>,
     sim_i: usize,
@@ -1592,6 +1596,7 @@ impl Ui {
             desktop_panel: None,
             analyzed_view: AView::Scope,
             sim_play: false,
+            sim_refs: Vec::new(),
             sim_generation: None,
             sim_error: None,
             sim_i: 0,
@@ -6407,7 +6412,7 @@ impl Ui {
     fn item_label(&self, it: Item) -> &'static str {
         if it == Item::SimPlay {
             if self.sim_generating() { return "Cancel generation"; }
-            return if !self.session_is_sim { "Run simulation mode" } else if self.m.run == RunState::Run { "Stop simulation" } else { "Run simulation" };
+            return if !self.sim_mode() { "Run simulation mode" } else if self.m.run == RunState::Run { "Stop simulation" } else { "Run simulation" };
         }
         let t = self.m.trig_type;
         let two_level = matches!(t, TrigType::Slope | TrigType::Runt | TrigType::Window);

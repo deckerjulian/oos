@@ -516,12 +516,14 @@ stat.push(value, current);
     }
     pub fn record_mode(&self) -> bool {
         // A reference drawn with the live channels is not a session. Take over, Offline waveforms, and SIM are.
-        self.offline || self.session_is_sim || self.sim_play
+        self.offline || self.session_is_sim || self.sim_play || !self.sim_refs.is_empty()
     }
 
     pub(super) fn active_reference(&self) -> usize {
         if self.session_is_sim {
             self.m.sim_slot
+        } else if !self.sim_refs.is_empty() {
+            self.m.trig_ref.filter(|s| self.sim_refs.contains(s)).unwrap_or(self.sim_refs[0])
         } else if self.offline {
             self.offline_ref
         } else if self.refs.get(self.ref_sel).is_some_and(Option::is_some) {
@@ -545,6 +547,7 @@ stat.push(value, current);
         self.set_offline(false);
         self.session_is_sim = false;
         self.sim_play = false;
+        self.sim_refs.clear();
         self.replay = Replay::default();
         if let Some(saved) = self.workflow_hold.take() {
             self.m = saved.model;
@@ -678,6 +681,7 @@ stat.push(value, current);
             self.set_offline(true);
             self.session_is_sim = false;
             self.sim_play = false;
+            self.sim_refs.clear();
             self.replay = Replay::default();
             self.reset_workspace_for_import();
             self.m.la.on = false;
@@ -944,6 +948,9 @@ stat.push(value, current);
 
     pub(super) fn record_caption(&self) -> String {
         let slot = self.active_reference();
+        if !self.sim_refs.is_empty() {
+            return format!("SIM \u{b7} {} \u{b7} {} measurements \u{b7} #{}", self.sim_refs_caption(), self.measurement_gate_label(), self.replay.captures);
+        }
         format!("{} R{} · {} measurements · #{}", if self.session_is_sim { "SIM" } else { "Reference" }, slot + 1, self.measurement_gate_label(), self.replay.captures)
     }
 
@@ -953,7 +960,7 @@ stat.push(value, current);
             TrigStatus::Triggered => "TRIGGERED", TrigStatus::Wait => "WAIT", TrigStatus::Auto => "AUTO", TrigStatus::Stop => "STOP",
         };
         J::obj(&[
-            ("mode", J::s(if self.session_is_sim { "sim" } else if self.record_mode() { "reference" } else { "live" })),
+            ("mode", J::s(if self.sim_mode() { "sim" } else if self.record_mode() { "reference" } else { "live" })),
             ("running", J::Bool(self.m.run == RunState::Run)),
             ("busy", J::Bool(self.sim_generating())),
             ("measurementBusy", J::Bool(self.measurement_busy())),
@@ -1002,7 +1009,7 @@ stat.push(value, current);
 
     pub(super) fn draw_session_card(&self, cv: &mut Canvas, r: Rect) {
         btn(cv, r, BAR, CARD_BORDER);
-        let title = if self.session_is_sim { "SIMULATION" } else { "STORED WAVEFORM" };
+        let title = if self.sim_mode() { "SIMULATION" } else { "STORED WAVEFORM" };
         cv.text(&self.fonts().sb, r.x + 10, r.y + 16, title, ACCENT);
         let (pause, exit) = Self::session_buttons(r);
         btn(cv, pause, BTN, BTN_BORDER);

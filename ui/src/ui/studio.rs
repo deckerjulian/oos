@@ -312,7 +312,7 @@ impl Ui {
 
     /// What the badge at the left of the top bar says about the source of the waveforms.
     pub(super) fn studio_source(&self) -> (&'static str, Rgb) {
-        if self.record_mode() { return (if self.session_is_sim { "SIM" } else { "REF" }, ACCENT); }
+        if self.record_mode() { return (if self.sim_mode() { "SIM" } else { "REF" }, ACCENT); }
         match self.src {
             Source::Demo { .. } => ("DEMO", ACCENT),
             Source::Replay { .. } => ("REPLAY", ACCENT),

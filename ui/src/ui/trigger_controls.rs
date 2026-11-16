@@ -58,6 +58,7 @@ impl Ui {
         self.offline_hold = None;
         self.session_is_sim = false;
         self.sim_play = false;
+        self.sim_refs.clear();
         self.m.ch[channel].on = true;
         self.select_workspace_source(WaveId::Ch(channel));
         self.m.set_trigger_wave(WaveId::Ch(channel), false);

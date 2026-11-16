@@ -298,7 +298,8 @@ impl Ui {
                 else { self.sim_cancel_generation(); }
                 self.toast("SIM generation cancelled");
             }
-            Item::SimPlay if self.session_is_sim => { self.record_key(key::RUNSTOP); },
+            Item::SimPlay if self.sim_mode() => { self.record_key(key::RUNSTOP); },
+            Item::SimPlay if !self.sim_shown_refs().is_empty() => self.sim_start_refs(),
             Item::SimPlay => self.sim_request_ui(true),
             Item::SimDefaults => {
                 let regenerate = self.session_is_sim || self.sim_generating();
@@ -310,6 +311,68 @@ impl Ui {
             _ => return false,
         }
         true
+    }
+
+    /// SIM mode is on: the sheet's generated signal or the offline refs are playing as a live acquisition.
+    pub(crate) fn sim_mode(&self) -> bool { self.session_is_sim || !self.sim_refs.is_empty() }
+
+    /// The refs that SIM mode plays: every shown ref with samples, from a file or from Add to R<n>.
+    pub(crate) fn sim_shown_refs(&self) -> Vec<usize> {
+        (0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 8 && r.dt > 0.0)).collect()
+    }
+
+    /// "R1 file.csv, R2 SATA I": what SIM mode is playing.
+    pub(super) fn sim_refs_caption(&self) -> String {
+        self.sim_refs.iter().filter_map(|&i| self.refs[i].as_ref().map(|r| {
+            if r.label.is_empty() { format!("R{}", i + 1) } else { format!("R{} {}", i + 1, r.label) }
+        })).collect::<Vec<_>>().join(", ")
+    }
+
+    /// SIM mode over offline waveforms. The refs go through the same replay acquisition as a stored waveform (the record
+    /// is re-triggered and scrolled each frame; measurements and statistics, persistence, eye and spectrum update); the
+    /// channels stay as they are, nothing is written to a ref, and Live restores the session.
+    fn sim_start_refs(&mut self) {
+        let slots = self.sim_shown_refs();
+        if slots.is_empty() { return; }
+        self.cancel_bus_candidate(true);
+        self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
+        self.sim_cancel_generation();
+        self.remember_live();
+        let first = self.m.trig_ref.filter(|s| slots.contains(s)).unwrap_or(slots[0]);
+        let initialize_measurements = self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
+        self.sim_refs = slots;
+        self.replay = Default::default();
+        self.clear_measurement_statistics();
+        self.invalidate_reference_eye();
+        if let Some((t0, dt, n)) = self.refs[first].as_ref().map(|r| (r.t0, r.dt, r.v.len())) {
+            // A record shorter than the screen fits it; otherwise the time/div stays and the record scrolls through it.
+            if n as f64 * dt < self.m.time_per_div() as f64 * HDIV as f64 {
+                let t0 = self.source_time_origin(WaveId::Ref(first), t0);
+                self.apply_record_timebase(t0, dt, n);
+            }
+        }
+        self.m.set_trigger_wave(WaveId::Ref(first), false);
+        self.m.trig_ref2 = None;
+        self.fit_reference_trigger_levels();
+        if initialize_measurements {
+            self.m.meas = [Meas::Vpp, Meas::Freq, Meas::Vrms, Meas::Rise].into_iter().map(|k| (k, WaveId::Ref(first))).collect();
+        }
+        self.select_workspace_source(WaveId::Ref(first));
+        self.m.eye_src = WaveId::Ref(first);
+        self.m.run = RunState::Run;
+        self.m.status = TrigStatus::Wait;
+        self.sim_play = true;
+        self.replay.next = 0.0;
+        self.replay.sim_next = self.now;
+        self.last[0] = None;
+        self.cleared = true;
+        self.ph.clear();
+        self.phz.clear();
+        self.measure_refs();
+        self.close_menu();
+        self.relayout();
+        let caption = self.sim_refs_caption();
+        self.toast(&format!("SIM \u{b7} {caption}"));
     }
 
     fn sim_lane(&self) -> Lane {
@@ -443,7 +506,7 @@ impl Ui {
     /// changes: no SIM mode, no other slot, no channel switched off.
     pub(super) fn sim_add_to_ref(&mut self) {
         let slot = self.m.sim_slot;
-        if self.session_is_sim {
+        if self.sim_mode() {
             return self.toast("Leave the simulation mode (Live) to add a signal to a ref");
         }
         let lane = self.sim_lane();

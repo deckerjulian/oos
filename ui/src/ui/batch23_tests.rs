@@ -229,12 +229,8 @@ fn the_sim_button_runs_the_simulation_mode_and_live_returns() {
     assert!(!u.record_mode());
     let t = u.studio_top();
     assert!(t.simbtn.w > 0 && t.badge.w == 0);
-    // a signal in a ref first: it stays while the mode runs
+    // no ref is shown, so the SIM sheet's signal plays (a shown ref plays instead: batch 24)
     u.sim_preset_set("SATA I");
-    u.sim_slot_set(0);
-    u.activate(Item::SimAddRef);
-    u.wait_sim_generation();
-    assert!(!u.record_mode());
     tap(&mut u, t.simbtn);
     u.wait_sim_generation();
     for _ in 0..8 { frame(&mut u); }

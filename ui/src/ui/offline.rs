@@ -141,7 +141,7 @@ impl Ui {
     /// Sample rate and depth for the top line. The bool is the live acquire mode that follows it.
     pub(super) fn acq_caption(&self) -> (String, bool) {
         if self.record_mode() {
-            let kind = if self.session_is_sim { "SIM" } else { "REF" };
+            let kind = if self.sim_mode() { "SIM" } else { "REF" };
             if let Some(r) = self.refs.get(self.active_reference()).and_then(|r| r.as_ref()).filter(|r| r.v.len() >= 2 && r.dt > 0.0) {
                 let sr = 1.0 / r.dt;
                 return (format!("{kind} \u{b7} {} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
