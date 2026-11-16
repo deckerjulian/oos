@@ -632,9 +632,7 @@ impl Ui {
     fn meas_cfg_idle(&mut self, d: i32) {
         let Some((_, k, id)) = self.cfg_entry() else { return };
         let cur = self.meas_own.get(&(k, id)).map(|o| if o.idle_set { o.idle } else { self.m.meas_idle }).unwrap_or(self.m.meas_idle);
-        let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
-        let i = l.iter().position(|&v| v >= cur * 0.999).unwrap_or(0);
-        let v = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+        let v = super::tools::time_step(cur, d);
         if let Some(own) = self.meas_own.get_mut(&(k, id)) {
             own.idle = v;
             own.idle_set = true;
@@ -826,6 +824,10 @@ mod tests {
         assert!(!vpp_own.idle_set);
         assert!(u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle_set);
         assert_ne!(burst_idle, vpp_own.idle);
+        // an own idle time above the 5 s of the steps goes down to 5 s, not to off
+        u.meas_own.get_mut(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle = 10.0;
+        u.meas_cfg_tap(g.idle_m.unwrap().x + 4, g.idle_m.unwrap().y + 4);
+        assert_eq!(u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle, 5.0);
     }
 
     #[test]
