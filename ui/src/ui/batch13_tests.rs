@@ -299,7 +299,7 @@ fn a_hold_on_a_ref_chip_opens_hide_clear_and_settings() {
     let r = chip_rect(&u, false);
     assert!(r.w > 0, "the R1 chip");
     hold(&mut u, r);
-    assert_eq!(popup_rows(&u), ["Hide", "Clear slot", "R1 settings"]);
+    assert_eq!(popup_rows(&u), ["Hide", "Clear slot", "Horizontal: Follow main", "R1 settings"]);
     let row = u.workspace.popup.as_ref().unwrap().row_rect(0);
     tap(&mut u, row);
     assert!(u.refs[0].as_ref().is_some_and(|r| !r.on), "hidden, not cleared");

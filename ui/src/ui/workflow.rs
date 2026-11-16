@@ -777,7 +777,7 @@ stat.push(value, current);
             }
             let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
             let end = t0 + r.v.len().saturating_sub(1) as f64 * r.dt;
-            let outside = end < left || t0 > right;
+            let outside = (end < left || t0 > right) && self.studio_ref_own(i).is_none();
             let where_ = if outside { " · outside this window" } else { "" };
             parts.push(format!("R{} {} · {}{}", i + 1, si_digits(1.0 / r.dt, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3), where_));
         }
@@ -802,6 +802,8 @@ stat.push(value, current);
             }
         };
         self.select_workspace_source(WaveId::Ref(slot));
+        // Studio: the lane gets its own time/div; the live time base stays where it is
+        if self.studio_ref_fit(slot) { return; }
         self.fit_selected_record();
     }
 

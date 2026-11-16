@@ -142,6 +142,8 @@ pub(super) struct Studio {
     pub axis: super::axis::AxisState,
     /// the trigger level slider is open (`trigslider.rs`), and what the finger on it is doing
     pub trig_slider: bool,
+    /// the shared zoom: its source, and the horizontal scale of the references (`sharedzoom.rs`)
+    pub sz: super::sharedzoom::SharedZoom,
     pub slider_part: Option<super::trigslider::SliderPart>,
 }
 
@@ -889,6 +891,7 @@ impl Ui {
         if self.info_card_tap(x, y) { return true; }
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
         if self.menu_open && self.menu_rect().is_some_and(|d| d.contains(x, y)) { return false; }
+        if self.studio_sz_taps(x, y) { return true; }
         if self.studio_view_tap(x, y) { return true; }
         if self.studio.ch_picker {
             let (rows, extras) = self.studio_picker_rows().unzip();
@@ -1420,6 +1423,7 @@ impl Ui {
     pub(super) fn draw_studio_floating(&self, cv: &mut Canvas) {
         self.draw_studio_zoom_menu(cv);
         self.draw_studio_yzoom(cv);
+        self.draw_studio_sz_pops(cv);
         let (Some(key), Some(p)) = (self.studio.popup, self.studio_popup_rect()) else { return };
         let f = self.fonts();
         let rows = self.meas_rows();
@@ -2286,6 +2290,8 @@ impl Ui {
         if self.m.layout != Layout::Studio { return false; }
         match ph {
             Phase::Down => {
+                self.studio.sz.press = Some((self.now, x, y));
+                self.studio.sz.fired = false;
                 self.studio.drag = None;
                 // the numeric pad is modal
                 if self.numpad.is_some() { return self.studio_eat(x, y); }
@@ -2339,6 +2345,7 @@ impl Ui {
                 false
             }
             Phase::Move => {
+                if let Some((_, x0, y0)) = self.studio.sz.press { if (x - x0).abs() > 12 || (y - y0).abs() > 12 { self.studio.sz.press = None; } }
                 if self.trig_slider_move(y) { return true; }
                 if self.ov_divider_move(y) { return true; }
                 if self.axis_move(x, y) { return true; }
@@ -2374,6 +2381,13 @@ impl Ui {
                 true
             }
             Phase::Up => {
+                self.studio.sz.press = None;
+                // the lift of a hold (`studio_hold_tick`) is not a tap
+                if std::mem::take(&mut self.studio.sz.fired) {
+                    if self.touch.down { return false; }
+                    self.studio.drag = None;
+                    return true;
+                }
                 if self.trig_slider_up(x, y) { return true; }
                 self.axis_up();
                 if self.ov_divider_up() { return true; }
@@ -2676,7 +2690,7 @@ impl Ui {
             cv.text_in(&f.sb, r, 1, text, TEXT);
         };
         if (self.zoom_vfactor - 1.0).abs() > 1e-3 {
-            for &lane in &self.wins { lane_tag(cv, lane, &format!("Y zoom {}", zoom_text(self.zoom_vfactor))); }
+            for &lane in self.wins.iter().filter(|l| self.studio_vzoom_covers(**l)) { lane_tag(cv, lane, &format!("Y zoom {}", zoom_text(self.zoom_vfactor))); }
         }
         if let (Some(hint), Some(&lane)) = (self.studio_zoom_samples_hint(), self.wins.last()) {
             let w = f.sb.width(&hint) + 16;

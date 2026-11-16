@@ -109,7 +109,8 @@ fn the_zoom_icon_in_the_waveform_corner_turns_zoom_on_and_off() {
     let mut v = studio();
     let (drawn, _) = v.zoom_btn();
     let (x, y) = (drawn.x + drawn.w / 2, drawn.y + drawn.h / 2);
-    for wait in [0.05, 0.3, 0.7] {
+    // (a press held for the long-press time opens the zoom source popover instead: batch27)
+    for wait in [0.05, 0.3, 0.45] {
         v.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
         v.step(wait);
         v.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });

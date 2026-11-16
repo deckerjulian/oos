@@ -22,6 +22,8 @@ pub(super) enum Action {
     ChCoupling(usize), ChInvert(usize), ChZero(usize), Autoset,
     /// the quick actions of a math or reference chip in the Studio bottom bar
     MathOff(usize), MathSettings(usize), RefClear(usize), RefSettings(usize),
+    /// Studio: the horizontal scale of a reference (Follow main, or its own; `sharedzoom.rs`)
+    RefHorizontal(usize),
 }
 
 #[cfg(test)]
@@ -872,8 +874,12 @@ impl Ui {
             HoldOn::Chan(c) => self.channel_popup(c, x, y),
             HoldOn::Ref(i) => {
                 let on = self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on);
-                let rows = vec![(if on { "Hide" } else { "Show" }.to_string(), Action::Source(WaveId::Ref(i))), ("Clear slot".to_string(), Action::RefClear(i)),
+                let mut rows = vec![(if on { "Hide" } else { "Show" }.to_string(), Action::Source(WaveId::Ref(i))), ("Clear slot".to_string(), Action::RefClear(i)),
                     (format!("R{} settings", i + 1), Action::RefSettings(i))];
+                if self.m.layout == Layout::Studio && on {
+                    let own = self.studio_ref_own(i).map_or("Horizontal: Follow main".to_string(), |(t, _)| format!("Horizontal: Own {}/div", si_short(t as f64, "s")));
+                    rows.insert(2, (own, Action::RefHorizontal(i)));
+                }
                 self.popup(&format!("R{}", i + 1), x, y, rows);
             }
             _ => {}
@@ -968,6 +974,7 @@ impl Ui {
                 self.analyzer_update();
                 self.relayout();
             }
+            Action::RefHorizontal(i) => { self.select_workspace_source(WaveId::Ref(i)); self.studio.sz.pop = false; self.studio.sz.ref_pop = Some(i); }
             Action::RefSettings(i) => { self.select_workspace_source(WaveId::Ref(i)); self.open_menu(MenuId::Ref); }
             Action::EyeClose => { self.m.view = AView::Scope; self.workspace.eye_float = None; self.relayout(); }
             Action::MeasureFloat => {
@@ -1027,6 +1034,8 @@ impl Ui {
             }
         }
     }
+    /// Another hold took the finger: the plot gesture under it must not open its own menu too.
+    pub(super) fn workspace_drop_gesture(&mut self) { self.workspace.gesture = None; }
     pub(super) fn workspace_hold_tick(&mut self) {
         let Some(mut gesture) = self.workspace.gesture else { return };
         if gesture.moved || gesture.held || self.now - gesture.at < HOLD { return; }

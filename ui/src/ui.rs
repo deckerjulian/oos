@@ -95,6 +95,7 @@ mod addtiles;
 mod menugrid;
 mod numpad;
 mod trigslider;
+mod sharedzoom;
 mod classicbadges;
 mod measpanel;
 #[cfg(test)]
@@ -109,6 +110,8 @@ mod batch24_tests;
 mod batch25_tests;
 #[cfg(test)]
 mod batch26_tests;
+#[cfg(test)]
+mod batch27_tests;
 #[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
@@ -2069,7 +2072,8 @@ impl Ui {
         // Studio: a word beside each corner icon, so full screen and zoom are not taken for each other
         if self.m.layout == Layout::Studio {
             let f = self.fonts();
-            cv.text(&f.s, r.x - f.s.width("Zoom") - 6, r.y + r.h / 2 + 4, "Zoom", if armed { AMBER } else { DIM });
+            let word = match self.studio_zoom_lane().filter(|_| armed) { Some(t) => format!("Zoom {}", sharedzoom::trace_name(t)), None => "Zoom".to_string() };
+            cv.text(&f.s, r.x - f.s.width(&word) - 6, r.y + r.h / 2 + 4, &word, if armed { AMBER } else { DIM });
         }
         cv.round(r, 5, PANEL_BG, 220);
         cv.round_outline(r, 5, if armed { AMBER } else { BTN_BORDER });
@@ -2134,7 +2138,7 @@ impl Ui {
 
     pub(super) fn zoom_vertical_transform(&self, area: Rect) -> (f32, f32) {
         let detail = self.split_zoom(self.grid).1;
-        if self.m.zoom && !self.view_on() && area.y >= detail.y && area.y < detail.y + detail.h {
+        if self.m.zoom && !self.view_on() && area.y >= detail.y && area.y < detail.y + detail.h && self.studio_vzoom_covers(area) {
             (self.zoom_vfactor, self.zoom_vcenter)
         } else { (1.0, 0.0) }
     }
@@ -2338,11 +2342,12 @@ impl Ui {
 
     /// Time base of the main waveform area: (s/div, delay).
     fn view(&self) -> (f32, f32) {
-        if self.m.zoom {
+        let base = if self.m.zoom {
             (tscales()[self.m.zscale], self.m.zdelay)
         } else {
             (self.m.time_per_div(), self.m.delay)
-        }
+        };
+        self.studio_lane_view(base)
     }
 
     /// The last record for the web page, as Storage > CSV writes it. A long record is refused rather than cut: making
@@ -2698,6 +2703,7 @@ impl Ui {
         self.relayout();
         self.now += dt_wall;
         self.meas_hold_tick();
+        self.studio_hold_tick();
         self.workspace_hold_tick();
         self.update_poll();
         self.wlan_poll();
@@ -2850,7 +2856,10 @@ impl Ui {
                                 let shifted_main = self.deskew_channel_view(&rec, c, mainv);
                                 let main = shifted_main.as_deref().unwrap_or(&rec);
                                 self.ph.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24, if shifted_main.is_some() { None } else { zw.as_deref() });
-                                if self.m.zoom {
+                                if self.m.zoom && !self.studio_zoom_covers(c) {
+                                    // one lane zooms alone (Studio): this one stays at the main time base
+                                    self.phz.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24, if shifted_main.is_some() { None } else { zw.as_deref() });
+                                } else if self.m.zoom {
                                     let shifted = self.deskew_channel_view(&rec, c, zv);
                                     let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
                                     self.phz.draw_ex(c, &zoom_model, zv, z.t0 - self.m.deskew_ch[c], z.dt, &z.ch[c], 24, if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() });
@@ -2944,7 +2953,9 @@ impl Ui {
                         let shifted_main = self.deskew_channel_view(&rec, c, mainv);
                         let main = shifted_main.as_deref().unwrap_or(&rec);
                         self.ph.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24 * 6, if shifted_main.is_some() { None } else { zw.as_deref() });
-                        if self.m.zoom {
+                        if self.m.zoom && !self.studio_zoom_covers(c) {
+                            self.phz.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24 * 6, if shifted_main.is_some() { None } else { zw.as_deref() });
+                        } else if self.m.zoom {
                             let shifted = self.deskew_channel_view(&rec, c, zv);
                             let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
                             self.phz.draw_ex(c, &zoom_model, zv, z.t0 - self.m.deskew_ch[c], z.dt, &z.ch[c], 24 * 6, if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() });
@@ -3176,6 +3187,7 @@ impl Ui {
             self.draw_grid(l.under, o);
             self.traces(l, o, false, true);
             self.draw_refs_at(l.over(), o, (self.m.time_per_div(), self.m.delay), true);
+            self.draw_studio_overview_math(l.over(), o);
             // zoom window in the overview: dim the rest, frame the window
             let (xa, xb) = self.zoom_window_x(o);
             let cv = l.over();
@@ -3476,7 +3488,7 @@ impl Ui {
                 backed_text(cv, &f.s, x, y + 4, &s, scale(color, 210));
             }
         }
-        if self.stacked() && self.cur_win + 1 < self.wins.len() { return; }
+        if self.stacked() && self.cur_win + 1 < self.wins.len() && !self.studio_lane_has_own_time() { return; }
         let (tdiv, delay) = self.view();
         let span = (HDIV / 2.0 * tdiv).abs() + delay.abs();
         // a narrow window (side by side) labels every second division, the centre always
@@ -3484,9 +3496,11 @@ impl Ui {
         if self.m.layout == Layout::Studio {
             // round times at any delay (a zoom window sits where it is put): the labels are whole steps from the
             // trigger, not the window's centre plus whole divisions
-            let step = tdiv as f64 * every as f64;
+            let mut step = tdiv as f64 * every as f64;
+            // a lane with a time/div of its own (a fitted record) is not on the 1-2-5 ladder: its labels are
+            if self.studio_lane_has_own_time() { step = nice_step_below(step); }
             let mut free = i32::MIN;
-            for (k, t) in studio_time_ticks(tdiv, delay, every) {
+            for (k, t) in studio_time_ticks_at(tdiv, delay, step) {
                 let x = a.x + (((t - delay as f64) / tdiv as f64 + HDIV as f64 / 2.0) * a.w as f64 / HDIV as f64).round() as i32;
                 let zero = k == 0;
                 let s = if zero { "0 s".to_string() } else { axis_label64(t, step as f32, 0.0, span, "s") };
@@ -4131,10 +4145,11 @@ impl Ui {
             let w = rec.v.as_ref();
             let sc = math_scales();
             let vpd = sc[c.scale.min(sc.len() - 1)] as f32;
-            let tdiv = self.view().0 as f64;
+            let (tdiv, vdelay) = self.view();
+            let (tdiv, vdelay) = (tdiv as f64, vdelay as f64);
             let ppx = self.area.w as f64 / HDIV as f64;
             let mut prev: Option<(i32, i32)> = None;
-            let left = self.view().1 as f64 - tdiv * HDIV as f64 * 0.5;
+            let left = vdelay - tdiv * HDIV as f64 * 0.5;
             let right = left + tdiv * HDIV as f64;
             let at = |t: f64| ((t - rec.t0) / rec.dt).floor().clamp(-1.0, w.len() as f64) as isize;
             let begin = (at(left) - 1).clamp(0, w.len() as isize) as usize;
@@ -4146,7 +4161,7 @@ impl Ui {
                     prev = None;
                     continue;
                 }
-                let t = rec.t0 + i as f64 * rec.dt - self.view().1 as f64;
+                let t = rec.t0 + i as f64 * rec.dt - vdelay;
                 let x = (self.area.x as f64 + self.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
                 let (zoom, center) = self.zoom_vertical_transform(self.area);
                 let y = (cy - (v / vpd + c.offset - center) * zoom * ppy).clamp(-1e4, 1e4).round() as i32;
@@ -4398,18 +4413,19 @@ impl Ui {
 
     fn draw_refs_at(&self, cv: &mut Canvas, area: Rect, view: (f32, f32), all_sources: bool) {
         cv.set_clip(area);
-        let (tdiv, delay) = view;
-        let (tdiv, delay) = (tdiv as f64, delay as f64);
         let ppx = area.w as f64 / HDIV as f64;
-        if !(tdiv > 0.0) {
+        if !(view.0 > 0.0) {
             cv.no_clip();
             return;
         }
-        let half = tdiv * HDIV as f64 / 2.0;
-        let (t_left, t_right) = (delay - half, delay + half);
         let mut badges: Vec<i32> = Vec::new();
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
+            // Studio: a ref with its own horizontal scale keeps it in the overview too
+            let (tdiv, delay) = if all_sources { self.studio_ref_own(i).unwrap_or(view) } else { view };
+            let (tdiv, delay) = (tdiv as f64, delay as f64);
+            let half = tdiv * HDIV as f64 / 2.0;
+            let (t_left, t_right) = (delay - half, delay + half);
             let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
             if !all_sources && self.stacked() && self.trace_sources().get(self.cur_win) != Some(&workspace::Trace::Reference(i)) { continue; }
             // a split (not Stacked): each reference in the window its Windows row names
@@ -5422,7 +5438,7 @@ impl Ui {
     /// cover it (it never hides dialog controls).
     /// A message that reports something done: it gets a tick, not the warning triangle.
     pub(super) fn toast_is_success(s: &str) -> bool {
-        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ") || s.starts_with("Returned to live")
+        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ") || s.starts_with("Returned to live") || s.starts_with("Fit ")
     }
 
     fn draw_toast(&self, cv: &mut Canvas) {
@@ -10238,10 +10254,21 @@ fn holdoff_step(h: f32, d: i32) -> f32 {
     steps[(i + d).clamp(0, steps.len() as i32 - 1) as usize]
 }
 
+/// The largest 1-2-5 step that is not above `x`.
+fn nice_step_below(x: f64) -> f64 {
+    if !(x.is_finite() && x > 0.0) { return 1.0; }
+    let base = 10f64.powf(x.log10().floor());
+    [5.0, 2.0, 1.0].into_iter().map(|m| m * base).find(|&s| s <= x * 1.000001).unwrap_or(base)
+}
+
 /// The labelled times of the time axis, as (whole steps from the trigger, seconds): the window is `delay` +- 5 divisions
 /// of `tdiv`; a step is `every` divisions. Whole steps, so a window put anywhere has round labels.
 fn studio_time_ticks(tdiv: f32, delay: f32, every: i32) -> Vec<(i64, f64)> {
-    let step = tdiv as f64 * every as f64;
+    studio_time_ticks_at(tdiv, delay, tdiv as f64 * every as f64)
+}
+
+/// `studio_time_ticks` with the step given (a lane whose time/div is not on the ladder labels round steps).
+fn studio_time_ticks_at(tdiv: f32, delay: f32, step: f64) -> Vec<(i64, f64)> {
     let half = tdiv as f64 * HDIV as f64 / 2.0;
     let (left, right) = (delay as f64 - half, delay as f64 + half);
     let first = (left / step - 1e-6).ceil() as i64;
