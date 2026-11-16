@@ -13,18 +13,15 @@
 # Nothing is written on the scope except: debugfs is mounted on /sys/kernel/debug if it is not mounted
 # yet (a pseudo filesystem, gone after reboot).
 set -eu
-target=${1:?usage: device-survey.sh <scope>[:port] [--keys]}
-case "$target" in *:*) ;; *) target="$target:55555";; esac
+scope=${1:?usage: device-survey.sh <scope>[:port] [--keys]}
 keys=0; for a in "$@"; do [ "$a" = "--keys" ] && keys=1; done
 
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/../local/device-survey/$(date +%Y-%m-%d_%H%M%S)"
 mkdir -p "$out"
 
-adb connect "$target" >/dev/null
-adb -s "$target" root >/dev/null 2>&1 || true
-sleep 2
-adb connect "$target" >/dev/null
+. "$here/lib/adb.sh"
+adb_root "$scope"
 A="adb -s $target shell"
 
 run() { # run name 'command'

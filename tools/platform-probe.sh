@@ -12,16 +12,13 @@
 #
 # Result: platform-probe-<model>-<date>.tar.gz in the current directory.
 set -eu
-target=${1:?usage: platform-probe.sh <scope-ip>[:port]}
-case "$target" in *:*) ;; *) target="$target:55555";; esac
+scope=${1:?usage: platform-probe.sh <scope-ip>[:port]}
 here=$(cd "$(dirname "$0")" && pwd)
 command -v adb >/dev/null || { echo "adb not found (Android platform tools)"; exit 1; }
 command -v perl >/dev/null || { echo "perl not found (needed to remove the serial number)"; exit 1; }
 
-adb connect "$target" >/dev/null
-adb -s "$target" root >/dev/null 2>&1 || true
-sleep 2
-adb connect "$target" >/dev/null
+. "$here/lib/adb.sh"
+adb_root "$scope"
 A="adb -s $target"
 [ "$($A shell id -u | tr -d '\r')" = 0 ] || { echo "no root shell on the scope (adb root refused)"; exit 1; }
 

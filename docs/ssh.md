@@ -40,7 +40,7 @@ password (network.md 7).
 ## Tools over SSH
 
 `tools/device-deploy.sh` and `tools/device-test.py` use the telnet shell. Over SSH instead:
-`tools/device-deploy-ssh.sh <ip>` and `OOS_SHELL=ssh tools/device-test.py ...`, with strict host key checking
+`OOS_SHELL=ssh tools/device-deploy.sh <ip>` and `OOS_SHELL=ssh tools/device-test.py ...`, with strict host key checking
 (compare the fingerprint on the SSH settings page with the first `ssh root@<ip>` prompt first); `OOS_SSH_IDENTITY`
 names a private key, `OOS_SSH_PORT` another port.
 

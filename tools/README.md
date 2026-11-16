@@ -42,8 +42,7 @@ from `OOS_CAL_DIR` (default `local/cal`) and touch no scope.
 | Tool | Touches a scope? | Purpose |
 |---|---|---|
 | `device-test.py --host IP` | over the network, read-only on the card | acceptance test of a running OOS with nobody at the scope; `--sim` runs it against `oos-ui --serve` on this computer |
-| `device-deploy.sh IP [--restore]` | writes `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS (telnet) |
-| `device-deploy-ssh.sh IP [--restore]` | writes `/tmp` only | the same over SSH |
+| `device-deploy.sh IP [--restore]` | writes `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS, over telnet or with `OOS_SHELL=ssh` over SSH; each file checked with SHA-256 |
 | `device-survey.sh [ip] [--keys]` | read-only over adb | inventory of the running stock system: USB/HID, input, GPIO owners, pinmux, ttyS0, PCIe, partitions |
 | `platform-probe.sh IP` | read-only over adb, removes its files again | description of another Rigol model (MHO900, DHO1000, ...) for a port, ready to share: device tree, buses, display, partition table, `/rigol` by name; serial number and MAC addresses replaced ([docs/porting.md](../docs/porting.md)); `platform-probe/probe.sh` is its part on the scope |
 | `frontpanel.py dump / leds / selftest` | runs on the scope under OOS; `leds` writes the panel's LEDs | the front-panel MCU over UART0 ([frontpanel.md](../docs/protocols/frontpanel.md)) |
@@ -51,6 +50,8 @@ from `OOS_CAL_DIR` (default `local/cal`) and touch no scope.
 | `sdcard-clone.sh list / read / write / verify` | the card in the Mac's reader | clone the boot SD card to an image and onto the second card; refuses non-removable, virtual and system disks; `write` asks you to type the disk id |
 | `sdcard-layout.py IMAGE [--extract DIR] [--compare DIR]` | no (reads an image or `/dev/rdiskN`) | IDB, vendor storage (MAC), PARM partition table, partition contents |
 | `ssh-keys.py --data-dir DIR add / list / remove` | an offline mounted data directory only | manage Ed25519 public keys without a network connection; [SSH setup](../docs/ssh.md) |
+
+`lib/` holds what several tools source: `adb.sh` (connect to a stock system as root).
 
 `device-test.py` also has the tiers `la` (`--pico <port>`: D0-D2 on GP2-GP4 of a Pico with the openSciLab firmware) and `rf`
 (`--rf <port>`: an HT008 on `--rf-ch`, CH2 by default). `--busy 3` names other channels with a cable, which are no open inputs.
