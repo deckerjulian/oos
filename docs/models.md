@@ -54,8 +54,8 @@ These come from Rigol's model line-up. Not yet verified on hardware: whether the
 
 OOS takes "DHO914S" as DHO914 plus generator.
 
-The bandwidth code is the rated (licence) bandwidth. OOS does not limit to it. "Full" opens the AFE filter on every
-model. Whether the DHO800 front end gets as far as the DHO900's is not yet measured.
+The bandwidth code is the rated bandwidth of the model. Whether the DHO800 front end has the bandwidth of the
+DHO900's is not yet measured.
 
 ### 2.1 Hardware variants
 

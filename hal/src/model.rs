@@ -27,7 +27,7 @@ pub struct Caps {
     pub series: &'static str,
     /// analog inputs (2 or 4)
     pub channels: usize,
-    /// rated bandwidth in MHz (the stock licence bandwidth; OOS does not limit to it)
+    /// rated bandwidth in MHz
     pub rated_bw_mhz: u32,
     /// stock bandwidth code of the model table (5 = 70, 6 = 100, 7 = 125, 10 = 250 MHz)
     pub bw_code: u32,

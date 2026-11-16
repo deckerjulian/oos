@@ -23,8 +23,7 @@ OOS builds on the work of these projects. Thank you to everyone behind them:
 - **[NovaOS](https://github.com/Bradyok/novaos-kernel-source)** by Olympian LED, Inc., for publishing the GPL source of
   its Linux port to this hardware, which showed what a kernel needs here and where OOS started. The patches, device tree
   and configuration of the OOS kernel are written anew today. Its install notes also helped with the loader's image format.
-- **[Norbert Kiszka](https://github.com/norbertkiszka)**, for the modified firmware for these scopes and the findings
-  shared in public, which showed how much more this hardware can do.
+- **[Norbert Kiszka](https://github.com/norbertkiszka)**, for the findings about this hardware he shared in public.
 - **[Linux](https://kernel.org)**, the kernel underneath everything, and **[Rockchip](https://github.com/rockchip-linux/kernel)**
   for the board support it runs on here.
 - **[Xilinx XDMA driver](https://github.com/Xilinx/dma_ip_drivers)**, which connects the SoC to the FPGA over PCIe.
@@ -127,9 +126,6 @@ Limits on all models:
 | Sample rate per channel | 1.25 GSa/s | 625 MSa/s | 312.5 MSa/s |
 | Memory depth per channel | 125 M | 62.5 M | 31.25 M |
 | Memory depth with the LA on | 31.25 M | 12.5 M | 10 M |
-
-OOS does not limit the bandwidth to the rated value: "Full" opens the front-end filter on every model. The real
-bandwidth depends on the hardware, and you can measure it with the [bandwidth test](docs/bandwidth-test.md).
 
 For how the hardware works, see the [hardware overview](https://dekajoule.github.io/oos/hardware/overview.html).
 
