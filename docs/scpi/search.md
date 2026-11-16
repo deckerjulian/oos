@@ -10,7 +10,7 @@ Part of the [SCPI reference](README.md).
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:SEARch:STATe` | Set / Query | Mark the events of the trigger condition | `0` | Decode and bus > Mark events | name not verified against the DHO guide |
+| `:SEARch:STATe` | Set / Query | Mark the events of the trigger condition | `0` | Trigger > Mark events | name not verified against the DHO guide |
 | `:SEARch:MODE` | Set / Query | `EDGE` (the only kind) | `EDGE` | - | name not verified against the DHO guide |
 | `:SEARch:EDGE:SOURce` | Set / Query | Search source; without a search of its own the trigger's. The first set of a source, level or slope adds Search 1 like the Add rail does | `CHAN1` | Decode and bus > Search source | name not verified against the DHO guide |
 | `:SEARch:EDGE:SLOPe` | Set / Query | `POSitive`, `NEGative`, `RFALl` | `POS` | Decode and bus > Search slope | name not verified against the DHO guide |

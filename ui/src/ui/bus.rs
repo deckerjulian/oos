@@ -170,21 +170,6 @@ impl Ui {
                     self.m.bus.data = next;
                 }
             }
-            Item::BusClkThr | Item::BusDataThr => {
-                let id = if it == Item::BusClkThr {
-                    self.m.bus.clk
-                } else {
-                    self.m.bus.data
-                };
-                let step = self.bus_volt_step(id);
-                let thr = if it == Item::BusClkThr {
-                    &mut self.m.bus.clk_thr
-                } else {
-                    &mut self.m.bus.data_thr
-                };
-                let lim = (super::ranges::LEVEL_DIVS * super::ranges::STEPS_PER_DIV) as f32 * step;
-                *thr = (*thr + step * d as f32).clamp(-lim, lim);
-            }
             _ => return false,
         }
         true

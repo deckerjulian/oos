@@ -12,19 +12,19 @@ Part of the [SCPI reference](README.md).
 | --- | --- | --- | --- | --- | --- |
 | `:MATH<n>:DISPlay` | Set / Query | Boolean; enable or disable the Math channel. | `0` | Math > Turn on/off | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:OPERator` | Set / Query | Operator; see the list above. The query answers its short token (`SUBT`, `MULT`, `LPAS`, `BST`, `AXB`, ...). | `OFF` | Math > Operation | Rigol-style (command family of the DHO guide) |
-| `:MATH<n>:SOURce1` | Set / Query | Source A: `CHANn`, `Rn` or an earlier `MATHn`; keeps native physical timing. | `CHAN1` | Math > Source A / B | Rigol-style (command family of the DHO guide) |
-| `:MATH<n>:SOURce2` | Set / Query | Source B: `CHANn`, `Rn` or an earlier `MATHn`. | `CHAN2` | Math > Source A / B | Rigol-style (command family of the DHO guide) |
+| `:MATH<n>:SOURce1` | Set / Query | Source A: `CHANn`, `Rn` or an earlier `MATHn`; keeps native physical timing. | `CHAN1` | Math > Source A | Rigol-style (command family of the DHO guide) |
+| `:MATH<n>:SOURce2` | Set / Query | Source B: `CHANn`, `Rn` or an earlier `MATHn`. | `CHAN2` | Math > Source B | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:SCALe` | Set / Query | Math display scale; an FFT uses its dB ladder. | `1.000000E-08` | Math > Scale | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:OFFSet` | Set / Query | Math display offset. | `0.000000E+00` | Math > Offset | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:EXPRession` | Set / Query | Root formula parser, including loaded reference names such as `R1 - R2`. | empty | Math > Formula | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:FFT:SOURce` | Set / Query | FFT input source; selecting it makes the operator FFT. | `CHAN1` | Math > FFT source / dB scale | Rigol-style (command family of the DHO guide) |
-| `:MATH<n>:FFT:WINDow` | Set / Query | `RECTangle`, `BLACkman`, `HANNing`, `HAMMing`, `FLATtop`; the query answers `RECT`, `BLAC`, `HANN`, `HAMM`, `FLAT`. | `HANN` | Math > FFT window | Rigol-style (command family of the DHO guide) |
+| `:MATH<n>:FFT:WINDow` | Set / Query | `RECTangle`, `BLACkman`, `HANNing`, `HAMMing`, `FLATtop`; the query answers `RECT`, `BLAC`, `HANN`, `HAMM`, `FLAT`. | `HANN` | Math > Window | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:FFT:SCALe` | Set / Query | FFT dB display scale. | `1.000000E+01` | Math > FFT source / dB scale | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:FILTer:TYPE` | Set / Query | `LPASs`, `HPASs`, `BPASs`, `BSTop`; the query answers `LPAS`, `HPAS`, `BPAS`, `BST`. | `LPAS` | Math > Filter frequency / bandwidth | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:FILTer:W1` | Set / Query | Corner frequency in Hz (low corner of a band filter). -221 when the operator is not a filter. | `9.9E37` | Math > Filter frequency / bandwidth | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:FILTer:W2` | Set / Query | High corner in Hz of a band-pass or band-stop filter, else -221. | `9.9E37` | Math > Filter frequency / bandwidth | Rigol-style (command family of the DHO guide) |
 | `:MATH<n>:AUTO` | Action | Fit scale and offset to the result | - | Math > Auto scale | OOS extension |
-| `:MATH<n>:LINear:A` | Set / Query | A of the linear `A x + B`. | `1.000000E+00` | Math > Linear A | OOS extension |
+| `:MATH<n>:LINear:A` | Set / Query | A of the linear `A x + B`. | `1.000000E+00` | Math > A | OOS extension |
 | `:MATH<n>:LINear:B` | Set / Query | B of the linear `A x + B`. | `0.000000E+00` | Math > B | OOS extension |
 
 ## Examples

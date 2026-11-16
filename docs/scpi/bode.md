@@ -12,11 +12,11 @@ Part of the [SCPI reference](README.md).
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:BODE:STARt` | Set / Query | Hz. Range 1e-3 to 1e9. | `1.000000E+02` | Bode > Start | OOS extension |
-| `:BODE:STOP` | Set / Query | Hz. Range 1e-3 to 1e9. | `1.000000E+06` | Bode > Stop | OOS extension |
+| `:BODE:STARt` | Set / Query | Hz. Range 1e-3 to 1e9. | `1.000000E+02` | Bode > Start freq | OOS extension |
+| `:BODE:STOP` | Set / Query | Hz. Range 1e-3 to 1e9. | `1.000000E+06` | Bode > Stop freq | OOS extension |
 | `:BODE:POINts` | Set / Query | Points, 5 to 200. Range 5 to 200. | `40` | Bode > Points | OOS extension |
 | `:BODE:AMPLitude` | Set / Query | Volts. Range 0.01 to 20.0. | `1.000000E+00` | Bode > Amplitude | OOS extension |
-| `:BODE:INPut` | Set / Query | Source; the input is `OFF`-able on the free sweep. | `CH1` | Bode > Input | OOS extension |
+| `:BODE:INPut` | Set / Query | Source; the input is `OFF`-able on the free sweep. | `CH1` | Bode > Input (ref) | OOS extension |
 | `:BODE:OUTPut` | Set / Query | Source; the input is `OFF`-able on the free sweep. | `CH2` | Bode > Output | OOS extension |
 | `:BODE:SWEep:TIME` | Set / Query | Seconds. Range 1e-3 to 500.0. | `1.000000E+00` | Bode > Free sweep: time | OOS extension |
 | `:BODE:SWEep:LOG` | Set / Query | `LIN`, `LOG`. | `LOG` | Bode > log | OOS extension |

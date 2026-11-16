@@ -773,14 +773,16 @@ impl Ui {
         }
         let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         let view = |m: &mut Model, v: AView| m.view = if m.view == v { AView::Scope } else { v };
+        // the ladders that remember where a press started (`ranges.rs`), worked out before `m` borrows the model
+        let stepped = self.freq_step(it, d);
         let m = &mut self.m;
         match it {
             Item::SpecOn => view(m, AView::Spectrum),
             Item::EyeOn => view(m, AView::Eye),
             Item::PowOn => view(m, AView::Power),
             Item::SpecCenter => m.spec_center = step_ladder(m.spec_center, d),
-            Item::SpecSpan => m.spec_span = step_ladder(m.spec_span, d),
-            Item::SpecRbw => m.spec_rbw = step_ladder(m.spec_rbw, d),
+            Item::SpecSpan => m.spec_span = stepped.unwrap_or(m.spec_span),
+            Item::SpecRbw => m.spec_rbw = stepped.unwrap_or(m.spec_rbw),
             Item::SpecHarm => {
                 m.spec_harm = cyc(m.spec_harm, PANE_HARMS.len());
                 self.azr.spec_stop = 0.0;
@@ -791,11 +793,10 @@ impl Ui {
                 m.spec_win = w[cyc(w.iter().position(|&x| x == m.spec_win).unwrap_or(0), w.len())];
             }
             Item::SpecTrace => m.spec_trace = cyc(m.spec_trace, 4),
-            Item::SpecRef => m.spec_ref = (m.spec_ref + 5.0 * d as f32).clamp(ranges::SPEC_REF_DBV.0, ranges::SPEC_REF_DBV.1),
             Item::SpecWf => m.spec_wf = !m.spec_wf,
             Item::SpecDist => m.spec_dist = !m.spec_dist,
             Item::EyeRate => {
-                m.eye_rate = step_ladder(m.eye_rate, d);
+                m.eye_rate = stepped.unwrap_or(m.eye_rate);
                 m.eye_from_record = false;
             }
             Item::EyePlace => {
@@ -813,7 +814,7 @@ impl Ui {
             Item::EyePnHi => m.eye_pn_hi = step_ladder(m.eye_pn_hi, d).max(1.0),
             Item::EyeNpj => m.eye_npj = !m.eye_npj,
             Item::EyeNotch => m.eye_notch = step_ladder(m.eye_notch, d),
-            Item::EyePll => m.eye_pll_bw = step_ladder(m.eye_pll_bw, d),
+            Item::EyePll => m.eye_pll_bw = stepped.unwrap_or(m.eye_pll_bw),
             Item::SpecAcprW => m.spec_acpr_w = step_ladder(m.spec_acpr_w.max(1.0), d).max(1.0),
             Item::SpecAcprS => m.spec_acpr_s = step_ladder(m.spec_acpr_s.max(1.0), d).max(1.0),
             Item::PowFline => m.pw_fline = step_ladder(m.pw_fline, d),
@@ -894,7 +895,7 @@ impl Ui {
     }
 
     /// The spectrum is on the screen and its span is left to the signal.
-    fn spec_follows(&self) -> bool {
+    pub(super) fn spec_follows(&self) -> bool {
         let shown = self.m.view == AView::Spectrum || self.m.view == AView::Scope && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
         shown && self.m.spec_span == 0.0 && PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)] > 0
     }
@@ -1658,5 +1659,36 @@ mod measurement_gate_tests {
         assert!(ui.azr.ref_measure[0].borrow().as_ref().is_some_and(|cached| cached.key == wanted), "the old broad Screen result cannot replace the panned gate");
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 2.0);
         assert_eq!(ui.replay.captures, 0);
+    }
+}
+
+impl Ui {
+    /// The value a press of `d` gives the frequency and rate items that start from a setting they do not hold: Auto
+    /// (0) steps from the value it shows (the span or resolution bandwidth it works out), a bit rate or bandwidth off the
+    /// ladder from where it is, and a press back returns to the start.
+    pub(super) fn freq_step(&mut self, it: Item, d: i32) -> Option<f64> {
+        let l = if it == Item::EyeRate { eng_ladder_list(ranges::EYE_RATE.0, ranges::EYE_RATE.1, false) } else { freq_ladder()[1..].to_vec() };
+        let l = &l[..];
+        let m = &self.m;
+        let (cur, shown) = match it {
+            Item::SpecSpan => (m.spec_span, if m.spec_span > 0.0 { m.spec_span } else if self.spec_follows() && self.azr.spec_stop > 0.0 { self.azr.spec_stop } else { 0.0 }),
+            Item::SpecRbw => (m.spec_rbw, if m.spec_rbw > 0.0 { m.spec_rbw } else { self.azr.spec.as_ref().map_or(0.0, |s| s.rbw) }),
+            Item::EyeRate => (m.eye_rate, m.eye_rate),
+            Item::EyePll => (m.eye_pll_bw, m.eye_pll_bw),
+            _ => return None,
+        };
+        // an Auto with a value to show steps from that value; the rungs below the first of the table give the ends
+        if shown <= 0.0 {
+            // Auto with nothing to show: the first rung up, Auto stays when pressing down
+            return Some(if d > 0 { self.ladder_move(it, l[0], d - 1, l) } else { 0.0 });
+        }
+        let (lo, hi) = match it {
+            Item::EyePll => (ranges::EYE_PLL.0, ranges::EYE_PLL.1),
+            _ => (l[0], *l.last().unwrap()),
+        };
+        let band: Vec<f64> = l.iter().copied().filter(|&x| x >= lo * 0.999 && x <= hi * 1.001).collect();
+        let to = self.ladder_move(it, shown, d, &band);
+        // down from the lowest rung of a setting with an Auto goes back to Auto
+        Some(if cur > 0.0 && d < 0 && shown <= band[0] * 1.001 && to <= band[0] { 0.0 } else { to })
     }
 }

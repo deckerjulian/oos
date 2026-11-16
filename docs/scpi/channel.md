@@ -10,19 +10,19 @@ Part of the [SCPI reference](README.md).
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:CHANnel<n>:DISPlay` | Set / Query | Boolean. | `1` | Channels > Display on/off | Rigol-compatible |
-| `:CHANnel<n>:SCALe` | Set / Query | Volts/div; setter chooses the nearest supported scale. Probe factor applies. | `1.000000E+00` | Channels > Scale (V/div) | Rigol-compatible |
-| `:CHANnel<n>:OFFSet` | Set / Query | Volts. | `-1.500000E+00` | Channels > Offset | Rigol-compatible |
-| `:CHANnel<n>:COUPling` | Set / Query | `DC\|AC\|GND`; `DC50` only on a board supporting it. | `DC` | Channels > Coupling | Rigol-compatible |
-| `:CHANnel<n>:BWLimit` | Set / Query | `OFF\|20M\|AUTO` or a supported filter name. OOS filtering extends stock choices. | `AUTO` | Channels > Bandwidth limit | Rigol-compatible |
-| `:CHANnel<n>:PROBe` | Set / Query | Positive attenuation factor. | `1.000000E+00` | Channels > Probe ratio | Rigol-compatible |
-| `:CHANnel<n>:INVert` | Set / Query | Boolean. | `0` | Channels > Invert | Rigol-compatible |
-| `:CHANnel<n>:POSition` | Set / Query | Vertical position in divisions, converted through that channel's current scale. | `-1.500000E+00` | Channels > Offset | Rigol-style (command family of the DHO guide) |
-| `:CHANnel<n>:UNITs` | Set / Query | Supported channel unit. Use the configured unit when interpreting cursor/readout values. | `VOLT` | Channels > Unit | Rigol-style (command family of the DHO guide) |
-| `:CHANnel<n>:VERNier` | Set / Query | Boolean fine vertical control. | `0` | Channels > Fine scale | Rigol-style (command family of the DHO guide) |
-| `:CHANnel<n>:TCALibrate` | Set / Query | Channel deskew in seconds; native transfer metadata remains unchanged. | `0.000000E+00` | Channels > Deskew | Rigol-style (command family of the DHO guide) |
-| `:CHANnel<n>:BIAS` | Set / Query | Software channel zero-bias correction. This is not a calibration procedure. | `0.000000E+00` | Channels > Zero bias | Rigol-style (command family of the DHO guide) |
-| `:CHANnel<n>:EXPand` | Set / Query | Vertical expansion reference supported by the model. | `CENT` | Channels > Expand around | Rigol-style (command family of the DHO guide) |
+| `:CHANnel<n>:DISPlay` | Set / Query | Boolean. | `1` | Channel > Display | Rigol-compatible |
+| `:CHANnel<n>:SCALe` | Set / Query | Volts/div; setter chooses the nearest supported scale. Probe factor applies. | `1.000000E+00` | Channel > Scale | Rigol-compatible |
+| `:CHANnel<n>:OFFSet` | Set / Query | Volts. | `-1.500000E+00` | Channel > Offset | Rigol-compatible |
+| `:CHANnel<n>:COUPling` | Set / Query | `DC\|AC\|GND`; `DC50` only on a board supporting it. | `DC` | Channel > Coupling | Rigol-compatible |
+| `:CHANnel<n>:BWLimit` | Set / Query | `OFF\|20M\|AUTO` or a supported filter name. OOS filtering extends stock choices. | `AUTO` | Channel > Bandwidth | Rigol-compatible |
+| `:CHANnel<n>:PROBe` | Set / Query | Positive attenuation factor. | `1.000000E+00` | Channel > Probe | Rigol-compatible |
+| `:CHANnel<n>:INVert` | Set / Query | Boolean. | `0` | Channel > Invert | Rigol-compatible |
+| `:CHANnel<n>:POSition` | Set / Query | Vertical position in divisions, converted through that channel's current scale. | `-1.500000E+00` | Channel > Offset | Rigol-style (command family of the DHO guide) |
+| `:CHANnel<n>:UNITs` | Set / Query | Supported channel unit. Use the configured unit when interpreting cursor/readout values. | `VOLT` | Channel more > Unit | Rigol-style (command family of the DHO guide) |
+| `:CHANnel<n>:VERNier` | Set / Query | Boolean fine vertical control. | `0` | Channel > Fine scale | Rigol-style (command family of the DHO guide) |
+| `:CHANnel<n>:TCALibrate` | Set / Query | Channel deskew in seconds; native transfer metadata remains unchanged. | `0.000000E+00` | Channel more > Deskew | Rigol-style (command family of the DHO guide) |
+| `:CHANnel<n>:BIAS` | Set / Query | Software channel zero-bias correction. This is not a calibration procedure. | `0.000000E+00` | Channel more > Zero bias | Rigol-style (command family of the DHO guide) |
+| `:CHANnel<n>:EXPand` | Set / Query | Vertical expansion reference supported by the model. | `CENT` | Channel more > Expand around | Rigol-style (command family of the DHO guide) |
 | `:CHANnel<n>:LABel:SHOW` | Set / Query | Boolean label visibility. | `0` | Channels > Name (label) | Rigol-style (command family of the DHO guide) |
 | `:CHANnel<n>:LABel:CONTent` | Set / Query | Label text. | empty | Channels > Name (label) | Rigol-style (command family of the DHO guide) |
 | `:CHANnel<n>:BIAS:ZERO` | Action | The mean of the last record becomes part of the zero bias | - | Channels > Zero this input | OOS extension |
