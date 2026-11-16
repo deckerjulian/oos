@@ -1624,8 +1624,12 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
             }
             let (s, p) = current.clone().unwrap();
+            // a hardware segment recording in the FPGA: the measure unit (DVM, levels, slots) and the ADC core offsets
+            // wait until it has ended. `disarm` does not stop it, and a write in between would change the segments
+            // still to come (H4 of the 0.1.13 review)
+            let seg_recording = segrun.as_ref().is_some_and(|r| r.recording);
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
-            {
+            if !seg_recording {
                 use oos_hal::dho::dvm;
                 let want = out.lock().unwrap().dvm_want;
                 let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
@@ -1656,14 +1660,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
             // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
             let lw = out.lock().unwrap().levels_want;
-            if let Some((id, _, runs)) = lw.filter(|w| mode == Slow::Off && stamp >= w.1 && levels_done != Some(w.0)) {
+            if let Some((id, _, runs)) = lw.filter(|w| mode == Slow::Off && !seg_recording && stamp >= w.1 && levels_done != Some(w.0)) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 let v = levels_measure(&mut bar, &s, &state.gain, runs);
                 out.lock().unwrap().levels = Some((id, v));
                 levels_done = Some(id);
             }
             // the core trim of the current configuration, with nothing armed
-            if let Some(t) = trim_pending.filter(|t| mode == Slow::Off && t.due(std::time::Instant::now())) {
+            if let Some(t) = trim_pending.filter(|t| mode == Slow::Off && !seg_recording && t.due(std::time::Instant::now())) {
                 trim_pending = None;
                 // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
                 let gen_on = afg_done.is_some_and(|d| d.0);
@@ -1677,7 +1681,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // debug: one raw run of the measure unit for `:DEBug:SLOTs?`
             let sw = out.lock().unwrap().slots_want;
-            if let Some(id) = sw.filter(|&id| mode == Slow::Off && slots_done != Some(id)) {
+            if let Some(id) = sw.filter(|&id| mode == Slow::Off && !seg_recording && slots_done != Some(id)) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 let r = oos_hal::dho::levels::run(&mut bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64)));
                 out.lock().unwrap().slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
