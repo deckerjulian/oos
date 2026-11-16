@@ -158,7 +158,7 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
 
 ## SCPI (TCP 5555)
 
-See the [OOS Plus SCPI manual](../docs/scpi.md) for the supported DHO924S-style
+See the [OOS Plus SCPI manual](../docs/scpi/README.md) for the supported DHO924S-style
 subset, command/result lists, reference/SIM/decoder extensions, binary transfer
 example, asynchronous operation completion and explicit compatibility limits.
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Tests of the SCPI coverage extensions (`ui/scpiext*.rs`): every new header is set and queried once (a round trip), and
 //! each one changes the model field or runs the Ui function that the menu item of the same name does, so the item shows
-//! the value. A last test checks that every header of the tables was exercised and is documented in `docs/scpi.md`.
+//! the value. A last test checks that every header of the tables was exercised and is documented in exactly one group table of `docs/scpi/`.
 //! The commands that power off, restart, update or roll back are only tested without their CONFIRM (they must refuse).
 
 use super::scpiext::{all_headers, resolve};
@@ -825,16 +825,57 @@ fn every_new_header_is_set_and_queried_and_changes_what_the_menu_changes() {
     assert!(missing.is_empty(), "headers no test exercised: {missing:?}");
 }
 
+/// Every page of the SCPI reference (`docs/scpi/*.md`), as (file name, text), in name order.
+fn scpi_docs() -> Vec<(String, String)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/scpi");
+    let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
+    files.sort();
+    assert!(files.iter().any(|p| p.file_name().is_some_and(|n| n == "README.md")), "docs/scpi/README.md is the index");
+    files.into_iter().map(|p| (p.file_name().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).unwrap())).collect()
+}
+
+/// The text of the first cell of every table row of a page (`| `:HEADER` | ... |`), unescaped.
+fn first_cells(text: &str) -> Vec<String> {
+    text.lines().filter(|l| l.starts_with('|')).filter_map(|l| {
+        let b = l.as_bytes();
+        let end = (1..b.len()).find(|&i| b[i] == b'|' && b[i - 1] != b'\\')?;
+        Some(l[1..end].trim().replace("\\|", "|"))
+    }).collect()
+}
+
 #[test]
 fn every_new_header_is_documented() {
-    let doc = include_str!("../../docs/scpi.md");
-    let missing: Vec<&str> = all_headers().filter(|h| !doc.contains(&format!("`{}{}", if h.starts_with('*') { "" } else { ":" }, h))).collect();
-    assert!(missing.is_empty(), "headers missing from docs/scpi.md: {missing:?}");
+    let docs = scpi_docs();
+    let all: String = docs.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n");
+    let missing: Vec<&str> = all_headers().filter(|h| !all.contains(&format!("`{}{}", if h.starts_with('*') { "" } else { ":" }, h))).collect();
+    assert!(missing.is_empty(), "headers missing from docs/scpi/: {missing:?}");
+}
+
+#[test]
+fn every_header_is_in_exactly_one_group_table() {
+    let docs = scpi_docs();
+    let cells: Vec<(&str, Vec<String>)> = docs.iter().map(|(n, t)| (n.as_str(), first_cells(t))).collect();
+    let mut wrong = Vec::new();
+    for h in all_headers() {
+        let cell = format!("`{}{}`", if h.starts_with('*') { "" } else { ":" }, h);
+        let pages: Vec<&str> = cells.iter().filter(|(_, c)| c.iter().any(|x| *x == cell)).map(|(n, _)| *n).collect();
+        if pages.len() != 1 { wrong.push(format!("{h}: {pages:?}")); }
+    }
+    assert!(wrong.is_empty(), "a header must be the command of exactly one group table row page: {wrong:?}");
+    // and no page lists the same header in two rows
+    for (name, c) in &cells {
+        let mut seen = BTreeSet::new();
+        for x in c.iter().filter(|x| x.starts_with("`:") || x.starts_with("`*")) {
+            assert!(seen.insert(x.as_str()), "{name}: {x} is in two rows");
+        }
+    }
 }
 
 #[test]
 fn the_setup_keys_are_documented() {
-    let doc = include_str!("../../docs/scpi.md");
+    let docs = scpi_docs();
+    let doc: String = docs.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n");
     let text = crate::store::setup_text(&Model::default());
     let mut missing = Vec::new();
     for line in text.lines().filter(|l| !l.starts_with('#')) {
@@ -843,7 +884,7 @@ fn the_setup_keys_are_documented() {
         let generic: String = key.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).collect();
         if !(doc.contains(&format!("`{key}`")) || doc.contains(&format!("`{generic}`")) || doc.contains(&format!("`{}`", generic.replace('N', "<n>")))) { missing.push(key.to_string()); }
     }
-    assert!(missing.is_empty(), "setup keys missing from docs/scpi.md: {missing:?}");
+    assert!(missing.is_empty(), "setup keys missing from docs/scpi/: {missing:?}");
 }
 
 #[test]

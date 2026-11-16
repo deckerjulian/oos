@@ -22,4 +22,4 @@ ARM64 Rust checking does not build the firmware image or link Dropbear: this hos
 
 All validation reported here ran locally. Integration pushes and merge commits use `[skip ci]`; no workflow, Actions setting or tag was changed. Incoming PR41 already had CI runs on its own branch when inspected; this integration did not start or rerun them.
 
-Local ignored evidence is under `local/ref-integration`: `final-ui-all.log`, `final-dsp-all.log`, `final-arm-check.log`, `final-source-build.log`, `final-scpi-validation.json`, `private-scpi-provenance.json`, `tekscope-owned-measurements/report.md`, and `pcie4-measurement-audit.md`. See [reference workflows](reference-analysis.md), the [SCPI manual](scpi.md) and [SSH provisioning](ssh.md).
+Local ignored evidence is under `local/ref-integration`: `final-ui-all.log`, `final-dsp-all.log`, `final-arm-check.log`, `final-source-build.log`, `final-scpi-validation.json`, `private-scpi-provenance.json`, `tekscope-owned-measurements/report.md`, and `pcie4-measurement-audit.md`. See [reference workflows](reference-analysis.md), the [SCPI reference](scpi/README.md) and [SSH provisioning](ssh.md).
