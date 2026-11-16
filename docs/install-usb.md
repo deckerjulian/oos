@@ -47,8 +47,41 @@ damaged OOS image in `recovery` (an update cut by a power loss) is replaced by t
 else by the stick's build. If the OOS in `recovery` starts but hangs early every time (no rollback happens because the
 start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
 
-The same install also runs over ADB, without a stick: `README.md`, Over ADB. `oos-update gel-install` is the same code,
-only `/rigol/data` has to be saved by hand. It ran on the same DHO924S (2026-11-07).
+### Over ADB
+
+The same install also runs over ADB, without a stick: `oos-update gel-install` is the same code, only `/rigol/data` has
+to be saved by hand. It ran on the same DHO924S (2026-11-07). You need `adb` on your computer and a scope that answers
+on its network port 55555 with root access; this is known from a modified stock system and has not been checked on an
+unmodified one.
+
+```sh
+adb connect <scope>:55555
+adb root
+adb connect <scope>:55555        # adb root drops the connection
+
+# your calibration and licences, onto your computer
+adb pull /rigol/data rigol-data
+
+# the tool for the scope, not the one in fpgad/target/release
+adb push fpgad/target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
+adb push boot/out/oos-dev.oosupd /data/local/tmp/
+adb shell chmod 755 /data/local/tmp/oos-update
+
+# dry run: all checks, the rescue set, the card is not written
+adb shell /data/local/tmp/oos-update gel-install /data/local/tmp/oos-dev.oosupd --save /data/local/tmp/OOS-rescue
+
+# the rescue set onto your computer: keep it
+adb pull /data/local/tmp/OOS-rescue
+
+# the install: last line "OOS selected for the next power-on"
+adb shell /data/local/tmp/oos-update gel-install /data/local/tmp/oos-dev.oosupd --save /data/local/tmp/OOS-rescue --execute
+```
+
+Before the last command, check the rescue set on your computer: run `sha256sum -c SHA256SUMS` in `OOS-rescue`
+(`shasum -a 256 -c SHA256SUMS` on macOS). After the install, switch the scope off and on. OOS starts.
+
+The rescue set takes 132 MiB on the scope. Afterwards you can remove it with
+`adb shell rm -rf /data/local/tmp/OOS-rescue /data/local/tmp/oos-update /data/local/tmp/oos-dev.oosupd`.
 
 ## 2. What it does
 

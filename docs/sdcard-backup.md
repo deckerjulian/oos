@@ -19,7 +19,7 @@ same thing; they have not been run against a scope's card here.
 - **Verify the backup** (below), keep the image in two places, and **put the original card away unchanged**. Work only
   with the second card from then on. The original holds the factory calibration and licences of your scope.
 - The second card should be the same size or larger. Cards of the same nominal size differ by a few MB; for a smaller
-  card see `tools/sdcard-clone.sh fit` (README, step 2).
+  card see [A smaller second card](#a-smaller-second-card).
 
 ## Windows
 
@@ -79,3 +79,17 @@ sudo cmp -n "$(stat -c %s sd-original.img)" sd-original.img /dev/sdY && echo sam
 
 `tools/sdcard-clone.sh` needs macOS for `list`, `read`, `write` and `verify`; its `fit` (a copy of the image for a
 smaller card) works on Linux with the card's size in bytes (`lsblk -bdno SIZE /dev/sdY`).
+
+## A smaller second card
+
+If the second card is smaller than the image, `tools/sdcard-clone.sh write` refuses and names the way out: `fit` makes
+a copy of the image for that card. The last partition, `userdata` (the stock `/data`, about 1.4 GB used on a stock
+card), runs to the end of the card; `fit` checks its ext4 and shrinks it in Docker, as far as the card needs, down to a
+card of about 8 GB. The original image is only read.
+
+```sh
+tools/sdcard-clone.sh fit ~/oos-backup/sd-original.img diskM ~/oos-backup/sd-fit.img
+tools/sdcard-clone.sh write ~/oos-backup/sd-fit.img diskM
+```
+
+On Linux, `fit` takes the card's size in bytes instead of `diskM` (see Linux above); write `sd-fit.img` with `dd`.

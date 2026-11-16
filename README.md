@@ -414,40 +414,26 @@ The whole process takes about an hour, mostly for copying the cards.
 
 ### 1. Back up the original card
 
-This step protects your factory calibration. **Do not skip it.**
+This step protects your factory calibration. **Do not skip it.** Switch the scope off, unplug the mains cable and all
+probes, open the instrument and take out the boot SD card. Then, on macOS:
 
-1. Switch the scope off, unplug the mains cable and all probes, open the instrument and take out the boot SD card.
-2. Put the card in the reader and find its disk number:
-   ```sh
-   tools/sdcard-clone.sh list
-   ```
-3. Read the whole card into an image. The tool also writes a checksum and a layout report:
-   ```sh
-   tools/sdcard-clone.sh read diskN ~/oos-backup/sd-original.img
-   ```
-4. Keep the image in at least two places, then **put the original card away**. From here on you only use the second
-   card. On Windows or Linux: [docs/sdcard-backup.md](docs/sdcard-backup.md). Always the whole card, never a
-   partition, and never let the computer format or initialise it.
+```sh
+tools/sdcard-clone.sh list                                       # the card's disk number
+tools/sdcard-clone.sh read diskN ~/oos-backup/sd-original.img     # the whole card, with a checksum and a layout report
+```
+
+Keep the image in at least two places, then **put the original card away**: from here on you only use the second card.
+Always the whole card, never a partition, and never let the computer format or initialise it. Windows, Linux and what
+to watch out for: [docs/sdcard-backup.md](docs/sdcard-backup.md).
 
 ### 2. Write the clone to the second card
 
 ```sh
-tools/sdcard-clone.sh list
 tools/sdcard-clone.sh write ~/oos-backup/sd-original.img diskM    # asks you to type the disk id, then verifies
 ```
 
-Cards of the same nominal size differ by a few MB. If the second card is smaller than the image, `write` refuses and
-names the way out: `fit` makes a copy of the image for that card. The last partition, `userdata` (the stock `/data`,
-about 1.4 GB used on a stock card), runs to the end of the card; `fit` checks its ext4 and shrinks it in Docker, as far
-as the card needs. The original image is only read.
-
-```sh
-tools/sdcard-clone.sh fit ~/oos-backup/sd-original.img diskM ~/oos-backup/sd-fit.img
-tools/sdcard-clone.sh write ~/oos-backup/sd-fit.img diskM
-```
-
-On Linux, give the card's size in bytes instead of `diskM` (`lsblk -bdno SIZE /dev/sdX`), and write `sd-fit.img` with
-`dd`.
+If the second card is smaller than the image, `write` refuses and names the way out, `tools/sdcard-clone.sh fit`
+([docs/sdcard-backup.md](docs/sdcard-backup.md), A smaller second card).
 
 Put the second card into the scope, close the instrument and start it once. The stock system must work as before, with
 its calibration and licences. Then unplug the scope and take the card out again.
@@ -599,61 +585,16 @@ again finishes the job. No stock update step runs, and the FPGA flash and `/rigo
 
 #### From a USB stick
 
-You need a FAT32 USB stick with at least 200 MiB free, and `DHO800_DHO900_OOS_Install.GEL`: download it from the
-[latest release](https://github.com/dekajoule/oos/releases/latest) and check it against `SHA256SUMS`, or take it from
-`boot/out/` of your own build.
-
-1. Copy the file to the top folder of the stick. Keep the name: the scope ignores a file
-   whose name does not end in `.GEL` and contain `DHO800_DHO900`.
-2. For a dry run, put an empty file `oos-dry-run.txt` next to it. This runs all checks and saves the rescue set, without
-   writing the card.
-3. Start the stock system, put the stick into the front USB port, open **Storage > Upgrade**, choose the file and start
-   it. This takes about a minute. The screen says at the end whether it worked. If Storage does not show the stick,
-   switch the scope off and on and look again ([docs/install-usb.md](docs/install-usb.md), section 5). If the list also
-   has a small file starting with `._`, that one comes from macOS: choose the real file of about 16 MB.
-4. Read `oos-install.log` on the stick on a computer. It should end with `exit code 0`.
-5. Delete `oos-dry-run.txt` and run the update again. The log should end with `OOS selected for the next power-on`
-   and `exit code 0`.
-6. Copy the folder `OOS-rescue` from the stick to a computer and keep it. It holds your calibration (`rigol-data`), the
-   stock `recovery` and the start of the card.
-7. Switch the scope off at the mains, wait 30 seconds and switch it on. OOS starts.
-
-The scope does not restart by itself after this update. OOS starts once: the power-on after it starts stock again. To stay on
-OOS, set **System > Boot mode** to **Persist**. Later versions go in through the `.oosupd` file of a release.
+You need a FAT32 USB stick with at least 200 MiB free and `DHO800_DHO900_OOS_Install.GEL`, from the
+[latest release](https://github.com/dekajoule/oos/releases/latest) (check it against `SHA256SUMS`) or from
+`boot/out/` of your own build. Copy it to the stick, run it through **Storage > Upgrade** of the stock system, first as
+a dry run, and keep the folder `OOS-rescue` the stick then holds. The steps, what each run writes and what to do when
+Storage does not show the stick: [docs/install-usb.md](docs/install-usb.md), section 1.
 
 #### Over ADB
 
-You need `adb` on your computer and a scope that answers on its network port 55555 with root access. This is known from a
-modified stock system; it has not been checked on an unmodified one.
-
-```sh
-adb connect <scope>:55555
-adb root
-adb connect <scope>:55555        # adb root drops the connection
-
-# your calibration and licences, onto your computer
-adb pull /rigol/data rigol-data
-
-# the tool for the scope, not the one in fpgad/target/release
-adb push fpgad/target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
-adb push boot/out/oos-dev.oosupd /data/local/tmp/
-adb shell chmod 755 /data/local/tmp/oos-update
-
-# dry run: all checks, the rescue set, the card is not written
-adb shell /data/local/tmp/oos-update gel-install /data/local/tmp/oos-dev.oosupd --save /data/local/tmp/OOS-rescue
-
-# the rescue set onto your computer: keep it
-adb pull /data/local/tmp/OOS-rescue
-
-# the install: last line "OOS selected for the next power-on"
-adb shell /data/local/tmp/oos-update gel-install /data/local/tmp/oos-dev.oosupd --save /data/local/tmp/OOS-rescue --execute
-```
-
-Before the last command, check the rescue set on your computer: run `sha256sum -c SHA256SUMS` in `OOS-rescue`
-(`shasum -a 256 -c SHA256SUMS` on macOS). After the install, switch the scope off and on. OOS starts.
-
-The rescue set takes 132 MiB on the scope. Afterwards you can remove it with
-`adb shell rm -rf /data/local/tmp/OOS-rescue /data/local/tmp/oos-update /data/local/tmp/oos-dev.oosupd`.
+The same install from a computer, with `adb` and a scope that answers on its network port 55555 with root access
+(known from a modified stock system only): [docs/install-usb.md](docs/install-usb.md), Over ADB.
 
 #### After the install
 
@@ -846,20 +787,10 @@ OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and `par
 
 ## Repository layout
 
-| Path | Content |
-|---|---|
-| `hal/` | Hardware layer: FPGA register sequences, front ends, ADC, PLL, cold boot, models, updates |
-| `dsp/` | Signal processing: triggers, measurements, maths, decoders, analysers |
-| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, HiSLIP, web remote, LAN announcement |
-| `fpgad/` | `oos-fpgad` bring-up tool and `oos-update` |
-| `boot/` | Boot image packer, image build, card installer, USB installer, stock/OOS switch |
-| `rootfs/initramfs/` | Init scripts and firmware of the image |
-| `rootfs/build-wlan-tools.sh`, `rootfs/build-fsck.sh` | Build wpa_supplicant and e2fsck in Docker |
-| `keys/` | Public keys trusted for updates, community signing key |
-| `tools/` | Card cloning and analysis, device inventory, Python models ([README](tools/README.md)) |
-| `kernel/` | Kernel source, own patches, device tree, configuration, build in Docker, licences ([README](kernel/README.md)) |
-| `CHANGELOG.md` | What changed between releases |
-| `docs/` | Technical documentation: architecture, boot, hardware, register-level protocols ([index](docs/README.md)) |
+The folders of the tree and what each holds: [AGENTS.md](AGENTS.md), Layout of the tree. Besides them: `keys/` (the
+public keys trusted for updates and the community signing key), [CHANGELOG.md](CHANGELOG.md) (what changed between
+releases), [docs/README.md](docs/README.md) (the index of the technical documentation) and
+[tools/README.md](tools/README.md) (the host tools, and which of them touch a scope).
 
 ## Development
 
