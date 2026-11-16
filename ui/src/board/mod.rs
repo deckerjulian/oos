@@ -171,6 +171,8 @@ pub trait Board: Sync + 'static {
     /// alarm limits (degC): SoC, FPGA
     fn temp_limits(&self) -> (f32, f32);
     fn thermal_zones(&self) -> Vec<Zone>;
+    /// how the fan is run (System info)
+    fn fan(&self) -> &'static str;
     /// ADC clocks of System > Overclock, the standard one first
     fn clock_steps(&self) -> &'static [f64];
 

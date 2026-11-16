@@ -178,6 +178,10 @@ impl Board for Mho {
         zones.into_iter().map(|(name, temp)| Zone { name, temp }).collect()
     }
 
+    fn fan(&self) -> &'static str {
+        "full speed (pwm-fan)"
+    }
+
     fn clock_steps(&self) -> &'static [f64] {
         oos_hal::target::ACTIVE.clock_steps
     }

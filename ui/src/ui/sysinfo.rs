@@ -178,7 +178,7 @@ impl Ui {
             }
             None => b.push(kvc("FPGA die", "-", DIM)),
         }
-        b.push(kv("Fan", "always on (GPIO hog)"));
+        b.push(kv("Fan", board().fan()));
         b.push(Row::Head("Temperature limits".into()));
         b.push(kv("SoC throttling", "70 / 85 \u{b0}C (kernel)"));
         b.push(kv("SoC alarm", format!("{:.0} \u{b0}C", soc)));

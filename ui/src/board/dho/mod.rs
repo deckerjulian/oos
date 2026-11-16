@@ -205,6 +205,10 @@ impl Board for Dho {
         board::thermal_zones(std::path::Path::new("/sys/class/thermal")).into_iter().map(|z| Zone { name: z.name, temp: z.temp }).collect()
     }
 
+    fn fan(&self) -> &'static str {
+        "always on (GPIO hog)"
+    }
+
     fn clock_steps(&self) -> &'static [f64] {
         oos_hal::target::ACTIVE.clock_steps
     }
