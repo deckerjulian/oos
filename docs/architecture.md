@@ -105,7 +105,9 @@ Threads:
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
 `Live` (read-out loop), `Hw` (real acquisitions of the board; on the DHO800/DHO900 the TPU trigger is set to the
-selected type, the software trigger finds the point again in the data).
+selected type, the software trigger finds the point again in the data). Only `Demo` gives a trigger type starting
+values when it is chosen, values that trigger on its signals; with every other source a new type keeps what the user
+set (width, pattern, levels), and the lower level of Slope, Runt and Window stays at or below the upper one.
 
 ### oos-fpgad: bring-up and service tool
 

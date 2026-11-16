@@ -315,6 +315,11 @@ impl Source {
         matches!(self, Source::Hw { .. })
     }
 
+    /// The made-up signals of the demo: the starting values of the trigger types are made for them.
+    pub fn is_demo(&self) -> bool {
+        matches!(self, Source::Demo { .. })
+    }
+
     /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
     pub fn force_hw(&self) {
         if let Source::Hw { shared, .. } = self {

@@ -6715,15 +6715,16 @@ impl Ui {
             self.dirty_map = true;
             return;
         }
-        // the presets below suit the demo signals (each type on a channel that shows it). On the hardware a trigger
-        // type sets only its own parameters: the channels, the source, the level and the slope, which the other types
-        // share, stay as they were (the forum, eTobey: one setting must not change another)
-        let hw = self.src.is_hw();
-        let shared = (self.m.ch.clone(), self.m.trig_src, self.m.trig_level, self.m.slope);
+        // the presets below suit the demo signals (each type on a channel that shows it). Every other source (the
+        // hardware, a live or replayed record) keeps what the user set: the channels, source, level and slope, and
+        // also the width, the pattern, the lower level and the rest that several types share (the forum, eTobey: one
+        // setting must not change another). A SIM session triggers on its reference: set_reference_trigger_type
+        let demo = self.src.is_demo();
         let m = &mut self.m;
         m.trig_type = t;
         let on = |c: usize, m: &mut Model| m.ch[c].on = true;
         match t {
+            _ if !demo => {}
             TrigType::Bus => {} // handled above
             TrigType::Edge => {
                 m.trig_src = 0;
@@ -6779,8 +6780,7 @@ impl Ui {
         if m.trig_type != TrigType::Runt && m.trig_when == WhenKind::Off {
             m.trig_when = WhenKind::Lt;
         }
-        if hw {
-            (m.ch, m.trig_src, m.trig_level, m.slope) = shared;
+        if !demo {
             // the second source of Delay and Setup/Hold on a channel that is on (PR #8, W4R)
             let src = m.trig_src;
             if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) && (m.trig_src2 == src || !m.ch[m.trig_src2.min(NCH - 1)].on) {
@@ -6789,6 +6789,8 @@ impl Ui {
                 }
             }
         }
+        // the lower level the type finds (Delay's level B, say) not above the shared upper one
+        m.order_trigger_levels();
         self.dirty_map = true;
     }
 
@@ -7543,7 +7545,13 @@ impl Ui {
                     m.run = RunState::Run;
                 }
             }
-            Item::TrigLevel => m.trig_level += d as f32 * m.ch[m.trig_src].volts_per_div() / 25.0,
+            Item::TrigLevel => {
+                m.trig_level += d as f32 * m.ch[m.trig_src].volts_per_div() / 25.0;
+                // the upper level of a two-level type stops at the lower one, as Bode's start stops at its stop
+                if m.trig_type.two_level() {
+                    m.trig_level = m.trig_level.max(m.trig_level2);
+                }
+            }
             Item::TrigType => {
                 let i = TRIG_TYPES.iter().position(|&x| x == m.trig_type).unwrap_or(0);
                 let t = TRIG_TYPES[cyc(i, TRIG_TYPES.len(), d)];
@@ -7552,6 +7560,9 @@ impl Ui {
             Item::TrigLevel2 => {
                 let c = if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
                 m.trig_level2 += d as f32 * m.ch[c].volts_per_div() / 25.0;
+                if m.trig_type.two_level() {
+                    m.trig_level2 = m.trig_level2.min(m.trig_level);
+                }
             }
             Item::TrigSrc2 => m.trig_src2 = src_step(m.trig_src2, NCH, d),
             Item::SearchOn => { self.search_on = !self.search_on; return; }
@@ -7945,6 +7956,8 @@ impl Ui {
     }
 
     fn settings_changed(&mut self) {
+        // whatever moved the upper level (50 %, SCPI's LEVel, a fit) leaves the two levels in order
+        self.m.order_trigger_levels();
         self.cancel_bus_candidate(true);
         if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run { self.single_armed = false; self.scpi_arm_operation(); }
         if self.m.run == RunState::Run {
@@ -8401,6 +8414,8 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                // a set-up written by hand or by an older build may have the two levels the wrong way round
+                self.m.order_trigger_levels();
                 // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
                 self.bus_auto = None;
                 self.math_state.borrow_mut().forget_fit();
@@ -9905,7 +9920,13 @@ impl Ui {
                         let id = if secondary { self.m.trigger_wave2() } else { self.m.trigger_wave() };
                         let ppy = self.source_area(id).map_or(ppy, |area| area.h as f32 / VDIV * self.zoom_vertical_transform(area).0);
                         let level = t.start_level - dy as f32 / ppy * self.trigger_vpd(secondary);
-                        if lower { self.m.trig_level2 = level; } else { self.m.trig_level = level; }
+                        // a two-level type: the dragged line stops at the other one, as the knob does
+                        let two = self.m.trig_type.two_level();
+                        if lower {
+                            self.m.trig_level2 = if two { level.min(self.m.trig_level) } else { level };
+                        } else {
+                            self.m.trig_level = if two { level.max(self.m.trig_level2) } else { level };
+                        }
                         self.settings_changed();
                     }
                     Drag::Bus => {

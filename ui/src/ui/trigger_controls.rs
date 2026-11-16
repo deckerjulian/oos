@@ -117,6 +117,7 @@ impl Ui {
         }
         if kind == TrigType::Runt { self.m.trig_when = WhenKind::Off; }
         else if self.m.trig_when == WhenKind::Off { self.m.trig_when = WhenKind::Gt; }
+        self.m.order_trigger_levels();
         self.replay.reset_search();
         true
     }

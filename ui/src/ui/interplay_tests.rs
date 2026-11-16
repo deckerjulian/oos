@@ -24,8 +24,10 @@ fn changed(a: &str, b: &str) -> Vec<String> {
     a.keys().chain(b.keys()).filter(|k| a.get(*k) != b.get(*k)).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()
 }
 
-/// Parameters that belong to one trigger type only: a type sets its own when it is chosen.
-const TYPE_OWN: [&str; 14] = ["trig_t1", "trig_when", "trig_level2", "trig_pol", "pat", "setup", "hold", "win_mode", "trig_src2", "trig_slope2", "nth_idle", "nth_n", "trig_bus", "trig_bus_val"];
+/// What a trigger type may set when it is chosen on the hardware: Delay and Setup/Hold put their second source on a
+/// channel that is on (CH4 is off here), Bus a value of its protocol, which may have changed since. The rest (width,
+/// pattern, lower level, ...) stays: review U6, where these keys were left out because each type set its demo values.
+const TYPE_OWN: [&str; 3] = ["trig_src2", "trig_bus", "trig_bus_val"];
 
 /// Steps `it` once round all `n` of its values with steps of the screen between, and checks the setup after (but
 /// for the keys of `own`).
@@ -43,7 +45,80 @@ fn round(u: &mut Ui, it: Item, n: usize, own: &[&str]) {
 #[test]
 fn every_trigger_type_and_back_leaves_the_rest() {
     let mut u = ui();
+    // the levels in the order the two-level types need (otherwise their lower level gives way, the next test)
+    u.m.trig_level = 1.0;
+    // values no type would choose for itself
+    (u.m.trig_t1, u.m.trig_t2, u.m.trig_when, u.m.trig_pol) = (7e-6, 9e-6, WhenKind::Out, Pol::Neg);
+    (u.m.win_mode, u.m.trig_slope2, u.m.trig_level2) = (WinMode::Exit, Slope::Fall, 0.25);
+    (u.m.setup, u.m.hold, u.m.nth_idle, u.m.nth_n) = (3e-6, 4e-6, 70e-6, 5);
+    u.m.pat = std::array::from_fn(|i| [Bit::L, Bit::H, Bit::F, Bit::X][i % 4]);
     round(&mut u, Item::TrigType, TRIG_TYPES.len(), &TYPE_OWN);
+}
+
+/// Review U6: on a source that is not the demo, a pulse width, a pattern and the runt thresholds set by the user stay
+/// when the type changes and comes back; the demo keeps its starting values, and a lower level never ends above the
+/// upper one.
+#[test]
+fn a_trigger_type_keeps_the_values_it_shares_away_from_the_demo() {
+    let replay = Source::Replay { words: Vec::new(), xinc: 1e-9, yinc: 1.0, yorg: 0.0, yref: 0.0 };
+    for (name, src) in [("hw", Source::Hw { shared: Default::default(), seen: 0 }), ("replay", replay)] {
+        let mut u = Ui::new(src);
+        u.set_trig_type(TrigType::Pulse);
+        (u.m.trig_t1, u.m.trig_when, u.m.trig_pol) = (5e-6, WhenKind::Gt, Pol::Neg);
+        u.set_trig_type(TrigType::Pattern);
+        let pat: [Bit; NCH] = std::array::from_fn(|i| [Bit::L, Bit::H, Bit::F, Bit::X][i % 4]);
+        u.m.pat = pat;
+        u.set_trig_type(TrigType::Runt);
+        (u.m.trig_level, u.m.trig_level2) = (1.2, 0.8);
+        for t in [TrigType::Edge, TrigType::Pulse, TrigType::Window, TrigType::Pattern, TrigType::Runt] {
+            u.set_trig_type(t);
+        }
+        assert_eq!((u.m.trig_t1, u.m.trig_when, u.m.trig_pol), (5e-6, WhenKind::Gt, Pol::Neg), "{name}: pulse width");
+        assert_eq!(u.m.pat, pat, "{name}: pattern");
+        assert_eq!((u.m.trig_level, u.m.trig_level2), (1.2, 0.8), "{name}: runt thresholds");
+    }
+    // the demo: each type comes with values that trigger on its signals
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.trig_t1 = 5e-6;
+    u.set_trig_type(TrigType::Pulse);
+    assert_eq!(u.m.trig_t1, 30e-6, "demo: the pulse preset");
+    u.set_trig_type(TrigType::Runt);
+    assert_eq!((u.m.trig_level, u.m.trig_level2), (2.0, 0.5), "demo: the runt preset");
+}
+
+#[test]
+fn the_lower_trigger_level_never_ends_above_the_upper() {
+    let mut u = ui();
+    // Delay's level B above its level A: Runt takes it as its lower level, at most up to the shared upper one
+    u.set_trig_type(TrigType::Delay);
+    (u.m.trig_level, u.m.trig_level2) = (0.4, 1.6);
+    u.set_trig_type(TrigType::Runt);
+    assert_eq!((u.m.trig_level, u.m.trig_level2), (0.4, 0.4), "the lower level gives way to the upper");
+    let ordered = |u: &Ui| u.m.trig_level2 <= u.m.trig_level;
+    // the knob: each level stops at the other
+    u.m.trig_level2 = -0.4;
+    for _ in 0..200 {
+        u.adjust(Item::TrigLevel, -1);
+        assert!(ordered(&u), "upper turned down: {} < {}", u.m.trig_level, u.m.trig_level2);
+    }
+    assert_eq!(u.m.trig_level, -0.4, "the upper stopped at the lower");
+    for _ in 0..200 {
+        u.adjust(Item::TrigLevel2, 1);
+        assert!(ordered(&u), "lower turned up");
+    }
+    // a level set from elsewhere (SCPI's :TRIGger:...:LEVel, 50 %): the lower one follows it down
+    for t in [TrigType::Slope, TrigType::Runt, TrigType::Window] {
+        u.set_trig_type(t);
+        (u.m.trig_level, u.m.trig_level2) = (1.0, 0.5);
+        u.m.trig_level = 0.2;
+        u.mark_changed();
+        assert_eq!((u.m.trig_level, u.m.trig_level2), (0.2, 0.2), "{t:?}");
+    }
+    // the other types keep two levels of their own, in any order
+    u.set_trig_type(TrigType::Delay);
+    (u.m.trig_level, u.m.trig_level2) = (0.2, 1.0);
+    u.mark_changed();
+    assert_eq!((u.m.trig_level, u.m.trig_level2), (0.2, 1.0));
 }
 
 #[test]

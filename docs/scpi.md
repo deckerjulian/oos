@@ -82,7 +82,7 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | `:TRIGger:EDGE:SLOPe[?]` | `POS|NEG|RFAL`. |
 | `:TRIGger:HOLDoff[?]` | Seconds, 0 through 10. |
 | `:TRIGger:NREJect[?]` | Boolean. |
-| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `ALEVel` / `BLEVel`. |
+| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `ALEVel` / `BLEVel`. A threshold past the other one is refused with `-224`, as `:MEASure:SETup:MAX` / `MIN`. |
 | `:TRIGger:SOURce2[?]` | Secondary CH/ref source for applicable OOS trigger types. |
 
 Trigger type names are `EDGE`, `PULSE`, `SLOPE`, `VIDEO`, `PATTERN`, `DURATION`, `TIMEOUT`, `RUNT`, `WINDOW`, `DELAY`, `SETUPHOLD`, `NTHEDGE`, `BUS`. MODE replies use canonical short tokens: `EDGE`, `PULS`, `SLOP`, `VID`, `PATT`, `DUR`, `TIM`, `RUNT`, `WIND`, `DEL`, `SET`, `NEDG`, `BUS`; TYPE retains the UI's descriptive names. This list does not imply that every stock type-specific subtree exists. Additional settings use the UI/setup schema; unsupported headers report an error.

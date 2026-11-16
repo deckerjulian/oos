@@ -670,6 +670,11 @@ impl TrigType {
             TrigType::Bus => "Bus",
         }
     }
+
+    /// The types with an upper (`trig_level`) and a lower level (`trig_level2`).
+    pub fn two_level(self) -> bool {
+        matches!(self, TrigType::Slope | TrigType::Runt | TrigType::Window)
+    }
 }
 
 /// Time condition kind of the "When" setting (Off only for runt).
@@ -1996,6 +2001,14 @@ impl Model {
             WaveId::Ref(i) => { *reference = Some(i.min(NREF - 1)); }
         }
         if !secondary { self.trig_la = None; }
+    }
+
+    /// Keeps the lower level of a two-level type at or below the upper one. The lower level gives way: the upper is
+    /// the level every type shares, the lower one is also Delay's level B and Setup/Hold's clock level.
+    pub fn order_trigger_levels(&mut self) {
+        if self.trig_type.two_level() && self.trig_level2 > self.trig_level {
+            self.trig_level2 = self.trig_level;
+        }
     }
 
     /// The configured trigger for the software trigger engine.

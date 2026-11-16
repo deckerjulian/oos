@@ -1046,12 +1046,21 @@ impl Scpi {
                 return None;
             }
             if nodes.len() == 3 && kw(nodes[1], "RUNT") {
-                let value = if kw(last, "UPPer") || kw(last, "ALEVel") { Some(&mut ui.m.trig_level) }
+                let upper = kw(last, "UPPer") || kw(last, "ALEVel");
+                let (lower, higher) = (ui.m.trig_level2, ui.m.trig_level);
+                let value = if upper { Some(&mut ui.m.trig_level) }
                     else if kw(last, "LOWer") || kw(last, "BLEVel") { Some(&mut ui.m.trig_level2) } else { None };
                 if let Some(value) = value {
                     if query { return t(&e(*value as f64)); }
-                    if let Some(number) = num(arg) { *value = number; ui.mark_changed(); }
-                    else { self.push_err("-224,\"Invalid runt threshold\"".into()); }
+                    // the pair stays in order, as :MEASure:SETup:MAX|MIN: a threshold past the other is refused
+                    match num(arg) {
+                        Some(number) if (upper && number < lower) || (!upper && number > higher) => {
+                            let other = if upper { "below the lower" } else { "above the upper" };
+                            self.push_err(format!("-224,\"Illegal parameter value\" {other} threshold"));
+                        }
+                        Some(number) => { *value = number; ui.mark_changed(); }
+                        None => self.push_err("-224,\"Invalid runt threshold\"".into()),
+                    }
                     return None;
                 }
             }
@@ -5775,6 +5784,19 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX 10");
         assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "the upper threshold must stay above the lower");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX?"), "80");
+
+        // the runt thresholds the same way (review U6)
+        line(&mut s, &mut ui, &cv, "*CLS;:TRIG:TYPE RUNT;:TRIG:RUNT:UPP 1.5;:TRIG:RUNT:LOW 0.25");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("0,"), "thresholds in order are taken");
+        line(&mut s, &mut ui, &cv, ":TRIG:RUNT:LOW 2");
+        let error = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(error.starts_with("-224,"), "the lower threshold must stay below the upper: {error}");
+        line(&mut s, &mut ui, &cv, ":TRIG:RUNT:UPP 0.1");
+        let error = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(error.starts_with("-224,"), "the upper threshold must stay above the lower: {error}");
+        let upper: f64 = line(&mut s, &mut ui, &cv, ":TRIG:RUNT:UPP?").parse().unwrap();
+        let lower: f64 = line(&mut s, &mut ui, &cv, ":TRIG:RUNT:LOW?").parse().unwrap();
+        assert!((upper - 1.5).abs() < 1e-6 && (lower - 0.25).abs() < 1e-6, "{upper} {lower}");
     }
 
     #[test]
