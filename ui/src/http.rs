@@ -7,7 +7,8 @@
 //!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
 //!   GET /screen.jpg   the live picture as JPEG from the VPU (`vpu.rs`; PNG where there is none), as /screen.png
 //!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
-//!   POST /waveform?name=...&slot=1   load a waveform into a chosen reference (no file written)
+//!   POST /waveform?name=...&slot=1   load a waveform into a chosen reference (no file written; parsed on a thread of
+//!                     its own and put into the slot by the frame loop, see `WaveJob`)
 //!   GET /ui-state     source, acquisition state and capture count for the remote controls
 //!   GET /cmd?c=...    one key, knob or touch command (cmd.rs syntax: "key runstop", "knob vscale +1", "tap 100 200");
 //!                     other commands are refused (`cmd::remote_ok`)
@@ -520,9 +521,69 @@ struct Pending {
     large: bool,
 }
 
+/// A waveform upload (`POST /waveform`) parsed on a thread of its own, as the desktop build's file picker does: a file
+/// near the 128 MiB limit takes seconds to parse, which on the frame loop stopped the scope's screen and keys. The
+/// frame loop puts the traces into the slot (`Ui::commit_waveform_traces_at`) and answers the client, which waits.
+struct WaveJob {
+    s: TcpStream,
+    name: String,
+    /// R1 is 0
+    slot: usize,
+    /// `Ui::waveform_epoch` at the upload: a session changed meanwhile does not get the late file
+    epoch: u64,
+    parsed: std::sync::mpsc::Receiver<Result<Vec<crate::store::WaveTrace>, String>>,
+}
+
+impl WaveJob {
+    /// Starts parsing `req[body..]`; None when no thread could be started.
+    fn start(s: TcpStream, req: Vec<u8>, body: usize, name: String, slot: usize, epoch: u64) -> Option<WaveJob> {
+        let (tx, parsed) = std::sync::mpsc::channel();
+        let file = name.clone();
+        std::thread::Builder::new()
+            .name("web-wave".into())
+            .spawn(move || {
+                lower_priority();
+                let _ = tx.send(crate::store::parse_wave(&req[body..], &file));
+            })
+            .ok()?;
+        Some(WaveJob { s, name, slot, epoch, parsed })
+    }
+
+    /// The answer once the parse is done: the traces in the slot, or why not. None while it runs.
+    fn finish(&self, ui: &mut Ui) -> Option<(bool, String)> {
+        let parsed = match self.parsed.try_recv() {
+            Ok(parsed) => parsed,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("The waveform reader stopped; try again.".into()),
+        };
+        let previous = ui.ref_slot();
+        let result = if ui.waveform_epoch() != self.epoch {
+            Err("The session changed while the file was read; load it again.".to_string())
+        } else {
+            parsed.and_then(|traces| ui.commit_waveform_traces_at(traces, &self.name, self.slot))
+        };
+        Some(match result {
+            Ok(()) => {
+                let hint = if ui.record_mode() {
+                    "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
+                } else {
+                    "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
+                };
+                (true, format!("Loaded {} into R{}. {}", self.name, ui.ref_slot() + 1, hint))
+            }
+            Err(error) => {
+                ui.ref_slot_set(previous);
+                (false, error)
+            }
+        })
+    }
+}
+
 pub struct Http {
     l: Option<TcpListener>,
     pending: Vec<Pending>,
+    /// the waveform upload being parsed
+    wave: Option<WaveJob>,
     shots: Arc<Shots>,
     /// who may install an update or use MCP (empty: everyone)
     pub acl: crate::netacl::Acl,
@@ -680,6 +741,7 @@ impl Http {
         Http {
             l: Self::bind(port),
             pending: Vec::new(),
+            wave: None,
             shots: Shots::new(),
             acl: crate::netacl::Acl::default(),
             offer: Offer::default(),
@@ -758,6 +820,15 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
+        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
+            let mut job = self.wave.take().unwrap();
+            let status = if ok { "200 OK" } else { "409 Conflict" };
+            let head = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
+                Cache-Control: no-store\r\nConnection: close\r\n\r\n", text.len());
+            let _ = job.s.set_write_timeout(Some(Duration::from_secs(2)));
+            let _ = job.s.write_all(head.as_bytes());
+            let _ = job.s.write_all(text.as_bytes());
+        }
         if let Some(l) = &self.l {
             while let Ok((s, _)) = l.accept() {
                 if self.pending.len() >= MAX_PENDING {
@@ -771,7 +842,8 @@ impl Http {
         let mut i = 0;
         while i < self.pending.len() {
             let mut buf = [0u8; 65536];
-            let large_taken = self.pending.iter().any(|p| p.large);
+            // a waveform being parsed holds its body too
+            let large_taken = self.pending.iter().any(|p| p.large) || self.wave.is_some();
             let Pending { s, req, t, t_acc, need, large } = &mut self.pending[i];
             let mut dead = false;
             // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s), and once
@@ -876,21 +948,25 @@ impl Http {
                     "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
                     "/waveform" if post => {
                         let slot = query.split('&').find_map(|part| part.strip_prefix("slot=")).and_then(|value| value.parse::<usize>().ok());
-                        let name = waveform_name(query);
-                        let previous = ui.ref_slot();
-                        let result = if let Some(slot) = slot.filter(|s| (1..=10).contains(s)) {
-                            ui.load_waveform_bytes_at(req_body, &name, slot - 1)
-                        } else { Err("Choose a reference slot from R1 to R10.".into()) };
-                        match result {
-                            Ok(()) => {
-                                let hint = if ui.record_mode() { "Use Run/Stop or Single to acquire from this record; Return to live restores the live source." }
-                                    else { "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition." };
-                                ("text/plain; charset=utf-8", format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint).into_bytes())
-                            }
-                            Err(error) => {
-                                ui.ref_slot_set(previous);
+                        match slot.filter(|s| (1..=10).contains(s)) {
+                            None => {
                                 failed = true;
-                                ("text/plain; charset=utf-8", error.into_bytes())
+                                ("text/plain; charset=utf-8", b"Choose a reference slot from R1 to R10.".to_vec())
+                            }
+                            Some(_) if self.wave.is_some() => {
+                                busy_answer(s);
+                                self.pending.remove(i);
+                                continue;
+                            }
+                            Some(slot) => {
+                                // the request goes to the parser whole, its body is not copied out
+                                let (body, epoch) = (hdr_end.unwrap_or(req.len()), ui.waveform_epoch());
+                                let Pending { s, req, .. } = self.pending.remove(i);
+                                match WaveJob::start(s, req, body, waveform_name(query), slot - 1, epoch) {
+                                    Some(job) => self.wave = Some(job),
+                                    None => eprintln!("oos-ui: no thread for a waveform upload"),
+                                }
+                                continue;
                             }
                         }
                     },
@@ -1273,6 +1349,54 @@ mod tests {
         let body = state.split("\r\n\r\n").nth(1).unwrap();
         let parsed = crate::json::parse(body).unwrap();
         assert_eq!(parsed.get("mode").and_then(crate::json::J::str), Some("live"));
+    }
+
+    /// A waveform upload is parsed off the frame loop: the poll that takes the request only starts the parse, and a
+    /// later poll puts the traces into the slot and answers. Before, the poll parsed it (a CSV near 128 MiB took
+    /// seconds, with the scope's screen and keys stopped). A session changed meanwhile does not get the late file.
+    #[test]
+    fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let port = h.port().unwrap();
+        let csv = "Time (s),Volts\n0,0.1\n1e-9,0.4\n2e-9,-0.2\n";
+        let upload = |slot: usize| {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+            let head = format!("POST /waveform?name=lane.csv&slot={slot} HTTP/1.1\r\nHost: x\r\n\
+                Content-Length: {}\r\n\r\n", csv.len());
+            c.write_all(head.as_bytes()).unwrap();
+            c.write_all(csv.as_bytes()).unwrap();
+            c
+        };
+        for (slot, change) in [(3, false), (5, true)] {
+            let mut c = upload(slot);
+            let until = Instant::now() + Duration::from_secs(60);
+            while h.wave.is_none() {
+                assert!(Instant::now() < until, "the upload was not taken");
+                h.poll(&mut ui, &cv, &mut scpi);
+                assert!(ui.ref_shown_slot(slot - 1).is_none(), "the poll that takes the upload does not parse it");
+            }
+            if change {
+                ui.return_to_live();
+            }
+            while h.wave.is_some() {
+                assert!(Instant::now() < until, "the parse did not end");
+                h.poll(&mut ui, &cv, &mut scpi);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let mut reply = String::new();
+            c.read_to_string(&mut reply).unwrap();
+            if change {
+                assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("session changed"), "{reply}");
+                assert!(ui.ref_shown_slot(slot - 1).is_none());
+            } else {
+                assert!(reply.starts_with("HTTP/1.1 200") && reply.contains("Loaded lane.csv into R3"), "{reply}");
+                assert_eq!(ui.ref_shown_slot(slot - 1), Some(true));
+            }
+        }
     }
 
     #[test]

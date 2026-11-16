@@ -234,8 +234,9 @@ the image on trial is the one running. Images whose load addresses or sizes are 
 At most 8 connections; bodies up to 70 MiB only for `POST /update` (128 MiB for `POST /waveform`, 1 MiB elsewhere),
 an announced larger `Content-Length` gets 413 at once; 10 s idle and 120 s per request. A body over 1 MiB is taken one
 at a time: while one is being read, the next gets 503 when its head is in. `POST /update` and `/mcp` from outside
-`net.allow` get 403 when the head is in, before the body is read. The page runs `oos-update status --quick` (headers
-only, no hashing of 2 x 31 MB).
+`net.allow` get 403 when the head is in, before the body is read. A `POST /waveform` is parsed on a thread of its own
+and put into its slot by the frame loop, which answers then; while one is parsed, another gets 503. The page runs
+`oos-update status --quick` (headers only, no hashing of 2 x 31 MB).
 
 ## To check on the unit
 
