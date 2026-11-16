@@ -359,11 +359,8 @@ impl Ui {
             return true;
         }
         let m = &mut self.m;
-        let step = |l: &[f64], x: f64, d: i32| {
-            let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-            l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
-        };
-        let freqs: Vec<f64> = (0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
+        let step = |l: &[f64], x: f64, d: i32| ladder_step(l, x, d, l.len() - 1);
+        let freqs = decades(0, 10, false);
         let ladder = |x: f64, d: i32| step(&freqs, x, d);
         match it {
             Item::BodeOn => m.view = if m.view == AView::Bode { AView::Scope } else { AView::Bode },
@@ -383,9 +380,7 @@ impl Ui {
             Item::BodeIn if free => m.bode_sw_in = opt_src_step(m.bode_sw_in, d),
             Item::BodeSwTime => {
                 // 1-2-5 steps from 1 ms to 500 s
-                let l: Vec<f64> = (-3..3).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
-                let i = l.iter().position(|&v| v >= m.bode_sw_time * 0.999).unwrap_or(l.len() - 1);
-                m.bode_sw_time = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+                m.bode_sw_time = step(&decades(-3, 3, false), m.bode_sw_time, d);
             }
             // two choices: an odd step switches
             Item::BodeSwLog => m.bode_sw_log ^= d % 2 != 0,

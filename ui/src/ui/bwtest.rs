@@ -68,17 +68,16 @@ impl Ui {
 
     pub(super) fn bw_adjust(&mut self, it: Item, d: i32) -> bool {
         let m = &mut self.m;
-        let step = |i: usize, n: usize| (i as i32 + d).clamp(0, n as i32 - 1) as usize;
         match it {
             Item::BwOn => m.view = if m.view == AView::Step { AView::Scope } else { AView::Step },
             Item::BwSrc => m.bw_src = src_step(m.bw_src, NCH, d),
             Item::BwHint => {
                 let i = HINTS.iter().position(|&h| h >= m.bw_hint * 0.999).unwrap_or(0);
-                m.bw_hint = HINTS[step(i, HINTS.len())];
+                m.bw_hint = HINTS[step_index(i, HINTS.len(), d)];
             }
             Item::BwBins => {
                 let i = BINS.iter().position(|&b| b >= m.bw_bins).unwrap_or(BINS.len() - 1);
-                m.bw_bins = BINS[step(i, BINS.len())];
+                m.bw_bins = BINS[step_index(i, BINS.len(), d)];
             }
             _ => return false,
         }

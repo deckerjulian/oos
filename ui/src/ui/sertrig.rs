@@ -8,11 +8,6 @@
 
 use super::*;
 
-/// Index `i` of `n` moved by `d`, wrapping.
-fn cyc(i: usize, n: usize, d: i32) -> usize {
-    (i as i32 + d).rem_euclid(n as i32) as usize
-}
-
 /// SPI timeout steps (s): off, then 1-2-5 from 100 ns to 10 ms.
 const TIMEOUTS: [f32; 17] = [0.0, 100e-9, 200e-9, 500e-9, 1e-6, 2e-6, 5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3];
 
@@ -116,7 +111,7 @@ impl Ui {
             Item::SerRel => {
                 let r = self.rel_mut();
                 let i = RELS.iter().position(|x| x == r).unwrap_or(0);
-                *r = RELS[cyc(i, RELS.len(), d)];
+                *r = RELS[cycle(i, RELS.len(), d)];
             }
             Item::SerMax | Item::SerMask => {
                 let v = (self.hex_value(it) as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64;
@@ -125,11 +120,11 @@ impl Ui {
             Item::UartPol => s.uart_inv = !s.uart_inv,
             Item::UartStop => {
                 let i = STOP_BITS.iter().position(|x| *x == s.uart_stop).unwrap_or(0);
-                s.uart_stop = STOP_BITS[cyc(i, STOP_BITS.len(), d)];
+                s.uart_stop = STOP_BITS[cycle(i, STOP_BITS.len(), d)];
             }
             Item::UartErr => {
                 let i = UART_ERRS.iter().position(|x| *x == s.uart_err).unwrap_or(0);
-                s.uart_err = UART_ERRS[cyc(i, UART_ERRS.len(), d)];
+                s.uart_err = UART_ERRS[cycle(i, UART_ERRS.len(), d)];
             }
             Item::SpiCs => s.spi_cs_high = !s.spi_cs_high,
             Item::SpiTimeout => {
@@ -138,7 +133,7 @@ impl Ui {
             }
             Item::I2cDir => {
                 let i = I2C_DIRS.iter().position(|x| *x == s.dir).unwrap_or(0);
-                s.dir = I2C_DIRS[cyc(i, I2C_DIRS.len(), d)];
+                s.dir = I2C_DIRS[cycle(i, I2C_DIRS.len(), d)];
             }
             Item::I2cAddrBits => s.ten_bit = !s.ten_bit,
             Item::I2cBytes => s.bytes = (s.bytes as i32 + d).clamp(0, 5) as u8,

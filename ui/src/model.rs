@@ -124,6 +124,29 @@ pub fn src_step(i: usize, n: usize, d: i32) -> usize {
     src_step_in(i, n, d, n_ch())
 }
 
+/// 1-2-5 steps over the decades `10^lo` .. `5 * 10^(hi - 1)`, each `k * 10^e` as written (`powi`), with 0 in front
+/// when `zero` (off, or auto).
+pub fn decades(lo: i32, hi: i32, zero: bool) -> Vec<f64> {
+    zero.then_some(0.0).into_iter().chain((lo..hi).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e)))).collect()
+}
+
+/// The entry of the ladder `l` that is `d` steps from `x`, stopping at its ends. `x` stands at the first entry not
+/// below it (a thousandth lower counts), or at index `miss` when the ladder has none.
+pub fn ladder_step(l: &[f64], x: f64, d: i32, miss: usize) -> f64 {
+    let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(miss);
+    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+}
+
+/// Index `i` of `n` moved by `d`, wrapping around.
+pub fn cycle(i: usize, n: usize, d: i32) -> usize {
+    (i as i32 + d).rem_euclid(n as i32) as usize
+}
+
+/// Index `i` of `n` moved by `d`, stopping at the ends.
+pub fn step_index(i: usize, n: usize, d: i32) -> usize {
+    (i as i32 + d).clamp(0, n as i32 - 1) as usize
+}
+
 /// 1-2-5 steps from `lo` to `hi`. `zero` inserts 0 (an unset geometry or resistance). `d` moves along that list and stops at the ends.
 pub fn eng_ladder(x: f64, d: i32, lo: f64, hi: f64, zero: bool) -> f64 {
     let mut l = Vec::new();
@@ -199,20 +222,9 @@ pub const HW_MIN_TDIV: f32 = 1e-9;
 /// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
 /// `HW_MIN_TDIV` (`hw_time_per_div`).
 pub fn tscales() -> Vec<f32> {
-    let mut v = Vec::new();
-    let mut d = 1e-11_f64;
-    while d < 2000.0 {
-        for m in [1.0, 2.0, 5.0] {
-            let x = d * m;
-            // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn
-            // with the windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
-            if x >= 0.49e-10 && x <= 1000.1 {
-                v.push(x as f32);
-            }
-        }
-        d *= 10.0;
-    }
-    v
+    // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn with the
+    // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
+    decades(-11, 4, false).into_iter().filter(|&x| x >= 0.49e-10 && x <= 1000.1).map(|x| x as f32).collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -705,17 +717,7 @@ pub enum VSync {
 
 /// 1-2-5 ladder for trigger times: 1 ns .. 10 s.
 pub fn time_ladder() -> Vec<f32> {
-    let mut v = Vec::new();
-    let mut d = 1e-9_f64;
-    while d < 20.0 {
-        for m in [1.0, 2.0, 5.0] {
-            if d * m <= 10.0 {
-                v.push((d * m) as f32);
-            }
-        }
-        d *= 10.0;
-    }
-    v
+    decades(-9, 2, false).into_iter().filter(|&x| x <= 10.0).map(|x| x as f32).collect()
 }
 
 /// What the QUICK key (and the Quick button of the top bar) does; set in Utility > Quick key.
@@ -2501,6 +2503,25 @@ pub fn si(v: f64, unit: &str) -> String {
     si_digits(v, unit, 3)
 }
 
+/// SI prefixes from tera to pico, the largest first.
+pub const SI_PREFIXES: [(f64, &str); 9] = [
+    (1e12, "T"),
+    (1e9, "G"),
+    (1e6, "M"),
+    (1e3, "k"),
+    (1.0, ""),
+    (1e-3, "m"),
+    (1e-6, "\u{b5}"),
+    (1e-9, "n"),
+    (1e-12, "p"),
+];
+
+/// The prefix of `SI_PREFIXES[from..]` for the magnitude `a`: the largest it reaches (half a per mille short counts),
+/// pico below them all.
+pub fn si_prefix(a: f64, from: usize) -> (f64, &'static str) {
+    SI_PREFIXES[from..].iter().copied().find(|(m, _)| a >= *m * 0.9995).unwrap_or((1e-12, "p"))
+}
+
 pub fn si_digits(v: f64, unit: &str, digits: usize) -> String {
     if !v.is_finite() {
         return format!("---- {}", unit);
@@ -2508,9 +2529,7 @@ pub fn si_digits(v: f64, unit: &str, digits: usize) -> String {
     if v == 0.0 {
         return format!("0 {}", unit);
     }
-    let prefixes = [(1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"), (1e-6, "\u{b5}"), (1e-9, "n"), (1e-12, "p")];
-    let a = v.abs();
-    let (mult, p) = prefixes.iter().copied().find(|(m, _)| a >= *m * 0.9995).unwrap_or((1e-12, "p"));
+    let (mult, p) = si_prefix(v.abs(), 0);
     let x = v / mult;
     let ax = x.abs();
     let dec = if ax >= 100.0 { digits.saturating_sub(3) } else if ax >= 10.0 { digits.saturating_sub(2) } else { digits.saturating_sub(1) };

@@ -7590,13 +7590,12 @@ impl Ui {
 
     /// The segment items of the Acquire menu; false for any other item.
     fn seg_adjust(&mut self, it: Item, d: i32) -> bool {
-        let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
         match it {
             Item::AcqSeg => {
                 let o = self.seg_options();
                 let cur = if self.m.segments == 0 { 0 } else { self.seg_count() };
                 let i = o.iter().position(|&n| n >= cur).unwrap_or(0);
-                self.m.segments = o[cyc(i, o.len(), d)];
+                self.m.segments = o[cycle(i, o.len(), d)];
             }
             Item::AcqAvgHw => {
                 self.m.avg_hw = !self.m.avg_hw;
@@ -7611,7 +7610,7 @@ impl Ui {
             }
             Item::AcqSegIvl => {
                 let i = SEG_IVLS.iter().position(|&x| x >= self.m.seg_ivl).unwrap_or(0);
-                self.m.seg_ivl = SEG_IVLS[cyc(i, SEG_IVLS.len(), d)];
+                self.m.seg_ivl = SEG_IVLS[cycle(i, SEG_IVLS.len(), d)];
             }
             _ => return false,
         }
@@ -7661,8 +7660,6 @@ impl Ui {
             return;
         }
         let m = &mut self.m;
-        let step = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).clamp(0, n as i32 - 1) as usize };
-        let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
         match it {
             Item::ChOn(c) => {
                 m.ch[c].on = !m.ch[c].on && c < n_ch();
@@ -7673,13 +7670,13 @@ impl Ui {
             Item::ChCoupling(c) => {
                 let all = board().couplings();
                 let i = all.iter().position(|&x| x == m.ch[c].coupling).unwrap_or(0);
-                m.ch[c].coupling = all[cyc(i, all.len(), d)];
+                m.ch[c].coupling = all[cycle(i, all.len(), d)];
             }
-            Item::ChBw(c) => m.ch[c].bw = cyc(m.ch[c].bw, BWS.len(), d),
+            Item::ChBw(c) => m.ch[c].bw = cycle(m.ch[c].bw, BWS.len(), d),
             Item::ChProbe(c) => {
                 let all = [1.0, 10.0, 100.0];
                 let i = all.iter().position(|&x| x == m.ch[c].probe).unwrap_or(0);
-                m.ch[c].probe = all[cyc(i, 3, d)];
+                m.ch[c].probe = all[cycle(i, 3, d)];
             }
             Item::ChInvert(c) => m.ch[c].invert = !m.ch[c].invert,
             Item::ChScale(c) => {
@@ -7694,7 +7691,7 @@ impl Ui {
                 let f = want / VSCALES[i];
                 (m.ch[c].vscale, m.ch[c].vfine) = (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f });
                 } else {
-                    m.ch[c].vscale = step(m.ch[c].vscale, VSCALES.len(), d);
+                    m.ch[c].vscale = step_index(m.ch[c].vscale, VSCALES.len(), d);
                     m.ch[c].vfine = 1.0;
                 }
                 // around ground: the zero line keeps its place on the screen
@@ -7704,7 +7701,7 @@ impl Ui {
             }
             Item::ChUnit(c) => {
                 let i = AmpUnit::ALL.iter().position(|&u| u == m.ch[c].unit).unwrap_or(0);
-                m.ch[c].unit = AmpUnit::ALL[cyc(i, AmpUnit::ALL.len(), d)];
+                m.ch[c].unit = AmpUnit::ALL[cycle(i, AmpUnit::ALL.len(), d)];
             }
             Item::ChBias(c) => m.ch[c].bias += 0.01 * m.ch[c].volts_per_div() * d as f32,
             Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
@@ -7713,7 +7710,7 @@ impl Ui {
             Item::HExpandI => {
                 let all = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
                 let i = all.iter().position(|&x| x == m.h_expand).unwrap_or(0);
-                m.h_expand = all[cyc(i, all.len(), d)];
+                m.h_expand = all[cycle(i, all.len(), d)];
             }
             Item::ChFine => m.fine_v = !m.fine_v,
             Item::LogOn => {
@@ -7723,14 +7720,14 @@ impl Ui {
                     self.log_start();
                 }
             }
-            Item::LogIvl => m.log_ivl = step(m.log_ivl, logger::LOG_STEPS.len(), d),
+            Item::LogIvl => m.log_ivl = step_index(m.log_ivl, logger::LOG_STEPS.len(), d),
             Item::ChOffset(c) => m.ch[c].offset += d as f32 * m.ch[c].volts_per_div() / 25.0,
             Item::HScale => {
                 let old = m.time_per_div();
                 if m.fine_t {
                     (m.tscale, m.tfine) = fine_time(old, d);
                 } else {
-                    m.tscale = step(m.tscale, tscales().len(), d);
+                    m.tscale = step_index(m.tscale, tscales().len(), d);
                     m.tfine = 1.0;
                 }
                 if m.zscale > m.tscale {
@@ -7753,12 +7750,12 @@ impl Ui {
             Item::TrigSlope => {
                 let all = [Slope::Rise, Slope::Fall, Slope::Either];
                 let i = all.iter().position(|&x| x == m.slope).unwrap();
-                m.slope = all[cyc(i, 3, d)];
+                m.slope = all[cycle(i, 3, d)];
             }
             Item::TrigMode => {
                 let all = [TrigMode::Auto, TrigMode::Normal, TrigMode::Single];
                 let i = all.iter().position(|&x| x == m.trig_mode).unwrap();
-                m.trig_mode = all[cyc(i, 3, d)];
+                m.trig_mode = all[cycle(i, 3, d)];
                 if m.trig_mode == TrigMode::Single {
                     m.run = RunState::Run;
                 }
@@ -7772,7 +7769,7 @@ impl Ui {
             }
             Item::TrigType => {
                 let i = TRIG_TYPES.iter().position(|&x| x == m.trig_type).unwrap_or(0);
-                let t = TRIG_TYPES[cyc(i, TRIG_TYPES.len(), d)];
+                let t = TRIG_TYPES[cycle(i, TRIG_TYPES.len(), d)];
                 self.set_trig_type(t);
             }
             Item::TrigLevel2 => {
@@ -7787,30 +7784,30 @@ impl Ui {
             Item::TrigSlope2 => {
                 let all = [Slope::Rise, Slope::Fall, Slope::Either];
                 let i = all.iter().position(|&x| x == m.trig_slope2).unwrap();
-                m.trig_slope2 = all[cyc(i, 3, d)];
+                m.trig_slope2 = all[cycle(i, 3, d)];
             }
             Item::TrigPol => m.trig_pol = if m.trig_pol == Pol::Pos { Pol::Neg } else { Pol::Pos },
             Item::TrigWhen => {
                 let all: &[WhenKind] = if m.trig_type == TrigType::Runt { &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out] } else { &[WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out] };
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
-                m.trig_when = all[cyc(i, all.len(), d)];
+                m.trig_when = all[cycle(i, all.len(), d)];
             }
-            Item::TrigT1 => m.trig_t1 = ladder_step(m.trig_t1, d),
-            Item::TrigT2 => m.trig_t2 = ladder_step(m.trig_t2, d),
-            Item::NthIdle => m.nth_idle = ladder_step(m.nth_idle, d),
-            Item::Setup => m.setup = ladder_step(m.setup, d),
-            Item::Hold => m.hold = ladder_step(m.hold, d),
+            Item::TrigT1 => m.trig_t1 = time_ladder_step(m.trig_t1, d),
+            Item::TrigT2 => m.trig_t2 = time_ladder_step(m.trig_t2, d),
+            Item::NthIdle => m.nth_idle = time_ladder_step(m.nth_idle, d),
+            Item::Setup => m.setup = time_ladder_step(m.setup, d),
+            Item::Hold => m.hold = time_ladder_step(m.hold, d),
             Item::VidStd => m.video_std = if m.video_std == VideoStd::Pal { VideoStd::Ntsc } else { VideoStd::Pal },
             Item::VidSync => {
                 let all = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Even, VSync::AllFields];
                 let i = all.iter().position(|&x| x == m.video_sync).unwrap();
-                m.video_sync = all[cyc(i, all.len(), d)];
+                m.video_sync = all[cycle(i, all.len(), d)];
             }
             Item::VidLine => m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32,
             Item::Pat(c) => {
                 let all = if m.trig_type == TrigType::Duration { &[Bit::H, Bit::L, Bit::X][..] } else { &[Bit::H, Bit::L, Bit::X, Bit::R, Bit::F][..] };
                 let i = all.iter().position(|&x| x == m.pat[c]).unwrap_or(0);
-                m.pat[c] = all[cyc(i, all.len(), d)];
+                m.pat[c] = all[cycle(i, all.len(), d)];
             }
             Item::PatLevel => {
                 let c = m.trig_src;
@@ -7819,19 +7816,19 @@ impl Ui {
             Item::WinModeI => {
                 let all = [WinMode::Enter, WinMode::Exit, WinMode::Inside];
                 let i = all.iter().position(|&x| x == m.win_mode).unwrap();
-                m.win_mode = all[cyc(i, 3, d)];
+                m.win_mode = all[cycle(i, 3, d)];
             }
             Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
             Item::AcqMode => {
                 let all = [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes];
                 let i = all.iter().position(|&x| x == m.acq).unwrap();
-                m.acq = all[cyc(i, 4, d)];
+                m.acq = all[cycle(i, 4, d)];
             }
             Item::AcqAvg => {
                 let i = AVERAGES.iter().position(|&x| x == m.avg_count).unwrap_or(3);
-                m.avg_count = AVERAGES[step(i, AVERAGES.len(), d)];
+                m.avg_count = AVERAGES[step_index(i, AVERAGES.len(), d)];
             }
-            Item::AcqDepth => m.mdepth = cyc(m.mdepth, mdepths().len(), d),
+            Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
             Item::MeasSrc => {
                 let cur = self.meas_src;
                 self.meas_src = self.step_wave(cur, d);
@@ -7859,7 +7856,7 @@ impl Ui {
             Item::CurMode => {
                 let all = [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
                 let i = all.iter().position(|&x| x == m.cursor).unwrap();
-                m.cursor = all[cyc(i, all.len(), d)];
+                m.cursor = all[cycle(i, all.len(), d)];
             }
             Item::CurA => m.cur_a = (m.cur_a + d as f32 * 0.005).clamp(0.0, 1.0),
             Item::CurB => m.cur_b = (m.cur_b + d as f32 * 0.005).clamp(0.0, 1.0),
@@ -7871,13 +7868,13 @@ impl Ui {
             }
             Item::RefColor => {
                 if let Some(r) = &mut self.refs[self.ref_sel] {
-                    r.color = cyc(r.color.min(REF_COLORS.len() - 1), REF_COLORS.len(), d);
+                    r.color = cycle(r.color.min(REF_COLORS.len() - 1), REF_COLORS.len(), d);
                 }
             }
             Item::RefVpd => {
                 if let Some(r) = &mut self.refs[self.ref_sel] {
                     let i = VSCALES.iter().position(|&s| s >= r.vpd * 0.999).unwrap_or(VSCALES.len() - 1);
-                    r.vpd = VSCALES[(i as i32 + d).clamp(0, VSCALES.len() as i32 - 1) as usize];
+                    r.vpd = VSCALES[step_index(i, VSCALES.len(), d)];
                 }
                 self.measure_refs();
             }
@@ -7887,11 +7884,11 @@ impl Ui {
                 }
             }
             Item::Persist => {
-                m.persist = cyc(m.persist, PERSIST.len(), d);
+                m.persist = cycle(m.persist, PERSIST.len(), d);
                 self.ph.clear();
             }
             Item::Intensity => m.intensity = (m.intensity as i32 + d * 5).clamp(10, 100) as u32,
-            Item::ZoneSel => self.zone_sel = cyc(self.zone_sel, 2, d),
+            Item::ZoneSel => self.zone_sel = cycle(self.zone_sel, 2, d),
             Item::ZoneOn => {
                 let z = &mut m.zones[self.zone_sel];
                 z.on = !z.on;
@@ -7919,14 +7916,14 @@ impl Ui {
             }
             Item::Hdmi => {
                 let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
-                m.hdmi = HDMI_MODES[step(i, HDMI_MODES.len(), d)];
+                m.hdmi = HDMI_MODES[step_index(i, HDMI_MODES.len(), d)];
                 if self.m.hdmi == HdmiMode::Layout {
                     self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
                 }
             }
             Item::TextSize => {
                 let i = m.text_size.index();
-                m.text_size = TEXT_SIZES[(i as i32 + d).clamp(0, TEXT_SIZES.len() as i32 - 1) as usize];
+                m.text_size = TEXT_SIZES[step_index(i, TEXT_SIZES.len(), d)];
             }
             Item::ZInput => {
                 let i = m.z_src.map_or(0, |c| c + 1);
@@ -7937,7 +7934,7 @@ impl Ui {
             Item::Histogram => {
                 let all = [Hist::Off, Hist::Vertical, Hist::Horizontal];
                 let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
-                m.hist = all[cyc(i, 3, d)];
+                m.hist = all[cycle(i, 3, d)];
             }
             Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(10, 100) as u32,
             Item::GridFrame => m.grid_frame = !m.grid_frame,
@@ -7945,34 +7942,34 @@ impl Ui {
             Item::TrigAutoNoise => m.auto_nrej = !m.auto_nrej,
             Item::TrigCoup => {
                 let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
-                m.trig_coup = TRIG_COUPS[cyc(i, TRIG_COUPS.len(), d)];
+                m.trig_coup = TRIG_COUPS[cycle(i, TRIG_COUPS.len(), d)];
             }
             Item::GridStyle => {
                 let all = [Grid::Full, Grid::Light, Grid::None];
                 let i = all.iter().position(|&x| x == m.grid).unwrap();
-                m.grid = all[cyc(i, 3, d)];
+                m.grid = all[cycle(i, 3, d)];
             }
             Item::AuxOut => {
                 let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
-                m.aux_out = all[cyc(i, all.len(), d)];
+                m.aux_out = all[cycle(i, all.len(), d)];
             }
             Item::QuickAct => {
                 let i = QUICKS.iter().position(|&q| q == m.quick).unwrap_or(0);
-                m.quick = QUICKS[cyc(i, QUICKS.len(), d)];
+                m.quick = QUICKS[cycle(i, QUICKS.len(), d)];
             }
             Item::MathOpI => {
                 let fam = self.math_fam;
                 let mut ops = vec![MathOp::Off];
                 ops.extend_from_slice(fam.ops());
                 let i = ops.iter().position(|&x| x == m.math).unwrap_or(0);
-                m.math = ops[cyc(i, ops.len(), d)];
+                m.math = ops[cycle(i, ops.len(), d)];
                 m.math_offset = 0.0;
                 self.math_autoscale();
             }
             Item::MathFam => {
                 let i = MathFamily::ALL.iter().position(|&f| f == self.math_fam).unwrap_or(0);
-                self.math_fam = MathFamily::ALL[cyc(i, MathFamily::ALL.len(), d)];
+                self.math_fam = MathFamily::ALL[cycle(i, MathFamily::ALL.len(), d)];
                 if m.math != MathOp::Off && m.math.family() != self.math_fam {
                     m.math = self.math_fam.ops()[0];
                     m.math_offset = 0.0;
@@ -7983,7 +7980,7 @@ impl Ui {
             Item::MathA => m.math_a = src_step(m.math_a.min(NCH + m.math_sel - 1), NCH + m.math_sel, d),
             Item::MathB => m.math_b = src_step(m.math_b.min(NCH + m.math_sel - 1), NCH + m.math_sel, d),
             Item::MathSel => {
-                let k = cyc(m.math_sel, NMATH, d);
+                let k = cycle(m.math_sel, NMATH, d);
                 m.math_select(k);
                 if m.math != MathOp::Off {
                     self.math_fam = m.math.family();
@@ -7993,29 +7990,29 @@ impl Ui {
                 let l = time_ladder();
                 let per = 1.0 / m.math_bw.max(1e-6);
                 let i = l.iter().position(|&x| x >= per * 0.999).unwrap_or(0);
-                m.math_bw = 1.0 / l[step(i, l.len(), -d)];
+                m.math_bw = 1.0 / l[step_index(i, l.len(), -d)];
             }
             Item::MathScale => {
                 let n = if m.math == MathOp::Fft { FFT_DB.len() } else { math_scales().len() };
-                m.math_scale = step(m.math_scale, n, d);
+                m.math_scale = step_index(m.math_scale, n, d);
             }
             Item::MathOffset => m.math_offset += d as f32 * 0.1,
             Item::FftWin => {
                 let i = WINDOWS.iter().position(|&w| w == m.fft_win).unwrap_or(0);
-                m.fft_win = WINDOWS[cyc(i, WINDOWS.len(), d)];
+                m.fft_win = WINDOWS[cycle(i, WINDOWS.len(), d)];
             }
             Item::MathFc => {
                 let l = time_ladder();
                 let per = 1.0 / m.math_fc.max(1e-6);
                 let i = l.iter().position(|&x| x >= per * 0.999).unwrap_or(0);
-                m.math_fc = 1.0 / l[step(i, l.len(), -d)];
+                m.math_fc = 1.0 / l[step_index(i, l.len(), -d)];
             }
             Item::MeasStats => self.stats_on = !self.stats_on,
             Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
             Item::StripDock => {
                 let all = StripDock::ALL;
                 let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
-                m.strip_dock = all[(i as i32 + d).clamp(0, all.len() as i32 - 1) as usize];
+                m.strip_dock = all[step_index(i, all.len(), d)];
                 // the statistics card follows the dock the strip uses
                 self.workspace.measure_docked = true; self.workspace.measure_float = None;
             }
@@ -8045,16 +8042,16 @@ impl Ui {
                 self.m.trend_sel[k] = (self.m.trend_sel[k].min(n as usize - 1) as i32 + d).rem_euclid(n) as usize;
             }
             Item::DecSrc => { let next = self.decoder_source_step(Some(self.m.dec_src), false, d); self.configure_decoder_source(0, next); }
-            Item::DecBaud => self.m.dec_baud = step(self.m.dec_baud, crate::decode::BAUDS.len(), d),
+            Item::DecBaud => self.m.dec_baud = step_index(self.m.dec_baud, crate::decode::BAUDS.len(), d),
             Item::DecCphyRate => {
                 let rates = crate::decode::CPHY_RATES;
                 let index = rates.iter().position(|&rate| rate >= self.m.dec_cphy_rate).unwrap_or(rates.len() - 1);
-                self.m.dec_cphy_rate = rates[cyc(index, rates.len(), d)];
+                self.m.dec_cphy_rate = rates[cycle(index, rates.len(), d)];
             }
-            Item::DecCanRate => self.m.dec_canrate = step(self.m.dec_canrate, crate::decode::CAN_RATES.len(), d),
+            Item::DecCanRate => self.m.dec_canrate = step_index(self.m.dec_canrate, crate::decode::CAN_RATES.len(), d),
             Item::TrigBusWhat => {
                 let i = BUS_WHATS.iter().position(|&x| x == self.m.trig_bus).unwrap_or(0);
-                self.m.trig_bus = BUS_WHATS[cyc(i, BUS_WHATS.len(), d)];
+                self.m.trig_bus = BUS_WHATS[cycle(i, BUS_WHATS.len(), d)];
             }
             Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64,
             Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_adjust(it, d),
@@ -8066,13 +8063,13 @@ impl Ui {
                 let on = self.protos_on();
                 if !on.is_empty() {
                     let i = on.iter().position(|&x| x == self.m.dec_proto).unwrap_or(0);
-                    self.set_dec_proto(on[cyc(i, on.len(), d)]);
+                    self.set_dec_proto(on[cycle(i, on.len(), d)]);
                 }
             }
-            Item::DecUsbSpeed => self.m.dec_uspeed = cyc(self.m.dec_uspeed, crate::decode::USB_SPEEDS.len(), d),
+            Item::DecUsbSpeed => self.m.dec_uspeed = cycle(self.m.dec_uspeed, crate::decode::USB_SPEEDS.len(), d),
             Item::DecOpt(k) => {
                 if let Some(o) = self.m.dec_proto.module().and_then(|p| p.options().get(k)) {
-                    self.m.dec_opt[k] = cyc(self.m.dec_opts()[k], o.choices.len(), d) as u8;
+                    self.m.dec_opt[k] = cycle(self.m.dec_opts()[k], o.choices.len(), d) as u8;
                 }
             }
             Item::DecSrc4 => {
@@ -8088,7 +8085,7 @@ impl Ui {
                 let next = self.decoder_source_step(self.m.dec_cs, self.m.dec_proto != Proto::CPHY, d);
                 self.configure_decoder_source(2, next);
             }
-            Item::DecMode => self.m.dec_mode = cyc(self.m.dec_mode as usize, 4, d) as u8,
+            Item::DecMode => self.m.dec_mode = cycle(self.m.dec_mode as usize, 4, d) as u8,
             Item::DecBits => {
                 let (lo, hi) = if self.m.dec_proto == Proto::UART { (5, 9) } else { (4, 32) };
                 self.m.dec_bits = (self.m.dec_bits as i32 + d).clamp(lo, hi) as u32;
@@ -8097,7 +8094,7 @@ impl Ui {
                 use oos_dsp::decode::Parity;
                 let all = [Parity::None, Parity::Even, Parity::Odd];
                 let i = all.iter().position(|&x| x == self.m.dec_parity).unwrap();
-                self.m.dec_parity = all[cyc(i, 3, d)];
+                self.m.dec_parity = all[cycle(i, 3, d)];
             }
             Item::Zoom => {
                 let on = !self.m.zoom;
@@ -8105,7 +8102,7 @@ impl Ui {
             }
             Item::AutoRoll => self.m.auto_roll = !self.m.auto_roll,
             Item::ZScale => {
-                self.m.zscale = step(self.m.zscale, tscales().len(), d);
+                self.m.zscale = step_index(self.m.zscale, tscales().len(), d);
                 self.clamp_zoom();
             }
             Item::ZDelay => {
@@ -8119,7 +8116,7 @@ impl Ui {
             Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(1, 9) as u32,
             Item::StoreDest => {
                 let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);
-                self.store_dest = crate::store::StoreDest::ALL[cyc(i, crate::store::StoreDest::ALL.len(), d)];
+                self.store_dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
             }
             Item::MaskOn => {
                 self.m.mask_on = !self.m.mask_on;
@@ -10802,9 +10799,8 @@ fn holdoff_step(h: f32, d: i32) -> f32 {
 /// Axis label with the SI prefix of the axis `span` and as many decimals as `step` and `base` (offset / delay)
 /// need: "-1.0 µs", "500 mV", "3.25 V".
 fn axis_label(v: f32, step: f32, base: f32, span: f32, unit: &str) -> String {
-    let prefixes = [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"), (1e-6, "\u{b5}"), (1e-9, "n"), (1e-12, "p")];
-    let a = span.abs().max(step.abs()) as f64;
-    let (mult, p) = prefixes.iter().copied().find(|(m, _)| a >= *m * 0.9995).unwrap_or((1e-12, "p"));
+    // up to giga: an axis does not go to tera
+    let (mult, p) = si_prefix(span.abs().max(step.abs()) as f64, 1);
     let st = (step as f64 / mult).abs();
     // decimals that show `x` (a step or the base): a whole number of the last digit, not 0 (a step of 0.001 ms is not
     // "0"), at most `max`: 6 for the step (a delay of seconds at a time base of microseconds), 3 for the base (an
@@ -13720,10 +13716,10 @@ mod tests {
 }
 
 /// One step on the 1-2-5 time ladder from the nearest ladder value.
-fn ladder_step(x: f32, d: i32) -> f32 {
+fn time_ladder_step(x: f32, d: i32) -> f32 {
     let l = time_ladder();
     let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+    l[step_index(i, l.len(), d)]
 }
 
 /// Menu text of a hardware segment interval.

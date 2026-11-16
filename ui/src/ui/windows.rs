@@ -138,19 +138,18 @@ impl Ui {
 
     pub(super) fn win_adjust(&mut self, it: Item, d: i32) -> bool {
         let n = self.m.win_layout.count();
-        let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         match it {
             Item::WinLayout => {
                 let all = Density::ALL;
                 let i = all.iter().position(|&l| l == self.m.density).unwrap_or(0);
-                self.m.density = all[cyc(i, all.len())];
+                self.m.density = all[cycle(i, all.len(), d)];
                 self.full_asked = false;
                 self.apply_density();
             }
-            Item::WinCh(c) => self.m.ch_win[c] = cyc(self.m.ch_win[c].min(n - 1), n),
-            Item::WinRef(i) => self.m.ref_win[i] = cyc(self.m.ref_win[i].min(n - 1), n),
-            Item::WinMath(k) => self.m.math_win[k] = cyc(self.m.math_win[k].min(n - 1), n),
-            Item::WinLa => self.m.la_win = cyc(self.m.la_win.min(n - 1), n),
+            Item::WinCh(c) => self.m.ch_win[c] = cycle(self.m.ch_win[c].min(n - 1), n, d),
+            Item::WinRef(i) => self.m.ref_win[i] = cycle(self.m.ref_win[i].min(n - 1), n, d),
+            Item::WinMath(k) => self.m.math_win[k] = cycle(self.m.math_win[k].min(n - 1), n, d),
+            Item::WinLa => self.m.la_win = cycle(self.m.la_win.min(n - 1), n, d),
             _ => return false,
         }
         true

@@ -113,13 +113,12 @@ impl Ui {
     pub(super) fn afg_adjust(&mut self, it: Item, d: i32) -> bool {
         let m = &mut self.m;
         let ladder = |x: f64, d: i32, lo: f64, hi: f64| {
-            let mut l: Vec<f64> = (-3..9).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).filter(|&v| v >= lo && v <= hi).collect();
+            let mut l: Vec<f64> = decades(-3, 9, false).into_iter().filter(|&v| v >= lo && v <= hi).collect();
             // the cap itself is the last step (60 MHz, or an experimental limit off the 1-2-5 ladder)
             if l.last().is_some_and(|&v| v < hi * 0.999) {
                 l.push(hi);
             }
-            let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-            l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+            ladder_step(&l, x, d, l.len() - 1)
         };
         match it {
             Item::AfgSel => {

@@ -504,7 +504,6 @@ impl Ui {
 
     /// Knob and +/-: through the listed servers and zones (Other opens the keyboard, from the picker).
     pub(super) fn time_adjust(&mut self, it: Item, d: i32) -> bool {
-        let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         match it {
             Item::NtpOn => {
                 self.sys.ntp = !self.sys.ntp;
@@ -519,12 +518,12 @@ impl Ui {
             }
             Item::NtpServer => {
                 let i = SERVERS.iter().position(|&s| s == self.sys.ntp_server).unwrap_or(0);
-                self.set_server(SERVERS[cyc(i, SERVERS.len())]);
+                self.set_server(SERVERS[cycle(i, SERVERS.len(), d)]);
             }
             Item::TimeZone => {
                 let list = Self::zone_cycle();
                 let i = list.iter().position(|&z| z == self.sys.tz).unwrap_or(0);
-                self.set_tz(list[cyc(i, list.len())]);
+                self.set_tz(list[cycle(i, list.len(), d)]);
             }
             Item::TimeNow | Item::NtpStatus => {}
             _ => return false,

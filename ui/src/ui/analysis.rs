@@ -217,19 +217,11 @@ const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 /// 1-2-5 frequency ladder 1 Hz .. 1 GHz (0 = full span / auto RBW in front).
 fn freq_ladder() -> Vec<f64> {
-    let mut v = vec![0.0];
-    let mut d = 1.0;
-    while d < 2e9 {
-        v.extend([d, 2.0 * d, 5.0 * d]);
-        d *= 10.0;
-    }
-    v
+    decades(0, 10, true)
 }
 
 fn step_ladder(v: f64, d: i32) -> f64 {
-    let l = freq_ladder();
-    let i = l.iter().position(|&x| x >= v * 0.999).unwrap_or(0);
-    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+    ladder_step(&freq_ladder(), v, d, 0)
 }
 
 impl Ui {
@@ -789,7 +781,6 @@ impl Ui {
             self.analyzer_update();
             return true;
         }
-        let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         let view = |m: &mut Model, v: AView| m.view = if m.view == v { AView::Scope } else { v };
         let m = &mut self.m;
         match it {
@@ -800,15 +791,15 @@ impl Ui {
             Item::SpecSpan => m.spec_span = step_ladder(m.spec_span, d),
             Item::SpecRbw => m.spec_rbw = step_ladder(m.spec_rbw, d),
             Item::SpecHarm => {
-                m.spec_harm = cyc(m.spec_harm, PANE_HARMS.len());
+                m.spec_harm = cycle(m.spec_harm, PANE_HARMS.len(), d);
                 self.azr.spec_stop = 0.0;
             }
             Item::SpecMargin => m.spec_margin = (m.spec_margin + d as f32).clamp(0.0, 60.0),
             Item::SpecWin => {
                 let w = crate::math::WINDOWS;
-                m.spec_win = w[cyc(w.iter().position(|&x| x == m.spec_win).unwrap_or(0), w.len())];
+                m.spec_win = w[cycle(w.iter().position(|&x| x == m.spec_win).unwrap_or(0), w.len(), d)];
             }
-            Item::SpecTrace => m.spec_trace = cyc(m.spec_trace, 4),
+            Item::SpecTrace => m.spec_trace = cycle(m.spec_trace, 4, d),
             Item::SpecRef => m.spec_ref += 5.0 * d as f32,
             Item::SpecWf => m.spec_wf = !m.spec_wf,
             Item::SpecDist => m.spec_dist = !m.spec_dist,
@@ -824,7 +815,7 @@ impl Ui {
             Item::EyeBer => {
                 const BERS: [f64; 5] = [1e-3, 1e-6, 1e-9, 1e-12, 1e-15];
                 let i = BERS.iter().position(|&x| (x - m.eye_ber).abs() < x * 0.01).unwrap_or(3);
-                m.eye_ber = BERS[(i as i32 + d).clamp(0, BERS.len() as i32 - 1) as usize];
+                m.eye_ber = BERS[step_index(i, BERS.len(), d)];
             }
             Item::EyeHp => m.eye_hp = !m.eye_hp,
             Item::EyePnLo => m.eye_pn_lo = step_ladder(m.eye_pn_lo, d).max(1.0),
@@ -840,7 +831,7 @@ impl Ui {
                 let next = step_ladder(cur, d);
                 m.pw_ref = if next == 0.0 { None } else { Some(next) };
             }
-            Item::PowMode => m.pw_mode = POWER_MODES[cyc(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), POWER_MODES.len())],
+            Item::PowMode => m.pw_mode = POWER_MODES[cycle(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), POWER_MODES.len(), d)],
             _ => return false,
         }
         // the averaging/waterfall/eye restart on any analyser change

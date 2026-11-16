@@ -348,12 +348,11 @@ impl Ui {
             _ => {}
         }
         let l = &mut self.m.la;
-        let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
         match it {
             Item::LaOn => l.on = !l.on && available(),
             Item::LaShow => {
                 let i = GROUPS.iter().take(3).position(|g| g.1 == l.show).unwrap_or(3);
-                let k = cyc(i, GROUPS.len());
+                let k = cycle(i, GROUPS.len(), d);
                 // Custom keeps a custom set, else starts with D0-D3 (refined in the Lines sub menu)
                 if k != 3 || i != 3 {
                     l.show = GROUPS[k].1;
@@ -364,14 +363,14 @@ impl Ui {
             }
             Item::LaPat(n) => {
                 let p = &mut self.m.pat_la[n.min(15)];
-                *p = PAT_BITS[cyc(PAT_BITS.iter().position(|b| b == p).unwrap_or(2), 3)];
+                *p = PAT_BITS[cycle(PAT_BITS.iter().position(|b| b == p).unwrap_or(2), 3, d)];
             }
-            Item::LaThr(p) => l.preset[p.min(1)] = cyc(l.preset[p.min(1)], PRESETS.len()),
+            Item::LaThr(p) => l.preset[p.min(1)] = cycle(l.preset[p.min(1)], PRESETS.len(), d),
             Item::LaUser(p) => {
                 let u = &mut l.user[p.min(1)];
                 *u = ((*u + 0.01 * d as f32) * 100.0).round().clamp(-THR_MAX * 100.0, THR_MAX * 100.0) / 100.0;
             }
-            Item::LaHeight => l.height = (l.height as i32 + d).clamp(0, HEIGHTS.len() as i32 - 1) as usize,
+            Item::LaHeight => l.height = step_index(l.height, HEIGHTS.len(), d),
             _ => return false,
         }
         self.settings_changed();
