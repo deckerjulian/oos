@@ -36,7 +36,10 @@ impl Ui {
         if it != Item::Graphics {
             return false;
         }
-        self.sys.gpu = !self.sys.gpu;
+        // two options: an odd step switches, an even one (or none) leaves it
+        let gpu = (self.sys.gpu as i32 + _d).rem_euclid(2) == 1;
+        if gpu == self.sys.gpu { return true; }
+        self.sys.gpu = gpu;
         self.sys_save();
         if !self.sys.gpu {
             self.toast("Graphics: CPU");

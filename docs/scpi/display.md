@@ -13,17 +13,17 @@ Part of the [SCPI reference](README.md).
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `:DISPlay:DATA` | Query | `[BMP\|PNG]` IEEE block containing a screenshot; default 24-bit BMP. | - | Display > Screenshot | Rigol-compatible |
-| `:DISPlay:TYPE` | Set / Query | `DOTS\|VECTors`. | `VECT` | Display and layout > Dots / vectors | Rigol-style (command family of the DHO guide) |
-| `:DISPlay:GRADing:TIME` | Set / Query | `MIN`, `INFinite`, or a duration mapped to the supported persistence ladder. | `MIN` | Display and layout > Persistence | Rigol-style (command family of the DHO guide) |
-| `:DISPlay:WBRightness` | Set / Query | Waveform brightness, percent. | `60` | - | Rigol-style (command family of the DHO guide) |
-| `:DISPlay:GBRightness` | Set / Query | Grid brightness, percent. | `100` | - | Rigol-style (command family of the DHO guide) |
-| `:DISPlay:GRID` | Set / Query | Supported full/half/no-grid display choice. | `FULL` | Display and layout > Grid style | Rigol-style (command family of the DHO guide) |
-| `:DISPlay:RULers` | Set / Query | Rulers on/off. | `1` | - | Rigol-style (command family of the DHO guide) |
-| `:DISPlay:COLor` | Set / Query | Color grading on/off. | `0` | - | Rigol-style (command family of the DHO guide) |
-| `:DISPlay:BACKlight` | Set / Query | Percent, 10 to 100 | `100` | Display and layout > Backlight | name not verified against the DHO guide |
-| `:DISPlay:HDMI` | Set / Query | Option text of the menu row. | `WAVEFORM` | Display and layout > HDMI | OOS extension |
-| `:DISPlay:TEXTsize` | Set / Query | Option text of the menu row. | `NORMAL` | Display and layout > Text size | OOS extension |
-| `:DISPlay:LAYout` | Set / Query | Option text of the menu row. | `MINIMAL` | Display and layout > Layout | OOS extension |
+| `:DISPlay:TYPE` | Set / Query | `DOTS\|VECTors`. | `VECT` | Display > Dots | Rigol-style (command family of the DHO guide) |
+| `:DISPlay:GRADing:TIME` | Set / Query | `MIN`, `INFinite`, or a duration mapped to the supported persistence ladder. | `MIN` | Display > Persistence | Rigol-style (command family of the DHO guide) |
+| `:DISPlay:WBRightness` | Set / Query | Waveform brightness, percent. | `60` | Display > Intensity | Rigol-style (command family of the DHO guide) |
+| `:DISPlay:GBRightness` | Set / Query | Grid brightness, percent. | `100` | Display > Grid bright. | Rigol-style (command family of the DHO guide) |
+| `:DISPlay:GRID` | Set / Query | Supported full/half/no-grid display choice. | `FULL` | Display > Grid | Rigol-style (command family of the DHO guide) |
+| `:DISPlay:RULers` | Set / Query | Rulers on/off. | `1` | Display > Grid frame | Rigol-style (command family of the DHO guide) |
+| `:DISPlay:COLor` | Set / Query | Color grading on/off. | `0` | Display > Colour grade | Rigol-style (command family of the DHO guide) |
+| `:DISPlay:BACKlight` | Set / Query | Percent, 10 to 100 | `100` | Display > Backlight | name not verified against the DHO guide |
+| `:DISPlay:HDMI` | Set / Query | Option text of the menu row. | `WAVEFORM` | Display > HDMI | OOS extension |
+| `:DISPlay:TEXTsize` | Set / Query | Option text of the menu row. | `NORMAL` | Display > Text size | OOS extension |
+| `:DISPlay:LAYout` | Set / Query | Option text of the menu row. | `MINIMAL` | Display > Layout | OOS extension |
 | `:DISPlay:LOWer` | Set / Query | Option text of the menu row (lower pane; content of the trend chart). | `TRACES` | Display and layout > Lower, Trend chart | OOS extension |
 | `:DISPlay:TRENd1` | Set / Query | Option text of the menu row (lower pane; content of the trend chart). | `AUTO` | Display and layout > Lower, Trend chart | OOS extension |
 | `:DISPlay:TRENd2` | Set / Query | Option text of the menu row (lower pane; content of the trend chart). | `AUTO` | Display and layout > Lower, Trend chart | OOS extension |
@@ -34,7 +34,7 @@ Part of the [SCPI reference](README.md).
 | --- | --- | --- | --- | --- | --- |
 | `:VIEW` | Set / Query | `SCOPE\|SPECTRUM\|EYE\|POWER\|BODE\|MAGNETIC\|INVERTER\|DPT`. | `SCOPE` | Run control > Select analyser view | OOS extension |
 | `:DISPlay:VIEW` | Set / Query | The view shown, `1` to the count (Display > Views). | `1` | Run control > Select analyser view | OOS extension |
-| `:DISPlay:VIEW:COUNt` | Set / Query | The number of views, 1 to 4. | `1` | Display and layout > Views: count | OOS extension |
+| `:DISPlay:VIEW:COUNt` | Set / Query | The number of views, 1 to 4. | `1` | Display > Views | OOS extension |
 
 ### Studio zoom
 

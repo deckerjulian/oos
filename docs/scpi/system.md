@@ -16,7 +16,7 @@ Part of the [SCPI reference](README.md).
 | `:SYSTem:LOCK` | Set / Query | Touch lock on/off | `0` | System > Touch | name not verified against the DHO guide |
 | `:SESSion` | Set / Query | `LIVE`, `SIM` or `REF`; setting `LIVE` leaves SIM and offline sessions. | `LIVE` | System > Live | OOS extension |
 | `:SYSTem:INFO` | Query | The System info page as text: `label,value` lines, `# heading` lines | - | System > System info | OOS extension |
-| `:SYSTem:GRAPhics` | Set / Query | `CPU` or `GPU` drawing; the query answers what is in use (whether the GPU really draws is the `gpu` part of `:SYSTem:STATe?`). | `GPU` | Display and layout > Graphics | OOS extension |
+| `:SYSTem:GRAPhics` | Set / Query | `CPU` or `GPU` drawing; the query answers what is in use (whether the GPU really draws is the `gpu` part of `:SYSTem:STATe?`). | `GPU` | System > Graphics | OOS extension |
 | `:SYSTem:QUICk` | Set / Query | The quick key action, by its option text | `SCREENSHOT` | System > Quick key | OOS extension |
 | `:IDENtify` | Query | The app's signal identification text. | - | Run control > Identify signal | OOS extension |
 | `:SYSTem:STATe` | Query | Diagnostic state text of the app (includes the `gpu` part). | - | - | OOS extension |
@@ -30,9 +30,9 @@ Part of the [SCPI reference](README.md).
 | --- | --- | --- | --- | --- | --- |
 | `:SYSTem:DATE` | Set / Query | `yyyy,mm,dd` in the time zone of the settings; setting one part keeps the other part of the clock. | `2026,11,16` | System > Date and time > Set the clock | Rigol-compatible |
 | `:SYSTem:TIME` | Set / Query | `hh,mm,ss` in the time zone of the settings. | `16,58,59` | System > Date and time > Set the clock | Rigol-compatible |
-| `:SYSTem:TZONe` | Set / Query | The time zone, a POSIX-style string (`CET-1CEST,M3.5.0,M10.5.0/3`) | `UTC0` | System > Date and time > Time zone | OOS extension |
-| `:SYSTem:NTP:ENABle` | Set / Query | NTP on/off | `0` | System > Date and time > Time from NTP | OOS extension |
-| `:SYSTem:NTP:SERVer` | Set / Query | Server name or address, or `DHCP` | `dhcp` | System > Date and time > NTP server | OOS extension |
+| `:SYSTem:TZONe` | Set / Query | The time zone, a POSIX-style string (`CET-1CEST,M3.5.0,M10.5.0/3`) | `UTC0` | Date and time > Time zone | OOS extension |
+| `:SYSTem:NTP:ENABle` | Set / Query | NTP on/off | `0` | Date and time > Time from NTP | OOS extension |
+| `:SYSTem:NTP:SERVer` | Set / Query | Server name or address, or `DHCP` | `dhcp` | Date and time > NTP server | OOS extension |
 | `:SYSTem:NTP:STATus` | Query | The NTP state text | `Off` | System > Date and time > NTP state | OOS extension |
 | `:SYSTem:NTP:SYNC` | Action | Sync now | - | System > Date and time > Sync now | OOS extension |
 | `:SYSTem:NAME` | Set / Query | The scope's name on the network (letters, digits and `-`, up to 63) | `dho924s` | System > Name | OOS extension |
@@ -46,7 +46,7 @@ Joining a WLAN network needs a password and stays on the screen.
 | `:SYSTem:COMMunicate:LAN:IPADdress` | Query | Address, MAC address or link text (query only). | empty | System > Network > Ethernet | Rigol-compatible |
 | `:SYSTem:COMMunicate:LAN:MAC` | Query | Address, MAC address or link text (query only). | `00:15:5d:6d:dc:93` | System > Network > Ethernet | Rigol-compatible |
 | `:SYSTem:COMMunicate:LAN:STATus` | Query | Address, MAC address or link text (query only). | `link up, no address yet` | System > Network > Ethernet | Rigol-compatible |
-| `:SYSTem:COMMunicate:LAN:RETRy10` | Set / Query | 10 Mbit retry on/off | `1` | System > Network > 10 Mbit retry | Rigol-compatible |
+| `:SYSTem:COMMunicate:LAN:RETRy10` | Set / Query | 10 Mbit retry on/off | `1` | Network > 10 Mbit retry | Rigol-compatible |
 | `:SYSTem:WLAN:STATus` | Query | WLAN state text. | `no stick` | System > Network > WLAN | OOS extension |
 | `:SYSTem:WLAN:SCAN` | Action | Start a scan. | - | System > Network > WLAN | OOS extension |
 | `:SYSTem:WLAN:NETWorks` | Query | The scanned networks, one per line. | `Other network ...` | System > Network > WLAN | OOS extension |
@@ -60,10 +60,10 @@ The switches of the Remote services page. `SCPI OFF` needs `,CONFIRM`.
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `:SYSTem:REMote:SERVice:SCPI` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | System > Remote services > Remote services | OOS extension |
-| `:SYSTem:REMote:SERVice:VXI11` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | System > Remote services > Remote services | OOS extension |
-| `:SYSTem:REMote:SERVice:TELNet` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | System > Remote services > Remote services | OOS extension |
-| `:SYSTem:REMote:SERVice:WEB` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | System > Remote services > Remote services | OOS extension |
-| `:SYSTem:REMote:SERVice:MDNS` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | System > Remote services > Remote services | OOS extension |
+| `:SYSTem:REMote:SERVice:VXI11` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | Remote services > VXI-11 | OOS extension |
+| `:SYSTem:REMote:SERVice:TELNet` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | Remote services > telnet | OOS extension |
+| `:SYSTem:REMote:SERVice:WEB` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | Remote services > Web remote | OOS extension |
+| `:SYSTem:REMote:SERVice:MDNS` | Set / Query | Boolean switch of the Remote services page; `SCPI OFF` needs `,CONFIRM`. | `1` | Remote services > mDNS | OOS extension |
 
 ### Power, update and boot
 

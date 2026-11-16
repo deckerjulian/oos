@@ -46,6 +46,10 @@ pub(super) const MATH_OFFSET_DIV: f32 = 5.0;
 pub(super) const INTENSITY: (i32, i32) = (10, 100);
 pub(super) const GRID_BRIGHT: (i32, i32) = (10, 100);
 pub(super) const STORE_SLOT: (i32, i32) = (1, 9);
+/// Magnetic: turns of the winding.
+/// Bode generator amplitude, Vpp.
+pub(super) const BODE_AMP: (f64, f64) = (0.01, 20.0);
+pub(super) const MAG_TURNS: (i32, i32) = (1, 10_000);
 pub(super) const CNT_DIGITS: (i32, i32) = (3, 7);
 pub(super) const NTH_N: (i32, i32) = (1, 65535);
 pub(super) const DEC_NIBBLES: (i32, i32) = (1, 6);
@@ -56,6 +60,8 @@ pub(super) const SIM_DEEMPH: (f64, f64) = (0.0, 12.0);
 pub(super) const SIM_SSC_DEV: (f64, f64) = (0.0, 0.05);
 pub(super) const TRIG_BUS_VAL: (i64, i64) = (0, 0x1fff_ffff);
 /// Simulator ladders: (lowest, highest, with a zero).
+/// Eye bit rate ladder: (lowest, highest, with Auto in front).
+pub(super) const EYE_RATE: (f64, f64, bool) = (1.0, 64e9, true);
 pub(super) const SIM_RATE: (f64, f64, bool) = (1e8, 64e9, false);
 pub(super) const SIM_RISE: (f64, f64, bool) = (5e-12, 2e-9, false);
 pub(super) const SIM_BW: (f64, f64, bool) = (10e6, 50e9, false);
@@ -67,6 +73,8 @@ pub(super) const SIM_CORR_HZ: (f64, f64, bool) = (1e3, 100e6, false);
 pub(super) const SIM_RJ: (f64, f64, bool) = (0.1e-12, 50e-12, false);
 pub(super) const SIM_PJ: (f64, f64, bool) = (0.5e-12, 50e-12, true);
 pub(super) const SIM_PJ_HZ: (f64, f64, bool) = (1e5, 50e6, false);
+/// Eye PLL loop bandwidth, Hz (0 = Auto, the rate / 1667). A loop faster than the edges it follows is not a loop.
+pub(super) const EYE_PLL: (f64, f64) = (1e3, crate::model::EYE_PLL_MAX);
 
 /// A press (or `d` presses) of an `Add` stepper: `v` moves by `d` steps and is rounded to a hundredth of a step. The
 /// value is stored as a 32-bit float, and a step that a float cannot hold would leave a residue (0 V, up, down: 745 pV);
@@ -96,6 +104,7 @@ impl Ui {
             }
             Item::ChOffset(c) => sym(m.ch[c].offset_max() as f64, m.ch[c].volts_per_div() as f64 / STEPS_PER_DIV, "V"),
             Item::ChBias(c) => sym(m.ch[c].offset_max() as f64, 0.01 * m.ch[c].volts_per_div() as f64, "V"),
+            Item::ChSkew(_) => sym(SKEW_MAX as f64, 600e-12, "s"),
             Item::HDelay => {
                 let tdiv = m.time_per_div() as f64;
                 sym(DELAY_SCREENS * HDIV as f64 * tdiv, tdiv / STEPS_PER_DIV, "s")
@@ -123,6 +132,8 @@ impl Ui {
             Item::Intensity => int(INTENSITY, "%"),
             Item::GridBright => int(GRID_BRIGHT, "%"),
             Item::StoreSlot => int(STORE_SLOT, ""),
+            Item::MagN => int(MAG_TURNS, ""),
+            Item::BodeAmp => Some(Range { lo: BODE_AMP.0, hi: BODE_AMP.1, step: Step::Ladder, unit: "Vpp" }),
             Item::CntDigits => int(CNT_DIGITS, ""),
             Item::NthN => int(NTH_N, ""),
             Item::DecNibbles => int(DEC_NIBBLES, ""),
@@ -142,6 +153,8 @@ impl Ui {
             Item::SimRj => ends(SIM_RJ, "s"),
             Item::SimPj => ends(SIM_PJ, "s"),
             Item::SimPjHz => ends(SIM_PJ_HZ, "Hz"),
+            Item::EyeRate => ends(EYE_RATE, "b/s"),
+            Item::EyePll => Some(Range { lo: 0.0, hi: EYE_PLL.1, step: Step::Ladder, unit: "Hz" }),
             Item::SpecCenter | Item::SpecSpan | Item::SpecRbw => Some(Range { lo: 0.0, hi: analysis::FREQ_TOP, step: Step::Ladder, unit: "Hz" }),
             _ => None,
         }
@@ -158,11 +171,11 @@ impl Ui {
             Item::TrigLevel, Item::TrigLevel2, Item::PatLevel, Item::HDelay, Item::MathOffset, Item::DecThr, Item::BusClkThr, Item::BusDataThr,
             Item::SpecRef, Item::RefOffset, Item::MathLinA, Item::MathLinB, Item::SpecMargin, Item::SimHigh, Item::SimLow, Item::SimDeemph,
             Item::BusPos, Item::Intensity, Item::GridBright,
-            Item::StoreSlot, Item::CntDigits, Item::NthN, Item::DecNibbles, Item::DecBits, Item::VidLine, Item::TrigBusVal, Item::SimSlot,
+            Item::StoreSlot, Item::MagN, Item::CntDigits, Item::NthN, Item::DecNibbles, Item::DecBits, Item::VidLine, Item::TrigBusVal, Item::SimSlot,
             Item::RefSel, Item::SimRate, Item::SimRise, Item::SimBw, Item::SimNoise, Item::SimSscHz, Item::SimDcd, Item::SimCorrRj,
-            Item::SimCorrHz, Item::SimRj, Item::SimPj, Item::SimPjHz, Item::SpecCenter, Item::SpecSpan, Item::SpecRbw,
+            Item::SimCorrHz, Item::SimRj, Item::SimPj, Item::SimPjHz, Item::SpecCenter, Item::SpecSpan, Item::SpecRbw, Item::EyePll, Item::EyeRate, Item::BodeAmp,
         ];
-        for c in 0..n_ch() { v.extend([Item::ChOffset(c), Item::ChBias(c)]); }
+        for c in 0..n_ch() { v.extend([Item::ChOffset(c), Item::ChBias(c), Item::ChSkew(c)]); }
         v
     }
 
@@ -175,6 +188,7 @@ impl Ui {
             Item::PatLevel => m.pat_levels[m.trig_src.min(NCH - 1)] as f64,
             Item::ChOffset(c) => m.ch[c].offset as f64,
             Item::ChBias(c) => m.ch[c].bias as f64,
+            Item::ChSkew(c) => m.ch[c].skew as f64,
             Item::HDelay => m.delay as f64,
             Item::MathOffset => m.math_offset as f64,
             Item::DecThr => m.dec_thr as f64,
@@ -199,6 +213,7 @@ impl Ui {
             Item::PatLevel => m.pat_levels[m.trig_src.min(NCH - 1)] = x,
             Item::ChOffset(c) => m.ch[c].offset = x,
             Item::ChBias(c) => m.ch[c].bias = x,
+            Item::ChSkew(c) => m.ch[c].skew = x,
             Item::HDelay => m.delay = x,
             Item::MathOffset => m.math_offset = x,
             Item::DecThr => m.dec_thr = x,
@@ -219,8 +234,19 @@ impl Ui {
     pub(super) fn range_step(&mut self, it: Item, d: i32) -> bool {
         let Some(Range { step: Step::Add(step), .. }) = self.item_range(it) else { return false };
         let Some(v) = self.range_get(it) else { return false };
-        let to = add_step(v, step, d);
-        self.range_set(it, to);
+        let near = |a: f64, b: f64| (a - b).abs() <= step * 1e-3;
+        let mut to = add_step(v, step, d);
+        // a press back from a limit that the last press ran into returns to where that press came from (the limit is
+        // not on the lattice of the value), so a press up into the limit and a press down leave the value where it was
+        if let Some((hit, at, from)) = self.clamp_home {
+            if hit == it && near(v, at) && (from - at) * d as f64 > 0.0 { to = add_step(from, step, d - d.signum()); self.clamp_home = None; }
+        }
+        let now = self.range_set(it, to);
+        if let (Some(now), Some(r)) = (now, self.item_range(it)) {
+            let out = to < r.lo - step * 1e-3 || to > r.hi + step * 1e-3;
+            if out && !near(v, now) { self.clamp_home = Some((it, now, v)); }
+            else if !out { self.clamp_home = None; }
+        }
         true
     }
 
@@ -265,4 +291,41 @@ pub(super) fn dec_bits(p: Proto) -> (i32, i32) {
 /// The lines a video trigger can pick (the first half of the lines of a standard, less its blanking).
 pub(super) fn vid_line(s: VideoStd) -> (i32, i32) {
     (1, s.lines() as i32 / 2 - 10)
+}
+// ---------------------------------------------------------------------------------------------------- ladders
+
+impl Ui {
+    /// `d` presses on a ladder of values (sorted, ascending).
+    /// * On a rung the value moves `d` rungs and stops at the ends.
+    /// * Between two rungs (a preset, a default, a value set by SCPI) the value joins the ladder as a rung of its own for
+    ///   as long as the presses go on (`ladder_home`): up goes to the rung above, down to the one below, and N presses
+    ///   up and N down come back to it exactly. A value set by anything else (the pad, SCPI) starts over.
+    pub(super) fn ladder_move(&mut self, it: Item, cur: f64, d: i32, l: &[f64]) -> f64 {
+        if l.is_empty() || d == 0 { return cur; }
+        let near = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.abs().max(b.abs()) + f64::MIN_POSITIVE;
+        let last = l.len() - 1;
+        let kept = match self.ladder_home { Some((hit, hv, to)) if hit == it && near(cur, to) => Some(hv), _ => None };
+        let between = !l.iter().any(|&x| near(x, cur)) && cur > l[0] && cur < l[last];
+        let home = kept.or(between.then_some(cur));
+        let mut list = l.to_vec();
+        if let Some(h) = home {
+            if !list.iter().any(|&x| near(x, h)) {
+                let at = list.partition_point(|&x| x < h);
+                list.insert(at, h);
+            }
+        }
+        // a value outside the ladder snaps to its end
+        let i = list.iter().position(|&x| near(x, cur) || x > cur).map_or(list.len() as i32, |i| i as i32);
+        let on = list.get(i as usize).is_some_and(|&x| near(x, cur));
+        let k = if on || d < 0 { i + d } else { i + d - 1 };
+        let to = list[k.clamp(0, list.len() as i32 - 1) as usize];
+        self.ladder_home = home.map(|h| (it, h, to));
+        to
+    }
+
+    /// `ladder_move` on the 1-2-5 ladder of a table entry `(lowest, highest, with a zero)`.
+    pub(super) fn ladder_eng(&mut self, it: Item, cur: f64, d: i32, t: (f64, f64, bool)) -> f64 {
+        let l = eng_ladder_list(t.0, t.1, t.2);
+        self.ladder_move(it, cur, d, &l)
+    }
 }

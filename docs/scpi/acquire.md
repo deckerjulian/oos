@@ -24,10 +24,10 @@ Part of the [SCPI reference](README.md).
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `:ACQuire:SRATe` | Query | ADC/model sample rate, not a loaded reference's native rate. | `2.500000E+08` | Acquisition > Memory depth (read-out) | Rigol-compatible |
-| `:ACQuire:MDEPth` | Set / Query | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the numeric configured/effective acquisition depth. | `5.000000E+05` | Acquisition > Memory depth | Rigol-compatible |
-| `:ACQuire:TYPE` | Set / Query | `NORMal\|PEAK\|AVERages\|HRESolution`. | `NORM` | Acquisition > Mode | Rigol-style (command family of the DHO guide) |
-| `:ACQuire:AVERages` | Set / Query | Requested average count, mapped to supported powers of two. Read back the selected count. | `16` | Acquisition > Averages | Rigol-style (command family of the DHO guide) |
-| `:ACQuire:ULTRa:MAXFrame` | Set / Query | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. | `0` | Acquisition > Segments | Rigol-style (command family of the DHO guide) |
+| `:ACQuire:MDEPth` | Set / Query | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the numeric configured/effective acquisition depth. | `5.000000E+05` | Acquire > Memory | Rigol-compatible |
+| `:ACQuire:TYPE` | Set / Query | `NORMal\|PEAK\|AVERages\|HRESolution`. | `NORM` | Acquire > Mode | Rigol-style (command family of the DHO guide) |
+| `:ACQuire:AVERages` | Set / Query | Requested average count, mapped to supported powers of two. Read back the selected count. | `16` | Acquire > Averages | Rigol-style (command family of the DHO guide) |
+| `:ACQuire:ULTRa:MAXFrame` | Set / Query | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. | `0` | Acquire > Segments | Rigol-style (command family of the DHO guide) |
 
 ### History
 

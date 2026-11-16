@@ -173,6 +173,8 @@ fn opt_src_step_in(i: usize, d: i32, nch: usize) -> usize {
     v[(p + d).rem_euclid(v.len() as i32) as usize]
 }
 pub const HDIV: f32 = 10.0;
+/// The highest Eye PLL loop bandwidth, Hz (the limit of the range table, the setup file and SCPI).
+pub const EYE_PLL_MAX: f64 = 100e6;
 pub const VDIV: f32 = 8.0;
 
 /// Channel colours (yellow, teal, pink, sky blue: a colour-blind safe set). CH2 teal and CH4 blue as the colour

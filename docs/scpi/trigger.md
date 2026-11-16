@@ -19,7 +19,7 @@ These apply whatever the type.
 | `:TRIGger:STATus` | Query | `STOP\|TD\|AUTO\|WAIT`. A completed Single reports STOP. | `STOP` | Run state (status line) | Rigol-compatible |
 | `:TRIGger:HOLDoff` | Set / Query | Seconds, 0 through 10. | `0.000000E+00` | Trigger > Holdoff | Rigol-compatible |
 | `:TRIGger:NREJect` | Set / Query | Boolean. | `0` | Trigger > Noise reject | Rigol-compatible |
-| `:TRIGger:SOURce2` | Set / Query | Secondary CH/ref source for applicable OOS trigger types. | `CHAN4` | Trigger > Source | OOS extension |
+| `:TRIGger:SOURce2` | Set / Query | Secondary CH/ref source for applicable OOS trigger types. | `CHAN4` | Trigger > Source B | OOS extension |
 | `:TRIGger:LEVel` | Set / Query | Volts; the first level whatever the type. | `1.500000E+00` | Trigger > Level | OOS extension |
 | `:TRIGger:LEVel2` | Set / Query | Volts; the second level whatever the type (alias of the slope, window and runt B level). | `5.000000E-01` | Trigger > Level 2 | OOS extension |
 | `:TRIGger:LEVel:AUTO` | Action | Level to the middle of the source (the menu's Level 50 %, `Item::Trig50`) | - | Trigger > Level 50 % | OOS extension |
@@ -59,8 +59,8 @@ Pulse-width conditions share the lower and upper time fields described above.
 | `:TRIGger:SLOPe:TIME` | Set / Query | Seconds, 1 ns to 10 s. The lower time limit, the menu's Time. | `2.000000E-05` | Trigger > Time | Rigol-compatible |
 | `:TRIGger:SLOPe:TLOWer` | Set / Query | Seconds, 1 ns to 10 s. The lower time limit, the menu's Time. | `2.000000E-05` | Trigger > Time | Rigol-compatible |
 | `:TRIGger:SLOPe:TUPPer` | Set / Query | Seconds, 1 ns to 10 s. The upper time limit, the menu's Upper limit. | `4.000000E-05` | Trigger > Upper limit | Rigol-compatible |
-| `:TRIGger:SLOPe:ALEVel` | Set / Query | Volts. | `1.500000E+00` | Trigger > Level (Level A on Delay) | Rigol-compatible |
-| `:TRIGger:SLOPe:BLEVel` | Set / Query | Volts. | `5.000000E-01` | Trigger > Level 2 (Level B on Delay) | Rigol-compatible |
+| `:TRIGger:SLOPe:ALEVel` | Set / Query | Volts. | `1.500000E+00` | Trigger > Level | Rigol-compatible |
+| `:TRIGger:SLOPe:BLEVel` | Set / Query | Volts. | `5.000000E-01` | Trigger > Level 2 | Rigol-compatible |
 
 ### Video
 
@@ -122,7 +122,7 @@ Pulse-width conditions share the lower and upper time fields described above.
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:TRIGger:DELay:SLOPA` | Set / Query | Slope of A: `POSitive`, `NEGative`, `RFALl`. | `POS` | Trigger > Slope A | Rigol-style spelling, not listed in the coverage report |
+| `:TRIGger:DELay:SLOPA` | Set / Query | Slope of A: `POSitive`, `NEGative`, `RFALl`. | `POS` | Trigger > Slope | Rigol-style spelling, not listed in the coverage report |
 | `:TRIGger:DELay:SLOPB` | Set / Query | Slope of B: `POSitive`, `NEGative`, `RFALl`. | `POS` | Trigger > Slope B | Rigol-style spelling, not listed in the coverage report |
 | `:TRIGger:DELay:WHEN` | Set / Query | `GREater`, `LESS`, `RANGe`, `OUTside` (as the pulse trigger). | `LESS` | Trigger > When | Rigol-style spelling, not listed in the coverage report |
 | `:TRIGger:DELay:TLOWer` | Set / Query | Seconds, 1 ns to 10 s. The lower time limit, the menu's Time. | `2.000000E-05` | Trigger > Time | Rigol-style spelling, not listed in the coverage report |
@@ -138,7 +138,7 @@ Pulse-width conditions share the lower and upper time fields described above.
 | `:TRIGger:SHOLd:HTIMe` | Set / Query | Hold time, seconds, 1 ns to 10 s. | `1.000000E-06` | Trigger > Hold | Rigol-compatible |
 | `:TRIGger:SHOLd:DSOurce` | Set / Query | Data source `CHANn\|Rn`. | `CHAN1` | Trigger > Source | name not verified against the DHO guide |
 | `:TRIGger:SHOLd:CSOurce` | Set / Query | Clock source `CHANn\|Rn`. | `CHAN4` | Trigger > Source B | name not verified against the DHO guide |
-| `:TRIGger:SHOLd:SLOPe` | Set / Query | Clock edge: `POSitive`, `NEGative`, `RFALl`. | `POS` | Trigger > Clock edge (Slope B) | Rigol-compatible |
+| `:TRIGger:SHOLd:SLOPe` | Set / Query | Clock edge: `POSitive`, `NEGative`, `RFALl`. | `POS` | Trigger > Slope B | Rigol-compatible |
 
 ### Nth edge
 

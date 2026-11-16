@@ -123,6 +123,10 @@ mod batch27_tests;
 #[cfg(test)]
 mod batch29_tests;
 #[cfg(test)]
+mod batch31_tests;
+#[cfg(test)]
+mod scpimap;
+#[cfg(test)]
 mod uiaudit_tests;
 #[cfg(test)]
 mod batch12_tests;
@@ -1476,6 +1480,13 @@ pub struct Ui {
     keypad: String,
     /// the numeric entry pad of the Studio sheets (ui/numpad.rs); its text is `keypad`
     numpad: Option<numpad::NumPad>,
+    /// the value a ladder stepper started from when it was between two rungs: (item, that value, the rung it went to)
+    ladder_home: Option<(Item, f64, f64)>,
+    /// the last press of an `Add` stepper that ran into a limit: (item, the limit, the value it came from)
+    clamp_home: Option<(Item, f64, f64)>,
+    /// The source the cursors measure when it was picked in the cursor menu: only the cursors move to it (the active
+    /// channel and the measurement source stay). Selecting a trace anywhere else lets the cursors follow it again.
+    cursor_pin: Option<WaveId>,
     /// the Eye source was chosen on purpose (its sheet, SIM, a loaded record): Auto keeps it instead of the selected lane
     eye_src_chosen: bool,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
@@ -1603,6 +1614,9 @@ impl Ui {
             rec_iv: 0.0,
             keypad: String::new(),
             numpad: None,
+            ladder_home: None,
+            clamp_home: None,
+            cursor_pin: None,
             eye_src_chosen: false,
             la_cols: Default::default(),
             dec_cache: Default::default(),
@@ -6649,7 +6663,7 @@ impl Ui {
             MenuId::MeasFall => "Fall levels".into(),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
-            MenuId::Cursor => format!("Cursor · {}", self.selected_workspace_source().map_or("No source".into(), |id| self.wave_name(id))),
+            MenuId::Cursor => format!("Cursor · {}", self.cursor_wave().map_or("No source".into(), |id| self.wave_name(id))),
             MenuId::Display => "Display".into(),
             MenuId::Windows => "Windows".into(),
             MenuId::Utility => "System".into(),
@@ -7204,8 +7218,23 @@ impl Ui {
             }
             return;
         }
+        // the trigger times step on the 1-2-5 ladder; a value between two rungs (30 us) goes to the nearest one in the
+        // direction of the press and the press back returns to it
+        if matches!(it, Item::TrigT1 | Item::TrigT2 | Item::NthIdle | Item::Setup | Item::Hold) {
+            let cur = match it { Item::TrigT1 => self.m.trig_t1, Item::TrigT2 => self.m.trig_t2, Item::NthIdle => self.m.nth_idle, Item::Setup => self.m.setup, _ => self.m.hold } as f64;
+            let l: Vec<f64> = time_ladder().iter().map(|&x| x as f64).collect();
+            let v = self.ladder_move(it, cur, d, &l) as f32;
+            match it { Item::TrigT1 => self.m.trig_t1 = v, Item::TrigT2 => self.m.trig_t2 = v, Item::NthIdle => self.m.nth_idle = v, Item::Setup => self.m.setup = v, _ => self.m.hold = v }
+            self.settings_changed();
+            return;
+        }
         // the steppers that add a step to a value and stop at the limits of the range table
         if self.range_step(it, d) {
+            // the reference level restarts the averaging and the picture of the spectrum
+            if it == Item::SpecRef {
+                self.azr.spec_avg = None;
+                self.analyzer_update();
+            }
             // a level of a reference trigger does not restart what was measured
             if !(matches!(it, Item::TrigLevel | Item::TrigLevel2) && self.m.trig_ref.is_some()) {
                 self.settings_changed();
@@ -7258,7 +7287,6 @@ impl Ui {
                 let i = AmpUnit::ALL.iter().position(|&u| u == m.ch[c].unit).unwrap_or(0);
                 m.ch[c].unit = AmpUnit::ALL[cyc(i, AmpUnit::ALL.len(), d)];
             }
-            Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
             Item::ChExpand => m.v_expand_gnd = !m.v_expand_gnd,
             Item::HFine => m.fine_t = !m.fine_t,
             Item::HExpandI => {
@@ -7337,11 +7365,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cyc(i, all.len(), d)];
             }
-            Item::TrigT1 => m.trig_t1 = ladder_step(m.trig_t1, d),
-            Item::TrigT2 => m.trig_t2 = ladder_step(m.trig_t2, d),
-            Item::NthIdle => m.nth_idle = ladder_step(m.nth_idle, d),
-            Item::Setup => m.setup = ladder_step(m.setup, d),
-            Item::Hold => m.hold = ladder_step(m.hold, d),
             Item::VidStd => m.video_std = if m.video_std == VideoStd::Pal { VideoStd::Ntsc } else { VideoStd::Pal },
             Item::VidSync => {
                 let all = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Even, VSync::AllFields];
@@ -7397,10 +7420,13 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.cursor).unwrap();
                 m.cursor = all[cyc(i, all.len(), d)];
             }
-            Item::CurA => m.cur_a = (m.cur_a + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurB => m.cur_b = (m.cur_b + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurC => m.cur_c = (m.cur_c + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurD => m.cur_d = (m.cur_d + d as f32 * 0.005).clamp(0.0, 1.0),
+            // a cursor on a voltage reads higher the further up the screen it is: + raises the reading (moves it up)
+            Item::CurA | Item::CurB | Item::CurC | Item::CurD => {
+                let vertical = matches!(it, Item::CurC | Item::CurD) || m.cursor == CursorMode::Volt;
+                let delta = d as f32 * 0.005 * if vertical { -1.0 } else { 1.0 };
+                let field = match it { Item::CurA => &mut m.cur_a, Item::CurB => &mut m.cur_b, Item::CurC => &mut m.cur_c, _ => &mut m.cur_d };
+                *field = (*field + delta).clamp(0.0, 1.0);
+            }
             Item::RefSel => {
                 let slot = (self.ref_sel as i32 + d).clamp(0, NREF as i32 - 1) as usize;
                 self.select_workspace_source(WaveId::Ref(slot));
@@ -11818,13 +11844,6 @@ mod tests {
         assert_eq!(axis_label(3.25, 2.0, 4.75, 12.75, "V"), "3.25 V");
         assert_eq!(axis_label(-1e-9, 2.0, 0.0, 8.0, "V"), "0 V");
     }
-}
-
-/// One step on the 1-2-5 time ladder from the nearest ladder value.
-fn ladder_step(x: f32, d: i32) -> f32 {
-    let l = time_ladder();
-    let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
 }
 
 #[cfg(test)]

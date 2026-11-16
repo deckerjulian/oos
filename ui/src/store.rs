@@ -826,7 +826,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             // older files have no third field: the rate was entered, not measured
             m.eye_from_record = w.get(2).is_some_and(|s| *s != "0");
         }
-        "eye_pll" => m.eye_pll_bw = v.trim().parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0).ok_or("eye_pll: Hz")?,
+        "eye_pll" => m.eye_pll_bw = v.trim().parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0).ok_or("eye_pll: Hz")?.min(crate::model::EYE_PLL_MAX),
         "eye_place" => m.eye_place = p_enum(v, &[EyePlace::Full, EyePlace::Side, EyePlace::Under])?,
         "power" => {
             let w: Vec<&str> = v.split_whitespace().collect();

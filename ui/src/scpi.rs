@@ -381,6 +381,8 @@ fn math_op_name(op: MathOp) -> &'static str {
 
 fn parse_math_op(arg: &str) -> Option<MathOp> {
     [
+        // what the query answers when the channel is off sets it off
+        ("OFF", MathOp::Off),
         ("ADD", MathOp::Add),
         ("SUBTract", MathOp::Sub),
         ("MULTiply", MathOp::Mul),
@@ -1438,9 +1440,29 @@ impl Scpi {
                         Some('M') => (&a[..a.len() - 1], 1e6),
                         _ => (&a[..], 1.0),
                     };
-                    (v.parse::<f64>().ok()? * mul).round() as u64
+                    let Some(x) = v.parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0) else {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return Some(None);
+                    };
+                    (x * mul).round() as u64
                 };
-                m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
+                if a.starts_with("AUTO") { m.mdepth = 0; return Some(None); }
+                // the query answers the depth the scope works with (a menu depth is cut to the memory it has), so what
+                // it answered is taken back: the setting that gives that depth, the one it has first
+                let keep = m.mdepth;
+                let effective: Vec<u64> = (0..mdepths().len()).map(|i| { m.mdepth = i; m.srate_depth().1 as u64 }).collect();
+                m.mdepth = keep;
+                let pick = if effective[keep] == want { Some(keep) }
+                    else if let Some(i) = (1..mdepths().len()).find(|&i| mdepths()[i].1 == want) { Some(i) }
+                    else if effective[0] == want { Some(0) }
+                    else { (1..mdepths().len()).find(|&i| effective[i] == want) };
+                match pick {
+                    Some(i) => m.mdepth = i,
+                    None => {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        return Some(None);
+                    }
+                }
                 return Some(None);
             }
             if kw(n0, "ACQuire") && nodes.len() == 2 {
@@ -3643,7 +3665,8 @@ impl Scpi {
                     return text(ui.m.dec_la[role].map_or("NONE".into(), |line| format!("D{line}")));
                 }
                 let source = match role { 0 => Some(ui.m.dec_src), 1 => Some(ui.m.dec_src2), 2 => ui.m.dec_cs, 3 => ui.m.dec_src4, _ => ui.m.dec_diff };
-                return text(source.map_or("NONE".into(), decode_source_name));
+                // as the other queries name a source (CHAN3, R1), which the setter takes back
+                return text(source.and_then(decode_wave).map_or("NONE".into(), wave_tok));
             }
             if ui.m.dec_on_la() && role < 4 {
                 let source = arg.strip_prefix('D').or_else(|| arg.strip_prefix('d')).and_then(|v| v.parse::<u8>().ok()).filter(|&v| v < 16);
