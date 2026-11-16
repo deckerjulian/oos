@@ -2222,11 +2222,16 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         return Err(format!("waveform version {}", ver));
     }
     let nch = u32_le(b, 8).unwrap_or(0) as usize;
-    let n = u64_le(b, 12).unwrap_or(0) as usize;
+    // the sample count comes from the file: bounded before it sizes anything, so a damaged or hostile count is an
+    // error and not an overflow or an allocation the size of the count
+    let n = usize::try_from(u64_le(b, 12).unwrap_or(0)).unwrap_or(usize::MAX);
     let dt = f64_le(b, 20).unwrap_or(0.0);
     let t0 = f64_le(b, 28).unwrap_or(0.0);
     if nch == 0 || nch > NCH || dt <= 0.0 {
         return Err("waveform header".into());
+    }
+    if n > MAX_WAVEFORM_SAMPLES {
+        return Err("waveform exceeds the 32-million-sample import limit".into());
     }
     let mut off = 36;
     let mut rec = Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
@@ -2236,7 +2241,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         if c < 1 || c > NCH {
             return Err(format!("channel {}", c));
         }
-        if b.len() < off + 4 * n {
+        if b.len().saturating_sub(off) < 4 * n {
             return Err("truncated waveform".into());
         }
         let mut v = vec![0f32; n];
@@ -2273,6 +2278,11 @@ pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
         return Err(format!("fast-frame version {}", ver));
     }
     let n = u32_le(b, 8).unwrap_or(0) as usize;
+    // every frame is at least a header and one channel number: a count the bytes cannot hold is refused before it
+    // sizes the list
+    if n > (b.len() - 12) / 40 {
+        return Err("truncated fast-frame file".into());
+    }
     let mut off = 12;
     let mut recs = Vec::with_capacity(n);
     for _ in 0..n {
@@ -3137,6 +3147,38 @@ mod tests {
         let old = parse_mask("1.0\n2.0\n").unwrap();
         assert_eq!(old.v, vec![1.0, 2.0]);
         assert!(old.src.is_none());
+    }
+
+    /// Counts in a frame file come from the file. One that does not fit the bytes is an error: before, a sample count
+    /// near 2^62 overflowed the offset (a panic, and with panic=abort the end of oos-ui) and a frame count of 2^32 - 1
+    /// asked for a list of that many records.
+    #[test]
+    fn frame_file_counts_beyond_the_bytes_are_refused() {
+        let mut huge = b"OOSW".to_vec();
+        for x in [1u32, 1] {
+            huge.extend_from_slice(&x.to_le_bytes());
+        }
+        huge.extend_from_slice(&((1u64 << 62) + 1).to_le_bytes());
+        huge.extend_from_slice(&1e-9f64.to_le_bytes());
+        huge.extend_from_slice(&0f64.to_le_bytes());
+        huge.extend_from_slice(&1u32.to_le_bytes());
+        huge.extend_from_slice(&[0u8; 16]);
+        assert!(parse_wave_bin(&huge).err().unwrap().contains("limit"));
+        let over = (MAX_WAVEFORM_SAMPLES as u64 + 1).to_le_bytes();
+        huge[12..20].copy_from_slice(&over);
+        assert!(parse_ff(&huge).err().unwrap().contains("limit"));
+        huge[12..20].copy_from_slice(&5u64.to_le_bytes());
+        assert!(parse_wave_bin(&huge).err().unwrap().contains("truncated"));
+        huge[12..20].copy_from_slice(&4u64.to_le_bytes());
+        assert_eq!(parse_wave_bin(&huge).unwrap().1, huge.len());
+
+        let mut ff = b"OOSF".to_vec();
+        ff.extend_from_slice(&1u32.to_le_bytes());
+        ff.extend_from_slice(&u32::MAX.to_le_bytes());
+        ff.extend_from_slice(&huge);
+        assert!(parse_ff(&ff).err().unwrap().contains("truncated"));
+        ff[8..12].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(parse_ff(&ff).unwrap().len(), 1);
     }
 
     #[test]
