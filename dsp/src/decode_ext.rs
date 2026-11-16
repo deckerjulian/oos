@@ -369,7 +369,7 @@ pub fn modbus_ascii(v: &[f32], dt: f64, baud: f64, bits: u32, parity: Parity, th
             j += 1;
         }
         let body = &ch[i + 1..j];
-        let mut bad = body.len() % 2 != 0;
+        let mut bad = !body.len().is_multiple_of(2);
         let mut bytes: Vec<Byte> = Vec::new();
         for p in body.chunks_exact(2) {
             match (hex(p[0].value), hex(p[1].value)) {
@@ -967,7 +967,7 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
         let sv = |r: std::ops::Range<usize>| seq[r].iter().fold(0u32, |a, b| a << 1 | b.0 as u32);
         let gray = sv(0..3);
         let cnt = (gray ^ gray >> 1 ^ gray >> 2) & 7;
-        let par_ok = (gray.count_ones() + seq[3].0 as u32) % 2 == 0;
+        let par_ok = (gray.count_ones() + seq[3].0 as u32).is_multiple_of(2);
         out.push(pk(Kind::Field("SBC"), seq[0].1, seq[3].2, cnt, None, par_ok && cnt == stuff_cnt % 8));
         let rx = sv(4..4 + crc_len);
         let mut input = raw.clone();
@@ -1160,7 +1160,7 @@ pub mod gen {
             match parity {
                 Parity::None => {}
                 Parity::Even => self.level(ones % 2 == 1, tb),
-                Parity::Odd => self.level(ones % 2 == 0, tb),
+                Parity::Odd => self.level(ones.is_multiple_of(2), tb),
             }
             self.level(true, stop as f64 * tb);
         }

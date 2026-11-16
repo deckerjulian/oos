@@ -549,7 +549,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
                 tm.iter().take_while(|&&x| x < segs[j].0 - 2.0 * bit).count() / 8 * 8
             } else {
                 let n1 = edge_bits + edge_data as usize;
-                if n1 % 8 == 0 {
+                if n1.is_multiple_of(8) {
                     n1
                 } else if n1 % 8 >= 2 {
                     n1 + 8 - n1 % 8
@@ -606,7 +606,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
 /// the length of its PID / a matching CRC16 when an EOP follows; the segment to go on from.
 fn usb_end(bus: &UsbBus, b: &[bool], te: f64, bit: f64) -> Option<(usize, bool)> {
     let l = b.len();
-    if l < 16 || l % 8 != 0 || b[..7].iter().any(|&x| x) || !b[7] {
+    if l < 16 || !l.is_multiple_of(8) || b[..7].iter().any(|&x| x) || !b[7] {
         return None;
     }
     let byte = |k: usize| (0..8).fold(0u8, |a, q| a | (b[8 * k + q] as u8) << q);

@@ -1424,7 +1424,7 @@ pub mod gen {
         /// I3C write byte + T-bit (odd parity; `bad` inverts it)
         pub fn byte_t(&mut self, v: u8, bad: bool) {
             self.bits(v as u64, 8);
-            self.bit((v.count_ones() % 2 == 0) != bad);
+            self.bit(v.count_ones().is_multiple_of(2) != bad);
         }
         /// I3C read byte + T-bit (`more` = 1: more data follows)
         pub fn read_t(&mut self, v: u8, more: bool) {

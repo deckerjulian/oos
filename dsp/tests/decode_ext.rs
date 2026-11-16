@@ -830,7 +830,7 @@ fn noise_and_garbage_never_panic() {
             .map(|i| {
                 let k = kinds[(r() % kinds.len() as u32) as usize];
                 let value = if matches!(k, Kind::Addr { .. }) { 0x18 + r() % 8 } else { r() % 256 };
-                Packet { t0: i as f64, t1: i as f64 + 0.5, kind: k, value, value2: None, ok: r() % 2 == 0 }
+                Packet { t0: i as f64, t1: i as f64 + 0.5, kind: k, value, value2: None, ok: r().is_multiple_of(2) }
             })
             .collect();
         let _ = ds2482(&pk);
