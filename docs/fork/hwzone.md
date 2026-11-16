@@ -2,7 +2,9 @@
 
 The zone trigger in the FPGA. Opt-in: `zone.hw = on` in system.conf, read once at start, off by default. Code:
 `hal/src/dho/zone.rs`, `hal/src/dho/zonegeom.rs`, `seq::State::zone_steps`, `ui/src/ui/hwzone.rs`. Register facts:
-assumed, not yet verified on hardware unless a step below says so.
+assumed, not yet verified on hardware unless a step below says so. What the logic does with a frame (qualification,
+both modes, two zones, mapping in time and value, slots) is verified on the unit (DHO924S, 2026-11-16, "On the
+DHO924S" below).
 
 ## Hardware
 
@@ -74,11 +76,11 @@ and the software-filter rate for comparison. Goal: at least the software rate.
 
 | assumption | where | bench step |
 |---|---|---|
-| Limits in the read-out word >> 8 (Rigol writes the low byte of a 16-bit level; that does not fit an 8-bit sample) | `mask::code` | 3, 4 |
-| 1000 columns of points / 1000 samples over the record | `zone::columns` | 4 |
-| Column times relative to the trigger at sample `pre` | `zone::table` | 4 |
-| A failing frame is not accepted; the FSM re-arms | | 2, 3 |
-| Slot = stream slot, as the mask test (CH2 alone 0, CH2 of CH1+CH2 1) | `mask::slot` | 5 |
+| Limits in the read-out word >> 8 (Rigol writes the low byte of a 16-bit level; that does not fit an 8-bit sample) | `mask::code` | 3, 4: verified on the unit, to 0.1 div |
+| 1000 columns of points / 1000 samples over the record | `zone::columns` | 4: verified on the unit at 10k points |
+| Column times relative to the trigger at sample `pre` | `zone::table` | 4: verified on the unit, to 40 us at 200 us/div, before and after the trigger |
+| A failing frame is not accepted; the FSM re-arms | | 2, 3: verified on the unit (no acquisition completes, FSM state 14) |
+| Slot = stream slot, as the mask test (CH2 alone 0, CH2 of CH1+CH2 1) | `mask::slot` | 5: verified on the unit, also with four channels |
 
 ## Stall guard (round 8)
 
@@ -118,3 +120,40 @@ Probe on CH1 at the probe-comp output (1 kHz square). `zone.hw = on` in system.c
    zone hardware returns (`armed=1`).
 
 Record the results in `docs/fork/unit-dho804.md`.
+
+## On the DHO924S (2026-11-16)
+
+`zone.hw = on`. The probe compensation output (1 kHz square, 0.03 to 2.98 V) on CH2, 1 V/div, 200 us/div, 10k points,
+edge trigger on CH2 rising at 1.5 V, Normal sweep. The edges are at 0 and +-0.5 ms.
+
+A zone that no frame passes ends every arm without an acquisition, which is what the stall guard counts: after two
+arms it drops the unit to software for these settings. So "the hardware rejects" shows as the guard's log line
+(`no acquisition ...; 0x4030 = 0x5f87e90e, readback 0, state 14`), and each case below started with a fresh guard key
+(a `mask.map` change). "passes" means frames arrive with the unit active (`slot=` in the debug line).
+
+| step | case | hardware | software filter |
+|---|---|---|---|
+| 1 | box on the high level, intersect | passes, 78 frames/s | passes |
+| 2 | box above the trace, intersect | rejects every frame, status WAIT | rejects |
+| 3 | box above the trace, not intersect | passes | passes |
+| 3 | box on the high level, not intersect | rejects | rejects |
+| 4 | box 40 us wide, 1.2 to 1.8 V, across the edge at 0, at +0.5 ms, at -0.5 ms | passes, each | passes |
+| 4 | the same box on the flat parts at +0.2, +0.7, +0.96, -0.3, -0.7 ms | rejects, each | rejects |
+| 4 | the same box 40 us before and 40 us after the edge at +0.5 ms | rejects, both | rejects |
+| 4 | box 0.2 V high over the high level (2.98 V): 2.8 to 3.0 and 2.9 to 3.1 V | passes | passes |
+| 4 | 2.2 to 2.4, 2.6 to 2.8, 3.1 to 3.3, 3.2 to 3.4, 3.4 to 3.6 V | rejects | rejects |
+| 4 | 3.0 to 3.2 V | passes 48 frames/s | drops 30 of them a second: the limits are rounded outwards |
+| 4 | box over the low level (0.03 V): -0.1 to 0.1 and 0.0 to 0.2 V pass; -0.4 to -0.2, 0.1 to 0.3, 0.3 to 0.5 V reject; -0.2 to 0.0 V as 3.0 to 3.2 V above | as listed | the same |
+| 5 | CH1 + CH2, zone on CH2: `slot=1`; box on CH2's high level passes, on its flat part at 1.2 to 1.8 V rejects; CH1's offset moved by 4 V changes nothing | as listed | the same |
+| 5 | four channels, zone on CH2: `slot=1`, the same two verdicts | as listed | the same |
+| 6 | zone 1 on the high level with zone 2 "not intersect" above the trace, or "intersect" on the low level | passes | passes |
+| 6 | zone 1 on the high level with zone 2 "not intersect" on the trace, or "intersect" above it | rejects | rejects |
+| 7 | AUX OUT pass/fail from the zone result (0x119c = 0x2000009c, 0x11d0 = 0x05000000): no pulse on accepted frames with event = fail; with event = pass a 1 us pulse per accepted frame (76 frames/s: rms 29.4 mV on the DVM block, `auxout.md`); none with the mask as the source | as listed | |
+| 8 | mask test on: the zone debug line turns `off`, the mask unit runs; mask off: the zone unit is back | as listed | |
+
+Rate: 78 frames/s with the zone trigger (`zone.batch` unset, `batch_ms` 10 to 14) against 157 acquired/s without a
+zone and 127 used/s with the software filter. The rate goal of "Rate" above is not met on this unit either.
+
+Open: a zone that rejects for longer than two arms loses the hardware for these settings (the guard cannot tell a
+rejecting zone from a stall), so in normal use the unit falls back to software as soon as the signal leaves the zone.
+`zone.batch` 4 and 16 were not tried.

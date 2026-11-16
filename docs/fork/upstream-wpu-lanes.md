@@ -41,3 +41,12 @@ One and four channels are unchanged (all lanes = the channel; lane n = CH n+1).
   fix the open channel's average sits several percent of the offset away from its single-channel reading; after it the
   two should agree (not yet confirmed on the unit at the time of writing). Setting the second channel to the same V/div
   as the first makes the error vanish even before the fix, which shows it is the gain mix.
+
+## On the DHO924S (2026-11-16)
+
+With the fix. CH3 open at 1 V/div, its average alone and with CH4 acquired at 100 mV/div, 1 V/div and 5 V/div:
+at +2 V offset 106.0 mV alone, 108.7 / 109.2 / 107.9 mV with CH4; at 0 V 126.5 against 127.2 / 128.3 / 127.3 mV; at
+-2 V 141.2 against 141.6 / 142.3 / 141.8 mV. The same with CH4 as the open channel and CH3 next to it (within 4 mV).
+The level does not depend on the other channel's V/div, where the old lane order gave about 7 % of the offset: the
+order lower, higher, lower, higher is verified on the unit. (With the probe-comp square on the second channel the open
+channel reads 15 to 21 mV higher at every V/div of that channel: coupling of the signal, not the gain mix.)

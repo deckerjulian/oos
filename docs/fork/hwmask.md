@@ -39,6 +39,9 @@ default until the steps below confirm the assumptions. Code:
 
 Only bits 9:0 and 15 of 0x1184 reach the comparator logic. Records above 1023 x 1000 points may mis-count columns.
 
+The first four rows and the stop are verified on the unit (DHO924S, 2026-11-16, "On the DHO924S" below), with the
+two open points named there.
+
 ## Sweep of the mapping (unit round 2)
 
 Round 2 (DHO804, 2026-11-13): slot 0 and the frame count are right (171/s against
@@ -155,3 +158,30 @@ after every step. The mask is in volts, so an offset change moves mask and trace
 8. `mask.hw = off`, restart: the pill reads `Mask CH1`, the software counts run, and the debug line starts with `off`.
 
 Record the results in `docs/fork/unit-dho804.md`.
+
+## On the DHO924S (2026-11-16)
+
+`mask.hw = on`, default `mask.map`. The probe compensation output (1 kHz square, 0 to 3 V) on CH2, 1 V/div, edge
+trigger on CH2, Normal sweep; AUX OUT on CH1. Each reading: Create mask (X 0.2, Y 0.4 div), Reset, 6 s. `hw` is the
+unit's frames and fails, `sw` the software test on the records that reach the UI.
+
+| step | result |
+|---|---|
+| 1 | CH2 alone: `slot=0`, `ctrl=0x00100000` |
+| 2, 20 us/div 10k | clean: hw 5128 frames, 0 fails; sw 187 pass. Delay +10 us: hw 5095 of 5095 fail, sw 187 of 187. Back: 0 fails |
+| 2, 50 us/div 10k | clean 0 fails; the +10 us shift is inside the tolerance at this time base: 0 fails in hw and sw |
+| 2, 100 us/div 10k | clean 0 of 2648; delay +20 us: 2674 of 2674; back: 0. sw the same verdicts |
+| 2, 200 us/div 10k | clean 0 of 1074; delay +40 us: 1070 of 1070; back: 0. sw the same verdicts |
+| 2, 1 ms/div 100k (Auto) | clean 0 of 236; delay +200 us: 234 of 234; back: 0. sw the same verdicts |
+| 2, 1 ms/div 10k (500 kSa/s) | **differs**: hw fails every frame on the clean signal, sw passes. With `range=0-499` every frame fails, with `range=500-999` none. Open |
+| 2, 200 us/div 100k and Auto | the stall of round 8: no acquisition twice, the guard drops to software, which gives the right verdicts |
+| 3 | 100 us/div 10k, 30 s: the unit counts 11421 frames, `acquired` rises by 10653: 7 % more in the unit. At 200 us/div and 1 ms/div the two rates are equal |
+| 4 | mask made at 1 V/div, then 500 mV/div and 2 V/div: 0 fails; with the delay shifted every frame fails at both |
+| 5 | CH1 + CH2, mask on CH2: `slot=1`, `ctrl=0x00200000`, 0 of 2480 clean, 2479 of 2479 shifted. Three and four channels, mask on CH2: slot 1, the same. Four channels, mask on CH3 (open input): `slot=2`, `ctrl=0x00400000`, 0 fails, also with CH3's offset moved |
+| 6 | 200 us/div 10k, stop on fail set, signal shifted: the acquisition stops (status STOP, 2 fails counted). Run with the clean signal: frames go on, no restart of oos-ui. The frame rate with stop on fail set is 26/s instead of 152/s |
+| 7 | AUX OUT pass/fail: `auxout.md`, all of it as described |
+| 8 | not run (it needs the settings file changed and a restart) |
+
+Besides the grid: one more stall at 100 us/div 10k, CH2 alone, a set-up that passed before, right after the pass/fail
+check had changed channels, trigger source and depth. The guard dropped to software; the set-up stayed blocked until
+`mask.map` changed. So a stall depends on what ran before, not only on the settings.

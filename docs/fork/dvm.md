@@ -1,7 +1,8 @@
 # DVM from the FPGA block
 
 Status: opt-in. Result layout and units measured on the unit (DHO804, 2026-11-13, round 2); decode checked
-against the software DVM in round 5 (below).
+against the software DVM in round 5 (below). The register fields, the lanes and the scale were measured again on a
+DHO924S on 2026-11-16 ("On the DHO924S" below).
 Next-round table row 2.5.
 
 ## What it does
@@ -29,10 +30,10 @@ after that. A reading the decode refuses, a reading of another channel, or no re
 
 | register | content | evidence |
 |---|---|---|
-| 0x2244 [0] | restart: written 1, then 0 together with the new fields | assumed; the restart meaning is inferred |
-| 0x2244 [5:1] | log2 of the samples per window; stock default 28 | assumed; unit: N = 2^28 |
-| 0x2244 [9:8] | lane: the channel with one, three or four channels; with two channels 0 for the lower, 2 for the higher | assumed for the bits; unit: with CH1 + CH2 the lane-2 reading follows CH2 |
-| 0x2244 read | not the configuration: `SQ_HI` with bits 7:0 replaced | measured |
+| 0x2244 [0] | restart: written 1, then 0 together with the new fields | assumed; the restart meaning is inferred. On the DHO924S new fields also take effect without the pulse |
+| 0x2244 [5:1] | log2 of the samples per window; stock default 28 | verified on the unit (DHO924S): with 24 and 20 written the sums are 2^4 and 2^8 times smaller and come that much faster |
+| 0x2244 [9:8] | lane: the channel with one, three or four channels; with two channels 0 for the lower, 2 for the higher | verified on the unit (DHO924S) with one, two, three and four channels: each reading follows its channel |
+| 0x2244 read | not the configuration alone: bits 9:8 and 5:0 read the written fields, bits 7:6 change between readings, bits 31:10 are those of `SQ_HI` | measured (DHO924S; the first session saw bits 7:0 replaced) |
 | 0x2248 [0] | latch: write 1 then 0 before reading the results | assumed |
 | 0x224c, 0x2250 [31:16] | sum of the samples, 48 bits: `(0x2250 >> 16) << 32 \| 0x224c` | measured |
 | 0x2254, 0x2258 | sum of their squares, 64 bits: `0x2258 << 32 \| 0x2254` | measured (a square's sigma matches half its amplitude) |
@@ -48,8 +49,8 @@ Other measured facts: mode and time base change nothing in the words; a new resu
 0.6 s apart); after STOP one nearly all-zero window (sum 0x900), then the block runs on. `decode` refuses a mean below
 one code, at or above 4096, and a mean square below the mean squared.
 
-Open: CH2 alone reported lane 2 where `dvm::lane` gives 1 (one channel: every lane carries it, so the reading is
-right either way; the log line may have come from a set-up with CH1 still acquired). Four channels not tried.
+CH2 alone reported lane 2 in the first session where `dvm::lane` gives 1 (the set-up still had CH1 acquired, see
+round 5). On the DHO924S CH2 alone is lane 1, and four channels are lanes 0 to 3 (below).
 
 ## Round 5: hardware against software
 
@@ -83,6 +84,32 @@ software value near their mean. That spread is the per-core-pair offset map, als
 Default: keep `dvm.hw` opt-in until the per-lane check and the core offset fix. With the fix the DC error is bounded
 by the trim (about +-0.5 step); then the hardware DVM is the better default: acquisition-independent, 2^28 samples,
 no record or clipping dependence.
+
+## On the DHO924S (2026-11-16)
+
+`dvm.hw = on`, the built-in generator on CH1 (DC levels, then a 1 kHz square of 1 Vpp), the probe compensation output
+on CH2, CH3 and CH4 open. Hardware (`hw`) against the software DVM (`sw`) and the level set on the generator.
+
+| check | result |
+|---|---|
+| DC, 500 mV/div, 0 / 0.5 / 1.0 / 1.5 / -1.0 V | hw - sw: -1.5, +0.3, 0.0, -0.4, +2.5 mV; both within 4 mV of the set level |
+| DC, 200 mV/div with -1 V offset, 0.6 / 1.0 / 1.4 V | hw - sw: +0.9, -0.1, 0.0 mV |
+| DC, 1 V/div, 0 / +2 / -2 V | hw - sw: -2.0, +2.7, +5.4 mV (1 ADC step is 2.3 mV here) |
+| DC, 100 mV/div, 0 / 0.2 / -0.3 V | hw - sw: -0.1, +0.1, +0.5 mV |
+| codes per division, from two levels | 435 at 1 V/div and 500 mV/div, 402 at 200 mV/div, 401 at 100 mV/div: the cal-file formula |
+| 1 kHz square, 1 Vpp, 500 mV/div | DC -0.2 mV, AC rms 0.5027 V, AC+DC 0.5027 V; sw 0.5030 to 0.5033 V. The second result is the sum of squares |
+| time base 5 ns/div, 1 us/div, 100 us/div | hw AC+DC 0.50276, 0.50284, 0.50269 V: no dependence |
+| time base 50 ms/div (125 kSa/s) | hw AC+DC 0.49936 V, DC +3.5 mV: 0.7 % lower. Not explained |
+| window | with 28 a new result every 1.71 s on average: 2^28 samples at 156.25 MSa/s, the rate of one lane |
+| first result after a level change | spans the change (a mean between the levels, a large sigma): one window is one sum |
+| CH1 + CH2 | CH1 lane 0 reads the generator level, CH2 lane 2 the probe-comp square (DC 1.514 V, sw 1.531 V) |
+| CH2 + CH3 | CH2 lane 0, CH3 lane 2 |
+| three and four channels | lane = channel; CH1 0.499 V, CH2 1.518 V, CH3 and CH4 their open-input levels, each within 5 mV of sw |
+| CH2 alone | lane 1, reads CH2 |
+| CH1 alone, lane forced 0 / 1 / 2 / 3 | mean codes 2487.2 / 2484.1 / 2485.3 / 2486.3: every lane carries the channel; 3.2 codes of spread between the core pairs; sw at their mean |
+| STOP | the dump stays as it is (the thread does not poll while stopped); after RUN the readings go on. The all-zero window of the first session did not show |
+
+Still assumed: the latch (0x2248) and what the restart bit does beyond loading the fields.
 
 ## Original on-unit test procedure (first session)
 
