@@ -44,14 +44,19 @@ A decision that touches two categories goes where its consequences are largest a
 | [0019](process/0019-one-style-for-text-files-and-commits.md) | process | One style for files, documents and commits, checked where a tool can | accepted |
 | [0020](process/0020-checks-in-layers-one-command-on-the-host.md) | process | The checks come in layers; one command runs every host layer, the same as CI | accepted |
 | [0021](process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md) | process | What runs on the scope depends on `libc` only; a desktop build may use its platform's crates | accepted |
+| [0022](code/0022-one-scpi-interpreter-transports-only-frame.md) | code | One SCPI interpreter in the frame loop; every remote transport only frames its messages | accepted |
+| [0023](code/0023-scpi-stock-names-first-oos-identifies-as-oos.md) | code | SCPI follows the stock command names where they exist; OOS identifies itself as OOS | accepted |
+| [0024](system/0024-vxi11-on-the-scope-hislip-on-a-computer-own-discovery.md) | system | VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification | accepted |
+| [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
 | [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted |
 
 ## Reading order for agents
 
 An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that
 touch the change: ADR 0009, 0010, 0013, 0015 and 0021 for anything near the hardware or the dependencies, ADR 0014 and
-0020 for how to show that a change is safe, ADR 0016 to 0019 for how code and text look. The records are short on
-purpose; reading the ones that apply costs minutes and saves a review round.
+0020 for how to show that a change is safe, ADR 0016 to 0019 for how code and text look, ADR 0022 to 0025 for SCPI,
+VXI-11, HiSLIP and the other network services. The records are short on purpose; reading the ones that apply costs
+minutes and saves a review round.
 
 ## Writing one
 
