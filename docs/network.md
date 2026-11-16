@@ -164,9 +164,12 @@ the update page: an update then comes from a USB stick. telnet and SSH are start
 when a switch changes. With SSH set up, switch telnet off: it is a shell for anyone on the network. The serial
 console (UART2) keeps its shell without a login.
 
+The last row: **Allowed**, the addresses that may reach the scope (`net.allow`, section 6), and **Firewall** beside it,
+which says whether that list is in force or waits for the next start.
+
 ### 4.1 The scope by name: mDNS and DNS-SD
 
-The last row of the page: **mDNS** (on by default) and **Name**, which shows where the scope is reached,
+The sixth row of the page: **mDNS** (on by default) and **Name**, which shows where the scope is reached,
 `dho924s-204527.local`. A computer on the same network opens the web remote at `http://dho924s-204527.local:8080`,
 also when the scope only has a link-local address (169.254.x.y, a cable straight to a computer without DHCP), and
 VISA reaches it at `TCPIP::dho924s-204527.local::INSTR`. macOS, iOS, Linux with Avahi and Windows 10 and newer resolve
@@ -290,12 +293,24 @@ answer 403 to others as soon as the request head is in (the body is not read), S
 The page, the live picture, `/cmd`, the downloads and `POST /waveform` (a reference upload, nothing written to
 storage) stay open to the firewall's prefixes. Loopback is always allowed.
 
+**On the scope**: System > Network > Remote services > **Allowed** shows the list in use (`everyone` without one). Its
+picker offers that list, the network the scope is on (from its address and netmask: `192.168.1.0/24`) and Other on
+the keyboard, which starts with the list or, without one, with that network. An entry is checked as oos-ui reads the
+key (`netacl`): every word must be an address prefix as above or `onlink6`, IPv6 without dotted IPv4. Anything else
+is refused with a message on the keyboard and nothing is written. What is taken goes to `/oos/system.conf` in its
+plain form (`192.168.1.7/24` becomes `192.168.1.0/24`, a single address `/32` or `/128`); an empty entry removes the
+line, so the image default applies again (none on most images: everyone, no firewall, SSH stays off). The firewall
+and oos-ui read the key only at the start: a change applies at the next start, and the **Firewall** row says
+`from the next start` until then (`on` with a list in force, `off: everyone` without one). Leave the computer that
+should reach the scope inside the list. There is no SCPI command for it: SCPI has no login.
+
 **MAC**: an address that is not unicast or not six colon-separated bytes falls back to `cid` (logged). `vendor` asks the board
 (`oos-board mac`; on the DHO800/DHO900 `oos-fpgad model`, which needs the keys of vendor.bin, docs/models.md 1); without
 them it falls back to `cid` as well.
 
 Not verified on hardware: all of this section. Verified on the host: the ruleset loads into a Linux kernel with the
-static `nft` (arm64 container), `oos-conf` and `oos-mac` under busybox, the address lists of oos-ui (`netacl` tests).
+static `nft` (arm64 container), `oos-conf` and `oos-mac` under busybox, the address lists of oos-ui (`netacl` tests),
+the Allowed row: shown, refused, written and read back (`ui::remote::tests`, `sysconf::tests`).
 
 ## 7. SSH
 
@@ -307,7 +322,8 @@ after the firewall, in the background, and oos-ui restarts or stops it when a se
 
 **When it listens.** Only with `remote.ssh = on`, a non-empty `net.allow` (section 6) and the firewall table loaded.
 Without `net.allow`, or when `nft` refused the ruleset, port 22 stays closed (state `off: needs net.allow`,
-`off: firewall not loaded`), so SSH never opens to a network that was not named. Built-in default: off. The DHO804 unit
+`off: firewall not loaded`), so SSH never opens to a network that was not named. Remote services > Allowed sets the
+list (section 6); it applies, and SSH can listen, from the next start. Built-in default: off. The DHO804 unit
 image sets `remote.ssh = on` together with its `net.allow`, so that unit has SSH from its first start: on a LAN that is
 already limited to one prefix, a random password is an acceptable first login, and it is what lets `ssh-copy-id` add the
 first key.

@@ -1108,6 +1108,19 @@ pub struct Status {
 
 static STATUS: std::sync::Mutex<Status> = std::sync::Mutex::new(Status { state: State::Off, name: String::new() });
 
+/// The netmask of the interface that has the IPv4 address `a` (up, running, multicast), None when none has it.
+pub fn netmask_of(a: Ipv4Addr) -> Option<Ipv4Addr> {
+    #[cfg(unix)]
+    {
+        net::interfaces(None).into_iter().find_map(|i| i.v4.filter(|v| v.0 == a).map(|v| v.1))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = a;
+        None
+    }
+}
+
 /// The responder's state, for the page (Off until it runs).
 pub fn status() -> Status {
     STATUS.lock().map(|s| s.clone()).unwrap_or_default()

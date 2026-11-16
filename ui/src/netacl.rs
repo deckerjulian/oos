@@ -8,7 +8,7 @@
 //! (loopback) is always allowed. `onlink6` stands for the IPv6 prefixes on the link (from the router's advertisements,
 //! `net6::PREFIX_FILE`), which change with the provider.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 
 /// The image default of the system settings (an image built for one unit, boot/build-dev-image.sh `OOS_UNIT`).
@@ -23,6 +23,9 @@ pub struct Acl {
 
 /// The `net.allow` word for the IPv6 prefixes on the link (`oos-firewall` has it too).
 pub const ONLINK6: &str = "onlink6";
+
+/// Longest `net.allow` taken from the keyboard (System > Network > Remote services > Allowed).
+pub const ALLOW_MAX: usize = 160;
 
 /// The value of `key` in the text of a `key = value` file: the last line wins, `#` starts a comment.
 pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
@@ -126,6 +129,37 @@ impl Acl {
     }
 }
 
+/// A `net.allow` value from the screen in the form it is written: the prefixes of `Acl::parse` with the host bits
+/// cleared, a bare address as `/32` or `/128`, `onlink6` last; empty for an empty entry. Err names the words not
+/// taken: what `parse` leaves out, and an IPv6 address written with dotted IPv4, which `oos-firewall` leaves out. A list
+/// with such a word is refused whole, so a typo never reaches the firewall (which would close or open the wrong way).
+pub fn canonical(s: &str) -> Result<String, String> {
+    let bad: Vec<&str> = s
+        .split([' ', ',', '\t'])
+        .filter(|w| !w.is_empty())
+        .filter(|w| {
+            let (a, bad) = Acl::parse(w);
+            let t = a.to_string();
+            !bad.is_empty() || (t.contains(':') && t.contains('.'))
+        })
+        .collect();
+    if !bad.is_empty() {
+        return Err(format!("Not an address prefix: {}", bad.join(" ")));
+    }
+    Ok(Acl::parse(s).0.to_string())
+}
+
+/// The network of the scope's IPv4 address `a` with its netmask, `192.168.1.0/24`: what Allowed offers. None for a
+/// mask that is no prefix or is empty (that would be everyone) and for loopback or no address.
+pub fn lan_of(a: Ipv4Addr, mask: Ipv4Addr) -> Option<String> {
+    let m = u32::from(mask);
+    let n = m.leading_ones();
+    if n == 0 || m.count_ones() != n || a.is_loopback() || a.is_unspecified() {
+        return None;
+    }
+    Some(format!("{}/{}", masked(IpAddr::V4(a), n as u8), n))
+}
+
 impl std::fmt::Display for Acl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut v: Vec<String> = self.nets.iter().map(|(a, n)| format!("{}/{}", a, n)).collect();
@@ -211,5 +245,32 @@ mod tests {
         let (a, _) = Acl::from_texts(Some(image), Some("net.allow =\n"));
         assert!(a.is_open());
         assert_eq!(value("a = 1\n#a = 2\na = 3 # c\n", "a"), Some("3"));
+    }
+
+    // Break it catches: an entry from the screen stored with a word the firewall leaves out (a list of which nothing
+    // is usable closes the scope), or stored with host bits that nft may refuse
+    #[test]
+    fn an_entry_from_the_screen() {
+        assert_eq!(canonical("").as_deref(), Ok(""));
+        assert_eq!(canonical("  ").as_deref(), Ok(""));
+        assert_eq!(canonical("192.0.2.7/24, onlink6 fd00::1:0/8 10.1.2.3").as_deref(), Ok("192.0.2.0/24 fd00::/8 10.1.2.3/32 onlink6"));
+        assert_eq!(canonical("169.254.0.0/16").as_deref(), Ok("169.254.0.0/16"));
+        for (s, bad) in [("192.0.2.0/33", "192.0.2.0/33"), ("192.0.2.0/24 x", "x"), ("300.1.1.1", "300.1.1.1"), ("::ffff:192.0.2.1", "::ffff:192.0.2.1"), ("::ffff:c000:201/128", "::ffff:c000:201/128"), ("fe80::1%eth0", "fe80::1%eth0"), ("010.0.0.1", "010.0.0.1"), ("192.0.2.0/24;reboot", "192.0.2.0/24;reboot")] {
+            assert_eq!(canonical(s), Err(format!("Not an address prefix: {}", bad)), "{}", s);
+        }
+        // what is written reads back as the same list, and the firewall's checks take every word of it
+        let c = canonical("192.0.2.200/25 2001:db8::/32 onlink6").unwrap();
+        assert_eq!(Acl::parse(&c), (Acl::parse("192.0.2.128/25 2001:db8::/32 onlink6").0, Vec::new()));
+    }
+
+    #[test]
+    fn the_network_the_scope_is_on() {
+        let v4 = |s: &str| s.parse::<Ipv4Addr>().unwrap();
+        assert_eq!(lan_of(v4("192.168.1.148"), v4("255.255.255.0")).as_deref(), Some("192.168.1.0/24"));
+        assert_eq!(lan_of(v4("169.254.7.9"), v4("255.255.0.0")).as_deref(), Some("169.254.0.0/16"));
+        assert_eq!(lan_of(v4("10.1.2.3"), v4("255.255.255.255")).as_deref(), Some("10.1.2.3/32"));
+        assert_eq!(lan_of(v4("10.1.2.3"), v4("0.0.0.0")), None, "no mask: that would be everyone");
+        assert_eq!(lan_of(v4("10.1.2.3"), v4("255.0.255.0")), None);
+        assert_eq!(lan_of(v4("127.0.0.1"), v4("255.0.0.0")), None);
     }
 }

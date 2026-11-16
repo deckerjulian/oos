@@ -181,6 +181,8 @@ impl Ui {
             eprintln!("oos-ui: {}: decoders.off leaves out every decoder, {} stays", path.display(), name);
         }
         self.sys_path = Some(path);
+        // what rcS built the firewall from, and oos-ui its address list (main.rs): in force until the next start
+        self.remote.allow_start = self.sys.net_allow();
         self.net_name_init();
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();
         self.apply_tz();
@@ -554,6 +556,7 @@ impl Ui {
             }
             Item::TimeZone if o == DHCP_LABEL => self.set_tz(sysconf::DHCP),
             Item::RemName => self.remote_pick(k),
+            Item::RemAllow => self.allow_pick(k),
             Item::NtpServer => {
                 if let Some(s) = SERVERS.iter().find(|s| server_label(s) == *o) {
                     self.set_server(s);

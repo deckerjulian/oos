@@ -10,9 +10,24 @@
 //! The last row: the mDNS responder (`crate::mdns`, on by default: it answers on the local link only) next to the
 //! scope's name on the network, `dho924s-204527.local` (`net.name`). The name is also the kernel's host name, which
 //! the DHCP client sends (rcS, oos-wlan).
+//!
+//! Below it: Allowed, the address prefixes that may reach the scope (`net.allow`, docs/network.md 6), and Firewall,
+//! whether that list is in force. rcS builds the firewall from the key and oos-ui its address list (`crate::netacl`),
+//! both at the start only, so a change applies at the next start. An entry is checked by `netacl::canonical` and
+//! refused whole when a word is not a prefix: nothing is written then.
 
 use super::*;
-use crate::mdns;
+use crate::{mdns, netacl};
+
+/// Remote services > Allowed.
+#[derive(Default)]
+pub(super) struct RemoteUi {
+    /// `net.allow` at the start (`load_system`): what the firewall and oos-ui use until the next one
+    pub allow_start: String,
+    /// the network the scope is on, `192.168.1.0/24` (from the address in the top bar and its netmask), read while the
+    /// page is open
+    pub lan: Option<String>,
+}
 
 const OTHER: &str = "Other ...";
 /// Characters of a name in the picker.
@@ -35,18 +50,20 @@ impl Ui {
             Item::RemTelnet,
             Item::RemSsh,
             Item::RemMdns,
+            Item::RemAllow,
             Item::NetWeb,
             Item::RemScpiInfo,
             Item::RemVxiInfo,
             Item::RemTelnetInfo,
             Item::Open(MenuId::Ssh),
             Item::RemName,
+            Item::RemFirewall,
         ]
     }
 
     pub(super) fn remote_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemTelnet | Item::RemSsh | Item::RemMdns | Item::RemName => Some(Kind::Choice),
+            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemTelnet | Item::RemSsh | Item::RemMdns | Item::RemName | Item::RemAllow => Some(Kind::Choice),
             _ => Self::ssh_kind(it),
         }
     }
@@ -161,9 +178,97 @@ impl Ui {
         true
     }
 
+    /// The network the scope is on, for the picker and the keyboard of Allowed (`RemoteUi::lan`).
+    pub(super) fn allow_lan_read(&mut self) {
+        self.remote.lan = self.net.parse().ok().and_then(|a| mdns::netmask_of(a).and_then(|m| netacl::lan_of(a, m)));
+    }
+
+    /// The lines of Allowed's picker: the list in use (stays), the network the scope is on, Other on the keyboard.
+    /// The value each one sets, None for the keyboard.
+    fn allow_choices(&self) -> Vec<(String, Option<String>)> {
+        let now = self.sys.net_allow();
+        let mut v = Vec::new();
+        if !now.is_empty() {
+            v.push((short_name(&now), Some(now.clone())));
+        }
+        if let Some(l) = self.remote.lan.as_ref().filter(|l| **l != now) {
+            v.push((short_name(l), Some(l.clone())));
+        }
+        v.push((OTHER.into(), None));
+        v
+    }
+
+    /// A line of Allowed's picker.
+    pub(super) fn allow_pick(&mut self, k: usize) {
+        match self.allow_choices().get(k) {
+            Some((_, Some(v))) if *v != self.sys.net_allow() => self.set_allow(&v.clone()),
+            Some((_, None)) => {
+                let now = self.sys.net_allow();
+                let start = if now.is_empty() { self.remote.lan.clone().unwrap_or_default() } else { now };
+                self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::NetAllow, &start));
+            }
+            _ => {}
+        }
+    }
+
+    /// OK on the keyboard of Allowed. False: refused, the keyboard stays open to correct it and nothing is written.
+    pub(super) fn allow_osk_done(&mut self, text: &str) -> bool {
+        match netacl::canonical(text) {
+            Ok(v) => {
+                self.set_allow(&v);
+                true
+            }
+            Err(m) => {
+                self.toast(&m);
+                false
+            }
+        }
+    }
+
+    /// Writes `net.allow` (a value `netacl::canonical` gave; empty: the settings' line goes, the image default applies).
+    fn set_allow(&mut self, v: &str) {
+        self.sys.set_net_allow((!v.is_empty()).then_some(v));
+        self.sys_save();
+        let now = self.sys.net_allow();
+        let what = if now.is_empty() { "No address list: everyone".to_string() } else { format!("Allowed: {}", now) };
+        let when = if now == self.remote.allow_start { "" } else { ", from the next start" };
+        self.toast(&format!("{}{}", what, when));
+    }
+
+    /// Allowed's row: the list in use, cut to the room of its row.
+    fn allow_value(&self) -> String {
+        let now = self.sys.net_allow();
+        if now.is_empty() {
+            return "everyone".into();
+        }
+        let room = self.dlg_layout().and_then(|d| d.rows.iter().find(|r| r.it == Item::RemAllow).map(|r| Self::value_parts(r.ctrl).1.w - 44));
+        let f = &self.fonts().mb;
+        let Some(room) = room.filter(|&w| f.width(&now) > w) else { return now };
+        let mut c: Vec<char> = now.chars().collect();
+        while c.pop().is_some() {
+            let t = format!("{}\u{2026}", c.iter().collect::<String>());
+            if f.width(&t) <= room {
+                return t;
+            }
+        }
+        "\u{2026}".into()
+    }
+
+    /// Firewall's row: the list of the start in force, or a change that waits for the next start.
+    fn firewall_value(&self) -> String {
+        let now = self.sys.net_allow();
+        if now != self.remote.allow_start {
+            "from the next start".into()
+        } else if now.is_empty() {
+            "off: everyone".into()
+        } else {
+            "on".into()
+        }
+    }
+
     /// Rows that are only text.
     pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo) || Self::ssh_text(it)
+        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo | Item::RemFirewall) || Self::ssh_text(it)
     }
 
     pub(super) fn remote_label(it: Item) -> Option<&'static str> {
@@ -176,6 +281,8 @@ impl Ui {
             Item::RemSsh => "SSH",
             Item::RemMdns => "mDNS",
             Item::RemName => "Name",
+            Item::RemAllow => "Allowed",
+            Item::RemFirewall => "Firewall",
             Item::NetWeb => "Address",
             Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo => "Port",
             _ => return Self::ssh_label(it),
@@ -194,6 +301,8 @@ impl Ui {
             Item::RemSsh => onoff(s.remote_ssh),
             Item::RemMdns => onoff(s.remote_mdns),
             Item::RemName => self.name_value(),
+            Item::RemAllow => self.allow_value(),
+            Item::RemFirewall => self.firewall_value(),
             Item::NetWeb if !s.remote_web => "off".into(),
             Item::NetWeb if self.net.is_empty() => "not connected".into(),
             Item::NetWeb => format!("http://{}:8080", self.net),
@@ -210,6 +319,7 @@ impl Ui {
         }
         match it {
             Item::RemName => Some(self.name_options()),
+            Item::RemAllow => Some(self.allow_choices().into_iter().map(|c| c.0).collect()),
             _ => Self::remote_kind(it).filter(|k| *k == Kind::Choice).map(|_| vec!["Off".into(), "On".into()]),
         }
     }
@@ -223,8 +333,8 @@ impl Ui {
             Item::RemTelnet => (&mut s.remote_telnet, "telnet"),
             Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
-            // the name changes in its picker only
-            Item::RemName => return true,
+            // the name and the address list change in their pickers only
+            Item::RemName | Item::RemAllow => return true,
             _ => return self.ssh_adjust(it, d),
         };
         *on = !*on;
@@ -250,8 +360,9 @@ mod tests {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of six: each switch has its address, port, settings or name on the same row
-        for (sw, info) in [(Item::RemWeb, Item::NetWeb), (Item::RemScpi, Item::RemScpiInfo), (Item::RemVxi, Item::RemVxiInfo), (Item::RemTelnet, Item::RemTelnetInfo), (Item::RemSsh, Item::Open(MenuId::Ssh)), (Item::RemMdns, Item::RemName)] {
+        // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
+        // its firewall
+        for (sw, info) in [(Item::RemWeb, Item::NetWeb), (Item::RemScpi, Item::RemScpiInfo), (Item::RemVxi, Item::RemVxiInfo), (Item::RemTelnet, Item::RemTelnetInfo), (Item::RemSsh, Item::Open(MenuId::Ssh)), (Item::RemMdns, Item::RemName), (Item::RemAllow, Item::RemFirewall)] {
             let a = d.rows.iter().find(|r| r.it == sw).unwrap().ctrl;
             let b = d.rows.iter().find(|r| r.it == info).unwrap().ctrl;
             assert!(a.y == b.y && a.x < b.x, "{:?} {:?}", sw, info);
@@ -317,5 +428,72 @@ mod tests {
         // the knob does not change the name
         u.adjust(Item::RemName, 1);
         assert_eq!(u.sys.net_name, d);
+    }
+
+    // Break it catches: no way to set net.allow on the scope (SSH says "off: needs net.allow" and nothing on the
+    // screen fixes it); a typo written to the file (the firewall would close the scope or leave a word out); a change
+    // shown as in force before the start that loads it
+    #[test]
+    fn the_address_list_from_the_screen() {
+        let dir = std::env::temp_dir().join(format!("oos-ui-allow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("system.conf");
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.sys_path = Some(p.clone());
+        u.open_menu(MenuId::Remote);
+        // the row is there, with no list: everyone, no firewall
+        assert!(u.dlg_layout().unwrap().rows.iter().any(|r| r.it == Item::RemAllow));
+        assert_eq!((u.value(Item::RemAllow).as_str(), u.value(Item::RemFirewall).as_str()), ("everyone", "off: everyone"));
+        // the network the scope is on is offered and starts the keyboard
+        u.remote.lan = Some("192.0.2.0/24".into());
+        assert_eq!(u.options(Item::RemAllow), vec!["192.0.2.0/24".to_string(), OTHER.into()]);
+        u.open_picker(Item::RemAllow);
+        u.activate(Item::PickOpt(1));
+        assert_eq!(u.wlan.osk.as_ref().map(|o| o.text.clone()), Some("192.0.2.0/24".into()));
+        // a typo is refused with a message, the keyboard stays open and nothing is written
+        u.wlan.osk.as_mut().unwrap().text = "192.0.2.0/24 192.168.1.0/33".into();
+        u.osk_ok();
+        assert!(u.wlan.osk.is_some(), "a bad entry keeps the keyboard");
+        assert_eq!(u.toast.as_ref().unwrap().0, "Not an address prefix: 192.168.1.0/33");
+        assert_eq!(u.sys.net_allow(), "");
+        assert!(!p.exists(), "nothing written");
+        // a good one is written in its plain form, and waits for the next start
+        u.wlan.osk.as_mut().unwrap().text = "192.0.2.77/24, fd00::/8".into();
+        u.osk_ok();
+        assert!(u.wlan.osk.is_none());
+        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24 fd00::/8, from the next start");
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(netacl::value(&text, "net.allow"), Some("192.0.2.0/24 fd00::/8"));
+        let (acl, bad) = netacl::Acl::from_texts(None, Some(&text));
+        assert!(bad.is_empty() && acl.permits("192.0.2.9".parse().unwrap()) && !acl.permits("198.51.100.1".parse().unwrap()));
+        assert_eq!(crate::sysconf::SysConf::load(&p).net_allow(), "192.0.2.0/24 fd00::/8");
+        assert_eq!(u.value(Item::RemAllow), "192.0.2.0/24 fd00::/8");
+        assert_eq!(u.value(Item::RemFirewall), "from the next start");
+        // after a start with it: in force
+        let mut v = Ui::new(Source::Demo { t: 0.0 });
+        v.sys = crate::sysconf::SysConf::load(&p);
+        v.sys_path = Some(p.clone());
+        // as `load_system` takes it at the start (that also sets the backlight, which a host test must not)
+        v.remote.allow_start = v.sys.net_allow();
+        assert_eq!(v.value(Item::RemFirewall), "on");
+        // the list in use (cut as a name is) and the network are offered; the network sets the list from the picker
+        v.remote.lan = Some("198.51.100.0/24".into());
+        assert_eq!(v.options(Item::RemAllow), vec!["192.0.2.0/24 fd00\u{2026}".to_string(), "198.51.100.0/24".into(), OTHER.into()]);
+        v.open_menu(MenuId::Remote);
+        v.open_picker(Item::RemAllow);
+        v.activate(Item::PickOpt(1));
+        assert_eq!(v.sys.net_allow(), "198.51.100.0/24");
+        // the knob does not change it
+        v.adjust(Item::RemAllow, 1);
+        assert_eq!(v.sys.net_allow(), "198.51.100.0/24");
+        // an empty entry removes the line: no list (no image default on the host)
+        v.allow_pick(v.options(Item::RemAllow).len() - 1);
+        v.wlan.osk.as_mut().unwrap().text.clear();
+        v.osk_ok();
+        assert!(v.wlan.osk.is_none());
+        assert_eq!(v.toast.as_ref().unwrap().0, "No address list: everyone, from the next start");
+        assert_eq!(netacl::value(&std::fs::read_to_string(&p).unwrap(), "net.allow"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

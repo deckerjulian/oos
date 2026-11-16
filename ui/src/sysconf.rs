@@ -16,6 +16,7 @@
 //! net.name = dho924s-204527 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
 //! backlight = 100            # Display > Backlight, percent (10..100)
+//! net.allow = 192.168.1.0/24 # System > Network > Remote services > Allowed (netacl.rs; rcS reads it, docs/network.md 6)
 //! ```
 
 use crate::clock::Tz;
@@ -79,7 +80,10 @@ pub struct SysConf {
     /// the decoders left out (protocol keys, `decoders.off`); nothing is left out by default
     pub features_off: Vec<String>,
     pub decoders_off: Vec<String>,
-    /// lines this version does not know
+    /// `net.allow` of the image defaults (`IMAGE_PATH`): in force while the settings file has no line of its own; never
+    /// written to the settings file (`net_allow`)
+    image_net_allow: Option<String>,
+    /// lines this version does not know, and the `net.allow` line (kept as it was written, `set_net_allow`)
     extra: Vec<String>,
 }
 
@@ -103,6 +107,7 @@ impl Default for SysConf {
             backlight: 100,
             features_off: Vec::new(),
             decoders_off: Vec::new(),
+            image_net_allow: None,
             extra: Vec::new(),
         }
     }
@@ -288,7 +293,24 @@ impl SysConf {
     pub fn image_defaults(image: &str) -> (SysConf, Vec<String>) {
         let (mut c, bad) = SysConf::parse(image);
         c.extra.clear();
+        c.image_net_allow = crate::netacl::value(image, "net.allow").map(str::to_string);
         (c, bad)
+    }
+
+    /// `net.allow` as rcS and `netacl` read it: the settings file's line (the last one, also an empty one), else the
+    /// image default, else empty (no list).
+    pub fn net_allow(&self) -> String {
+        let own = self.extra.iter().filter_map(|l| crate::netacl::value(l, "net.allow")).last();
+        own.or(self.image_net_allow.as_deref()).unwrap_or("").to_string()
+    }
+
+    /// Sets the settings file's `net.allow` line (a value `netacl::canonical` took); None removes it, so the image
+    /// default applies again.
+    pub fn set_net_allow(&mut self, v: Option<&str>) {
+        self.extra.retain(|l| crate::netacl::value(l, "net.allow").is_none());
+        if let Some(v) = v {
+            self.extra.push(format!("net.allow = {}", v));
+        }
     }
 
     /// From a file over the image defaults (`IMAGE_PATH`, none on most images); a missing file gives the defaults.
@@ -546,5 +568,30 @@ mod tests {
         let (c, bad) = SysConf::parse("remote.telnet = off\n");
         assert!(bad.is_empty() && !c.remote_telnet && !c.remote_ssh);
         assert!(SysConf::default().remote_telnet);
+    }
+
+    // Break it catches: Remote services > Allowed showing or writing another list than rcS and netacl use (the image's
+    // copied into the settings, an empty line not winning, a second line left behind)
+    #[test]
+    fn net_allow_from_the_settings_or_the_image() {
+        assert_eq!(SysConf::default().net_allow(), "");
+        let (base, _) = SysConf::image_defaults("net.allow = 192.0.2.0/24\n");
+        assert_eq!(base.net_allow(), "192.0.2.0/24");
+        assert!(!base.text().contains("net.allow"), "the image's list stays in the image");
+        let (mut c, bad) = SysConf::parse_over(base.clone(), "ntp = on\nnet.allow = 10.0.0.0/8 # lab\n");
+        assert!(bad.is_empty());
+        assert_eq!(c.net_allow(), "10.0.0.0/8");
+        assert!(c.text().contains("\nnet.allow = 10.0.0.0/8 # lab\n"), "a line by hand stays as it was");
+        c.set_net_allow(Some("192.168.1.0/24"));
+        assert_eq!(c.net_allow(), "192.168.1.0/24");
+        assert_eq!(c.text().matches("net.allow").count(), 1);
+        let (back, _) = SysConf::parse_over(base.clone(), &c.text());
+        assert_eq!(back.net_allow(), "192.168.1.0/24");
+        assert_eq!(crate::netacl::value(&c.text(), "net.allow"), Some("192.168.1.0/24"));
+        c.set_net_allow(Some(""));
+        assert_eq!(c.net_allow(), "", "an empty line wins over the image, as in oos-conf");
+        c.set_net_allow(None);
+        assert_eq!(c.net_allow(), "192.0.2.0/24");
+        assert!(!c.text().contains("net.allow"));
     }
 }

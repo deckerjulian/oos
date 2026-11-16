@@ -428,8 +428,9 @@ pub(super) enum OskFor {
     NtpServer,
     Tz,
     DateTime,
-    /// System > Network > Remote services > Name (remote.rs)
+    /// System > Network > Remote services > Name and Allowed (remote.rs)
     NetName,
+    NetAllow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -557,6 +558,7 @@ impl Osk {
             OskFor::Tz => crate::clock::TZ_MAX,
             OskFor::DateTime => 19,
             OskFor::NetName => crate::mdns::NAME_MAX,
+            OskFor::NetAllow => crate::netacl::ALLOW_MAX,
         }
     }
 
@@ -679,6 +681,12 @@ impl Ui {
             OskFor::NetName => {
                 let t = o.text.clone();
                 if self.remote_osk_done(&t) {
+                    self.wlan.osk = None;
+                }
+            }
+            OskFor::NetAllow => {
+                let t = o.text.clone();
+                if self.allow_osk_done(&t) {
                     self.wlan.osk = None;
                 }
             }
@@ -807,6 +815,7 @@ impl Ui {
             OskFor::Tz => "Time zone, POSIX: CET-1CEST,M3.5.0,M10.5.0/3 or <+04>-4 (4 hours east)".to_string(),
             OskFor::DateTime => "Local date and time: 2026-11-11 14:30".to_string(),
             OskFor::NetName => "Name on the network: letters, digits and - (name.local, host name)".to_string(),
+            OskFor::NetAllow => "Allowed prefixes: 192.168.1.0/24 fd00::/8 onlink6 (empty: no list)".to_string(),
             OskFor::Pass(s) if self.wlan.nets.iter().any(|n| n.ssid == *s) => format!("Password for {}", wlan::name(s)),
             OskFor::Pass(s) => format!("Password for {} (empty: open network)", wlan::name(s)),
         };

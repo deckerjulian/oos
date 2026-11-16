@@ -816,6 +816,9 @@ enum Item {
     /// the mDNS switch, and the scope's name on the network (`<name>.local`, a picker with Other on the keyboard)
     RemMdns,
     RemName,
+    /// who may reach the scope (`net.allow`, a picker with Other on the keyboard), and whether that is in force
+    RemAllow,
+    RemFirewall,
     /// System > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
     /// Display > Views (ui/views.rs)
@@ -1370,6 +1373,8 @@ pub struct Ui {
     /// NTP worker and schedule (ui/time.rs)
     ntp: time::NtpUi,
     ssh: ssh::SshUi,
+    /// System > Network > Remote services > Allowed (ui/remote.rs)
+    remote: remote::RemoteUi,
     /// the system clock was set in this boot (NTP or by hand): file names carry the date
     pub clock_known: bool,
     pub t_step: f32,
@@ -1680,6 +1685,7 @@ impl Ui {
             sys_path: None,
             ntp: Default::default(),
             ssh: Default::default(),
+            remote: Default::default(),
             clock_known: false,
             t_step: 0.0,
             t_acq: 0.0,
@@ -8001,7 +8007,7 @@ impl Ui {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName)) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName | Item::RemAllow)) => {
                     let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
                     self.close_picker();
                     self.time_pick(it, k);
@@ -8607,8 +8613,9 @@ impl Ui {
     /// Control of a menu row whose control rectangle is `w` px wide: segmented buttons when all options fit, a
     /// picker (- value +, the value opens the list of all options) for longer option lists, else - value +.
     fn ctl(&self, it: Item, w: i32) -> Ctl {
-        // - and + step, the value opens the keypad (`open_picker`); the name's value opens its list even when short
-        if matches!(it, Item::AfgFreq | Item::RemName) {
+        // - and + step, the value opens the keypad (`open_picker`); the name's and the address list's value open their
+        // list even when short
+        if matches!(it, Item::AfgFreq | Item::RemName | Item::RemAllow) {
             return Ctl::Pick;
         }
         if let Item::RefShow(_) = it {

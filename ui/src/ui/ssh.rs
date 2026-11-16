@@ -37,12 +37,13 @@ impl Ui {
     }
 
     /// Reads the keys, the state and the host key again once a second while one of the two pages is open: the script
-    /// changes the state, `ssh-copy-id` the keys.
+    /// changes the state, `ssh-copy-id` the keys. The network the scope is on for Allowed too (ui/remote.rs).
     pub(super) fn ssh_poll(&mut self) {
         let open = self.menu_open && matches!(self.menu_root(), MenuId::Ssh | MenuId::Remote);
         if !open || self.ssh.read_at.is_some_and(|t| self.now - t < 1.0) {
             return;
         }
+        self.allow_lan_read();
         self.ssh_read();
     }
 

@@ -3,7 +3,8 @@
 The SSH server, its switches and its page are described in [network.md](network.md) section 7: Dropbear started by
 `/bin/oos-ssh`, off by default (`remote.ssh`), listening only with `net.allow` and the firewall loaded, root with the
 scope's own password or a trusted key, System > Network > Remote services > SSH settings. telnet stays beside it
-(`remote.telnet`, on by default); switch it off once SSH is set up.
+(`remote.telnet`, on by default); switch it off once SSH is set up. `net.allow` is set on the same page, **Allowed**
+(network.md section 6); it applies from the next start.
 
 This page is about getting trusted keys onto a scope without the password.
 
