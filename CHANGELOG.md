@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-Fixes from a review of 0.1.13. Tested on the host; not yet run on a unit.
+Fixes from a review of 0.1.13, and the forum's report on it. All of it is tested on the host. Marked "(unit)" where
+it also ran on a DHO924S (2026-11-16).
+
+Added:
+
+- System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
+  every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
+  stored. The list takes effect at the next start; the Firewall row says when it is in force.
 
 Changed:
 
@@ -15,7 +22,7 @@ Fixed:
 - A typo in `net.allow` (`192.168.1.0/`, `2001:db8:::1`) made nft refuse the whole firewall, and the scope came up
   without one while telnet listened. Such entries are left out and logged; a ruleset nft refuses anyway closes the
   scope to everything but loopback.
-- STOP: the stopped record is no longer counted twice in the statistics, trend and catalog, and a change of view while
+- STOP (unit): the stopped record is no longer counted twice in the statistics, trend and catalog, and a change of view while
   stopped adds nothing. Clear while stopped keeps the hardware stopped (it went on acquiring and overwrote the stored
   record). RUN after STOP starts with a frame from after the RUN press.
 - Deep records read as min/max pairs: Mean, RMS, Std dev and AC RMS statistics no longer count pair values while the
@@ -27,6 +34,22 @@ Fixed:
   is left (Live, Record = With live, a channel key, a channel as trigger source, Sources). A set-up recalled during a
   session ends it and stays. Leaving the Bus trigger after a recall keeps the recalled decoder on. In Live, switching
   a channel on from Sources leaves the trigger and Run/Stop alone.
+- Issue #5, stray traces (unit): frame 0 of a batch is left out in Batch draw mode too. Frame 1 is the first
+  trigger after the arm, and now and then it holds a piece of older memory. With an edge trigger it is left out
+  when its edge is not at the trigger point. SINGLE returned no frame from before the arm in 40 tries.
+- `:REF:LOAD "/proc/kmsg"` froze the screen for good (unit). Files under /proc, /sys and /dev are refused now. So is
+  any file larger than the 128 MiB import limit, before it is read.
+- Waveform import (unit for the first two):
+  - A CSV with more columns than reference slots is refused while it is read. It used to take gigabytes first.
+  - An upload over the web page is parsed beside the frame loop: 32 MB took 6 s, and SCPI answered within 43 ms
+    meanwhile.
+  - A frame file (`frame-NNN.bin`) whose counts do not fit its size no longer crashes oos-ui.
+- Web remote: `/update` and `/mcp` from outside `net.allow` are refused at the request head, before the body is read.
+  Only one large body is read at a time.
+- HiSLIP (desktop): a tiny maximum message size no longer splits a reply into one message per byte.
+- The zoom window no longer overflows at extreme delays.
+- The console banner and the Network page said SSH takes a provisioned key only. It takes the password or a key.
+- With hardware segments recording, the DVM, the levels and the ADC core trim wait for the recording to end.
 - A `system.conf` that leaves out every decoder no longer crashes Decode > Protocol.
 - Measurements: line and switching ripple without the rail's DC level on records of partial cycles; double pulse
   I_L, td_on, tr, td_off, tf, di/dt, Ipeak - I_L and Qoss with a ramping load current; high time, low time and time
