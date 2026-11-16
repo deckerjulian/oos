@@ -56,7 +56,15 @@ run dmesg 'dmesg'
 run device-tree 'find /proc/device-tree/ -type f | sort | while read f; do
 	case ${f##*/} in
 	*mac-address*|*macaddr*|serial-number|*serial_number|*serialno*) echo "${f#/proc/device-tree} <left out>";;
-	*) if [ -z "$(tr -d "\040-\176\000" < "$f")" ] && [ -s "$f" ]; then echo "${f#/proc/device-tree} = \"$(tr "\000" "|" < "$f")\""; else echo "${f#/proc/device-tree} = <$(od -An -tx1 -v "$f" | tr -s " \n" " ")>"; fi;;
+	*) h=$(od -An -tx1 -v "$f" | tr -s " \n" " ")
+		# text only when it reads as strings: printable, ends with a NUL, no NUL first and no two in a row (a number
+		# such as 0 or 0x20 would else look like text)
+		s=x
+		case "$h" in
+		" 00"*|*" 00 00"*|" ") ;;
+		*" 00 ") s=$(tr -d "\040-\176\000" < "$f") ;;
+		esac
+		if [ -z "$s" ]; then echo "${f#/proc/device-tree} = \"$(tr "\000" "|" < "$f")\""; else echo "${f#/proc/device-tree} = <$h>"; fi;;
 	esac
 done'
 # card layout: the partition table text and the headers of the boot partitions (magic, sizes)

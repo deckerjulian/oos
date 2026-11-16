@@ -120,6 +120,8 @@ measurement tests. From PR #8's second round (2026-11-15) the fixes are in, its 
 
 New:
 
+- `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
+  numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,
   Power, Motor drive, Power rails, Double pulse; under them Selected), right of them the sources and the groups, one
   open at a time, at the bottom the last tile tapped with what it measures. Basic now holds all 60 standard

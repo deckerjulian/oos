@@ -89,7 +89,8 @@ first 2 KiB of the boot partitions, and the names and sizes of the files under `
 What it does not: read any register, read the content of calibration, licence or key files, write anything outside
 its own folder (it mounts debugfs, a pseudo filesystem that is gone after the next start). Device tree properties
 named after a MAC address or serial number are left out; on the PC, the serial numbers it finds in the properties and
-the command line and every MAC address are replaced. Look through the files before you share them anyway.
+the command line, the SoC's serial number (`Serial` in `/proc/cpuinfo`) and every MAC address are replaced. Look
+through the files before you share them anyway.
 
 The result is `platform-probe-<model>-<date>.tar.gz`. Attach it to an issue on GitHub.
 

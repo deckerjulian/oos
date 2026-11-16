@@ -7,8 +7,8 @@
 #   platform-probe.sh <scope-ip>[:port]
 #
 # It copies tools/platform-probe/probe.sh to /data/local/tmp on the scope, runs it there, fetches the result and
-# removes both from the scope. probe.sh only reads (see its header). On the PC the serial number and MAC addresses
-# are replaced before the archive is made; look through the files before you share them anyway.
+# removes both from the scope. probe.sh only reads (see its header). On the PC the serial numbers (the scope's and the
+# SoC's) and MAC addresses are replaced before the archive is made; look through the files before you share them anyway.
 #
 # Result: platform-probe-<model>-<date>.tar.gz in the current directory.
 set -eu
@@ -36,6 +36,8 @@ d="$tmp/oos-probe"
 {
 	grep -i 'serial' "$d/getprop.txt" 2>/dev/null | sed -n 's/^\[[^]]*\]: \[\(.*\)\]$/\1/p'
 	tr ' ' '\n' < "$d/cmdline.txt" | grep -i 'serial' | sed 's/^[^=]*=//'
+	# the SoC's own serial number (efuse), as /proc/cpuinfo shows it
+	sed -n 's/^Serial[[:space:]]*:[[:space:]]*//p' "$d/cpu.txt" 2>/dev/null
 } | tr -d '\r' | awk 'length($0) >= 4' | sort -u > "$tmp/serials"
 for f in "$d"/*.txt; do
 	SERIALS="$tmp/serials" perl -0777 -pi -e '
