@@ -779,7 +779,6 @@ enum Item {
     About,
     SysInfo,
     Shot,
-    TouchLock,
     AuxOut,
     Stock,
     Update,
@@ -6018,7 +6017,7 @@ impl Ui {
             MenuId::Windows => self.win_items(),
             MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
             MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskInvert, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskFromRef, Item::MaskReset, Item::MaskClear, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::Offline, Item::QuickAct, Item::TouchLock, Item::AuxOut, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Features), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Utility => vec![Item::Offline, Item::QuickAct, Item::AuxOut, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Features), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -7121,7 +7120,6 @@ impl Ui {
             Item::About => "About OOS",
             Item::SysInfo => "System info",
             Item::Shot => "Screenshot",
-            Item::TouchLock => "Touch",
             Item::AuxOut => "AUX out",
             Item::Stock => "Back to stock",
             Item::Update => "Update",
@@ -7302,7 +7300,6 @@ impl Ui {
             Item::ZoneMode => if m.zones[self.zone_sel].inside { "Intersect".into() } else { "Not intersect".into() },
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::Histogram => format!("{:?}", m.hist),
-            Item::TouchLock => if m.touch_lock { "Locked".into() } else { "On".into() },
             Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
             Item::MathFam => self.math_fam.name().into(),
@@ -7739,7 +7736,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.grid).unwrap();
                 m.grid = all[cyc(i, 3, d)];
             }
-            Item::TouchLock => m.touch_lock = !m.touch_lock,
             Item::AuxOut => {
                 let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
@@ -8614,7 +8610,6 @@ impl Ui {
             Item::ZoneMode => &["Intersect", "Not intersect"],
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
-            Item::TouchLock => &["On", "Locked"],
             Item::AuxOut => return AuxOut::choices(board().mask_hw() || board().zone_hw()).iter().map(|a| a.name().to_string()).collect(),
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],

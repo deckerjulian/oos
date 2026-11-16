@@ -25,6 +25,8 @@ Changed:
   upper one; `:TRIGger:RUNT:UPPer/LOWer` refuses a threshold past the other with -224.
 - Choosing a decoder protocol on Live or a Replay keeps the sources, as on the hardware. Before, they moved to the
   demo's channels.
+- Touch lock has one place on the screen: the Touch lock action in the start menu, next to the other front-panel
+  keys (and the TOUCH key itself). Utility > Touch, the same switch a second time, is gone.
 
 Fixed:
 
