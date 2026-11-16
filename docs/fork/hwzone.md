@@ -62,7 +62,7 @@ the record is complete: pass goes on to completion, fail re-arms in hardware (14
 whole acquisition. 0x11a0 is a snapshot of qualified frames (latch 0x1190 bit 28, clear bit 30); its strobe likely
 needs the mask column strobe, so it depends on the column layout of `mask::Map` too.
 
-regmap reads the 29/s as most frames being rejected rather than lost in re-arm. Both are checked on the bench: with
+Assumed: at 29/s most frames are rejected rather than lost in re-arm. Both are checked on the bench: with
 the box on the trace, latch `frames` over 10 s in mode intersect, then not intersect. If the two counts do not add up
 to the triggers in that time, the table limits or columns are off (sweep with `hwmask.md` "Sweep of the mapping");
 if they add up and used/s stays low, the batch wait is the cause.

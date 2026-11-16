@@ -113,7 +113,7 @@ stall is open.
 
 ## Strobe sweep (round 8)
 
-regmap: the column strobe comes from a read-back state machine (0x4030 bit 20), not from the ADC stream. A 10-bit
+Assumed: the column strobe comes from a read-back state machine (0x4030 bit 20), not from the ADC stream. A 10-bit
 counter of strobes ends the window. With fewer than 1000 x count strobes per record the window never ends and the
 FSM waits in state 5: the stall. The strobe unit and the terminal count are open.
 
