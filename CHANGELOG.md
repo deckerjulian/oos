@@ -120,8 +120,8 @@ measurement tests. From PR #8's second round (2026-11-15) the fixes are in, its 
 
 New:
 
-- MHO900 (MHO934, MHO954, MHO984): a build of OOS's platform for its main board, without acquisition (docs/mho.md,
-  ADR 0028): screen, touch, network, web remote, SCPI and storage with the demo signal, nothing driven on the
+- MHO900 (MHO934, MHO954, MHO984, MHO98): a build of OOS's platform for its main board, without acquisition
+  (docs/mho.md, ADR 0028): screen, touch, network, web remote, SCPI and storage with the demo signal, nothing driven on the
   acquisition board. `OOS_BOARD=mho boot/build-dev-image.sh`; the Rust crates take the feature `board-mho`. Built from
   an owner's platform probe of an MHO954; not yet started on a unit.
 - MHO900 acquisition board described (docs/protocols/mho-acquisition.md, `hal/src/mho/acq.rs`, the MHO900 section of

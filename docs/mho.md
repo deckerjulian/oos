@@ -1,14 +1,17 @@
 # MHO900: the platform without acquisition
 
-An OOS build for the Rigol MHO900 (MHO934, MHO954, MHO984): the screen, touch, network, the web remote, SCPI, storage
-and updates of OOS on the MHO900's main board, with the **demo signal** in place of an acquisition. OOS has no code for
-the MHO900's acquisition board, and this build touches none of it: no FPGA, no front end, no clock, no generator, no
-front panel. The decision is [ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md); how a port is
-built in general is in [porting.md](porting.md).
+An OOS build for the Rigol MHO900 (MHO934, MHO954, MHO984, MHO98): the screen, touch, network, the web remote, SCPI,
+storage and updates of OOS on the MHO900's main board, with the **demo signal** in place of an acquisition. OOS has no
+code for the MHO900's acquisition board, and this build touches none of it: no FPGA, no front end, no clock, no
+generator, no front panel. The decision is
+[ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md); how a port is built in general is in
+[porting.md](porting.md).
 
 **Not yet verified on hardware: none of this has started on an MHO900.** It is built and checked on the host only. What
 it rests on is the platform probe of one MHO954 (firmware 00.01.00, hardware 3, GitHub issue #4), compared with the
-stock survey of a DHO924S.
+stock survey of a DHO924S. The probe of one MHO98 (the same firmware and hardware code) shows the same board: its device
+tree, I2C devices, GPIO use, partitions and drivers are the MHO954's; only the licence files under `/rigol/data`
+differ.
 
 ## What the MHO900 shares with the DHO800/DHO900
 

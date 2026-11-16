@@ -5,7 +5,8 @@
 //!
 //! How it is known: the card layout and the boot card from the platform probe of one MHO954 (firmware 00.01.00,
 //! hardware 3, GitHub issue #4): its `mtdparts` are those of the DHO800/DHO900 word for word. The models, channels and
-//! bandwidths from Rigol's data sheet. Sample rates and memory depths are **assumed** from the data sheet; OOS does not
+//! bandwidths from Rigol's data sheet; the MHO98's name from the `*IDN?` of one unit, whose platform probe (firmware
+//! 00.01.00, hardware 3) shows the MHO954's board and device tree. Sample rates and memory depths are **assumed** from the data sheet; OOS does not
 //! acquire on this board, they only shape the demo signal and the menus.
 
 use crate::model::{AfgMax, Caps, Limits};
@@ -13,19 +14,21 @@ use crate::target::{Layout, Target, Variant};
 
 const MHO900: &str = "MHO900";
 
-/// The MHO900 models: (name, rated bandwidth in MHz, channels). The MHO98 edition is left out: the name its vendor
-/// file gives is not known.
-pub const MODEL_TABLE: [(&str, u32, usize); 4] = [
+/// The MHO900 models: (name, rated bandwidth in MHz, channels). The MHO98 is the 1 GHz edition on the same board
+/// (its bandwidth from the data sheet, **assumed**).
+pub const MODEL_TABLE: [(&str, u32, usize); 5] = [
     ("MHO934", 350, 4),
     ("MHO954", 500, 4),
     ("MHO984", 800, 4),
+    ("MHO98", 1000, 4),
     // not a model: the family name alone (vendor.bin unreadable but the user forces the series)
     ("MHO900", 500, 4),
 ];
 
-/// One variant: the three models differ in their bandwidth licence only (data sheet). OOS has not run on any.
+/// One variant: the models differ in their bandwidth licence only (data sheet; the MHO98's platform probe shows the
+/// MHO954's board). OOS has not run on any.
 const VARIANTS: [Variant; 1] =
-    [Variant { name: "MHO900, 4 channels", models: &["MHO934", "MHO954", "MHO984"], ran_on: &[] }];
+    [Variant { name: "MHO900, 4 channels", models: &["MHO934", "MHO954", "MHO984", "MHO98"], ran_on: &[] }];
 
 /// Capabilities of a model name (case-insensitive). The generator is an option whose presence vendor.bin is not known
 /// to tell, and OOS does not drive it: none. The logic analyser port is there (PLA2216, data sheet), not driven either.
@@ -125,6 +128,7 @@ mod tests {
         }
         assert!(family("mho964"), "a name missing from the table still is one of the family");
         assert_eq!(caps("mho954").map(|c| c.rated_bw_mhz), Some(500));
+        assert_eq!(caps("MHO98").map(|c| (c.name, c.rated_bw_mhz)), Some(("MHO98".to_string(), 1000)));
     }
 
     /// The card layout of the MHO900 is that of the DHO800/DHO900 (the probe's mtdparts are the same); so is the
