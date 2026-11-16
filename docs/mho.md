@@ -99,6 +99,9 @@ read-out stream, the run and read-out registers of the SCU and the sample format
 32768, the DHO's interleave) are the DHO800/DHO900's. OOS's decode and its measurements therefore carry over once the
 board delivers frames.
 
+An owner can check these assumptions under the stock system with `tools/mho-check.py <scope-ip>` (read-only on the
+hardware; over SCPI it changes settings and sets them back) and attach the report to the GitHub issue.
+
 Still to be measured on a unit at the bench: the clock and ADC settings, the JESD204 link, the front ends and their
 select lines, the calibration files, the generator board and the front panel. Nothing of it is turned on before it
 has run on a unit (ADR 0010); `Target::acquisition` stays false until then.

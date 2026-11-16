@@ -173,7 +173,36 @@ the MHO900 board delivers frames (`Board`, ui/src/board/mho), the whole measurem
 What the board must deliver for it: the frames in volts with their sample interval, and the retained deep record for
 the full-record gate.
 
-## 7. Open at the bench
+## 7. Checking it on a unit
+
+`tools/mho-check.py <scope-ip>` checks on an MHO900 under its stock system what can be seen without writing to the
+hardware, and writes `mho-check-<model>-<date>.txt` to attach to the GitHub issue. It needs Python 3 and adb on the
+PC, network adb and SCPI (port 5555) on the scope; like `tools/platform-probe.sh` it restarts adbd as root.
+
+| check | what it looks at | expected |
+|---|---|---|
+| S1 to S3 | hardware code, `version.txt`, `/rigol/FPGA` | the image table of section 1, this unit's image present |
+| S4 | GPIO0_A1, GPIO0_A2, GPIO1_A0, GPIO3_D0 | outputs at 1 (not the supplies on code 1), the probe detect an input |
+| S5, S6 | modules and device nodes | the drivers and devices of section 1 and 2 |
+| S7, S8 | PCIe | `10ee:7024`, a BAR of 16 MiB |
+| S9 | clock tables | 136 TI register words each (only counted, not copied) |
+| S10, S11 | open devices, kernel log | recorded; FPGA DONE at 1 |
+| R1 to R4 | registers read once | the blocks answer; 0x3000 holds a finished bridge word (strobe 0, one ADC) |
+| R5 to R9 | 0x4008 with CH1, CH1+2, CH1 to 4, CH1 to 3 | channel mask 0x1, 0x3, 0xf; roll and scan off at 1 us/div |
+| R10 | 0x10e4 at 1k and 1M points | the record depth changes |
+| R11 | 0x40b0/0x40b4 while running | the time stamp moves |
+| R12 | 0x4008 at 200 ms/div | roll or scan bit set |
+| R13 | 0x4004, 0x4034, 0x4100 in STOP | recorded |
+| R14 | 0x6110 with the mask test on | the mask block follows |
+| R15 | waveform preamble in WORD at 0.1 and 1 V/div | 7500 codes per division, centre 32768 |
+
+Registers are read with the stock tool `/rigol/tools/pcie2dev`, always with exactly one address (it writes when it is
+given two), and only at addresses the stock system uses itself: a read of an address the FPGA does not decode could
+stop the processor. The settings it changes over SCPI are read first and set back at the end; `--no-scpi` leaves
+them alone and skips R5 to R15. Not covered: the read-out stream itself, the interleave of the words and the ADC
+bridge's writes (they would need the application stopped or writes to the hardware).
+
+## 8. Open at the bench
 
 - the LMK04821 settings and the ADC register set and masks (sections 1 and 4);
 - the JESD204 link values and how to see that it is up;

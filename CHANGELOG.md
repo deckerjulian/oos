@@ -128,6 +128,8 @@ New:
   docs/hardware/overview.html): start-up order, register blocks, the ADCs' SPI bridge, the read-out and sample format
   (the DHO's) and how measurements get their data. Taken from how the stock MHO900 system uses the board; not yet
   verified on hardware, nothing of it is driven.
+- `tools/mho-check.py`: an MHO900 owner checks these assumptions under the stock system (register reads through
+  the stock tool, settings changed over SCPI and set back) and attaches the report to the issue.
 - `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
   numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,
