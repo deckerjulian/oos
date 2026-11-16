@@ -617,7 +617,6 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wave::Source;
 
     #[test]
     fn failure_reasons_stay_short() {
@@ -678,7 +677,7 @@ mod tests {
     }
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.net_ifs = vec![("eth0".into(), "192.168.1.20".into())];
         u.eth_link = true;
         u
@@ -718,7 +717,7 @@ mod tests {
 
     #[test]
     fn dhcp_asks_the_server_of_the_lease_at_each_request() {
-        let dir = std::env::temp_dir().join(format!("oos-time-dhcp-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("time-dhcp");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut u = ui();
@@ -756,7 +755,7 @@ mod tests {
 
     #[test]
     fn dhcp_zone_from_the_lease_with_its_source_on_the_page() {
-        let dir = std::env::temp_dir().join(format!("oos-time-tz-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("time-tz");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut u = ui();
@@ -828,7 +827,7 @@ mod tests {
 
     #[test]
     fn file_names_carry_the_local_time_once_the_clock_is_set() {
-        let dir = std::env::temp_dir().join(format!("oos-time-names-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("time-names");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut u = ui();
@@ -848,7 +847,7 @@ mod tests {
 
     #[test]
     fn the_settings_go_to_the_file() {
-        let dir = std::env::temp_dir().join(format!("oos-time-conf-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("time-conf");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("system.conf");
         let _ = std::fs::remove_file(&p);

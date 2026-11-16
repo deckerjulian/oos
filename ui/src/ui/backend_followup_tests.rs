@@ -17,7 +17,7 @@ fn output(ui: &mut Ui, name: &str) {
 #[ignore = "Reads the user's actual D-drive Gen7 files; explicit local acceptance only"]
 fn actual_gen7_reference_math_zoom_and_automatic_eye_backend() {
     let started = Instant::now();
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     for name in ["Gen7_65GB_CP_Q6_n_Ch2.wfm", "Gen7_65GB_CP_Q6_p_Ch1.wfm"] {
         let bytes = std::fs::read(Path::new("D:/").join(name)).unwrap();
         ui.load_waveform_auto(&bytes, name).unwrap();
@@ -79,7 +79,7 @@ fn actual_gen7_reference_math_zoom_and_automatic_eye_backend() {
 #[test]
 #[ignore = "Reads the user's actual D-drive C-PHY trio; does not operate TekScope"]
 fn actual_cphy_reference_trio_decode_backend() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     for name in ["VA_SE.wfm", "VB_SE.wfm", "VC_SE.wfm"] {
         let bytes = std::fs::read(Path::new("D:/WFMs/WFMs").join(name)).unwrap();
         ui.load_waveform_auto(&bytes, name).unwrap();

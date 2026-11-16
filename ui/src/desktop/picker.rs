@@ -120,7 +120,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn fixture() -> PathBuf {
-        let directory = std::env::temp_dir().join(format!("oos-native-load-{}", std::process::id()));
+        let directory = crate::ui::testkit::Scratch::new("native-load");
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("clock.csv");
         std::fs::write(&path, b"Time (s),Volts\n0,-1\n1e-9,1\n2e-9,-1\n").unwrap();

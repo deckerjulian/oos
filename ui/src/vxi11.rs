@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn empty_query_has_a_readable_end_marker_and_cancelled_fence_has_no_reply() {
-        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let mut links = vec![Some(Link::default())];

@@ -5,13 +5,12 @@ use super::*;
 use std::{sync::Arc, time::{Duration, Instant}};
 
 fn reference(values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
-    RefWave { src: 0, color: 1, label: "helper fixture".into(),
-        v: values.into(), dt, t0, vpd: 0.2, offset: -0.3, on: true }
+    RefWave { color: 1, label: "helper fixture".into(), vpd: 0.2, offset: -0.3, ..RefWave::test(values, dt, t0) }
 }
 
 #[test]
 fn native_channel_pages_walk_full_memory_with_original_time_and_screen_fallback() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     let mut native = (0..100).map(|i| i as f32).collect::<Vec<_>>();
     native[98] = f32::NAN;
     let frame = Arc::new(crate::board::Frame { dt: 2e-9, ch: [native, Vec::new(), Vec::new(), Vec::new()], ..Default::default() });
@@ -44,7 +43,7 @@ fn native_channel_pages_walk_full_memory_with_original_time_and_screen_fallback(
 
 #[test]
 fn reference_pages_keep_native_time_and_scale_independent_of_deskew_and_view() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     ui.refs[2] = Some(reference((0..20).map(|i| i as f32).collect(), 5e-12, -50e-6));
     ui.m.deskew_ref[2] = 1e-6;
     ui.m.delay = 0.123;
@@ -59,7 +58,7 @@ fn reference_pages_keep_native_time_and_scale_independent_of_deskew_and_view() {
 
 #[test]
 fn oversized_native_ascii_page_is_rejected_before_copy_but_small_pages_keep_metadata() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     let frame = Arc::new(crate::board::Frame { dt: 2e-9,
         ch: [vec![0.25; 5_000_000], Vec::new(), Vec::new(), Vec::new()], ..Default::default() });
     let mut record = Ui::blank_record(); record.ch[0] = vec![0.25; 64]; record.dt = 2e-9; record.t0 = -20e-9;
@@ -85,7 +84,7 @@ fn oversized_native_ascii_page_is_rejected_before_copy_but_small_pages_keep_meta
 
 #[test]
 fn cursor_time_roundtrip_retains_small_intervals_at_large_record_offsets() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     ui.m.tscale = tscales().iter().position(|&t| (t - 100e-12).abs() < 1e-18).unwrap();
     ui.m.delay = 1.0;
     ui.m.zoom = false;
@@ -101,7 +100,7 @@ fn cursor_time_roundtrip_retains_small_intervals_at_large_record_offsets() {
 
 #[test]
 fn selected_reference_cursors_match_stacked_zoom_readouts_and_touch_keeps_xy_axes_independent() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     for _ in 0..4 { ui.step(0.05); }
     let statistics = ui.measurement_statistics_snapshot_for_test();
     assert!(statistics.iter().any(|s| s.0 >= 3));
@@ -150,7 +149,7 @@ fn selected_reference_cursors_match_stacked_zoom_readouts_and_touch_keeps_xy_axe
 
 #[test]
 fn duplicate_measurement_add_preserves_genuine_statistics_and_pending_single() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     for _ in 0..4 { ui.step(0.05); }
     let before = ui.measurement_statistics_snapshot_for_test();
     assert!(before.iter().any(|s| s.0 >= 3));
@@ -169,7 +168,7 @@ fn duplicate_measurement_add_preserves_genuine_statistics_and_pending_single() {
 
 #[test]
 fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     ui.set_offline(true);
     ui.refs[0] = Some(reference((0..3_000_000).map(|i| if i % 20 < 10 { 1.0 } else { -1.0 }).collect(), 1e-9, 0.0));
     ui.m.meas = vec![(Meas::Period, WaveId::Ref(0))];
@@ -205,7 +204,7 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
 
 #[test]
 fn rejected_reference_edits_do_not_change_the_selected_slot_or_loaded_data() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     ui.refs[0] = Some(reference(vec![0.0, 1.0], 1e-9, 0.0));
     ui.ref_sel = 0;
     let owner = Arc::clone(&ui.refs[0].as_ref().unwrap().v);

@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn empty_query_emits_data_end_but_writes_and_cancelled_fences_do_not() {
-        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let mut peer = Peer { role: Role::Sync, session: 1, pending: Vec::new(), msgid: 0, program: None };

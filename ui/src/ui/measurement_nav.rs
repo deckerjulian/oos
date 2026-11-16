@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn seventy_three_selections_survive_and_every_page_is_reachable() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas.clear();
         ui.m.meas2.clear();
         for &kind in &ALL_MEAS { ui.activate(Item::MeasAdd(kind)); }
@@ -315,13 +315,13 @@ mod tests {
 
     #[test]
     fn stopped_reference_readouts_follow_the_visible_window() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         let samples: Vec<f32> = (0..4000).map(|i| {
             let amplitude = if i < 2000 { 1.0 } else { 3.0 };
             if (i / 50) % 2 == 0 { amplitude } else { -amplitude }
         }).collect();
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "changing amplitude".into(), t0: 0.0, dt: 1e-9, v: (samples).into(), vpd: 1.0, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "changing amplitude".into(), ..RefWave::test(samples, 1e-9, 0.0) });
         ui.offline_ref = 0;
         ui.m.zoom = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-9).abs() < 1e-12).unwrap();
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn the_catalog_opens_settings_and_adds_from_the_time_group() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas.clear();
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);
@@ -356,11 +356,11 @@ mod tests {
 
     #[test]
     fn eye_panes_leave_every_measurement_dock_and_page_accessible() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         let samples: Vec<f32> = (0..4000).map(|i| if (i / 50) % 2 == 0 { 0.5 } else { -0.5 }).collect();
         for slot in 0..2 {
-            ui.refs[slot] = Some(RefWave { src: 0, color: slot, label: format!("R{} clock", slot + 1), t0: 0.0, dt: 1e-9, v: (samples.clone()).into(), vpd: 0.2, offset: 0.0, on: true });
+            ui.refs[slot] = Some(RefWave { color: slot, label: format!("R{} clock", slot + 1), vpd: 0.2, ..RefWave::test(samples.clone(), 1e-9, 0.0) });
         }
         ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(0))).collect();
         ui.m.meas2 = (0..13).map(|kind| (kind, WaveId::Ref(0), WaveId::Ref(1))).collect();

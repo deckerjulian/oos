@@ -680,7 +680,7 @@ mod tests {
     use super::*;
 
     fn ui() -> Ui {
-        Ui::new(Source::Demo { t: 0.0 })
+        crate::ui::testkit::demo_ui()
     }
 
     fn square(amp: f32) -> Vec<f32> {
@@ -707,12 +707,12 @@ mod tests {
     }
 
     fn put(u: &mut Ui, slot: usize, v: Vec<f32>, on: bool) {
-        u.refs[slot] = Some(RefWave { src: 0, color: slot % REF_COLORS.len(), label: format!("R{}", slot + 1), t0: 0.0, dt: 1e-9, v: v.into(), vpd: 1.0, offset: 0.0, on });
+        u.refs[slot] = Some(RefWave { color: slot % REF_COLORS.len(), label: format!("R{}", slot + 1), on, ..RefWave::test(v, 1e-9, 0.0) });
     }
 
     #[test]
     fn take_over_fills_the_screen_with_the_loaded_reference() {
-        let dir = std::env::temp_dir().join(format!("oos-takeover-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("takeover");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut u = ui();

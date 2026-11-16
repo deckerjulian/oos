@@ -5,11 +5,7 @@ use super::workspace::Action;
 use super::*;
 
 fn fresh() -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
-    u.m.bar_compact = true;
-    u.relayout();
-    for _ in 0..4 { u.step(0.05); }
-    u
+    super::testkit::fresh(true, 4)
 }
 
 fn shot(u: &mut Ui, name: &str) -> Canvas {

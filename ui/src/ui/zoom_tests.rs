@@ -3,7 +3,7 @@
 use super::*;
 
 fn mixed() -> Ui {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     ui.m.run = RunState::Stop;
     ui.m.tscale = tscales().iter().position(|&s| s >= 1e-6).unwrap();
     ui.m.tfine = 1.0;
@@ -11,9 +11,7 @@ fn mixed() -> Ui {
     ui.m.meas2.clear();
     // the workspace gestures of the compact bottom bar (Display > Bottom bar = Compact)
     ui.m.bar_compact = true;
-    ui.refs[0] = Some(RefWave { src: 0, color: 1, label: "Known record".into(),
-        t0: -40e-6, dt: 20e-9, v: ((0..4000).map(|k| (k as f32 * 0.1).sin() * 0.4).collect::<Vec<_>>()).into(),
-        vpd: 0.2, offset: 0.1, on: true });
+    ui.refs[0] = Some(RefWave { color: 1, label: "Known record".into(), vpd: 0.2, offset: 0.1, ..RefWave::test((0..4000).map(|k| (k as f32 * 0.1).sin() * 0.4).collect::<Vec<_>>(), 20e-9, -40e-6) });
     ui.relayout();
     ui
 }
@@ -349,8 +347,7 @@ fn ctrl_wheel_anchors_main_detail_and_overview_for_reference_native_and_mixed_re
         record.dt=5e-12;record.t0=-25e-9;
         record.raw=Some(crate::wave::Raw { frame:Arc::clone(&native),i0:5000,i1:6000,t0:-25e-9,conditioned:true });
         ui.last[0]=Some(record);
-        ui.refs[0]=if source==1 {None} else {Some(RefWave {src:0,color:1,label:"Native-equivalent reference".into(),
-            v:values.into(),dt:5e-12,t0:-50e-9,vpd:0.2,offset:0.1,on:true})};
+        ui.refs[0]=if source==1 {None} else {Some(RefWave { color: 1, label: "Native-equivalent reference".into(), vpd: 0.2, offset: 0.1, ..RefWave::test(values, 5e-12, -50e-9) })};
         let reference=ui.refs[0].as_ref().map(|r|Arc::clone(&r.v));
         ui.m.tscale=tscales().iter().position(|&t|t==5e-9f32).unwrap();ui.m.tfine=1.0;ui.m.delay=0.0;
         ui.records=11;ui.wfm_total=11;ui.replay.captures=7;ui.m.run=RunState::Stop;

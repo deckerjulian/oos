@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn demo_square_gives_a_step_response() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.activate(Item::Open(MenuId::BwTest));
         ui.adjust(Item::BwOn, 1);
         assert_eq!(ui.m.view, AView::Step);

@@ -159,10 +159,9 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wave::Source;
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         for c in 0..n_ch() {
             u.m.ch[c].on = true;
         }
@@ -348,7 +347,7 @@ mod tests {
     #[test]
     fn a_loaded_reference_gets_a_window_row_and_draws_there() {
         let mut u = ui();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt: 1e-9, v: vec![0.0f32; 400].into(), vpd: 1.0, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave::test(vec![0.0f32; 400], 1e-9, 0.0));
         u.select_option(Item::WinLayout, "Four");
         render(&mut u);
         assert!(u.win_items().contains(&Item::WinRef(0)), "{:?}", u.win_items());

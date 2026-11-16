@@ -1252,9 +1252,7 @@ mod tests {
     fn web_demo() {
         let var = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
         let end = Instant::now() + Duration::from_secs(var("OOS_WEB_DEMO_S", 300));
         while Instant::now() < end {
             ui.step(0.04);
@@ -1276,7 +1274,7 @@ mod tests {
         let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
         let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16);
         assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR").map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
@@ -1298,8 +1296,8 @@ mod tests {
     #[test]
     fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let store = std::env::temp_dir().join(format!("oos-http-no-write-{}", std::process::id()));
+        let mut ui = crate::ui::testkit::demo_ui();
+        let store = crate::ui::testkit::Scratch::new("http-no-write");
         ui.store_dir = store.clone();
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
         let mut scpi = crate::scpi::Scpi::open(0);
@@ -1355,9 +1353,7 @@ mod tests {
     #[test]
     fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let port = h.port().unwrap();
         let csv = "Time (s),Volts\n0,0.1\n1e-9,0.4\n2e-9,-0.2\n";
         let upload = |slot: usize| {
@@ -1402,9 +1398,7 @@ mod tests {
         assert_eq!(MAX_WAVEFORM, 128 << 20, "native and browser imports share the parser byte limit");
         assert!(PAGE.contains("up to 128 MiB") && PAGE.contains("file.size>128*1024*1024"));
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, format!("POST /waveform?name=x.bin HTTP/1.1\r\nContent-Length: {}\r\n\r\n", MAX_WAVEFORM + 1).into_bytes());
         assert!(reply.starts_with("HTTP/1.1 413"), "{reply}");
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, b"POST /waveform HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\nContent-Length: 0\r\n\r\n".to_vec());
@@ -1475,9 +1469,7 @@ setTimeout(() => {
     #[test]
     fn page_lets_the_viewer_pick_png_or_bmp() {
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let page = get(&mut h, &mut ui, &cv, &mut scpi, "/");
         let script = page.split("<script>").nth(1).and_then(|s| s.split("</script>").next()).expect("script in the page");
         // the picture the browser loads before the script runs is the small one, too
@@ -1509,9 +1501,7 @@ setTimeout(() => {
     fn pages_and_downloads() {
         let _sends = sends();
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let r = get(&mut h, &mut ui, &cv, &mut scpi, "/");
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("/screen.png") && r.contains("/update"), "{}", &r[..200]);
         assert!(get(&mut h, &mut ui, &cv, &mut scpi, "/style.css").contains("text/css"));
@@ -1545,7 +1535,7 @@ setTimeout(() => {
         let _sends = sends();
         use std::sync::atomic::Ordering::SeqCst;
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
@@ -1612,9 +1602,7 @@ setTimeout(() => {
         let mut h = Http::open(0);
         // the request waits for its picture however long the encoder takes (`slow_encoder_guard`)
         slow_encoder_guard(&h);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
         let mut frame = 0u32;
         // the first screen handed over (the canvas got another buffer): the one before the render
@@ -1686,9 +1674,7 @@ setTimeout(() => {
         let _sends = sends();
         let mut h = Http::open(0);
         slow_encoder_guard(&h);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -1736,7 +1722,7 @@ setTimeout(() => {
             assert!(!same_pixels(&a, &a[..n.saturating_sub(1)]) || n == 0);
         }
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
         let mut scpi = crate::scpi::Scpi::open(0);
@@ -1803,9 +1789,7 @@ setTimeout(() => {
     #[test]
     fn update_upload_limits() {
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let post = |path: &str, body: &[u8]| {
             let mut r = format!("POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n", path, body.len()).into_bytes();
             r.extend_from_slice(body);
@@ -1836,9 +1820,7 @@ setTimeout(() => {
     #[test]
     fn a_large_body_at_a_time_and_net_allow_before_the_body() {
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let head = |path: &str, n: usize| format!("POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {n}\r\n\r\n");
         // a large upload in progress: its head and a part of its body
         let port = h.port().unwrap();
@@ -1878,9 +1860,7 @@ setTimeout(() => {
     #[test]
     fn net_allow_follows_a_change_without_a_restart() {
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         // the list the screen sets, shared with the server; the test's connections come from 198.51.100.7
         let acl = crate::netacl::Shared::default();
         h.acl = acl.clone();
@@ -1904,9 +1884,7 @@ setTimeout(() => {
     fn identification_names_the_listeners() {
         let mut h = Http::open(0);
         h.offer(Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(crate::hislip::PORT) });
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
         assert!(r.contains("TCPIP::hislip0::INSTR"), "{}", r);
         assert!(r.contains("TCPIP::5555::SOCKET"), "{}", r);
@@ -1926,9 +1904,7 @@ setTimeout(() => {
     #[test]
     fn cmd_takes_keys_knobs_and_touch_only() {
         let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let get = |c: &str| format!("GET /cmd?c={} HTTP/1.1\r\n\r\n", c).into_bytes();
         for c in ["shot%20/dev/mmcblk1", "storedir%20/", "stat%20/etc/passwd", "quit", "frames%2010", "selfcal%20x", ""] {
             let r = request(&mut h, &mut ui, &cv, &mut scpi, get(c));
@@ -1963,9 +1939,7 @@ setTimeout(() => {
 
     #[test]
     fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::W, crate::ui::H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let empty = mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR;:MEAS:STRIP?"}}}"#,
             &mut ui, &cv, &mut scpi).unwrap();
         assert!(empty.contains("\"text\":\"\""), "{empty}");
@@ -1981,9 +1955,7 @@ setTimeout(() => {
     #[test]
     fn mcp_session() {
         use crate::json::{parse, J};
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let mut call = |b: &str| mcp(b, &mut ui, &cv, &mut scpi).map(|r| parse(&r).unwrap());
         let r = call(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap();
         assert_eq!(r.get("result").and_then(|x| x.get("protocolVersion")).and_then(J::str), Some("2025-06-18"));
@@ -2001,13 +1973,11 @@ setTimeout(() => {
 
     #[test]
     fn scpi_extensions() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         for _ in 0..3 {
             ui.step(0.05);
         }
-        let mut q = |c: &str| String::from_utf8(scpi.exec_line(&mut ui, &cv, c)).unwrap();
+        let mut q = |c: &str| crate::ui::testkit::q(&mut scpi, &mut ui, &cv, c);
         q(":VIEW SPEC");
         assert_eq!(q(":VIEW?"), "SPECTRUM");
         assert!(q(":IDEN?").starts_with("CH1 "), "{}", q(":IDEN?"));
@@ -2046,9 +2016,7 @@ setTimeout(() => {
 
     #[test]
     fn scpi_refuses_what_is_not_a_number() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
         let (delay, offset, probe) = (ui.m.delay, ui.m.ch[0].offset, ui.m.ch[0].probe);
         for c in [":TIM:OFFS nan", ":TIM:OFFS inf", ":TIM:OFFS 1e39", ":CHAN1:OFFS NaN", ":CHAN1:PROB -inf", ":CHAN1:PROB 0", ":CHAN1:PROB -10", ":TRIG:EDGE:LEV nan", ":SOUR:FREQ nan", ":SOUR:VOLT inf"] {
             scpi.exec_line(&mut ui, &cv, c);
@@ -2068,9 +2036,7 @@ setTimeout(() => {
 
     #[test]
     fn empty_bode_address_keeps_the_setup_readable() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         scpi.exec_line(&mut ui, &cv, ":BODE:GEN \"\"");
         assert_eq!(ui.m.bode_addr, "");
         let m = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();

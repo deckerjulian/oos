@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn saved_and_loaded() {
-        let dir = std::env::temp_dir().join(format!("oos-sysconf-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("sysconf");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("system.conf");
         let _ = std::fs::remove_file(&p);

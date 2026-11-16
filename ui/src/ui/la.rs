@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn la_page_key_and_lanes_on_the_demo() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.items(MenuId::Main).contains(&Item::Open(MenuId::La)));
         ui.key(key::LA);
         assert!(ui.m.la.on && ui.menu_open && ui.menu == MenuId::La);
@@ -736,7 +736,7 @@ mod decode_tests {
 
     /// A UI with the LA on and the decoder on LA lines, some records acquired.
     fn ui_on(p: Proto) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.la.on = true;
         ui.m.dec_on = true;
         ui.set_dec_proto(p);
@@ -790,7 +790,7 @@ mod decode_tests {
     /// Without the probe the LA stays off, whichever way it is asked for; pulling the probe switches it off.
     #[test]
     fn the_la_needs_its_probe() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         // demo signals: no probe to ask for
         assert!(ui.la_probe_ok());
         ui.la_probe_set(Some(false));
@@ -873,9 +873,7 @@ mod remote_tests {
 
     #[test]
     fn scpi_and_csv() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let mut q = |ui: &mut Ui, c: &str| scpi.exec_line(ui, &cv, c);
         let s = |b: Vec<u8>| String::from_utf8(b).unwrap();
         assert_eq!(s(q(&mut ui, ":LA:STAT?")), "0");
@@ -919,7 +917,7 @@ mod trigger_tests {
     use super::*;
 
     fn ui_la() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.la.on = true;
         ui
     }
@@ -1009,7 +1007,7 @@ mod pattern_tests {
     #[test]
     fn demo_triggers_on_a_counter_value() {
         // D0-D7 count at 100 kHz: 0x5a begins every 2.56 ms; the trigger point must sit on that change
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.la.on = true;
         ui.m.trig_type = TrigType::Pattern;
         ui.m.pat = [Bit::X; NCH];
@@ -1054,7 +1052,7 @@ mod bus_tests {
     #[test]
     fn protocol_trigger_on_la_lines() {
         // I2C on D12/D13: trigger on the data byte 0x42, the field ends at the trigger point
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.la.on = true;
         ui.m.dec_on = true;
         ui.set_dec_proto(Proto::I2C);
@@ -1096,7 +1094,7 @@ mod duration_tests {
     #[test]
     fn duration_on_a_line() {
         // D14 = the 1 kHz square, high for 500 us: "longer than 300 us" fires 300 us after the rising edge
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.la.on = true;
         ui.m.trig_type = TrigType::Duration;
         ui.m.pat = [Bit::X; NCH];

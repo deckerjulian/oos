@@ -501,11 +501,11 @@ mod tests {
     use super::{Item, MenuId, Ui, BUS};
     use crate::gfx::{Canvas, Rgb};
     use crate::model::{bus_label, n_ch, WaveId, NCH};
-    use crate::wave::{Record, Source};
+    use crate::wave::Record;
     use oos_dsp::sim::{i2c_logic, sample, I2cXfer};
 
     fn ui() -> Ui {
-        Ui::new(Source::Demo { t: 0.0 })
+        crate::ui::testkit::demo_ui()
     }
 
     fn xfer() -> (Vec<f32>, Vec<f32>, f64) {
@@ -595,17 +595,7 @@ mod tests {
             la: None, pairs: false
         });
         let slow: Vec<f32> = sda.iter().step_by(2).copied().collect();
-        u.refs[2] = Some(super::super::RefWave {
-            src: 1,
-            color: 2,
-            label: String::new(),
-            t0: 0.0,
-            dt: dt * 2.0,
-            v: (slow).into(),
-            vpd: 2.0,
-            offset: 0.0,
-            on: true,
-        });
+        u.refs[2] = Some(super::super::RefWave { src: 1, color: 2, vpd: 2.0, ..super::super::RefWave::test(slow, dt * 2.0, 0.0) });
         u.m.bus.on = true;
         u.m.bus.clk = WaveId::Ch(0);
         u.m.bus.data = WaveId::Ref(2);

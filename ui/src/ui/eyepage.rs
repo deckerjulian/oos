@@ -1600,7 +1600,7 @@ mod tests {
     }
 
     fn page(s: Sig, records: usize) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.step(0.05);
         ui.m.run = RunState::Stop;
         ui.m.view = AView::Eye;
@@ -1635,12 +1635,12 @@ mod tests {
             let fraction = ((t - edges[at]) / (0.1 / rate)).clamp(0.0, 1.0);
             (-level + 2.0 * level * fraction) as f32
         }).collect();
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.session_is_sim = false;
         ui.set_offline(true);
         ui.m.sim_slot = 0;
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "SSC clock".into(), t0: 0.0, dt, v: (samples).into(), vpd: 0.5, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "SSC clock".into(), vpd: 0.5, ..RefWave::test(samples, dt, 0.0) });
         ui.m.eye_src = WaveId::Ref(0);
         ui.m.eye_rate = rate;
         ui.m.zoom = true;
@@ -1846,7 +1846,7 @@ mod tests {
 
     #[test]
     fn nothing_sits_under_the_overflow_button() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.view = AView::Eye;
         for w in [640, PANEL_W] {
             for h in [160, 352, 480] {
@@ -1971,13 +1971,12 @@ mod tests {
 
     #[test]
     fn selected_eye_source_keeps_its_identity_and_updates_only_automatic_rate() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         let mut noise = Noise(3);
         for (slot, signal) in [(0, CLEAN), (1, Sig { rate: CLEAN.rate * 2.0, ..CLEAN })] {
             let rec = record(signal, &mut noise);
-            ui.refs[slot] = Some(RefWave { src: 0, color: slot, label: format!("Rate {slot}"), t0: rec.t0, dt: rec.dt,
-                v: (rec.ch[0].clone()).into(), vpd: 0.2, offset: 0.0, on: true });
+            ui.refs[slot] = Some(RefWave { color: slot, label: format!("Rate {slot}"), vpd: 0.2, ..RefWave::test(rec.ch[0].clone(), rec.dt, rec.t0) });
         }
         ui.select_workspace_source(WaveId::Ref(1));
         ui.eye_make();
@@ -1999,7 +1998,7 @@ mod tests {
     /// One press reads the bit rate from the record. The eye starts beside the trace; Under stacks it below.
     #[test]
     fn one_press_reads_the_rate_and_keeps_the_trace() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.eye_place = EyePlace::Side;
         ui.m.run = RunState::Stop;
         ui.m.eye_rate = 123.0;
@@ -2201,10 +2200,9 @@ mod automatic_setup_tests {
     use super::*;
 
     fn reference(values: Vec<f32>, dt: f64) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "Auto test".into(), t0: -1e-6,
-            dt, v: (values).into(), vpd: 0.2, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "Auto test".into(), vpd: 0.2, ..RefWave::test(values, dt, -1e-6) });
         ui.select_workspace_source(WaveId::Ref(0));
         ui.m.run = RunState::Stop;
         ui
@@ -2260,7 +2258,7 @@ mod automatic_setup_tests {
 
     #[test]
     fn auto_eye_live_updates_on_new_captures_but_stopped_pan_is_not_new_data() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let mut rec = Ui::blank_record();
         rec.dt = 50e-12;
         rec.t0 = -0.5e-6;

@@ -4,8 +4,7 @@ use super::*;
 use std::{sync::{Arc, Mutex}, time::{Duration, Instant}};
 
 fn reference(v: Vec<f32>, dt: f64, t0: f64) -> RefWave {
-    RefWave { src: 0, color: 0, label: "frozen41".into(), v: v.into(), dt, t0,
-        vpd: 0.2, offset: 0.0, on: true }
+    RefWave { label: "frozen41".into(), vpd: 0.2, ..RefWave::test(v, dt, t0) }
 }
 
 #[test]
@@ -50,7 +49,7 @@ fn force_in_stored_and_sim_sessions_never_touches_the_mock_hardware() {
 #[test]
 fn force_after_completed_single_arms_a_fresh_receipt_in_live_and_stored_modes() {
     for stored in [false, true] {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.key(key::SINGLE);
         let old = ui.scpi_operations();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -76,7 +75,7 @@ fn force_after_completed_single_arms_a_fresh_receipt_in_live_and_stored_modes() 
 
 #[test]
 fn independent_track_sources_use_refs_native_channels_deskew_and_real_units() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     for _ in 0..4 { ui.step(0.05); }
     let statistics = ui.measurement_statistics_snapshot_for_test();
     ui.refs[0] = Some(reference(vec![0.0, 1.0, 2.0, 3.0], 1e-9, 10e-9));
@@ -127,7 +126,7 @@ fn track_b_source_setup_roundtrip_accepts_legacy_channel_and_rejects_invalid_ids
 
 #[test]
 fn remote_current_statistics_use_the_selected_rows_own_thresholds() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 }); ui.m.run = RunState::Stop; ui.m.meas_full_record = true;
+    let mut ui = crate::ui::testkit::demo_ui(); ui.m.run = RunState::Stop; ui.m.meas_full_record = true;
     let values = (0..1600).map(|i| { let k=i%400; match k {
         0..=99 => -0.5, 100..=199 => -0.5+(k-100) as f32/99.0,
         200..=299 => 0.5, _ => 0.5-(k-300) as f32/99.0,
@@ -145,7 +144,7 @@ fn remote_current_statistics_use_the_selected_rows_own_thresholds() {
 
 #[test]
 fn statistics_reset_keeps_rows_and_pending_single_but_rejects_old_deferred_counts() {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 }); ui.set_offline(true);
+    let mut ui = crate::ui::testkit::demo_ui(); ui.set_offline(true);
     ui.refs[0] = Some(reference((0..3_000_000).map(|i| if i%20<10 {1.0}else{-1.0}).collect(), 1e-9, 0.0));
     ui.m.meas = vec![(Meas::Period, WaveId::Ref(0))]; ui.m.meas2.clear(); ui.m.cat.clear(); ui.m.meas_full_record=true;
     ui.m.set_trigger_wave(WaveId::Ref(0), false); ui.m.trig_level=0.0;

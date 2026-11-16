@@ -241,7 +241,7 @@ mod tests {
     use super::*;
 
     fn ui() -> Ui {
-        Ui::new(Source::Demo { t: 0.0 })
+        crate::ui::testkit::demo_ui()
     }
 
     #[test]
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn import_matches_play_on_the_record() {
-        let dir = std::env::temp_dir().join(format!("oos-offline-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("offline");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut live = ui();
@@ -365,13 +365,7 @@ mod tests {
     fn import_gates_existing_references_before_the_first_measurement() {
         let mut u = ui();
         u.set_offline(true);
-        u.refs[1] = Some(RefWave {
-            src: 0, color: 1, label: "previous capture".into(), t0: 0.0, dt: 1e-9,
-            v: ((0..20_000).map(|index| {
-                let amplitude = if index < 1000 { 1.0 } else { 5.0 };
-                if index % 4 < 2 { -amplitude } else { amplitude }
-            }).collect::<Vec<_>>()).into(), vpd: 1.0, offset: 0.0, on: true,
-        });
+        u.refs[1] = Some(RefWave { color: 1, label: "previous capture".into(), ..RefWave::test((0..20_000).map(|index| { let amplitude = if index < 1000 { 1.0 } else { 5.0 }; if index % 4 < 2 { -amplitude } else { amplitude } }).collect::<Vec<_>>(), 1e-9, 0.0) });
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {
             csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, if index % 4 < 2 { -0.5 } else { 0.5 }));
@@ -385,8 +379,7 @@ mod tests {
     #[test]
     fn import_keeps_the_live_window_until_take_over() {
         let mut u = ui();
-        u.refs[1] = Some(RefWave { src: 0, color: 1, label: "existing".into(), t0: 0.0, dt: 1e-9,
-            v: (vec![0.0, 1.0, 0.0]).into(), vpd: 0.2, offset: 0.0, on: true });
+        u.refs[1] = Some(RefWave { color: 1, label: "existing".into(), vpd: 0.2, ..RefWave::test(vec![0.0, 1.0, 0.0], 1e-9, 0.0) });
         let held = (u.m.tscale, u.m.tfine, u.m.delay);
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {

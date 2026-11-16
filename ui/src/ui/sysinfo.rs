@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn opens_refreshes_and_closes_like_a_dialog() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.activate(Item::SysInfo);
         assert!(ui.sysinfo.is_some() && ui.dialog.is_some());
         let rows = ui.sysinfo.as_ref().unwrap();

@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn switches_stand_next_to_what_they_open() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
         // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn a_service_switched_off_says_so() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11 && u.sys.remote_telnet, "on by default");
         assert!(!u.sys.remote_ssh, "SSH off by default");
         u.net = "192.168.1.9".into();
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn the_name_and_what_mdns_announces() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         let p = oos_hal::model::platform();
         let d = mdns::default_name(&p.caps.name, p.serial.as_deref());
         assert!(u.sys.remote_mdns, "on by default");
@@ -527,11 +527,11 @@ mod tests {
     // that waits for the next start (the servers' list kept, no firewall run)
     #[test]
     fn the_address_list_from_the_screen() {
-        let dir = std::env::temp_dir().join(format!("oos-ui-allow-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("ui-allow");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("system.conf");
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.sys_path = Some(p.clone());
         let servers = u.acl();
         let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
@@ -620,7 +620,7 @@ mod tests {
     fn a_change_of_allowed_runs_the_firewall_and_ssh() {
         let fw = "/bin/oos-firewall reload >> /tmp/oos-net.log";
         let ssh = |a: &str| format!("/bin/oos-ssh {} >> /tmp/oos-ssh.log", a);
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         let (run, ran) = recorder(None);
         u.set_allow_runner(run);
         u.open_menu(MenuId::Remote);

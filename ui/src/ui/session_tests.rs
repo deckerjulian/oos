@@ -3,11 +3,10 @@
 //! Leaving a reference, Take over or SIM session gives back the live set-up from before it, whichever way it is left,
 //! and holds nothing of it for a later Live.
 use super::*;
-use crate::wave::Source;
 
 fn square_ref() -> RefWave {
     let v = (0..1000).map(|i| (i % 50) as f32 / 50.0).collect::<Vec<_>>();
-    RefWave { src: 1, color: 0, label: "r".into(), t0: 0.0, dt: 1e-9, v: v.into(), vpd: 1.0, offset: 0.0, on: true }
+    RefWave { src: 1, label: "r".into(), ..RefWave::test(v, 1e-9, 0.0) }
 }
 
 /// What a session must not take with it: the channels, the time base and the measurements.
@@ -17,7 +16,7 @@ fn live_setup(u: &Ui) -> (Vec<bool>, usize, Vec<(Meas, WaveId)>) {
 
 #[test]
 fn trigger_source_back_on_a_channel_brings_back_the_live_setup() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     for c in 0..3 { u.m.ch[c].on = true; }
     u.m.tscale = 10;
     u.m.meas = vec![(Meas::Freq, WaveId::Ch(1)), (Meas::Rise, WaveId::Ch(2))];
@@ -46,7 +45,7 @@ fn trigger_source_back_on_a_channel_brings_back_the_live_setup() {
 
 #[test]
 fn a_channel_key_in_sim_brings_back_the_live_setup() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.ch[0].on = true;
     u.m.ch[1].on = true;
     u.m.tscale = 20;
@@ -68,7 +67,7 @@ fn a_channel_key_in_sim_brings_back_the_live_setup() {
 fn take_over_and_live_bring_back_the_live_setup() {
     // left by the top bar's Live, and by Record = With live in the Reference menu
     for with_live in [false, true] {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.m.ch[0].on = false;
         u.m.ch[1].on = true;
         u.m.active = 1;
@@ -100,7 +99,7 @@ fn store(u: &mut Ui, name: &str) -> std::path::PathBuf {
 
 #[test]
 fn a_setup_recalled_in_sim_is_what_live_keeps() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     let dir = store(&mut u, "recall");
     u.m.tscale = 20;
     u.step(0.05);

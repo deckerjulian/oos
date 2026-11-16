@@ -756,10 +756,9 @@ fn nearest_tscale(want: f64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wave::Source;
 
     fn ui() -> Ui {
-        Ui::new(Source::Demo { t: 0.0 })
+        crate::ui::testkit::demo_ui()
     }
 
     #[test]
@@ -1135,7 +1134,7 @@ mod tests {
     /// A step in the record, low then high, so the edge on screen has a place to move.
     fn put_step(u: &mut Ui, n: usize, dt: f64, tdiv: f32) {
         let v: Vec<f32> = (0..n).map(|i| if i < n / 5 { -0.5 } else { 0.5 }).collect();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "rec".into(), t0: 0.0, dt, v: v.into(), vpd: 0.2, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave { label: "rec".into(), vpd: 0.2, ..RefWave::test(v, dt, 0.0) });
         u.m.sim_slot = 0;
         u.m.ch[0].on = false;
         u.m.run = RunState::Run;
@@ -1327,8 +1326,7 @@ mod tests {
             u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 2.0 HS").unwrap();
             u.m.apply_sim_preset();
             u.sim_play_set(true).unwrap();
-            u.refs[1] = Some(RefWave { src: 0, color: 1, label: "External".into(), t0: 0.0, dt: 2e-9,
-                v: ((0..1024).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>()).into(), vpd: 0.2, offset: 0.0, on: false });
+            u.refs[1] = Some(RefWave { color: 1, label: "External".into(), vpd: 0.2, on: false, ..RefWave::test((0..1024).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>(), 2e-9, 0.0) });
             if change == 5 {
                 u.m.trig_type = TrigType::Delay;
                 u.m.set_trigger_wave(WaveId::Ref(1), true);
@@ -1366,8 +1364,7 @@ mod tests {
             u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 2.0 HS").unwrap();
             u.m.apply_sim_preset();
             u.sim_play_set(true).unwrap();
-            u.refs[source] = Some(RefWave { src: 0, color: source, label: "Long external trigger".into(), t0: 20e-9, dt: 10e-12,
-                v: ((0..263_168).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>()).into(), vpd: 0.2, offset: 0.0, on: false });
+            u.refs[source] = Some(RefWave { color: source, label: "Long external trigger".into(), vpd: 0.2, on: false, ..RefWave::test((0..263_168).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>(), 10e-12, 20e-9) });
             assert!(u.set_trigger_source(WaveId::Ref(source), false));
             u.m.trig_level = 0.0;
             u.m.trig_mode = TrigMode::Single;

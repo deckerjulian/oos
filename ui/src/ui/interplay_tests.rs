@@ -78,7 +78,7 @@ fn a_trigger_type_keeps_the_values_it_shares_away_from_the_demo() {
         assert_eq!((u.m.trig_level, u.m.trig_level2), (1.2, 0.8), "{name}: runt thresholds");
     }
     // the demo: each type comes with values that trigger on its signals
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.trig_t1 = 5e-6;
     u.set_trig_type(TrigType::Pulse);
     assert_eq!(u.m.trig_t1, 30e-6, "demo: the pulse preset");
@@ -219,7 +219,7 @@ fn leaving_bus_after_a_recall_leaves_the_recalled_decoder() {
     // what choosing Bus switched on is switched off when Bus is left (`bus_auto`), but only in the set-up it came
     // from: a recalled set-up with Bus and its decoder keeps them
     let mut u = ui();
-    let dir = std::env::temp_dir().join(format!("oos-interplay-bus-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("interplay-bus");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     u.store_dir = dir.clone();

@@ -193,15 +193,11 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn reference(count: usize) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.m.meas_full_record = true;
         ui.m.meas.clear(); ui.m.meas2.clear();
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "row-test".into(), t0: 0.001, dt: 1e-9,
-            v: ((0..count).map(|i| { let k = i % 400; match k {
-                0..=99 => -0.5, 100..=199 => -0.5 + (k - 100) as f32 / 99.0,
-                200..=299 => 0.5, _ => 0.5 - (k - 300) as f32 / 99.0,
-            } }).collect::<Vec<_>>()).into(), vpd: 0.2, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "row-test".into(), vpd: 0.2, ..RefWave::test((0..count).map(|i| { let k = i % 400; match k { 0..=99 => -0.5, 100..=199 => -0.5 + (k - 100) as f32 / 99.0, 200..=299 => 0.5, _ => 0.5 - (k - 300) as f32 / 99.0, } }).collect::<Vec<_>>(), 1e-9, 0.001) });
         ui
     }
 

@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn hardware_counts_while_the_hardware_tests() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         (ui.mask_pass, ui.mask_fail) = (7, 2);
         ui.mask_hw = rd(0, 4, 3);
         // the demo source is no hardware: the software counts

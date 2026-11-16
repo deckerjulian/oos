@@ -232,12 +232,12 @@ impl Ui {
 mod tests {
     use super::*;
     fn refs() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.last[0] = None;
         for ch in &mut ui.m.ch { ch.on = false; }
         for (i, t0, dt, v) in [(0, -2.0, 1.0, vec![0., 1., 2., 3., 4., 5.]), (1, -1.5, 0.5, vec![0., 1., 2., 3., 4., 5., 6., 7.])] {
-            ui.refs[i] = Some(RefWave { src: 0, color: i, label: format!("R{}", i + 1), t0, dt, v: v.into(), vpd: 1.0, offset: 0.0, on: true });
+            ui.refs[i] = Some(RefWave { color: i, label: format!("R{}", i + 1), ..RefWave::test(v, dt, t0) });
         }
         ui.m.math = MathOp::Sub;
         ui.m.math_a = MATH_REF_BASE;

@@ -57,16 +57,16 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Item, Source, Ui};
+    use super::super::Item;
     use super::*;
 
     #[test]
     fn writes_the_step_and_keeps_other_lines() {
-        let dir = std::env::temp_dir().join(format!("oos-overclock-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("overclock");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("limits.conf");
         fs::write(&path, "# my limits\nafg.sine_max_hz = 7e7\nadc.clock_hz = 2e9\n").unwrap();
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.limits_path = path.to_str().unwrap().into();
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
         ui.select_option(Item::Overclock, "1.5 GHz");
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn back_at_the_standard_clock_no_file_is_left() {
-        let dir = std::env::temp_dir().join(format!("oos-overclock-empty-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("overclock-empty");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("limits.conf");
         let p = path.to_str().unwrap();
@@ -93,9 +93,9 @@ mod tests {
 
     #[test]
     fn steps_stop_at_both_ends() {
-        let dir = std::env::temp_dir().join(format!("oos-overclock-ends-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("overclock-ends");
         fs::create_dir_all(&dir).unwrap();
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.limits_path = dir.join("limits.conf").to_str().unwrap().into();
         ui.overclock_step(-1);
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn a_step_the_file_cannot_take_stays_as_it_was() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.limits_path = "/nonexistent-dir/limits.conf".into();
         ui.select_option(Item::Overclock, "1.5 GHz");
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");

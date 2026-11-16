@@ -1196,7 +1196,7 @@ mod tests {
             format!("123 ({}) S 2 0 0 0 -1 2129984 0 0 0 0 {} {} 0 0 20 0 1 0 50 0 0 18446744073709551615 0 0 0 0 0 0 0 2147483647 0 0 0 0 17 {} 0 0 0 0 0", name, ut, st, cpu)
         };
         assert_eq!(stat_time_cpu(&line("cmpl status th", 7, 5, 2)), Some((12, 2)));
-        let dir = std::env::temp_dir().join(format!("oos-poller-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("poller");
         for (pid, name, ut, cpu) in [("10", "cmpl_status_th0", 3, 0), ("11", "cmpl_status_th1", 9000, 1), ("12", "cmpl_status_th2", 0, 2), ("13", "busyloop", 99999, 3), ("self", "cmpl_status_th9", 99999, 3)] {
             let d = dir.join(pid);
             std::fs::create_dir_all(&d).unwrap();

@@ -848,7 +848,6 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wave::Source;
 
     fn net(name: &str, s: Security) -> Net {
         Net { ssid: name.as_bytes().to_vec(), signal: -50, freq: 2437, security: s }
@@ -908,7 +907,7 @@ mod tests {
 
     #[test]
     fn typing_a_password() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.wlan.osk = Some(Osk::new(OskFor::Pass(b"Labor".to_vec())));
         type_text(&mut ui, "aB3 #x");
         let o = ui.wlan.osk.as_ref().unwrap();
@@ -923,7 +922,7 @@ mod tests {
 
     #[test]
     fn entry_stops_at_the_limit_and_del_is_safe() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.wlan.osk = Some(Osk::new(OskFor::Name));
         ui.osk_press(Key::Del);
         for _ in 0..40 {
@@ -934,7 +933,7 @@ mod tests {
 
     #[test]
     fn arrows_fix_a_typo_without_deleting_the_rest() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.wlan.osk = Some(Osk::new(OskFor::Pass(b"Labor".to_vec())));
         type_text(&mut ui, "abxdef");
         // back to the x, out with it, the c in its place
@@ -965,7 +964,7 @@ mod tests {
 
     #[test]
     fn a_tap_into_the_entry_moves_the_insertion_point() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.wlan.osk = Some(Osk::for_label(0, "abcd"));
         assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 4);
         let f = &ui.fonts().lb;
@@ -980,7 +979,7 @@ mod tests {
 
     #[test]
     fn a_long_entry_keeps_the_insertion_point_in_view() {
-        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let ui = crate::ui::testkit::demo_ui();
         let f = &ui.fonts().lb;
         let mut o = Osk::new(OskFor::Pass(b"Labor".to_vec()));
         o.show = true;
@@ -999,7 +998,7 @@ mod tests {
 
     #[test]
     fn knobs_reach_every_key() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.wlan.osk = Some(Osk::new(OskFor::Name));
         let n = ui.wlan.osk.as_ref().unwrap().keys().len();
         for _ in 0..n {
@@ -1025,7 +1024,7 @@ mod tests {
 
     #[test]
     fn scan_list_and_the_way_to_each_network() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.open_menu(MenuId::Network);
         ui.wlan.link.stick = true;
         ui.wlan.link.saved = vec![Saved { id: 7, ssid: b"Bekannt".to_vec(), temp_disabled: false, disabled: false }];
@@ -1057,7 +1056,7 @@ mod tests {
 
     #[test]
     fn forget_needs_a_saved_network() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.open_menu(MenuId::Network);
         ui.wlan.link.stick = true;
         ui.wlan_forget_tap();
@@ -1070,7 +1069,7 @@ mod tests {
 
     #[test]
     fn network_page_says_what_is_there() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.tap(950, 20);
         assert!(ui.menu_open && ui.menu == MenuId::Network);
         assert_eq!(ui.value(Item::NetWeb), "not connected");
@@ -1092,7 +1091,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn desktop_network_page_uses_actual_runtime_ports_before_scope_fallbacks() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.net = "192.168.1.148".into();
         ui.lan_web_port = Some(18080);
         ui.lan_status = "SCPI 5555 / HiSLIP 14880 / mDNS on".into();
@@ -1108,7 +1107,7 @@ mod tests {
 
     #[test]
     fn hardware_network_fallback_names_ssh_instead_of_telnet() {
-        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let ui = crate::ui::testkit::demo_ui();
         let ports = ui.net_value(Item::NetPorts);
         // oos-ssh takes the password and trusted keys (docs/network.md 7), not only a key
         assert!(ports.contains("SSH 22 (password or key)"));
@@ -1117,7 +1116,7 @@ mod tests {
 
     #[test]
     fn status_lines() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.wlan_lines()[1].starts_with("No stick"));
         ui.wlan.link = Link { stick: true, ctrl: true, signal: Some(-55), ..Link::default() };
         ui.wlan.link.status = wlan::parse_status("wpa_state=COMPLETED\nssid=Labor\nip_address=10.0.0.7\nfreq=2437\naddress=00:11:22:33:44:55\n");
@@ -1129,7 +1128,7 @@ mod tests {
     /// Whatever arrives on the touch panel and the knobs, with hostile names on the list.
     #[test]
     fn random_input() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         let mut x = 0x2545_f491_4f6c_dd1du64;
         let mut next = move || {
@@ -1244,7 +1243,7 @@ mod tests {
             ui.render(&mut cv);
             let _ = crate::store::write(&dir.join(n), &crate::store::png_of(&cv));
         };
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.wlan.link.stick = true;
         ui.open_menu(MenuId::Utility);
         shot(&mut ui, "wlan-0-system.png");

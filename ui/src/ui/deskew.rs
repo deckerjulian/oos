@@ -103,12 +103,10 @@ mod tests {
     use super::*;
 
     fn reference(t0: f64, on: bool) -> RefWave {
-        RefWave { src: 0, color: 0, label: "timing fixture".into(), t0, dt: 1e-9,
-            v: ((0..500).map(|i| if i % 40 < 20 { -1.0 } else { 1.0 }).collect::<Vec<_>>()).into(),
-            vpd: 0.5, offset: 0.0, on }
+        RefWave { label: "timing fixture".into(), vpd: 0.5, on, ..RefWave::test((0..500).map(|i| if i % 40 < 20 { -1.0 } else { 1.0 }).collect::<Vec<_>>(), 1e-9, t0) }
     }
     fn stopped() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         ui.refs[0] = Some(reference(-250e-9, true));
         ui.refs[1] = Some(reference(-247e-9, true));
@@ -189,7 +187,7 @@ mod tests {
 
     #[test]
     fn stacked_auto_aligns_all_enabled_channels_not_only_the_current_draw_lane() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.ch[1].on = true; ui.m.run = RunState::Stop; ui.m.delay = 0.0;
         ui.workspace.stacked = true; ui.relayout(); ui.cur_win = 1;
         let a = reference(-250e-9, true).v;

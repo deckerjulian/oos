@@ -174,12 +174,11 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wave::Source;
 
     // Break it catches: a feature left out still offered somewhere, still running, or not kept in system.conf
     #[test]
     fn what_is_left_out_is_gone_and_runs_nothing() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         assert!(u.items(MenuId::Utility).contains(&Item::Open(MenuId::Features)));
         let has = |u: &Ui, it: Item| u.main_groups().iter().any(|g| g.1.contains(&it));
         assert!(has(&u, Item::Open(MenuId::Magnetic)) && has(&u, Item::Open(MenuId::Sim)));
@@ -219,7 +218,7 @@ mod tests {
         let all = PROTOS.iter().map(|p| p.key()).collect::<Vec<_>>().join(" ");
         let (c, bad) = crate::sysconf::SysConf::parse(&format!("decoders.off = {}\n", all));
         assert!(bad.is_empty());
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.sys.decoders_off = c.decoders_off.clone();
         u.open_menu(MenuId::Decode);
         u.adjust(Item::DecProto, 1);

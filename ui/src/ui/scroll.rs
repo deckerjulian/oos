@@ -175,7 +175,7 @@ mod tests {
     }
 
     fn page() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas.clear();
         ui.key(key::MEASURE);
         ui
@@ -216,7 +216,7 @@ mod tests {
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         let mut ui = (0..6)
             .map(|k| {
-                let mut ui = Ui::new(Source::Demo { t: 0.0 });
+                let mut ui = crate::ui::testkit::demo_ui();
                 ui.m.ch[2].on = true;
                 ui.m.dec_on = true;
                 ui.m.dec_src = 2;

@@ -73,11 +73,11 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Item, MenuId, Source, Ui};
+    use super::super::{Item, MenuId, Ui};
     use super::*;
 
     fn at(view: AView) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.view = view;
         ui.step(1.0 / 30.0);
         ui.render(&mut Canvas::new(super::super::PANEL_W, super::super::PANEL_H));

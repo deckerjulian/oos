@@ -295,7 +295,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn reference(v: Vec<f32>, dt: f64, t0: f64, vpd: f32) -> RefWave {
-        RefWave { src: 0, color: 0, label: "decoder fixture".into(), t0, dt, v: v.into(), vpd, offset: 0.0, on: true }
+        RefWave { label: "decoder fixture".into(), vpd, ..RefWave::test(v, dt, t0) }
     }
     fn uart(byte: u8, count: usize) -> (Vec<f32>, f64) {
         let mut values = vec![3.3; count];
@@ -306,7 +306,7 @@ mod tests {
         (values, 1.0 / (115_200.0 * 20.0))
     }
     fn uart_ui(count: usize) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let (v, dt) = uart(0xa5, count);
         ui.refs[0] = Some(reference(v, dt, -0.005, 0.5));
         ui.m.dec_proto = Proto::UART;
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn four_wire_and_mixed_inputs_align_at_native_physical_times() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let clk = |t: f64| if (0..8).any(|bit| (5.0 + 8.0 * bit as f64..9.0 + 8.0 * bit as f64).contains(&t)) { 3.3 } else { 0.0 };
         let data = |t: f64| { let bit = ((t - 3.0).max(0.0) / 8.0) as usize; if bit < 8 && 0xa5u8 >> (7 - bit) & 1 != 0 { 3.3 } else { 0.0 } };
         ui.refs[0] = Some(reference((0..100).map(|i| data(-3.0 + i as f64)).collect(), 1e-6, -3e-6, 0.5));
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn all_twenty_seven_protocol_dispatchers_match_the_same_live_samples_as_refs() {
         for protocol in PROTOS.iter().copied().filter(|protocol| *protocol != Proto::CPHY) {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.set_dec_proto(protocol);
             ui.m.dec_on = true;
             for channel in &mut ui.m.ch { channel.on = true; }
@@ -480,7 +480,7 @@ mod tests {
         symbols.extend([0, 2, 2, 4, 1, 0, 0]);
         symbols.extend([4; 7]);
         let states = oos_dsp::cphy::states_for_symbols(0, &symbols);
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let dt = 5e-12;
         let t0 = -12e-9;
         for wire in 0..3 {

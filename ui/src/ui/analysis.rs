@@ -1459,7 +1459,7 @@ mod measurement_gate_tests {
         let bytes = std::fs::read(&path).unwrap();
         let traces = crate::store::parse_wave(&bytes, &path).unwrap();
         drop(bytes);
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.commit_waveform_traces(traces, &path, true).unwrap();
         ui.set_offline(true);
         ui.m.run = RunState::Stop;
@@ -1491,7 +1491,7 @@ mod measurement_gate_tests {
     }
 
     fn sources() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.m.zoom = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-9).abs() < 1e-12).unwrap();
@@ -1504,11 +1504,7 @@ mod measurement_gate_tests {
             if i % 100 < 50 { amplitude } else { -amplitude }
         }).collect();
         ui.last[0] = Some(rec);
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "2ns reference".into(),
-            t0: 0.0, dt: 2e-9, v: ((0..2000).map(|i| {
-                let amplitude = if i < 1000 { 2.0 } else { 4.0 };
-                if i % 50 < 25 { amplitude } else { -amplitude }
-            }).collect::<Vec<_>>()).into(), vpd: 1.0, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "2ns reference".into(), ..RefWave::test((0..2000).map(|i| { let amplitude = if i < 1000 { 2.0 } else { 4.0 }; if i % 50 < 25 { amplitude } else { -amplitude } }).collect::<Vec<_>>(), 2e-9, 0.0) });
         ui
     }
 
@@ -1516,7 +1512,7 @@ mod measurement_gate_tests {
     fn screen_gate_is_half_open_at_f32_200ps_boundaries_with_nonzero_origins() {
         let dt = 20e-12;
         for center in [0.0, 2f64.powi(-20)] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.run = RunState::Stop;
             ui.m.zoom = false;
             ui.m.tscale = 0;
@@ -1538,8 +1534,7 @@ mod measurement_gate_tests {
             rec.dt = dt;
             rec.ch[0] = values.clone();
             ui.last[0] = Some(rec);
-            ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "border outliers".into(),
-                t0, dt, v: (values).into(), vpd: 0.02, offset: 0.0, on: true });
+            ui.refs[0] = Some(RefWave { label: "border outliers".into(), vpd: 0.02, ..RefWave::test(values, dt, t0) });
             ui.measure_last();
             for source in [WaveId::Ch(0), WaveId::Ref(0)] {
                 assert!((ui.fact_meas(Meas::Vpp, source) - 0.12).abs() < 1e-8);
@@ -1550,7 +1545,7 @@ mod measurement_gate_tests {
 
     #[test]
     fn screen_gate_keeps_real_near_boundary_samples_without_rounding_the_view() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.zoom = false;
         ui.m.tscale = 0;
         ui.m.tfine = 200e-12f32 / tscales()[0];

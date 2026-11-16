@@ -25,13 +25,12 @@ mod tests {
     use super::*;
 
     fn mixed() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.m.tscale = tscales().iter().position(|&t| t >= 1e-9).unwrap();
         ui.m.delay = 4e-9;
         for i in 0..3 {
-            ui.refs[i] = Some(RefWave { src: 0, color: i, label: format!("source-{i}"), t0: -2e-9, dt: 1e-10,
-                v: ((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>()).into(), vpd: 0.1, offset: 0.0, on: true });
+            ui.refs[i] = Some(RefWave { color: i, label: format!("source-{i}"), vpd: 0.1, ..RefWave::test((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>(), 1e-10, -2e-9) });
         }
         ui
     }

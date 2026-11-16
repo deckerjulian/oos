@@ -1059,7 +1059,7 @@ mod tests {
     /// The HDMI workspace on a 1920 x 1080 monitor: settings line on top, the waveform area below without menus.
     #[test]
     fn hdmi_workspace_picture() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let mut cv = Canvas::new(ui::PANEL_W, ui::PANEL_H);
         ui.hdmi_snap_want = true;
         for _ in 0..10 {

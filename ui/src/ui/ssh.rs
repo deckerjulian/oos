@@ -243,7 +243,7 @@ mod tests {
         let d = std::env::temp_dir().join(format!("oos-ui-ssh-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("usb")).unwrap();
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.set_ssh_dir(d.join("ssh"));
         u.ssh.stick = d.join("usb");
         u.sys.remote_ssh = true;

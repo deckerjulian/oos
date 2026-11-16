@@ -8,11 +8,7 @@ use super::*;
 enum Layout { Default, Minimal, Studio }
 
 fn fresh(layout: Layout) -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
-    u.m.bar_compact = !matches!(layout, Layout::Default);
-    u.relayout();
-    for _ in 0..6 { u.step(0.05); }
-    u
+    super::testkit::fresh(!matches!(layout, Layout::Default), 6)
 }
 
 /// The hardware source: there a trigger type or a decoder sets only its own parameters (the demo keeps presets that
@@ -34,8 +30,7 @@ fn shot(u: &mut Ui, name: &str) {
 }
 
 fn sine_ref(i: usize, n: usize, dt: f64) -> RefWave {
-    RefWave { src: 0, color: i, label: format!("R{}", i + 1), t0: 0.0, dt,
-        v: (0..n).map(|k| (k as f64 * dt * 5e3 * std::f64::consts::TAU).sin() as f32).collect::<Vec<_>>().into(), vpd: 0.5, offset: 0.0, on: true }
+    RefWave { color: i, label: format!("R{}", i + 1), vpd: 0.5, ..RefWave::test((0..n).map(|k| (k as f64 * dt * 5e3 * std::f64::consts::TAU).sin() as f32).collect::<Vec<_>>(), dt, 0.0) }
 }
 
 fn only_ch1(u: &mut Ui) {
@@ -183,7 +178,7 @@ fn math_scale_set_by_the_user_is_not_refitted_and_a_flat_result_keeps_a_sane_sca
 #[test]
 fn setup_save_and_recall_keep_how_a_ref_looks() {
     let mut u = fresh(Layout::Default);
-    let dir = std::env::temp_dir().join(format!("oos-b2-setup-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("b2-setup");
     std::fs::create_dir_all(&dir).unwrap();
     u.store_dir = dir.clone();
     u.refs[0] = Some(sine_ref(0, 2000, 1e-6));

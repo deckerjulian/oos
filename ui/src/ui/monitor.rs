@@ -112,10 +112,9 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wave::Source;
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.m.hdmi = HdmiMode::Layout;
         u.views_set(2);
         u
@@ -155,7 +154,7 @@ mod tests {
         let mut u = ui();
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
-        let mut q = |u: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(u, &cv, c)).unwrap();
+        let mut q = |u: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, u, &cv, c);
         assert_eq!(q(&mut u, ":DISP:VIEW:MON?"), "0");
         q(&mut u, ":DISPlay:VIEW:MONitor 2");
         assert_eq!(u.m.hdmi_view, 2);

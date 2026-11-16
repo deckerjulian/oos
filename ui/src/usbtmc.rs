@@ -622,7 +622,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn find_reads_sysfs() {
-        let root = std::env::temp_dir().join(format!("oos-usbtmc-{}", std::process::id()));
+        let root = crate::ui::testkit::Scratch::new("usbtmc");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         assert!(find(&root).unwrap_err().contains("no USB device"));

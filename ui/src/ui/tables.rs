@@ -21,10 +21,9 @@ mod reference_search_navigation_tests {
 
     #[test]
     fn stopped_reference_table_jumps_to_an_event_outside_the_current_main_window() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "Long reference".into(), t0: -7e-6, dt: 2e-9,
-            v: ((0..1600).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect::<Vec<_>>()).into(), vpd: 0.5, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "Long reference".into(), vpd: 0.5, ..RefWave::test((0..1600).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect::<Vec<_>>(), 2e-9, -7e-6) });
         ui.m.set_trigger_wave(WaveId::Ref(0), false);
         ui.m.trig_level = 0.0;
         ui.m.slope = Slope::Rise;

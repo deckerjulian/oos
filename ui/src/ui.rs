@@ -81,6 +81,8 @@ mod script;
 #[cfg(test)]
 mod lint;
 #[cfg(test)]
+pub(crate) mod testkit;
+#[cfg(test)]
 mod backend_followup_tests;
 mod bwtest;
 pub mod la;
@@ -444,6 +446,15 @@ struct RefWave {
     vpd: f32,
     offset: f32,
     on: bool,
+}
+
+#[cfg(test)]
+impl RefWave {
+    /// A shown reference of the samples `v` (`dt` apart, the first at `t0`): slot colour 0, no label, 1 V/div, no
+    /// offset; the tests change what they need with `..RefWave::test(..)`.
+    fn test(v: Vec<f32>, dt: f64, t0: f64) -> RefWave {
+        RefWave { src: 0, color: 0, label: String::new(), t0, dt, v: v.into(), vpd: 1.0, offset: 0.0, on: true }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1150,7 +1161,7 @@ mod part_tests {
     #[test]
     fn no_menu_item_has_two_parts() {
         use MenuId::*;
-        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let ui = crate::ui::testkit::demo_ui();
         let mut items: Vec<Item> = Vec::new();
         let menus = [
             Main, Channel(0), ChMore(0), Logger, Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasHold, MeasPair,
@@ -1167,7 +1178,7 @@ mod part_tests {
         }
         let mut owned = 0;
         for &it in &items {
-            let mut u = Ui::new(Source::Demo { t: 0.0 });
+            let mut u = crate::ui::testkit::demo_ui();
             let claims: Vec<usize> = (0..PARTS.len())
                 .filter(|&i| {
                     let p = &PARTS[i];
@@ -11676,7 +11687,7 @@ mod tests {
     // frame after a batch of several came out dim: the flicker after autoset, docs/fork/trigger-lockin.md)
     #[test]
     fn equal_frames_give_equal_brightness_whatever_their_number() {
-        let mut ui = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.persist = 0;
         for c in 1..super::NCH {
             ui.m.ch[c].on = false;
@@ -11726,7 +11737,7 @@ mod tests {
     /// still arrive (0.1.7 to 0.1.10 dropped each one as older than the record shown, and the values froze in Run).
     #[test]
     fn background_measurements_follow_a_running_record() {
-        let mut u = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.measure_in_background();
         let n = |u: &super::Ui| u.mstat.iter().map(|s| s.n).max().unwrap_or(0);
         for _ in 0..120 {
@@ -11741,7 +11752,7 @@ mod tests {
     fn add_item_toggles_a_measurement() {
         use super::*;
 
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas.clear();
         ui.meas_src = WaveId::Ch(0);
         let (a, b) = (ALL_MEAS[0], ALL_MEAS[1]);
@@ -11766,7 +11777,7 @@ mod tests {
         use oos_dsp::decode::Kind;
         for (proto, tdiv, want_id) in [(Proto::CAN, 100e-6f32, 0x123u32), (Proto::LIN, 1e-3, 0x21)] {
             // (I2S and 1553 have their own test below)
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.dec_on = true;
             ui.set_dec_proto(proto);
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
@@ -11792,7 +11803,7 @@ mod tests {
     #[test]
     fn leaving_the_bus_trigger_undoes_only_what_it_switched_on() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for c in 0..NCH {
             ui.m.ch[c].on = c == 0;
         }
@@ -11824,7 +11835,7 @@ mod tests {
         use super::*;
         use oos_dsp::decode::Kind;
         for id in [0x123u32, 0x18da_f110] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.dec_proto = Proto::CAN;
             ui.set_trig_type(TrigType::Bus);
             ui.m.trig_bus_val = id as u64;
@@ -11846,7 +11857,7 @@ mod tests {
                 let _ = crate::store::write(&dir.join("j-bus-trigger.png"), &crate::store::png_of(&cv));
             }
         }
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.dec_proto = Proto::CAN;
         ui.set_trig_type(TrigType::Bus);
         ui.m.trig_bus = BusWhat::Error;
@@ -11871,7 +11882,7 @@ mod tests {
             let tsc = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
             let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
             for what in [BusWhat::Id, BusWhat::Data, BusWhat::Frame, BusWhat::Error] {
-                let mut ui = Ui::new(Source::Demo { t: 0.0 });
+                let mut ui = crate::ui::testkit::demo_ui();
                 ui.set_dec_proto(proto);
                 ui.set_trig_type(TrigType::Bus);
                 let id_default = ui.m.trig_bus_val;
@@ -11921,7 +11932,7 @@ mod tests {
         let tsc = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
         let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
         for (what, val) in [(BusWhat::Id, None), (BusWhat::Id, Some(0x4B)), (BusWhat::Data, Some(0x40)), (BusWhat::Frame, None), (BusWhat::Error, None)] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.dec_proto = Proto::from_key("Usb").unwrap();
             ui.set_trig_type(TrigType::Bus);
             assert_eq!((ui.m.dec_src, ui.m.dec_cs, ui.m.trig_bus, ui.m.trig_bus_val), (2, Some(3), BusWhat::Id, 5));
@@ -11975,7 +11986,7 @@ mod tests {
     #[test]
     fn math_on_math() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.ch[1].on = true;
         ui.step(0.02);
         // M1 = CH1 + CH2, M2 = Abs(M1); M1 offers only the channels, M2 also M1
@@ -12001,7 +12012,7 @@ mod tests {
     #[test]
     fn zone_drawn_by_touch_filters_records() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.relayout();
         ui.open_menu(MenuId::Zone);
         ui.activate(Item::ZoneBox);
@@ -12051,7 +12062,7 @@ mod tests {
             (m("Usb"), 5e-6, "ENDP"),
         ];
         for (p, tdiv, want) in cases {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.set_dec_proto(p);
             ui.m.dec_on = true;
             ui.m.tscale = tscales().iter().position(|&x| (x - tdiv).abs() < tdiv * 1e-3).unwrap();
@@ -12073,7 +12084,7 @@ mod tests {
     #[test]
     fn segmented_recording_stops_after_n_records() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.segments = 10;
         for _ in 0..20 {
             ui.step(0.02);
@@ -12088,7 +12099,7 @@ mod tests {
     #[test]
     fn analysers_on_the_demo_signal() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();
         ui.step(0.05);
         // spectrum: the strongest line of the 1 kHz square is its fundamental
@@ -12133,7 +12144,7 @@ mod tests {
             ui.render(&mut cv);
             std::fs::write(format!("{}/{}.png", dir, name), crate::store::png_of(&cv)).unwrap();
         };
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();
         ui.m.ch[1].on = true;
         ui.step(0.05);
@@ -12206,7 +12217,7 @@ mod tests {
                 assert!(bad.is_none(), "{} {}: pixel {:?} differs: {:08x} drawn, {:08x} replayed", what, name, bad.map(|i| (i as i32 % w, i as i32 / w)), bad.map_or(0, |i| a.px[i]), bad.map_or(0, |i| b.px[i]));
             }
         };
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.ch[1].on = true;
         for _ in 0..5 {
             ui.step(0.05);
@@ -12253,7 +12264,7 @@ mod tests {
     #[test]
     fn protocol_watch_names_a_new_bus() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_dec_proto(Proto::UART);
         // demo UART on CH3 (115200 Bd): watch on at 100 us/div (a screen record resolves the bits), a few seconds
         ui.m.ch[2].on = true;
@@ -12293,7 +12304,7 @@ mod tests {
                 }
             }
         });
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         (ui.m.bode_addr, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_gen) = (addr, 1e3, 1e5, 5, 1);
         let ts0 = ui.m.tscale;
         ui.activate(Item::BodeRun);
@@ -12317,7 +12328,7 @@ mod tests {
     #[test]
     fn bode_sweep_with_the_builtin_generator() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) = (bode::BUILTIN, 1e3, 1e5, 3, WaveId::Ch(0), WaveId::Ch(0));
         (ui.m.afg_on, ui.m.afg_freq) = (false, 1234.0);
         ui.activate(Item::BodeRun);
@@ -12342,7 +12353,7 @@ mod tests {
     #[test]
     fn web_csv_refuses_a_record_it_would_have_to_cut() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.web_wave_csv().is_err());
         for _ in 0..30 {
             ui.step(0.02);
@@ -12355,7 +12366,7 @@ mod tests {
     #[test]
     fn keypad_enters_a_long_can_id() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.dec_proto = Proto::CAN;
         ui.set_trig_type(TrigType::Bus);
         ui.open_menu(MenuId::Trigger);
@@ -12393,7 +12404,7 @@ mod tests {
         use oos_dsp::decode::Kind;
         for (key, tdiv) in [("I2s", 10e-6f32), ("Mil1553", 20e-6)] {
             let proto = Proto::from_key(key).unwrap();
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.dec_on = true;
             ui.set_dec_proto(proto);
             // the trigger that holds the demo still: I2S the falling WS edge on CH1, 1553 the first rising edge after
@@ -12426,7 +12437,7 @@ mod tests {
     #[test]
     fn power_key_dialog() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.key(key::POWER);
         assert!(ui.power_dlg);
         assert_eq!(ui.panel_tx, vec![crate::board::PanelCmd::CancelPowerDown]);
@@ -12460,7 +12471,7 @@ mod tests {
     fn every_trigger_type_triggers_on_the_demo() {
         use super::*;
         for &t in TRIG_TYPES.iter() {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.set_trig_type(t);
             ui.m.trig_mode = TrigMode::Normal;
             let mut hits = 0;
@@ -12490,7 +12501,7 @@ mod tests {
     #[test]
     fn colour_grade_renders() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.ch[1].on = true;
         ui.m.color_grade = true;
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -12526,7 +12537,7 @@ mod tests {
     #[test]
     fn zoom_close_preserves_explicit_main_timebase_changes() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.step(0.02);
         let (ts, tf, d) = (ui.m.tscale, ui.m.tfine, ui.m.delay);
         ui.set_zoom(true);
@@ -12552,7 +12563,7 @@ mod tests {
     #[test]
     fn mask_test_counts_and_stops() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.step(0.033);
         ui.create_mask();
         assert!(ui.m.mask_on && ui.mask.is_some());
@@ -12580,7 +12591,7 @@ mod tests {
     #[test]
     fn math_category_filters_the_operation_list() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.select_option(Item::MathFam, "Logic");
         let ops = ui.options(Item::MathOpI);
         assert!(ops.contains(&"AND".into()) && ops.contains(&"XOR".into()));
@@ -12596,13 +12607,13 @@ mod tests {
     #[test]
     fn mask_from_ref_invert_save_and_load() {
         use super::*;
-        let dir = std::env::temp_dir().join(format!("oos-mask-{}", std::process::id()));
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let dir = crate::ui::testkit::Scratch::new("mask");
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.store_dir = dir.clone();
         ui.store_dest = crate::store::StoreDest::Local;
         ui.step(0.033);
         let rec = ui.last[0].as_ref().unwrap();
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: rec.t0, dt: rec.dt, v: rec.ch[0].clone().into(), vpd: 1.0, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "R1".into(), ..RefWave::test(rec.ch[0].clone(), rec.dt, rec.t0) });
         ui.activate(Item::MaskFromRef);
         assert!(ui.m.mask_on && ui.mask.is_some());
         ui.adjust(Item::MaskInvert, 1);
@@ -12623,8 +12634,8 @@ mod tests {
     #[test]
     fn fast_frame_save_and_load_and_local_dest() {
         use super::*;
-        let dir = std::env::temp_dir().join(format!("oos-ff-{}", std::process::id()));
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let dir = crate::ui::testkit::Scratch::new("ff");
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.store_dir = dir.clone();
         ui.store_dest = crate::store::StoreDest::Local;
         for _ in 0..4 {
@@ -12648,8 +12659,8 @@ mod tests {
     #[test]
     fn storage_save_and_recall() {
         use super::*;
-        let dir = std::env::temp_dir().join(format!("oos-ui-store-{}", std::process::id()));
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let dir = crate::ui::testkit::Scratch::new("ui-store");
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.store_dir = dir.join("sub");
         ui.m.ch[2].on = true;
         ui.m.tscale -= 2;
@@ -12775,10 +12786,8 @@ mod tests {
     #[test]
     fn segment_scpi() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
-        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+        let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
         q(&mut ui, ":ACQ:SEGM 5000");
         q(&mut ui, ":ACQ:SEGM:HARD ON");
         q(&mut ui, ":ACQuire:SEGMents:INTerval 1e-4");
@@ -13018,7 +13027,7 @@ mod tests {
         let g = shared.lock().unwrap();
         assert_eq!((g.queue.len(), g.queue[0].seq, g.dropped), (1, 100, 69));
         drop(g);
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert_eq!(ui.fast_max(), crate::board::QUEUE_MAX);
         // nothing else in the screen: 28 ms; a slow screen leaves at least 5
         assert_eq!(ui.fast_budget(), 28.0);
@@ -13050,7 +13059,7 @@ mod tests {
     #[test]
     fn level_line_after_a_change_and_no_mark_with_ac_coupling() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.step(0.05);
         assert!(!ui.level_line_on(), "no line at start-up");
         ui.adjust(Item::TrigLevel, 3);
@@ -13143,10 +13152,8 @@ mod tests {
     #[test]
     fn dvm_lane_scpi() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
-        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+        let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
         assert_eq!(q(&mut ui, ":SYST:DEB:DVM:LANE?"), "AUTO");
         q(&mut ui, ":SYSTem:DEBug:DVM:LANE 3");
         assert_eq!((q(&mut ui, ":SYST:DEB:DVM:LANE?"), ui.dvm_lane), ("3".into(), Some(3)));
@@ -13160,10 +13167,8 @@ mod tests {
     #[test]
     fn average_scpi() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
-        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+        let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
         assert_eq!(q(&mut ui, ":ACQ:TYPE?"), "NORM");
         q(&mut ui, ":ACQuire:TYPE AVERages");
         q(&mut ui, ":ACQ:AVER 256");
@@ -13190,7 +13195,7 @@ mod tests {
     #[test]
     fn layout_plot_size_and_touch_targets() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         // default: one measurement row under the plot
         assert_eq!((ui.grid.x, ui.grid.y, ui.grid.w, ui.grid.h), (0, 40, 1024, 456));
         ui.m.meas.clear();
@@ -13246,7 +13251,7 @@ mod tests {
     #[test]
     fn pickers_open_and_set_the_value() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.open_menu(MenuId::Main);
         ui.activate(Item::Open(MenuId::Trigger));
         let row = row_of(&ui, Item::TrigType);
@@ -13299,7 +13304,7 @@ mod tests {
     #[test]
     fn every_option_selects() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let items = [
             Item::TrigType, Item::MathOpI, Item::MathFam, Item::FftWin, Item::VidSync, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct,
             Item::AcqMode, Item::TrigWhen, Item::Pat(1), Item::DecCs, Item::DecProto, Item::GridStyle, Item::ChProbe(0), Item::TrigMode, Item::StoreDest,
@@ -13325,7 +13330,7 @@ mod tests {
     #[test]
     fn clear_empties_the_display_in_stop() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let lit = |ui: &Ui| ui.ph.map.iter().map(|m| m.iter().filter(|&&v| v > 0).count()).sum::<usize>();
         for _ in 0..5 {
             ui.step(0.033);
@@ -13364,7 +13369,7 @@ mod tests {
     #[test]
     fn measure_tap_lists_and_hold_adds() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let rest = vec![
             Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::MeasRefs, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasClear,
         ];
@@ -13420,8 +13425,8 @@ mod tests {
     #[test]
     fn quick_key_dispatch() {
         use super::*;
-        let dir = std::env::temp_dir().join(format!("oos-ui-quick-{}", std::process::id()));
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let dir = crate::ui::testkit::Scratch::new("ui-quick");
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.store_dir = dir.clone();
         ui.step(0.033);
         // default: screenshot as before
@@ -13468,7 +13473,7 @@ mod tests {
     fn the_acquisition_text_fits_before_the_buttons() {
         use super::*;
         for ts in TEXT_SIZES {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.text_size = ts;
             ui.relayout();
             let f = ui.fonts();
@@ -13487,7 +13492,7 @@ mod tests {
     #[test]
     fn a_channel_key_first_selects_when_several_are_on() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.step(0.033);
         assert!(ui.m.ch[0].on && ui.m.n_on() == 1 && ui.m.active == 0);
         ui.key(key::CH1 + 1);
@@ -13526,7 +13531,7 @@ mod tests {
     #[test]
     fn a_long_press_of_a_channel_key_switches_ac_dc() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.step(0.033);
         assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Dc && !ui.menu_open);
         // short: the menu opens when the key is let go
@@ -13572,7 +13577,7 @@ mod tests {
     #[test]
     fn start_menu_and_keys_reach_everything() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for _ in 0..3 {
             ui.step(0.033);
         }
@@ -13648,7 +13653,7 @@ mod tests {
     #[test]
     fn nested_menu_back_restores_each_parent_and_its_focus_after_a_picker() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let back = |ui: &mut Ui| {
             let (x, y) = mid(ui.dlg_layout().unwrap().back.expect("nested menu has Back"));
             ui.tap(x, y);
@@ -13716,7 +13721,7 @@ mod aux_out_tests {
 
     #[test]
     fn aux_out_in_the_system_menu_with_the_offered_choices() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
         let want: &[&str] = if board().mask_hw() || board().zone_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
         assert_eq!(ui.options(Item::AuxOut), want);

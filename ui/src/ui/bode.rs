@@ -946,7 +946,7 @@ mod tests {
     /// a first-order low-pass at 1 kHz, CH4 the sync pulse at the start.
     #[test]
     fn free_sweep_reads_one_record() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points) = (FREE, 20.0, 20e3, 40);
         (ui.m.bode_sw_time, ui.m.bode_sw_log, ui.m.bode_sw_in, ui.m.bode_out, ui.m.bode_sync, ui.m.bode_sync_level) = (0.5, true, 1, WaveId::Ch(1), 3, 1.5);
         let (ts0, trig0, mode0) = (ui.m.tscale, ui.m.trig_src, ui.m.trig_mode);
@@ -1011,7 +1011,7 @@ mod tests {
 
     #[test]
     fn free_sweep_refuses_what_does_not_fit() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_sw_time) = (FREE, 1e3, 200e6, 0.5);
         ui.activate(Item::BodeRun);
         assert!(!ui.bode.running && ui.toast.as_ref().unwrap().0.contains("does not fit the memory"), "{:?}", ui.toast);
@@ -1049,7 +1049,7 @@ mod tests {
 
     #[test]
     fn free_sweep_menu_settings() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.bode_gen = FREE;
         assert_eq!(ui.value(Item::BodeGen), "Free-running sweep");
         assert_eq!((ui.value(Item::BodeSwTime), ui.value(Item::BodeSwLog), ui.value(Item::BodeSync), ui.value(Item::BodeIn)), ("1 s".into(), "Log".into(), "CH4".into(), "CH1".into()));
@@ -1070,7 +1070,7 @@ mod tests {
     // 10 mVpp .. 20 Vpp are allowed.
     #[test]
     fn the_amplitude_knob_covers_10_mv_to_20_v() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert_eq!(ui.m.bode_amp, 1.0);
         ui.adjust(Item::BodeAmp, -1);
         assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (0.5, "500 mVpp".into()));
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn usb_connection_in_the_menu() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert!(!ui.items(MenuId::Bode).contains(&Item::BodeLink), "not for the built-in generator");
         ui.m.bode_gen = 5;
         assert_eq!(ui.value(Item::BodeGen), "CHANnel");

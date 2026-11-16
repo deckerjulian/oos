@@ -16,7 +16,7 @@ mod slot_loading_tests {
     }
     #[test]
     fn destination_choice_is_modal_and_cancel_changes_no_source_or_model() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas.clear(); ui.ref_sel = 3;
         let before = ui.m.clone();
         ui.request_waveform();
@@ -31,7 +31,7 @@ mod slot_loading_tests {
     }
     #[test]
     fn chosen_async_destination_is_transactional_and_live_import_is_an_overlay() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
         ui.m.ch[1].on = true; ui.m.trig_mode = TrigMode::Normal; ui.m.delay = 6e-6;
         ui.ref_sel = 3;
@@ -60,7 +60,7 @@ mod slot_loading_tests {
 
     #[test]
     fn live_overlay_fit_reuses_bounded_selected_record_fit_and_keeps_adc_acquisition() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.commit_waveform_traces_at(vec![trace("overlay")], "overlay", 2).unwrap();
         ui.m.deskew_ref[2] = 2e-9;
         ui.m.delay = 10e-3;
@@ -97,7 +97,7 @@ mod import_measurement_tests {
 
     #[test]
     fn additive_imports_keep_all_configured_single_pair_and_gate_settings() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.load_waveform_auto(CSV, "first.csv").unwrap();
         ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(0))).collect();
         ui.m.meas2 = (0..PAIRS_N).map(|kind| (kind, WaveId::Ref(0), WaveId::Ref(1))).collect();
@@ -118,12 +118,12 @@ mod import_measurement_tests {
     #[test]
     fn a_first_import_respects_a_deliberately_empty_or_custom_catalog() {
         for custom in [Vec::new(), vec![(Meas::Vmax, WaveId::Ch(0))]] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.meas = custom.clone();
             ui.load_waveform_auto(CSV, "custom.csv").unwrap();
             assert_eq!(ui.m.meas, custom);
         }
-        let mut untouched = Ui::new(Source::Demo { t: 0.0 });
+        let mut untouched = crate::ui::testkit::demo_ui();
         untouched.load_waveform_auto(CSV, "default.csv").unwrap();
         assert!(untouched.m.meas.iter().any(|entry| entry.1 == WaveId::Ref(0)), "a first live import adds useful reference defaults");
         assert!(untouched.m.meas.iter().any(|entry| matches!(entry.1, WaveId::Ch(_))), "live channel defaults remain in the overlay workspace");
@@ -135,7 +135,7 @@ mod tests {
     use super::*;
 
     fn replay() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.remember_live();
         u.offline = true;
         u.offline_ref = 0;
@@ -150,7 +150,7 @@ mod tests {
             let amplitude = if i < 2500 { 0.5 } else { 1.0 };
             if i % 40 < 20 { -amplitude } else { amplitude }
         }).collect();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "Test record".into(), t0: 0.0, dt: 1e-9, v: (values).into(), vpd: 0.5, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave { label: "Test record".into(), vpd: 0.5, ..RefWave::test(values, 1e-9, 0.0) });
         u.meas_src = WaveId::Ref(0);
         u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
         u.m.run = RunState::Stop;
@@ -209,17 +209,7 @@ mod tests {
     }
 
     fn wave(dt: f64, vpd: f32, offset: f32, color: usize) -> RefWave {
-        RefWave {
-            src: 0,
-            color,
-            label: String::new(),
-            t0: 0.0,
-            dt,
-            v: (vec![0.0; 64]).into(),
-            vpd,
-            offset,
-            on: true,
-        }
+        RefWave { color, vpd, offset, ..RefWave::test(vec![0.0; 64], dt, 0.0) }
     }
 
     #[test]
@@ -234,7 +224,7 @@ mod tests {
 
     #[test]
     fn reference_badges_keep_one_horizontal_scale() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         for ch in &mut u.m.ch {
             ch.on = false;
         }
@@ -269,7 +259,7 @@ mod tests {
     fn every_reference_uses_the_same_time_window_at_its_own_sample_interval() {
         let mut u = replay();
         let values: Vec<f32> = (0..2500).map(|i| if i < 1250 { if i % 20 < 10 { -1.0 } else { 1.0 } } else if i % 20 < 10 { -3.0 } else { 3.0 }).collect();
-        u.refs[1] = Some(RefWave { src: 0, color: 1, label: "Second source".into(), t0: 0.0, dt: 2e-9, v: (values).into(), vpd: 1.0, offset: 0.0, on: false });
+        u.refs[1] = Some(RefWave { color: 1, label: "Second source".into(), on: false, ..RefWave::test(values, 2e-9, 0.0) });
         u.m.delay = 1e-6;
         u.step(0.01);
         assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 0.01);
@@ -297,9 +287,7 @@ mod tests {
                 u.m.set_trigger_wave(secondary, true);
                 let values: Vec<f32> = (0..5000).map(|i| if i % 40 < 30 { -0.05 } else { 0.05 }).collect();
                 match secondary {
-                    WaveId::Ref(i) => u.refs[i] = Some(RefWave { src: 0, color: 1,
-                        label: "Low-amplitude secondary".into(), t0: 0.0, dt: 1e-9,
-                        v: (values).into(), vpd: 2.0, offset: 0.0, on: false }),
+                    WaveId::Ref(i) => u.refs[i] = Some(RefWave { color: 1, label: "Low-amplitude secondary".into(), vpd: 2.0, on: false, ..RefWave::test(values, 1e-9, 0.0) }),
                     WaveId::Ch(c) => {
                         u.m.ch[c].probe = 1.0;
                         u.m.ch[c].vfine = 2.0 / VSCALES[u.m.ch[c].vscale];
@@ -368,9 +356,9 @@ mod tests {
 
     #[test]
     fn a_file_waits_for_a_slot_and_lands_on_the_one_chosen() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         let kept: Vec<f32> = (0..40).map(|i| if i < 20 { -0.2 } else { 0.2 }).collect();
-        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "keep".into(), t0: 0.0, dt: 1e-9, v: kept.clone().into(), vpd: 0.2, offset: 0.0, on: true });
+        u.refs[0] = Some(RefWave { label: "keep".into(), vpd: 0.2, ..RefWave::test(kept.clone(), 1e-9, 0.0) });
         u.request_waveform();
         assert!(u.load_slot_ask && !u.open_wave_request);
         let title = Ui::load_slot_box();
@@ -401,7 +389,7 @@ mod tests {
 
     #[test]
     fn auto_deskew_lines_up_the_shown_traces() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.m.run = RunState::Stop;
         for ch in &mut u.m.ch { ch.on = false; }
         u.m.ch[0].on = true;
@@ -410,8 +398,8 @@ mod tests {
         samples[0] = square(0);
         samples[1] = square(40);
         u.last[0] = Some(Record { t0: 0.0, dt: 1e-9, ch: samples, triggered: true, partial: false, raw: None, la: None, pairs: false });
-        u.refs[3] = Some(RefWave { src: 0, color: 1, label: String::new(), t0: 0.0, dt: 1e-9, v: square(80).into(), vpd: 0.2, offset: 0.0, on: true });
-        u.refs[4] = Some(RefWave { src: 0, color: 2, label: String::new(), t0: 0.0, dt: 1e-9, v: square(200).into(), vpd: 0.2, offset: 0.0, on: false });
+        u.refs[3] = Some(RefWave { color: 1, vpd: 0.2, ..RefWave::test(square(80), 1e-9, 0.0) });
+        u.refs[4] = Some(RefWave { color: 2, vpd: 0.2, on: false, ..RefWave::test(square(200), 1e-9, 0.0) });
         u.measure_last();
         let before = u.pair_at(8, WaveId::Ch(0), WaveId::Ch(1));
         assert!((before - 40e-9).abs() < 2e-9, "{before}");

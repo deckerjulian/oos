@@ -1273,7 +1273,7 @@ mod time_step_tests {
     // knob did not find it in its list.
     #[test]
     fn a_time_above_the_knob_steps_down_to_5_s_not_to_off() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas_idle = 10.0;
         ui.adjust(Item::MeasIdle, -1);
         assert_eq!(ui.m.meas_idle, 5.0);
@@ -1299,7 +1299,7 @@ mod ref_clear_tests {
     // Break it catches: the readouts an import adds for its slot staying as empty rows after Reference > Clear.
     #[test]
     fn clearing_the_references_takes_their_readouts_along() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let csv: String = (0..2000).map(|i| format!("{:e},{}\n", i as f64 * 1e-6, if (i / 100) % 2 == 0 { 1.0 } else { -1.0 })).collect();
         ui.load_waveform_bytes_at(csv.as_bytes(), "r.csv", 1).unwrap();
         assert!(ui.m.meas.iter().any(|(_, w)| *w == WaveId::Ref(1)), "the import adds readouts of its slot");
@@ -1322,7 +1322,7 @@ mod physical_extremum_time_tests {
 
     #[test]
     fn extremum_times_follow_physical_origins_and_screen_gate_for_channels_and_refs() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.m.zoom = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 10e-9).abs() < 1e-14).unwrap();
@@ -1339,8 +1339,7 @@ mod physical_extremum_time_tests {
         rec.dt = dt;
         rec.ch[0] = values.clone();
         ui.last[0] = Some(rec);
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "nonzero origin".into(),
-            t0, dt, v: (values).into(), vpd: 0.5, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "nonzero origin".into(), vpd: 0.5, ..RefWave::test(values, dt, t0) });
         ui.m.meas = vec![(Meas::TVmax, WaveId::Ch(0)), (Meas::TVmin, WaveId::Ref(0)), (Meas::Vpp, WaveId::Ref(0))];
 
         for (full, max_time, min_time, vpp) in [(true, -450e-9, 300e-9, 5.0), (false, 180e-9, 220e-9, 2.0)] {
@@ -1361,11 +1360,9 @@ mod physical_extremum_time_tests {
 
     #[test]
     fn first_reference_maximum_reports_its_record_origin() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let origin = -9.99990584751956e-7;
-        ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "clock origin".into(),
-            t0: origin, dt: 20e-12, v: (vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0]).into(),
-            vpd: 0.5, offset: 0.0, on: true });
+        ui.refs[0] = Some(RefWave { label: "clock origin".into(), vpd: 0.5, ..RefWave::test(vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0], 20e-12, origin) });
         ui.set_measurement_full_record(true);
         close(ui.meas_at(WaveId::Ref(0), Meas::TVmax), origin);
         close(ui.fact_meas(Meas::TVmax, WaveId::Ref(0)), origin);
@@ -1380,10 +1377,10 @@ mod counter_tests {
     /// The counter through SCPI, off the hardware: set-up, a value from the records, the totalizer's clear.
     #[test]
     fn the_counter_by_scpi() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let cv = crate::gfx::Canvas::new(ui.scr.w, ui.scr.h);
         let mut s = crate::scpi::Scpi::open(0);
-        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(s.exec_line(ui, &cv, c)).unwrap().trim().to_string();
+        let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut s, ui, &cv, c).trim().to_string();
         q(&mut ui, ":COUNter:ENABle 1;:COUNter:SOURce CHAN1;:COUNter:MODE FREQuency;:COUNter:NDIGits 6");
         assert_eq!(q(&mut ui, ":COUNter:ENABle?;:COUNter:SOURce?;:COUNter:MODE?;:COUNter:NDIGits?"), "1;CHAN1;FREQ;6");
         for _ in 0..10 {

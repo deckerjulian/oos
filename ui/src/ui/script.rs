@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn menus_and_items_by_name() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         assert!(u.script_menu("nothing").is_err());
         u.script_menu("Mask").unwrap();
         assert_eq!(u.menu, MenuId::Mask);

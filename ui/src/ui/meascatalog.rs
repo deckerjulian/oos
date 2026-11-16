@@ -710,7 +710,7 @@ mod tests {
     use super::*;
 
     fn put(ui: &mut Ui, slot: usize, v: Vec<f32>, dt: f64) {
-        ui.refs[slot] = Some(RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt, v: v.into(), vpd: 1.0, offset: 0.0, on: true });
+        ui.refs[slot] = Some(RefWave::test(v, dt, 0.0));
     }
 
     fn ready_rows(ui: &mut Ui) -> Vec<tools::MeasRow> {
@@ -760,7 +760,7 @@ mod tests {
 
     #[test]
     fn add_puts_a_reference_measurement_on_the_strip() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas_full_record=true;
         put(&mut ui, 1, square(1.0, 2000, 40), 1e-6);
         ui.meas_src = WaveId::Ref(1);
@@ -778,7 +778,7 @@ mod tests {
 
     #[test]
     fn power_jitter_and_double_pulse_return_numbers() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas_full_record=true;
         let n = 2000;
         let v: Vec<f32> = (0..n).map(|i| (i as f32 * 0.02).sin()).collect();
@@ -829,7 +829,7 @@ mod tests {
     #[test]
     fn catalog_screenshots() {
         let Ok(dir) = std::env::var("OOS_CATALOG_DIR") else { return };
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for _ in 0..4 {
             ui.step(0.05);
         }

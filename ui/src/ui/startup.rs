@@ -415,7 +415,7 @@ mod tests {
     use oos_hal::bootstatus::line;
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.start_up_begin(None);
         u
     }

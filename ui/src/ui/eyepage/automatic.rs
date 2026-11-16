@@ -467,12 +467,11 @@ mod performance_and_timing_tests {
     use super::*;
 
     fn reference(values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
-        RefWave { src: 0, color: 0, label: "fixed analysis".into(), v: values.into(), dt, t0,
-            vpd: 0.5, offset: 0.0, on: true }
+        RefWave { label: "fixed analysis".into(), vpd: 0.5, ..RefWave::test(values, dt, t0) }
     }
 
     fn controlled(sim_slot: usize) -> (Ui, mpsc::Receiver<Job>, mpsc::Sender<Finished>) {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true); ui.session_is_sim = true; ui.m.sim_slot = sim_slot;
         ui.replay.sim_revision = 1;
         ui.refs[0] = Some(reference((0..300_000).map(|i| if i / 100 % 2 == 0 { -1.0 } else { 1.0 }).collect(), 1e-12, 0.0));
@@ -579,7 +578,7 @@ mod performance_and_timing_tests {
     #[test]
     fn native_channel_eye_uses_full_frame_and_ignores_interpolated_display_pan() {
         const NATIVE_POINTS: usize = 1_000_000;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop; ui.m.meas.clear(); ui.m.meas2.clear();
         ui.m.ch[0].on = true; ui.m.deskew_ch[0] = 2e-12;
         let values: Vec<f32> = (0..NATIVE_POINTS).map(|i| if i / 100 % 2 == 0 { -1.0 } else { 1.0 }).collect();
@@ -633,7 +632,7 @@ mod performance_and_timing_tests {
 
     #[test]
     fn full_eye_owns_its_header_while_side_and_floating_eye_keep_waveform_info() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 }); ui.set_offline(true);
+        let mut ui = crate::ui::testkit::demo_ui(); ui.set_offline(true);
         ui.m.view = AView::Eye; ui.m.eye_place = EyePlace::Full;
         let mut canvas = Canvas::new(W, H); canvas.clear(BG);
         let blank = canvas.px.clone();
@@ -648,7 +647,7 @@ mod performance_and_timing_tests {
 
     #[test]
     fn reference_badge_keeps_slot_identity_and_native_rate_in_two_compact_rows() {
-        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let ui = crate::ui::testkit::demo_ui();
         let mut wave = reference(vec![-1.0, 1.0], 20e-12, 0.0);
         wave.label = "Capture_信号_very_long_file_name_".repeat(8); wave.vpd = 0.25;
         let (name, readout) = ui.ref_badge_lines(0, &wave, 200);
@@ -665,7 +664,7 @@ mod performance_and_timing_tests {
 
     #[test]
     fn twenty_million_point_acquisition_caption_fits_without_duplicate_live_controls() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 }); ui.set_offline(true);
+        let mut ui = crate::ui::testkit::demo_ui(); ui.set_offline(true);
         ui.refs[0] = Some(reference(vec![0.0; 20_000_000], 5e-12, -50e-6));
         let buttons = ui.top_buttons();
         assert_eq!(buttons.iter().filter(|button| button.0 == TopBtn::Live).count(), 1);
@@ -687,7 +686,7 @@ mod performance_and_timing_tests {
 
     #[test]
     fn long_reference_analysis_ignores_display_geometry_and_keeps_all_native_edges() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         let values: Vec<_> = (0..300_000).map(|i| if i / 100 % 2 == 0 { -1.0 } else { 1.0 }).collect();
         let expected_edges = oos_dsp::edges::edges(&values, 0.0, 0.1).len();
@@ -727,7 +726,7 @@ mod performance_and_timing_tests {
 
     #[test]
     fn companion_clock_and_rail_deskew_change_identity_and_align_only_the_physical_overlap() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.refs[0] = Some(reference((0..50).map(|v| v as f32).collect(), 1e-9, 10e-9));
         ui.refs[1] = Some(reference((100..150).map(|v| v as f32).collect(), 2e-9, 14e-9));
         ui.refs[2] = Some(reference((0..50).map(|v| v as f32).collect(), 1e-9, 10e-9));

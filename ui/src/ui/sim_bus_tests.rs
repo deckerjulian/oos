@@ -4,7 +4,6 @@
 //! The controlled worker keeps the pending phase deterministic: no timing sleeps,
 //! random PRBS payloads, native GUI, or live SCPI endpoint are involved.
 use super::*;
-use crate::wave::Source;
 use oos_dsp::{decode::Kind as PacketKind, sim::{i2c_logic, sample, I2cXfer}};
 
 const RATE: f64 = 100_000.0;
@@ -22,12 +21,11 @@ fn data(payload: u8) -> (Vec<f32>, Vec<f32>) {
 }
 
 fn reference(label: &str, values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
-    RefWave { src: 0, color: 0, label: label.into(), t0, dt,
-        v: values.into(), vpd: 0.5, offset: -1.65, on: true }
+    RefWave { label: label.into(), vpd: 0.5, offset: -1.65, ..RefWave::test(values, dt, t0) }
 }
 
 fn fixture() -> (Ui, Vec<f32>, Vec<f32>) {
-    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut ui = crate::ui::testkit::demo_ui();
     let (old, clock) = data(0x5a);
     let (fresh, same_clock) = data(0xa5);
     assert_eq!(clock, same_clock, "payload changes must not alter the clock fixture");

@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn queued_short_panel_click_dispatches_once_and_canceled_or_crossed_gestures_do_not() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         let controls = panel::controls();
         let single = controls.iter().find(|control| control.command == "key single").unwrap().rect;

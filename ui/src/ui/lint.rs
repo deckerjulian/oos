@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 pub(super) const SCREENS: [Screen; 3] = [Screen::PANEL, Screen { w: 1280, h: 800 }, Screen { w: 1920, h: 1080 }];
 
 fn demo_on(scr: Screen) -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.scr = scr;
     u
 }
@@ -202,7 +202,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
 
 #[test]
 fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.tap(160, 20);
     assert!(u.menu_open && u.menu == MenuId::Acquire);
     u.tap(160, 20);
@@ -240,7 +240,7 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
 #[cfg(not(windows))]
 #[test]
 fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
-    let dir = std::env::temp_dir().join(format!("oos-refload-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("refload");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = with_two_channels();
@@ -259,7 +259,7 @@ fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
 
 #[test]
 fn a_page_offers_to_switch_on_its_channels() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.open_menu(MenuId::Power);
     assert!(!u.m.ch[1].on);
     assert_eq!(u.off_sources(MenuId::Power), [1]);
@@ -282,7 +282,7 @@ fn a_page_offers_to_switch_on_its_channels() {
 fn files_go_to_the_stick_while_it_is_there() {
     assert!(crate::store::usb_mounted("/dev/sda1 /mnt/usb vfat rw 0 0\n"));
     assert!(!crate::store::usb_mounted("/dev/mmcblk0p1 /oos ext4 rw 0 0\n/dev/sda1 /mnt/usb2 vfat rw 0 0\n"));
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
     assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));
     u.usb = true;
@@ -302,7 +302,7 @@ fn files_go_to_the_stick_while_it_is_there() {
 
 #[test]
 fn system_info_has_the_rates() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.wfm_rate = 123.0;
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
@@ -464,7 +464,7 @@ fn screen_in_order_on(scr: Screen) {
 
 #[test]
 fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.bar_compact = true;
     u.tap(80, BOTTOM.y + 15);
     let (x, y) = fix_tests::row_xy(&u, "Logic analyser"); u.tap(x, y); // Sources: Logic analyser, immediately above Generator.
@@ -478,7 +478,7 @@ fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
 
 /// Stage of frames with demo signals on channels 1 and 2.
 fn with_two_channels() -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.ch[1].on = true;
     for _ in 0..12 {
         u.step(0.04);
@@ -619,7 +619,7 @@ fn ten_references() {
 
 #[test]
 fn a_mask_comes_back_from_its_file() {
-    let dir = std::env::temp_dir().join(format!("oos-mask-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("mask");
     let mut u = with_two_channels();
     u.store_dir = dir.clone();
     u.activate(Item::MaskCreate);
@@ -651,7 +651,7 @@ fn a_channel_keeps_its_name() {
 
 #[test]
 fn holdoff_steps_and_setups() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     assert_eq!(u.value(Item::TrigHoldoff), "Off");
     u.adjust(Item::TrigHoldoff, 1);
     assert!(u.value(Item::TrigHoldoff).ends_with("s"), "{}", u.value(Item::TrigHoldoff));
@@ -735,7 +735,7 @@ fn decoder_results_are_cached_per_record() {
 
 #[test]
 fn event_table_scrolls_and_goes_to_an_event() {
-    let dir = std::env::temp_dir().join(format!("oos-events-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("events");
     let mut u = with_two_channels();
     u.store_dir = dir.clone();
     u.m.ch[2].on = true;
@@ -1228,7 +1228,7 @@ fn a_formula_is_a_math_channel() {
 
 #[test]
 fn the_logger_writes_rows_at_its_interval() {
-    let dir = std::env::temp_dir().join(format!("oos-log-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("log");
     let mut u = with_two_channels();
     u.store_dir = dir.clone();
     u.m.meas = vec![];
@@ -1323,7 +1323,7 @@ fn peak_hz(u: &Ui) -> Vec<f64> {
 
 #[test]
 fn the_pane_follows_a_square_wave_and_finds_its_harmonics() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.pane = tables::PANE_SPECTRUM;
     u.step(0.04);
     square_on_ch1(&mut u);
@@ -1359,7 +1359,7 @@ fn the_pane_follows_a_square_wave_and_finds_its_harmonics() {
 
 #[test]
 fn the_sort_button_works_by_touch_in_pane_and_view() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.pane = tables::PANE_SPECTRUM;
     u.step(0.04);
     square_on_ch1(&mut u);
@@ -1386,7 +1386,7 @@ fn the_sort_button_works_by_touch_in_pane_and_view() {
     u.tap(v.x + 5, v.y + 5);
     assert!(u.menu_open && u.menu == MenuId::ViewMore);
     // the close button of the pane too
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.pane = tables::PANE_SPECTRUM;
     u.step(0.04);
     u.relayout();
@@ -1423,7 +1423,7 @@ fn pane_text_fits() {
 /// A pane uses its height: a short list makes it lower and the plot larger, and the rows reach its end.
 #[test]
 fn panes_leave_no_empty_rows() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.pane = tables::PANE_RESULTS;
     u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
     u.m.ch[0].on = false;
@@ -1455,7 +1455,7 @@ fn panes_leave_no_empty_rows() {
 
 #[test]
 fn a_long_results_list_scrolls_by_touch() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.pane = tables::PANE_RESULTS;
     u.m.meas = ALL_MEAS.iter().take(14).map(|&k| (k, WaveId::Ch(0))).collect();
     for _ in 0..3 {
@@ -1486,7 +1486,7 @@ fn a_long_results_list_scrolls_by_touch() {
 
 #[test]
 fn the_results_pane_shows_cursors_and_peaks() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.pane = tables::PANE_RESULTS;
     u.m.cursor = CursorMode::Time;
     u.step(0.04);
@@ -1584,7 +1584,7 @@ fn pane_pictures() {
         let _ = crate::store::write(&dir.join(format!("{}.png", n)), &crate::store::png_of(&cv));
     };
     let square = |pane: usize, f: &dyn Fn(&mut Ui)| {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.m.pane = pane;
         u.step(0.04);
         square_on_ch1(&mut u);
@@ -1607,7 +1607,7 @@ fn pane_pictures() {
     let mut u = square(2, &|u| { u.m.spec_src = WaveId::Ch(1); });
     shot(&mut u, "results-table-only");
     let live = |pane: usize, f: &dyn Fn(&mut Ui), secs: usize| {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.m.pane = pane;
         u.m.ch[1].on = true;
         f(&mut u);
@@ -1699,7 +1699,7 @@ fn a_reference_has_its_colour_and_name() {
 
 #[test]
 fn a_reference_travels_through_a_file() {
-    let dir = std::env::temp_dir().join(format!("oos-ref-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("ref");
     let mut u = with_two_channels();
     u.store_dir = dir.clone();
     u.activate(Item::RefSave);
@@ -1729,7 +1729,7 @@ fn a_reference_travels_through_a_file() {
 
 #[test]
 fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
-    let dir = std::env::temp_dir().join(format!("oos-refbin-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("refbin");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = with_two_channels();
@@ -1777,10 +1777,10 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
 /// does not touch it. CH1 still reads the hardware frame, and the live source is left alone.
 #[test]
 fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
-    let dir = std::env::temp_dir().join(format!("oos-refmeas-{}", std::process::id()));
+    let dir = crate::ui::testkit::Scratch::new("refmeas");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.store_dir = dir.clone();
     assert!(matches!(u.src, Source::Demo { .. }));
 
@@ -1935,7 +1935,7 @@ fn write_wave(dir: &std::path::Path, slot: usize, t0: f64, dt: f64, v: &[f32]) {
 }
 
 fn put_ref(u: &mut Ui, slot: usize, t0: f64, dt: f64, v: Vec<f32>) {
-    u.refs[slot] = Some(RefWave { src: 0, color: 0, label: String::new(), t0, dt, v: v.into(), vpd: 0.2, offset: 0.0, on: true });
+    u.refs[slot] = Some(RefWave { vpd: 0.2, ..RefWave::test(v, dt, t0) });
 }
 
 /// Voltage of a 1 kHz triangle current in an ideal inductor.
@@ -1979,7 +1979,7 @@ fn double_pulse(dt: f64) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
 /// Measure, power, Bode, spectrum and the eye read a loaded ref at its own interval.
 #[test]
 fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     let (dt, n, f) = (5e-9, 800usize, 40e6);
     let sine: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * f * k as f64 * dt).sin() as f32).collect();
     put_ref(&mut u, 0, 0.0, dt, sine.clone());
@@ -2266,7 +2266,7 @@ fn load_dq_dqs(u: &mut Ui) -> bool {
 
 #[test]
 fn dq_and_dqs_refs_make_a_strobe_eye() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     if !load_dq_dqs(&mut u) {
         return;
     }
@@ -2330,7 +2330,7 @@ fn cphy_eye_full_screen_shot() {
     if !va.is_file() || !clk.is_file() {
         return;
     }
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     for c in 0..NCH {
         u.m.ch[c].on = false;
     }
@@ -2352,7 +2352,7 @@ fn cphy_eye_full_screen_shot() {
     }
     let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
-    u.refs[3] = Some(RefWave { src: 0, color: 3, label: "CLK".into(), t0, dt, v: v.into(), vpd: 0.5, offset: 0.0, on: true });
+    u.refs[3] = Some(RefWave { color: 3, label: "CLK".into(), vpd: 0.5, ..RefWave::test(v, dt, t0) });
     u.full = true;
     u.relayout();
     u.m.view = AView::Eye;
@@ -2373,13 +2373,11 @@ fn cphy_eye_full_screen_shot() {
 /// R1–R10 answer `:MEASure:ITEM?`. The strip, the eye figures, and one readout of everything on screen.
 #[test]
 fn scpi_reads_a_ref_the_strip_and_the_eye() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
-    let cv = Canvas::new(W, H);
-    let mut scpi = crate::scpi::Scpi::open(0);
+    let (mut scpi, mut u, cv) = crate::ui::testkit::scpi_session();
     for _ in 0..4 {
         u.step(0.05);
     }
-    let q = |scpi: &mut crate::scpi::Scpi, u: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(u, &cv, c)).unwrap();
+    let q = |scpi: &mut crate::scpi::Scpi, u: &mut Ui, c: &str| crate::ui::testkit::q(scpi, u, &cv, c);
 
     let ch = q(&mut scpi, &mut u, ":MEAS:ITEM? VPP,CHAN1");
     assert!(ch.contains('E') && ch != "9.9E37", "{ch}");
@@ -2451,7 +2449,7 @@ fn scpi_reads_a_ref_the_strip_and_the_eye() {
 
 #[test]
 fn measurement_queries_read_a_channel_or_a_ref() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     for _ in 0..8 {
         u.step(0.05);
     }
@@ -2556,7 +2554,7 @@ fn measurement_queries_read_a_channel_or_a_ref() {
 /// Measure > Dock: under the plot, left, right, or above the trace. The plot gives that side up and keeps the rest.
 #[test]
 fn the_measurement_strip_docks_on_four_sides() {
-    let mut bare = Ui::new(Source::Demo { t: 0.0 });
+    let mut bare = crate::ui::testkit::demo_ui();
     bare.m.meas.clear();
     bare.m.meas2.clear();
     bare.m.cursor = CursorMode::Off;

@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn every_page_runs_and_is_reached_the_same_way() {
         for a in ANALYSERS {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.ch[1].on = true;
             ui.set_analysis_view(a.view());
             let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -146,9 +146,7 @@ mod tests {
     #[test]
     fn scpi_and_setups_reach_the_pages() {
         for (k, v) in scpi_views() {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
-            let cv = Canvas::new(PANEL_W, PANEL_H);
-            let mut s = crate::scpi::Scpi::open(0);
+            let (mut s, mut ui, cv) = crate::ui::testkit::scpi_session();
             s.exec_line(&mut ui, &cv, &format!(":VIEW {k}"));
             assert_eq!(ui.m.view, v, ":VIEW {k}");
         }

@@ -169,7 +169,7 @@ impl Ui {
 mod tests {
     use super::*;
     fn long_capture() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.m.ch[0].on = true;
         ui.m.ch[0].bw = BW_FULL;
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn explicit_demo_memory_is_fully_filled_off_thread_and_survives_stop() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.mdepth = mdepths().iter().position(|d| d.1 >= 10_000 && d.1 <= 100_000).unwrap();
         let expected = ui.m.srate_depth().1 as usize;
         assert!(ui.acquire_display_record(0.02).is_none(), "full memory is prepared off the event thread");
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn full_demo_conditioning_is_native_once_and_shared_by_display_math_and_measurements() {
         for (coupling, invert, bw) in [(Coupling::Ac, true, BW_20M), (Coupling::Gnd, true, BW_20M), (Coupling::Dc, true, BW_FULL)] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.mdepth = mdepths().iter().position(|d| d.1 >= 10_000 && d.1 <= 100_000).unwrap();
             ui.m.ch[0].coupling = coupling;
             ui.m.ch[0].invert = invert;
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn every_single_press_rearms_and_rejects_a_queued_full_demo_from_before_the_press() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.mdepth = mdepths().iter().position(|d| d.1 >= 10_000 && d.1 <= 100_000).unwrap();
         ui.m.trig_mode = TrigMode::Single;
         ui.m.run = RunState::Run;
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn equal_length_hires_display_never_reuses_unfiltered_native_statistics() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.acq = AcqMode::HiRes;
         ui.m.meas_full_record = true;
         ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];

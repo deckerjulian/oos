@@ -220,11 +220,11 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn reference(dt: f64, t0: f64, samples: Vec<f32>) -> RefWave {
-        RefWave { src: 0, color: 0, label: "Search fixture".into(), t0, dt, v: (samples).into(), vpd: 0.5, offset: 0.0, on: true }
+        RefWave { label: "Search fixture".into(), vpd: 0.5, ..RefWave::test(samples, dt, t0) }
     }
 
     fn fixture(points: usize) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         let values = || (0..points).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect();
         ui.refs[0] = Some(reference(1e-9, -5e-6, values()));

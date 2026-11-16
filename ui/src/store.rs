@@ -1528,7 +1528,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn a_save_does_not_follow_links_or_write_to_devices() {
-        let d = std::env::temp_dir().join(format!("oos-link-{}", std::process::id()));
+        let d = crate::ui::testkit::Scratch::new("link");
         std::fs::create_dir_all(&d).unwrap();
         let (victim, link) = (d.join("victim"), d.join("shot-001.png"));
         std::fs::write(&victim, b"keep").unwrap();
@@ -2291,7 +2291,7 @@ mod tests {
         }
         let (w, h) = (64u32, 40u32);
         let px: Vec<u32> = (0..w * h).map(|i| rgb((i % w) * 4, (i / w) * 6, 0x80)).collect();
-        let dir = std::env::temp_dir().join(format!("oos-ui-png-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("ui-png");
         let path = dir.join("t.png");
         write(&path, &png(w, h, &px)).unwrap();
         // a full screen with long runs and repeated rows, compared byte for byte with what Pillow decodes
@@ -2312,7 +2312,7 @@ mod tests {
     /// A real screen (the demo, four channels and the menus of the UI) decodes back to its pixels.
     #[test]
     fn png_of_the_demo_screen_round_trips() {
-        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for c in ["key ch2", "key ch3", "key ch4", "key measure"] {
             crate::cmd::run(&mut ui, c);
         }
@@ -2329,7 +2329,7 @@ mod tests {
     #[test]
     #[ignore]
     fn png_encode_time() {
-        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for c in ["key ch2", "key ch3", "key ch4"] {
             crate::cmd::run(&mut ui, c);
         }
@@ -2372,7 +2372,7 @@ mod tests {
 
     #[test]
     fn next_free_name() {
-        let dir = std::env::temp_dir().join(format!("oos-ui-names-{}", std::process::id()));
+        let dir = crate::ui::testkit::Scratch::new("ui-names");
         assert_eq!(file_name(&next_name(&dir, "shot", "png")), "shot-001.png");
         write(&dir.join("shot-001.png"), b"x").unwrap();
         write(&dir.join("shot-002.png"), b"x").unwrap();

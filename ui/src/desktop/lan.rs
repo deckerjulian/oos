@@ -100,7 +100,7 @@ mod tests {
             assert!(response.starts_with("HTTP/1.1 200"));
             assert!(response.contains("hislip0"));
         });
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
         let deadline = Instant::now() + Duration::from_secs(6);
         while !client.is_finished() && Instant::now() < deadline {

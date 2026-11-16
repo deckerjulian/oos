@@ -805,7 +805,7 @@ mod tests {
     /// The bar after an auto set-up: periods and edges of the trigger channel, gone after a tap elsewhere.
     #[test]
     fn view_bar_sets_periods_and_edges() {
-        let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         u.m.trig_src = 0;
         for _ in 0..20 {
             u.step(0.05);
@@ -867,7 +867,7 @@ mod tests {
 
     #[test]
     fn looks_only_at_the_channels_that_are_on() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for c in 0..NCH {
             ui.m.ch[c].on = c == 0;
         }
@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn noise_reject_menu_setup_scpi_and_hardware() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         // a new set-up: Auto bandwidth, noise reject off
         assert!(ui.m.ch.iter().all(|c| c.bw == BW_AUTO) && !ui.m.trig_nrej);
         assert!(ui.trigger_items().contains(&Item::TrigNoise));
@@ -906,7 +906,7 @@ mod tests {
     // after the auto set-up (docs/fork/trigger-lockin.md)
     #[test]
     fn levels_stages_use_the_fast_auto_trigger_only() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert!(!crate::board::dho::hw::settings(&ui.m, false).auto_fast);
         ui.auto_start();
         assert!(crate::board::dho::hw::settings(&ui.m, false).auto_fast);
@@ -924,7 +924,7 @@ mod tests {
         }
         assert!(seen_search && ui.auto.is_none() && !ui.m.auto_fast);
         // a failed run (no channel worth a period) ends without it too
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for c in 0..NCH {
             ui.m.ch[c].on = c == 3;
         }
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn hardware_records_settle_a_stage_at_once() {
         // probe-comp output: 0.3 V at 1 V/div is under 0.4 div, so the wide stage rescales and looks again
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let now = ui.now;
         let stages = run_hw(&mut ui, 0.0, 0.3);
         assert_eq!(ui.now, now);
@@ -983,7 +983,7 @@ mod tests {
         let p = ui.m.time_per_div() as f64 * HDIV as f64;
         assert!((1.5e-3..=12e-3).contains(&p), "window {} s for a 1 ms period", p);
         // a signal that reads well at the wide scale: no second look
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let stages = run_hw(&mut ui, -1.0, 2.0);
         assert_eq!(&stages[..2], ["wide", "search 0"]);
         assert!(ui.auto.is_none() && (ui.m.trig_level - 0.5).abs() < 0.1, "level {}", ui.m.trig_level);
@@ -993,7 +993,7 @@ mod tests {
     // period (the noisy 5 V signal of docs/fork/trigger-lockin.md), or one that keeps a channel without a signal
     #[test]
     fn a_signal_without_a_steady_period_keeps_scale_and_level() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let back = ui.m.clone();
         // 0..5 V pulses at irregular distances (0.2 to 1.9 ms), seen at every time base
         let edges: Vec<f64> = {
@@ -1019,7 +1019,7 @@ mod tests {
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("no steady period")));
         assert!(!ui.auto_bar_on());
         // a flat input is still no signal: the set-up stays
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let back = ui.m.clone();
         run_hw_of(&mut ui, &|_| 0.004);
         assert_eq!(ui.m.ch[0], back.ch[0]);
@@ -1038,13 +1038,13 @@ mod tests {
         };
         let clean = |t: f64| if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { 5.0 } else { 0.0 };
         for (opt, sig, want) in [(true, &noisy as &dyn Fn(f64) -> f32, true), (true, &clean, false), (false, &noisy, false)] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = crate::ui::testkit::demo_ui();
             ui.m.auto_nrej = opt;
             run_hw_of(&mut ui, sig);
             assert_eq!(ui.m.trig_nrej, want, "opt-in {} noise {:?}", opt, crate::wave::flat_noise(&ui.record_volts(0)));
         }
         // the option is part of the set-up and of the trigger menu
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.trigger_items().contains(&Item::TrigAutoNoise));
         ui.select_option(Item::TrigAutoNoise, "On");
         assert!(crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().auto_nrej);
@@ -1216,7 +1216,7 @@ mod tests {
         assert_eq!(parts[0], id.to_string());
         assert_eq!(parts[8], "7,4007,32768.5");
         assert!(shared.lock().unwrap().slots_want.unwrap() > id, "each query asks for a new run");
-        let mut demo = Ui::new(Source::Demo { t: 0.0 });
+        let mut demo = crate::ui::testkit::demo_ui();
         assert_eq!(scpi.exec_line(&mut demo, &cv, ":DEB:SLOT?"), b"no hardware");
     }
 
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn with_no_channel_on_nothing_happens() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for c in 0..NCH {
             ui.m.ch[c].on = false;
         }
@@ -1246,12 +1246,12 @@ mod tests {
 
     fn sine_ref(n: usize, cycles: f64, dt: f64) -> RefWave {
         let v: Vec<f32> = (0..n).map(|k| (k as f64 / n as f64 * cycles * std::f64::consts::TAU).sin() as f32).collect();
-        RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt, v: v.into(), vpd: 10.0, offset: 3.0, on: true }
+        RefWave { vpd: 10.0, offset: 3.0, ..RefWave::test(v, dt, 0.0) }
     }
 
     #[test]
     fn live_autoset_ignores_a_shown_reference() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.ch[1].on = false;
         ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
         ui.m.trig_level = 9.0;
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn hardware_autoset_entry_cannot_bypass_offline_mode_even_with_a_retained_adc_flag() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
         ui.m.ch[0].on = true;
         let before = ui.m.clone();
@@ -1281,7 +1281,7 @@ mod tests {
 
     #[test]
     fn offline_autoset_is_a_noop_and_directs_the_user_to_fit_record() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         for c in 0..NCH {
             ui.m.ch[c].on = false;
         }
@@ -1309,7 +1309,7 @@ mod tests {
 
     #[test]
     fn sim_autoset_does_not_fit_regenerate_or_stop_the_playing_record() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.m.sim_slot = 4;
         ui.m.ch[1].on = true;
         ui.activate(Item::SimPlay);

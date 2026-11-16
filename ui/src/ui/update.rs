@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn upload_refuses_unsigned_packages() {
-        let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut u = crate::ui::testkit::demo_ui();
         let e = u.update_upload(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx").unwrap_err();
         assert!(e.contains("signature") || e.contains("header"), "{}", e);
         assert!(u.upd.job.is_none());

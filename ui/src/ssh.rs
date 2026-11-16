@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn saved_loaded_and_found_on_a_stick() {
         use std::os::unix::fs::PermissionsExt;
-        let d = std::env::temp_dir().join(format!("oos-ssh-{}", std::process::id()));
+        let d = crate::ui::testkit::Scratch::new("ssh");
         let _ = std::fs::remove_dir_all(&d);
         let ssh = d.join("ssh");
         assert_eq!(Keys::load(&ssh).unwrap(), Keys::default());

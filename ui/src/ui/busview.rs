@@ -122,7 +122,7 @@ mod tests {
     /// switches to a protocol without one.
     #[test]
     fn bus_view_shows_the_module_view() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         ui.set_dec_proto(Proto::from_key("Example").unwrap());
         ui.m.dec_on = true;
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();

@@ -8,7 +8,7 @@ use super::*;
 enum Layout { Default, Minimal }
 
 fn fresh(l: Layout) -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = crate::ui::testkit::demo_ui();
     u.m.bar_compact = l == Layout::Minimal;
     u.m.ch[1].on = true;
     u.relayout();
@@ -17,7 +17,7 @@ fn fresh(l: Layout) -> Ui {
 }
 
 fn put_ref(u: &mut Ui, slot: usize, color: usize, v: Vec<f32>, dt: f64) {
-    u.refs[slot] = Some(RefWave { src: 0, color, label: String::new(), t0: 0.0, dt, v: v.into(), vpd: 0.5, offset: 0.0, on: true });
+    u.refs[slot] = Some(RefWave { color, vpd: 0.5, ..RefWave::test(v, dt, 0.0) });
 }
 
 fn snap(u: &mut Ui) -> Canvas {

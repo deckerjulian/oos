@@ -5,11 +5,7 @@ use super::*;
 use super::workspace::Action;
 
 fn fresh() -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
-    u.m.bar_compact = true;
-    u.relayout();
-    for _ in 0..4 { u.step(0.05); }
-    u
+    super::testkit::fresh(true, 4)
 }
 
 #[test]
@@ -63,8 +59,7 @@ fn overlay_keeps_a_split_and_stacked_leaves_a_consistent_density() {
 
 fn with_refs(u: &mut Ui, n: usize) {
     for i in 0..n {
-        u.refs[i] = Some(RefWave { src: 0, color: i, label: format!("source-{i}"), t0: -2e-9, dt: 1e-10,
-            v: ((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>()).into(), vpd: 0.1, offset: 0.0, on: true });
+        u.refs[i] = Some(RefWave { color: i, label: format!("source-{i}"), vpd: 0.1, ..RefWave::test((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>(), 1e-10, -2e-9) });
     }
 }
 

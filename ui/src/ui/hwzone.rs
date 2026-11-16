@@ -70,12 +70,11 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::zone::Zone;
 
     #[test]
     fn one_source_for_the_hardware() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::testkit::demo_ui();
         let z = |src| Zone { on: true, src, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0)] };
         assert_eq!(ui.zone_hw_src(), None);
         ui.m.zones[0] = z(1);
