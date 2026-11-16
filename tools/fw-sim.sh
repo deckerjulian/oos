@@ -10,13 +10,12 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-. "$root/tools/lib/docker.sh"
+. "$root/tools/lib/sim.sh"
 out="${OOS_OUT:-$root/rootfs/out}"
 w="${TMPDIR:-/tmp}/oos-fw-sim"
 rm -rf "$w"; mkdir -p "$w"
 [ -x "$out/nft" ] || { echo "no $out/nft" >&2; exit 1; }
-docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
-chmod +x "$w/busybox"
+sim_busybox "$w"
 
 cat > "$w/routes" <<'R'
 default via fe80::1 dev eth0  metric 1024  expires 1790sec

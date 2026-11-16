@@ -12,13 +12,12 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-. "$root/tools/lib/docker.sh"
+. "$root/tools/lib/sim.sh"
 out="$root/rootfs/out"
 w="${TMPDIR:-/tmp}/oos-ssh-sim"
 rm -rf "$w"; mkdir -p "$w"
 for f in nft dropbearmulti sftp-server; do [ -x "$out/$f" ] || { echo "no $out/$f" >&2; exit 1; }; done
-docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
-chmod +x "$w/busybox"
+sim_busybox "$w"
 
 cat > "$w/test" <<'TEST'
 set -u

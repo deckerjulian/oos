@@ -7,11 +7,10 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-. "$root/tools/lib/docker.sh"
+. "$root/tools/lib/sim.sh"
 w="${TMPDIR:-/tmp}/oos-usb-sim"
 mkdir -p "$w"
-docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
-chmod +x "$w/busybox"
+sim_busybox "$w"
 
 cat > "$w/init" <<'INIT'
 #!/bin/sh
@@ -42,39 +41,16 @@ echo ---- log; cat /tmp/oos-usb.log
 poweroff -f
 INIT
 
-docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" "$OOS_ALPINE" sh -euc '
-	apk add --no-cache linux-firmware-none cpio xz zstd dosfstools exfatprogs sfdisk >/dev/null
-	apk add --no-cache --no-scripts linux-lts >/dev/null
+# three disks: FAT32 with a partition table, exFAT without one, an empty one
+sim_vm_initramfs "$w" "dosfstools exfatprogs sfdisk" "virtio_pci virtio_scsi sd_mod vfat exfat nls_cp437 nls_utf8 nls_iso8859-1" '
 	cd /w
 	truncate -s 64M fat.img
 	echo "2048,,c" | sfdisk -q fat.img
 	mkfs.vfat -F 32 --offset=2048 fat.img >/dev/null
 	truncate -s 64M exfat.img; mkfs.exfat -q exfat.img
 	truncate -s 16M empty.img
-	r=/tmp/r; rm -rf $r; mkdir -p $r/bin $r/mods
-	cp /w/busybox $r/bin/busybox
-	for a in $($r/bin/busybox --list | grep -vx busybox) sh; do ln -sf busybox $r/bin/$a; done
 	cp /rootfs/initramfs/bin/oos-usb $r/bin/
-	cp /w/init $r/init; chmod +x $r/init
-	M=$(ls -d /lib/modules/*)
-	n=10
-	for want in virtio_pci virtio_scsi sd_mod vfat exfat nls_cp437 nls_utf8 nls_iso8859-1; do
-		line=$(grep "/$want.ko[^:]*:" $M/modules.dep || true)
-		[ -n "$line" ] || continue
-		for f in $(echo "${line#*:}" | tr " " "\n" | sed "/^$/d" | sed "1!G;h;\$!d") "${line%%:*}"; do
-			b=$(basename $f); b=${b%%.ko*}
-			ls $r/mods/*-$b.ko >/dev/null 2>&1 && continue
-			case "$f" in *.gz) gzip -dc $M/$f;; *.xz) xz -dc $M/$f;; *.zst) zstd -dc $M/$f;; *) cat $M/$f;; esac > $r/mods/$n-$b.ko
-			n=$((n + 1))
-		done
-	done
-	(cd $r && find . | cpio -o -H newc -R 0:0 --quiet | gzip -1) > /w/initramfs.gz
-	cp /boot/vmlinuz-lts /w/kernel
-'
-accel="-cpu max"
-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] && accel="-accel hvf -cpu host"
+' -v "$root/rootfs:/rootfs:ro"
 disk() { printf -- '-drive if=none,id=%s,format=raw,file=%s -device scsi-hd,drive=%s,channel=0,scsi-id=0,lun=%s\n' "$1" "$2" "$1" "$3"; }
-qemu-system-aarch64 -M virt $accel -m 512 -smp 2 -nographic -no-reboot -kernel "$w/kernel" -initrd "$w/initramfs.gz" \
-	-append "console=ttyAMA0 rdinit=/init quiet panic=1" -device virtio-rng-pci -device virtio-scsi-pci \
-	$(disk a "$w/fat.img" 0) $(disk b "$w/exfat.img" 1) $(disk c "$w/empty.img" 2) | tee "$w/log"
+sim_qemu "$w" 512 -device virtio-scsi-pci $(disk a "$w/fat.img" 0) $(disk b "$w/exfat.img" 1) $(disk c "$w/empty.img" 2)
 grep -q 'USB TEST PASSED' "$w/log"

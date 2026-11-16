@@ -8,7 +8,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-. "$root/tools/lib/docker.sh"
+. "$root/tools/lib/sim.sh"
 w="${TMPDIR:-/tmp}/oos-wlan-sim"
 mkdir -p "$w"
 [ -x "$root/rootfs/out/wpa_supplicant" ] || "$root/rootfs/build-wlan-tools.sh"
@@ -28,8 +28,7 @@ for l in sys.stdin:
 cp "$(cat "$w/test-binary")" "$w/oos-ui-test"
 
 # the busybox of the image
-docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
-chmod +x "$w/busybox"
+sim_busybox "$w"
 
 cat > "$w/init" <<'INIT'
 #!/bin/sh
@@ -89,42 +88,16 @@ echo ---- end
 poweroff -f
 INIT
 
-docker run --rm --platform linux/arm64 -e HOSTAPD="$hostapd" -v "$w:/w" -v "$root/rootfs:/rootfs:ro" "$OOS_ALPINE" sh -euc '
-	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static linux-firmware-none cpio curl xz zstd >/dev/null
-	apk add --no-cache --no-scripts linux-lts >/dev/null
+# mac80211_hwsim and what it needs, and the ciphers and packet sockets (built in on the scope, modules here)
+sim_vm_initramfs "$w" "build-base linux-headers pkgconf libnl3-dev libnl3-static" "af_packet ccm gcm cmac ctr mac80211_hwsim" '
 	if [ ! -x /w/hostapd ]; then
 		cd /tmp && tar -xzf /w/hostapd-$HOSTAPD.tar.gz && cd hostapd-$HOSTAPD/hostapd
 		printf "CONFIG_DRIVER_NL80211=y\nCONFIG_LIBNL32=y\nCONFIG_TLS=internal\nCONFIG_INTERNAL_LIBTOMMATH=y\nCONFIG_NO_RANDOM_POOL=y\nCONFIG_GETRANDOM=y\nCONFIG_IEEE80211N=y\n" > .config
 		LDFLAGS=-static make -j"$(nproc)" hostapd >/tmp/b.log 2>&1 || { tail -20 /tmp/b.log; exit 1; }
 		cp hostapd /w/hostapd
 	fi
-	r=/tmp/r; rm -rf $r; mkdir -p $r/bin $r/etc $r/mods
-	cp /w/busybox $r/bin/busybox
-	for a in $($r/bin/busybox --list | grep -vx busybox) sh; do ln -sf busybox $r/bin/$a; done
 	cp /rootfs/out/wpa_supplicant /rootfs/out/wpa_cli /rootfs/initramfs/bin/oos-wlan /w/hostapd /w/oos-ui-test $r/bin/
 	cp /rootfs/initramfs/etc/udhcpc.script $r/etc/
-	cp /w/init $r/init; chmod +x $r/init
-	# mac80211_hwsim and what it needs, and the ciphers and packet sockets (built in on the scope, modules here), in the order to load
-	# them (modules.dep lists the last one to load first)
-	M=$(ls -d /lib/modules/*)
-	n=10
-	for want in af_packet ccm gcm cmac ctr mac80211_hwsim; do
-		line=$(grep "/$want.ko[^:]*:" $M/modules.dep || true)
-		[ -n "$line" ] || continue
-		for f in $(echo "${line#*:}" | tr " " "\n" | sed "/^$/d" | sed "1!G;h;\$!d") "${line%%:*}"; do
-			b=$(basename $f); b=${b%%.ko*}
-			ls $r/mods/*-$b.ko >/dev/null 2>&1 && continue
-			case "$f" in *.gz) gzip -dc $M/$f;; *.xz) xz -dc $M/$f;; *.zst) zstd -dc $M/$f;; *) cat $M/$f;; esac > $r/mods/$n-$b.ko
-			n=$((n + 1))
-		done
-	done
-	(cd $r && find . | cpio -o -H newc -R 0:0 --quiet | gzip -1) > /w/initramfs.gz
-	cp /boot/vmlinuz-lts /w/kernel
-	ls -la /w/kernel /w/initramfs.gz
-'
-accel="-cpu max"
-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] && accel="-accel hvf -cpu host"
-qemu-system-aarch64 -M virt $accel -m 1024 -smp 2 -nographic -no-reboot \
-	-kernel "$w/kernel" -initrd "$w/initramfs.gz" -append "console=ttyAMA0 rdinit=/init quiet panic=1" -device virtio-rng-pci \
-	| tee "$w/log"
+' -e HOSTAPD="$hostapd" -v "$root/rootfs:/rootfs:ro"
+sim_qemu "$w" 1024
 grep -q 'LIVE RADIO TEST PASSED' "$w/log" && grep -q 'oos-wlan: stick gone' "$w/log"

@@ -29,6 +29,7 @@ The checks are named by layer. Each layer says what it can show and what not:
 | test | `tools/check.sh test` | the unit tests, the interplay tests and the menu geometry of all four crates; the tests of the Python host tools | the hardware |
 | target | `tools/check.sh target` | the scope's build (`aarch64-unknown-linux-musl`) compiles and depends on `libc` only (ADR 0021) | that it runs |
 | decoders | `tools/check.sh decoders` | the core-only build and every optional decoder alone | |
+| sim | `tools/check.sh sim` (by name: needs Docker, QEMU and image builds) | the scripts of the image in arm64 containers and virtual machines: firewall, SSH, USB stick, WLAN, the unit's DTB step, the USB install, the GPU picture against the CPU's | the scope's hardware and drivers |
 | pixels | `ui/tools/layout-check.sh record` / `check` | a refactoring leaves every picture the same (ADR 0014) | timing |
 | registers | `tools/plan-matrix.sh` before and after | the analog path writes the same sequences (ADR 0014) | what the hardware does with them |
 | speed | `tools/perf-guard.sh` | the fast paths stay faster than the paths they replaced (ratios, release build) | times on a unit |
@@ -37,7 +38,8 @@ The checks are named by layer. Each layer says what it can show and what not:
 - `tools/check.sh` with no argument runs every host layer that is enforced, in the order above, and stops at the first
   that fails. CI calls the same script, layer by layer, so "passes here" and "passes in CI" mean the same.
 - `fmt` and `clippy` can be run now but join the default set with the rollout of ADR 0016 and ADR 0017; until then
-  `tools/check.sh` names them as not yet enforced.
+  `tools/check.sh` names them as not yet enforced. `sim` is run by name (corrected 2026-11-16: the simulations
+  existed as scripts of `tools/` and `gpu/` and were missing from the table).
 - `pixels` and `registers` compare against the commit before a change and need a baseline; they are run for every
   change that is not meant to change the screen or the analog path, and the pull request says that they were.
   `speed` measures and needs a computer that does nothing else; it is run for a change of a fast path.

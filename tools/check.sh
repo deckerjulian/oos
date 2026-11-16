@@ -10,15 +10,16 @@
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
 # ui/tools/layout-check.sh, tools/plan-matrix.sh, tools/perf-guard.sh, tools/device-test.py.
 #
-# Layers: fmt clippy text syntax test target decoders. A compiler warning fails a layer like an error (ADR 0017).
-# Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope.
+# Layers: fmt clippy text syntax test target decoders sim. A compiler warning fails a layer like an error (ADR 0017).
+# Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope. The layer sim
+# also needs Docker that runs arm64 containers, qemu-system-aarch64 and the builds it names; it is run by name.
 set -e
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
 crates="hal dsp ui fpgad"
-layers="fmt clippy text syntax test target decoders"
-# fmt and clippy join with the rollout of ADR 0016 and ADR 0017
+layers="fmt clippy text syntax test target decoders sim"
+# fmt and clippy join with the rollout of ADR 0016 and ADR 0017; sim needs Docker and builds that CI's check job lacks
 enforced="text syntax test target decoders"
 
 tmp=$(mktemp -d)
@@ -179,6 +180,17 @@ layer_decoders() {
     for d in $(ui/tools/decoder-features.sh list); do
         (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
             fail "decoders: dec-$d alone"
+    done
+}
+
+# The simulations: the scripts of the image in arm64 containers and virtual machines, without a scope. Each needs what
+# its header says: rootfs/out (fw, ssh), kernel/out/base (unit-dtb), a finished boot/build-dev-image.sh (gel), QEMU
+# (usb, wlan), oos-ui built for aarch64-unknown-linux-musl (gpu).
+layer_sim() {
+    for s in tools/fw-sim.sh tools/ssh-sim.sh tools/unit-dtb-check.sh tools/gel-sim.sh tools/usb-sim.sh \
+        tools/wlan-sim.sh gpu/test-host.sh; do
+        say "sim $s"
+        sh "$s" || fail "sim: $s"
     done
 }
 
