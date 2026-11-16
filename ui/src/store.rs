@@ -1340,14 +1340,14 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if b.len() < 36 || &b[..4] != b"OOSW" {
         return Err("not an OOS waveform".into());
     }
-    let ver = u32::from_le_bytes(b[4..8].try_into().unwrap());
+    let f = Fields::new(b, true);
+    let ver = f.u32(4)?;
     if ver != 1 {
         return Err(format!("OOS waveform version {ver}"));
     }
-    let nch = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
-    let n = usize::try_from(u64::from_le_bytes(b[12..20].try_into().unwrap())).map_err(|_| "OOS waveform is too large".to_string())?;
-    let dt = f64::from_le_bytes(b[20..28].try_into().unwrap());
-    let t0 = f64::from_le_bytes(b[28..36].try_into().unwrap());
+    let nch = f.u32(8)? as usize;
+    let n = usize::try_from(f.u64(12)?).map_err(|_| "OOS waveform is too large".to_string())?;
+    let (dt, t0) = (f.f64(20)?, f.f64(28)?);
     if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
     if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
         return Err("that file holds no waveform".into());
@@ -1359,11 +1359,11 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let mut out = Vec::with_capacity(nch);
     let mut p = 36;
     for _ in 0..nch {
-        let ch = u32::from_le_bytes(b[p..p + 4].try_into().unwrap());
+        let ch = f.u32(p)?;
         p += 4;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            v.push(f32::from_le_bytes(b[p..p + 4].try_into().unwrap()));
+            v.push(f.f32(p)?);
             p += 4;
         }
         out.push(WaveTrace { t0, dt, v, label: format!("CH{ch}") });
@@ -1424,24 +1424,12 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if b.len() < 78 {
         return Err("truncated WFM".into());
     }
-    let le = match u16::from_le_bytes(b[0..2].try_into().unwrap()) {
+    let le = match Fields::new(b, true).u16(0)? {
         0x0F0F => true,
         0xF0F0 => false,
         _ => return Err("header is not a Tek WFM version 001, 002 or 003".into()),
     };
-    let get_u32 = |o| {
-        let v = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
-        if le { v } else { v.swap_bytes() }
-    };
-    let get_i32 = |o| get_u32(o) as i32;
-    let get_f64 = |o| {
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(&b[o..o + 8]);
-        if !le {
-            raw.reverse();
-        }
-        f64::from_le_bytes(raw)
-    };
+    let f = Fields::new(b, le);
     let ver = &b[2..10];
     if ver != b":WFM#001" && ver != b":WFM#002" && ver != b":WFM#003" {
         return Err("header is not a Tek WFM version 001, 002 or 003".into());
@@ -1450,7 +1438,7 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if bpp == 0 || bpp > 8 {
         return Err("WFM sample size".into());
     }
-    let curve = usize::try_from(get_i32(16)).map_err(|_| "WFM curve offset is negative")?;
+    let curve = usize::try_from(f.i32(16)?).map_err(|_| "WFM curve offset is negative")?;
     let label = b[40..72].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string();
     let (reference_size, explicit_size, implicit_size) = if ver == b":WFM#001" { (88, 156, 132) } else { (90, 160, 136) };
     // Packed header follows the common 78-byte static block.
@@ -1459,20 +1447,20 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     need(i + reference_size)?;
     i += reference_size;
     need(i + explicit_size)?;
-    let vscale = get_f64(i);
-    let voff = get_f64(i + 8);
-    let fmt = get_u32(i + 72); // after scale, offset, size, units, 4 doubles
+    let vscale = f.f64(i)?;
+    let voff = f.f64(i + 8)?;
+    let fmt = f.u32(i + 72)?; // after scale, offset, size, units, 4 doubles
     i += explicit_size;
     need(i + explicit_size)?;
     i += explicit_size;
     need(i + implicit_size)?;
-    let dt = get_f64(i);
-    let t0 = get_f64(i + 8);
+    let dt = f.f64(i)?;
+    let t0 = f.f64(i + 8)?;
     i += implicit_size;
     need(i + implicit_size + 12 + 12 + 24 + 30)?;
     i += implicit_size + 12 + 12 + 24;
-    let data_start = get_u32(i + 14) as usize;
-    let post_start = get_u32(i + 18) as usize;
+    let data_start = f.u32(i + 14)? as usize;
+    let post_start = f.u32(i + 18)? as usize;
     if !dt.is_finite() || dt <= 0.0 || !t0.is_finite() || !vscale.is_finite() || !voff.is_finite() {
         return Err("WFM time and voltage scaling must be finite with a positive time step".into());
     }
@@ -1496,29 +1484,12 @@ fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     for k in 0..n {
         let o = start + k * bpp;
         let code = match fmt {
-            0 if bpp >= 2 => {
-                let s = i16::from_le_bytes(b[o..o + 2].try_into().unwrap());
-                (if le { s } else { s.swap_bytes() }) as f64
-            }
-            1 if bpp >= 4 => {
-                let s = i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
-                (if le { s } else { s.swap_bytes() }) as f64
-            }
-            2 => get_u32(o) as f64,
-            3 => {
-                let mut raw: [u8; 8] = b[o..o + 8].try_into().unwrap();
-                if !le { raw.reverse(); }
-                u64::from_le_bytes(raw) as f64
-            }
-            4 if bpp >= 4 => {
-                let mut raw = [0u8; 4];
-                raw.copy_from_slice(&b[o..o + 4]);
-                if !le {
-                    raw.reverse();
-                }
-                f32::from_le_bytes(raw) as f64
-            }
-            5 if bpp >= 8 => get_f64(o),
+            0 if bpp >= 2 => f.i16(o)? as f64,
+            1 if bpp >= 4 => f.i32(o)? as f64,
+            2 => f.u32(o)? as f64,
+            3 => f.u64(o)? as f64,
+            4 if bpp >= 4 => f.f32(o)? as f64,
+            5 if bpp >= 8 => f.f64(o)?,
             6 if bpp >= 1 => b[o] as f64,
             7 if bpp >= 1 => b[o] as i8 as f64,
             _ => return Err("WFM sample format".into()),
@@ -1613,18 +1584,17 @@ fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         if n > MAX_WAVEFORM_SAMPLES {
             return Err("waveform is too large".into());
         }
+        let f = Fields::new(b, !msb);
         for k in 0..n {
             let o = raw + k * bpp;
             let code = match bpp {
                 1 => if signed { b[o] as i8 as f64 } else { b[o] as f64 },
                 2 => {
-                    let u = u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
-                    let u = if msb { u.swap_bytes() } else { u };
+                    let u = f.u16(o)?;
                     if signed { u as i16 as f64 } else { u as f64 }
                 }
                 _ => {
-                    let u = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
-                    let u = if msb { u.swap_bytes() } else { u };
+                    let u = f.u32(o)?;
                     if signed { u as i32 as f64 } else { u as f64 }
                 }
             };
@@ -1660,32 +1630,57 @@ fn wavedesc_at(b: &[u8]) -> Option<usize> {
     b[..n].windows(8).position(|w| w == b"WAVEDESC")
 }
 
-fn endian_u16(b: &[u8], o: usize, le: bool) -> u16 {
-    let u = u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
-    if le { u } else { u.swap_bytes() }
+/// Fixed fields of a binary file in its byte order, read with a bounds check: a field past the end of the file is the
+/// error "truncated waveform", not a panic.
+#[derive(Clone, Copy)]
+pub(crate) struct Fields<'a> {
+    b: &'a [u8],
+    le: bool,
 }
 
-fn endian_u32(b: &[u8], o: usize, le: bool) -> u32 {
-    let u = u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
-    if le { u } else { u.swap_bytes() }
-}
-
-fn endian_f32(b: &[u8], o: usize, le: bool) -> f32 {
-    let mut raw = [0u8; 4];
-    raw.copy_from_slice(&b[o..o + 4]);
-    if !le {
-        raw.reverse();
+impl<'a> Fields<'a> {
+    /// `le`: little endian, else big endian.
+    pub(crate) fn new(b: &'a [u8], le: bool) -> Self {
+        Fields { b, le }
     }
-    f32::from_le_bytes(raw)
-}
 
-fn endian_f64(b: &[u8], o: usize, le: bool) -> f64 {
-    let mut raw = [0u8; 8];
-    raw.copy_from_slice(&b[o..o + 8]);
-    if !le {
-        raw.reverse();
+    /// The `N` bytes at `at`, little endian first.
+    fn bytes<const N: usize>(&self, at: usize) -> Result<[u8; N], String> {
+        let field = at.checked_add(N).and_then(|end| self.b.get(at..end)).ok_or("truncated waveform")?;
+        let mut a: [u8; N] = field.try_into().map_err(|_| "truncated waveform")?;
+        if !self.le {
+            a.reverse();
+        }
+        Ok(a)
     }
-    f64::from_le_bytes(raw)
+
+    pub(crate) fn u16(&self, at: usize) -> Result<u16, String> {
+        self.bytes(at).map(u16::from_le_bytes)
+    }
+
+    pub(crate) fn i16(&self, at: usize) -> Result<i16, String> {
+        self.bytes(at).map(i16::from_le_bytes)
+    }
+
+    pub(crate) fn u32(&self, at: usize) -> Result<u32, String> {
+        self.bytes(at).map(u32::from_le_bytes)
+    }
+
+    pub(crate) fn i32(&self, at: usize) -> Result<i32, String> {
+        self.bytes(at).map(i32::from_le_bytes)
+    }
+
+    pub(crate) fn u64(&self, at: usize) -> Result<u64, String> {
+        self.bytes(at).map(u64::from_le_bytes)
+    }
+
+    pub(crate) fn f32(&self, at: usize) -> Result<f32, String> {
+        self.bytes(at).map(f32::from_le_bytes)
+    }
+
+    pub(crate) fn f64(&self, at: usize) -> Result<f64, String> {
+        self.bytes(at).map(f64::from_le_bytes)
+    }
 }
 
 /// `WAVEDESC` block. `volts = code * gain - offset`, time of point 0 is the double at offset 180.
@@ -1699,28 +1694,29 @@ fn parse_wavedesc(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         (0, 0) => false,
         _ => return Err("that file is not a waveform".into()),
     };
-    let desc = endian_u32(b, i + 36, le) as usize;
-    let user = endian_u32(b, i + 40, le) as usize;
-    let trig = endian_u32(b, i + 48, le) as usize;
-    let ris = endian_u32(b, i + 52, le) as usize;
-    let nbytes = endian_u32(b, i + 60, le) as usize;
-    let count = endian_u32(b, i + 116, le) as usize;
+    let f = Fields::new(b, le);
+    let desc = f.u32(i + 36)? as usize;
+    let user = f.u32(i + 40)? as usize;
+    let trig = f.u32(i + 48)? as usize;
+    let ris = f.u32(i + 52)? as usize;
+    let nbytes = f.u32(i + 60)? as usize;
+    let count = f.u32(i + 116)? as usize;
     if desc < 188 || desc > 8192 || count < 2 || count > MAX_WAVEFORM_SAMPLES {
         return Err("that file holds no waveform".into());
     }
     let bpp = if count > 0 && nbytes % count == 0 && matches!(nbytes / count, 1 | 2 | 4) {
         nbytes / count
     } else {
-        match endian_u16(b, i + 32, le) {
+        match f.u16(i + 32)? {
             0 => 1,
             1 => 2,
             _ => return Err("that file holds no waveform".into()),
         }
     };
-    let gain = endian_f32(b, i + 156, le) as f64;
-    let off = endian_f32(b, i + 160, le) as f64;
-    let dt = endian_f32(b, i + 176, le) as f64;
-    let t0 = endian_f64(b, i + 180, le);
+    let gain = f.f32(i + 156)? as f64;
+    let off = f.f32(i + 160)? as f64;
+    let dt = f.f32(i + 176)? as f64;
+    let t0 = f.f64(i + 180)?;
     if !(dt.is_finite() && dt > 0.0 && gain.is_finite() && off.is_finite() && t0.is_finite()) {
         return Err("that file holds no waveform".into());
     }
@@ -1735,8 +1731,8 @@ fn parse_wavedesc(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         let o = start + k * bpp;
         let code = match bpp {
             1 => b[o] as i8 as f64,
-            2 => endian_u16(b, o, le) as i16 as f64,
-            _ => endian_f32(b, o, le) as f64,
+            2 => f.i16(o)? as f64,
+            _ => f.f32(o)? as f64,
         };
         v.push((code * gain - off) as f32);
     }
@@ -1747,8 +1743,8 @@ fn looks_ag(b: &[u8]) -> bool {
     if b.len() < 12 + 140 || &b[..2] != b"AG" || !b[2].is_ascii_graphic() || !b[3].is_ascii_graphic() {
         return false;
     }
-    let nwave = u32::from_le_bytes(b[8..12].try_into().unwrap());
-    let hsize = u32::from_le_bytes(b[12..16].try_into().unwrap());
+    let f = Fields::new(b, true);
+    let (nwave, hsize) = (f.u32(8).unwrap_or(0), f.u32(12).unwrap_or(0));
     (1..=64).contains(&nwave) && (140..8192).contains(&hsize)
 }
 
@@ -1757,21 +1753,21 @@ fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if !looks_ag(b) {
         return Err("that file is not a waveform".into());
     }
-    let nwave = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+    let f = Fields::new(b, true);
+    let nwave = f.u32(8)? as usize;
     let mut p = 12usize;
     let mut out = Vec::with_capacity(nwave);
     for wi in 0..nwave {
         if p + 140 > b.len() {
             return Err("truncated waveform".into());
         }
-        let hsize = u32::from_le_bytes(b[p..p + 4].try_into().unwrap()) as usize;
+        let hsize = f.u32(p)? as usize;
         if !(140..8192).contains(&hsize) || p + hsize > b.len() {
             return Err("truncated waveform".into());
         }
-        let nbuf = u32::from_le_bytes(b[p + 8..p + 12].try_into().unwrap()) as usize;
-        let npts = u32::from_le_bytes(b[p + 12..p + 16].try_into().unwrap()) as usize;
-        let dt = f64::from_le_bytes(b[p + 32..p + 40].try_into().unwrap());
-        let t0 = f64::from_le_bytes(b[p + 40..p + 48].try_into().unwrap());
+        let nbuf = f.u32(p + 8)? as usize;
+        let npts = f.u32(p + 12)? as usize;
+        let (dt, t0) = (f.f64(p + 32)?, f.f64(p + 40)?);
         let label = cstr(&b[p + 112..p + 128]);
         if !(1..=32).contains(&nbuf) || !(dt.is_finite() && dt > 0.0 && t0.is_finite()) {
             return Err("that file holds no waveform".into());
@@ -1783,10 +1779,10 @@ fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             if p + 12 > b.len() {
                 return Err("truncated waveform".into());
             }
-            let dsize = u32::from_le_bytes(b[p..p + 4].try_into().unwrap()) as usize;
-            let kind = u16::from_le_bytes(b[p + 4..p + 6].try_into().unwrap());
-            let bpp = u16::from_le_bytes(b[p + 6..p + 8].try_into().unwrap()) as usize;
-            let bsize = u32::from_le_bytes(b[p + 8..p + 12].try_into().unwrap()) as usize;
+            let dsize = f.u32(p)? as usize;
+            let kind = f.u16(p + 4)?;
+            let bpp = f.u16(p + 6)? as usize;
+            let bsize = f.u32(p + 8)? as usize;
             if dsize < 12 || p + dsize + bsize > b.len() {
                 return Err("truncated waveform".into());
             }
@@ -1794,7 +1790,7 @@ fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             if matches!(kind, 1 | 2 | 3) && bpp == 4 && bsize >= 8 && bsize % 4 == 0 {
                 let n = (bsize / 4).min(if npts >= 2 { npts } else { bsize / 4 });
                 if n >= 2 && n <= MAX_WAVEFORM_SAMPLES {
-                    let v: Vec<f32> = (0..n).map(|k| f32::from_le_bytes(b[data + k * 4..data + k * 4 + 4].try_into().unwrap())).collect();
+                    let v = (0..n).map(|k| f.f32(data + k * 4)).collect::<Result<Vec<f32>, String>>()?;
                     if kind == 1 {
                         normal = Some(v);
                     } else if other.is_none() {
@@ -1933,7 +1929,7 @@ fn parse_tr0_blocks(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let mut first = true;
     while pos + 16 <= b.len() {
         let le = block_le(&b[pos..pos + 16]).ok_or("that file is not a waveform")?;
-        let n = endian_u32(b, pos + 12, le) as usize;
+        let n = Fields::new(b, le).u32(pos + 12)? as usize;
         if n > MAX_WAVEFORM_BYTES || pos + 16 + n > b.len() {
             return Err(if n > MAX_WAVEFORM_BYTES { "waveform is too large" } else { "truncated waveform" }.into());
         }
@@ -1958,27 +1954,14 @@ fn parse_tr0_blocks(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         return Err("truncated waveform".into());
     }
     let mut cols = Vec::with_capacity(data.len() / width);
-    for chunk in data.chunks(width) {
-        let x = if width == 8 {
-            f64::from_le_bytes(chunk.try_into().unwrap())
-        } else {
-            f32::from_le_bytes(chunk.try_into().unwrap()) as f64
-        };
+    // the endian of the first block applies to the floats as well
+    let f = Fields::new(&data, block_le(b) != Some(false));
+    for k in 0..data.len() / width {
+        let x = if width == 8 { f.f64(k * 8)? } else { f.f32(k * 4)? as f64 };
         if x.abs() >= 1e29 {
             break;
         }
         cols.push(x);
-    }
-    // The block endian applies to the floats as well. Re-read when the header was big endian.
-    if block_le(b) == Some(false) {
-        cols.clear();
-        for chunk in data.chunks(width) {
-            let x = if width == 8 { endian_f64(chunk, 0, false) } else { endian_f32(chunk, 0, false) as f64 };
-            if x.abs() >= 1e29 {
-                break;
-            }
-            cols.push(x);
-        }
     }
     traces_from_columns(&cols, nvars, &names, width == 4)
 }
@@ -2052,7 +2035,8 @@ fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         for p in 0..points {
             for k in 0..nvars {
                 let o = i + (p * nvars + k) * 8;
-                let x = if complex { endian_f32(b, o, true) as f64 } else { endian_f64(b, o, true) };
+                let f = Fields::new(b, true);
+                let x = if complex { f.f32(o)? as f64 } else { f.f64(o)? };
                 cols.push(x);
             }
         }
@@ -2187,7 +2171,12 @@ fn wfmx_payload(b: &[u8], points: usize) -> Result<&[u8], String> {
 }
 
 fn wfmx_volts(payload: &[u8], points: usize, t0: f64, dt: f64) -> Result<Vec<f32>, String> {
-    let le_f32 = |p: &[u8], be: bool| -> Vec<f32> { (0..p.len() / 4).map(|k| endian_f32(p, k * 4, !be)).collect() };
+    // the lengths are checked against `points` before each read: no field is past the end
+    let le_f32 = |p: &[u8], be: bool| -> Vec<f32> {
+        let f = Fields::new(p, !be);
+        (0..p.len() / 4).filter_map(|k| f.f32(k * 4).ok()).collect()
+    };
+    let f64_at = |at: usize| Fields::new(payload, true).f64(at).unwrap_or(f64::NAN);
     let as_y = |ys: &[f32]| ys.iter().take(points).copied().collect::<Vec<_>>();
     if payload.len() == points * 4 {
         let v = le_f32(payload, false);
@@ -2212,13 +2201,13 @@ fn wfmx_volts(payload: &[u8], points: usize, t0: f64, dt: f64) -> Result<Vec<f32
         return Err("unsupported or ambiguous WFMX sample layout".into());
     }
     if payload.len() == points * 16 {
-        let xs: Vec<f64> = (0..points).map(|k| endian_f64(payload, k * 8, true)).collect();
+        let xs: Vec<f64> = (0..points).map(|k| f64_at(k * 8)).collect();
         if x_matches(&xs, t0, dt) {
-            return Ok((0..points).map(|k| endian_f64(payload, (points + k) * 8, true) as f32).collect());
+            return Ok((0..points).map(|k| f64_at((points + k) * 8) as f32).collect());
         }
-        let inter: Vec<f64> = (0..points).map(|k| endian_f64(payload, k * 16, true)).collect();
+        let inter: Vec<f64> = (0..points).map(|k| f64_at(k * 16)).collect();
         if x_matches(&inter, t0, dt) {
-            return Ok((0..points).map(|k| endian_f64(payload, k * 16 + 8, true) as f32).collect());
+            return Ok((0..points).map(|k| f64_at(k * 16 + 8) as f32).collect());
         }
     }
     Err("that file holds no waveform".into())
@@ -2248,37 +2237,22 @@ fn cstr(b: &[u8]) -> String {
     b.iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string()
 }
 
-fn u32_le(b: &[u8], at: usize) -> Option<u32> {
-    b.get(at..at + 4)?.try_into().ok().map(u32::from_le_bytes)
-}
-
-fn u64_le(b: &[u8], at: usize) -> Option<u64> {
-    b.get(at..at + 8)?.try_into().ok().map(u64::from_le_bytes)
-}
-
-fn f64_le(b: &[u8], at: usize) -> Option<f64> {
-    b.get(at..at + 8)?.try_into().ok().map(f64::from_le_bytes)
-}
-
-fn f32_le(b: &[u8], at: usize) -> Option<f32> {
-    b.get(at..at + 4)?.try_into().ok().map(f32::from_le_bytes)
-}
-
 /// One OOSW blob: the record and the number of bytes consumed.
 pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
     if b.len() < 36 || &b[..4] != b"OOSW" {
         return Err("not an OOS waveform file".into());
     }
-    let ver = u32_le(b, 4).unwrap_or(0);
+    let f = Fields::new(b, true);
+    let ver = f.u32(4).unwrap_or(0);
     if ver != 1 {
         return Err(format!("waveform version {}", ver));
     }
-    let nch = u32_le(b, 8).unwrap_or(0) as usize;
+    let nch = f.u32(8).unwrap_or(0) as usize;
     // the sample count comes from the file: bounded before it sizes anything, so a damaged or hostile count is an
     // error and not an overflow or an allocation the size of the count
-    let n = usize::try_from(u64_le(b, 12).unwrap_or(0)).unwrap_or(usize::MAX);
-    let dt = f64_le(b, 20).unwrap_or(0.0);
-    let t0 = f64_le(b, 28).unwrap_or(0.0);
+    let n = usize::try_from(f.u64(12).unwrap_or(0)).unwrap_or(usize::MAX);
+    let dt = f.f64(20).unwrap_or(0.0);
+    let t0 = f.f64(28).unwrap_or(0.0);
     if nch == 0 || nch > NCH || dt <= 0.0 {
         return Err("waveform header".into());
     }
@@ -2288,7 +2262,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
     let mut off = 36;
     let mut rec = Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
     for _ in 0..nch {
-        let c = u32_le(b, off).ok_or("truncated waveform")? as usize;
+        let c = f.u32(off)? as usize;
         off += 4;
         if c < 1 || c > NCH {
             return Err(format!("channel {}", c));
@@ -2298,7 +2272,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         }
         let mut v = vec![0f32; n];
         for i in 0..n {
-            v[i] = f32_le(b, off + 4 * i).unwrap_or(f32::NAN);
+            v[i] = f.f32(off + 4 * i).unwrap_or(f32::NAN);
         }
         rec.ch[c - 1] = v;
         off += 4 * n;
@@ -2325,11 +2299,12 @@ pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
     if b.len() < 12 || &b[..4] != b"OOSF" {
         return Err("not a fast-frame file".into());
     }
-    let ver = u32_le(b, 4).unwrap_or(0);
+    let f = Fields::new(b, true);
+    let ver = f.u32(4).unwrap_or(0);
     if ver != 1 {
         return Err(format!("fast-frame version {}", ver));
     }
-    let n = u32_le(b, 8).unwrap_or(0) as usize;
+    let n = f.u32(8).unwrap_or(0) as usize;
     // every frame is at least a header and one channel number: a count the bytes cannot hold is refused before it
     // sizes the list
     if n > (b.len() - 12) / 40 {
@@ -2733,6 +2708,42 @@ pub fn sync_disks() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: an importer that indexes past the end of a damaged file and panics (the UI thread with it)
+    // instead of refusing it. Random bodies behind each recognised header, some with small numbers where counts and
+    // offsets are read.
+    #[test]
+    fn damaged_waveform_files_are_refused_not_a_panic() {
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let heads: [&[u8]; 6] =
+            [b"OOSW\x01\x00\x00\x00", b"\x0F\x0F:WFM#001", b":CURVE #", b"WAVEDESC", b"AG10", b"OOSF\x01\x00\x00\x00"];
+        for it in 0..20_000 {
+            let mut b = heads[it % heads.len()].to_vec();
+            for _ in 0..rnd() % 600 {
+                let r = rnd();
+                b.push(if r % 3 == 0 { 0 } else { (r >> 8) as u8 });
+            }
+            if it % 5 == 0 {
+                for k in (8..b.len().saturating_sub(4)).step_by(4) {
+                    if rnd() % 2 == 0 {
+                        b[k..k + 4].copy_from_slice(&((rnd() % 300) as u32).to_le_bytes());
+                    }
+                }
+            }
+            let _ = parse_wave(&b, ["a.bin", "a.wfm", "a.isf", "a.trc", "a.bin", "a.bin"][it % 6]);
+            let _ = parse_ff(&b);
+        }
+        let f = Fields::new(b"\x01\x02\x03", true);
+        assert_eq!((f.u16(1), Fields::new(b"\x01\x02\x03", false).u16(1)), (Ok(0x0302), Ok(0x0203)));
+        assert_eq!(f.u32(0), Err("truncated waveform".to_string()));
+        assert_eq!(f.u16(usize::MAX), Err("truncated waveform".to_string()));
+    }
     use crate::gfx::rgb;
     use crate::math::{MathOp, Window};
 
