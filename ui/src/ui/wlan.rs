@@ -714,7 +714,7 @@ impl Ui {
             }
             OskFor::Search => {
                 let t = o.text.trim().to_string();
-                self.sheet_set_search(&t);
+                if self.studio.panel.query_osk { self.panel_set_query(&t); } else { self.sheet_set_search(&t); }
                 self.wlan.osk = None;
             }
             OskFor::BusLabel => {

@@ -75,7 +75,7 @@ fn the_switch_in_the_header_toggles_list_and_detailed_and_is_saved() {
     let s = switch(&u);
     assert!(s.h >= 40 && s.w >= 40, "40 px target: {s:?}");
     assert!(!u.studio_detailed());
-    tap(&mut u, s);
+    tap(&mut u, seg(s, 2));
     assert!(u.studio_detailed() && u.m.studio_detail);
     assert_eq!(u.studio_panel_row(), super::measview::DETAIL_ROW);
     // saved with the Studio setup, and read back
@@ -85,7 +85,7 @@ fn the_switch_in_the_header_toggles_list_and_detailed_and_is_saved() {
     assert!(m.studio_detail);
     // back to the list
     let s = switch(&u);
-    tap(&mut u, s);
+    tap(&mut u, seg(s, 0));
     assert!(!u.studio_detailed());
     assert!(!crate::store::setup_text(&u.m).contains("studio_meas_view"));
     // the other layouts have no such switch
@@ -122,7 +122,7 @@ fn the_detailed_table_has_source_name_value_mean_min_max_sigma_and_count() {
 fn a_narrow_table_drops_sigma_and_count_and_scrolls_sideways() {
     let mut u = studio();
     let s = switch(&u);
-    tap(&mut u, s);
+    tap(&mut u, seg(s, 2));
     // wide: everything
     assert_eq!(Ui::detail_cols(700).0.len(), 8);
     // short of room: sigma and count go first
@@ -259,9 +259,12 @@ fn a_hold_or_a_right_click_on_a_math_chip_opens_turn_off_and_settings() {
     frame(&mut u);
     let r = chip_rect(&u, true);
     assert!(r.w > 0, "the M1 chip");
-    // a tap only selects
+    // a tap selects it and (Batch 21, like a channel pill) opens the Math sheet; it is closed again for the hold
     tap(&mut u, r);
     assert!(u.workspace.popup.is_none());
+    assert!(u.menu_open && u.menu == MenuId::Math);
+    u.close_menu();
+    frame(&mut u);
     // a hold
     hold(&mut u, r);
     assert_eq!(popup_rows(&u), ["Turn off", "M1 settings"]);
@@ -425,4 +428,9 @@ fn a_pinch_on_the_waveform_itself_does_nothing_and_ctrl_wheel_is_as_it_was() {
     let t0 = u.m.tscale;
     assert!(u.pointer_wheel(lane.x + lane.w / 2, lane.y + lane.h / 3, 1, true));
     assert_ne!(u.m.tscale, t0);
+}
+
+/// Segment `k` (0 List, 1 Cards, 2 Detailed) of the three-way switch.
+fn seg(s: Rect, k: i32) -> Rect {
+    Rect::new(s.x + (2 * k + 1) * s.w / 6 - 2, s.y, 4, s.h)
 }

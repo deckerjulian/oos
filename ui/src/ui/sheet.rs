@@ -71,6 +71,8 @@ pub(super) struct SheetState {
     page: usize,
     pub add_group: usize,
     pub search: String,
+    /// how far the Menu page is moved up
+    pub scroll: i32,
 }
 
 /// Geometry of an items page.
@@ -137,7 +139,7 @@ impl Ui {
                 _ => Slot::Tab(1),
             }),
             M::Measure => (&["Settings", "Sources", "Parameters", "Levels"], |it| match it {
-                MeasGate | Open(M::MeasStat) | MeasLabels | Open(M::MeasPair) | Open(M::Dvm) => Slot::Tab(0),
+                MeasGate | BadgeStyle | Open(M::MeasStat) | MeasLabels | Open(M::MeasPair) | Open(M::Dvm) => Slot::Tab(0),
                 MeasSrc | MeasSrcB | MeasCopyTo => Slot::Tab(1),
                 MeasLvType | MeasRefs | MeasLow | MeasMid | MeasHigh | MeasHyst | MeasBaseTop => Slot::Tab(3),
                 Open(M::MeasFall) => Slot::Foot(3),
@@ -232,6 +234,11 @@ impl Ui {
                 SimDefaults => Slot::Foot(1),
                 _ => Slot::Tab(1),
             }),
+            M::Afg => (&["Signal", "Modulation"], |it| match it {
+                AfgMod | AfgModRate | AfgModDepth | AfgModShape => Slot::Tab(1),
+                AfgArbGrab | AfgArbFile => Slot::Foot(0),
+                _ => Slot::Tab(0),
+            }),
             M::La => (&["Logic", "Thresholds"], |it| match it {
                 LaThr(_) | LaUser(_) => Slot::Tab(1),
                 _ => Slot::Tab(0),
@@ -257,34 +264,10 @@ impl Ui {
         }
     }
 
-    /// The start menu of the Studio sheet: short, with nothing the top bar already has.
+    /// The start menu of the Studio sheet: the grouped Menu of every layout, as one page (drawn by menugrid.rs).
     fn sheet_main_spec(&self) -> SheetSpec {
-        use Item::*;
-        use MenuId as M;
-        let names = ["Setup", "Tools", "Analysis views", "More"];
-        let place = |it: Item| -> Slot {
-            match it {
-                AutosetAct | ClearDisp | ForceAct | Open(M::Horizontal) | Open(M::Display) | NavHist => Slot::Tab(0),
-                // the factory reset is on its own, in the footer, and asks first
-                NavBack | NavFwd | DefaultAct => Slot::Foot(0),
-                // math, ref and bus live behind + CH; the tools of the plot behind + Add
-                Open(M::Mask) | Open(M::Zone) | Open(M::Sim) | Open(M::Dvm) => Slot::Tab(1),
-                Open(M::Spectrum) | Open(M::Eye) | Open(M::Power) | Open(M::Bode) | Open(M::BwTest) | IdentifyAct | Open(M::Magnetic) => Slot::Tab(2),
-                Open(M::Inverter) | Open(M::Dpt) | Open(M::Afg) | Open(M::La) | Open(M::Logger) | Open(M::Storage) | Open(M::Utility) => Slot::Tab(3),
-                LockAct | PowerAct => Slot::Foot(3),
-                // what the top bar has, and what System has
-                _ => Slot::Skip,
-            }
-        };
-        let mut tabs: Vec<SheetTab> = names.iter().map(|n| SheetTab { name: n, rows: Vec::new(), foot: Vec::new() }).collect();
-        for it in self.items(M::Main) {
-            match place(it) {
-                Slot::Tab(i) => tabs[i].rows.push(it),
-                Slot::Foot(i) => tabs[i].foot.push(it),
-                Slot::Skip => {}
-            }
-        }
-        SheetSpec { tabs, first: 0 }
+        let rows: Vec<Item> = self.items(MenuId::Main);
+        SheetSpec { tabs: vec![SheetTab { name: "Menu", rows, foot: Vec::new() }], first: 0 }
     }
 
     /// The sheet of a menu, or None when the menu has none yet or does not fit the pattern.
@@ -293,7 +276,8 @@ impl Ui {
             return None;
         }
         let spec = if menu == MenuId::Main {
-            self.sheet_main_spec()
+            // the Menu is one scrolling page of groups (menugrid.rs): no tabs, no row limit
+            return Some(self.sheet_main_spec());
         } else if menu == MenuId::MeasRow {
             let tabs = self.measrow_sheet_tabs();
             if tabs.is_empty() { return None; }
@@ -573,6 +557,7 @@ impl Ui {
             MenuId::MeasAdd => return self.draw_sheet_add(cv),
             MenuId::AddPanel => return self.draw_sheet_add_panel(cv),
             MenuId::Pick => return self.draw_sheet_pick(cv),
+            MenuId::Main => return self.draw_menu_grid(cv),
             _ => {}
         }
         let Some(g) = self.sheet_geo() else { return };
@@ -718,6 +703,7 @@ impl Ui {
             MenuId::MeasAdd => return self.sheet_add_tap(x, y),
             MenuId::AddPanel => return self.sheet_add_panel_tap(x, y),
             MenuId::Pick => return self.sheet_pick_tap(x, y),
+            MenuId::Main => return self.menu_grid_tap(x, y),
             _ => {}
         }
         let Some(g) = self.sheet_geo() else { return true };
@@ -770,11 +756,14 @@ impl Ui {
                 }
             }
             RowKind::Number => {
-                let (mi, _, pl) = Self::value_parts(row.ctrl);
+                let (mi, mid, pl) = Self::value_parts(row.ctrl);
                 if mi.contains(x, y) {
                     self.adjust(it, -1);
                 } else if pl.contains(x, y) {
                     self.adjust(it, 1);
+                } else if mid.contains(x, y) {
+                    // the value opens the numeric pad
+                    self.open_numpad(it);
                 }
             }
             RowKind::Toggle => {

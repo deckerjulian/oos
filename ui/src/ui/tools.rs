@@ -265,7 +265,7 @@ impl Ui {
         Some(match it {
             Item::MeasIdle | Item::MeasN | Item::MeasTsetup | Item::MeasThold => Kind::Value,
             Item::MeasLow | Item::MeasMid | Item::MeasHigh | Item::MeasHyst | Item::MeasFallLow | Item::MeasFallMid | Item::MeasFallHigh => Kind::Value,
-            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate | Item::MeasLvType | Item::MeasBaseTop | Item::MeasSepFall => Kind::Choice,
+            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate | Item::BadgeStyle | Item::MeasLvType | Item::MeasBaseTop | Item::MeasSepFall => Kind::Choice,
             Item::MeasPop | Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax => Kind::Choice,
             Item::MeasStatReset => Kind::Action,
             _ => return None,
@@ -290,6 +290,7 @@ impl Ui {
             Item::MeasFallMid => "Fall mid",
             Item::MeasFallHigh => "Fall high",
             Item::MeasGate => "Gate",
+            Item::BadgeStyle => "Badge style",
             Item::MeasPop => "Population",
             Item::MeasShowSd => "Show \u{3c3}",
             Item::MeasShowMin => "Show min",
@@ -323,6 +324,7 @@ impl Ui {
             Item::MeasBaseTop => m.meas_lv.base_top.label().into(),
             Item::MeasSepFall => if m.meas_lv.sep_fall { "Separate".into() } else { "Same as rise".into() },
             Item::MeasGate => self.measurement_gate_label().into(),
+            Item::BadgeStyle => (if m.studio_classic { "Classic" } else { "Studio" }).into(),
             Item::MeasPop => if m.meas_pop_current { "Current".into() } else { "Accumulated".into() },
             Item::MeasShowSd => (if m.meas_show[0] { "On" } else { "Off" }).into(),
             Item::MeasShowMin => (if m.meas_show[1] { "On" } else { "Off" }).into(),
@@ -342,6 +344,7 @@ impl Ui {
             Item::MeasBaseTop => oos_dsp::measure::BaseTop::ALL.iter().map(|b| b.label().to_string()).collect(),
             Item::MeasSepFall => vec!["Same as rise".into(), "Separate".into()],
             Item::MeasGate => vec!["Screen".into(), "Full record".into()],
+            Item::BadgeStyle => vec!["Studio".into(), "Classic".into()],
             Item::MeasPop => vec!["Accumulated".into(), "Current".into()],
             Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax => vec!["Off".into(), "On".into()],
             _ => return None,
@@ -366,6 +369,9 @@ impl Ui {
             }
             Item::MeasGate => {
                 if d.rem_euclid(2) != 0 { self.set_measurement_full_record(!self.m.meas_full_record); }
+            }
+            Item::BadgeStyle => {
+                if d.rem_euclid(2) != 0 { self.m.studio_classic = !self.m.studio_classic; self.relayout(); }
             }
             Item::MeasIdle => {
                 let cur = if self.m.meas_idle > 0.0 { self.m.meas_idle } else { 0.0 };

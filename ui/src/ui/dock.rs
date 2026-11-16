@@ -23,7 +23,7 @@ pub(super) const DIV_HIT: i32 = 44;
 const MIN_W: i32 = 150;
 const MIN_H: i32 = STRIP_H + 80;
 /// The measurement list stays usable small: a few rows, and it scrolls.
-const MEAS_MIN_W: i32 = 180;
+const MEAS_MIN_W: i32 = 200;
 const MEAS_MIN_H: i32 = STRIP_H + 100;
 const WAVE_MIN_W: i32 = 300;
 const WAVE_MIN_H: i32 = 210;
@@ -565,7 +565,7 @@ impl Ui {
     pub(super) fn dock_view_rect(&self, k: VKind, r: Rect) -> Option<Rect> {
         if k != VKind::Measure || !matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline) { return None; }
         let base = self.dock_extra_rect(k, r).map_or(Self::dock_close_rect(r).x, |e| e.x);
-        Some(Rect::new(base - 52, r.y, 52, STRIP_HIT.min(r.h)))
+        Some(Rect::new(base - 76, r.y, 76, STRIP_HIT.min(r.h)))
     }
     pub(super) fn dock_grip_rect(r: Rect) -> Rect { Rect::new(r.right() - GRIP, r.bottom() - GRIP, GRIP, GRIP) }
 
@@ -984,9 +984,10 @@ impl Ui {
                 true
             }
             (Some(Press::View { kind }), None) => {
-                if self.dock_rect(kind).and_then(|r| self.dock_view_rect(kind, r)).is_some_and(|e| e.contains(x, y)) {
-                    let on = !self.m.studio_detail;
-                    self.studio_set_detailed(on);
+                if let Some(e) = self.dock_rect(kind).and_then(|r| self.dock_view_rect(kind, r)).filter(|e| e.contains(x, y)) {
+                    // three segments: List, Cards, Detailed
+                    let k = ((x - e.x) * 3 / e.w.max(1)).clamp(0, 2);
+                    self.panel_set_view([super::measpanel::PanelView::List, super::measpanel::PanelView::Cards, super::measpanel::PanelView::Detailed][k as usize]);
                 }
                 true
             }

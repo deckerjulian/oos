@@ -92,6 +92,12 @@ mod measview;
 mod caticons;
 mod fullchrome;
 mod addtiles;
+mod menugrid;
+mod numpad;
+mod classicbadges;
+mod measpanel;
+#[cfg(test)]
+mod batch21_tests;
 #[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
@@ -663,6 +669,8 @@ enum Item {
     MeasFallMid,
     MeasFallHigh,
     MeasGate,
+    /// Studio: the badge row under the lanes as Studio chips or as the classic strip
+    BadgeStyle,
     MeasTsetup,
     MeasThold,
     CurMode,
@@ -1420,6 +1428,8 @@ pub struct Ui {
     rec_iv: f64,
     /// hex entry of the keypad picker (protocol trigger value)
     keypad: String,
+    /// the numeric entry pad of the Studio sheets (ui/numpad.rs); its text is `keypad`
+    numpad: Option<numpad::NumPad>,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
     la_cols: std::cell::RefCell<la::Cache>,
     /// decoded LA lines of the record shown: (key of record and settings, packets with times in s)
@@ -1544,6 +1554,7 @@ impl Ui {
             last_rec_t: 0.0,
             rec_iv: 0.0,
             keypad: String::new(),
+            numpad: None,
             la_cols: Default::default(),
             dec_cache: Default::default(),
             table: None,
@@ -5857,6 +5868,8 @@ impl Ui {
             MenuId::Measure => { let mut v = vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasStat), Item::MeasLabels, Item::StripDock, Item::MeasClear]; if self.m.layout == Layout::Studio {
                 // the sheet has the levels on a tab of their own; the other layouts open them from one row
                 v.retain(|i| *i != Item::StripDock);
+                let g = v.iter().position(|i| *i == Item::MeasGate).unwrap_or(0);
+                v.insert(g + 1, Item::BadgeStyle);
                 let at = v.iter().position(|i| *i == Item::Open(MenuId::MeasLevels)).unwrap_or(0);
                 v.splice(at..=at, self.items(MenuId::MeasLevels));
             }
@@ -6545,7 +6558,6 @@ impl Ui {
             MenuId::La => self.la_title(),
             MenuId::LaLines => "Logic analyser \u{b7} lines shown".into(),
             MenuId::LaPat => "Pattern \u{b7} D0-D15".into(),
-            MenuId::Main if self.m.layout == Layout::Studio => "Settings".into(),
             MenuId::Main => "Menu".into(),
             MenuId::Channel(c) => format!("CH{}", c + 1),
             MenuId::Horizontal => "Horizontal".into(),
@@ -8749,6 +8761,7 @@ impl Ui {
         if self.menu == MenuId::MeasRow { self.meas_cfg = None; }
         self.menu_open = false;
         self.menu = MenuId::Main;
+        self.sheet.scroll = 0;
         self.parent = None;
         self.menu_history.clear();
         self.pick = None;
@@ -8765,6 +8778,7 @@ impl Ui {
         self.draw_load_slot(cv);
         let f = self.fonts();
         self.draw_osk(cv);
+        self.draw_numpad(cv);
         if self.power_dlg {
             cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);
             let (r, [off, restart, cancel]) = self.pwr_layout();
@@ -9782,6 +9796,7 @@ impl Ui {
     }
 
     pub fn tap(&mut self, x: i32, y: i32) {
+        if self.numpad_tap(x, y) { return; }
         if self.load_slot_tap(x, y) { return; }
         let box_button = self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
         if !box_button { self.zoom_arm = false; }

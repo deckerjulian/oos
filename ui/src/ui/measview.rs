@@ -89,7 +89,10 @@ impl Ui {
             cv.text(&f.s, r.x + 8, y + 9, "statistics: waiting for values", DIM);
             return;
         };
-        let mut parts = vec![format!("mean {}", row.fmt(mean)), format!("min {}", row.fmt(min)), format!("max {}", row.fmt(max)), format!("\u{3c3} {}", row.fmt(sd))];
+        let mut parts = match self.studio.panel.stats_mode {
+            2 => vec![format!("min {}", row.fmt(min)), format!("max {}", row.fmt(max))],
+            _ => vec![format!("\u{b5} {}", row.fmt(mean)), format!("\u{3c3} {}", row.fmt(sd)), format!("min {}", row.fmt(min)), format!("max {}", row.fmt(max))],
+        };
         while parts.len() > 1 && f.s.width(&parts.join("  ")) > avail { parts.pop(); }
         cv.set_clip(Rect::new(r.x + 4, r.y, r.w - 8, r.h));
         cv.text(&f.s, r.x + 8, y + 9, &parts.join("  "), DIM);
@@ -103,7 +106,7 @@ impl Ui {
         let multi = self.studio_multi_source();
         let hx = self.studio.panel.hx.clamp(0, (total - g.list.w).max(0));
         // the head: the names of the columns, scrolled with the rows
-        let head = Rect::new(g.list.x, g.p.y + 2, g.list.w, 26);
+        let head = Rect::new(g.list.x, g.list.y - 26, g.list.w, 26);
         cv.fill(head, BAR);
         cv.set_clip(head);
         for &(i, x, w) in &cols {
@@ -156,14 +159,17 @@ impl Ui {
 
     /// The little switch in the strip of the measurements panel: its two modes, the one that is on lit.
     pub(super) fn draw_view_switch(&self, cv: &mut Canvas, e: Rect) {
-        let b = Rect::new(e.x + 4, e.y + 2, 44, 22);
+        let b = Rect::new(e.x + 4, e.y + 2, 68, 22);
         chip(cv, b, BTN, BTN_BORDER);
-        let (l, t) = (Rect::new(b.x + 2, b.y + 2, 20, 18), Rect::new(b.x + 22, b.y + 2, 20, 18));
-        let det = self.m.studio_detail;
-        cv.round(if det { t } else { l }, 4, ACCENT, 255);
-        let (cl, ct) = (if det { TEXT } else { DARK_TEXT }, if det { DARK_TEXT } else { TEXT });
-        // list: three lines; table: a grid
-        for k in 0..3 { cv.hline(l.x + 4, l.right() - 5, l.y + 4 + k * 5, cl); }
+        let (l, k, t) = (Rect::new(b.x + 2, b.y + 2, 21, 18), Rect::new(b.x + 23, b.y + 2, 21, 18), Rect::new(b.x + 44, b.y + 2, 21, 18));
+        let view = self.panel_view();
+        let at = match view { super::measpanel::PanelView::List => l, super::measpanel::PanelView::Cards => k, super::measpanel::PanelView::Detailed => t };
+        cv.round(at, 4, ACCENT, 255);
+        let ink = |on: bool| if on { DARK_TEXT } else { TEXT };
+        let (cl, ck, ct) = (ink(at == l), ink(at == k), ink(at == t));
+        // list: three lines; cards: four squares; table: a grid
+        for i in 0..3 { cv.hline(l.x + 4, l.right() - 5, l.y + 4 + i * 5, cl); }
+        for (dx, dy) in [(0, 0), (7, 0), (0, 7), (7, 7)] { cv.rect(Rect::new(k.x + 4 + dx, k.y + 3 + dy, 6, 6), ck); }
         cv.rect(Rect::new(t.x + 4, t.y + 3, 12, 12), ct);
         cv.hline(t.x + 4, t.x + 15, t.y + 9, ct);
         cv.vline(t.x + 10, t.y + 3, t.y + 14, ct);

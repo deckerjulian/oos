@@ -102,7 +102,7 @@ impl Ui {
     /// The row of the docked list under a point: the measurement and the rectangle of the row.
     pub(super) fn md_row_at(&self, x: i32, y: i32) -> Option<(MeasKey, Rect)> {
         let g = self.studio_panel_geo()?;
-        if !g.list.contains(x, y) || self.studio_detailed() { return None; }
+        if !g.list.contains(x, y) || self.studio_detailed() || self.panel_is_cards() { return None; }
         let rows = self.meas_rows();
         let listed = self.studio_listed(&rows);
         let keys = self.studio_keys();
@@ -248,6 +248,14 @@ impl Ui {
         self.studio.md.hold = None;
         self.studio.md.cand = None;
         self.studio.md.spring = None;
+        // the Menu: the page scrolls with the finger
+        if self.menu_open && self.menu == MenuId::Main && self.sheet_active() {
+            if self.menu_geo().view.contains(x, y) {
+                self.studio.drag = Some(StudioDrag::MenuScroll { y0: y, s0: self.sheet.scroll, moved: false });
+                return true;
+            }
+            return false;
+        }
         // a tile of the Add measurement panel: it follows the finger once it has moved
         if self.menu_open && self.menu == MenuId::MeasAdd && self.sheet_active() {
             let g = self.sheet_add_geo();
@@ -272,6 +280,8 @@ impl Ui {
                 return self.studio_eat(x, y);
             }
         }
+        // the cards: a drag scrolls, a tap acts
+        if self.panel_is_cards() { return false; }
         // the detailed table: a sideways drag scrolls it
         if self.studio_detailed() {
             if let Some(g) = self.studio_panel_geo().filter(|g| g.list.contains(x, y)) {

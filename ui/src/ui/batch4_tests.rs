@@ -322,7 +322,7 @@ fn autoset_is_two_taps_away_in_every_layout() {
         let (x, y) = if l == Layout::Studio { centre(u.studio_top().gear) } else if l == Layout::Minimal { centre(Ui::MENU_BTN) } else { centre(u.menu_btn()) };
         u.tap(x, y);
         assert_eq!(u.menu, MenuId::Main, "{l:?}");
-        let (x, y) = if l == Layout::Studio { centre(u.sheet_geo().expect("sheet").rows.into_iter().find(|r| r.it == Item::AutosetAct).expect("Autoset on the first tab").row) }
+        let (x, y) = if l == Layout::Studio { centre(u.menu_geo().groups.iter().flat_map(|g| g.items.iter()).find(|(it, _)| *it == Item::AutosetAct).expect("Autoset in the Menu").1) }
             else { centre(u.dlg_layout().expect("menu").rows.into_iter().find(|r| r.it == Item::AutosetAct).expect("Autoset row").ctrl) };
         u.tap(x, y);
         assert_eq!(toast_text(&u), "Auto set-up", "{l:?}: Menu");

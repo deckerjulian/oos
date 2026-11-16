@@ -344,6 +344,7 @@ pub fn setup_text(m: &Model) -> String {
     if !m.studio_dock.is_empty() { kv("studio_dock", m.studio_dock.clone()); }
     if m.studio_ov != 0 { kv("studio_ov", m.studio_ov.to_string()); }
     if m.studio_detail { kv("studio_meas_view", "detailed".to_string()); }
+    if m.studio_classic { kv("studio_badges", "classic".to_string()); }
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
@@ -750,6 +751,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "studio_view" => m.studio_view = if ["waveform", "docked", "floating", "only"].contains(&v) { v.to_string() } else { return Err(format!("bad studio view {v}")) },
         "studio_dock" => m.studio_dock = v.to_string(),
         "studio_meas_view" => m.studio_detail = match v { "detailed" => true, "list" => false, _ => return Err(format!("bad studio_meas_view {v}")) },
+        "studio_badges" => m.studio_classic = match v { "classic" => true, "studio" => false, _ => return Err(format!("bad studio_badges {v}")) },
         "studio_ov" => m.studio_ov = v.parse::<i32>().ok().filter(|h| (0..=2000).contains(h)).ok_or_else(|| format!("bad studio_ov {v}"))?,
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "views" => {

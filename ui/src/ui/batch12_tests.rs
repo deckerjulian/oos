@@ -343,7 +343,7 @@ fn a_narrow_strip_has_a_short_title_and_a_narrow_footer_does_not_overlap() {
     drag(&mut u, (x, y), (x + 300, y));
     let g = u.studio_panel_geo().unwrap();
     assert!(g.p.w < super::studio::NARROW_PANEL_W, "narrow: {}", g.p.w);
-    assert!(g.add.right() <= g.plus.x, "{:?} {:?}", g.add, g.plus);
-    assert!(g.add.h >= 40 && g.plus.h >= 40 && g.plus.w >= 40);
+    assert!(g.add.right() <= g.stats.x, "{:?} {:?}", g.add, g.stats);
+    assert!(g.add.h >= 40 && g.stats.h >= 40 && g.stats.w >= 40);
     shot(&mut u, "narrow-panel");
 }

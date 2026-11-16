@@ -169,14 +169,11 @@ fn the_gear_sheet_is_settings_with_tools_and_analysis_views_and_no_duplicates() 
     let mut u = studio();
     u.open_menu(MenuId::Main);
     for _ in 0..3 { frame(&mut u); }
-    assert_eq!(u.menu_title(MenuId::Main), "Settings");
+    // Batch 21: the gear sheet is the grouped Menu (one page, no tabs); the reset is a button of its group and asks first
+    assert_eq!(u.menu_title(MenuId::Main), "Menu");
     let spec = u.sheet_spec(MenuId::Main).unwrap();
-    let names: Vec<&str> = spec.tabs.iter().map(|t| t.name).collect();
-    assert_eq!(names, ["Setup", "Tools", "Analysis views", "More"]);
-    let all: Vec<Item> = spec.tabs.iter().flat_map(|t| t.rows.iter().chain(t.foot.iter()).copied()).collect();
-    for dup in [MenuId::Math, MenuId::Ref, MenuId::Decode] { assert!(!all.contains(&Item::Open(dup)), "{dup:?} is behind + CH"); }
-    assert!(spec.tabs[0].foot.contains(&Item::DefaultAct), "the factory reset is in the footer");
-    assert!(!spec.tabs[0].rows.contains(&Item::DefaultAct));
+    assert_eq!(spec.tabs.len(), 1);
+    assert!(spec.tabs[0].rows.contains(&Item::DefaultAct));
 }
 
 #[test]
@@ -267,8 +264,8 @@ fn a_danger_button_in_a_footer_asks_before_it_acts_and_stands_apart() {
     // the factory reset
     u.open_menu(MenuId::Main);
     for _ in 0..3 { frame(&mut u); }
-    let g = u.sheet_geo().unwrap();
-    let (_, reset) = *g.foot.iter().find(|(it, _)| *it == Item::DefaultAct).expect("the factory reset is in the footer");
+    // Batch 21: the factory reset is a button of the Menu's Acquisition group
+    let reset = u.menu_geo().groups.iter().flat_map(|g| g.items.iter()).find(|(it, _)| *it == Item::DefaultAct).expect("the factory reset is in the Menu").1;
     u.m.tscale = 3;
     tap(&mut u, reset);
     assert_eq!(u.m.tscale, 3, "the first tap only asks");

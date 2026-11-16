@@ -63,7 +63,8 @@ fn with_one_source_a_row_has_no_chip_and_the_list_has_no_header() {
     // the colour is in a thin bar at the left edge only: nothing of that colour right of it in the first row
     let row = Rect::new(g.list.x, g.list.y, g.list.w, u.studio_panel_row());
     assert!(count(&cv, Rect::new(row.x + 3, row.y + 4, 5, row.h - 8), yellow) > 20, "the colour bar");
-    assert_eq!(count(&cv, Rect::new(row.x + 9, row.y, row.w - 9, row.h), yellow), 0, "no chip of the source in the row");
+    // Batch 21: the second line of a row names its source in its colour (the list view of the mockups); the first line (name, value) has none
+    assert_eq!(count(&cv, Rect::new(row.x + 9, row.y, row.w - 9, 26), yellow), 0, "no chip of the source in the first line of the row");
     // no band for a header: the first row starts with its name
     assert_eq!(u.studio_panel_row(), if u.studio.compact { 36 } else { 46 });
     shot(&mut u, "one-source");

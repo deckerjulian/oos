@@ -29,7 +29,7 @@ fn shot(u: &mut Ui, name: &str) {
 /// The menus the sheet converts, with the name their picture gets.
 fn converted() -> Vec<(MenuId, &'static str)> {
     vec![
-        (MenuId::Main, "main"), (MenuId::Trigger, "trigger"), (MenuId::Channel(0), "channel"), (MenuId::Measure, "measure"),
+        (MenuId::Trigger, "trigger"), (MenuId::Channel(0), "channel"), (MenuId::Measure, "measure"),
         (MenuId::Display, "display"), (MenuId::Acquire, "acquire"), (MenuId::Horizontal, "horizontal"), (MenuId::Cursor, "cursor"),
         (MenuId::Ref, "ref"), (MenuId::Decode, "decode"), (MenuId::Math, "math"), (MenuId::Utility, "system"),
     ]
@@ -289,13 +289,12 @@ fn bus_is_a_tab_of_decode_and_the_gear_opens_a_short_main_sheet() {
     assert!(u.menu_open && u.menu == MenuId::Main && u.sheet_active());
     let spec = u.sheet_spec(MenuId::Main).unwrap();
     let all: Vec<Item> = spec.tabs.iter().flat_map(|t| t.rows.iter().chain(t.foot.iter()).copied()).collect();
+    // Batch 21: the gear sheet is the whole grouped Menu on one scrolling page (menugrid.rs, batch21_tests)
     let n: usize = spec.tabs.iter().map(|t| t.rows.len()).sum();
-    assert!((14..=28).contains(&n), "short: {n} rows");
-    // nothing the top bar has
-    for dup in [Item::RunStop, Item::SingleAct, Item::Open(MenuId::Trigger), Item::Open(MenuId::Acquire), Item::Open(MenuId::Measure), Item::Open(MenuId::Cursor), Item::Open(MenuId::Bus)] {
-        assert!(!all.contains(&dup), "{dup:?} is in the top bar or merged");
+    assert!((30..=50).contains(&n), "the whole Menu: {n} entries");
+    for must in [Item::RunStop, Item::SingleAct, Item::Open(MenuId::Trigger), Item::Open(MenuId::Acquire), Item::Open(MenuId::Measure), Item::Open(MenuId::Cursor), Item::Open(MenuId::Bus)] {
+        assert!(all.contains(&must), "{must:?} is in the Menu");
     }
-    check_geometry(&u, "main");
 }
 
 #[test]
@@ -454,12 +453,9 @@ fn each_panel_opens_docked_with_the_pages_that_exist() {
     assert_eq!(u.studio.view, StudioView::Docked);
     assert!(u.panel_shown(PanelKind::Measurements) && u.studio_panel_rect().is_some());
     shot(&mut u, "panel-measurements");
-    // the + tile of the panel area opens the page again
-    let plus = u.studio_panel_geo().unwrap().plus;
-    assert!(plus.w >= 40 && plus.h >= 40);
-    tap_in(&mut u, plus);
-    assert_eq!(u.menu, MenuId::AddPanel);
-    u.close_menu();
+    // Batch 21: the + Panel button of the footer is the statistics button now (+ Add in the top bar opens the page)
+    let stats = u.studio_panel_geo().unwrap().stats;
+    assert!(stats.w >= 40 && stats.h >= 40);
 
     let mut u = studio();
     open(&mut u, PanelKind::Decode);

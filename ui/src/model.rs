@@ -1259,6 +1259,8 @@ pub struct Model {
     pub studio_ov: i32,
     /// the Studio measurements panel shows the detailed table instead of the list
     pub studio_detail: bool,
+    /// the pinned badges under the lanes in the classic strip: a row per source, name and value pairs in columns
+    pub studio_classic: bool,
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
@@ -1695,6 +1697,7 @@ impl Default for Model {
             studio_dock: String::new(),
             studio_ov: 0,
             studio_detail: false,
+            studio_classic: false,
             hdmi: HdmiMode::Waveform,
             views: 1,
             view_cur: 0,
