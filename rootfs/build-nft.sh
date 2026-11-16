@@ -9,10 +9,11 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 . "$here/deps.sh"
+. "$here/../tools/lib/docker.sh"
 for d in libmnl libnftnl nftables; do dep_fetch $d "$out" >/dev/null; done
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e MNL="$(dep_ver libmnl)" -e NFTNL="$(dep_ver libnftnl)" \
-	-e NFT="$(dep_ver nftables)" -v "$out:/out" alpine:3.22 sh -euc '
+	-e NFT="$(dep_ver nftables)" -v "$out:/out" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache build-base linux-headers pkgconf bison flex xz >/dev/null
 	p=/tmp/prefix; mkdir -p $p
 	export PKG_CONFIG_PATH=$p/lib/pkgconfig CFLAGS="-Os -ffunction-sections -fdata-sections"

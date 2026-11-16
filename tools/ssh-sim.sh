@@ -12,12 +12,12 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/docker.sh"
 out="$root/rootfs/out"
 w="${TMPDIR:-/tmp}/oos-ssh-sim"
 rm -rf "$w"; mkdir -p "$w"
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
 for f in nft dropbearmulti sftp-server; do [ -x "$out/$f" ] || { echo "no $out/$f" >&2; exit 1; }; done
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/test" <<'TEST'
@@ -135,7 +135,7 @@ grep -q "$(cat /oos/ssh/password)" /tmp/oos-ssh.log && fail "the password is in 
 TEST
 
 docker run --rm --platform linux/arm64 --cap-add NET_ADMIN \
-	-v "$w:/w:ro" -v "$root/rootfs/initramfs/bin:/src:ro" -v "$out:/out:ro" alpine:3.22 sh -euc '
+	-v "$w:/w:ro" -v "$root/rootfs/initramfs/bin:/src:ro" -v "$out:/out:ro" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache openssh-client openssh-keygen sshpass >/dev/null
 	# the image busybox runs every applet from here on (the OpenSSH client and sshpass are the computer side)
 	cp /w/busybox /bin/busybox

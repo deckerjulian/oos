@@ -8,10 +8,11 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 . "$here/deps.sh"
+. "$here/../tools/lib/docker.sh"
 ver=$(dep_ver e2fsprogs)
 dep_fetch e2fsprogs "$out" >/dev/null
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
+docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache build-base linux-headers pkgconf >/dev/null
 	cd /tmp && tar -xJf /out/e2fsprogs-$VER.tar.xz && cd e2fsprogs-$VER
 	./configure --disable-nls --disable-uuidd --disable-fuse2fs --disable-defrag --disable-imager --disable-resizer CFLAGS=-Os >/tmp/conf.log 2>&1 || { tail -20 /tmp/conf.log; exit 1; }

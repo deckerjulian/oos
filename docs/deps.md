@@ -21,9 +21,9 @@ of its own.
 - What a release has to carry next to its image is listed by `tools/release-sources.sh list`, from this manifest and
   `kernel/base.sha256`; `tools/release-sources.sh check <tag>` compares a release on GitHub with it
   ([THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md)).
-- Not in the manifest: the Docker base images (`alpine:3.22`, `ubuntu:26.04`, `rust:1-alpine`), busybox (Ubuntu's
-  `busybox-static`, its version and the glibc it was built with recorded in `busybox.version` of each build), the
-  kernel base archive (`kernel/base.sha256`) and Rust crates (`Cargo.lock`).
+- Not in the manifest: the Docker base images (`alpine:3.22` and `ubuntu:26.04`, named once in `tools/lib/docker.sh`),
+  busybox (Ubuntu's `busybox-static`, its version and the glibc it was built with recorded in `busybox.version` of
+  each build), the kernel base archive (`kernel/base.sha256`) and Rust crates (`Cargo.lock`).
 
 ## Rust crates
 

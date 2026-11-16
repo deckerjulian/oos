@@ -7,10 +7,10 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/docker.sh"
 w="${TMPDIR:-/tmp}/oos-usb-sim"
 mkdir -p "$w"
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/init" <<'INIT'
@@ -42,7 +42,7 @@ echo ---- log; cat /tmp/oos-usb.log
 poweroff -f
 INIT
 
-docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" alpine:3.22 sh -euc '
+docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache linux-firmware-none cpio xz zstd dosfstools exfatprogs sfdisk >/dev/null
 	apk add --no-cache --no-scripts linux-lts >/dev/null
 	cd /w

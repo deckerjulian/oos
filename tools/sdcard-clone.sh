@@ -17,6 +17,7 @@ set -eu
 
 die() { echo "error: $*" >&2; exit 1; }
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/lib/docker.sh"
 
 info() { diskutil info "/dev/$1" 2>/dev/null; }
 field() { info "$1" | awk -F': *' -v k="$2" '$1 ~ "^ *"k"$" {print $2; exit}'; }
@@ -168,7 +169,7 @@ EOF
 	# the partition is copied into a Docker volume (sparse: only what is used takes room), checked and shrunk there;
 	# in.img is mounted read only
 	docker run --rm -e IMG="$(basename "$img")" -e OUT="$(basename "$out")" -e OFF="$off" -e AVAIL="$avail" -e NAME="$name" \
-		-e OUT_OWNER="$(id -u):$(id -g)" -v "$indir:/in:ro" -v "$outdir:/out" -v oos-sdfit:/w alpine:3.22 sh -euc '
+		-e OUT_OWNER="$(id -u):$(id -g)" -v "$indir:/in:ro" -v "$outdir:/out" -v oos-sdfit:/w "$OOS_ALPINE" sh -euc '
 		apk add --no-cache e2fsprogs e2fsprogs-extra coreutils >/dev/null
 		p=/w/part; rm -f $p
 		trap "rm -f $p" EXIT

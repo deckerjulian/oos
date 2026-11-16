@@ -12,6 +12,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/docker.sh"
 gel="$root/boot/out/DHO800_DHO900_OOS_Install.GEL"
 [ -f "$gel" ] || { echo "run boot/build-dev-image.sh first" >&2; exit 1; }
 w="${TMPDIR:-/tmp}/oos-gel-sim"
@@ -33,7 +34,7 @@ with open(sys.argv[1], "wb") as f:
         f.seek(lba * S); f.write(b)
 PY
 
-docker run --rm --platform linux/arm64 -v "$w:/w" ubuntu:26.04 bash -euc '
+docker run --rm --platform linux/arm64 -v "$w:/w" "$OOS_UBUNTU" bash -euc '
 	apt-get update >/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends mksh >/dev/null
 	mkdir -p /system/bin /rigol/shell /mnt/media_rw/ABCD-1234 /rigol
 	ln -s /usr/bin/mksh /system/bin/sh; ln -s /bin/bash /system/bin/bash

@@ -36,14 +36,10 @@ if command -v rustup >/dev/null 2>&1; then
 else
 	echo "no rustup: a cargo from the distribution usually lacks aarch64-unknown-linux-musl and rust-lld; Rust from https://rustup.rs has them" >&2
 fi
-# the initramfs is built in Docker: fail now, not after the Rust builds (a failed late step kept the OLD image)
-docker info >/dev/null 2>&1 || { echo "Docker is not running (macOS: open -a Docker; Linux: systemctl start docker, and be in the docker group)" >&2; exit 1; }
-# the image's busybox, wpa_supplicant and e2fsck come from arm64 containers: on other hosts they need QEMU's binfmt
-docker run --rm --platform linux/arm64 alpine:3.22 true >/dev/null 2>&1 || {
-	echo "Docker cannot run arm64 containers. On an x86-64 host, once: docker run --privileged --rm tonistiigi/binfmt --install arm64" >&2
-	echo "(or the distribution's qemu-user-static with binfmt-support)" >&2
-	exit 1
-}
+# the initramfs is built in Docker: fail now, not after the Rust builds (a failed late step kept the OLD image). The
+# image's busybox, wpa_supplicant and e2fsck come from arm64 containers.
+. "$root/tools/lib/docker.sh"
+need_docker_arm64
 # the sources the image builds from: rootfs/deps.lock, and the stamps that say when a part is built again
 DEPS_LOCK="$root/rootfs/deps.lock"
 . "$root/rootfs/deps.sh"
@@ -63,14 +59,8 @@ if [ ! -x "$hw" ] || [ "$(od -An -tx1 -j18 -N1 "$hw" | tr -d ' ')" != b7 ]; then
 	docker run --rm -e OUT_OWNER="$owner" -v "$root/tools/hw:/src" "$kimage" sh -euc 'cd /src && aarch64-linux-gnu-gcc -static -O2 -Wall -o oos-hw oos-hw.c && chown "$OUT_OWNER" oos-hw'
 fi
 mkdir -p "$out"
-# arm64 whatever the host is: its busybox goes into the image. An image of another architecture under this name (left
-# by an older script on an x86-64 host) is built again.
-image=oos-initramfs:ubuntu
-[ "$(docker image inspect -f '{{.Architecture}}' "$image" 2>/dev/null)" = arm64 ] || docker build --platform linux/arm64 -t "$image" - <<'EOF'
-FROM ubuntu:26.04
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      busybox-static cpio gzip device-tree-compiler && rm -rf /var/lib/apt/lists/*
-EOF
+# arm64 whatever the host is: its busybox goes into the image (tools/lib/docker.sh)
+image=$(initramfs_image)
 
 # The programs built from rootfs/deps.lock are built again when missing, or when their deps.lock lines or their build
 # script changed since (deps.sh stamps). WLAN: wpa_supplicant and wpa_cli (docs/wlan.md)

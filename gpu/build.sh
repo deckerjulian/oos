@@ -20,12 +20,12 @@ out="$root/rootfs/out"
 DEPS_LOCK="$root/rootfs/deps.lock"
 . "$root/rootfs/deps.sh"
 ver=$(dep_ver mesa)
-image=oos-gpu-build:ubuntu
+. "$root/tools/lib/docker.sh"
 mkdir -p "$out"
 # arm64 whatever the host is (on x86-64 through QEMU, as the rest of the image): the helper and the libraries run on
-# the scope. An image of another architecture under this name is built again.
-[ "$(docker image inspect -f '{{.Architecture}}' "$image" 2>/dev/null)" = arm64 ] || docker build --platform linux/arm64 -t $image - >&2 <<'EOF'
-FROM ubuntu:26.04
+# the scope
+image=$(oos_image oos-gpu-build linux/arm64 <<'EOF'
+FROM @UBUNTU@
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates dpkg-dev \
       meson ninja-build gcc g++ pkg-config python3-mako python3-yaml python3-packaging python3-ply bison flex glslang-tools \
@@ -34,6 +34,7 @@ RUN apt-get update && \
       spirv-tools spirv-tools-dev spirv-headers libclang-cpp21-dev \
     && rm -rf /var/lib/apt/lists/*
 EOF
+)
 # the source: the Mesa release, checked against rootfs/deps.lock
 dep_fetch mesa "$out" >/dev/null
 # a Mesa built from another deps.lock line is built again

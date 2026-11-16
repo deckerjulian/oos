@@ -10,12 +10,12 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/docker.sh"
 out="${OOS_OUT:-$root/rootfs/out}"
 w="${TMPDIR:-/tmp}/oos-fw-sim"
 rm -rf "$w"; mkdir -p "$w"
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
 [ -x "$out/nft" ] || { echo "no $out/nft" >&2; exit 1; }
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/routes" <<'R'
@@ -194,7 +194,7 @@ TEST
 
 docker run --rm --platform linux/arm64 --cap-add NET_ADMIN --sysctl net.ipv6.conf.all.disable_ipv6=0 \
 	--sysctl net.ipv6.conf.default.disable_ipv6=0 \
-	-v "$w:/w:ro" -v "$root/rootfs/initramfs:/src:ro" -v "$out:/out:ro" alpine:3.22 sh -euc '
+	-v "$w:/w:ro" -v "$root/rootfs/initramfs:/src:ro" -v "$out:/out:ro" "$OOS_ALPINE" sh -euc '
 	cp /w/busybox /bin/busybox
 	for a in sh ip awk sed grep sort cat od tr mv mkdir chmod dirname sleep timeout stat cp sync setsid; do
 		ln -sf busybox /bin/$a

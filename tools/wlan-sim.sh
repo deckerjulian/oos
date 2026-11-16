@@ -8,6 +8,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/docker.sh"
 w="${TMPDIR:-/tmp}/oos-wlan-sim"
 mkdir -p "$w"
 [ -x "$root/rootfs/out/wpa_supplicant" ] || "$root/rootfs/build-wlan-tools.sh"
@@ -27,8 +28,7 @@ for l in sys.stdin:
 cp "$(cat "$w/test-binary")" "$w/oos-ui-test"
 
 # the busybox of the image
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/init" <<'INIT'
@@ -89,7 +89,7 @@ echo ---- end
 poweroff -f
 INIT
 
-docker run --rm --platform linux/arm64 -e HOSTAPD="$hostapd" -v "$w:/w" -v "$root/rootfs:/rootfs:ro" alpine:3.22 sh -euc '
+docker run --rm --platform linux/arm64 -e HOSTAPD="$hostapd" -v "$w:/w" -v "$root/rootfs:/rootfs:ro" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static linux-firmware-none cpio curl xz zstd >/dev/null
 	apk add --no-cache --no-scripts linux-lts >/dev/null
 	if [ ! -x /w/hostapd ]; then

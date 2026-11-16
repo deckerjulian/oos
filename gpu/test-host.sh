@@ -12,14 +12,17 @@ cd "$(dirname "$0")/.."
 out=$PWD/ui/target/gpu-check
 rm -rf "$out"
 mkdir -p "$out/cpu" "$out/gpu"
-image=oos-gpu-host-test
-docker image inspect $image >/dev/null 2>&1 || docker build -t $image - >&2 <<'EOF'
-FROM ubuntu:26.04
+# arm64 whatever the host is: the scope's oos-ui runs in it (on x86-64 through QEMU)
+. tools/lib/docker.sh
+need_docker_arm64
+image=$(oos_image oos-gpu-host-test linux/arm64 <<'EOF'
+FROM @UBUNTU@
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       gcc libc6-dev libegl-dev libgles-dev libegl-mesa0 libgles2 libegl1 mesa-libgallium \
     && rm -rf /var/lib/apt/lists/*
 EOF
-docker run --rm -v "$PWD:/o" -v "$out:/out" $image sh -euc '
+)
+docker run --rm --platform linux/arm64 -v "$PWD:/o" -v "$out:/out" "$image" sh -euc '
 	gcc -std=gnu11 -O2 -Wall -o /tmp/oos-gpu /o/gpu/oos-gpu.c -lEGL -lGLESv2
 	ui=/o/ui/target/aarch64-unknown-linux-musl/release/oos-ui
 	for t in /o/ui/tests/*.txt; do

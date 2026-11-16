@@ -10,10 +10,11 @@ here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 # the checksum in rootfs/deps.lock is the one of kernel.org's pub/linux/utils/kernel/kexec/sha256sums.asc
 . "$here/deps.sh"
+. "$here/../tools/lib/docker.sh"
 ver=$(dep_ver kexec-tools)
 dep_fetch kexec-tools "$out" >/dev/null
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
+docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache build-base linux-headers >/dev/null
 	cd /tmp && tar -xJf /out/kexec-tools-$VER.tar.xz && cd kexec-tools-$VER
 	./configure --without-zlib --without-lzma --without-xen CFLAGS=-Os LDFLAGS=-static >/tmp/conf.log 2>&1 || { tail -20 /tmp/conf.log; exit 1; }

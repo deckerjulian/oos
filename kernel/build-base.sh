@@ -18,10 +18,10 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tarball="$here/src/linux-6.12.115-base.tar.xz"
 out="$here/out/base"
-image=oos-kbuild:ubuntu-gcc15-patch
-
-docker image inspect "$image" >/dev/null 2>&1 || docker build -t "$image" - >&2 <<'EOF'
-FROM ubuntu:26.04
+# the host's architecture (see above); a change of the Dockerfile gives a new tag (tools/lib/docker.sh)
+. "$here/../tools/lib/docker.sh"
+image=$(oos_image oos-kbuild <<'EOF'
+FROM @UBUNTU@
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       make gcc g++ bc flex bison libssl-dev libelf-dev cpio xz-utils kmod python3 file ca-certificates \
       device-tree-compiler u-boot-tools patch \
@@ -30,6 +30,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross; fi \
     && rm -rf /var/lib/apt/lists/*
 EOF
+)
 if [ "${1:-}" = image ]; then
 	echo "$image"
 	exit 0

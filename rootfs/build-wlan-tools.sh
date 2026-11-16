@@ -8,6 +8,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 . "$here/deps.sh"
+. "$here/../tools/lib/docker.sh"
 ver=$(dep_ver wpa_supplicant)
 dep_fetch wpa_supplicant "$out" >/dev/null
 # libnl comes from Alpine's libnl3-static and is linked in (LGPL-2.1-or-later): its source goes with a release
@@ -17,7 +18,7 @@ libnl=$(dep_ver libnl)
 dep_fetch libnl "$out" >/dev/null
 dep_fetch libnl-musl-patch "$out" >/dev/null
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e LIBNL="$libnl" -v "$out:/out" alpine:3.22 sh -euc '
+docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e LIBNL="$libnl" -v "$out:/out" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static >/dev/null
 	apk list -I libnl3-static 2>/dev/null | grep -q "^libnl3-static-$LIBNL-r" || { echo "libnl3-static of this Alpine is not $LIBNL (rootfs/deps.lock): $(apk list -I libnl3-static 2>/dev/null)" >&2; exit 1; }
 	cd /tmp && tar -xzf /out/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant

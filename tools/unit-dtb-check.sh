@@ -8,6 +8,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/docker.sh"
 kbase="${OOS_KBASE:-$root/kernel/out/base}"
 w="${TMPDIR:-/tmp}/oos-unit-dtb"
 rm -rf "$w"; mkdir -p "$w"
@@ -25,7 +26,7 @@ for v in cid vendor 01:11:22:33:44:55 00:00:00:00:00:00 02:11:22:33:44 junk; do
 done
 echo 02:11:22:33:44:5A > "$w/dtb.mac"
 cp "$kbase"/*.dtb "$w/"
-docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/boot:/b:ro" oos-initramfs:ubuntu sh -euc '
+docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/boot:/b:ro" "$(initramfs_image)" sh -euc '
 	. /b/unit-hook-dtb.sh
 	for d in /w/*.dtb; do
 		cp $d $d.orig
