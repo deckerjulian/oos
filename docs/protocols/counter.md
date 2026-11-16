@@ -10,8 +10,8 @@ row, statistics, SCPI `:COUNter`). Off the hardware (host runs, demo source) the
   signal's edges and measures, in 0.8 ns ticks, where the first and the last edge lie in the gate. The period is the
   time between them divided by the edges less one, so the resolution is about 1.6 ns over the gate at every
   frequency: 6 digits and more at 1 s. Its accuracy is that of the scope's clock.
-- **Slow signals**: it also keeps one whole period; below about 625 Hz (fewer than two edges in a short gate) that one
-  counts, from 1.6 ms up.
+- **Slow signals**: it also keeps one whole period. When the gate gives no valid result (fewer than two edges), OOS
+  takes that period if it is at least 1.6 ms (at most about 625 Hz).
 - **Totalize**: a running count of edges since the counter was started or cleared.
 - **The source channel must be acquired** (on), as for the trigger.
 

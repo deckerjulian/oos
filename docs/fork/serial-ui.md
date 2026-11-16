@@ -37,6 +37,7 @@ value, Max and the decoded value alike. Switching to the protocol trigger resets
 | I2C address relation, 10-bit, direction | yes | yes |
 | I2C data, Bytes 1..5 | yes (the first bytes after the address, big-endian) | yes |
 | I2C data, Bytes Any | yes (any data byte of a frame, as before) | no |
+| I2C data, direction | no: the software matches data in either direction | yes (written; not yet verified on hardware) |
 
 The software decode stays the reference; the record path places the trigger point on its match.
 

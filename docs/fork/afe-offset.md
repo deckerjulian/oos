@@ -12,13 +12,14 @@ About -13 mV per volt on the positive side, about -4 mV per volt on the negative
 
 ## What is known
 
-- The offset DAC code is `trunc(-(sign * offset + position) / lsb + zero)`: `lsb` from cal_lsb per channel and input
-  gain path (record field g[0]), `zero` from the cal_vertical record of the scale. The stock firmware computes the
-  same expression from the same fields (assumed; the codes agree on the unit). The record block it picks by
-  bandwidth limit matches OOS's `block_group` on this unit (hardware code 0x0c selects the fourth block at full
+- The offset DAC code is `trunc(-(sign * offset + position) / lsb + zero)` with offset and position in volts and
+  `lsb` in V per DAC code (`Afe::set_offset` takes nanovolts and divides by 1e9 first): `lsb` from cal_lsb per channel
+  and input gain path (record field g[0]), `zero` from the cal_vertical record of the scale. The stock firmware
+  computes the same expression from the same fields (assumed; the codes agree on the unit). The record block it picks
+  by bandwidth limit matches OOS's `block_group` on this unit (hardware code 0x0c selects the fourth block at full
   bandwidth).
-- So OOS reproduces the stock offset. The residual is a property of the unit and its factory cal, and the stock
-  firmware most likely shows it too (not measured).
+- So OOS reproduces the stock offset expression. The residual is consistent with the unit's offset path and factory
+  cal. Whether the stock firmware shows the same error is assumed, not measured.
 - CH3 lsb per path (V per DAC code): ig0 6.095e-5 (10 mV..50 mV/div), ig1 -3.7037e-4 (100, 200 mV/div), ig2
   -1.6996e-3 (500 mV..2 V/div), ig3 -1.6524e-2 (5, 10 V/div). The ig1 value is exactly -1/2700, which looks like
   a default rather than a measured value; CH1, CH2 and CH4 have measured ig1 values within 0.5 % of it.
@@ -30,7 +31,8 @@ About -13 mV per volt on the positive side, about -4 mV per volt on the negative
 
 DHO800 data sheet, DC offset accuracy: +-(0.1 div + 2 mV + 1.5 % of the offset) at 200 mV/div and below,
 +-(0.1 div + 2 mV + 1.0 % of the offset) above. DC gain accuracy +-1 % of full scale above 5 mV/div. Offset range
-+-1 V up to 65 mV/div, +-8 V up to 270 mV/div, +-20 V up to 2.75 V/div, +-100 V up to 10 V/div.
++-0.5 V below 500 uV/div, +-1 V from 500 uV/div to 65 mV/div, +-8 V above 65 to 270 mV/div, +-20 V above 270 mV/div to
+2.75 V/div, +-100 V above 2.75 to 10 V/div.
 
 Round 9 against it: at 1 V/div and +2 V the limit is 100 + 2 + 20 = 122 mV; the reading is -27 mV. Even the
 offset-proportional term alone (1.0 %, 20 mV at 2 V) is of the same size as the error. Inside the specification.
@@ -61,4 +63,5 @@ data sheet bound at the largest offset of the row.
 
 Result: every point is inside the data sheet bound, at most about a third of it. Item closed without a code change.
 An OOS lsb trim would remove about 1 % of the offset on CH3 but needs a reference input the unit does not have
-(an open input is not a voltage reference for the gain), and the stock firmware has the same behaviour.
+(an open input is not a voltage reference for the gain). Whether the stock firmware has the same behaviour is not
+measured.

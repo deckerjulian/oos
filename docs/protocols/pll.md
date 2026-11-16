@@ -22,8 +22,10 @@ R8=1084  R7=28b2  R4=1943  R2=0500  R1=0808  R0=221c
 
 `oos-hw pll-init` drives the three lines through the GPIO character device, found by their DT line names (`spi_le` = gpio0
 line 6, `spi_sclk` = line 3, `spi_sdio` = line 2): LE low, MSB first, data on the rising SCLK edge, LE high pulse after each
-24-bit word, 50 ms between words. There is no readback (SDIO is write-only on this board). `hal::dho::boot` does the same
-(`PLL_TABLE`).
+24-bit word, 50 ms between words. There is no readback (SDIO is write-only on this board). `hal::dho::boot` sends the
+same edges and the table of `boot::pll_table` (`PLL_TABLE` at 1.25 GHz), R0 last. In the normal power-on path
+(`boot::early_start`) it runs during the FPGA configuration wait, before PCIe, with 1 ms between words and 50 ms after
+the last. The path without `early_start` keeps 50 ms between words.
 
 The write path is verified on the unit: in a warm state, one word R0 = 0x221d (POWERDOWN) drops the counter 0x1210 at once,
 and the full table brings it back (`cold-clock.md` E2).
@@ -41,12 +43,15 @@ and the full table brings it back (`cold-clock.md` E2).
 ## Lock check without readback
 
 The FPGA counts the ADC data clock in 0x1210. A read of 0x1210 (`oos-hw rd 0x1210`, read only) with 62494..62506 as the
-good window (`(v - 62494) < 13`) is the check that the write-only LMX2582 bus cannot give. In a cold start the counter only
-runs after the ADC sync and the eye scan (`cold-clock.md`), so read it after those steps.
+good window at 1.25 GHz (`(v - 62494) < 13`; other clocks: `boot::adc_clk_window`) is the check that the write-only
+LMX2582 bus cannot give. In a cold start the counter only runs after the ADC sync and the eye scan (`cold-clock.md`), so
+read it after those steps.
 
-## Other output frequencies (offline, untested)
+## Other output frequencies (experimental)
 
-Nothing in this section has been written to a unit. Field names, positions and limits are from TI's LMX2582 datasheet
+Generated tables have run on one DHO924S through `adc.clock_hz` (`models.md` 4.1): 1.375, 1.5 and 1.75 GHz booted with
+the right frequency, 1.5 GHz with more noise, and 2 GHz gave bad samples and is not usable. Other frequencies and other
+models are not yet verified on hardware. Field names, positions and limits are from TI's LMX2582 datasheet
 **SNAS680E** (rev. E, August 2022; register descriptions Tables 7-5..7-50, input path Table 7-1, MASH order Table 7-2,
 channel divider Table 7-4). Code: `oos_hal::dho::lmx2582` (decode and `table_for`), dry run `oos-fpgad pll --freq <Hz> --dry`.
 
@@ -96,9 +101,11 @@ default" and matches the datasheet register map.
 needs OSCin <= 200 MHz, and ACAL_CMP_DLY 25 is above the datasheet's "> 10 for 100 MHz". The VCO range alone would allow
 71..142 MHz. The oscillator itself has not been identified on the PCB.
 
-**The stock table is outside rev. E of the datasheet.** Table 7-4 limits CHDIV 4 to VCO 3552..4736 MHz (output 888..1184 MHz) and
-puts 1250 MHz on CHDIV 3 (VCO 3750 MHz). The table runs /4 at 5000 MHz. Rev. E "changed the channel divider requirement"; the
-table is probably older. It works on every DHO800/900, so `table_for` admits CHDIV 4 up to exactly this 5000 MHz and no further.
+**The stock table is outside rev. E of the datasheet.** Table 7-4 limits CHDIV 4 to VCO 3552..4736 MHz (output
+888..1184 MHz) and puts 1250 MHz on CHDIV 3 (VCO 3750 MHz). The table runs /4 at 5000 MHz. Rev. E "changed the channel
+divider requirement"; the table is probably older. The stock firmware uses this one table for the family (assumed for
+the models OOS has not run on). It runs on the DHO804 and the DHO924S (`models.md` 2), so `table_for` admits CHDIV 4 up
+to exactly this 5000 MHz and no further.
 
 **Frequency-dependent fields** (the only ones `table_for` changes): PLL_N (R38), PLL_NUM (R44/R45), PLL_DEN (R40/R41), the
 channel divider (R35: SEG1, SEG1_EN, SEG2, SEG2_EN, SEG3_EN; R36: SEG_SEL, SEG3) and VTUNE_ADJ (R30). These depend on the
@@ -124,10 +131,11 @@ reach (below 20 MHz: /192 needs VCO >= 3840 MHz). `table_for(1.25e9)` reproduces
 | 1.750 GHz | 3 | 5250 MHz | 26 + 1/4 | fractional | R45 R38 R36 R35 |
 | 2.000 GHz | 2 | 4000 MHz | 20 + 0/4 | integer | R38 R36 R35 |
 
-With f_PD fixed at 100 MHz, only 1.25 and 2.0 GHz have an integer-N solution. 1.375/1.625 GHz cannot be integer with any divider,
-and 1.5/1.75 GHz cannot be integer with an allowed one (/4 would need VCO 6000/7000 MHz, above the /4 limit). 2.0 GHz could also be
-/3 at 6000 MHz, N 30; /2 at 4000 MHz wins the tie-break by the smaller divider (both are 1000 MHz from 5 GHz). Every generated
-table passes the datasheet checks in `Fields::notes` (VCO range, Table 7-4, minimum N, PFD_DLY, VTUNE_ADJ).
+With f_PD fixed at 100 MHz, of the six frequencies above only 1.25 and 2.0 GHz have an integer-N solution.
+1.375/1.625 GHz cannot be integer with any divider, and 1.5/1.75 GHz cannot be integer with an allowed one (/4 would
+need VCO 6000/7000 MHz, above the /4 limit). 2.0 GHz could also be /3 at 6000 MHz, N 30; /2 at 4000 MHz wins the
+tie-break by the smaller divider (both are 1000 MHz from 5 GHz). Every generated table passes the datasheet checks in
+`Fields::notes` (VCO range, Table 7-4, minimum N, PFD_DLY, VTUNE_ADJ).
 
 Generated tables (same order as above, highest register first, R0 last):
 
@@ -184,23 +192,27 @@ R8=1084 R7=28b2 R4=1943 R2=0500 R1=0808 R0=221c
   indirectly: by the FPGA clock counter 0x1210, whose window 62494..62506 is the 1.25 GHz value and must scale with the clock (see
   below; gate and divider are not known, `cold-clock.md`), and finally by clean ADC data (sync, eye scan, a known input signal at
   the right frequency).
-- **Fractional tables.** The datasheet puts the primary fractional spur at f_PD / DEN from the carrier: 25 MHz for DEN 4 and 12.5
-  MHz for DEN 8. The divider lowers its level by 20 log(CHDIV) but keeps the offset. How much of it the loop filter removes is
-  unknown, because the filter is not documented. In the sample clock it shows up as spurs or jitter in every acquisition. Integer N
-  is only possible at 1.25 and 2.0 GHz. Other integer points would need another f_PD (MULT / PLL_R), which `table_for` deliberately
-  does not touch.
+- **Fractional tables.** The datasheet puts the primary fractional spur at f_PD / DEN from the carrier: 25 MHz for DEN 4
+  and 12.5 MHz for DEN 8. The divider lowers its level by 20 log(CHDIV) but keeps the offset. How much of it the loop
+  filter removes is unknown, because the filter is not documented. In the sample clock it shows up as spurs or jitter in
+  every acquisition. Of the listed frequencies only 1.25 and 2.0 GHz are integer N. Other integer points exist at the
+  same f_PD whenever f_OUT x CHDIV is a multiple of 200 MHz inside that divider's VCO range, for example 1.2 GHz (/4,
+  VCO 4800 MHz, N 24; host test `lmx2582` `refused`).
 - **Loop dynamics.** Charge pump (2.5 mA) and loop filter are designed for 5 GHz / N_total 50. K_VCO rises with frequency (Table
   7-3: about 30 MHz/V at 4 GHz, 47 at 6.2 GHz), roughly as N_total does, so the loop gain stays similar (K_VCO / N_total: 0.72 stock,
   about 0.74 for 4 GHz / N 40). Unverified.
-- **FPGA timing.** The stock bitstream is timing-closed for a 156.25 MHz ADC data clock (1.25 GHz / 8). At 2 GHz the same logic runs
-  at 250 MHz (+60 %), at 1.5 GHz at 187.5 MHz (+20 %). Whether the capture, the ADC lane deserialisers and the DDR write path keep
-  up is unknown. Failures show up as eye-scan failures, wrong data or a hang.
+- **FPGA timing.** The stock bitstream is timing-closed for a 156.25 MHz ADC data clock (1.25 GHz / 8). At 2 GHz the
+  same logic runs at 250 MHz (+60 %), at 1.5 GHz at 187.5 MHz (+20 %). Whether the capture, the ADC lane deserialisers
+  and the DDR write path keep up is not known in general. Failures show up as eye-scan failures, wrong data or a hang
+  (2 GHz: wrong data, `models.md` 4.1).
 - **ADC.** The ADC's own maximum clock and any rate-dependent register set-up (init table, IDELAY eye at a shorter bit period) are
   unknown. The DHO1000 evidence is only an indication.
 - **Generator.** The DDS of the built-in generator runs on the FPGA clock (ADC clock / 8), so its output frequency scales by
   f/1.25 GHz unless the phase increment is recomputed for the new clock.
-- **Order of testing.** 1.375 GHz (+10 %) first; check 0x1210 and the eye scan at each step. Keep the stock table at hand: a power
-  cycle restores 1.25 GHz, because every boot writes `PLL_TABLE`.
+- **Order of testing.** 1.375 GHz (+10 %) first; check 0x1210 and the eye scan at each step. A clock set through
+  `adc.clock_hz` persists: every boot writes the table of that clock. To return to 1.25 GHz, select 1.25 GHz in System >
+  Overclock or remove the `adc.clock_hz` line from `/oos/limits.conf`, then power off and on. Only a start that does not
+  finish sets the file aside by itself (`limits.conf.failed`, rcS).
 
 ### Places in OOS that assume the 1.25 GHz ADC clock or the 156.25 MHz derived clock
 

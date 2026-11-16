@@ -65,7 +65,9 @@ address 0x50, or an Arduino as master. Probes: CH1 on SDA, CH2 on SCL. Read the 
 1. SPI Frame: stable triggers, one per word at 300 words/s (3 per 10 ms); debug `on,proto=SPI,...,mux=12`.
 2. SPI Data = 0xa5: only the second word at the trigger point, 100 triggers/s. Data = 0x42: no triggers. Mode 1 on
    the scope (falling edge) with the Pi in mode 0: decoded values change, triggers follow the scope's mode.
-3. SPI with CS removed from the decoder: debug `off`, software trigger as before.
+3. SPI with CS removed from the decoder, Trigger > Protocol > Timeout = Off: debug `off`, software trigger as before.
+   Then a Timeout below the 10 ms pause between transfers: debug `on`, 0x2178 bit 0 = 1, 0x217c = ceil(timeout /
+   6.4 ns); triggers as in step 1.
 4. I2C Frame: a trigger at every start (one per read, two with the repeated start of `i2cget`: note which).
 5. I2C ID = 0x50: triggers; ID = 0x51: none. Unplug the device (or ID 0x51 with a non-existent device in the loop):
    Error triggers on the missing ACK.

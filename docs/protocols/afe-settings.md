@@ -53,7 +53,9 @@ All calibration files have a 28-byte header (`self-cal.md` 7.1). Payloads:
 File header (7 x u32): [0] header CRC32, [1] 0x14, [2] 0, [3] time, [4] date (0x7dd01 = January 2013), [5] payload size,
 [6] payload CRC32. Location order: `/oos/cal`, `/rigol/data`, `/rigol/data/default`.
 
-A 12-block `cal_vertical.hex` has no group 3. `hal::dho::afe::Cal` reads the 16-block layout.
+A 12-block `cal_vertical.hex` has no group 3. `hal::dho::afe::Cal` reads either layout: `Cal::rec` takes the last group
+the file has for a group it lacks, so a 12-block file serves group 2 for group 3. This is an OOS fallback, not
+calibration data for the requested bandwidth.
 
 In `cal_afe_bandwidth.hex`, ints 4/10/16 of each channel are replaced by 110/97/97 after loading. The stock system also
 saves them back to the file. Under OOS these ints have no effect (5.4).
@@ -89,7 +91,9 @@ groups belong to these stock band-limit codes (hw = hardware GPIO version of the
 | 10 and (hw \| 8) == 0xc | 3 |
 
 Group 3 is all zero in a factory file (verified on the unit) and filled after a self-calibration with four passes
-(`self-cal.md` 2.1). Loading a zero block gives all-zero gains: check with `Cal::block_filled` before relying on group 3.
+(`self-cal.md` 2.1). Loading a zero block gives all-zero gains. `Afe::set_scale` checks `Cal::block_filled` and takes
+group 0 for an empty block, and the offset step uses that same record. This is an OOS fallback, not calibration data
+for OFF or >= 400 MHz.
 A filled file holds 76 distinct gain tuples, the configurations the vertical self-cal measures.
 
 Example rows, variant 2 (values vary per channel and unit):
@@ -106,11 +110,13 @@ Example rows, variant 2 (values vary per channel and unit):
 
 The smallest analog range is about 1 mV/div (dgain 1.07). Below that the FPGA digital gain does the rest (0.5 mV/div = 2.14).
 
-The 801 scale keys are the same in every block and form a fine ladder from 100 uV to 10 V: per decade 1.00 by 0.02, 2.00 by
-0.05 and 5.0 by 0.1, so 160 rows a decade and 1 to 2.5 % a row. Fine scale walks these rows: each one has its own gain codes
-and digital gain, so a fine scale needs nothing beyond the normal scale set-up. The lookup takes the first key >= the
-requested scale, which makes the request exact to the nanovolt. A scale held as f32 misses it (100 mV reads 100000001 nV and
-lands on the 102 mV row), so OOS accepts a value up to a millionth above a key as that key.
+The 801 scale keys are the same in every block and form a fine ladder from 100 uV to 10 V: per decade 1.00 by 0.02,
+2.00 by 0.05 and 5.0 by 0.1, so 160 rows a decade and 1 to 2.5 % a row. Fine scale walks these rows: each one has its
+own gain codes and digital gain, so a fine scale needs nothing beyond the normal scale set-up. The lookup takes the
+first key >= the requested scale. The keys are integer nanovolts, so a request equal to a key selects that row. A
+scale between two keys is quantized up to the next row, not calibrated exactly. A scale held as f32 misses its key
+(100 mV reads 100000001 nV and lands on the 102 mV row), so OOS accepts a value up to a millionth above a key as that
+key.
 
 ## 2. AFE primitives
 
@@ -218,11 +224,14 @@ CH1, 5 mV/div (IG 0, VGA 0, ATT 1, SGA 1, SGAR 0, MUX 3, MUXR 0), offset +10 mV,
 
 Run after a V/div change, an offset or position change, invert, channel on.
 
+Sections 3.2, 3.3 and 3.5 give the writes each setting needs on its own. OOS does not send these minimal sequences: a
+setting change runs the full set-up of every acquired channel (filter, gains, trims, DAC, then the read path; 5.3).
+
 1. Store the offset. If the channel is off: stop here (**no hardware write while off**; channel on re-applies scale and offset).
 2. rec as in 3.1 (same variant selection); IG = rec.IG, zero = rec.zero; lsb = cal_lsb[ch][IG].
 3. if lsb != 0: `code = (int)( -(sign * offset + position) / 1e9 / lsb + zero )` (truncation toward zero), sign = invert ? -1 : 1;
    else code = zero.
-4. `set_dac(ch, code)` -> **AFE reg 0x28 = code** (the only hardware write).
+4. `set_dac(ch, code)` -> **AFE reg 0x28 = code** (the only AFE write of this step).
 5. With GND coupling re-apply the read path (4.1), else restart the acquisition counters.
 
 Typical LSB table values (V per code, `cal_lsb.hex`, they vary by about 1 % between channels):
@@ -239,8 +248,9 @@ attenuated paths. Clamp the offset to the range of the scale before.
 c: 0 = DC, 1 = AC, 2 = GND (DC default, consistent with r07 bit 15 = 1 after init).
 - c = 0 or 1: `coupling_dc(ch, c == 0)` -> **r07[15] = 1 for DC, 0 for AC**, W(07). Then re-apply the read path if the
   previous coupling was GND, else restart the acquisition counters.
-- c = 2 (GND): **no AFE write**, only re-apply the read path. GND is done in the FPGA: the channel's digital gain is 0
-  and its offset is `32768 + 7500 * offset / scale` (a flat line at the offset level, 4.1). The AFE keeps the previous DC/AC state.
+- c = 2 (GND): **no coupling write**, only re-apply the read path. GND is done in the FPGA: the channel's digital gain
+  is 0 and its offset is `32768 + 7500 * offset / scale` (a flat line at the offset level, 4.1). The AFE keeps the
+  previous DC/AC state.
 
 ### 3.4 Bandwidth limit
 
@@ -265,7 +275,7 @@ the DAC. So run the scale and offset steps at the end (5.1).
 ### 3.5 Invert
 
 Only if the channel is on: store the flag, rewrite the offset (3.2: DAC code with the sign flipped, so the AFE offset is
-mirrored), re-arm. No other AFE write. The waveform inversion itself is in the FPGA:
+mirrored), re-arm. No other AFE write for the invert itself. The waveform inversion itself is in the FPGA:
 SPU register **0x1004 bits 19:16**. With 4 channels bit 16+n = invert of CHn+1. One channel on all ADC cores (mask 1/2/4/8):
 that channel's bit in all four. Two channels: the two active channels as (a, a, b, b).
 
@@ -302,8 +312,9 @@ Per sampled channel during live acquisition (`hal::dho::wpu::analog`):
 2. Not GND: g = min(dg, 508.0); **gain = (int)(g * 1024)** (Q10), **offset = (int)(32768 - 32768 * g)**.
    GND: gain = 0, offset = (int)(offset / scale * 7500 + 32768).
 3. Analog gain -> **0x14c8, 0x14d4, 0x14e0, 0x14ec**; analog offset -> **0x14d0, 0x14dc, 0x14e8, 0x14f4**; the same values
-   to the zoom gain (0x1508..0x1514) and zoom offset (0x14f8..0x1504). With 1 or 2 active channels the values are replicated
-   across the four slots like the invert bits.
+   to the zoom gain (0x1508..0x1514) and zoom offset (0x14f8..0x1504). Lanes: one channel uses all four. Two channels
+   use lanes 0 and 2 for the lower-numbered channel, lanes 1 and 3 for the higher one. Four channels: lane n = CH n+1.
+   Two channels differ from the invert bits (a, a, b, b). Verified on the unit (`wpu.rs` test, unit 2026-11-13).
 
 Stopped or replayed data (the live setting differs from the setting of the acquisition) uses the same formula with
 g = scale_acq / scale_live * dgain_acq and an extra offset 7500 * (off_live - off_acq) / scale_live.
@@ -501,14 +512,14 @@ The code is in `hal::dho::afe` (primitives, `set_scale`, `set_offset`, `configur
 4. **Scale**: index search, variant by 5.2 from the channel's stored bandwidth value, steps 3.1 3-9 with the constants of
    5.4, no filter re-apply, gear line `afeN` high, then the offset step 3.2. Returns the record for the FPGA step.
 5. **Offset**: 3.2 with the current scale's record; position = 0 unless needed.
-6. **Coupling**: r07[15]; GND = no AFE write, FPGA gain 0 / offset line (4.1).
+6. **Coupling**: r07[15]; GND = no coupling write, FPGA gain 0 / offset line (4.1).
 7. **Bandwidth**: 5.1: store the value, ADC words 0x01545251, 0x0155000c to 0x1034 (100 us gaps), filter triple from the
    table or encoding, then scale and offset, then the input-mode words. Auto needs the sample rate. If block group 3 is empty
-   in the `cal_vertical.hex` in use, OFF and >= 400 MHz have no data (1.3).
+   or missing in the `cal_vertical.hex` in use, OFF and >= 400 MHz have no data of their own; OOS falls back as in 1.3.
 8. **FPGA step** (registers and formula as in 4.1; the conditions of the stopped branch are assumed): per channel dg ->
    0x105c field (x2 if >= 2), 0x14c8 + 0xc*n gain = dg*1024, 0x14d0 + 0xc*n offset = 32768 - 32768*dg (zoom registers the same),
-   invert bits in 0x1004[19:16] (keep the other bits of 0x1004), with the replication of 4.1 when fewer than 4 channels are
-   acquired.
+   invert bits in 0x1004[19:16] (keep the other bits of 0x1004). Gain and offset lanes as in 4.1, which for two channels
+   differ from the invert bits.
 9. **Invert**: flip the offset sign in 3.2 and set the FPGA bit.
 10. **Probe ratio**: software only, divide V/div and offset by the ratio before steps 4 and 5.
 11. **Dry run**: the setters return lists of operations (`hal::dho::afe::Op`), so a set-up can be printed before it touches the hardware.

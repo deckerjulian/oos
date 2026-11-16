@@ -3,7 +3,7 @@
 The UART protocol trigger in the TPU's receiver. Opt-in: `trig.serial_hw = on` in system.conf, read once at start,
 off by default. Code: `hal/src/dho/uarttrig.rs` (words, timing), `tpu::uart` (the write sequence),
 `seq::Trig::Uart`, `ui/src/board/dho/hw.rs` (`hw_uart`, `uart_debug`). Register facts: assumed, not
-yet verified on hardware unless a step below says so.
+yet verified on hardware unless a step below says so. OOS rounds the bit time to the nearest clock (`bit_clocks`).
 
 ## Hardware
 
@@ -32,8 +32,9 @@ yet verified on hardware unless a step below says so.
 | Error | error, either type |
 | ID/Addr | software (UART has no ID) |
 
-  Baud, data bits and parity come from the Decode menu; stop bits 1 and not inverted, as the software decoder.
-  Relations, polarity, stop bits and the error type are menu settings (`serial-ui.md`).
+  Baud, data bits and parity come from the Decode menu. Relations, polarity, stop bits and the error type come from
+  Trigger > Protocol (`serial-ui.md`). Polarity reaches both the software decoder and the receiver; stop bits reach the
+  receiver only (the software decoder reads one stop bit).
 - Everything else keeps the edge trigger on the line with the software decoder picking the frame.
 - Written in the trigger block of `configure` with the other trigger types (the acquisition thread disarms first).
 - The software trigger stays the reference: every record still goes through the decoder, and the screen's trigger
@@ -78,7 +79,8 @@ Note `:SYSTem:DEBug:UART?` (expect `on,src=CH1,baud=115200,...,clocks=1356,r2100
    line shows `clocks=16276` and `clocks=156`.
 5. Counter coexistence: Measure > Counter on CH1 while the UART trigger runs: the counter shows the bit-level edge
    rate and keeps updating; the UART trigger keeps firing. Counter off again.
-6. Inverted line: not offered by the UI (the software decoder has no idle-low setting). Skip.
+6. Inverted line: send through an inverting buffer (idle low), set Trigger > Protocol > Polarity = Inverted. Repeat
+   steps 1 and 2: the same results as with the normal line. Polarity Normal on the inverted line: no stable trigger.
 7. `trig.serial_hw = off`, restart: `:SYSTem:DEBug:UART?` returns `off,...`, the protocol trigger behaves as before.
 
 Record the results here.

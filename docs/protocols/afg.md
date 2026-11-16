@@ -1,7 +1,11 @@
 # Built-in generator (AFG, "GI/GO" BNC, DHO924S)
 
-Scope: the generator of the "S" models. Sections 1-11 describe the hardware and the required sequences. Section 14
-lists what was verified on the unit. Sections 15-16 are host-tested only and marked as such.
+Scope: the generator of the "S" models. Sections 1-11 describe the hardware and the required sequences; sections 7 and
+8 describe the stock driver's state and flows. Section 14 lists what was verified on the unit. Sections 15-16 mark each
+feature: square, ramp and pulse output and sine-shaped AM/FM/PM were seen on the unit, the rest is host-tested only.
+
+Clock-derived numbers (156.25 MHz, 78.125 MHz, 6.4 ns) assume the nominal 1.25 GHz ADC clock. OOS uses ADC clock / 8 as
+the DDS clock (`afg::clock_hz`, `models.md` 4.1).
 
 Related docs: `self-cal.md` (container format 7.1, factory-only AFG cal, section 6), `cold-clock.md` 2.3 (module init
 levels), `../hardware/gpio-map.md` (afg_in1..5, FG_M2C), `cold-boot.md` (never-do list), `board.md`.
@@ -17,9 +21,10 @@ levels), `../hardware/gpio-map.md` (afg_in1..5, FG_M2C), `cold-boot.md` (never-d
   select -10 dB / -20 dB / x10 / -20 dB / always-on; `FG_M2C_GPIO` (GPIO 149, under stock `/dev/fg_m2c_gpio`) is the
   generator supply switch, on only while the output is enabled. The gear is picked from amplitude and offset thresholds.
 - **Output enable** = afg_gpio 0 -> FG_M2C 1 -> relay code (bits 0..3 first, 3 ms, then bit 4) -> FPGA 0x3000 = 1.
-- **Calibration** `cal_afg.hex`: 24-byte header + 40 records of 2408 bytes, each a list of up to 100 ranges with a
-  linear correction `y = k*x + b` (f32 k, b). Records 0..15 offset per gear, 16..29 amplitude per gear,
-  30..33 flatness below 100 kHz, 34..39 flatness from 100 kHz. Header +0x10/+0x14 = frequency k/b (OOS does not apply it).
+- **Calibration** `cal_afg.hex`: the 28-byte container, then a payload of a 24-byte prefix + 40 records of
+  2408 bytes, each a list of up to 100 ranges with a linear correction `y = k*x + b` (f32 k, b). Records 0..15 offset
+  per gear, 16..29 amplitude per gear, 30..33 flatness below 100 kHz, 34..39 flatness from 100 kHz.
+  Payload +0x10/+0x14 = frequency k/b (OOS does not apply it).
 - **Minimal 1 kHz / 1 Vpp / 0 V sine**: complete list in section 9, values computed with an example cal file.
   The amplitude is peak-to-peak into high impedance, and the 156.25 MHz clock runs under OOS: both verified on the
   unit (section 14).
@@ -39,8 +44,10 @@ levels), `../hardware/gpio-map.md` (afg_in1..5, FG_M2C), `cold-boot.md` (never-d
 
 The sequences need no 64-bit store and no read of the 0x3xxx block. Do not read it (section 11).
 
-The generator is initialised once at start: FPGA tables loaded, output off. Under stock the relay state of a running
-unit matches this (4.2).
+The stock driver initialises the generator once at start: FPGA tables loaded, output off. Under stock the relay state
+of a running unit matches this (4.2). OOS uploads nothing at start: its first generator request, normally off, opens the
+GPIO lines and runs `afg::idle` (output and supply off, relays on the gear of the set levels). A full start
+(`afg::start`) uploads the carrier table and, when selected, the modulation table (section 14).
 
 ## 2. FPGA register block (BAR1)
 
@@ -83,8 +90,8 @@ No other offset in 0x3000..0x3fff is used.
 
 - Carrier phase increment: `inc = trunc((f_uHz / 156250000000000.0) * 2^52)` (double), written as 56 bits. With noise
   (type 4) the increment is fixed `0x4000000000` (2^38). Clock 156.25 MHz, one table cycle = 2^52; 8192 samples are
-  probably addressed by the top 13 bits (assumed; noise is then replayed at 78.125 MSa/s and repeats every 8192
-  samples, about 9.5 kHz).
+  probably addressed by the top 13 bits (assumed; noise is then replayed at 78.125 MSa/s and repeats every
+  8192 samples, about 9.5 kHz).
 - Modulation rate (AM/FM/PM): `trunc((f_uHz / 78125000000000.0) * 2^48)` -> 0x302c/0x3030/0x3034. With modulation shape 5
   (noise) a constant is written instead: AM 0x16cdf93e9e, FM 0, PM 0x346dc5d6388.
 - FM deviation: `d = trunc((dev_uHz / 156250000000000.0) * 2^48)`; 0x3004 = `(d & 0x7fff) << 1`, 0x3008 = `(d >> 15) & 0xffff`,
@@ -125,7 +132,8 @@ Wave types:
 | 5 | DC | constant; the level comes from the offset DAC | 60 MHz |
 | 6 | arbitrary | samples scaled to +-32767 and resampled to 8192 points (section 16) | 10 MHz |
 
-Minimum frequency 2000 uHz (2 mHz) for all types. OOS can upload any s16[8192] it computes itself; nothing in the
+Minimum frequency 2000 uHz (2 mHz) for all types in the stock driver and in `hal::dho::afg`; the OOS UI and SCPI stop at
+10 mHz. OOS can upload any s16[8192] it computes itself; nothing in the
 FPGA path depends on the table type except noise (fixed increment) and FM-noise (bit 7 of 0x3000).
 
 Modulation (type 0 AM, 1 FM, 2 PM; shape 0 sine, 1 square, 2 triangle, 3 up-ramp, 4 down-ramp, 5 noise):
@@ -138,7 +146,7 @@ m = depth / 100000; FM/PM tables are s16[4096]; noise shapes use a u16 table.
 
 - `/dev/afg_gpio` (stock kernel module `afg_gpio`, misc device): `write` of one byte sets GPIO 122 + n to bit n (n = 0..4,
   afg_in1..5); `read` returns the five levels packed the same way. Module init: 122..125 output low; afg_in5 (126)
-  stays an input until the first write.
+  stays an input until the first write. `cold-clock.md` 2.3 lists 126 as output low: not yet verified which is right.
 - `/dev/fg_m2c_gpio` (stock kernel module `fg_m2c_gpio`): byte != 0 -> GPIO 149 high, 0 -> low; init low.
 
 Under OOS both are plain GPIO lines (section 9).
@@ -187,7 +195,7 @@ high-offset flag h, path gain G. Same thresholds as 4.2:
 | 2 V < A <= 6 V | (0, 0, 0) | 1 |
 | A <= 2 V, \|O\| > 2 V | (9..12, 0, 9..12) as in 4.2 | 1 |
 | A <= 2 V, \|O\| <= 2 V | (2..7, 2, 2..7) as in 4.2 | 0 |
-| DC | g3 = 13 (\|O\| <= 2 V) or 14; g1/g2 keep their previous values | \|O\| > 2 V |
+| DC | g3 = 13 (\|O\| <= 2 V) or 14; g1/g2: stock keeps the previous ones, OOS uses 7 / 2, gain 1 | \|O\| > 2 V |
 
 ### 5.2 Calibration and codes
 
@@ -244,6 +252,8 @@ operator enters the reading, and k/b follow from it. Set points 100 kHz / 2..10 
 
 ## 7. Generator state and units
 
+Stock driver defaults. OOS defaults (`ui/src/model.rs`): 1 kHz, 1 Vpp, 0 V offset, FM deviation 100 Hz.
+
 | parameter | default |
 |---|---|
 | output on | off |
@@ -267,6 +277,8 @@ offset limited to `+-(Vmax - A)/2` with Vmax = 10 V (f <= 10 MHz) else 5 V; DC o
 
 ## 8. Driver flows
 
+The stock driver's flows. OOS uses `afg::start`, `afg::retune` and `afg::idle` instead (sections 13, 14).
+
 - Init (reset: defaults first): build sine table and AM table -> relays for (A, O, no DC) -> calibration ->
   FPGA init (section 9) -> output flag = 0 -> supply off -> output off.
 - Output on: afg_gpio <- 0x00, supply on, relays for (A, O, type == DC), output on. Off: supply off, output off (relays
@@ -277,9 +289,13 @@ offset limited to `+-(Vmax - A)/2` with Vmax = 10 V (f <= 10 MHz) else 5 V; DC o
   output on again.
 - Amplitude A: store; relays for (A, O, no DC); calibration; rewrite 0x3070. Rewrite 0x3078 too when the offset gear
   changes.
-- Offset O: store; relays for (A, O, t == DC); calibration; rewrite 0x3078.
-- Phase, square duty, ramp symmetry, pulse duty: store, rebuild/upload the table when that type is active, re-enable
-  the output if on.
+- Offset O: store; relays for (A, O, t == DC); calibration; rewrite 0x3078. When the gear changes (\|O\| crosses
+  2 V with A <= 2 V), g1 and the path gain change too: rewrite 0x3070 as well. OOS `retune` recomputes both codes, and
+  a gear change takes the full start.
+- Phase: store; set phase (2.4: B=1, 0x3040, B=0). The table does not change. OOS starts with phase 0 and has no phase
+  setting.
+- Square duty, ramp symmetry, pulse duty: store, rebuild/upload the table when that type is active, re-enable the output
+  if on.
 - System mode m or modulation type: m = 0 -> basic mode sequence; else the AM/FM/PM setting, build and upload the
   modulation table, write the rate again; re-enable the output if on. AM depth/DSSC/shape changes only rebuild the AM
   table; AM/FM/PM rate and deviation setters write their words directly.
@@ -387,7 +403,8 @@ switches output and supply off.
 
 Changing a running output: a full start writes all tables, about 0.9 s with a gap in the signal. `afg::retune` writes only the
 frequency and the two DAC words when the gear and the wave table stay the same and there is no modulation. A change of gear
-(the relays switch), a square or ramp whose table depends on the frequency, and noise take the full start. Verified on the
+(the relays switch), a square or pulse whose table changes with the frequency, another wave or symmetry, noise and
+modulation take the full start. A ramp keeps its table across frequencies and can retune. Verified on the
 unit with sine offset steps; amplitude steps across a gear still take 0.9 s.
 
 Open observation: where the gear changes at 2 Vpp (0x10 to 0x15) the middle of the output jumps by about -85 mV, the
@@ -397,7 +414,8 @@ coupling is no reference for such readings: the FPGA sets the channel's gain to 
 
 ## 15. Other wave shapes in OOS
 
-Host-tested, not yet verified on hardware.
+Square, ramp and pulse output verified on the unit up to the frequency caps measured in `models.md` 4 (one DHO924S).
+Duty and edge settings, the edge shapes, noise, DC and the flatness of non-sine shapes are not yet verified on hardware.
 
 `hal::dho::afg::Wave` builds OOS's own tables (section 3: the FPGA only cares about noise): square (duty 1..99 %) and pulse
 (duty, rise/fall times) as trapezoids whose edges span at least one DAC clock (8192 * f / 156.25 MHz table samples,

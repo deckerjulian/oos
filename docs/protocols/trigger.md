@@ -4,6 +4,10 @@ Status: unless a statement says otherwise, the sequences in this file are not ye
 interpretation of a field or a behaviour. The values called "hand-over state" are the register contents left by the stock
 system in its default configuration.
 
+Tick values (1.6 ns, 6.4 ns) assume the nominal 1.25 GHz ADC clock. Under the experimental `adc.clock_hz` OOS first
+converts real times to that domain (`clock::to_nominal_fs`, `models.md` 4.1); that the TPU timers scale with the ADC
+clock is assumed.
+
 Conventions as in `acquisition-start.md`: time values are in **femtoseconds**, `sN` is the software copy of register N.
 Voltages (scale, offset, level) are **int64 nanovolts at the BNC**, probe ratio not applied (see `afe-settings.md`). The TPU
 configuration registers are **write-only** (0x2034 reads 0). Registers that change bit by bit need a software copy
@@ -131,7 +135,8 @@ For source n = 1..4 (other sources have no level register, no TPU write):
 scale  = channel scale            (s64 nV/div)
 offset = channel offset           (s64 nV)
 g      = channel digital gain     (f64; = cal_vertical record +0x28 of the current scale index, see afe-settings.md)
-v      = level + offset           (offset NOT added if trigger type == edge and coupling code == 3 (AC))
+v      = level + offset           (offset NOT added for an edge trigger with coupling code 3 (AC) or 2 (LF reject);
+                                   LF reject verified on the unit, see 2.5)
 code(x) = (u32) trunc( x * 7500.0 / scale / g + 32768.0 )     ; negative -> 0
 hyst   = (s64) (noise * (float)scale)                         ; nV, single precision, truncated
 ```
@@ -206,8 +211,11 @@ Measured on a DHO924S (2026-11-13, CH1 500 mV/div, 1 Vpp sine on 1 V DC, NORMAL 
 - HF reject keeps the DC (level 1 V fires, as with DC) and suppresses 1 MHz (no trigger at 1 V), 10 kHz and 100 kHz
   pass.
 
-Sequence: if the code equals the stored one, **no write**. Otherwise store, `bypass(coupling != DC)` (0x205c bit12),
-`iir(code, source, 0x800)`: 0x208c = (s208c & 0xfffc0000) | code | ((source-1)&3) << 2 | 0x800 << 4.
+Sequence: write the filter when the code differs from the stored one, or when the code is not DC and the source
+channel differs from 0x208c[3:2] (OOS, `tpu::edge`; host-tested). With the same code and channel, **no write**. On a
+write: store, `bypass(coupling != DC)` (0x205c bit12), `iir(code, source, 0x800)`: 0x208c = (s208c & 0xfffc0000) |
+code | ((source-1)&3) << 2 | 0x800 << 4. That the filter needs the new channel when bit12 = 1 is assumed (section 8
+item 3).
 
 Consequences: with DC coupling the edge trigger leaves the filter register alone (0x208c = 0 in the hand-over state, so not
 even the 0x800 coefficient is set), and changing the source while staying in DC does not update 0x208c[3:2]. So 0x208c is
@@ -232,8 +240,9 @@ Only through the hysteresis (2.3). No separate TPU bit. (0x2264 bit16 is cleared
   0x4020 bit0 plus 0x4060/0x4064, written on every RUN/SINGLE command. See `acquisition-start.md` section 3: auto = (sweep ==
   AUTO), t1 = clamp(20 x tb, 10 ms, 500 ms), t2 = max(holdoff, clamp(10 x tb, 100 ms, 250 ms)). A change to AUTO or NORMAL
   needs a stop, reconfigure and re-arm cycle, a change to SINGLE does not.
-- SINGLE = one frame, then STOP, `acquisition-start.md` section 1. The trigger set-up is the same as NORMAL
-  (0x4020 bit0 = 0).
+- SINGLE = one accepted frame, then STOP, `acquisition-start.md` section 1. The trigger set-up is the same as NORMAL
+  (0x4020 bit0 = 0). With a protocol trigger or a zone trigger the UI may refuse a frame, so further frames are
+  acquired until one is accepted (`single_takes_first` in `ui/src/board/dho/hw.rs`).
 - Force: 0x205c = s205c | 0x20, then 0x205c = s205c & ~0x20 (pulse, both writes use the full copy).
 - Status: 0x4034 (`acquisition-start.md` section 2: bit4 waiting, bits 6/7 triggered/auto, bit13 stopped).
 
@@ -264,6 +273,8 @@ Details of D, k and d are in `horizontal-config.md`.
 9 ARINC429, 10 MIL-1553B, 11 SENT, 12 SPI, 13 I2C, 14 Video.
 
 Bit 12 (bypass) details: 10.1. "src" in that column = 1 for sources 9..27 (D0-D15, AC line, EXT), 0 for CH1..CH4.
+For UART, I2C and SPI on analog channels OOS writes bit 12 = 0 (`tpu::uart`, `tpu::spi`, `tpu::i2c`). Which value the
+serial receivers need is not yet verified on hardware.
 
 | type | name | 0x205c mux | bypass bit12 | main TPU use |
 |---|---|---|---|---|
@@ -280,9 +291,9 @@ Bit 12 (bypass) details: 10.1. "src" in that column = 1 for sources 9..27 (D0-D1
 | 10 | Delay | 0 | 1 if either source is 9..27 | A with two sources (CHx -> CHy), pattern (1,0,1,0), when + t1/t2 |
 | 11 | Setup/Hold | 0 / 1 (both) | 1 if either source is 9..27 | A and B, pattern (2,x,3,x) setup / (2,x,6,0) hold, when 1 (<) with the time in t2 |
 | 12 | Nth edge | 3 (ABR) | src | A, ABR flags (1,1,1,0,1), 0x2070 = N, 0x2068/0x206c = idle time |
-| 13 | RS232/UART | 4 | 1 | R + 0x2100/0x2104, clock divider in 0x221c |
-| 14 | I2C | 13 | 1 | A (SCL), B (SDA), 0x218c..0x21a0 |
-| 15 | SPI | 12 | 1 | R, A, B, 0x2178..0x2188 |
+| 13 | RS232/UART | 4 | 1 (stock); OOS writes 0 | R + 0x2100/0x2104, clock divider in 0x221c |
+| 14 | I2C | 13 | 1 (stock); OOS writes 0 | A (SCL), B (SDA), 0x218c..0x21a0 |
+| 15 | SPI | 12 | 1 (stock); OOS writes 0 | R, A, B, 0x2178..0x2188 |
 | 16 | CAN | 7 | 1 | R, 0x213c..0x2164 |
 | 17 | CAN FD | no configuration | | |
 | 18 | FlexRay | 8 | 1 | R, 0x2168..0x2174 |
@@ -339,7 +350,7 @@ Other choices:
   in the acquisition channel mask (2.4). Falling: write 10 = (cmpB) | 0x40 | (cmpA << 8), write 11 = 0x00220000.
   Any: falling in A, rising in B (0x2034 = (s2034 & 0xff000000) | 0x00aa4100 after write 8), write 12 mux = 1.
 - AC / LF / HF coupling: write 9 with bit12 = 1, plus 0x208c = (s208c & 0xfffc0000) | code | (n-1) << 2 | 0x8000 (code AC 3,
-  LFR 2, HFR 1), and for AC leave the offset out of the level codes.
+  LFR 2, HFR 1), and for AC and LF reject leave the offset out of the level codes (2.3).
 - Sweep AUTO/NORMAL: 0x4020 bit0 and 0x4060/0x4064 as in `acquisition-start.md`. Force: 0x205c bit5 pulse.
 
 ### 6.2 Assumptions
@@ -400,7 +411,9 @@ removes the noise from the comparator. OOS now defaults to Auto bandwidth too, a
 
 Frame header as read with 0x1010 bit31 = 0 (8 little-endian u16 words, `fa05 0000 007b xxxx n tttt tttt tttt`): word 0 =
 frame header code, dword 0 holds source [31:28], object [3:0], plot type [19:18], mode [23:20], zoom bit 16, LA bit 17;
-word 3 [13:0] = TX time count; word 4 = frame number in the batch; words 5..7 a time stamp (1.6 ns ticks assumed). No
+word 3 [13:0] = TX time count; word 4 = frame number in the batch; words 5..7 a 48-bit time stamp, word 5 most
+significant, in 0.8 ns ticks at the nominal clock (the tick of the 0x40b0/0x40b4 latch). In a segmented recording the
+header of segment k carries the latch value of segment k-1. Both verified on the unit (`hal/src/dho/seg.rs`). No
 trigger position.
 
 The UI does not trust `pre` for the edge trigger: the fast path and `to_record` take the edge of the set
@@ -470,7 +483,9 @@ so 0 for CH1..CH4. Delay, setup/hold: 1 if either source is in that range. Patte
 the sequence. Duration, runt, window: 0, written on the type change, the sequence does not touch it (so a source/polarity change
 keeps the old value). Video: never written.
 
-**Coupling filter:** every type writes `iir(0, src, 0x800)`, so 0x208c = 0x8000 | (src-1)<<2 (DC). Pattern and
+**Coupling filter:** every type writes `iir(0, src, 0x800)`, so 0x208c = (s208c & 0xfffc0000) | ((src-1)&3)<<2 |
+0x8000 (DC). The channel field is two bits for every source, D0..D15 and EXT included. The tables below write
+0x8000 | ((src-1)&3)<<2 for short. Pattern and
 duration write it for src 1, 2, 3, 4 (end value 0x800c).
 
 **Not cleared when switching types:** each sequence writes only what it uses. Not reset: event B/R
@@ -493,7 +508,7 @@ Parameters: source, polarity (positive, negative, any), when, t1 (lower), t2 (up
 |---|---|
 | 1 | 0x205c bit12 = (9 <= src < 28) |
 | 2 | levels (single level, dirA 1, dirB 0) |
-| 3 | 0x208c = 0x8000 \| (src-1)<<2 |
+| 3 | 0x208c = 0x8000 \| ((src-1)&3)<<2 |
 | 4-7 | `trigger(A; when, t1, t2)`: 0x201c[26:24], 0x2020, 0x2024, 0x2028 |
 | 8 | positive: `source(A; cmpB,1,cmpA,0)`; negative: `source(A; cmpA,0,cmpB,1)`; any: nothing |
 | 9 | positive: `pattern(A; 2,0,1,0)`; negative: `(2,1,1,0)`; any: nothing |
@@ -512,7 +527,7 @@ a change of when or width writes `trigger(A; when, t1, t2)` on its own (the mode
 |---|---|
 | 1 | 0x205c bit12 = (9 <= src < 28) |
 | 2 | levels: A = high, B = low; rising dirA = dirB = 1, falling dirA = dirB = 0 |
-| 3 | 0x208c = 0x8000 \| (src-1)<<2 |
+| 3 | 0x208c = 0x8000 \| ((src-1)&3)<<2 |
 | 4 | rising: `source(A; cmpA,0,cmpB,0)`; falling: `source(A; cmpB,1,cmpA,1)`; other: stop |
 | 5 | rising: `pattern(A; 2,1,1,0)`; falling: `(2,0,1,0)` |
 | 6 | 0x205c[4:0] = 0 |
@@ -531,7 +546,7 @@ Parameters: source, polarity (positive, negative, any), when, t1 (lower), t2 (up
 |---|---|
 | (0) | 0x205c bit12 = 0 (only on a type change) |
 | 1 | levels: A = high (dir 1), B = low (dir 0) |
-| 2 | 0x208c = 0x8000 \| (src-1)<<2 |
+| 2 | 0x208c = 0x8000 \| ((src-1)&3)<<2 |
 | 3 | when == 5 (none) -> when = 0, t1 = t2 = 0 |
 | 4 | positive: `source(A; cmpA,0,cmpB,0)`, `pattern(A; 3,0,6,0)` |
 |   | negative: `source(A; cmpB,1,cmpA,1)`, `pattern(A; 3,1,6,0)` |
@@ -554,7 +569,7 @@ rejected), event (enter, exit, time), time. Every change runs the whole sequence
 |---|---|
 | (0) | 0x205c bit12 = 0 (on a type change) |
 | 1 | levels: A = high, B = low; dirA = (event != exit), dirB = (event == exit) |
-| 2 | 0x208c = 0x8000 \| (src-1)<<2 |
+| 2 | 0x208c = 0x8000 \| ((src-1)&3)<<2 |
 | 3 | `source(A; cmpA,0,cmpB,0)`, `source(B; cmpB,0,cmpA,0)` |
 | 4 | falling only: `source(A; cmpB,0,cmpA,0)` |
 | 5 | `trigger(A; w, t, t)` (and for any `trigger(B; w, t, t)`), w = 4 and t = time for event "time", else 0, 0, 0 |
@@ -581,7 +596,7 @@ Parameters: source, slope (rising, falling, any), timeout T. Every change runs t
 |---|---|
 | 1 | 0x205c bit12 = (9 <= src < 28) |
 | 2 | levels (single level) |
-| 3 | 0x208c = 0x8000 \| (src-1)<<2 |
+| 3 | 0x208c = 0x8000 \| ((src-1)&3)<<2 |
 | 4 | `source(A; cmpA,0,cmpB,0)`, `source(B; cmpB,0,cmpA,0)` |
 | 5 | `trigger(A; 4, T, 0)`, `trigger(B; 4, T, 0)` (always both) |
 | 6 | rising: `pattern(A; 2,0,2,0)`, mode 0 |
@@ -678,7 +693,7 @@ change writes only 0x2070, an idle time change only 0x2068/0x206c.
 |---|---|
 | 1 | 0x205c bit12 = (9 <= src < 28) |
 | 2 | levels (single level) |
-| 3 | 0x208c = 0x8000 \| (src-1)<<2 |
+| 3 | 0x208c = 0x8000 \| ((src-1)&3)<<2 |
 | 4 | `source(A; cmpA, s, cmpB, s)` (s = slope: 0 rising, 1 falling) |
 | 5 | falling: `source(A; cmpB,1,cmpA,1)`, `pattern(A; 2,0,2,0)`; rising: `pattern(A; 2,1,2,1)` |
 | 6 | `trigger(A; 0,0,0)`, `trigger(B; 0,0,0)` |
@@ -701,7 +716,7 @@ Odd/even set the line first: NTSC odd 4, even 267; PAL odd 1, even 313 (1080i: 1
 | # | write |
 |---|---|
 | 1 | levels (single level) |
-| 2 | 0x208c = 0x8000 \| (src-1)<<2 |
+| 2 | 0x208c = 0x8000 \| ((src-1)&3)<<2 |
 | 3 | `source(R; cmpA, 0, cmpA, 0)` |
 | 4 | `pattern(R; 0, 0, 2, 0)` |
 | 5 | `pattern(A; 2,1,2,1)` if polarity != 0, else `(2,0,2,0)`; **no `source(A; ...)`** (0x201c[15:0] keeps the old value) |

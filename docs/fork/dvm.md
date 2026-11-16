@@ -41,16 +41,16 @@ after that. A reading the decode refuses, a reading of another channel, or no re
 Samples (measured): stored 12-bit ADC codes, mid-scale 2048 (open input: mean 2046.9, sigma 3.5), before the
 read-path gain. Volts: `(code - 2048) x 16 x dg / 7500 x V/div - offset`, dg = the channel's digital gain from the
 cal record (halved when 2 or more, the ADC x2 acts before storage). With the unit's cal file that is about 436 codes
-per division at 1 V/div and 437 at 500 mV/div (measured 428 and 438), and 400 at 100 mV/div. The unit session
-estimated about 200 at 100 mV/div from the probe-comp square, assuming a 0.3 V amplitude; that disagrees by a factor
-2 and is the first thing the re-check settles.
+per division at 1 V/div and 437 at 500 mV/div (measured 428 and 438), and 400 at 100 mV/div. The round-2 estimate of
+about 200 at 100 mV/div assumed a 0.3 V probe-comp amplitude; round 5 found no factor 2 (below).
 
 Other measured facts: mode and time base change nothing in the words; a new result every 1 to 2 readings (about
 0.6 s apart); after STOP one nearly all-zero window (sum 0x900), then the block runs on. `decode` refuses a mean below
 one code, at or above 4096, and a mean square below the mean squared.
 
-CH2 alone reported lane 2 in the first session where `dvm::lane` gives 1 (the set-up still had CH1 acquired, see
-round 5). On the DHO924S CH2 alone is lane 1, and four channels are lanes 0 to 3 (below).
+Round 2 saw CH2 alone report lane 2 where `dvm::lane` gives 1; CH1 was still acquired for the trigger, so the set
+had two channels and lane 2 is right (round 5, below). On the DHO924S CH2 alone is lane 1, and four channels are
+lanes 0 to 3 (below).
 
 ## Round 5: hardware against software
 
@@ -75,15 +75,17 @@ Reading:
 - Lane 2 for CH2 alone (round 2): the trigger was on CH1, which OOS acquires even when hidden, so the set was CH1 +
   CH2 and lane 2 is right (Rigol's rule, assumed).
 
-Per-lane check (needs this branch): `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` forces the lane with one channel acquired
-(every lane carries the channel then). CH1 alone with the trigger on CH1 (OOS also acquires a hidden trigger
-channel, which makes it a two-channel set), input open, 500 mV/div and 100 mV/div, offset 0; for each lane 0..3
-five `:SYSTem:DEBug:DVM?` dumps, then `AUTO`. Expect the four lane DC values to spread by a few ADC steps, with the
-software value near their mean. That spread is the per-core-pair offset map, also the input for the core offset fix.
+Per-lane check: `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` forces the lane with one channel acquired (every lane carries
+the channel then). Acquire one channel only and put the trigger on that channel; a trigger on another channel is
+acquired hidden and makes a two-channel set, where the lane is not forced. Input open, 500 mV/div and 100 mV/div,
+offset 0; for each lane 0..3 five `:SYSTem:DEBug:DVM?` dumps, then `AUTO`. Done before and after the core offset
+trim in `core-offset.md` round 13 (CH3: lane 2 read +8.22 mV against -5.4 mV in software at 500 mV/div before it).
 
-Default: keep `dvm.hw` opt-in until the per-lane check and the core offset fix. With the fix the DC error is bounded
-by the trim (about +-0.5 step); then the hardware DVM is the better default: acquisition-independent, 2^28 samples,
-no record or clipping dependence.
+Default: `dvm.hw` stays opt-in. The core offset trim matches each core to the channel mean with a target of 0.6 ADC step
+and keeps a result within 1.5 steps (`hal/src/dho/coretrim.rs`). It reduces the spread between lanes. It does not bound
+the absolute DC error: in round 13 the four lanes read -4.92 to -3.12 mV against -5.4 mV in software at 500 mV/div, up
+to 2 steps from it, and the AFE offset error adds to that. The block is independent of the record and the time base. ADC
+clipping still affects the sums.
 
 ## On the DHO924S (2026-11-16)
 
@@ -123,8 +125,9 @@ mode. `off,sw=...` without a reading.
 
 1. Baseline with `dvm.hw` off (default): DVM on CH1, `:SYSTem:DEBug:DVM?` answers `off,...`. Nothing else changed.
 2. Set `dvm.hw = on` in system.conf, restart oos-ui. `:SYST:SET dvm = true 0 0` (DVM on, CH1, DC).
-3. Idle check: CH1 open, 1 V/div, offset 0. Read the dump 10 times, 0.6 s apart. Expect n to rise, `cfg` to read
-   the mean in codes (sum / 2^28) near 2048. (Done 2026-11-13: mean 2046.9, a new result every 1 to 2 readings.)
+3. Idle check: CH1 open, 1 V/div, offset 0. Read the dump 10 times, 0.6 s apart. Expect n to rise and the mean in
+   codes, ((0x2250 >> 16) << 32 | 0x224c) / 2^28, near 2048. `cfg` is not the mean (register facts). (Done
+   2026-11-13: mean 2046.9, a new result every 1 to 2 readings.)
 4. DC: apply the reference to CH1 at 1 V/div (about 2 V), then 10 records worth of readings (10 dumps, one per
    record, `:SINGle` + `:SYSTem:DEBug:DVM?` each). Compare `hw` DC with `sw` and the DMM. Repeat at 200 mV/div with
    offset -2 V (the reference near the middle of the screen). `hw` and `sw` must agree within 2 %.

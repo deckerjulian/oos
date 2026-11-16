@@ -1,7 +1,8 @@
 # DHO924S GPIO map
 
-Verified on the unit: every pin below is claimed with the label given here, PCIe PERST# as `ep` (GPIO 82, out high),
-GPIO 120 via sysfs (input, low with no LA probe). This is the state under stock.
+Verified on the unit under stock: the pins below carry the labels given here, PCIe PERST# as `ep` (GPIO 82, out high),
+GPIO 120 via sysfs (input, low with no LA probe). The `hdcode_gpio` pins are assigned but not claimed: that module was
+not loaded on the unit (`../protocols/board.md` 7).
 
 Numbering: Linux 4.4 Rockchip global number = bank * 32 + offset, offset = letter(A=0, B=8, C=16, D=24) + pin.
 Linux 6.12 numbers gpiochips dynamically: in OOS always address pins as `gpiochipN` + offset (libgpiod) or by DT phandle.

@@ -5,11 +5,13 @@ they say so. Anything else is not yet verified on hardware. "Assumed" marks an i
 
 The read-out is the **play** path (0x400c play mode, then FSM start). The FSM replays a stored frame. A new acquisition needs the
 **record** set-up (0x400c record bits + the frame window in 0x4010/0x4014/0x4018) before the FSM start. So a repeated read-out
-gives no new frames. Every frame needs a full stop/arm cycle, also in RUN.
+gives no new frames. Every new batch needs a record set-up and a stop/arm cycle, also in RUN. The FPGA records the n
+frames of a batch without a host stop/arm between them; a one-frame batch needs one cycle per frame.
 
 Conventions below: `sN` = the software copy of register N (last value written; for 0x4034 and 0x4080 the copy holds the last
 value *read*). "RMW" = write the copy with bits changed. Time values are in **femtoseconds**, the register ticks are 4 ns,
-6.4 ns and 1.6 ns.
+6.4 ns and 1.6 ns. The 6.4 ns and 1.6 ns ticks hold at the nominal 1.25 GHz ADC clock; OOS converts through
+`hal::dho::clock` for another clock (`docs/models.md`).
 
 ## 1. Sequences and register writes
 
@@ -41,7 +43,7 @@ WPU, WAU, and always the SCU block.
 
 All of these are configuration registers that keep their value. After a warm hand-over they are still what the stock system set.
 
-### Run sequence (per command AND per frame)
+### Run sequence (per command AND per batch)
 
 ```
 chmask = the 0x4008[3:0] nibble (1 = CH1 only, 0xf = all)
@@ -114,7 +116,9 @@ read-out starts clean.
 
 - SINGLE = RUN with type 3 and n = 1; register-wise identical to a type-2 arm with cnt = 1. After the first successful
   frame go to STOP.
-- STOP = stop sequence (plus a status read and 0x4034 clear for the UI). Nothing else is written.
+- STOP = stop sequence plus a status read and 0x4034 clear for the UI, the average clear and the read of the recorded
+  range (table above). The bare stop sequence is the 17-write primitive, not all of STOP. OOS writes more depending on
+  the path: roll/scan exit (`roll-mode.md` 6 D), and a final raw replay of the newest frame (`docs/fork/stop-exact.md`).
 
 ## 2. Detecting the finished acquisition, fetching the frame, re-arming
 
@@ -135,12 +139,13 @@ At start: 0x1010 bit31 = 0 (header on). Loop while RUN or SINGLE and channel mas
 0x4008 bit23 = 1, bit24 = 0                    ; analog stream on, LA stream off
 cnt = frame request (below)                    ; < 1 -> nothing ready (sleep 10 ms first if timebase > 1 ms/div)
 if len < 8 -> nothing ready
-read(c2h, cnt * (16 + 2*ratio*len [+ 16 + 2*ratio*zoomlen if zoom]))
+read(c2h, cnt * (16 + 2*ratio*len [+ 16 + 2*ratio*zoomlen if zoom]))   ; len = the 0x11f0 value
 de-interleave, header = 8 words                ; 16-byte header per frame
 ```
-with ratio = the interleave factor of the channel set, len = the analog display length. With 0x1010 bit31 = 0 the FPGA sends a
-16-byte header in front of every frame (live path); with bit31 = 1 there is none (export path; the read-out verified on the
-unit has no header). So bit31 = 1 means "no header".
+with ratio = the interleave factor of the channel set, len = the programmed TX length 0x11f0 = roundup8(display length).
+Then every frame is a multiple of 8 bytes and needs no stream padding (C2H read rules 1). With 0x1010 bit31 = 0 the FPGA
+sends a 16-byte header in front of every frame (live path); with bit31 = 1 there is none (export path; the read-out
+verified on the unit has no header). So bit31 = 1 means "no header".
 
 ### Frame request (RUN, SINGLE, record)
 
@@ -157,8 +162,11 @@ return count
 ```
 The live path runs the stop sequence a second time before `set_run` (`record-play.md` 1.3).
 
-So **done = 0x4080 bit30 set**, polled every ~9 ms. The number of frames is 0x4010 - 0x4014 + 1 (the FPGA updates the
-0x4010 read-back to the last written frame). The stop sequence clears it again (info clear, 0x4080 bit31 pulse).
+So **done = 0x4080 bit30 set**, polled every ~9 ms. Bit30 means at least the first frame is ready, not the whole batch
+("Batches of frames on the unit"). The number of frames recorded so far is 0x4010 - 0x4014 + 1 (the FPGA updates the
+0x4010 read-back to the last written frame), and only that count may be played: an immediate play can be a partial
+batch. OOS waits after done until the count reaches n or a wait budget passes. The stop sequence clears bit30 again
+(info clear, 0x4080 bit31 pulse).
 
 ### Per-frame cycle in RUN (summary)
 
@@ -182,8 +190,11 @@ arm again (ping-pong slot toggled)
 | 5, 8, 9, 13 | none set = acquisition still running | |
 | 31, 30 | status clear (a, b): write `(last_read & 0x3fffffff) \| a<<31 \| b<<30`, then `& 0x3fffffff` | |
 
-Status priority: bit6 -> 4, bit7 -> 2, bit5 -> 0, bit4 -> 3, else 1. Assumed names (the `:TRIG:STAT?` set): 4 AUTO, 2 TD
-(triggered), 3 WAIT, 1 RUN, 0 STOP. The UI status path uses the status clear with a = b = 1, it is not part of the arm/read cycle.
+Status priority: bit6 -> 4, bit7 -> 2, bit5 -> 0, bit4 -> 3, else 1. Bit 6 = the TPU fired, bit 7 = the FSM accepted a
+trigger (TPU, auto timeout or force) (assumed; that both are sticky until a status clear was seen on the unit,
+`scu::status`, `docs/fork/trigger-lockin.md`). So bit 6 set reads TD (code 4), bit 7 without bit 6 reads AUTO (code 2).
+Without a status clear before the arm the bits do not tell the source of the latest frame. Assumed names for the rest:
+3 WAIT, 1 RUN, 0 STOP. The UI status path uses the status clear with a = b = 1, it is not part of the arm/read cycle.
 Other observed values: 0x31c0 (bits 6,7,8,12,13), 0x11c7, 0x7, 0x12.
 
 ## 3. Trigger set-up the start depends on
@@ -275,10 +286,12 @@ Variant 2 (type-4 play, `scu::readout_play4`, the default in `seq::Settings`): w
 bit24 = 0; 0x1100, 0x1108, 0x11f0; 0x1010 bit31 = 1 for no header; 0x400c bit25 off), then the stop sequence (writes 1-17 of table
 A), then the type-4 play: 0x4008 &= ~bit17, &= ~bit22, 0x4068 = 0, 0x406c = 0, 0x400c = (s & 0x89ffffff) | 0x30000000,
 0x4010 = 0, 0x4014 = 0, 0x4018 = count - 1, 0x400c &= ~bit28, 0x400c = (s & ~bit26) | 0x60000000,
-0x4008 = (s & ~0xf) | chmask, 0x4004 |= 1; then one read of exactly 2 x ratio x 0x11f0 bytes.
+0x4008 = (s & ~0xf) | chmask, 0x4004 |= 1; then one read of count x roundup8(2 x ratio x 0x11f0) bytes. Drop the
+padding behind each frame before de-interleaving (`seq::read_len`, `seq::unpad`; C2H read rules 1).
 
 Live-equivalent variant (no OOS window): leave 0x1100/0x1108/0x11f0 as the horizontal block set them, 0x1010 bit31 = 0,
-and read `count * (16 + 2*ratio*len)` bytes with an 8-word header per frame. Needs `len`.
+and read `count * (16 + 2*ratio*len)` bytes with an 8-word header per frame, len = the 0x11f0 value (a multiple of 8, so
+no padding).
 
 ### D. Next frame
 
@@ -372,21 +385,27 @@ window memsel + 0x248, 0x11f0 = len; `horizontal-config.md`, `record-play.md` se
 ## FPGA compression = min/max (peak) decimation
 
 `oos-fpgad run --depth 1000000 --tdiv 2e-4 --all` (full, 1 M points, 2 MB) and the same with `--compress 4`
-(`seq::Settings::compress`: 0x1170 = 0xc0000004, window = whole record, 0x11f0 = ceil(memsel / k) rounded up to 8 =
-250 000; 500 kB), verified on the unit:
+(`seq::Settings::compress`: 0x1170 = 0xc0000004, window = whole record, 0x11f0 = 250 000; 500 kB), verified on the
+unit:
 
 - rising edges full at 187 621 / 500 121 / 812 621, compressed at 46 903 / 125 029 / 203 155 (x4 = 187 612 /
   500 116 / 812 620): one compressed point per k samples, aligned with the record;
 - around the trigger the compressed points alternate low/high (31 726, 31 967, 31 864, 32 157, ...): consecutive
-  pairs are the minimum and maximum of a block, i.e. the FPGA does peak-detect decimation (noise of a flat part 127
-  codes compressed vs 88 full: the envelope).
+  pairs are the minimum and maximum of a block, i.e. the FPGA does peak-detect decimation (noise of a flat part
+  127 codes compressed vs 88 full: the envelope).
 
 So the live path gives a min/max envelope at large depths. For OOS: read huge records for the screen with k so
-that ceil(memsel / k) stays near 625 k points (2.5 M at k = 4 gives this value), draw the points as a polyline
+that memsel / k stays near 625 k points (2.5 M at k = 4 gives this value), draw the points as a polyline
 (min-max pairs become vertical spans), and read uncompressed windows only for zoom / measurements on raw samples.
-Not checked yet: the exact block size of one min/max pair (2k samples?) and the extra + k term in 0x1100 of the live set-up (OOS
-writes memsel + 0x248, which works). Another project reports 2N samples per pair, the minimum and maximum taken over all
-eight ADC cores together; not checked on the unit here.
+Not checked yet: the extra + k term in 0x1100 of the live set-up (OOS writes memsel + 0x248, which works). The pair
+covers 2k samples, in time order (verified on the unit, `docs/fork/compress.md`). Another project reports the minimum
+and maximum taken over all eight ADC cores together; not checked on the unit here.
+
+TX length of a compressed whole-record read: k = 1..16383 and at most memsel / 8, 0x11f0 = max(8, floor(memsel / k / 8)
+x 8) (`seq::compressed_len`), so TX points x k <= memsel. Do not round up: the FPGA waits for samples beyond the window.
+Rounding up asked for 3912 points at k = 256 and 1 M points, and the C2H read timed out (verified on the unit). The
+rounded-down length (3904 points) read without a time-out. The stock roundup8 of 3.1 in `horizontal-config.md` is for
+the screen window of the display chain, not for a whole-record read.
 
 ### Time axis of compressed reads by depth
 
