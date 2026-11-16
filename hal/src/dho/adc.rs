@@ -42,16 +42,23 @@ pub struct CalAdc {
 }
 
 impl CalAdc {
+    /// Shared runtime and cold-boot acceptance: both CRCs, container length and ADC payload size.
     pub fn from_file_bytes(d: &[u8]) -> Option<CalAdc> {
-        let p = container(d)?;
+        let p = crate::dho::calfile::parse(d).ok()?;
         (p.len() == 0x738).then(|| CalAdc { p: p.to_vec() })
     }
     /// The first valid cal_adc.hex: OOS's own (`calfile::OOS_CAL_DIR`), then `dir`, then `dir/default`.
     pub fn load(dir: &str) -> std::io::Result<CalAdc> {
         let def = format!("{}/default", dir.trim_end_matches('/'));
-        let (d, _) = crate::dho::calfile::load_first("cal_adc.hex", &[crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()])
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "cal_adc.hex: no valid copy"))?;
-        CalAdc::from_file_bytes(&d).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "cal_adc.hex: bad container"))
+        Self::load_dirs(&[crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()])
+    }
+    fn load_dirs(dirs: &[&str]) -> std::io::Result<CalAdc> {
+        dirs.iter()
+            .find_map(|dir| {
+                let d = std::fs::read(std::path::Path::new(dir).join("cal_adc.hex")).ok()?;
+                Self::from_file_bytes(&d)
+            })
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "cal_adc.hex: no valid copy"))
     }
     /// The 0x738-byte payload (for the self-cal, which edits a copy and saves it with `calfile`).
     pub fn payload(&self) -> &[u8] {
@@ -381,3 +388,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod load_tests;
