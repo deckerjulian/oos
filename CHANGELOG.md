@@ -129,7 +129,8 @@ New:
   (the DHO's) and how measurements get their data. Taken from how the stock MHO900 system uses the board; not yet
   verified on hardware, nothing of it is driven.
 - `tools/mho-check.py`: an MHO900 owner checks these assumptions under the stock system (register reads through
-  the stock tool, settings changed over SCPI and set back) and attaches the report to the issue.
+  the stock tool, settings changed over SCPI, then set back one by one and read again) and attaches the report to the
+  issue. The memory depth is written back as the scope takes it (`10k`, not the `1.0000E+04` its query answers).
 - `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
   numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,

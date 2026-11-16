@@ -22,7 +22,7 @@ depend on it. Code 1 is an early board; codes 2 and up are later ones.
 | 5 | Ethernet PHY | Motorcomm driver, link down and up again |
 | 6 | sample clock | a **LMK04821** on a GPIO 3-wire bus (`/dev/spi_3wires`), one register table per hardware code (codes 1, 2, 3 and up) |
 | 7 | FPGA supply | GPIO1_A0 (gpio 32) = 1 |
-| 8 | FPGA image | a Kintex-7 in slave serial mode: PROGRAM_B, INIT_B and DONE on GPIOs (`/dev/spi2k7_ctl`: GPIO1_B5, GPIO2_C7, GPIO2_C4 from the platform probe), the bitstream streamed over SPI (`/dev/spidev1.0`; `/dev/spidev5.0` on code 1); then 5 s |
+| 8 | FPGA image | a Kintex-7 in slave serial mode: PROGRAM_B, INIT_B and DONE on GPIOs (`/dev/spi2k7_ctl`: GPIO1_B5, GPIO2_C7, GPIO2_C4 from the platform probe), the bitstream streamed over SPI (`/dev/spidev1.0` or `/dev/spidev5.0`: on code 3 the stock device tree enables only spi5 with its spidev, and `/dev/spidev1.0` is not there (platform probes of an MHO954 and an MHO98); `/dev/spidev5.0` on code 1); then 5 s |
 | 9 | PCIe | `pcie-rockchip`, then `xdma`; when no `/dev/xdma0_*` appears, both are unloaded and loaded again, up to 10 times |
 | 10 | front-end bus, generator | the AFE bus on GPIOs (`/dev/spi_simulate`); the generator board on `ttyS4` (codes 2 and up) |
 | 11 | others | DAC range driver, LA probe detect GPIO3_D0 (gpio 120, input), front-end overload inputs (`afe_rms`) |
@@ -183,18 +183,19 @@ PC, network adb and SCPI (port 5555) on the scope; like `tools/platform-probe.sh
 |---|---|---|
 | S1 to S3 | hardware code, `version.txt`, `/rigol/FPGA` | the image table of section 1, this unit's image present |
 | S4 | GPIO0_A1, GPIO0_A2, GPIO1_A0, GPIO3_D0 | outputs at 1 (not the supplies on code 1), the probe detect an input |
-| S5, S6 | modules and device nodes | the drivers and devices of section 1 and 2 |
+| S5, S6 | modules and device nodes | the drivers and devices of section 1 and 2; the `/dev/spidev*` there recorded |
 | S7, S8 | PCIe | `10ee:7024`, a BAR of 16 MiB |
 | S9 | clock tables | 136 TI register words each (only counted, not copied) |
-| S10, S11 | open devices, kernel log | recorded; FPGA DONE at 1 |
+| S10, S11 | open devices, kernel log | recorded; the FPGA configured: its PCIe endpoint enumerates after the load (the DONE the driver logs when it requests the line comes before the load and is 0) |
 | R1 to R4 | registers read once | the blocks answer; 0x3000 holds a finished bridge word (strobe 0, one ADC) |
 | R5 to R9 | 0x4008 with CH1, CH1+2, CH1 to 4, CH1 to 3 | channel mask 0x1, 0x3, 0xf; roll and scan off at 1 us/div |
 | R10 | 0x10e4 at 1k and 1M points | the record depth changes |
 | R11 | 0x40b0/0x40b4 while running | the time stamp moves |
 | R12 | 0x4008 at 200 ms/div | roll or scan bit set |
 | R13 | 0x4004, 0x4034, 0x4100 in STOP | recorded |
-| R14 | 0x6110 with the mask test on | the mask block follows |
+| R14 | 0x2438 and 0x6110 with the mask test off, on and running | the mask block follows; unchanged is recorded (the test may need a mask, and the check makes none) |
 | R15 | waveform preamble in WORD at 0.1 and 1 V/div | 7500 codes per division, centre 32768 |
+| R16 | the settings again | each written back on its own (the memory depth as `10k`, `1M` ...: the number its query answers is refused), then read and compared with before |
 
 Registers are read with the stock tool `/rigol/tools/pcie2dev`, always with exactly one address (it writes when it is
 given two), and only at addresses the stock system uses itself: a read of an address the FPGA does not decode could

@@ -16,8 +16,9 @@ What it does on the scope:
   system itself uses (a read of an address the FPGA does not decode could stop the processor). Nothing is written to
   a file, a partition or a register.
 - over SCPI (port 5555) it changes the scope's settings the way a user would at the front panel (channels on and
-  off, time base, memory depth, waveform format, Run/Stop) and reads back registers after each change. The settings
-  it changes are read first and set back at the end. --no-scpi leaves the settings alone and skips those checks.
+  off, time base, memory depth, waveform format, the mask test on and off, Run/Stop) and reads back registers after
+  each change. The settings it changes are read first, set back at the end and read again (R16 says whether every one
+  is as before). --no-scpi leaves the settings alone and skips those checks.
 
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
@@ -30,7 +31,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "1"
+VERSION = "2"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -42,6 +43,7 @@ STATIC_REGS = [
     (0x3000, "ADC SPI bridge, last word"),
     (0x3004, "ADC SPI bridge, read data"),
     (0x5000, "Bode block"),
+    (0x2438, "WAU mask control"),
     (0x6110, "mask control (moved from 0x1190)"),
     (0x10100, "peripheral PWM"),
     (0x20004, "JESD204 receiver"),
@@ -58,8 +60,10 @@ SNAP_REGS = [
     0x3000, 0x40B0, 0x40B4, 0x4100, 0x6110,
 ]
 
+# The SPI port the bitstream goes over is not in the list: the stock device tree gives spi1 and spi5 a spidev each, with
+# only one of them enabled; S6 records which /dev/spidev* there is.
 DEVICES = ["/dev/xdma0_bypass", "/dev/xdma0_c2h_0", "/dev/spi_3wires", "/dev/spi2k7_ctl",
-           "/dev/spidev1.0", "/dev/spi_simulate", "/dev/afe_rms", "/dev/hdcode_gpio"]
+           "/dev/spi_simulate", "/dev/afe_rms", "/dev/hdcode_gpio"]
 MODULES = ["xdma", "pcie_rockchip", "spi2pll_gpio", "fpga_gpio", "spi2afe_gpio", "afe_rms_gpio", "dac_gpio",
            "hdcode_gpio"]
 # (gpio number, line, expected direction, expected value or None)
@@ -70,6 +74,7 @@ IMAGES = {1: "sparrow3_K160T.bit", **{c: "sparrow3_RT688.bit" for c in range(2, 
           **{c: "sparrow3_K160T_LR.bit" for c in range(8, 12)}}
 
 READ_RE = re.compile(r"Read\((0x[0-9a-fA-F]+|\d+)\)\s*=\s*#0x([0-9a-fA-F]+)#")
+LOG_RE = re.compile(r"^\[\s*(\d+\.\d+)\]\s*(.*)$")
 
 
 # ---- pure parts (tools/tests/test_mho_check.py) ----
@@ -120,6 +125,45 @@ def adc_bridge_word(w):
     kind = "read" if w & (1 << 23) else "write"
     return ok, (f"0x{w:08x}: strobe {strobe}, ADC {'0' if sel == 1 else '1' if sel == 2 else '?'} (select {sel}), "
                 f"{kind}, address 0x{(w >> 16) & 0x7f:02x}, data 0x{w & 0xffff:04x}")
+
+
+def fpga_done(log):
+    """(status, text) for the FPGA's configuration from the kernel log. The driver logs DONE when it requests the line,
+    before the image is loaded, so a DONE of 0 there says nothing; the FPGA's PCIe endpoint enumerating afterwards
+    says the image is in."""
+    done, pcie = [], None
+    for line in log.splitlines():
+        m = LOG_RE.match(line.strip())
+        t, msg = (float(m.group(1)), m.group(2)) if m else (None, line)
+        d = re.search(r"PIN_DONE\s+voltage:\s*(\d)", msg)
+        if d:
+            done.append((t, d.group(1)))
+        if pcie is None and re.search(r"\[10ee:7024\]", msg):
+            pcie = t
+    if pcie is not None:
+        logged = f"; DONE logged {done[-1][1]} at {done[-1][0]} s, when the line was requested" if done else ""
+        return "PASS", f"PCIe endpoint 10ee:7024 enumerated at {pcie} s (the image is loaded){logged}"
+    if any(v == "1" for _, v in done):
+        return "PASS", "DONE 1"
+    if done:
+        return "FAIL", f"DONE {done[-1][1]} and no PCIe endpoint in the log"
+    return "INFO", "not in the kernel log (needs adb root, or the log has rotated)"
+
+
+def depth_word(answer):
+    """The memory depth as :ACQuire:MDEPth takes it (1k, 10k, 1M, AUTO ...) from what its query answers
+    (1.0000E+04): the scope refuses the number form with -222."""
+    a = answer.strip()
+    if a.upper().startswith("AUTO"):
+        return "AUTO"
+    try:
+        n = round(float(a))
+    except ValueError:
+        return a
+    for unit, f in (("G", 10**9), ("M", 10**6), ("k", 10**3)):
+        if n >= f and n % f == 0:
+            return f"{n // f}{unit}"
+    return str(n)
 
 
 def channel_mask(v4008):
@@ -272,10 +316,11 @@ def static_checks(adb, rep):
             "all" if not missing else "missing " + ", ".join(missing))
 
     ls = adb.sh("ls -l " + " ".join(DEVICES) + " 2>&1")
-    rep.raw += ["devices:", ls]
+    spi = adb.sh("ls /dev/spidev* 2>/dev/null").split()
+    rep.raw += ["devices:", ls, "spidev: " + " ".join(spi)]
     absent = [d for d in DEVICES if not re.search(r"\s" + re.escape(d) + r"\s*$", ls, re.M)]
     rep.add("S6", "device nodes", "PASS" if not absent else "FAIL",
-            "all" if not absent else "absent " + ", ".join(absent))
+            ("all" if not absent else "absent " + ", ".join(absent)) + f"; spidev: {' '.join(spi) or 'none'}")
 
     pci = adb.sh("for d in /sys/bus/pci/devices/*; do echo \"dev $d $(cat $d/vendor) $(cat $d/device)\"; "
                  "cat $d/resource; done")
@@ -310,9 +355,7 @@ def static_checks(adb, rep):
 
     log = adb.sh("dmesg 2>/dev/null | grep -iE 'PIN_DONE|PIN_INITB|PIN_PROGRAMB|xdma.*probe|10ee' | tail -20")
     rep.raw += ["dmesg:", log]
-    done = re.findall(r"PIN_DONE voltage:\s*(\d)", log)
-    rep.add("S11", "FPGA DONE line after loading", ("PASS" if done[-1] == "1" else "FAIL") if done else "INFO",
-            f"DONE {done[-1]}" if done else "not in the kernel log (needs adb root, or the log has rotated)")
+    rep.add("S11", "FPGA configured", *fpga_done(log))
     return code
 
 
@@ -334,6 +377,11 @@ def register_checks(adb, rep, code):
     return True
 
 
+def mask_regs(adb):
+    r = adb.regs([0x2438, 0x6110])
+    return r.get(0x2438), r.get(0x6110)
+
+
 def snap(adb, rep, label):
     r = adb.regs(SNAP_REGS)
     rep.raw.append(f"snapshot {label}: " + " ".join(f"{a:x}={hx(r.get(a))}" for a in SNAP_REGS))
@@ -347,7 +395,7 @@ def scpi_checks(adb, scpi, rep):
     keep = {}
     for q in [":CHANnel1:DISPlay?", ":CHANnel2:DISPlay?", ":CHANnel3:DISPlay?", ":CHANnel4:DISPlay?",
               ":CHANnel1:SCALe?", ":TIMebase:MAIN:SCALe?", ":ACQuire:MDEPth?", ":WAVeform:FORMat?",
-              ":WAVeform:SOURce?", ":WAVeform:MODE?", ":TRIGger:STATus?", ":MASK:ENABle?"]:
+              ":WAVeform:SOURce?", ":WAVeform:MODE?", ":TRIGger:STATus?", ":MASK:ENABle?", ":MASK:OPERate?"]:
         keep[q] = scpi.query(q)
     rep.raw.append("settings before: " + "; ".join(f"{k} {v}" for k, v in keep.items()))
 
@@ -387,7 +435,8 @@ def scpi_checks(adb, scpi, rep):
                 "PASS" if a is not None and b is not None and a != b else "FAIL",
                 f"1k: {hx(a)} ({depths['1k'][1]} pts, {depths['1k'][2]} Sa/s), "
                 f"1M: {hx(b)} ({depths['1M'][1]} pts, {depths['1M'][2]} Sa/s)")
-        scpi.write(f":ACQuire:MDEPth {keep[':ACQuire:MDEPth?']}")
+        if keep[":ACQuire:MDEPth?"]:
+            scpi.write(f":ACQuire:MDEPth {depth_word(keep[':ACQuire:MDEPth?'])}")
 
         t0 = adb.regs([0x40B0, 0x40B4])
         time.sleep(0.5)
@@ -413,16 +462,25 @@ def scpi_checks(adb, scpi, rep):
                 f"0x4004 {hx(r.get(0x4004))}, 0x4034 {hx(r.get(0x4034))}, stop reason 0x4100 {hx(r.get(0x4100))}")
         scpi.write(":RUN")
 
+        # the mask test switched on and started; no mask is created, so the owner's own mask stays as it is
         scpi.errors()
-        before = adb.regs([0x6110]).get(0x6110)
+        before = mask_regs(adb)
         scpi.write(":MASK:ENABle ON")
         settle()
-        after = adb.regs([0x6110]).get(0x6110)
+        enabled = mask_regs(adb)
+        scpi.write(":MASK:OPERate RUN")
+        settle()
+        running = mask_regs(adb)
         err = scpi.errors()
+        scpi.write(f":MASK:OPERate {keep[':MASK:OPERate?'] or 'STOP'}")
         scpi.write(f":MASK:ENABle {keep[':MASK:ENABle?'] or 'OFF'}")
-        rep.add("R14", "mask block at 0x6110 follows the mask test", "SKIP" if err else
-                "PASS" if before is not None and after is not None and before != after else "FAIL",
-                f"{hx(before)} -> {hx(after)}" + (f" ({'; '.join(err)})" if err else ""))
+        moved = all(None not in r for r in (before, enabled, running)) and len({before, enabled, running}) > 1
+        rep.add("R14", "mask block (0x2438, 0x6110) follows the mask test", "SKIP" if err else
+                "PASS" if moved else "INFO",
+                "; ".join(f"{n} {hx(r[0])}/{hx(r[1])}" for n, r in (("off", before), ("on", enabled),
+                                                                    ("running", running)))
+                + (f" ({'; '.join(err)})" if err else
+                "" if moved else " (unchanged: the test may need a mask of its own, which this check does not make)"))
 
         scpi.write(":WAVeform:SOURce CHANnel1")
         scpi.write(":WAVeform:MODE NORMal")
@@ -436,18 +494,49 @@ def scpi_checks(adb, scpi, rep):
             ok, text = preamble_check(pre, scale)
             rep.add("R15", f"sample words at {scale:g} V/div", "PASS" if ok else "FAIL", text)
     finally:
-        restore = [(":CHANnel1:DISPlay", 0), (":CHANnel2:DISPlay", 0), (":CHANnel3:DISPlay", 0),
-                   (":CHANnel4:DISPlay", 0), (":CHANnel1:SCALe", 0), (":TIMebase:MAIN:SCALe", 0),
-                   (":ACQuire:MDEPth", 0), (":WAVeform:FORMat", 0), (":WAVeform:SOURce", 0), (":WAVeform:MODE", 0),
-                   (":MASK:ENABle", 0)]
-        for cmd, _ in restore:
-            v = keep.get(cmd + "?")
-            if v:
-                scpi.write(f"{cmd} {v}")
-        scpi.write(":STOP" if keep.get(":TRIGger:STATus?", "").upper().startswith("STOP") else ":RUN")
-        left = scpi.errors()
-        rep.raw.append("settings restored" + (f", errors: {left}" if left else ""))
-        print("settings set back" + (f" (errors: {left}; check them by hand)" if left else ""))
+        restore(scpi, rep, keep)
+
+
+# What is set back, in this order, and how the value read before is written again.
+RESTORE = [":CHANnel1:DISPlay", ":CHANnel2:DISPlay", ":CHANnel3:DISPlay", ":CHANnel4:DISPlay", ":CHANnel1:SCALe",
+           ":TIMebase:MAIN:SCALe", ":ACQuire:MDEPth", ":WAVeform:FORMat", ":WAVeform:SOURce", ":WAVeform:MODE",
+           ":MASK:OPERate", ":MASK:ENABle"]
+WRITE_AS = {":ACQuire:MDEPth": depth_word}
+
+
+def same_setting(a, b):
+    try:
+        return abs(float(a) - float(b)) <= 1e-6 * max(abs(float(a)), abs(float(b)))
+    except ValueError:
+        return a.strip().upper() == b.strip().upper()
+
+
+def restore(scpi, rep, keep):
+    """Every setting written back one by one, each refusal named, then read again and compared with before."""
+    scpi.errors()
+    refused, differ = [], []
+    for cmd in RESTORE:
+        v = keep.get(cmd + "?")
+        if not v:
+            continue
+        w = WRITE_AS.get(cmd, str)(v)
+        scpi.write(f"{cmd} {w}")
+        err = scpi.errors()
+        if err:
+            refused.append(f"{cmd} {w}: {'; '.join(err)}")
+    scpi.write(":STOP" if keep.get(":TRIGger:STATus?", "").upper().startswith("STOP") else ":RUN")
+    time.sleep(1.5)
+    for cmd in RESTORE:
+        v = keep.get(cmd + "?")
+        if v:
+            now = scpi.query(cmd + "?")
+            if not same_setting(now, v):
+                differ.append(f"{cmd} {now} (was {v})")
+    ok = not refused and not differ
+    rep.add("R16", "settings set back", "PASS" if ok else "FAIL",
+            "all as before" if ok else "; ".join(refused + differ) + " - please set these back by hand")
+    print("settings set back" if ok else "SETTINGS NOT ALL SET BACK, please set these by hand: "
+          + "; ".join(refused + differ))
 
 
 def main():
@@ -485,8 +574,8 @@ def main():
         rep.add("R5", "checks with changed settings", "SKIP", "no register reads")
     else:
         if not a.yes:
-            ans = input("The next part changes channels, time base, memory depth and waveform format over SCPI for "
-                        "about a minute and sets them back. Go on? [y/N] ")
+            ans = input("The next part changes channels, time base, memory depth, waveform format and the mask test "
+                        "over SCPI for about a minute and sets them back. Go on? [y/N] ")
             if ans.strip().lower() not in ("y", "yes", "j", "ja"):
                 rep.add("R5", "checks with changed settings", "SKIP", "declined")
                 a.no_scpi = True

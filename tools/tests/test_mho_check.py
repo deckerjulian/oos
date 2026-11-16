@@ -73,6 +73,35 @@ class Judging(unittest.TestCase):
         self.assertFalse(mc.preamble_check("0,0,1000,1,1e-9,0,0,4e-3,0,128", 1.0)[0])
         self.assertFalse(mc.preamble_check("garbage", 1.0)[0])
 
+    def test_fpga_done_is_judged_after_the_load(self):
+        # the driver logs DONE when it requests the line, before the image is loaded
+        log = ("[    9.594720] finish request gpio PIN_DONE voltage:0\n"
+               "[   18.070367] pci 0000:01:00.0: [10ee:7024] type 00 class 0x070001\n")
+        status, text = mc.fpga_done(log)
+        self.assertEqual(status, "PASS")
+        self.assertIn("18.070367", text)
+        self.assertEqual(mc.fpga_done("[ 9.5] finish request gpio PIN_DONE voltage:0\n")[0], "FAIL")
+        self.assertEqual(mc.fpga_done("[ 9.5] get PIN_DONE voltage:1\n")[0], "PASS")
+        self.assertEqual(mc.fpga_done("")[0], "INFO")
+
+    def test_the_depth_is_written_back_as_the_scope_takes_it(self):
+        # the query answers the number, the command takes the menu word (the number is refused with -222)
+        self.assertEqual(mc.depth_word("1.0000E+04"), "10k")
+        self.assertEqual(mc.depth_word("1.0000E+03"), "1k")
+        self.assertEqual(mc.depth_word("1.0000E+06"), "1M")
+        self.assertEqual(mc.depth_word("2.5000E+07"), "25M")
+        self.assertEqual(mc.depth_word("1.0000E+08"), "100M")
+        self.assertEqual(mc.depth_word("AUTO"), "AUTO")
+        self.assertEqual(mc.depth_word("1500"), "1500")
+        self.assertEqual(mc.depth_word("x"), "x")
+
+    def test_settings_compare_as_numbers_or_words(self):
+        self.assertTrue(mc.same_setting("2.000000E-6", "2e-06"))
+        self.assertTrue(mc.same_setting("CHAN1", "chan1"))
+        self.assertFalse(mc.same_setting("1.0000E+06", "1.0000E+04"))
+        self.assertIn(":ACQuire:MDEPth", mc.RESTORE)
+        self.assertLess(mc.RESTORE.index(":MASK:OPERate"), mc.RESTORE.index(":MASK:ENABle"))
+
     def test_channel_mask(self):
         self.assertEqual(mc.channel_mask(0x00420003), 0x3)
 
