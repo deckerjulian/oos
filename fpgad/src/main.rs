@@ -1164,7 +1164,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
             })?;
             println!("  {} configurations, largest change {:.2} %", r.measured, r.worst * 100.0);
             if has("--save") {
-                for f in sc::save(&r, &rigol)? {
+                for f in sc::save(&r, &rigol).map_err(|e| e.to_string())? {
                     println!("  saved {}", f);
                 }
             }
@@ -1223,7 +1223,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
                     let mut nb = block.clone();
                     sc::rebuild_scales(&mut nb, &keys, &got);
                     let (b, from) = calfile::load_first("cal_vertical.hex", &[calfile::OOS_CAL_DIR, &rigol]).ok_or("no cal_vertical.hex")?;
-                    let p = sc::vertical_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, &[(var, ch, nb)]);
+                    let p = sc::vertical_payload(calfile::parse(&b).map_err(|e| format!("{e:?}"))?, &[(var, ch, nb)])?;
                     calfile::save(calfile::OOS_CAL_DIR, "cal_vertical.hex", &p, calfile::now()).map_err(|e| e.to_string())?;
                     println!("  saved {}/cal_vertical.hex block group {} CH{} (base: {})", calfile::OOS_CAL_DIR, var, ch + 1, from);
                 }

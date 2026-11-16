@@ -30,6 +30,10 @@ Changed:
 
 Fixed:
 
+- Self-cal stages every result before it replaces a file, keeps the live files present during backup and
+  replacement, and restores the earlier files after a failed publish. A stale backup temporary no longer prevents
+  later saves. A failed final directory sync warns and reloads the tables in the UI; the command line exits non-zero
+  with the files published. Short vertical calibration tables grow without a slice panic; malformed ones are refused.
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
   only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
   keeps the panel's bars while the external display has the waveform.

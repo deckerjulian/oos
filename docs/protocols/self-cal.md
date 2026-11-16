@@ -35,8 +35,10 @@ must be pressed twice within 10 s; the first press shows the preconditions (sect
 AFEs in the acquisition thread. A roll acquisition is stopped first. Status shows configurations done of total, the
 current channel and pass. Cancel ends the run at the next configuration and nothing is kept.
 
-On success the results are saved to `/oos/cal` and take effect at the next set-up. `oos-fpgad selfcal
-entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to `/oos/cal` only.
+On success the results are saved to `/oos/cal` and take effect at the next set-up. In the UI, a final directory-fsync
+failure is reported as a warning and the published tables are reloaded. `oos-fpgad selfcal
+entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to `/oos/cal` only; a final
+directory-fsync failure exits non-zero with the files already published.
 
 ### 1.2 Items and order
 
@@ -273,8 +275,21 @@ Verified on the unit's files (both CRCs). `hal::dho::calfile::build` reproduces 
 Stock files are written in place, without a temporary file, so a crash mid-write can leave a broken file. A reader rejects
 a file on open failure, short read, wrong header size, CRC or length mismatch, and takes the next location.
 
-OOS writes atomically (`hal::dho::calfile::save`): `name.new`, fsync, the old file to `name.bak`, rename, directory fsync. It
-refuses any path under `/rigol`. OOS stamps UTC time, the unit has no time zone set under OOS.
+OOS stages and fsyncs every result before replacing any file (`hal::dho::calfile::save_all`). A stale `name.bak.new`
+is removed before the current live file is hard-linked there. The directory is synced, then the link renamed over
+`name.bak`. Renaming `name.new` over the live name keeps the live path readable throughout replacement. A publish
+error restores earlier files, attempting every restore and reporting rollback errors. The backup holds the live file
+from before this save; rollback does not restore the older backup generation. Temporary-file cleanup errors are
+reported.
+A failed rollback rename returns `Failed` with some new files live; memory and disk may differ until restart.
+
+Each replacement is atomic, but separate renames are not a transaction across power loss. A failed final directory
+fsync has a distinct error: all new files are live, so the UI reloads them and reports uncertain durability. Paths
+under `/rigol` are refused. OOS stamps UTC time, the unit has no time zone set under OOS. These save failure paths
+are tested on the host, not yet verified on hardware.
+
+A short vertical base containing whole channel groups grows by copying its last group, as the reader's fallback
+does, before changed records are written. Empty or partial groups are rejected without publishing any result.
 
 ### 7.2 What the self-cal writes
 

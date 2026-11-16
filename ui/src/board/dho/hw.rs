@@ -15,6 +15,22 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
+#[cfg(any(target_os = "linux", test))]
+fn selfcal_saved(
+    result: Result<Vec<String>, oos_hal::dho::calfile::SaveError>,
+    reload: impl FnOnce(),
+) -> Result<String, String> {
+    use oos_hal::dho::calfile::SaveError;
+    let message = match result {
+        Ok(files) => format!("saved {}", files.join(", ")),
+        Err(e @ SaveError::PublishedDirectorySync(_)) => format!("warning: {}", e),
+        Err(e) => return Err(e.to_string()),
+    };
+    // The published tables take effect at the next set-up even when durability is uncertain.
+    reload();
+    Ok(message)
+}
+
 /// Time base from which the hardware source streams in roll mode: 200 ms/div (stock: 50 ms/div). Below it the stream
 /// comes out too fast for its time axis with two or four channels, a normal acquisition is right there.
 pub const ROLL_TDIV: f64 = 0.2;
@@ -389,7 +405,7 @@ fn core_trim(bar: &mut oos_hal::dho::bus::Bar1, state: &mut oos_hal::dho::seq::S
                 }
                 overlay.set(mode, &t.offsets);
                 if let Err(e) = calfile::save(calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, &overlay.to_bytes(), calfile::now()) {
-                    eprintln!("oos-ui hw: core offsets: {}/{} not saved: {}", calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, e);
+                    eprintln!("oos-ui hw: core offsets: {}/{} save: {}", calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, e);
                 }
             }
             t.matched != 0 && t.skipped == 0
@@ -1505,23 +1521,20 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             prog_out.lock().unwrap().cal_progress = Some((d, t, s.to_string()));
                         });
                         match r {
-                            Ok(r) => oos_hal::dho::selfcal::save(&r, &cal_dir).map(|files| format!("{} configurations, largest change {:.2} %, saved {}", r.measured, r.worst * 100.0, files.join(", "))),
+                            Ok(r) => selfcal_saved(oos_hal::dho::selfcal::save(&r, &cal_dir), || {
+                                cal = afe::Cal::load(&cal_dir).ok();
+                                cal_adc = adc::CalAdc::load(&cal_dir).ok();
+                                if let Some(c) = cal_adc.as_mut() { trim_overlay.apply(c); }
+                                (trim_done, trim_tries) = ([false; 11], [0; 11]);
+                            }).map(|saved| format!(
+                                "{} configurations, largest change {:.2} %, {}", r.measured, r.worst * 100.0, saved
+                            )),
                             Err(e) => Err(e),
                         }
                     }
                     _ => Err("self-cal needs the AFE bus (--afe) and the calibration files".into()),
                 };
                 status(format!("self-cal CH{:?}: {}", chans.iter().map(|c| c + 1).collect::<Vec<_>>(), match &res { Ok(s) => format!("done, {}", s), Err(e) => format!("failed: {}", e) }));
-                // the new tables take effect at the next set-up
-                if res.is_ok() {
-                    cal = afe::Cal::load(&cal_dir).ok();
-                    cal_adc = adc::CalAdc::load(&cal_dir).ok();
-                    // the matched offsets over the new trims; every mode is matched again from there
-                    if let Some(c) = cal_adc.as_mut() {
-                        trim_overlay.apply(c);
-                    }
-                    (trim_done, trim_tries) = ([false; 11], [0; 11]);
-                }
                 current = None;
                 let mut g = out.lock().unwrap();
                 (g.cal_progress, g.cal_result, g.cal_cancel) = (None, Some(res), false);
@@ -2454,6 +2467,29 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selfcal_reloads_published_files_and_warns_on_sync_failure() {
+        use oos_hal::dho::calfile::SaveError;
+        for outcome in [
+            Ok(vec!["cal_vertical.hex".into()]),
+            Err(SaveError::PublishedDirectorySync(std::io::Error::other("sync failed"))),
+            Err(SaveError::Failed(std::io::Error::other("publish failed"))),
+        ] {
+            let published = !matches!(&outcome, Err(SaveError::Failed(_)));
+            let warning = matches!(&outcome, Err(SaveError::PublishedDirectorySync(_)));
+            let mut reloads = 0;
+            let result = super::selfcal_saved(outcome, || reloads += 1);
+            assert_eq!(reloads, usize::from(published));
+            assert_eq!(result.is_ok(), published);
+            if warning {
+                let message = result.unwrap();
+                assert!(message.contains("warning:"));
+                assert!(message.contains("files published; directory fsync failed: sync failed"));
+            } else if !published {
+                assert_eq!(result.unwrap_err(), "publish failed");
+            }
+        }
+    }
 
     // Break it catches: SINGLE armed for a whole batch (248 frames at 1 us/div on the unit, all but the first unseen)
     #[test]
