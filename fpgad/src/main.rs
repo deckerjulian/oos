@@ -13,9 +13,9 @@
 //!   oos-fpgad fpga-boot [--slot 0x400000] [--progress FILE]   only the BOOT command (start of rcS: the bitstream loads
 //!                                          while Linux starts the rest); its uptime goes to /tmp/oos-fpga-booted
 //!   oos-fpgad cold-boot [--execute] [--power-on [--slot 0x400000] [--booted]] [--ignore-clock] [--progress FILE]
-//!                                          (refused while XDMA is loaded: power cycle); --booted: the BOOT command
-//!                                          was sent by `fpga-boot`, only the rest of the wait; --progress: start-up
-//!                                          screen lines (oos_hal::bootstatus), then the temperature check
+//!                                          (refused while XDMA or the PCIe host is loaded: power cycle); --booted:
+//!                                          BOOT was sent by `fpga-boot`, only the rest of the wait; --progress:
+//!                                          start-up screen lines (oos_hal::bootstatus), then the temperature check
 //!                                          without --execute: dry run against the unit model (runs anywhere);
 //!                                          --execute: cold boot with the FPGA already on PCIe; --power-on: first the
 //!                                          BOOT command (slots 0x0 / 0x400000 only) and the PCIe/xdma bring-up;
@@ -53,6 +53,8 @@
 //!                                          over-temperature guard (SoC > 90 C or FPGA > 75 C): warning + beep after
 //!                                          3 periods, power off via the panel MCU after 11 (only with --power-off)
 //!
+//! `fpga-boot` and `cold-boot`: --force bypasses both loaded-module guards; a retry can hang the SoC.
+//!
 //! Options (defaults = the warm hand-over of 2026-11-02: CH1, 200 us/div, Auto depth, 1 V/div):
 //!   --mask 1           channel mask (bit0 = CH1)          --app-mask 1   channel mask the stock system left behind
 //!   --tdiv 200e-6      time/div in s                       --depth 0      memory depth (0 = Auto)
@@ -82,6 +84,7 @@
 //! OOS_CAL_DIR (default /rigol/data).
 
 mod board;
+mod boot_guard;
 mod compcheck;
 
 use oos_hal::dho::seq::{self, Settings, Step};
@@ -732,11 +735,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
             return Ok(());
         }
     }
-    // unit 2026-11-03: a second cold boot while PCIe/XDMA from the first one are loaded hung the whole SoC (no ping);
-    // a failed cold boot needs a power cycle, never a retry in the same boot
-    if (cmd == "cold-boot" || cmd == "fpga-boot") && std::path::Path::new("/sys/module/xdma").exists() && !has("--force") {
-        return Err("XDMA is already loaded (an earlier cold boot or hand-over in this boot): power cycle the scope instead of retrying".into());
-    }
+    boot_guard::check(cmd, has("--force"), |name| std::path::Path::new("/sys/module").join(name).exists())?;
     #[cfg(target_os = "linux")]
     {
         use oos_hal::dho::bus::{Bar1, Bus};
