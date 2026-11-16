@@ -173,9 +173,25 @@ pub(super) struct StudioTop {
     pub acq: Rect,
     pub measure: Rect,
     pub cursors: Rect,
+    pub display: Rect,
+    pub storage: Rect,
     pub view: Rect,
     pub gear: Rect,
+    /// Autoset, Clear and Force
+    pub autoset: Rect,
+    pub clear: Rect,
+    pub force: Rect,
+    /// 0 full labels, 1 shortened, 2 the shortest
+    pub tier: usize,
 }
+
+const TOP_TIERS: usize = 3;
+/// The labels of the top bar per tier: Autoset, Clear, Force, + Add, Measure, Cursors, Display, Storage, View.
+pub(super) const TOP_LABELS: [[&str; 9]; TOP_TIERS] = [
+    ["Autoset", "Clear", "Force", "+ Add", "Measure", "Cursors", "Display", "Storage", "View"],
+    ["Auto", "Clear", "Force", "+ Add", "Meas", "Cur", "Disp", "Store", "View"],
+    ["Auto", "Clr", "Force", "+", "Meas", "Cur", "Disp", "Store", "View"],
+];
 
 /// The rectangles of the Studio bottom bar.
 #[derive(Clone, Copy)]
@@ -204,6 +220,8 @@ pub(super) const OVERFLOW_W: i32 = 46;
 pub(super) const GROUP_BAND: i32 = 14;
 
 const CHIP_H: i32 = 30;
+/// The two text lines of a pill need both fonts to fit the 30 px: at the Larger text size a pill keeps one line.
+const TWO_LINE_MAX: i32 = 30;
 /// A chip is drawn this high; its touch target is at least 40 px (`hit40`).
 pub(super) const TARGET: i32 = 40;
 const CHIP_Y: i32 = 5;
@@ -351,52 +369,63 @@ impl Ui {
         }
     }
 
+    /// The top bar at the first tier (full labels) that leaves the acquisition caption room, else the shortest: labels
+    /// shorten before anything is dropped, and every button stays reachable.
     pub(super) fn studio_top(&self) -> StudioTop {
+        let mut t = self.studio_top_tier(0);
+        for tier in 1..TOP_TIERS {
+            if t.acq.w >= 120 { break; }
+            t = self.studio_top_tier(tier);
+        }
+        t
+    }
+
+    fn studio_top_tier(&self, tier: usize) -> StudioTop {
         let f = self.fonts();
         let top = self.frame().top;
+        let (pad, floor, gap) = [(28, 40, 6), (22, 38, 6), (14, 34, 4)][tier];
+        let labels = &TOP_LABELS[tier];
         // the same sizes as the Default bar: the status pill at the left, small buttons of the bar height
-        let btn_w = |label: &str| (f.mb.width(label) + 28).max(40);
+        let btn_w = |label: &str| (f.mb.width(label) + pad).max(floor);
         let pill = Rect::new(8, 6, 92.max(30 + f.mb.width("TRIG'D") + 12), 28);
         let single = Rect::new(pill.right() + 4, CHIP_Y, 54, CHIP_H);
-        let mut x = single.right() + 6;
+        let mut x = single.right() + gap;
         // Live: the way back from a loaded file or a SIM, as in the Default bar
         let badge = if self.record_mode() { Rect::new(x, CHIP_Y, btn_w("Live"), CHIP_H) } else { Rect::new(x, CHIP_Y, 0, CHIP_H) };
-        if badge.w > 0 { x = badge.right() + 6; }
+        if badge.w > 0 { x = badge.right() + gap; }
+        // SIM: enters the simulation mode (gone while in it: Live is there then)
         let simbtn = if self.record_mode() { Rect::new(x, CHIP_Y, 0, CHIP_H) } else { Rect::new(x, CHIP_Y, btn_w("SIM"), CHIP_H) };
-        if simbtn.w > 0 { x = simbtn.right() + 6; }
+        if simbtn.w > 0 { x = simbtn.right() + gap; }
         // while the SIM is the source: the preset, a tap opens the SIM panel
         let sim = if self.session_is_sim && self.record_mode() {
-            Rect::new(x, CHIP_Y, (f.mb.width(self.sim_preset_name()) + 56).min(220), CHIP_H)
+            Rect::new(x, CHIP_Y, (f.mb.width(self.sim_preset_name()) + 56).min(if tier == 0 { 220 } else { 170 }), CHIP_H)
         } else { Rect::new(x, CHIP_Y, 0, CHIP_H) };
-        if sim.w > 0 { x = sim.right() + 8; } else { x += 2; }
-        // the right group is laid out from the edge
+        if sim.w > 0 { x = sim.right() + gap; }
+        // Autoset, Clear, Force: the acquisition actions of the front panel
+        let autoset = Rect::new(x, CHIP_Y, btn_w(labels[0]), CHIP_H);
+        let clear = Rect::new(autoset.right() + gap, CHIP_Y, btn_w(labels[1]), CHIP_H);
+        let force = Rect::new(clear.right() + gap, CHIP_Y, btn_w(labels[2]), CHIP_H);
+        x = force.right() + 8;
+        // the right group is laid out from the edge: gear, View, Storage, Display, Cursors, Measure, + Add
         let mut r = top.right() - 8;
         let gear = Rect::new(r - 40, CHIP_Y, 40, CHIP_H);
-        r = gear.x - 6;
-        let view = Rect::new(r - btn_w("View"), CHIP_Y, btn_w("View"), CHIP_H);
-        r = view.x - 6;
-        let cursors = Rect::new(r - btn_w("Cursors"), CHIP_Y, btn_w("Cursors"), CHIP_H);
-        r = cursors.x - 6;
-        let measure = Rect::new(r - btn_w("Measure"), CHIP_Y, btn_w("Measure"), CHIP_H);
-        r = measure.x - 6;
-        let add = Rect::new(r - btn_w("+ Add"), CHIP_Y, btn_w("+ Add"), CHIP_H);
-        // short of room, as in the Default bar: Measure becomes Meas and Cursors Cur
-        if add.x - 10 - x < 120 {
-            let (cu, me) = (btn_w("Cur"), btn_w("Meas"));
-            let cursors = Rect::new(view.x - 6 - cu, CHIP_Y, cu, CHIP_H);
-            let measure = Rect::new(cursors.x - 6 - me, CHIP_Y, me, CHIP_H);
-            let add = Rect::new(measure.x - 6 - btn_w("+ Add"), CHIP_Y, btn_w("+ Add"), CHIP_H);
-            let acq = Rect::new(x, CHIP_Y, (add.x - 10 - x).max(40), CHIP_H);
-            return StudioTop { add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, view, gear };
-        }
+        r = gear.x - gap;
+        let mut place = |label: &str| { let b = Rect::new(r - btn_w(label), CHIP_Y, btn_w(label), CHIP_H); r = b.x - gap; b };
+        let view = place(labels[8]);
+        let storage = place(labels[7]);
+        let display = place(labels[6]);
+        let cursors = place(labels[5]);
+        let measure = place(labels[4]);
+        let add = place(labels[3]);
         let acq = Rect::new(x, CHIP_Y, (add.x - 10 - x).max(40), CHIP_H);
-        StudioTop { add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, view, gear }
+        StudioTop { add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, display, storage, view, gear, autoset, clear, force, tier }
     }
 
     /// Measure and Cursors as the top-bar buttons (`top_buttons`); the others are Studio's own.
     pub(super) fn studio_top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let t = self.studio_top();
-        vec![(TopBtn::Menu(MenuId::Measure), "Measure", t.measure), (TopBtn::Menu(MenuId::Cursor), "Cursors", t.cursors)]
+        vec![(TopBtn::Menu(MenuId::Measure), "Measure", t.measure), (TopBtn::Menu(MenuId::Cursor), "Cursors", t.cursors),
+             (TopBtn::Menu(MenuId::Display), "Display", t.display), (TopBtn::Menu(MenuId::Storage), "Storage", t.storage)]
     }
 
     pub(super) fn draw_studio_top(&self, cv: &mut Canvas) {
@@ -451,10 +480,19 @@ impl Ui {
         let measuring = open(MenuId::Measure) || self.results_panel();
         let cursors = open(MenuId::Cursor) || self.m.cursor != CursorMode::Off;
         let adding = self.menu_open && matches!(self.menu, MenuId::AddPanel);
-        let short = t.measure.w < f.mb.width("Measure") + 20;
-        for (r, label, on) in [(t.add, "+ Add", adding), (t.measure, if short { "Meas" } else { "Measure" }, measuring), (t.cursors, if short { "Cur" } else { "Cursors" }, cursors), (t.view, "View", self.studio.view_menu)] {
+        let displaying = open(MenuId::Display);
+        let storing = open(MenuId::Storage);
+        let labels = &TOP_LABELS[t.tier];
+        for (r, label, on) in [(t.add, labels[3], adding), (t.measure, labels[4], measuring), (t.cursors, labels[5], cursors), (t.display, labels[6], displaying), (t.storage, labels[7], storing), (t.view, labels[8], self.studio.view_menu)] {
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, label, if on { ACCENT } else { TEXT });
+        }
+        // Autoset, Clear, Force: Force is dimmed while no trigger is waiting, and still works
+        let waiting = !self.record_mode() && self.m.run == RunState::Run && self.m.status == TrigStatus::Wait;
+        for (r, label, lit) in [(t.autoset, labels[0], true), (t.clear, labels[1], true), (t.force, labels[2], waiting)] {
+            let pressed = self.touch.down && self.top_hit(r).contains(self.touch.x0, self.touch.y0);
+            btn(cv, r, if pressed { mix(BTN, ACCENT, 60) } else { BTN }, if pressed { ACCENT } else { BTN_BORDER });
+            cv.text_in(&f.mb, r, 1, label, if lit { TEXT } else { DIM });
         }
         let gear_on = open(MenuId::Main) || open(MenuId::Utility) || self.m.touch_lock;
         btn(cv, t.gear, BTN, if gear_on { ACCENT } else { BTN_BORDER });
@@ -465,6 +503,11 @@ impl Ui {
     pub(super) fn studio_bottom(&self) -> StudioBottom {
         let bottom = self.frame().bottom;
         let (y, h) = (bottom.y + 3, CHIP_H);
+        let ph = h;
+        let f = self.fonts();
+        // a ref or math pill is as wide as the name it carries under its own, at least 42
+        let ref_w = |i: usize| (f.s.width(&self.studio_ref_detail(i)) + 12).clamp(REF_CHIP_W, 96);
+        let math_w = |k: usize| (f.s.width(self.m.math_ch(k).op.name()) + 12).clamp(REF_CHIP_W, 96);
         let n = n_ch();
         let mut right = bottom.right() - 4;
         let panel = self.desktop_panel.map(|_| { right -= 46; let r = Rect::new(right, y, 46, h); right -= 4; r });
@@ -483,25 +526,25 @@ impl Ui {
         let la_w = if caps.la { 52 } else { 0 };
         let gen_w = if caps.has_gen() { if self.m.afg_on { 124 } else { 56 } } else { 0 };
         let aux_w = [la_w, gen_w].iter().filter(|w| **w > 0).map(|w| w + 5).sum::<i32>();
-        let small = (shown.len() + maths.len()) as i32 * (REF_CHIP_W + 5) + add_w + 5 + show_w + aux_w;
+        let small = shown.iter().map(|&i| ref_w(i) + 5).sum::<i32>() + maths.iter().map(|&k| math_w(k) + 5).sum::<i32>() + add_w + 5 + show_w + aux_w;
         let room = time.x - 9 - (bottom.x + 4) - small;
         let w_on = if on > 0 { (170).min((room - (on - 1) * 5) / on).max(60) } else { 0 };
-        let mut ch = [Rect::new(0, y, 0, h); NCH];
+        let mut ch = [Rect::new(0, y, 0, ph); NCH];
         let mut x = bottom.x + 4;
         for (c, r) in ch.iter_mut().enumerate().take(n) {
             if !self.m.ch[c].on { continue; }
-            *r = Rect::new(x, y, w_on, h);
+            *r = Rect::new(x, y, w_on, ph);
             x += w_on + 5;
         }
-        let mut refs = [Rect::new(0, y, 0, h); NREF];
+        let mut refs = [Rect::new(0, y, 0, ph); NREF];
         for &i in &shown {
-            refs[i] = Rect::new(x, y, REF_CHIP_W, h);
-            x += REF_CHIP_W + 5;
+            refs[i] = Rect::new(x, y, ref_w(i), ph);
+            x += ref_w(i) + 5;
         }
-        let mut math = [Rect::new(0, y, 0, h); NMATH];
+        let mut math = [Rect::new(0, y, 0, ph); NMATH];
         for &k in &maths {
-            math[k] = Rect::new(x, y, REF_CHIP_W, h);
-            x += REF_CHIP_W + 5;
+            math[k] = Rect::new(x, y, math_w(k), ph);
+            x += math_w(k) + 5;
         }
         let add = Rect::new(x, y, add_w, h);
         let mut ax = add.right() + 5;
@@ -538,8 +581,18 @@ impl Ui {
             cv.round(badge, 4, if ch.on { col } else { mix(BAR, col, 70) }, 255);
             cv.text_in(&f.sb, badge, 1, &format!("CH{}", c + 1), if ch.on { DARK_TEXT } else { mix(BAR, col, 200) });
             let text = if ch.on { format!("{}/div", si_short(ch.volts_per_div() as f64, ch.unit.name())) } else { "Off".into() };
+            let (tx, tw) = (badge.right() + 8, (r.right() - 20 - badge.right() - 8).max(1));
             cv.set_clip(Rect::new(badge.right() + 2, r.y, (r.right() - 18 - badge.right() - 2).max(1), r.h));
-            cv.text_in(&f.mb, Rect::new(badge.right() + 8, r.y, (r.right() - 20 - badge.right() - 8).max(1), r.h), 0, &text, if ch.on { TEXT } else { DIM });
+            // the second small line: coupling, probe and offset in the channel colour, dimmer; the offset goes first, then
+            // the probe, and a pill too narrow for even the coupling keeps the one line
+            let two_lines = f.mb.size + f.s.size <= TWO_LINE_MAX;
+            match Some(self.studio_ch_detail(c, tw)).filter(|d| ch.on && two_lines && f.s.width(d) <= tw) {
+                Some(d) => {
+                    cv.text(&f.mb, tx, r.y + 13, &text, TEXT);
+                    cv.text(&f.s, tx, r.y + 25, &d, mix(BAR, col, 170));
+                }
+                None => cv.text_in(&f.mb, Rect::new(tx, r.y, tw, r.h), 0, &text, if ch.on { TEXT } else { DIM }),
+            }
             cv.no_clip();
             chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM);
         }
@@ -549,7 +602,7 @@ impl Ui {
             let active = self.selected_workspace_source() == Some(WaveId::Ref(i));
             chip(cv, r, BTN, if active { ACCENT } else { col });
             cv.circle(r.x + 5, r.y + 5, 3, GREEN);
-            cv.text_in(&f.sb, r, 1, &format!("R{}", i + 1), col);
+            self.studio_pill_text(cv, r, &format!("R{}", i + 1), &self.studio_ref_detail(i), col);
         }
         for k in 0..NMATH {
             let r = b.math[k];
@@ -557,7 +610,7 @@ impl Ui {
             let col = MATH_COLORS[k % MATH_COLORS.len()];
             chip(cv, r, BTN, if self.m.math_sel == k && self.selected_workspace_source().is_none() { ACCENT } else { col });
             cv.circle(r.x + 5, r.y + 5, 3, GREEN);
-            cv.text_in(&f.sb, r, 1, &format!("M{}", k + 1), col);
+            self.studio_pill_text(cv, r, &format!("M{}", k + 1), self.m.math_ch(k).op.name(), col);
         }
         if b.add.w > 0 {
             chip(cv, b.add, BTN, if self.studio.ch_picker { ACCENT } else { BTN_BORDER });
@@ -642,6 +695,32 @@ impl Ui {
             cv.text_in(&f.s, r, 1, "Panel", if on { ACCENT } else { TEXT });
         }
         self.draw_studio_ch_picker(cv);
+    }
+
+    /// The second line of a channel pill: "DC {b7} 1{d7} {b7} 4.75 V". Short of room the offset goes first, then the probe.
+    pub(super) fn studio_ch_detail(&self, c: usize, room: i32) -> String {
+        let ch = &self.m.ch[c];
+        let f = self.fonts();
+        let probe = format!("{}×", ch.probe);
+        let full = format!("{} · {} · {}", ch.coupling.name(), probe, si_short(ch.offset as f64, self.m.unit(c)));
+        if f.s.width(&full) <= room { return full; }
+        let two = format!("{} · {}", ch.coupling.name(), probe);
+        if f.s.width(&two) <= room { two } else { ch.coupling.name().to_string() }
+    }
+
+    /// What a ref pill says under its name: the signal or file name.
+    pub(super) fn studio_ref_detail(&self, i: usize) -> String {
+        self.refs.get(i).and_then(Option::as_ref).map(|r| r.label.clone()).unwrap_or_default()
+    }
+
+    /// The text of a ref or math pill: its name, and under it a small line (the signal, the operation) when it fits.
+    fn studio_pill_text(&self, cv: &mut Canvas, r: Rect, name: &str, detail: &str, col: Rgb) {
+        let f = self.fonts();
+        if detail.is_empty() || f.sb.size + f.s.size > TWO_LINE_MAX || f.s.width(detail) > r.w - 6 { return cv.text_in(&f.sb, r, 1, name, col); }
+        cv.set_clip(r.inset(2));
+        cv.text(&f.sb, r.x + (r.w - f.sb.width(name)) / 2, r.y + 13, name, col);
+        cv.text(&f.s, r.x + (r.w - f.s.width(detail)) / 2, r.y + 25, detail, mix(BAR, col, 170));
+        cv.no_clip();
     }
 
     /// The badges are hidden and there are some to show: the bottom bar keeps a button for them.
@@ -801,6 +880,7 @@ impl Ui {
         }
         if self.md_menu_tap(x, y) { return true; }
         if self.md_hide_bar().is_some_and(|(bar, _)| bar.contains(x, y)) && self.md_undo_tap(x, y) { return true; }
+        if self.md_undo_bar().is_some_and(|(bar, _)| bar.contains(x, y)) && self.md_undo_tap(x, y) { return true; }
         if self.studio_popup_tap(x, y) { return true; }
         if let Some(k) = self.dock_float_at(x, y) { return self.dock_float_tap(k, x, y); }
         if self.studio_zoom_tap(x, y) { return true; }
@@ -843,11 +923,19 @@ impl Ui {
         if t.badge.w > 0 && hit(t.badge) {
             self.return_to_live();
         } else if t.simbtn.w > 0 && hit(t.simbtn) {
-            if self.menu_open && self.menu == MenuId::Sim { self.close_menu(); } else { self.open_menu(MenuId::Sim); }
+            // SIM: the simulation mode (Live goes back); the SIM sheet, with Add to ref, is in the Menu
+            if self.menu_open { self.close_menu(); }
+            self.sim_activate(Item::SimPlay);
         } else if hit(t.run) {
             self.studio_run_stop();
         } else if hit(t.single) {
             self.studio_single();
+        } else if hit(t.autoset) {
+            self.key(key::AUTO);
+        } else if hit(t.clear) {
+            self.key(key::CLEAR);
+        } else if hit(t.force) {
+            self.key(key::FORCE);
         } else if t.sim.w > 0 && hit(t.sim) {
             if self.menu_open { self.close_menu(); }
             self.studio_set_view(StudioView::Sim);
@@ -859,6 +947,10 @@ impl Ui {
             self.open_meas_list();
         } else if hit(t.cursors) {
             self.studio_cursors_tap();
+        } else if hit(t.display) {
+            self.toggle_menu(MenuId::Display);
+        } else if hit(t.storage) {
+            self.toggle_menu(MenuId::Storage);
         } else if hit(t.view) {
             if self.menu_open { self.close_menu(); }
             self.studio.popup = None;

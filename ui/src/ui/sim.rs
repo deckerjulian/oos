@@ -27,6 +27,8 @@ struct Request {
     guard: String,
     trigger: Option<super::reference_search::SimTrigger>,
     bus_trigger: Option<Result<sim_bus_candidate::Plan, &'static str>>,
+    /// Add to ref: the result is only written to the slot, no SIM session starts
+    add_only: bool,
 }
 
 struct Generated {
@@ -139,6 +141,7 @@ impl Ui {
             Item::SimPj,
             Item::SimPjHz,
             Item::SimSlot,
+            Item::SimAddRef,
             Item::SimPlay,
             Item::SimShow,
             Item::SimDefaults,
@@ -154,7 +157,7 @@ impl Ui {
 
     pub(super) fn sim_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SimPlay | Item::SimLive | Item::SimDefaults => Kind::Action,
+            Item::SimPlay | Item::SimAddRef | Item::SimLive | Item::SimDefaults => Kind::Action,
             Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => Kind::Choice,
             Item::SimRate | Item::SimHigh | Item::SimLow | Item::SimRise | Item::SimBw | Item::SimDeemph | Item::SimNoise | Item::SimRj | Item::SimPj | Item::SimPjHz
             | Item::SimSscDeviation | Item::SimSscHz | Item::SimDcd | Item::SimCorrRj | Item::SimCorrHz => Kind::Value,
@@ -186,7 +189,8 @@ impl Ui {
             Item::SimPj => "PJ peak",
             Item::SimPjHz => "PJ freq",
             Item::SimSlot => "Slot",
-            Item::SimPlay => "Play",
+            Item::SimPlay => "Run simulation mode",
+            Item::SimAddRef => "Add to ref",
             Item::SimLive => "Live",
             Item::SimShow => "Show",
             Item::SimDefaults => "Defaults",
@@ -217,7 +221,7 @@ impl Ui {
             Item::SimPj => si_short(m.sim_pj, "s"),
             Item::SimPjHz => if m.sim_pj > 0.0 { si_short(m.sim_pjhz, "Hz") } else { "off".into() },
             Item::SimSlot => format!("R{}", m.sim_slot + 1),
-            Item::SimPlay => String::new(),
+            Item::SimPlay | Item::SimAddRef => String::new(),
             Item::SimDefaults => String::new(),
             Item::SimShow => match &self.refs[m.sim_slot] {
                 None => "empty".into(),
@@ -288,6 +292,7 @@ impl Ui {
     pub(super) fn sim_activate(&mut self, it: Item) -> bool {
         match it {
             Item::SimLive => self.return_to_live(),
+            Item::SimAddRef => self.sim_add_to_ref(),
             Item::SimPlay if self.sim_generating() => {
                 if self.session_is_sim && self.m.run==RunState::Run { self.record_key(key::RUNSTOP); }
                 else { self.sim_cancel_generation(); }
@@ -382,7 +387,7 @@ impl Ui {
     fn sim_capture_request(&self, lane: Lane, slot: usize, continuing: bool, fresh: bool, run: bool) -> Request {
         let model = self.sim_trigger_model(&lane, slot, continuing);
         let vpd = self.sim_candidate_vpd(&lane, slot, continuing, run);
-        Request { id: 0, lane, slot, continuing, fresh, run,
+        Request { id: 0, lane, slot, continuing, fresh, run, add_only: false,
             guard: self.sim_trigger_guard(&lane, slot, continuing, run), trigger: self.prepare_sim_trigger(&model, slot, vpd),
             bus_trigger: if self.m.trig_on_la(){Some(Err("SIM qualification on logic-analyzer inputs is unavailable"))}else if matches!(model.trig_type,TrigType::Pattern|TrigType::Duration){Some(Err("SIM Pattern/Duration qualification is unavailable"))}else if model.trig_type==TrigType::Bus{Some(self.prepare_sim_bus(&model,slot,vpd))}else{None} }
     }
@@ -432,6 +437,57 @@ impl Ui {
             self.toast(&format!("Generating {} ({:.1} M samples)", lane.name, count as f64 / 1e6));
         }
         Ok(())
+    }
+
+    /// Add to ref: the signal of the SIM sheet is written to the chosen slot, named after the signal, and nothing else
+    /// changes: no SIM mode, no other slot, no channel switched off.
+    pub(super) fn sim_add_to_ref(&mut self) {
+        let slot = self.m.sim_slot;
+        if self.session_is_sim {
+            return self.toast("Leave the simulation mode (Live) to add a signal to a ref");
+        }
+        let lane = self.sim_lane();
+        let count = match serial::sample_count(&lane) { Ok(c) => c, Err(e) => return self.toast(&format!("SIM: {e}")) };
+        if count <= 65_536 {
+            match serial::try_generate(&lane) {
+                Ok(v) => self.sim_store_ref(slot, &lane, v),
+                Err(e) => self.toast(&format!("SIM: {e}")),
+            }
+            return;
+        }
+        if self.sim_generating() { return self.toast("SIM is busy generating"); }
+        if self.sim_generation.is_none() {
+            match Generation::new() { Ok(w) => self.sim_generation = Some(w), Err(e) => return self.toast(&format!("SIM: {e}")) }
+        }
+        let name = lane.name;
+        let request = Request { id: 0, lane, slot, continuing: false, fresh: false, run: false, guard: String::new(), trigger: None, bus_trigger: None, add_only: true };
+        match self.sim_generation.as_mut().unwrap().submit(request) {
+            Ok(()) => self.toast(&format!("Generating {name} ({:.1} M samples)", count as f64 / 1e6)),
+            Err(e) => self.toast(&format!("SIM: {e}")),
+        }
+    }
+
+    fn sim_store_ref(&mut self, slot: usize, lane: &Lane, v: Vec<f32>) {
+        let dt = serial::dt_of(lane);
+        let span = (lane.v_high - lane.v_low).abs().max(0.2);
+        let replaced = self.refs[slot].as_ref().filter(|r| r.label != lane.name).map(|r| r.label.clone());
+        self.refs[slot] = Some(RefWave {
+            src: 0,
+            color: slot,
+            label: lane.name.into(),
+            t0: -0.5 * v.len() as f64 * dt,
+            dt,
+            v: v.into(),
+            vpd: nearest_vdiv((span / 4.0) as f32),
+            offset: (-0.5 * (lane.v_high + lane.v_low)) as f32,
+            on: true,
+        });
+        self.invalidate_reference_eye();
+        self.measure_refs();
+        match replaced {
+            Some(old) => self.toast(&format!("{} added to R{}, replacing {}", lane.name, slot + 1, old)),
+            None => self.toast(&format!("{} added to R{}", lane.name, slot + 1)),
+        }
     }
 
     /// A new simulation does not overwrite a ref the user loaded: it moves to the first free slot. With every slot in
@@ -504,6 +560,10 @@ impl Ui {
 
     /// Commit one successful result. Overview is the stored record; zoom is ~eight UI.
     fn sim_finish(&mut self, request: Request, generated: Generated) {
+        if request.add_only {
+            if self.session_is_sim { return; }
+            return self.sim_store_ref(request.slot, &request.lane, generated.samples);
+        }
         if request.guard != self.sim_trigger_guard(&request.lane, request.slot, request.continuing, request.run) {
             // This result belongs to a superseded trigger/source/scale snapshot.
             // Keep the last accepted record; the next running tick retries.

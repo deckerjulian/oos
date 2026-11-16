@@ -5,6 +5,7 @@
 //! channel. Every gesture has a tap equivalent: the row's menu (Settings, Pin, Move up, Move down, Remove).
 use super::meascatalog::Preview;
 use super::studio::{MeasKey, StudioDrag, StudioView};
+use super::workspace::Action;
 use super::*;
 
 /// A swipe starts after this much horizontal movement, when it is more horizontal than vertical.
@@ -39,6 +40,15 @@ pub(super) struct Hold {
     pub at: f64,
 }
 
+/// A channel, ref or math channel turned off by a swipe down, kept until the Undo bar goes.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SrcUndo {
+    pub on: HoldOn,
+    /// the math operation that was on
+    pub op: Option<MathOp>,
+    pub at: f64,
+}
+
 /// A removed measurement, kept until the Undo bar goes.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Undo {
@@ -59,6 +69,10 @@ pub(super) struct Md {
     /// a row that springs back after a short swipe
     pub spring: Option<(MeasKey, f32)>,
     pub undo: Option<Undo>,
+    /// a channel, ref or math turned off by a swipe down on its pill: kept for the Undo bar
+    pub src_undo: Option<SrcUndo>,
+    /// a finger went down on a badge or a bottom-bar pill: where, for the swipe down
+    pub dn: Option<(HoldOn, i32, i32)>,
     /// the row menu (the tap equivalent of the gestures)
     pub menu: Option<MeasKey>,
     /// rows that show their statistics although the Statistics switch is off
@@ -129,9 +143,16 @@ impl Ui {
 
     /// The Undo bar: the bottom of the list.
     pub(super) fn md_undo_bar(&self) -> Option<(Rect, Rect)> {
-        self.studio.md.undo?;
-        let g = self.studio_panel_geo()?;
-        let bar = Rect::new(g.list.x, g.list.bottom() - BAR_H, g.list.w, BAR_H);
+        if self.studio.md.undo.is_none() && self.studio.md.src_undo.is_none() { return None; }
+        // with the panel it is at the foot of the list; without it, under the top bar like the hide bar
+        let bar = match self.studio_panel_geo() {
+            Some(g) => Rect::new(g.list.x, g.list.bottom() - BAR_H, g.list.w, BAR_H),
+            None => {
+                let w = 300;
+                let below = if self.studio.md.hide_undo.is_some() { BAR_H + 6 } else { 0 };
+                Rect::new((self.scr.w - w) / 2, self.frame().top.bottom() + 6 + below, w, BAR_H)
+            }
+        };
         Some((bar, Rect::new(bar.right() - 92, bar.y, 92, bar.h)))
     }
 
@@ -213,6 +234,7 @@ impl Ui {
     /// Every frame: the Undo bar times out, a short swipe springs back, a held finger picks the row or badge up.
     pub(super) fn md_tick(&mut self) {
         if self.studio.md.undo.is_some_and(|u| self.now - u.at > UNDO_S) { self.studio.md.undo = None; }
+        if self.studio.md.src_undo.is_some_and(|u| self.now - u.at > UNDO_S) { self.studio.md.src_undo = None; }
         if self.studio.md.hide_undo.is_some_and(|t| self.now - t > UNDO_S) { self.studio.md.hide_undo = None; }
         if let Some((key, off)) = self.studio.md.spring {
             let off = off * 0.6;
@@ -248,6 +270,7 @@ impl Ui {
         self.studio.md.hold = None;
         self.studio.md.cand = None;
         self.studio.md.spring = None;
+        self.studio.md.dn = None;
         // the Menu: the page scrolls with the finger
         if self.menu_open && self.menu == MenuId::Main && self.sheet_active() {
             if self.menu_geo().view.contains(x, y) {
@@ -277,8 +300,16 @@ impl Ui {
         if self.studio_badges_visible() && self.studio_row().contains(x, y) {
             if let Some((key, _)) = self.studio_badges().into_iter().find(|(_, r)| r.contains(x, y)) {
                 self.studio.md.hold = Some(Hold { on: HoldOn::Badge(key), x0: x, y0: y, x, y, at: self.now });
+                self.studio.md.dn = Some((HoldOn::Badge(key), x, y));
                 return self.studio_eat(x, y);
             }
+        }
+        // a pill of the bottom bar (channel, ref, math): a tap selects it, a hold opens its quick actions, a swipe down
+        // off the screen turns it off. The bar is clear of the panels, so this goes before their rules.
+        if let Some(chip) = self.md_chip_at(x, y) {
+            self.studio.md.hold = Some(Hold { on: chip, x0: x, y0: y, x, y, at: self.now });
+            self.studio.md.dn = Some((chip, x, y));
+            return self.studio_eat(x, y);
         }
         // the cards: a drag scrolls, a tap acts
         if self.panel_is_cards() { return false; }
@@ -288,11 +319,6 @@ impl Ui {
                 self.studio.md.hdown = Some((x, y, self.studio.panel.hx.clamp(0, self.detail_hmax(g.list.w))));
             }
             return false;
-        }
-        // a math or reference chip: a tap selects it, a hold opens its quick actions
-        if let Some(chip) = self.md_chip_at(x, y) {
-            self.studio.md.hold = Some(Hold { on: chip, x0: x, y0: y, x, y, at: self.now });
-            return self.studio_eat(x, y);
         }
         // a row of the list: a drag scrolls, a clear sideways drag swipes it, a hold picks it up
         if let Some((key, _)) = self.md_row_at(x, y) {
@@ -374,7 +400,13 @@ impl Ui {
         self.studio.md.hold = None;
         self.studio.md.cand = None;
         self.studio.md.hdown = None;
+        let dn = self.studio.md.dn.take();
         match drag {
+            // a badge or a pill dragged down off the screen: removed / turned off, with the Undo bar
+            StudioDrag::Eat { .. } if dn.is_some_and(|(_, x0, y0)| self.md_swiped_off(x0, y0, x, y)) => {
+                self.md_swipe_down(dn.unwrap().0);
+                true
+            }
             StudioDrag::HScroll { .. } => true,
             StudioDrag::Swipe { key, x0, .. } => {
                 let dx = (x - x0).min(0);
@@ -398,6 +430,73 @@ impl Ui {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// A drag that went mostly down and ended at the bottom edge of the screen (the finger cannot go further): off the
+    /// screen. The pills are at the foot of the screen, so the way is short; a tap that wobbles is no swipe.
+    pub(super) fn md_swiped_off(&self, x0: i32, y0: i32, x: i32, y: i32) -> bool {
+        let (dx, dy) = (x - x0, y - y0);
+        dy >= 12 && dy > dx.abs() && y >= self.scr.h - 12
+    }
+
+    /// The swipe down: a badge is removed, a channel, ref or math channel is turned off; the Undo bar brings it back.
+    fn md_swipe_down(&mut self, on: HoldOn) {
+        match on {
+            HoldOn::Badge(key) => { self.md_remove(key); self.studio.md.src_undo = None; }
+            HoldOn::Chan(c) => {
+                if !self.m.ch[c].on { return; }
+                self.workspace_action(Action::Source(WaveId::Ch(c)));
+                if self.m.ch[c].on { return; }
+                self.md_src_undo(on, None);
+            }
+            HoldOn::Ref(i) => {
+                if !self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on) { return; }
+                self.workspace_action(Action::Source(WaveId::Ref(i)));
+                if self.refs[i].as_ref().is_some_and(|r| r.on) { return; }
+                self.md_src_undo(on, None);
+            }
+            HoldOn::Math(k) => {
+                let op = self.m.math_ch(k).op;
+                if op == MathOp::Off { return; }
+                self.math_turn_off(k);
+                self.md_src_undo(on, Some(op));
+            }
+            HoldOn::Row(_) => {}
+        }
+    }
+
+    fn md_src_undo(&mut self, on: HoldOn, op: Option<MathOp>) {
+        self.studio.md.undo = None;
+        self.studio.md.src_undo = Some(SrcUndo { on, op, at: self.now });
+    }
+
+    /// Undo of a swipe down: the source is on again.
+    pub(super) fn md_src_restore(&mut self, s: SrcUndo) {
+        match s.on {
+            HoldOn::Chan(c) => { self.activate_live_channel(c); }
+            HoldOn::Ref(i) => {
+                if let Some(r) = self.refs[i].as_mut() { r.on = true; }
+                self.select_workspace_source(WaveId::Ref(i));
+            }
+            HoldOn::Math(k) => {
+                if let Some(op) = s.op {
+                    if k == self.m.math_sel { self.m.math = op; } else { self.m.maths[k].op = op; }
+                    self.settings_changed();
+                }
+            }
+            _ => {}
+        }
+        self.relayout();
+    }
+
+    /// What the Undo bar says: the name of the removed source.
+    fn md_src_label(&self, on: HoldOn) -> String {
+        match on {
+            HoldOn::Chan(c) => format!("CH{}", c + 1),
+            HoldOn::Ref(i) => format!("R{}", i + 1),
+            HoldOn::Math(k) => format!("M{}", k + 1),
+            _ => String::new(),
         }
     }
 
@@ -517,7 +616,9 @@ impl Ui {
         }
         let Some((bar, button)) = self.md_undo_bar() else { return false };
         if !bar.contains(x, y) { return false; }
-        if button.contains(x, y) { self.md_undo(); }
+        if button.contains(x, y) {
+            if let Some(s) = self.studio.md.src_undo.take() { self.md_src_restore(s); } else { self.md_undo(); }
+        }
         true
     }
 
@@ -534,15 +635,15 @@ impl Ui {
             btn(cv, button.inset(4), BTN, ACCENT);
             cv.text_in(&f.mb, button, 1, "Undo", ACCENT);
         }
-        if let (Some((bar, button)), Some(u)) = (self.md_undo_bar(), self.studio.md.undo) {
+        let undo_of = self.studio.md.undo.map(|u| (self.md_key_label(u.key), u.at)).or_else(|| self.studio.md.src_undo.map(|s| (self.md_src_label(s.on), s.at)));
+        if let (Some((bar, button)), Some((name, at))) = (self.md_undo_bar(), undo_of) {
             cv.round(bar, 6, BTN_BORDER, 255);
             cv.round(bar.inset(1), 5, PANEL_BG, 255);
-            let name = self.md_key_label(u.key);
             cv.set_clip(Rect::new(bar.x, bar.y, (button.x - bar.x).max(1), bar.h));
             cv.text_in(&f.s, Rect::new(bar.x + 10, bar.y, button.x - bar.x - 14, bar.h), 0, &format!("Removed {name}"), TEXT);
             cv.no_clip();
             // the time left, as a line along the bottom
-            let left = (1.0 - ((self.now - u.at) / UNDO_S) as f32).clamp(0.0, 1.0);
+            let left = (1.0 - ((self.now - at) / UNDO_S) as f32).clamp(0.0, 1.0);
             cv.fill(Rect::new(bar.x + 6, bar.bottom() - 4, ((bar.w - 12) as f32 * left) as i32, 2), ACCENT);
             btn(cv, button.inset(4), BTN, ACCENT);
             cv.text_in(&f.mb, button, 1, "Undo", ACCENT);

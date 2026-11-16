@@ -101,6 +101,8 @@ mod batch21_tests;
 #[cfg(test)]
 mod batch22_tests;
 #[cfg(test)]
+mod batch23_tests;
+#[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
 mod batch13_tests;
@@ -981,6 +983,8 @@ enum Item {
     MeasRemove(u16),
     CatSourceC,
     CatSourceD,
+    /// SIM sheet: write the signal to the chosen ref (no SIM mode)
+    SimAddRef,
 }
 
 #[derive(PartialEq)]
@@ -6403,7 +6407,7 @@ impl Ui {
     fn item_label(&self, it: Item) -> &'static str {
         if it == Item::SimPlay {
             if self.sim_generating() { return "Cancel generation"; }
-            return if !self.session_is_sim { "Start simulation" } else if self.m.run == RunState::Run { "Stop simulation" } else { "Run simulation" };
+            return if !self.session_is_sim { "Run simulation mode" } else if self.m.run == RunState::Run { "Stop simulation" } else { "Run simulation" };
         }
         let t = self.m.trig_type;
         let two_level = matches!(t, TrigType::Slope | TrigType::Runt | TrigType::Window);

@@ -221,12 +221,12 @@ impl Ui {
                 MaskClear => Slot::Foot(1),
                 _ => Slot::Tab(1),
             }),
-            M::Sim => (&["Signal", "Channel", "Jitter", "Output"], |it| match it {
-                SimPreset | SimRate | SimPat | SimHigh | SimLow | SimRise => Slot::Tab(0),
-                SimLive | SimPlay => Slot::Foot(0),
+            M::Sim => (&["Signal", "Channel", "Jitter", "Show"], |it| match it {
+                SimPreset | SimSlot | SimRate | SimPat | SimHigh | SimLow | SimRise => Slot::Tab(0),
+                SimAddRef | SimPlay => Slot::Foot(0),
                 SimBw | SimDeemph | SimNoise => Slot::Tab(1),
                 SimRj | SimPj | SimPjHz | SimSsc | Open(M::SimAdvanced) => Slot::Tab(2),
-                SimDefaults => Slot::Foot(3),
+                SimLive | SimDefaults => Slot::Foot(3),
                 _ => Slot::Tab(3),
             }),
             M::SimAdvanced => (&["Spread spectrum", "Other jitter"], |it| match it {
@@ -436,12 +436,13 @@ impl Ui {
         format!("Store as R{} (next free)", i + 1)
     }
 
-    fn sheet_label(&self, it: Item) -> String {
+    pub(super) fn sheet_label(&self, it: Item) -> String {
         match it {
             Item::SrcOn => {
                 let names: Vec<String> = self.off_sources(self.menu).iter().map(|c| format!("CH{}", c + 1)).collect();
                 if names.is_empty() { "Switch on source".into() } else { format!("Turn on {}", names.join(", ")) }
             }
+            Item::SimAddRef => format!("Add to R{}", self.m.sim_slot + 1),
             Item::RefShow(_) => "Shown".into(),
             Item::RefSaveNext => self.ref_store_next_label(),
             Item::RowF(measrow::RF::Used | measrow::RF::StMean | measrow::RF::StRange | measrow::RF::StN) => self.measrow_text(it).unwrap_or_default(),
@@ -546,7 +547,8 @@ impl Ui {
             let label = if armed { "Tap again to confirm".to_string() } else if it == Item::RefSave {
                 self.ref_store_label()
             } else { self.sheet_label(it) };
-            cv.text_in(&f.mb, b, 1, &label, if red { RED } else { TEXT });
+            let font = if f.mb.width(&label) > b.w - 12 { &f.sb } else { &f.mb };
+            cv.text_in(font, b, 1, &label, if red { RED } else { TEXT });
         }
     }
 

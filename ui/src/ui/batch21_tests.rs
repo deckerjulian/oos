@@ -247,12 +247,12 @@ fn sim_is_in_the_top_bar_when_live_and_live_when_viewing_a_record() {
     assert!(t.simbtn.w > 0 && t.badge.w == 0, "SIM when live, no Live");
     assert!(t.simbtn.right() < t.acq.x + 1 && t.simbtn.h >= 28);
     shot(&mut u, "topbar-sim");
-    tap(&mut u, t.simbtn);
-    assert_eq!(u.menu, MenuId::Sim);
+    // Batch 23: the SIM button enters the simulation mode (the SIM sheet, with Add to ref, is in the Menu)
+    u.open_menu(MenuId::Sim);
     assert!(u.sheet_active());
     u.close_menu();
-    // start the SIM: Live shows and SIM goes; a tap on Live returns
-    u.sim_activate(Item::SimPlay);
+    // the SIM button: Live shows and SIM goes; a tap on Live returns
+    tap(&mut u, t.simbtn);
     u.wait_sim_generation();
     for _ in 0..8 { u.step(0.05); }
     assert!(u.record_mode());
