@@ -200,6 +200,20 @@ fn a_new_decoder_role_takes_a_channel_that_is_on() {
     assert!(!u.m.ch[2].on && !u.m.ch[3].on, "nothing switched on");
 }
 
+// Break it catches: a recorded file (Replay) or a Live stream treated as the demo, whose decoder choice moves the
+// sources to the demo's channels (U6's twin in the decoder, review of 0.1.13).
+#[test]
+fn a_decoder_on_a_replay_keeps_its_sources() {
+    let mut u = ui();
+    u.src = Source::Replay { words: Vec::new(), xinc: 1e-9, yinc: 1.0, yorg: 0.0, yref: 0.0 };
+    u.m.dec_on = true;
+    u.set_dec_proto(Proto::UART);
+    u.m.dec_src = 0;
+    u.set_dec_proto(Proto::SPI);
+    assert_eq!((u.m.dec_src, u.m.dec_src2), (0, 1), "the sources follow the channels that are on, not the demo's");
+    assert!(!u.m.ch[2].on && !u.m.ch[3].on, "nothing switched on");
+}
+
 #[test]
 fn leaving_bus_after_a_recall_leaves_the_recalled_decoder() {
     // what choosing Bus switched on is switched off when Bus is left (`bus_auto`), but only in the set-up it came

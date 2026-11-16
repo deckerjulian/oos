@@ -6419,10 +6419,10 @@ impl Ui {
     }
 
     /// Switches the decoder protocol. The demo takes the sources, channels and trigger that match its bus traffic
-    /// (`Protocol::setup`). On the hardware one setting must not change another (the forum, eTobey): the channels and
-    /// the trigger stay as they are, the sources the protocols share stay, and a role the old protocol did not have
-    /// takes a channel that is on and no other role uses, or none. The protocol's own parameters (threshold, baud, bits
-    /// ...) are set on both.
+    /// (`Protocol::setup`). On every other source (the hardware, Live, Replay of a recorded file) one setting must not
+    /// change another (the forum, eTobey): the channels and the trigger stay as they are, the sources the protocols
+    /// share stay, and a role the old protocol did not have takes a channel that is on and no other role uses, or none.
+    /// The protocol's own parameters (threshold, baud, bits ...) are set on both.
     fn set_dec_proto(&mut self, p: Proto) {
         let Proto::Module(i) = p;
         let s = crate::protocols::get(i).setup();
@@ -6433,7 +6433,7 @@ impl Ui {
             }
             return;
         }
-        let demo = !self.src.is_hw();
+        let demo = self.src.is_demo();
         let m = &mut self.m;
         let changed = m.dec_proto != p;
         let old = m.dec_proto.roles();
