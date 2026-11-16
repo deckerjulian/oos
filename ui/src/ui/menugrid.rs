@@ -2,7 +2,7 @@
 //! The Studio gear sheet is the grouped Menu: a group label at the left and a grid of buttons at the right, in one
 //! scrolling page. A button that opens a sub-menu shows a chevron. Every button has a small line figure of its own.
 //! Nothing about an entry is decided here: the groups and their items are `main_groups`, a tap is `activate`.
-use super::sheet::SHEET_HEAD;
+use super::sheet::{SHEET_FOOT, SHEET_HEAD};
 use super::*;
 
 const PAD: i32 = 12;
@@ -12,6 +12,11 @@ pub(super) const CELL_H: i32 = 40;
 const GAP: i32 = 4;
 const GROUP_GAP: i32 = 12;
 const ICON: i32 = 18;
+/// Room under the last group, so the last row can scroll fully into view.
+const BOTTOM_PAD: i32 = 8;
+/// The least width of a button, and the most buttons in a row.
+const CELL_MIN_W: i32 = 124;
+const MAX_COLS: i32 = 6;
 
 pub(super) struct MenuGroupGeo {
     pub name: &'static str,
@@ -86,43 +91,78 @@ impl Ui {
         s.to_string()
     }
 
-    /// The geometry of the Menu: groups down the page, buttons in two columns. `scroll` is how far the page is moved up.
+    /// Buttons per row in a Menu `w` wide (the sheet): as many as keep a button at least `CELL_MIN_W` wide, up to six.
+    pub(super) fn menu_cols(w: i32) -> i32 {
+        let gw = w - 2 * PAD - GROUP_LABEL_W - 6;
+        ((gw + GAP) / (CELL_MIN_W + GAP)).clamp(1, MAX_COLS)
+    }
+
+    /// Height of the page of the Menu for `cols` buttons per row, with the room under the last row.
+    pub(super) fn menu_content_h(&self, cols: i32) -> i32 {
+        let all = self.main_groups();
+        let height = |n: usize| { let rows = (n as i32 + cols - 1) / cols; rows * CELL_H + (rows - 1) * GAP };
+        (all.iter().map(|(_, items)| height(items.len()) + GROUP_GAP).sum::<i32>() - GROUP_GAP).max(0) + BOTTOM_PAD
+    }
+
+    /// The Menu is the wide overlay: it is the main page of the Studio menu and floats over the waveform.
+    pub(super) fn menu_is_wide(&self) -> bool {
+        self.m.layout == Layout::Studio && self.menu_open && self.menu == MenuId::Main
+    }
+
+    /// The place of the wide Menu: nearly the width of the screen, as high as its page (or as the body, when that is shorter).
+    pub(super) fn menu_wide_rect(&self) -> Rect {
+        let f = self.frame();
+        let y = f.top.bottom();
+        let w = self.scr.w - 16;
+        let avail = (f.bottom.y - y).max(SHEET_HEAD + SHEET_FOOT);
+        let want = SHEET_HEAD + 4 + self.menu_content_h(Self::menu_cols(w)) + 6;
+        Rect::new(8, y, w, want.min(avail))
+    }
+
+    /// The geometry of the Menu: groups down the page, buttons in rows of up to six. The page is moved up by the scroll, which
+    /// is kept inside what the real content height allows (the last row can scroll fully into view, with its padding).
     pub(super) fn menu_geo(&self) -> MenuGeo {
         let r = self.sheet_rect();
         let view = Rect::new(r.x + PAD, r.y + SHEET_HEAD + 4, r.w - 2 * PAD, (r.bottom() - r.y - SHEET_HEAD - 10).max(CELL_H));
-        let scroll = self.sheet.scroll;
+        let cols = Self::menu_cols(r.w);
         let gx = view.x + GROUP_LABEL_W;
         let gw = view.w - GROUP_LABEL_W - 6;
-        let cw = (gw - GAP) / 2;
+        let cw = (gw - (cols - 1) * GAP) / cols;
+        let all = self.main_groups();
+        let height = |n: usize| { let rows = (n as i32 + cols - 1) / cols; rows * CELL_H + (rows - 1) * GAP };
+        let content_h = self.menu_content_h(cols);
+        let scroll = self.sheet.scroll.clamp(0, (content_h - view.h).max(0));
         let mut y = 0;
         let mut groups = Vec::new();
-        for (name, items) in self.main_groups() {
-            let rows = items.len().div_ceil(2) as i32;
-            let h = rows * CELL_H + (rows - 1) * GAP;
+        for (name, items) in all {
+            let h = height(items.len());
             let cells = items.iter().enumerate().map(|(i, &it)| {
-                let (c, row) = ((i % 2) as i32, (i / 2) as i32);
+                let (c, row) = (i as i32 % cols, i as i32 / cols);
                 (it, Rect::new(gx + c * (cw + GAP), view.y + y - scroll + row * (CELL_H + GAP), cw, CELL_H))
             }).collect();
             groups.push(MenuGroupGeo { name, label: Rect::new(view.x, view.y + y - scroll, GROUP_LABEL_W - 6, CELL_H), items: cells });
             y += h + GROUP_GAP;
         }
-        MenuGeo { r, view, groups, content_h: (y - GROUP_GAP).max(0) }
+        MenuGeo { r, view, groups, content_h }
     }
 
     pub(super) fn draw_menu_grid(&self, cv: &mut Canvas) {
         let f = self.fonts();
         self.sheet_draw_chrome(cv, &self.menu_title(MenuId::Main));
         let g = self.menu_geo();
+        // everything of the page is drawn inside the body of the sheet: what is over its edge is cut
         cv.set_clip(g.view);
         for (n, grp) in g.groups.iter().enumerate() {
-            cv.text_in(&f.sb, grp.label, 0, grp.name, LABEL);
+            if grp.label.bottom() >= g.view.y && grp.label.y <= g.view.bottom() {
+                cv.text_in(&f.sb, grp.label, 0, grp.name, LABEL);
+            }
             if n > 0 {
                 let y = grp.label.y - GROUP_GAP / 2 - 1;
-                cv.hline(g.view.x, g.view.right() - 8, y, LINE);
+                if y >= g.view.y && y < g.view.bottom() { cv.hline(g.view.x, g.view.right() - 8, y, LINE); }
             }
             for &(it, c) in &grp.items {
                 if c.bottom() < g.view.y || c.y > g.view.bottom() { continue; }
-                self.draw_menu_cell(cv, it, c);
+                self.draw_menu_cell(cv, it, c, g.view);
             }
         }
         cv.no_clip();
@@ -140,7 +180,7 @@ impl Ui {
         self.studio.md.armed.is_some_and(|(a, t)| a == it && self.now - t < 3.0)
     }
 
-    fn draw_menu_cell(&self, cv: &mut Canvas, it: Item, c: Rect) {
+    fn draw_menu_cell(&self, cv: &mut Canvas, it: Item, c: Rect, view: Rect) {
         let f = self.fonts();
         let armed = self.menu_armed(it);
         let danger = matches!(it, Item::DefaultAct | Item::PowerAct);
@@ -166,9 +206,11 @@ impl Ui {
         let label = if armed { "Tap again".to_string() } else { self.menu_cell_label(it) };
         let room = c.w - 32 - if open { 16 } else { 6 };
         let font = if f.m.width(&label) <= room { &f.m } else { &f.s };
-        cv.set_clip(Rect::new(c.x + 30, c.y, room + 2, c.h));
+        // the label is cut at the edge of the button and of the body of the sheet
+        let (top, bottom) = (c.y.max(view.y), c.bottom().min(view.bottom()));
+        cv.set_clip(Rect::new(c.x + 30, top, room + 2, (bottom - top).max(0)));
         cv.text_in(font, Rect::new(c.x + 30, c.y, room, c.h), 0, &label, ink);
-        cv.no_clip();
+        cv.set_clip(view);
         if open {
             chevron(cv, c.right() - 12, c.y + c.h / 2, 1, if on { ink } else { DIM });
         }

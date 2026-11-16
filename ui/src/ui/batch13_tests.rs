@@ -127,20 +127,18 @@ fn a_narrow_table_drops_sigma_and_count_and_scrolls_sideways() {
     assert_eq!(Ui::detail_cols(700).0.len(), 8);
     // short of room: sigma and count go first
     let (cols, total) = Ui::detail_cols(560);
-    assert_eq!(cols.iter().map(|c| c.0).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 5]);
+    assert_eq!(cols.iter().map(|c| c.0).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 6]);  // by priority: name, value, mean, sigma, min, max, count
     assert!(total <= 560);
-    // narrower than what is left: it scrolls
+    // narrower than that: columns drop, none is half drawn
     let (_, total) = Ui::detail_cols(200);
-    assert!(total > 200);
+    assert!(total <= 200);
     panel_width(&mut u, 200);
     let g = u.studio_panel_geo().unwrap();
     assert!(g.p.w <= 260, "narrow panel: {}", g.p.w);
-    assert!(u.detail_hmax(g.list.w) > 0);
+    // batch 22: the columns that do not fit are dropped, so there is nothing to scroll to
+    assert_eq!(u.detail_hmax(g.list.w), 0);
     assert_eq!(u.studio.panel.hx, 0);
     let y = g.list.y + u.studio_panel_row() / 2;
-    drag(&mut u, (g.list.right() - 20, y), (g.list.x + 20, y));
-    assert!(u.studio.panel.hx > 0, "scrolled sideways");
-    assert!(u.studio.panel.hx <= u.detail_hmax(g.list.w));
     // a tap on a row of the table still opens its settings
     u.studio.panel.hx = 0;
     tap(&mut u, Rect::new(g.list.x + 100, y - 10, 20, 20));

@@ -976,6 +976,19 @@ pub(super) fn icon_pin(cv: &mut Canvas, x: i32, cy: i32, filled: bool, c: Rgb) {
     }
 }
 
+/// The badge style switch: Studio shows two small chips, Classic (lit) rows of a dot and a line.
+fn icon_badge_style(cv: &mut Canvas, cx: i32, cy: i32, classic: bool, c: Rgb) {
+    for dy in [-6, 2] {
+        if classic {
+            cv.circle(cx - 6, cy + dy + 2, 2, c);
+            cv.hline(cx - 2, cx + 7, cy + dy + 2, c);
+            cv.hline(cx - 2, cx + 7, cy + dy + 3, c);
+        } else {
+            cv.round_outline(Rect::new(cx - 8, cy + dy, 17, 6), 3, c);
+        }
+    }
+}
+
 fn icon_eye(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
     cv.round_outline(Rect::new(cx - 8, cy - 5, 17, 11), 5, c);
     cv.circle(cx, cy, 2, c);
@@ -1056,10 +1069,24 @@ impl Ui {
         self.m.layout == Layout::Studio
     }
 
-    /// Whether the row under the lanes is there: pinned measurements, or the cursor read-out, unless hidden.
+    /// The Measurements panel is on screen (docked or floating): it lists every measurement, so the row has nothing to add.
+    pub(super) fn studio_panel_shown(&self) -> bool {
+        matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline)
+    }
+
+    /// Whether the row under the lanes is there: pinned measurements to show and the panel closed, unless hidden. The cursor
+    /// read-out is never in it (the plot has its own).
     pub(super) fn studio_badges_visible(&self) -> bool {
         self.m.layout == Layout::Studio && !self.studio.hide_badges && self.studio.view != StudioView::Only
-            && (!self.studio_pinned().is_empty() || self.m.cursor != CursorMode::Off || self.studio.search.is_some())
+            && ((!self.studio_pinned().is_empty() && !self.studio_panel_shown()) || self.studio.search.is_some())
+    }
+
+    /// With no row, the way to the panel: a slim chip at the bottom right of the plot (Waveform view, some measurements).
+    pub(super) fn studio_meas_chip(&self) -> Option<Rect> {
+        if self.m.layout != Layout::Studio || self.studio.view != StudioView::Waveform || self.studio_badges_visible() || self.full_on()
+            || self.measurement_count() == 0 { return None; }
+        let w = self.dock_wave_rect();
+        Some(Rect::new(w.right() - 8 - 102, w.bottom() - 26 - 34, 102, 34))
     }
 
     /// Height the badge row takes from the lanes.
@@ -1104,6 +1131,20 @@ impl Ui {
         Rect::new(eye.x - 6 - tab_w - 34, eye.y, 34, eye.h)
     }
 
+    /// Studio or Classic badges: the button in the row and Measure > Badge style set the same flag.
+    pub(super) fn studio_set_classic(&mut self, on: bool) {
+        self.m.studio_classic = on;
+        self.studio.popup = None;
+        self.studio.badge_first = 0;
+        self.relayout();
+    }
+
+    /// The button left of the compact switch that flips the badges between Studio and Classic.
+    pub(super) fn studio_style_chip(&self) -> Rect {
+        let c = self.studio_compact_chip();
+        Rect::new(c.x - 4 - 34, c.y, 34, c.h)
+    }
+
     /// The eye button at the right end of the row.
     pub(super) fn studio_eye(&self) -> Rect {
         let r = self.studio_row();
@@ -1113,7 +1154,7 @@ impl Ui {
 
     /// Where the badges end: before the Meas tab and the eye.
     pub(super) fn studio_row_limit(&self) -> i32 {
-        self.studio_compact_chip().x - 6
+        self.studio_style_chip().x - 6
     }
 
     /// The row of badges as (measurement, rectangle), as many as fit.
@@ -1191,13 +1232,18 @@ impl Ui {
     }
 
     pub(super) fn draw_studio_badges(&self, cv: &mut Canvas) {
+        if let Some(r) = self.studio_meas_chip() {
+            let f = self.fonts();
+            chip(cv, r, BTN, BTN_BORDER);
+            cv.text_in(&f.sb, Rect::new(r.x + 8, r.y, r.w - 22, r.h), 0, &format!("Meas \u{b7} {}", self.measurement_count()), TEXT);
+            chevron(cv, r.right() - 12, r.y + r.h / 2, 1, TEXT);
+        }
         if !self.studio_badges_visible() { return; }
         let f = self.fonts();
         let row = self.studio_row();
         cv.fill(row, BG);
         let rows = self.meas_rows();
         self.draw_studio_search_chip(cv);
-        let mut end = row.x + 4 + self.studio_search_w();
         if self.studio_classic() { self.draw_classic_badges(cv); }
         for (key, r) in self.studio_badges().into_iter().filter(|_| !self.studio_classic()) {
             let Some(m) = self.studio_index(key).and_then(|i| rows.get(i)) else { continue };
@@ -1210,21 +1256,18 @@ impl Ui {
             cv.set_clip(Rect::new(x, r.y, (r.right() - x - 4).max(1), r.h));
             cv.text(&f.sb, x, cy + 4, &m.text(), TEXT);
             cv.no_clip();
-            end = r.right() + 5;
         }
         if let Some((r, n)) = self.studio_badges_more().filter(|_| !self.studio_classic()) {
             chip(cv, r, BTN, ACCENT);
             cv.text_in(&f.sb, r, 1, &format!("+{n}"), ACCENT);
         }
-        if let Some((r, text)) = self.studio_cursor_chip(end).filter(|_| !self.studio_classic()) {
-            chip(cv, r, BAR, BTN_BORDER);
-            icon_cursors(cv, r.x + 9, r.y + r.h / 2, BAND);
-            cv.text_in(&f.sb, Rect::new(r.x + 28, r.y, r.w - 30, r.h), 0, &text, TEXT);
-        }
         self.draw_studio_tab(cv);
         let c = self.studio_compact_chip();
         chip(cv, c, if self.studio.compact { mix(BAR, ACCENT, 60) } else { BTN }, if self.studio.compact { ACCENT } else { BTN_BORDER });
         icon_compact(cv, c.x + c.w / 2, c.y + c.h / 2, if self.studio.compact { ACCENT } else { TEXT });
+        let sc = self.studio_style_chip();
+        chip(cv, sc, if self.m.studio_classic { mix(BAR, ACCENT, 60) } else { BTN }, if self.m.studio_classic { ACCENT } else { BTN_BORDER });
+        icon_badge_style(cv, sc.x + sc.w / 2, sc.y + sc.h / 2, self.m.studio_classic, if self.m.studio_classic { ACCENT } else { TEXT });
         let eye = self.studio_eye();
         cv.vline(eye.x - 3, row.y + 6, row.bottom() - 6, LINE);
         icon_eye(cv, eye.x + eye.w / 2, eye.y + eye.h / 2, TEXT);
@@ -1312,6 +1355,10 @@ impl Ui {
 
     /// A tap in the badge row: the eye hides it, a badge opens its popup.
     fn studio_badge_tap(&mut self, x: i32, y: i32) -> bool {
+        if self.studio_meas_chip().is_some_and(|r| Self::hit40(r).contains(x, y)) {
+            self.studio_set_view(StudioView::Docked);
+            return true;
+        }
         if !self.studio_badges_visible() || !self.studio_row().contains(x, y) { return false; }
         if self.studio_search_chip_tap(x, y) { return true; }
         if self.studio_badges_more().is_some_and(|(r, _)| Self::hit40(r).contains(x, y)) {
@@ -1322,6 +1369,10 @@ impl Ui {
             self.studio.hide_badges = true;
             self.studio.md.hide_undo = Some(self.now);
             self.relayout();
+            return true;
+        }
+        if Self::hit40(self.studio_style_chip()).contains(x, y) {
+            self.studio_set_classic(!self.m.studio_classic);
             return true;
         }
         if self.studio_compact_chip().contains(x, y) {
@@ -1628,6 +1679,8 @@ pub(super) struct PanelGeo {
     pub add: Rect,
     /// the statistics button
     pub stats: Rect,
+    /// a short panel: a header and a footer of one row each
+    pub short: bool,
 }
 
 pub(super) fn icon_expand(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
@@ -1696,27 +1749,47 @@ impl Ui {
         if self.m.layout == Layout::Studio && self.studio.view.is_docked() { self.studio_panel_w() + 4 } else { 0 }
     }
 
+    /// A panel too short for the header of two rows and the footer of two rows plus one row of the list: it has a header and a
+    /// footer of one row each, so the list always keeps a row.
+    pub(super) fn panel_short(&self, p: Rect) -> bool {
+        p.h - super::measpanel::HEAD_H - if self.studio_detailed() { 26 } else { 0 } - 92 < self.studio_panel_row()
+    }
+
     pub(super) fn studio_panel_geo(&self) -> Option<PanelGeo> {
         let p = self.studio_panel_rect().filter(|_| matches!(self.studio.view, StudioView::Docked | StudioView::Offline | StudioView::Floating))?;
+        Some(self.studio_panel_geo_in(p))
+    }
+
+    pub(super) fn studio_panel_geo_in(&self, p: Rect) -> PanelGeo {
+        let short = self.panel_short(p);
         // the header (dropdowns, count); the table has its column heads under it
-        let list_y = p.y + super::measpanel::HEAD_H + if self.studio_detailed() { 26 } else { 0 };
-        let rows_h = (p.bottom() - 48 - 6 - 34 - 4 - list_y).max(self.studio_panel_row());
+        let list_y = p.y + super::measpanel::head_h(short) + if self.studio_detailed() { 26 } else { 0 };
+        let reserve = if short { 50 } else { 48 + 6 + 34 + 4 };
+        let rows_h = (p.bottom() - reserve - list_y).max(self.studio_panel_row());
         let page = (rows_h / self.studio_panel_row()).max(1) as usize;
         let page = if self.panel_is_cards() { Self::panel_cards_page(rows_h) } else { page };
         let shown_h = if self.panel_is_cards() { (page as i32 / 2) * (super::measpanel::CARD_H + 4) } else { page as i32 * self.studio_panel_row() };
         let list = Rect::new(p.x + 4, list_y, p.w - 8, shown_h);
         let nav_y = list.bottom() + 4;
-        Some(PanelGeo {
+        let by = p.bottom() - 46;
+        if short {
+            // one row at the foot: Add, the statistics button and the two arrows
+            let (up, down) = (Rect::new(p.right() - 82, by + 3, 36, 34), Rect::new(p.right() - 42, by + 3, 36, 34));
+            let stats = Rect::new(up.x - 6 - 92, by, 92, 40);
+            return PanelGeo { p, maximize: Rect::new(0, 0, 0, 0), collapse: Rect::new(0, 0, 0, 0), list, page, up, down,
+                add: Rect::new(p.x + 6, by, (stats.x - p.x - 12).clamp(40, 260), 40), stats, short };
+        }
+        PanelGeo {
             p,
             maximize: Rect::new(0, 0, 0, 0),
             collapse: Rect::new(0, 0, 0, 0),
-            list, page,
+            list, page, short,
             up: Rect::new(p.right() - 82, nav_y, 36, 30),
             down: Rect::new(p.right() - 42, nav_y, 36, 30),
             // a narrow panel: the + Panel button shrinks to its plus and the other gets a short label (see the draw)
-            add: Rect::new(p.x + 6, p.bottom() - 46, p.w - 12 - if p.w < NARROW_PANEL_W { 60 } else { 100 }, 40),
-            stats: if p.w < NARROW_PANEL_W { Rect::new(p.right() - 58, p.bottom() - 46, 52, 40) } else { Rect::new(p.right() - 98, p.bottom() - 46, 92, 40) },
-        })
+            add: Rect::new(p.x + 6, by, p.w - 12 - if p.w < NARROW_PANEL_W { 60 } else { 100 }, 40),
+            stats: if p.w < NARROW_PANEL_W { Rect::new(p.right() - 58, by, 52, 40) } else { Rect::new(p.right() - 98, by, 92, 40) },
+        }
     }
 
     /// Floating panel: its title bar, close, the Dock and View all buttons.
@@ -1810,7 +1883,7 @@ impl Ui {
             cv.no_clip();
             Self::draw_scrollbar(cv, g.list, first, g.page, listed.len());
             let end = (first + if detailed || cards { g.page } else { layout.len() }).min(listed.len());
-            cv.text(&f.s, p.x + 14, g.up.y + 20, &if listed.is_empty() { "0 of 0".to_string() } else { format!("{}-{} of {}", first + 1, end, listed.len()) }, DIM);
+            if !g.short { cv.text(&f.s, p.x + 14, g.up.y + 20, &if listed.is_empty() { "0 of 0".to_string() } else { format!("{}-{} of {}", first + 1, end, listed.len()) }, DIM); }
             for (r, up) in [(g.up, true), (g.down, false)] {
                 chip(cv, r, BTN, BTN_BORDER);
                 icon_arrow(cv, r.x + r.w / 2, r.y + r.h / 2, up, TEXT);

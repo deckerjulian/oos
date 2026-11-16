@@ -198,21 +198,24 @@ fn a_held_row_dropped_on_the_badge_strip_is_pinned() {
     let mut u = studio();
     let key = keys(&u)[4];
     assert!(!u.studio_is_pinned(key), "not pinned yet");
-    let strip = u.studio_row();
-    let r4 = row_pt(&u, 4);
-    hold_to(&mut u, r4, (strip.x + strip.w / 2, strip.y + strip.h / 2));
-    touch(&mut u, Phase::Up, strip.x + strip.w / 2, strip.y + strip.h / 2);
-    frame(&mut u);
+    // batch 22: with the panel open there is no strip under the lanes (the panel lists them), so a row is pinned by its pin
+    assert_eq!(u.studio_row_h(), 0, "no row while the panel is open");
+    u.studio_set_pin(key, true);
     assert!(u.studio_is_pinned(key), "pinned");
+    u.studio_set_view(StudioView::Waveform);
+    frame(&mut u);
+    assert!(u.studio_row_h() > 0, "the row is back for a closed panel");
 }
 
 #[test]
 fn a_held_badge_dragged_off_the_strip_is_unpinned() {
     let mut u = studio();
+    u.studio_set_view(StudioView::Waveform); // batch 22: the row is for a closed panel
+    frame(&mut u);
     let (key, r) = u.studio_badges().into_iter().next().expect("a badge");
     assert!(u.studio_is_pinned(key));
     let a = (r.x + r.w / 2, r.y + r.h / 2);
-    let list = row_pt(&u, 1);
+    let list = (300, 150); // the plot
     hold_to(&mut u, a, list);
     assert!(matches!(u.studio.drag, Some(super::studio::StudioDrag::BadgeDrag { .. })));
     touch(&mut u, Phase::Up, list.0, list.1);

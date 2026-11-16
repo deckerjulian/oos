@@ -870,7 +870,8 @@ impl Phosphor {
                 None => w0,
             };
             let p = (x_of(k), y_of(val));
-            if m.dots {
+            // fat: where the zoom has too few samples, each real sample is marked with a 3 x 3 dot (the line goes on through them)
+            if m.dots || fat {
                 let (x, y) = (p.0.floor() as i32, p.1.round() as i32);
                 if fat {
                     for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
@@ -880,13 +881,11 @@ impl Phosphor {
                             map[idx] = map[idx].saturating_add(w);
                         }
                     }
-                    continue;
-                }
-                if (0..wi).contains(&x) && (0..hi).contains(&y) {
+                } else if (0..wi).contains(&x) && (0..hi).contains(&y) {
                     let idx = (y * wi + x) as usize;
                     map[idx] = map[idx].saturating_add(w);
                 }
-                continue;
+                if m.dots { continue; }
             }
             if let Some(q) = prev {
                 // rasterize segment q -> p as vertical spans per column

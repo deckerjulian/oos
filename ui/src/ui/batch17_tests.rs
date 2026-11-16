@@ -97,7 +97,7 @@ fn with_several_sources_each_has_one_header_and_the_rows_are_grouped() {
 }
 
 #[test]
-fn the_detailed_table_names_the_source_only_in_the_first_row_of_a_group() {
+fn the_detailed_table_names_the_source_in_every_row_beside_its_colour_bar() {
     let mut u = studio();
     two_sources(&mut u);
     u.studio_set_detailed(true);
@@ -109,12 +109,12 @@ fn the_detailed_table_names_the_source_only_in_the_first_row_of_a_group() {
     let c0 = u.wave_color(WaveId::Ch(0));
     let name = |k: i32| Rect::new(g.list.x + 10, g.list.y + k * pitch, 24, pitch);
     assert!(count(&cv, name(0), c0) > 5, "CH1 in the first row");
-    assert_eq!(count(&cv, name(1), c0), 0, "not in the second");
-    // with one source the column has only the bar
+    assert!(count(&cv, name(1), c0) > 0 || count(&cv, name(1), u.wave_color(WaveId::Ch(1))) > 5, "batch 22: the second row names its source too");
+    // with one source the name is there as well
     one_source(&mut u);
     let mut cv = Canvas::new(W, H);
     u.render(&mut cv);
-    assert_eq!(count(&cv, name(0), c0), 0, "no name with one source");
+    assert!(count(&cv, name(0), c0) > 5, "the name with one source");
     shot(&mut u, "table-one-source");
 }
 

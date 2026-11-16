@@ -95,7 +95,7 @@ fn the_gear_sheet_is_the_grouped_menu_with_every_group_and_entry() {
             assert_eq!(have, items, "{name}");
         }
     }
-    // no tabs, no footer; two columns; targets of 40 px; labels left of the grid; nothing outside the sheet
+    // no tabs, no footer; up to six buttons in a row; targets of 40 px; labels left of the grid; nothing outside the sheet
     let spec = u.sheet_spec(MenuId::Main).unwrap();
     assert_eq!(spec.tabs.len(), 1);
     assert!(spec.tabs[0].foot.is_empty());
@@ -111,8 +111,12 @@ fn the_gear_sheet_is_the_grouped_menu_with_every_group_and_entry() {
             assert!(f.s.width(&label) <= room, "{label} fits in {room}");
         }
     }
-    // the page is longer than the sheet and scrolls; the sheet itself is where it always is
-    assert!(g.max_scroll() > 0);
+    // batch 22: the Menu is the wide overlay and the whole page fits at 1024 x 600, in rows of six
+    assert_eq!(g.max_scroll(), 0, "no scrolling at 1024 x 600");
+    assert!(g.r.w >= W - 24, "a near-full-width overlay: {:?}", g.r);
+    let acq = g.groups.iter().find(|x| x.name == "Acquisition").unwrap();
+    assert!(acq.items.iter().all(|(_, r)| r.y == acq.items[0].1.y), "Acquisition is one row");
+    assert_eq!(u.sheet_dock_w(), 0, "it floats over the waveform");
     assert_eq!(g.r, u.sheet_rect());
     assert!(g.r.bottom() <= H);
     shot(&mut u, "menu");
@@ -123,17 +127,21 @@ fn the_menu_scrolls_by_drag_and_a_tap_on_a_button_opens_its_sheet() {
     use Item::*;
     let mut u = studio();
     open_menu(&mut u);
+    // a window too short for the page: it scrolls
+    u.scr = Screen { w: 1024, h: 400 };
     let g = u.menu_geo();
+    assert!(g.max_scroll() > 120);
     // a drag moves the page and taps nothing
     let (x, y) = (g.view.x + g.view.w / 2, g.view.y + g.view.h - 20);
     touch(&mut u, Phase::Down, x, y);
     touch(&mut u, Phase::Move, x, y - 60);
     touch(&mut u, Phase::Move, x, y - 120);
     touch(&mut u, Phase::Up, x, y - 120);
-    frame(&mut u);
+    u.step(0.02);
     assert_eq!(u.sheet.scroll, 120);
     assert!(u.menu == MenuId::Main && u.menu_open);
     u.sheet.scroll = 0;
+    u.scr = Screen::PANEL;
     frame(&mut u);
     tap_cell(&mut u, Open(MenuId::Trigger));
     assert_eq!(u.menu, MenuId::Trigger);
@@ -423,6 +431,7 @@ fn a_tap_on_a_card_pin_toggles_it_and_the_rest_of_the_card_configures() {
 #[test]
 fn the_classic_badge_strip_has_a_row_per_source_with_even_columns() {
     let mut u = studio();
+    u.studio_set_view(StudioView::Waveform); // batch 22: the row is for a closed panel
     two_sources(&mut u);
     for k in u.studio_keys() { u.studio_set_pin(k, true); }
     for _ in 0..4 { frame(&mut u); }

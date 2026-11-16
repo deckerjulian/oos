@@ -340,7 +340,7 @@ impl Ui {
     }
 
     pub(super) fn sheet_dock_w(&self) -> i32 {
-        if self.sheet_active() { SHEET_W + 4 } else { 0 }
+        if self.sheet_active() && !self.menu_is_wide() { SHEET_W + 4 } else { 0 }
     }
 
     /// The rectangle of the menu on screen, sheet or classic dialog.
@@ -350,6 +350,7 @@ impl Ui {
 
     /// The sheet's place: the right edge of the body, from the top bar to the bottom bar. It is the same for every page.
     pub(super) fn sheet_rect(&self) -> Rect {
+        if self.menu_is_wide() { return self.menu_wide_rect(); }
         let f = self.frame();
         let y = f.top.bottom();
         Rect::new(self.scr.w - SHEET_W, y, SHEET_W, (f.bottom.y - y).max(SHEET_HEAD + SHEET_FOOT))

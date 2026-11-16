@@ -247,6 +247,8 @@ fn studio_pinned_badges_sit_under_the_lanes_and_the_eye_hides_them() {
 #[test]
 fn studio_badge_popup_configures_unpins_floats_and_removes() {
     let mut u = badges();
+    u.studio_set_view(StudioView::Waveform); // batch 22: the row is for a closed panel
+    u.step(0.05);
     let vpp = MeasKey::One(Meas::Vpp, WaveId::Ch(0));
     let open = |u: &mut Ui, key: MeasKey| {
         let r = u.studio_badges().into_iter().find(|(k, _)| *k == key).unwrap().1;
@@ -275,6 +277,9 @@ fn studio_badge_popup_configures_unpins_floats_and_removes() {
     tap_in(&mut u, Ui::studio_popup_row(p, 2));
     assert!(!u.studio_is_pinned(key));
     assert_eq!(u.studio.view, StudioView::Floating);
+    // batch 22: the floating panel lists them, so the row is gone; close it to have the row again
+    u.studio_set_view(StudioView::Waveform);
+    u.step(0.05);
     // Remove takes the measurement out of the list, and its pin with it
     let key = MeasKey::One(Meas::Vpp, WaveId::Ch(1));
     let p = open(&mut u, key);

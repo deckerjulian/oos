@@ -2,7 +2,7 @@
 //! Studio: the classic badge strip under the lanes (Measure > Badge style). One row per source: a chip of the
 //! source's colour at the left, then name and value pairs in even columns ("Pk-pk 976 mV   Ampl 976 mV ..."), "----"
 //! where there is no value. A tap on a pair opens the same popup as a Studio badge.
-use super::studio::{chip, icon_cursors, MeasKey, OVERFLOW_W};
+use super::studio::{chip, MeasKey, OVERFLOW_W};
 use super::*;
 
 /// Height of a row of the strip.
@@ -40,7 +40,7 @@ impl Ui {
 
     /// Height of the strip: a row per source, and one for the cursor readout.
     pub(super) fn classic_row_px(&self) -> i32 {
-        let n = self.classic_groups().len().min(MAX_GROUPS) + usize::from(self.m.cursor != CursorMode::Off);
+        let n = self.classic_groups().len().min(MAX_GROUPS);
         n as i32 * CLASSIC_ROW + 6
     }
 
@@ -113,14 +113,6 @@ impl Ui {
         if let Some((r, n)) = self.classic_more() {
             chip(cv, r, BTN, ACCENT);
             cv.text_in(&f.sb, r, 1, &format!("+{n}"), ACCENT);
-        }
-        if self.m.cursor != CursorMode::Off {
-            let y = row.y + 3 + l.chips.len() as i32 * CLASSIC_ROW;
-            if let Some((r, text)) = self.studio_cursor_chip_at(row.x + 4 + self.studio_search_w(), y, CLASSIC_ROW - 3) {
-                chip(cv, r, BAR, BTN_BORDER);
-                icon_cursors(cv, r.x + 9, r.y + r.h / 2, super::studio::BAND);
-                cv.text_in(&f.sb, Rect::new(r.x + 28, r.y, r.w - 30, r.h), 0, &text, TEXT);
-            }
         }
     }
 }

@@ -7,6 +7,9 @@ use super::*;
 
 /// Height of the header: the dropdown row and the count row.
 pub(super) const HEAD_H: i32 = 68;
+/// Height of the header of a short panel: one row.
+pub(super) const HEAD_H_SHORT: i32 = 44;
+pub(super) fn head_h(short: bool) -> i32 { if short { HEAD_H_SHORT } else { HEAD_H } }
 /// A card of the cards view and the space between cards.
 pub(super) const CARD_H: i32 = 98;
 const CARD_GAP: i32 = 4;
@@ -62,10 +65,18 @@ impl Ui {
         self.relayout();
     }
 
-    /// The header: two dropdowns and the search, then the count and the Pinned only switch.
+    /// The header: two dropdowns and the search, then the count and the Pinned only switch. A short panel has all of it in one row.
     pub(super) fn panel_head(&self, p: Rect) -> PanelHead {
         let w = p.w - 8;
         let search = Rect::new(p.right() - 4 - 36, p.y + 4, 36, 36);
+        if self.panel_short(p) {
+            let only = Rect::new(search.x - 4 - 112, p.y + 10, 112, 24);
+            let dw = ((only.x - p.x - 16) / 2).clamp(60, 170);
+            let src = Rect::new(p.x + 4, p.y + 4, dw, 36);
+            let gate = Rect::new(src.right() + 4, p.y + 4, dw, 36);
+            let count = Rect::new(gate.right() + 8, p.y + 10, (only.x - gate.right() - 12).max(1), 24);
+            return PanelHead { src, gate, search, count, only };
+        }
         let dw = (w - 36 - 8) / 2;
         let src = Rect::new(p.x + 4, p.y + 4, dw, 36);
         let gate = Rect::new(src.right() + 4, p.y + 4, dw, 36);

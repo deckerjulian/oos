@@ -99,6 +99,8 @@ mod measpanel;
 #[cfg(test)]
 mod batch21_tests;
 #[cfg(test)]
+mod batch22_tests;
+#[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
 mod batch13_tests;
@@ -2365,8 +2367,8 @@ impl Ui {
         (pct, tdiv / tscales()[self.m.zscale])
     }
 
-    /// The zoom asks for more resolution than the record has: a sample is more than 3 px from the next. Studio then draws
-    /// the samples there are as dots, not lines through them (a 1 kHz square wave must not turn into ramps).
+    /// The zoom asks for more resolution than the record has: a sample is more than 3 px from the next. Studio then marks each sample with a dot
+    /// and keeps the draw mode (lines join the samples; Display > Dots stays dots only).
     pub(super) fn zoom_sparse(&self, dt: f64) -> bool {
         self.m.layout == Layout::Studio && self.m.zoom && dt > 0.0
             && (self.phz.w.max(1) as f64 / HDIV as f64) * dt / tscales()[self.m.zscale] as f64 > 3.0
@@ -2818,10 +2820,9 @@ impl Ui {
                         }
                         let mainv = (self.m.time_per_div(), self.m.delay);
                         let zv = (tscales()[self.m.zscale], self.m.zdelay);
-                        let mut zoom_model = self.zoom_display_model();
+                        let zoom_model = self.zoom_display_model();
                         let detail = self.captured_record_view(&rec, zv);
                         let sparse = self.zoom_sparse(detail.as_deref().map_or(rec.dt, |d| d.dt));
-                        zoom_model.dots |= sparse;
                         self.phz.fat = sparse;
                         let t1 = std::time::Instant::now();
                         let zw = self.z_weights(&rec);
@@ -2913,10 +2914,9 @@ impl Ui {
             self.phz.clear();
             let mainv = (self.m.time_per_div(), self.m.delay);
             let zv = (tscales()[self.m.zscale], self.m.zdelay);
-            let mut zoom_model = self.zoom_display_model();
+            let zoom_model = self.zoom_display_model();
             let detail = self.captured_view(zv);
             let sparse = self.zoom_sparse(detail.as_deref().map_or_else(|| self.last[0].as_ref().map_or(1.0, |r| r.dt), |d| d.dt));
-            zoom_model.dots |= sparse;
             self.phz.fat = sparse;
             if let Some(rec) = self.last[0].clone() {
                 let zw = self.z_weights(&rec);

@@ -199,8 +199,10 @@ fn compact_view_shrinks_lanes_badges_and_panel_and_toggles_from_the_view_menu_an
     shot(&mut u, "compact-on");
     // the small toggle in the badge row turns it off again
     u.studio.view_menu = false;
-    let c = u.studio_compact_chip();
-    assert!(u.studio_row().contains(c.x, c.y));
+    // batch 22: with the panel open there is no row; the View menu has the switch
+    assert_eq!(u.studio_row_h(), 0);
+    u.studio.view_menu = true;
+    let c = u.studio_view_row(super::studio::VIEW_COMPACT);
     tap_in(&mut u, c);
     assert!(!u.studio.compact);
     // Default is not touched by the flag
@@ -366,12 +368,12 @@ fn zoom_detail_shows_real_samples_not_invented_ramps() {
     assert!(u.zoom_sparse(dt), "the zoom asks for more than the record has");
     let hint = u.studio_zoom_samples_hint().expect("the hint");
     assert!(hint.ends_with("samples/div") && hint.starts_with("1.4"), "{hint}");
-    assert!(u.phz.fat, "samples are drawn as dots");
-    // the dots are separate: no pixel column of the trace is filled between two samples far apart
+    assert!(u.phz.fat, "each sample is marked with a dot");
+    // the samples are joined: the pixel columns between two samples are lit
     let lane = u.wins[0];
     let map = &u.phz.map[0];
     let lit_cols = (0..u.phz.w).filter(|&x| (0..u.phz.h).any(|y| map[y * u.phz.w + x] > 0)).count();
-    assert!(lit_cols < u.phz.w / 2, "a line through the samples would light every column: {lit_cols} of {}", u.phz.w);
+    assert!(lit_cols > u.phz.w / 2, "the samples are joined by a line: {lit_cols} of {}", u.phz.w);
     shot(&mut u, "zoom-b");
     // the zoom of a record with enough samples is a line and has no hint
     let a = zoomed_demo(500e-6, 200e-6, 0.439e-3);
