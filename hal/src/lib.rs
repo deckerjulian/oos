@@ -13,6 +13,7 @@
 //! write-only registers), so they are unit-tested on the host; `dho::bus` applies them to the hardware.
 
 pub mod bootstatus;
+pub mod fsutil;
 pub mod model;
 pub mod procs;
 pub mod target;

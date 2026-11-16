@@ -139,19 +139,7 @@ impl State {
             std::fs::create_dir_all(d)?;
         }
         let tmp = path.with_extension("new");
-        {
-            use std::io::Write;
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(self.text().as_bytes())?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, path)?;
-        if let Some(d) = path.parent() {
-            if let Ok(f) = std::fs::File::open(d) {
-                let _ = f.sync_all();
-            }
-        }
-        Ok(())
+        crate::fsutil::write_atomic(path, self.text().as_bytes(), &crate::fsutil::Opts { tmp: Some(&tmp), ..Default::default() })
     }
 }
 

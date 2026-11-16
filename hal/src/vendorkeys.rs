@@ -168,19 +168,8 @@ pub fn for_file(vendor: &[u8]) -> Option<Keys> {
 
 /// Best effort: without it the next start searches again.
 fn keep(line: &str) {
-    use std::io::Write;
-    let tmp = format!("{}.new", KEEP);
-    let mut o = std::fs::OpenOptions::new();
-    o.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    let done = o.open(&tmp).and_then(|mut f| {
-        f.write_all(line.as_bytes())?;
-        f.sync_all()
-    });
-    if done.is_ok() {
-        let _ = std::fs::rename(&tmp, KEEP);
-    }
+    use crate::fsutil::{write_atomic, DirSync, Opts};
+    let _ = write_atomic(KEEP.as_ref(), line.as_bytes(), &Opts { mode: Some(0o600), dir_sync: DirSync::Skip, ..Default::default() });
 }
 
 #[cfg(test)]

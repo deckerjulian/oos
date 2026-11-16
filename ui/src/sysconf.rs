@@ -20,7 +20,6 @@
 //! ```
 
 use crate::clock::Tz;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// On OOS's own data partition.
@@ -350,19 +349,11 @@ impl SysConf {
 
     /// Replaces the file in one step and syncs it: the scope is switched off at the mains.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        use oos_hal::fsutil::{write_atomic, DirSync, Opts};
         let tmp = path.with_extension("conf.new");
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(self.text().as_bytes())?;
-        f.sync_all()?;
-        std::fs::rename(&tmp, path)?;
         // the rename reaches the disk with the directory; Windows cannot open a directory as a file (the desktop build
         // keeps the rename alone)
-        #[cfg(unix)]
-        {
-            let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
-            std::fs::File::open(dir)?.sync_all()?;
-        }
-        Ok(())
+        write_atomic(path, self.text().as_bytes(), &Opts { tmp: Some(&tmp), dir_sync: DirSync::Required, ..Default::default() })
     }
 }
 

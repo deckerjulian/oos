@@ -6,7 +6,6 @@
 //! (`authorized_keys`, imported from a USB stick) and asks the script to start or stop the server. All files live in
 //! the SSH folder: `/oos/ssh` on the data partition, `/tmp/oos-ssh` without one.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// The script that owns the server.
@@ -271,14 +270,10 @@ impl Keys {
 
     /// Replaces the file in one step, readable by root only, and syncs it (the scope is switched off at the mains).
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        use std::os::unix::fs::DirBuilderExt;
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-        let tmp = dir.join(format!("{}.new", KEYS_FILE));
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
-        f.write_all(self.text().as_bytes())?;
-        f.sync_all()?;
-        std::fs::rename(&tmp, dir.join(KEYS_FILE))?;
-        std::fs::File::open(dir)?.sync_all()
+        let opts = oos_hal::fsutil::Opts { mode: Some(0o600), dir_sync: oos_hal::fsutil::DirSync::Required, ..Default::default() };
+        oos_hal::fsutil::write_atomic(&dir.join(KEYS_FILE), self.text().as_bytes(), &opts)
     }
 }
 

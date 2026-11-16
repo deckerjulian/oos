@@ -85,7 +85,6 @@ pub fn now() -> Stamp {
 
 /// Writes `name` in `dir` atomically: `name.new`, fsync, the old file to `name.bak`, rename. Never under /rigol.
 pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<()> {
-    use std::io::Write;
     let refuse = |m: &str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, m.to_string());
     let canon = std::path::Path::new(dir).components().collect::<std::path::PathBuf>();
     if canon.starts_with("/rigol") || dir.contains("..") || name.contains('/') {
@@ -97,19 +96,7 @@ pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<
     }
     std::fs::create_dir_all(dir)?;
     let path = format!("{}/{}", dir.trim_end_matches('/'), name);
-    let tmp = format!("{}.new", path);
-    let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(&build(payload, s))?;
-    f.sync_all()?;
-    drop(f);
-    if std::path::Path::new(&path).exists() {
-        std::fs::rename(&path, format!("{}.bak", path))?;
-    }
-    std::fs::rename(&tmp, &path)?;
-    if let Ok(d) = std::fs::File::open(dir) {
-        let _ = d.sync_all();
-    }
-    Ok(())
+    crate::fsutil::write_atomic(path.as_ref(), &build(payload, s), &crate::fsutil::Opts { bak: true, ..Default::default() })
 }
 
 /// The data partition is mounted at /oos, by the text of /proc/mounts.
