@@ -34,6 +34,11 @@ fn bootimg_build(tag: u8, build: &str) -> Vec<u8> {
     bootimg_parts(tag, rd, vec![tag ^ 0xaa; 300])
 }
 
+/// `bootimg` with this ramdisk (`unit::tests`).
+pub(super) fn bootimg_with_ramdisk(ramdisk: Vec<u8>) -> Vec<u8> {
+    bootimg_parts(7, ramdisk, vec![7 ^ 0xaa; 300])
+}
+
 fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
     let page = 2048usize;
     let mut kernel = vec![tag; 4096 + 512];

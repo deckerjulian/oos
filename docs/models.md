@@ -196,7 +196,8 @@ la = no
 - Facts of the unit, not experimental: no toast, the identity (model name, serial, rated bandwidth, `*IDN?`) stays what
   `vendor.bin` says. `oos-fpgad model` prints them as `unit`, System > System info as "Unit defaults".
 - Build: `OOS_UNIT=<name> boot/build-dev-image.sh` copies `rootfs/unit/<name>/*.conf` to `/etc/oos/` (below). Without
-  `OOS_UNIT` the image has no `/etc/oos` and behaves as before.
+  `OOS_UNIT` the image has no `/etc/oos` and behaves as before. The image names its unit in `/etc/oos-unit` (`none`
+  without), and an update package for another unit is refused (update.md, "Unit").
 
 **An image for one unit (`OOS_UNIT`).** `OOS_UNIT=<name> boot/build-dev-image.sh` builds the image with the profile in
 `rootfs/unit/<name>/` (`boot/unit-hook.sh`); the build stops when that folder does not exist. A profile belongs to the

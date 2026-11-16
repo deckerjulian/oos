@@ -4,6 +4,8 @@
 # container, sourced once from /wlan/unit-hook/image.sh (staged by boot/unit-hook.sh) when the files of the image are in
 # $r and before the DTB.
 d=/wlan/unit-hook
+# the unit this image is built for (oos_hal::update::unit)
+cp $d/unit $r/etc/oos-unit
 [ -f $d/build.env ] && . $d/build.env
 # the LAN-only firewall (net.allow, docs/network.md 6)
 cp /wlan/nft $r/bin/
