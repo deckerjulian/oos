@@ -106,4 +106,4 @@ path is faster than its fork counterpart.
 - Image build hook: done as `boot/unit-hook.sh` + `boot/unit-hook-image.sh` (not `rootfs/unit/hook.sh`: the hook is
   build logic, the unit directory stays data). Output identical on stub inputs.
 - Guards 1, 3, 4: `hal/tests/alloc_batch.rs`, `hal/tests/early_trigger_end.rs`, `hal/tests/perf_ratio.rs`, run by
-  `tools/perf-guard.sh` (docs/fork/sync-checklist.md). Guard 2 (ui `decode`) is the ui's.
+  `tools/perf-guard.sh`. Guard 2 (ui `decode`) is the ui's.

@@ -157,7 +157,7 @@ after every step. The mask is in volts, so an offset change moves mask and trace
    Delay-shifted: one 1 us high pulse per failed frame on CH2. AUX out = Trigger out afterwards.
 8. `mask.hw = off`, restart: the pill reads `Mask CH1`, the software counts run, and the debug line starts with `off`.
 
-Record the results in `docs/fork/unit-dho804.md`.
+Record the results here.
 
 ## On the DHO924S (2026-11-16)
 

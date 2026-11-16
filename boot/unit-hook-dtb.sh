@@ -1,7 +1,7 @@
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# unit-hook-dtb.sh - the fork's DTB step of boot/build-dev-image.sh inside the initramfs container, sourced from
-# /wlan/unit-hook/dtb.sh right after the image's DTB is written (docs/fork/unit-dho804.md, docs/network.md 8).
+# unit-hook-dtb.sh - the unit profile's DTB step of boot/build-dev-image.sh inside the initramfs container, sourced
+# from /wlan/unit-hook/dtb.sh right after the image's DTB is written (docs/models.md 4.2, docs/network.md 8).
 #
 # A unit whose `eth.mac` is a fixed address (rootfs/unit/<name>/system.conf, resolved by boot/unit-hook.sh into
 # dtb.mac) gets it as `local-mac-address` of the Ethernet node. The RK3399 GMAC driver then takes it at probe

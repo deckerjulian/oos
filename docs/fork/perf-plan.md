@@ -264,8 +264,7 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   about 8x): 4 A53 reach about 10 k frames/s at 100 ns/div, 20 k at 1 us/div, 3 k at 10 us/div; the A72 helper adds up
   to 5 k / 10 k / 1.5 k when its wait is long.
   Arm ahead, opt-in `acq.prearm = on` in system.conf or OOS_PREARM (any value; set wins over the key): `seq::prearm`
-  arms the next batch before the decode of the current one. Default off until the unit check
-  (unit-dho804.md, arm ahead).
+  arms the next batch before the decode of the current one. Default off until it is checked on a unit.
   Fast interpolation, opt-in `acq.interp = fast` / OOS_INTERP=fast (`sparse::fast_many`): the exact 16-tap sinc
   on a grid of 24 points per sample (one fixed filter per phase over consecutive samples, vectorised), linear in
   between, used where the grid has at most 4x the screen's 3600 points (else exact). A 4-lobe kernel at the same

@@ -119,7 +119,7 @@ Probe on CH1 at the probe-comp output (1 kHz square). `zone.hw = on` in system.c
 8. Mask test on (hardware mask): the debug line turns `off` and the software zone filter takes over; mask off: the
    zone hardware returns (`armed=1`).
 
-Record the results in `docs/fork/unit-dho804.md`.
+Record the results here.
 
 ## On the DHO924S (2026-11-16)
 

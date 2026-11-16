@@ -72,4 +72,4 @@ address 0x50, or an Arduino as master. Probes: CH1 on SDA, CH2 on SCL. Read the 
 6. With CH3 off while SPI uses it: debug shows the receiver, but the trigger falls back to edge (lines not acquired).
 7. `trig.serial_hw = off`: everything as before.
 
-Record the results in `docs/fork/unit-dho804.md`.
+Record the results here.

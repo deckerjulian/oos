@@ -80,7 +80,7 @@ Needs a probe on CH1 (probe compensation output) and a BNC cable from AUX OUT to
 5. With the hardware mask test (`hwmask.md`): choose Pass/fail, use a mask the signal violates. Expect one
    1 us high pulse per failed acquisition, none for passed ones. Then check `idle_high` and `event = Pass`.
 
-Record the results in `docs/fork/unit-dho804.md`. If step 3 shows nothing, check with a second scope whether the BNC
+Record the results here. If step 3 shows nothing, check with a second scope whether the BNC
 is driven at all before suspecting the select value.
 
 ## On the DHO924S (2026-11-16)

@@ -100,7 +100,7 @@ Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first without the
 6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3 (with the views after the STOP); then RUN again.
 7. Peak mode, roll, zoom: no raw deep reads (log), as before.
 
-Record the results here and in `docs/fork/unit-dho804.md`.
+Record the results here.
 
 ## Result on the DHO924S (2026-11-15)
 

@@ -137,4 +137,4 @@ mode. `off,sw=...` without a reading.
 8. STOP: press STOP, read 5 dumps. Note whether n and the result words keep changing.
 9. Off: DVM off. `:SYSTem:DEBug:DVM?` must answer `off`; the last write to 0x2244 is the stop pulse.
 
-Record the results in `docs/fork/unit-dho804.md` and update the evidence column above.
+Record the results here and update the evidence column above.

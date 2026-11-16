@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-# perf-guard.sh - the fork's performance guards, a step of every upstream sync (docs/fork/sync-checklist.md).
+# perf-guard.sh - the performance guards of the fast paths, the layer `speed` of docs/adr/process/0020.
 #
 #   tools/perf-guard.sh
 #

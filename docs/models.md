@@ -185,8 +185,32 @@ la = no
   defaults; `/oos/limits.conf` can switch a capability on again (`afg = yes` after a generator board is fitted).
 - Facts of the unit, not experimental: no toast, the identity (model name, serial, rated bandwidth, `*IDN?`) stays what
   `vendor.bin` says. `oos-fpgad model` prints them as `unit`, System > System info as "Unit defaults".
-- Build: `OOS_UNIT=<name> boot/build-dev-image.sh` copies `rootfs/unit/<name>/*.conf` to `/etc/oos/`. Without `OOS_UNIT`
-  the image has no `/etc/oos` and behaves as before.
+- Build: `OOS_UNIT=<name> boot/build-dev-image.sh` copies `rootfs/unit/<name>/*.conf` to `/etc/oos/` (below). Without
+  `OOS_UNIT` the image has no `/etc/oos` and behaves as before.
+
+**An image for one unit (`OOS_UNIT`).** `OOS_UNIT=<name> boot/build-dev-image.sh` builds the image with the profile in
+`rootfs/unit/<name>/` (`boot/unit-hook.sh`); the build stops when that folder does not exist. A profile belongs to the
+owner of one scope: it holds that unit's hardware, its network and its choices. So `rootfs/unit/` is in `.gitignore`,
+and no profile is in the tree; each owner keeps their own. Every file is optional:
+
+| File | In the image | What |
+|---|---|---|
+| `limits.conf` | `/etc/oos/limits.conf` | the capability keys above (`channels`, `la`, `afg`, `ext_trig`) |
+| `system.conf` | `/etc/oos/system.conf` | defaults of the system settings, read before `/oos/system.conf` (docs/network.md 5 and 6). A fixed address in `eth.mac` also goes into the DTB as `local-mac-address` (`boot/unit-hook-dtb.sh`, docs/network.md 8) |
+| other `*.conf` | `/etc/oos/` | copied as they are |
+| `build.env` | not copied; sourced by the build | plain `KEY=value` lines: `OOS_KERNEL_DTB` (the DTB, docs/boot.md), `OOS_BOOTARGS_EXTRA` (kernel arguments added to the image's own) |
+
+An example layout, with placeholder values:
+
+```
+rootfs/unit/bench/
+  limits.conf    afg = no
+                 la = no
+  system.conf    eth.mac = 02:00:00:00:00:01
+                 net.allow = 192.0.2.0/24
+                 remote.ssh = on
+  build.env      OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb
+```
 
 Without a generator (model table or `afg = no`) nothing opens the generator lines (`afg_in1..5`, `FG_M2C_GPIO`):
 `afg::Io::open` refuses (`afg::line_allowed`), the acquisition thread never asks, `oos-fpgad afg` and

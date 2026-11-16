@@ -1,6 +1,6 @@
 # Time zone from DHCP, IPv6 on the unit
 
-Branch `net/tz-ipv6`. Working file: fold into docs/network.md and docs/fork/unit-dho804.md when merged, then delete.
+Branch `net/tz-ipv6`. Working file: fold into docs/network.md and docs/models.md 4.2 when merged, then delete.
 
 ## Plan
 

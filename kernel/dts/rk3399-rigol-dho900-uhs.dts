@@ -3,7 +3,7 @@
  * Copyright (C) 2026 OOS contributors
  *
  * Rigol DHO800/DHO900 main board with the boot card in UHS-I (SDR104, SDR50) instead of 3.3 V high speed. Opt-in:
- * the image takes it with OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb (docs/boot.md, docs/fork/unit-dho804.md).
+ * the image takes it with OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb (docs/boot.md, docs/models.md 4.2).
  * Everything else is rk3399-rigol-dho900.dts.
  *
  * Seen on one DHO804 under the stock 4.4 kernel with the same settings in its device tree: SDR104 at 150 MHz,

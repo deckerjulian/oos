@@ -173,7 +173,7 @@ Probe on the 1 kHz compensation output, CH1 and CH2 on the same probe or a secon
    (the factor of the last batch read, 1 = raw) drops to 1 at once, no `raw read of the newest frame` errors in
    /tmp/oos-ui.log.
 
-Record the results here and in `docs/fork/unit-dho804.md`; flip the default only after steps 2, 6 and 7 pass.
+Record the results here; flip the default only after steps 2, 6 and 7 pass.
 
 ## Risks and open points
 
