@@ -244,14 +244,17 @@ pub struct Server {
     core_tcp: Option<TcpListener>,
     conns: Vec<Conn>,
     pub links: Vec<Option<Link>>,
-    /// who may connect (`netacl`, net.allow; empty: everyone)
-    pub acl: crate::netacl::Acl,
+    /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
+    pub acl: crate::netacl::Shared,
+    /// the changes of `acl` looked at (`netacl::Shared::changed`)
+    acl_seen: u64,
 }
 
 impl Server {
     /// Nothing listening. A computer leaves VXI-11 to the scope, where port 111 is free.
     pub fn closed() -> Server {
-        Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new(), acl: crate::netacl::Acl::default() }
+        let acl = crate::netacl::Shared::default();
+        Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new(), acl, acl_seen: 0 }
     }
 
     /// The core port, once the portmapper on 111 and the core channel are both up.
@@ -260,7 +263,7 @@ impl Server {
     }
 
     pub fn open() -> Server {
-        let mut s = Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new(), acl: crate::netacl::Acl::default() };
+        let mut s = Server::closed();
         s.set_open(true);
         s
     }
@@ -288,7 +291,7 @@ impl Server {
         if let Some(u) = &self.pm_udp {
             let mut b = [0u8; 1500];
             while let Ok((n, from)) = u.recv_from(&mut b) {
-                if !self.acl.permits(from.ip()) {
+                if !self.acl.permits_peer(Ok(from)) {
                     continue;
                 }
                 if let Some(c) = parse_call(&b[..n]) {
@@ -299,7 +302,7 @@ impl Server {
         for (l, core) in [(&self.pm_tcp, false), (&self.core_tcp, true)] {
             if let Some(l) = l {
                 while let Ok((s, peer)) = l.accept() {
-                    if !self.acl.permits(peer.ip()) {
+                    if !self.acl.permits_peer(Ok(peer)) {
                         continue;
                     }
                     let _ = s.set_nonblocking(false);
@@ -310,12 +313,14 @@ impl Server {
                 }
             }
         }
+        // net.allow changed on the screen: a connection the list now leaves out is closed with its links
+        let recheck = self.acl.changed(&mut self.acl_seen);
         let mut i = 0;
         while i < self.conns.len() {
-            let mut closed = false;
+            let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
             let mut tmp = [0u8; 8192];
             let mut read_bytes = 0;
-            loop {
+            while !closed {
                 match crate::net::read_now(&self.conns[i].s, &mut tmp) {
                     Ok(0) => {
                         closed = true;

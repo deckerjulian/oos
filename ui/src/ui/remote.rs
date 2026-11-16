@@ -12,18 +12,33 @@
 //! the DHCP client sends (rcS, oos-wlan).
 //!
 //! Below it: Allowed, the address prefixes that may reach the scope (`net.allow`, docs/network.md 6), and Firewall,
-//! whether that list is in force. rcS builds the firewall from the key and oos-ui its address list (`crate::netacl`),
-//! both at the start only, so a change applies at the next start. An entry is checked by `netacl::canonical` and
-//! refused whole when a word is not a prefix: nothing is written then.
+//! the state in force. rcS builds the firewall from the key at power-on and main.rs oos-ui's address list
+//! (`crate::netacl`). A change takes effect at once: once it is saved, the list the servers share
+//! (`netacl::Shared`) is set, which closes the connections it leaves out, and on the scope a thread runs the
+//! firewall again and starts or stops SSH as a start with the new list would (`crate::remote::allow_steps`); the
+//! toast says when that is done, or what failed. A computer has no firewall: there only the list changes. An entry is
+//! checked by `netacl::canonical` and refused whole when a word is not a prefix: nothing is written then.
 
 use super::*;
+use crate::remote::Runner;
 use crate::{mdns, netacl};
+use std::sync::{mpsc, Mutex, PoisonError};
+
+/// One run of the firewall at a time, in the order of the changes: each reads the settings file as it is then.
+static ALLOW_RUN: Mutex<()> = Mutex::new(());
 
 /// Remote services > Allowed.
 #[derive(Default)]
 pub(super) struct RemoteUi {
-    /// `net.allow` at the start (`load_system`): what the firewall and oos-ui use until the next one
-    pub allow_start: String,
+    /// the address list the network servers check, shared with them (`Ui::acl`); set after a change was saved
+    pub acl: netacl::Shared,
+    /// runs the firewall and SSH after a change (`crate::remote::script_runner` on the scope); none on a computer,
+    /// which has no firewall, and in tests unless one is given
+    pub runner: Option<Runner>,
+    /// the run of the last change, until it answered (Err: what failed)
+    pub job: Option<mpsc::Receiver<Result<(), String>>>,
+    /// the last run failed: the Firewall row says so
+    pub failed: bool,
     /// the networks the scope is on, `192.168.1.0/24` (every IPv4 address with its netmask, `netacl::lans`), read
     /// while the page is open
     pub lans: Vec<String>,
@@ -225,14 +240,90 @@ impl Ui {
         }
     }
 
-    /// Writes `net.allow` (a value `netacl::canonical` gave; empty: the settings' line goes, the image default applies).
+    /// The address list the network servers check (main.rs, desktop.rs hand it to them); Allowed sets it.
+    pub fn acl(&self) -> netacl::Shared {
+        self.remote.acl.clone()
+    }
+
+    /// On the scope: what runs the firewall and SSH after a change of Allowed (`crate::remote::script_runner`).
+    pub fn set_allow_runner(&mut self, r: Runner) {
+        self.remote.runner = Some(r);
+    }
+
+    /// Writes `net.allow` (a value `netacl::canonical` gave; empty: the settings' line goes, the image default applies)
+    /// and puts it in force: the servers' list at once, then the firewall and SSH (`allow_run`). A save that fails
+    /// changes nothing.
     fn set_allow(&mut self, v: &str) {
+        let before = self.sys.clone();
         self.sys.set_net_allow((!v.is_empty()).then_some(v));
-        self.sys_save();
+        if !self.sys_save() {
+            self.sys = before;
+            return;
+        }
+        let now = self.sys.net_allow();
+        let shown = if now.is_empty() { "(none): everyone" } else { &now };
+        eprintln!("oos-ui: net.allow = {} (Remote services > Allowed)", shown);
+        self.remote.acl.set(netacl::Acl::from_value(&now).0);
+        match self.remote.runner.clone() {
+            Some(run) => self.allow_run(run, &now),
+            None => self.allow_done(Ok(())),
+        }
+    }
+
+    /// The firewall and SSH for the list `now`, in a thread: the scripts take a moment, the frame loop does not wait.
+    fn allow_run(&mut self, run: Runner, now: &str) {
+        let steps = crate::remote::allow_steps(self.sys.remote_ssh, !now.is_empty());
+        let (tx, rx) = mpsc::channel();
+        let job = move || {
+            let _one = ALLOW_RUN.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut r = Ok(());
+            for s in &steps {
+                if let Err(e) = run(s) {
+                    eprintln!("oos-ui: net.allow: {}", e);
+                    r = r.and(Err(e));
+                }
+            }
+            let _ = tx.send(r);
+        };
+        match std::thread::Builder::new().name("net-allow".into()).spawn(job) {
+            Ok(_) => {
+                self.remote.job = Some(rx);
+                self.remote.failed = false;
+            }
+            Err(e) => self.allow_done(Err(format!("no thread for the firewall: {}", e))),
+        }
+    }
+
+    /// The answer of the firewall's run, once it is there (every frame, `step`).
+    pub(super) fn allow_poll(&mut self) {
+        let Some(rx) = &self.remote.job else { return };
+        let r = match rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Err("the firewall's run ended without an answer".into()),
+        };
+        self.allow_done(r);
+    }
+
+    /// Tests: waits for the answer of the firewall's run.
+    #[cfg(test)]
+    fn allow_wait(&mut self) {
+        if let Some(rx) = &self.remote.job {
+            let r = rx.recv().unwrap_or_else(|_| Err("the firewall's run ended without an answer".into()));
+            self.allow_done(r);
+        }
+    }
+
+    /// The change is in force, or what failed: the toast and the Firewall row.
+    fn allow_done(&mut self, r: Result<(), String>) {
+        self.remote.job = None;
+        self.remote.failed = r.is_err();
         let now = self.sys.net_allow();
         let what = if now.is_empty() { "No address list: everyone".to_string() } else { format!("Allowed: {}", now) };
-        let when = if now == self.remote.allow_start { "" } else { ", from the next start" };
-        self.toast(&format!("{}{}", what, when));
+        match r {
+            Ok(()) => self.toast(&format!("{}, in force", what)),
+            Err(e) => self.toast(&format!("{}: {}", what, e)),
+        }
     }
 
     /// Allowed's row: the list in use, cut to the room of its row.
@@ -254,12 +345,13 @@ impl Ui {
         "\u{2026}".into()
     }
 
-    /// Firewall's row: the list of the start in force, or a change that waits for the next start.
+    /// Firewall's row: the state in force, or the run of a change that has not answered yet or failed.
     fn firewall_value(&self) -> String {
-        let now = self.sys.net_allow();
-        if now != self.remote.allow_start {
-            "from the next start".into()
-        } else if now.is_empty() {
+        if self.remote.job.is_some() {
+            "applying".into()
+        } else if self.remote.failed {
+            "failed: see the log".into()
+        } else if self.sys.net_allow().is_empty() {
             "off: everyone".into()
         } else {
             "on".into()
@@ -432,7 +524,7 @@ mod tests {
 
     // Break it catches: no way to set net.allow on the scope (SSH says "off: needs net.allow" and nothing on the
     // screen fixes it); a typo written to the file (the firewall would close the scope or leave a word out); a change
-    // shown as in force before the start that loads it
+    // that waits for the next start (the servers' list kept, no firewall run)
     #[test]
     fn the_address_list_from_the_screen() {
         let dir = std::env::temp_dir().join(format!("oos-ui-allow-{}", std::process::id()));
@@ -441,6 +533,8 @@ mod tests {
         let p = dir.join("system.conf");
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         u.sys_path = Some(p.clone());
+        let servers = u.acl();
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
         u.open_menu(MenuId::Remote);
         // the row is there, with no list: everyone, no firewall
         assert!(u.dlg_layout().unwrap().rows.iter().any(|r| r.it == Item::RemAllow));
@@ -458,42 +552,119 @@ mod tests {
         assert_eq!(u.toast.as_ref().unwrap().0, "Not an address prefix: 192.168.1.0/33");
         assert_eq!(u.sys.net_allow(), "");
         assert!(!p.exists(), "nothing written");
-        // a good one is written in its plain form, and waits for the next start
+        assert!(servers.permits(ip("198.51.100.1")), "the servers' list unchanged");
+        // a good one is written in its plain form and is in force at once: no firewall here (a computer), the servers'
+        // list follows
         u.wlan.osk.as_mut().unwrap().text = "192.0.2.77/24, fd00::/8".into();
         u.osk_ok();
         assert!(u.wlan.osk.is_none());
-        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24 fd00::/8, from the next start");
+        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24 fd00::/8, in force");
         let text = std::fs::read_to_string(&p).unwrap();
         assert_eq!(netacl::value(&text, "net.allow"), Some("192.0.2.0/24 fd00::/8"));
         let (acl, bad) = netacl::Acl::from_texts(None, Some(&text));
-        assert!(bad.is_empty() && acl.permits("192.0.2.9".parse().unwrap()) && !acl.permits("198.51.100.1".parse().unwrap()));
+        assert!(bad.is_empty() && acl.permits(ip("192.0.2.9")) && !acl.permits(ip("198.51.100.1")));
         assert_eq!(crate::sysconf::SysConf::load(&p).net_allow(), "192.0.2.0/24 fd00::/8");
         assert_eq!(u.value(Item::RemAllow), "192.0.2.0/24 fd00::/8");
-        assert_eq!(u.value(Item::RemFirewall), "from the next start");
-        // after a start with it: in force
-        let mut v = Ui::new(Source::Demo { t: 0.0 });
-        v.sys = crate::sysconf::SysConf::load(&p);
-        v.sys_path = Some(p.clone());
-        // as `load_system` takes it at the start (that also sets the backlight, which a host test must not)
-        v.remote.allow_start = v.sys.net_allow();
-        assert_eq!(v.value(Item::RemFirewall), "on");
+        assert_eq!(u.value(Item::RemFirewall), "on");
+        assert!(servers.permits(ip("192.0.2.9")) && servers.permits(ip("fd12::1")));
+        assert!(!servers.permits(ip("198.51.100.1")));
         // the list in use (cut as a name is) and the network are offered; the network sets the list from the picker
-        v.remote.lans = vec!["198.51.100.0/24".into(), "203.0.113.0/24".into()];
-        assert_eq!(v.options(Item::RemAllow), vec!["192.0.2.0/24 fd00\u{2026}".to_string(), "198.51.100.0/24".into(), "203.0.113.0/24".into(), OTHER.into()]);
-        v.open_menu(MenuId::Remote);
-        v.open_picker(Item::RemAllow);
-        v.activate(Item::PickOpt(1));
-        assert_eq!(v.sys.net_allow(), "198.51.100.0/24");
+        u.remote.lans = vec!["198.51.100.0/24".into(), "203.0.113.0/24".into()];
+        assert_eq!(u.options(Item::RemAllow), vec!["192.0.2.0/24 fd00\u{2026}".to_string(), "198.51.100.0/24".into(), "203.0.113.0/24".into(), OTHER.into()]);
+        u.open_menu(MenuId::Remote);
+        u.open_picker(Item::RemAllow);
+        u.activate(Item::PickOpt(1));
+        assert_eq!(u.sys.net_allow(), "198.51.100.0/24");
+        assert!(servers.permits(ip("198.51.100.1")) && !servers.permits(ip("192.0.2.9")));
         // the knob does not change it
-        v.adjust(Item::RemAllow, 1);
-        assert_eq!(v.sys.net_allow(), "198.51.100.0/24");
-        // an empty entry removes the line: no list (no image default on the host)
-        v.allow_pick(v.options(Item::RemAllow).len() - 1);
-        v.wlan.osk.as_mut().unwrap().text.clear();
-        v.osk_ok();
-        assert!(v.wlan.osk.is_none());
-        assert_eq!(v.toast.as_ref().unwrap().0, "No address list: everyone, from the next start");
+        u.adjust(Item::RemAllow, 1);
+        assert_eq!(u.sys.net_allow(), "198.51.100.0/24");
+        // an empty entry removes the line: no list (no image default on the host), everyone again
+        u.allow_pick(u.options(Item::RemAllow).len() - 1);
+        u.wlan.osk.as_mut().unwrap().text.clear();
+        u.osk_ok();
+        assert!(u.wlan.osk.is_none());
+        assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
+        assert_eq!(u.value(Item::RemFirewall), "off: everyone");
         assert_eq!(netacl::value(&std::fs::read_to_string(&p).unwrap(), "net.allow"), None);
+        assert!(servers.permits(ip("203.0.113.5")));
+        // a save that fails changes nothing: neither the setting nor the servers' list
+        let blocked = dir.join("a-file");
+        std::fs::write(&blocked, "").unwrap();
+        u.sys_path = Some(blocked.join("system.conf"));
+        u.allow_osk_done("192.0.2.0/24");
+        assert!(u.toast.as_ref().unwrap().0.starts_with("Not saved"), "{:?}", u.toast);
+        assert_eq!(u.sys.net_allow(), "");
+        assert!(servers.permits(ip("203.0.113.5")));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A runner that keeps what it was asked to run and fails `fail` (the scope's scripts are never run in a test).
+    fn recorder(fail: Option<&'static str>) -> (Runner, std::sync::Arc<Mutex<Vec<String>>>) {
+        let ran = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let r = ran.clone();
+        let run: Runner = std::sync::Arc::new(move |s: &crate::remote::Step| {
+            r.lock().unwrap().push(format!("{} {} >> {}", s.prog, s.arg, s.log));
+            if fail == Some(s.prog) {
+                return Err(format!("{} {} failed (exit status: 1), see {}", s.prog, s.arg, s.log));
+            }
+            Ok(())
+        });
+        (run, ran)
+    }
+
+    // Break it catches: a change of Allowed that leaves the firewall of the boot in place (or runs it in the frame
+    // loop), SSH not started when a list appears with its switch on, or still listening with its sessions when the
+    // list is gone; a failure of the firewall not told
+    #[test]
+    fn a_change_of_allowed_runs_the_firewall_and_ssh() {
+        let fw = "/bin/oos-firewall reload >> /tmp/oos-net.log";
+        let ssh = |a: &str| format!("/bin/oos-ssh {} >> /tmp/oos-ssh.log", a);
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let (run, ran) = recorder(None);
+        u.set_allow_runner(run);
+        u.open_menu(MenuId::Remote);
+        // SSH off: the firewall alone; the row says so until the run answered, then the state in force
+        assert!(u.allow_osk_done("192.0.2.0/24"));
+        assert!(u.remote.job.is_some(), "the run is a thread of its own");
+        assert_eq!(u.value(Item::RemFirewall), "applying");
+        assert!(!u.acl().permits("198.51.100.1".parse().unwrap()), "the servers' list does not wait for it");
+        u.allow_wait();
+        assert_eq!(*ran.lock().unwrap(), vec![fw.to_string()]);
+        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24, in force");
+        assert_eq!(u.value(Item::RemFirewall), "on");
+        // SSH on: it listens with a list (the sessions stay) ...
+        u.sys.remote_ssh = true;
+        ran.lock().unwrap().clear();
+        assert!(u.allow_osk_done("198.51.100.0/24"));
+        u.allow_wait();
+        assert_eq!(*ran.lock().unwrap(), vec![fw.to_string(), ssh("restart")]);
+        // ... and without one ends with its sessions and stays off, as a start without net.allow leaves it
+        ran.lock().unwrap().clear();
+        assert!(u.allow_osk_done(""));
+        u.allow_wait();
+        assert_eq!(*ran.lock().unwrap(), vec![fw.to_string(), ssh("stop"), ssh("start")]);
+        assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
+        assert_eq!(u.value(Item::RemFirewall), "off: everyone");
+        // the answer also comes through the frame loop's poll
+        assert!(u.allow_osk_done("192.0.2.0/24"));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while u.remote.job.is_some() {
+            assert!(std::time::Instant::now() < until, "no answer");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            u.allow_poll();
+        }
+        assert_eq!(u.value(Item::RemFirewall), "on");
+        // the firewall fails: the toast names it, the row says so, SSH still follows the list; the servers' list is
+        // the new one all the same
+        let (run, ran) = recorder(Some(crate::remote::FIREWALL));
+        u.set_allow_runner(run);
+        assert!(u.allow_osk_done("203.0.113.0/24"));
+        u.allow_wait();
+        assert_eq!(*ran.lock().unwrap(), vec![fw.to_string(), ssh("restart")]);
+        let toast = "Allowed: 203.0.113.0/24: /bin/oos-firewall reload failed (exit status: 1), see /tmp/oos-net.log";
+        assert_eq!(u.toast.as_ref().unwrap().0, toast);
+        assert_eq!(u.value(Item::RemFirewall), "failed: see the log");
+        assert!(u.acl().permits("203.0.113.9".parse().unwrap()) && !u.acl().permits("192.0.2.9".parse().unwrap()));
     }
 }

@@ -153,7 +153,7 @@ pub fn run(mut ui: Ui, args: &[String]) {
     if !input.mouse_captured() { eprintln!("oos-ui: native mouse event capture unavailable; using polling"); }
     let mut cv = Canvas::new(ui::W, ui::H);
     let mut front_window: Option<front_window::FrontWindow> = None;
-    let mut services = lan::Services::open(args);
+    let mut services = lan::Services::open(args, &ui.acl());
     let mut loader = picker::Loader::new();
     let mut last = Instant::now();
     let mut wheel = 0.0f32;

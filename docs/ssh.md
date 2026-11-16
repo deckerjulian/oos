@@ -4,7 +4,8 @@ The SSH server, its switches and its page are described in [network.md](network.
 `/bin/oos-ssh`, off by default (`remote.ssh`), listening only with `net.allow` and the firewall loaded, root with the
 scope's own password or a trusted key, System > Network > Remote services > SSH settings. telnet stays beside it
 (`remote.telnet`, on by default); switch it off once SSH is set up. `net.allow` is set on the same page, **Allowed**
-(network.md section 6); it applies from the next start.
+(network.md section 6); it applies at once: with SSH switched on, a list set starts the server, and a list removed
+stops it with its sessions.
 
 This page is about getting trusted keys onto a scope without the password.
 

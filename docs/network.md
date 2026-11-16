@@ -165,7 +165,8 @@ when a switch changes. With SSH set up, switch telnet off: it is a shell for any
 console (UART2) keeps its shell without a login.
 
 The last row: **Allowed**, the addresses that may reach the scope (`net.allow`, section 6), and **Firewall** beside it,
-which says whether that list is in force or waits for the next start.
+which shows the state in force: `on`, `off: everyone`, `applying` while a change is being put in force, `failed: see
+the log` when the firewall or SSH could not follow it.
 
 ### 4.1 The scope by name: mDNS and DNS-SD
 
@@ -196,7 +197,7 @@ and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the 
 | `_http._tcp.local` | PTR, SRV, TXT | web remote: port 8080, `path=/` |
 | `_scpi-raw._tcp.local` | PTR, SRV, TXT | SCPI: port 5555 |
 | `_vxi-11._tcp.local` | PTR, SRV, TXT | VXI-11: port 111 |
-| `_ssh._tcp.local` | PTR, SRV, TXT | SSH (section 7): port 22, only while oos-ssh listens (`remote.ssh = on`, `net.allow` set, firewall loaded) |
+| `_ssh._tcp.local` | PTR, SRV, TXT | SSH (section 7): port 22, only while oos-ssh listens (`remote.ssh = on`, `net.allow` set, firewall loaded; looked at once a second, so it follows a change of Allowed) |
 
 The instance name a computer lists is `Rigol DHO924S OOS (204527)` (with a name of its own: `Rigol DHO924S OOS
 (lab-scope-3)`). A service switched off is not announced; its records get a goodbye. A name of the scope without the
@@ -283,15 +284,21 @@ anything from a listed prefix. The rest is dropped, on Ethernet and WLAN alike. 
 does not parse is left out and logged (`/tmp/oos-net.log`, kernel log): an IPv4 address of four numbers up to 255, an
 IPv6 address of up to eight groups of 1 to 4 hex digits with at most one `::`, each with an optional `/length`. A
 list of which nothing parses closes everything but loopback rather than opening it, and so does a ruleset nft refuses
-anyway.
+anyway. `oos-firewall reload` (oos-ui, after a change of Allowed) stops the `onlink6` watcher of the old list, applies
+the new one in one step (nft replaces the table whole) and starts a watcher as rcS does; it ends at once without
+`onlink6`. Without a list it removes the table and the prefix file, which leaves the scope as a start without the key.
+A connection that is open already keeps passing (connection tracking): a list without its address refuses only new
+ones; an SSH session from there stays until it ends, unless the list is removed, which ends SSH (section 7).
 `nft` is a static build in the image (`rootfs/build-nft.sh`, nftables 1.1.3).
 The link-local fallback address (169.254.x.y) is only reachable from a listed prefix: add `169.254.0.0/16` to
 `net.allow` for a computer on a direct cable.
 
-**oos-ui** reads `net.allow` once at start and applies it a second time per connection: `POST /update` and `/mcp`
-answer 403 to others as soon as the request head is in (the body is not read), SCPI and VXI-11 close the connection.
-The page, the live picture, `/cmd`, the downloads and `POST /waveform` (a reference upload, nothing written to
-storage) stay open to the firewall's prefixes. Loopback is always allowed.
+**oos-ui** reads `net.allow` at the start; its servers share that list with Allowed, which sets it after a change
+(`netacl::Shared`). They apply it a second time per connection: `POST /update` and `/mcp` answer 403 to others as soon
+as the request head is in (the body is not read; each request is checked, so a change counts from the next one), SCPI,
+VXI-11 and HiSLIP (on a computer) close the connection. After a change they also close the connections they hold from
+an address the new list leaves out. The page, the live picture, `/cmd`, the downloads and `POST /waveform` (a
+reference upload, nothing written to storage) stay open to the firewall's prefixes. Loopback is always allowed.
 
 **On the scope**: System > Network > Remote services > **Allowed** shows the list in use (`everyone` without one). Its
 picker offers that list, every network the scope is on (each IPv4 address with its netmask, e.g. `192.168.1.0/24`
@@ -300,10 +307,17 @@ keyboard, which starts with the list or, without one, with the first network. An
 key (`netacl`): every word must be an address prefix as above or `onlink6`, IPv6 without dotted IPv4. Anything else
 is refused with a message on the keyboard and nothing is written. What is taken goes to `/oos/system.conf` in its
 plain form (`192.168.1.7/24` becomes `192.168.1.0/24`, a single address `/32` or `/128`); an empty entry removes the
-line, so the image default applies again (none on most images: everyone, no firewall, SSH stays off). The firewall
-and oos-ui read the key only at the start: a change applies at the next start, and the **Firewall** row says
-`from the next start` until then (`on` with a list in force, `off: everyone` without one). Leave the computer that
-should reach the scope inside the list. There is no SCPI command for it: SCPI has no login.
+line, so the image default applies again (none on most images: everyone, no firewall, SSH stays off).
+
+A change takes effect at once. When it is saved, oos-ui's own list changes (connections from outside it are closed, as
+above); then a thread of its own runs `oos-firewall reload`, and with the SSH switch on `oos-ssh restart` (a list) or
+`oos-ssh stop` and `start` (no list: SSH ends with its sessions and shows `off: needs net.allow`), so the scope is as a
+start with the new list would leave it. The toast says `Allowed: <list>, in force` (`No address list: everyone, in
+force`), or names what failed, with the log (`/tmp/oos-net.log`, `/tmp/oos-ssh.log`, and oos-ui's own); the
+**Firewall** row says `applying` until then, `failed: see the log` after a failure, else `on` or `off: everyone`. A
+save that fails changes nothing. On a computer (the desktop build, `--serve`) there is no firewall: only oos-ui's list
+changes. Leave the computer that should reach the scope inside the list: a change that leaves it out closes its SCPI
+connection at once and refuses its next update. There is no SCPI command for it: SCPI has no login.
 
 **MAC**: an address that is not unicast or not six colon-separated bytes falls back to `cid` (logged). `vendor` asks the board
 (`oos-board mac`; on the DHO800/DHO900 `oos-fpgad model`, which needs the keys of vendor.bin, docs/models.md 1); without
@@ -311,7 +325,10 @@ them it falls back to `cid` as well.
 
 Not verified on hardware: all of this section. Verified on the host: the ruleset loads into a Linux kernel with the
 static `nft` (arm64 container), `oos-conf` and `oos-mac` under busybox, the address lists of oos-ui (`netacl` tests),
-the Allowed row: shown, refused, written and read back (`ui::remote::tests`, `sysconf::tests`).
+the Allowed row: shown, refused, written and read back (`ui::remote::tests`, `sysconf::tests`); a change followed by
+the web server and SCPI without a restart, an SCPI connection from outside the new list closed (`http::tests`,
+`scpi::tests`); the steps a change runs, the toast and the row (`ui::remote::tests`, with a stand-in for the scripts);
+`oos-firewall reload` with and without `onlink6` and without a list (`tools/fw-sim.sh`).
 
 ## 7. SSH
 
@@ -324,10 +341,12 @@ after the firewall, in the background, and oos-ui restarts or stops it when a se
 **When it listens.** Only with `remote.ssh = on`, a non-empty `net.allow` (section 6) and the firewall table loaded.
 Without `net.allow`, or when `nft` refused the ruleset, port 22 stays closed (state `off: needs net.allow`,
 `off: firewall not loaded`), so SSH never opens to a network that was not named. Remote services > Allowed sets the
-list (section 6); it applies, and SSH can listen, from the next start. Built-in default: off. The DHO804 unit
-image sets `remote.ssh = on` together with its `net.allow`, so that unit has SSH from its first start: on a LAN that is
-already limited to one prefix, a random password is an acceptable first login, and it is what lets `ssh-copy-id` add the
-first key.
+list (section 6) and SSH follows it at once when its switch is on: a list set starts the listener after the firewall
+is loaded, a changed one restarts it (sessions stay; the firewall refuses new connections from outside the list, an
+open session stays until it ends), a list removed ends the listener and every session. Built-in default: off. The
+DHO804 unit image sets `remote.ssh = on` together with its `net.allow`, so that unit has SSH from its first start: on
+a LAN that is already limited to one prefix, a random password is an acceptable first login, and it is what lets
+`ssh-copy-id` add the first key.
 
 **First start.** The scope makes, once, in `/oos/ssh` on the data partition (kept over updates and power-offs; without
 the partition in `/tmp/oos-ssh`, made again at every start):

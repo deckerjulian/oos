@@ -148,8 +148,10 @@ pub struct Scpi {
     wav_start: u64,
     wav_stop: u64,
     err: Vec<String>,
-    /// who may connect (`netacl`, net.allow; empty: everyone)
-    pub acl: crate::netacl::Acl,
+    /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
+    pub acl: crate::netacl::Shared,
+    /// the changes of `acl` looked at (`netacl::Shared::changed`)
+    acl_seen: u64,
     event_status: u8,
     error_serial: u64,
     last_error: Option<String>,
@@ -629,7 +631,7 @@ fn e(v: f64) -> String {
 #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
-        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_mode: 0, wav_start: 1, wav_stop: 0, err: Vec::new(), event_status: 0, error_serial: 0, last_error: None, opc_events: Vec::new(), acl: crate::netacl::Acl::default() }
+        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_mode: 0, wav_start: 1, wav_stop: 0, err: Vec::new(), event_status: 0, error_serial: 0, last_error: None, opc_events: Vec::new(), acl: crate::netacl::Shared::default(), acl_seen: 0 }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
@@ -689,7 +691,7 @@ impl Scpi {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
             while let Ok((s, peer)) = l.accept() {
-                if !self.acl.permits(peer.ip()) {
+                if !self.acl.permits_peer(Ok(peer)) {
                     continue; // dropped: closes the connection
                 }
                 let _ = s.set_nonblocking(false);
@@ -699,6 +701,11 @@ impl Scpi {
                     self.clients.push(Client { s, buf: Vec::new(), program: None });
                 }
             }
+        }
+        // net.allow changed on the screen: a client the list now leaves out is closed, as at `accept`
+        if self.acl.changed(&mut self.acl_seen) {
+            let acl = &self.acl;
+            self.clients.retain(|c| acl.permits_peer(c.s.peer_addr()));
         }
         let mut i = 0;
         while i < self.clients.len() {
@@ -4714,6 +4721,53 @@ mod tests {
         line(&mut s,&mut ui,&cv,":TRIG:FORC");ui.step(0.2);for _ in 0..25 { server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
         let n=client.read(&mut bytes).unwrap();let response=crate::hislip::take_message(&mut bytes[..n].to_vec()).unwrap().unwrap();
         assert_eq!((response.typ,response.param),(7,77));assert_eq!(response.data,b"WAIT;1\nSTOP\n");
+    }
+
+    // Break it catches: SCPI keeping the net.allow of its start (a list changed on the screen counted only after a
+    // restart of oos-ui), or a client the new list leaves out kept on its open connection
+    #[test]
+    fn net_allow_follows_a_change_without_a_restart() {
+        let (mut s, mut ui, cv) = session();
+        let acl = crate::netacl::Shared::default();
+        s.acl = acl.clone();
+        // the test's connections come from 198.51.100.7
+        acl.peers_as(Some("198.51.100.7".parse().unwrap()));
+        let port = s.port().unwrap();
+        // what the client reads until it has a line (Some) or the server closed it (None)
+        let mut read = |s: &mut Scpi, c: &mut TcpStream| -> Option<String> {
+            c.set_nonblocking(true).unwrap();
+            let (mut got, until) = (Vec::new(), std::time::Instant::now() + Duration::from_secs(20));
+            loop {
+                assert!(std::time::Instant::now() < until, "no answer and not closed");
+                s.poll(&mut ui, &cv);
+                let mut b = [0u8; 256];
+                match c.read(&mut b) {
+                    Ok(0) => return None,
+                    Ok(n) => got.extend_from_slice(&b[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(1))
+                    }
+                    Err(_) => return None,
+                }
+                if got.ends_with(b"\n") {
+                    return Some(String::from_utf8_lossy(&got).into_owned());
+                }
+            }
+        };
+        let mut held = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        held.write_all(b"*IDN?\n").unwrap();
+        assert!(read(&mut s, &mut held).is_some_and(|a| a.starts_with("OOS,")), "no list: everyone");
+        // a list without the client: the connection held is closed, a new one refused
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        assert_eq!(read(&mut s, &mut held), None, "the connection held is closed");
+        let mut new = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        assert_eq!(read(&mut s, &mut new), None, "a new connection is refused");
+        assert!(s.clients.is_empty());
+        // a list with it: in again, without a restart
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24 198.51.100.0/24").0);
+        let mut again = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        again.write_all(b"*IDN?\n").unwrap();
+        assert!(read(&mut s, &mut again).is_some_and(|a| a.starts_with("OOS,")), "inside the new list");
     }
 
     // Break it catches: `echo "*IDN?" | nc host 5555` (the client closes its side after the line) got no answer

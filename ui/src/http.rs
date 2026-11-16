@@ -592,13 +592,10 @@ pub struct Http {
     /// the waveform upload being parsed
     wave: Option<WaveJob>,
     shots: Arc<Shots>,
-    /// who may install an update or use MCP (empty: everyone)
-    pub acl: crate::netacl::Acl,
+    /// who may install an update or use MCP (empty: everyone); checked per request, so a change counts at once
+    pub acl: crate::netacl::Shared,
     /// the addresses the identification page names
     offer: Offer,
-    /// tests: every peer outside `acl` (loopback is always inside)
-    #[cfg(test)]
-    refuse_peers: bool,
 }
 
 impl Drop for Http {
@@ -750,10 +747,8 @@ impl Http {
             pending: Vec::new(),
             wave: None,
             shots: Shots::new(),
-            acl: crate::netacl::Acl::default(),
+            acl: crate::netacl::Shared::default(),
             offer: Offer::default(),
-            #[cfg(test)]
-            refuse_peers: false,
         }
     }
 
@@ -896,11 +891,7 @@ impl Http {
                 if !too_big && need.is_none() {
                     // what only `net.allow` may send is refused before its body is read, not after
                     let guarded = upload_path == "/mcp" || (first.starts_with("post ") && upload_path == "/update");
-                    #[cfg(test)]
-                    let refused = self.refuse_peers;
-                    #[cfg(not(test))]
-                    let refused = false;
-                    if guarded && (refused || !s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()))) {
+                    if guarded && !self.acl.permits_peer(s.peer_addr()) {
                         early = Some("403 Forbidden");
                         return false;
                     }
@@ -937,7 +928,7 @@ impl Http {
                 let req_body = &req[hdr_end.unwrap_or(req.len())..];
                 let post = text.starts_with("POST ");
                 // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
-                let peer_ok = s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()));
+                let peer_ok = self.acl.permits_peer(s.peer_addr());
                 // an answer that is text for the page to show, not the data asked for
                 let mut failed = false;
                 let mut csv = |r: Result<String, String>| match r {
@@ -1859,13 +1850,41 @@ setTimeout(() => {
         assert!(r.starts_with("HTTP/1.1 200"), "{r}");
         drop(first);
         // outside net.allow: refused at the head, the body never asked for
-        h.refuse_peers = true;
+        h.acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        h.acl.peers_as(Some("198.51.100.7".parse().unwrap()));
         for path in ["/update", "/mcp"] {
             let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 1 << 20).into_bytes());
             assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "{path}: {r}");
         }
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
         assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    }
+
+    // Break it catches: the web server keeping the net.allow of its start, so a list changed on the screen
+    // (Remote services > Allowed) refused or let in an update only after a restart of oos-ui
+    #[test]
+    fn net_allow_follows_a_change_without_a_restart() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        // the list the screen sets, shared with the server; the test's connections come from 198.51.100.7
+        let acl = crate::netacl::Shared::default();
+        h.acl = acl.clone();
+        acl.peers_as(Some("198.51.100.7".parse().unwrap()));
+        let update = b"POST /update HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\njunk".to_vec();
+        let taken = |r: &str| r.starts_with("HTTP/1.1 200") && r.contains("REFUSED: not an OOS update package");
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(taken(&r), "no list: everyone: {r}");
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "outside the new list: {r}");
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24 198.51.100.0/24").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(taken(&r), "inside the next one: {r}");
+        acl.set(crate::netacl::Acl::from_value("").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update);
+        assert!(taken(&r), "the list removed: {r}");
     }
 
     #[test]

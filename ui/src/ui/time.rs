@@ -181,20 +181,20 @@ impl Ui {
             eprintln!("oos-ui: {}: decoders.off leaves out every decoder, {} stays", path.display(), name);
         }
         self.sys_path = Some(path);
-        // what rcS built the firewall from, and oos-ui its address list (main.rs): in force until the next start
-        self.remote.allow_start = self.sys.net_allow();
         self.net_name_init();
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();
         self.apply_tz();
         self.apply_backlight();
     }
 
-    /// Writes the settings (not in tests: there `sys_path` is none).
-    pub(super) fn sys_save(&mut self) {
-        let Some(p) = self.sys_path.clone() else { return };
+    /// Writes the settings (not in tests: there `sys_path` is none). False: not written, the toast says why.
+    pub(super) fn sys_save(&mut self) -> bool {
+        let Some(p) = self.sys_path.clone() else { return true };
         if let Err(e) = self.sys.save(&p) {
             self.toast(&format!("Not saved: {}", e));
+            return false;
         }
+        true
     }
 
     /// The time zone in use: the setting, with `tz = dhcp` the lease's or the fallback (`resolve_zone`).

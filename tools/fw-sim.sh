@@ -3,9 +3,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # fw-sim.sh - tests oos-firewall's IPv6 part, udhcpc.script and oos-net6 (docs/network.md 6, 8) without a scope: an
 # arm64 container with the image's busybox, oos-conf, oos-firewall and nft. Checks which routes count as prefixes on
-# the link, the ruleset, the set `onlink6` loaded in the kernel and kept up to date by `watch`, the lease's time zone
-# and that a DHCP lease leaves the IPv6 addresses alone. Needs Docker, one finished image build (its busybox) and
-# rootfs/out/nft (rootfs/build-nft.sh; OOS_OUT names another rootfs/out).
+# the link, the ruleset, the set `onlink6` loaded in the kernel and kept up to date by `watch`, `reload` after a change
+# of net.allow (the new list, the watcher stopped and started, without a list nothing left as at a start without one),
+# the lease's time zone and that a DHCP lease leaves the IPv6 addresses alone. Needs Docker, one finished image build
+# (its busybox) and rootfs/out/nft (rootfs/build-nft.sh; OOS_OUT names another rootfs/out).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
@@ -111,6 +112,49 @@ echo "$t" | grep -q 'policy drop' || fail "closed: no drop policy: $t"
 echo "$t" | grep -q 'saddr' && fail "closed: a prefix is let in: $t"
 grep -q 'inbound closed except loopback' /c/refused.log || fail "closed log: $(cat /c/refused.log)"
 
+echo "== reload: net.allow changed while the scope runs (Remote services > Allowed)"
+alive() { s=$(awk '{ print $3 }' /proc/"$1"/stat 2>/dev/null); [ -n "$s" ] && [ "$s" != Z ]; }
+watcher() { p=$(cat /tmp/oos-firewall-watch.pid 2>/dev/null) && [ -n "$p" ] && alive "$p" && echo "$p"; }
+conf "net.allow = 192.0.2.0/24 onlink6"
+OOS_FW6_PERIOD=1 /bin/oos-firewall reload 2> /c/reload.log || fail "reload: $(cat /c/reload.log)"
+t=$(nft list table inet oos_fw)
+echo "$t" | grep -q 'ip saddr 192.0.2.0/24 accept' || fail "reload: the new list: $t"
+echo "$t" | grep -q 'ip6 saddr @onlink6 accept' || fail "reload: onlink6: $t"
+w1=; n=0; until w1=$(watcher) || [ $n -ge 10 ]; do sleep 1; n=$((n + 1)); done
+[ -n "$w1" ] || fail "reload: no watcher with onlink6"
+echo "2001:db8:abc::/64 dev eth0  metric 256" >> /c/routes
+n=0; until member 2001:db8:abc::1 || [ $n -ge 10 ]; do sleep 1; n=$((n + 1)); done
+member 2001:db8:abc::1 || fail "reload: the watcher does not follow the prefixes"
+conf "net.allow = 198.51.100.0/24"
+/bin/oos-firewall reload 2>> /c/reload.log || fail "reload without onlink6: $(cat /c/reload.log)"
+t=$(nft list table inet oos_fw)
+echo "$t" | grep -q 'ip saddr 198.51.100.0/24 accept' || fail "reload: the second list: $t"
+echo "$t" | grep -q -e 192.0.2.0 -e onlink6 && fail "reload: the old list kept: $t"
+n=0; while alive "$w1" && [ $n -lt 10 ]; do sleep 1; n=$((n + 1)); done
+alive "$w1" && fail "reload: the watcher of the old list still runs"
+[ -n "$(watcher)" ] && fail "reload: a watcher without onlink6"
+[ -e /tmp/oos-net6.prefixes ] && fail "reload: the prefix file kept without onlink6"
+
+echo "== reload: net.allow removed: as a start without it"
+conf "net.allow = 192.0.2.0/24 onlink6"
+/bin/oos-firewall reload 2>> /c/reload.log || fail "reload: $(cat /c/reload.log)"
+w1=; n=0; until w1=$(watcher) || [ $n -ge 10 ]; do sleep 1; n=$((n + 1)); done
+conf "ntp = on"
+/bin/oos-firewall reload 2>> /c/reload.log || fail "reload without net.allow: $(cat /c/reload.log)"
+[ -z "$(nft list ruleset)" ] || fail "reload without net.allow: a ruleset is left: $(nft list ruleset)"
+grep -q 'no net.allow: firewall removed, inbound open' /c/reload.log || fail "removal log: $(cat /c/reload.log)"
+n=0; while [ -n "$w1" ] && alive "$w1" && [ $n -lt 10 ]; do sleep 1; n=$((n + 1)); done
+[ -n "$w1" ] && alive "$w1" && fail "reload without net.allow: the watcher still runs"
+[ -e /tmp/oos-net6.prefixes ] && fail "reload without net.allow: the prefix file kept"
+/bin/oos-firewall 2> /c/start.log || fail "a start without net.allow: $(cat /c/start.log)"
+[ -s /c/start.log ] && fail "a start without net.allow logs: $(cat /c/start.log)"
+# an empty line in the settings is no list either (it switches an image default off)
+conf "net.allow = 192.0.2.0/24"
+/bin/oos-firewall reload 2>> /c/reload.log || fail "reload: $(cat /c/reload.log)"
+conf "net.allow ="
+/bin/oos-firewall reload 2>> /c/reload.log || fail "reload with an empty line: $(cat /c/reload.log)"
+[ -z "$(nft list ruleset)" ] || fail "reload with an empty line: a ruleset is left: $(nft list ruleset)"
+
 echo "== DHCP lease: time zone, IPv6 kept"
 ip link add d0 type dummy && ip link set d0 up
 n=0; until ip -6 addr show dev d0 | grep -q 'inet6 fe80'; do sleep 1; n=$((n + 1)); [ $n -ge 5 ] && break; done
@@ -152,7 +196,9 @@ docker run --rm --platform linux/arm64 --cap-add NET_ADMIN --sysctl net.ipv6.con
 	--sysctl net.ipv6.conf.default.disable_ipv6=0 \
 	-v "$w:/w:ro" -v "$root/rootfs/initramfs:/src:ro" -v "$out:/out:ro" alpine:3.22 sh -euc '
 	cp /w/busybox /bin/busybox
-	for a in sh ip awk sed grep sort cat od tr mv mkdir chmod dirname sleep timeout stat cp sync; do ln -sf busybox /bin/$a; done
+	for a in sh ip awk sed grep sort cat od tr mv mkdir chmod dirname sleep timeout stat cp sync setsid; do
+		ln -sf busybox /bin/$a
+	done
 	for f in oos-conf oos-firewall oos-net6; do cp /src/bin/$f /bin/; done
 	cp /src/etc/udhcpc.script /etc/udhcpc.script
 	cp /out/nft /bin/

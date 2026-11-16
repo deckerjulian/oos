@@ -2683,6 +2683,7 @@ impl Ui {
         self.wlan_poll();
         self.ntp_poll();
         self.ssh_poll();
+        self.allow_poll();
         self.usb_poll();
         self.ch_hold_poll();
         self.counter_poll();

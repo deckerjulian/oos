@@ -4,12 +4,18 @@
 //! Who may control the scope over the network: `net.allow` in `/oos/system.conf`, with the image default from
 //! `/etc/oos/system.conf` (docs/network.md 6). A list of address prefixes, `192.0.2.0/24 fd00::/8`. Empty or
 //! absent: everyone, as before. rcS builds the firewall from the same key (`oos-firewall`); this list is the second
-//! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI and VXI-11. The scope itself
+//! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI, VXI-11 and HiSLIP. The scope itself
 //! (loopback) is always allowed. `onlink6` stands for the IPv6 prefixes on the link (from the router's advertisements,
 //! `net6::PREFIX_FILE`), which change with the provider.
+//!
+//! The servers hold one list (`Shared`) that Remote services > Allowed sets after it saved a change (ui/remote.rs):
+//! every check takes the list of that moment, and each server closes the connections it holds from an address the new
+//! list leaves out.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 
 /// The image default of the system settings (an image built for one unit, boot/build-dev-image.sh `OOS_UNIT`).
 pub const IMAGE_CONF: &str = "/etc/oos/system.conf";
@@ -107,6 +113,11 @@ impl Acl {
     /// something but of which nothing parses closes everything but loopback rather than opening it.
     pub fn from_texts(image: Option<&str>, settings: Option<&str>) -> (Acl, Vec<String>) {
         let v = settings.and_then(|t| value(t, "net.allow")).or_else(|| image.and_then(|t| value(t, "net.allow"))).unwrap_or("");
+        Acl::from_value(v)
+    }
+
+    /// The value of `net.allow` in force (the settings' line or the image default), as `from_texts` takes it.
+    pub fn from_value(v: &str) -> (Acl, Vec<String>) {
         let (mut acl, bad) = Acl::parse(v);
         if acl.is_open() && !bad.is_empty() {
             acl.nets.push(("::1".parse().unwrap(), 128));
@@ -122,10 +133,63 @@ impl Acl {
         for b in bad {
             eprintln!("oos-ui: net.allow: {:?} is not an address prefix, left out", b);
         }
-        if !acl.is_open() {
-            eprintln!("oos-ui: update, MCP, SCPI and VXI-11 only from {}", acl);
-        }
+        acl.log();
         acl
+    }
+
+    /// The list in the log, when there is one.
+    pub fn log(&self) {
+        if !self.is_open() {
+            eprintln!("oos-ui: update, MCP, SCPI, VXI-11 and HiSLIP only from {}", self);
+        }
+    }
+}
+
+/// The list the servers check, one for all of them: Remote services > Allowed sets it after it saved a change. Each
+/// check takes the list of that moment; `changed` tells a server to look again at the connections it holds.
+#[derive(Clone, Default)]
+pub struct Shared(Arc<SharedList>);
+
+#[derive(Default)]
+struct SharedList {
+    acl: RwLock<Acl>,
+    /// counts the changes (`set`)
+    changes: AtomicU64,
+    /// tests: every peer is taken to be this address (a test connects over loopback, which is always allowed)
+    #[cfg(test)]
+    peers_as: std::sync::Mutex<Option<IpAddr>>,
+}
+
+impl Shared {
+    /// The list from now on, for new connections and those held.
+    pub fn set(&self, acl: Acl) {
+        *self.0.acl.write().unwrap_or_else(PoisonError::into_inner) = acl;
+        self.0.changes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn permits(&self, ip: IpAddr) -> bool {
+        self.0.acl.read().unwrap_or_else(PoisonError::into_inner).permits(ip)
+    }
+
+    /// The peer of a connection (`TcpStream::peer_addr`, or the address `accept` gave); none is refused.
+    pub fn permits_peer(&self, peer: std::io::Result<SocketAddr>) -> bool {
+        #[cfg(test)]
+        if let Some(ip) = *self.0.peers_as.lock().unwrap_or_else(PoisonError::into_inner) {
+            return self.permits(ip);
+        }
+        peer.is_ok_and(|a| self.permits(a.ip()))
+    }
+
+    /// True once after each change since the server last asked (`seen` is its count of changes).
+    pub fn changed(&self, seen: &mut u64) -> bool {
+        let n = self.0.changes.load(Ordering::SeqCst);
+        std::mem::replace(seen, n) != n
+    }
+
+    /// Tests: every peer is taken to be `ip` (None: its own address again).
+    #[cfg(test)]
+    pub fn peers_as(&self, ip: Option<IpAddr>) {
+        *self.0.peers_as.lock().unwrap() = ip;
     }
 }
 
@@ -278,6 +342,25 @@ mod tests {
         // what is written reads back as the same list, and the firewall's checks take every word of it
         let c = canonical("192.0.2.200/25 2001:db8::/32 onlink6").unwrap();
         assert_eq!(Acl::parse(&c), (Acl::parse("192.0.2.128/25 2001:db8::/32 onlink6").0, Vec::new()));
+    }
+
+    // Break it catches: a server that kept the list of the start (a change on the screen counted only after a restart),
+    // or never looked again at the connections it held
+    #[test]
+    fn one_list_for_every_server_that_follows_a_change() {
+        let a = Shared::default();
+        let b = a.clone();
+        let (mut seen_a, mut seen_b) = (0, 0);
+        assert!(!a.changed(&mut seen_a) && b.permits(ip("198.51.100.7")), "open, as without net.allow");
+        a.set(Acl::parse("192.0.2.0/24").0);
+        assert!(!b.permits(ip("198.51.100.7")) && b.permits(ip("192.0.2.7")) && b.permits(ip("127.0.0.1")));
+        assert!(b.changed(&mut seen_b) && !b.changed(&mut seen_b), "once per change");
+        assert!(a.changed(&mut seen_a), "each server sees it");
+        let peer = |s: &str| Ok(SocketAddr::new(ip(s), 5555));
+        assert!(b.permits_peer(peer("192.0.2.1")) && !b.permits_peer(peer("198.51.100.7")));
+        assert!(!b.permits_peer(Err(std::io::ErrorKind::NotConnected.into())), "no address: refused");
+        a.set(Acl::from_value("").0);
+        assert!(b.changed(&mut seen_b) && b.permits_peer(peer("198.51.100.7")));
     }
 
     #[test]

@@ -10,10 +10,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// The script that owns the server.
-const SCRIPT: &str = "/bin/oos-ssh";
+pub const SCRIPT: &str = "/bin/oos-ssh";
 /// One line of state the script leaves: `on: keys only`, `off: needs net.allow`, ...
 const STATE: &str = "/tmp/oos-ssh.state";
-const LOG: &str = "/tmp/oos-ssh.log";
+pub const LOG: &str = "/tmp/oos-ssh.log";
 pub const KEYS_FILE: &str = "authorized_keys";
 const PASSWORD_FILE: &str = "password";
 const HOST_KEY_PUB: &str = "dropbear_ed25519_host_key.pub";

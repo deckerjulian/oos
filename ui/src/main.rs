@@ -219,7 +219,7 @@ fn main() {
 /// HiSLIP. VXI-11 stays on the scope, where port 111 is free. `OOS_DEMO_LOOP=<mask>` puts the generator on those
 /// channels, as a cable from the output would.
 fn serve(mut ui: Ui, args: &[String]) {
-    let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args);
+    let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args, &ui.acl());
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);
@@ -241,20 +241,31 @@ fn on_scope() -> bool {
     std::path::Path::new("/dev/xdma0_bypass").exists() || matches!(oos_hal::model::platform().source, oos_hal::model::Source::Vendor)
 }
 
-/// SCPI, the web server, and whichever of VXI-11 and HiSLIP this machine accepts, plus the announcement.
-fn lan(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
-    let (web, scpi, vxi, hislip) = lan_servers(scope, args);
+/// SCPI, the web server, and whichever of VXI-11 and HiSLIP this machine accepts, plus the announcement. `acl`: the
+/// address list they check, the one the screen sets (`Ui::acl`).
+fn lan(
+    scope: bool,
+    args: &[String],
+    acl: &netacl::Shared,
+) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
+    let (web, scpi, vxi, hislip) = lan_servers(scope, args, acl);
     let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
     let ann = announce::Announcer::open(&services);
     (web, scpi, vxi, hislip, ann)
 }
 
 /// The listeners of `lan` without the announcement: the scope announces itself by name (mdns.rs, System > Network).
-fn lan_servers(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server) {
+fn lan_servers(
+    scope: bool,
+    args: &[String],
+    acl: &netacl::Shared,
+) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server) {
     let mut web = http::Http::open(lan_port(args, "--web-port", 8080));
-    let scpi = scpi::Scpi::open(lan_port(args, "--scpi-port", 5555));
-    let vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
-    let hislip = if scope { hislip::Server::closed() } else { hislip::Server::open(lan_port(args, "--hislip-port", hislip::PORT)) };
+    let mut scpi = scpi::Scpi::open(lan_port(args, "--scpi-port", 5555));
+    let mut vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
+    let hislip_port = lan_port(args, "--hislip-port", hislip::PORT);
+    let mut hislip = if scope { hislip::Server::closed() } else { hislip::Server::open(hislip_port) };
+    (web.acl, scpi.acl, vxi.acl, hislip.acl) = (acl.clone(), acl.clone(), acl.clone(), acl.clone());
     web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
     (web, scpi, vxi, hislip)
 }
@@ -581,12 +592,14 @@ fn device_main(mut ui: Ui, args: &[String]) {
     // the scope accepts VXI-11, a computer HiSLIP instead; the scope announces itself by name (mdns.rs below)
     let scope = on_scope();
     let (web_port, scpi_port) = (lan_port(args, "--web-port", 8080), lan_port(args, "--scpi-port", 5555));
-    let (mut web, mut scpi, mut vxi, mut hislip) = lan_servers(scope, args);
-    // who may update or control the scope over the network: net.allow (docs/network.md 6); read once per start
-    let acl = netacl::Acl::load(&sysconf::default_path());
-    web.acl = acl.clone();
-    scpi.acl = acl.clone();
-    vxi.acl = acl;
+    // who may update or control the scope over the network: net.allow (docs/network.md 6), read here at the start; the
+    // servers share the list with Remote services > Allowed, which sets it after a change and runs the firewall again
+    let acl = ui.acl();
+    acl.set(netacl::Acl::load(&sysconf::default_path()));
+    if std::path::Path::new(remote::FIREWALL).exists() {
+        ui.set_allow_runner(remote::script_runner());
+    }
+    let (mut web, mut scpi, mut vxi, mut hislip) = lan_servers(scope, args, &acl);
     // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login, telnet (None:
     // not yet, at the start)
     let mut remote_now: Option<[bool; 6]> = None;

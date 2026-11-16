@@ -4,20 +4,25 @@
 # oos-firewall: inbound only from the prefixes of `net.allow` (oos-conf, docs/network.md 6), before any service of
 # the image listens. Loopback, answers to what the scope sent (DHCP, DNS, NTP) and IPv6 neighbour discovery always
 # pass; everything else that comes in is dropped. Outbound is not limited. No `net.allow` or an empty one: no firewall,
-# as before. A list of which nothing parses closes everything but loopback rather than opening it, and so does a
-# ruleset nft refuses (an entry the checks here let through): a typo in the list must not open the scope.
+# as before (a table loaded before is removed). A list of which nothing parses closes everything but loopback rather
+# than opening it, and so does a ruleset nft refuses (an entry the checks here let through): a typo in the list must
+# not open the scope.
 # The word `onlink6` in the list admits the IPv6 prefixes on the link: the routes without a gateway the kernel made
 # from the router's advertisements, /48 to /128, not fe80::/64 (a shorter one, `2000::/3` from a rogue router, would
 # open the scope to the internet). They change with the provider: `watch` checks them every 10 s, puts them in the
 # nft set `onlink6` and in /tmp/oos-net6.prefixes for oos-ui (netacl.rs, net6.rs). busybox ip has no monitor.
 #   oos-firewall             apply (rcS)
-#   oos-firewall watch       keep the set `onlink6` up to date (rcS, in the background)
+#   oos-firewall watch       keep the set `onlink6` up to date (rcS, in the background; its pid in $WPID)
+#   oos-firewall reload      oos-ui after a change of `net.allow` (Remote services > Allowed): the watcher of the old
+#                            list stopped, the list applied, a watcher started as rcS starts it. Without a list the
+#                            scope is left as a start without one leaves it: no table, no watcher, no prefix file
 #   oos-firewall --print     print the ruleset only (host tests: OOS_CONF_FILES, OOS_ROUTES6 = a file in place of
 #                            `ip -6 route show`)
 #   oos-firewall --prefixes  print the prefixes on the link only
 allow=$("$(dirname "$0")/oos-conf" net.allow)
 log() { echo "oos-firewall: $*" >&2; [ ! -w /dev/kmsg ] || echo "oos-firewall: $*" > /dev/kmsg; }
 PFX=/tmp/oos-net6.prefixes
+WPID=/tmp/oos-firewall-watch.pid
 prefixes() {
 	{ if [ -n "${OOS_ROUTES6:-}" ]; then cat "$OOS_ROUTES6"; else ip -6 route show 2>/dev/null; fi; } | awk '
 		$1 ~ /^[0-9A-Fa-f:]+\/[0-9]+$/ && $2 == "dev" && $3 != "lo" {
@@ -27,7 +32,26 @@ prefixes() {
 		}' | sort -u
 }
 if [ "${1:-}" = --prefixes ]; then prefixes; exit 0; fi
-[ -n "$allow" ] || exit 0
+if [ "${1:-}" = reload ]; then
+	# the watcher knows the list it started with only; a pid of another program is left alone
+	p=$(cat $WPID 2>/dev/null)
+	[ -n "$p" ] && [ "$(cat /proc/"$p"/comm 2>/dev/null)" = oos-firewall ] && kill "$p" 2>/dev/null
+	rm -f $WPID
+	"$0"; r=$?
+	# ends at once without `onlink6` in the list
+	(setsid "$0" watch < /dev/null > /dev/null &)
+	exit $r
+fi
+if [ -z "$allow" ]; then
+	case "${1:-}" in --print | watch) exit 0;; esac
+	rm -f $PFX
+	# what a start without the key leaves: no table (none at power-on, the one of an earlier list after a reload)
+	if [ -x /bin/nft ] && /bin/nft list table inet oos_fw > /dev/null 2>&1; then
+		/bin/nft delete table inet oos_fw || { log "nft did not remove the firewall"; exit 1; }
+		log "no net.allow: firewall removed, inbound open"
+	fi
+	exit 0
+fi
 v4=; v6=; bad=; on6=
 octet() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -le 255 ]; }
 # IPv6: groups of 1 to 4 hex digits, eight of them or fewer with one `::` (`2001:db8:::1` made nft refuse everything)
@@ -92,6 +116,7 @@ if [ "${1:-}" = --print ]; then rules; exit 0; fi
 keep() { printf '%s\n' $1 > $PFX.new && mv $PFX.new $PFX; }
 if [ "${1:-}" = watch ]; then
 	[ -n "$on6" ] || exit 0
+	echo $$ > $WPID
 	cur=$(cat $PFX 2>/dev/null)
 	while :; do
 		sleep "${OOS_FW6_PERIOD:-10}"
@@ -112,6 +137,8 @@ if /bin/nft -f /tmp/oos-firewall.nft; then
 	if [ -n "$on6" ]; then
 		keep "$p6"
 		on6log=" and the IPv6 prefixes on the link ($(list "${p6:-none yet}"))"
+	else
+		rm -f $PFX
 	fi
 	log "inbound only from ${v4}${v4:+${v6:+, }}${v6}${on6log}"
 else

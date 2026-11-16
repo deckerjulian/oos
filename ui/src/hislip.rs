@@ -3,7 +3,8 @@
 
 //! HiSLIP (IVI-6.1) on TCP 4880, for a computer. The scope keeps VXI-11, where port 111 is free.
 //!
-//! A connection is accepted and the data payload is handed to the same SCPI interpreter as the raw socket.
+//! A connection is accepted (from the addresses of `net.allow`, `netacl`) and the data payload is handed to the same
+//! SCPI interpreter as the raw socket.
 //! The session itself is not part of this: no lock is kept, overlap mode is not run, and remote/local is only
 //! acknowledged. What is here is the header, the initial exchange that lets a client send that payload, and the
 //! reply that carries the SCPI response back.
@@ -269,6 +270,10 @@ pub struct Server {
     conns: Vec<Conn>,
     live: Vec<Live>,
     next: u16,
+    /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
+    pub acl: crate::netacl::Shared,
+    /// the changes of `acl` looked at (`netacl::Shared::changed`)
+    acl_seen: u64,
 }
 
 impl Server {
@@ -280,11 +285,12 @@ impl Server {
         } else {
             eprintln!("oos-ui: HiSLIP port {} not available", port);
         }
-        Server { l, conns: Vec::new(), live: Vec::new(), next: 1 }
+        Server { l, conns: Vec::new(), live: Vec::new(), next: 1, acl: crate::netacl::Shared::default(), acl_seen: 0 }
     }
 
     pub fn closed() -> Server {
-        Server { l: None, conns: Vec::new(), live: Vec::new(), next: 1 }
+        let acl = crate::netacl::Shared::default();
+        Server { l: None, conns: Vec::new(), live: Vec::new(), next: 1, acl, acl_seen: 0 }
     }
 
     pub fn port(&self) -> Option<u16> {
@@ -298,7 +304,10 @@ impl Server {
 
     pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
         if let Some(l) = &self.l {
-            while let Ok((s, _)) = l.accept() {
+            while let Ok((s, peer)) = l.accept() {
+                if !self.acl.permits_peer(Ok(peer)) {
+                    continue; // dropped: closes the connection
+                }
                 let _ = s.set_nonblocking(false);
                 let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                 let _ = s.set_nodelay(true);
@@ -307,12 +316,14 @@ impl Server {
                 }
             }
         }
+        // net.allow changed on the screen: a connection the list now leaves out is closed with its session
+        let recheck = self.acl.changed(&mut self.acl_seen);
         let mut i = 0;
         while i < self.conns.len() {
             let mut tmp = [0u8; 8192];
-            let mut closed = false;
+            let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
             let mut read_bytes = 0;
-            loop {
+            while !closed {
                 match self.conns[i].s.read(&mut tmp) {
                     Ok(0) => {
                         closed = true;
