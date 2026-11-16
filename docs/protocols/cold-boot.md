@@ -87,8 +87,10 @@ After these steps, write 0x1010 bit 31 = 0 (frame header on, `acquisition-start.
 | k | ADC core alignment | section 3.5; result 0x1020 = 0x1010, 0x1014 = 0x14f01301 (verified on the unit) |
 | l | ADC internal trim | section 3.6 |
 
-All files come from `/rigol/data/<name>` with fallback `/rigol/data/default/<name>`. Container: 20-byte header, u32
-length, u32 crc32, payload. Only steps d and g write hardware from file contents.
+Under stock all files come from `/rigol/data/<name>` with fallback `/rigol/data/default/<name>`. OOS's cold boot
+(`boot::cal::CalFiles::load`) reads `cal_adc.hex` from `/oos/cal` first, then those two; `cal_ddr.hex` only from the
+two stock locations. Container: 20-byte header, u32 length, u32 crc32, payload. Only steps d and g write hardware
+from file contents.
 
 ## 2. Already in OOS / missing (per step)
 
@@ -224,12 +226,13 @@ Window search (`boot::wnd`):
 2. For every lane k (two calls, lanes 0-13 and 14-27): if bit k at C equals P, count the run of P around C (down to
    index 0, up to 31) -> length n, last index e; delay = max(0, e - n/2). Else if bit k at S equals P, run from S up
    -> e, delay = max(0, e - L/2). Else if bit k at E-1 equals P, run from C+1 up -> e, n; delay = max(0, e - n/2).
-   Else the lane fails (the other lanes keep their result).
+   Else the lane fails. Then none of the 14 delays of that call is set (`wnd::lane_windows`), and OOS loads no scanned
+   delay at all: it loads the complete fallback list below.
 3. `data_mode(normal)`: `0x1034 <- 0x010d520f` (normal data).
 
 Example result, lanes 0..27: 12 12 13 12 13 12 12 12 12 13 11 11 13 13 12 11 13 13 13 13 13 13 12 11 12 12 12 13. Repeated
-scans stay within +-1 (verified on the unit). If any lane fails, OOS loads a stored list. A flat default of 10 for every
-lane is the alternative.
+scans stay within +-1 (verified on the unit). If any lane fails, OOS loads `Options::idelay_fallback`, by default the
+stored 28-lane list (`sim::UNIT_IDELAY`). A flat 10 for every lane is an alternative, not the OOS default.
 
 Load: `0x1014 <- (s & 0xfff00fff) | 0x1000`, then for lane 0..27 the three 0x1018 writes of `adc-spu-init.md` (`d`,
 `d | lane bit | group bit`, `d`).
@@ -295,11 +298,11 @@ to the horizontal rows except 0x1130/0x1134/0x1154../0x1170/0x1174, which the pa
 
 | block | registers | values for a raw read-out (proposal) | reference |
 |---|---|---|---|
-| WPU read-path gain/offset | 0x14c8/0x14d4/0x14e0/0x14ec (Q10 gain), 0x14d0/0x14dc/0x14e8/0x14f4 (offset), zoom 0x1508..0x1514 / 0x14f8..0x1504 | gain = digital gain x 1024, offset = 32768 - 32768 x gain, per lane: one channel all four, two channels lanes 0, 2 lower and 1, 3 higher (not like the invert bits), four channels lane n = CH n+1 | `afe-settings.md` 4.1 |
+| WPU read-path gain/offset | 0x14c8/0x14d4/0x14e0/0x14ec (Q10 gain), 0x14d0/0x14dc/0x14e8/0x14f4 (offset), zoom 0x1508..0x1514 / 0x14f8..0x1504 | d = record digital gain; x2 in 0x105c if d >= 2 and g = d/2, else g = d; g capped at 508; gain = trunc(g x 1024), offset = trunc(32768 - 32768 x g) (g, not the Q10 word); per lane: one channel all four, two channels lanes 0, 2 lower and 1, 3 higher (not like the invert bits), four channels lane n = CH n+1 | `afe-settings.md` 4.1 |
 | WPU ADC gain | 0x105c (0x5555 for x1) | 0x5555 | `adc-mode.md` 4.3 |
 | horizontal: interpolation off | 0x1130 = 0x00010101, 0x1134 (zoom, disabled), 0x1118/0x111c = points + 40, 0x1138 = 0x00c8c8c8, 0x1154 bit 0 = 1 (linear off) and bits 8/9 = 0, 0x1158 = 0, 0x115c = 0xffffffff, same for zoom 0x1160/0x1164 | as listed | `horizontal-config.md` 4.1 |
 | horizontal: compression / TX | 0x1170 = 0x40000001 (k = 1) or the k of 3.1 there, 0x1174, 0x11fc = 1000, 0x11f0 (OOS window) | | `horizontal-config.md` 3.1/4.1 |
-| horizontal: misc | 0x131c = (s & 0xf000) \| 0x2580044 (wave-early word 4, 4), 0x10a0 = 16 (filter control) | | |
+| horizontal: misc | 0x131c = (s & 0xf000) \| 0x2580044 (wave-early word 4, 4), 0x10a0 = 16 (filter control, stock only: OOS does not write 0x10a0, `adc-mode.md`) | | |
 | horizontal: delays | 0x1120/0x1124 (coarse: header write `en << 31 \| x << 30`, then one write per lane with lane select in bits 19:16 and the value in 15:0), 0x1128/0x112c (fine, same layout), 0x1290/0x1294 (LA) | values (3 x dot / 2 + deskew) not known | |
 | acquisition: sample delays | 0x1080/0x1084 | 3.10 | |
 | WAU (mask test off) | 0x4020 bit 15 = 0 (16-bit RMW), 0x119c bit 29 = 0, 0x1184 = 0x40000001 (mask compression off) | as listed | |
@@ -311,6 +314,8 @@ Base b = 480 / 240 / 120 for ratio 1 / 2 / 4, T = 600,000 fs on the stock system
 (0 without deskew). Measured on the unit with one source on two channels, T is 800,000 fs: a step moves a channel by 1.6 ns at ratio 2,
 and at ratio 4 only every second step counts, 6.4 ns. A positive d moves the trace to earlier times, under stock as well (`:CHANnel<n>:TCALibrate`, same 6.4 ns grid at 312.5 MSa/s). OOS uses
 800,000.
+Each field is b plus d/(ratio T) rounded to the nearest integer (half away from zero), clamped to 0..65535
+(`hal::dho::acq`).
 - ratio 1: 0x1080[31:16] = b + d/T, 0x1080[15:0] and 0x1084 rewritten from their shadows -> zero deskew:
   0x1080 = 0x01e00000 \| (s1080 & 0xffff), 0x1084 = s1084 (start 0);
 - ratio 2: 0x1080 = (b + d_lo/2T) << 16 \| (b + d_hi/2T) = 0x00f000f0; 0x1084 = s1084;
@@ -324,8 +329,8 @@ Keep shadows for 0x1000, 0x1014, 0x1020, 0x1428, 0x4004, 0x4008 and the ADC regi
 | # | step | details | status |
 |---|---|---|---|
 | 1 | FPGA boot | `\rBOOT\r` + 00 40 00 00 on spidev1.0; wait; `pcie-rockchip` host (retry by reload), `xdma poll_mode=1`; check 0x4000 = 0xe2072115; if it shows another value, BOOT was lost (`fpga-boot.md`): unload both modules, BOOT, wait, load, check again, at most twice | verified on the unit; the repeat of BOOT verified once (first repeat of two) |
-| 2 | sample clock | LMX2582 table (`pll.md`) | verified on the unit |
-| 3 | AFE x4 | AFE init | verified on the unit |
+| 2 | sample clock | LMX2582 table (`pll.md`); in the power-on path during the FPGA wait, before PCIe (`boot::early_start`) | verified on the unit |
+| 3 | AFE x4 | AFE init; in the power-on path also during the FPGA wait | verified on the unit |
 | 4 | ADC init | 2 x 104 words + `0x010f0201` | verified on the unit (1.1 ms / 100 us) |
 | 5 | SPU init | 0x1000 1,0,0,0x10,0; 0x105c 0x55555555; 0x1010 0x20000000; **0x1014 0x00f00001** | verified on the unit |
 | 6 | SCU init | 0x4004 0x80000000, 0 | verified on the unit |
@@ -334,7 +339,7 @@ Keep shadows for 0x1000, 0x1014, 0x1020, 0x1428, 0x4004, 0x4008 and the ADC regi
 | 9 | ADC cal mode 0 | 3.7 from `cal_adc.hex` | verified on the unit |
 | 10 | DDR taps | 3.2 from `cal_ddr.hex` (skip if absent); then poll 0x1008 bit 29 | verified on the unit |
 | 11 | sync delay | 3.3 sweep + sync sequence; no falling edge stays at 7, a reg 7 that never changes stops the boot | verified on the unit |
-| 12 | lane delays | 3.4 scan, window search, load; fallback to the stored list; then check 0x1210 in 62494..62506 | verified on the unit, fallback not yet |
+| 12 | lane delays | 3.4 scan, window search, load; fallback to the stored list; then check 0x1210 against `boot::adc_clk_window` (62494..62506 at 1.25 GHz) | verified on the unit, fallback not yet |
 | 13 | core align | 3.5 | verified on the unit |
 | 14 | ADC trim | 3.6, ADC 0 only, 2 s timeout | verified on the unit |
 | 15 | normal data | `0x010d520f` | verified on the unit |

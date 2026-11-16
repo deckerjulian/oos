@@ -15,9 +15,10 @@ copy of register N, memsel = record length, ratio = interleave factor, dot = sam
 2. Each read: pulse 0x1010 bit28, read **0x11e8** = FIFO fill level in 8-byte units. Then read as many whole chunks as are
    there. One chunk = 8-word (16-byte) header + 100 data words (all channels interleaved, 100/ratio points per channel),
    i.e. **216 bytes**. If 0x11e8 = 0, sleep 9 ms. Otherwise read and loop at once.
-3. Display: a sliding buffer of 1000 chunks per channel, newest data at the right end, older data shifted left
-   (2.4). The time per point is 10 x ratio x k x dot / f (k = compression, f = linear interpolation
-   factor, see 3). With the parameters of 3.2 one chunk is one screen column (time/div / 100) in most single-channel cases.
+3. Display (stock reconstruction, 2.4): a sliding buffer of 1000 chunks per channel, newest data at the right end, older
+   data shifted left. OOS keeps one screen of points instead (2.4). The time per point is 10 x ratio x k x dot / f (k =
+   compression, f = linear interpolation factor, see 3). With the parameters of 3.2 one chunk is one screen column
+   (time/div / 100) in most single-channel cases.
 4. Register differences from a normal RUN: the acquisition block is the same (analog). In the horizontal block the window covers the
    whole memory (0x1108 = 0, 0x1100 = memsel + 0x248 + k), **0x1170 = 0xc0000000 | 10·ratio·k**, **0x11fc = 100/ratio**
    (normally 1000), the linear interpolator is switched on with a fraction that brings the stream to 1000 points per column
@@ -25,7 +26,7 @@ copy of register N, memsel = record length, ratio = interleave factor, dot = sam
    written as usual.
 5. Stop = stop sequence + average clear + read 0x1208 (number of recorded points, bit31 = memory full). The roll bit stays set.
    It is cleared when the time mode leaves roll and by the prologue of the next normal arm.
-6. Switching rule (only while running): **Auto Roll on → roll from 50 ms/div**. Auto Roll off → **scan from
+6. Stock switching rule (only while running): **Auto Roll on → roll from 50 ms/div**. Auto Roll off → **scan from
    200 ms/div** (not with average mode). The states RUN, SINGLE and STOP are the normal ones. The time mode is separate: YT, XY, ROLL,
    SCAN. OOS rolls from 200 ms/div (section 8).
 
@@ -37,7 +38,8 @@ YT, ROLL, SCAN (and XY, which plays no role here). A change of the time mode nee
 
 ### 1.2 Decision
 
-This runs only while running, and also on RUN. Thresholds: 5e13 fs = **50 ms/div**, 2e14 fs = **200 ms/div**.
+Stock rule, reconstructed. This runs only while running, and also on RUN. Thresholds: 5e13 fs = **50 ms/div**, 2e14 fs =
+**200 ms/div**.
 
 | current mode | Auto Roll | new time base | new mode |
 |---|---|---|---|
@@ -49,7 +51,9 @@ This runs only while running, and also on RUN. Thresholds: 5e13 fs = **50 ms/div
 | SCAN | on | >= 50 ms | ROLL |
 
 Scan allowed = acquire mode is not average. It is not checked on the Auto Roll path. A further condition (assumed: mask or math on)
-is not known exactly. `board::dho::hw::slow_mode` in oos-ui follows this table with `board::dho::hw::ROLL_TDIV` and `board::dho::hw::SCAN_TDIV`.
+is not known exactly. `board::dho::hw::slow_mode` in oos-ui uses 200 ms/div for both (`ROLL_TDIV`, `SCAN_TDIV`): Auto
+Roll on -> roll, off -> scan unless averaging; below 200 ms/div normal triggered acquisition (section 8 gives the
+reason).
 
 ### 1.3 Side effects of entering ROLL/SCAN
 
@@ -110,10 +114,11 @@ de-interleave: len = n / ratio, count = cnt, header = 8 words   ; same layout as
 roll: append to the display buffer (2.4)
 scan: rd 0x1204, rd 0x40d0 (section 5)
 ```
-Read size at n = 100: **216 bytes per chunk** for every channel count (100 words = 100/ratio points per
-channel, interleaved like `horizontal-config.md` 2.2). 0x11e8 x 8 is 27 x chunks if the FIFO holds only whole
-chunks. An odd remainder (if any) stays in the FIFO for the next call. No register write between reads except the
-3 latch writes. 0x4008 bit23 is not touched here, the acquisition block set it.
+Read size at n = 100: **216 bytes per chunk** for every channel count (100 words = 100/ratio points per channel,
+interleaved like `horizontal-config.md` 2.2). If the FIFO holds only whole chunks, 0x11e8 = 27 x chunks (0x11e8 x 8 =
+216 x chunks bytes); in general read floor(4 x 0x11e8 / 108) whole chunks. An odd remainder (if any) stays in the FIFO
+for the next call. No register write between reads except the 3 latch writes. 0x4008 bit23 is not touched here, the
+acquisition block set it.
 
 ### 2.3 Polling
 
@@ -128,12 +133,16 @@ So the read runs at most every ~9 ms when the FIFO is empty. At 100 ms/div (1000
 
 ### 2.4 How points are appended
 
-Per channel, buffer capacity = 1000 x len points (len = points per channel per chunk). New data = cnt x len points,
-copied to the **end**. If old + new fits: old data is moved left by the new length, new data goes after it,
+Stock reconstruction. OOS does not use it: per channel it keeps round(10 x time/div / point spacing) points, appends
+every whole chunk it reads, and drops the oldest points beyond that (`board::dho::hw`). It has no 500-chunk discard.
+How many chunks fill a screen depends on ratio and interpolation (3.4), so it is not always 1000.
+
+Stock: per channel, buffer capacity = 1000 x len points (len = points per channel per chunk). New data = cnt x len
+points, copied to the **end**. If old + new fits: old data is moved left by the new length, new data goes after it,
 range = (cap - total, total). If it does not fit: the oldest new-length points are dropped, everything moves to index 0,
-new data at the end, range = (0, cap). Time axis: `xinc = trace dot time * 1000 / len` with trace dot time =
-ceil(dot x k / f), `x0 = -xinc * points` (newest point at t = 0, right edge). A read with **> 500 chunks** is not
-added to the display. The data is still consumed. After the start and after a channel on/off/position change, discard the next n
+new data at the end, range = (0, cap). Time axis: `xinc = trace dot time * 1000 / len` with trace dot time = ceil(dot x
+k / f), `x0 = -xinc * points` (newest point at t = 0, right edge). A read with **> 500 chunks** is not added to the
+display. The data is still consumed. After the start and after a channel on/off/position change, discard the next n
 reads.
 
 ## 3. Acquisition and horizontal values in roll
@@ -141,8 +150,9 @@ reads.
 ### 3.1 Acquisition block
 
 Analog only: **identical to normal mode** (same rate 0x10d0/0x10d8/0x10d4, 0x10e4 = memsel, 0x10e0 = segment size,
-0x4050/0x4054 = pre/post, 0x404c = 5, 0x1148, 0x1004). The only roll terms are for LA: 0x4008 bit24 = LA && roll/scan,
-and the LA doubling of 0x10e4 is skipped in roll. The FPGA records into memory during roll as well (0x1208 counts it, section 4).
+0x4050/0x4054 = pre/post, 0x404c = 5, 0x1148, 0x1004). With the LA on: 0x4008 bit24 = LA && roll/scan, 0x10e4 = memsel
+(the LA doubling of normal mode is skipped), and still 0x4050 / 0x4054 = 2 x pre / 2 x post and the doubled segment
+(`la::config`, `la.md` 3.1). The FPGA records into memory during roll as well (0x1208 counts it, section 4).
 
 ### 3.2 Display-chain parameters
 
@@ -228,8 +238,9 @@ be overwritten (assumed; see experiment E2).
 ## 5. Scan mode (differences from roll)
 
 - SCU block: bit17 = 0, bit22 = 1 (0x4008).
-- **0x4058** = `pos | en << 31` with pos = (offset − 5·time/div) / dot. en = 0 (and pos 0) if −(screen start / column time) >= 1, i.e.
-  when the trigger point is not left of the screen start (assumed meaning: samples from trigger to scan start).
+- **0x4058** = `pos | en << 31` with pos = (offset − 5·time/div) / dot. Stock, reconstructed: en = 0 (and pos 0) if
+  −(screen start / column time) >= 1, column = time/div / 100 (assumed meaning: samples from trigger to scan start). OOS
+  uses another threshold (section 9). Which one the hardware needs is not yet verified on hardware.
 - Read path: the same chunk read, the same chunks, no roll buffer. The picture is drawn left to right with wrap. After every read,
   also when 0x11e8 = 0 or the read failed: rd **0x1204**, bit31 = triggered, [15:0] = position (see 9.1).
   Rd **0x40d0** != 0 → sweep done.
@@ -364,9 +375,10 @@ normal configuration, then A, B, C, D of section 6; parameters from `roll::param
 ## 9. Scan mode in OOS (verified on the unit)
 
 - `hal::dho::roll::config_scan(sh, rp, memsel, pos)` = A of section 6 with the last write (roll bit) replaced by bit22,
-  then **0x4058** = `scan_trig_pos(delay, time/div, dot)`: 0 unless the screen start is at least one column (time/div / 10 in the
-  code) right of the trigger point, else `(delay - 5 time/div) / dot | 1 << 31` (dot = sample period `hz::Params::dot_fs`, assumed). A
-  non-zero 0x4058 is not yet verified on hardware.
+  then **0x4058** = `scan_trig_pos(delay, time/div, dot)`: 0 when delay - 5 time/div < time/div / 10 (a tenth of a
+  division = ten screen columns), else `(delay - 5 time/div) / dot | 1 << 31`, saturated to 31 bits (dot = sample period
+  `hz::Params::dot_fs`, assumed). The stock rule of section 5 enables it from delay - 5 time/div > -time/div / 100.
+  The two disagree between those bounds. A non-zero 0x4058 is not yet verified on hardware.
 - After every read (also an empty poll): `SCAN_INFO_REGS` = 0x1204, 0x40d0 -> `scan_info` (triggered, position, done).
 - Done in RUN: `scan_done` (stop sequence, average clear), 500 ms, `config_scan` + `start` again. Done in SINGLE: stop until the next
   SINGLE press. Leaving scan: `stop` (clears bit17 and bit22, 0x11fc = 1000).

@@ -18,7 +18,8 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
   acquisition thread reads the screen window of the newest frame once more, raw (`seq::read_raw_again` with a window),
   before the next arm, as the live compression's raw newest frame does. Window: `screen_window`'s rule (screen and a
   quarter screen each side, at least 4096 points, the trigger point inside), or the whole record when that reaches
-  past its end; at most `deepmeas::MAX_BYTES` = 24 MiB for all channels (12 M points of one channel). The C2H path
+  past its end; at most `deepmeas::MAX_BYTES` = 24 MiB over all `ratio` acquired lanes (12 M points of one lane; a
+  hidden trigger channel counts as a lane). The C2H path
   splits it into reads of at most 4 MiB.
 - Rate: once per `deepmeas::PERIOD` = 1 s while running; every batch in Single.
 - The raw frame replaces the newest frame of its batch, so its record is an ordinary raw record: measurements,
@@ -58,10 +59,10 @@ their values and the statistics count nothing more (docs/fork/stop-exact.md, "Vi
 
 | claim | level |
 |---|---|
-| a frame of the ring can be played again after a batch read | unit for the LA read and the segment stamp plays; the compressed-then-raw replay of the live compression is host only (compress.md step 2) |
+| a frame of the ring can be played again after a batch read | unit: LA read, segment stamp plays, and the raw replay of the live compression returns the same record (round 2, compress.md) |
 | a raw window read of a deep record (screen_window) | unit, existing deep-memory path |
-| replay of a deep frame with a window after a compressed read | not shown |
-| cost: about 0.1 s of read per second at 10 M, 1 channel | estimate from the PCIe rate, not measured |
+| replay of a deep frame with a window after a compressed read | unit: the same Vrms at 10 to 125 M as at depth Auto ("Result on the DHO924S"). Trigger alignment of raw against pairs, other channel sets and delays not yet verified on hardware |
+| cost at 10 M, 1 ch | measured: about 5 % of the records ("Result on the DHO924S") |
 
 ## Host tests
 
@@ -83,13 +84,14 @@ their values and the statistics count nothing more (docs/fork/stop-exact.md, "Vi
 
 ## On-unit verification
 
-Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first without the key.
+Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first with `meas.deep_raw = off` in /oos/system.conf
+and `OOS_DEEP_RAW` unset, then restart oos-ui. The key absent means on.
 
 1. 10 M depth, 1 ms/div (10 periods on screen), Auto trigger. Measure Vavg, Vrms, Std dev,
-   Vmax. Without `meas.deep_raw`: Vavg/Vrms/Std dev show NaN ("----"). Note wfm/s and `:SYSTem:STATe?` (acquired/s).
-2. `meas.deep_raw = on`, restart oos-ui. Within about 1 s Vavg, Vrms and Std dev show values; Vavg about half the
-   square's amplitude plus its low level, Vrms consistent with a 50 % square. Compare with the same measurements at
-   1 M depth (raw records, no compression): within 1 %.
+   Vmax. With `meas.deep_raw = off`: Vavg/Vrms/Std dev show NaN ("----"). Note wfm/s and `:SYSTem:STATe?` (acquired/s).
+2. Remove the line or set `meas.deep_raw = on`, restart oos-ui. Within about 1 s Vavg, Vrms and Std dev show values;
+   Vavg about half the square's amplitude plus its low level, Vrms consistent with a 50 % square. Compare with the same
+   measurements at 1 M depth (raw records, no compression): within 1 %.
 3. Rate: acquired/s against step 1; at most about 10 % lower. `top -H -d 1`: oos-ui CPU, the measure thread on the
    little cores. /tmp/oos-ui.log: no `raw read of the deep window` errors.
 4. The raw record is the same acquisition: Single at 10 M, then the record shown (`:WAV:DATA?` RAW over the screen)
@@ -100,7 +102,7 @@ Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first without the
 6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3 (with the views after the STOP); then RUN again.
 7. Peak mode, roll, zoom: no raw deep reads (log), as before.
 
-Record the results here and in `docs/fork/unit-dho804.md`.
+Record the results here.
 
 ## Result on the DHO924S (2026-11-15)
 
@@ -128,8 +130,9 @@ Record the results here and in `docs/fork/unit-dho804.md`.
 
 ## Risks
 
-- Replay of a deep frame after a compressed read is not shown on the unit (step 4 decides); a wrong window would put
-  the measurement on the wrong samples.
+- Replay of a deep frame after a compressed read gave the right Vrms on the unit ("Result on the DHO924S"), but the
+  trigger alignment of the raw window against the pairs is not yet verified on hardware (step 4 decides); a wrong
+  window would put the measurement on the wrong samples.
 - A 12 M-point raw frame is copied once into `Shared::frame` (48 MB) and run through `to_record` and the measurement
   threads: about once a second; the measurement of 12 M samples on the little cores may take longer than the period,
   then results come less often.

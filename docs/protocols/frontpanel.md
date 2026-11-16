@@ -78,7 +78,7 @@ LEDs: `cmd 1/2/3, data 0xff` switched all front-panel LEDs on (verified on the u
 |---|---|---|---|---|
 | CH1-CH4 | 10-13 | | TOUCH | 0 |
 | RUN (green) | 16 | | A up/down | 7 |
-| STOP (red) | 17 | | B left/right | 5 |
+| STOP (red, assumed) | 17 | | B left/right | 5 |
 | SINGLE (red) | 15 | | SLOPE1 | 9 |
 | SINGLE (orange) | 14 | | SLOPE2 | 8 |
 | LA | 1 | | A left/right | 6 |
@@ -86,8 +86,9 @@ LEDs: `cmd 1/2/3, data 0xff` switched all front-panel LEDs on (verified on the u
 | G2 | none | | INTENSITY | 4 |
 
   RUN, STOP and both SINGLE bits are driven together as the run state. The slope pair (bits 9 and 8) follows the trigger
-  slope. Verified on the unit, by eye: bit 4 lights the blue Intensity LED; CH1-CH4 (in their channel colours), RUN/STOP
-  green, the rising-slope LED.
+  slope. Verified on the unit, by eye: bit 4 lights the blue Intensity LED; CH1-CH4 (in their channel colours), the
+  RUN/STOP key green with bit 16 (RUN), the rising-slope LED. Bit 17 (STOP) alone was not observed; its red colour is
+  assumed.
 - Power commands, the power LED and the MCU firmware version: `board.md` section 4. Motor functions exist for other
   Rigol products and are unused on the DHO.
 

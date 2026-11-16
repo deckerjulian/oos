@@ -1,7 +1,7 @@
 # STOP: the record on screen is the one in memory
 
-Branch `fix/stop-exact`. Default on: the pause applies to every STOP; the raw final frame only with `meas.deep_raw = on`
-(docs/fork/deep-meas.md).
+Branch `fix/stop-exact`. Default on: the pause applies to every STOP. A raw final frame comes for live-compression
+pairs, and for deep pairs while the deep measurements want samples (docs/fork/deep-meas.md).
 
 ## Before
 
@@ -21,18 +21,20 @@ Single scan only).
   their own paths, as before. RUN or SINGLE clear `hold`; the frames queued before are dropped then, by the UI as it
   releases the hold (`Source::hw_hold`: it takes frames in the same step) and by the thread on its next pass.
 - A batch already armed when STOP comes is finished (its wait is not cut short) and read.
-- Final frame (`Ui::stop_wants_final`): a plain STOP (not the end of Single or segments, not a mask stop, not a
-  history view) while the deep measurements want samples and the record shown is of min/max pairs. The UI raises
-  `final_req` and keeps taking records (status STOP) until `final_ack` answers it and the queue is empty, at most
-  `STOP_FINAL_WAIT` = 3 s. The thread reads the newest frame of the batch it read last once more, raw
-  (`final_replay`: deep window, `seq::read_raw_again`), queues it, then answers. That frame is the record on screen;
-  its measurements are made from its samples.
-- Arming ahead (`acq.prearm = on`, the unit's set-up) is skipped for batches the deep measurements may replay
-  (`prearm_keeps_replay`: a compressed deep record with deep measurements on), so the ring of the last batch stays for
-  the replay. Prearm's gain is at short time bases; at deep records the read takes most of the batch anyway.
-- No replay when the newest frame was already raw (rate-limited deep read, live compression), when the next batch was
-  armed ahead anyway, or when anything else ran on the FPGA since the read (the read is only remembered for one
-  pass). Then the record shown is the newest one already queued, measured as it is.
+- Final frame (`Ui::stop_wants_final`): a plain STOP (not the end of Single or segments, not a mask stop, not a history
+  view) while the record shown is of live-compression pairs, or of deep pairs while the deep measurements want samples.
+  The UI raises `final_req` and keeps taking records (status STOP) until `final_ack` answers it and the queue is empty,
+  at most `STOP_FINAL_WAIT` = 3 s. The thread reads the newest frame of the batch it read last once more, raw
+  (`final_replay`: the whole frame for live compression, the deep window for deep pairs; `seq::read_raw_again`), queues
+  it, then answers. The wait ends with the frame, not with the background measurement. That frame is the record on
+  screen; its measurements are made from its samples.
+- Arming ahead (`acq.prearm = on`, the unit's set-up) is skipped for batches that may be replayed
+  (`prearm_keeps_replay`: a live-compression batch, or a compressed deep record with deep measurements on), so the ring
+  of the last batch stays for the replay. Prearm's gain is at short time bases; at deep records the read takes most of
+  the batch anyway.
+- No replay when that newest frame was already read raw (rate-limited deep read, periodic raw read of the live
+  compression), when the next batch was armed ahead anyway, or when anything else ran on the FPGA since the read (the
+  read is only remembered for one pass). Then the record shown is the newest one already queued, measured as it is.
 - Views after the STOP (`Ui::stop_replay`): the thread reads the stored record again for every view (`stop_plan`),
   the first time right after the STOP. Zoomed out on a record above `LIVE_READ` (625 k points: 10 M at 1 ms/div) that
   read is the whole record through the compression, min/max pairs. Those pairs are drawn (`stop_pic`), but the raw
@@ -71,9 +73,11 @@ Single scan only).
    RUN; SINGLE still takes the first trigger after the press. CPU of oos-ui in STOP drops (`top -d 1`): nothing is
    read any more.
 2. Settings in STOP (V/div, time base, delay): as before (the record is redrawn, no new acquisition).
-3. `meas.deep_raw = on`, 10 M at 1 ms/div, probe comp on CH1, Vavg and Vrms on. STOP: within a fraction of a second
-   the values belong to the record shown: `:WAV:MODE RAW;:WAV:DATA?` over the screen, mean computed on the host,
-   equal to Vavg. Repeat 10 times at different moments.
+3. `meas.deep_raw = on`, 10 M at 1 ms/div, probe comp on CH1, Vavg and Vrms on. STOP: the values belong to the record
+   shown: `:WAV:MODE RAW;:WAV:DATA?` over the screen, mean computed on the host, equal to Vavg. Repeat 10 times at
+   different moments. Check the final-frame answer and the measurement separately. On one unit with a downstream
+   build (not in this tree): equal at 2.3 s after STOP (4 of 4), still NaN or an older value at 0.8 s. A sub-second
+   result is an unmet target.
    Then the views (A3): 10 M at 1 ms/div, generator 1 kHz square or sine on CH1, Vavg, Vrms, Std dev and AC RMS on
    the list, Measure statistics on, Screen gate. RUN a few seconds, STOP, note the values and the count. Wait 2 s:
    the values and the count stay (no "----"), the picture stays the whole record. Time base to 500 us and 200 us/div

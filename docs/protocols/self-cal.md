@@ -52,8 +52,9 @@ Run the items in this order. An error stops all later items.
 6. **Ext**: saves `cal_ext.hex`.
 7. **DDR**: **never-do** (section 8).
 
-Channel loops cover 4 channels, 2 on hardware version 4 (2-channel models). On those models the AFE zero item also runs
-for channel index 3.
+Stock: channel loops cover 4 channels, 2 on hardware version 4 (2-channel models). On those models the AFE zero item
+also runs for channel index 3. OOS has no such rule: `run_all_with` and `adc_plan` use the channel list they get, and
+the UI's All builds CH1..CH4. Self-cal on a 2-channel model is not yet verified on hardware.
 
 `hal::dho::selfcal::run_all_with` runs: ADC cores for the channel set (optional), then per channel AFE zero (optional) and the four
 vertical passes.
@@ -107,7 +108,9 @@ For each entry:
 6. After 20 rounds keep the last result.
 7. After all entries of the pass: rebuild the table (2.5) on a scratch copy.
 
-Cancel ends the run. An aborted or failed run keeps nothing.
+Cancel ends the run. A cancel or a measurement failure before saving discards the result. Saving (`selfcal::save`)
+replaces each file atomically, in the order vertical, ADC, zero, but the set is not one transaction: a save error on a
+later file leaves the earlier files updated.
 
 ### 2.3 Acceptance limits summary
 
@@ -121,12 +124,16 @@ Cancel ends the run. An aborted or failed run keeps nothing.
 ### 2.4 Measurement primitives
 
 **ADC measure unit** (`hal::dho::adc::measure`, `oos-hw adc-meas`):
-`0x1040 <- (value & 0x77fff0e0) | 15`, then the same `| 0x80000000` (start). 15 is the averaging exponent (assumed: 65536
-samples per core at 156.25 MSa/s, about 0.42 ms). Poll 0x1040 bit 30 every 10 ms, max 5 polls. Per core n = 0..7:
+`0x1040 <- (value & 0x77fff0e0) | 15`, then the same `| 0x80000000` (start). 15 is the averaging exponent e. A run is
+2^e samples per core (as `levels.rs`): 32768 samples, about 0.21 ms at 156.25 MSa/s (assumed;
+the run length is not timed on the unit). Poll 0x1040 bit 30 every 10 ms, max 5 polls. Per core n = 0..7:
 `0x1040[11:8] = n`, read 0x1044 (read again once if 0xeeeeeeee), also 0x1048 (peak). Output: 8 core means.
 
-Channel value: in the four-channel mode the mean of cores k and k+4, k = per-channel slot of the core order (14.3). In
-channel-only mode all 8 cores sample the channel and OOS averages all 8 (section 13).
+Channel value, stock: the mean of slots order[ch] and order[ch] + 4 with the core order of 14.3. That pairing belongs to
+core-order mode (0x1004 bit 0 set). In normal acquisition the slots of a channel are those of `levels::slots`: one
+channel all eight, two channels 0..3 and 4..7, four channels CH1 0/2, CH2 1/3, CH3 4/6, CH4 5/7 (assumed; a four-channel
+reading on the unit put CH1 and CH2 in slots 2 and 3, which fits it). OOS's self-cal uses channel-only mode, where all
+8 cores sample the channel, and averages all 8 (section 13).
 
 **DAC search** (`hal::dho::selfcal::dac_for`, target -> code and mean): measure both ends of the window 20000..40000, then
 bisect on the sign of the error, with each step `set_dac`, settle, read until stable, stop at +-16 codes. This works for
@@ -288,7 +295,9 @@ refuses any path under `/rigol`. OOS stamps UTC time, the unit has no time zone 
 
 `cal_lsb.hex` and `cal_afe_bandwidth.hex` are not written by the self-cal (the stock system rewrites the bandwidth file at
 boot, `afe-settings.md` 1.3). `/rigol/data/default/` is never written. A 12-block `default/cal_vertical.hex` has a file
-size of 538300 bytes (`afe-settings.md` 1.3).
+size of 538300 bytes (`afe-settings.md` 1.3). Normal lookup accepts a 12-block file, but the four-pass save needs a
+16-block base: `selfcal::vertical_payload` does not extend a 12-block payload and indexes past its end for group 3.
+The save takes its base from `/oos/cal` or `/rigol/data`, not from `default/`.
 
 OOS does not read `/rigol/data/cal.bin`. It holds process pointers and must never be loaded raw.
 
@@ -305,8 +314,9 @@ OOS does not read `/rigol/data/cal.bin`. It holds process pointers and must neve
 
 ## 9. Duration and preconditions
 
-- There is no temperature reading, no warm-up timer and no detection of a connected input. Warm up at least 15 min, better
-  30 min. Disconnect everything; only 50 Ohm BNC terminators are allowed. A connected signal corrupts both the zero cal
+- There is no temperature reading and no detection of a connected input. The OOS start dialog shows the time since boot
+  (`/proc/uptime`) against 30 min as advice; nothing enforces the wait. Warm up at least 15 min, better 30 min.
+  Disconnect everything; only 50 Ohm BNC terminators are allowed. A connected signal corrupts both the zero cal
   (comparators) and the vertical cal (ADC means). The result is not protected against this: after 20 rounds the last
   zero result is kept.
 - Fixed waits: 1 s settle per configuration, 2 x 1 s per AFE zero configuration.
@@ -331,7 +341,7 @@ Same file layout, but output only to `/oos/cal`, never `/rigol/data`. OOS reads 
    configuration does not reach keep their value.
 5. `selfcal::vertical_entry` + `rebuild_scales`: section 2 on a **scratch copy** of the table, with ADC mode "channel only",
    four passes with the band values 2/5/6/0xa via the normal set-up, the tuple list of 2.2, and the formulas of 2.2.
-   Abortable between configurations; on abort or failure nothing is kept.
+   Abortable between configurations; on abort or measurement failure nothing is saved (save errors: 2.2).
 6. `selfcal::adc_cores`: sections 14 and 15.
 7. The new tables take effect at the next set-up: the UI reloads the calibration after a successful run.
 8. `afe::Cal::load` order: OOS file (if CRCs are ok), then `/rigol/data`, then `/rigol/data/default`. `load_from` reports the
@@ -354,8 +364,8 @@ data partition: the last 16 MiB of `backup` (`oos-mount-data`, `blkdevparts=` in
 Hardware facts found on the unit:
 - The comparator self-check and input-select register is **0x2a** (3.2).
 - The MUX trim mapping is the reverse of the SGA mapping (3.2).
-- The ADC measure unit (0x1044) returns the mean raw code per core directly, before the read-path gain (about 6970
-  codes per volt at 1 V/div). In channel-only mode all 8 cores sample the channel; OOS averages all 8.
+- The ADC measure unit (0x1044) returns the mean raw code per core directly, before the read-path gain (about
+  6970 codes per volt at 1 V/div). In channel-only mode all 8 cores sample the channel; OOS averages all 8.
 - The offset DAC needs more than 5 ms to settle (runs with 5 ms contradicted themselves). OOS waits 30 ms.
 
 OOS choices, not all of them verified to be required:
@@ -426,7 +436,8 @@ Default order: **0, 2, 1, 3, 4, 6, 5, 7**.
 
 Verified on the unit: the order in core-order mode is 0, 2, 1, 3, 4, 6, 5, 7, so slot 1 shows core 2 and slot 2 core 1
 (also 5/6). Consequence: the channel value (mean of slots `order[ch]` and `order[ch] + 4`) is cores ch and ch+4,
-exactly the cores that sample CH ch+1 in the four-channel mode (`adc-mode.md` 3.2).
+exactly the cores that sample CH ch+1 in the four-channel mode (`adc-mode.md` 3.2). The measure slots of normal mode
+group differently (2.4): which core each normal-mode slot shows is not yet verified on hardware.
 
 ### 14.4 Reference
 
@@ -471,8 +482,10 @@ Per ADC mode m (offset record m = payload `m*0x68`):
 3. **Iteration**, at most 20 rounds: write the 8 core offsets (regs 0x14 + 8n), one measurement right after the SPI writes
    (no extra settle), per core n with k = order[n]: e = (mean[k] - 32768) / 16; if |e| > 1.5: **o[n] = trunc(o[n] - e)** (no
    clamp; values outside -1024..1023 are not written and the loop then fails). Stop when no core was corrected, else 50 ms
-   and the next round. **1 offset LSB = 16 measure-unit codes = 1 LSB of the 12-bit ADC** (assumed); tolerance +-1.5 LSB
-   (+-24 codes) per core, target = absolute mid-scale 32768.
+   and the next round. The loop treats one register step as 16 measure-unit codes (one 12-bit ADC LSB). That is a loop
+   coefficient, not the physical slope: in normal mode on the unit one register step moved a slot by about
+   0.5 to 0.6 ADC LSB, 9.0 to 10.6 codes (`../fork/core-offset.md` rounds 11/12). The slope in core-order mode is not
+   yet verified on hardware. Tolerance +-1.5 ADC LSB (+-24 codes) per core, target = absolute mid-scale 32768.
 4. Not converged: failure.
 
 ### 14.7 Channel mask -> what is calibrated
@@ -490,7 +503,7 @@ Per ADC mode m (offset record m = payload `m*0x68`):
 | 0xc (CH3+4) | 2, 3 | 2, 3, 9 |
 | 7 / 0xb / 0xd / 0xe (3 channels) | the three | the three single modes + the three pair modes (no mode 10) |
 | 0xf or 0 (default) | 0..3 (0 with mask 0: all channels) | **all 11 modes 0..10** |
-| default on hardware version 4 | 0, 1 | 0, 1, 4 |
+| default on hardware version 4 (stock only; OOS has no such rule, 1.2) | 0, 1 | 0, 1, 4 |
 
 With all four channels everything in the file is recalibrated except the reference (fixed 32) and the delay fields (ADC
 phase only). Gains are calibrated per channel in single-channel mode and reused by all modes (mapping `adc-mode.md` 3.2);
@@ -513,7 +526,7 @@ before the offsets. An offset error stops the remaining modes.
 |---|---|---|
 | ADC (0x1034) | reg 0x09 reference | 32 (word 0x01097700) |
 | ADC (0x1034) | regs 0x15 + 8n core gain | 7-bit two's complement, -64..63, 1/2048 per LSB (assumed) |
-| ADC (0x1034) | regs 0x14 + 8n core offset | 11-bit two's complement, -1024..1023, 1 ADC LSB (assumed) |
+| ADC (0x1034) | regs 0x14 + 8n core offset | 11-bit two's complement, -1024..1023; about 0.5 to 0.6 ADC LSB per step (normal mode) |
 | ADC (0x1034) | regs 0x54/0x55, 0x04/0x05/0x01 | via the mode switch (input mode, stored delays, unchanged) |
 | FPGA | 0x1058 SPU fine gain | 0 during the gain step of a channel, then the packed fine codes of that channel |
 | FPGA | 0x1040/0x1044 measure unit | exponent 15, 8 slots (as 2.4) |
@@ -540,12 +553,14 @@ The payload is `struct { record[11] (0x68 B each, 0x000..0x477); fine[11] (16 x 
 | +0x48 | s16[2] | record 0 only: reference ADC 0 / ADC 1 (32 / 32) | reference step | reg 0x09 |
 | fine block c (0x478 + 64c) | i32[16] | 2-bit fine code per slot of channel c (slots 8..15 = 2nd ADC, 0) | gain step of channel c | 0x1058 (pair/mode selection `adc-mode.md` 3.3) |
 
-Typical values: gains -16..15 (about +-0.75 %), offsets -74..52 ADC LSB.
+Typical values: gains -16..15 (about +-0.75 %), offsets -74..52 register steps.
 
-**OOS applies every stored value**: cold boot step 9 writes the parameters of mode 0 (`hal::dho::boot`, `adc::Adc::parameter`:
-reference, 0x1058, 8 gains, 8 offsets, delays), `seq::State::configure` writes `channel_mode` on every channel-set change
-(including the mode-9 exception), and 0x105c is written per mode. Nothing in the file is unused by OOS.
-`CalAdc::load` (`oos-fpgad`, `oos-ui`) prefers `/oos/cal`. `boot::cal::CalFiles::load` reads `/rigol/data` and `default/` only.
+**What OOS applies**: cold boot step 9 writes the parameters of mode 0 (`hal::dho::boot`, `adc::Adc::parameter`:
+ADC-0 reference, 0x1058, 8 gains, 8 offsets, the delay fields of the mode), `seq::State::configure` writes
+`channel_mode` on every channel-set change (including the mode-9 exception), and 0x105c is written per mode. The
+"ADC 1" fields only update software shadows, fine blocks 4..10 and the padding are not used, and the self-cal keeps them
+byte-identical. `CalAdc::load` (`oos-fpgad`, `oos-ui`) and the cold boot's `boot::cal::CalFiles::load` both prefer
+`/oos/cal`, then `/rigol/data`, then `default/`.
 
 ### 14.11 ADC phase (item 2), for completeness
 
@@ -576,8 +591,8 @@ fields (+0x40). Delay fields are usually 0. OOS: skip, keep 0.
    channels of the set; core order detection (does not hard-code 0,2,1,3,4,6,5,7); gains per channel with `dac_for` (30 ms DAC
    settle, section 13); gain loop (12 rounds, |span - ref| > 32, step -2048 * rel. error, clamp -64..63); centre codes; offsets
    per mode (20 rounds, |e| > 1.5 LSB, results outside -1024..1023 are a failure); cancel = failure.
-4. Host model test: 8 simulated cores with gain/offset errors, a permuted slot order; checks convergence and that a
-   cancel returns an error.
+4. Host model test: 8 simulated cores with gain/offset errors, a permuted slot order; checks the core order and
+   convergence. The code returns an error on cancel; no test runs a cancelled ADC calibration.
 5. Save with `calfile::save("/oos/cal", "cal_adc.hex", ..)`.
 6. UI (System > Self-cal): item "ADC cores", run before Vertical, because the vertical levels depend on the core gains.
 

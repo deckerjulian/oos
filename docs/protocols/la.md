@@ -24,8 +24,8 @@ values for 0x4050 / 0x4054.
 1. **There is no per-channel or per-pod enable in the hardware.** With the LA on, the FPGA records all 16 lines. Which Dn are
    shown is a display choice.
 2. **Enable** = 0x4008 bit26 plus an LA sample-rate block 0x12a4/0x12a8/0x12ac, an LA deskew 0x128c,
-   and the "LA doubling": segment size 0x10e0 x2, record depth 0x10e4 x2, pre/post 0x4050/0x4054 x2, display window
-   0x1100/0x1108 x2. 0x4008 bit24 does not enable anything. It picks which stream the TX engine sends
+   and the "LA doubling": segment size 0x10e0 x2, record depth 0x10e4 x2 (not in roll/scan), pre/post 0x4050/0x4054 x2,
+   display window 0x1100/0x1108 x2. 0x4008 bit24 does not enable anything. It picks which stream the TX engine sends
    (analog or LA) and is only set for the read (normal mode) or permanently in roll/scan.
 3. **Data format:** one 16-bit word per LA sample, **bit n = Dn** (n = 0..15), the same for every analog channel set.
    Analog and LA words are never mixed inside one frame. In normal/batch mode they come in two separate reads (the
@@ -35,7 +35,8 @@ values for 0x4050 / 0x4054.
    **half the analog rate**, so one record holds memsel x m / 2 LA samples and only the first part of a read of memsel words is
    valid. Max 625 MSa/s. Verified on the unit.
 5. **Analog rate with LA:** the analog rate is halved only if the LA is on **and** at least one analog channel is
-   displayed. memsel is not recomputed, so the record then spans 2x the screen. With "LA alone" the hidden trigger-source channel
+   displayed (156.25 MSa/s becomes 62.5 MSa/s, 3.1). memsel is not recomputed, so the record then spans 2x the time it
+   spans without the LA (2.5x from 156.25 MSa/s). With "LA alone" the hidden trigger-source channel
    is still acquired (mask 1 verified on the unit). Never run with an empty analog mask.
 6. **Thresholds:** one FPGA register 0x12d4: [15:0] = D0-D7 DAC code, [31:16] = D8-D15. code = trunc(zero + V x 310.07),
    V clamped to ±15 V. zero = per-pod calibration code from `cal_la.hex`, for example 8609 (0x21a1) for D0-7 and 8580 (0x2184) for
@@ -159,10 +160,14 @@ window (0x4010/0x4014/0x4018) and 0x4008 bit24 = 1 is plausible but not yet veri
 
 ### 4.2 Raw LA window (what OOS should use)
 
-Verified on the unit with N = 1000 and N = 100,000: the words are correct, but only right after an acquisition of the stock system.
+First verified on the unit with N = 1000 and N = 100,000 right after an acquisition of the stock system. OOS reads
+with this recipe from word 0 after its own acquisitions; that works on the unit (top of this page).
 
-1. Pass-through additions (`la::passthrough`): 0x1298 = 0x129c = 0x40000001 (keep bits 28-29). 0x1280 bits 2 and 3 = 1,
-   0x12b0 = 0x12b8 = 0, 0x12b4 = 0x12bc = 0xffffffff. 0x1290 / 0x1294 low half = 0. Plus the analog `scu::passthrough`.
+1. Pass-through additions: 0x1298 = 0x129c = 0x40000001, 0x1280 bits 2 and 3 = 1, 0x12b0 = 0x12b8 = 0,
+   0x12b4 = 0x12bc = 0xffffffff, 0x1290 / 0x1294 [15:0] = 0. Plus the analog `scu::passthrough`. A stock-style update
+   keeps the other bits (0x1298/0x129c bits 28-29, the rest of 0x1280, the upper halves of 0x1290/0x1294). OOS
+   (`la::passthrough`) has no copies of these registers and writes whole words: 0x1298 = 0x129c = 0x40000001,
+   0x1280 = 0x0c, 0x1290 = 0x1294 = 0. That the other bits may be 0 is assumed.
 2. 0x4008: bit23 = 0, bit24 = 1.
 3. Window: **0x1100 = 10 x N**, **0x1108 = start**. In this recipe start is not divided by ratio
    (verified only with start 0).
@@ -278,26 +283,29 @@ trace height. Probe state from gpio 120. Digital trigger sources D0-D15 are in
 Device tests (after a dry run): **T1** the same 1 kHz 0..3.3 V square on CH1 and D0, LA on, mask 1,
 2 us and 1 ms/div. Read analog with start S and 2S and LA with several start encodings, then compare edge times. That
 fixes the window units and the LA-analog skew. **T2** threshold sweep through 0x12d4 with a DC level on D0, reading
-0x12dc (checks 310.07/V and the zero codes). **T3** mask 3 + LA: is the m = 4 LA rate right (edge spacing)?
+0x12dc (checks 310.07/V and the zero codes). **T3** mask 3 + LA: done, m = 2 is right (3.1).
 
 ## 9. Not yet verified on hardware
 
 1. Unit of 0x1108 (and 0x1100) for the LA stream in a raw read, and whether analog windows need 2 x start with the LA on (T1).
-2. Mask 3 -> m = 4 while ratio = 2 (also 0x128c = 145, roll LA compression): does this match the hardware (T3)?
+2. (settled by T3: masks 3 and 12 use m = 2, verified on the unit, 3.1)
 3. Exact frame length the FPGA sends for the raw LA read with 0x12c0 = 4N (4.2).
 4. (unused)
 5. The value f in the LA delay formula (3.1), and whether the deskew constants 424/145 also shift the raw window.
 6. Per-frame LA of a batch (type-4 play with 0x4008 bit24 = 1).
 
-## 10. OOS implementation (host only, not yet verified on hardware)
+## 10. OOS implementation
 
-Built from sections 3-6 and the plan in section 8 without the probe at hand. Everything runs only while the LA is
-switched on; with the LA off the analog path writes exactly what it writes otherwise (the acquisition block clears 0x4008
-bit26 itself, 0x128c and the rate block keep their last values, as section 8.3 says).
+Built from sections 3-6 and the plan in section 8 without the probe at hand. The first run with a probe (top of this
+page) then verified the acquisition, raw reads from word 0, deep reads, LA beside analog and alone, and roll spacing.
+Still not verified on hardware: a non-zero raw window start, the exact raw TX length, and the LA-analog skew.
+Everything runs only while the LA is switched on; with the LA off the analog path writes exactly what it writes
+otherwise (the acquisition block clears 0x4008 bit26 itself, 0x128c and the rate block keep their last values, as
+section 8.3 says).
 
 | part | where | status |
 |---|---|---|
-| sample mode m, LA rate, n_la, trigger index | `hal::dho::la::sample_mode`, `timing` | 3.1 table including mask 3; trigger index pre x m / 2 is assumed (T1) |
+| sample mode m, LA rate, n_la, trigger index | `hal::dho::la::sample_mode`, `timing` | 3.1 table, m = 2 for masks 3 and 12; trigger index pre x m / 2 is assumed (T1) |
 | analog parameters with the LA | `hal::dho::la::prep` | rate halved with a channel shown (156.25 M -> 62.5 M), memsel kept, segment x2, frame ring from the doubled segment (assumed) |
 | acquisition additions | `hal::dho::acq::configure_la`, `hal::dho::la::config` | 0x4008 bit26/bit23/bit24 (roll only), 0x128c 424/145, rate block 3.2, 0x131c, 0x10e4 x2 (not roll), 0x4050/0x4054 x2, 0x10e0 doubled |
 | thresholds | `hal::dho::la::thresholds`, with every set-up while the LA is on | 5.1 bit-exact; zero codes from `cal_la.hex` (fallback 0x2180) |
@@ -312,12 +320,13 @@ bit26 itself, 0x128c and the rate block keep their last values, as section 8.3 s
 Assumptions in the code, to settle with the device tests of section 8:
 
 1. **Play-last for the LA read.** OOS reads the analog record with the type-4 play, then plays the LA with the play-last
-   pulse of 4.2 (verified on the unit only right after an acquisition of the stock system). Play-last right after a type-4 play is
+   pulse of 4.2 (works on the unit, top of this page). Play-last right after a type-4 play is
    also the order of the live path (4.1). If the frame never ends, try the type-4 play (0x4010/0x4014/0x4018) with 0x4008 bit24 = 1
    instead (section 9 item 6).
-2. **Window units (T1).** The LA read starts at word 0 and takes at most `la::READ_MAX` (1,000,000) words, so a longer record shows
-   its first part only. The start of the analog read stays as it is and its length is doubled (4.3); whether the doubled point
-   space also needs 2 x start is open.
+2. **Window units (T1).** The LA read starts at word 0 and takes min(n_la, `la::READ_MAX`) words. READ_MAX is
+   40,000,000, above the deepest LA record, so OOS reads the whole record (12.5 M words read on the unit without a
+   gap). The stock limit of 1,000,000 words does not apply. The start of the analog read stays as it is and its
+   length is doubled (4.3); whether the doubled point space also needs 2 x start is open.
 3. **0x12c0 = 4 x roundup4(N) / ratio** as in the recipe, read 2 x roundup4(N) bytes (section 9 item 3).
 4. **0x1280 / 0x1290 / 0x1294 / 0x1298 / 0x129c** written as whole words with the unknown bits 0 (no OOS copy).
 5. **Rate block code for 125 MSa/s** (d = 5) written as 0x8000, as in 3.2.
@@ -373,16 +382,19 @@ Details that section 10 relies on:
 - **LA alone:** the trigger source channel is acquired hidden, not always CH1.
 - **Slow time bases:** the done poll follows the record length.
 
-## 13. Roll and scan (host only, not yet verified on hardware)
+## 13. Roll and scan
 
-From 4.4. `la::config(roll = true)`: 0x4008 bit 24 on, 0x10e4 not doubled.
+From 4.4. The LA word spacing in roll is verified on the unit with 1, 2, 3 and 4 channels (top of this page,
+`roll::la_spacing_fs`), the scan chunk order too (end of this section). `la::config(roll = true)`: 0x4008 bit 24 on,
+0x10e4 not doubled.
 `roll::la_config` after `roll::config` / `config_scan`: 0x12cc = ratio x (100 / ratio), 0x12c0 = the length of 0x11f0,
 0x1298 = 0xc0000000 | `la_compress`, 0x129c = 0x40000001, LA interpolation with the analog fraction (0x1280 = 0x08 with
 interpolation on, 0x0c off; 0x12b0 = 0, 0x12b4 = the step; 0x12b8 = 0, 0x12bc = 0xffffffff), delays 0.
 
 - `la_compress` = (10 x ratio x k_la) >> s, k_la = k, 2 k at ratio 4, s = 1 for m 1 / 2, 2
   for m 4. With m = ratio this gives an LA word every analog spacing / ratio, so a chunk of 100 LA words spans the time of
-  an analog chunk; a host test checks that for all three ratios. At mask 3 (m != ratio) the spans differ.
+  an analog chunk; a host test checks that for all three ratios. Every mask has m = ratio (3.1), so there is no
+  exception.
 - Read: an even number of chunks; `roll::split_la` separates them by header word 1 bit 1.
 - Display: roll keeps a ring of 10 divisions of words, the newest word beside the newest analog point at the right edge
   (`board::dho::hw::roll_la_t0`); scan writes a sweep picture like the analog one, word 0 at the left edge, the part not yet written

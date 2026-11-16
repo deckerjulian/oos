@@ -116,14 +116,17 @@ fields (0 in normal files). This has no effect, because only the masked upper bi
 word.
 Start values: gain 0x0002 per core, offset 0, reg 0x04 = 0x8000, reg 0x05 = 0, reg 0x01 = 0, reg 0x09 = 0x5020.
 
-Verified on the unit: after start in mode 0, 0x1058 holds the mode-0 fine word, the low half of reg 0x09 is 0x5020
-(reference 32) and regs 0x04/0x05/0x01 are 0.
+Kept values after start in mode 0 with reference 32 and zero delays: reg 0x09 = 0x5020 (SPI word 0x01097700),
+regs 0x04/0x05 = 0 (words 0x8080; the first reg-0x04 word at cold boot is 0x0080), reg 0x01 = 0. These are encoded
+write values, not ADC readbacks; that the chip holds them is not yet verified on hardware. 0x1058 holds the mode-0 fine
+word (verified on the unit).
 
 ## 3. cal_adc.hex
 
 Container as all `/rigol/data/cal_*.hex` (`self-cal.md` 7.1): 20-byte header part, u32 payload length, u32 crc32(payload),
-payload. The file holds exactly 1848 (0x738) payload bytes. Location order: `/oos/cal`, `/rigol/data`,
-`/rigol/data/default` (the cold boot reads the last two only, `self-cal.md` 14.10).
+payload. The file holds exactly 1848 (0x738) payload bytes. Location order, runtime and cold boot alike: `/oos/cal`,
+`/rigol/data`, `/rigol/data/default`. Cold boot checks CRC and payload size at each location. The runtime loader
+checks only the container there; see 5.1. The DDR calibration has no OOS copy (`self-cal.md` 14.10).
 
 ### 3.1 Layout (offsets in the payload, little-endian)
 
@@ -149,6 +152,10 @@ within about -74..52.
 | 0..3 (one channel c) | record c, gain[n] |
 | 4..9 (pair lo, hi) | even n: record lo, gain[n]; odd n: record hi, gain[n] |
 | 10 (four channels) | record (n mod 4), gain[n] |
+
+The four-channel row (CHc+1 on cores c and c+4) is the stock gain mapping. Which output slot carries which core is a
+separate question: `hal/src/dho/levels.rs` reads CH1 from slots 0/2 in normal mode. Whether both agree on the unit is
+not yet verified on hardware (`self-cal.md` 14.3).
 
 Offsets always come from the mode's own record. Exception: in mode 9 (CH3+CH4) cores 3 and 7 take their gain from
 payload offsets 0x1c6/0x1ce (record 4 + 0x26/0x2e, normally 0) instead of CH4's 0x15e/0x166. Stored mode-9 offsets in
@@ -187,14 +194,16 @@ OOS does not read `/rigol/data/cal.bin`.
 
 ### 4.1 No filter set-up
 
-Do not touch 0x1098/0x109c: the FPGA keeps its power-on filter state.
-0x10a0 <- 16 is still written in the horizontal block (`horizontal-config.md` 4.1 step 47).
+Do not touch 0x1098/0x109c/0x10a0: the FPGA keeps its power-on or hand-over filter state. The stock horizontal block
+writes 0x10a0 <- 16 (`horizontal-config.md` 4.1 step 47); OOS does not.
 
 ### 4.2 Filter registers
 
-Bypass: 0x1098 bits 1:0 = 1, 0x10a0 <- 16. Coefficient set: 0x1098 bits 1:0 = 2, 0x10a0 <- 16, then per tap
+Reconstructed from the stock driver, not yet verified on hardware. Bypass:
+0x1098 bits 1:0 = 1, 0x10a0 <- 16. Coefficient set: 0x1098 bits 1:0 = 2, 0x10a0 <- 16, then per tap
 0x109c <- (coef & 0x7fffff) | tap << 23 | phase << 30 (phases 0..3 for ratio 1; the coefficient layout differs for ratio
-1, 2 and 4). The filter is enabled when 0x1098 bit 0 is 0. OOS uses none of this.
+1, 2 and 4), then 0x1098 bits 1:0 = 0 (run), 0x10a0 <- 16. A test of bit 0 alone does not tell load (2) from run (0).
+OOS uses none of this.
 
 ### 4.3 Digital gain 0x105c follows the mode
 
@@ -221,8 +230,10 @@ mask to 0x4008[3:0] (`acquisition-start.md`).
 ### 5.1 State to keep
 
 ADC register values: sel1/sel2, reg 0x09, reg 0x04, reg 0x05, reg 0x01, gain[8], offset[8] (start values of 2.2), the
-current ADC mode (or "unknown" after a warm hand-over), and the kept value for 0x105c. Load `cal_adc.hex` once
-(CRC check; if missing or bad, the next location of section 3).
+current ADC mode (or "unknown" after a warm hand-over), and the kept value for 0x105c. Load `cal_adc.hex` once:
+`CalAdc::load` skips missing files and bad containers in the order of section 3, but a CRC-valid file with a payload
+other than 0x738 bytes fails the load without trying the next location. Cold boot checks the size per location and
+goes on.
 
 ### 5.2 Ordered write list for a mode switch
 
@@ -290,7 +301,8 @@ Then the acquire block for ratio 1 / 2 / 4 as in `horizontal-config.md` and the 
 
 ### 5.4 Verified vs guessed
 
-Verified on the unit: 0x1058 and the ADC register values after start in mode 0, 0x105c = 0x5555.
+Verified on the unit: 0x1058 after start in mode 0, 0x105c = 0x5555. The ADC register values of 2.2 are encoded
+write values; no ADC readback confirms them.
 
 Assumed: the channel order of the 0x105c writes, the meaning of the sel1/sel2 fields and of the core-to-channel
 assignment, whether the sleeps can be replaced by polling 0x1038. The meaning of the fine-gain codes 0..3 is not known.
@@ -320,8 +332,8 @@ generator, over `:WAV:MODE RAW` (16-bit words, 7500 a division):
 - Bit 27 with a core number in bits 30:28 of 0x1004 ("one core") changes nothing in the stream.
 
 The ADC has a trim register per core (`self-cal.md` 14.6). A pattern of +-90 codes is the stored calibration drifted
-(about 150 codes spread, as noted in `self-cal.md` 14.14); the self-calibration of the cores is meant to bring it to +-24
-codes (section 15 of `self-cal.md`; not yet run on a unit).
+(about 150 codes spread, as noted in `self-cal.md` 14.14); the self-calibration of the cores is meant to bring it
+to +-24 codes (section 15 of `self-cal.md`; not yet run on a unit).
 
 OOS matches the cores in software as well (`ui/src/board/dho/cores.rs`, Acquire > ADC cores, `:ACQuire:CORes`): per
 channel set, channel and rate it learns the 8 offsets from the frames, finds each frame's turn from a Hann-weighted

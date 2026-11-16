@@ -1,7 +1,8 @@
 # Live display compression (next round 2.2, perf plan item 7)
 
 Branch `feat/compress`. Opt-in: `acq.compress = on` in /oos/system.conf, or `OOS_COMPRESS=1` for oos-ui alone. Off
-by default until the procedure below has passed on the unit.
+by default (`compress::enabled_from`). The procedure below passed on one unit with a downstream build (not in this
+tree); the default stays off until it passes with this tree.
 
 ## What it does
 
@@ -103,9 +104,9 @@ off.
 
 | claim | level |
 |---|---|
-| 0x1170 = 0xc0000000 \| k compresses the play to ceil(memsel / k) points, aligned, alternating low/high | unit, k = 4 at 1 M (acquisition-start.md); time axis exact for k 16..200 at deep records |
+| 0x1170 = 0xc0000000 \| k compresses the play: one point per k samples, aligned with the record. 0x11f0 sets how many points are sent; OOS asks for floor(memsel / k / 8) x 8 (`compressed_len`) | unit, k = 4 at 1 M (acquisition-start.md); time axis exact for k 16..200 at deep records |
 | pair = min and max of 2k samples from the window start, in time order | unit, 100 % of the points for k 3, 4, 15, 16, 64, 128, 1 and 2 ch (unitlab round 2); assumed: k up to 16383, k = 0 stalls |
-| k = 256 at 1 M time-out = TX length beyond the window | inferred from the sample counts above; unit re-test pending |
+| k = 256 at 1 M time-out = TX length beyond the window | unit: 3912 points timed out twice (round 2); with a downstream build (not in this tree), 3904 points read without a time-out and the compress check passed at k = 4, 16, 64 and 256 |
 | a frame of the ring can be played again after a batch read | unit: the raw replay returns the same record (round 2) |
 | k down to 3 (1 us/div) | unit (round 2) |
 | picture of pairs = software min/max of the raw record | host model only |
@@ -173,7 +174,7 @@ Probe on the 1 kHz compensation output, CH1 and CH2 on the same probe or a secon
    (the factor of the last batch read, 1 = raw) drops to 1 at once, no `raw read of the newest frame` errors in
    /tmp/oos-ui.log.
 
-Record the results here and in `docs/fork/unit-dho804.md`; flip the default only after steps 2, 6 and 7 pass.
+Record the results here. Steps 2, 6 and 7 passed on one unit with a downstream build (not in this tree).
 
 ## Risks and open points
 
@@ -186,5 +187,6 @@ Record the results here and in `docs/fork/unit-dho804.md`; flip the default only
   frames, a slightly wider edge in persistence than raw at the same rate.
 - The Settings change (k) depends on the model, so toggling a raw-only feature reconfigures the acquisition, as any
   settings change does.
-- Deep-memory envelope frames (> 1 M) still go to the record path and to `framestats`, which measures Vavg/RMS on
-  their min/max points: an existing inaccuracy, not changed here.
+- Deep-memory envelope frames (> 1 M) go to the record path. `framestats` counts only maximum, minimum and peak-peak
+  on them; mean-type values come from a raw replay of the screen window (`meas.deep_raw`, docs/fork/deep-meas.md) or
+  show as not available.

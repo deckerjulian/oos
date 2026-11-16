@@ -15,7 +15,8 @@ channel, `ratio` = interleave factor, `dot` = sample period in fs, `mask` = chan
   display compression. The acquisition block then writes the acquisition registers, the horizontal block the
   display-trace (read-out) registers.
 - Horizontal acquisition registers: **0x10d0/0x10d8/0x10d4** sample-rate divider, **0x10e4** record depth (points per
-  channel), **0x10e0** segment size (memory bursts per frame), **0x4050/0x4054** pre/post-trigger points,
+  channel), **0x10e0** segment size (memory bursts per frame), **0x4050/0x4054** pre/post-trigger points (with the LA
+  on these values change, see 1.6),
   **0x4008[3:0]** channel mask (FSM nibble), **0x1004** lane config (ADC order, invert, BW filter, acquire mode),
   **0x10b0/0x1148** average parameters, **0x404c** pre-SA compensation, **0x1080/0x1084** per-channel sample delay and,
   when the channel set changes, the ADC input-mode SPI words (ADC reg 0x54/0x55 via 0x1034) plus the per-mode ADC
@@ -70,7 +71,8 @@ else:                               ; Auto
 if rate is one of the "from" values below:
     rate = its "to" value
     if Auto: memsel = 10 * tb * rate / 1e15
-if LA on: rate = rate/2 (156.25 M -> 62.5 M special case)    ; analog rate halves with LA
+if LA on and an analog channel shown: rate = rate/2 (156.25 M -> 62.5 M special case)
+                                    ; LA on, all analog hidden: rate unchanged (la.md 3.1)
 dot  = 1e15 / rate                  ; fs per sample
 ```
 
@@ -107,21 +109,30 @@ divisions. Example: 1 M points at 200 us/div -> 1e6/2e-3 = 500 MSa/s -> 312.5 MS
 
 Verified on the unit: 200 us/div 1 ch -> memsel 0x2625a0 (2.5 M) at 1.25 GSa/s; 500 us/div -> 6.25 M; 2 us/div 1 ch ->
 25 k; 2 us/div 4 ch -> memsel 0x186a (6250) per channel at 312.5 MSa/s.
-Roll mode starts at 50 ms/div and uses a different path (`roll-mode.md`), not covered here.
+Stock roll starts at 50 ms/div, OOS roll at 200 ms/div. Roll uses a different path (`roll-mode.md`), not covered here.
 
 ### 1.4 Segment size -> 0x10e0
 
-Input `pts = memsel * ratio` (total words) and the acquire mode. A DDR burst is 10 points, an average segment burst 32.
-The memory size for the segment cap is 0x5000000 bursts.
+Input `pts = memsel * ratio` (total words) and the acquire mode. A DDR burst is 10 points in both modes, and 0x10e0
+counts these bursts. The stock series parameter "average segment burst" = 32 is a block size, not a burst: average
+mode takes 64 bursts per block of 32 normal bursts (320 points), twice the normal segment, plus two blocks of margin
+(`hz::mem_size_avg`). The memory size for the normal segment cap is 0x5000000 bursts.
 
 ```
-n = (mode == 2 /*average*/) ? ((pts + 0x17f) / 320 + 2) * 64 : (pts + 0x180) / 10   ; bursts, +384 points guard
-n = max(n, 32)
-n = next power of two >= n
-n = min(n, (0x5000000 - 0x100000) / 2) = 41,418,752
+normal:  n = max(32, (pts + 0x180) / 10)                 ; bursts, +384 points guard
+         n = next power of two >= n
+         n = min(n, (0x5000000 - 0x100000) / 2) = 41,418,752
+average: n = max(32, ((pts + 0x17f) / 320 + 2) * 64)
+         n = (pts < 25,000,000) ? next power of two >= n : (n / 2048 + 1) * 2048
+         n = min(n, 7,864,320)
 LA on: n *= 2
 segsize = n  -> register 0x10e0
 ```
+
+Average mode keeps the stock cap of 7,864,320 bursts (`hz::mem_size_avg`). Its live ring is
+`(16,777,216/2 - 0x100000) / segsize` frames; OOS refuses a configuration where that is 0. The average layout above
+25 M points is host-tested only, not yet verified on hardware. OOS runs the hardware average only with the LA off
+(`hw_avg_count` in `ui/src/board/dho/hw.rs`), so `LA on: n *= 2` applies to normal mode only.
 
 Example 2.5 M points: (2,500,000 + 384)/10 = 250,038 -> 0x40000.
 
@@ -153,12 +164,15 @@ halving). A batch of 160 frames at 2 us/div was seen on the unit. That fits LA o
 ```
 mem_start = offset - dot*memsel/2           ; fs relative to the trigger (offset = horizontal position)
 mem_end   = mem_start + dot*memsel
-post = ceil((mem_end + extra) / dot)        ; -> 0x4054
-pre  = max(0, memsel - post)               ; -> 0x4050
+post = ceil((mem_end + extra) / dot)        ; -> 0x4054 (LA on: 2 * post)
+pre  = max(0, memsel - post)               ; -> 0x4050 (LA on: 2 * pre)
 (invalid, nothing changes, if mem_start < -memsel*dot, i.e. the whole memory ends before the trigger)
 ```
 
 `extra` is 0, except for the latency compensation of `trigger.md` section 4 (190/638/296/296 ns for 1/2/3/4 channels).
+
+The register values of this file are for the LA off. With the LA on (`la::config`, `la.md` 3.1) the segment doubles,
+0x10e4 = 2 * memsel in normal acquisition (memsel in roll/scan), and 0x4050 / 0x4054 = 2 * pre / 2 * post in both.
 
 Centered trigger (offset 0): pre = post = memsel/2. Positive offset (window moved later) -> fewer pre points.
 Verified on the unit: a window of 4000 points around memory index 1,250,000 holds the trigger for 2.5 M points.
@@ -203,8 +217,9 @@ is below the ADC's.
 | 4 | `s[4i+k]` = CH(k+1), k = 0..3 |
 
 A live frame is `header (8 words) + ratio*len words`. With 0x1010 bit31 = 1 (read-out) there is no header.
-The ratio 4 layout is verified word-exact on the unit. For 3 channels the 4th slot is CH4 (off) (assumed, from the lane
-mapping).
+The ratio 4 layout is verified word-exact on the unit. With 3 channels the stream keeps all four slots: word 4i+k is
+CH(k+1), and the slot of the channel that is off is unused (slot 3 for mask 7, 2 for B, 1 for D, 0 for E). OOS
+de-interleaves this way (`seq::deinterleave`, `roll::split`); not yet verified on hardware.
 
 ### 2.3 ADC input mode, only when the mask changes
 
@@ -243,7 +258,7 @@ Acquire mode numbers: 0 normal, 1 peak detect, 2 average, 3 high resolution (ass
 | average (2) | 0x1004 bit3 = 1; 0x10b0 = count-1 (1 for count 1 or 2); 0x1148 = 640/ratio + 32; 0x404c = 10 instead of 5; segment size uses the average layout (1.4); 0x1110/0x1114 = average offset; 0x10b4 = 1, then 0 (average clear) on STOP/SINGLE | averaging runs in the FPGA memory (assumed, from the register set; another project reports a read-modify-write in DDR tied to the frame read-out, not checked) |
 | high res (3) | no SPU mode bit | OOS does it in software: each screen point is the mean of the record's samples behind it, so it gains only where the record has more samples than the screen has points |
 | ultra (7) | own frame count, 524,288,000 / (memsel*ratio) | not analysed, not used by OOS |
-| average/sinc select | 0x1004 bit2 = (rate < maxrate/8) | set in all modes |
+| average/sinc select | 0x1004 bit2 = (rate < maxrate/8), and always in average mode | stock: the rate rule in all modes. OOS also sets it in average mode at every rate: its pass-through play chain gives all-zero averaged frames without it at rates >= maxrate/8 (above 62.5 MSa/s on the unit; verified on the unit) |
 | anti-aliasing | 0x10dc = 1 only when anti-aliasing is off | OOS does not write 0x10dc |
 | interpolation (sinc) | 0x1130 (main) / 0x1134 (zoom) = en<<31 \| f<<16 \| f<<8 \| f with f = sinc factor, en = f > 1; coefficient table via 0x1140/0x1144 when enabled; 0x1118/0x111c = memory points + 40; 0x1138 = en<<31 \| 0xc8c8c8 | FPGA, display trace only |
 | interpolation (linear) | 0x1154 bit0 (main) / bit1 (zoom) = NOT enabled; 0x1158/0x1160 = 0; 0x115c/0x1164 = (2^32-1)*den/num or 0xffffffff; 0x1154 bits 8/9 = x2 interpolation | FPGA, display trace only |
@@ -299,7 +314,7 @@ no linear interpolation. Ratio, FSM nibble, memsel, len and frames/batch are ver
 | 7 | analog stream on | 0x4008 | s \|= bit23 |
 | 8 | LA stream off | 0x4008 | s &= ~bit24 |
 | 9 | average/sinc select | 0x1004 | s &= ~bit2 (1.25 G is not < 1.25 G/8) |
-| 10 | sample delay | 0x1080 | (s & 0xffff) \| (480 + d1/600000) << 16 = 0x01e0xxxx for d1 = 0 |
+| 10 | sample delay | 0x1080 | (s & 0xffff) \| (480 + round(d1/800000)) << 16 = 0x01e0xxxx for d1 = 0 (stock: d1/600000; 800,000 fs is the step measured on the unit, `cold-boot.md` 3.10) |
 | 11 | | 0x1084 | shadow unchanged (written again) |
 | 12 | LA delay | 0x128c | `la.md` |
 | 13-14 | pre-processing reset | 0x1000 | s \| 0x20, then s & ~0x20 |
@@ -331,7 +346,7 @@ no linear interpolation. Ratio, FSM nibble, memsel, len and frames/batch are ver
 | 44 | x2 interpolation off | 0x1154 | bits 8, 9 = 0 |
 | 45 | sinc select 2 | 0x1138 | 0x00c8c8c8 |
 | 46 | wave-early word (4, 4) | 0x131c | (s & 0xf000) \| 0x2580044 (LA on: 0x2580004, verified on the unit) |
-| 47 | filter control (meaning unknown) | 0x10a0 | 16 |
+| 47 | filter control (meaning unknown) | 0x10a0 | 16 (stock; OOS does not write 0x10a0) |
 | 48+ | delays, main, then zoom if zoom is on | 0x1120/0x1124, 0x1128/0x112c, 0x1290 | display-trace channel alignment (3*dot/2 + fine deskew), values not known |
 | | main compression (k = 4) | 0x1170 | 0xc0000004 (+ kept bits 28-29) |
 | | zoom compression | 0x1174 | |
@@ -353,7 +368,7 @@ Differences from example 1 (same order):
 |---|---|---|
 | 1-2 | 0x1034 | 0x01541860, then 0x01550005 (ADC mode 4, only if the mask changed) |
 | 3 | ADC calibration | mode 4 |
-| 10 | 0x1080 | (240 + d1/1.2e6) << 16 \| (240 + d2/1.2e6) = 0x00f000f0 for zero delays |
+| 10 | 0x1080 | (240 + round(d1/1.6e6)) << 16 \| (240 + round(d2/1.6e6)) = 0x00f000f0 for zero delays (stock: /1.2e6) |
 | 11 | 0x1084 | shadow unchanged |
 | 15, 16 | 0x1004 | invert/filter [19:16]/[23:20] = CH1, CH1, CH2, CH2 bits |
 | 17-19 | 0x10d0 / 0x10d8 / 0x10d4 | 0x8001 / 1 / 0 (625 M = max rate for ratio 2) |
@@ -363,7 +378,7 @@ Differences from example 1 (same order):
 | 28 | 0x10e0 | 0x800 |
 | 30 | 0x1100 | 6250 + (0x48 \| 2<<9 = 0x448) + 1 = 7347 (0x1cb3) |
 | 31 | 0x1108 | 0 |
-| 38-40 | 0x1154 bit0 = 0 (linear on), 0x115c = (2^32-1)*den/num of the resampling fraction | fraction assumed 25/28 |
+| 38-40 | 0x1154 bit0 = 0 (linear on), 0x115c = (2^32-1)*den/num with num/den = 28/25 (6250 -> 7000 points), so 0x115c = 0xe4924923 | assumed |
 | | 0x1170 | 0x40000001 (k = 1, compression off) |
 | | 0x11f0 | 7000 (0x1b58), assumed (len from 3.1) |
 | | SCU 0x4060 / 0x4064 | 1e13/4e6 = 2,500,000 / 1e14/4e6 = 25,000,000 (20 x 1 us clamps to 10 ms, 10 x 1 us to 100 ms) |
@@ -392,8 +407,8 @@ shadows of 0x1000, 0x1004, 0x1080, 0x1084, 0x4008, 0x1154, 0x1170 (start value o
    channel and de-interleave as in 2.2.
 7. Read-out window for a frame: start = pre - points_before_trigger_wanted (memory index of the trigger = pre).
 
-Assumed, not verified on hardware: acquire mode 3 = high res and its handling, the 3-channel 4th slot, the linear
-resampling fraction and len of example 2.
+Assumed, not verified on hardware: acquire mode 3 = high res and its handling, the 3-channel slot layout (2.2), the
+linear resampling fraction and len of example 2.
 
 ## 6. Field reference
 
@@ -406,7 +421,7 @@ resampling fraction and len of example 2.
 | offset | horizontal offset | |
 | memsel | points per channel | 0x10e4 |
 | pre / post | pre / post trigger points | 0x4050 / 0x4054 |
-| frames | frames per batch | 0x4018 |
+| frames | frames per batch | 0x4018 = first + frames - 1 (inclusive last frame index; 0x4010 = 0x4014 = first) |
 | segsize | segment size | 0x10e0 |
 | max_frames | ring slot 1 start | |
 | ratio | interleave 1/2/4 | |

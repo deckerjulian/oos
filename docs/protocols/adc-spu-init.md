@@ -29,13 +29,16 @@ Register values in STOP after a complete set-up (verified on the unit): 0x1000 =
 
 Run after the calibration files are loaded. Details and the boot order are in `cold-boot.md` 3.3 to 3.5.
 1. Sync delay sweep: step the ADC sync delay, 20 ms per step, each step ADC SPI sync + SPU ADC sync + SPU reset, read
-   ADC reg 7, find the best window over the results, set the best sync delay.
+   ADC reg 7, take bit 1 of each result, select the first delay n with a 1 -> 0 step to n + 1, set it and sync again.
+   Without a falling edge the delay stays at 7 (`cold-boot.md` 3.3).
 2. Eye scan of the 28 LVDS lanes: ADC to test pattern (data mode 2, fixed output code), FPGA Gray decode off, ADC SPI
    sync + SPU ADC sync, SPU reset, ADC calibration select 1. For delay 0..31: set the IDELAY of all lanes to delay,
    enable the IDELAY calibration, read the bit errors per lane. Per lane, take the centre of the error-free window into
    buf[28]. ADC back to normal data (data mode 4).
 3. Load the lane delays: ADC calibration select 1, then for lane 0..27 set the IDELAY of the lane to buf[lane].
-   The fallback is delay 10 on every lane.
+   If any lane has no window, OOS loads `Options::idelay_fallback` for all 28 lanes, by default the stored lane list
+   (`cold-boot.md` 3.4). A flat delay 10 is an alternative, not the OOS default. The fallback is not yet verified on
+   hardware.
 
 IDELAY write, register 0x1018, three writes:
 `delay & 0x1ff`; then `delay | mask` with mask = 0x3ffff000 for all lanes, `(0x1000 << lane) | 0x10000000` for
@@ -88,13 +91,13 @@ scaled), 0x11f0 = 0xfa0. ONE `dd bs=8000 count=1` under OOS.
 
 Result (verified on the unit): **3991 of 4000 words identical to the reference at shift 0**, same edge positions. Four
 reads under OOS (fresh play-last each time) are identical to each other, so the OOS read path is exact and repeatable.
-The 9 differing words are isolated: the reference is smooth there, the memory word deviates downwards (by 17 to 35000
-codes). See the outlier test below.
+The 9 differing words are isolated: the reference is smooth there, the memory word deviates downwards (by 17 to
+35000 codes). See the outlier test below.
 
 ## Repeating the read-out does not re-arm the acquisition
 
-Repeating the 28 writes of the read-out (including the final FSM run, `0x4004 |= 1`) plus one read of 2N bytes, every 30
-ms, after a warm hand-over (FPGA version 0xe2072115, `0x4034 = 0x2000` STOP), verified on the unit:
+Repeating the 28 writes of the read-out (including the final FSM run, `0x4004 |= 1`) plus one read of 2N bytes, every
+30 ms, after a warm hand-over (FPGA version 0xe2072115, `0x4034 = 0x2000` STOP), verified on the unit:
 
 - the read path is solid: 540 frames in 18 s, no C2H error, no timeout;
 - every frame is identical (0 changed words between frames) and `0x4034` stays `0x2000`: the FSM run at the end of the

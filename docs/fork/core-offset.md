@@ -1,10 +1,13 @@
 # ADC core offset matching
 
-Status: implemented on `feat/core-offset`, opt-in (`cal.core_offset = tight` in system.conf), host-tested only.
+Status: implemented, opt-in (`cal.core_offset = tight` in system.conf). Verified on the unit for CH3 alone (ADC
+mode 2) in rounds 13 to 16, including the kept overlay and the reduced phase spread. Other channel sets and modes are
+not yet verified on hardware.
 
 ## Problem
 
-The RT8847 interleaves eight cores; each has an offset register (0x14 + 8n, 11-bit signed, one ADC step). The stock
+The RT8847 interleaves eight cores; each has an offset register (0x14 + 8n, 11-bit signed). One register step moves a
+core by about half to 0.6 of an ADC step on the unit (rounds 11 and 12), so the trim measures it per core. The stock
 calibration (self-cal.md 14.6) trims every core to mid-scale and stops at +-1.5 steps, so two cores can differ by up
 to 3 steps. The FPGA has per-core gain trims only (0x1058, 0x105c) and no per-core offset; every rate path decimates
 after them (assumed).
@@ -37,13 +40,13 @@ Reading:
   other seven. At 100 mV/div the digital gain of CH3 is 1.174 (cal file), so one ADC step is 18.8 codes: the core is
   about **11 steps** high. The other seven sit within about +-1.5 steps of each other, as the stock tolerance
   allows.
-- The two cores of the 62.5 and 312.5 MSa/s paths (cores 0 and 1 of the register model) differ by 0.7 to 1
-  step. The far core is not one of them. It shows only where all eight cores are used.
+- The two cores of the 62.5 and 312.5 MSa/s paths (cores 0 and 1 of the register model) differ by 0.7 to
+  1 step. The far core is not one of them. It shows only where all eight cores are used.
 - The core's register index n is not known: the model's core numbers are not mapped to RT8847 registers
   (rt8847.md open item 8). The step procedure below finds it.
 - The offsets OOS writes for CH3 alone are the stored mode-2 offsets of the Rigol file (`seq::State::configure`
-  writes them on the change to mode 2). In the unit's file (scope_dump 20261113): 32, 66, 33, 73, 53, 85, -32, 62
-  steps. The August file had 13, 70, -20, 21, 64, 52, 57, 69, so the cores were recalibrated since. No other
+  writes them on the change to mode 2). On the unit these eight stored offsets differ from those of a file saved
+  three months earlier, so the cores were recalibrated since (the values are per unit and not listed here). No other
   stored mode written in its place gives one core about 12 steps off with the rest within 1.5 steps; so the stored
   values arrive, and one core has moved by about 12 steps since its calibration, or the measure unit the calibration
   uses sees it differently from the acquisition.
@@ -70,8 +73,8 @@ alone at 1 us/div, input open):
 - `oos-fpgad adc slots` printed nothing and exited 0: the command dispatch did not route `adc` to the register tool,
   so it fell through to the usage path silently. Fixed: the routed commands are one list (`TOOL_CMDS`) and a test
   checks that every command the tool handles is in it.
-- `:SYSTem:DEBug:SLOTs?` (CH3 alone, input open) showed slot 6 at +8.7 to +8.9 steps; the other slots within 1.2
-  steps. The measure unit sees the error.
+- `:SYSTem:DEBug:SLOTs?` (CH3 alone, input open) showed slot 6 at +8.7 to +8.9 steps; the other slots within
+  1.2 steps. The measure unit sees the error.
 - `cal.core_offset = tight` logged "core order not found" for mode 2 and saved nothing; `/rigol/data/cal_adc.hex` was
   unchanged (sha256 checked). The order search nudged by 32 register steps and expected a move of at least 16 steps.
   The stock firmware's own order search uses a nudge of 1023 and a threshold of 7936 codes, which is about 8 codes
@@ -178,21 +181,22 @@ and slots runs do), once per ADC mode and session:
    divided by 64 is that core's measure codes per register step; `trim` uses it instead of an assumed size. Every
    nudge is taken back.
 2. `trim`: per acquired channel, its slots (`levels::slots`) are matched to the channel's mean, not to mid-scale.
-   Correction = difference divided by the measured codes per register step, rounded; up to 8 rounds; target 0.6
-   steps. Each reading averages 4 measure runs, and every round waits 50 ms after its writes (`order` waits 5 ms
-   after each nudge), as the stock calibration does. When noise keeps one core above 0.6 in every round, the best
-   round is kept if its worst core is within 1.5 steps, the stock calibration's own tolerance. Up to 12 rounds. Codes per ADC step for the tolerance: 16, or
-   32 where a digital gain of 2 or more puts the ADC x2 of 0x105c before the measure unit.
-3. Quietness gate: a channel is matched only when every slot's samples stay within 128 steps (max - min) and every
-   slot's mean moves by at most 1 step over three runs 20 ms apart (one run's slot means scatter by about 0.3 step). Matching to the channel mean assumes each core
-   sees the same signal on average; a signal near a multiple of fs/8 would otherwise be trimmed into the offsets.
-   One that is not locked to the ADC clock moves the core means from run to run and is refused; one that is locked
-   (the built-in generator) cannot be told from an offset, so nothing is trimmed while the generator runs. Inputs open
-   or terminated is still the safe state, as for the stock calibration.
-4. Channels are left alone when they clip, when their mean is more than 256 steps from mid-scale (core gain
-   differences would then move the core means by more than 0.25 step), or, with two or more channels, when their
-   cores start more than 8 steps apart (a slot grouping that mixes channels). The mode is then tried again at a later configuration, at most 5
-   times per session.
+   Correction = difference divided by the measured codes per register step, rounded; at most 12 rounds (`ROUNDS`);
+   target 0.6 steps. Each reading averages 4 measure runs, and every round waits 50 ms after its writes (`order` waits
+   5 ms after each nudge), as the stock calibration does. When noise keeps one core above 0.6 in every round, the best
+   round is kept if its worst core is within 1.5 steps, the stock calibration's own tolerance. Codes per ADC step for
+   the tolerance: 16, or 32 where a digital gain of 2 or more puts the ADC x2 of 0x105c before the measure unit.
+3. Quietness gate: a channel is matched only when every slot's samples stay within 128 raw 12-bit measure codes (max -
+   min, `QUIET_RANGE`; after the x2 of 0x105c, so with x2 active that is 64 ADC steps) and every slot's mean moves by at
+   most 1 step over three runs 20 ms apart (one run's slot means scatter by about 0.3 step). Matching to the channel
+   mean assumes each core sees the same signal on average; a signal near a multiple of fs/8 would otherwise be trimmed
+   into the offsets. One that is not locked to the ADC clock moves the core means from run to run and is refused; one
+   that is locked (the built-in generator) cannot be told from an offset, so nothing is trimmed while the generator
+   runs. Inputs open or terminated is still the safe state, as for the stock calibration.
+4. Channels are left alone when they clip, when their mean is more than 256 steps from mid-scale (core gain differences
+   would then move the core means by more than 0.25 step), or, with two or more channels, when their cores start more
+   than 8 steps apart (a slot grouping that mixes channels). The mode is then tried again at a later configuration, at
+   most 5 times per session.
 5. The new offsets go into the in-memory cal_adc payload, so later switches back to the mode apply them, and, when
    some core moved by more than 4 register steps, into `/oos/cal/core_offsets.hex` (the trimmed modes only, a `calfile` container). That file is read only while the key
    is on and is laid over the cal_adc.hex in use (Rigol's, or the self-cal's `/oos/cal/cal_adc.hex`). At the first

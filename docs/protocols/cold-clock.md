@@ -101,7 +101,7 @@ Stock OS boot chain:
 |---|---|
 | `spi2pll_lxm2582_gpio` | request 6 `spi_le` out **0**, then **set 6 high**; request 3 `spi_sclk` out 0; 2 `spi_sdio` out 0 |
 | `fg_m2c_gpio` | 149 out 0 |
-| `afg_gpio` | 122..126 out 0 (later set hi lo hi lo hi) |
+| `afg_gpio` | 122..125 out 0 (later set hi lo hi lo hi). 126 (afg_in5): out 0 here, input until the first write in `afg.md` 4.1; not yet verified which. OOS opens all five as outputs low |
 | `dac_gpio` | 153, 154, 157, 158 |
 | `beeper_gpio` | 131 out 1, set 1 |
 | `fan_gpio_clt` | 133 out 1 |
@@ -112,7 +112,8 @@ udelay 1; SCLK low after the byte; then udelay 1, LE high, udelay 1, LE low, ude
 0x80). Identical to `regs::pll_edges`. LE idles high only between module load and the first word. After that it idles low.
 
 `spi2pll_lxm2582`: 46 x `write(fd, word, 3)` on `/dev/spi_3wires_lxm2582` (bytes `46 00 00 45 00 00 44 00 89 ...`, ends
-`00 22 1c`). No reset word, no repeat of R0. The gap between words does not matter: OOS uses 50 ms, 1 ms also works.
+`00 22 1c`). No reset word, no repeat of R0. The gap between words does not matter: OOS uses 1 ms in the power-on path
+(`boot::early_start`) and 50 ms otherwise.
 
 ### 2.4 Does anything else program the LMX2582 or a clock chip?
 
@@ -127,8 +128,8 @@ udelay 1; SCLK low after the byte; then udelay 1, LE high, udelay 1, LE low, ude
 
 Order (`cold-boot.md` 1.3): ADC init (3), SPU init (4), ..., **self test (12, log only)**, calibration (14): stored ADC
 calibration (d), DDR taps (g), **sync delay sweep (i)** = the first `spi_sync(1)` -> 0x1000 bit 1 pulse -> `spi_sync(0)` ->
-SPU reset of the boot. The SPI sync occurs only in the sync sweep, the eye scan and the core alignment. The SPU ADC sync
-pulse occurs only in the sync sweep and the eye scan.
+SPU reset of the boot. The SPI sync sequence, including the SPU ADC sync pulse (0x1000 bit 1), occurs only in the sync
+sweep, the eye scan and each run of the core alignment (`cold-boot.md` 3.5).
 
 Consequence for ADC reg 0x00: after the init list it holds `0x05` (shadow 0xe4 ^ 0xe1). After the first sync sequence it
 holds `0xc5` (shadow 0x24, verified on the unit). Before the first sync, reg 0x00 bits 7:6 are 00; afterwards they are 11.
@@ -228,4 +229,5 @@ rule).
 ## 7. Consequences for `hal::dho::boot`
 
 Step 8 only logs 0x1210. Steps 9..12 run (at least the sync sweep and the eye scan). Then 0x1210 is a hard condition before
-step 13, unless `--ignore-clock` is given, which turns the stop into a warning. The PLL stays step 2, after the FPGA boot.
+step 13, unless `--ignore-clock` is given, which turns the stop into a warning. The PLL stays step 2. In the power-on
+path it runs after the BOOT command, during the FPGA configuration wait and before PCIe (`boot::early_start`).

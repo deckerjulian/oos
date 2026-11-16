@@ -1,6 +1,7 @@
 # Models, capabilities and limits (`oos_hal::model`)
 
-OOS runs on every DHO800/DHO900. At start it reads which model it is on, what that model has (channels, logic
+OOS supports every DHO800/DHO900 model. It has run on the hardware variants marked in section 2.1; the others are not
+yet verified on hardware. At start it reads which model it is on, what that model has (channels, logic
 analyser port, generator, EXT input) and which limits apply. Tests can raise the limits in `/oos/limits.conf`.
 
 ## 1. Identity: `/rigol/data/vendor.bin`
@@ -32,7 +33,7 @@ Without the stock software OOS cannot read the file: set `model = ...` in `/oos/
 
 Each entry has a name, a bandwidth code, the channel count and the series:
 
-| Model | bandwidth code | MHz | channels | series | OOS: LA | OOS: generator | OOS: EXT trigger |
+| Model | bandwidth code | MHz | channels | series | OOS: LA | OOS: generator | OOS: EXT input |
 |---|---|---|---|---|---|---|---|
 | DHO802 | 5 | 70 | 2 | 800 | - | - | yes |
 | DHO804 | 5 | 70 | 4 | 800 | - | - | - |
@@ -49,7 +50,8 @@ Each entry has a name, a bandwidth code, the channel count and the series:
 Bandwidth codes: 5 = 70, 6 = 100, 7 = 125, 10 = 250 MHz (`protocols/afe-settings.md` 3.5). The HDO1000 entries add
 4 = 50 and 9 = 200. HDO1000/2000/4000 models are other boards, which OOS does not support (see section 6).
 
-How OOS fills the three right-hand columns: LA = series 900, generator = name ends in "S", EXT trigger = 2 channels.
+How OOS fills the three right-hand columns: LA = series 900, generator = name ends in "S", EXT input = 2 channels.
+The EXT column says the input is fitted; OOS has no EXT trigger source yet (section 5).
 These come from Rigol's model line-up. Not yet verified on hardware: whether the EDU variants have the LA port.
 
 OOS takes "DHO914S" as DHO914 plus generator.
@@ -101,7 +103,7 @@ and bad values only produce warnings.
 | `mem.1ch`, `mem.2ch`, `mem.4ch` | max. memory depth per channel (points), LA off |
 | `mem.la_1ch`, `mem.la_2ch`, `mem.la_4ch` | the same with LA on |
 | `adc.clock_hz = 2e9` | **experimental ADC clock** 1.25..2.0 GHz, only what `lmx2582::table_for` can make: the cold boot (and `oos-fpgad pll`) writes the generated LMX2582 table, sample rates, roll rate, trigger ticks and the generator DDS clock follow (`hal::dho::clock`); see `protocols/pll.md` and section 4.1 |
-| `afg.sine_max_hz`, `afg.square_max_hz`, `afg.ramp_max_hz`, `afg.pulse_max_hz`, `afg.noise_max_hz`, `afg.dc_max_hz`, `afg.arb_max_hz` | generator frequency cap (clamped to DDS clock / 2 = 78.125 MHz) |
+| `afg.sine_max_hz`, `afg.square_max_hz`, `afg.ramp_max_hz`, `afg.pulse_max_hz`, `afg.noise_max_hz`, `afg.dc_max_hz`, `afg.arb_max_hz` | generator frequency cap (clamped to half the DDS clock in effect: 78.125 MHz at the nominal 1.25 GHz ADC clock, more with `adc.clock_hz`; a digital limit, not a measured output) |
 
 Example (test of the generator up to 75 MHz, not yet characterised):
 
@@ -216,7 +218,9 @@ Without a generator (model table or `afg = no`) nothing opens the generator line
 Still open for models other than the DHO924S:
 - EXT trigger input of the 2-channel models: not implemented.
 - DHO800: a DHO804 runs OOS (user report); front panel, LEDs and display have not been checked in detail.
-- Logic analyser in the UI: not implemented on any model (`hal::dho::la` exists).
+- Logic analyser: the UI, capture, trigger and decoding on the lines are implemented for models with the LA port
+  and were run with a PLA2216 probe on a DHO924S. The threshold had no effect there, under stock as well
+  (`protocols/la.md`). Other variants are not yet verified on hardware.
 
 ## 6. Related findings (other Rigol series)
 
@@ -229,5 +233,6 @@ Series configurations:
 | HDO4000 | 2 | 16 | 56 | 14 | 4.0 ns (250 MHz) | 4 GSa/s |
 
 The DHO1000 has the same ADC interface as the DHO900, but runs at 2 GSa/s. The ADC is reported as RT8847IQ (2 GS/s) in
-the DHO800 as well as in the DHO1000/4000 and MHO98 (two of them in the MHO98). Whether the DHO900 runs at more than
-1.25 GSa/s is not yet verified on hardware: PLL tables, plus the lane eye scan as the measure.
+the DHO800 as well as in the DHO1000/4000 and MHO98 (two of them in the MHO98). Running a DHO900 above 1.25 GSa/s was
+tried on one DHO924S (section 4.1): 1.5 GHz boots with more noise, 2 GHz gives unusable data. 1.25 GHz stays the
+default.
