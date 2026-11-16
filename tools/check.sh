@@ -78,6 +78,18 @@ kernel/firmware/LICENSE.wireless-regdb rootfs/initramfs/etc/licenses/wireless-re
 COPIES
 }
 
+# every tracked shell script of our own: the *.sh files and every file whose first line starts a shell (rcS, init,
+# the programs of the image, kernel/tools/git), so a new script is checked without a list to keep
+shell_scripts() {
+    git ls-files | outside | while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        case $f in
+        *.sh) echo "$f" ;;
+        *) if head -n 1 "$f" 2>/dev/null | grep -qE '^#!.*[/ ](ba|da)?sh( |$)'; then echo "$f"; fi ;;
+        esac
+    done
+}
+
 layer_text() {
     bad=0
     git ls-files -z | xargs -0 grep -IlE '[[:space:]]+$' 2>/dev/null | outside >"$tmp/trail" || true
@@ -97,7 +109,7 @@ layer_text() {
         sed 's/^/  /' "$tmp/eof"
         bad=1
     fi
-    git ls-files '*.rs' '*.sh' '*.py' '*.c' '*.h' | outside | while IFS= read -r f; do
+    { git ls-files '*.rs' '*.py' '*.c' '*.h' '*.ps1' | outside; shell_scripts; } | sort -u | while IFS= read -r f; do
         head -n 5 "$f" | grep -q 'SPDX-License-Identifier:' || echo "$f"
     done >"$tmp/spdx"
     if [ -s "$tmp/spdx" ]; then
@@ -120,15 +132,19 @@ layer_text() {
     [ "$bad" = 0 ] || fail "text: see docs/adr/process/0019-one-style-for-text-files-and-commits.md"
 }
 
+# every tracked Python file, and every shell script by its first line (shell_scripts)
 layer_syntax() {
-    for f in boot/*.py tools/*.py tools/tests/*.py; do
+    git ls-files '*.py' | outside >"$tmp/py"
+    while IFS= read -r f; do
         python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1])' "$f" ||
             fail "syntax: $f"
-    done
-    for f in boot/*.sh boot/gel/*.sh kernel/*.sh rootfs/*.sh tools/*.sh ui/*.sh ui/tools/*.sh gpu/*.sh \
-        rootfs/initramfs/bin/* rootfs/initramfs/etc/rcS; do
-        sh -n "$f" || fail "syntax: $f"
-    done
+    done <"$tmp/py"
+    shell_scripts >"$tmp/sh"
+    while IFS= read -r f; do
+        case $(head -n 1 "$f") in *bash*) sh=bash ;; *) sh=sh ;; esac
+        $sh -n "$f" || fail "syntax: $f"
+    done <"$tmp/sh"
+    echo "$(wc -l <"$tmp/py" | tr -d ' ') Python files, $(wc -l <"$tmp/sh" | tr -d ' ') shell scripts"
 }
 
 layer_test() {

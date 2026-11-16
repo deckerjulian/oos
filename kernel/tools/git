@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Not git. This source tree is not a git repository, but some Rockchip BSP driver Makefiles ask `git log` for their
 # revision and compile the answer into the module. build.sh puts this script first on PATH: it answers exactly the
 # `git log` queries the release's own build made, with the answers recorded there (git-log-answers.txt; the work
