@@ -257,8 +257,8 @@ Cursor changes preserve capture statistics and an armed Single. Track values use
 | Command | Meaning |
 | --- | --- |
 | `:REFerence:SLOT[?] R1..R10` | Choose the destination/working slot. |
-| `:REFerence:LOAD "path"` | Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. |
-| `:REFerence:IMPort ["path"]` | Load named file, or the selected `refN` file beside setups. |
+| `:REFerence:LOAD "path"` | Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. A file under `/proc`, `/sys` or `/dev` (where the path resolves to) and a file over 128 MiB are refused (-224) before it is read. |
+| `:REFerence:IMPort ["path"]` | Load named file (as LOAD), or the selected `refN` file beside setups. |
 | `:REFerence:SAVE` | Copy the selected acquired channel record into the selected reference slot. Does not write a waveform file. |
 | `:REFerence:SHOW[?] [<slot>,]ON|OFF` | Visibility of one slot; DISPlay aliases SHOW. Query accepts a slot number. |
 | `:REFerence:CURRent[?] 1..10` | Working slot, returned as a number; SLOT returns `Rn`. |

@@ -5362,6 +5362,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// :REF:LOAD names any path on the scope. A file of the kernel's file systems is refused by where it resolves to
+    /// (before, /proc/kmsg passed the is_file check and its read never ended: the frame loop stood still), and a file
+    /// over the import limit by its size, before it is read.
+    #[test]
+    fn load_refuses_kernel_files_and_oversize_files_before_reading() {
+        let (mut s, mut ui, cv) = session();
+        let dir = std::env::temp_dir().join(format!("oos-ref-limits-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let csv = dir.join("lane.csv");
+        std::fs::write(&csv, "Time (s),Volts\n0,0.1\n1e-9,0.4\n").unwrap();
+        // a regular file under /proc or /dev: Linux has /proc; macOS shows an open regular file as /dev/fd/N
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let open = std::fs::File::open(&csv).unwrap();
+            let kernel = if cfg!(target_os = "linux") {
+                std::path::PathBuf::from("/proc/self/status")
+            } else {
+                use std::os::fd::AsRawFd;
+                std::path::PathBuf::from(format!("/dev/fd/{}", open.as_raw_fd()))
+            };
+            assert!(kernel.is_file());
+            line(&mut s, &mut ui, &cv, &format!(":REF:SLOT R1;:REF:LOAD \"{}\"", kernel.display()));
+            let err = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+            assert!(err.starts_with("-224,") && err.contains("/proc, /sys and /dev"), "{err}");
+            assert!(ui.ref_shown_slot(0).is_none());
+        }
+        let big = dir.join("big.csv");
+        std::fs::File::create(&big).unwrap().set_len(crate::store::MAX_WAVEFORM_BYTES as u64 + 1).unwrap();
+        line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", big.display()));
+        let err = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(err.starts_with("-224,") && err.contains("big.csv exceeds the 128 MiB"), "{err}");
+        line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", dir.display()));
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-256,"), "a directory is no file");
+        line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", csv.display()));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+        assert!(ui.ref_shown_slot(0).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn probewright_queries_answer_and_the_rigol_pages_round_trip() {
         let (mut s, mut ui, cv) = session();

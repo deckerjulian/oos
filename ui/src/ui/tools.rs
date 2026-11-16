@@ -1257,10 +1257,7 @@ impl Ui {
     }
 
     fn ref_load_file(&mut self, p: &std::path::Path) -> Result<(), String> {
-        if !p.is_file() {
-            return Err(format!("missing {}", crate::store::file_name(p)));
-        }
-        let bytes = std::fs::read(p).map_err(|_| format!("missing {}", crate::store::file_name(p)))?;
+        let bytes = crate::store::read_waveform_file(p)?;
         self.load_waveform_bytes(&bytes, &crate::store::file_name(p))
     }
     /// Name of a channel on its card: its label, or CHn.

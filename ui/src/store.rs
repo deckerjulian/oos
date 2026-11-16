@@ -1262,6 +1262,39 @@ pub struct WaveTrace {
 pub const MAX_WAVEFORM_BYTES: usize = 128 << 20;
 pub const MAX_WAVEFORM_SAMPLES: usize = 32_000_000;
 
+/// File systems of the kernel: their files can be regular and still endless (`/proc/kmsg`), or a device.
+const NOT_STORAGE: [&str; 3] = ["/proc", "/sys", "/dev"];
+
+/// The bytes of a waveform file named by a remote client (SCPI `:REFerence:LOAD`, also over VXI-11 and MCP) or found
+/// beside the setups, read on the frame loop. Refused: a file of `NOT_STORAGE` (by the path it resolves to), and one
+/// larger than the import limit, from its size before anything is read; the read stops one byte past the limit should
+/// the file grow meanwhile. A path that is not there or not a regular file is `missing <name>`.
+pub fn read_waveform_file(p: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let name = file_name(p);
+    let missing = || format!("missing {name}");
+    let real = p.canonicalize().map_err(|_| missing())?;
+    if NOT_STORAGE.iter().any(|d| real.starts_with(d)) {
+        return Err(format!("{name}: files under /proc, /sys and /dev are not read"));
+    }
+    let too_large = || format!("{name} exceeds the {} MiB import limit", MAX_WAVEFORM_BYTES >> 20);
+    // before the open: opening a FIFO would wait for a writer
+    let meta = std::fs::metadata(&real).map_err(|_| missing())?;
+    if !meta.is_file() {
+        return Err(missing());
+    }
+    if meta.len() > MAX_WAVEFORM_BYTES as u64 {
+        return Err(too_large());
+    }
+    let file = std::fs::File::open(&real).map_err(|_| missing())?;
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.take(MAX_WAVEFORM_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| format!("{name}: {e}"))?;
+    if bytes.len() > MAX_WAVEFORM_BYTES {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
 /// Extensions shown by native and browser waveform import. The header chooses the parser.
 pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx"];
 
