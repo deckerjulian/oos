@@ -1,6 +1,6 @@
 # ADR 0004: Two draw paths: Standard by default, Batch to choose
 
-- Status: accepted, to be reviewed (when Batch holds the frame rate with four channels at 10 us/div)
+- Status: superseded by ADR 0029
 - Date: 2026-11-14 (both selectable), measured on the unit 2026-11-15
 - Category: code
 

@@ -2114,7 +2114,7 @@ impl Scpi {
             if kw(nodes[1], "STATe") && query {
                 return t(crate::cmd::stat_text(ui).trim());
             }
-            // Acquire > Draw path: FRAMes (the fast path, default) or BATCh (PR #7's pipeline); the `pipe` part of
+            // Acquire > Draw path: BATCh (PR #7's pipeline, the default) or FRAMes (Standard); the `pipe` part of
             // :SYSTem:STATe? says which runs
             if kw(nodes[1], "PIPeline") {
                 if query {
@@ -6108,7 +6108,11 @@ mod draw_path_tests {
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = Scpi::open(0);
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
-        assert_eq!(q(&mut ui, ":SYST:PIP?"), "FRAM");
+        assert_eq!(q(&mut ui, ":SYST:PIP?"), "BATC", "Batch is the default (ADR 0029)");
+        q(&mut ui, ":SYST:PIP STANdard");
+        assert!(!ui.m.draw_batch);
+        assert!(crate::store::setup_text(&ui.m).contains("draw_path = standard\n"));
+        assert!(!crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().draw_batch);
         q(&mut ui, ":SYSTem:PIPeline BATCh");
         assert!(ui.m.draw_batch);
         assert!(crate::store::setup_text(&ui.m).contains("draw_path = batch\n"));

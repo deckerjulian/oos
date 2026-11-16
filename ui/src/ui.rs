@@ -562,7 +562,7 @@ enum Item {
     AcqSeg,
     /// software matching of the ADC cores' offsets (`board::dho::cores`)
     AcqCores,
-    /// Acquire > Draw path: Standard (fast path) or Batch (PR #7, `Model::draw_batch`)
+    /// Acquire > Draw path: Batch (PR #7, `Model::draw_batch`, the default) or Standard (fast path)
     AcqDrawPath,
     /// a note while the sample rate is below the ADC's: what lies above half of it folds down, nothing filters it
     AcqAlias,
