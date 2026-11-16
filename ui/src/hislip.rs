@@ -502,9 +502,10 @@ mod tests {
     fn a_socket_round_trip_answers_idn() {
         let mut h = Server::open(0);
         let port = h.port().expect("port");
+        // the deadlines only guard against a hang: a slow or busy computer must not fail the test
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             c.write_all(&encode(INITIALIZE, 0, 0x0200_4F53, b"hislip0")).unwrap();
             let mut buf = Vec::new();
             let resp = read_one(&mut c, &mut buf);
@@ -512,7 +513,7 @@ mod tests {
             assert_eq!(resp.param >> 16, VERSION as u32, "a newer client is answered at 1.0");
             let id = resp.param as u16;
             let mut a = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            a.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            a.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             a.write_all(&encode(ASYNC_INITIALIZE, 0, id as u32, b"")).unwrap();
             let mut abuf = Vec::new();
             assert_eq!(read_one(&mut a, &mut abuf).typ, ASYNC_INITIALIZE_RESPONSE);
@@ -521,7 +522,8 @@ mod tests {
             assert_eq!((data.typ, data.data.as_slice()), (DATA_END, &b"OOS,unit\n"[..]));
         });
         let start = std::time::Instant::now();
-        while !t.is_finished() && start.elapsed() < Duration::from_secs(4) {
+        while !t.is_finished() {
+            assert!(start.elapsed() < Duration::from_secs(120), "no answer");
             h.poll(&mut exec_idn);
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -539,7 +541,7 @@ mod tests {
                 Ok(0) => panic!("closed"),
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
                 Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
-                    if start.elapsed() > Duration::from_secs(3) {
+                    if start.elapsed() > Duration::from_secs(60) {
                         panic!("timeout");
                     }
                 }

@@ -268,6 +268,9 @@ struct ShotState {
     no_jpeg: bool,
     /// when the VPU failed: it is tried again after `VPU_RETRY` (one timeout must not end JPEG for the session)
     no_jpeg_at: Option<Instant>,
+    /// tests: a long poll other than `LONG_POLL`
+    #[cfg(test)]
+    long_poll: Option<Duration>,
     /// the frame loop hands its screens over (`hand_over`) instead of `tick` copying them
     frames: bool,
     thread: bool,
@@ -328,7 +331,11 @@ impl Shots {
             return;
         }
         let now = Instant::now();
-        let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= LONG_POLL);
+        #[cfg(test)]
+        let long_poll = st.long_poll.unwrap_or(LONG_POLL);
+        #[cfg(not(test))]
+        let long_poll = LONG_POLL;
+        let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= long_poll);
         st.waiting = keep;
         if !old.is_empty() {
             let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
@@ -1533,10 +1540,12 @@ setTimeout(() => {
         assert_eq!(body(&get(&mut h, &mut ui, &cv, &mut scpi, "/stamp")), "");
         ui.clock_known = true;
         ui.sys.tz = "JST-9".into();
+        let before = ui.local_now().stamp();
         let st = body(&get(&mut h, &mut ui, &cv, &mut scpi, "/stamp"));
-        let want = ui.local_now().stamp();
-        // the second may have turned between the two readings
-        assert!(st.len() == 15 && st[..13] == want[..13], "{} {}", st, want);
+        let after = ui.local_now().stamp();
+        // the clock goes on during the request (over a minute or a day too): the stamp lies between the readings
+        // around it, and the fixed-width form sorts as text
+        assert!(st.len() == 15 && before <= st && st <= after, "{} {} {}", before, st, after);
     }
 
     /// Large answers leave the frame loop: the whole body arrives, also several at once, and the count goes back.
@@ -1574,13 +1583,12 @@ setTimeout(() => {
                 assert_eq!(&out[e..e + 4], b"\x89PNG");
             }
         }
-        for _ in 0..200 {
-            if SENDERS.load(SeqCst) == 0 {
-                return;
-            }
+        // the client has every byte, the sender only lets go of its place: a minute is a guard against a hang only
+        let until = Instant::now() + Duration::from_secs(60);
+        while SENDERS.load(SeqCst) != 0 {
+            assert!(Instant::now() < until, "a sender did not finish");
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("a sender did not finish");
     }
 
     /// With a frame loop that hands its screens over before each render, the picture is the screen that was shown,
@@ -1736,7 +1744,7 @@ setTimeout(() => {
             let t0 = Instant::now();
             let t = std::thread::spawn(move || {
                 let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-                c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+                c.set_read_timeout(Some(Duration::from_secs(120))).unwrap();
                 let _ = c.write_all(&req);
                 let mut out = Vec::new();
                 let _ = c.read_to_end(&mut out);
@@ -1759,22 +1767,29 @@ setTimeout(() => {
         };
         let encodes = |h: &Http| h.shots.lock().encodes;
         let png_of = |cv: &Canvas| crate::store::png(cv.w as u32, cv.h as u32, &cv.px);
+        // the long poll is a minute but where it is waited out: a debug PNG takes most of a second, and the encoder
+        // waits twice its last encode before the next copy (`SHOT_DUTY`), so the test's one second could end before a
+        // picture is made on a slow or busy computer (a viewer without a picture then got an empty one)
+        let long_poll = |h: &Http, d: Duration| h.shots.lock().long_poll = Some(d);
+        long_poll(&h, Duration::from_secs(60));
         let (head, tag1, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && head.contains("Content-Type: image/png"), "{}", head);
         assert!(tag1.starts_with('"') && tag1.ends_with('"') && tag1.len() > 2, "{}", head);
         assert!(body == png_of(&cv), "the PNG of the screen");
         // the screen unchanged, the viewer has it: it waits the long poll out, then 304 without a body, no encode
+        long_poll(&h, LONG_POLL);
         let (head, tag, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), false);
         assert!(head.starts_with("HTTP/1.1 304") && body.is_empty() && tag == tag1, "{}", head);
         assert!(took >= LONG_POLL, "answered after {:?}", took);
+        long_poll(&h, Duration::from_secs(60));
         // a viewer without it gets the same picture, without a new encode
         let (head, tag, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && tag == tag1 && body == png_of(&cv), "{}", head);
         assert_eq!(encodes(&h), 1);
-        // the screen changes while the viewer waits: the new picture comes before the long poll ends
-        let (head, tag2, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
+        // the screen changes while the viewer waits: the new picture comes before the long poll ends (a 304 would come
+        // after a minute)
+        let (head, tag2, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
         assert!(head.starts_with("HTTP/1.1 200") && tag2 != tag1 && body == png_of(&cv), "{}", head);
-        assert!(took < LONG_POLL, "answered after {:?}", took);
         assert_eq!(encodes(&h), 2);
         // a foreign page still gets nowhere
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /screen.png HTTP/1.1\r\nHost: x\r\nSec-Fetch-Site: cross-site\r\n\r\n".to_vec());
