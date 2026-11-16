@@ -13,9 +13,17 @@ mkdir -p "$out"
 tarball="$out/wpa_supplicant-$ver.tar.gz"
 [ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://w1.fi/releases/wpa_supplicant-$ver.tar.gz"
 echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
+# libnl comes from Alpine's libnl3-static and is linked in (LGPL-2.1-or-later): its source goes with a release
+# (THIRD-PARTY-LICENSES.md). Alpine builds the package from these two files; the build stops below when the package
+# Alpine installs is another version than the one fetched here (then rootfs/deps.lock follows).
+. "$here/deps.sh"
+libnl=$(dep_ver libnl)
+dep_fetch libnl "$out" >/dev/null
+dep_fetch libnl-musl-patch "$out" >/dev/null
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
+docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e LIBNL="$libnl" -v "$out:/out" alpine:3.22 sh -euc '
 	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static >/dev/null
+	apk list -I libnl3-static 2>/dev/null | grep -q "^libnl3-static-$LIBNL-r" || { echo "libnl3-static of this Alpine is not $LIBNL (rootfs/deps.lock): $(apk list -I libnl3-static 2>/dev/null)" >&2; exit 1; }
 	cd /tmp && tar -xzf /out/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant
 	cat > .config <<CFG
 CONFIG_DRIVER_NL80211=y

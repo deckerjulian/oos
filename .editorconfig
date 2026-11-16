@@ -27,7 +27,7 @@ indent_style = tab
 indent_style = tab
 
 # taken from elsewhere: kept in their own format
-[{LICENSE,kernel/modules/**,kernel/patches/**,rootfs/initramfs/lib/firmware/**}]
+[{LICENSE,kernel/modules/**,kernel/patches/**,rootfs/initramfs/lib/firmware/**,rootfs/initramfs/etc/licenses/*.txt}]
 trim_trailing_whitespace = false
 insert_final_newline = unset
 indent_style = unset

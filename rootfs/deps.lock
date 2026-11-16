@@ -15,3 +15,7 @@ kexec-tools      upstream:rootfs/build-kexec.sh   2.0.32   8f81422a5fd2362cf6cb0
 e2fsprogs        upstream:rootfs/build-fsck.sh    1.47.2   08242e64ca0e8194d9c1caad49762b19209a06318199b63ce74ae4ef2d74e63c  https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.2/e2fsprogs-1.47.2.tar.xz
 wpa_supplicant   upstream:rootfs/build-wlan-tools.sh 2.11  912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a  https://w1.fi/releases/wpa_supplicant-2.11.tar.gz
 mesa             upstream:gpu/build.sh            26.0.8   caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc  https://archive.mesa3d.org/mesa-26.0.8.tar.xz
+# libnl is not built here: wpa_supplicant links Alpine's libnl3-static. These are the two files Alpine builds that
+# package from; rootfs/build-wlan-tools.sh fetches them for the release and stops when Alpine's version differs.
+libnl            alpine:3.22                      3.11.0   2a56e1edefa3e68a7c00879496736fdbf62fc94ed3232c0baba127ecfa76874d  https://github.com/thom311/libnl/releases/download/libnl3_11_0/libnl-3.11.0.tar.gz
+libnl-musl-patch alpine:3.22                      3.11.0   d787017fdf108c98bf2d0010004cc38040ed7f0734265b197117ffdb4f140f97  https://gitlab.alpinelinux.org/alpine/aports/-/raw/3.22-stable/main/libnl3/libnl3-musl.patch

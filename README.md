@@ -901,18 +901,13 @@ Start with the [hardware overview](https://deckerjulian.github.io/oos/hardware/o
 OOS is free software under the GNU General Public License, version 2 or (at your option) any later version. See
 [LICENSE](LICENSE).
 
-Third-party parts keep their own licences:
+Third-party parts keep their own licences. [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) lists every one of
+them with its version, its licence, where its licence text is and which source files go with a release: the Linux
+kernel and the XDMA driver, BusyBox, glibc and GCC's runtime, Mesa, libdrm and zlib (the GPU helper,
+[gpu/README.md](gpu/README.md)), e2fsck, kexec, wpa_supplicant with libnl, nftables with libmnl and libnftnl, Dropbear,
+OpenSSH's `sftp-server`, musl, the Rust standard library, the Roboto font, the wireless regulatory database and the
+RTL8188EU firmware. An image built from this tree carries the licence texts and that list under `/etc/licenses`.
 
-| Part | Licence |
-|---|---|
-| Linux kernel and patches | GPL-2.0, device trees GPL-2.0+ OR MIT; see [kernel/README.md](kernel/README.md) |
-| XDMA driver | Dual BSD/GPL |
-| BusyBox | GPL-2.0 |
-| e2fsck (e2fsprogs) | GPL-2.0; the notice is in the image at `/etc/licenses/e2fsck` |
-| kexec (kexec-tools) | GPL-2.0; the text is in the image at `/etc/licenses/kexec-tools` |
-| Mesa, libdrm, glibc, libstdc++, zlib (the GPU helper, [gpu/README.md](gpu/README.md)) | MIT, MIT, LGPL-2.1, GPL-3.0 with the runtime exception, zlib; the texts are in the image under `/etc/licenses` |
-| Roboto font | Apache-2.0, see [ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt) |
-| wpa_supplicant | BSD-3-Clause; the text is in the image at `/etc/licenses/wpa_supplicant` |
-| RTL8188EU firmware | Realtek's redistribution licence, see [LICENCE.rtlwifi_firmware.txt](rootfs/initramfs/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt) |
-
-If you pass on an OOS image, the GPL requires you to provide the corresponding source, including the kernel source.
+Every release carries the source archives of the binaries in its image next to the image. If you pass on an OOS
+image, the GPL requires you to provide the corresponding source as well: pass those archives and this tree at the
+release's tag on with it, or point to the release.

@@ -12,6 +12,12 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 - Upstream's builds (`rootfs/build-kexec.sh`, `rootfs/build-fsck.sh`, `rootfs/build-wlan-tools.sh`, `gpu/build.sh`)
   keep their own `ver=` and `sum=`: changing them would conflict at every upstream sync. Their lines in the manifest
   (`upstream:<script>`) document them, and `tools/deps-check.sh` reports when a script and its line differ.
+- `libnl` and `libnl-musl-patch` (owner `alpine:3.22`) are not built: `wpa_supplicant` links the `libnl3-static` of the
+  Alpine image. The two lines are the files Alpine builds that package from. `rootfs/build-wlan-tools.sh` fetches them
+  into `rootfs/out/` for the release and stops when Alpine installs another version.
+- What a release has to carry next to its image is listed by `tools/release-sources.sh list`, from this manifest and
+  `kernel/base.sha256`; `tools/release-sources.sh check <tag>` compares a release on GitHub with it
+  ([THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md)).
 - Not in the manifest: the Docker base images (`alpine:3.22`, `ubuntu:26.04`, `rust:1-alpine`), busybox (Ubuntu's
   `busybox-static`, its version recorded in `busybox.version` of each build), the kernel base archive
   (`kernel/src/SHA256SUMS`) and Rust crates (`Cargo.lock`).

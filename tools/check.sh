@@ -59,11 +59,23 @@ layer_clippy() {
     done
 }
 
-# ADR 0019. Taken from elsewhere, so left out: the licence text, the XDMA driver, kernel patches, firmware licences,
+# ADR 0019. Taken from elsewhere, so left out: the licence texts, the XDMA driver, kernel patches, firmware licences,
 # the recorded kernel answers.
 outside() {
     grep -v -e '^LICENSE$' -e '^kernel/modules/' -e '^kernel/patches/' -e '^kernel/tools/git-log-answers.txt$' \
-        -e '^rootfs/initramfs/lib/firmware/'
+        -e '^rootfs/initramfs/lib/firmware/' -e '^rootfs/initramfs/etc/licenses/.*\.txt$'
+}
+
+# the licence texts the image carries (/etc/licenses) are copies: each must equal the file it is a copy of
+licence_copies() {
+    while read -r a b; do
+        cmp -s "$a" "$b" || echo "$b differs from $a"
+    done <<COPIES
+LICENSE rootfs/initramfs/etc/licenses/GPL-2.0.txt
+THIRD-PARTY-LICENSES.md rootfs/initramfs/etc/licenses/THIRD-PARTY-LICENSES.md
+ui/tools/fonts/LICENSE-Roboto.txt rootfs/initramfs/etc/licenses/Apache-2.0.txt
+kernel/firmware/LICENSE.wireless-regdb rootfs/initramfs/etc/licenses/wireless-regdb.txt
+COPIES
 }
 
 layer_text() {
@@ -97,6 +109,12 @@ layer_text() {
     if [ -s "$tmp/tabs" ]; then
         echo "Rust indented with tabs:"
         sed 's/^/  /' "$tmp/tabs"
+        bad=1
+    fi
+    licence_copies >"$tmp/copies"
+    if [ -s "$tmp/copies" ]; then
+        echo "a licence text in the image tree is not the copy it should be (THIRD-PARTY-LICENSES.md):"
+        sed 's/^/  /' "$tmp/copies"
         bad=1
     fi
     [ "$bad" = 0 ] || fail "text: see docs/adr/process/0019-one-style-for-text-files-and-commits.md"
