@@ -226,6 +226,8 @@ fn gen_thread(usb: bool, addr: String, err: std::sync::Arc<std::sync::Mutex<Opti
     tx
 }
 
+/// The generator amplitudes of the knob, 1-2-5 over the allowed 10 mVpp .. 20 Vpp.
+const BODE_AMPS: [f64; 11] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0];
 const BODE_MODES: [oos_dsp::bode::Mode; 3] = [oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z];
 
 fn bode_mode_name(m: oos_dsp::bode::Mode) -> &'static str {
@@ -357,11 +359,12 @@ impl Ui {
             return true;
         }
         let m = &mut self.m;
-        let ladder = |x: f64, d: i32| {
-            let l: Vec<f64> = (0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
+        let step = |l: &[f64], x: f64, d: i32| {
             let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
             l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
         };
+        let freqs: Vec<f64> = (0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
+        let ladder = |x: f64, d: i32| step(&freqs, x, d);
         match it {
             Item::BodeOn => m.view = if m.view == AView::Bode { AView::Scope } else { AView::Bode },
             Item::BodeMode => {
@@ -376,7 +379,7 @@ impl Ui {
             Item::BodeStart => m.bode_start = ladder(m.bode_start, d).min(m.bode_stop / 2.0),
             Item::BodeStop => m.bode_stop = ladder(m.bode_stop, d).max(m.bode_start * 2.0),
             Item::BodePoints => m.bode_points = (m.bode_points as i32 + 5 * d).clamp(5, 200) as usize,
-            Item::BodeAmp => m.bode_amp = ladder(m.bode_amp, d).clamp(0.01, 20.0),
+            Item::BodeAmp => m.bode_amp = step(&BODE_AMPS, m.bode_amp, d),
             Item::BodeIn if free => m.bode_sw_in = opt_src_step(m.bode_sw_in, d),
             Item::BodeSwTime => {
                 // 1-2-5 steps from 1 ms to 500 s
@@ -1066,6 +1069,24 @@ mod tests {
         assert_eq!(ui.m.bode_sw_time, 1e-3);
         ui.adjust(Item::BodeSwTime, 100);
         assert_eq!(ui.m.bode_sw_time, 500.0);
+    }
+
+    // Break it catches: an amplitude knob that starts its ladder at 1 V and so never goes below it, although
+    // 10 mVpp .. 20 Vpp are allowed.
+    #[test]
+    fn the_amplitude_knob_covers_10_mv_to_20_v() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        assert_eq!(ui.m.bode_amp, 1.0);
+        ui.adjust(Item::BodeAmp, -1);
+        assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (0.5, "500 mVpp".into()));
+        ui.adjust(Item::BodeAmp, -100);
+        assert_eq!(ui.m.bode_amp, 0.01);
+        ui.adjust(Item::BodeAmp, 1);
+        assert_eq!(ui.m.bode_amp, 0.02);
+        ui.adjust(Item::BodeAmp, 100);
+        assert_eq!(ui.m.bode_amp, 20.0);
+        ui.adjust(Item::BodeAmp, -1);
+        assert_eq!(ui.m.bode_amp, 10.0);
     }
 
     #[test]
