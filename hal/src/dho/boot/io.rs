@@ -16,7 +16,7 @@ pub const SPI_IOC_WR_BITS_PER_WORD: u32 = spi_iow(3, 1);
 pub const SPI_IOC_WR_MAX_SPEED_HZ: u32 = spi_iow(4, 4);
 
 /// Sends `\rBOOT\r` + slot address to the FPGA boot monitor (`spi2boot`: spidev1.0, mode 0, 8 bit, 10 MHz, two
-/// writes, no reply) [U]. Only the three image slots are accepted. This is the only monitor command in OOS; there is no
+/// writes, no reply) [U]. Only the two image slots are accepted. This is the only monitor command in OOS; there is no
 /// way to send PROG or flash data through this module.
 #[cfg(target_os = "linux")]
 pub fn fpga_boot(addr: u32) -> std::io::Result<()> {

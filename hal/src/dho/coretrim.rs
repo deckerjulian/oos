@@ -21,7 +21,7 @@ use crate::dho::levels::Slot;
 pub trait TrimHw {
     /// One run of the measure unit: per slot the 12-bit min / max and the mean on the 16-bit scale.
     fn slots(&mut self) -> Option<[Slot; 8]>;
-    /// Writes the offset register of core `core` (-1024..1023 ADC steps).
+    /// Writes the offset register of core `core` (-1024..1023 register steps, about 0.6 ADC LSB per step on the unit).
     fn set_offset(&mut self, core: usize, o: i32);
     /// Waits between the gate's runs.
     fn wait_ms(&mut self, _ms: u32) {}

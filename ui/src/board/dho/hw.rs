@@ -37,7 +37,7 @@ pub const ROLL_TDIV: f64 = 0.2;
 /// Time base from which the hardware source sweeps in scan mode when Auto Roll is off (stock: 200 ms/div).
 pub const SCAN_TDIV: f64 = 0.2;
 
-/// The stock switching rule: Auto Roll on -> roll from 50 ms/div; off -> scan from 200 ms/div unless averaging.
+/// The OOS switching rule: Auto Roll on -> roll from 200 ms/div; off -> scan from 200 ms/div unless averaging.
 pub fn slow_mode(m: &Model) -> Slow {
     // f32 time bases: 5 ms is 4.99999989 ms
     let tdiv = m.hw_time_per_div() as f64 * 1.0001;

@@ -58,6 +58,7 @@ pub fn spu_init(sh: &mut Shadows) -> Vec<Write> {
         sh.s1000 = v;
         w.push((0x1000, v));
     }
+    // wpu writes 0x5555 here; whether the upper bits matter is not confirmed on hardware.
     w.push((0x105c, 0x5555_5555));
     sh.s1010 |= 0x2000_0000;
     w.push((0x1010, sh.s1010));

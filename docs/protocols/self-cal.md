@@ -126,8 +126,9 @@ loss (7.1).
 ### 2.4 Measurement primitives
 
 **ADC measure unit** (`hal::dho::adc::measure`, `oos-hw adc-meas`):
-`0x1040 <- (value & 0x77fff0e0) | 15`, then the same `| 0x80000000` (start). 15 is the averaging exponent (assumed: 65536
-samples per core at 156.25 MSa/s, about 0.42 ms). Poll 0x1040 bit 30 every 10 ms, max 5 polls. Per core n = 0..7:
+`0x1040 <- (value & 0x77fff0e0) | 15`, then the same `| 0x80000000` (start). 15 is the averaging exponent (assumed:
+2^15 = 32768 samples per slot; run length not yet verified on hardware). Poll 0x1040 bit 30 every 10 ms, max 5 polls.
+Per core n = 0..7:
 `0x1040[11:8] = n`, read 0x1044 (read again once if 0xeeeeeeee), also 0x1048 (peak). Output: 8 core means.
 
 Channel value: in the four-channel mode the mean of cores k and k+4, k = per-channel slot of the core order (14.3). In
