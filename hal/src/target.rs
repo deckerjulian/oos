@@ -93,10 +93,17 @@ pub struct Target {
     pub set_adc_clock: fn(&mut Limits, f64) -> Result<(), String>,
     /// the ADC clocks of System > Overclock, the standard clock first
     pub clock_steps: &'static [f64],
+    /// OOS has code for the acquisition hardware of this board. False for a port of the platform alone (the MHO900):
+    /// then nothing touches the FPGA, the front ends, the generator or the front panel, and the screen shows the demo
+    /// signal (`model::Platform::drives_hardware`, docs/porting.md)
+    pub acquisition: bool,
 }
 
-/// The board this build is for.
+/// The board this build is for: the DHO800/DHO900, or with the feature `board-mho` the MHO900.
+#[cfg(not(feature = "board-mho"))]
 pub const ACTIVE: Target = crate::dho::target::DHO;
+#[cfg(feature = "board-mho")]
+pub const ACTIVE: Target = crate::mho::target::MHO;
 
 #[cfg(test)]
 mod tests {

@@ -1,7 +1,8 @@
 # Other Rigol models
 
 OOS runs on the DHO800 and DHO900 only. **Do not install it on another model**: its acquisition part is another
-board, and the USB install and the card layout are verified on the DHO800/DHO900 only.
+board, and the USB install and the card layout are verified on the DHO800/DHO900 only. The MHO900 has a build of the
+platform alone, without acquisition, that has not run on a unit yet ([mho.md](mho.md)).
 
 If OOS starts on another board anyway, it sees it in `/rigol/data/vendor.bin`: a model outside the DHO800/DHO900
 family (not DHO8xx or DHO9xx) makes `oos-fpgad` refuse every hardware command and `oos-ui` show the demo signal
@@ -49,8 +50,14 @@ The code keeps the board apart:
   6 channels, the neutral code was tried on the host: it builds, and with 2 generators all tests pass.
 
 A port adds `hal/src/<board>/` with its `Target`, `ui/src/board/<board>/` with its `Board` and `rootfs/board/<board>/`,
-and points `target::ACTIVE` and `board::Active` at them; the image is built with `OOS_BOARD=<board>`. The compiler names
-every part of the interface still missing. `oos-fpgad` is a DHO800/DHO900 tool and stays one; only that board's `oos-board` calls it.
+and points `target::ACTIVE` and `board::Active` at them behind a Cargo feature `board-<board>` (in `oos-hal`, passed on by
+`oos-ui` and `oos-fpgad`); the image is built with `OOS_BOARD=<board>`, which sets the feature (ADR 0028). The
+compiler names every part of the interface still missing. A board whose acquisition OOS cannot drive yet says so in
+`Target::acquisition`: then `Platform::drives_hardware` is false and the screen shows the demo signal. `oos-fpgad` is a
+DHO800/DHO900 tool and stays one; another board's `oos-board` asks it at most `model` (vendor.bin, read only).
+
+The MHO900 is the first such port, of the platform alone: `hal/src/mho/`, `ui/src/board/mho/`, `rootfs/board/mho/`,
+`kernel/dts/rk3399-rigol-mho900.dts` ([mho.md](mho.md)).
 
 ## What does not carry over
 
@@ -66,9 +73,11 @@ Everything that talks to the acquisition board, which on the DHO800/DHO900 is in
 | calibration | the files in `/rigol/data`, `hal/src/dho/calfile.rs` | file formats |
 | generator, logic analyser | `protocols/afg.md`, `protocols/la.md` | other boards |
 
-Reported for the MHO900 (forum, not verified here): two ADCs, interleaved to 4 GSa/s; an FPGA said to be a Fudan
-part; a 1 GHz front end with a 50 Ω path; a two-channel generator on its own board; a logic analyser path apart from
-the ADC words. So a port means working out the whole acquisition part again, measured on a unit at the bench.
+Reported for the MHO900 (forum, not verified here): two ADCs, interleaved to 4 GSa/s; a 1 GHz front end with a 50 Ω
+path; a two-channel generator on its own board; a logic analyser path apart from the ADC words. The platform probe of
+an MHO954 (GitHub issue #4) adds: a Kintex-7 bitstream the SoC loads at every start over GPIOs, XDMA `10ee:7024`, a
+`sysref_reset` line (JESD204 ADCs), other front-end lines and calibration files ([mho.md](mho.md)). So a port means
+working out the whole acquisition part again, measured on a unit at the bench.
 
 The model limits (sample rates, memory depths, channel count, generator) live in `hal/src/model.rs`; the GUI takes
 them from there.

@@ -153,6 +153,9 @@ layer_test() {
         say "test $c"
         (cd "$c" && strict cargo test --locked) || fail "test: $c"
     done
+    # the MHO900 build (docs/mho.md): its board description against rootfs/board/mho (the UI's tests are the DHO's)
+    say "test hal, board-mho"
+    (cd hal && strict cargo test --locked --features board-mho --lib target::) || fail "test: hal board-mho"
     # the host tools' own tests: offline, no scope, no listener
     say "test tools"
     python3 -m unittest discover -q -s tools/tests || fail "test: tools/tests"
@@ -161,7 +164,12 @@ layer_test() {
 layer_target() {
     for c in ui fpgad; do
         (cd "$c" && strict cargo check --locked --target aarch64-unknown-linux-musl) || fail "target: $c"
+        # the MHO900 build (docs/mho.md) for the scope
+        (cd "$c" && strict cargo check --locked --target aarch64-unknown-linux-musl --features board-mho) ||
+            fail "target: $c board-mho, scope"
     done
+    # and oos-ui's on the host too (the desktop build); oos-fpgad is a tool of the scope
+    (cd ui && strict cargo check --locked --features board-mho) || fail "target: ui board-mho"
     # ADR 0021: what runs on the scope depends on libc only; hal and dsp on every platform
     for c in hal dsp ui fpgad; do
         case $c in hal | dsp) t=all ;; *) t=aarch64-unknown-linux-musl ;; esac

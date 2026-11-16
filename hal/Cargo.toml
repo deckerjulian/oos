@@ -9,6 +9,10 @@ license = "GPL-2.0-or-later"
 [lib]
 name = "oos_hal"
 
+[features]
+# the board this build is for (hal/src/target.rs `ACTIVE`): without one the DHO800/DHO900
+board-mho = []
+
 [dependencies]
 libc = "0.2"
 

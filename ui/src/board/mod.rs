@@ -10,9 +10,13 @@
 //! `board::dho` out of the rest of the crate.
 //!
 //! The board is chosen when OOS is built (`Active`): an image is built for one board family anyway (kernel, device
-//! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it.
+//! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it: `mho` is the MHO900,
+//! a port of the platform without acquisition.
 
+#[cfg(not(feature = "board-mho"))]
 pub mod dho;
+#[cfg(feature = "board-mho")]
+pub mod mho;
 mod record;
 
 pub use record::resample as resample_record;
@@ -21,12 +25,18 @@ pub use record::{sw_trig_level, to_record, trigger_point};
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
 
-/// The board this build drives.
+/// The board this build drives: the DHO800/DHO900, or with the feature `board-mho` the MHO900 (docs/mho.md).
+#[cfg(not(feature = "board-mho"))]
 pub type Active = dho::Dho;
+#[cfg(feature = "board-mho")]
+pub type Active = mho::Mho;
 
 /// The board of this build.
 pub fn board() -> &'static Active {
-    &dho::Dho
+    #[cfg(not(feature = "board-mho"))]
+    return &dho::Dho;
+    #[cfg(feature = "board-mho")]
+    return &mho::Mho;
 }
 
 /// What the acquisition thread of the active board is to apply, made from the model (`Board::want`).

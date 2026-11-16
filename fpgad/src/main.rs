@@ -252,12 +252,14 @@ fn main() {
         }
         return;
     }
-    // another board (docs/porting.md): its registers are not those of the DHO800/DHO900
-    if let Some(m) = &oos_hal::model::platform().foreign {
-        if !matches!(cmd, "help" | "--help" | "-h") {
-            eprintln!("oos-fpgad: this unit is a {}, another board: OOS does not drive its hardware (docs/porting.md)", m);
-            std::process::exit(3);
+    // another board (docs/porting.md): its registers are not those of the DHO800/DHO900; and a build for a board OOS
+    // drives no acquisition hardware of (the MHO900, docs/mho.md)
+    if !oos_hal::model::platform().drives_hardware() && !matches!(cmd, "help" | "--help" | "-h") {
+        match &oos_hal::model::platform().foreign {
+            Some(m) => eprintln!("oos-fpgad: this unit is a {}, another board: OOS does not drive its hardware (docs/porting.md)", m),
+            None => eprintln!("oos-fpgad: OOS drives no {} hardware (docs/mho.md)", oos_hal::target::ACTIVE.family_name),
         }
+        std::process::exit(3);
     }
     if cmd == "afg" && !oos_hal::model::platform().caps.has_gen() && !flag(&args, "--force") {
         eprintln!("oos-fpgad: the {} has no generator (--force to drive the lines anyway)", oos_hal::model::platform().caps.name);

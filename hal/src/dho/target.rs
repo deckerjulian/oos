@@ -144,4 +144,5 @@ pub const DHO: Target = Target {
     limits,
     set_adc_clock,
     clock_steps: &CLOCK_STEPS,
+    acquisition: true,
 };

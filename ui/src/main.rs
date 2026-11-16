@@ -16,6 +16,8 @@
 // leaves them unused. The guard against dead code is the scope build (tools/check.sh target): there only the items that
 // the desktop window alone uses carry an allow, and what only the tests use is #[cfg(test)].
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// an MHO900 build (docs/mho.md) never reaches the DHO's hardware path: its live compression, deep reads and core placement
+#![cfg_attr(feature = "board-mho", allow(dead_code))]
 
 mod clock;
 mod cmd;
@@ -135,11 +137,13 @@ fn main() {
     }
     let experimental = p.experimental();
     let foreign = p.foreign.clone();
+    let drives = p.drives_hardware();
     oos_hal::model::init(p);
-    // another board (docs/porting.md): no hardware source, the demo signal instead
-    let args: Vec<String> = match &foreign {
-        Some(_) => args.iter().filter(|a| !matches!(a.as_str(), "--hw" | "--fpga-live" | "--afe")).cloned().collect(),
-        None => args,
+    // another board (docs/porting.md), or a build for a board without acquisition code (the MHO900, docs/mho.md): no
+    // hardware source, the demo signal instead
+    let args: Vec<String> = match drives {
+        false => args.iter().filter(|a| !matches!(a.as_str(), "--hw" | "--fpga-live" | "--afe")).cloned().collect(),
+        true => args,
     };
     // on the unit the frame loop and the acquisition thread (started with the source) keep the two A72 for themselves
     #[cfg(target_os = "linux")]
@@ -153,6 +157,8 @@ fn main() {
     }
     if let Some(m) = &foreign {
         ui.toast(&format!("This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)", m));
+    } else if !drives {
+        ui.toast(&format!("OOS does not acquire on the {} yet: demo signal shown (docs/mho.md)", oos_hal::target::ACTIVE.family_name));
     }
     ui.limits_path = limits;
     if experimental {

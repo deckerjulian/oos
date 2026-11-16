@@ -48,9 +48,12 @@ owner="$(id -u):$(id -g)"
 ui="$root/ui/target/aarch64-unknown-linux-musl/release"
 # always rebuild (incremental), so the image never carries a stale binary
 feat=$("$root/ui/tools/decoder-features.sh") || exit 1
-(cd "$root/ui" && cargo build --release --target aarch64-unknown-linux-musl $feat) || exit 1
+# the board's code (hal/src/target.rs ACTIVE): the DHO800/DHO900 without a feature, another board by its feature
+bfeat=
+[ "$OOS_BOARD" = dho ] || bfeat="--features board-$OOS_BOARD"
+(cd "$root/ui" && cargo build --release --target aarch64-unknown-linux-musl $feat $bfeat) || exit 1
 fpgad="$root/fpgad/target/aarch64-unknown-linux-musl/release"
-(cd "$root/fpgad" && cargo build --release --target aarch64-unknown-linux-musl) || exit 1
+(cd "$root/fpgad" && cargo build --release --target aarch64-unknown-linux-musl $bfeat) || exit 1
 # oos-hw with the kernel's compiler (kernel/build-base.sh image), for arm64 whatever the host is; ELF e_machine 0xb7 is
 # AArch64, a binary built for the host by an older script is built again
 hw="$root/tools/hw/oos-hw"
@@ -150,7 +153,7 @@ key="${OOS_UPDATE_KEY:-$HOME/.config/oos/update-signing.key}"
 [ -f "$key" ] || key="$root/keys/community-signing.key"
 rm -f "$out/oos-dev.oosupd"
 if [ -f "$key" ]; then
-	(cd "$root/fpgad" && cargo build --release --bin oos-update) || exit 1
+	(cd "$root/fpgad" && cargo build --release --bin oos-update $bfeat) || exit 1
 	"$root/fpgad/target/release/oos-update" pack --image "$out/oos-dev.img" --build "$build_id" --key "$key" --out "$out/oos-dev.oosupd"
 else
 	echo "no signing key at $key: no update package (oos-update keygen, docs/update.md)"

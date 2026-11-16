@@ -1,0 +1,23 @@
+#!/bin/sh
+# Copyright (C) 2026 dekajoule
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What rcS asks of the board, the MHO900 here (docs/mho.md): a port of the platform alone. Nothing starts the
+# acquisition board (its FPGA stays unloaded), so rcS takes the demo signal; touch, screen and network are the board's.
+#
+#   oos-board has-hardware       exit 1: this image starts no acquisition hardware
+#   oos-board early STATUS       mounts /rigol read only (oos-mount-rigol), so vendor.bin gives the model and the MAC
+#   oos-board drivers            kernel modules of the board: the touch panel
+#   oos-board ui-args STATUS     prints nothing (demo signal)
+#   oos-board bring-up STATUS    exit 1: no acquisition hardware comes up
+#   oos-board mac                prints the unit's own LAN MAC (vendor.bin, read only), nothing if it cannot be read
+case "$1" in
+has-hardware) exit 1;;
+early) /bin/oos-mount-rigol >/dev/null 2>&1; exit 0;;
+drivers)
+	insmod /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/edt-ft5x06.ko 2>/dev/null
+	exit 0;;
+ui-args) exit 0;;
+bring-up) exit 1;;
+mac) /bin/oos-fpgad model 2>/dev/null | sed -n 's/^mac  *//p';;
+*) echo "usage: oos-board has-hardware | early STATUS | drivers | ui-args STATUS | bring-up STATUS | mac" >&2; exit 2;;
+esac

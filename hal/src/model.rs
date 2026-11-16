@@ -326,9 +326,10 @@ impl Platform {
         !self.overrides.is_empty()
     }
 
-    /// False on another board (`foreign`): then nothing may touch the acquisition hardware, the generator or the LA.
+    /// False on another board (`foreign`), and on a board OOS has no acquisition code for (`Target::acquisition`,
+    /// the MHO900): then nothing may touch the acquisition hardware, the generator, the LA or the front panel.
     pub fn drives_hardware(&self) -> bool {
-        self.foreign.is_none()
+        self.foreign.is_none() && ACTIVE.acquisition
     }
 }
 

@@ -6,6 +6,10 @@ edition = "2021"
 description = "OOS acquisition control for the Rigol DHO800/DHO900 (plan / run one acquisition)"
 license = "GPL-2.0-or-later"
 
+[features]
+# the board (hal/src/target.rs `ACTIVE`): without one the DHO800/DHO900
+board-mho = ["oos-hal/board-mho"]
+
 [dependencies]
 libc = "0.2"
 oos-hal = { path = "../hal" }
