@@ -929,11 +929,10 @@ mod tests {
         assert!(worst <= 0.9, "drawing from the codes must be cheaper: worst ratio {:.2}", worst);
     }
 
-    /// Until every batch fed is done (drawn and handed on, or dropped).
+    /// Until every batch fed is done (drawn and handed on, or dropped); a batch that is never done hangs the test
+    /// instead of a deadline a busy computer could miss (ADR 0020).
     fn settle(p: &Pipe) {
-        let t0 = std::time::Instant::now();
         while p.live.load(Ordering::Acquire) > 0 {
-            assert!(t0.elapsed() < std::time::Duration::from_secs(20), "batches still open");
             std::thread::yield_now();
         }
     }

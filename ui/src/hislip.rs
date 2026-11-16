@@ -513,7 +513,7 @@ mod tests {
     fn a_socket_round_trip_answers_idn() {
         let mut h = Server::open(0);
         let port = h.port().expect("port");
-        // the deadlines only guard against a hang: a slow or busy computer must not fail the test
+        // no deadline: a missing answer hangs the test, a slow or busy computer does not fail it (ADR 0020)
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
@@ -532,9 +532,7 @@ mod tests {
             let data = read_one(&mut c, &mut buf);
             assert_eq!((data.typ, data.data.as_slice()), (DATA_END, &b"OOS,unit\n"[..]));
         });
-        let start = std::time::Instant::now();
         while !t.is_finished() {
-            assert!(start.elapsed() < Duration::from_secs(120), "no answer");
             h.poll(&mut exec_idn);
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -543,7 +541,6 @@ mod tests {
 
     fn read_one(c: &mut TcpStream, buf: &mut Vec<u8>) -> Message {
         let mut tmp = [0u8; 256];
-        let start = std::time::Instant::now();
         loop {
             if let Ok(Some(m)) = take_message(buf) {
                 return m;
@@ -551,11 +548,7 @@ mod tests {
             match c.read(&mut tmp) {
                 Ok(0) => panic!("closed"),
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
-                    if start.elapsed() > Duration::from_secs(60) {
-                        panic!("timeout");
-                    }
-                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {}
                 Err(e) => panic!("{e}"),
             }
         }

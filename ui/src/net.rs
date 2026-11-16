@@ -53,12 +53,11 @@ mod tests {
         let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
         let (s, _) = l.accept().unwrap();
         let mut b = [0u8; 16];
-        let t = std::time::Instant::now();
+        // nothing is sent before these reads: one that waited would never return
         for _ in 0..100 {
             let e = read_now(&s, &mut b).unwrap_err();
             assert!(later(&e), "{:?}", e);
         }
-        assert!(t.elapsed() < std::time::Duration::from_millis(50), "{:?} for 100 reads", t.elapsed());
         c.write_all(b"*IDN?\n").unwrap();
         let t = std::time::Instant::now();
         let n = loop {

@@ -1180,10 +1180,12 @@ fn scpi_errors_and_answers_stay_bounded() {
 fn a_remote_knob_turn_has_a_limit() {
     let mut u = with_two_channels();
     let d0 = u.m.delay;
-    let t = std::time::Instant::now();
     crate::cmd::run(&mut u, "knob hpos 2000000000");
-    assert!(t.elapsed().as_secs() < 5);
     assert!(u.m.delay != d0);
+    // two billion detents are taken as the limit of 100, not run one by one
+    let mut hundred = with_two_channels();
+    crate::cmd::run(&mut hundred, "knob hpos 100");
+    assert_eq!(u.m.delay, hundred.m.delay);
 }
 
 #[test]

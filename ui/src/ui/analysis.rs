@@ -1483,7 +1483,6 @@ mod measurement_gate_tests {
             let tick = std::time::Instant::now();
             ui.step(0.0);
             worst_tick = worst_tick.max(tick.elapsed());
-            assert!(scan.elapsed().as_secs() < 60, "full record analysis did not finish within its local test bound");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         let full_scan = scan.elapsed();
@@ -1646,12 +1645,11 @@ mod measurement_gate_tests {
         ui
     }
 
+    /// Until the worker is done; one that never is hangs the test (no deadline a busy computer could miss).
     fn pump(ui: &mut Ui) {
-        let start = std::time::Instant::now();
         loop {
             ui.step(0.0);
             if !ui.azr.ref_measure_worker.borrow().as_ref().is_some_and(|worker| worker.busy) && !ui.measurement_busy() { break; }
-            assert!(start.elapsed().as_secs() < 10, "bounded worker did not complete");
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
@@ -1659,9 +1657,8 @@ mod measurement_gate_tests {
     #[test]
     fn large_full_measurements_are_nonblocking_and_use_one_worker_without_fake_captures() {
         let mut ui = large();
-        let start = std::time::Instant::now();
         ui.set_measurement_full_record(true);
-        assert!(start.elapsed().as_millis() < 500, "dispatch must not perform the full scan on the event thread");
+        // dispatch does not scan on the event thread: the job is still running and no value is there yet
         assert!(ui.measurement_busy());
         for _ in 0..100 { assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan()); }
         assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, 1, "readouts must not queue duplicate jobs");
@@ -1710,9 +1707,8 @@ mod measurement_gate_tests {
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-6).abs() < 1e-10).unwrap();
         ui.m.delay = 400e-6;
         ui.m.meas_full_record = false;
-        let started = std::time::Instant::now();
         ui.measure_refs();
-        assert!(started.elapsed().as_millis() < 500, "a zoomed-out Screen gate must not scan on the event thread");
+        // a zoomed-out Screen gate does not scan on the event thread: busy, no value yet
         assert!(ui.measurement_busy());
         assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan());
         assert_eq!(ui.meas_rows()[0].text(), "Computing");

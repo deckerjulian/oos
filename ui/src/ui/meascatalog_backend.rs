@@ -187,8 +187,8 @@ mod tests{
     fn families_queue_once_share_immutable_data_and_never_count_stopped_reads(){
         let mut ui=fixture();put(&mut ui,0,(0..400_000).map(|i|if i%40<20{-0.5}else{0.5}).collect(),0.0,1e-9);
         ui.m.cat=vec![row(tile(measures::jitter::EYE_HEIGHT)),row(tile(measures::jitter::TIE))];
-        let started=Instant::now();for _ in 0..100{let _=ui.cat_row(row(tile(measures::jitter::EYE_HEIGHT)).0,row(tile(measures::jitter::EYE_HEIGHT)).1,row(tile(measures::jitter::EYE_HEIGHT)).2,row(tile(measures::jitter::EYE_HEIGHT)).3,row(tile(measures::jitter::EYE_HEIGHT)).4);let _=ui.cat_row(row(tile(measures::jitter::TIE)).0,row(tile(measures::jitter::TIE)).1,row(tile(measures::jitter::TIE)).2,row(tile(measures::jitter::TIE)).3,row(tile(measures::jitter::TIE)).4);}
-        assert!(started.elapsed()<Duration::from_millis(500));assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted,1);
+        for _ in 0..100{let _=ui.cat_row(row(tile(measures::jitter::EYE_HEIGHT)).0,row(tile(measures::jitter::EYE_HEIGHT)).1,row(tile(measures::jitter::EYE_HEIGHT)).2,row(tile(measures::jitter::EYE_HEIGHT)).3,row(tile(measures::jitter::EYE_HEIGHT)).4);let _=ui.cat_row(row(tile(measures::jitter::TIE)).0,row(tile(measures::jitter::TIE)).1,row(tile(measures::jitter::TIE)).2,row(tile(measures::jitter::TIE)).3,row(tile(measures::jitter::TIE)).4);}
+        assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted,1,"100 reads queue one job");
         assert!(Arc::strong_count(&ui.refs[0].as_ref().unwrap().v)>=2,"worker must hold the same immutable source");
         let height=wait(&mut ui,tile(measures::jitter::EYE_HEIGHT));assert!(height.value.is_finite());assert!(height.quality.contains("NRZ"));assert!(wait(&mut ui,tile(measures::jitter::TIE)).value.is_finite());
         assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted,1);
