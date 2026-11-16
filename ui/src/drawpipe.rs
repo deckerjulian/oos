@@ -471,21 +471,25 @@ impl Pipe {
     /// `feed_codes` without the board's view of the read-out words (tests).
     #[cfg(test)]
     pub fn feed(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto) {
-        self.feed_batch(raw, fb, frames, stamp, decode, None);
+        self.feed_batch(raw, fb, 0, frames, stamp, decode, None);
     }
 
-    /// From the acquisition thread: the first `frames` frames of `fb` bytes in `raw`, recorded under settings stamp
-    /// `stamp`, for the workers (and the helper) to claim, decoded with `decode` or, without per-frame measurements,
-    /// drawn from their words with `codes` (`draw_frame_codes`). The buffer comes back through `take_buffer` when the
-    /// batch is done. Frames nobody claims are counted as dropped.
-    pub fn feed_codes(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) {
-        self.feed_batch(raw, fb, frames, stamp, decode, codes);
+    /// From the acquisition thread: frames `first..frames` of `fb` bytes in `raw` (the ones before `first` are left
+    /// out: frame 0 of a batch, issue #5), recorded under settings stamp `stamp`, for the workers (and the helper) to
+    /// claim, decoded with `decode` or, without per-frame measurements, drawn from their words with `codes`
+    /// (`draw_frame_codes`). The buffer comes back through `take_buffer` when the batch is done. Frames nobody claims
+    /// are counted as dropped.
+    #[allow(clippy::too_many_arguments)]
+    pub fn feed_codes(&self, raw: Box<dyn RawBatch>, fb: usize, first: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) {
+        self.feed_batch(raw, fb, first, frames, stamp, decode, codes);
     }
 
     /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
-    fn feed_batch(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) -> Arc<Batch> {
+    #[allow(clippy::too_many_arguments)]
+    fn feed_batch(&self, raw: Box<dyn RawBatch>, fb: usize, first: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) -> Arc<Batch> {
         let frames = if fb == 0 { 0 } else { frames.min(raw.bytes().len() / fb) };
-        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next: AtomicUsize::new(0), counters: self.counters, live: self.live.clone() });
+        let next = AtomicUsize::new(first.min(frames));
+        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next, counters: self.counters, live: self.live.clone() });
         self.live.fetch_add(1, Ordering::Acquire);
         {
             let mut open = self.open.lock().unwrap();
@@ -815,7 +819,7 @@ mod tests {
             pipe.set_view(Some(&m), w, h);
             let (cs, cp) = (s.clone(), p);
             let codes: CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
-            pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 9, 0, dec(&s, &p), Some(codes));
+            pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 9, 0, dec(&s, &p), Some(codes));
             settle(&pipe);
             let mut got = Phosphor::new(w, h);
             let (mut clear, mut edges, mut off) = (false, [0u64; 4], (0.0, 0.0));
@@ -1017,7 +1021,7 @@ mod tests {
             let (bytes, fb, s, p) = batch(20, memsel, false);
             let pipe = Pipe::start(0, false, fresh());
             pipe.set_view(Some(&m), w, h);
-            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 20, 0, dec(&s, &p), None);
+            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 0, 20, 0, dec(&s, &p), None);
             let mut hp = Helper::default();
             let mut k = 0;
             while pipe.help(&mut hp) {
@@ -1031,6 +1035,30 @@ mod tests {
             assert_eq!((k, n.frames, n.triggered), (20, 20, trig), "{} s/div", tdiv);
             assert!((0..NCH).all(|c| got.map[c] == want.map[c]), "{} s/div", tdiv);
         }
+    }
+
+    // Break it catches: frame 0 of a batch (the frame the FPGA held across the arm, issue #5) drawn in batch mode,
+    // where the path without batches leaves it out.
+    #[test]
+    fn frames_before_first_are_left_out() {
+        let (w, h) = (970, 448);
+        let m = model(1e-6, false, false);
+        let (bytes, fb, s, p) = batch(20, 12_512, false);
+        let pipe = Pipe::start(0, false, fresh());
+        pipe.set_view(Some(&m), w, h);
+        let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 1, 20, 0, dec(&s, &p), None);
+        let mut hp = Helper::default();
+        let mut k = 0;
+        while pipe.help(&mut hp) {
+            k += 1;
+            assert!(k < 100);
+        }
+        drop(b);
+        let mut got = Phosphor::new(w, h);
+        let n = pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        let (want, trig, ..) = reference(&bytes[fb..], fb, &s, &p, &m, w, h);
+        assert_eq!((k, n.frames, n.triggered), (19, 19, trig));
+        assert!((0..NCH).all(|c| got.map[c] == want.map[c]));
     }
 
     // Break it catches: frames of older settings drawn, maps of an older mapping merged, frames nobody drew not

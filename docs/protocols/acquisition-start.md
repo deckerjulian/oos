@@ -313,6 +313,34 @@ A-D only use 0x1000, 0x4004, 0x4008, 0x400c, 0x4010-0x4018, 0x4068, 0x406c, 0x40
 - So one batch costs ~10 ms plus the time the triggers need: about 800 records/s with the probe-comp signal instead
   of ~30 with single frames. `frames` is capped by `max_frames` = 7 340 032 / segment size.
 
+## Frames 0 and 1 of a batch (issue #5)
+
+Verified on the unit (DHO924S, 2026-11-16): the built-in generator gives a 1 kHz square of 2 Vpp on CH1, at 10 us/div
+and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal sweep. The headers were logged with
+`OOS_FRAME_HEADER=off`, which logs only the frames without an edge within 20 samples of `pre`, plus a count every
+10,000 frames. Word 4 of the frame header is the frame's number in its batch.
+
+- **Frame 0** is a frame the FPGA recorded before the arm (issue #5, mj1911's runs R1 to R5). oos-ui leaves it out of
+  every batch of more than one frame; `acq.frame0 = keep` in system.conf keeps it.
+  - The batch path (`acq.pipeline = batch`) used to hand it to the deposit workers.
+  - With batches on, 1 of 7,075 logged frames was off the trigger, and that one was frame 0.
+- **Frame 1**, the first trigger after the arm, now and then holds a piece of older memory.
+  - Without frame 0, every frame found off the trigger was frame 1: 27 of 330,000 frames (about 12,700 batches). With
+    the trigger point 60 us to the right (pre 125 instead of 500), it was 61 of 350,000.
+  - Such a frame 1 has its rising edge about 90 samples before the trigger point (at both pre values), or none at
+    all.
+  - The cause is not known. It is not the pre-trigger fill: a shorter pre gave more of them, not fewer.
+- oos-ui checks frame 1 when the trigger is an edge on a channel with DC or HF reject coupling: frame 1 is left out
+  when it has no crossing of the level in the trigger's direction within 32 samples of `pre`, with a hysteresis of
+  0.2 div (`hw::frame1_off_trigger`).
+  - In batch mode frame 1 is decoded once more for this check, for records up to 100 k points.
+  - Other trigger types keep their frame 1, since they cannot be checked this way.
+  - The log line `frame 1 of a batch without its edge at the trigger point, left out` counts these (logged at 1, 2,
+    4, 8, ... frames).
+  - On the unit, every frame found was frame 1, and each was left out:
+    - standard path: 22 in 270,000 frames;
+    - batch path: 85 in 300,000 frames, none of them reaching a deposit worker.
+
 ## Reading a stored frame again (STOP)
 
 After a batch has been read, any frame of it can be played and read again with the same type-4 read-out, as long as

@@ -1127,6 +1127,48 @@ fn frame0_drop() -> bool {
     *K.get_or_init(|| crate::drawpipe::conf_value(None, &std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default(), "acq.frame0").as_deref() != Some("keep"))
 }
 
+#[cfg(any(target_os = "linux", test))]
+/// Samples around the trigger point in which frame 1's edge must lie (`frame1_off_trigger`); the hardware puts it
+/// within a few samples (unit 2026-11-16: +6.5 at 6.25 MSa/s).
+const FRAME1_SPAN: usize = 32;
+
+#[cfg(target_os = "linux")]
+/// Largest record whose frame 1 the batch path decodes for `frame1_off_trigger`: one more decode per batch, cheap for
+/// the short records batches are made of; a longer record is searched for its edge by the fast path anyway.
+const FRAME1_CHECK_MAX: u32 = 100_000;
+
+/// Counts a frame 1 left out (`frame1_off_trigger`) and logs the count at 1, 2, 4, 8, ...
+#[cfg(target_os = "linux")]
+fn frame1_left_out() {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n.is_power_of_two() {
+        eprintln!("oos-ui hw: frame 1 of a batch without its edge at the trigger point, left out (issue #5): {} so far", n);
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+/// Issue #5, the rest: frame 1 of a batch (the first trigger after the arm) is now and then joined with older memory.
+/// On the unit (2026-11-16, generator 1 kHz square on CH1, 1 kpts, 10 us/div, edge trigger) 27 of about 12,700
+/// batches had no edge of the trigger slope near the trigger point in frame 1 (61 of 13,500 with the trigger point
+/// moved right), and no other frame ever. True when `f` is such a frame: an edge trigger on a channel with DC or HF
+/// reject coupling and no rising (falling, either) crossing of the level within `FRAME1_SPAN` samples of `pre`. Other
+/// trigger types cannot be checked this way and keep their frame 1.
+fn frame1_off_trigger(f: &Frame, s: &Settings) -> bool {
+    use oos_hal::dho::tpu::{Coupling, Slope};
+    if !matches!(s.trigger, oos_hal::dho::seq::Trig::Edge) || !(1..=4).contains(&s.trig_src) || !matches!(s.trig_couple, Coupling::Dc | Coupling::HfReject) || f.envelope {
+        return false;
+    }
+    let tc = (s.trig_src - 1) as usize;
+    let v = &f.ch[tc];
+    if v.len() < 2 * FRAME1_SPAN || f.pre >= v.len() {
+        return false;
+    }
+    // a fifth of a division: an edge the trigger took crosses it, noise on a flat level near the level does not
+    let hyst = (0.2 * s.ch[tc].scale) as f32;
+    crate::fastdraw::edge_near(v, f.pre, s.level as f32, hyst, s.slope != Slope::Falling, s.slope == Slope::Either, FRAME1_SPAN).is_none()
+}
+
 /// Frames per batch while the zone trigger runs: `zone.batch = <n>` in system.conf, default 1.
 fn zone_batch() -> u32 {
     static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -2077,6 +2119,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let mut skip = 0usize;
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
+                        // frame 1, when the workers get it: left out when its edge is not at the trigger point
+                        let f1_off = frame0_drop() && avail > 2 && p.memsel <= FRAME1_CHECK_MAX && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b);
                         // the record of measurements: with the ADC-core correction, as on the path without batches
                         let mc = out.lock().unwrap().cores;
                         let newest = match raw_frame {
@@ -2097,11 +2141,24 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 let (bs, ps) = (b.clone(), p);
                                 let (cs, cp) = (b.clone(), p);
                                 let codes: crate::drawpipe::CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
-                                pipe.feed_codes(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes));
+                                // frame 0 left out as on the path without batches (issue #5; unit 2026-11-16: the
+                                // one stray frame of 7,075 in batch mode was frame 0 of its batch)
+                                skip = frame0_drop() as usize + f1_off as usize;
+                                if f1_off {
+                                    frame1_left_out();
+                                }
+                                pipe.feed_codes(Box::new(full), fb, skip, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes));
                             }
                             None => crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1),
                         }
-                        vec![newest]
+                        // two frames: the newest is frame 1
+                        if avail == 2 && frame0_drop() && frame1_off_trigger(&newest, &b) {
+                            frame1_left_out();
+                            skip += 1;
+                            Vec::new()
+                        } else {
+                            vec![newest]
+                        }
                     } else {
                         // only the newest frames the screen takes are decoded (`Shared::take`; on the fast cores,
                         // which the frame loop needs), in average mode the newest one
@@ -2126,7 +2183,13 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 Frame { stamp, hw_avg: after.is_some(), ..decode_with(chunk, &b, &p, n, match_cores.then_some(&mut cores)) }
                             })
                             .collect();
-                        if let (Some(r), Some(last)) = (raw_frame, all.last_mut()) {
+                        // frame 1 (frame 0 left out above) without its edge at the trigger point: left out too
+                        if stale == 1 && skip == 1 && all.first().is_some_and(|f| frame1_off_trigger(f, &b)) {
+                            all.remove(0);
+                            frame1_left_out();
+                            skip += 1;
+                        }
+                        if let (Some(r), Some(last)) = (raw_frame.filter(|_| !all.is_empty()), all.last_mut()) {
                             *last = Frame { stamp, seq: last.seq, ..r };
                         }
                         all
@@ -2816,6 +2879,36 @@ mod tests {
         assert_eq!(overlay_in_use(false, || panic!("read with the key off")), oos_hal::dho::coretrim::Overlay::default());
         assert_eq!(overlay_in_use(true, || Some(file.clone())), file);
         assert_eq!(overlay_in_use(true, || None).modes, 0);
+    }
+
+    // Issue #5 on the unit (2026-11-16): frame 1 now and then has its rising edge about 90 samples before the trigger
+    // point, or none. Break it catches: such a frame kept, a good frame or one of another trigger type left out.
+    #[test]
+    fn frame1_without_its_edge_is_found() {
+        let s = Settings { level: 0.0, ..Settings::default() };
+        let frame = |edge: usize| {
+            let mut f = Frame { pre: 500, ..Frame::default() };
+            f.ch[0] = (0..1000).map(|i| if i >= edge { 1.0 } else { -1.0 }).collect();
+            f
+        };
+        // the hardware's edge, a few samples after pre
+        assert!(!frame1_off_trigger(&frame(506), &s));
+        // the unit's frame 1: the edge 90 samples early, or none at all (a level the whole record)
+        assert!(frame1_off_trigger(&frame(410), &s));
+        assert!(frame1_off_trigger(&frame(2000), &s));
+        // falling slope on a rising edge: off; either: on
+        assert!(frame1_off_trigger(&frame(506), &Settings { slope: oos_hal::dho::tpu::Slope::Falling, ..s.clone() }));
+        assert!(!frame1_off_trigger(&frame(506), &Settings { slope: oos_hal::dho::tpu::Slope::Either, ..s.clone() }));
+        // noise around the level, under a fifth of a division: no edge, the frame is off
+        let mut flat = frame(2000);
+        flat.ch[0] = (0..1000).map(|i| if i % 2 == 0 { 0.05 } else { -0.05 }).collect();
+        assert!(frame1_off_trigger(&flat, &s));
+        // what cannot be checked stays: another trigger type, AC coupling, min/max pairs, an LA line as source
+        let timeout = Settings { trigger: oos_hal::dho::seq::Trig::Timeout { time: 1e-6 }, ..s.clone() };
+        assert!(!frame1_off_trigger(&frame(410), &timeout));
+        assert!(!frame1_off_trigger(&frame(410), &Settings { trig_couple: oos_hal::dho::tpu::Coupling::Ac, ..s.clone() }));
+        assert!(!frame1_off_trigger(&Frame { envelope: true, ..frame(410) }, &s));
+        assert!(!frame1_off_trigger(&frame(410), &Settings { trig_src: 9, ..s.clone() }));
     }
 
     // Round 15: a trim right after the start-up mode switches read a settling front end. Break it catches: a trim
