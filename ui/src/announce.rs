@@ -131,27 +131,10 @@ fn put_u32(o: &mut Vec<u8>, v: u32) {
     o.extend_from_slice(&v.to_be_bytes());
 }
 
+/// A dotted name, uncompressed (`mdns::write_name`).
 fn put_name(o: &mut Vec<u8>, name: &str) {
-    for label in name.trim_end_matches('.').split('.') {
-        let b = label.as_bytes();
-        o.push(b.len().min(63) as u8);
-        o.extend_from_slice(&b[..b.len().min(63)]);
-    }
-    o.push(0);
-}
-
-fn txt(items: &[String]) -> Vec<u8> {
-    let mut o = Vec::new();
-    for s in items {
-        let b = s.as_bytes();
-        let n = b.len().min(255);
-        o.push(n as u8);
-        o.extend_from_slice(&b[..n]);
-    }
-    if o.is_empty() {
-        o.push(0);
-    }
-    o
+    let labels: Vec<String> = name.trim_end_matches('.').split('.').map(str::to_string).collect();
+    crate::mdns::write_name(&labels, o);
 }
 
 fn instance_fqdn(id: &Identity, typ: &str) -> String {
@@ -209,7 +192,7 @@ fn service_rrs(id: &Identity, svc: &Svc, ttl: u32) -> Vec<Rr> {
     vec![
         Rr { name: st, typ: PTR, class: IN, ttl, rdata: ptr },
         Rr { name: inst.clone(), typ: SRV, class: FLUSH, ttl, rdata: srv },
-        Rr { name: inst, typ: TXT, class: FLUSH, ttl, rdata: txt(&txt_of(id, svc)) },
+        Rr { name: inst, typ: TXT, class: FLUSH, ttl, rdata: crate::mdns::txt_bytes(&txt_of(id, svc)) },
     ]
 }
 
@@ -258,80 +241,17 @@ struct Question {
     unicast: bool,
 }
 
-fn read_name(msg: &[u8], at: usize) -> Option<(String, usize)> {
-    let mut p = at;
-    let mut out = String::new();
-    let mut jumped = false;
-    let mut end = at;
-    for _ in 0..20 {
-        let n = *msg.get(p)? as usize;
-        if n == 0 {
-            if !jumped {
-                end = p + 1;
-            }
-            return Some((out.to_ascii_lowercase(), end));
-        }
-        if n & 0xC0 == 0xC0 {
-            let b = *msg.get(p + 1)? as usize;
-            if !jumped {
-                end = p + 2;
-            }
-            p = ((n & 0x3F) << 8) | b;
-            jumped = true;
-            continue;
-        }
-        if n & 0xC0 != 0 || p + 1 + n > msg.len() {
-            return None;
-        }
-        if !out.is_empty() {
-            out.push('.');
-        }
-        out.push_str(&String::from_utf8_lossy(&msg[p + 1..p + 1 + n]));
-        p += 1 + n;
-        if !jumped {
-            end = p;
-        }
-    }
-    None
-}
-
-fn be_u16(msg: &[u8], p: usize) -> Option<u16> {
-    let b: [u8; 2] = msg.get(p..p + 2)?.try_into().ok()?;
-    Some(u16::from_be_bytes(b))
-}
-
+/// The questions of a standard query, the names of its known answers (RFC 6762 §7.1), its id and where its questions
+/// end; None for a response, another opcode or anything malformed (`mdns::parse`, the reader of the scope's responder).
 fn read_questions(msg: &[u8]) -> Option<(Vec<Question>, Vec<(String, u16)>, usize, usize)> {
-    if msg.len() < 12 {
+    let (m, question_end, _) = crate::mdns::parse_ends(msg)?;
+    if m.is_response() || !m.standard() {
         return None;
     }
-    let flags = u16::from_be_bytes([msg[2], msg[3]]);
-    if flags & 0x8000 != 0 || flags & 0x7800 != 0 {
-        return None; // a response, or not a standard query
-    }
-    let qd = u16::from_be_bytes([msg[4], msg[5]]) as usize;
-    let an = u16::from_be_bytes([msg[6], msg[7]]) as usize;
-    let mut p = 12;
-    let mut qs = Vec::new();
-    for _ in 0..qd {
-        let (name, n) = read_name(msg, p)?;
-        p = n;
-        let typ = be_u16(msg, p)?;
-        let class = be_u16(msg, p + 2)?;
-        p += 4;
-        qs.push(Question { name, typ, unicast: class & 0x8000 != 0 });
-    }
-    let question_end = p;
-    let mut known = Vec::new();
-    for _ in 0..an {
-        let (name, n) = read_name(msg, p)?;
-        p = n;
-        let typ = be_u16(msg, p)?;
-        p += 8; // type, class, ttl
-        let rd = be_u16(msg, p)? as usize;
-        p += 2 + rd;
-        known.push((name, typ));
-    }
-    Some((qs, known, u16::from_be_bytes([msg[0], msg[1]]) as usize, question_end))
+    let dotted = |n: &[String]| n.join(".").to_ascii_lowercase();
+    let qs = m.qs.iter().map(|q| Question { name: dotted(&q.name), typ: q.qtype, unicast: q.qu }).collect();
+    let known = m.an.iter().map(|r| (dotted(&r.name), r.rtype)).collect();
+    Some((qs, known, m.id as usize, question_end))
 }
 
 fn wants(q: &Question, name: &str, typ: u16) -> bool {
@@ -640,25 +560,10 @@ mod tests {
         (id, services)
     }
 
+    /// The answer and additional records: name, type, data (names in it expanded, as `mdns::parse` gives them).
     fn names(msg: &[u8]) -> Vec<(String, u16, Vec<u8>)> {
-        let mut p = 12;
-        for _ in 0..be_u16(msg, 4).unwrap() {
-            p = read_name(msg, p).unwrap().1 + 4;
-        }
-        let an = u16::from_be_bytes([msg[6], msg[7]]) as usize;
-        let extra = u16::from_be_bytes([msg[10], msg[11]]) as usize;
-        let mut o = Vec::new();
-        for _ in 0..an + extra {
-            let (name, n) = read_name(msg, p).unwrap();
-            p = n;
-            let typ = u16::from_be_bytes(msg[p..p + 2].try_into().unwrap());
-            p += 8;
-            let rd = u16::from_be_bytes(msg[p..p + 2].try_into().unwrap()) as usize;
-            p += 2;
-            o.push((name, typ, msg[p..p + rd].to_vec()));
-            p += rd;
-        }
-        o
+        let m = crate::mdns::parse(msg).unwrap();
+        m.an.iter().chain(&m.ar).map(|r| (r.name.join(".").to_ascii_lowercase(), r.rtype, r.canon.clone())).collect()
     }
 
     fn srv_port(data: &[u8]) -> u16 {
@@ -749,19 +654,9 @@ mod tests {
     }
 
     fn record_headers(msg: &[u8]) -> Vec<(u16, u32)> {
-        let mut at = 12;
-        for _ in 0..be_u16(msg, 4).unwrap() { at = read_name(msg, at).unwrap().1 + 4; }
-        let mut headers = Vec::new();
-        for _ in 0..be_u16(msg, 6).unwrap() + be_u16(msg, 10).unwrap() {
-            at = read_name(msg, at).unwrap().1;
-            let class = be_u16(msg, at + 2).unwrap();
-            let ttl = u32::from_be_bytes(msg[at + 4..at + 8].try_into().unwrap());
-            let size = be_u16(msg, at + 8).unwrap() as usize;
-            headers.push((class, ttl));
-            at += 10 + size;
-        }
-        assert_eq!(at, msg.len(), "the echoed question must not corrupt resource record offsets");
-        headers
+        let (m, _, end) = crate::mdns::parse_ends(msg).unwrap();
+        assert_eq!(end, msg.len(), "the echoed question must not corrupt resource record offsets");
+        m.an.iter().chain(&m.ar).map(|r| (r.class | if r.flush { 0x8000 } else { 0 }, r.ttl)).collect()
     }
 
     #[test]
@@ -779,17 +674,42 @@ mod tests {
         put_u16(&mut query, IN);
         let (reply, unicast) = answer(&query, &id, &services, true).unwrap();
         assert!(unicast);
-        assert_eq!(be_u16(&reply, 0), Some(0x9876));
-        assert_eq!(be_u16(&reply, 4), Some(2));
+        let m = crate::mdns::parse(&reply).unwrap();
+        assert_eq!((m.id, m.qs.len()), (0x9876, 2));
         assert_eq!(&reply[12..query.len()], &query[12..], "preserve resolver question case and compression exactly");
-        assert_eq!(be_u16(&reply, 6), Some(2));
+        assert_eq!(m.an.len(), 2);
         assert!(record_headers(&reply).iter().all(|&(class, ttl)| class == IN && ttl <= 10));
         assert!(names(&reply).iter().any(|entry| entry.1 == SRV && srv_port(&entry.2) == 8080));
         // The same ordinary mDNS query keeps its multicast/cache coherency rules.
         let (mdns, unicast) = answer(&query, &id, &services, false).unwrap();
         assert!(!unicast);
-        assert_eq!(be_u16(&mdns, 4), Some(0));
+        assert!(crate::mdns::parse(&mdns).unwrap().qs.is_empty());
         assert!(record_headers(&mdns).iter().any(|&(class, ttl)| class == FLUSH && ttl == TTL));
+    }
+
+    // Break it catches: a second reader of names in the desktop responder that follows compression pointers forward
+    // or in a loop where the scope's responder (mdns.rs) refuses them, so the two answer different packets.
+    #[test]
+    fn names_are_read_as_the_scope_reads_them() {
+        let (id, services) = sample();
+        let query = |name: &[u8]| {
+            let mut m = Vec::new();
+            for value in [1, 0, 1, 0, 0, 0] {
+                put_u16(&mut m, value);
+            }
+            m.extend_from_slice(name);
+            put_u16(&mut m, PTR);
+            put_u16(&mut m, IN);
+            m
+        };
+        let mut plain = Vec::new();
+        put_name(&mut plain, "_http._tcp.local");
+        assert!(answer(&query(&plain), &id, &services, false).is_some());
+        // a pointer to itself, and one forward to a copy of the name after the question
+        assert!(answer(&query(&[0xc0, 12]), &id, &services, false).is_none());
+        let mut forward = query(&[0xc0, 18]);
+        forward.extend_from_slice(&plain);
+        assert!(answer(&forward, &id, &services, false).is_none());
     }
 
     #[test]
@@ -827,7 +747,7 @@ mod tests {
                 Err(error) => panic!("no discovery response: {error}"),
             }
         };
-        assert_eq!(be_u16(&buf[..n], 4), Some(1));
+        assert_eq!(crate::mdns::parse(&buf[..n]).unwrap().qs.len(), 1);
         assert_eq!(&buf[12..q.len()], &q[12..]);
         assert!(record_headers(&buf[..n]).iter().all(|&(class, ttl)| class == IN && ttl <= 10));
         let recs = names(&buf[..n]);
