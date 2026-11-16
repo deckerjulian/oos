@@ -934,7 +934,7 @@ impl Ui {
         true
     }
 
-    fn cat_added(&self, c: Cat) -> bool {
+    pub(super) fn cat_added(&self, c: Cat) -> bool {
         match meta(c).kind {
             CatKind::Meas(k) => self.m.meas.iter().any(|e| e.0 == k && e.1 == self.meas_src),
             CatKind::Pair(k) => self.m.meas2.iter().any(|e| e.0 == k && e.1 == self.meas_src && e.2 == self.meas_src_b),

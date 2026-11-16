@@ -47,10 +47,15 @@ impl Ui {
         if it != Item::Backlight {
             return false;
         }
-        self.sys.backlight = (self.sys.backlight as i32 + STEP as i32 * d).clamp(MIN as i32, 100) as u32;
+        self.backlight_set((self.sys.backlight as i32 + STEP as i32 * d).max(0) as u32);
+        true
+    }
+
+    /// The backlight in percent (the Backlight row, SCPI `:DISPlay:BACKlight`): within MIN to 100, saved and applied.
+    pub(super) fn backlight_set(&mut self, pct: u32) {
+        self.sys.backlight = pct.clamp(MIN, 100);
         self.sys_save();
         self.apply_backlight();
-        true
     }
 
     /// On the unit only (tests and host runs have no settings file).

@@ -968,12 +968,7 @@ impl Ui {
             Action::EyeFloat => { self.workspace.eye_float = Some(Rect::new(360, 100, 620, 360)); self.relayout(); }
             Action::MathOff(k) => self.math_turn_off(k),
             Action::MathSettings(k) => { self.m.math_select(k); self.open_menu(MenuId::Math); }
-            Action::RefClear(i) => {
-                if i < NREF { self.refs[i] = None; }
-                self.measure_refs();
-                self.analyzer_update();
-                self.relayout();
-            }
+            Action::RefClear(i) => self.ref_clear_slot(i),
             Action::RefHorizontal(i) => { self.select_workspace_source(WaveId::Ref(i)); self.studio.sz.pop = false; self.studio.sz.ref_pop = Some(i); }
             Action::RefSettings(i) => { self.select_workspace_source(WaveId::Ref(i)); self.open_menu(MenuId::Ref); }
             Action::EyeClose => { self.m.view = AView::Scope; self.workspace.eye_float = None; self.relayout(); }

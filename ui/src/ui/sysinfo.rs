@@ -118,6 +118,21 @@ impl Ui {
         }
     }
 
+    /// The page as text for SCPI: one `label,value` line per row, a `# heading` line per section.
+    pub(crate) fn sysinfo_text(&self) -> String {
+        let mut out = Vec::new();
+        for col in self.sysinfo_rows() {
+            for r in col {
+                match r {
+                    Row::Head(h) => out.push(format!("# {}", h)),
+                    Row::Kv(k, v, _) => out.push(format!("{},{}", k, v)),
+                    Row::Note(n, _) => out.push(format!("! {}", n)),
+                }
+            }
+        }
+        out.join("\n")
+    }
+
     pub(super) fn sysinfo_rows(&self) -> [Vec<Row>; 3] {
         let p = oos_hal::model::platform();
         let (c, l, base) = (&p.caps, &p.limits, oos_hal::model::Limits::standard());

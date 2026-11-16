@@ -1079,9 +1079,16 @@ impl Ui {
         self.setup_path().with_file_name(format!("mask{}.txt", self.store_slot))
     }
 
-    pub(super) fn mask_save(&mut self) {
+    pub(super) fn mask_save(&mut self) { self.mask_save_to(None) }
+
+    /// `mask_save` to a file of the caller (SCPI `:MASK:SAVE "path"`), or to the slot and the save folder.
+    pub(super) fn mask_save_to(&mut self, path: Option<std::path::PathBuf>) {
         let Some(r) = &self.mask_ref else { return self.toast("No mask yet: Create mask first") };
         let t = crate::store::mask_text(self.m.mask_src, self.m.mask_x, self.m.mask_y, self.m.mask_inv, r);
+        if let Some(p) = path {
+            let res = crate::store::write(&p, t.as_bytes());
+            return self.toast_saved(&p, res);
+        }
         let slot = self.mask_path();
         if let Err(e) = crate::store::write(&slot, t.as_bytes()) {
             return self.toast(&format!("Save failed: {}", e));
@@ -1091,9 +1098,14 @@ impl Ui {
         self.toast_saved(&p, res);
     }
 
-    pub(super) fn mask_load(&mut self) {
+    pub(super) fn mask_load(&mut self) { self.mask_load_from(None) }
+
+    /// `mask_load` from a file of the caller (SCPI `:MASK:LOAD "path"`), or the slot and the save folder.
+    pub(super) fn mask_load_from(&mut self, path: Option<std::path::PathBuf>) {
         let slot = self.mask_path();
-        let p = if slot.is_file() {
+        let p = if let Some(p) = path {
+            p
+        } else if slot.is_file() {
             slot
         } else if let Some(p) = crate::store::latest_name(&self.save_dir(), "mask", "txt") {
             p
@@ -1171,13 +1183,16 @@ impl Ui {
     }
 
     /// The reference of the Slot row as CSV: Time (s),Volts.
-    pub(super) fn ref_export(&mut self) {
+    pub(super) fn ref_export(&mut self) { self.ref_export_to(None) }
+
+    /// `ref_export` to a file of the caller (SCPI `:REFerence:EXPort "path"`), or beside the setups.
+    pub(super) fn ref_export_to(&mut self, path: Option<std::path::PathBuf>) {
         let Some(r) = &self.refs[self.ref_sel] else { return self.toast("That slot is empty") };
         let mut t = String::from("Time (s),Volts\n");
         for (k, v) in r.v.iter().enumerate() {
             t.push_str(&format!("{:.12e},{}\n", r.t0 + k as f64 * r.dt, v));
         }
-        let p = self.ref_path();
+        let p = path.unwrap_or_else(|| self.ref_path());
         let res = crate::store::write(&p, t.as_bytes());
         self.toast_saved(&p, res);
     }
@@ -1356,6 +1371,14 @@ impl Ui {
     }
 
     /// Empties every reference slot, the same as Clear all.
+    /// One slot emptied (the chip action "Clear slot").
+    pub(crate) fn ref_clear_slot(&mut self, i: usize) {
+        if i < NREF { self.refs[i] = None; }
+        self.measure_refs();
+        self.analyzer_update();
+        self.relayout();
+    }
+
     pub(crate) fn ref_clear_all(&mut self) {
         self.refs = std::array::from_fn(|_| None);
         self.measure_refs();

@@ -90,7 +90,7 @@ impl Ui {
     pub(super) fn clear_deskew(&mut self) {
         self.m.deskew_ch.fill(0.0); self.m.deskew_ref.fill(0.0); self.deskew_changed(); self.toast("Source deskew cleared");
     }
-    fn deskew_changed(&mut self) {
+    pub(super) fn deskew_changed(&mut self) {
         self.ph.clear(); self.phz.clear(); self.dirty_map = true;
         self.replay.viewport = None;
         // Time is part of every downstream gate/search/math/decode key. Do not

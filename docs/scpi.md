@@ -429,3 +429,383 @@ Mask commands are `:MASK:ENABle[?]`, `:SOURce[?]`, `:X[?]`, `:Y[?]`, `:CREate`, 
 
 Histogram commands are `:HISTogram:ENABle[?]`, `:TYPE[?]`, `:SOURce[?]`, `:STATistics:RESult?`. Supported sources are CH roles; histogram results describe the rendered display-density distribution and current view/zoom, not an exact full-native-record population. Empty results carry invalid sentinels where no figure exists. This is the same histogram shown in the UI.
 
+
+## Menu coverage extensions
+
+These headers make the menu options that had no SCPI command reachable. Each one changes the same `Model` field, or runs the same `Ui` function, as the menu item named in its row, so the screen follows and the item shows the new value. They are plain top-level subtrees like `:SIM:` and `:BODE:` (no `:OOS:` prefix). Where Rigol has a header of the same job its name is used; the names marked "verify" were taken from memory of the DHO800/900 Programming Guide and are not checked against it.
+
+Conventions of this section: `[?]` is set and query, `?` is query only, no mark is an action. A source is `CHANn`, `Rn` or (where the menu allows) `MATHn`. A choice item takes the long or short keyword of its option text (`CHANnel2` for CH2; case, spaces and dashes of the option text do not matter) and answers the option text in capitals, spaces as `_`. On/Off items answer `1` and `0`. Errors: -224 illegal parameter value, -221 settings conflict (nothing to do it with, or the command needs `CONFIRM`), -113 undefined header.
+
+**Destructive commands** (power off, restart, update, roll back, boot mode, overclock, back to stock, and switching the SCPI service off) take an explicit `CONFIRM` argument and are refused with -221 without it. A command that would not change anything (the boot mode it already has) needs no confirmation.
+
+### Trigger types
+
+The typed subtrees set the fields the menu pages edit (the same fields as `:SYSTem:SET trig_*`); they do not change the trigger type, `:TRIGger:MODE` does. Times are seconds, 1 ns to 10 s. The pulse-width conditions, the slope and delay times, the window time, the runt width and the duration times share two fields: "lower" (`WIDTh`, `LWIDth`, `TIME`, `TLOWer`, `WLOWer`) is the menu's Time, "upper" (`UWIDth`, `TUPPer`, `WUPPer`) its Upper limit. Source and level of every type are `:TRIGger:EDGE:SOURce`, `:SOURce2` and `:LEVel` (also `:TRIGger:<type>:SOURce`), plus the aliases below.
+
+| Header | Values | Menu item |
+| --- | --- | --- |
+| `:TRIGger:PULSe:POLarity[?]` | `POSitive`, `NEGative` | Polarity |
+| `:TRIGger:PULSe:WHEN[?]` | `GREater`, `LESS`, `RANGe`, `OUTside`; or `PGReater`, `PLESs`, `PGLess`, `NGReater`, `NLESs`, `NGLess` (polarity and condition together) | When |
+| `:TRIGger:PULSe:WIDTh[?]`, `:TRIGger:PULSe:LWIDth[?]`, `:TRIGger:PULSe:UWIDth[?]` | seconds | Time, Upper limit |
+| `:TRIGger:PULSe:LEVel[?]` | volts | Level |
+| `:TRIGger:SLOPe:SLOPe[?]` | `POSitive`, `NEGative`, `RFALl` | Slope |
+| `:TRIGger:SLOPe:WHEN[?]` | `GREater`, `LESS`, `RANGe`, `OUTside` | When |
+| `:TRIGger:SLOPe:TIME[?]`, `:TRIGger:SLOPe:TLOWer[?]`, `:TRIGger:SLOPe:TUPPer[?]` | seconds | Time, Upper limit |
+| `:TRIGger:SLOPe:ALEVel[?]`, `:TRIGger:SLOPe:BLEVel[?]` | volts | Level, Level 2 |
+| `:TRIGger:RUNT:POLarity[?]` | `POSitive`, `NEGative` | Polarity |
+| `:TRIGger:RUNT:WHEN[?]` | `NONE`, `GREater`, `LESS`, `RANGe`, `OUTside` | When |
+| `:TRIGger:RUNT:WLOWer[?]`, `:TRIGger:RUNT:WUPPer[?]` | seconds | Time, Upper limit |
+| `:TRIGger:VIDeo:STANdard[?]` | `PAL`, `NTSC` | Standard |
+| `:TRIGger:VIDeo:MODE[?]` | `ALINes`, `LINE`, `ODDField`, `EVENfield`, `AFIelds` | Sync |
+| `:TRIGger:VIDeo:LINE[?]` | line number, 1 to (lines / 2 - 10) of the standard | Line |
+| `:TRIGger:VIDeo:LEVel[?]` | volts | Level |
+| `:TRIGger:PATTern:PATTern[?]` | `"HLXRF..."`: one character per channel (H, L, X, R rising, F falling), optionally followed by the 16 logic lines D0..D15 (H, L, X) | CH1..CH4, LA pattern |
+| `:TRIGger:PATTern:LEVel[?]` | `<ch>,<volts>`; the query takes `<ch>` (`1` or `CHAN1`) | Level (per channel) |
+| `:TRIGger:DURation:PATTern[?]`, `:TRIGger:DURation:LEVel[?]` | as the pattern trigger (R and F count as X) | the same fields |
+| `:TRIGger:DURation:WHEN[?]`, `:TRIGger:DURation:TLOWer[?]`, `:TRIGger:DURation:TUPPer[?]` | as the pulse trigger | When, Time, Upper limit |
+| `:TRIGger:WINDow:SLOPe[?]` | `POSitive`, `NEGative`, `RFALl` | Slope |
+| `:TRIGger:WINDow:POSition[?]` | `ENTer`, `EXIT`, `TIMe` (also `INSide`) | Trigger on |
+| `:TRIGger:WINDow:ALEVel[?]`, `:TRIGger:WINDow:BLEVel[?]` | volts | Level, Level 2 |
+| `:TRIGger:WINDow:WHEN[?]`, `:TRIGger:WINDow:TIME[?]` | as the pulse trigger, for `TIMe` | When, Time |
+| `:TRIGger:NEDGe:SLOPe[?]` | `POSitive`, `NEGative`, `RFALl` | Slope |
+| `:TRIGger:NEDGe:IDLE[?]` | seconds | Idle time |
+| `:TRIGger:NEDGe:EDGE[?]` | 1 to 65535 | Edge no. |
+| `:TRIGger:NEDGe:LEVel[?]` | volts | Level |
+| `:TRIGger:SHOLd:STIMe[?]`, `:TRIGger:SHOLd:HTIMe[?]` | seconds | Setup, Hold |
+| `:TRIGger:SHOLd:DSOurce[?]`, `:TRIGger:SHOLd:CSOurce[?]` | data and clock source | Source, Source B (names verify) |
+| `:TRIGger:SHOLd:SLOPe[?]` | clock edge | Clock edge (Slope B) |
+| `:TRIGger:TIMeout:SLOPe[?]`, `:TRIGger:TIMeout:TIME[?]`, `:TRIGger:TIMeout:LEVel[?]` | slope, seconds, volts | Slope, Timeout, Level |
+| `:TRIGger:DELay:SLOPA[?]`, `:TRIGger:DELay:SLOPB[?]` | slopes of A and B | Slope A, Slope B |
+| `:TRIGger:DELay:WHEN[?]`, `:TRIGger:DELay:TLOWer[?]`, `:TRIGger:DELay:TUPPer[?]` | as the pulse trigger | When, Time, Upper limit |
+| `:TRIGger:DELay:ALEVel[?]`, `:TRIGger:DELay:BLEVel[?]` | volts | Level A, Level B |
+| `:TRIGger:BUS:WHEN[?]` | `FRAMe`, `ID`, `DATA`, `ERRor` | Match |
+| `:TRIGger:BUS:VALue[?]` | value, decimal or `0x` hexadecimal; the query answers `0x..` | Value |
+| `:TRIGger:LEVel[?]`, `:TRIGger:LEVel2[?]` | volts; the first and the second level whatever the type | Level, Level 2 |
+| `:TRIGger:LEVel:AUTO` | action: level to the middle of the source (the menu's Level 50 %, `Item::Trig50`) | Level 50 % |
+
+### Acquisition history and search
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:ACQuire:HISTory:ENABle[?]` | `ON` shows the newest stored record (stops the acquisition), `OFF` goes back to live (Run). -221 when nothing is stored. | History / Live |
+| `:ACQuire:HISTory:FRAMe[?]` | record `1`..count; `0` when not in history | History, Back, Forward |
+| `:ACQuire:HISTory:COUNt?` | number of stored records | |
+| `:ACQuire:HISTory:NEXT`, `:ACQuire:HISTory:PREVious` | one record on / back, like the Display menu's Forward and Back | Forward, Back |
+| `:SEARch:STATe[?]` | mark the events of the trigger condition | Mark events |
+| `:SEARch:MODE[?]` | `EDGE` (the only kind) | |
+| `:SEARch:EDGE:SOURce[?]` | search source; without a search of its own the trigger's. The first set of a source, level or slope adds Search 1 like the Add rail does | Search source |
+| `:SEARch:EDGE:SLOPe[?]` | `POSitive`, `NEGative`, `RFALl` | Search slope |
+| `:SEARch:EDGE:LEVel[?]` | volts | Search level |
+| `:SEARch:EDGE:LEVel:AUTO` | action: level to the middle of the source | Level 50 % |
+| `:SEARch:COPY:TO TRIGger`, `:SEARch:COPY:FROM TRIGger` | copy the search to the trigger / the trigger to the search | To trigger, From trigger |
+| `:SEARch:COUNt?` | number of events in the record shown | |
+| `:SEARch:EVENt[?]` | go to event `1`..count (the view moves there); the query answers the current one | Event |
+| `:SEARch:DATA?` | rows `time,source #n,type,ok`, one per line, like `:DECode:EVENts?` | Event list |
+| `:SEARch:SAVE` | save the events as CSV (`events-*.csv` in the save folder) | Save events |
+| `:SEARch:REMove` | remove Search 1 | Remove |
+
+### Measurements, channels, math, deskew
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:MEASure:COPY <source>` | copy the measurements of Source A to another source | Copy to |
+| `:MEASure:ITEM:REMove <n>` or `<item>[,<src>[,<srcB>]]` | remove one row, by its number in `:MEASure:STRip?` order, or by item and source | Remove |
+| `:CHANnel<n>:BIAS:ZERO` | action: the mean of the last record becomes part of the zero bias | Zero this input |
+| `:CALibrate:DESKew:AUTO` | action: line up the shown traces near the view | Auto deskew |
+| `:CALibrate:DESKew:CLEar` | action: clear the analysis deskew | Clear deskew |
+| `:CALibrate:DESKew[?] <wave>,<seconds>` | analysis deskew of a channel or reference (the query takes `<wave>`); this is not the probe deskew `:CHANnel<n>:TCALibrate` | schema keys `deskew_ch<n>`, `deskew_ref<n>` |
+| `:CALibrate:STARt <0..4>[,ZERO][,ADC]` | (extended) `ADC` also calibrates the ADC cores | Self-calibration ADC cores |
+| `:MATH<n>:AUTO` | action: fit scale and offset to the result | Auto scale |
+| `:MATH<n>:LINear:A[?]`, `:MATH<n>:LINear:B[?]` | linear `A x + B` of the channel | Linear A, B |
+| `:EYE:AUTO`, `:EYE:CLEar` | Auto Eye/Jitter (measure the bit rate and open the eye) / clear the eye | Auto Eye/Jitter, Clear eye |
+| `:SPECtrum:PEAK:CENTer` | action: centre the spectrum on its strongest line | Centre on peak |
+| `:SPECtrum:LIMit:SET`, `:SPECtrum:LIMit:CLEar` | limit line from the trace / clear | Limit line |
+| `:SPECtrum:LIMit:MARGin[?]` | dB, 0 to 60 | Limit margin |
+
+### Analyser setup
+
+The analyser pages were only reachable through packed `:SYSTem:SET` keys. Sources take `CHANn`/`Rn`; the "optional" sources also take `OFF`. A change restarts the averaging and the waterfall like the menu does.
+
+| Header | Values | Menu item |
+| --- | --- | --- |
+| `:SPECtrum:SOURce[?]` | source | Source |
+| `:SPECtrum:CENTer[?]`, `:SPECtrum:SPAN[?]`, `:SPECtrum:RBW[?]` | Hz; span 0 is full / automatic | Centre, Span, RBW |
+| `:SPECtrum:WINDow[?]`, `:SPECtrum:TRACe[?]` | option text of the Window and Trace rows | Window, Trace |
+| `:SPECtrum:RLEVel[?]` | dBV | Ref level |
+| `:SPECtrum:WATerfall[?]`, `:SPECtrum:DISTortion[?]` | on/off | Waterfall, THD / SNR |
+| `:SPECtrum:PEAK:HARMonics[?]` | option text of the Harmonics row | Peak list |
+| `:SPECtrum:ACPR:WIDTh[?]`, `:SPECtrum:ACPR:SPACing[?]` | Hz | Ch width, Ch space |
+| `:EYE:SOURce[?]`, `:EYE:CLOCk[?]`, `:EYE:RAIL[?]` | source; clock and rail also `OFF` | Source, Clock, Rail |
+| `:EYE:RATE[?]` | bit rate, Hz (switches "from record" off) | Bit rate |
+| `:EYE:BER[?]` | target bit error ratio | BER |
+| `:EYE:PN:LOW[?]`, `:EYE:PN:HIGH[?]`, `:EYE:NOTCh[?]`, `:EYE:PLL:BWIDth[?]` | Hz | PN band, notch, PLL bandwidth |
+| `:EYE:NPJ[?]`, `:EYE:HPASs[?]` | on/off | NPJ, High-pass |
+| `:EYE:PLACe[?]` | `FULL`, `SIDE`, `UNDER` | Place |
+| `:POWer:VOLTage:SOURce[?]`, `:POWer:CURRent:SOURce[?]`, `:POWer:VIN:SOURce[?]`, `:POWer:CLOCk:SOURce[?]` | source; VIN and clock also `OFF` | Voltage, Current, Input, Clock |
+| `:POWer:PAGE[?]` | option text of the Page row | Page |
+| `:POWer:FLINe[?]`, `:POWer:FSWitch[?]`, `:POWer:REFerence[?]` | Hz, Hz, volts (0 = none) | Line f, Switch f, Reference |
+| `:MAGnetic:VOLTage:SOURce[?]`, `:MAGnetic:CURRent:SOURce[?]` | source | Voltage, Current |
+| `:MAGnetic:TURNs[?]`, `:MAGnetic:AREA[?]`, `:MAGnetic:LENGth[?]`, `:MAGnetic:RCU[?]` | turns; m^2; m; ohms | Turns, Ae, Le, Rcu |
+| `:MAGnetic:PLOT[?]`, `:MAGnetic:CURSor[?]` | `I-PSI` or `B-H`; loop point | Plot, Cursor |
+| `:INVerter:PAGE[?]` | `DQ0`, `MECHANICAL` | Page |
+| `:INVerter:PHASe1:SOURce[?]`, `:INVerter:PHASe2:SOURce[?]`, `:INVerter:PHASe3:SOURce[?]` | source | Phase A, B, C |
+| `:INVerter:ANGLe:SOURce[?]` | `OFF`, `PHASE`, `ANALOG`, `QUAD`, `HALL` | Angle source |
+| `:INVerter:POLEs[?]` | 1 to 32 | Poles |
+| `:INVerter:ANALog:SOURce[?]`, `:INVerter:ANALog:SCALe[?]`, `:INVerter:ANALog:DEGRees[?]` | source; scale; degrees per volt | Analog |
+| `:INVerter:ANGLe:OFFSet[?]` | degrees, +-3600 | Offset |
+| `:INVerter:QUANtity[?]` | `VOLTAGE`, `CURRENT` | Quantity |
+| `:INVerter:TORQue:SOURce[?]`, `:INVerter:BUS:VOLTage:SOURce[?]`, `:INVerter:BUS:CURRent:SOURce[?]` | source or `OFF` | Torque, Bus V, Bus I |
+| `:INVerter:ELECtrical[?]` | `MECH`, `ELEC` | Mech / Elec |
+| `:INVerter:ENCoder:CPR[?]`, `:INVerter:ENCoder:SWAP[?]`, `:INVerter:ENCoder:A[?]`, `:INVerter:ENCoder:B[?]` | counts per revolution; on/off; LA line 0..15 | Encoder |
+| `:INVerter:HALL1:LINE[?]`, `:INVerter:HALL2:LINE[?]`, `:INVerter:HALL3:LINE[?]` | LA line 0..15 | Hall lines |
+| `:DPT:VDS:SOURce[?]`, `:DPT:ID:SOURce[?]`, `:DPT:VGS:SOURce[?]` | source | Vds, Id, Vgs |
+| `:DPT:FOURth[?]`, `:DPT:FOURth:SOURce[?]` | `OFF`, `GATE`, `DIODE_V`, `DIODE_I`; source | Fourth channel |
+| `:DPT:GATE[?]`, `:DPT:ZOOM[?]` | percent 1 to 49; `BOTH`, `TURN-ON`, `TURN-OFF` | Gate, Zoom |
+| `:BODE:STARt[?]`, `:BODE:STOP[?]`, `:BODE:POINts[?]`, `:BODE:AMPLitude[?]` | Hz, Hz, 5 to 200, volts | Start, Stop, Points, Amplitude |
+| `:BODE:INPut[?]`, `:BODE:OUTPut[?]` | source (the input is `OFF`able on the free sweep) | Input, Output |
+| `:BODE:SWEep:TIME[?]`, `:BODE:SWEep:LOG[?]` | seconds; `LIN`, `LOG` | Free sweep: time, log |
+| `:BODE:SYNC:SOURce[?]`, `:BODE:SYNC:EDGE[?]`, `:BODE:SYNC:LEVel[?]` | `CH1`..; `RISING`, `FALLING`; volts | Sync |
+| `:BODE:REFLevel[?]` | dBV | Ref level |
+| `:BODE:RUN[?]` | start / stop the sweep; the query answers whether it runs | Start / Stop |
+| `:BANDwidth:STATe[?]` | the bandwidth test view (also `:VIEW BWTest`) | View |
+| `:BANDwidth:SOURce[?]`, `:BANDwidth:FREQuency[?]`, `:BANDwidth:BINS[?]` | channel; Hz (0 = auto; the nearest hint of the menu); bins per period (nearest step) | Source, Signal freq, Bins / period |
+
+### Reference, mask, SIM
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:REFerence:EXPort ["path"]` | write the selected slot as CSV (`Time (s),Volts`); without a path to `ref<n>.csv` beside the setups | Export |
+| `:REFerence:CLEar [slot]` | without a slot all references, with `Rn` (or `n`) one | Clear all, Clear slot |
+| `:REFerence:LOOK[?]` | `LIVE`, `TAKEover`, `OFFLine` (offline waveforms) | Offline / reference look |
+| `:REFerence:HORizontal:MODE[?]` | `FOLLow` (main time base) or `OWN` for the selected slot (Studio) | Follow / Own |
+| `:REFerence:HORizontal:SCALe[?]`, `:REFerence:HORizontal:OFFSet[?]` | own seconds per division, position | time/div, position |
+| `:REFerence:HORizontal:FIT` | action: the whole record fills the lane; -221 outside Studio's stacked lanes | Fit |
+| `:MASK:CREate:REF <Rn>` | mask from a reference | Create from ref |
+| `:MASK:CLEar` | clear the mask | Clear mask |
+| `:MASK:INVert[?]`, `:MASK:OUTPut[?]` | on/off; `STOP`, `CONTinue` (on fail) | Invert, On fail |
+| `:MASK:SAVE ["path"]`, `:MASK:LOAD ["path"]` | mask file; without a path the slot's `mask<n>.txt` and the save folder | Save mask, Load mask |
+| `:SIM:DEFault` | the SIM knobs back to the preset | Defaults |
+| `:SIM:ADDRef` | add the generated signal to the SIM slot's reference | Add to R |
+| `:SIM:LOAD "path"` | load a waveform file into the SIM slot | Load file |
+| `:SIM:LIVE` | leave SIM mode | Live |
+| `:SIM:RATE[?]`, `:SIM:LEVel:HIGH[?]`, `:SIM:LEVel:LOW[?]`, `:SIM:RISE[?]`, `:SIM:BWLimit[?]`, `:SIM:DEEMphasis[?]`, `:SIM:NOISe[?]` | b/s (1e8 to 6.4e10); volts +-2; 20-80 % rise (5 ps to 2 ns); Hz; dB 0 to 12; volts RMS | Rate, High, Low, Rise, Bandwidth, De-emph, Noise |
+| `:SIM:JITTer:RANDom[?]`, `:SIM:JITTer:PERiodic:AMPLitude[?]`, `:SIM:JITTer:PERiodic:FREQuency[?]` | seconds RMS; seconds peak; Hz | RJ RMS, PJ peak, PJ freq |
+
+Like the older `:SIM:` settings these apply on the next `:SIM:PLAY ON`.
+
+### Storage and the whole setup
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:SAVE:DESTination[?]` | `AUTO`, `USB`, `DESKtop` | Save destination |
+| `:SAVE:SLOT[?]` | setup slot 1 to 9 | Setup slot |
+| `*SAV <n>`, `*RCL <n>` | save / recall setup slot `n` (the file `setup<n>.txt`) | Save setup, Recall setup |
+| `:SAVE:SETup ["path"]`, `:LOAD:SETup ["path"]` | the current slot, or a file | Save setup, Recall setup |
+| `:SAVE:WAVeform ["path"[,CSV or BIN]]` | newest record to a file (default CSV, in the save folder) | Save waveform |
+| `:SAVE:IMAGe ["path"]` | screenshot as PNG, written after the next frame | Save screenshot |
+| `:SAVE:FFRame`, `:LOAD:FFRame` | save / load the fast-frame history (`frame-NNN.bin` in the save folder) | Save fast-frame, Load fast-frame |
+| `:SYSTem:SETup?` | the whole setup (the file Save setup writes) as an IEEE block | |
+| `:SYSTem:SETup <block>` | apply a setup block (or the plain text); the acquisition state stays as it is | Recall setup |
+
+`:SYSTem:SETup` is spelled in full: the short form `:SYST:SET` stays the older key = value command. A relative path of a save is taken in the save folder. The text of a setup contains newlines and semicolons: the interpreter does not split a definite-length block `#<n><length><data>` that follows a blank, and TCP framing waits for the whole block, so one message can carry it. The setup text is also what the key table below describes.
+
+### Studio zoom
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:TIMebase:DELay:SOURce[?]` | the lane that zooms: `ALL`, `CHANn`, `Rn`, `MATHn`; turns the zoom on | Zoom source |
+| `:TIMebase:DELay:VZOom[?]` | vertical zoom factor 1 to 1024, the nearest power of two | Y zoom +/- |
+| `:TIMebase:DELay:VZOom:RESet` | vertical zoom back to 1 | Reset Y |
+| `:TIMebase:DELay:FIT` | action: the zoom window back to the whole screen | Fit record |
+| `:TIMebase:DELay:CENTer` | action: the trigger in the middle of the zoom window | Center trigger |
+
+### Data logger
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:SYSTem:LOG[?]` | log on/off (query added; the older set form is the same) | Logging |
+| `:SYSTem:LOG:INTerval[?]` | seconds, the nearest of 1, 2, 5, 10, 30, 60, 300, 600, 1800, 3600 | Interval |
+| `:SYSTem:LOG:FILE?` | path of the CSV file while logging, else empty | Log file |
+| `:SYSTem:LOG:INFO?` | the info row, for example `log-001.csv: 12 rows` | Log info |
+
+### System
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:SYSTem:DATE[?]`, `:SYSTem:TIME[?]` | `yyyy,mm,dd` / `hh,mm,ss` in the time zone of the settings; setting one keeps the other part of the clock | Set the clock |
+| `:SYSTem:TZONe[?]` | the time zone, a POSIX-style string (`CET-1CEST,M3.5.0,M10.5.0/3`) | Time zone |
+| `:SYSTem:NTP:ENABle[?]` | NTP on/off | Time from NTP |
+| `:SYSTem:NTP:SERVer[?]` | server name or address, or `DHCP` | NTP server |
+| `:SYSTem:NTP:STATus?` | the NTP state text | NTP state |
+| `:SYSTem:NTP:SYNC` | action: sync now | Sync now |
+| `:SYSTem:COMMunicate:LAN:IPADdress?`, `:SYSTem:COMMunicate:LAN:MAC?`, `:SYSTem:COMMunicate:LAN:STATus?` | address, MAC, link text | Ethernet |
+| `:SYSTem:COMMunicate:LAN:RETRy10[?]` | 10 Mbit retry on/off | 10 Mbit retry |
+| `:SYSTem:WLAN:STATus?`, `:SYSTem:WLAN:SCAN`, `:SYSTem:WLAN:NETWorks?`, `:SYSTem:WLAN:SAVed?`, `:SYSTem:WLAN:FORGet <n>` | WLAN state; scan; the scanned networks and the saved ones (one per line); forget saved network `n`. Joining a network needs a password and stays on the screen | WLAN |
+| `:SYSTem:REMote:SERVice:SCPI[?]`, `:SYSTem:REMote:SERVice:VXI11[?]`, `:SYSTem:REMote:SERVice:TELNet[?]`, `:SYSTem:REMote:SERVice:WEB[?]`, `:SYSTem:REMote:SERVice:MDNS[?]` | the switches of the Remote services page. `SCPI OFF` needs `,CONFIRM` | Remote services |
+| `:SYSTem:NAME[?]` | the scope's name on the network (letters, digits and `-`, up to 63) | Name |
+| `:DISPlay:BACKlight[?]` | percent, 10 to 100 | Backlight |
+| `:DISPlay:HDMI[?]`, `:DISPlay:TEXTsize[?]`, `:DISPlay:LAYout[?]` | option text of the rows | HDMI, Text size, Layout |
+| `:SYSTem:LOCK[?]` | touch lock on/off | Touch |
+| `:SESSion[?]`, `:SESSion LIVE` | `LIVE`, `SIM` or `REF`; `LIVE` leaves SIM and offline sessions | Live |
+| `:SYSTem:INFO?` | the System info page as text: `label,value` lines, `# heading` lines | System info |
+| `:SYSTem:POWer:OFF CONFIRM`, `:SYSTem:POWer:RESTart CONFIRM` | power off / restart (refused while an update runs) | Power dialog |
+| `:SYSTem:UPDate:STATus?` | the Update page as text | Update |
+| `:SYSTem:UPDate:ROLLback CONFIRM` | roll back to the kept image | Roll back update |
+| `:SYSTem:UPDate:INSTall "path",CONFIRM` | install a signed package file (same checks as the web page) | Update |
+| `:SYSTem:BOOT[?]` | `ONEShot`, `PERSist`; a change needs `,CONFIRM` | Boot mode |
+| `:SYSTem:OVERclock[?]` | ADC clock in Hz, one of the board's steps; a change needs `,CONFIRM` | Overclock |
+| `:SYSTem:STOCk CONFIRM` | what Back to stock does: says whether the next power-on is stock | Back to stock |
+
+### Headers that were implemented but not documented
+
+| Header | Parameters / behavior |
+| --- | --- |
+| `:MEASure:LEVel:TYPE[?]` | Reference levels as `PERCent` of the waveform or `VOLTs`. Query answers `PERC` or `VOLT`. |
+| `:MEASure:LEVel:PRESet[?]` | `10/90`, `20/80` or `CUSTom` (the Reference preset row). |
+| `:MEASure:LEVel:LOW[?]`, `:MEASure:LEVel:MID[?]`, `:MEASure:LEVel:HIGH[?]` | Low, mid and high reference level, percent or volts (by `TYPE`). |
+| `:MEASure:LEVel:HYSTeresis[?]` | Hysteresis of the edge detection, percent or volts. |
+| `:MEASure:LEVel:BASEtop[?]` | Base/top method: `AUTO`, `MINMax`, `MEAN`, `MODE`. |
+| `:MEASure:LEVel:FALL:SEParate[?]` | `ON` gives the falling edge its own levels. |
+| `:MEASure:LEVel:FALL:LOW[?]`, `:MEASure:LEVel:FALL:MID[?]`, `:MEASure:LEVel:FALL:HIGH[?]` | Falling-edge levels. |
+| `:MEASure:STATistic:POPulation[?]` | `CURRent` (the statistics of the shown acquisition run) or `ACCumulated`. A change resets the statistics. |
+| `:MEASure:STATistic:SHOW[?]` | Statistics columns: any of `SDEViation`, `MINimum`, `MAXimum` comma-separated, or `NONE`. |
+| `:TRIGger:COUPling[?]` | Coupling of the edge trigger on a channel: `DC`, `AC`, `LFR` (low-frequency reject), `HFR`. |
+| `:DISPlay:VIEW[?]` | The view shown, `1` to the count (Display > Views). |
+| `:DISPlay:VIEW:COUNt[?]` | The number of views, 1 to 4. |
+| `:SYSTem:GRAPhics[?]` | `CPU` or `GPU` drawing; the query answers what is in use (whether the GPU really draws is the `gpu` part of `:SYSTem:STATe?`). |
+
+## The `:SYSTem:SET` key list
+
+`:SYSTem:SET <key> = <value>` writes a key of the setup file on the live settings; `:SYSTem:GET? <key>` reads it. It is the setup schema, an escape hatch for tests and for the few settings that have no header; where a header exists above or in the sections before, use that. The file written by Save setup and returned by `:SYSTem:SETup?` is the same list as `key = value` lines (`#` starts a comment). Values: booleans `true`/`false`, numbers in base units, enumerations as the Rust variant name (`Dc`, `Rise`, `Auto`), lists separated by blanks. A key that is not in the list is rejected with -224 after the fact; some keys are only written when they differ from their default (listed as "optional"). The keys that carry a number are written with it (`ch2.vdiv`); here that number is `<n>`.
+
+### Channels, timebase, trigger, acquisition
+
+| Key | Value |
+| --- | --- |
+| `ch<n>.on`, `ch<n>.vdiv`, `ch<n>.offset`, `ch<n>.coupling`, `ch<n>.bw`, `ch<n>.probe`, `ch<n>.invert` | on, V/div step, offset (volts), `Dc`/`Ac`/`Gnd`/`Dc50`, bandwidth limit (`Auto`, `Full`, `20 MHz`, ...), probe ratio, invert |
+| `ch<n>.vfine`, `ch<n>.unit`, `ch<n>.bias`, `ch<n>.skew`, `ch<n>.label` | optional: fine scale, unit, zero bias, probe deskew, label |
+| `active` | the selected channel, 0-based |
+| `tdiv`, `delay`, `fine_t`, `tfine`, `fine_v`, `v_expand_gnd`, `h_expand`, `auto_roll` | time/div step, delay, fine switches (`tfine` optional), vertical expand about ground, horizontal expand (`Center`, `Left`, `Right`, `Trigger`), auto roll |
+| `zoom`, `zoom_tdiv`, `zdelay` | zoom on/off, zoom time/div step, zoom delay |
+| `trig_src`, `trig_ref`, `trig_la`, `trig_src2`, `trig_ref2` | source channel 0-based; reference slot (0-based) or `none`; logic line or `none` |
+| `trig_level`, `trig_level2`, `slope`, `trig_slope2`, `trig_mode`, `holdoff`, `trig_type`, `trig_nrej`, `trig_coup` | level, level 2, `Rise`/`Fall`/`Either`, sweep `Auto`/`Normal`/`Single`, holdoff, type name, noise reject, coupling |
+| `trig_pol`, `trig_when`, `trig_t1`, `trig_t2` | `Pos`/`Neg`; `Off`/`Gt`/`Lt`/`In`/`Out`; time and upper limit |
+| `video_std`, `video_sync`, `video_line` | `Pal`/`Ntsc`; `AllLines`/`Line`/`Odd`/`Even`/`AllFields`; line |
+| `pat`, `pat_levels`, `pat_la` | four bits `H L X R F`; four levels; the 16 logic-line bits as one word of `H L X` |
+| `win_mode`, `nth_idle`, `nth_n`, `setup`, `hold`, `trig_bus`, `trig_bus_val` | `Enter`/`Exit`/`Inside`; idle time; edge number; setup and hold times; bus match, bus value |
+| `acq`, `avg_count`, `segments`, `mdepth` | `Normal`/`Peak`/`Average`/`HiRes`; averages; segments (0 = off); memory depth index |
+| `touch_lock`, `quick`, `text_size`, `hdmi` | touch lock, quick key action, text size, HDMI mode |
+| `deskew_ch<n>`, `deskew_ref<n>` | optional: analysis deskew seconds |
+
+### Display, windows, views
+
+| Key | Value |
+| --- | --- |
+| `persist`, `intensity`, `grid`, `grid_bright`, `grid_frame`, `color_grade`, `dots` | display settings |
+| `windows`, `density`, `split_pane`, `ch_window`, `math_window`, `la_window`, `ref_window`, `pane`, `trend_sel`, `strip`, `meas_labels` | window layout; `ch_window`, `math_window`, `ref_window` hold one window number per slot (1-based) |
+| `layout`, `studio_view`, `studio_dock`, `studio_ov`, `studio_meas_view`, `studio_badges` | layout name; the Studio keys (`studio_dock`, `studio_ov`, `studio_meas_view` = `detailed`, `studio_badges` = `classic` are optional) |
+| `view`, `views`, `view<n>` | the analyser view (`Scope`, `Spectrum`, `Eye`, ...); `views` is `<count> <current, 1-based>`; `view<n>` is the text of view slot n (optional) |
+
+### Measurements, cursors, DVM, counter, logger
+
+| Key | Value |
+| --- | --- |
+| `meas` | rows as `<Item>:<source>`, blank separated, for example `Vpp:1` or `Vpp:R2` (the source token is the channel number, 1 = CH1, or `R<n>`) |
+| `meas2` | pair rows as `<pair number>:<source A>:<source B>` |
+| `cat` | optional: catalogue rows `<id>:<A>:<B>:<C>:<D>` |
+| `row_cfg` | optional: per-row settings, `<row key>\|<settings text>`, blank separated; implementation specific |
+| `meas_cfg` | `<idle> <Above/Below/Both> <N periods> <data edges 0/1> <low pct> <high pct> <Tsetup> <Thold>` |
+| `meas_levels` | `<absolute 0/1> <custom 0/1> <mid> <hysteresis> <low V> <mid V> <high V> <hysteresis V> <separate fall 0/1> <fall low> <fall mid> <fall high> <fall low V> <fall mid V> <fall high V> <base/top method>` |
+| `meas_stat` | optional: `<current 0/1> <sigma 0/1> <min 0/1> <max 0/1>` |
+| `meas_full_record` | gate: whole record or the screen |
+| `cursor`, `cur_a`, `cur_b`, `cur_c`, `cur_d`, `cur_b_source` | cursor mode, positions (fractions of the screen), second cursor source (optional) |
+| `dvm`, `counter` | `<on> <source> <mode>`; `<on> <source> <mode> <digits>` |
+| `log_ivl` | logger interval, index into 1, 2, 5, 10, 30, 60, 300, 600, 1800, 3600 s |
+
+### Math
+
+| Key | Value |
+| --- | --- |
+| `math`, `math_a`, `math_b`, `math_scale`, `math_fc`, `math_lin`, `math_offset`, `fft_win`, `math_bw`, `math_sel` | the selected math channel (`math_sel`, 0-based): operator, sources, scale index, corner, `<A> <B>` of A x + B, offset, FFT window, bandwidth |
+| `m<n>.op`, `m<n>.a`, `m<n>.b`, `m<n>.scale`, `m<n>.fc`, `m<n>.bw`, `m<n>.offset`, `m<n>.win`, `m<n>.lin` | the same for math channels 2 to 8 (the selected one is written as `math*`) |
+| `math_expr<n>` | optional: the formula text of channel n |
+| `spec_margin` | spectrum limit margin, dB |
+
+### Decoders and bus
+
+The keys of the selected decoder are plain (`dec_*`); decoders 2 and up repeat them with a prefix, `d<n>.on`, `d<n>.src`, and so on.
+
+| Key | Value |
+| --- | --- |
+| `dec_sel`, `dec_on`, `dec_proto`, `dec_src`, `dec_src2`, `dec_cs`, `dec_src4`, `dec_diff`, `dec_thr`, `dec_ascii` | selected decoder, on, protocol name, role sources (index; `none`), threshold, ASCII or hex |
+| `dec_baud`, `dec_canrate`, `dec_canh`, `dec_fdrate`, `dec_arate`, `dec_tick`, `dec_nibbles`, `dec_uspeed`, `dec_cphy_rate`, `dec_mode`, `dec_bits`, `dec_parity`, `dec_opt` | protocol parameters: ladder indices (baud, CAN, FD, ARINC, SENT tick, USB speed), `dec_opt` is four numbers whose meaning depends on the protocol |
+| `dec_la` | `<input 0/1> <16 logic line numbers or ->` |
+| `bus_on`, `bus_label`, `bus_pos`, `bus_kind`, `bus_clk`, `bus_data`, `bus_clk_thr`, `bus_data_thr`, `bus_rw` | the plot-bus (I2C lane) |
+| `la` | the logic analyser: `<on> <line mask hex> <...> <threshold pod 1> <threshold pod 2> <...>` as `la = false ffff 0 0 1.65 1.65 1` |
+
+### Analysers and tools: the packed keys
+
+The analyser pages keep several fields in one key, positional, blank separated. A source in a setup key is its token: the channel number (`1` is CH1) or `R1`; `-` or `off` is none. The view key takes `Scope`, `Spectrum`, `Eye`, `Power`, `Bode`, `Step` (the bandwidth test), `Magnetic`, `Inverter`, `Dpt`.
+
+| Key | Fields, in order |
+| --- | --- |
+| `spec` | source token, centre Hz, span Hz (0 = full), RBW Hz, window name, trace mode index, ref level dBV, waterfall 0/1, THD/SNR 0/1 (the last two as `true`/`false`) |
+| `spec_peaks` | peak sort index, harmonics index |
+| `spec_acpr` | channel width Hz, channel spacing Hz |
+| `eye` | source, bit rate Hz, from-record 0/1 |
+| `eye_more` | BER, PN low Hz, PN high Hz, NPJ 0/1, rail source or `-`, notch Hz, clock (strobe) source or `-`, high-pass 0/1 |
+| `eye_pll`, `eye_place` | optional PLL bandwidth Hz (only when above 0); `Full`/`Side`/`Under` |
+| `power` | voltage source index, current source index, page name |
+| `power_more` | line f Hz, switch f Hz, input source or `-`, reference volts or `-`, clock source or `-` |
+| `magnetic` | voltage source, current source, turns, Ae, Le, Rcu, plot (`IPsi`/`BH`), loop cursor |
+| `inverter` | page (`Dq0`/`Mech`), phase A, B, C source, angle source name, poles, analog source, volts-mode 0/1, torque source or `off`, bus voltage source or `off`, bus current source or `off`, analog scale, degrees per volt, offset, electrical 0/1, encoder line A, encoder line B, index line or `off`, counts per revolution, swap 0/1, Hall line A, B, C |
+| `dpt` | Vds, Id, Vgs source tokens, fourth channel mode (`Off`/`Gate`/`DiodeV`/`DiodeI`), fourth source, gate percent, zoom (`Both`/`TurnOn`/`TurnOff`) |
+| `bode` | start Hz, stop Hz, points, amplitude V, input source, output source, generator index, generator address `ip:port` |
+| `bode_link`, `bode_mode` | `lan`/`usb`; `Loop`/`Psrr`/`Impedance` |
+| `bode_sweep` | free sweep: time s, log true/false, sync channel (1-based), sync edge (`Rise`/`Fall`), sync level V, input channel (0 = none), reference dBV |
+| `sim` | preset index, slot, rate b/s, PRBS order, high V, low V, rise s, noise V, bandwidth Hz, de-emphasis dB, spread 0/1, random jitter s, periodic jitter s, periodic jitter Hz, reserved 0 |
+| `sim_extra` | spread centre true/false, spread deviation, spread frequency Hz, DCD s, correlated RJ s, correlated corner Hz |
+| `zone<n>` | `<on> <source, 1-based> <inside true/false> <t:v points, blank separated>` |
+| `z_src`, `hist` | Z input channel or `off`; histogram type |
+| `mask_on`, `mask_src`, `mask_x`, `mask_y`, `mask_stop`, `mask_inv` | mask test settings (see also `:MASK:...`) |
+
+### Decoder parameters, plot bus, logic analyser, zones and small rows
+
+Decoder parameters take the option text of the menu row (`:BUS1:CAN:BAUD?` answers it in capitals). `BUS<n>` is decoder n; the decoder the menu edits stays the same afterwards. The protocol-specific rows exist only for their protocol (an option the protocol does not have is -224).
+
+| Header | Values | Menu item |
+| --- | --- | --- |
+| `:BUS<n>:SPI:MODE[?]` | `0` to `3` (clock polarity and phase) | Mode |
+| `:BUS<n>:CAN:BAUD[?]`, `:BUS<n>:CAN:SIGNal[?]` | bit rate; `RX/TX` or `CAN_H` | Bit rate, Signal |
+| `:BUS<n>:CAN:FD:BAUD[?]`, `:BUS<n>:CAN:FD:ABAUd[?]` | FD data rate; arbitration rate | FD data rate, Arbitration rate |
+| `:BUS<n>:SENT:TICK[?]`, `:BUS<n>:SENT:NIBBles[?]` | tick; nibbles 1 to 6 | Tick, Nibbles |
+| `:BUS<n>:USB:SPEed[?]` | speed | Speed |
+| `:BUS<n>:OPTion1[?]`, `:BUS<n>:OPTion2[?]`, `:BUS<n>:OPTion3[?]`, `:BUS<n>:OPTion4[?]` | the options of the protocol module, in the order of the menu | Option |
+| `:BUS:LANE:STATe[?]`, `:BUS:LANE:LABel[?]`, `:BUS:LANE:POSition[?]` | the plot bus (the I2C lane): on/off; label (12 characters); position in divisions, +-3.6 | Plot bus |
+| `:BUS:LANE:CLOCk:SOURce[?]`, `:BUS:LANE:DATA:SOURce[?]` | source | Clock, Data |
+| `:BUS:LANE:CLOCk:THReshold[?]`, `:BUS:LANE:DATA:THReshold[?]` | volts | thresholds |
+| `:BUS:LANE:RW[?]` | `LEFT_OUT`, `INCLUDED` (the read/write bit in the address) | R/W bit |
+| `:DECode:SAVE` | save the decoded events as CSV | Export events |
+| `:LA:DIGital<n>:PATTern[?]` | `H`, `L`, `X` for line n (0 to 15), as the trigger pattern | LA pattern |
+| `:LA:POD<n>:PRESet[?]` | threshold preset of pod 1 or 2 by its name (`TTL`, `CMOS`, ..., `USER`) | Thr D0-7, Thr D8-15 |
+| `:LA:SIZE[?]` | lane height by its name | Lane height |
+| `:ZONE<n>:STATe[?]`, `:ZONE<n>:SOURce[?]`, `:ZONE<n>:CONDition[?]` | zone n (1 or 2): on/off; `CHANn`; `INTersect` or `NOTintersect` | Zone on, source, condition |
+| `:ZONE<n>:BOX[?]` | `<t1>,<v1>,<t2>,<v2>`: seconds from the trigger and volts of two corners (the query only for a box) | Draw zone box |
+| `:ZONE<n>:POINts[?]` | `<t>,<v>,...`: a polygon of three or more points | Draw zone shape |
+| `:ZONE<n>:CLEar` | delete the outline, keep the source | Delete zone |
+| `:SOURce:ARB:LOAD ["path"]`, `:SOURce<n>:ARB:LOAD ["path"]` | arbitrary wave from a file (one number per line or a CSV); default `arb.csv` in the storage folder | Load arb.csv |
+| `:CHANnel:ACTive[?]` | the selected channel, 1 to the number of channels | active channel |
+| `:SYSTem:QUICk[?]` | the quick key action, by its option text | Quick key |
+| `:DISPlay:LOWer[?]`, `:DISPlay:TRENd1[?]`, `:DISPlay:TRENd2[?]` | the lower pane; the content of trend chart 1 and 2, by option text | Lower, Trend chart |
+
+### Menu options with no SCPI path
+
+These rows stay without a header: pure chrome (window layout, density, strip position, dock arrangement and the Studio panels), keypad and picker navigation, the candidate pick of Identify, joining a WLAN (it needs a password: do it on the screen), measurement catalogue rows (adding by catalogue id and reading `:MEASure:ITEM? CAT<id>`, source C and D, and the per-row settings card): these remain on `:SYSTem:SET cat` and `row_cfg`, and `:MEASure:READout?` exports them as `CAT<id>`.
+
+### Measurement catalogue and the inverter index line
+
+| Header | Meaning | Menu item |
+| --- | --- | --- |
+| `:MEASure:CATalog:ITEM <id>[,A[,B[,C[,D]]]]` | add the catalogue row `id` on the given sources (defaults: the current Source A, B, C, D); a row already there is left. The query `:MEASure:CATalog:ITEM? <id>[,A,...]` answers its value (`9.9E37` when none) | Add (catalogue) |
+| `:MEASure:CATalog:SOURceC[?]`, `:MEASure:CATalog:SOURceD[?]` | Source C and D of the Add page | Source C, Source D |
+| `:INVerter:ENCoder:INDex[?]` | encoder index line 0 to 15 or `OFF` | Index line |

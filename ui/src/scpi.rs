@@ -69,11 +69,9 @@ impl Program {
     pub fn new(text: &str) -> Self {
         if text.len() > MAX_LINE { return Self { invalid: true, ..Self::default() }; }
         let mut commands = std::collections::VecDeque::new();
-        for line in text.split(['\n', '\r']).filter(|line| !line.trim().is_empty()) {
-            for (index, command) in line.split(';').map(str::trim).filter(|s| !s.is_empty()).enumerate() {
-                if commands.len() >= 1024 { return Self { invalid: true, ..Self::default() }; }
-                commands.push_back((command.to_string(), index == 0));
-            }
+        for (command, first) in split_message(text) {
+            if commands.len() >= 1024 { return Self { invalid: true, ..Self::default() }; }
+            commands.push_back((command, first));
         }
         Self { commands, separator: b';', bytes: text.len(), ..Self::default() }
     }
@@ -101,6 +99,60 @@ struct Client {
 
 /// Longest command line (`:SOURce:ARB:DATA` with its samples is the longest there is); a client past it is dropped.
 const MAX_LINE: usize = 4 << 20;
+
+/// The `#<n><length><data>` definite-length block that starts at `i` (a `#` after a blank, a comma or the header):
+/// the index just after its data. `None`: not a block, or its data is not all there yet (`complete` tells which).
+fn block_span(b: &[u8], i: usize) -> Option<(usize, bool)> {
+    if b.get(i) != Some(&b'#') || i == 0 || !matches!(b[i - 1], b' ' | b'\t' | b',') { return None; }
+    let n = (*b.get(i + 1)? as char).to_digit(10).filter(|&n| n >= 1)? as usize;
+    let digits = b.get(i + 2..i + 2 + n);
+    let Some(digits) = digits else { return Some((b.len(), false)) };
+    let len: usize = std::str::from_utf8(digits).ok()?.parse().ok().filter(|&l| l <= MAX_LINE)?;
+    let end = i + 2 + n + len;
+    Some((end.min(b.len()), end <= b.len()))
+}
+
+/// The end of the first message in `buf`: the newline that is not inside a block. `None`: not complete yet.
+pub(crate) fn message_end(buf: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i < buf.len() {
+        match buf[i] {
+            b'\n' => return Some(i),
+            b'#' => match block_span(buf, i) {
+                Some((_, false)) => return None,
+                Some((end, true)) => { i = end; continue; }
+                None => {}
+            },
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Splits a program message into its commands: at newlines and semicolons, but not inside a definite-length block. The flag
+/// is set for the first command of each line.
+fn split_message(text: &str) -> Vec<(String, bool)> {
+    let b = text.as_bytes();
+    let (mut out, mut start, mut first, mut i) = (Vec::new(), 0, true, 0);
+    let mut flush = |from: usize, to: usize, first: &mut bool| {
+        let c = text[from..to].trim();
+        if !c.is_empty() { out.push((c.to_string(), *first)); *first = false; }
+    };
+    while i < b.len() {
+        match b[i] {
+            b';' => { flush(start, i, &mut first); start = i + 1; }
+            b'\n' | b'\r' => { flush(start, i, &mut first); start = i + 1; first = true; }
+            b'#' => if let Some((end, true)) = block_span(b, i) {
+                if text.is_char_boundary(end) { i = end; continue; }
+            },
+            _ => {}
+        }
+        i += 1;
+    }
+    flush(start, b.len(), &mut first);
+    out
+}
 /// Connections at once.
 const MAX_CLIENTS: usize = 8;
 /// A message stops here: one answer may be a long record, ten thousand of them in one line may not.
@@ -157,7 +209,7 @@ pub(crate) fn kw(tok: &str, long: &str) -> bool {
 }
 
 /// Splits a keyword with a numeric suffix: "CHAN2" -> ("CHAN", 2).
-fn suffix(tok: &str) -> (&str, Option<usize>) {
+pub(crate) fn suffix(tok: &str) -> (&str, Option<usize>) {
     let i = tok.find(|c: char| c.is_ascii_digit()).unwrap_or(tok.len());
     (&tok[..i], tok[i..].parse().ok())
 }
@@ -388,7 +440,7 @@ fn unquote(s: &str) -> &str {
     if s.len() >= 2 && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\''))) { &s[1..s.len() - 1] } else { s }
 }
 
-fn parse_ch(s: &str) -> Option<usize> {
+pub(crate) fn parse_ch(s: &str) -> Option<usize> {
     let (k, n) = suffix(s.trim());
     if kw(k, "CHANnel") {
         n.filter(|&n| (1..=NCH).contains(&n)).map(|n| n - 1)
@@ -410,7 +462,7 @@ fn arg_rest(arg: &str) -> &str {
 }
 
 /// A measurement source: CHANn, or a ref slot R1–R10 (also REF1–REF10).
-fn parse_wave(s: &str) -> Option<WaveId> {
+pub(crate) fn parse_wave(s: &str) -> Option<WaveId> {
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -425,7 +477,7 @@ fn parse_wave(s: &str) -> Option<WaveId> {
     None
 }
 
-fn wave_tok(id: WaveId) -> String {
+pub(crate) fn wave_tok(id: WaveId) -> String {
     match id {
         WaveId::Ch(c) => format!("CHAN{}", c + 1),
         WaveId::Ref(i) => format!("R{}", i + 1),
@@ -531,7 +583,7 @@ const PAIR_ITEMS: &[(&str, &str, usize)] = &[
     ("DSEThold", "DSETHOLD", 19),
 ];
 
-fn meas_kind(item: &str) -> Option<Meas> {
+pub(crate) fn meas_kind(item: &str) -> Option<Meas> {
     MEAS_ITEMS.iter().find(|it| kw(item, it.0)).map(|it| it.2)
 }
 
@@ -539,7 +591,7 @@ fn meas_token(k: Meas) -> &'static str {
     MEAS_ITEMS.iter().find(|it| it.2 == k).map(|it| it.1).unwrap_or("ITEM")
 }
 
-fn pair_kind(item: &str) -> Option<usize> {
+pub(crate) fn pair_kind(item: &str) -> Option<usize> {
     PAIR_ITEMS.iter().find(|it| kw(item, it.0)).map(|it| it.2)
 }
 
@@ -572,7 +624,7 @@ fn parse_slot(s: &str) -> Option<usize> {
     s.parse::<usize>().ok().filter(|&n| (1..=NREF).contains(&n)).map(|n| n - 1)
 }
 
-fn parse_bool(s: &str) -> Option<bool> {
+pub(crate) fn parse_bool(s: &str) -> Option<bool> {
     match s.trim().to_ascii_uppercase().as_str() {
         "1" | "ON" => Some(true),
         "0" | "OFF" => Some(false),
@@ -581,11 +633,11 @@ fn parse_bool(s: &str) -> Option<bool> {
 }
 
 /// A finite number ("nan", "inf" and overflows are refused: they would end up in the model and in saved setups).
-fn num(s: &str) -> Option<f32> {
+pub(crate) fn num(s: &str) -> Option<f32> {
     s.trim().parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
-fn nearest(ladder: &[f32], v: f32) -> usize {
+pub(crate) fn nearest(ladder: &[f32], v: f32) -> usize {
     let mut best = 0;
     for (i, &x) in ladder.iter().enumerate() {
         if ((x / v).ln()).abs() < ((ladder[best] / v).ln()).abs() {
@@ -596,7 +648,7 @@ fn nearest(ladder: &[f32], v: f32) -> usize {
 }
 
 /// Stock number format: 7 significant digits, two-digit exponent ("2.000000E-04").
-fn e(v: f64) -> String {
+pub(crate) fn e(v: f64) -> String {
     if !v.is_finite() {
         return "9.9E37".into();
     }
@@ -705,7 +757,7 @@ impl Scpi {
             }
             while !closed {
                 if self.clients[i].program.is_none() {
-                    let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') else { break; };
+                    let Some(p) = message_end(&self.clients[i].buf) else { break; };
                     let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
                     self.clients[i].program = Some(Program::new(&String::from_utf8_lossy(&line)));
                 }
@@ -890,6 +942,13 @@ impl Scpi {
             _ => {}
         }
         let nodes: Vec<&str> = head.trim_start_matches(':').split(':').collect();
+        // the coverage extensions (ui/scpiext*.rs): same model and menu code paths as the screen
+        if let Some(r) = ui.scpi_ext_command(&nodes, query, arg) {
+            return match r {
+                Ok(v) => v,
+                Err(msg) => { self.push_err(msg); None }
+            };
+        }
         if !query && nodes.len() == 1 {
             let command = if kw(nodes[0], "STOP") { Some(0) } else if kw(nodes[0], "RUN") { Some(1) }
                 else if kw(nodes[0], "SINGle") { Some(2) } else { None };
@@ -1755,9 +1814,9 @@ impl Scpi {
         }
         // OOS extensions: analyser view, Identify, self-calibration, Bode
         if kw(n0, "VIEW") && nodes.len() == 1 {
-            const VIEWS: [(&str, AView); 8] = [("SCOPe", AView::Scope), ("SPECtrum", AView::Spectrum), ("EYE", AView::Eye), ("POWer", AView::Power), ("BODE", AView::Bode), ("MAGnetic", AView::Magnetic), ("INVerter", AView::Inverter), ("DPT", AView::Dpt)];
+            const VIEWS: [(&str, AView); 9] = [("SCOPe", AView::Scope), ("SPECtrum", AView::Spectrum), ("EYE", AView::Eye), ("POWer", AView::Power), ("BODE", AView::Bode), ("MAGnetic", AView::Magnetic), ("INVerter", AView::Inverter), ("DPT", AView::Dpt), ("BWTest", AView::Step)];
             if query {
-                return t(&format!("{:?}", ui.m.view).to_ascii_uppercase());
+                return t(&if ui.m.view == AView::Step { "BWTEST".to_string() } else { format!("{:?}", ui.m.view).to_ascii_uppercase() });
             }
             match VIEWS.iter().find(|(k, _)| kw(arg, k)) {
                 Some((_, v)) => ui.set_analysis_view(*v),
@@ -1776,7 +1835,8 @@ impl Scpi {
             if kw(nodes[1], "STARt") && !query {
                 let mut it = arg.split(',');
                 let ch = it.next().unwrap_or("0").trim();
-                ui.selfcal_remote(ch, it.next().is_some_and(|z| kw(z.trim(), "ZERO")));
+                let rest: Vec<&str> = it.map(str::trim).collect();
+                ui.selfcal_remote_full(ch, rest.iter().any(|z| kw(z, "ZERO")), rest.iter().any(|z| kw(z, "ADC")));
                 return None;
             }
             if kw(nodes[1], "CANCel") && !query {
@@ -4339,7 +4399,7 @@ fn meas_readout(ui: &Ui) -> String {
 }
 
 /// IEEE 488.2 definite-length block: #9 + 9 digits + data.
-fn block(d: &[u8]) -> Vec<u8> {
+pub(crate) fn block(d: &[u8]) -> Vec<u8> {
     let mut o = format!("#9{:09}", d.len()).into_bytes();
     o.extend_from_slice(d);
     o
@@ -5310,7 +5370,7 @@ mod tests {
         let (mut scpi, mut ui, canvas) = reference_session();
         let model = crate::store::setup_text(&ui.m);
         let workflow = ui.workflow_state();
-        for query in [":TFOR?", ":TRIG:FORC?", ":CAL:STAR?", ":CAL:CANC?", ":BODE:RUN?", ":REF:CLEAR?", ":REF:SAVE?"] {
+        for query in [":TFOR?", ":TRIG:FORC?", ":CAL:STAR?", ":CAL:CANC?", ":REF:CLEAR?", ":REF:SAVE?"] {
             assert!(line(&mut scpi, &mut ui, &canvas, query).starts_with("-113,"), "{query}");
             assert_eq!(crate::store::setup_text(&ui.m), model);
             assert_eq!(ui.workflow_state(), workflow);

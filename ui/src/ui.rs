@@ -49,6 +49,13 @@ mod dock;
 mod studio_views;
 mod sheet;
 mod addrail;
+mod scpiext;
+mod scpiext_a;
+mod scpiext_b;
+mod scpiext_c;
+#[cfg(test)]
+#[path = "scpi_coverage_tests.rs"]
+mod scpi_coverage_tests;
 #[cfg(test)]
 mod sheet_tests;
 #[cfg(test)]
@@ -1085,6 +1092,20 @@ struct TouchState {
 pub enum PowerAction {
     Off,
     Restart,
+}
+
+impl Ui {
+    /// Power off or restart, as the buttons of the power dialog ask (SCPI `:SYSTem:POWer:OFF|RESTart CONFIRM`): the main loop
+    /// carries it out. False while an update job runs: a cut now leaves recovery half-written (docs/update.md).
+    pub(crate) fn power_request(&mut self, action: PowerAction) -> bool {
+        if self.update_busy() {
+            self.toast("Update running: wait until it is done");
+            return false;
+        }
+        self.power_action = Some(action);
+        self.toast(match action { PowerAction::Off => "Powering off ...", PowerAction::Restart => "Restarting ..." });
+        true
+    }
 }
 
 /// Samples of one channel for the measurements in the background: a window of the hardware frame (shared, not
@@ -7831,14 +7852,7 @@ impl Ui {
                 Item::DecExport => self.events_export(tables::TableKind::Decode),
                 Item::SearchTable => self.table_toggle(tables::TableKind::Search),
                 Item::SearchSave => self.events_export(tables::TableKind::Search),
-                Item::StoreBin => match &self.last[0] {
-                    Some(rec) => {
-                        let p = self.new_file(&self.save_dir(), "wave", "bin");
-                        let r = crate::store::write(&p, &crate::store::wave_bin(rec, &self.m));
-                        self.toast_saved(&p, r);
-                    }
-                    None => self.toast("No waveform to save"),
-                },
+                Item::StoreBin => self.store_wave(false, None),
                 Item::RefExport => self.ref_export(),
                 Item::RefImport if self.m.layout == Layout::Studio => self.studio_load_file(self.ref_sel),
                 Item::RefImport => self.ref_import(),
@@ -7940,23 +7954,11 @@ impl Ui {
                 }
                 Item::StoreSaveSetup => {
                     let p = self.setup_path();
-                    let r = crate::store::write(&p, format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes());
+                    let r = crate::store::write(&p, self.setup_text_full().as_bytes());
                     self.toast_saved(&p, r);
                 }
                 Item::StoreRecall => self.recall_setup(),
-                Item::StoreCsv => match &self.last[0] {
-                    Some(rec) => {
-                        let p = self.new_file(&self.save_dir(), "wave", "csv");
-                        let mut r = crate::store::write(&p, crate::store::wave_csv(rec, &self.m).as_bytes());
-                        // the LA lines go to their own file: another sample rate, and only the changes
-                        if let (Ok(()), Some(la), true) = (&r, &rec.la, self.m.la_on()) {
-                            let q = self.new_file(&self.save_dir(), "la", "csv");
-                            r = crate::store::write(&q, crate::store::la_csv(la, &self.m.la.lines()).as_bytes());
-                        }
-                        self.toast_saved(&p, r);
-                    }
-                    None => self.toast("No waveform to save"),
-                },
+                Item::StoreCsv => self.store_wave(true, None),
                 Item::StorePng => {
                     // without the dialog: the screen is saved after the next frame (main loop / script runner)
                     let p = self.new_file(&self.save_dir(), "shot", "png");
@@ -8019,6 +8021,20 @@ impl Ui {
                 s.copy_from(o);
             }
         }
+    }
+
+    /// Storage > Save waveform (CSV or binary): the newest record to the save folder, or to a file of the caller
+    /// (SCPI `:SAVE:WAVeform "path"`).
+    pub(crate) fn store_wave(&mut self, csv: bool, path: Option<std::path::PathBuf>) {
+        let Some(rec) = &self.last[0] else { return self.toast("No waveform to save") };
+        let p = path.clone().unwrap_or_else(|| self.new_file(&self.save_dir(), "wave", if csv { "csv" } else { "bin" }));
+        let mut r = if csv { crate::store::write(&p, crate::store::wave_csv(rec, &self.m).as_bytes()) } else { crate::store::write(&p, &crate::store::wave_bin(rec, &self.m)) };
+        // the LA lines go to their own file: another sample rate, and only the changes
+        if let (true, Ok(()), Some(la), true, None) = (csv, &r, &rec.la, self.m.la_on(), &path) {
+            let q = self.new_file(&self.save_dir(), "la", "csv");
+            r = crate::store::write(&q, crate::store::la_csv(la, &self.m.la.lines()).as_bytes());
+        }
+        self.toast_saved(&p, r);
     }
 
     fn toast_saved(&mut self, p: &std::path::Path, r: std::io::Result<()>) {
@@ -8118,10 +8134,24 @@ impl Ui {
     fn recall_setup(&mut self) {
         let p = self.setup_path();
         let text = std::fs::read_to_string(&p).map_err(|e| e.to_string());
-        let parsed = text.as_ref().map_err(|e| e.clone()).and_then(|t| crate::store::parse_setup(t));
+        match text.and_then(|t| self.apply_setup_text(&t)) {
+            Ok(()) => self.toast(&format!("Recalled {}", crate::store::file_name(&p))),
+            Err(e) => self.toast(&format!("Recall failed: {}", e)),
+        }
+    }
+
+    /// The text of the whole setup (the keys of the setup file and the look of the ref slots): what Save setup writes and
+    /// `:SYSTem:SETup?` returns.
+    pub(crate) fn setup_text_full(&self) -> String {
+        format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text())
+    }
+
+    /// Applies a setup text to the live settings, the way Recall setup does; the acquisition state stays as it is.
+    pub(crate) fn apply_setup_text(&mut self, text: &str) -> Result<(), String> {
+        let parsed = crate::store::parse_setup(text);
         match parsed {
             Ok(mut m) => {
-                if let Ok(t) = &text { self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF)); }
+                self.apply_ref_looks(&crate::store::parse_ref_looks(text, NREF));
                 (m.run, m.status) = (self.m.run, self.m.status);
                 // the text size is a preference of this screen, not part of a set-up
                 m.text_size = self.m.text_size;
@@ -8142,9 +8172,9 @@ impl Ui {
                 self.relayout();
                 self.dirty_map = true;
                 self.clear_measurement_statistics();
-                self.toast(&format!("Recalled {}", crate::store::file_name(&p)));
+                Ok(())
             }
-            Err(e) => self.toast(&format!("Recall failed: {}", e)),
+            Err(e) => Err(e),
         }
     }
 
@@ -9846,15 +9876,10 @@ impl Ui {
         if self.power_dlg {
             self.power_dlg = false;
             let (_, [off, restart, _]) = self.pwr_layout();
-            if (off.contains(x, y) || restart.contains(x, y)) && self.update_busy() {
-                // a cut now leaves recovery half-written (docs/update.md)
-                self.toast("Update running: wait until it is done");
-            } else if off.contains(x, y) {
-                self.power_action = Some(PowerAction::Off);
-                self.toast("Powering off ...");
+            if off.contains(x, y) {
+                self.power_request(PowerAction::Off);
             } else if restart.contains(x, y) {
-                self.power_action = Some(PowerAction::Restart);
-                self.toast("Restarting ...");
+                self.power_request(PowerAction::Restart);
             }
             return;
         }
