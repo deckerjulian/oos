@@ -36,6 +36,7 @@ mod logger;
 mod measlabels;
 mod overclock;
 mod tools;
+mod feedback;
 mod measurement_nav;
 mod meascatalog;
 pub(crate) mod facts;
@@ -128,6 +129,14 @@ mod batch27_tests;
 mod batch29_tests;
 #[cfg(test)]
 mod measpanel_redesign_tests;
+#[cfg(test)]
+mod batch30_tests;
+#[cfg(test)]
+mod batch31_tests;
+#[cfg(test)]
+mod batch33_tests;
+#[cfg(test)]
+mod scpimap;
 #[cfg(test)]
 mod uiaudit_tests;
 #[cfg(test)]
@@ -1183,6 +1192,9 @@ impl MeasWorker {
     }
 }
 
+/// What Clear eye / Clear counter / Reset counts / Clear limit / Delete (zone) say when there was nothing to clear.
+pub(super) const NOTHING_TO_CLEAR: &str = "Nothing to clear";
+
 pub struct Ui {
     meas_category: usize,
     /// Add-measurements catalog: tab, selected button, which groups are open, scroll, and the extra sources.
@@ -1218,6 +1230,8 @@ pub struct Ui {
     zoom_vfactor: f32,
     zoom_vcenter: f32,
     zoom_user_closed: bool,
+    /// The last Measure > Copy meas. to: from, to, how many (the row shows the result instead of "Pick").
+    meas_copied: Option<(WaveId, WaveId, usize)>,
     /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
     wins: Vec<Rect>,
     /// the window being drawn
@@ -1317,6 +1331,8 @@ pub struct Ui {
     look: reflook::RefLook,
     /// Settings of each added measurement. Missing keys follow the shared measure menu.
     meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
+    /// The same of the views that are not shown (`ui/views.rs`).
+    view_own: [std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>; VIEWS_MAX],
     /// The gate a row measures with while its key or samples are made (None: the shared one).
     row_gate: std::cell::Cell<Option<bool>>,
     /// Settings dialog open on this index of `m.meas`.
@@ -1482,6 +1498,13 @@ pub struct Ui {
     keypad: String,
     /// the numeric entry pad of the Studio sheets (ui/numpad.rs); its text is `keypad`
     numpad: Option<numpad::NumPad>,
+    /// the value a ladder stepper started from when it was between two rungs: (item, that value, the rung it went to)
+    ladder_home: Option<(Item, f64, f64)>,
+    /// the last press of an `Add` stepper that ran into a limit: (item, the limit, the value it came from)
+    clamp_home: Option<(Item, f64, f64)>,
+    /// The source the cursors measure when it was picked in the cursor menu: only the cursors move to it (the active
+    /// channel and the measurement source stay). Selecting a trace anywhere else lets the cursors follow it again.
+    cursor_pin: Option<WaveId>,
     /// the Eye source was chosen on purpose (its sheet, SIM, a loaded record): Auto keeps it instead of the selected lane
     eye_src_chosen: bool,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
@@ -1569,6 +1592,7 @@ impl Ui {
             zoom_vfactor: 1.0,
             zoom_vcenter: 0.0,
             zoom_user_closed: false,
+            meas_copied: None,
             wins: Vec::new(),
             cur_win: 0,
             full: false,
@@ -1609,6 +1633,9 @@ impl Ui {
             rec_iv: 0.0,
             keypad: String::new(),
             numpad: None,
+            ladder_home: None,
+            clamp_home: None,
+            cursor_pin: None,
             eye_src_chosen: false,
             la_cols: Default::default(),
             dec_cache: Default::default(),
@@ -1648,6 +1675,7 @@ impl Ui {
             offline: false,
             look: reflook::RefLook::Live,
             meas_own: std::collections::HashMap::new(),
+            view_own: Default::default(),
             row_gate: std::cell::Cell::new(None),
             meas_cfg: None,
             offline_ref: 0,
@@ -1969,7 +1997,7 @@ impl Ui {
 
     /// Whether window `w` has an analog channel or a math channel in it.
     fn win_has_analog(&self, w: usize) -> bool {
-        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w) || (0..NMATH).any(|k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == w)
+        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w) || (0..NMATH).any(|k| self.m.math_shown(k) && self.math_win_of(k) == w)
     }
 
     /// Window of decoder `k`'s band in the plot, or None when it has a row under the LA lanes.
@@ -2003,7 +2031,7 @@ impl Ui {
             };
         }
         for k in 0..NMATH {
-            self.m.math_win[k] = if self.m.math_ch(k).op != MathOp::Off {
+            self.m.math_win[k] = if self.m.math_shown(k) {
                 i += 1;
                 (i - 1) % n
             } else {
@@ -4090,7 +4118,7 @@ impl Ui {
     /// Math channel `k` goes off, and so does its chip in the bottom bar.
     pub(super) fn math_turn_off(&mut self, k: usize) {
         if k >= NMATH { return; }
-        if k == self.m.math_sel { self.m.math = MathOp::Off; } else { self.m.maths[k].op = MathOp::Off; }
+        self.math_set_shown(k, false);
         self.settings_changed();
         self.close_menu();
         self.relayout();
@@ -4125,7 +4153,7 @@ impl Ui {
 
     fn draw_math(&self, cv: &mut Canvas) {
         // all traces first, then the labels on top of them
-        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win).collect();
+        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_shown(k) && self.math_win_of(k) == self.cur_win).collect();
         let labels: Vec<Option<String>> = on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
         let f = self.fonts();
         for (row, (label, &k)) in labels.iter().zip(&on).enumerate() {
@@ -5158,7 +5186,7 @@ impl Ui {
             Some(StripDock::Right) => (fr.body.right() - strip_side - rw - 2, body_top),
             Some(StripDock::Above) => (plot_x + (plot_w - rw) / 2, body_top + strip_h + 2),
             Some(StripDock::Below) => (plot_x + (plot_w - rw) / 2, bottom - strip_h - panel_h - 2),
-            Some(StripDock::Hidden) | None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32),
+            Some(StripDock::Hidden) | None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_shown(k)).count() as i32),
         };
         let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
         // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
@@ -5493,8 +5521,13 @@ impl Ui {
     /// Messages as an amber pill at the top centre of the plot; next to or under an open menu dialog that would
     /// cover it (it never hides dialog controls).
     /// A message that reports something done: it gets a tick, not the warning triangle.
+    /// A message that only informs (nothing to clear, which view, a channel turned on): a neutral pill with an "i".
+    pub(super) fn toast_is_info(s: &str) -> bool {
+        s == NOTHING_TO_CLEAR || s == "Views off" || s.ends_with(" turned on") || (s.starts_with("View ") && s.contains(" of "))
+    }
+
     pub(super) fn toast_is_success(s: &str) -> bool {
-        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ") || s.starts_with("Returned to live") || s.starts_with("Fit ")
+        matches!(s, "Eye cleared" | "Counter cleared" | "Limit cleared" | "Counts reset" | "Mask cleared") || s.starts_with("Copied ") || (s.starts_with("Zone ") && s.ends_with(" deleted")) || s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ") || s.starts_with("Returned to live") || s.starts_with("Fit ")
     }
 
     fn draw_toast(&self, cv: &mut Canvas) {
@@ -5523,6 +5556,18 @@ impl Ui {
             } else {
                 r.y = d.y + d.h + 6;
             }
+        }
+        if Self::toast_is_info(s) {
+            // information, not a warning: a neutral pill with an "i"
+            cv.round(r, 6, mix(BAR, TEXT, 80), 255);
+            cv.round(r.inset(1), 5, mix(BAR, TEXT, 20), 255);
+            let (cx, cy) = (r.x + 18, r.y + 14);
+            cv.circle(cx, cy, 8, TEXT);
+            cv.circle(cx, cy, 7, mix(BAR, TEXT, 20));
+            cv.pixel(cx, cy - 4, TEXT, 255);
+            cv.vline(cx, cy - 1, cy + 4, TEXT);
+            cv.text(&f.mb, r.x + 32, r.y + 19, s, TEXT);
+            return;
         }
         cv.round(r, 6, mix(BAR, AMBER, 110), 255);
         cv.round(r.inset(1), 5, mix(BAR, AMBER, 34), 255);
@@ -5583,7 +5628,7 @@ impl Ui {
         let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
         let n_off = n as i32 - n_on;
         let caps = &oos_hal::model::platform().caps;
-        let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
+        let aux = [(caps.la, self.m.la.on), (caps.has_gen() && !self.m.gen_hidden, self.m.afg_on)];
         let ref_card = !self.record_mode() && !self.shown_refs().is_empty();
         let start = row.x;
         let room = |wide: bool| {
@@ -6668,7 +6713,7 @@ impl Ui {
             MenuId::MeasFall => "Fall levels".into(),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
-            MenuId::Cursor => format!("Cursor · {}", self.selected_workspace_source().map_or("No source".into(), |id| self.wave_name(id))),
+            MenuId::Cursor => format!("Cursor · {}", self.cursor_wave().map_or("No source".into(), |id| self.wave_name(id))),
             MenuId::Display => "Display".into(),
             MenuId::Windows => "Windows".into(),
             MenuId::Utility => "System".into(),
@@ -7067,7 +7112,11 @@ impl Ui {
             Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => self.wave_name(self.meas_src),
-            Item::MeasCopyTo => "Pick".into(),
+            Item::MeasCopyTo => match self.meas_copied {
+                // what the last copy did, while the source is still the one it was made from
+                Some((from, to, _)) if from == self.meas_src => format!("Copied to {}", self.wave_name(to)),
+                _ => "Pick".into(),
+            },
             Item::MeasSrcB => self.wave_name(self.meas_src_b),
             Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
@@ -7187,6 +7236,7 @@ impl Ui {
 
     /// One press (or `d` presses) of a stepper. The limits are in the range table (`ranges.rs`).
     fn adjust(&mut self, it: Item, d: i32) {
+        if self.item_blocked_toast(it) { return; }
         self.adjust_item(it, d);
         self.range_enforce(it);
     }
@@ -7223,8 +7273,23 @@ impl Ui {
             }
             return;
         }
+        // the trigger times step on the 1-2-5 ladder; a value between two rungs (30 us) goes to the nearest one in the
+        // direction of the press and the press back returns to it
+        if matches!(it, Item::TrigT1 | Item::TrigT2 | Item::NthIdle | Item::Setup | Item::Hold) {
+            let cur = match it { Item::TrigT1 => self.m.trig_t1, Item::TrigT2 => self.m.trig_t2, Item::NthIdle => self.m.nth_idle, Item::Setup => self.m.setup, _ => self.m.hold } as f64;
+            let l: Vec<f64> = time_ladder().iter().map(|&x| x as f64).collect();
+            let v = self.ladder_move(it, cur, d, &l) as f32;
+            match it { Item::TrigT1 => self.m.trig_t1 = v, Item::TrigT2 => self.m.trig_t2 = v, Item::NthIdle => self.m.nth_idle = v, Item::Setup => self.m.setup = v, _ => self.m.hold = v }
+            self.settings_changed();
+            return;
+        }
         // the steppers that add a step to a value and stop at the limits of the range table
         if self.range_step(it, d) {
+            // the reference level restarts the averaging and the picture of the spectrum
+            if it == Item::SpecRef {
+                self.azr.spec_avg = None;
+                self.analyzer_update();
+            }
             // a level of a reference trigger does not restart what was measured
             if !(matches!(it, Item::TrigLevel | Item::TrigLevel2) && self.m.trig_ref.is_some()) {
                 self.settings_changed();
@@ -7277,7 +7342,6 @@ impl Ui {
                 let i = AmpUnit::ALL.iter().position(|&u| u == m.ch[c].unit).unwrap_or(0);
                 m.ch[c].unit = AmpUnit::ALL[cyc(i, AmpUnit::ALL.len(), d)];
             }
-            Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
             Item::ChExpand => m.v_expand_gnd = !m.v_expand_gnd,
             Item::HFine => m.fine_t = !m.fine_t,
             Item::HExpandI => {
@@ -7356,11 +7420,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cyc(i, all.len(), d)];
             }
-            Item::TrigT1 => m.trig_t1 = ladder_step(m.trig_t1, d),
-            Item::TrigT2 => m.trig_t2 = ladder_step(m.trig_t2, d),
-            Item::NthIdle => m.nth_idle = ladder_step(m.nth_idle, d),
-            Item::Setup => m.setup = ladder_step(m.setup, d),
-            Item::Hold => m.hold = ladder_step(m.hold, d),
             Item::VidStd => m.video_std = if m.video_std == VideoStd::Pal { VideoStd::Ntsc } else { VideoStd::Pal },
             Item::VidSync => {
                 let all = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Even, VSync::AllFields];
@@ -7416,10 +7475,13 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.cursor).unwrap();
                 m.cursor = all[cyc(i, all.len(), d)];
             }
-            Item::CurA => m.cur_a = (m.cur_a + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurB => m.cur_b = (m.cur_b + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurC => m.cur_c = (m.cur_c + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurD => m.cur_d = (m.cur_d + d as f32 * 0.005).clamp(0.0, 1.0),
+            // a cursor on a voltage reads higher the further up the screen it is: + raises the reading (moves it up)
+            Item::CurA | Item::CurB | Item::CurC | Item::CurD => {
+                let vertical = matches!(it, Item::CurC | Item::CurD) || m.cursor == CursorMode::Volt;
+                let delta = d as f32 * 0.005 * if vertical { -1.0 } else { 1.0 };
+                let field = match it { Item::CurA => &mut m.cur_a, Item::CurB => &mut m.cur_b, Item::CurC => &mut m.cur_c, _ => &mut m.cur_d };
+                *field = (*field + delta).clamp(0.0, 1.0);
+            }
             Item::RefSel => {
                 let slot = (self.ref_sel as i32 + d).clamp(0, NREF as i32 - 1) as usize;
                 self.select_workspace_source(WaveId::Ref(slot));
@@ -7734,6 +7796,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
+        if self.item_blocked_toast(it) { return; }
         if self.addrail_activate(it) { return; }
         if self.measrow_activate(it) { return; }
         if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.sim_activate(it) || self.afg_activate(it) || self.time_activate(it)) {
@@ -7870,7 +7933,14 @@ impl Ui {
                     self.toast(&format!("{} {} added", meascatalog::meas_display_name(k), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
-                Item::CntClear => self.counter_clear(),
+                Item::CntClear => {
+                    if self.cnt_total == 0 && self.cnt_hw.is_none() {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.counter_clear();
+                        self.toast("Counter cleared");
+                    }
+                }
                 Item::DecTable => self.table_toggle(tables::TableKind::Decode),
                 Item::DecExport => self.events_export(tables::TableKind::Decode),
                 Item::SearchTable => self.table_toggle(tables::TableKind::Search),
@@ -7973,7 +8043,13 @@ impl Ui {
                     self.toast(if it == Item::ZoneShape { "Draw the zone with one finger" } else { "Drag a box for the zone" });
                 }
                 Item::ZoneClear => {
-                    self.m.zones[self.zone_sel] = crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+                    let blank = crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+                    if self.m.zones[self.zone_sel] == blank {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.m.zones[self.zone_sel] = blank;
+                        self.toast(&format!("Zone {} deleted", self.zone_sel + 1));
+                    }
                 }
                 Item::StoreSaveSetup => {
                     let p = self.setup_path();
@@ -7991,16 +8067,25 @@ impl Ui {
                 Item::MaskCreate => self.create_mask(),
                 Item::MaskFromRef => self.create_mask_from_ref(),
                 Item::MaskClear => {
-                    self.mask = None;
-                    self.mask_ref = None;
-                    self.m.mask_on = false;
-                    self.mask_pass = 0;
-                    self.mask_fail = 0;
-                    self.toast("Mask cleared");
+                    if self.mask.is_none() && self.mask_ref.is_none() && !self.m.mask_on && self.mask_pass == 0 && self.mask_fail == 0 {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.mask = None;
+                        self.mask_ref = None;
+                        self.m.mask_on = false;
+                        self.mask_pass = 0;
+                        self.mask_fail = 0;
+                        self.toast("Mask cleared");
+                    }
                 }
                 Item::MaskReset => {
-                    self.mask_pass = 0;
-                    self.mask_fail = 0;
+                    if self.mask_pass == 0 && self.mask_fail == 0 {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.mask_pass = 0;
+                        self.mask_fail = 0;
+                        self.toast("Counts reset");
+                    }
                 }
                 Item::StoreFfSave => self.ff_save(),
                 Item::StoreFfLoad => self.ff_load(),
@@ -8165,7 +8250,8 @@ impl Ui {
 
     /// The text of the whole setup (the keys of the setup file and the look of the ref slots): what Save setup writes and
     /// `:SYSTem:SETup?` returns.
-    pub(crate) fn setup_text_full(&self) -> String {
+    pub(crate) fn setup_text_full(&mut self) -> String {
+        self.sync_view_state();
         format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text())
     }
 
@@ -8183,6 +8269,8 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                self.restore_view_state();
+                self.view_state_restore(text);
                 if self.m.layout == Layout::Studio { self.studio.enter = true; }
                 self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
@@ -8457,6 +8545,7 @@ impl Ui {
 
     /// Opens the picker of a choice item of the current menu; picking an option returns to this menu.
     fn open_picker(&mut self, it: Item) {
+        if self.item_blocked_toast(it) { return; }
         let it = if it == Item::AfgFreq { Item::AfgFreqEntry } else { it };
         if it == Item::TrigBusVal {
             self.keypad = format!("{:X}", self.m.trig_bus_val);
@@ -8482,6 +8571,7 @@ impl Ui {
     /// Sets a choice item to the option `want`: one adjust step by the distance in the option list (every item with
     /// options moves by index, cycling or clamped), else stepping until it shows `want`.
     fn select_option(&mut self, it: Item, want: &str) {
+        if self.item_blocked_toast(it) { return; }
         if it == Item::DecCphyRate {
             if let Some(rate) = crate::decode::CPHY_RATES.into_iter().find(|&rate| crate::decode::cphy_rate_label(rate) == want) {
                 self.m.dec_cphy_rate = rate;
@@ -8489,11 +8579,19 @@ impl Ui {
             }
             return;
         }
+        if it == Item::Views {
+            // a count is chosen: the new views exist, the dialog gets out of the way of the plot, the toast says which
+            let n = if want == "Off" { 1 } else { want.parse().unwrap_or(self.m.views) };
+            self.views_set(n);
+            self.close_menu();
+            return;
+        }
         if it == Item::MeasCopyTo {
             if let Some(to) = self.wave_ids().into_iter().find(|&w| self.wave_name(w) == want) {
                 let from = self.meas_src;
                 let n = self.copy_measurements(from, to);
-                self.toast(&format!("{} measurement{} copied {} -> {}", n, if n == 1 { "" } else { "s" }, self.wave_name(from), want));
+                self.meas_copied = Some((from, to, n));
+                self.toast(&format!("Copied {} measurement{} to {}", n, if n == 1 { "" } else { "s" }, want));
             }
             return;
         }
@@ -8779,6 +8877,9 @@ impl Ui {
                         chevron(cv, c.x + c.w - 14, c.y + c.h / 2, 1, DIM);
                     }
                 }
+            }
+            if self.item_blocked(row.it).is_some() {
+                Self::draw_blocked_veil(cv, if kind == Kind::Action { Rect::new(0, 0, 0, 0) } else { row.label }, c);
             }
             if focus {
                 if let Ctl::Seg(..) = row.ctl {
@@ -11839,13 +11940,6 @@ mod tests {
         assert_eq!(axis_label(3.25, 2.0, 4.75, 12.75, "V"), "3.25 V");
         assert_eq!(axis_label(-1e-9, 2.0, 0.0, 8.0, "V"), "0 V");
     }
-}
-
-/// One step on the 1-2-5 time ladder from the nearest ladder value.
-fn ladder_step(x: f32, d: i32) -> f32 {
-    let l = time_ladder();
-    let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
 }
 
 #[cfg(test)]

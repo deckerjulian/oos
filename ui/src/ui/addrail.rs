@@ -667,7 +667,7 @@ impl Ui {
 
     /// One tap: two waveform cursors on the chosen trace (the selected one when none is given).
     pub(super) fn studio_cursors_add(&mut self, src: Option<WaveId>) {
-        if let Some(s) = src { self.set_cursor_source(s); }
+        if let Some(s) = src { if self.set_cursor_source(s) { self.select_workspace_source(s); } }
         self.m.cur_b_source = None;
         self.m.cursor = CursorMode::Track;
         // apart: a third and two thirds of the visible span

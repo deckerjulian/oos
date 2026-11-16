@@ -14,14 +14,14 @@ Part of the [SCPI reference](README.md).
 | --- | --- | --- | --- | --- | --- |
 | `:MASK:CREate:REF` | Action | `<Rn>` Mask from a reference | - | Mask, zones, histogram > Create from ref | OOS extension |
 | `:MASK:CLEar` | Action | Clear the mask | - | Mask, zones, histogram > Clear mask | OOS extension |
-| `:MASK:INVert` | Set / Query | Boolean. | `0` | Mask, zones, histogram > Invert | OOS extension |
-| `:MASK:OUTPut` | Set / Query | `STOP`, `CONTinue` (on fail). | `CONT` | Mask, zones, histogram > On fail | name not verified against the DHO guide |
+| `:MASK:INVert` | Set / Query | Boolean. | `0` | Mask > Invert | OOS extension |
+| `:MASK:OUTPut` | Set / Query | `STOP`, `CONTinue` (on fail). | `CONT` | Mask > On fail | name not verified against the DHO guide |
 | `:MASK:SAVE` | Action | `["path"]` Mask file `["path"]`; without a path the slot's `mask<n>.txt` in the save folder. | - | Mask, zones, histogram > Save mask | OOS extension |
 | `:MASK:LOAD` | Action | `["path"]` Mask file `["path"]`; without a path the slot's `mask<n>.txt` in the save folder. | - | Mask, zones, histogram > Load mask | OOS extension |
-| `:MASK:ENABle` | Set / Query | Boolean. Enabling a page does not prove a valid mask. | `0` | Mask, zones, histogram > Mask test on/off | Rigol-style (command family of the DHO guide) |
-| `:MASK:SOURce` | Set / Query | `<channel>` Physical CH role only; not a reference or Math input. | `CHAN1` | Mask, zones, histogram > Mask source | Rigol-style (command family of the DHO guide) |
-| `:MASK:X` | Set / Query | `number` Horizontal tolerance, as the menu row. | `2.000000E-01` | Mask, zones, histogram > Tolerance X / Y | Rigol-style (command family of the DHO guide) |
-| `:MASK:Y` | Set / Query | `number` Vertical tolerance, as the menu row. | `4.000000E-01` | Mask, zones, histogram > Tolerance X / Y | Rigol-style (command family of the DHO guide) |
+| `:MASK:ENABle` | Set / Query | Boolean. Enabling a page does not prove a valid mask. | `0` | Mask > Mask test | Rigol-style (command family of the DHO guide) |
+| `:MASK:SOURce` | Set / Query | `<channel>` Physical CH role only; not a reference or Math input. | `CHAN1` | Mask > Source | Rigol-style (command family of the DHO guide) |
+| `:MASK:X` | Set / Query | `number` Horizontal tolerance, as the menu row. | `2.000000E-01` | Mask > Tolerance X | Rigol-style (command family of the DHO guide) |
+| `:MASK:Y` | Set / Query | `number` Vertical tolerance, as the menu row. | `4.000000E-01` | Mask > Tolerance Y | Rigol-style (command family of the DHO guide) |
 | `:MASK:CREate` | Action | Build the mask from the source's waveform; error -230 when it has none. | - | Mask, zones, histogram > Create mask from channel | Rigol-style (command family of the DHO guide) |
 | `:MASK:RESet` | Action | Reset the pass/fail counters. | - | Mask, zones, histogram > Reset counts | Rigol-style (command family of the DHO guide) |
 | `:MASK:OPERate` | Set / Query | `RUN\|STOP`; the query answers `RUN` only when the mask is on and the scope runs. Error -224 when the mask is off. | `STOP` | Mask, zones, histogram > Run / stop mask test | Rigol-style (command family of the DHO guide) |
@@ -33,7 +33,7 @@ Part of the [SCPI reference](README.md).
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:HISTogram:ENABle` | Set / Query | Boolean; ON selects the vertical histogram when it was off. | `0` | Mask, zones, histogram > Histogram | Rigol-style (command family of the DHO guide) |
+| `:HISTogram:ENABle` | Set / Query | Boolean; ON selects the vertical histogram when it was off. | `0` | Display > Histogram | Rigol-style (command family of the DHO guide) |
 | `:HISTogram:TYPE` | Set / Query | `HORizontal\|VERTical`; the query answers `HOR` or `VERT`. | `VERT` | Mask, zones, histogram > Histogram | Rigol-style (command family of the DHO guide) |
 | `:HISTogram:SOURce` | Set / Query | `<channel>` CH roles only; turns the channel on and makes it the Measure source. | `CHAN1` | Mask, zones, histogram > Histogram | Rigol-style (command family of the DHO guide) |
 | `:HISTogram:STATistics:RESult` | Query | `Sum,Peaks,Max,Min,Pk_Pk,Mean,Median,Mode,Bin width,Sigma` as `name:value` pairs; `9.9E37` where no figure exists. Describes the rendered display-density distribution, not the full native record. | - | Mask, zones, histogram > Histogram | Rigol-style (command family of the DHO guide) |

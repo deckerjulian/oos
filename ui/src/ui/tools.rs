@@ -768,7 +768,7 @@ impl Ui {
 
     /// Cursor A follows the selected workspace source.
     pub(crate) fn wave_at(&self, t: f64) -> Option<f32> {
-        self.wave_at_source(self.selected_workspace_source()?, t)
+        self.wave_at_source(self.cursor_wave()?, t)
     }
 
     pub(crate) fn cursor_b_source(&self) -> WaveId { self.m.cur_b_source.unwrap_or_else(|| self.cursor_source()) }
@@ -822,7 +822,7 @@ impl Ui {
 
     /// Cursor focus follows the displayed source, independently of acquisition.
     pub(crate) fn cursor_source(&self) -> WaveId {
-        self.selected_workspace_source().unwrap_or(WaveId::Ch(self.m.active.min(n_ch() - 1)))
+        self.cursor_wave().unwrap_or(WaveId::Ch(self.m.active.min(n_ch() - 1)))
     }
 
     pub(crate) fn set_cursor_source(&mut self, source: WaveId) -> bool {
@@ -831,7 +831,8 @@ impl Ui {
             WaveId::Ref(i) => self.refs.get(i).is_some_and(Option::is_some),
         };
         if !available { return false; }
-        self.select_workspace_source(source);
+        // only the cursors move to it: the active channel and the measurement source stay
+        self.cursor_pin = Some(source);
         self.relayout();
         true
     }

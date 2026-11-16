@@ -163,26 +163,12 @@ impl Ui {
                 };
                 let i = ids.iter().position(|&x| x == cur).unwrap_or(0);
                 let next = ids[(i as i32 + d).rem_euclid(ids.len() as i32) as usize];
+                self.source_turn_on(next);
                 if it == Item::BusClk {
                     self.m.bus.clk = next;
                 } else {
                     self.m.bus.data = next;
                 }
-            }
-            Item::BusClkThr | Item::BusDataThr => {
-                let id = if it == Item::BusClkThr {
-                    self.m.bus.clk
-                } else {
-                    self.m.bus.data
-                };
-                let step = self.bus_volt_step(id);
-                let thr = if it == Item::BusClkThr {
-                    &mut self.m.bus.clk_thr
-                } else {
-                    &mut self.m.bus.data_thr
-                };
-                let lim = (super::ranges::LEVEL_DIVS * super::ranges::STEPS_PER_DIV) as f32 * step;
-                *thr = (*thr + step * d as f32).clamp(-lim, lim);
             }
             _ => return false,
         }

@@ -190,6 +190,8 @@ impl PickAdd {
 /// The rectangles of the Studio top bar.
 #[derive(Clone, Copy)]
 pub(super) struct StudioTop {
+    /// the numbered view switcher, zero wide unless there is more than one view
+    pub vbox: Rect,
     /// the Add panel button
     pub add: Rect,
     /// Live (the way back from a record session), zero wide in live mode
@@ -310,12 +312,14 @@ impl Ui {
         self.studio.view = StudioView::from_token(&self.m.studio_view);
         let text = self.m.studio_dock.clone();
         self.dock_restore(&text);
+        self.view_state_restore("");
         self.studio.enter = self.m.layout == Layout::Studio;
     }
 
     /// Start of a frame: the lanes draw their badges again, and a layout change made in the Display menu is applied.
     pub(super) fn studio_frame_start(&mut self) {
         self.studio.lane_badges.get_mut().clear();
+        self.sync_view_state();
         // coming into Studio by any road (menu, recalled setup, restart) applies its entry rules: its bars show
         let is = self.m.layout == Layout::Studio;
         if is && !self.studio.was { self.studio.enter = true; }
@@ -456,8 +460,11 @@ impl Ui {
         // Add replaces the old "+ Add" and Meas buttons: one button, the menu has both
         let measure = Rect::new(-20, CHIP_Y, 0, CHIP_H);
         let add = place(labels[3]);
-        let acq = Rect::new(x, CHIP_Y, (add.x - 10 - x).max(40), CHIP_H);
-        StudioTop { add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, display, storage, view, gear, autoset, clear, force, tier }
+        // the numbered view switcher (Display > Views), left of + Add, only while there is more than one view
+        let vw = super::views::studio_box_w(self.m.views);
+        let vbox = Rect::new(add.x - if vw > 0 { gap + vw } else { 0 }, CHIP_Y, vw, CHIP_H);
+        let acq = Rect::new(x, CHIP_Y, (vbox.x - 10 - x).max(40), CHIP_H);
+        StudioTop { vbox, add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, display, storage, view, gear, autoset, clear, force, tier }
     }
 
     /// Measure and Cursors as the top-bar buttons (`top_buttons`); the others are Studio's own.
@@ -523,6 +530,7 @@ impl Ui {
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, label, if on { ACCENT } else { TEXT });
         }
+        self.draw_view_box(cv);
         // Autoset, Clear, Force: Force is dimmed while no trigger is waiting, and still works
         let waiting = !self.record_mode() && self.m.run == RunState::Run && self.m.status == TrigStatus::Wait;
         for (r, label, lit) in [(t.autoset, labels[0], true), (t.clear, labels[1], true), (t.force, labels[2], waiting)] {
@@ -551,7 +559,7 @@ impl Ui {
         let time = Rect::new(trig.x - 9 - 150 - extra, y, 150 + extra, h);
         // the sources that are on get a pill; the channels that are off share one "+ CH" chip
         let shown = self.shown_refs();
-        let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).collect();
+        let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_shown(k)).collect();
         let off = (0..n).filter(|&c| !self.m.ch[c].on).count();
         // with every channel on the chip stays, as "Add source": math, ref and bus are behind it
         let add_w = if off > 0 { 62 } else { 100 };
@@ -560,7 +568,7 @@ impl Ui {
         let show_w = if self.studio_badges_hidden() { 64 } else { 0 };
         let caps = &oos_hal::model::platform().caps;
         let la_w = if caps.la { 52 } else { 0 };
-        let gen_w = if caps.has_gen() { if self.m.afg_on { 124 } else { 56 } } else { 0 };
+        let gen_w = if caps.has_gen() && !self.m.gen_hidden { if self.m.afg_on { 124 } else { 56 } } else { 0 };
         let aux_w = [la_w, gen_w].iter().filter(|w| **w > 0).map(|w| w + 5).sum::<i32>();
         // the source pills (channels, refs, math) share what the fixed chips leave, by count
         let count = (chans.len() + shown.len() + maths.len()) as i32;
@@ -866,7 +874,11 @@ impl Ui {
     /// one (or the same, for one), so its trace is on the screen at once.
     pub(super) fn studio_math_start(&mut self) {
         let free = if self.m.math == MathOp::Off { Some(self.m.math_sel) } else { (0..NMATH).find(|&k| self.m.math_ch(k).op == MathOp::Off) };
-        let Some(k) = free else { return };
+        // every channel is defined: one hidden in this view comes back
+        let Some(k) = free else {
+            if let Some(k) = (0..NMATH).find(|&k| self.m.math_ch(k).op != MathOp::Off && self.m.math_hidden[k]) { self.m.math_hidden[k] = false; self.relayout(); }
+            return;
+        };
         if k != self.m.math_sel { self.m.math_select(k); }
         let on: Vec<usize> = (0..n_ch()).filter(|&c| self.m.ch[c].on).collect();
         let Some(&a) = on.first() else { return };
@@ -996,6 +1008,8 @@ impl Ui {
             // SIM: the simulation mode (Live goes back); the SIM sheet, with Add to ref, is in the Menu
             if self.menu_open { self.close_menu(); }
             self.sim_activate(Item::SimPlay);
+        } else if t.vbox.w > 0 && hit(t.vbox) {
+            self.view_box_tap(x, y);
         } else if hit(t.run) {
             self.studio_run_stop();
         } else if hit(t.single) {

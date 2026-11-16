@@ -292,7 +292,10 @@ pub fn recover_clock_pll(v: &[f32], dt: f64, thr: f32, hyst: f32, nominal_rate: 
     let uis = ((last - first) / c.period).round().max(1.0);
     let density = (c.edges.len() as f64 / uis).clamp(0.01, 1.0);
     let bw = if loop_bw > 0.0 { loop_bw } else { c.rate() / 1667.0 };
-    let wn_te = 2.0 * std::f64::consts::PI * bw * c.period / density; // natural frequency x time between edges
+    // natural frequency x time between edges. A loop faster than the edges it is fed (a bandwidth near or above the edge
+    // rate) is not a loop any more: the second-order gain grows with its square, the period flies off (to zero or below)
+    // and the tick loops below never end. Keep it where the discrete loop is stable.
+    let wn_te = (2.0 * std::f64::consts::PI * bw * c.period / density).min(0.6);
     let (kp, ki) = if second_order { ((2.0 * 0.707 * wn_te).min(1.0), wn_te * wn_te * density) } else { (wn_te.min(1.0), 0.0) };
     let mut period = c.period;
     let mut next = c.phase - (c.phase / period).ceil() * period; // first tick at or before t = 0
@@ -304,7 +307,8 @@ pub fn recover_clock_pll(v: &[f32], dt: f64, thr: f32, hyst: f32, nominal_rate: 
         }
         let err = te - next;
         next += kp * err;
-        period += ki * err;
+        // the frequency pull stays within 10 % of the constant-rate clock, so a tick step is always positive
+        period = (period + ki * err).clamp(0.9 * c.period, 1.1 * c.period);
     }
     while next <= end + period {
         ticks.push(next);

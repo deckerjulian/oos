@@ -944,3 +944,135 @@ fn catalogue_and_inverter_index(t: &mut T) {
     let _ = t.go(&format!(":MEAS:CAT:ITEM? {id},CHAN1,CHAN2"));
     t.no(":MEAS:CAT:ITEM 9999", "-224");
 }
+
+// ------------------------------------------------------------------------------------------------ the menu to SCPI map
+
+/// A header of the map as it is sent: 1 for `<n>`, the optional brackets dropped.
+fn sendable(h: &str) -> String { h.replace("<n>", "1").replace(['[', ']'], "") }
+
+fn scpi_reply(s: &mut Scpi, ui: &mut Ui, cv: &Canvas, line: &str) -> String {
+    String::from_utf8_lossy(&s.exec_line(ui, cv, line)).trim().to_string()
+}
+
+fn scpi_error(s: &mut Scpi, ui: &mut Ui, cv: &Canvas) -> String { scpi_reply(s, ui, cv, ":SYST:ERR?") }
+
+/// The pieces of a table row of a reference page: (byte range of the cells, text), split at the `|` that is not escaped.
+fn row_cells(line: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let b = line.as_bytes();
+    let bars: Vec<usize> = (0..b.len()).filter(|&i| b[i] == b'|' && (i == 0 || b[i - 1] != 92u8)).collect();
+    bars.windows(2).map(|w| (w[0] + 1..w[1], line[w[0] + 1..w[1]].trim().to_string())).collect()
+}
+
+#[test]
+fn the_map_has_one_row_per_header_and_every_header_exists() {
+    let rows = super::scpimap::map();
+    assert!(rows.len() >= 200, "{} rows", rows.len());
+    let mut seen = BTreeSet::new();
+    for r in &rows { assert!(seen.insert(r.header), "{} is in the map twice", r.header); }
+    // the headers resolve: the query is not "undefined header"
+    let mut s = Scpi::open(0);
+    let cv = Canvas::new(W, H);
+    let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    let mut undefined = Vec::new();
+    for r in &rows {
+        let q = format!("{}?", sendable(r.header));
+        let _ = scpi_error(&mut s, &mut ui, &cv);
+        let _ = scpi_reply(&mut s, &mut ui, &cv, &q);
+        let e = scpi_error(&mut s, &mut ui, &cv);
+        if e.starts_with("-113") || e.starts_with("-100") { undefined.push(format!("{} -> {e}", r.header)); }
+    }
+    assert!(undefined.is_empty(), "headers of the map the interpreter does not know: {undefined:?}");
+}
+
+#[test]
+fn every_menu_item_of_the_map_follows_its_scpi_header_and_the_header_its_item() {
+    let rows = super::scpimap::map();
+    let mut s = Scpi::open(0);
+    let cv = Canvas::new(W, H);
+    let (mut ok, mut stuck, mut bad) = (0, Vec::new(), Vec::new());
+    for r in &rows {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Default;
+        u.store_dir = std::env::temp_dir().join(format!("oos-scpimap-{}", std::process::id()));
+        // the scope of a bench: every input on, a reference in R1
+        for c in 0..n_ch() { u.m.ch[c].on = true; }
+        u.refs[0] = Some(RefWave { src: 0, color: 0, label: "R1".into(), t0: 0.0, dt: 1e-9, v: vec![0.0f32; 128].into(), vpd: 0.5, offset: 0.0, on: true });
+        for _ in 0..6 { u.step(0.05); }
+        (r.pre)(&mut u);
+        for _ in 0..2 { u.step(0.05); }
+        let h = sendable(r.header);
+        let _ = scpi_error(&mut s, &mut u, &cv);
+        let ask = if r.index.is_empty() { format!("{h}?") } else { format!("{h}? {}", r.index) };
+        let (t0, q0) = (u.value(r.item), scpi_reply(&mut s, &mut u, &cv, &ask));
+        if q0.is_empty() { bad.push(format!("{}: the query is empty", r.header)); continue; }
+        // a press in the menu
+        let mut moved = false;
+        for d in [1, -1] {
+            u.adjust(r.item, d);
+            for _ in 0..2 { u.step(0.02); }
+            if u.value(r.item) != t0 { moved = true; break; }
+        }
+        let (t1, q1) = (u.value(r.item), scpi_reply(&mut s, &mut u, &cv, &ask));
+        if !moved { stuck.push(format!("{} ({:?}): the menu does not move it from {t0:?}", r.header, r.item)); continue; }
+        if q1 == q0 { bad.push(format!("{}: {:?} went {t0:?} -> {t1:?} in the menu, the query stays {q0:?}", r.header, r.item)); continue; }
+        // SCPI back to the first value, then to the second: the item shows each
+        let mut why = String::new();
+        for (q, t) in [(&q0, &t0), (&q1, &t1)] {
+            let _ = scpi_error(&mut s, &mut u, &cv);
+            let set = if r.index.is_empty() { format!("{h} {q}") } else { format!("{h} {},{q}", r.index) };
+            let _ = scpi_reply(&mut s, &mut u, &cv, &set);
+            let e = scpi_error(&mut s, &mut u, &cv);
+            for _ in 0..2 { u.step(0.02); }
+            let shown = u.value(r.item);
+            if !e.starts_with("0,") { why = format!("{h} {q} -> {e}"); break; }
+            if &shown != t { why = format!("{h} {q} shows {shown:?}, the menu had {t:?}"); break; }
+        }
+        if why.is_empty() { ok += 1 } else { bad.push(format!("{}: {:?}: {why}", r.header, r.item)) }
+    }
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("oos-scpimap-{}", std::process::id())));
+    eprintln!("map rows: {}, agree both ways: {ok}, not movable from the menu: {}, mismatches: {}", rows.len(), stuck.len(), bad.len());
+    for l in stuck.iter().chain(bad.iter()) { eprintln!("MAP {l}"); }
+    assert!(bad.is_empty() && stuck.is_empty(), "{} not movable, {} mismatches:\n{}\n{}", stuck.len(), bad.len(), stuck.join("\n"), bad.join("\n"));
+}
+
+/// The text of the "Menu equivalent" column for a row of the map.
+fn menu_equivalent(r: &super::scpimap::Row) -> String { format!("{} > {}", r.group, Ui::label(r.item)) }
+
+#[test]
+fn the_menu_equivalent_column_of_the_reference_agrees_with_the_map() {
+    let rows = super::scpimap::map();
+    let by_header: std::collections::BTreeMap<String, String> = rows.iter().map(|r| (format!("`{}`", r.header), menu_equivalent(r))).collect();
+    let write = std::env::var_os("OOS_WRITE_DOCS").is_some();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/scpi");
+    let mut drift = Vec::new();
+    let mut found = BTreeSet::new();
+    for (name, text) in scpi_docs() {
+        let mut out = String::new();
+        let mut changed = false;
+        for line in text.lines() {
+            let cells = row_cells(line);
+            let mut new_line = line.to_string();
+            if cells.len() >= 6 {
+                let key = cells[0].1.replace("\\|", "|");
+                if let Some(want) = by_header.get(&key) {
+                    found.insert(key);
+                    if &cells[4].1 != want {
+                        drift.push(format!("{name}: {} says {:?}, the map says {want:?}", cells[0].1, cells[4].1));
+                        new_line = format!("{} {want} {}", &line[..cells[4].0.start], &line[cells[4].0.end..]);
+                        changed = true;
+                    }
+                }
+            }
+            out.push_str(&new_line);
+            out.push('\n');
+        }
+        if write && changed {
+            let keep_end = text.ends_with('\n');
+            std::fs::write(dir.join(&name), if keep_end { out } else { out.trim_end_matches('\n').to_string() }).unwrap();
+        }
+    }
+    let missing: Vec<&String> = by_header.keys().filter(|k| !found.contains(*k)).collect();
+    assert!(missing.is_empty(), "headers of the map that no row of docs/scpi/ has: {missing:?}");
+    if write { eprintln!("docs rewritten: {} rows", drift.len()); return; }
+    assert!(drift.is_empty(), "{} rows of docs/scpi/ differ from the map (OOS_WRITE_DOCS=1 rewrites them):\n{}", drift.len(), drift.join("\n"));
+}

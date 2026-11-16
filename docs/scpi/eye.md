@@ -13,18 +13,18 @@ Part of the [SCPI reference](README.md).
 | `:EYE:ITEM` | Query | `<figure>` Current configured Eye result; does not itself run one-click Auto Eye. | - | Eye and jitter > Read eye / jitter figures | OOS extension |
 | `:EYE:AUTO` | Action | Auto Eye/Jitter: measure the bit rate and open the eye. | - | Eye and jitter > Auto Eye/Jitter | OOS extension |
 | `:EYE:CLEar` | Action | Clear the eye. | - | Eye and jitter > Clear eye | OOS extension |
-| `:EYE:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH1` | Eye and jitter > Source | OOS extension |
-| `:EYE:CLOCk` | Set / Query | Source `CHANn\|Rn`, or `OFF`. | `OFF` | Eye and jitter > Clock | OOS extension |
-| `:EYE:RAIL` | Set / Query | Source `CHANn\|Rn`, or `OFF`. | `OFF` | Eye and jitter > Rail | OOS extension |
-| `:EYE:RATE` | Set / Query | Bit rate, Hz (switches "from record" off) | `0.000000E+00` | Eye and jitter > Bit rate | OOS extension |
-| `:EYE:BER` | Set / Query | Target bit error ratio Range 1e-18 to 1e-1. | `1.000000E-12` | Eye and jitter > BER | OOS extension |
-| `:EYE:PN:LOW` | Set / Query | Hz. Range 1.0 to 1e12. | `1.000000E+03` | Eye and jitter > PN band, notch, PLL bandwidth | OOS extension |
-| `:EYE:PN:HIGH` | Set / Query | Hz. Range 1.0 to 1e12. | `1.000000E+06` | Eye and jitter > PN band, notch, PLL bandwidth | OOS extension |
-| `:EYE:NOTCh` | Set / Query | Hz. Range 0.0 to 1e12. | `0.000000E+00` | Eye and jitter > PN band, notch, PLL bandwidth | OOS extension |
-| `:EYE:PLL:BWIDth` | Set / Query | Hz. Range 0.0 to 1e12. | `0.000000E+00` | Eye and jitter > PN band, notch, PLL bandwidth | OOS extension |
-| `:EYE:NPJ` | Set / Query | Boolean. | `0` | Eye and jitter > NPJ | OOS extension |
-| `:EYE:HPASs` | Set / Query | Boolean. | `1` | Eye and jitter > High-pass | OOS extension |
-| `:EYE:PLACe` | Set / Query | `FULL`, `SIDE`, `UNDER` | `FULL` | Eye and jitter > Place | OOS extension |
+| `:EYE:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH1` | Eye > Source | OOS extension |
+| `:EYE:CLOCk` | Set / Query | Source `CHANn\|Rn`, or `OFF`. | `OFF` | Eye > Clock | OOS extension |
+| `:EYE:RAIL` | Set / Query | Source `CHANn\|Rn`, or `OFF`. | `OFF` | Eye > Rail | OOS extension |
+| `:EYE:RATE` | Set / Query | Bit rate, Hz (switches "from record" off) | `0.000000E+00` | Eye > Bit rate | OOS extension |
+| `:EYE:BER` | Set / Query | Target bit error ratio Range 1e-18 to 1e-1. | `1.000000E-12` | Eye > BER | OOS extension |
+| `:EYE:PN:LOW` | Set / Query | Hz. Range 1.0 to 1e12. | `1.000000E+03` | Eye > Pn low | OOS extension |
+| `:EYE:PN:HIGH` | Set / Query | Hz. Range 1.0 to 1e12. | `1.000000E+06` | Eye > Pn high | OOS extension |
+| `:EYE:NOTCh` | Set / Query | Hz. Range 0.0 to 1e12. | `0.000000E+00` | Eye > Notch | OOS extension |
+| `:EYE:PLL:BWIDth` | Set / Query | Hz. Range 0.0 to 1e12. | `0.000000E+00` | Eye > PLL bandwidth | OOS extension |
+| `:EYE:NPJ` | Set / Query | Boolean. | `0` | Eye > NPJ | OOS extension |
+| `:EYE:HPASs` | Set / Query | Boolean. | `1` | Eye > Highpass | OOS extension |
+| `:EYE:PLACe` | Set / Query | `FULL`, `SIDE`, `UNDER` | `FULL` | Eye > Place | OOS extension |
 
 ## Eye figures
 

@@ -356,6 +356,12 @@ impl Ui {
             if it == Item::BodeIn { self.m.bode_in = next; } else { self.m.bode_out = next; }
             return true;
         }
+        // the amplitude steps on its own 1-2-5 ladder from 10 mV to 20 V (the Hz ladder below starts at 1)
+        let amp = (it == Item::BodeAmp).then(|| {
+            let l: Vec<f64> = eng_ladder_list(ranges::BODE_AMP.0, 10.0, false).into_iter().filter(|&x| x <= ranges::BODE_AMP.1 * 1.001).collect();
+            let now = self.m.bode_amp;
+            self.ladder_move(it, now, d, &l)
+        });
         let m = &mut self.m;
         let ladder = |x: f64, d: i32| {
             let l: Vec<f64> = (0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e))).collect();
@@ -376,7 +382,7 @@ impl Ui {
             Item::BodeStart => m.bode_start = ladder(m.bode_start, d).min(m.bode_stop / 2.0),
             Item::BodeStop => m.bode_stop = ladder(m.bode_stop, d).max(m.bode_start * 2.0),
             Item::BodePoints => m.bode_points = (m.bode_points as i32 + 5 * d).clamp(5, 200) as usize,
-            Item::BodeAmp => m.bode_amp = ladder(m.bode_amp, d).clamp(0.01, 20.0),
+            Item::BodeAmp => m.bode_amp = amp.unwrap_or(m.bode_amp).clamp(ranges::BODE_AMP.0, ranges::BODE_AMP.1),
             Item::BodeIn if free => m.bode_sw_in = opt_src_step(m.bode_sw_in, d),
             Item::BodeSwTime => {
                 // 1-2-5 steps from 1 ms to 500 s

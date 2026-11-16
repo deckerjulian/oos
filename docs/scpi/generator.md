@@ -12,11 +12,11 @@ Part of the [SCPI reference](README.md).
 | --- | --- | --- | --- | --- | --- |
 | `:SOURce:ARB:LOAD` | Action | `["path"]` Load an arbitrary wave from a file (one number per line or a CSV); default `arb.csv` in the storage folder. | - | Generator > Load arb.csv | name not verified against the DHO guide |
 | `:SOURce<n>:ARB:LOAD` | Action | `["path"]` Load an arbitrary wave from a file (one number per line or a CSV); default `arb.csv` in the storage folder. | - | Generator > Load arb.csv | name not verified against the DHO guide |
-| `:SOURce[<n>]:OUTPut[:STATe]` | Set / Query | Boolean generator output. | `0` | Generator > Output on/off | OOS extension (Rigol-style spelling). Error -241 on a model without a generator. |
-| `:SOURce[<n>]:FUNCtion` | Set / Query | `SINusoid\|SQUare\|RAMP\|PULSe\|NOISe\|DC\|ARB`; the query answers `SIN\|SQU\|RAMP\|PULS\|NOIS\|DC\|ARB`. | `SIN` | Generator > Waveform | OOS extension (Rigol-style spelling) |
+| `:SOURce[<n>]:OUTPut[:STATe]` | Set / Query | Boolean generator output. | `0` | Generator > Output | OOS extension (Rigol-style spelling). Error -241 on a model without a generator. |
+| `:SOURce[<n>]:FUNCtion` | Set / Query | `SINusoid\|SQUare\|RAMP\|PULSe\|NOISe\|DC\|ARB`; the query answers `SIN\|SQU\|RAMP\|PULS\|NOIS\|DC\|ARB`. | `SIN` | Generator > Wave | OOS extension (Rigol-style spelling) |
 | `:SOURce[<n>]:FREQuency` | Set / Query | `hertz` Generator frequency. | `1.000000E+03` | Generator > Frequency | OOS extension (Rigol-style spelling) |
-| `:SOURce[<n>]:VOLTage[:AMPLitude]` | Set / Query | `volts` Generator amplitude. | `1.000000E+00` | Generator > Amplitude / offset | OOS extension (Rigol-style spelling) |
-| `:SOURce[<n>]:VOLTage:OFFSet` | Set / Query | `volts` Generator offset. | `0.000000E+00` | Generator > Amplitude / offset | OOS extension (Rigol-style spelling) |
+| `:SOURce[<n>]:VOLTage[:AMPLitude]` | Set / Query | `volts` Generator amplitude. | `1.000000E+00` | Generator > Amplitude | OOS extension (Rigol-style spelling) |
+| `:SOURce[<n>]:VOLTage:OFFSet` | Set / Query | `volts` Generator offset. | `0.000000E+00` | Generator > Offset | OOS extension (Rigol-style spelling) |
 | `:SOURce[<n>]:FUNCtion:SQUare:DUTY` | Set / Query | `percent` 5 to 95 (also `:FUNCtion:PULSe:DUTY`). | `5.000000E+01` | Generator > Square duty / ramp symmetry | OOS extension (Rigol-style spelling) |
 | `:SOURce[<n>]:FUNCtion:RAMP:SYMMetry` | Set / Query | `percent` 0 to 100. | `5.000000E+01` | Generator > Square duty / ramp symmetry | OOS extension (Rigol-style spelling) |
 | `:SOURce[<n>]:ARB:DATA` | Action | `<v>,<v>,...` One period of the arbitrary wave, any scale; error -224 when the samples do not fit. | - | Generator > Arbitrary: capture from / capture screen | OOS extension (Rigol-style spelling) |

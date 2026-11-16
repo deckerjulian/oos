@@ -85,7 +85,7 @@ impl Ui {
         let m = &mut self.m;
         match it {
             Item::MagOn => m.view = if m.view == AView::Magnetic { AView::Scope } else { AView::Magnetic },
-            Item::MagN => m.mag_n = (m.mag_n + d as f64).clamp(1.0, 10_000.0),
+            Item::MagN => m.mag_n = (m.mag_n + d as f64).clamp(ranges::MAG_TURNS.0 as f64, ranges::MAG_TURNS.1 as f64),
             Item::MagAe => m.mag_ae = eng_ladder(m.mag_ae, d, 1e-6, 0.1, true),
             Item::MagLe => m.mag_le = eng_ladder(m.mag_le, d, 1e-3, 10.0, true),
             Item::MagRcu => m.mag_rcu = eng_ladder(m.mag_rcu, d, 1e-3, 1e3, true).max(0.0),

@@ -30,8 +30,8 @@ Part of the [SCPI reference](README.md).
 | `:MAGnetic:VOLTage:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH1` | Magnetic > Voltage | OOS extension |
 | `:MAGnetic:CURRent:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH2` | Magnetic > Current | OOS extension |
 | `:MAGnetic:TURNs` | Set / Query | Number of turns. Range 1.0 to 10000.0. | `1.000000E+00` | Magnetic > Turns | OOS extension |
-| `:MAGnetic:AREA` | Set / Query | Core area Ae, m^2. Range 0.0 to 1e3. | `0.000000E+00` | Magnetic > Ae | OOS extension |
-| `:MAGnetic:LENGth` | Set / Query | Path length Le, m. Range 0.0 to 1e3. | `0.000000E+00` | Magnetic > Le | OOS extension |
+| `:MAGnetic:AREA` | Set / Query | Core area Ae, m^2. Range 0.0 to 1e3. | `0.000000E+00` | Magnetic > Area | OOS extension |
+| `:MAGnetic:LENGth` | Set / Query | Path length Le, m. Range 0.0 to 1e3. | `0.000000E+00` | Magnetic > Length | OOS extension |
 | `:MAGnetic:RCU` | Set / Query | Copper resistance, ohms. Range 0.0 to 1e6. | `0.000000E+00` | Magnetic > Rcu | OOS extension |
 | `:MAGnetic:PLOT` | Set / Query | `I-PSI` or `B-H` (dashes optional); the query answers `I-PSI` or `B-H`. | `I-PSI` | Magnetic > Plot | OOS extension |
 | `:MAGnetic:CURSor` | Set / Query | Loop point index. Range 0 to 1000000. | `0` | Magnetic > Cursor | OOS extension |
@@ -43,15 +43,15 @@ Part of the [SCPI reference](README.md).
 | --- | --- | --- | --- | --- | --- |
 | `:INVerter:PAGE` | Set / Query | `DQ0`, `MECHANICAL` | `DQ0` | Inverter > Page | OOS extension |
 | `:INVerter:PHASe1:SOURce` | Set / Query | Phase source `CHANn\|Rn`. | `CH1` | Inverter > Phase A | OOS extension |
-| `:INVerter:PHASe2:SOURce` | Set / Query | Phase source `CHANn\|Rn`. | `CH2` | Inverter > B | OOS extension |
-| `:INVerter:PHASe3:SOURce` | Set / Query | Phase source `CHANn\|Rn`. | `CH3` | Inverter > C | OOS extension |
-| `:INVerter:ANGLe:SOURce` | Set / Query | `OFF`, `PHASE`, `ANALOG`, `QUAD`, `HALL` | `OFF` | Inverter > Angle source | OOS extension |
+| `:INVerter:PHASe2:SOURce` | Set / Query | Phase source `CHANn\|Rn`. | `CH2` | Inverter > Phase B | OOS extension |
+| `:INVerter:PHASe3:SOURce` | Set / Query | Phase source `CHANn\|Rn`. | `CH3` | Inverter > Phase C | OOS extension |
+| `:INVerter:ANGLe:SOURce` | Set / Query | `OFF`, `PHASE`, `ANALOG`, `QUAD`, `HALL` | `OFF` | Inverter > Angle | OOS extension |
 | `:INVerter:POLEs` | Set / Query | 1 to 32 Range 1 to 32. | `1` | Inverter > Poles | OOS extension |
 | `:INVerter:ANALog:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH4` | Inverter > Analog | OOS extension |
 | `:INVerter:ANALog:SCALe` | Set / Query | Scale. Range 1e-3 to 1e3. | `1.000000E+00` | Inverter > Analog | OOS extension |
 | `:INVerter:ANALog:DEGRees` | Set / Query | Degrees per volt. Range 1e-3 to 1e4. | `1.000000E+00` | Inverter > Analog | OOS extension |
 | `:INVerter:ANGLe:OFFSet` | Set / Query | Degrees, +-3600 Range -3600.0 to 3600.0. | `0.000000E+00` | Inverter > Offset | OOS extension |
-| `:INVerter:QUANtity` | Set / Query | `VOLTAGE`, `CURRENT` | `VOLTAGE` | Inverter > Quantity | OOS extension |
+| `:INVerter:QUANtity` | Set / Query | `VOLTAGE`, `CURRENT` | `VOLTAGE` | Inverter > Signal | OOS extension |
 | `:INVerter:TORQue:SOURce` | Set / Query | Source or `OFF`. | `OFF` | Inverter > Torque | OOS extension |
 | `:INVerter:BUS:VOLTage:SOURce` | Set / Query | Source or `OFF`. | `OFF` | Inverter > Bus V | OOS extension |
 | `:INVerter:BUS:CURRent:SOURce` | Set / Query | Source or `OFF`. | `OFF` | Inverter > Bus I | OOS extension |
@@ -73,8 +73,8 @@ Part of the [SCPI reference](README.md).
 | `:DPT:VDS:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH1` | Double pulse > Vds | OOS extension |
 | `:DPT:ID:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH2` | Double pulse > Id | OOS extension |
 | `:DPT:VGS:SOURce` | Set / Query | Source `CHANn\|Rn`. | `CH3` | Double pulse > Vgs | OOS extension |
-| `:DPT:FOURth` | Set / Query | `OFF`, `GATE`, `DIODE_V`, `DIODE_I`. | `OFF` | Double pulse > Fourth channel | OOS extension |
-| `:DPT:FOURth:SOURce` | Set / Query | Source of the fourth channel. | `CH4` | Double pulse > Fourth channel | OOS extension |
+| `:DPT:FOURth` | Set / Query | `OFF`, `GATE`, `DIODE_V`, `DIODE_I`. | `OFF` | Double pulse > Fourth | OOS extension |
+| `:DPT:FOURth:SOURce` | Set / Query | Source of the fourth channel. | `CH4` | Double pulse > Channel | OOS extension |
 | `:DPT:GATE` | Set / Query | Percent, 1 to 49. Range 1.0 to 49.0. | `1.000000E+01` | Double pulse > Gate | OOS extension |
 | `:DPT:ZOOM` | Set / Query | `BOTH`, `TURN-ON`, `TURN-OFF`. | `BOTH` | Double pulse > Zoom | OOS extension |
 | `:DPT:ITEM` | Query | `<item>[,V,I[,G]]` `VPEAK`, `IPEAK`, `EON`, `EOFF`, `TDON`, `TR`, `TDOFF`, `TF`, `QRR`. | `9.9E37` | Double pulse > Read double-pulse figures | OOS extension |

@@ -577,7 +577,16 @@ impl Ui {
         let id = if self.record_mode() { WaveId::Ref(self.ref_sel) } else { WaveId::Ch(self.m.active) };
         available(id).then_some(id)
     }
+    /// The trace the cursors measure: the one picked in the cursor menu, else the selected one.
+    pub(super) fn cursor_wave(&self) -> Option<WaveId> {
+        let available = |id| match id {
+            WaveId::Ch(c) => c < n_ch() && self.m.ch[c].on,
+            WaveId::Ref(i) => self.refs.get(i).is_some_and(Option::is_some),
+        };
+        self.cursor_pin.filter(|&id| available(id)).or_else(|| self.selected_workspace_source())
+    }
     pub(super) fn select_workspace_source(&mut self, id: WaveId) {
+        self.cursor_pin = None;
         self.workspace.selected_source = Some(id);
         match id { WaveId::Ch(c) => self.m.active = c, WaveId::Ref(i) => self.ref_sel = i }
         self.meas_src = id;
@@ -590,10 +599,10 @@ impl Ui {
         }
     }
     pub(super) fn cursor_badge(&self) -> Option<(String, Rgb)> {
-        self.selected_workspace_source().map(|id| (self.wave_name(id), self.wave_color(id)))
+        self.cursor_wave().map(|id| (self.wave_name(id), self.wave_color(id)))
     }
     pub(super) fn cursor_source_context(&self) -> Option<(WaveId, f32, f32, &'static str)> {
-        let id = self.selected_workspace_source()?;
+        let id = self.cursor_wave()?;
         let (scale, offset, unit) = match id {
             WaveId::Ch(c) => (self.m.ch[c].volts_per_div(), self.m.ch[c].offset, self.m.unit(c)),
             WaveId::Ref(i) => { let r = self.refs[i].as_ref()?; (r.vpd, r.offset, "V") },
@@ -636,7 +645,7 @@ impl Ui {
         // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane
         let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on && !self.record_mode()).map(Trace::Channel).collect();
         sources.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(Trace::Reference));
-        sources.extend((0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).map(Trace::Math));
+        sources.extend((0..NMATH).filter(|&k| self.m.math_shown(k)).map(Trace::Math));
         sources
     }
     pub(super) fn source_area(&self, id: WaveId) -> Option<Rect> {

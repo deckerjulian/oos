@@ -12,7 +12,7 @@ Part of the [SCPI reference](README.md).
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:REFerence:SLOT` | Set / Query | `R1..R10` Choose the destination/working slot. | `R1` | Reference > Slot select | OOS extension |
+| `:REFerence:SLOT` | Set / Query | `R1..R10` Choose the destination/working slot. | `R1` | Reference > Slot | OOS extension |
 | `:REFerence:LOAD` | Action | `"path"` Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. | - | Reference > Import (load file) | OOS extension |
 | `:REFerence:IMPort` | Action | `["path"]` Load named file, or the selected `refN` file beside setups. | - | Reference > Import (load file) | OOS extension |
 | `:REFerence:SAVE` | Action | Copy the selected acquired channel record into the selected reference slot. Does not write a waveform file. | - | Reference > Save to slot | OOS extension |
@@ -26,10 +26,10 @@ Part of the [SCPI reference](README.md).
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `:REFerence:SHOW` | Set / Query | `[<slot>,]ON\|OFF` Visibility of one slot; DISPlay aliases SHOW. Query accepts a slot number. | `0` | Reference > Show / hide per slot | OOS extension |
-| `:REFerence:VSCale` | Set / Query | `[<slot>,]<V/div>` Display scale of a loaded reference; stored samples are unchanged. | - | Reference > Scale / offset | OOS extension |
-| `:REFerence:VOFFset` | Set / Query | `[<slot>,]<V>` Display offset of a loaded reference. | - | Reference > Scale / offset | OOS extension |
+| `:REFerence:VSCale` | Set / Query | `[<slot>,]<V/div>` Display scale of a loaded reference; stored samples are unchanged. | - | Reference > Slot scale | OOS extension |
+| `:REFerence:VOFFset` | Set / Query | `[<slot>,]<V>` Display offset of a loaded reference. | - | Reference > Slot offset | OOS extension |
 | `:REFerence:LABel:CONTent` | Set / Query | `[<slot>,]<text>` Reference display label. | - | Reference > Name | OOS extension |
-| `:REFerence:COLor` | Set / Query | Color of the selected or explicit slot: `GRAY`, `WHITe`, `RED`, `GREen`, `BLUE`, `ORANge`, `VIOLet`. | - | Reference > Color | OOS extension |
+| `:REFerence:COLor` | Set / Query | Color of the selected or explicit slot: `GRAY`, `WHITe`, `RED`, `GREen`, `BLUE`, `ORANge`, `VIOLet`. | - | Reference > Slot color | OOS extension |
 | `:REFerence:RESet` | Action | Reset the reference display scale; recorded samples and native timing are retained. | - | Reference > Scale / offset | OOS extension |
 
 ### Look and horizontal scale (Studio)

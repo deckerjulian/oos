@@ -975,7 +975,7 @@ impl Ui {
         self.studio.eye_full = place == EyePlace::Full;
         if place == EyePlace::Full { self.workspace.eye_float = None; self.workspace.eye_left = false; }
         self.m.eye_place = place;
-        if place == EyePlace::Under && self.eye_below() == 0 {
+        if place == EyePlace::Under && self.eye_open() && !self.dock_on() && self.eye_below() == 0 {
             self.m.eye_place = EyePlace::Side;
             self.toast("Eye stays beside the trace: not enough room below. Hide the logic lanes or measurements to use Under.");
         }

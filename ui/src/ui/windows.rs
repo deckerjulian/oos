@@ -26,7 +26,7 @@ impl Ui {
         if self.m.win_layout != WinLayout::One {
             v.extend((0..n_ch()).filter(|&c| self.m.ch[c].on).map(Item::WinCh));
             v.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(Item::WinRef));
-            v.extend((0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).map(Item::WinMath));
+            v.extend((0..NMATH).filter(|&k| self.m.math_shown(k)).map(Item::WinMath));
             if self.m.la_on() {
                 v.push(Item::WinLa);
             }
