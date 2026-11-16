@@ -6,7 +6,7 @@
 use oos_dsp::math::Window;
 use oos_dsp::sim::sample;
 use oos_dsp::spectrum::{self, Detector, Settings, Trace};
-use std::f64::consts::PI;
+use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
 /// Deterministic Gaussian noise (xorshift + Box-Muller), standard deviation `sigma`.
 struct Gauss(u64);
@@ -605,8 +605,8 @@ fn power_rl_load_phase_and_reactive_power() {
     let q = power::quality(&v, &i, dt, Some(50.0));
     let s = 325.0 / 2f64.sqrt() * ip / 2f64.sqrt();
     assert!(close(q.phase_deg, 45.0, 0.2), "{:?}", q);
-    assert!(close(q.pf, 0.70711, 0.003), "{:?}", q);
-    assert!(close(q.s_apparent, s, 0.5) && close(q.p_real, s * 0.70711, 2.0) && close(q.q_reactive, s * 0.70711, 2.0), "{:?}", q);
+    assert!(close(q.pf, FRAC_1_SQRT_2, 0.003), "{:?}", q);
+    assert!(close(q.s_apparent, s, 0.5) && close(q.p_real, s * FRAC_1_SQRT_2, 2.0) && close(q.q_reactive, s * FRAC_1_SQRT_2, 2.0), "{:?}", q);
     // capacitive: negative phase and reactive power
     let i = sample(|t| ip * (w * t + PI / 6.0).sin(), 0.0, dt, 10_000);
     let q = power::quality(&v, &i, dt, None);
