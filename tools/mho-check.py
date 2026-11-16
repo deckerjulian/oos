@@ -20,6 +20,13 @@ What it does on the scope:
   each change. The settings it changes are read first, set back at the end and read again (R16 says whether every one
   is as before). --no-scpi leaves the settings alone and skips those checks.
 
+With --map it runs no checks but maps the front ends and the sample path: it steps through the vertical settings of
+the four channels (scale, offset, coupling, bandwidth limit; with --fifty also 50 ohm on CH1), the time base and the
+trigger level over SCPI, and after each step records what changed in the FPGA's configuration registers (only those
+the stock system writes itself, read back), in the GPIO lines (/sys/kernel/debug/gpio: the front ends' select
+lines), in the ADC bridge word, and in the kernel log. It writes mho-map-<model>-<date>.txt. Nothing may be connected
+to the inputs; the settings are set back at the end as above.
+
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
 """
@@ -511,11 +518,12 @@ def same_setting(a, b):
         return a.strip().upper() == b.strip().upper()
 
 
-def restore(scpi, rep, keep):
+def restore(scpi, rep, keep, cmds=None):
     """Every setting written back one by one, each refusal named, then read again and compared with before."""
+    cmds = RESTORE if cmds is None else cmds
     scpi.errors()
     refused, differ = [], []
-    for cmd in RESTORE:
+    for cmd in cmds:
         v = keep.get(cmd + "?")
         if not v:
             continue
@@ -526,7 +534,7 @@ def restore(scpi, rep, keep):
             refused.append(f"{cmd} {w}: {'; '.join(err)}")
     scpi.write(":STOP" if keep.get(":TRIGger:STATus?", "").upper().startswith("STOP") else ":RUN")
     time.sleep(1.5)
-    for cmd in RESTORE:
+    for cmd in cmds:
         v = keep.get(cmd + "?")
         if v:
             now = scpi.query(cmd + "?")
@@ -539,6 +547,204 @@ def restore(scpi, rep, keep):
           + "; ".join(refused + differ))
 
 
+# ---- --map: what the stock system sets in the FPGA and on the GPIOs for each front-panel setting ----
+
+# Configuration registers the stock system writes, read back after each step (it reads them only; reading back a
+# setting has no effect on the FPGA). No status, counter or FIFO register is among them.
+MAP_REGS = [
+    (0x1004, "ADC order, channel filter"), (0x1014, "ADC bit range, calibration select"),
+    (0x1058, "ADC gain fine"), (0x105c, "ADC gain"),
+    (0x10d0, "sample rate 0"), (0x10d4, "sample rate 1"), (0x10d8, "sample rate 2"), (0x10dc, "anti-alias"),
+    (0x10e0, "segment size"), (0x10e4, "record depth"),
+    (0x1120, "delay coarse 0"), (0x1124, "delay coarse 1"), (0x1128, "delay fine 0"), (0x112c, "delay fine 1"),
+    (0x1154, "interpolation enable"), (0x1158, "linear interpolation 1"), (0x115c, "linear interpolation 2"),
+    (0x1160, "linear interpolation 3"), (0x1164, "linear interpolation 4"), (0x1168, "interpolation factor"),
+    (0x1328, "acquisition delay"),
+    (0x1408, "probe offset DAC CH1"), (0x140c, "probe offset DAC CH2"), (0x1410, "probe offset DAC CH3"),
+    (0x1414, "probe offset DAC CH4"),
+    (0x1418, "AFE offset CH1"), (0x141c, "AFE offset CH2"), (0x1420, "AFE offset CH3"), (0x1424, "AFE offset CH4"),
+    (0x1428, "DAC polling"), (0x142c, "probe power"),
+    (0x14c8, "analog gain CH1"), (0x14d0, "analog offset CH1"), (0x14d4, "analog gain CH2"),
+    (0x14dc, "analog offset CH2"), (0x14e0, "analog gain CH3"), (0x14e8, "analog offset CH3"),
+    (0x14ec, "analog gain CH4"), (0x14f4, "analog offset CH4"),
+    (0x155c, "gain after the ADC A"), (0x1560, "offset 1 after the ADC A"), (0x1564, "offset 2 after the ADC A"),
+    (0x1568, "gain after the ADC B"), (0x156c, "offset 1 after the ADC B"), (0x1570, "offset 2 after the ADC B"),
+    (0x1574, "offset bypass and mode"),
+    (0x2004, "trigger level A 0"), (0x2008, "trigger level B 0"), (0x200c, "trigger level A 1"),
+    (0x2010, "trigger level B 1"), (0x201c, "trigger A 0"), (0x2020, "trigger A 1"), (0x2024, "trigger A 2"),
+    (0x2028, "trigger A 3"), (0x20b8, "trigger level A 2"), (0x20bc, "trigger level B 2"),
+    (0x20c0, "trigger level A 3"), (0x20c4, "trigger level B 3"), (0x2264, "external trigger hysteresis"),
+    (0x4008, "SCU mode"), (0x4050, "pre-trigger samples"), (0x4054, "post-trigger samples"),
+    (0x10100, "PWM 0"), (0x10108, "PWM 1"), (0x10120, "DAC sync"),
+]
+# How often the last ADC bridge word (0x3000) is read while a setting changes: it shows some of the ADC register
+# writes the change makes (the data as written, with the stock system's mask applied).
+ADC_POLLS = 120
+ADC_SPI_WORD = 0x3000
+MAC_RE = re.compile(r"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b")
+
+
+def map_steps(fifty=False):
+    """[(label, [SCPI commands])]: the steps of --map, in order. Every step starts from the state the one before left;
+    the first sets the base: CH1 alone, DC, 1 MOhm, no bandwidth limit, no offset, 1 V/div, 1 us/div, edge trigger
+    on CH1 at 0 V."""
+    base = [":CHANnel1:DISPlay ON", ":CHANnel2:DISPlay OFF", ":CHANnel3:DISPlay OFF", ":CHANnel4:DISPlay OFF",
+            ":CHANnel1:COUPling DC", ":CHANnel1:BWLimit OFF", ":CHANnel1:SCALe 1", ":CHANnel1:OFFSet 0",
+            ":TIMebase:MAIN:SCALe 1e-6", ":TRIGger:MODE EDGE", ":TRIGger:EDGE:SOURce CHANnel1",
+            ":TRIGger:EDGE:LEVel 0", ":RUN"]
+    steps = [("base", base)]
+    for v in ("0.0005", "0.001", "0.002", "0.005", "0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10"):
+        steps.append((f"CH1 {v} V/div", [f":CHANnel1:SCALe {v}"]))
+    steps.append(("CH1 0.1 V/div", [":CHANnel1:SCALe 0.1"]))
+    for o in ("-0.3", "0.3", "0"):
+        steps.append((f"CH1 offset {o} V", [f":CHANnel1:OFFSet {o}"]))
+    for c in ("AC", "GND", "DC"):
+        steps.append((f"CH1 coupling {c}", [f":CHANnel1:COUPling {c}"]))
+    for b in ("20M", "OFF"):
+        steps.append((f"CH1 bandwidth limit {b}", [f":CHANnel1:BWLimit {b}"]))
+    if fifty:
+        for v in ("0.01", "0.1", "1"):
+            steps.append((f"CH1 50 ohm {v} V/div", [":CHANnel1:IMPedance FIFTy", f":CHANnel1:SCALe {v}"]))
+        steps.append(("CH1 1 MOhm", [":CHANnel1:IMPedance OMEG", ":CHANnel1:SCALe 0.1"]))
+    for n in (2, 3, 4):
+        steps.append((f"CH{n} on, 1 V/div", [f":CHANnel{n}:DISPlay ON", f":CHANnel{n}:SCALe 1"]))
+        steps.append((f"CH{n} 0.01 V/div", [f":CHANnel{n}:SCALe 0.01"]))
+        steps.append((f"CH{n} off", [f":CHANnel{n}:DISPlay OFF"]))
+    for t in ("2e-9", "1e-8", "1e-7", "1e-6", "1e-5", "1e-4", "1e-3"):
+        steps.append((f"time base {t} s/div", [f":TIMebase:MAIN:SCALe {t}"]))
+    steps.append(("time base 1e-6 s/div, CH1+2", [":TIMebase:MAIN:SCALe 1e-6", ":CHANnel2:DISPlay ON"]))
+    steps.append(("CH1 to CH4", [":CHANnel3:DISPlay ON", ":CHANnel4:DISPlay ON"]))
+    steps.append(("CH1 alone", [":CHANnel2:DISPlay OFF", ":CHANnel3:DISPlay OFF", ":CHANnel4:DISPlay OFF"]))
+    for lv in ("-0.2", "0.2", "0"):
+        steps.append((f"trigger level {lv} V at 0.1 V/div", [f":TRIGger:EDGE:LEVel {lv}"]))
+    return steps
+
+
+def map_restore_list(fifty=False):
+    """The settings --map changes, in the order they are set back: the impedance before the scale, the scale before
+    the offset and the trigger level."""
+    out = []
+    for n in range(1, 5):
+        out += [f":CHANnel{n}:IMPedance"] if fifty and n == 1 else []
+        out += [f":CHANnel{n}:COUPling", f":CHANnel{n}:BWLimit", f":CHANnel{n}:SCALe", f":CHANnel{n}:OFFSet",
+                f":CHANnel{n}:DISPlay"]
+    return out + [":TIMebase:MAIN:SCALe", ":TRIGger:MODE", ":TRIGger:EDGE:SOURce", ":TRIGger:EDGE:LEVel"]
+
+
+def gpio_lines(text):
+    """{gpio number: "label dir value"} from /sys/kernel/debug/gpio (lines ` gpio-120 (label) in  lo`)."""
+    out = {}
+    for line in text.splitlines():
+        m = re.match(r"\s*gpio-(\d+)\s+\((.*?)\)\s+(.*)$", line)
+        if m:
+            out[int(m.group(1))] = f"({m.group(2).strip()}) {' '.join(m.group(3).split())}"
+    return out
+
+
+def changes(before, after, fmt=str, key=str):
+    """["key: old -> new"] for the keys whose value differs."""
+    return [f"{key(k)}: {fmt(before.get(k))} -> {fmt(after.get(k))}"
+            for k in sorted(set(before) | set(after)) if before.get(k) != after.get(k)]
+
+
+def log_after(text, t0):
+    """(lines of the kernel log after time t0, the last time stamp), MAC-like words masked."""
+    new, last = [], t0
+    for line in text.splitlines():
+        m = LOG_RE.match(line.strip())
+        if m and float(m.group(1)) > t0:
+            new.append(MAC_RE.sub("<mac>", line.strip()))
+            last = max(last, float(m.group(1)))
+    return new, last
+
+
+def map_state(adb):
+    regs = adb.regs([a for a, _ in MAP_REGS])
+    gpio = gpio_lines(adb.sh("cat /sys/kernel/debug/gpio"))
+    return regs, gpio
+
+
+def run_map(adb, scpi, out, fifty):
+    """Each step of map_steps: the commands, the ADC bridge words seen meanwhile, then the registers, the GPIOs and
+    the kernel log, as changes against the step before. `out` collects the lines of the report."""
+    names = dict(MAP_REGS)
+    keep = {}
+    cmds = map_restore_list(fifty)
+    for c in cmds + [":TRIGger:STATus"]:
+        keep[c + "?"] = scpi.query(c + "?")
+    out.append("settings before: " + "; ".join(f"{k} {v}" for k, v in keep.items()))
+    _, t0 = log_after(adb.sh("dmesg | tail -n 1"), 0.0)
+    regs, gpio = map_state(adb)
+    out += ["", "## registers before the first step"]
+    out += [f"0x{a:05x} {hx(regs.get(a))} {n}" for a, n in MAP_REGS]
+    out += ["", "## GPIOs before the first step"] + [f"gpio-{k} {v}" for k, v in sorted(gpio.items())]
+    if not gpio:
+        out.append("(none: /sys/kernel/debug/gpio not readable; adb root?)")
+    table = []
+    rep = Report()
+    try:
+        scpi.errors()
+        for i, (label, commands) in enumerate(map_steps(fifty)):
+            print(f"  {i:2} {label}")
+            poll = subprocess.Popen(["adb", "-s", adb.target, "shell", remote_read_command([ADC_SPI_WORD] * ADC_POLLS)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for c in commands:
+                scpi.write(c)
+            err = scpi.errors()
+            words = []
+            for w in READ_RE.findall(poll.communicate(timeout=120)[0]):
+                v = int(w[1], 16)
+                if not words or words[-1] != v:
+                    words.append(v)
+            time.sleep(1.0)
+            r2, g2 = map_state(adb)
+            log, t0 = log_after(adb.sh("dmesg | tail -n 40"), t0)
+            now = {"V/div": scpi.query(":CHANnel1:SCALe?"), "s/div": scpi.query(":TIMebase:MAIN:SCALe?"),
+                   "Sa/s": scpi.query(":ACQuire:SRATe?")}
+            out += ["", f"## step {i}: {label}", "commands: " + "; ".join(commands),
+                    "now: " + ", ".join(f"{k} {v}" for k, v in now.items())]
+            if err:
+                out.append("SCPI errors: " + "; ".join(err))
+            out += ["register " + c + f"  ({names.get(int(c.split(':')[0], 16), '')})"
+                    for c in changes(regs, r2, hx, lambda a: f"0x{a:05x}")]
+            out += ["gpio-" + c for c in changes(gpio, g2)]
+            if len(words) > 1:
+                out.append("ADC bridge words: " + " ".join(f"{w:08x}" for w in words))
+            out += ["kernel: " + line for line in log]
+            table.append(f"{i};{label};" + ";".join(f"{r2.get(a, 0):x}" for a, _ in MAP_REGS))
+            regs, gpio = r2, g2
+    finally:
+        restore(scpi, rep, keep, cmds)
+        out += ["", "## settings set back"] + [f"{s} {k} {t}: {d}" for k, t, s, d in rep.results]
+    out += ["", "## registers per step (hex)", "step;label;" + ";".join(f"{a:x}" for a, _ in MAP_REGS)] + table
+
+
+def map_main(a, adb):
+    if not adb.is_root():
+        return "--map needs adb root (the GPIO states and the kernel log); nothing done"
+    if not a.yes:
+        ans = input("--map changes the vertical settings of CH1 to CH4, the time base and the trigger level over SCPI "
+                    "for about 3 minutes and sets them back. Nothing may be connected to the inputs"
+                    + (", and CH1 goes to 50 ohm" if a.fifty else "") + ". Go on? [y/N] ")
+        if ans.strip().lower() not in ("y", "yes", "j", "ja"):
+            return "declined; nothing done"
+    scpi = Scpi(a.host, a.scpi_port)
+    idn = idn_without_serial(scpi.query("*IDN?"))
+    code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
+    out = [f"mho-check {VERSION} --map (OOS tools/mho-check.py), {datetime.datetime.now():%Y-%m-%d %H:%M}",
+           f"instrument: {idn}", f"hardware code: {code}", f"FPGA version: {hx(adb.regs([0x0004]).get(0x0004))}",
+           "Each step lists what changed against the step before: configuration registers, GPIO lines, words seen in "
+           "the ADC SPI bridge (0x3000) while the setting changed, and kernel log lines.", ""]
+    print("steps:")
+    run_map(adb, scpi, out, a.fifty)
+    model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else "MHO900").replace(" ", "")
+    name = f"mho-map-{model}-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
+    with open(name, "w") as f:
+        f.write("\n".join(out) + "\n")
+    print(f"written: {name} - please attach it to the GitHub issue")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("host")
@@ -546,6 +752,10 @@ def main():
     ap.add_argument("--scpi-port", type=int, default=5555)
     ap.add_argument("--no-scpi", action="store_true", help="read only; leave the scope's settings alone")
     ap.add_argument("--yes", action="store_true", help="do not ask before changing settings over SCPI")
+    ap.add_argument("--map", action="store_true",
+                    help="instead of the checks: step through vertical, time base and trigger settings and record "
+                         "what the stock system sets for each (about 3 minutes; nothing connected to the inputs)")
+    ap.add_argument("--fifty", action="store_true", help="with --map: CH1 at 50 ohm too (CH1 must be unconnected)")
     a = ap.parse_args()
 
     adb = Adb(f"{a.host}:{a.adb_port}")
@@ -557,6 +767,9 @@ def main():
         sys.exit("this is not an MHO900 under its stock system (no sparrow3 image in /rigol/FPGA); nothing done")
     if "pcie2dev" not in adb.sh(f"ls {PCIE2DEV}"):
         sys.exit(f"{PCIE2DEV} is missing; nothing done")
+
+    if a.map:
+        sys.exit(map_main(a, adb))
 
     rep = Report()
     root = adb.is_root()

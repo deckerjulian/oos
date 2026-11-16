@@ -201,7 +201,24 @@ Registers are read with the stock tool `/rigol/tools/pcie2dev`, always with exac
 given two), and only at addresses the stock system uses itself: a read of an address the FPGA does not decode could
 stop the processor. The settings it changes over SCPI are read first and set back at the end; `--no-scpi` leaves
 them alone and skips R5 to R15. Not covered: the read-out stream itself, the interleave of the words and the ADC
-bridge's writes (they would need the application stopped or writes to the hardware).
+bridge's writes in full (they would need the application stopped or writes to the hardware).
+
+`tools/mho-check.py <scope-ip> --map` runs none of the checks but maps what section 8 leaves open about the front ends
+and the sample path. It steps through about 50 settings with nothing connected to the inputs: the scale of CH1 from
+500 uV/div to 10 V/div, its offset, coupling and bandwidth limit, each other channel on at two scales, the time base
+from 2 ns/div to 1 ms/div with one, two and four channels, and the trigger level (`--fifty` adds CH1 at 50 ohm).
+After each step it records what changed against the step before:
+
+- the FPGA's configuration registers that the stock system writes itself (analog gain and offset per channel, the
+  gain and offsets after the ADC, the AFE and probe offset DACs, sample rate, interpolation, delays, trigger levels,
+  the PWM outputs), read back with `pcie2dev`;
+- the GPIO lines of `/sys/kernel/debug/gpio`, among them the front ends' select lines;
+- the words seen in the ADC bridge (0x3000) while the setting changed, about 120 reads: some of the ADC register
+  writes the change makes, as written (with the stock system's mask applied);
+- new lines of the kernel log.
+
+The settings it changes are read first and set back one by one at the end, and compared again. The report,
+`mho-map-<model>-<date>.txt`, ends with every register per step as a table.
 
 ## 8. Open at the bench
 
