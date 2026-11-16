@@ -261,9 +261,8 @@ pub fn psk(pass: &str, ssid: &[u8]) -> [u8; 32] {
     out
 }
 
-pub fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{:02x}", x)).collect()
-}
+/// Lower-case hex of bytes (the SSID and key form of wpa_supplicant).
+pub use crate::update::hash::hex;
 
 /// What is wrong with a password (printable ASCII of 8 to 63 characters), None when it is fine.
 pub fn pass_problem(p: &str) -> Option<String> {

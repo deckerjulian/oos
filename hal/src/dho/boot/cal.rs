@@ -8,17 +8,7 @@
 
 use crate::dho::adc::CalAdc;
 
-/// CRC-32 (IEEE 802.3, reflected, as zlib.crc32).
-pub fn crc32(d: &[u8]) -> u32 {
-    let mut c = 0xffff_ffffu32;
-    for &b in d {
-        c ^= b as u32;
-        for _ in 0..8 {
-            c = if c & 1 != 0 { (c >> 1) ^ 0xedb8_8320 } else { c >> 1 };
-        }
-    }
-    !c
-}
+pub use crate::crc32;
 
 /// Payload of a cal container if the length and the crc32 are right.
 pub fn payload(d: &[u8]) -> Option<&[u8]> {
