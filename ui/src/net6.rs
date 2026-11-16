@@ -18,16 +18,10 @@ pub const PREFIX_MIN: u8 = 48;
 /// `net.ipv6` (OOS_IPV6 overrides it), read once.
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_IPV6").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        enabled_from(env, &crate::sysconf::fork_text())
-    })
+    *ON.get_or_init(|| FLAG.get())
 }
 
-/// `env` if set, else the `net.ipv6` line of `conf`; off unless `on`.
-pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "net.ipv6").as_deref() == Some("on")
-}
+const FLAG: crate::sysconf::Flag = crate::sysconf::Flag { key: "net.ipv6", env: Some("OOS_IPV6"), on: "on" };
 
 /// `bind` on `[::]:port` when `v6`, else (or when IPv6 is not there) on `0.0.0.0:port`.
 pub fn bind_any<T>(v6: bool, port: u16, bind: impl Fn(SocketAddr) -> std::io::Result<T>) -> Option<T> {
@@ -70,8 +64,7 @@ mod tests {
 
     #[test]
     fn switch_and_prefixes() {
-        assert!(!enabled_from(None, ""), "off by default");
-        assert!(enabled_from(None, "net.ipv6 = on\n") && !enabled_from(Some("off"), "net.ipv6 = on\n"));
+        FLAG.check_both_files();
         let p = parse_prefixes("2001:db8:1:2::/64\nfd00:1::/56 10.0.0.0/8 2000::/3 x/64 2001:db8::/129 ::1/128\n");
         let want: Vec<(Ipv6Addr, u8)> = vec![("2001:db8:1:2::".parse().unwrap(), 64), ("fd00:1::".parse().unwrap(), 56), ("::1".parse().unwrap(), 128)];
         assert_eq!(p, want);

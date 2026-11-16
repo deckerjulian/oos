@@ -17,9 +17,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
-/// The image default of the system settings (an image built for one unit, boot/build-dev-image.sh `OOS_UNIT`).
-pub const IMAGE_CONF: &str = "/etc/oos/system.conf";
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Acl {
     nets: Vec<(IpAddr, u8)>,
@@ -32,20 +29,6 @@ pub const ONLINK6: &str = "onlink6";
 
 /// Longest `net.allow` taken from the keyboard (System > Network > Remote services > Allowed).
 pub const ALLOW_MAX: usize = 160;
-
-/// The value of `key` in the text of a `key = value` file: the last line wins, `#` starts a comment.
-pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    text.lines()
-        .filter_map(|l| {
-            let l = l.trim();
-            if l.starts_with('#') {
-                return None;
-            }
-            let (k, v) = l.split_once('=')?;
-            (k.trim() == key).then(|| v.split(" #").next().unwrap_or("").trim())
-        })
-        .last()
-}
 
 /// The same address with only the first `bits` bits.
 fn masked(ip: IpAddr, bits: u8) -> IpAddr {
@@ -112,7 +95,8 @@ impl Acl {
     /// From the image default and the settings file (the file wins, also with an empty value). A list that names
     /// something but of which nothing parses closes everything but loopback rather than opening it.
     pub fn from_texts(image: Option<&str>, settings: Option<&str>) -> (Acl, Vec<String>) {
-        let v = settings.and_then(|t| value(t, "net.allow")).or_else(|| image.and_then(|t| value(t, "net.allow"))).unwrap_or("");
+        let v = settings.and_then(|t| crate::sysconf::value(t, "net.allow"));
+        let v = v.or_else(|| image.and_then(|t| crate::sysconf::value(t, "net.allow"))).unwrap_or("");
         Acl::from_value(v)
     }
 
@@ -125,9 +109,9 @@ impl Acl {
         (acl, bad)
     }
 
-    /// `IMAGE_CONF` and the settings file `path` (sysconf); problems go to the log.
+    /// The image defaults (`sysconf::IMAGE_PATH`) and the settings file `path`; problems go to the log.
     pub fn load(path: &Path) -> Acl {
-        let image = std::fs::read_to_string(IMAGE_CONF).ok();
+        let image = std::fs::read_to_string(crate::sysconf::IMAGE_PATH).ok();
         let settings = std::fs::read_to_string(path).ok();
         let (acl, bad) = Acl::from_texts(image.as_deref(), settings.as_deref());
         for b in bad {
@@ -325,7 +309,6 @@ mod tests {
         // an empty value in the settings switches the image default off
         let (a, _) = Acl::from_texts(Some(image), Some("net.allow =\n"));
         assert!(a.is_open());
-        assert_eq!(value("a = 1\n#a = 2\na = 3 # c\n", "a"), Some("3"));
     }
 
     // Break it catches: an entry from the screen stored with a word the firewall leaves out (a list of which nothing

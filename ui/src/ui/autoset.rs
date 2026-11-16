@@ -64,7 +64,7 @@ fn unit_levels_on() -> bool {
 
 /// `env` if set, else the `autoset.levels` line of `conf`: the measure unit only with `unit`.
 fn unit_levels_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "autoset.levels").as_deref() == Some("unit")
+    crate::sysconf::setting_of(env, conf, "autoset.levels") == Some("unit")
 }
 
 /// What the measure-unit step did (`Ui::auto_unit`).

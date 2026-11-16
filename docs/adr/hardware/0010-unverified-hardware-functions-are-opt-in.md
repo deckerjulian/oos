@@ -19,7 +19,8 @@ working on a unit; the document of the function says which unit and when.
 
 Keys of this kind at the time of writing: `autoset.levels = unit`, `acq.prearm = on`, `acq.pipeline = batch` (ADR 0004).
 
-The keys on 2026-11-15, as read by the code (`crate::drawpipe::conf_value`; the list above had missed four):
+The keys on 2026-11-15, as read by the code (`crate::sysconf::flag` and `setting_of`, until 2026-11-16
+`crate::drawpipe::conf_value`; the list above had missed four):
 
 | Key | Function | State |
 |---|---|---|

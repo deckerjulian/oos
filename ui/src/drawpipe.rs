@@ -234,15 +234,9 @@ pub enum Mode {
     Batch,
 }
 
-/// `env` if set, else the value of `key` in system.conf text `conf` (a fork key: kept by `SysConf` as an unknown line).
-pub fn conf_value(env: Option<&str>, conf: &str, key: &str) -> Option<String> {
-    let conf_val = conf.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(k, _)| k.trim() == key).map(|(_, v)| v.trim().to_string());
-    env.map(str::to_string).or(conf_val)
-}
-
 /// OOS_PIPELINE, else the `acq.pipeline` line of system.conf, else `frames`.
 pub fn mode_from(env: Option<&str>, conf: &str) -> Mode {
-    match conf_value(env, conf, "acq.pipeline").as_deref() {
+    match crate::sysconf::setting_of(env, conf, "acq.pipeline") {
         Some("batch") => Mode::Batch,
         _ => Mode::Frames,
     }

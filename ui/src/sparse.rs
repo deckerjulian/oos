@@ -166,7 +166,7 @@ pub enum Interp {
 
 /// OOS_INTERP, else the `acq.interp` line of system.conf, else `exact`.
 pub fn interp_from(env: Option<&str>, conf: &str) -> Interp {
-    match crate::drawpipe::conf_value(env, conf, "acq.interp").as_deref() {
+    match crate::sysconf::setting_of(env, conf, "acq.interp") {
         Some("fast") => Interp::Fast,
         _ => Interp::Exact,
     }

@@ -560,7 +560,7 @@ mod tests {
         assert!(u.wlan.osk.is_none());
         assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24 fd00::/8, in force");
         let text = std::fs::read_to_string(&p).unwrap();
-        assert_eq!(netacl::value(&text, "net.allow"), Some("192.0.2.0/24 fd00::/8"));
+        assert_eq!(crate::sysconf::value(&text, "net.allow"), Some("192.0.2.0/24 fd00::/8"));
         let (acl, bad) = netacl::Acl::from_texts(None, Some(&text));
         assert!(bad.is_empty() && acl.permits(ip("192.0.2.9")) && !acl.permits(ip("198.51.100.1")));
         assert_eq!(crate::sysconf::SysConf::load(&p).net_allow(), "192.0.2.0/24 fd00::/8");
@@ -586,7 +586,7 @@ mod tests {
         assert!(u.wlan.osk.is_none());
         assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
         assert_eq!(u.value(Item::RemFirewall), "off: everyone");
-        assert_eq!(netacl::value(&std::fs::read_to_string(&p).unwrap(), "net.allow"), None);
+        assert_eq!(crate::sysconf::value(&std::fs::read_to_string(&p).unwrap(), "net.allow"), None);
         assert!(servers.permits(ip("203.0.113.5")));
         // a save that fails changes nothing: neither the setting nor the servers' list
         let blocked = dir.join("a-file");

@@ -49,17 +49,11 @@ pub fn enabled() -> bool {
         return on;
     }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_DEEP_RAW").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        enabled_from(env, &conf)
-    })
+    *ON.get_or_init(|| !OFF.get())
 }
 
-/// `env` if set, else the `meas.deep_raw` line of `conf`; on unless `off`.
-pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "meas.deep_raw").as_deref() != Some("off")
-}
+/// Off: the switch of `enabled` reads `off`.
+const OFF: crate::sysconf::Flag = crate::sysconf::Flag { key: "meas.deep_raw", env: Some("OOS_DEEP_RAW"), on: "off" };
 
 /// The request for the model: on, and a shown measurement (or the software DVM) needs samples. Normal acquisition
 /// only: in Peak the memory holds peak pairs, not samples; Average and High res have their own records.
@@ -122,10 +116,8 @@ mod tests {
 
     #[test]
     fn asked_for_only_when_on_and_a_measurement_needs_samples() {
-        assert!(enabled_from(None, ""), "on by default");
-        assert!(!enabled_from(None, "meas.deep_raw = off\n"));
-        assert!(enabled_from(None, "meas.deep_raw = on\n"));
-        assert!(!enabled_from(Some("off"), "meas.deep_raw = on\n"));
+        OFF.check_both_files();
+        assert!(!OFF.of(None, "meas.deep_raw = on\n"));
         force(Some(true));
         let mut m = Model::default();
         m.ch[0].on = true;

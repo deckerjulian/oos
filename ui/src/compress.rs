@@ -39,12 +39,10 @@ pub const MAX_DEPTH: u32 = 1_000_000;
 /// has passed the procedure in docs/fork/compress.md.
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_COMPRESS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        enabled_from(env, &conf)
-    })
+    *ON.get_or_init(|| FLAG.get())
 }
+
+const FLAG: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.compress", env: Some("OOS_COMPRESS"), on: "on" };
 
 /// The live-compression factor of the last batch read: 1 for raw frames (`:SYSTem:STATe?` `compress k`).
 static LAST_K: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
@@ -57,10 +55,6 @@ pub fn last_k() -> u32 {
     LAST_K.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// `env` if set, else the `acq.compress` line of `conf`; off unless `on`.
-pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "acq.compress").as_deref() == Some("on")
-}
 
 /// Whether the UI leaves the newest record unmeasured: running (not Single), and the record is of live-compression
 /// pairs. Its batch's newest frame is read raw only every `RAW_PERIOD`; the measurement shown stays that of the last
@@ -498,9 +492,7 @@ mod tests {
 
     #[test]
     fn opt_in_and_the_model_conditions() {
-        assert!(!enabled_from(None, ""));
-        assert!(enabled_from(None, "acq.compress = on\n"));
-        assert!(!enabled_from(Some("off"), "acq.compress = on\n"));
+        FLAG.check_both_files();
         let mut m = Model::default();
         m.ch[0].on = true;
         assert!(allowed(&m));

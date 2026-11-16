@@ -269,13 +269,10 @@ fn avg_kind() -> oos_hal::dho::avg::Kind {
 /// matched to each other at its first configuration, and kept in OOS's own cal_adc.hex. Off by default.
 fn core_offset_tight() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| core_offset_from(&crate::sysconf::fork_text()))
+    *ON.get_or_init(|| CORE_OFFSET.get())
 }
 
-/// The `cal.core_offset` line; `tight` or not.
-fn core_offset_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "cal.core_offset").as_deref() == Some("tight")
-}
+const CORE_OFFSET: crate::sysconf::Flag = crate::sysconf::Flag { key: "cal.core_offset", env: None, on: "tight" };
 
 /// Tries per ADC mode and session: a mode whose channels sit far from mid-scale or clip is tried again at the next
 /// configurations, at most this often.
@@ -536,48 +533,39 @@ fn levels_measure(bar: &mut oos_hal::dho::bus::Bar1, s: &Settings, gain: &[f64; 
 /// OOS_TRIG_HW_STATUS=0, takes it from the software refinement instead.
 pub fn hw_status_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_TRIG_HW_STATUS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        crate::drawpipe::conf_value(env, &conf, "trig.hw_status").as_deref() != Some("off")
-    })
+    *ON.get_or_init(|| !HW_STATUS_OFF.get())
 }
+
+/// Off: the switch of `hw_status_on` reads `off`.
+const HW_STATUS_OFF: crate::sysconf::Flag =
+    crate::sysconf::Flag { key: "trig.hw_status", env: Some("OOS_TRIG_HW_STATUS"), on: "off" };
 
 /// `dvm.hw = on` in system.conf: the DVM reads the FPGA's DVM block (docs/fork/dvm.md) instead of the records. Off by
 /// default until the result layout is verified on the unit.
 pub fn dvm_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| dvm_hw_from(&crate::sysconf::fork_text()))
+    *ON.get_or_init(|| DVM_HW.get())
 }
 
-/// The `dvm.hw` line of system.conf; off unless `on`.
-fn dvm_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
-}
+const DVM_HW: crate::sysconf::Flag = crate::sysconf::Flag { key: "dvm.hw", env: None, on: "on" };
 
 /// `mask.hw = on` in system.conf: the mask test runs in the FPGA's mask unit (docs/fork/hwmask.md) and the software
 /// test only where it cannot. Off by default until the sample scale and the slots are verified on the unit.
 pub fn mask_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| mask_hw_from(&crate::sysconf::fork_text()))
+    *ON.get_or_init(|| MASK_HW.get())
 }
 
-/// The `mask.hw` line of system.conf; off unless `on`.
-fn mask_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "mask.hw").as_deref() == Some("on")
-}
+const MASK_HW: crate::sysconf::Flag = crate::sysconf::Flag { key: "mask.hw", env: None, on: "on" };
 
 /// `zone.hw = on` in system.conf: the zone trigger qualifies frames in the FPGA (docs/fork/hwzone.md) and the records
 /// are no longer filtered in software where it can. Off by default until the mapping is verified on the unit.
 pub fn zone_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| zone_hw_from(&crate::sysconf::fork_text()))
+    *ON.get_or_init(|| ZONE_HW.get())
 }
 
-/// The `zone.hw` line of system.conf; off unless `on`.
-fn zone_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "zone.hw").as_deref() == Some("on")
-}
+const ZONE_HW: crate::sysconf::Flag = crate::sysconf::Flag { key: "zone.hw", env: None, on: "on" };
 
 /// Keys of the comparator mapping in system.conf: `mask.map.<key> = <value>` (`mask::Map::set`).
 const MASK_MAP_KEYS: [&str; 8] = ["domain", "cpd", "mid", "shift", "offs", "invert", "cols", "range"];
@@ -586,7 +574,7 @@ const MASK_MAP_KEYS: [&str; 8] = ["domain", "cpd", "mid", "shift", "offs", "inve
 fn mask_map_from(conf: &str) -> oos_hal::dho::mask::Map {
     let mut m = oos_hal::dho::mask::Map::default();
     for k in MASK_MAP_KEYS {
-        if let Some(v) = crate::drawpipe::conf_value(None, conf, &format!("mask.map.{}", k)) {
+        if let Some(v) = crate::sysconf::value(conf, &format!("mask.map.{}", k)) {
             if let Err(e) = m.set(&format!("{}={}", k, v)) {
                 eprintln!("oos-ui: system.conf mask.map.{}: {}", k, e);
             }
@@ -676,13 +664,10 @@ fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Op
 /// Off by default until it is verified on the unit.
 pub fn serial_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| serial_hw_from(&crate::sysconf::fork_text()))
+    *ON.get_or_init(|| SERIAL_HW.get())
 }
 
-/// The `trig.serial_hw` line of system.conf; off unless `on`.
-fn serial_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
-}
+const SERIAL_HW: crate::sysconf::Flag = crate::sysconf::Flag { key: "trig.serial_hw", env: None, on: "on" };
 
 /// The relation of the TPU's receivers for a model relation.
 fn hw_rel(r: Rel) -> uarttrig::Relation {
@@ -939,16 +924,10 @@ fn dvm_reading(raw: &oos_hal::dho::dvm::Raw, key: DvmKey, s: &Settings, gain: &[
 ///.
 fn prearm_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let conf = crate::sysconf::fork_text();
-        prearm_from(std::env::var_os("OOS_PREARM").is_some(), &conf)
-    })
+    *ON.get_or_init(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get())
 }
 
-/// OOS_PREARM set, else the `acq.prearm` line of system.conf; off unless `on`.
-fn prearm_from(env_set: bool, conf: &str) -> bool {
-    env_set || crate::drawpipe::conf_value(None, conf, "acq.prearm").as_deref() == Some("on")
-}
+const PREARM: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.prearm", env: None, on: "on" };
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
 #[cfg(target_os = "linux")]
@@ -1146,13 +1125,10 @@ const FIRST_LEFT_MAX_S: f64 = 0.05;
 /// system.conf.
 fn frame0_drop() -> bool {
     static K: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *K.get_or_init(|| frame0_drop_from(&crate::sysconf::fork_text()))
+    *K.get_or_init(|| !FRAME0_KEEP.get())
 }
 
-/// The `acq.frame0` line of system.conf; frame 0 is left out unless `keep`.
-fn frame0_drop_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "acq.frame0").as_deref() != Some("keep")
-}
+const FRAME0_KEEP: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.frame0", env: None, on: "keep" };
 
 #[cfg(any(target_os = "linux", test))]
 /// Samples around the trigger point in which frame 1's edge must lie (`frame1_off_trigger`); the hardware puts it
@@ -1203,7 +1179,7 @@ fn zone_batch() -> u32 {
 }
 
 fn zone_batch_from(conf: &str) -> u32 {
-    crate::drawpipe::conf_value(None, conf, "zone.batch").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).clamp(1, 1000)
+    crate::sysconf::value(conf, "zone.batch").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).clamp(1, 1000)
 }
 
 /// The part of a deep record the screen shows, as a read-out window (`Settings::window`: points, first point from the
@@ -2464,15 +2440,17 @@ mod tests {
     // (/etc/oos/system.conf) do not reach it while every other switch takes them.
     #[test]
     fn the_switches_take_the_image_defaults_under_the_settings_file() {
-        use super::{frame0_drop_from, mask_map_from, serial_hw_from, zone_batch_from};
+        use super::{mask_map_from, zone_batch_from};
         use crate::sysconf::fork_text_of as both;
-        let image = "trig.serial_hw = on\nacq.frame0 = keep\nzone.batch = 8\nmask.map.mid = 100\n";
-        assert!(serial_hw_from(&both("", image)) && !frame0_drop_from(&both("", image)));
+        for f in [&CORE_OFFSET, &HW_STATUS_OFF, &DVM_HW, &MASK_HW, &ZONE_HW, &SERIAL_HW, &PREARM, &FRAME0_KEEP] {
+            f.check_both_files();
+        }
+        assert!(!DVM_HW.of(None, "dvm.hw = yes\n") && !CORE_OFFSET.of(None, "cal.core_offset = on\n"));
+        let image = "zone.batch = 8\nmask.map.mid = 100\n";
         assert_eq!((zone_batch_from(&both("", image)), mask_map_from(&both("", image)).mid), (8, 100.0));
-        let settings = "trig.serial_hw = off\nacq.frame0 = drop\nzone.batch = 2\nmask.map.mid = 120\n";
-        assert!(!serial_hw_from(&both(settings, image)) && frame0_drop_from(&both(settings, image)));
+        let settings = "zone.batch = 2\nmask.map.mid = 120\n";
         assert_eq!((zone_batch_from(&both(settings, image)), mask_map_from(&both(settings, image)).mid), (2, 120.0));
-        assert!(!serial_hw_from(&both("", "")) && frame0_drop_from(&both("", "")) && zone_batch_from(&both("", "")) == 1);
+        assert_eq!(zone_batch_from(&both("", "")), 1);
     }
 
     // Break it catches: SINGLE armed for a whole batch (248 frames at 1 us/div on the unit, all but the first unseen)
@@ -2641,7 +2619,6 @@ mod tests {
             f(&mut x);
             assert_eq!(uart_of(&x), None);
         }
-        assert!(!serial_hw_from("") && serial_hw_from("trig.serial_hw = on\n"));
         assert!(uart_debug(&m).starts_with("off,src=CH2,"), "{}", uart_debug(&m));
     }
 
@@ -2809,12 +2786,6 @@ mod tests {
     }
 
     #[test]
-    fn zone_hw_from_conf() {
-        assert!(!zone_hw_from(""));
-        assert!(zone_hw_from("zone.hw = on\n"));
-    }
-
-    #[test]
     fn mask_and_zone_merge() {
         use crate::board::{MaskWant, ZoneWant};
         let mw = MaskWant { ch: 0, lo: vec![-1.0; 1000], hi: vec![1.0; 1000], stop: false, clear: 0 };
@@ -2832,13 +2803,6 @@ mod tests {
         let mut s = Settings::default();
         hw_merge(&mut s, None, None, oos_hal::dho::mask::Map::default());
         assert!(s.hwmask.is_none() && s.hwzone.is_none() && s.aux == auxout::AuxOut::TriggerOut);
-    }
-
-    #[test]
-    fn mask_hw_from_conf() {
-        assert!(!mask_hw_from(""));
-        assert!(mask_hw_from("mask.hw = on\n"));
-        assert!(!mask_hw_from("mask.hw = 1\n"));
     }
 
     /// The software mask in the hardware table, and the comparator modelled on the read-out words (the assumed sample
@@ -2879,13 +2843,6 @@ mod tests {
         }
         let v = wave(true, 9);
         assert!(!m.test(&v).pass && fails(&v));
-    }
-
-    #[test]
-    fn dvm_hw_from_conf() {
-        assert!(!dvm_hw_from(""));
-        assert!(dvm_hw_from("dvm.hw = on # FPGA DVM\n"));
-        assert!(!dvm_hw_from("dvm.hw = yes\n"));
     }
 
     #[test]
@@ -2961,22 +2918,6 @@ mod tests {
         let p = TrimPending { mode: 2, mask: 0b100, since: t0 };
         assert!(!p.due(t0) && !p.due(t0 + TRIM_HOLD - std::time::Duration::from_millis(1)));
         assert!(p.due(t0 + TRIM_HOLD) && TRIM_HOLD >= std::time::Duration::from_secs(1));
-    }
-
-    #[test]
-    fn core_offset_from_conf() {
-        assert!(!core_offset_from(""));
-        assert!(core_offset_from("cal.core_offset = tight\n"));
-        assert!(!core_offset_from("cal.core_offset = on\n"));
-    }
-
-    #[test]
-    fn prearm_from_env_or_conf() {
-        assert!(!prearm_from(false, ""));
-        assert!(prearm_from(true, ""));
-        assert!(prearm_from(true, "acq.prearm = off\n"));
-        assert!(prearm_from(false, "ntp = off\nacq.prearm = on   # arm ahead\n"));
-        assert!(!prearm_from(false, "acq.prearm = yes\n"));
     }
 
     #[test]

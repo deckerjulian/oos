@@ -193,7 +193,7 @@ impl SysConf {
                 bad.push(format!("not key = value: {}", l));
                 continue;
             };
-            let (k, v) = (k.trim(), v.split(" #").next().unwrap_or("").trim());
+            let (k, v) = (k.trim(), uncomment(v));
             let ok = match k {
                 "ntp" => on_off(v).map(|b| c.ntp = b).is_some(),
                 "ntp.server" if v.eq_ignore_ascii_case(DHCP) => {
@@ -292,21 +292,21 @@ impl SysConf {
     pub fn image_defaults(image: &str) -> (SysConf, Vec<String>) {
         let (mut c, bad) = SysConf::parse(image);
         c.extra.clear();
-        c.image_net_allow = crate::netacl::value(image, "net.allow").map(str::to_string);
+        c.image_net_allow = value(image, "net.allow").map(str::to_string);
         (c, bad)
     }
 
     /// `net.allow` as rcS and `netacl` read it: the settings file's line (the last one, also an empty one), else the
     /// image default, else empty (no list).
     pub fn net_allow(&self) -> String {
-        let own = self.extra.iter().filter_map(|l| crate::netacl::value(l, "net.allow")).last();
+        let own = self.extra.iter().filter_map(|l| value(l, "net.allow")).last();
         own.or(self.image_net_allow.as_deref()).unwrap_or("").to_string()
     }
 
     /// Sets the settings file's `net.allow` line (a value `netacl::canonical` took); None removes it, so the image
     /// default applies again.
     pub fn set_net_allow(&mut self, v: Option<&str>) {
-        self.extra.retain(|l| crate::netacl::value(l, "net.allow").is_none());
+        self.extra.retain(|l| value(l, "net.allow").is_none());
         if let Some(v) = v {
             self.extra.push(format!("net.allow = {}", v));
         }
@@ -357,8 +357,8 @@ impl SysConf {
     }
 }
 
-/// The text the opt-in keys (`acq.*`, `perf.*`, `trig.*`, ...; `drawpipe::conf_value`) are looked up in: the settings
-/// file (`default_path`), then the image defaults (`IMAGE_PATH`). `conf_value` takes the first line of a key, so the
+/// The text the opt-in keys (`acq.*`, `perf.*`, `trig.*`, ...; `flag`, `setting_of`) are looked up in: the image
+/// defaults (`IMAGE_PATH`), then the settings file (`default_path`). `value` takes the last line of a key, so the
 /// settings file wins, also with an empty value, as `oos-conf` has it for the scripts.
 pub fn fork_text() -> String {
     fork_text_of(&std::fs::read_to_string(default_path()).unwrap_or_default(), &std::fs::read_to_string(IMAGE_PATH).unwrap_or_default())
@@ -366,7 +366,85 @@ pub fn fork_text() -> String {
 
 /// `fork_text` from the two files' text.
 pub fn fork_text_of(settings: &str, image: &str) -> String {
-    format!("{}\n{}", settings, image)
+    format!("{}\n{}", image, settings)
+}
+
+/// The end of a value: a comment starts with `#` after a space or a tab.
+fn uncomment(v: &str) -> &str {
+    v.split(" #").next().unwrap_or("").split("\t#").next().unwrap_or("").trim()
+}
+
+/// The value of `key` in the text of a `key = value` file, by the one rule of system.conf (`SysConf::parse`, `oos-conf`
+/// for the scripts): a line that starts with `#` is a comment, so is the rest of a line from a `#` after a space or a
+/// tab, and of several lines of one key the last wins.
+pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if l.starts_with('#') {
+                return None;
+            }
+            let (k, v) = l.split_once('=')?;
+            (k.trim() == key).then(|| uncomment(v))
+        })
+        .last()
+}
+
+/// `env` if set (an environment variable's value), else the value of `key` in `conf`.
+pub fn setting_of<'a>(env: Option<&'a str>, conf: &'a str, key: &str) -> Option<&'a str> {
+    env.or_else(|| value(conf, key))
+}
+
+/// An opt-in switch: whether `key` is `on_value` in system.conf (`fork_text`). The environment variable `env`, when it
+/// is set, decides instead: empty or `0` is off, anything else on (for a switch that is on unless `off`, on_value is
+/// `off` and the caller negates). Read it once (a `OnceLock`), the files do not change while the scope runs.
+pub fn flag(key: &str, env: Option<&str>, on_value: &str) -> bool {
+    flag_of(env.and_then(|e| std::env::var(e).ok()).as_deref(), &fork_text(), key, on_value)
+}
+
+/// `flag` from the environment variable's value and the text of the files.
+pub fn flag_of(env: Option<&str>, conf: &str, key: &str, on_value: &str) -> bool {
+    let env = env.map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
+    setting_of(env, conf, key) == Some(on_value)
+}
+
+/// An opt-in switch of system.conf (`flag`): its key, the environment variable that overrides it, the value that
+/// turns it on.
+pub struct Flag {
+    pub key: &'static str,
+    pub env: Option<&'static str>,
+    pub on: &'static str,
+}
+
+impl Flag {
+    /// The switch now (`flag`); read it once.
+    pub fn get(&self) -> bool {
+        flag(self.key, self.env, self.on)
+    }
+
+    /// The switch for an environment variable's value and the text of the files (`flag_of`).
+    #[cfg(test)]
+    pub fn of(&self, env: Option<&str>, conf: &str) -> bool {
+        flag_of(env, conf, self.key, self.on)
+    }
+
+    /// Holds the rule of every switch: the image defaults alone apply, the settings file wins over them (also with
+    /// another value), without a line the switch is not at its `on` value, and the environment variable overrides
+    /// both.
+    #[cfg(test)]
+    pub fn check_both_files(&self) {
+        let image = format!("# unit image\n{} = {}\n", self.key, self.on);
+        assert!(self.of(None, &fork_text_of("", &image)), "{}: the image default", self.key);
+        let settings = format!("{} = something else  # by hand\n", self.key);
+        assert!(!self.of(None, &fork_text_of(&settings, &image)), "{}: the settings file wins", self.key);
+        assert!(self.of(None, &fork_text_of(&image, "")), "{}: the settings file alone", self.key);
+        assert!(!self.of(None, &fork_text_of("", "")), "{}: no line", self.key);
+        if self.env.is_some() {
+            let set = self.of(Some("1"), &fork_text_of(&settings, ""));
+            let zero = self.of(Some("0"), &fork_text_of(&image, ""));
+            assert_eq!((set, zero), (self.on == "on", self.on == "off"), "{}: the environment variable", self.key);
+        }
+    }
 }
 
 /// `/oos/system.conf` when the data partition is there (it has `/oos/setups`), else the file in RAM.
@@ -386,7 +464,7 @@ mod tests {
     #[test]
     fn fork_keys_take_the_image_default_unless_the_settings_set_them() {
         let image = "acq.pipeline = batch\nperf.place = on\n";
-        let v = |settings: &str, k: &str| crate::drawpipe::conf_value(None, &super::fork_text_of(settings, image), k);
+        let v = |settings: &str, k: &str| super::value(&super::fork_text_of(settings, image), k).map(str::to_string);
         assert_eq!(v("", "acq.pipeline").as_deref(), Some("batch"));
         assert_eq!(v("perf.place = off\n", "perf.place").as_deref(), Some("off"));
         assert_eq!(v("acq.pipeline =\n", "acq.pipeline").as_deref(), Some(""), "an empty value in the settings wins too");
@@ -578,7 +656,7 @@ mod tests {
         assert_eq!(c.text().matches("net.allow").count(), 1);
         let (back, _) = SysConf::parse_over(base.clone(), &c.text());
         assert_eq!(back.net_allow(), "192.168.1.0/24");
-        assert_eq!(crate::netacl::value(&c.text(), "net.allow"), Some("192.168.1.0/24"));
+        assert_eq!(value(&c.text(), "net.allow"), Some("192.168.1.0/24"));
         c.set_net_allow(Some(""));
         assert_eq!(c.net_allow(), "", "an empty line wins over the image, as in oos-conf");
         c.set_net_allow(None);

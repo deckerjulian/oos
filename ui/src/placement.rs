@@ -66,12 +66,10 @@ fn little_of(cap: &[(usize, u32)]) -> Option<usize> {
 /// (any value but empty or 0; off with those).
 fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_PLACE").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        crate::drawpipe::conf_value(env, &conf, "perf.place").as_deref() == Some("on")
-    })
+    *ON.get_or_init(|| FLAG.get())
 }
+
+const FLAG: crate::sysconf::Flag = crate::sysconf::Flag { key: "perf.place", env: Some("OOS_PLACE"), on: "on" };
 
 /// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when placement is on.
 pub fn place(r: Role) {
@@ -102,6 +100,11 @@ pub fn place(r: Role) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_switch_reads_both_files() {
+        FLAG.check_both_files();
+    }
 
     fn fake_sysfs(cap: &[(usize, u32)]) -> std::path::PathBuf {
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
