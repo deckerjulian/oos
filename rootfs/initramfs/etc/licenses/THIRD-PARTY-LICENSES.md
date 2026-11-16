@@ -59,6 +59,6 @@ source of 2.43-2ubuntu2.4, the revision of the next build.
 ## Not in the image
 
 - The Windows desktop build of `oos-ui` uses the crates `minifb` and `windows-sys` and what they depend on
-  (`ui/Cargo.lock`, [docs/fork/deps.md](docs/fork/deps.md)). No binaries of it are published.
+  (`ui/Cargo.lock`, [docs/deps.md](docs/deps.md)). No binaries of it are published.
 - The stock software of the scope, its FPGA image and the calibration files are not part of OOS and not in any OOS
   image; OOS reads them on the scope.

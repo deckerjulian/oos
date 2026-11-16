@@ -29,11 +29,8 @@ if [ -n "${OOS_UNIT:-}" ]; then
 	[ -n "$mac" ] && echo "$mac" > "$stage/dtb.mac"
 fi
 [ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
-# the fork's own builds from rootfs/deps.lock (docs/fork/deps.md): built again when missing, or when the manifest line
-# or the build script changed since (deps.sh stamps)
-DEPS_LOCK="$root/rootfs/deps.lock"
-. "$root/rootfs/deps.sh"
-o="$root/rootfs/out"
+# built from rootfs/deps.lock (docs/deps.md): again when missing, or when the deps.lock lines or the build script
+# changed since (deps.sh stamps; boot/build-dev-image.sh sourced deps.sh and set o)
 # the LAN-only firewall (net.allow, docs/network.md 6)
 if dep_stale "$o/nft" "$root/rootfs/build-nft.sh" libmnl libnftnl nftables; then "$root/rootfs/build-nft.sh"; fi
 # the SSH server and its SFTP subsystem (docs/network.md 7)

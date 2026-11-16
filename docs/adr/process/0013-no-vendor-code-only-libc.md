@@ -29,4 +29,4 @@ network of packages.
 ## References
 
 [CONTRIBUTING.md](../../../CONTRIBUTING.md), [architecture.md](../../architecture.md),
-[fork/deps.md](../../fork/deps.md), ADR 0021.
+[deps.md](../../deps.md), ADR 0021. (Corrected 2026-11-16: `docs/fork/deps.md` moved to `docs/deps.md`.)

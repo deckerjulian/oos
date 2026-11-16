@@ -11,6 +11,11 @@ root=$(cd "$here/.." && pwd)
 w="${TMPDIR:-/tmp}/oos-wlan-sim"
 mkdir -p "$w"
 [ -x "$root/rootfs/out/wpa_supplicant" ] || "$root/rootfs/build-wlan-tools.sh"
+# the access points' hostapd, from rootfs/deps.lock (checked), built once into $w
+DEPS_LOCK="$root/rootfs/deps.lock"
+. "$root/rootfs/deps.sh"
+hostapd=$(dep_ver hostapd)
+[ -x "$w/hostapd" ] || dep_fetch hostapd "$w" >/dev/null
 
 (cd "$root/ui" && PATH="$HOME/.cargo/bin:$PATH" cargo test --target aarch64-unknown-linux-musl --no-run --message-format=json 2>/dev/null) \
 	| python3 -c '
@@ -84,11 +89,11 @@ echo ---- end
 poweroff -f
 INIT
 
-docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" alpine:3.22 sh -euc '
+docker run --rm --platform linux/arm64 -e HOSTAPD="$hostapd" -v "$w:/w" -v "$root/rootfs:/rootfs:ro" alpine:3.22 sh -euc '
 	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static linux-firmware-none cpio curl xz zstd >/dev/null
 	apk add --no-cache --no-scripts linux-lts >/dev/null
 	if [ ! -x /w/hostapd ]; then
-		cd /tmp && curl -fsSL https://w1.fi/releases/hostapd-2.11.tar.gz | tar -xz && cd hostapd-2.11/hostapd
+		cd /tmp && tar -xzf /w/hostapd-$HOSTAPD.tar.gz && cd hostapd-$HOSTAPD/hostapd
 		printf "CONFIG_DRIVER_NL80211=y\nCONFIG_LIBNL32=y\nCONFIG_TLS=internal\nCONFIG_INTERNAL_LIBTOMMATH=y\nCONFIG_NO_RANDOM_POOL=y\nCONFIG_GETRANDOM=y\nCONFIG_IEEE80211N=y\n" > .config
 		LDFLAGS=-static make -j"$(nproc)" hostapd >/tmp/b.log 2>&1 || { tail -20 /tmp/b.log; exit 1; }
 		cp hostapd /w/hostapd

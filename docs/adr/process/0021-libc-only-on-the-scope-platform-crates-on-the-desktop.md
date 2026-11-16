@@ -31,7 +31,7 @@ was not written for it. They do not need the desktop build to be bare.
   `oos-hal` and `oos-dsp` on every platform depend on `libc` and the crates of the tree only.
 - A build that only runs on a computer (today the Windows desktop build) may depend on the crates of its platform's
   window, input and network API, in a `[target.'cfg(...)'.dependencies]` section of `ui/Cargo.toml` and behind the
-  same `cfg` in the code. Each such crate is named in [fork/deps.md](../../fork/deps.md) with what it is for.
+  same `cfg` in the code. Each such crate is named in [deps.md](../../deps.md) with what it is for.
 - `tools/check.sh target` fails when the scope's build, `oos-hal` or `oos-dsp` gains any other dependency.
 
 ## Alternatives
@@ -47,11 +47,13 @@ was not written for it. They do not need the desktop build to be bare.
 
 - ADR 0013 holds for the scope as it was meant; its status says "amended by ADR 0021".
 - The Windows desktop build needs a network for its first build; the scope's build does not.
-- A new platform crate for a desktop build is a pull request that says why, and a line in `fork/deps.md`. A crate that
+- A new platform crate for a desktop build is a pull request that says why, and a line in `deps.md`. A crate that
   would be compiled into the scope's build is still ADR 0013's case and needs a strong reason.
 - Worth a second look if a desktop build for another platform needs more than its window and network API.
 
 ## References
 
-ADR 0013, `ui/Cargo.toml`, `tools/check.sh` (layer `target`), [fork/deps.md](../../fork/deps.md),
+ADR 0013, `ui/Cargo.toml`, `tools/check.sh` (layer `target`), [deps.md](../../deps.md),
 [architecture.md](../../architecture.md).
+
+Corrected 2026-11-16: the list of crates moved from `docs/fork/deps.md` to `docs/deps.md`.

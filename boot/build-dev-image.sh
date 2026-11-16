@@ -72,10 +72,15 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
       busybox-static cpio gzip device-tree-compiler && rm -rf /var/lib/apt/lists/*
 EOF
 
-# WLAN: wpa_supplicant and wpa_cli (docs/wlan.md)
-[ -x "$root/rootfs/out/wpa_supplicant" ] && [ -x "$root/rootfs/out/wpa_cli" ] || "$root/rootfs/build-wlan-tools.sh"
+# The programs built from rootfs/deps.lock are built again when missing, or when their deps.lock lines or their build
+# script changed since (deps.sh stamps). WLAN: wpa_supplicant and wpa_cli (docs/wlan.md)
+o="$root/rootfs/out"
+if [ ! -x "$o/wpa_cli" ] || dep_stale "$o/wpa_supplicant" "$root/rootfs/build-wlan-tools.sh" wpa_supplicant libnl \
+	libnl-musl-patch; then
+	"$root/rootfs/build-wlan-tools.sh"
+fi
 # /oos is checked before it is mounted
-[ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
+if dep_stale "$o/e2fsck" "$root/rootfs/build-fsck.sh" e2fsprogs; then "$root/rootfs/build-fsck.sh"; fi
 # SSH (Dropbear, built by boot/unit-hook.sh): trusted public keys can be built into the image
 # (OOS_SSH_AUTHORIZED_KEYS); host keys and the password are made once on each scope, on /oos.
 ssh_seed="$root/rootfs/out/ssh-seed"
@@ -85,10 +90,10 @@ if [ -n "${OOS_SSH_AUTHORIZED_KEYS:-}" ]; then
 	python3 -I "$root/tools/ssh-keys.py" validate "$OOS_SSH_AUTHORIZED_KEYS" --out "$ssh_seed/authorized_keys"
 fi
 # an update with another device tree is tried by kexec_load with that tree (docs/update.md)
-[ -x "$root/rootfs/out/kexec" ] || "$root/rootfs/build-kexec.sh"
+if dep_stale "$o/kexec" "$root/rootfs/build-kexec.sh" kexec-tools; then "$root/rootfs/build-kexec.sh"; fi
 # System > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md), again when gpu/build.sh, oos-gpu.c or the Mesa
 # line of rootfs/deps.lock changed since (deps.sh stamps; gpu/build.sh keeps Mesa itself in rootfs/out/mesa)
-if dep_stale "$root/rootfs/out/gpu/bin/oos-gpu" "$root/gpu/build.sh" "$root/gpu/oos-gpu.c" mesa; then
+if dep_stale "$o/gpu/bin/oos-gpu" "$root/gpu/build.sh" "$root/gpu/oos-gpu.c" mesa; then
 	"$root/gpu/build.sh"
 fi
 
