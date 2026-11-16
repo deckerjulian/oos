@@ -7,24 +7,26 @@
 #                                     links (libdrm, zlib, libstdc++, glibc)
 #   lib/ld-linux-aarch64.so.1         glibc's loader (oos-ui itself stays static)
 #   etc/licenses/                     the licences of all of it
-# boot/build-dev-image.sh runs it when rootfs/out/gpu is missing. Mesa's build (about 10 minutes) is kept in
-# rootfs/out/mesa; remove that directory to build it again.
+# boot/build-dev-image.sh runs it when the helper is missing or its stamp differs (rootfs/deps.sh: this script,
+# oos-gpu.c, the Mesa line of rootfs/deps.lock). Mesa's build (about 10 minutes) is kept in rootfs/out/mesa, stamped
+# with its deps.lock line, so a new Mesa version is built again; remove the directory after a change of its build
+# options.
 #
 # Mesa's own compilers for its built-in GPU programs need LLVM at build time (two stages); the libraries do not.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 out="$root/rootfs/out"
-ver=26.0.8
-deb=26.0.8-1ubuntu0.3
-sum=caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc
+DEPS_LOCK="$root/rootfs/deps.lock"
+. "$root/rootfs/deps.sh"
+ver=$(dep_ver mesa)
 image=oos-gpu-build:ubuntu
 mkdir -p "$out"
 # arm64 whatever the host is (on x86-64 through QEMU, as the rest of the image): the helper and the libraries run on
 # the scope. An image of another architecture under this name is built again.
 [ "$(docker image inspect -f '{{.Architecture}}' "$image" 2>/dev/null)" = arm64 ] || docker build --platform linux/arm64 -t $image - >&2 <<'EOF'
 FROM ubuntu:26.04
-RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources && apt-get update && \
+RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates dpkg-dev \
       meson ninja-build gcc g++ pkg-config python3-mako python3-yaml python3-packaging python3-ply bison flex glslang-tools \
       libdrm-dev libexpat1-dev zlib1g-dev file xz-utils libegl-dev libgles-dev \
@@ -32,23 +34,20 @@ RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.s
       spirv-tools spirv-tools-dev spirv-headers libclang-cpp21-dev \
     && rm -rf /var/lib/apt/lists/*
 EOF
-# the source: Ubuntu's copy of the Mesa release, checked
-tarball="$out/mesa_$ver.orig.tar.xz"
-if [ ! -f "$tarball" ]; then
-	docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -v "$out:/out" $image sh -euc "
-		cd /tmp && apt-get update >/dev/null && apt-get source --download-only mesa=$deb >/dev/null
-		cp mesa_$ver.orig.tar.xz /out/ && chown \"\$OUT_OWNER\" /out/mesa_$ver.orig.tar.xz"
-fi
-echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
+# the source: the Mesa release, checked against rootfs/deps.lock
+dep_fetch mesa "$out" >/dev/null
+# a Mesa built from another deps.lock line is built again
+if dep_stale "$out/mesa" mesa; then rm -rf "$out/mesa" "$out/mesa.stamp"; fi
 rm -rf "$out/gpu"
 mkdir -p "$out/gpu"
+st=0
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" -v "$here:/g:ro" $image sh -euc '
 	W=/w; mkdir -p $W; cd $W
 	L=usr/lib/aarch64-linux-gnu
 	M=/out/mesa
 	if [ ! -f $M/$L/libEGL.so.1 ]; then
 	export PATH="/usr/lib/llvm-21/bin:$PATH"
-	tar -xJf /out/mesa_$VER.orig.tar.xz
+	tar -xJf /out/mesa-$VER.tar.xz
 	S=$W/mesa-$VER
 	common="--buildtype=release -Db_ndebug=true -Dstrip=true -Dvulkan-drivers= -Dplatforms= -Dgles1=disabled -Dgles2=enabled
 	  -Dopengl=false -Dglx=disabled -Dglvnd=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dzstd=disabled
@@ -82,4 +81,8 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="
 	cp /usr/share/doc/zlib1g/copyright $R/etc/licenses/zlib
 	chown -R "$OUT_OWNER" $R
 	du -sh $R; ls $R/$L
-'
+' || st=$?
+# a finished Mesa keeps its stamp even when the helper failed, so the next try does not build Mesa again
+[ ! -f "$out/mesa/usr/lib/aarch64-linux-gnu/libEGL.so.1" ] || dep_stamp "$out/mesa" mesa
+[ "$st" = 0 ] || exit "$st"
+dep_stamp "$out/gpu/bin/oos-gpu" "$here/build.sh" "$here/oos-gpu.c" mesa

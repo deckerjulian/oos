@@ -9,7 +9,8 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
   lines and the build script it came from (`<binary>.stamp`). `boot/unit-hook.sh` builds a binary again when it is
   missing or its stamp no longer matches, so a version bump or a changed build option takes effect at the next image
   build without deleting anything by hand.
-- Upstream's builds (`rootfs/build-kexec.sh`, `rootfs/build-fsck.sh`, `rootfs/build-wlan-tools.sh`, `gpu/build.sh`)
+- `gpu/build.sh` reads the Mesa line the same way, and keeps Mesa's build in `rootfs/out/mesa` stamped with that line.
+- Upstream's builds (`rootfs/build-kexec.sh`, `rootfs/build-fsck.sh`, `rootfs/build-wlan-tools.sh`)
   keep their own `ver=` and `sum=`: changing them would conflict at every upstream sync. Their lines in the manifest
   (`upstream:<script>`) document them, and `tools/deps-check.sh` reports when a script and its line differ.
 - `libnl` and `libnl-musl-patch` (owner `alpine:3.22`) are not built: `wpa_supplicant` links the `libnl3-static` of the

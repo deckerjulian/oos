@@ -44,6 +44,9 @@ docker run --rm --platform linux/arm64 alpine:3.22 true >/dev/null 2>&1 || {
 	echo "(or the distribution's qemu-user-static with binfmt-support)" >&2
 	exit 1
 }
+# the sources the image builds from: rootfs/deps.lock, and the stamps that say when a part is built again
+DEPS_LOCK="$root/rootfs/deps.lock"
+. "$root/rootfs/deps.sh"
 sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
 owner="$(id -u):$(id -g)"
 ui="$root/ui/target/aarch64-unknown-linux-musl/release"
@@ -83,9 +86,11 @@ if [ -n "${OOS_SSH_AUTHORIZED_KEYS:-}" ]; then
 fi
 # an update with another device tree is tried by kexec_load with that tree (docs/update.md)
 [ -x "$root/rootfs/out/kexec" ] || "$root/rootfs/build-kexec.sh"
-# System > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md)
-# (again when the helper's source is newer than the built one: Mesa itself is kept in rootfs/out/mesa)
-{ [ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] && [ ! "$root/gpu/oos-gpu.c" -nt "$root/rootfs/out/gpu/bin/oos-gpu" ]; } || "$root/gpu/build.sh"
+# System > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md), again when gpu/build.sh, oos-gpu.c or the Mesa
+# line of rootfs/deps.lock changed since (deps.sh stamps; gpu/build.sh keeps Mesa itself in rootfs/out/mesa)
+if dep_stale "$root/rootfs/out/gpu/bin/oos-gpu" "$root/gpu/build.sh" "$root/gpu/oos-gpu.c" mesa; then
+	"$root/gpu/build.sh"
+fi
 
 # the unit profile (OOS_UNIT, docs/models.md 4.2), the firewall and the SSH server (boot/unit-hook.sh)
 . "$here/unit-hook.sh"

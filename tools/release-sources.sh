@@ -20,7 +20,8 @@ busybox_glibc=glibc_2.42-2ubuntu4
 names() {
     # the kernel base archive
     awk '{ print $2 }' "$root/kernel/base.sha256" | sed 's|.*/||'
-    # every pinned archive; Mesa is built from the archive of Ubuntu's source package, which is upstream's renamed
+    # every pinned archive; Mesa's under either name: up to 0.1.13 it came from Ubuntu's source package, whose archive is
+    # upstream's renamed
     grep -v '^#' "$root/rootfs/deps.lock" | while read -r name _ ver _ url _; do
         [ -n "$name" ] || continue
         case "$name" in

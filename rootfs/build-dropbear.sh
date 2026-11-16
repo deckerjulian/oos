@@ -33,6 +33,6 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="
 	cp LICENSE /out/dropbear.COPYING
 	chown "$OUT_OWNER" /out/dropbearmulti /out/dropbear.COPYING
 '
-dep_stamp "$out/dropbearmulti" "$0" dropbear
+dep_stamp "$out/dropbearmulti" "$here/build-dropbear.sh" dropbear
 file "$out/dropbearmulti" 2>/dev/null || true
 ls -la "$out/dropbearmulti"

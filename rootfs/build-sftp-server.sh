@@ -24,6 +24,6 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="
 	cp LICENCE /out/sftp-server.COPYING
 	chown "$OUT_OWNER" /out/sftp-server /out/sftp-server.COPYING
 '
-dep_stamp "$out/sftp-server" "$0" openssh
+dep_stamp "$out/sftp-server" "$here/build-sftp-server.sh" openssh
 file "$out/sftp-server" 2>/dev/null || true
 ls -la "$out/sftp-server"

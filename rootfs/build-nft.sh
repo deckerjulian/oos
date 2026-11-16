@@ -26,6 +26,6 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e MNL="
 	cp COPYING /out/nft.COPYING
 	chown "$OUT_OWNER" /out/nft /out/nft.COPYING
 '
-dep_stamp "$out/nft" "$0" libmnl libnftnl nftables
+dep_stamp "$out/nft" "$here/build-nft.sh" libmnl libnftnl nftables
 file "$out/nft" 2>/dev/null || true
 ls -la "$out/nft"
