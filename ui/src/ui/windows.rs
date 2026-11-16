@@ -35,11 +35,14 @@ impl Ui {
     /// Expand button and the Full density: Scope goes to Full, Full goes back to Scope, Split and Four go to Full.
     pub(super) fn toggle_expand(&mut self) {
         self.m.density = if self.m.density == Density::Full { Density::Scope } else { Density::Full };
+        // a tap asks for the panel itself, also while the external display shows the waveform
+        self.full_asked = self.m.density == Density::Full;
         self.apply_density();
     }
 
     /// Makes the windows, the lower pane and the panel bars follow the density.
-    /// Waveform on the external display keeps the bars: the density changes the plot, the panel stays the controls.
+    /// Waveform on the external display keeps the bars: the density changes the plot, the panel stays the controls
+    /// (the expand button overrides that, `sync_full`).
     pub(super) fn apply_density(&mut self) {
         let prev = self.m.win_layout;
         match self.m.density {
@@ -72,16 +75,25 @@ impl Ui {
         }
     }
 
-    /// Panel bars hide only for Full while the external display copies the panel.
+    /// Panel bars hide for Full while the external display copies the panel, or when the expand button asked for it.
     pub(crate) fn sync_full(&mut self) {
-        // waveform on an external display keeps the panel's bars; with no display attached Full enlarges the panel
-        self.full = self.m.density == Density::Full && !(self.m.hdmi != HdmiMode::Mirror && self.hdmi_present);
+        if self.m.density != Density::Full {
+            self.full_asked = false;
+        }
+        // waveform on an external display keeps the panel's bars unless the button asked; with no display attached
+        // Full enlarges the panel
+        let external = self.m.hdmi != HdmiMode::Mirror && self.hdmi_present;
+        self.full = self.m.density == Density::Full && (!external || self.full_asked);
     }
 
     /// Called when an external display comes or goes, so Full follows it.
     pub(crate) fn set_hdmi_present(&mut self, present: bool) {
         if self.hdmi_present != present {
             self.hdmi_present = present;
+            // a display plugged in takes the waveform; the panel keeps its bars until the button is tapped again
+            if present {
+                self.full_asked = false;
+            }
             self.sync_full();
         }
     }
@@ -132,6 +144,7 @@ impl Ui {
                 let all = Density::ALL;
                 let i = all.iter().position(|&l| l == self.m.density).unwrap_or(0);
                 self.m.density = all[cyc(i, all.len())];
+                self.full_asked = false;
                 self.apply_density();
             }
             Item::WinCh(c) => self.m.ch_win[c] = cyc(self.m.ch_win[c].min(n - 1), n),
@@ -298,6 +311,39 @@ mod tests {
         u.set_hdmi_present(false);
         render(&mut u);
         assert!(u.full && u.grid.h > normal.h);
+    }
+
+    #[test]
+    fn the_expand_button_enlarges_the_panel_while_the_external_display_shows_the_waveform() {
+        // forum report: with HDMI on Waveform or Layout the button did nothing on the panel
+        for mode in ["Waveform", "Layout"] {
+            let mut u = ui();
+            u.set_hdmi_present(true);
+            u.select_option(Item::Hdmi, mode);
+            render(&mut u);
+            let normal = u.grid;
+            let tap = |u: &mut Ui| {
+                let (_, hit) = u.full_btn();
+                u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
+                render(u);
+            };
+            tap(&mut u);
+            assert!(u.full && u.grid.h > normal.h, "{mode}: the tap must enlarge the panel: {:?} {:?}", u.grid, normal);
+            tap(&mut u);
+            assert_eq!((u.m.density, u.full, u.grid), (Density::Scope, false, normal), "{mode}");
+            // Full chosen under Density keeps the panel's bars: the external display has the waveform
+            u.select_option(Item::WinLayout, "Full");
+            render(&mut u);
+            assert!(u.m.density == Density::Full && !u.full && u.grid == normal, "{mode}");
+            // and a display plugged in after a tap takes the waveform back
+            u.select_option(Item::WinLayout, "Scope");
+            tap(&mut u);
+            assert!(u.full, "{mode}");
+            u.set_hdmi_present(false);
+            u.set_hdmi_present(true);
+            render(&mut u);
+            assert!(!u.full && u.grid == normal, "{mode}");
+        }
     }
 
     #[test]

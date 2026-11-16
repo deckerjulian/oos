@@ -28,6 +28,9 @@ Changed:
 
 Fixed:
 
+- The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
+  only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
+  keeps the panel's bars while the external display has the waveform.
 - A typo in `net.allow` (`192.168.1.0/`, `2001:db8:::1`) made nft refuse the whole firewall, and the scope came up
   without one while telnet listened. Such entries are left out and logged; a ruleset nft refuses anyway closes the
   scope to everything but loopback.

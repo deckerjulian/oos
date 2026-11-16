@@ -1144,10 +1144,13 @@ pub struct Ui {
     /// the window being drawn
     cur_win: usize,
     /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
-    /// shows the waveform, so the panel keeps the controls.
+    /// shows the waveform, so the panel keeps the controls, unless the expand button asked for it (`full_asked`).
     full: bool,
     /// Top left of the corner button after a drag. None keeps it at the top right of the plot.
     full_at: Option<(i32, i32)>,
+    /// Full came from a tap on the expand button: the panel enlarges its plot even while the external display shows
+    /// the waveform. Full chosen under Density, a display plugged in, or leaving Full clears it.
+    full_asked: bool,
     vmaxz: [u32; NCH],
     rng: Rng,
     trace_bus: std::cell::RefCell<bus::Cache>,
@@ -1545,6 +1548,7 @@ impl Ui {
             cur_win: 0,
             full: false,
             full_at: None,
+            full_asked: false,
             vmaxz: [1; NCH],
             trace_bus: Default::default(),
             rng: Rng::new(0x9e3779b97f4a7c15),
@@ -1861,7 +1865,7 @@ impl Ui {
     }
 
     /// Full density drawn on the panel. Not while the external display shows the waveform (the panel stays the
-    /// controls), and not with the touch lock, whose way out is the Menu button.
+    /// controls) unless the expand button asked for it, and not with the touch lock, whose way out is the Menu button.
     fn full_on(&self) -> bool {
         self.full && !self.m.touch_lock
     }
