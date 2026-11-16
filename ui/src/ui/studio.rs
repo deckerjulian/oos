@@ -164,6 +164,8 @@ impl PickAdd {
 /// The rectangles of the Studio top bar.
 #[derive(Clone, Copy)]
 pub(super) struct StudioTop {
+    /// the numbered view switcher, zero wide unless there is more than one view
+    pub vbox: Rect,
     /// the Add panel button
     pub add: Rect,
     /// Live (the way back from a record session), zero wide in live mode
@@ -429,8 +431,11 @@ impl Ui {
         let cursors = place(labels[5]);
         let measure = place(labels[4]);
         let add = place(labels[3]);
-        let acq = Rect::new(x, CHIP_Y, (add.x - 10 - x).max(40), CHIP_H);
-        StudioTop { add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, display, storage, view, gear, autoset, clear, force, tier }
+        // the numbered view switcher (Display > Views), left of + Add, only while there is more than one view
+        let vw = super::views::studio_box_w(self.m.views);
+        let vbox = Rect::new(add.x - if vw > 0 { gap + vw } else { 0 }, CHIP_Y, vw, CHIP_H);
+        let acq = Rect::new(x, CHIP_Y, (vbox.x - 10 - x).max(40), CHIP_H);
+        StudioTop { vbox, add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, display, storage, view, gear, autoset, clear, force, tier }
     }
 
     /// Measure and Cursors as the top-bar buttons (`top_buttons`); the others are Studio's own.
@@ -497,6 +502,7 @@ impl Ui {
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, label, if on { ACCENT } else { TEXT });
         }
+        self.draw_view_box(cv);
         // Autoset, Clear, Force: Force is dimmed while no trigger is waiting, and still works
         let waiting = !self.record_mode() && self.m.run == RunState::Run && self.m.status == TrigStatus::Wait;
         for (r, label, lit) in [(t.autoset, labels[0], true), (t.clear, labels[1], true), (t.force, labels[2], waiting)] {
@@ -970,6 +976,8 @@ impl Ui {
             // SIM: the simulation mode (Live goes back); the SIM sheet, with Add to ref, is in the Menu
             if self.menu_open { self.close_menu(); }
             self.sim_activate(Item::SimPlay);
+        } else if t.vbox.w > 0 && hit(t.vbox) {
+            self.view_box_tap(x, y);
         } else if hit(t.run) {
             self.studio_run_stop();
         } else if hit(t.single) {

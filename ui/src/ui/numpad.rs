@@ -74,6 +74,7 @@ impl Ui {
 
     /// Opens the pad on a "- value +" item. False when its value is not a number.
     pub(super) fn open_numpad(&mut self, it: Item) -> bool {
+        if self.item_blocked_toast(it) { return true; }
         let Some((v, unit)) = self.numpad_value(it) else { return false };
         self.keypad = plain(v);
         self.numpad = Some(NumPad { it, fresh: true, unit });

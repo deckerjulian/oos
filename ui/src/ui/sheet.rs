@@ -669,6 +669,9 @@ impl Ui {
                 }
             }
         }
+        if self.item_blocked(it).is_some() {
+            Self::draw_blocked_veil(cv, if row.kind == RowKind::Link { Rect::new(0, 0, 0, 0) } else { row.label }, c);
+        }
     }
 
     // ------------------------------------------------------------------------------------------------ tapping

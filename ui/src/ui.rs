@@ -36,6 +36,7 @@ mod logger;
 mod measlabels;
 mod overclock;
 mod tools;
+mod feedback;
 mod measurement_nav;
 mod meascatalog;
 pub(crate) mod facts;
@@ -122,6 +123,8 @@ mod batch26_tests;
 mod batch27_tests;
 #[cfg(test)]
 mod batch29_tests;
+#[cfg(test)]
+mod batch30_tests;
 #[cfg(test)]
 mod uiaudit_tests;
 #[cfg(test)]
@@ -1177,6 +1180,9 @@ impl MeasWorker {
     }
 }
 
+/// What Clear eye / Clear counter / Reset counts / Clear limit / Delete (zone) say when there was nothing to clear.
+pub(super) const NOTHING_TO_CLEAR: &str = "Nothing to clear";
+
 pub struct Ui {
     meas_category: usize,
     /// Add-measurements catalog: tab, selected button, which groups are open, scroll, and the extra sources.
@@ -1212,6 +1218,8 @@ pub struct Ui {
     zoom_vfactor: f32,
     zoom_vcenter: f32,
     zoom_user_closed: bool,
+    /// The last Measure > Copy meas. to: from, to, how many (the row shows the result instead of "Pick").
+    meas_copied: Option<(WaveId, WaveId, usize)>,
     /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
     wins: Vec<Rect>,
     /// the window being drawn
@@ -1563,6 +1571,7 @@ impl Ui {
             zoom_vfactor: 1.0,
             zoom_vcenter: 0.0,
             zoom_user_closed: false,
+            meas_copied: None,
             wins: Vec::new(),
             cur_win: 0,
             full: false,
@@ -5474,8 +5483,13 @@ impl Ui {
     /// Messages as an amber pill at the top centre of the plot; next to or under an open menu dialog that would
     /// cover it (it never hides dialog controls).
     /// A message that reports something done: it gets a tick, not the warning triangle.
+    /// A message that only informs (nothing to clear, which view, a channel turned on): a neutral pill with an "i".
+    pub(super) fn toast_is_info(s: &str) -> bool {
+        s == NOTHING_TO_CLEAR || s == "Views off" || s.ends_with(" turned on") || (s.starts_with("View ") && s.contains(" of "))
+    }
+
     pub(super) fn toast_is_success(s: &str) -> bool {
-        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ") || s.starts_with("Returned to live") || s.starts_with("Fit ")
+        matches!(s, "Eye cleared" | "Counter cleared" | "Limit cleared" | "Counts reset" | "Mask cleared") || s.starts_with("Copied ") || (s.starts_with("Zone ") && s.ends_with(" deleted")) || s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ") || s.starts_with("Returned to live") || s.starts_with("Fit ")
     }
 
     fn draw_toast(&self, cv: &mut Canvas) {
@@ -5504,6 +5518,18 @@ impl Ui {
             } else {
                 r.y = d.y + d.h + 6;
             }
+        }
+        if Self::toast_is_info(s) {
+            // information, not a warning: a neutral pill with an "i"
+            cv.round(r, 6, mix(BAR, TEXT, 80), 255);
+            cv.round(r.inset(1), 5, mix(BAR, TEXT, 20), 255);
+            let (cx, cy) = (r.x + 18, r.y + 14);
+            cv.circle(cx, cy, 8, TEXT);
+            cv.circle(cx, cy, 7, mix(BAR, TEXT, 20));
+            cv.pixel(cx, cy - 4, TEXT, 255);
+            cv.vline(cx, cy - 1, cy + 4, TEXT);
+            cv.text(&f.mb, r.x + 32, r.y + 19, s, TEXT);
+            return;
         }
         cv.round(r, 6, mix(BAR, AMBER, 110), 255);
         cv.round(r.inset(1), 5, mix(BAR, AMBER, 34), 255);
@@ -7048,7 +7074,11 @@ impl Ui {
             Item::AcqSeg => if m.segments == 0 { "Off".into() } else { m.segments.to_string() },
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::MeasSrc => self.wave_name(self.meas_src),
-            Item::MeasCopyTo => "Pick".into(),
+            Item::MeasCopyTo => match self.meas_copied {
+                // what the last copy did, while the source is still the one it was made from
+                Some((from, to, _)) if from == self.meas_src => format!("Copied to {}", self.wave_name(to)),
+                _ => "Pick".into(),
+            },
             Item::MeasSrcB => self.wave_name(self.meas_src_b),
             Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
@@ -7168,6 +7198,7 @@ impl Ui {
 
     /// One press (or `d` presses) of a stepper. The limits are in the range table (`ranges.rs`).
     fn adjust(&mut self, it: Item, d: i32) {
+        if self.item_blocked_toast(it) { return; }
         self.adjust_item(it, d);
         self.range_enforce(it);
     }
@@ -7715,6 +7746,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
+        if self.item_blocked_toast(it) { return; }
         if self.addrail_activate(it) { return; }
         if self.measrow_activate(it) { return; }
         if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.sim_activate(it) || self.afg_activate(it) || self.time_activate(it)) {
@@ -7851,7 +7883,14 @@ impl Ui {
                     self.toast(&format!("{} {} added", meascatalog::meas_display_name(k), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
-                Item::CntClear => self.counter_clear(),
+                Item::CntClear => {
+                    if self.cnt_total == 0 && self.cnt_hw.is_none() {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.counter_clear();
+                        self.toast("Counter cleared");
+                    }
+                }
                 Item::DecTable => self.table_toggle(tables::TableKind::Decode),
                 Item::DecExport => self.events_export(tables::TableKind::Decode),
                 Item::SearchTable => self.table_toggle(tables::TableKind::Search),
@@ -7954,7 +7993,13 @@ impl Ui {
                     self.toast(if it == Item::ZoneShape { "Draw the zone with one finger" } else { "Drag a box for the zone" });
                 }
                 Item::ZoneClear => {
-                    self.m.zones[self.zone_sel] = crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+                    let blank = crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+                    if self.m.zones[self.zone_sel] == blank {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.m.zones[self.zone_sel] = blank;
+                        self.toast(&format!("Zone {} deleted", self.zone_sel + 1));
+                    }
                 }
                 Item::StoreSaveSetup => {
                     let p = self.setup_path();
@@ -7972,16 +8017,25 @@ impl Ui {
                 Item::MaskCreate => self.create_mask(),
                 Item::MaskFromRef => self.create_mask_from_ref(),
                 Item::MaskClear => {
-                    self.mask = None;
-                    self.mask_ref = None;
-                    self.m.mask_on = false;
-                    self.mask_pass = 0;
-                    self.mask_fail = 0;
-                    self.toast("Mask cleared");
+                    if self.mask.is_none() && self.mask_ref.is_none() && !self.m.mask_on && self.mask_pass == 0 && self.mask_fail == 0 {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.mask = None;
+                        self.mask_ref = None;
+                        self.m.mask_on = false;
+                        self.mask_pass = 0;
+                        self.mask_fail = 0;
+                        self.toast("Mask cleared");
+                    }
                 }
                 Item::MaskReset => {
-                    self.mask_pass = 0;
-                    self.mask_fail = 0;
+                    if self.mask_pass == 0 && self.mask_fail == 0 {
+                        self.toast(NOTHING_TO_CLEAR);
+                    } else {
+                        self.mask_pass = 0;
+                        self.mask_fail = 0;
+                        self.toast("Counts reset");
+                    }
                 }
                 Item::StoreFfSave => self.ff_save(),
                 Item::StoreFfLoad => self.ff_load(),
@@ -8438,6 +8492,7 @@ impl Ui {
 
     /// Opens the picker of a choice item of the current menu; picking an option returns to this menu.
     fn open_picker(&mut self, it: Item) {
+        if self.item_blocked_toast(it) { return; }
         let it = if it == Item::AfgFreq { Item::AfgFreqEntry } else { it };
         if it == Item::TrigBusVal {
             self.keypad = format!("{:X}", self.m.trig_bus_val);
@@ -8463,6 +8518,7 @@ impl Ui {
     /// Sets a choice item to the option `want`: one adjust step by the distance in the option list (every item with
     /// options moves by index, cycling or clamped), else stepping until it shows `want`.
     fn select_option(&mut self, it: Item, want: &str) {
+        if self.item_blocked_toast(it) { return; }
         if it == Item::DecCphyRate {
             if let Some(rate) = crate::decode::CPHY_RATES.into_iter().find(|&rate| crate::decode::cphy_rate_label(rate) == want) {
                 self.m.dec_cphy_rate = rate;
@@ -8470,11 +8526,19 @@ impl Ui {
             }
             return;
         }
+        if it == Item::Views {
+            // a count is chosen: the new views exist, the dialog gets out of the way of the plot, the toast says which
+            let n = if want == "Off" { 1 } else { want.parse().unwrap_or(self.m.views) };
+            self.views_set(n);
+            self.close_menu();
+            return;
+        }
         if it == Item::MeasCopyTo {
             if let Some(to) = self.wave_ids().into_iter().find(|&w| self.wave_name(w) == want) {
                 let from = self.meas_src;
                 let n = self.copy_measurements(from, to);
-                self.toast(&format!("{} measurement{} copied {} -> {}", n, if n == 1 { "" } else { "s" }, self.wave_name(from), want));
+                self.meas_copied = Some((from, to, n));
+                self.toast(&format!("Copied {} measurement{} to {}", n, if n == 1 { "" } else { "s" }, want));
             }
             return;
         }
@@ -8760,6 +8824,9 @@ impl Ui {
                         chevron(cv, c.x + c.w - 14, c.y + c.h / 2, 1, DIM);
                     }
                 }
+            }
+            if self.item_blocked(row.it).is_some() {
+                Self::draw_blocked_veil(cv, if kind == Kind::Action { Rect::new(0, 0, 0, 0) } else { row.label }, c);
             }
             if focus {
                 if let Ctl::Seg(..) = row.ctl {
