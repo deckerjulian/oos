@@ -190,10 +190,7 @@ pub fn scan_done(sh: &mut Shadows) -> Vec<Write> {
 pub fn start(sh: &mut Shadows, mask: u32) -> Vec<Write> {
     let mut w = Vec::new();
     scu::stop_sequence(&mut w, sh);
-    sh.s4008 = (sh.s4008 & !0xf) | (mask & 0xf);
-    w.push((0x4008, sh.s4008));
-    sh.s4004 |= 1;
-    w.push((0x4004, sh.s4004));
+    scu::fsm_run(&mut w, sh, mask & 0xf);
     w
 }
 
@@ -204,14 +201,8 @@ pub fn fill_pulse(sh: &Shadows) -> [Write; 3] {
 
 /// D: stop streaming and leave roll mode (stop sequence, average clear, roll/scan bits off, 0x11fc back to 1000).
 pub fn stop(sh: &mut Shadows) -> Vec<Write> {
-    let mut w = Vec::new();
-    scu::stop_sequence(&mut w, sh);
-    w.push((0x10b4, 1));
-    w.push((0x10b4, 0));
-    sh.s4008 &= !(1 << 17);
-    w.push((0x4008, sh.s4008));
-    sh.s4008 &= !(1 << 22);
-    w.push((0x4008, sh.s4008));
+    let mut w = scan_done(sh);
+    scu::set_run_prologue(&mut w, sh);
     w.push((0x11fc, 1000));
     w
 }

@@ -168,19 +168,29 @@ pub fn readout(win: &Window, sh: &mut Shadows) -> Vec<Write> {
     let mut w = Vec::new();
     readout_window(&mut w, win, sh);
     stop_sequence(&mut w, sh);
+    play_last_pulse(&mut w, sh);
+    fsm_run(&mut w, sh, win.fsm);
+    w
+}
+
+/// The play-last pulse: 0x4004 bit2 cleared, then set.
+pub(crate) fn play_last_pulse(w: &mut Vec<Write>, sh: &mut Shadows) {
     sh.s4004 &= !4;
     w.push((0x4004, sh.s4004));
     sh.s4004 |= 4;
     w.push((0x4004, sh.s4004));
-    sh.s4008 = (sh.s4008 & !0xf) | win.fsm;
+}
+
+/// The FSM channel mask `fsm` into 0x4008[3:0], then the FSM run bit 0x4004 bit0.
+pub(crate) fn fsm_run(w: &mut Vec<Write>, sh: &mut Shadows, fsm: u32) {
+    sh.s4008 = (sh.s4008 & !0xf) | fsm;
     w.push((0x4008, sh.s4008));
     sh.s4004 |= 1;
     w.push((0x4004, sh.s4004));
-    w
 }
 
 /// Before a run: roll (0x4008 bit17) and scan (bit22) off.
-fn set_run_prologue(w: &mut Vec<Write>, sh: &mut Shadows) {
+pub fn set_run_prologue(w: &mut Vec<Write>, sh: &mut Shadows) {
     sh.s4008 &= !(1 << 17);
     w.push((0x4008, sh.s4008));
     sh.s4008 &= !(1 << 22);
@@ -225,10 +235,7 @@ pub fn readout_play4(win: &Window, sh: &mut Shadows, first: u32, count: u32) -> 
     w.push((0x400c, sh.s400c));
     sh.s400c = (sh.s400c & !(1 << 26)) | 0x6000_0000;
     w.push((0x400c, sh.s400c));
-    sh.s4008 = (sh.s4008 & !0xf) | win.fsm;
-    w.push((0x4008, sh.s4008));
-    sh.s4004 |= 1;
-    w.push((0x4004, sh.s4004));
+    fsm_run(&mut w, sh, win.fsm);
     w
 }
 
@@ -259,10 +266,7 @@ fn record_run(fsm: u32, sh: &mut Shadows, first: u32, n: u32, interval_ticks: u3
     w.push((0x400c, sh.s400c));
     sh.s400c |= 0x2200_0000;
     w.push((0x400c, sh.s400c));
-    sh.s4008 = (sh.s4008 & !0xf) | fsm;
-    w.push((0x4008, sh.s4008));
-    sh.s4004 |= 1;
-    w.push((0x4004, sh.s4004));
+    fsm_run(&mut w, sh, fsm);
     w
 }
 

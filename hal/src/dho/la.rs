@@ -234,14 +234,8 @@ pub fn readout(sh: &mut crate::dho::scu::Shadows, n: u32, start: u32, ratio: u32
     sh.s400c &= !(1 << 25);
     w.push((0x400c, sh.s400c));
     crate::dho::scu::stop_sequence(&mut w, sh);
-    sh.s4004 &= !4;
-    w.push((0x4004, sh.s4004));
-    sh.s4004 |= 4;
-    w.push((0x4004, sh.s4004));
-    sh.s4008 = (sh.s4008 & !0xf) | fsm;
-    w.push((0x4008, sh.s4008));
-    sh.s4004 |= 1;
-    w.push((0x4004, sh.s4004));
+    crate::dho::scu::play_last_pulse(&mut w, sh);
+    crate::dho::scu::fsm_run(&mut w, sh, fsm);
     w
 }
 
