@@ -9,13 +9,22 @@ Added:
 
 - System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
-  stored. The list takes effect at the next start; the Firewall row says when it is in force.
+  stored. A change takes effect at once, without a restart:
+  - the firewall is reloaded;
+  - SCPI, VXI-11 and HiSLIP close the connections the new list leaves out, and the web remote checks every request;
+  - SSH starts or stops with the list.
+  The Firewall row shows the state in force (host-tested; the earlier build of the row ran on a unit).
 
 Changed:
 
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
-  clock first gets swapped results now.
+  clock first gets swapped results now. These are OOS items; the stock programming guide has none.
+- A change of trigger type keeps the user's pulse width, pattern, levels and limits on the hardware, Live and Replay.
+  The demo's starting values are set on the demo only. Slope, Runt and Window keep the lower level at or below the
+  upper one; `:TRIGger:RUNT:UPPer/LOWer` refuses a threshold past the other with -224.
+- Choosing a decoder protocol on Live or a Replay keeps the sources, as on the hardware. Before, they moved to the
+  demo's channels.
 
 Fixed:
 
@@ -50,6 +59,10 @@ Fixed:
 - The zoom window no longer overflows at extreme delays.
 - The console banner and the Network page said SSH takes a provisioned key only. It takes the password or a key.
 - With hardware segments recording, the DVM, the levels and the ADC core trim wait for the recording to end.
+- STOP on a deep record (e.g. 10 M at 1 ms/div): the views read again as min/max pairs are drawn, while Mean, RMS,
+  Std dev and the other readouts stay measured on the raw record of the STOP. Before, they turned to "----".
+- Reference > Clear also removes the readouts of the cleared slots. Before, an import's Vpp, Freq, RMS and Rise rows
+  stayed empty (unit).
 - A `system.conf` that leaves out every decoder no longer crashes Decode > Protocol.
 - Measurements: line and switching ripple without the rail's DC level on records of partial cycles; double pulse
   I_L, td_on, tr, td_off, tf, di/dt, Ipeak - I_L and Qoss with a ramping load current; high time, low time and time
