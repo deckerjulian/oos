@@ -39,6 +39,18 @@ jobs:
         run: gh release download --repo "$GITHUB_REPOSITORY" --pattern 'linux-6.12.115-base.tar.xz' --dir kernel/src
       - name: Kernel
         run: kernel/build-base.sh
+      # the downloads of rootfs/deps.lock and Mesa's build (hours under QEMU). The key follows what they are made from;
+      # an older cache is a start, its stamps (rootfs/deps.sh) say which part is built again
+      - name: Cache of the downloads and Mesa
+        uses: actions/cache@v4
+        with:
+          path: |
+            rootfs/out/*.tar.*
+            rootfs/out/*.patch
+            rootfs/out/mesa
+            rootfs/out/mesa.stamp
+          key: rootfs-out-${{ runner.arch }}-${{ hashFiles('rootfs/deps.lock', 'rootfs/deps.sh', 'rootfs/build-*.sh', 'gpu/build.sh', 'tools/lib/docker.sh') }}
+          restore-keys: rootfs-out-${{ runner.arch }}-
       - name: Image
         run: boot/build-dev-image.sh
       - name: Manifest
