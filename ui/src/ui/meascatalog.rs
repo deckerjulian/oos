@@ -74,7 +74,6 @@ struct Lay {
     content: i32,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn catalog_source_label(&self, id: u16, sources: [WaveId;4]) -> String {
         let Some(c) = cat_from(id) else { return String::new() };
@@ -162,13 +161,13 @@ impl Ui {
         Lay { r, close, back, settings, selected, gate, tabs, preview, mark, sources, view, groups, items, bar, content: y }
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(super) fn catalog_settings_rect(&self) -> Rect {
         self.catalog_lay().settings
     }
 
     /// Set control on an added standard measurement, in screen coordinates.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(super) fn catalog_set_rect(&self, k: Meas) -> Option<Rect> {
         let lay = self.catalog_lay();
         lay.items.iter().find_map(|it| {
@@ -179,13 +178,11 @@ impl Ui {
     }
 
     /// Header of one group on the current tab, in screen coordinates.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn catalog_group_rect(&self, group: usize) -> Option<Rect> {
         let lay = self.catalog_lay();
         lay.groups.iter().find(|g| g.n as usize == group).map(|g| screen_rect(lay.view, g.r, self.cat_top()))
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn catalog_view(&self) -> Rect {
         self.catalog_lay().view
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Sparse frames on the fast display path (fork, docs/fork/perf-plan.md item 4): fewer than two samples per screen
-//! column, the short time bases where the waveform rate peaks. `Ui::fast_draw` made a full screen record of each such
+//! column, the short time bases where the waveform rate peaks. The fast path made a full screen record of each such
 //! frame (`board::to_record`: a copy of the frame, every channel, the raw window and the LA record) only to draw its
 //! points. `draw` computes the same points of the channels that are on, with the same expressions, into reused
 //! buffers and draws them. It answers only in the plain case (edge trigger found on a channel, interpolated points);
@@ -16,7 +16,7 @@ use crate::model::*;
 use crate::wave::Phosphor;
 use std::cell::RefCell;
 
-/// Points of the screen record, as in `Source::acquire` and `Ui::fast_draw`.
+/// Points of the screen record, as in `Source::acquire` and the fast path (`drawpipe::draw_frame`).
 pub const POINTS: usize = 3600;
 
 thread_local! {
@@ -203,7 +203,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    /// The path this replaces: `Ui::fast_draw` for sparse frames before item 4.
+    /// The path this replaces: the fast path for sparse frames before item 4.
     fn reference(ph: &mut Phosphor, m: &Model, f: &Frame) -> bool {
         let fr = Arc::new(f.clone());
         let window = m.time_per_div() as f64 * HDIV as f64;

@@ -610,7 +610,6 @@ impl Page {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Generated and imported references are immutable records. Eye analysis reads
     /// the whole record even when ordinary measurements follow the zoom window.
@@ -1143,7 +1142,7 @@ impl Ui {
 
     /// Left edge of the heat scale on plot `r`. On the usual split it is the top right of the plot; with the column
     /// away that corner belongs to the full-screen button, so the scale stops short of it.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     fn heat_x(&self, r: Rect) -> i32 {
         let src = match self.src.name() {
             "DEMO" => "Demo signals",
@@ -1170,19 +1169,6 @@ impl Ui {
         cv.round(r, 6, PANEL_BG, 235);
         cv.round_outline(r, 6, BTN_BORDER);
         chevron(cv, r.x + r.w / 2, r.y + r.h / 2, if self.eye_to > 0.5 { 1 } else { -1 }, TEXT);
-    }
-
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    fn eye_head(&self, cv: &mut Canvas, l: &Layout) {
-        if l.head.w < 40 || l.head.h < 16 {
-            return;
-        }
-        let f = self.fonts();
-        let p = &self.azr.page;
-        cv.set_clip(l.head);
-        cv.text(&f.sb, l.head.x + 2, l.head.y + 15, &p.status[0], TEXT);
-        cv.text(&f.s, l.head.x + 2, l.head.y + 33, &p.status[1], MODELLED);
-        cv.no_clip();
     }
 
     /// The eye: frame, axes in volts and UI, the coloured hits and the two levels.

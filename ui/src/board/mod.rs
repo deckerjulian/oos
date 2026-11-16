@@ -176,11 +176,8 @@ pub trait Board: Sync + 'static {
 
 /// Six inexpensive full-frame readings, prepared outside the UI event loop.
 #[derive(Clone, Copy, Debug, Default)]
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub struct BasicStats {
     pub valid: bool,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub count: u64,
     /// Vmin, Vmax, Vpp, Vavg, Vrms (including DC), population StdDev.
     pub values: [f64; 6],
 }
@@ -199,7 +196,7 @@ impl BasicStats {
             low = low.min(value); high = high.max(value);
         }
         if count == 0 { return Self::default(); }
-        Self { valid: true, count, values: [low, high, high - low, mean,
+        Self { valid: true, values: [low, high, high - low, mean,
             (squares / count as f64).sqrt(), (m2 / count as f64).max(0.0).sqrt()] }
     }
     pub fn reading(self, measurement: crate::model::Meas) -> Option<f64> {

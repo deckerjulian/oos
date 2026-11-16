@@ -60,7 +60,6 @@ struct Src<'a> {
     hyst: f32,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn bus_items(&self) -> Vec<Item> {
         vec![
@@ -403,7 +402,7 @@ impl Ui {
     }
 
     /// Hex words the plot draws for the bus, in time order.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     fn bus_words(&self) -> Vec<String> {
         self.bus_packets()
             .iter()

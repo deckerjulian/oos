@@ -117,7 +117,6 @@ const SIM_MEAS: [Meas; 12] = [
     Meas::PEdges,
 ];
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     fn sim_meas(slot: usize) -> Vec<(Meas, WaveId)> {
         SIM_MEAS.into_iter().map(|k| (k, WaveId::Ref(slot))).collect()
@@ -335,7 +334,7 @@ impl Ui {
     }
 
     /// Sample rate and length of the loaded SIM slot, when it is shown.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(super) fn sim_rate_depth(&self) -> Option<(f64, u64)> {
         let r = self.refs[self.m.sim_slot].as_ref()?;
         if !r.on || r.dt <= 0.0 {

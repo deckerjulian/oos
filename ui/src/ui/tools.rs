@@ -105,7 +105,6 @@ impl MeasRow {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn measurement_count(&self) -> usize { self.m.meas.len() + self.m.meas2.len() + self.m.cat.len() }
 
@@ -248,14 +247,6 @@ impl Ui {
                 self.reference_measurement(i)
             }
         }
-    }
-
-    /// Extremum times use the physical waveform coordinate, including the gate's
-    /// start. Keep DSP timestamps relative so durations and edge pairing do not change.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn meas_of_at(&self, a: &Analysis, k: Meas, t0: f64) -> f64 {
-        let value = self.meas_of(a, k);
-        if matches!(k, Meas::TVmax | Meas::TVmin) { t0 + value } else { value }
     }
 
     /// A measurement with the Measure menu's idle, outside and N settings. The other items are `Analysis::get`.
@@ -468,12 +459,6 @@ impl Ui {
         v.is_finite().then_some(v)
     }
 
-    /// Clear counter, from SCPI :COUNter:TOTalize:CLEar.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub fn counter_reset(&mut self) {
-        self.counter_clear();
-    }
-
     pub(crate) fn counter_clear(&mut self) {
         self.cnt_total = 0;
         self.cnt_stat = MStat::default();
@@ -631,13 +616,8 @@ impl Ui {
         value.is_finite().then_some(value)
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(crate) fn wave_at_ch(&self, c: usize, t: f64) -> Option<f32> {
-        self.wave_at_source(WaveId::Ch(c), t)
-    }
-
     /// Cursor A follows the selected workspace source.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(crate) fn wave_at(&self, t: f64) -> Option<f32> {
         self.wave_at_source(self.selected_workspace_source()?, t)
     }
@@ -1079,7 +1059,7 @@ impl Ui {
     }
 
     /// Whether the selected slot is drawn. None when it is empty.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(crate) fn ref_shown(&self) -> Option<bool> {
         self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).map(|r| r.on)
     }
@@ -1276,11 +1256,6 @@ impl Ui {
     pub(super) fn ch_name(&self, c: usize) -> String {
         if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
     }
-}
-
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-fn nearest_ref_vdiv(want: f32) -> f32 {
-    VSCALES.iter().copied().min_by(|a, b| (a - want).abs().partial_cmp(&(b - want).abs()).unwrap()).unwrap_or(0.2)
 }
 
 #[cfg(test)]

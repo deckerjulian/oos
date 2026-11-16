@@ -18,8 +18,7 @@ enum Samples{Reference(Arc<Vec<f32>>),Native(Arc<crate::board::Frame>,usize),Sma
 impl Samples{fn values(&self)->&[f32]{match self{Self::Reference(v)|Self::Small(v)=>v,Self::Native(f,c)=>&f.ch[*c]}}}
 #[derive(Clone)]
 struct Input{id:WaveId,samples:Samples,lo:usize,hi:usize,t0:f64,dt:f64}
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-impl Input{fn values(&self)->&[f32]{&self.samples.values()[self.lo..self.hi]}fn start(&self)->f64{self.t0+self.lo as f64*self.dt}fn end(&self)->f64{self.t0+(self.hi-1)as f64*self.dt}}
+impl Input{fn start(&self)->f64{self.t0+self.lo as f64*self.dt}fn end(&self)->f64{self.t0+(self.hi-1)as f64*self.dt}}
 enum Owner{Reference(Weak<Vec<f32>>),Native(Weak<crate::board::Frame>),Small(usize,u64,u64)}
 struct Version{id:WaveId,owner:Owner,version:u64}
 impl Owner{fn same(&self,other:&Self)->bool{match(self,other){(Self::Reference(a),Self::Reference(b))=>Weak::ptr_eq(a,b),(Self::Native(a),Self::Native(b))=>Weak::ptr_eq(a,b),(Self::Small(a,ac,ag),Self::Small(b,bc,bg))=>a==b&&ac==bc&&ag==bg,_=>false}}}

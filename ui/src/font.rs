@@ -16,9 +16,7 @@ pub struct Glyph {
 
 pub struct Font {
     pub size: i32,
-    #[allow(dead_code)] // part of the atlas format, kept for line spacing
-    pub ascent: i32,
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))] // read by the layout tests
     pub descent: i32,
     pub glyphs: Vec<Glyph>,
     pub alpha: &'static [u8],
@@ -33,7 +31,6 @@ pub struct Fonts {
     pub mb: Font,
     pub l: Font,
     pub lb: Font,
-    #[allow(dead_code)] // reserved for large read-outs
     pub xl: Font,
 }
 
@@ -79,7 +76,7 @@ impl Fonts {
         let mut v = Vec::new();
         for _ in 0..count {
             let size = u16le(b, o) as i32;
-            let ascent = u16le(b, o + 2) as i32;
+            // o + 2: the ascent, not used
             let descent = u16le(b, o + 4) as i32;
             let n = u16le(b, o + 6) as usize;
             let alen = u32le(b, o + 8) as usize;
@@ -99,7 +96,7 @@ impl Fonts {
             }
             let alpha = &b[o..o + alen];
             o += alen;
-            v.push(Font { size, ascent, descent, glyphs, alpha });
+            v.push(Font { size, descent, glyphs, alpha });
         }
         let mut it = v.into_iter();
         let mut next = || it.next().unwrap();

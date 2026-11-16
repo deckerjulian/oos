@@ -628,7 +628,6 @@ fn e(v: f64) -> String {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
         Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_mode: 0, wav_start: 1, wav_stop: 0, err: Vec::new(), event_status: 0, error_serial: 0, last_error: None, opc_events: Vec::new(), acl: crate::netacl::Shared::default(), acl_seen: 0 }
@@ -765,15 +764,15 @@ impl Scpi {
         }
     }
 
-    /// Immediate adapter for HTTP and in-process callers. Deferred barriers must use
+    /// Immediate adapter for the tests. Deferred barriers must use
     /// `poll_program`: returning 1 here while an operation is pending would be false.
     /// Commands before a pending barrier execute once; the remaining message is rejected.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub fn exec_line(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Vec<u8> {
         self.exec_line_checked(ui, cv, line).unwrap_or_default()
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub fn exec_line_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<Vec<u8>, &'static str> {
         self.exec_message_checked(ui, cv, line).map(|(response, _)| response)
     }
@@ -934,6 +933,8 @@ impl Scpi {
                 else if kw(nodes[0], "SINGle") { Some(2) } else { None };
             if command.is_some_and(|command| ui.mixed_bus_command(command)) { return None; }
         }
+        // Rigol: a forced trigger releases Normal or Single when the level never crosses. On a reference or SIM
+        // session that is the replay flag (`force_trigger`); on the live hardware it pulses the FPGA force bit.
         if !query && ((nodes.len() == 1 && kw(nodes[0], "TFORce"))
             || (nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "FORCe"))) {
             ui.force_trigger();
@@ -962,18 +963,6 @@ impl Scpi {
         }
         if !query && nodes.len() == 1 && kw(nodes[0], "CLEar") {
             ui.key(crate::ui::key::CLEAR);
-            return None;
-        }
-        // Rigol: a forced trigger releases Normal or Single when the level never crosses. On a reference or SIM
-        // session that is the replay flag. On the live hardware the front-panel key also asks the acquisition
-        // thread to pulse the FPGA force bit.
-        if !query && nodes.len() == 1 && kw(nodes[0], "TFORce") {
-            if ui.record_mode() {
-                ui.record_key(crate::ui::key::FORCE);
-            } else {
-                ui.key(crate::ui::key::FORCE);
-            }
-            ui.mark_changed();
             return None;
         }
         if !query && nodes.len() == 1 && kw(nodes[0], "STOP") && ui.sim_generating() {

@@ -68,7 +68,6 @@ impl Window {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Cores {
     /// Takes the core offsets off the words `w` of channel `key.1`. Returns the turn applied (word k had the offset
     /// of phase (k + turn) % 8 of the learnt pattern), None when the frame was left as it is.
@@ -110,7 +109,7 @@ impl Cores {
     }
 
     /// The learnt pattern of `key` (codes, phase 0 first) and the samples it stands for.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub fn pattern(&self, key: Key) -> Option<([f64; P], f64)> {
         self.learnt.get(&key).map(|e| (e.l, e.n))
     }
@@ -133,7 +132,7 @@ fn take_off(w: &mut [u16], l: &[f64; P], turn: usize) {
 /// A frame's own estimate of the pattern: the Hann-weighted mean of each phase k % 8 of the first `LOOK` words, less
 /// the mean of the 8 (a windowed DFT at the multiples of a 8th of the rate). With the samples it used; None for short
 /// frames.
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+#[cfg(test)]
 pub fn estimate(w: &[u16]) -> Option<([f64; P], f64)> {
     estimate_with(w, &mut Window::default())
 }

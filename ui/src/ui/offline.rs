@@ -19,7 +19,6 @@ pub(super) struct LiveHold {
     delay: f32,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub fn set_offline(&mut self, on: bool) {
         if on == self.offline {
@@ -177,31 +176,6 @@ impl Ui {
                 (format!("R{}", i + 1), sub)
             }
             None => (format!("R{}", i + 1), "empty".into()),
-        }
-    }
-
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn draw_offline_card(&self, cv: &mut Canvas, r: Rect, sel: bool) {
-        let f = &self.fonts();
-        cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
-        cv.round(r.inset(2), 5, BAR, 255);
-        let (name, sub) = self.ref_card_lines();
-        cv.set_clip(r.inset(3));
-        cv.text(&f.sb, r.x + 12, r.y + 18, &name, LABEL);
-        cv.text(Self::card_font(f, &sub, r.w - 24), r.x + 12, r.y + 48, &sub, TEXT);
-        cv.no_clip();
-    }
-
-    /// Run pill while the mode is on: play the loaded record, or hold it. It does not start the demo.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn toggle_offline_run(&mut self) {
-        if self.sim_play {
-            self.sim_play = false;
-            return;
-        }
-        let ready = self.refs.get(self.offline_ref).and_then(|r| r.as_ref()).is_some_and(|r| r.v.len() >= 2 && r.dt > 0.0);
-        if ready {
-            self.sim_play = true;
         }
     }
 

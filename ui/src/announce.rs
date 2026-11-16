@@ -505,7 +505,6 @@ pub struct Announcer {
     interfaces_next: Instant,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Announcer {
     pub fn open(services: &[Svc]) -> Announcer {
         let sock = mcast_socket();
@@ -518,13 +517,13 @@ impl Announcer {
     }
 
     /// The responder owns a socket and has real listeners to announce.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
     pub fn available(&self) -> bool {
         self.sock.is_some() && !self.services.is_empty()
     }
 
     /// Addresses in the most recent announcement, excluding down and loopback interfaces.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
     pub fn local_addresses(&self) -> &[[u8; 4]] {
         &self.last
     }

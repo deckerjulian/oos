@@ -11,7 +11,9 @@
 //! use the separate Fit record action; its bounded helper is retained below.
 
 use super::*;
-use crate::wave::{autoset_shown, flat_noise, mid_level, periodic, place, Stats};
+#[cfg(test)]
+use crate::wave::autoset_shown;
+use crate::wave::{flat_noise, mid_level, periodic, place, Stats};
 
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
 const TBASES: [f32; 5] = [20e-9, 2e-6, 200e-6, 2e-3, 20e-3];
@@ -521,22 +523,10 @@ impl Ui {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+#[cfg(test)]
 impl Ui {
-    /// Whether the separate Fit record action is working with stored references.
-    /// The hardware Auto action does not call this reference fitting path.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn reference_autoset(&self) -> bool {
-        if self.sim_play {
-            return true;
-        }
-        let live = (0..n_ch()).any(|c| self.m.ch[c].on);
-        !live && self.refs.iter().any(|r| r.as_ref().is_some_and(|r| r.on && r.v.len() >= 4 && r.dt > 0.0))
-    }
-
     /// Bounded Fit record helper: scale/position/time base from shown refs;
     /// never called by hardware Auto and never turns an ADC channel on.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn autoset_reference(&mut self) {
         let shown: Vec<usize> = self
             .refs

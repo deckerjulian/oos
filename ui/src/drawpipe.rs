@@ -5,10 +5,10 @@
 //! and the record path) and hands the read-out buffer itself (no copy) with the other frames to the deposit workers,
 //! one per little core. The workers claim the frames a few at a time; while the FPGA's ring fills with the next batch
 //! the acquisition thread claims single frames too (`help`, from `seq::acquire_batch_idle`). Each frame is
-//! decoded into kept vectors and drawn with the fast path (`draw_frame`, the same function as `Ui::fast_draw`) into
-//! the claimer's own maps, with the screen mapping the UI published (`View`); the trigger statistics and the cheap
-//! measurements (framestats.rs) are counted with it. Once per screen refresh the UI adds the maps to its phosphor
-//! (`merge`); it never iterates the frames.
+//! decoded into kept vectors and drawn with the fast path (`draw_frame`, one frame at a time; the frames mode draws
+//! the same picture with `Ui::fast_draw_all`) into the claimer's own maps, with the screen mapping the UI published
+//! (`View`); the trigger statistics and the cheap measurements (framestats.rs) are counted with it. Once per screen
+//! refresh the UI adds the maps to its phosphor (`merge`); it never iterates the frames.
 //!
 //! The picture is the one of the `frames` mode (every frame through the queue) for the same frames: the workers run
 //! `draw_frame` on the frames the UI would have fast-drawn, and the newest frame of each batch takes the UI's path.
@@ -944,7 +944,7 @@ mod tests {
         }
     }
 
-    /// The frames mode for the same frames: `Ui::fast_draw` and the per-frame statistics on every frame.
+    /// The frames mode for the same frames: `draw_frame` and the per-frame statistics on every frame, one by one.
     fn reference(bytes: &[u8], fb: usize, s: &Settings, p: &hz::Params, m: &Model, w: usize, h: usize) -> (Phosphor, u64, [u64; 4], (f64, f64), crate::framestats::Folds) {
         let mut want = Phosphor::new(w, h);
         let (mut trig, mut edges, mut off) = (0, [0u64; 4], (0.0, 0.0));
@@ -1122,7 +1122,7 @@ mod tests {
     }
 
     /// Host cost per frame of a worker (decode into kept vectors, trigger refinement, deposit) against the frames
-    /// mode's per-frame work on the UI thread (`decode` + `Ui::fast_draw`), and the rate of 1, 2 and 4 workers (the
+    /// mode's per-frame work on the UI thread (`decode` + `draw_frame`), and the rate of 1, 2 and 4 workers (the
     /// helper runs the same code per frame). Run by tools/perf-guard.sh.
     #[test]
     #[ignore]
@@ -1134,7 +1134,7 @@ mod tests {
             m.meas = if meas { crate::framestats::CHEAP.iter().map(|&k| (k, crate::model::WaveId::Ch(0))).collect() } else { Vec::new() };
             let frames = (2_000_000 / (memsel as usize * 2)).clamp(8, 500);
             let (bytes, fb, s, p) = batch(frames, memsel, false);
-            // the frames mode: decode + fast_draw on one thread (its measurements: a few records a second), against
+            // the frames mode: decode + draw_frame on one thread (its measurements: a few records a second), against
             // one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are reported only
             let mut ph = Phosphor::new(w, h);
             let one = Pipe::start(1, false, fresh());

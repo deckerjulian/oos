@@ -12,7 +12,9 @@
 //!   --model NAME                   act as this model (DHO802 .. DHO924S), instead of /rigol/data/vendor.bin
 //!   --limits FILE                  experimental limits (default /oos/limits.conf, docs/models.md)
 
-// SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
+// SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner and
+// leaves them unused. The guard against dead code is the scope build (tools/check.sh target): there only the items that
+// the desktop window alone uses carry an allow, and what only the tests use is #[cfg(test)].
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 mod clock;

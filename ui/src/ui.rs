@@ -103,11 +103,7 @@ pub const BOTTOM_H: i32 = 36;
 pub const W: i32 = PANEL_W;
 pub const H: i32 = PANEL_H;
 pub const TOP: Rect = Rect::new(0, 0, W, METRICS.top_h);
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-const PLOT_X: i32 = 0;
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-const PLOT_W: i32 = W;
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+#[cfg(test)]
 const PLOT_Y: i32 = TOP.h;
 pub const BOTTOM: Rect = Rect::new(0, H - BOTTOM_H, W, BOTTOM_H);
 /// The normal text size's `Lay::results_w` and `Lay::strip_row`, for the same code.
@@ -955,11 +951,10 @@ enum Kind {
     Action,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub enum Ev {
     Key(u8),
     Touch { id: i32, phase: Phase, x: i32, y: i32 },
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // made by the desktop window
     Wheel { x: i32, y: i32, steps: i32, ctrl: bool, shift: bool, alt: bool },
 }
 
@@ -1102,7 +1097,6 @@ impl MeasWorker {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub struct Ui {
     /// Add-measurements catalog: tab, selected button, which groups are open, scroll, and the extra sources.
     cat_tab: u8,
@@ -1122,7 +1116,7 @@ pub struct Ui {
     load_slot_ask: bool,
     load_destination: Option<usize>,
     pub lan_status: String,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // set by the desktop window
     pub lan_web_port: Option<u16>,
     pub m: Model,
     pub src: Source,
@@ -1267,8 +1261,6 @@ pub struct Ui {
     sim_play: bool,
     sim_generation: Option<sim::Generation>,
     sim_error: Option<String>,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    sim_i: usize,
     /// Offline mode. Off, the live screen stays as it is.
     offline: bool,
     /// Take over, offline waveforms, or the live scope.
@@ -1491,7 +1483,6 @@ fn copy_page(v: &[f32], dt: f64, t0: f64, start: u64, stop: u64) -> (Vec<f32>, f
     (page, dt, t0 + lo as f64 * dt)
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// The fonts of the text size.
     pub fn fonts(&self) -> &'static Fonts {
@@ -1634,7 +1625,6 @@ impl Ui {
             sim_play: false,
             sim_generation: None,
             sim_error: None,
-            sim_i: 0,
             offline: false,
             look: reflook::RefLook::Live,
             meas_own: std::collections::HashMap::new(),
@@ -2497,17 +2487,8 @@ impl Ui {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn channel_stats(&self, c: usize) -> Option<Stats> {
-        if self.m.ch[c].on && self.stats[c].valid {
-            Some(self.stats[c])
-        } else {
-            None
-        }
-    }
-
     /// (points, dt, time of the first point relative to the trigger) of the last record of channel c.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub fn record_info(&self, c: usize) -> Option<(usize, f64, f64)> {
         let r = self.last[0].as_ref()?;
         if r.ch[c].is_empty() {
@@ -2539,7 +2520,7 @@ impl Ui {
     }
 
     /// The samples of `raw_info`.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub fn raw_volts(&self, c: usize) -> Option<Vec<f32>> {
         let r = self.last[0].as_ref()?.raw.as_ref()?;
         let v = r.frame.ch.get(c)?;
@@ -2585,7 +2566,7 @@ impl Ui {
     }
 
     /// Samples of a reference slot, finite volts. Empty when that slot holds nothing.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(crate) fn ref_volts(&self, slot: usize) -> Vec<f32> {
         self.ref_page(slot, 1, 0).map(|(v, _, _, _, _)| v).unwrap_or_default()
     }
@@ -3323,14 +3304,6 @@ impl Ui {
         self.t_fast_fold += 0.05 * (t2.elapsed().as_secs_f32() * 1e3 - self.t_fast_fold);
         self.fast_n += 0.05 * (frames.len() as f32 - self.fast_n);
         trig
-    }
-
-    /// One frame of the fast path into the main phosphor map; false if its trigger edge was not found near the
-    /// hardware trigger point. Sparse frames (fewer than 2 samples per column) take the record path instead.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    fn fast_draw(&mut self, f: &crate::board::Frame) -> bool {
-        let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
-        crate::drawpipe::draw_frame(&mut self.ph, &self.m, f, Some(stats))
     }
 
     // ------------------------------------------------------------------ rendering
@@ -4134,7 +4107,7 @@ impl Ui {
     }
 
     /// Test/legacy adapter; production rendering reuses immutable timed results.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     fn math_source(&self, s: usize, below: usize) -> Vec<f32> {
         self.math_source_record(s, below).map_or_else(Vec::new, |w| w.v.as_ref().clone())
     }
@@ -4146,6 +4119,7 @@ impl Ui {
     }
 
     /// The waveform of the selected math channel.
+    #[cfg(test)]
     fn math_wave(&self) -> Vec<f32> {
         self.math_wave_of(self.m.math_sel)
     }
@@ -4984,7 +4958,7 @@ impl Ui {
     }
 
     /// Where the strip is drawn. None when it has nothing to show.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     fn strip_rect(&self) -> Option<Rect> {
         let rows = self.strip_rows();
         if rows == 0 {
@@ -5317,7 +5291,7 @@ impl Ui {
     const MENU_BTN: Rect = Rect::new(4, H - BOTTOM_H + 3, 46, 30);
     const SINGLE_BTN: Rect = Rect::new(104, 5, 54, 30);
     /// Run state pill at the panel's normal text size (`run_pill` grows with the text).
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     const RUN_PILL: Rect = Rect::new(8, 6, 92, 28);
     fn menu_btn(&self) -> Rect {
         self.frame().menu_btn
@@ -9199,12 +9173,6 @@ impl Ui {
     }
 
     // ------------------------------------------------------------------ input
-
-    /// A menu is on the screen (the desktop window turns Multi 1 with the wheel only then).
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub fn menu_is_open(&self) -> bool {
-        self.menu_open
-    }
 
     pub fn handle(&mut self, ev: Ev) {
         if self.start_up_input(&ev) {

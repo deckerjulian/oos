@@ -13,14 +13,11 @@ enum Panel { Plot, Eye, Measurements }
 #[derive(Clone, Copy)]
 struct Gesture { panel: Panel, origin: Rect, x: i32, y: i32, at: f64, moved: bool, held: bool }
 #[derive(Clone)]
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub(super) enum Action {
     Overlay, Stacked, Sources, Source(WaveId), Trigger(WaveId), Menu(MenuId),
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    ZoomReset, ZoomClose, FitRecord, Live, Single, Run, Panel,
+    ZoomReset, ZoomClose, FitRecord, Single, Run,
     EyeRight, EyeLeft, EyeBelow, EyeFloat, EyeClose,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    MeasureFloat, MeasureDock(StripDock), Close,
+    MeasureFloat, MeasureDock(StripDock),
 }
 
 #[cfg(test)]
@@ -546,7 +543,6 @@ pub(super) struct Workspace {
     pub(super) popup: Option<Popup>,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Display/knob focus is independent of acquisition and measurement A/B.
     pub(super) fn selected_workspace_source(&self) -> Option<WaveId> {
@@ -844,8 +840,7 @@ impl Ui {
             Action::ZoomReset => { self.zoom_arm = false; self.zoom_path.clear(); self.reset_zoom(); }
             Action::ZoomClose => { self.zoom_arm = false; self.zoom_path.clear(); self.set_zoom(false); }
             Action::FitRecord => { self.fit_selected_record(); }
-            Action::Live => self.return_to_live(), Action::Single => self.key(key::SINGLE), Action::Run => self.key(key::RUNSTOP),
-            Action::Panel => self.desktop_panel = self.desktop_panel.map(|open| !open),
+            Action::Single => self.key(key::SINGLE), Action::Run => self.key(key::RUNSTOP),
             Action::EyeRight => { self.workspace.eye_float = None; self.workspace.eye_left = false; self.eye_set_place(EyePlace::Side); self.relayout(); }
             Action::EyeLeft => { self.workspace.eye_float = None; self.workspace.eye_left = true; self.eye_set_place(EyePlace::Side); self.relayout(); }
             Action::EyeBelow => { self.workspace.eye_float = None; self.workspace.eye_left = false; self.eye_set_place(EyePlace::Under); self.relayout(); }
@@ -863,7 +858,6 @@ impl Ui {
                 self.stats_on = true;
                 self.relayout();
             }
-            Action::Close => {},
         }
     }
     pub(super) fn workspace_draw(&self, cv: &mut Canvas) {
@@ -980,7 +974,7 @@ impl Ui {
         }
     }
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
     pub fn dismiss_context(&mut self) {
         if self.load_slot_ask { self.cancel_load_slot(); return; }
         let was_drawing = self.zoom_arm;

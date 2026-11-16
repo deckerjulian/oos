@@ -77,7 +77,6 @@ pub enum Source {
     /// frames from the read-out-only debug source of the board (`Board::live`)
     Live { shared: crate::board::LiveShared, seen: u64, words: Vec<u16>, xinc: f64, yinc: f64, yorg: f64, yref: f64 },
     /// acquisitions of the board (`Board::spawn`)
-    #[allow(dead_code)]
     Hw { shared: crate::board::HwShared, seen: u64 },
 }
 
@@ -865,10 +864,6 @@ impl Phosphor {
             m.iter_mut().for_each(|x| *x = 0);
         }
     }
-    #[allow(dead_code)]
-    pub fn clear_ch(&mut self, c: usize) {
-        self.map[c].iter_mut().for_each(|x| *x = 0);
-    }
     /// Multiplies every count by f (0..1).
     pub fn decay(&mut self, f: f32) {
         let k = (f.clamp(0.0, 1.0) * 65536.0) as u32;
@@ -1187,7 +1182,7 @@ pub fn autoset(m: &mut Model, src: &Source) {
 /// fills 80 % of its band, the midpoint sits on the band centre). The time base shows about three periods of the
 /// slowest record. Analog channels, the trigger and the run state stay as they are.
 /// `None` where the record is flatter than the live set-up's floor (50 mV).
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+#[cfg(test)]
 pub fn autoset_shown(m: &mut Model, waves: &[(&[f32], f64)]) -> Vec<Option<(f32, f32)>> {
     let measured: Vec<Stats> = waves.iter().map(|(v, dt)| autoset_summary(v, *dt)).collect();
     let hot: Vec<bool> = measured.iter().map(|s| s.vmax - s.vmin >= 0.05).collect();

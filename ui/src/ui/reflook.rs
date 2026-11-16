@@ -68,7 +68,6 @@ pub(super) struct CfgGeom {
     pub edges: Option<Rect>,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn set_look(&mut self, look: RefLook) {
         if self.look == look {
@@ -602,7 +601,7 @@ impl Ui {
         v
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(crate) fn set_meas_refs(&mut self, index: usize, low: f64, high: f64) {
         if index >= self.m.meas.len() {
             return;
