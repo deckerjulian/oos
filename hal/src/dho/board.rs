@@ -195,16 +195,10 @@ mod tests {
 
     #[test]
     fn xadc_rejects_unloaded_fpga() {
-        struct R(u32);
-        impl crate::dho::bus::Bus for R {
-            fn wr(&mut self, _: u32, _: u32) {}
-            fn rd(&mut self, _: u32) -> u32 {
-                self.0
-            }
-        }
-        assert!(read_xadc(&mut R(u32::MAX)).is_none());
-        assert!(read_xadc(&mut R(0)).is_none());
-        assert!(read_xadc(&mut R(0x0555_09b0)).is_some());
+        let r = |v: u32| crate::dho::bus::Recorder { regs: [(XADC_REG, v)].into(), ..Default::default() };
+        assert!(read_xadc(&mut r(u32::MAX)).is_none());
+        assert!(read_xadc(&mut r(0)).is_none());
+        assert!(read_xadc(&mut r(0x0555_09b0)).is_some());
     }
 
     #[test]

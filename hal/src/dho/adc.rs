@@ -340,8 +340,6 @@ mod tests {
         assert_eq!(c.get16(CalAdc::off_at(5, 3)), 1023);
     }
 
-    const CAL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal");
-
     #[test]
     fn modes_and_input_words() {
         assert_eq!(mode_of_mask(1), Some(0));
@@ -361,7 +359,7 @@ mod tests {
     /// Needs the unit's cal_adc.hex (device data, not in the tree); skipped when missing.
     #[test]
     fn matches_adcmodel() {
-        let Ok(cal) = CalAdc::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into())) else {
+        let Ok(cal) = CalAdc::load(&crate::dho::calfile::test_dir(false)) else {
             eprintln!("cal_adc.hex not found, skipped");
             return;
         };

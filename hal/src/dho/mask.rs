@@ -589,24 +589,10 @@ mod tests {
 
     #[test]
     fn counters_are_48_bits_after_a_latch() {
-        struct B(Vec<Write>);
-        impl Bus for B {
-            fn wr(&mut self, o: u32, v: u32) {
-                self.0.push((o, v));
-            }
-            fn rd(&mut self, o: u32) -> u32 {
-                match o {
-                    FRAMES_LO => 0xffff_fff0,
-                    FRAMES_HI => 0xdead_0001,
-                    FAILS_LO => 7,
-                    FAILS_HI => 0,
-                    _ => 0,
-                }
-            }
-        }
-        let mut b = B(vec![]);
+        let regs = [(FRAMES_LO, 0xffff_fff0), (FRAMES_HI, 0xdead_0001), (FAILS_LO, 7), (FAILS_HI, 0)];
+        let mut b = crate::dho::bus::Recorder { regs: regs.into(), ..Default::default() };
         let r = read(&mut b, 0x0010_0000 | ctrl::LATCH);
-        assert_eq!(b.0, vec![(0x1190, 0x0010_0000), (0x1190, 0x1010_0000), (0x1190, 0x0010_0000)]);
+        assert_eq!(b.writes, vec![(0x1190, 0x0010_0000), (0x1190, 0x1010_0000), (0x1190, 0x0010_0000)]);
         assert_eq!((r.frames(), r.fails()), (0x1_ffff_fff0, 7));
     }
 }

@@ -83,6 +83,18 @@ pub fn now() -> Stamp {
     (y as u32, m as u32, d as u32, (rem / 3600) as u32, (rem / 60 % 60) as u32, (rem % 60) as u32)
 }
 
+/// The calibration files of a real unit for the tests: OOS_CAL_DIR, else `local/cal` of the tree (`full`:
+/// `local/cal-full`, the complete set). They are not in the tree; a test that needs them skips itself without them.
+#[cfg(test)]
+pub fn test_dir(full: bool) -> String {
+    let local = if full {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full")
+    } else {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal")
+    };
+    std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| local.into())
+}
+
 /// Writes `name` in `dir` atomically: `name.new`, fsync, the old file to `name.bak`, rename. Never under /rigol.
 pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<()> {
     let refuse = |m: &str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, m.to_string());
@@ -125,7 +137,7 @@ mod tests {
     }
 
     fn unit_dir() -> String {
-        std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full").into())
+        crate::dho::calfile::test_dir(true)
     }
 
     #[test]

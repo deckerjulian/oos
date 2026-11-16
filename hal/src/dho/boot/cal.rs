@@ -110,7 +110,7 @@ mod tests {
     /// The unit's files (device data, not in the tree); skipped when missing.
     #[test]
     fn unit_files() {
-        let dir = std::env::var("OOS_CAL_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").into());
+        let dir = crate::dho::calfile::test_dir(false);
         let c = CalFiles::load(&dir);
         if let Some(d) = c.ddr {
             assert_eq!(d.taps, [0x12, 0x4d6, 0x8a2, 0x924, 0x1ef, 0]); // = oos-hw ddr-cal, cold-boot.md 3.2

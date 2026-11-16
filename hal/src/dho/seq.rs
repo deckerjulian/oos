@@ -1161,7 +1161,7 @@ mod tests {
     }
     #[test]
     fn the_afe_sees_the_bnc_behind_a_probe() {
-        let dir = std::env::var("OOS_CAL_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").into());
+        let dir = crate::dho::calfile::test_dir(false);
         let Ok(cal) = afe::Cal::load(&dir) else {
             eprintln!("calibration files not found, skipped");
             return;
@@ -1181,7 +1181,7 @@ mod tests {
     }
 
     fn cal() -> Option<afe::Cal> {
-        afe::Cal::load(&std::env::var("OOS_CAL_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").into())).ok()
+        afe::Cal::load(&crate::dho::calfile::test_dir(false)).ok()
     }
 
     fn afe_writes(st: &[Step], reg: u8) -> Vec<u16> {

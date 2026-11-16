@@ -217,19 +217,8 @@ mod tests {
 
     #[test]
     fn status_and_counters() {
-        struct B;
-        impl Bus for B {
-            fn wr(&mut self, _: u32, _: u32) {}
-            fn rd(&mut self, o: u32) -> u32 {
-                match o {
-                    0x4030 => 1 << 28,
-                    0x4038 => 1 << 19,
-                    0x11a0 => 42,
-                    _ => 0,
-                }
-            }
-        }
-        let r = read(&mut B, 0x0010_0000);
+        let mut b = crate::dho::bus::Recorder { regs: [(0x4030, 1 << 28), (0x4038, 1 << 19), (0x11a0, 42)].into(), ..Default::default() };
+        let r = read(&mut b, 0x0010_0000);
         assert!(r.armed() && r.pass() && !r.in_cycle() && r.state() == 0);
         // the unit's reading between cycles (round 3)
         let idle = Raw { s4030: 0xcf04_a880, s4038: 0x2080_0700, counters: mask::Raw::default() };

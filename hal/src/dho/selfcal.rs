@@ -790,7 +790,7 @@ mod tests {
     use super::*;
 
     fn unit_cal() -> Option<(Cal, Vec<u8>)> {
-        let dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full").into());
+        let dir = crate::dho::calfile::test_dir(true);
         let v = std::fs::read(format!("{}/cal_vertical.hex", dir)).ok()?;
         Some((Cal::load(&dir).ok()?, v))
     }

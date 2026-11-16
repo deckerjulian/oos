@@ -678,7 +678,7 @@ fn only_verified_models_by_default() {
     assert!(first::check_model(None, false).is_err());
     assert!(first::check_model(None, true).is_ok());
     assert!(first::check_model(Some(b"not a vendor file"), false).is_err());
-    let dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").to_string());
+    let dir = crate::dho::calfile::test_dir(false);
     if let Ok(v) = std::fs::read(format!("{}/vendor.bin", dir)) {
         assert_eq!(first::check_model(Some(&v), false).unwrap(), "DHO924S");
     }

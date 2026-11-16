@@ -245,13 +245,6 @@ mod tests {
         let l = channel_levels(&[a, b], 1, &v)[0].unwrap();
         assert!((l.lo - volts(1000.0 * 16.0 + 8.0, &v[0])).abs() < 1e-9 && (l.hi - volts(3000.0 * 16.0 + 8.0, &v[0])).abs() < 1e-9);
         // a unit that never finishes: no reading
-        struct Dead;
-        impl Bus for Dead {
-            fn wr(&mut self, _: u32, _: u32) {}
-            fn rd(&mut self, _: u32) -> u32 {
-                0
-            }
-        }
-        assert!(run(&mut Dead, &mut |_| {}).is_none());
+        assert!(run(&mut crate::dho::bus::Recorder::default(), &mut |_| {}).is_none());
     }
 }
