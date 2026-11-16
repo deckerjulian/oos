@@ -65,6 +65,8 @@ Fixed:
 - The software I2C Data trigger applies Direction for Any and one to five data bytes.
 - Self-cal All calibrates only the channels of the model; the picker no longer offers CH3 and CH4 on a two-channel
   model.
+- `oos-fpgad cold-boot` and `fpga-boot` refuse BOOT while either the PCIe host or the XDMA module is loaded, unless
+  forced.
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
   only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
   keeps the panel's bars while the external display has the waveform.
