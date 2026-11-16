@@ -944,6 +944,248 @@ enum Item {
     CatSourceD,
 }
 
+/// One part of the menus (a module of ui/): what it answers about the items it owns, None where it has nothing of
+/// that kind. A part answers None (false) for an item that is not its own, and no item of a menu belongs to two parts
+/// (`no_menu_item_has_two_parts`), so the order of `PARTS` decides nothing.
+struct Part {
+    kind: Option<fn(Item) -> Option<Kind>>,
+    label: Option<fn(Item) -> Option<&'static str>>,
+    value: Option<fn(&Ui, Item) -> Option<String>>,
+    adjust: Option<fn(&mut Ui, Item, i32) -> bool>,
+    activate: Option<fn(&mut Ui, Item) -> bool>,
+    options: Option<fn(&Ui, Item) -> Option<Vec<String>>>,
+    /// a line of text, not a control
+    text: Option<fn(Item) -> bool>,
+}
+
+const NO_PART: Part =
+    Part { kind: None, label: None, value: None, adjust: None, activate: None, options: None, text: None };
+
+/// The parts of the menus, asked by `kind`, `label`, `value`, `adjust`, `activate`, `options` and `ctl` before the
+/// items `ui.rs` keeps itself. `remote` answers for `ssh` too, except the actions.
+const PARTS: [Part; 22] = [
+    Part {
+        kind: Some(Ui::meas_kind),
+        label: Some(Ui::meas_cfg_label),
+        value: Some(Ui::meas_value),
+        adjust: Some(Ui::meas_adjust),
+        options: Some(Ui::meas_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::ana_kind),
+        label: Some(Ui::ana_label),
+        value: Some(Ui::ana_value),
+        adjust: Some(Ui::ana_adjust),
+        activate: Some(Ui::ana_activate),
+        options: Some(Ui::ana_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::magnetic_kind),
+        label: Some(Ui::magnetic_label),
+        value: Some(Ui::magnetic_value),
+        adjust: Some(Ui::magnetic_adjust),
+        options: Some(Ui::magnetic_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::inverter_kind),
+        label: Some(Ui::inverter_label),
+        value: Some(Ui::inverter_value),
+        adjust: Some(Ui::inverter_adjust),
+        options: Some(Ui::inverter_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::dpt_kind),
+        label: Some(Ui::dpt_label),
+        value: Some(Ui::dpt_value),
+        adjust: Some(Ui::dpt_adjust),
+        options: Some(Ui::dpt_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::cal_kind),
+        label: Some(Ui::cal_label),
+        value: Some(Ui::cal_value),
+        adjust: Some(Ui::cal_adjust),
+        activate: Some(Ui::cal_activate),
+        options: Some(Ui::cal_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::bode_kind),
+        label: Some(Ui::bode_label),
+        value: Some(Ui::bode_value),
+        adjust: Some(Ui::bode_adjust),
+        activate: Some(Ui::bode_activate),
+        options: Some(Ui::bode_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::sim_kind),
+        label: Some(Ui::sim_label),
+        value: Some(Ui::sim_value),
+        adjust: Some(Ui::sim_adjust),
+        activate: Some(Ui::sim_activate),
+        options: Some(Ui::sim_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::offline_kind),
+        label: Some(Ui::offline_label),
+        value: Some(Ui::offline_value),
+        adjust: Some(Ui::offline_adjust),
+        options: Some(Ui::offline_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::afg_kind),
+        label: Some(Ui::afg_label),
+        value: Some(Ui::afg_value),
+        adjust: Some(Ui::afg_adjust),
+        activate: Some(Ui::afg_activate),
+        options: Some(Ui::afg_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::bw_kind),
+        label: Some(Ui::bw_label),
+        value: Some(Ui::bw_value),
+        adjust: Some(Ui::bw_adjust),
+        options: Some(Ui::bw_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::la_kind),
+        label: Some(Ui::la_label),
+        value: Some(Ui::la_value),
+        adjust: Some(Ui::la_adjust),
+        options: Some(Ui::la_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::win_kind),
+        label: Some(Ui::win_label),
+        value: Some(Ui::win_value),
+        adjust: Some(Ui::win_adjust),
+        options: Some(Ui::win_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::bus_kind),
+        label: Some(Ui::bus_label),
+        value: Some(Ui::bus_value),
+        adjust: Some(Ui::bus_adjust),
+        options: Some(Ui::bus_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::time_kind),
+        label: Some(Ui::time_label),
+        value: Some(Ui::time_value),
+        adjust: Some(Ui::time_adjust),
+        activate: Some(Ui::time_activate),
+        options: Some(Ui::time_options),
+        text: Some(Ui::time_text),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::remote_kind),
+        label: Some(Ui::remote_label),
+        value: Some(Ui::remote_value),
+        adjust: Some(Ui::remote_adjust),
+        options: Some(Ui::remote_options),
+        text: Some(Ui::remote_text),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::graphics_kind),
+        label: Some(Ui::graphics_label),
+        value: Some(Ui::graphics_value),
+        adjust: Some(Ui::graphics_adjust),
+        options: Some(Ui::graphics_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::views_kind),
+        label: Some(Ui::views_label),
+        value: Some(Ui::views_value),
+        adjust: Some(Ui::views_adjust),
+        options: Some(Ui::views_options),
+        ..NO_PART
+    },
+    Part {
+        label: Some(Ui::monitor_label),
+        value: Some(Ui::monitor_value),
+        adjust: Some(Ui::monitor_adjust),
+        options: Some(Ui::monitor_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::features_kind),
+        label: Some(Ui::features_label),
+        value: Some(Ui::features_value),
+        adjust: Some(Ui::features_adjust),
+        options: Some(Ui::features_options),
+        ..NO_PART
+    },
+    Part {
+        kind: Some(Ui::backlight_kind),
+        label: Some(Ui::backlight_label),
+        value: Some(Ui::backlight_value),
+        adjust: Some(Ui::backlight_adjust),
+        ..NO_PART
+    },
+    Part { activate: Some(Ui::ssh_activate), ..NO_PART },
+];
+
+#[cfg(test)]
+mod part_tests {
+    use super::*;
+
+    // Break it catches: an item of a menu that two parts answer for, so the order of PARTS (and of the six chains it
+    // replaced, which did not agree) decides what the menu shows or does. Actions are not run.
+    #[test]
+    fn no_menu_item_has_two_parts() {
+        use MenuId::*;
+        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut items: Vec<Item> = Vec::new();
+        let menus = [
+            Main, Channel(0), ChMore(0), Logger, Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasHold, MeasPair,
+            Dvm, Cursor, Display, Utility, Math, Ref, Decode, Bus, Storage, Mask, Zone, Spectrum, Eye, Power, Magnetic,
+            Inverter, Dpt, Identify, SelfCal, Network, Features, Decoders(0), Remote, Ssh, Time, Bode, Sim,
+            SimAdvanced, Afg, BwTest, ViewMore, La, LaLines, LaPat, Windows, MeasSelected,
+        ];
+        for m in menus {
+            for it in ui.items(m) {
+                if !items.contains(&it) {
+                    items.push(it);
+                }
+            }
+        }
+        let mut owned = 0;
+        for &it in &items {
+            let mut u = Ui::new(Source::Demo { t: 0.0 });
+            let claims: Vec<usize> = (0..PARTS.len())
+                .filter(|&i| {
+                    let p = &PARTS[i];
+                    p.kind.is_some_and(|f| f(it).is_some())
+                        | p.label.is_some_and(|f| f(it).is_some())
+                        | p.value.is_some_and(|f| f(&ui, it).is_some())
+                        | p.options.is_some_and(|f| f(&ui, it).is_some())
+                        | p.text.is_some_and(|f| f(it))
+                        | p.adjust.is_some_and(|f| f(&mut u, it, 1))
+                })
+                .collect();
+            assert!(claims.len() <= 1, "{:?} belongs to parts {:?}", it, claims);
+            owned += claims.len();
+        }
+        assert!(items.len() > 400 && owned > 200, "{} items, {} of a part", items.len(), owned);
+    }
+}
+
 #[derive(PartialEq)]
 enum Kind {
     Choice,
@@ -6836,7 +7078,7 @@ impl Ui {
 
     fn kind(it: Item) -> Kind {
         if matches!(it, Item::AutoDeskew | Item::ClearDeskew) { return Kind::Action; }
-        if let Some(k) = Self::meas_kind(it).or_else(|| Self::ana_kind(it)).or_else(|| Self::magnetic_kind(it)).or_else(|| Self::inverter_kind(it)).or_else(|| Self::dpt_kind(it)).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::sim_kind(it)).or_else(|| Self::offline_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::bus_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::features_kind(it)).or_else(|| Self::backlight_kind(it)) {
+        if let Some(k) = PARTS.iter().find_map(|p| p.kind.and_then(|f| f(it))) {
             return k;
         }
         match it {
@@ -6858,7 +7100,7 @@ impl Ui {
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::meas_cfg_label(it).or_else(|| Self::ana_label(it)).or_else(|| Self::magnetic_label(it)).or_else(|| Self::inverter_label(it)).or_else(|| Self::dpt_label(it)).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::sim_label(it)).or_else(|| Self::offline_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::bus_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::monitor_label(it)).or_else(|| Self::features_label(it)).or_else(|| Self::backlight_label(it)) {
+        if let Some(l) = PARTS.iter().find_map(|p| p.label.and_then(|f| f(it))) {
             return l;
         }
         match it {
@@ -7138,7 +7380,7 @@ impl Ui {
         // the desktop build reports its own web port and listeners (wlan.rs `net_value`)
         if it == Item::NetWeb && cfg!(windows) && !self.lan_status.is_empty() { return self.net_value(it); }
         if it == Item::CatSourceD { return self.wave_name(self.cat_d); }
-        if let Some(v) = self.meas_value(it).or_else(|| self.ana_value(it)).or_else(|| self.magnetic_value(it)).or_else(|| self.inverter_value(it)).or_else(|| self.dpt_value(it)).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.sim_value(it)).or_else(|| self.offline_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.bus_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.monitor_value(it)).or_else(|| self.features_value(it)).or_else(|| self.backlight_value(it)) {
+        if let Some(v) = PARTS.iter().find_map(|p| p.value.and_then(|f| f(self, it))) {
             return v;
         }
         let m = &self.m;
@@ -7394,7 +7636,7 @@ impl Ui {
             }
             return;
         }
-        if self.bus_adjust(it, d) || self.meas_adjust(it, d) || self.ana_adjust(it, d) || self.magnetic_adjust(it, d) || self.inverter_adjust(it, d) || self.dpt_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.sim_adjust(it, d) || self.offline_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.monitor_adjust(it, d) || self.features_adjust(it, d) || self.backlight_adjust(it, d) {
+        if PARTS.iter().any(|p| p.adjust.is_some_and(|f| f(self, it, d))) {
             return;
         }
         if matches!(it, Item::TrigSrc | Item::TrigSrc2) {
@@ -7942,7 +8184,7 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
-        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.sim_activate(it) || self.afg_activate(it) || self.time_activate(it) || self.ssh_activate(it)) {
+        if Self::kind(it) == Kind::Action && PARTS.iter().any(|p| p.activate.is_some_and(|f| f(self, it))) {
             return;
         }
         match Self::kind(it) {
@@ -8518,7 +8760,7 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.meas_options(it).or_else(|| self.ana_options(it)).or_else(|| self.magnetic_options(it)).or_else(|| self.inverter_options(it)).or_else(|| self.dpt_options(it)).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.sim_options(it)).or_else(|| self.offline_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.bus_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)).or_else(|| self.monitor_options(it)).or_else(|| self.features_options(it)) {
+        if let Some(o) = PARTS.iter().find_map(|p| p.options.and_then(|f| f(self, it))) {
             return o;
         }
         let v: &[&str] = match it {
@@ -8643,7 +8885,9 @@ impl Ui {
             let cur = self.value(it);
             return Ctl::Seg(vec![cur.clone()], Some(0));
         }
-        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan | Item::AcqAlias) || Self::time_text(it) || Self::remote_text(it) {
+        let text = matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac);
+        let text = text || matches!(it, Item::NetPorts | Item::NetWlan | Item::AcqAlias);
+        if text || PARTS.iter().any(|p| p.text.is_some_and(|f| f(it))) {
             return Ctl::Text;
         }
         match Self::kind(it) {
