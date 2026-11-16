@@ -111,7 +111,7 @@ fn pow2(n: i128) -> i128 {
 /// bursts 125 M fits.
 pub const MEM_BURSTS: i128 = 0x500_0000;
 
-/// Frame memory in bursts of the segmented record (stock series parameter, `DevAcquireSpu_getMaxFrm` mode 1): the whole
+/// Frame memory in bursts of the segmented record (stock series parameter): the whole
 /// frame memory less the reserved top 1 M bursts. Kept at the stock size until the real size is measured.
 pub const RECORD_BURSTS: u32 = 16_777_216 - 0x10_0000;
 
