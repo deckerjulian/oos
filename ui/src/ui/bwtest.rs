@@ -10,9 +10,9 @@ use super::*;
 use oos_dsp::bandwidth;
 
 /// Frequency hints: 0 = Auto (the signal is below Nyquist, its tone is taken as it is).
-const HINTS: [f64; 16] = [0.0, 1e6, 2e6, 5e6, 10e6, 20e6, 50e6, 100e6, 150e6, 200e6, 250e6, 300e6, 400e6, 500e6, 750e6, 1e9];
+pub(super) const HINTS: [f64; 16] = [0.0, 1e6, 2e6, 5e6, 10e6, 20e6, 50e6, 100e6, 150e6, 200e6, 250e6, 300e6, 400e6, 500e6, 750e6, 1e9];
 /// Bins per period of the folded picture.
-const BINS: [usize; 5] = [250, 500, 1000, 2000, 5000];
+pub(super) const BINS: [usize; 5] = [250, 500, 1000, 2000, 5000];
 
 impl Ui {
     pub(super) fn bw_items(&self) -> Vec<Item> {

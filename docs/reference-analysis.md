@@ -51,7 +51,7 @@ live acquisition context. Use the shared Run/Stop/Single controls and choose a
 reference trigger source when you want stored-record acquisition; returning the
 primary trigger source to CH preserves the same running or stopped state.
 
-The [SCPI manual](scpi.md) documents the same controls, transfer formats and
+The [SCPI reference](scpi/README.md) documents the same controls, transfer formats and
 supported DHO924S-style commands alongside the OOS extensions.
 
 ## Math and decoding

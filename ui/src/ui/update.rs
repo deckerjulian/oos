@@ -108,6 +108,12 @@ impl Ui {
         self.update_spawn(&["rollback", "--execute"], "Roll back");
     }
 
+    /// Roll back without the second tap (SCPI `:SYSTem:UPDate:ROLLback CONFIRM`: the confirmation is the argument).
+    pub(crate) fn update_rollback_confirmed(&mut self) {
+        self.upd.arm_until = self.now + 5.0;
+        self.update_rollback_tap();
+    }
+
     /// A package from the web page: checked here (signature, image hash) before the child process writes the card.
     pub fn update_upload(&mut self, body: &[u8]) -> Result<String, String> {
         if self.update_busy() {

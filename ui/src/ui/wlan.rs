@@ -237,7 +237,7 @@ impl Ui {
     }
 
     /// Why nothing can be done yet, for a toast.
-    fn wlan_blocked(&self) -> Option<&'static str> {
+    pub(super) fn wlan_blocked(&self) -> Option<&'static str> {
         if self.wlan.busy.is_some() {
             Some("WLAN is busy")
         } else if !self.wlan.link.stick && !stick_there() {

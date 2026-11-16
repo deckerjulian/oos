@@ -435,7 +435,7 @@ impl Ui {
         })
     }
 
-    fn set_server(&mut self, s: &str) {
+    pub(super) fn set_server(&mut self, s: &str) {
         if self.sys.ntp_server != s {
             self.sys.ntp_server = s.to_string();
             self.sys_save();
@@ -446,7 +446,7 @@ impl Ui {
         }
     }
 
-    fn set_tz(&mut self, tz: &str) {
+    pub(super) fn set_tz(&mut self, tz: &str) {
         if self.sys.tz != tz {
             self.sys.tz = tz.to_string();
             self.sys_save();
