@@ -10,7 +10,7 @@
     backups/recovery-<date>.bin in this repository (refuses to continue if that fails).
 
 Checks before anything is written:
-  - the PARM table at LBA 8192 has the stock layout (recovery 0x00020000@0x0002C000, misc 0x00002000@0x00006000)
+  - the PARM table has the stock layout: every mark of OOS_PARM_MARKS in the board file (boardconf.check_parm)
   - the image is an ANDROID! boot image whose Rockchip id holds (oos-bootimg.py) and fits the partition
   - the current recovery content is a Rockchip KRNL ramdisk, an ANDROID! image, or a saved OOS image
 --arm also writes `boot-recovery` to LBA 32800 (bcb.py), so the next power-on boots the image once
@@ -42,14 +42,11 @@ def read(f, lba, n):
 
 
 def check_parm(f):
-    raw = read(f, PARM_LBA, 4)
-    if raw[:4] != b"PARM":
-        sys.exit(f"no PARM block at LBA {PARM_LBA}: not a boot card of this board")
-    txt = raw.decode("latin1")
-    for need in ("0x00020000@0x0002C000(recovery)", "0x00002000@0x00006000(misc)"):
-        if need.lower() not in txt.lower():
-            sys.exit(f"partition table differs from the stock layout (missing {need}); refusing")
-    print("PARM table: stock layout (recovery at LBA 0x2e000, misc at LBA 0x8000)")
+    missing = boardconf.check_parm(read(f, PARM_LBA, 2), BOARD)
+    if missing:
+        sys.exit(f"partition table at LBA {PARM_LBA} is not the stock layout of this board "
+                 f"(missing {', '.join(missing)}); refusing")
+    print("PARM table: stock layout (" + ", ".join(BOARD["OOS_PARM_MARKS"].split()) + ")")
 
 
 def kind(blob):

@@ -34,8 +34,9 @@ def main():
     a = ap.parse_args()
     with open(a.target, "rb", buffering=0) as f:
         parm, boot, rec, bak = rd(f, PARM_LBA, 2), rd(f, BOOT_LBA), rd(f, RECOVERY_LBA), rd(f, BACKUP_LBA)
-    if parm[:4] != b"PARM" or b"0x00010000@0x0001C000(boot)".lower() not in parm.lower():
-        sys.exit("not a stock-layout DHO card")
+    missing = boardconf.check_parm(parm, BOARD)
+    if missing:
+        sys.exit(f"not a stock-layout card of this board (missing {', '.join(missing)})")
     state = {b"KRNL": "stock (boot valid)", b"OOSK": "OOS (boot disabled -> recovery)"}.get(boot[:4], f"unknown boot magic {boot[:4]!r}")
     print(f"boot: {state}; recovery: {rec[:8]!r}; backup: {bak[:4]!r}")
     if a.action == "show":

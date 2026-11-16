@@ -15,3 +15,13 @@ def load(board=None):
                 key, value = line.split("=", 1)
                 values[key] = value.strip('"')
     return values
+
+
+def check_parm(raw, values=None):
+    """What the PARM block `raw` (read from OOS_PARM_LBA, at least its first 1 KiB) lacks of the stock layout of the
+    board: the `PARM` magic and every mark of OOS_PARM_MARKS, as the scope's own check (oos-oneshot, oos-hal) sees it:
+    NUL bytes left out, case ignored. An empty list: the stock layout, the card may be written."""
+    values = values or load()
+    text = raw.replace(b"\0", b"").decode("latin1").lower()
+    missing = [] if text.startswith("parm") else ["PARM magic"]
+    return missing + [m for m in values["OOS_PARM_MARKS"].split() if m.lower() not in text]

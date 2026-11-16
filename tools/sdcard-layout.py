@@ -23,8 +23,12 @@ as Rockchip's U-Boot interprets them.
 """
 import argparse, hashlib, os, re, struct, sys, zlib
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "boot"))
+import boardconf
+
 SECTOR = 512
-PARM_LBA = 0x2000
+BOARD = boardconf.load()
+PARM_LBA = int(BOARD["OOS_PARM_LBA"])
 VENDOR_LBA, VENDOR_SECTORS, VENDOR_COPIES = 7168, 128, 4
 VENDOR_TAG = 0x524B5644  # "DVKR" little endian
 VENDOR_IDS = {1: "serial number", 2: "WiFi MAC", 3: "LAN MAC", 4: "BT MAC", 5: "HDCP 1.4 HDMI", 6: "HDCP 1.4 DP",
@@ -114,6 +118,8 @@ def parse_parm(d):
     crc_stored = struct.unpack_from("<I", raw, 8 + length)[0] if len(raw) >= 12 + length else None
     head_crc = zlib.crc32(raw[:942]) & 0xffffffff
     print(f"   length {length}, stored crc {crc_stored if crc_stored is None else hex(crc_stored)}, crc32(first 942 bytes) {head_crc:#010x} (known value 0x4a377dc5 on stock DHO units)")
+    missing = boardconf.check_parm(raw[:1024], BOARD)
+    print("   stock layout of this board: " + ("yes" if not missing else "no, missing " + ", ".join(missing)))
     txt = text.decode("latin1")
     for line in txt.splitlines():
         if line.strip() and not line.startswith("CMDLINE"):

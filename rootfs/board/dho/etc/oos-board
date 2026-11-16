@@ -11,9 +11,10 @@ OOS_MODULES="kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko k
 OOS_MODULE_NAMES="edt-ft5x06 pwm-gpio"
 # the update file of the stock system: its name has to hold this
 OOS_GEL_STEM=DHO800_DHO900_OOS
-# the boot card, and what its stock partition table has to say before the boot selection is touched
+# the boot card, and what its stock partition table has to say before anything on it is written (oos-oneshot,
+# boot/boardconf.py check_parm; the first 1 KiB of the PARM block, case ignored)
 OOS_CARD_CONTROLLER=fe320000
-OOS_PARM_MARKS="0x00002000@0x00006000(misc) 0x00010000@0x0001c000(boot)"
+OOS_PARM_MARKS="0x00002000@0x00006000(misc) 0x00010000@0x0001c000(boot) 0x00020000@0x0002c000(recovery)"
 # sectors of 512 bytes from the start of the card
 OOS_PARM_LBA=8192
 OOS_BCB_LBA=32800
