@@ -186,7 +186,8 @@ la = no
 - Facts of the unit, not experimental: no toast, the identity (model name, serial, rated bandwidth, `*IDN?`) stays what
   `vendor.bin` says. `oos-fpgad model` prints them as `unit`, System > System info as "Unit defaults".
 - Build: `OOS_UNIT=<name> boot/build-dev-image.sh` copies `rootfs/unit/<name>/*.conf` to `/etc/oos/`. Without `OOS_UNIT`
-  the image has no `/etc/oos` and behaves as before.
+  the image has no `/etc/oos` and behaves as before. The image names its unit in `/etc/oos-unit` (`none` without), and
+  an update package for another unit is refused (update.md, "Unit").
 
 Without a generator (model table or `afg = no`) nothing opens the generator lines (`afg_in1..5`, `FG_M2C_GPIO`):
 `afg::Io::open` refuses (`afg::line_allowed`), the acquisition thread never asks, `oos-fpgad afg` and

@@ -12,6 +12,13 @@
 stage="$root/rootfs/out/unit-hook"
 rm -rf "$stage"
 mkdir -p "$stage/etc-oos"
+# the image names its unit in /etc/oos-unit (none without OOS_UNIT); pack signs it, install compares (docs/update.md)
+unit_name=${OOS_UNIT:-none}
+case "$unit_name" in
+	[!a-zA-Z0-9]* | *[!a-zA-Z0-9._-]*) echo "OOS_UNIT: letters, digits, '.', '_', '-' only" >&2; exit 1 ;;
+esac
+[ "${#unit_name}" -le 64 ] || { echo "OOS_UNIT: 64 characters at most" >&2; exit 1; }
+printf '%s\n' "$unit_name" > "$stage/unit"
 # defaults of one unit (docs/models.md 4.2, docs/network.md 6): rootfs/unit/<OOS_UNIT>/ becomes /etc/oos/ in the image
 if [ -n "${OOS_UNIT:-}" ]; then
 	unit="$root/rootfs/unit/$OOS_UNIT"

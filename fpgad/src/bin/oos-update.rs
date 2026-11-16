@@ -6,13 +6,14 @@
 //! On the unit:
 //!   oos-update status [--quick]            what recovery and the rollback slot hold, trial state, boot mode
 //!                                          (--quick: headers only, no SHA-256 over the images)
-//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--no-kexec | --new-dt]
+//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--no-kexec | --new-dt] [--any-unit]
 //!                                          check the signature and the image (dry run without --execute), then start
 //!                                          the new image by kexec with nothing written; that start
 //!                                          installs it (rollback slot, recovery, read back, OOS armed) and is its
 //!                                          first trial start. --no-kexec (also: a package without 'trial kexec') and
 //!                                          --new-dt (another device tree, which kexec cannot try) write it directly;
-//!                                          it starts on trial at the next power-on
+//!                                          it starts on trial at the next power-on. A package built for another unit
+//!                                          (OOS_UNIT, update::unit) is refused; --any-unit installs it anyway
 //!   oos-update kexec-check FILE.oosupd     load the package's kernel and initramfs for a kexec start and unload them
 //!                                          again: nothing written, no restart
 //!   oos-update rollback [--execute]        write the rollback image back to recovery and arm OOS
@@ -37,11 +38,12 @@
 //!   oos-update keygen [--out FILE]         new signing key (default ~/.config/oos/update-signing.key, mode 0600),
 //!                                          prints the public key line for oos/keys/update.pub
 //!   oos-update pack --image IMG --build ID [--kernel REL] [--key FILE] --out FILE.oosupd
+//!                                          the package names the image's unit (its /etc/oos-unit, none without)
 //!
 //! Common options: --card /dev/mmcblk0, --state /oos/update/state, --keys FILE (extra trusted keys: verify, and
 //! install on a card file for tests; refused for the unit's card).
 
-use oos_hal::update::{self, card, hash::hex, kexec, pkg, Card, InstallOpt, State};
+use oos_hal::update::{self, card, hash::hex, kexec, pkg, unit, Card, InstallOpt, State};
 use std::path::{Path, PathBuf};
 
 const NOTICE: &str = "/tmp/oos-update.notice";
@@ -58,7 +60,7 @@ impl Args {
         let mut it = std::env::args().skip(1);
         while let Some(s) = it.next() {
             match s.as_str() {
-                "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec" | "--new-dt" => a.flags.push(s),
+                "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec" | "--new-dt" | "--any-unit" => a.flags.push(s),
                 _ if s.starts_with("--") => {
                     let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
                     a.vals.push((s, v));
@@ -101,9 +103,52 @@ fn notice(msg: &str) {
     tell(msg);
 }
 
+/// The system card.
+const SYSTEM_CARD: &str = "/dev/mmcblk0";
+
+/// What `--card` names: the system card (by any path to its block device) or a card file for tests.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CardKind {
+    System,
+    File,
+}
+
+/// A regular file (also behind a symlink) is a card file; a block device is the system card when it is the same
+/// device as `/dev/mmcblk0` (`/dev/./mmcblk0`, a symlink, another node); anything else is refused.
+fn classify(is_file: bool, block: Option<u64>, system: Option<u64>) -> Result<CardKind, &'static str> {
+    match (is_file, block) {
+        (true, _) => Ok(CardKind::File),
+        (false, Some(dev)) if Some(dev) == system => Ok(CardKind::System),
+        (false, Some(_)) => Err("a block device that is not the system card (mmcblk0)"),
+        (false, None) => Err("neither the system card nor a card file"),
+    }
+}
+
+#[cfg(unix)]
+fn card_kind(a: &Args) -> CardKind {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let path = a.val("--card").unwrap_or(SYSTEM_CARD);
+    let block = |p: &str| std::fs::metadata(p).ok().filter(|m| m.file_type().is_block_device()).map(|m| m.rdev());
+    let m = match std::fs::metadata(path) {
+        Ok(m) => m,
+        // the unit's card when it is not there (the build machine): Card::open says so
+        Err(_) if path == SYSTEM_CARD => return CardKind::System,
+        Err(e) => die(&format!("--card {}: {}", path, e)),
+    };
+    let dev = m.file_type().is_block_device().then(|| m.rdev());
+    classify(m.is_file(), dev, block(SYSTEM_CARD)).unwrap_or_else(|e| die(&format!("--card {}: {}", path, e)))
+}
+
+/// No block devices to compare: a regular file is a card file, anything else the system card.
+#[cfg(not(unix))]
+fn card_kind(a: &Args) -> CardKind {
+    let path = a.val("--card").unwrap_or(SYSTEM_CARD);
+    if std::fs::metadata(path).is_ok_and(|m| m.is_file()) { CardKind::File } else { CardKind::System }
+}
+
 fn open_card(a: &Args, write: bool) -> Card {
-    let path = a.val("--card").unwrap_or("/dev/mmcblk0");
-    if path == "/dev/mmcblk0" {
+    let path = a.val("--card").unwrap_or(SYSTEM_CARD);
+    if card_kind(a) == CardKind::System {
         // the boot card of this board, as oos-oneshot checks
         let ctl = oos_hal::target::ACTIVE.card_controller;
         let dev = std::fs::canonicalize("/sys/block/mmcblk0/device").ok();
@@ -264,10 +309,22 @@ fn install(a: &Args) {
     let p = read_file(f);
     let opt = InstallOpt { execute: a.flag("--execute"), downgrade: a.flag("--downgrade"), force: a.flag("--force") };
     let mut c = open_card(a, opt.execute);
-    let test_card = a.val("--card").is_some_and(|c| c != "/dev/mmcblk0");
+    let test_card = card_kind(a) == CardKind::File;
     let keys = keys(a, test_card);
     let sp = state_path(a);
-    let announced = pkg::verify_header(&p, &keys).is_ok_and(|h| kexec::announced(&h.manifest));
+    let header = pkg::verify_header(&p, &keys);
+    // a card file on the build machine is no unit; every path to the system card is
+    if !test_card {
+        if let Ok(h) = &header {
+            let running = unit::running().unwrap_or_else(|e| die(&e));
+            match unit::check(&h.manifest, &running, a.flag("--any-unit")) {
+                Ok(None) => {}
+                Ok(Some(w)) => tell(&w),
+                Err(e) => die(&e),
+            }
+        }
+    }
+    let announced = header.is_ok_and(|h| kexec::announced(&h.manifest));
     // a card file on the build machine cannot be started
     let by_kexec = !test_card && !a.flag("--no-kexec") && !a.flag("--new-dt") && announced;
     if !by_kexec {
@@ -883,8 +940,25 @@ fn pack(a: &Args) {
         eprintln!("oos-update: WARNING: key {} is not in oos/keys/update.pub: units will refuse this package", hex(&pkg::key_id(&pk)));
     }
     // this tree's oos-update finishes a kexec start (update::kexec): the image says so in its package
-    let p = pkg::build_with(&seed, build, &kernel, &img, &[kexec::LINE]).unwrap_or_else(|e| die(&e));
+    let u = unit::of_image(&img).unwrap_or_else(|e| die(&format!("image: {}", e)));
+    let p = pkg::build_with(&seed, build, &kernel, &img, &[kexec::LINE, (unit::KEY, &u)]).unwrap_or_else(|e| die(&e));
     pkg::verify(&p, &[pk]).unwrap_or_else(|e| die(&format!("self-check: {}", e)));
     std::fs::write(out, &p).unwrap_or_else(|e| die(&format!("{}: {}", out, e)));
-    println!("{}: build {}, {} bytes, key {}", out, build, p.len(), hex(&pkg::key_id(&pk)));
+    println!("{}: build {}, unit {}, {} bytes, key {}", out, build, u, p.len(), hex(&pkg::key_id(&pk)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn card_option() {
+        assert_eq!(classify(true, None, Some(7)), Ok(CardKind::File));
+        assert_eq!(classify(true, None, None), Ok(CardKind::File));
+        // an alias of the system card's device
+        assert_eq!(classify(false, Some(7), Some(7)), Ok(CardKind::System));
+        assert!(classify(false, Some(8), Some(7)).is_err());
+        assert!(classify(false, Some(8), None).is_err());
+        assert!(classify(false, None, Some(7)).is_err());
+    }
 }

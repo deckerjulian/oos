@@ -7,6 +7,7 @@
 //! - `card`: the card layout, the image regions (`recovery` and the rollback slot in `backup`) and the boot magic.
 //! - `first`: the first install from the running stock system, without opening the scope.
 //! - `kexec`: the trial start of a new image by kexec, before anything is written.
+//! - `unit`: the unit an image was built for (`OOS_UNIT`); a package for another unit is refused.
 //! - here: the state file (/oos/update/state) and the operations `install`, `rollback`, `boot_started`, `judge`,
 //!   `confirm`.
 //!
@@ -30,6 +31,7 @@ pub mod hash;
 pub mod inflate;
 pub mod kexec;
 pub mod pkg;
+pub mod unit;
 
 pub use card::Card;
 use card::{check_image, Region};

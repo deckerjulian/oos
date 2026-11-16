@@ -17,6 +17,9 @@ Added:
 
 Changed:
 
+- An update package built for another unit is refused before anything is written: a package names the unit its image
+  was built for (`OOS_UNIT`), or none. `--any-unit` on the shell installs it anyway, with a warning. `--card` takes a
+  card file only when it is a regular file; the system card is always checked as one (host-tested).
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.

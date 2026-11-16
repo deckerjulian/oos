@@ -216,6 +216,8 @@ fn ui_running() -> bool {
 
 /// The lines of `adc slots`: per slot the mean over all runs (16-bit measure scale), the lowest min and highest max
 /// (12-bit), and the mean's distance from the average of all slots in ADC steps (16 codes).
+// `adc slots` runs on the scope only; on a computer the binary is built for the tests in fpgad/tests
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn slot_lines(runs: &[[oos_hal::dho::levels::Slot; 8]]) -> Vec<String> {
     let n = runs.len().max(1) as f64;
     let mean: [f64; 8] = std::array::from_fn(|k| runs.iter().map(|r| r[k].mean).sum::<f64>() / n);

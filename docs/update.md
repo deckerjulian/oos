@@ -170,7 +170,7 @@ write the image directly: then power-cycle to start it on trial.
 | command | |
 |---|---|
 | `oos-update status` | boot magic, recovery and slot (build, SHA-256, loader id), trial, mode, last event |
-| `oos-update install FILE [--execute] [--downgrade] [--force] [--no-kexec \| --new-dt]` | see above |
+| `oos-update install FILE [--execute] [--downgrade] [--force] [--no-kexec \| --new-dt] [--any-unit]` | see above; `--any-unit`: "Unit" below |
 | `oos-update kexec-check FILE` | load and unload the package's kernel for a kexec start; nothing written |
 | `oos-update rollback [--execute]` | slot -> recovery (checked against its SHA-256 first), arm OOS |
 | `oos-update confirm` | end a trial by hand (after stopping oos-ui for development, `/tmp/oos-ui.off`) |
@@ -179,6 +179,30 @@ write the image directly: then power-cycle to start it on trial.
 | `oos-update pack ...`, `keygen` | host side |
 
 Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI / web job), state `/oos/update/state`.
+
+### Unit
+
+An image built with `OOS_UNIT=<name>` ([models.md](models.md) 4.2) carries one unit's defaults and its build choices,
+such as a fixed MAC address or another device tree. A package built without it, installed on that unit, drops them
+without a word: another MAC (the DHCP reservation and the firewall's view of the scope change), the plain tree.
+So the image names its unit in `/etc/oos-unit` (`none` without `OOS_UNIT`; `boot/unit-hook.sh`), `oos-update pack`
+puts it into the signed header (`unit <name>`), and `oos-update install` compares it with the running image's before
+anything is staged or written:
+
+- the same unit: installed as before. Another device tree of the same unit is fine (a kernel update).
+- another unit, `none` on a unit, or a unit on a plain image: refused, nothing written. The GUI and the web upload
+  show the refusal. `--any-unit` on the shell installs it anyway, with a warning in the job log.
+- a package from before this (no `unit` line) counts as `none`, an image without `/etc/oos-unit` as well.
+
+Not covered: the updater that runs the install is the running build's. A build from before this has no check, so the
+first install of a build with it is not guarded. A card file (`--card`, tests on the build machine) is not checked;
+only a regular file (also behind a symlink) counts as one. Any other path to the system card's block device
+(`/dev/./mmcblk0`, a symlink, another device node) is the system card, with every check; any other block device or
+path is refused.
+
+Package compatibility: a signed header line a build does not know is kept and ignored, so packages with `unit` install
+on older builds (unguarded) and older packages install on newer ones as `none`. A new header line that a build must
+not ignore needs a new first line (`OOS-UPDATE 2`), which older builds refuse.
 
 ## Trial rules (`oos_hal::update::judge`)
 
