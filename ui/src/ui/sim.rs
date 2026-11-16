@@ -1423,27 +1423,4 @@ mod tests {
         u.render(&mut cv);
         cv
     }
-
-    /// Left edge of the level that starts furthest right: the step in the record.
-    fn high_edge(cv: &crate::gfx::Canvas) -> i32 {
-        let col = super::super::REF_COLORS[0].1;
-        let mut best = -1;
-        for y in 0..cv.h {
-            let mut n = 0i32;
-            let mut minx = cv.w;
-            for x in 0..cv.w {
-                if cv.px[(y * cv.w + x) as usize] == col {
-                    n += 1;
-                    if x < minx {
-                        minx = x;
-                    }
-                }
-            }
-            if n > 80 && minx > best {
-                best = minx;
-            }
-        }
-        assert!(best >= 0, "no reference trace");
-        best
-    }
 }
