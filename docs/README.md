@@ -1,7 +1,8 @@
 # OOS technical documentation
 
-How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on the unit" means seen on a running scope;
-"assumed" or "not yet verified on hardware" means it was never run.
+How the Rigol DHO800/DHO900 hardware works and how OOS drives it. Every hardware statement carries one of three marks:
+"verified on the unit" (seen on a running scope), "assumed" (concluded, not observed) or "not yet verified on
+hardware" (written down or coded, never run on a scope).
 
 ## System
 
@@ -27,6 +28,8 @@ How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on t
   how the scope, the logic analyser and the generator work.
 - [hardware/README.md](hardware/README.md): buses and on-chip blocks of the RK3399 and what is attached to them.
 - [hardware/gpio-map.md](hardware/gpio-map.md): every GPIO with its pin, label and role.
+- [hardware/fpga.md](hardware/fpga.md): the acquisition FPGA for implementers: boot, PCIe/XDMA, throughput, data
+  formats, register access rules, hazards.
 
 ## Protocols
 

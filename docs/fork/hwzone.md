@@ -2,7 +2,8 @@
 
 The zone trigger in the FPGA. Opt-in: `zone.hw = on` in system.conf, read once at start, off by default. Code:
 `hal/src/dho/zone.rs`, `hal/src/dho/zonegeom.rs`, `seq::State::zone_steps`, `ui/src/ui/hwzone.rs`. Register facts:
-assumed, not yet verified on hardware unless a step below says so.
+assumed, not yet verified on hardware unless a step below says so; the confirmed part is in
+[../hardware/fpga.md](../hardware/fpga.md) "Zone unit".
 
 ## Hardware
 
@@ -15,9 +16,11 @@ assumed, not yet verified on hardware unless a step below says so.
 - 0x11d0: bits 24/25 zone 1/2 on, bits 26/27 mode (1 = pass when touched, 0 = pass when not touched). The result is
   the AND of both zones; a zone that is off passes.
 - 0x4020 bit 1 arms the logic (readable at 0x4030 bit 28). The latched pass flag (0x4038 bit 19) feeds the trigger
-  FSM: the zone qualifies the trigger. That a failing frame is not accepted and the FSM re-arms is inferred, not
-  measured. The normal trigger stays configured; the zone acts on top of it.
-- The mask frame counter (0x11a0/0x11a4) counts zone-qualified frames.
+  FSM: the zone qualifies the trigger. That a failing frame is not accepted was seen on the unit (round 3, "Rate");
+  that the FSM re-arms on its own is inferred. The normal trigger stays configured; the zone acts on top of it.
+- OOS reads the mask frame counter (0x11a0/0x11a4) as the count of zone-qualified frames. On the unit it stayed 0 in
+  the zone runs with the OOS fork ([../hardware/fpga.md](../hardware/fpga.md) "Zone unit"), so that it counts them is
+  not verified.
 
 ## What OOS does
 
@@ -25,10 +28,10 @@ assumed, not yet verified on hardware unless a step below says so.
   vertical extent of the zone within the column's time strip (`zonegeom::extent`) gives the limits.
 - Codes: the same assumed scale as the mask (`mask::code`: read-out word >> 8 at the channel's V/div and offset),
   rounded outwards and clipped to 0..255. A column the zone does not reach has bit 16 clear.
-- Columns: 1000 over the record, `points / 1000` samples per column (0x1184), as the mask test. Column c covers
-  samples c n .. (c + 1) n at times (k - pre) / rate relative to the trigger. The stock system instead leaves 0x1184
-  at one count and writes 1000 / (4 / ratio) columns (250, 500, 1000 for 1, 2, 4 channels). The bench decides which
-  holds; `zone::columns` is the one place to change.
+- Columns: 1000, n = clamp(points per channel / 1000, 1, 1023) samples per column (0x1184), as the mask test
+  (`mask::Map::layout`). Column c covers samples c n .. (c + 1) n at times (k - pre) / rate relative to the trigger.
+  The stock system instead leaves 0x1184 at one count and writes 1000 / (4 / ratio) columns (250, 500, 1000 for 1, 2,
+  4 channels). The bench decides which holds; `mask::Map::layout` is the one place to change.
 - With the FSM stopped (acquisition block of `configure`): 0x4020 bit 1 off, the tables that changed, 0x11d0, 0x1184,
   the slot (counter cleared on the first start, a new slot, Clear display), 0x4020 bit 1 on. Nothing is written while
   it runs as wanted. A V/div, offset or time base change reloads the tables.
@@ -75,7 +78,7 @@ and the software-filter rate for comparison. Goal: at least the software rate.
 | assumption | where | bench step |
 |---|---|---|
 | Limits in the read-out word >> 8 (Rigol writes the low byte of a 16-bit level; that does not fit an 8-bit sample) | `mask::code` | 3, 4 |
-| 1000 columns of points / 1000 samples over the record | `zone::columns` | 4 |
+| 1000 columns of clamp(points / 1000, 1, 1023) samples | `mask::Map::layout` | 4 |
 | Column times relative to the trigger at sample `pre` | `zone::table` | 4 |
 | A failing frame is not accepted; the FSM re-arms | | 2, 3 |
 | Slot = stream slot, as the mask test (CH2 alone 0, CH2 of CH1+CH2 1) | `mask::slot` | 5 |
