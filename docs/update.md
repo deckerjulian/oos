@@ -145,10 +145,11 @@ starts with the UTC build time; an older build than the installed one is refused
   key) is added as another line; a key is retired by an update that no longer lists it.
 - Ed25519 and SHA-2 are implemented in the tree (no crates beyond libc): RFC 8032 test vectors, FIPS examples, and a
   cross-check against Python `cryptography` in both directions (Rust signs / Python verifies and the reverse).
-- The signature guards the install path only. The root shell requires a provisioned SSH key ([ssh.md](ssh.md)); SCPI
-  and the web remote retain their existing unauthenticated bench-LAN interfaces. With the community key trusted, anyone on the LAN can also sign and
-  install a package. What the signature buys then: a damaged package, or one not made for OOS, is never installed by
-  the web page or the GUI. Keeping foreign packages out takes a build without the community key.
+- The signature guards the install path only. The root shell over SSH takes the scope's password or a trusted key
+  ([network.md](network.md) 7); SCPI and the web remote retain their existing unauthenticated bench-LAN interfaces.
+  With the community key trusted, anyone on the LAN can also sign and install a package. What the signature buys then:
+  a damaged package, or one not made for OOS, is never installed by the web page or the GUI. Keeping foreign packages
+  out takes a build without the community key.
 
 ## Use
 

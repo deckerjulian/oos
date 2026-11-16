@@ -351,7 +351,7 @@ impl Ui {
             Item::NetWeb if !self.sys.remote_web => "off".into(),
             Item::NetWeb if self.net.is_empty() => "not connected".into(),
             Item::NetWeb => format!("http://{}:8080", self.net),
-            Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (key)".into(),
+            Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (password or key)".into(),
             _ => {
                 let l = &self.wlan.link;
                 if !l.stick {
@@ -1098,10 +1098,11 @@ mod tests {
     }
 
     #[test]
-    fn hardware_network_fallback_names_key_only_ssh_instead_of_telnet() {
+    fn hardware_network_fallback_names_ssh_instead_of_telnet() {
         let ui = Ui::new(Source::Demo { t: 0.0 });
         let ports = ui.net_value(Item::NetPorts);
-        assert!(ports.contains("SSH 22 (key)"));
+        // oos-ssh takes the password and trusted keys (docs/network.md 7), not only a key
+        assert!(ports.contains("SSH 22 (password or key)"));
         assert!(!ports.contains("telnet"));
     }
 
