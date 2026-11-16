@@ -150,18 +150,28 @@ known sine from the generator (its frequency must be right; the generator clock 
 frequency are not enough: also compare the noise of a large sine against 1.25 GHz. Stop at the first step with lane
 errors, odd 0x1210 or wrong data, then remove the line and power cycle.
 
-Measured on one DHO924S with a 2 Vpp sine from the generator on CH1 at 0.5 V/div, sine fit over screen records. The
-absolute figures include the generator's harmonics; only the comparison counts. The calibration files were made at
-1.25 GHz.
+Verified on the unit (DHO924S, 2026-11-16): the generator's sine on CH1, raw native records of 20 k samples at the
+full rate, one channel on. The calibration files were made at 1.25 GHz.
 
-| ADC clock | Boots | Frequency | 1 MHz SINAD | 10 MHz SINAD | Data |
-|---|---|---|---|---|---|
-| 1.25 GHz | yes | right | 39.2 dB | 41.6 dB | clean |
-| 1.5 GHz | yes | right | 34.0 dB | 38.8 dB | no jumps, noise up |
-| 2 GHz | yes | right | not measured | not measured | single samples off by up to 2.4 V, frequency measurement wrong |
+| ADC clock | Boots, PLL locks, lane scan | 0x1210 | Record at full rate |
+|---|---|---|---|
+| 1.25 GHz | yes | 62500 (nominal) | complete: SINAD 43.4 dB at 1 MHz, 44.0 dB at 10 MHz |
+| 1.375 GHz | yes | 56816 | samples missing |
+| 1.5 GHz | yes | 52081 | samples missing |
+| 1.75 GHz | yes | 44641 | samples missing |
+| 2 GHz | yes | 39060 | samples missing |
 
-So 2 GHz is not usable, and 1.25 GHz stays the default. 1.375 and 1.75 GHz boot and show the right frequency; their data
-was not checked this way.
+Every step boots, but above 1.25 GHz the record at the full rate loses samples. At 1.375 GHz the periods of a 1 MHz
+sine are 1286 to 1327 samples long instead of 1375, with single gaps of about 400 samples; on average about 5 % are
+missing. Each period on its own is a clean sine, and all eight ADC cores agree. Frequencies therefore read too high by
+about the ratio of the clocks (the scope's own frequency measurement shows 1.094 MHz for 1 MHz at 1.375 GHz), and sine
+fits over a record fail. Assumed, not measured: the path into the acquisition memory cannot take the higher rate.
+
+An earlier table of this section showed 1.5 GHz with the right frequency and only more noise: those figures came from
+screen records at a slow time base.
+
+So overclocking is not usable at the full rate, and 1.25 GHz stays the default. System > Overclock stays an
+experiment.
 A start with `adc.clock_hz` that does not reach its end sets the file aside at the next start (`limits.conf.failed`, rcS).
 
 Memory depths above 125 M need more entries in the depth list (`MDEPTHS` in ui/src/model.rs) and a check of the

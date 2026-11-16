@@ -89,7 +89,7 @@ Installing OOS means that you accept in particular the following risks:
   never directly to the internet.**
 - **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can
   also lift limits. Values outside the defaults are outside any rating and can make the scope unusable or damage it.
-  Overclocked samples are worse and at 2 GHz wrong: see [docs/models.md](docs/models.md).
+  Overclocked records lose samples at the full rate, so they are wrong: see [docs/models.md](docs/models.md).
 
 OOS is an independent project. It is not affiliated with, endorsed by or supported by RIGOL TECHNOLOGIES CO., LTD.
 Rigol and all other names are trademarks of their respective owners and are used here only to identify the hardware.
@@ -261,7 +261,7 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 | Bode with a generator on USB (USBTMC), UNI-T UTG900 preset | tests on the host only (a simulated USBTMC device); no generator on USB tried yet |
 | USB storage stick, 10:1 probe | run on a DHO924S |
 | WLAN | driver, firmware and scan run on a DHO924S with an RTL8188EU stick; joining a network tested on simulated radios only |
-| Overclocking (System > Overclock) | run on a DHO924S: 1.5 GHz with more noise, 2 GHz with wrong samples; the default stays 1.25 GHz |
+| Overclocking (System > Overclock) | run on a DHO924S: every step boots, but above 1.25 GHz records at the full rate lose samples; the default stays 1.25 GHz |
 | Spectrum, eye and jitter, results and trend panes, measurement labels, Auto | run on a DHO924S with the generator and an RF source |
 | Protocol decoders | tested with simulated signals; only some with real signals |
 | All models other than the DHO924S | never run |
@@ -759,8 +759,9 @@ measurement, the peak list's button to sort it. The x closes the pane.
 right, or above the trace. In Measure > Add item a tap adds a measurement of the source channel and a second tap removes
 it. Measure > Labels on trace draws level lines and arrows with their values on the waveform.
 
-**Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz the noise rises, and 2 GHz
-gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
+**Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz every step boots, but
+records at the full rate lose samples and frequencies read too high: it is for tests only. See
+[docs/models.md](docs/models.md).
 
 **Web remote.** Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the
 window, so it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer;
