@@ -215,8 +215,10 @@ fn power_page(p: PowerMode) -> &'static str {
     }
 }
 const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
+/// The highest value of the frequency ladder (the end of Center, Span and RBW).
+pub(super) const FREQ_TOP: f64 = 5e9;
 
-/// 1-2-5 frequency ladder 1 Hz .. 1 GHz (0 = full span / auto RBW in front).
+/// 1-2-5 frequency ladder 1 Hz .. 5 GHz (0 = full span / auto RBW in front).
 fn freq_ladder() -> Vec<f64> {
     let mut v = vec![0.0];
     let mut d = 1.0;
@@ -229,7 +231,7 @@ fn freq_ladder() -> Vec<f64> {
 
 fn step_ladder(v: f64, d: i32) -> f64 {
     let l = freq_ladder();
-    let i = l.iter().position(|&x| x >= v * 0.999).unwrap_or(0);
+    let i = l.iter().position(|&x| x >= v * 0.999).unwrap_or(l.len() - 1);
     l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
 }
 
@@ -786,7 +788,7 @@ impl Ui {
                 m.spec_win = w[cyc(w.iter().position(|&x| x == m.spec_win).unwrap_or(0), w.len())];
             }
             Item::SpecTrace => m.spec_trace = cyc(m.spec_trace, 4),
-            Item::SpecRef => m.spec_ref += 5.0 * d as f32,
+            Item::SpecRef => m.spec_ref = (m.spec_ref + 5.0 * d as f32).clamp(ranges::SPEC_REF_DBV.0, ranges::SPEC_REF_DBV.1),
             Item::SpecWf => m.spec_wf = !m.spec_wf,
             Item::SpecDist => m.spec_dist = !m.spec_dist,
             Item::EyeRate => {

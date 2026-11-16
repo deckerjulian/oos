@@ -213,7 +213,7 @@ impl Ui {
     /// followed by zooming in left the screen at minus 200 seconds.
     pub(super) fn studio_delay_clamp(&mut self) {
         if self.m.layout != Layout::Studio || self.record_mode() { return; }
-        let lim = 50.0 * HDIV * self.m.time_per_div();
+        let lim = self.item_range(Item::HDelay).map_or(0.0, |r| r.hi as f32);
         if lim.is_finite() && lim > 0.0 && self.m.delay.abs() > lim {
             self.m.delay = self.m.delay.clamp(-lim, lim);
             if self.m.zoom { self.clamp_zoom(); }

@@ -36,6 +36,18 @@ pub(super) fn pick<T: Copy + PartialEq>(q: bool, arg: &str, cur: &mut T, table: 
     }
 }
 
+impl Ui {
+    /// A trigger level (`TrigLevel` or `TrigLevel2`) by SCPI: the query answers the level, a number sets it limited to
+    /// the range of the table, like the stepper and the number pad (a level beyond the screen is not an error).
+    pub(super) fn scpi_level(&mut self, q: bool, arg: &str, it: Item) -> Reply {
+        if q { return t(en(self.range_get(it).unwrap_or(0.0))); }
+        match num(arg).filter(|v| v.is_finite()) {
+            Some(v) => { self.scpi_range_set(it, v as f64); DONE }
+            None => Err(bad(arg)),
+        }
+    }
+}
+
 pub(super) fn numf(q: bool, arg: &str, cur: &mut f32, lo: f32, hi: f32) -> Reply {
     if q { return t(en(*cur as f64)); }
     match num(arg).filter(|v| *v >= lo && *v <= hi) {
@@ -173,8 +185,8 @@ impl Ui {
             "TRIGger:SLOPe:SLOPe" | "TRIGger:WINDow:SLOPe" | "TRIGger:NEDGe:SLOPe" | "TRIGger:TIMeout:SLOPe" | "TRIGger:DELay:SLOPA" => pick(q, arg, &mut self.m.slope, &SLOPES),
             "TRIGger:SHOLd:SLOPe" | "TRIGger:DELay:SLOPB" => pick(q, arg, &mut self.m.trig_slope2, &SLOPES),
             "TRIGger:SLOPe:ALEVel" | "TRIGger:WINDow:ALEVel" | "TRIGger:DELay:ALEVel" | "TRIGger:PULSe:LEVel" | "TRIGger:VIDeo:LEVel"
-            | "TRIGger:NEDGe:LEVel" | "TRIGger:TIMeout:LEVel" | "TRIGger:LEVel" => numf(q, arg, &mut self.m.trig_level, -1e6, 1e6),
-            "TRIGger:SLOPe:BLEVel" | "TRIGger:WINDow:BLEVel" | "TRIGger:DELay:BLEVel" | "TRIGger:LEVel2" => numf(q, arg, &mut self.m.trig_level2, -1e6, 1e6),
+            | "TRIGger:NEDGe:LEVel" | "TRIGger:TIMeout:LEVel" | "TRIGger:LEVel" => self.scpi_level(q, arg, Item::TrigLevel),
+            "TRIGger:SLOPe:BLEVel" | "TRIGger:WINDow:BLEVel" | "TRIGger:DELay:BLEVel" | "TRIGger:LEVel2" => self.scpi_level(q, arg, Item::TrigLevel2),
             "TRIGger:VIDeo:STANdard" => pick(q, arg, &mut self.m.video_std, &[(VideoStd::Pal, "PAL"), (VideoStd::Ntsc, "NTSC")]),
             "TRIGger:VIDeo:MODE" => pick(q, arg, &mut self.m.video_sync, &[(VSync::AllLines, "ALINes"), (VSync::Line, "LINE"), (VSync::Odd, "ODDField"), (VSync::Even, "EVENfield"), (VSync::AllFields, "AFIelds")]),
             "TRIGger:VIDeo:LINE" => {

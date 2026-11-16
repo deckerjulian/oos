@@ -1069,11 +1069,11 @@ impl Scpi {
                 return None;
             }
             if nodes.len() == 3 && kw(nodes[1], "RUNT") {
-                let value = if kw(last, "UPPer") || kw(last, "ALEVel") { Some(&mut ui.m.trig_level) }
-                    else if kw(last, "LOWer") || kw(last, "BLEVel") { Some(&mut ui.m.trig_level2) } else { None };
-                if let Some(value) = value {
-                    if query { return t(&e(*value as f64)); }
-                    if let Some(number) = num(arg) { *value = number; ui.mark_changed(); }
+                let secondary = if kw(last, "UPPer") || kw(last, "ALEVel") { Some(false) }
+                    else if kw(last, "LOWer") || kw(last, "BLEVel") { Some(true) } else { None };
+                if let Some(secondary) = secondary {
+                    if query { return t(&e(ui.scpi_trigger_level(secondary) as f64)); }
+                    if let Some(number) = num(arg) { ui.scpi_set_trigger_level(secondary, number); ui.mark_changed(); }
                     else { self.push_err("-224,\"Invalid runt threshold\"".into()); }
                     return None;
                 }
@@ -1083,6 +1083,13 @@ impl Scpi {
             || nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "SWEep")
                 && arg.to_ascii_uppercase().starts_with("SING") && ui.m.run == RunState::Run) {
             ui.scpi_arm_operation();
+        }
+        if !query && nodes.len() == 3 && kw(nodes[0], "TRIGger") && kw(nodes[1], "EDGE") && nodes.last().is_some_and(|l| kw(l, "LEVel")) {
+            if let Some(number) = num(arg) {
+                ui.scpi_set_trigger_level(false, number);
+                ui.mark_changed();
+                return None;
+            }
         }
         let m = &mut ui.m;
         let r: Option<Option<Vec<u8>>> = (|| {

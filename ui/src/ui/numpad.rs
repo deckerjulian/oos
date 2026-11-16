@@ -80,12 +80,10 @@ impl Ui {
         true
     }
 
-    /// The limits of an item: its own, or where the stepper stops.
+    /// The limits of an item: its own from the range table, or where the stepper stops.
     pub(super) fn numpad_limits(&mut self, it: Item) -> Option<(f64, f64)> {
-        if matches!(it, Item::TrigLevel | Item::TrigLevel2) {
-            let secondary = it == Item::TrigLevel2 && matches!(self.m.trig_type, TrigType::Delay | TrigType::SetupHold);
-            let r = self.trigger_vpd(secondary) as f64 * 5.0;
-            return Some((-r, r));
+        if let Some(r) = self.item_range(it) {
+            return Some((r.lo, r.hi));
         }
         let (cur, _) = self.numpad_value(it)?;
         let saved = self.m.clone();
@@ -108,11 +106,14 @@ impl Ui {
     pub(super) fn numpad_apply(&mut self, it: Item, want: f64) -> f64 {
         let limits = self.numpad_limits(it);
         let want = limits.map_or(want, |(lo, hi)| want.clamp(lo, hi));
-        if matches!(it, Item::TrigLevel | Item::TrigLevel2) {
-            if it == Item::TrigLevel { self.m.trig_level = want as f32; } else { self.m.trig_level2 = want as f32; }
-            self.replay.reset_search();
+        // the items that add a step: straight into the setting, through the same setter as the stepper and SCPI
+        if let Some(v) = self.range_set(it, want) {
+            if it == Item::SpecRef {
+                self.azr.spec_avg = None;
+                self.analyzer_update();
+            }
             self.settings_changed();
-            return want;
+            return v;
         }
         // the stepper's own path: big steps first, then smaller ones, as long as the value does not pass the wanted one
         let mut cur = self.numpad_value(it).map_or(want, |v| v.0);
@@ -308,12 +309,10 @@ impl Ui {
         }
     }
 
-    /// The limit of an item as text (for the field); only for the items whose limits are known without a probe.
+    /// The limit of an item as text (for the field): from the range table, for the items that have one.
     fn numpad_limit_text(&self, it: Item, high: bool) -> Option<String> {
-        if !matches!(it, Item::TrigLevel | Item::TrigLevel2) { return None; }
-        let secondary = it == Item::TrigLevel2 && matches!(self.m.trig_type, TrigType::Delay | TrigType::SetupHold);
-        let r = self.trigger_vpd(secondary) as f64 * 5.0;
+        let r = self.item_range(it)?;
         let unit = self.numpad_value(it).map(|v| v.1).unwrap_or_default();
-        Some(si(if high { r } else { -r }, &unit))
+        Some(si(if high { r.hi } else { r.lo }, &unit))
     }
 }

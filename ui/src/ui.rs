@@ -101,6 +101,7 @@ mod fullchrome;
 mod addtiles;
 mod menugrid;
 mod numpad;
+mod ranges;
 mod trigslider;
 mod sharedzoom;
 mod classicbadges;
@@ -119,6 +120,8 @@ mod batch25_tests;
 mod batch26_tests;
 #[cfg(test)]
 mod batch27_tests;
+#[cfg(test)]
+mod batch29_tests;
 #[cfg(test)]
 mod uiaudit_tests;
 #[cfg(test)]
@@ -7163,7 +7166,13 @@ impl Ui {
         }
     }
 
+    /// One press (or `d` presses) of a stepper. The limits are in the range table (`ranges.rs`).
     fn adjust(&mut self, it: Item, d: i32) {
+        self.adjust_item(it, d);
+        self.range_enforce(it);
+    }
+
+    fn adjust_item(&mut self, it: Item, d: i32) {
         if matches!(it, Item::CatSourceC | Item::CatSourceD) {
             let current = if it == Item::CatSourceC { self.cat_c } else { self.cat_d };
             let next = self.step_wave(current, d);
@@ -7195,11 +7204,12 @@ impl Ui {
             }
             return;
         }
-        if matches!(it, Item::TrigLevel | Item::TrigLevel2) && self.m.trig_ref.is_some() {
-            let secondary = it == Item::TrigLevel2 && matches!(self.m.trig_type, TrigType::Delay | TrigType::SetupHold);
-            let step = d as f32 * self.trigger_vpd(secondary) / 25.0;
-            if it == Item::TrigLevel { self.m.trig_level += step; } else { self.m.trig_level2 += step; }
-            self.replay.reset_search();
+        // the steppers that add a step to a value and stop at the limits of the range table
+        if self.range_step(it, d) {
+            // a level of a reference trigger does not restart what was measured
+            if !(matches!(it, Item::TrigLevel | Item::TrigLevel2) && self.m.trig_ref.is_some()) {
+                self.settings_changed();
+            }
             return;
         }
         let m = &mut self.m;
@@ -7248,7 +7258,6 @@ impl Ui {
                 let i = AmpUnit::ALL.iter().position(|&u| u == m.ch[c].unit).unwrap_or(0);
                 m.ch[c].unit = AmpUnit::ALL[cyc(i, AmpUnit::ALL.len(), d)];
             }
-            Item::ChBias(c) => m.ch[c].bias += 0.01 * m.ch[c].volts_per_div() * d as f32,
             Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
             Item::ChExpand => m.v_expand_gnd = !m.v_expand_gnd,
             Item::HFine => m.fine_t = !m.fine_t,
@@ -7266,7 +7275,6 @@ impl Ui {
                 }
             }
             Item::LogIvl => m.log_ivl = step(m.log_ivl, logger::LOG_STEPS.len(), d),
-            Item::ChOffset(c) => m.ch[c].offset += d as f32 * m.ch[c].volts_per_div() / 25.0,
             Item::HScale => {
                 let old = m.time_per_div();
                 if m.fine_t {
@@ -7295,7 +7303,6 @@ impl Ui {
                     m.zdelay = m.delay + place * new * HDIV;
                 }
             }
-            Item::HDelay => m.delay += d as f32 * m.time_per_div() / 25.0,
             Item::TrigSrc => {
                 m.trig_src = src_step(m.trig_src, NCH, d);
             }
@@ -7312,15 +7319,10 @@ impl Ui {
                     m.run = RunState::Run;
                 }
             }
-            Item::TrigLevel => m.trig_level += d as f32 * m.ch[m.trig_src].volts_per_div() / 25.0,
             Item::TrigType => {
                 let i = TRIG_TYPES.iter().position(|&x| x == m.trig_type).unwrap_or(0);
                 let t = TRIG_TYPES[cyc(i, TRIG_TYPES.len(), d)];
                 self.set_trig_type(t);
-            }
-            Item::TrigLevel2 => {
-                let c = if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
-                m.trig_level2 += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
             Item::TrigSrc2 => m.trig_src2 = src_step(m.trig_src2, NCH, d),
             Item::SearchOn => { self.search_on = !self.search_on; return; }
@@ -7346,22 +7348,18 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.video_sync).unwrap();
                 m.video_sync = all[cyc(i, all.len(), d)];
             }
-            Item::VidLine => m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32,
+            Item::VidLine => m.video_line = (m.video_line as i32 + d).clamp(ranges::vid_line(m.video_std).0, ranges::vid_line(m.video_std).1) as u32,
             Item::Pat(c) => {
                 let all = if m.trig_type == TrigType::Duration { &[Bit::H, Bit::L, Bit::X][..] } else { &[Bit::H, Bit::L, Bit::X, Bit::R, Bit::F][..] };
                 let i = all.iter().position(|&x| x == m.pat[c]).unwrap_or(0);
                 m.pat[c] = all[cyc(i, all.len(), d)];
-            }
-            Item::PatLevel => {
-                let c = m.trig_src;
-                m.pat_levels[c] += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
             Item::WinModeI => {
                 let all = [WinMode::Enter, WinMode::Exit, WinMode::Inside];
                 let i = all.iter().position(|&x| x == m.win_mode).unwrap();
                 m.win_mode = all[cyc(i, 3, d)];
             }
-            Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
+            Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(ranges::NTH_N.0, ranges::NTH_N.1) as u32,
             Item::AcqMode => {
                 let all = [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes];
                 let i = all.iter().position(|&x| x == m.acq).unwrap();
@@ -7390,10 +7388,10 @@ impl Ui {
             Item::CntOn => m.cnt_on = !m.cnt_on,
             Item::CntSrc => m.cnt_src = src_step(m.cnt_src, NCH, d),
             Item::CntMode => m.cnt_mode = (m.cnt_mode as i32 + d).rem_euclid(3) as usize,
-            Item::CntDigits => m.cnt_digits = (m.cnt_digits as i32 + d).clamp(3, 7) as u32,
+            Item::CntDigits => m.cnt_digits = (m.cnt_digits as i32 + d).clamp(ranges::CNT_DIGITS.0, ranges::CNT_DIGITS.1) as u32,
             Item::TrigHoldoff => m.holdoff = holdoff_step(m.holdoff, d),
-            Item::MathLinA => m.math_lin.0 = (m.math_lin.0 + 0.1 * d as f32).clamp(-1e6, 1e6),
-            Item::MathLinB => m.math_lin.1 = (m.math_lin.1 + 0.1 * d as f32).clamp(-1e6, 1e6),
+            Item::MathLinA => m.math_lin.0 = (m.math_lin.0 + 0.1 * d as f32).clamp(ranges::MATH_LIN.0, ranges::MATH_LIN.1),
+            Item::MathLinB => m.math_lin.1 = (m.math_lin.1 + 0.1 * d as f32).clamp(ranges::MATH_LIN.0, ranges::MATH_LIN.1),
             Item::CurMode => {
                 let all = [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
                 let i = all.iter().position(|&x| x == m.cursor).unwrap();
@@ -7404,7 +7402,7 @@ impl Ui {
             Item::CurC => m.cur_c = (m.cur_c + d as f32 * 0.005).clamp(0.0, 1.0),
             Item::CurD => m.cur_d = (m.cur_d + d as f32 * 0.005).clamp(0.0, 1.0),
             Item::RefSel => {
-                let slot = (self.ref_sel as i32 + d).rem_euclid(NREF as i32) as usize;
+                let slot = (self.ref_sel as i32 + d).clamp(0, NREF as i32 - 1) as usize;
                 self.select_workspace_source(WaveId::Ref(slot));
             }
             Item::RefColor => {
@@ -7419,16 +7417,11 @@ impl Ui {
                 }
                 self.measure_refs();
             }
-            Item::RefOffset => {
-                if let Some(r) = &mut self.refs[self.ref_sel] {
-                    r.offset += 0.1 * r.vpd * d as f32;
-                }
-            }
             Item::Persist => {
                 m.persist = cyc(m.persist, PERSIST.len(), d);
                 self.ph.clear();
             }
-            Item::Intensity => m.intensity = (m.intensity as i32 + d * 5).clamp(10, 100) as u32,
+            Item::Intensity => m.intensity = (m.intensity as i32 + d * 5).clamp(ranges::INTENSITY.0, ranges::INTENSITY.1) as u32,
             Item::ZoneSel => self.zone_sel = cyc(self.zone_sel, 2, d),
             Item::ZoneOn => {
                 let z = &mut m.zones[self.zone_sel];
@@ -7474,7 +7467,7 @@ impl Ui {
                 let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
                 m.hist = all[cyc(i, 3, d)];
             }
-            Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(10, 100) as u32,
+            Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(ranges::GRID_BRIGHT.0, ranges::GRID_BRIGHT.1) as u32,
             Item::GridFrame => m.grid_frame = !m.grid_frame,
             Item::TrigNoise => m.trig_nrej = !m.trig_nrej,
             Item::TrigCoup => {
@@ -7529,7 +7522,6 @@ impl Ui {
                 let n = if m.math == MathOp::Fft { FFT_DB.len() } else { math_scales().len() };
                 m.math_scale = step(m.math_scale, n, d);
             }
-            Item::MathOffset => m.math_offset += d as f32 * 0.1,
             Item::FftWin => {
                 let i = WINDOWS.iter().position(|&w| w == m.fft_win).unwrap_or(0);
                 m.fft_win = WINDOWS[cyc(i, WINDOWS.len(), d)];
@@ -7588,9 +7580,8 @@ impl Ui {
                 let i = BUS_WHATS.iter().position(|&x| x == self.m.trig_bus).unwrap_or(0);
                 self.m.trig_bus = BUS_WHATS[cyc(i, BUS_WHATS.len(), d)];
             }
-            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, 0x1fff_ffff) as u32,
+            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(ranges::TRIG_BUS_VAL.0, ranges::TRIG_BUS_VAL.1) as u32,
             Item::DecCanH => self.m.dec_canh = !self.m.dec_canh,
-            Item::DecThr => self.m.dec_thr += d as f32 * self.decoder_vpd() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
             Item::DecProto => {
                 let i = PROTOS.iter().position(|&x| x == self.m.dec_proto).unwrap();
@@ -7599,7 +7590,7 @@ impl Ui {
             Item::DecFdRate => self.m.dec_fdrate = cyc(self.m.dec_fdrate, crate::decode::FD_RATES.len(), d),
             Item::DecArate => self.m.dec_arate = cyc(self.m.dec_arate, crate::decode::ARINC_RATES.len(), d),
             Item::DecTick => self.m.dec_tick = step(self.m.dec_tick, crate::decode::SENT_TICKS.len(), d),
-            Item::DecNibbles => self.m.dec_nibbles = (self.m.dec_nibbles as i32 + d).clamp(1, 6) as u32,
+            Item::DecNibbles => self.m.dec_nibbles = (self.m.dec_nibbles as i32 + d).clamp(ranges::DEC_NIBBLES.0, ranges::DEC_NIBBLES.1) as u32,
             Item::DecUsbSpeed => self.m.dec_uspeed = cyc(self.m.dec_uspeed, crate::decode::USB_SPEEDS.len(), d),
             Item::DecOpt(k) => {
                 if let Some(o) = self.m.dec_proto.module().and_then(|p| p.options().get(k)) {
@@ -7621,7 +7612,7 @@ impl Ui {
             }
             Item::DecMode => self.m.dec_mode = cyc(self.m.dec_mode as usize, 4, d) as u8,
             Item::DecBits => {
-                let (lo, hi) = if self.m.dec_proto == Proto::Uart { (5, 9) } else { (4, 32) };
+                let (lo, hi) = ranges::dec_bits(self.m.dec_proto);
                 self.m.dec_bits = (self.m.dec_bits as i32 + d).clamp(lo, hi) as u32;
             }
             Item::DecParity => {
@@ -7647,7 +7638,7 @@ impl Ui {
             Item::BootMode => self.boot_mode_toggle(),
             Item::Overclock => self.overclock_step(d),
             Item::ColorGrade => self.m.color_grade = !self.m.color_grade,
-            Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(1, 9) as u32,
+            Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(ranges::STORE_SLOT.0, ranges::STORE_SLOT.1) as u32,
             Item::StoreDest => {
                 let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);
                 self.store_dest = crate::store::StoreDest::ALL[cyc(i, crate::store::StoreDest::ALL.len(), d)];
@@ -8836,13 +8827,16 @@ impl Ui {
                     self.select_option(row.it, &opts[k]);
                 }
                 Ctl::Value | Ctl::Pick => {
-                    let (mi, _, pl) = Self::value_parts(row.ctrl);
+                    let (mi, mid, pl) = Self::value_parts(row.ctrl);
                     if mi.contains(x, y) {
                         self.adjust(row.it, -1);
                     } else if pl.contains(x, y) {
                         self.adjust(row.it, 1);
                     } else if let Ctl::Pick = row.ctl {
                         self.open_picker(row.it);
+                    } else if mid.contains(x, y) {
+                        // the value of a number row opens the numeric pad, as in the Studio sheets
+                        self.open_numpad(row.it);
                     }
                 }
                 Ctl::Button => self.activate(row.it),

@@ -181,7 +181,8 @@ impl Ui {
                 } else {
                     &mut self.m.bus.data_thr
                 };
-                *thr = (*thr + step * d as f32).clamp(-40.0, 40.0);
+                let lim = (super::ranges::LEVEL_DIVS * super::ranges::STEPS_PER_DIV) as f32 * step;
+                *thr = (*thr + step * d as f32).clamp(-lim, lim);
             }
             _ => return false,
         }
@@ -315,7 +316,7 @@ impl Ui {
         v
     }
 
-    fn bus_volt_step(&self, id: WaveId) -> f32 {
+    pub(super) fn bus_volt_step(&self, id: WaveId) -> f32 {
         match id {
             WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].volts_per_div() / 25.0,
             WaveId::Ref(i) => self

@@ -127,6 +127,17 @@ pub fn src_step(i: usize, n: usize, d: i32) -> usize {
 
 /// 1-2-5 steps from `lo` to `hi`. `zero` inserts 0 (an unset geometry or resistance). `d` moves along that list and stops at the ends.
 pub fn eng_ladder(x: f64, d: i32, lo: f64, hi: f64, zero: bool) -> f64 {
+    let l = eng_ladder_list(lo, hi, zero);
+    if l.is_empty() {
+        return x;
+    }
+    // a relative tolerance: the values are picoseconds, an absolute one would swallow whole steps
+    let i = l.iter().position(|&v| v >= x * (1.0 - 1e-9) - f64::MIN_POSITIVE).unwrap_or(l.len() - 1);
+    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+}
+
+/// The 1-2-5 values of `eng_ladder`, from `lo` up to `hi`, with a zero in front when asked.
+pub fn eng_ladder_list(lo: f64, hi: f64, zero: bool) -> Vec<f64> {
     let mut l = Vec::new();
     if zero {
         l.push(0.0);
@@ -138,11 +149,7 @@ pub fn eng_ladder(x: f64, d: i32, lo: f64, hi: f64, zero: bool) -> f64 {
         l.push(e * 5.0);
         e *= 10.0;
     }
-    if l.is_empty() {
-        return x;
-    }
-    let i = l.iter().position(|&v| v + 1e-12 >= x).unwrap_or(l.len() - 1);
-    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
+    l
 }
 
 /// `src_step` for a unit with `nch` inputs.

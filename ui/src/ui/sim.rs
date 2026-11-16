@@ -257,28 +257,28 @@ impl Ui {
                 self.m.sim_preset = (self.m.sim_preset as i32 + d).rem_euclid(n) as usize;
                 self.m.apply_sim_preset();
             }
-            Item::SimRate => self.m.sim_rate = eng_ladder(self.m.sim_rate.max(1e8), d, 1e8, 64e9, false),
+            Item::SimRate => self.m.sim_rate = eng_ladder(self.m.sim_rate.max(ranges::SIM_RATE.0), d, ranges::SIM_RATE.0, ranges::SIM_RATE.1, ranges::SIM_RATE.2),
             Item::SimPat => {
                 let i = PRBS.iter().position(|&p| p == self.m.sim_prbs).unwrap_or(0);
                 self.m.sim_prbs = PRBS[(i as i32 + d).rem_euclid(PRBS.len() as i32) as usize];
             }
-            Item::SimHigh => self.m.sim_vhigh = (self.m.sim_vhigh + 0.05 * d as f64).clamp(-2.0, 2.0),
-            Item::SimLow => self.m.sim_vlow = (self.m.sim_vlow + 0.05 * d as f64).clamp(-2.0, 2.0),
-            Item::SimRise => self.m.sim_rise = eng_ladder(self.m.sim_rise.max(5e-12), d, 5e-12, 2e-9, false),
-            Item::SimBw => self.m.sim_bw = eng_ladder(self.m.sim_bw.max(10e6), d, 10e6, 50e9, false),
-            Item::SimDeemph => self.m.sim_deemph = (self.m.sim_deemph + 0.5 * d as f64).clamp(0.0, 12.0),
-            Item::SimNoise => self.m.sim_noise = eng_ladder(self.m.sim_noise.max(100e-6), d, 100e-6, 50e-3, false),
+            Item::SimHigh => self.m.sim_vhigh = (self.m.sim_vhigh + 0.05 * d as f64).clamp(ranges::SIM_LEVEL.0, ranges::SIM_LEVEL.1),
+            Item::SimLow => self.m.sim_vlow = (self.m.sim_vlow + 0.05 * d as f64).clamp(ranges::SIM_LEVEL.0, ranges::SIM_LEVEL.1),
+            Item::SimRise => self.m.sim_rise = eng_ladder(self.m.sim_rise.max(ranges::SIM_RISE.0), d, ranges::SIM_RISE.0, ranges::SIM_RISE.1, ranges::SIM_RISE.2),
+            Item::SimBw => self.m.sim_bw = eng_ladder(self.m.sim_bw.max(ranges::SIM_BW.0), d, ranges::SIM_BW.0, ranges::SIM_BW.1, ranges::SIM_BW.2),
+            Item::SimDeemph => self.m.sim_deemph = (self.m.sim_deemph + 0.5 * d as f64).clamp(ranges::SIM_DEEMPH.0, ranges::SIM_DEEMPH.1),
+            Item::SimNoise => self.m.sim_noise = eng_ladder(self.m.sim_noise.max(ranges::SIM_NOISE.0), d, ranges::SIM_NOISE.0, ranges::SIM_NOISE.1, ranges::SIM_NOISE.2),
             Item::SimSsc => self.m.sim_ssc = !self.m.sim_ssc,
             Item::SimSscCenter => self.m.sim_ssc_center = !self.m.sim_ssc_center,
-            Item::SimSscDeviation => self.m.sim_ssc_deviation = (self.m.sim_ssc_deviation + d as f64 * 0.0005).clamp(0.0, 0.05),
-            Item::SimSscHz => self.m.sim_ssc_hz = eng_ladder(self.m.sim_ssc_hz, d, 1e3, 1e6, false),
-            Item::SimDcd => self.m.sim_dcd_pp = eng_ladder(self.m.sim_dcd_pp, d, 0.5e-12, 100e-12, true),
-            Item::SimCorrRj => self.m.sim_corr_rj = eng_ladder(self.m.sim_corr_rj, d, 0.1e-12, 50e-12, true),
-            Item::SimCorrHz => self.m.sim_corr_hz = eng_ladder(self.m.sim_corr_hz, d, 1e3, 100e6, false),
-            Item::SimRj => self.m.sim_rj = eng_ladder(self.m.sim_rj.max(0.1e-12), d, 0.1e-12, 50e-12, false),
-            Item::SimPj => self.m.sim_pj = eng_ladder(self.m.sim_pj, d, 0.5e-12, 50e-12, true),
-            Item::SimPjHz => self.m.sim_pjhz = eng_ladder(self.m.sim_pjhz.max(1e5), d, 1e5, 50e6, false),
-            Item::SimSlot => self.m.sim_slot = (self.m.sim_slot as i32 + d).rem_euclid(NREF as i32) as usize,
+            Item::SimSscDeviation => self.m.sim_ssc_deviation = (self.m.sim_ssc_deviation + d as f64 * 0.0005).clamp(ranges::SIM_SSC_DEV.0, ranges::SIM_SSC_DEV.1),
+            Item::SimSscHz => self.m.sim_ssc_hz = eng_ladder(self.m.sim_ssc_hz, d, ranges::SIM_SSC_HZ.0, ranges::SIM_SSC_HZ.1, ranges::SIM_SSC_HZ.2),
+            Item::SimDcd => self.m.sim_dcd_pp = eng_ladder(self.m.sim_dcd_pp, d, ranges::SIM_DCD.0, ranges::SIM_DCD.1, ranges::SIM_DCD.2),
+            Item::SimCorrRj => self.m.sim_corr_rj = eng_ladder(self.m.sim_corr_rj, d, ranges::SIM_CORR_RJ.0, ranges::SIM_CORR_RJ.1, ranges::SIM_CORR_RJ.2),
+            Item::SimCorrHz => self.m.sim_corr_hz = eng_ladder(self.m.sim_corr_hz, d, ranges::SIM_CORR_HZ.0, ranges::SIM_CORR_HZ.1, ranges::SIM_CORR_HZ.2),
+            Item::SimRj => self.m.sim_rj = eng_ladder(self.m.sim_rj.max(ranges::SIM_RJ.0), d, ranges::SIM_RJ.0, ranges::SIM_RJ.1, ranges::SIM_RJ.2),
+            Item::SimPj => self.m.sim_pj = eng_ladder(self.m.sim_pj, d, ranges::SIM_PJ.0, ranges::SIM_PJ.1, ranges::SIM_PJ.2),
+            Item::SimPjHz => self.m.sim_pjhz = eng_ladder(self.m.sim_pjhz.max(ranges::SIM_PJ_HZ.0), d, ranges::SIM_PJ_HZ.0, ranges::SIM_PJ_HZ.1, ranges::SIM_PJ_HZ.2),
+            Item::SimSlot => self.m.sim_slot = (self.m.sim_slot as i32 + d).clamp(0, NREF as i32 - 1) as usize,
             Item::SimShow => {
                 if let Some(r) = &mut self.refs[self.m.sim_slot] {
                     r.on = !r.on;

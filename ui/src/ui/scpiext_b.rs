@@ -39,7 +39,7 @@ pub(super) const SETUP: &[(&str, K)] = &[
     ("SPECtrum:SOURce", K::Sel(Item::SpecSrc)), ("SPECtrum:CENTer", K::F64(|m| &mut m.spec_center, 0.0, 1e12)),
     ("SPECtrum:SPAN", K::F64(|m| &mut m.spec_span, 0.0, 1e12)), ("SPECtrum:RBW", K::F64(|m| &mut m.spec_rbw, 0.0, 1e12)),
     ("SPECtrum:WINDow", K::Sel(Item::SpecWin)), ("SPECtrum:TRACe", K::Sel(Item::SpecTrace)),
-    ("SPECtrum:RLEVel", K::F32(|m| &mut m.spec_ref, -300.0, 300.0)), ("SPECtrum:WATerfall", K::Sel(Item::SpecWf)),
+    ("SPECtrum:RLEVel", K::F32(|m| &mut m.spec_ref, super::ranges::SPEC_REF_DBV.0, super::ranges::SPEC_REF_DBV.1)), ("SPECtrum:WATerfall", K::Sel(Item::SpecWf)),
     ("SPECtrum:DISTortion", K::Sel(Item::SpecDist)), ("SPECtrum:PEAK:HARMonics", K::Sel(Item::SpecHarm)),
     ("SPECtrum:ACPR:WIDTh", K::F64(|m| &mut m.spec_acpr_w, 1.0, 1e12)), ("SPECtrum:ACPR:SPACing", K::F64(|m| &mut m.spec_acpr_s, 1.0, 1e12)),
     ("EYE:SOURce", K::Sel(Item::EyeSrc)), ("EYE:CLOCk", K::Sel(Item::EyeB)),
