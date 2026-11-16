@@ -198,6 +198,8 @@ Changed:
 
 Fixed:
 
+- The top bar and the Network page showed eth0's link-local address (169.254.x.x, kept when no DHCP server answered)
+  instead of an address set later by DHCP or by hand; a link-local address now comes only when there is no other.
 - The first record after a change of settings in a deep record (one frame per batch) could show the older memory of
   the settings before, e.g. twice the amplitude after the memory depth was changed: it is left out.
 - A deep record measured from its raw window no longer shows "not available" for the time the background

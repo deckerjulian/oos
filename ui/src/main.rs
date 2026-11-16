@@ -992,18 +992,14 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     fit.scale(&ui.hdmi_snap, &mut hc.px[top..], stride);
 }
 
-/// First IPv4 address of a non-loopback interface that is up ("" when none).
-#[cfg(target_os = "linux")]
 /// The address to show in the top bar, and all of them, as (interface, address).
+#[cfg(target_os = "linux")]
 fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
-    // an interface with a link first: eth0 keeps its fallback address without a cable
-    let mut out = (String::new(), String::new());
-    let mut all = Vec::new();
-    let mut linked = false;
+    let mut found = Vec::new();
     unsafe {
         let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
         if libc::getifaddrs(&mut ifa) != 0 {
-            return (out, all);
+            return ((String::new(), String::new()), Vec::new());
         }
         let mut p = ifa;
         while !p.is_null() {
@@ -1013,23 +1009,51 @@ fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
                 let link = a.ifa_flags & (libc::IFF_RUNNING as u32) != 0;
                 let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
                 let name = std::ffi::CStr::from_ptr(a.ifa_name).to_string_lossy().into_owned();
-                let addr = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)).to_string();
-                if out.1.is_empty() || (link && !linked) {
-                    out = (name.clone(), addr.clone());
-                    linked = link;
-                }
-                all.push((name, addr));
+                found.push((name, std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), link));
             }
             p = a.ifa_next;
         }
         libc::freeifaddrs(ifa);
     }
-    (out, all)
+    pick_addresses(found)
+}
+
+/// Orders the IPv4 addresses (interface, address, link) for the screen: an interface's link-local address
+/// (169.254/16, what eth0 keeps when no DHCP server answers) after its others, so a page that shows one address per
+/// interface shows the one set by DHCP or by hand. The top bar takes an interface with a link first (eth0 keeps its
+/// fallback address without a cable), then an address that is not link-local, then the first.
+fn pick_addresses(mut v: Vec<(String, std::net::Ipv4Addr, bool)>) -> ((String, String), Vec<(String, String)>) {
+    v.sort_by_key(|a| a.1.is_link_local());
+    let best = v.iter().enumerate().max_by_key(|(i, a)| (a.2, !a.1.is_link_local(), std::cmp::Reverse(*i)));
+    let first = best.map(|(_, a)| (a.0.clone(), a.1.to_string())).unwrap_or_default();
+    (first, v.into_iter().map(|a| (a.0, a.1.to_string())).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// eth0 with the fallback address it took before the hand-set one (seen on a DHO924S, 2026-11-16): both the top
+    /// bar and the Network page show the hand-set one.
+    #[test]
+    fn a_link_local_address_comes_after_the_others() {
+        let a = |n: &str, ip: &str, link: bool| (n.to_string(), ip.parse::<std::net::Ipv4Addr>().unwrap(), link);
+        let s = |n: &str, ip: &str| (n.to_string(), ip.to_string());
+        let (first, all) = pick_addresses(vec![a("eth0", "169.254.1.1", true), a("eth0", "192.0.2.51", true)]);
+        assert_eq!(first, s("eth0", "192.0.2.51"));
+        assert_eq!(all, vec![s("eth0", "192.0.2.51"), s("eth0", "169.254.1.1")]);
+        // only a link-local address: it is still shown
+        assert_eq!(pick_addresses(vec![a("eth0", "169.254.1.2", true)]).0, s("eth0", "169.254.1.2"));
+        // eth0 without a cable keeps its address, the WLAN with a link wins
+        let v = vec![a("eth0", "192.168.1.20", false), a("wlan0", "192.168.177.64", true)];
+        assert_eq!(pick_addresses(v).0, s("wlan0", "192.168.177.64"));
+        // with a link on both: the address that is not link-local, else the first
+        let v = vec![a("eth0", "169.254.9.9", true), a("wlan0", "192.168.177.64", true)];
+        assert_eq!(pick_addresses(v).0, s("wlan0", "192.168.177.64"));
+        let v = vec![a("eth0", "10.0.0.2", true), a("wlan0", "192.168.177.64", true)];
+        assert_eq!(pick_addresses(v).0, s("eth0", "10.0.0.2"));
+        assert_eq!(pick_addresses(Vec::new()).0, (String::new(), String::new()));
+    }
 
     /// The HDMI workspace on a 1920 x 1080 monitor: settings line on top, the waveform area below without menus.
     #[test]
