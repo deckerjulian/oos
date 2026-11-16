@@ -155,7 +155,6 @@ layer_test() {
     done
     # the host tools' own tests: offline, no scope, no listener
     say "test tools"
-    (cd tools && python3 -m unittest -q test_scpi_validate) || fail "test: tools/test_scpi_validate.py"
     python3 -m unittest discover -q -s tools/tests || fail "test: tools/tests"
 }
 

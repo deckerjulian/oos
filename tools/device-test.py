@@ -28,6 +28,9 @@ that could write the FPGA flash, the calibration or the boot partitions, so a ty
 
 import argparse, base64, json, math, os, random, re, signal, socket, statistics, struct, subprocess, sys, time, traceback, urllib.error, urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from oosclient import Link, LinkError, NoBlock  # noqa: E402
+
 CH = (1, 2, 3, 4)
 VSCALES = [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0]
 # a shell command with one of these never leaves this program
@@ -54,35 +57,22 @@ class Scope:
         self.connect()
 
     def connect(self):
-        for _ in range(30):
-            try:
-                self.s = socket.create_connection((self.host, self.port), timeout=10)
-                self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                return
-            except OSError:
-                time.sleep(2)
-        raise Gone(f"no SCPI on {self.host}:{self.port}")
+        try:
+            self.s = Link(self.host, self.port, timeout=10, tries=30, pause=2, nodelay=True)
+        except LinkError as e:
+            raise Gone(str(e))
 
     def w(self, cmd):
         try:
-            self.s.sendall(cmd.encode() + b"\n")
-        except OSError as e:
-            raise Gone(f"SCPI write: {e}")
+            self.s.send(cmd)
+        except LinkError as e:
+            raise Gone(str(e))
 
     def line(self, timeout=15):
-        self.s.settimeout(timeout)
-        b = b""
         try:
-            while not b.endswith(b"\n"):
-                c = self.s.recv(65536)
-                if not c:
-                    raise Gone("SCPI connection closed")
-                b += c
-        except socket.timeout:
-            raise Gone(f"no SCPI answer in {timeout} s")
-        except OSError as e:
-            raise Gone(f"SCPI read: {e}")
-        return b.decode(errors="replace").strip()
+            return self.s.reply(timeout).decode(errors="replace").strip()
+        except LinkError as e:
+            raise Gone(str(e))
 
     def q(self, cmd, timeout=15):
         self.w(cmd)
@@ -93,29 +83,13 @@ class Scope:
         return math.nan if abs(v) > 9e37 else v
 
     def block(self, cmd, timeout=60):
-        """IEEE 488.2 definite block."""
-        self.w(cmd)
-        self.s.settimeout(timeout)
-
-        def need(n):
-            b = b""
-            while len(b) < n:
-                c = self.s.recv(min(1 << 20, n - len(b)))
-                if not c:
-                    raise Gone("SCPI connection closed")
-                b += c
-            return b
-
+        """IEEE 488.2 definite block (oosclient.Link)."""
         try:
-            h = need(2)
-            if h[:1] != b"#":
-                raise AssertionError(f"no block: {h!r}{self.line()}")
-            n = int(need(h[1] - 48))
-            d = need(n)
-            need(1)
-        except socket.timeout:
-            raise Gone(f"no block in {timeout} s")
-        return d
+            return self.s.block(cmd, timeout)
+        except NoBlock as e:
+            raise AssertionError(f"no block: {e}")
+        except LinkError as e:
+            raise Gone(str(e))
 
     def set(self, **kv):
         for k, v in kv.items():

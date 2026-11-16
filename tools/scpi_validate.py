@@ -22,12 +22,13 @@ import ipaddress
 import json
 import math
 from pathlib import Path
-import socket
 import sys
 import time
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from oosclient import Link  # noqa: E402
 
 TEKSCOPE_MANUAL = "https://download.tek.com/manual/TekScope-Programmer-Manual_077177904.pdf"
 SAMPLE_INTERVAL = 1e-9
@@ -40,8 +41,7 @@ class OOS:
     def __init__(self, host, scpi_port, web_port):
         if not ipaddress.ip_address(host).is_loopback:
             raise ValueError("This validation is for a loopback OOS desktop build only")
-        self.sock = socket.create_connection((host, scpi_port), timeout=5)
-        self.stream = self.sock.makefile("rb")
+        self.link = Link(host, scpi_port, timeout=5)
         self.base = f"http://{host}:{web_port}"
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.idn = self.query("*IDN?")
@@ -50,49 +50,17 @@ class OOS:
             raise ValueError(f"Refusing to change non-OOS server: {self.idn!r}")
 
     def close(self):
-        self.stream.close()
-        self.sock.close()
+        self.link.close()
 
     def query(self, command):
-        return self.query_bytes(command).decode("ascii").strip()
+        return self.link.query(command)
 
     def query_bytes(self, command):
-        self.sock.sendall((command + "\n").encode("ascii"))
-        # Definite-length IEEE blocks are binary; an empty line is a complete valid reply.
-        first = self.stream.read(1)
-        if not first:
-            raise RuntimeError(f"No SCPI response to {command!r}")
-        if first == b"\n":
-            return b""
-        if first != b"#":
-            line = first + self.stream.readline(1 << 20)
-            if not line.endswith(b"\n"):
-                raise RuntimeError(f"Incomplete SCPI response to {command!r}")
-            return line[:-1].rstrip(b"\r")
-        def exact(count):
-            data = bytearray()
-            while len(data) < count:
-                chunk = self.stream.read(count - len(data))
-                if not chunk:
-                    raise RuntimeError(f"Incomplete block from {command!r}")
-                data.extend(chunk)
-            return bytes(data)
-        width = exact(1)
-        if width not in b"123456789":
-            raise RuntimeError(f"Bad block length width from {command!r}: {width!r}")
-        digits = exact(int(width))
-        if not digits.isdigit():
-            raise RuntimeError(f"Bad block length from {command!r}: {digits!r}")
-        length = int(digits)
-        if length > 64 << 20:
-            raise RuntimeError(f"Block from {command!r} exceeds the OOS response limit")
-        payload = exact(length)
-        if exact(1) != b"\n":
-            raise RuntimeError(f"Block from {command!r} was not terminated")
-        return first + width + digits + payload
+        """A line, or a definite block with its header (oosclient.Link)."""
+        return self.link.query_bytes(command)
 
     def send(self, command):
-        self.sock.sendall((command + "\n").encode("ascii"))
+        self.link.send(command)
 
     def write(self, command):
         self.send(command)

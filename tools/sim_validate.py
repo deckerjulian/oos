@@ -3,7 +3,7 @@
 """Validate PR6 SIM integration in a loopback OOS desktop app, without hardware.
 
 Replaces R8 with generated records and leaves SIM stopped. Uses the identity
-guard and standard-library transport from scpi_validate.py. No GitHub calls.
+guard of scpi_validate.py and the transport of oosclient.py. No GitHub calls.
 """
 
 import argparse
@@ -11,10 +11,12 @@ import datetime
 import json
 import math
 from pathlib import Path
+import sys
 import time
 import urllib.parse
 
-from scpi_validate import OOS, Results
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from scpi_validate import OOS, Results  # noqa: E402
 
 
 def ready(oos, seconds=45):
@@ -30,7 +32,7 @@ def live(oos):
 
 
 def run(oos, result):
-    oos.sock.settimeout(15)
+    oos.link.timeout = 15
     oos.write("*CLS")
     live(oos)
     oos.write(':SIM:PRESET "PCIe 3.0";:SIM:SLOT R8;:SIM:SSC:MODE DOWN;:SIM:SSC:FREQ 33000;:SIM:SSC:DEV 0.005;:SIM:JITT:DCD 0;:SIM:JITT:CORR 0;:SIM:PATT PRBS31')
