@@ -440,9 +440,18 @@ fn roll(a: &[String]) -> Result<(), String> {
     println!("{}: {} Sa/s, memsel {}, k {}, f {}/{}, len {}, {:.3} us per point, chunk = {:.3} ms", name, p.rate, p.memsel, rp.k, rp.f_num, rp.f_den, rp.len, rp.spacing_fs as f64 / 1e9, rp.spacing_fs as f64 * 100.0 / rp.ratio as f64 / 1e12);
     if !o.execute {
         let mut sh = seq::State::handover(o.app_mask, None).sh;
-        for (r, v) in slow_cfg(&mut sh).iter().chain(oos_hal::dho::roll::start(&mut sh, o.s.mask).iter()) {
-            println!("  wr  {:#06x} {:#010x}", r, v);
+        let wr = |w: &[oos_hal::dho::Write]| w.iter().for_each(|(r, v)| println!("  wr  {:#06x} {:#010x}", r, v));
+        wr(&slow_cfg(&mut sh));
+        wr(&oos_hal::dho::roll::start(&mut sh, o.s.mask));
+        // the writes of the read loop and of the end, against the shadows of the dry run
+        println!("# before each fill level read");
+        wr(&oos_hal::dho::roll::fill_pulse(&sh));
+        if scan {
+            println!("# after a complete sweep, then the configuration and the start again");
+            wr(&oos_hal::dho::roll::scan_done(&mut sh));
         }
+        println!("# stop");
+        wr(&oos_hal::dho::roll::stop(&mut sh));
         eprintln!("oos-fpgad: dry run; add --execute");
         return Ok(());
     }
