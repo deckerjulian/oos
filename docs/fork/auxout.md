@@ -42,6 +42,10 @@ to the idle level when the acquisition ends. That a comparator hit means "fail" 
 - Written in the acquisition block of `configure` when it differs from the last written value. The first set-up after
   start writes it once, so the FPGA state never depends on what an earlier run left behind. A change of the setting
   reconfigures like any other settings change.
+- ADR 0010: the write at the first set-up is not a function switched on by default. It writes 0, the power-up value of
+  0x1430, so AUX OUT carries trigger out as it always has under OOS (owner's decision of 2026-11-16, review of
+  0.1.13, H2). `Off` and `Pass/fail` are only written when chosen. The register meaning stays assumed until the
+  on-unit check below has run.
 - SCPI: `:SYSTem:AOUTput TOUT|OFF`, query returns `TOUT` or `OFF`. `TOUT` and `PFAil` are the stock names; `OFF` is
   an OOS addition (stock offers only trigger out and pass/fail).
 
