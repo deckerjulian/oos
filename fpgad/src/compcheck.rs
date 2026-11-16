@@ -18,12 +18,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
                 i += 1;
             }
             "--mask" => {
-                let v = args.get(i + 1).ok_or("--mask needs a value")?;
-                mask = match v.strip_prefix("0x") {
-                    Some(h) => u32::from_str_radix(h, 16),
-                    None => v.parse(),
-                }
-                .map_err(|e| format!("--mask: {}", e))?;
+                mask = crate::num(args.get(i + 1).ok_or("--mask needs a value")?).map_err(|e| format!("--mask {}", e))?;
                 i += 1;
             }
             f => files.push(f.to_string()),

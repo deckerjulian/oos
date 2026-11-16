@@ -107,13 +107,7 @@ fn parse(args: &[String]) -> Result<Opt, String> {
     let (mut n, mut at, mut all) = (4000u32, -2000i64, false);
     let mut i = 0;
     let num = |v: Option<&String>| -> Result<f64, String> { v.ok_or("missing value")?.parse::<f64>().map_err(|e| e.to_string()) };
-    let int = |v: Option<&String>| -> Result<u32, String> {
-        let t = v.ok_or("missing value")?;
-        match t.strip_prefix("0x") {
-            Some(h) => u32::from_str_radix(h, 16).map_err(|e| e.to_string()),
-            None => t.parse().map_err(|e: std::num::ParseIntError| e.to_string()),
-        }
-    };
+    let int = |v: Option<&String>| -> Result<u32, String> { crate::num(v.ok_or("missing value")?) };
     while i < args.len() {
         let v = args.get(i + 1);
         let mut take = true;
@@ -233,9 +227,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("help");
     // the unit (docs/models.md): model from vendor.bin, standard limits plus /oos/limits.conf; read only
-    let opt_arg = |k: &str| args.iter().position(|x| x == k).and_then(|i| args.get(i + 1)).cloned();
-    let cal_dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
-    let platform = oos_hal::model::Platform::detect(&cal_dir, &opt_arg("--limits").unwrap_or_else(|| oos_hal::model::LIMITS_CONF.into()), opt_arg("--model").as_deref());
+    let opt_arg = |k: &str| opt(&args, k).cloned();
+    let platform = oos_hal::model::Platform::detect(&cal_dir(), &opt_arg("--limits").unwrap_or_else(|| oos_hal::model::LIMITS_CONF.into()), opt_arg("--model").as_deref());
     oos_hal::model::init(platform);
     if cmd == "model" {
         let p = oos_hal::model::platform();
@@ -266,50 +259,22 @@ fn main() {
             std::process::exit(3);
         }
     }
-    if cmd == "afg" && !oos_hal::model::platform().caps.has_gen() && !args.iter().any(|x| x == "--force") {
+    if cmd == "afg" && !oos_hal::model::platform().caps.has_gen() && !flag(&args, "--force") {
         eprintln!("oos-fpgad: the {} has no generator (--force to drive the lines anyway)", oos_hal::model::platform().caps.name);
         std::process::exit(1);
     }
-    if matches!(cmd, "temp" | "beep" | "guard") {
-        if let Err(e) = board::run(cmd, &args[2..]) {
-            eprintln!("oos-fpgad: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-    if cmd == "afg" || cmd == "la" {
-        if let Err(e) = afg_la(cmd, &args[2..]) {
-            eprintln!("oos-fpgad: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-    if cmd == "selfcal" {
-        if let Err(e) = selfcal(&args[2..]) {
-            eprintln!("oos-fpgad: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-    if cmd == "roll" {
-        if let Err(e) = roll(&args[2..]) {
-            eprintln!("oos-fpgad: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-    if cmd == "compress-check" {
-        match compcheck::run(&args[2..]) {
-            Ok(text) => print!("{}", text),
-            Err(e) => {
-                eprintln!("oos-fpgad: {}", e);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-    if TOOL_CMDS.contains(&cmd) {
-        if let Err(e) = tool(cmd, &args[2..]) {
+    let a = args.get(2..).unwrap_or(&[]);
+    let done = match cmd {
+        "temp" | "beep" | "guard" => Some(board::run(cmd, a)),
+        "afg" | "la" => Some(afg_la(cmd, a)),
+        "selfcal" => Some(selfcal(a)),
+        "roll" => Some(roll(a)),
+        "compress-check" => Some(compcheck::run(a).map(|text| print!("{}", text))),
+        c if TOOL_CMDS.contains(&c) => Some(tool(cmd, a)),
+        _ => None,
+    };
+    if let Some(r) = done {
+        if let Err(e) = r {
             eprintln!("oos-fpgad: {}", e);
             std::process::exit(1);
         }
@@ -328,7 +293,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
+    let dir = cal_dir();
     let cal = if o.s.afe { afe::Cal::load(&dir).ok() } else { None };
     let cal_adc = adc::CalAdc::load(&dir).ok();
     let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
@@ -355,15 +320,10 @@ fn main() {
     }
     #[cfg(target_os = "linux")]
     {
-        use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
         let mut run = || -> Result<(), String> {
-            let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
-            let v = bar.rd(0x4000);
-            if v != FPGA_VERSION {
-                return Err(format!("unexpected FPGA version {:#x}, not touching it", v));
-            }
+            let mut bar = bar_checked()?;
             let mut afe_bus = if o.s.afe { Some(afe::GpioAfe::open().map_err(|e| format!("AFE GPIO: {}", e))?) } else { None };
-            let mut c2h = std::fs::File::open("/dev/xdma0_c2h_0").map_err(|e| format!("/dev/xdma0_c2h_0: {}", e))?;
+            let mut c2h = c2h()?;
             let t0 = std::time::Instant::now();
             let log = |m: String| eprintln!("{:8.1} ms  {}", t0.elapsed().as_secs_f64() * 1e3, m);
             let mut raw = oos_hal::dho::bus::DmaBuf::new();
@@ -412,6 +372,45 @@ fn num(s: &str) -> Result<u32, String> {
     .map_err(|e| format!("{}: {}", s, e))
 }
 
+/// The directory of the calibration files: OOS_CAL_DIR, default /rigol/data.
+fn cal_dir() -> String {
+    std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into())
+}
+
+/// The value after option `k`.
+fn opt<'a>(a: &'a [String], k: &str) -> Option<&'a String> {
+    a.iter().position(|x| x == k).and_then(|i| a.get(i + 1))
+}
+
+/// Option `k` is given.
+fn flag(a: &[String], k: &str) -> bool {
+    a.iter().any(|x| x == k)
+}
+
+/// BAR1 of the FPGA.
+#[cfg(target_os = "linux")]
+fn bar() -> Result<oos_hal::dho::bus::Bar1, String> {
+    oos_hal::dho::bus::Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))
+}
+
+/// BAR1, refused unless the FPGA answers with the image OOS knows.
+#[cfg(target_os = "linux")]
+fn bar_checked() -> Result<oos_hal::dho::bus::Bar1, String> {
+    use oos_hal::dho::bus::Bus;
+    let mut bar = bar()?;
+    let v = bar.rd(0x4000);
+    if v != oos_hal::dho::bus::FPGA_VERSION {
+        return Err(format!("unexpected FPGA version {:#x}, not touching it", v));
+    }
+    Ok(bar)
+}
+
+/// The card-to-host DMA channel of the records.
+#[cfg(target_os = "linux")]
+fn c2h() -> Result<std::fs::File, String> {
+    std::fs::File::open("/dev/xdma0_c2h_0").map_err(|e| format!("/dev/xdma0_c2h_0: {}", e))
+}
+
 /// Roll mode test: configuration as for `run`, then the roll display chain, streaming for `--secs`, stop.
 fn roll(a: &[String]) -> Result<(), String> {
     let mut a = a.to_vec();
@@ -457,17 +456,14 @@ fn roll(a: &[String]) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
+        use oos_hal::dho::bus::Bus;
         use std::io::Write as _;
-        let dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
+        let dir = cal_dir();
         let cal = if o.s.afe { afe::Cal::load(&dir).ok() } else { None };
         let cal_adc = adc::CalAdc::load(&dir).ok();
-        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
-        if bar.rd(0x4000) != FPGA_VERSION {
-            return Err("unexpected FPGA version, not touching it".into());
-        }
+        let mut bar = bar_checked()?;
         let mut afe_bus = if o.s.afe { Some(afe::GpioAfe::open().map_err(|e| format!("AFE GPIO: {}", e))?) } else { None };
-        let mut c2h = std::fs::File::open("/dev/xdma0_c2h_0").map_err(|e| format!("/dev/xdma0_c2h_0: {}", e))?;
+        let mut c2h = c2h()?;
         let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
         let (cfg, _) = state.configure(&o.s, cal.as_ref(), cal_adc.as_ref())?;
         seq::execute(&cfg, &mut bar, afe_bus.as_mut(), &mut c2h, |_| {})?;
@@ -705,7 +701,7 @@ fn check_temps(bar: &mut Option<oos_hal::dho::bus::Bar1>, say: &dyn Fn(&str, &st
 fn pll_dry(a: &[String]) -> Result<Option<String>, String> {
     use oos_hal::dho::lmx2582;
     let freq = a.iter().position(|x| x == "--freq").map(|i| a.get(i + 1).ok_or("--freq <Hz>")?.parse::<f64>().map_err(|e| format!("--freq: {}", e))).transpose()?;
-    if !a.iter().any(|x| x == "--dry") {
+    if !flag(a, "--dry") {
         return match freq {
             Some(f) if f != 1.25e9 => Err(format!("pll --freq {}: only 1.25 GHz is tested on the unit; other clocks only with --dry for now", f)),
             _ => Ok(None),
@@ -727,8 +723,8 @@ fn pll_dry(a: &[String]) -> Result<Option<String>, String> {
 }
 
 fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
-    let has = |f: &str| a.iter().any(|x| x == f);
-    let dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
+    let has = |f: &str| flag(a, f);
+    let dir = cal_dir();
     if cmd == "cold-boot" && !has("--execute") {
         let cal = oos_hal::dho::boot::CalFiles::load(&dir);
         print!("{}", oos_hal::dho::boot::dry_run(&cal, &oos_hal::dho::boot::Options::default()));
@@ -748,10 +744,10 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        use oos_hal::dho::bus::{Bar1, Bus};
+        use oos_hal::dho::bus::Bus;
         match cmd {
             "status" => {
-                let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                let mut bar = bar()?;
                 for l in status_lines(&mut |o| bar.rd(o)) {
                     println!("{}", l);
                 }
@@ -759,9 +755,9 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
             "gpio" => {
                 let name = a.first().ok_or("gpio <line> <0|1> [--hold s]")?;
                 let v = a.get(1).ok_or("gpio <line> <0|1> [--hold s]")? == "1";
-                let hold = a.iter().position(|x| x == "--hold").and_then(|i| a.get(i + 1)).map(|x| x.parse::<u64>().map_err(|e| e.to_string())).transpose()?.unwrap_or(0);
+                let hold = opt(a, "--hold").map(|x| x.parse::<u64>().map_err(|e| e.to_string())).transpose()?.unwrap_or(0);
                 // generator relays and supply only on a unit with a generator (docs/models.md 4.2)
-                oos_hal::dho::afg::line_allowed(&oos_hal::model::platform().caps, name, a.iter().any(|x| x == "--force"))?;
+                oos_hal::dho::afg::line_allowed(&oos_hal::model::platform().caps, name, flag(a, "--force"))?;
                 let _l = oos_hal::dho::gpio::Line::output(name, v).map_err(|e| format!("{}: {}", name, e))?;
                 println!("{} = {} (held {} s)", name, v as u8, hold);
                 std::thread::sleep(std::time::Duration::from_secs(hold));
@@ -776,12 +772,12 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 // idle state of the stock module after insmod: LE high (the first word then starts with a falling edge)
                 pll.set(regs::PllPin::Le, true);
                 std::thread::sleep(std::time::Duration::from_millis(10));
-                if let Some(v) = a.iter().position(|x| x == "--r0").and_then(|i| a.get(i + 1)) {
+                if let Some(v) = opt(a, "--r0") {
                     // diagnostic: one R0 word only (e.g. 0x221d = POWERDOWN set: the counter must drop to 0)
                     let v = num(v)?;
                     send(&mut pll, [0, (v >> 8) as u8, v as u8]);
                     println!("LMX2582: R0 <- {:#06x}", v);
-                    let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                    let mut bar = bar()?;
                     for _ in 0..3 {
                         std::thread::sleep(std::time::Duration::from_millis(300));
                         println!("0x1210 = {}", bar.rd(0x1210));
@@ -803,7 +799,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 }
                 println!("LMX2582: {} words written", table.len());
                 std::thread::sleep(std::time::Duration::from_millis(100));
-                let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                let mut bar = bar()?;
                 for _ in 0..3 {
                     println!("0x1210 = {}", bar.rd(0x1210));
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -812,7 +808,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
             "rd" => {
                 let off = num(a.first().ok_or("rd <offset> [count]")?)?;
                 let n = a.get(1).map(|x| num(x)).transpose()?.unwrap_or(1);
-                let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                let mut bar = bar()?;
                 for k in 0..n {
                     let o = off + 4 * k;
                     println!("{:#06x} = {:#010x}", o, bar.rd(o));
@@ -824,8 +820,8 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 }
                 match a.first().map(String::as_str) {
                     Some("slots") => {
-                        let runs = a.iter().position(|x| x == "--runs").and_then(|i| a.get(i + 1)).map(|x| x.parse::<u32>().map_err(|e| e.to_string())).transpose()?.unwrap_or(4).max(1);
-                        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                        let runs = opt(a, "--runs").map(|x| x.parse::<u32>().map_err(|e| e.to_string())).transpose()?.unwrap_or(4).max(1);
+                        let mut bar = bar()?;
                         let mut got = Vec::new();
                         for _ in 0..runs {
                             got.push(oos_hal::dho::levels::run(&mut bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64))).ok_or("measure unit did not finish")?);
@@ -843,7 +839,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                             println!("dry run: would write 0x1034 <- {:#010x} (core {} offset {} steps); add --execute", w, core, o);
                             return Ok(());
                         }
-                        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                        let mut bar = bar()?;
                         bar.wr(0x1034, w);
                         std::thread::sleep(std::time::Duration::from_micros(100));
                         println!("0x1034 <- {:#010x} (core {} offset {} steps)", w, core, o);
@@ -860,13 +856,13 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                     println!("dry run: would write {:#06x} <- {:#010x}; add --execute", off, v);
                     return Ok(());
                 }
-                let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                let mut bar = bar()?;
                 bar.wr(off, v);
                 println!("{:#06x} <- {:#010x}", off, v);
             }
             "fpga-boot" => {
-                let slot = a.iter().position(|x| x == "--slot").and_then(|i| a.get(i + 1)).map(|x| num(x)).transpose()?.unwrap_or(0x40_0000);
-                let progress = a.iter().position(|x| x == "--progress").and_then(|i| a.get(i + 1)).cloned();
+                let slot = opt(a, "--slot").map(|x| num(x)).transpose()?.unwrap_or(0x40_0000);
+                let progress = opt(a, "--progress").cloned();
                 oos_hal::dho::boot::io::fpga_boot(slot).map_err(|e| {
                     if let Some(p) = &progress {
                         // the cold boot sends it again (rcS runs it with --booted, which falls back)
@@ -883,7 +879,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
             }
             _ => {
                 // cold-boot --execute
-                let progress = a.iter().position(|x| x == "--progress").and_then(|i| a.get(i + 1)).cloned();
+                let progress = opt(a, "--progress").cloned();
                 let say = |state: &str, stage: &str, detail: &str| {
                     if let Some(p) = &progress {
                         bootstatus::append(p, state, stage, detail);
@@ -891,11 +887,11 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 };
                 let cal = oos_hal::dho::boot::CalFiles::load(&dir);
                 check_cal(&cal, &dir, &say);
-                let opt = oos_hal::dho::boot::Options { ignore_clock: has("--ignore-clock"), ..Default::default() };
+                let boot_opt = oos_hal::dho::boot::Options { ignore_clock: has("--ignore-clock"), ..Default::default() };
                 // the start-up screen's stage of the running step: ok when the next one starts
                 let mut cur: Option<&'static str> = None;
                 let report = if has("--power-on") {
-                    let slot = a.iter().position(|x| x == "--slot").and_then(|i| a.get(i + 1)).map(|x| num(x)).transpose()?.unwrap_or(0x40_0000);
+                    let slot = opt(a, "--slot").map(|x| num(x)).transpose()?.unwrap_or(0x40_0000);
                     // --booted without the file (the early BOOT command failed): send it here
                     let booted = has("--booted").then(|| std::fs::read_to_string(BOOTED_FILE).ok().and_then(|t| t.trim().parse::<f64>().ok())).flatten();
                     if booted.is_none() {
@@ -923,7 +919,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                             cur = Some(g);
                         }
                     };
-                    let r = oos_hal::dho::boot::io::power_on(slot, booted, up, pcie_down, noted, &cal, &opt, &mut step);
+                    let r = oos_hal::dho::boot::io::power_on(slot, booted, up, pcie_down, noted, &cal, &boot_opt, &mut step);
                     if let Err(e) = &r {
                         // before the first step: the BOOT command / PCIe, or the PLL / AFE lines (e.g. EBUSY)
                         let stage = if e.starts_with("PLL lines") || e.starts_with("AFE lines") { "GPIO lines" } else { "FPGA image" };
@@ -931,11 +927,11 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                     }
                     r?
                 } else {
-                    let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                    let mut bar = bar()?;
                     let mut pll = oos_hal::dho::boot::io::GpioPll::open().map_err(|e| format!("PLL lines: {}", e))?;
                     let mut afe = oos_hal::dho::afe::GpioAfe::open().map_err(|e| format!("AFE lines: {}", e))?;
                     let mut clk = oos_hal::dho::boot::SysClock::default();
-                    oos_hal::dho::boot::cold_boot(oos_hal::dho::boot::Hw { bus: &mut bar, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None }, &cal, &opt)
+                    oos_hal::dho::boot::cold_boot(oos_hal::dho::boot::Hw { bus: &mut bar, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None }, &cal, &boot_opt)
                 };
                 print!("{}", oos_hal::dho::boot::format_log(&report.log));
                 match report.result {
@@ -1088,12 +1084,12 @@ fn selfcal(a: &[String]) -> Result<(), String> {
     #[cfg_attr(not(target_os = "linux"), allow(unused_imports))]
     use oos_hal::dho::{calfile, selfcal as sc};
     let what = a.first().map(|s| s.as_str()).ok_or("selfcal entry|zero|vertical --ch N ...")?;
-    let get = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned();
-    let has = |k: &str| a.iter().any(|x| x == k);
+    let get = |k: &str| opt(a, k).cloned();
+    let has = |k: &str| flag(a, k);
     let ch = get("--ch").ok_or("--ch 1..4")?.parse::<usize>().map_err(|e| e.to_string())?.checked_sub(1).filter(|c| *c < 4).ok_or("--ch 1..4")?;
     let var = get("--var").map_or(Ok(2), |v| v.parse::<usize>()).map_err(|e| e.to_string())?.min(3);
     let limit = get("--limit").map_or(Ok(usize::MAX), |v| v.parse::<usize>()).map_err(|e| e.to_string())?;
-    let rigol = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
+    let rigol = cal_dir();
     let cal = afe::Cal::load(&rigol).map_err(|e| format!("{}: {}", rigol, e))?;
     let block = cal.block(var, ch);
     let entries = sc::entries_of(&block);
@@ -1121,19 +1117,14 @@ fn selfcal(a: &[String]) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        use oos_hal::dho::bus::{Bar1, FPGA_VERSION};
-        use oos_hal::dho::bus::Bus;
-        let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
-        if bar.rd(0x4000) != FPGA_VERSION {
-            return Err("unexpected FPGA version, not touching it".into());
-        }
+        let mut bar = bar_checked()?;
         let mut afe_bus = afe::GpioAfe::open().map_err(|e| format!("AFE GPIO: {}", e))?;
         // a full configuration of the channel first, so the AFE shadows match the unit (ADC mode = this channel only)
         let cal_adc = adc::CalAdc::load(&rigol).ok();
         let mut state = seq::State::handover(1, cal_adc.as_ref());
         let st = Settings { mask: 1 << ch, trig_src: ch as u32 + 1, afe: true, ..Settings::default() };
         let (steps, _) = state.configure(&st, Some(&cal), cal_adc.as_ref())?;
-        let mut c2h = std::fs::File::open("/dev/xdma0_c2h_0").map_err(|e| format!("/dev/xdma0_c2h_0: {}", e))?;
+        let mut c2h = c2h()?;
         seq::execute(&steps, &mut bar, Some(&mut afe_bus), &mut c2h, |_| {})?;
         if what == "adc" {
             // only the ADC core gains/offsets of this channel (mode = the channel alone); --save writes /oos/cal
@@ -1249,9 +1240,9 @@ fn selfcal(a: &[String]) -> Result<(), String> {
 
 fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
     use oos_hal::dho::{afg, la};
-    let get = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).map(|v| v.parse::<f64>().map_err(|e| format!("{}: {}", k, e))).transpose();
-    let exec = a.iter().any(|x| x == "--execute");
-    let dir = std::env::var("OOS_CAL_DIR").unwrap_or_else(|_| "/rigol/data".into());
+    let get = |k: &str| opt(a, k).map(|v| v.parse::<f64>().map_err(|e| format!("{}: {}", k, e))).transpose();
+    let exec = flag(a, "--execute");
+    let dir = cal_dir();
     match (cmd, a.first().map(|s| s.as_str())) {
         ("afg", Some("sine" | "square" | "ramp" | "pulse" | "noise" | "dc" | "off")) => {
             let ops = if a[0] != "off" {
@@ -1269,7 +1260,7 @@ fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
                 let (ac, oc, g) = afg::codes(cal.as_ref(), amp * 1e9, off * 1e9, f * 1e6, wave == afg::Wave::Noise, wave == afg::Wave::Dc);
                 println!("afg {:?} {} Hz {} Vpp {} V: relays {:#04x}, 0x3070 {:#06x}, 0x3078 {:#06x}, increment {:#x} ({})", wave, f, amp, off, g.code, 0xffff - ac, 0xffff - oc, afg::increment(f * 1e6), if cal.is_some() { "cal_afg.hex" } else { "no cal file" });
                 // --mod am|fm|pm --mod-rate Hz --depth % (AM) --dev Hz (FM) / degrees (PM) --mod-shape sine|square|triangle|up|down
-                let shape = match a.iter().position(|x| x == "--mod-shape").and_then(|i| a.get(i + 1)).map(|s| s.as_str()) {
+                let shape = match opt(a, "--mod-shape").map(|s| s.as_str()) {
                     Some("square") => afg::ModShape::Square,
                     Some("triangle") => afg::ModShape::Triangle,
                     Some("up") => afg::ModShape::UpRamp,
@@ -1278,7 +1269,7 @@ fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
                     _ => afg::ModShape::Sine,
                 };
                 let rate = get("--mod-rate")?.unwrap_or(100.0);
-                let md = match a.iter().position(|x| x == "--mod").and_then(|i| a.get(i + 1)).map(|s| s.as_str()) {
+                let md = match opt(a, "--mod").map(|s| s.as_str()) {
                     Some("am") => afg::Mod::Am { rate, depth: get("--depth")?.unwrap_or(100.0) / 100.0, shape },
                     Some("fm") => afg::Mod::Fm { rate, dev: get("--dev")?.unwrap_or(f / 10.0), shape },
                     Some("pm") => afg::Mod::Pm { rate, dev: get("--dev")?.unwrap_or(90.0), shape },
@@ -1303,12 +1294,8 @@ fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
             }
             #[cfg(target_os = "linux")]
             {
-                use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
-                let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
-                if bar.rd(0x4000) != FPGA_VERSION {
-                    return Err("unexpected FPGA version, not touching it".into());
-                }
-                let open = if a.iter().any(|x| x == "--force") { afg::Io::open_forced } else { afg::Io::open };
+                let mut bar = bar_checked()?;
+                let open = if flag(a, "--force") { afg::Io::open_forced } else { afg::Io::open };
                 let mut io = open().map_err(|e| format!("AFG GPIO: {}", e))?;
                 io.apply(&mut bar, &ops);
                 println!("done; relays now {:#04x}. The lines stay as set while this process runs: Ctrl-C ends it (output keeps its state).", io.relays());
@@ -1330,8 +1317,8 @@ fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
             println!("la: zero codes {:?}{}", cal.zero, w.map_or(String::new(), |w| format!(", write {:#06x} <- {:#010x}", w.0, w.1)));
             #[cfg(target_os = "linux")]
             {
-                use oos_hal::dho::bus::{Bar1, Bus};
-                let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
+                use oos_hal::dho::bus::Bus;
+                let mut bar = bar()?;
                 if let (Some(w), true) = (w, exec) {
                     bar.wr(w.0, w.1);
                 }
