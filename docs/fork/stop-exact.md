@@ -33,6 +33,17 @@ Single scan only).
 - No replay when the newest frame was already raw (rate-limited deep read, live compression), when the next batch was
   armed ahead anyway, or when anything else ran on the FPGA since the read (the read is only remembered for one
   pass). Then the record shown is the newest one already queued, measured as it is.
+- Views after the STOP (`Ui::stop_replay`): the thread reads the stored record again for every view (`stop_plan`),
+  the first time right after the STOP. Zoomed out on a record above `LIVE_READ` (625 k points: 10 M at 1 ms/div) that
+  read is the whole record through the compression, min/max pairs. Those pairs are drawn (`stop_pic`), but the raw
+  record of the STOP (`stop_raw`: the final frame, or a raw record already shown) stays `last[0]`, the record measured
+  and read out (`:WAV:MODE RAW`). Before, the pairs replaced it one step after the STOP and Mean, RMS, Std dev and AC
+  RMS turned to "----" (A3 of the 2026-11-16 review). Far zoomed in the thread reads every sample of the view; that
+  window becomes the record shown and measured, as before, and the raw record of the STOP comes back with the next
+  view read as pairs. The measurement gate is unchanged: Screen measures the part of the measured record within the
+  view (zoomed out beyond a raw window that is only a part of the record: only that part), Full record all of it. A
+  view adds nothing to the statistics (`stop_reads_the_record_again_without_counting_it`); a time base or delay change
+  clears them, as every setting does. RUN, Clear and the history let the raw record go.
 
 ## Host tests
 
@@ -41,6 +52,11 @@ Single scan only).
   measured (Mean of its samples), status STOP; later frames are not taken; RUN releases the hold; without an answer
   the STOP ends after 3 s; a shallow record's STOP holds without a request. Mutation check: without taking records
   while waiting the test fails.
+- `ui/src/ui.rs` `stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs`: 10 M at 1 ms/div, the
+  final raw frame, then the view read as pairs: the pairs are drawn, Mean, RMS, Std dev, AC RMS and Max stay those of
+  the raw frame, the count stays; zoomed in and out (pairs): same values, statistics stay cleared; far zoomed in (raw
+  window): that window is measured; out again: the raw frame of the STOP again; RUN lets it go. Fails without the
+  change: "the view read as pairs: Vavg NaN instead of 0.5".
 - `ui/src/ui.rs` `clear_in_stop_keeps_the_hardware_held`: started in STOP, not held until the first record; held
   after a Clear in STOP; RUN releases it.
 - `ui/src/ui.rs` `run_after_stop_takes_no_frame_from_before`: a frame queued in STOP (the batch in progress) is not
@@ -58,6 +74,13 @@ Single scan only).
 3. `meas.deep_raw = on`, 10 M at 1 ms/div, probe comp on CH1, Vavg and Vrms on. STOP: within a fraction of a second
    the values belong to the record shown: `:WAV:MODE RAW;:WAV:DATA?` over the screen, mean computed on the host,
    equal to Vavg. Repeat 10 times at different moments.
+   Then the views (A3): 10 M at 1 ms/div, generator 1 kHz square or sine on CH1, Vavg, Vrms, Std dev and AC RMS on
+   the list, Measure statistics on, Screen gate. RUN a few seconds, STOP, note the values and the count. Wait 2 s:
+   the values and the count stay (no "----"), the picture stays the whole record. Time base to 500 us and 200 us/div
+   and back to 1 ms/div: the values stay valid at every view (at 1 ms/div equal to those at the STOP), the
+   statistics are cleared by the change and the count stays 0 while nothing else changes. 10 us/div (a raw window):
+   values of that window; back to 1 ms/div: the values of the STOP again. Then `Full record`: values of the whole
+   record. RUN: the values update again.
 4. Normal trigger without a signal, STOP: the STOP completes within 3 s (log: no error), RUN works again.
 5. `acq.prearm = on` (the unit's set-up): step 3 again, same result; wfm/s at 1 us/div unchanged against prearm without
    the deep measurements (prearm stays on there); no `disarm` errors.

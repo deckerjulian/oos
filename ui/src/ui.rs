@@ -1230,6 +1230,11 @@ pub struct Ui {
     /// STOP: the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
     /// records read again (`stop_replay`)
     stop_ti_off: Option<f64>,
+    /// STOP: the raw record shown at the stop (the final frame of a deep or live-compressed record), and the min/max
+    /// pair record the thread read again for the view when that came as pairs. The pairs are drawn; the raw record
+    /// stays `last[0]`, the record measured and read out (`stop_replay`, docs/fork/stop-exact.md)
+    stop_raw: Option<Record>,
+    stop_pic: Option<Record>,
     pub t_fast: f32,
     pub t_fast_ab: (f32, f32),
     /// of the drawing: adding the collected frames to the maps (ms), frames a call (smoothed)
@@ -1597,6 +1602,8 @@ impl Ui {
             fast_off: (0.0, 0.0),
             fast_take: crate::board::QUEUE_MAX as f32,
             stop_ti_off: None,
+            stop_raw: None,
+            stop_pic: None,
             t_fast: 0.0,
             t_fast_ab: (0.0, 0.0),
             t_fast_fold: 0.0,
@@ -2769,6 +2776,7 @@ impl Ui {
         if !self.record_mode() && live && (self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared)) {
             if self.m.run == RunState::Run {
                 self.stop_ti_off = None;
+                (self.stop_raw, self.stop_pic) = (None, None);
             }
             if self.dirty_map {
                 self.ph.clear();
@@ -3046,7 +3054,9 @@ impl Ui {
             let zv = (tscales()[self.m.zscale], self.m.zdelay);
             let zoom_model = self.zoom_display_model();
             let detail = self.captured_view(zv);
-            if let Some(rec) = self.last[0].clone() {
+            // the view read again as pairs while the raw record of the STOP is the one measured: the pairs are drawn
+            let shown = self.stop_picture().cloned().or_else(|| self.last[0].clone());
+            if let Some(rec) = shown {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
@@ -3171,10 +3181,14 @@ impl Ui {
         if !ok {
             self.src.hw_stop(None);
             self.stop_ti_off = None;
+            (self.stop_raw, self.stop_pic) = (None, None);
             return;
         }
         // the software trigger of the record shown at the stop, as a time from the hardware trigger point
         if self.stop_ti_off.is_none() {
+            // and that record itself when it is of samples: measured while the views come as pairs
+            self.stop_raw = self.last[0].clone().filter(|r| r.raw.as_ref().is_some_and(|x| !x.frame.envelope));
+            self.stop_pic = None;
             self.stop_ti_off = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|raw| {
                 let f = &raw.frame;
                 let ti = raw.i0 as f64 - raw.t0 / f.dt;
@@ -3188,10 +3202,24 @@ impl Ui {
         }
         let window = view.0 * HDIV as f64;
         let rec = crate::board::to_record(&std::sync::Arc::new(f), &self.m, 3600, window, view.1 - window / 2.0);
-        self.last[0] = Some(rec);
+        // a view read as min/max pairs (zoomed out on a record above `LIVE_READ`: the whole record compressed) after a
+        // STOP on a raw record (the final frame of a deep record): the pairs are drawn, the raw record stays the one
+        // measured and read out; pairs hold no Mean, RMS or Std dev (A3 of the 2026-11-16 review). A view read raw (far
+        // zoomed in) is the record shown and measured, as before
+        match self.stop_raw.as_ref().filter(|_| rec.raw.as_ref().is_some_and(|r| r.frame.envelope)) {
+            Some(raw) => (self.last[0], self.stop_pic) = (Some(raw.clone()), Some(rec)),
+            None => (self.last[0], self.stop_pic) = (Some(rec), None),
+        }
         // the record counted when it came in RUN: its values for the view, not a new one for the statistics, the trend
         // and the catalog (as `refresh_stopped_measurements`)
         self.measure_last();
+    }
+
+    /// STOP: the pair record to draw for the view (`stop_pic`) while the raw record of the stop is the record shown.
+    fn stop_picture(&self) -> Option<&Record> {
+        let frame = |r: Option<&Record>| r.and_then(|r| r.raw.as_ref()).map(|r| std::sync::Arc::as_ptr(&r.frame));
+        let same = frame(self.last[0].as_ref()).is_some_and(|f| Some(f) == frame(self.stop_raw.as_ref()));
+        self.stop_pic.as_ref().filter(|_| same)
     }
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
@@ -11053,6 +11081,115 @@ mod tests {
         ui.m.run = RunState::Stop;
         steps(&mut ui, 1);
         assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches (docs/fork/stop-exact.md): after the final raw frame of a deep record the view read again in
+    // STOP (`stop_replay`, min/max pairs of the whole record) replaced the record measured, so Mean, RMS, Std dev and
+    // AC RMS went to NaN one step after the STOP; a view counted in the statistics; a raw window read for a view far
+    // zoomed in not measured; the raw record of the STOP not measured again once the view is pairs again
+    #[test]
+    fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        let ch1 = WaveId::Ch(0);
+        let kinds = [Meas::Vavg, Meas::Vrms, Meas::StdDev, Meas::VrmsAc, Meas::Vmax];
+        ui.m.meas = kinds.iter().map(|&k| (k, ch1)).collect();
+        ui.m.meas2.clear();
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (1e9, 10_000_000),
+            ..Default::default()
+        };
+        // what the thread answers for a view in STOP: the stored record read again, trigger at the point given
+        let view = |seq: u64, envelope: bool, v: Vec<f32>| {
+            crate::board::Frame { fixed_ti: Some((n / 2) as f64), ..frame(seq, envelope, v) }
+        };
+        // a square of a quarter duty, 2 V high: mean 0.5, RMS 1, std dev and AC RMS sqrt(0.75)
+        let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 2.0 } else { 0.0 }).collect();
+        let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 2.0 }).collect();
+        let steps = |ui: &mut Ui, k: usize| {
+            for _ in 0..k {
+                ui.step(0.02);
+            }
+        };
+        let check = |ui: &Ui, what: &str| {
+            let sd = 0.75f64.sqrt();
+            for (k, want) in kinds.into_iter().zip([0.5, 1.0, sd, sd, 2.0]) {
+                let v = ui.meas(0, k);
+                assert!((v - want).abs() < 0.03, "{}: {:?} {} instead of {}", what, k, v, want);
+            }
+        };
+        shared.lock().unwrap().queue.push_back(frame(1, true, pairs.clone()));
+        steps(&mut ui, 3);
+        ui.m.run = RunState::Stop;
+        steps(&mut ui, 2);
+        {
+            let mut g = shared.lock().unwrap();
+            g.queue.push_back(frame(2, false, raw.clone()));
+            g.final_ack = 1;
+        }
+        steps(&mut ui, 2);
+        assert!(ui.stop_final.is_none());
+        check(&ui, "the final raw frame");
+        let counted = ui.mstat[0].n;
+        assert!(counted > 0);
+        // the view of the STOP read again as pairs: drawn, while the raw frame stays the record measured
+        steps(&mut ui, 1);
+        assert!(shared.lock().unwrap().stop_view.is_some(), "the UI asks for the view read again");
+        shared.lock().unwrap().replay = Some(view(3, true, pairs.clone()));
+        steps(&mut ui, 2);
+        check(&ui, "the view read as pairs");
+        assert_eq!(ui.mstat[0].n, counted, "the view counted in the statistics");
+        let measured = |ui: &Ui| ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
+        let drawn = |ui: &Ui| ui.stop_picture().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
+        assert_eq!(measured(&ui), Some(2));
+        assert_eq!(drawn(&ui), Some((3, true)), "the pairs read for the view are drawn");
+        // zoomed in and out (a new time base clears the statistics, as any setting): the screen part of the raw frame
+        for d in [-1, 1] {
+            ui.adjust(Item::HScale, d);
+            steps(&mut ui, 1);
+            shared.lock().unwrap().replay = Some(view(4, true, pairs.clone()));
+            steps(&mut ui, 2);
+            check(&ui, "a new view read as pairs");
+            assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
+            assert_eq!(measured(&ui), Some(2));
+            assert_eq!(drawn(&ui), Some((4, true)));
+        }
+        // far zoomed in the thread reads every sample of the view: that window is the record measured, as before
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        steps(&mut ui, 1);
+        shared.lock().unwrap().replay = Some(view(5, false, vec![3.0; n]));
+        steps(&mut ui, 2);
+        assert_eq!(measured(&ui), Some(5));
+        assert_eq!(drawn(&ui), None, "the raw window is drawn as the record shown");
+        assert!((ui.meas(0, Meas::Vavg) - 3.0).abs() < 1e-3, "mean of the raw window {}", ui.meas(0, Meas::Vavg));
+        // zoomed out again: pairs, measured from the raw frame of the STOP again
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        steps(&mut ui, 1);
+        shared.lock().unwrap().replay = Some(view(6, true, pairs.clone()));
+        steps(&mut ui, 2);
+        assert_eq!((measured(&ui), drawn(&ui)), (Some(2), Some((6, true))));
+        check(&ui, "pairs after the raw window");
+        assert!(ui.mstat.iter().all(|s| s.n == 0));
+        // RUN: the record of the STOP is let go
+        ui.m.run = RunState::Run;
+        shared.lock().unwrap().queue.push_back(frame(7, true, pairs.clone()));
+        steps(&mut ui, 2);
+        assert!(ui.stop_raw.is_none() && ui.stop_picture().is_none());
         crate::deepmeas::force(None);
     }
 

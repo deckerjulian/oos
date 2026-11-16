@@ -42,6 +42,10 @@ Since `fix/stop-exact` (docs/fork/stop-exact.md): STOP holds the acquisition thr
 its last batch raw when the record shown is of pairs; that frame becomes the record on screen, so the measurements
 belong to it. With `acq.prearm = on` such batches are not armed ahead, so the replay works there too.
 
+The views after the STOP are read again from the stored record; zoomed out on a deep record that read is of pairs
+again. It is drawn, while the raw frame of the STOP stays the record measured, so Mean, RMS, Std dev and AC RMS keep
+their values and the statistics count nothing more (docs/fork/stop-exact.md, "Views after the STOP").
+
 ## Constants
 
 | constant | where | value |
@@ -93,7 +97,7 @@ Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first without the
    before it (no shift of the window: trigger point check).
 5. Budget: 2 channels at 10 M (40 MB) and 1 channel at 25 M: mean-type stay NaN, Max/Min update per record, no raw
    reads in the log.
-6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3; then RUN again.
+6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3 (with the views after the STOP); then RUN again.
 7. Peak mode, roll, zoom: no raw deep reads (log), as before.
 
 Record the results here and in `docs/fork/unit-dho804.md`.

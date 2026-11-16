@@ -59,7 +59,8 @@ Between two raw records the newest record is of pairs. While running the UI does
 (`compress::hold`): the measurement shown stays that of the last raw record, so every value belongs to one record and
 the statistics count each raw record once; measurements update up to 5 times a second. STOP on a pair record asks the
 thread for the final frame raw (docs/fork/stop-exact.md: `final_replay` reads the whole newest frame of the last batch
-raw), so the record left on screen is raw. Batches of the live compression are not armed ahead (`acq.prearm`), so that
+raw), so the record left on screen is raw; views read again as pairs after it are drawn while that raw record stays
+the one measured. Batches of the live compression are not armed ahead (`acq.prearm`), so that
 read is always possible.
 
 The compressed frames are only drawn. `drawpipe::draw_frame` sends a frame of the live compression (`compress::live`:
