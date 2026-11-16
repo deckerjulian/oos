@@ -274,6 +274,13 @@ pub fn pll_edges(w: [u8; 3]) -> Vec<(PllPin, bool)> {
     e
 }
 
+/// Sends one LMX2582 word over the lines (`pll_edges`); the caller keeps its own pause after it.
+pub fn send_pll_word(pll: &mut dyn super::PllPins, w: [u8; 3]) {
+    for (pin, v) in pll_edges(w) {
+        pll.set(pin, v);
+    }
+}
+
 /// FPGA image slots in the QSPI flash the boot monitor can start (fpga-boot.md).
 /// Slot 0x800000 is deliberately not allowed: the factory DDR calibration flashes a self-test image there (cold-boot.md,
 /// never-do list), its content and behaviour are unknown.

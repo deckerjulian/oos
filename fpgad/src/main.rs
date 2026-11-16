@@ -770,9 +770,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
                 use oos_hal::dho::boot::{regs, PllPins};
                 let mut pll = oos_hal::dho::boot::io::GpioPll::open().map_err(|e| format!("PLL lines: {}", e))?;
                 let send = |pll: &mut oos_hal::dho::boot::io::GpioPll, w: [u8; 3]| {
-                    for (p, v) in regs::pll_edges(w) {
-                        pll.set(p, v);
-                    }
+                    regs::send_pll_word(pll, w);
                     std::thread::sleep(std::time::Duration::from_micros(regs::PLL_WORD_GAP_US));
                 };
                 // idle state of the stock module after insmod: LE high (the first word then starts with a falling edge)
