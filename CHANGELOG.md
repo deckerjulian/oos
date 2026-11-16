@@ -42,6 +42,8 @@ Changed:
 - Docs: overclocking above 1.25 GHz loses about 5 % of the samples at the full rate (unit), so frequencies read too
   high; 1.25 GHz stays (docs/models.md 4.1). Unit profiles for `OOS_UNIT=<name>` are described in docs/models.md 4.2;
   `rootfs/unit/` is private and ignored by git.
+- The PCIe link to the FPGA runs at 2.5 GT/s, the maximum the RK3399 data sheet gives, instead of 5 GT/s. Reads and
+  frame rate stay the same: 4 channels x 10 M read in 282 ms at either speed (DHO804).
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.

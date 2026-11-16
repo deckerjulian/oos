@@ -806,11 +806,18 @@
  * The FPGA comes up on PCIe only after its boot over spi1, so the host driver
  * is a module that may be removed and loaded again: the fixed domain keeps
  * the endpoint at 0000:01:00.0 through that.
+ *
+ * 2.5 GT/s only: the RK3399 datasheet gives 2.5 GT/s as the maximum and
+ * Rockchip warns that 5 GT/s risks failure; mainline caps the host there too
+ * (84d08ff902f1, "PCI: rockchip: Drive at 2.5 GT/s, error other speeds",
+ * https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=84d08ff902f1).
+ * Measured on a DHO804 on 2026-11-15: the C2H reads and the frame rate are
+ * the same as at 5 GT/s (docs/protocols/fpga-boot.md).
  */
 &pcie0 {
 	ep-gpios = <&gpio2 RK_PC2 GPIO_ACTIVE_HIGH>;
 	linux,pci-domain = <0>;
-	max-link-speed = <2>;
+	max-link-speed = <1>;
 	num-lanes = <4>;
 	phys = <&pcie_phy>;
 	phy-names = "pcie-phy";

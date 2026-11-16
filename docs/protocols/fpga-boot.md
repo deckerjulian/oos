@@ -48,6 +48,23 @@ Verified on the unit with Linux 6.12.115+, from the OOS development initramfs:
 (the stock FPGA version), 0x4034 = 0x2020 (stopped), 0x4044/0x4048 = FPGA DNA. Scripted as `oos-fpga-up`, register access as
 `oos-hw rd/wr` (`tools/hw/oos-hw.c`).
 
+The link speed is capped at 2.5 GT/s (`max-link-speed = <1>` on `&pcie0`): the RK3399 datasheet gives 2.5 GT/s as its
+maximum, and mainline Linux caps the host there as well: commit 84d08ff902f1, "PCI: rockchip: Drive at 2.5 GT/s,
+error other speeds" ([git.kernel.org](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=84d08ff902f1)),
+which quotes the datasheet and Rockchip's warning that 5 GT/s risks failure. The endpoint still offers 5.0 GT/s; the
+link trains 2.5 GT/s x2. Verified on a DHO804 on 2026-11-15 against the same build at 5.0 GT/s, three 5 s windows
+each, `:SYSTem:STATe?`:
+
+| | 5.0 GT/s | 2.5 GT/s |
+|---|---|---|
+| 4 ch x 10M: C2H read p50 | 282.9 to 283.3 ms | 282.2 to 282.4 ms |
+| 4 ch x 10M: frames per second | 29.1 to 29.6 | 29.5 to 29.9 |
+| 200 ns/div, one channel: C2H read p50 | 5.0 ms | 5.0 ms |
+| 200 ns/div, one channel: frames per second | 29.9 to 30.0 | 29.9 to 30.0 |
+
+About 80 MB in 282 ms is about 280 MB/s, below the 500 MB/s of 2.5 GT/s x2: the link is not the limit. Not yet
+measured over a long run.
+
 ## A BOOT sent too early is lost
 
 After a true power-on the Zynq runs its factory image (slot 0x000000) first, and only that image's boot monitor hears the
