@@ -180,20 +180,24 @@ fn persist_index(arg: &str) -> Option<usize> {
         return Some(PERSIST.len() - 1);
     }
     let v = a.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0)?;
-    let times = [0.0, 0.1, 0.5, 1.0, 5.0, 10.0];
-    times.iter().enumerate().min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i)
+    // the f32 seconds of PERSIST in f64 as written (whole milliseconds), so a time half-way picks as before
+    let times: Vec<f64> = PERSIST.iter().filter(|p| p.1 >= 0.0).map(|p| (p.1 as f64 * 1e3).round() / 1e3).collect();
+    Some(nearest_index(&times, v))
 }
 
-fn persist_token(i: usize) -> &'static str {
-    match i {
-        0 => "MIN",
-        1 => "0.1",
-        2 => "0.5",
-        3 => "1",
-        4 => "5",
-        5 => "10",
-        _ => "INF",
+/// The answer to `:DISPlay:GRADing:TIME?` for entry `i` of `PERSIST`.
+fn persist_token(i: usize) -> String {
+    match PERSIST.get(i).map(|p| p.1) {
+        Some(s) if s == 0.0 => "MIN".into(),
+        Some(s) if s > 0.0 => s.to_string(),
+        _ => "INF".into(),
     }
+}
+
+/// The index of the entry of `list` nearest to `v` by difference (`nearest` compares ratios), the first of two as
+/// near; 0 for an empty list.
+fn nearest_index(list: &[f64], v: f64) -> usize {
+    list.iter().enumerate().min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0)
 }
 
 fn bus_index(tok: &str) -> Option<usize> {
@@ -270,10 +274,6 @@ fn parse_proto(arg: &str) -> Option<Proto> {
     if kw(a, "SPI") { return Some(Proto::SPI); }
     if kw(a, "CAN") { return Some(Proto::CAN); }
     PROTOS.iter().copied().find(|p| proto_token(*p).eq_ignore_ascii_case(a))
-}
-
-fn nearest_baud(v: f64) -> usize {
-    crate::decode::BAUDS.iter().enumerate().min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0)
 }
 
 fn chan_token(c: usize) -> String {
@@ -388,10 +388,6 @@ fn parse_math_src(s: &str, k: usize) -> Option<usize> {
     (idx < k).then_some(NCH + idx)
 }
 
-fn nearest_step(steps: &[f64], want: f64) -> usize {
-    steps.iter().enumerate().min_by(|(_, a), (_, b)| (*a - want).abs().partial_cmp(&(*b - want).abs()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0)
-}
-
 fn unquote(s: &str) -> &str {
     let s = s.trim();
     if s.len() >= 2 && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\''))) { &s[1..s.len() - 1] } else { s }
@@ -404,10 +400,6 @@ fn parse_ch(s: &str) -> Option<usize> {
     } else {
         None
     }
-}
-
-fn shown(v: f64) -> String {
-    if v.is_finite() { e(v) } else { "9.9E37".into() }
 }
 
 fn arg_item(arg: &str) -> String {
@@ -1696,7 +1688,7 @@ impl Scpi {
             };
             return match ui.fact_inverter(&arg_item(arg), &src) {
                 Ok(crate::ui::facts::Fact::Word(w)) => t(w),
-                Ok(crate::ui::facts::Fact::Num(v)) => t(&shown(v)),
+                Ok(crate::ui::facts::Fact::Num(v)) => t(&e(v)),
                 Err(()) => {
                     self.push_err("-224,\"Illegal parameter value\"".into());
                     t("9.9E37")
@@ -2347,7 +2339,7 @@ impl Scpi {
             4 => dev,
             _ => return t(&e(n as f64)),
         };
-        t(&shown(v))
+        t(&e(v))
     }
 
     fn timebase_more(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
@@ -2677,10 +2669,10 @@ impl Scpi {
             return if ui.m.cursor == CursorMode::Volt || ui.m.cursor == CursorMode::Off { miss() } else { t(&e(tb)) };
         }
         if kw(which, "AYValue") {
-            return t(&shown(y_of(true)));
+            return t(&e(y_of(true)));
         }
         if kw(which, "BYValue") {
-            return t(&shown(y_of(false)));
+            return t(&e(y_of(false)));
         }
         if kw(which, "XDELta") {
             return if matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { t(&e(tb - ta)) } else { miss() };
@@ -2694,7 +2686,7 @@ impl Scpi {
                 return miss();
             }
             let d = y_of(false) - y_of(true);
-            return t(&shown(d));
+            return t(&e(d));
         }
         self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
         None
@@ -2774,7 +2766,7 @@ impl Scpi {
         }
         if n.len() == 2 && kw(n0, "GRADing") && kw(n[1], "TIME") {
             if query {
-                return t(persist_token(ui.m.persist));
+                return t(&persist_token(ui.m.persist));
             }
             let Some(i) = persist_index(arg) else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
@@ -3087,7 +3079,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
-            let i = nearest_baud(v);
+            let i = nearest_index(&crate::decode::BAUDS, v);
             with_bus(ui, k, |m| {
                 m.dec_proto = Proto::UART;
                 m.dec_baud = i;
@@ -3203,9 +3195,9 @@ impl Scpi {
             };
             let mut c = ui.m.math_ch(k);
             c.scale = if c.op == MathOp::Fft {
-                nearest_step(&FFT_DB.map(|x| x as f64), v)
+                nearest_index(&FFT_DB.map(|x| x as f64), v)
             } else {
-                nearest_step(&math_scales(), v)
+                nearest_index(&math_scales(), v)
             };
             put_math(ui, k, c);
             return None;
@@ -3294,7 +3286,7 @@ impl Scpi {
             };
             let mut c = ui.m.math_ch(k);
             c.op = MathOp::Fft;
-            c.scale = nearest_step(&FFT_DB.map(|x| x as f64), v);
+            c.scale = nearest_index(&FFT_DB.map(|x| x as f64), v);
             put_math(ui, k, c);
             return None;
         }
@@ -3596,7 +3588,7 @@ impl Scpi {
             };
         }
         if n.len() == 1 && kw(n0, "CURRent") && query {
-            return t(&shown(ui.dvm_value()));
+            return t(&e(ui.dvm_value()));
         }
         self.push_err(format!("-113,\"Undefined header\" :DVM:{}", n.join(":")));
         None
@@ -3681,7 +3673,7 @@ impl Scpi {
             };
         }
         if n.len() == 1 && kw(n0, "CURRent") && query {
-            return t(&shown(ui.counter_value()));
+            return t(&e(ui.counter_value()));
         }
         if n.len() == 2 && kw(n0, "TOTalize") && kw(n[1], "CLEar") && !query {
             ui.counter_clear();
@@ -3966,7 +3958,7 @@ impl Scpi {
 
     fn one_fact(&mut self, r: Result<f64, ()>) -> Option<Vec<u8>> {
         match r {
-            Ok(v) => Some(shown(v).into_bytes()),
+            Ok(v) => Some(e(v).into_bytes()),
             Err(()) => {
                 self.push_err("-224,\"Illegal parameter value\"".into());
                 Some(b"9.9E37".to_vec())
@@ -4386,7 +4378,7 @@ impl Scpi {
                     return t("9.9E37");
                 }
             };
-            return t(&shown(ui.fact_setup_hold(data, clock)));
+            return t(&e(ui.fact_setup_hold(data, clock)));
         }
         // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
         let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
@@ -4397,7 +4389,7 @@ impl Scpi {
             },
         };
         if let Some(k) = meas_kind(item) {
-            return t(&shown(ui.fact_meas(k, src)));
+            return t(&e(ui.fact_meas(k, src)));
         }
         if let Some(k) = pair_kind(item) {
             let Some(word) = parts.next().map(str::trim).filter(|s| !s.is_empty()) else {
