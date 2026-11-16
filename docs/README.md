@@ -41,6 +41,7 @@ and in our own words. The code of OOS is written to them
   how the scope, the logic analyser and the generator work.
 - [hardware/README.md](hardware/README.md): buses and on-chip blocks of the RK3399 and what is attached to them.
 - [hardware/gpio-map.md](hardware/gpio-map.md): every GPIO with its pin, label and role.
+- [hardware/datasheets.md](hardware/datasheets.md): datasheets and manuals of the parts on the board, with how each part is known.
 
 ## Protocols
 
