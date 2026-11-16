@@ -10,6 +10,15 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
   calibration files, no `vendor.bin`. What runs on the scope only depends on `libc`, and it stays that way unless
   there is a strong reason; a desktop-only build may use its platform's crates
   ([ADR 0021](docs/adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
+- **No vendor material in the texts either.** Code, comments, documents, commit messages, pull request descriptions
+  and issues describe the hardware as behaviour, in your own words: no listings, copied tables or strings from the
+  stock or a modified firmware, and no names of its functions, classes or files. What the vendor publishes for users
+  is fine: the command names of the programming guide, the manuals, the data sheets of the parts
+  ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
+- **Sign your commits off.** `git commit -s` adds a `Signed-off-by:` line with your name. With it you state the
+  [Developer Certificate of Origin](https://developercertificate.org): the work is your own or you have the right to
+  submit it, under the licence of the project. This holds for work your agent wrote too. Code or text from another
+  project is named in the pull request with its source and licence.
 - **Say how you know.** A statement about the hardware in `docs/` is "verified on the unit", or "assumed", or "not yet
   verified on hardware". Keep that honest: a wrong "verified" costs someone else days.
 - **Be careful with other people's scopes.** OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and
@@ -42,6 +51,10 @@ need the calibration files of a real unit skip themselves without them. See the 
 [README](README.md). [docs/architecture.md](docs/architecture.md) is the place to start reading.
 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
+
+A pull request from a fork enters main squashed, one commit per topic, made from the state that was reviewed; your
+name and sign-off stay on it. Keep a pull request to one topic where you can, and link the branch of your fork when
+its history matters (ADR 0026).
 
 ## Style
 

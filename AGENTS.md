@@ -27,6 +27,8 @@ there. These instructions are the same for every agent and every person; the rea
   in `docs/fork/deps.md` (ADR 0021).
 - **Turn on a hardware function that is not verified on a unit by default** (ADR 0010).
 - **Put personal data** (serial numbers, MAC addresses, licence keys, a scope's address) into code, docs or commits.
+- **Put vendor material into a text around the code**: commit messages, pull request descriptions and issues follow
+  the same rule as the tree, and every commit is signed off by the person who submits it (ADR 0026).
 
 ## Always
 
