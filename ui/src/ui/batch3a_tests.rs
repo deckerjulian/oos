@@ -6,6 +6,8 @@ use super::{axis_label, studio_time_ticks};
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..8 { u.step(0.05); }
@@ -54,7 +56,7 @@ fn top_bar_is_one_status_pill_a_single_button_plain_acquisition_and_the_default_
     // the source is in the caption, not a badge of its own
     assert!(u.studio_acq_caption().starts_with("DEMO \u{b7} "), "{}", u.studio_acq_caption());
     // acquisition is plain text over the room before Measure and opens Acquire
-    assert!(t.acq.right() < t.measure.x);
+    assert!(t.acq.right() < t.add.x);
     tap_in(&mut u, t.acq);
     assert_eq!(u.menu, MenuId::Acquire);
     u.close_menu();

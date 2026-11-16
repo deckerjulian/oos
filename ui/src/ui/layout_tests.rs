@@ -85,6 +85,8 @@ fn the_display_menu_steps_through_the_three_layouts() {
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..8 {
@@ -113,7 +115,7 @@ fn studio_top_bar_has_run_single_state_acquisition_and_the_menu_chips() {
     let mut u = studio();
     shot(&mut u, "01-top");
     let t = u.studio_top();
-    let all = [t.run, t.single, t.acq, t.add, t.measure, t.cursors, t.view, t.gear];
+    let all = [t.run, t.single, t.acq, t.add, t.cursors, t.view, t.gear];
     for (i, a) in all.iter().enumerate() {
         assert!(a.x >= 0 && a.right() <= W && a.y >= 0 && a.bottom() <= TOP.h, "chip {i} inside the bar");
         for b in &all[i + 1..] { assert!(!overlaps(*a, *b), "chips do not overlap"); }
@@ -140,12 +142,13 @@ fn studio_top_bar_has_run_single_state_acquisition_and_the_menu_chips() {
     tap_in(&mut u, t.cursors);
     assert_eq!(u.menu, MenuId::Cursor);
     u.close_menu();
-    // Add opens the Add panel
+    // Add opens the grouped Add menu (Measurement first); Measure is its first row
     tap_in(&mut u, t.add);
-    assert_eq!(u.menu, MenuId::AddPanel);
-    u.close_menu();
-    tap_in(&mut u, t.measure);
-    assert!(u.menu_open);
+    assert!(u.studio.add_menu && !u.menu_open);
+    let first = u.studio_add_rows()[0];
+    assert_eq!(first.0, super::addmenu::AddRow::Measurement);
+    tap_in(&mut u, first.1);
+    assert_eq!(u.menu, MenuId::MeasAdd);
     u.close_menu();
     // Load file and SIM stay in the menus, not in the bar
     assert!(!u.top_buttons().iter().any(|b| b.1 == "SIM" || b.1.starts_with("Load")));
@@ -208,6 +211,8 @@ fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
     u.m.layout = Layout::Minimal;
     assert!(!u.studio_tags_on());
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.zoom = true;
     assert!(!u.studio_tags_on(), "the zoom view brings its own toolbar");
 }
@@ -300,6 +305,8 @@ fn studio_pins_survive_other_measurements_coming_and_going() {
     // until a pin is chosen the first three measurements are the badges
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     assert_eq!(u.studio_pinned().len(), 3);
 }
 
@@ -367,20 +374,19 @@ fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
     let g = u.studio_panel_geo().expect("docked panel");
     assert_eq!(u.grid.w, full - 274, "the lanes give their width to the panel");
     assert!(g.p.x >= u.grid.right() && g.p.right() <= W && g.p.bottom() <= u.frame().bottom.y && g.p.y >= TOP.h);
-    assert!(g.list.bottom() <= g.up.y && g.up.bottom() <= g.add.y && g.add.bottom() <= g.p.bottom());
+    assert!(g.list.bottom() <= g.p.bottom(), "no pager and no footer: the list has the room");
     assert!(g.page >= 5, "about six rows to a page, like the mock");
     // the badges sit under the lanes only, the panel keeps its column
     assert_eq!(u.studio_row().right(), u.grid.right());
-    // paging down moves by a page and stops at the end
+    // there is no pager: the list scrolls by pixels and stops at both ends
     let total = 12;
-    tap_in(&mut u, g.down);
-    assert_eq!(u.studio.panel.first, g.page.min(total - g.page));
-    tap_in(&mut u, g.down);
-    tap_in(&mut u, g.down);
-    assert_eq!(u.studio.panel.first, total - g.page);
+    let max = u.panel_scroll_max(total, &g);
+    assert!(max > 0);
+    u.panel_scroll_set(max + 500, total, &g);
+    assert_eq!(u.panel_scroll_px(), max);
     shot(&mut u, "11-scroll");
-    tap_in(&mut u, g.up);
-    assert_eq!(u.studio.panel.first, total - g.page - g.page.min(total - g.page));
+    u.panel_scroll_set(-50, total, &g);
+    assert_eq!(u.panel_scroll_px(), 0);
     u.studio.panel.first = 0;
     // the pin left of the row menu pins and unpins it
     assert_eq!(u.studio_pinned().len(), 3);
@@ -514,8 +520,9 @@ fn studio_measurements_only_is_a_table_with_statistics_and_a_source_filter() {
     u.close_menu();
     tap_in(&mut u, back);
     assert_eq!(u.studio.view, StudioView::Waveform);
-    assert!(u.studio_tab().is_some(), "the tab brings the panel back");
-    let tab = u.studio_tab().unwrap();
+    // the list button of the badge row (it carries the count; the Meas tab is gone) brings the panel back
+    assert!(u.studio_tab().is_none());
+    let tab = u.studio_compact_chip();
     tap_in(&mut u, tab);
     assert_eq!(u.studio.view, StudioView::Docked);
 }
@@ -543,7 +550,7 @@ fn studio_zoom_has_a_toolbar_an_overview_and_a_menu() {
     assert!(bar.tdiv.right() <= bar.center.x, "the chips do not overlap");
     // the overview is over the toolbar, the zoomed lanes under it
     let (overview, detail) = u.split_zoom(u.grid);
-    assert!(overview.bottom() <= row.y && row.bottom() <= detail.y);
+    assert!(overview.bottom() <= detail.y, "the strip is in the waveform title bar, not between them");
     // the factor is the ratio of the two time bases
     assert!((u.studio_time_zoom() - u.m.time_per_div() / tscales()[u.m.zscale]).abs() < 1e-3);
     // the hint of a pinch shows the factor under the fingers (mock 08)

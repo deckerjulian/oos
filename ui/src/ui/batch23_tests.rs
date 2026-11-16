@@ -7,6 +7,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     u.store_dir = std::env::temp_dir().join("oos-batch23");
@@ -75,7 +77,7 @@ fn check_top(u: &Ui) {
     for (name, r) in &rects { assert!(r.x >= top.x && r.right() <= top.right() && r.y >= top.y && r.bottom() <= top.bottom(), "{name} {r:?} in {top:?}"); }
     for p in rects.windows(2) { assert!(p[0].1.right() <= p[1].1.x, "{} {:?} overlaps {} {:?}", p[0].0, p[0].1, p[1].0, p[1].1); }
     let labels = &super::studio::TOP_LABELS[t.tier];
-    for (r, label) in [(t.autoset, labels[0]), (t.clear, labels[1]), (t.force, labels[2]), (t.add, labels[3]), (t.measure, labels[4]), (t.cursors, labels[5]), (t.display, labels[6]), (t.storage, labels[7]), (t.view, labels[8])] {
+    for (r, label) in [(t.autoset, labels[0]), (t.clear, labels[1]), (t.force, labels[2]), (t.add, labels[3]), (t.cursors, labels[5]), (t.display, labels[6]), (t.storage, labels[7]), (t.view, labels[8])] {
         assert!(r.w > 0 && f.mb.width(label) <= r.w - 4, "{label:?} in {r:?}");
     }
     assert!(t.acq.right() <= t.add.x, "the caption stays left of the buttons");

@@ -8,6 +8,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -216,7 +218,7 @@ fn mask_sim_and_la_pages() {
 // ------------------------------------------------------------------------------------------------ item 2
 
 fn open_plot(u: &mut Ui, i: usize) {
-    if !(u.menu_open && u.menu == MenuId::AddPanel) { let r = u.studio_top().add; tap_in(u, r); }
+    if !(u.menu_open && u.menu == MenuId::AddPanel) { u.studio.add_menu = false; u.open_menu(MenuId::AddPanel); u.sheet.add.kind = None; }
     if u.sheet.add.kind.is_some() { let b = u.sheet_chrome().1.unwrap(); tap_in(u, b); }
     let (_, r) = u.rail_geo().rows.into_iter().find(|(k, _)| *k == AddKind::Plot).unwrap();
     tap_in(u, r);
@@ -310,8 +312,8 @@ fn the_plot_pages_keep_their_picture_and_fit_the_sheet() {
 #[test]
 fn measure_has_a_picture_a_line_and_a_choose_button() {
     let mut u = studio();
-    let r = u.studio_top().add;
-    tap_in(&mut u, r);
+    u.open_menu(MenuId::AddPanel);
+    u.sheet.add.kind = None;
     let (_, r) = u.rail_geo().rows.into_iter().find(|(k, _)| *k == AddKind::Measure).unwrap();
     tap_in(&mut u, r);
     assert_eq!(u.menu, MenuId::AddPanel, "Measure is a page like the others");

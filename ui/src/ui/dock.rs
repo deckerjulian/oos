@@ -216,6 +216,8 @@ pub(super) enum Press {
     Button { kind: VKind, close: bool },
     /// the List / Detailed switch of the measurements panel
     View { kind: VKind },
+    /// a control of the measurements bar in the strip (source, gate, search, pinned, add, statistics)
+    Bar,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -571,6 +573,16 @@ impl Ui {
         let base = self.dock_extra_rect(k, r).map_or(Self::dock_close_rect(r).x, |e| e.x);
         Some(Rect::new(base - 76, r.y, 76, STRIP_HIT.min(r.h)))
     }
+    /// The strip of the measurements panel has its controls in it (wide panels): the content under the strip.
+    fn dock_bar_content(&self, k: VKind, r: Rect) -> Option<Rect> {
+        if k != VKind::Measure || self.m.layout != Layout::Studio || !matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline) { return None; }
+        let p = Rect::new(r.x, r.y + STRIP_H, r.w, (r.h - STRIP_H).max(1));
+        Self::panel_bar_wide(p).then_some(p)
+    }
+    /// A point on a control of that bar: its hit area reaches 14 px down over the head row of the table.
+    fn dock_bar_at(&self, k: VKind, r: Rect, x: i32, y: i32) -> bool {
+        self.dock_bar_content(k, r).is_some_and(|p| self.panel_bar_hit(p, x, y).is_some())
+    }
     pub(super) fn dock_grip_rect(r: Rect) -> Rect { Rect::new(r.right() - GRIP, r.bottom() - GRIP, GRIP, GRIP) }
 
     /// The title that fits a narrow strip: the name, else its short form, else the short form with an ellipsis.
@@ -876,7 +888,7 @@ impl Ui {
             return true;
         }
         for (k, r) in lay.leaves.iter() {
-            if Self::dock_strip(*r).contains(x, y) { return self.dock_down_strip(*k, *r, x, y, false); }
+            if Self::dock_strip(*r).contains(x, y) || self.dock_bar_at(*k, *r, x, y) { return self.dock_down_strip(*k, *r, x, y, false); }
         }
         if let Some(d) = lay.dividers.iter().find(|d| d.hit.contains(x, y)) {
             self.studio.dock.drag = Some(DockDrag::Divider { path: d.path.clone(), dir: d.dir, origin: d.origin, avail: d.avail, lo: d.lo, hi: d.hi });
@@ -902,6 +914,12 @@ impl Ui {
     }
 
     fn dock_down_strip(&mut self, k: VKind, r: Rect, x: i32, y: i32, floating: bool) -> bool {
+        // the zoom controls in the strip of the waveform are the plot's own taps
+        if k == VKind::Wave && self.studio_zoom_active() && !self.zoom_tab_mode() && self.zoom_readout().contains(x, y) { return false; }
+        if self.dock_bar_at(k, r, x, y) {
+            self.studio.dock.press = Some(Press::Bar);
+            return true;
+        }
         if !Self::dock_strip(r).contains(x, y) { return false; }
         if self.dock_down_button(k, r, x, y) { return true; }
         let movable = self.studio.view != StudioView::Only;
@@ -922,7 +940,7 @@ impl Ui {
             }
             return true;
         }
-        if matches!(self.studio.dock.press, Some(Press::Button { .. } | Press::View { .. })) { return true; }
+        if matches!(self.studio.dock.press, Some(Press::Button { .. } | Press::View { .. } | Press::Bar)) { return true; }
         let Some(d) = self.studio.dock.drag.clone() else { return false };
         match d {
             DockDrag::Move { kind, grab, free, .. } => {
@@ -991,12 +1009,13 @@ impl Ui {
             }
             (Some(Press::View { kind }), None) => {
                 if let Some(e) = self.dock_rect(kind).and_then(|r| self.dock_view_rect(kind, r)).filter(|e| e.contains(x, y)) {
-                    // three segments: List, Cards, Detailed
+                    // three segments: Table, List, Cards
                     let k = ((x - e.x) * 3 / e.w.max(1)).clamp(0, 2);
-                    self.panel_set_view([super::measpanel::PanelView::List, super::measpanel::PanelView::Cards, super::measpanel::PanelView::Detailed][k as usize]);
+                    self.panel_set_view([super::measpanel::PanelView::Detailed, super::measpanel::PanelView::List, super::measpanel::PanelView::Cards][k as usize]);
                 }
                 true
             }
+            (Some(Press::Bar), None) => { self.panel_strip_tap(x, y); true }
             (Some(Press::Strip { .. }), None) => true,
             (None, None) => false,
         }
@@ -1029,11 +1048,29 @@ impl Ui {
         let extra = self.dock_extra_rect(k, r);
         let view = self.dock_view_rect(k, r);
         let right = view.map_or(extra.map_or(close.x, |e| e.x), |v| v.x);
-        let avail = (right - s.x - 30).max(1);
-        let name = self.dock_title_fit(k, &name, avail);
-        cv.set_clip(Rect::new(s.x + 26, s.y, avail, s.h));
-        cv.text_in(&f.mb, Rect::new(s.x + 26, s.y, avail, s.h), 0, &name, TEXT);
-        cv.no_clip();
+        // the controls of the measurements panel sit in the strip when it is wide: they take the room left of the switch
+        let bar = self.dock_bar_content(k, r).map(|p| self.panel_bar(p));
+        let right_title = bar.as_ref().map_or(right, |b| b.left - 6);
+        let zoom_in_strip = k == VKind::Wave && self.studio_zoom_active() && !self.zoom_tab_mode();
+        let right_title = if zoom_in_strip { self.zoom_readout().x - 4 } else { right_title };
+        let avail = (right_title - s.x - 30).max(1);
+        if bar.as_ref().is_some_and(|b| b.field.is_some()) {
+            // the search field replaces the title
+        } else {
+            let name = self.dock_title_fit(k, &name, avail);
+            cv.set_clip(Rect::new(s.x + 26, s.y, avail, s.h));
+            cv.text_in(&f.mb, Rect::new(s.x + 26, s.y, avail, s.h), 0, &name, TEXT);
+            // a small caption while something filters the list
+            let used = f.mb.width(&name) + 12;
+            if let Some(cap) = bar.as_ref().and_then(|_| self.panel_caption()) {
+                if used + f.s.width(&cap) <= avail {
+                    cv.text_in(&f.s, Rect::new(s.x + 26 + used, s.y, avail - used, s.h), 0, &cap, DIM);
+                }
+            }
+            cv.no_clip();
+        }
+        if let Some(b) = &bar { self.draw_panel_bar(cv, b); }
+        if zoom_in_strip { self.draw_studio_zoom_bar(cv); }
         if let Some(v) = view { self.draw_view_switch(cv, v); }
         if let Some(e) = extra {
             chip(cv, Rect::new(e.x + 12, s.y + 1, 26, 24), BTN, BTN_BORDER);

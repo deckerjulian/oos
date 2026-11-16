@@ -9,6 +9,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -346,7 +348,6 @@ fn a_narrow_strip_has_a_short_title_and_a_narrow_footer_does_not_overlap() {
     drag(&mut u, (x, y), (x + 300, y));
     let g = u.studio_panel_geo().unwrap();
     assert!(g.p.w < super::studio::NARROW_PANEL_W, "narrow: {}", g.p.w);
-    assert!(g.add.right() <= g.stats.x, "{:?} {:?}", g.add, g.stats);
-    assert!(g.add.h >= 40 && g.stats.h >= 40 && g.stats.w >= 40);
+    assert!(u.panel_bar(g.p).more.is_some(), "what does not fit is behind the dots");
     shot(&mut u, "narrow-panel");
 }

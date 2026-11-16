@@ -7,6 +7,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -186,10 +188,7 @@ fn in_waveform_focus_the_badge_row_buttons_work() {
     let mut u = studio();
     u.studio_set_view(StudioView::Waveform);
     frame(&mut u);
-    // Meas > opens the measurements
-    let tab = u.studio_tab().expect("the Meas tab");
-    tap(&mut u, tab);
-    assert!(matches!(u.studio.view, StudioView::Docked | StudioView::Floating), "{:?}", u.studio.view);
+    // the Meas tab is gone: the list button (with the count) opens the measurements
     u.studio_set_view(StudioView::Waveform);
     frame(&mut u);
     // the list button: opens the measurement list
@@ -316,7 +315,7 @@ fn the_detailed_table_keeps_name_value_and_mean_in_a_narrow_panel_and_the_pin_af
     // the pin sits in the name column, at its right end
     let mut u = studio();
     let s = u.dock_rect(VKind::Measure).and_then(|r| u.dock_view_rect(VKind::Measure, r)).unwrap();
-    tap(&mut u, Rect::new(s.x + s.w * 5 / 6 - 2, s.y, 4, s.h));
+    tap(&mut u, Rect::new(s.x + s.w / 6 - 2, s.y, 4, s.h));
     assert!(u.studio_detailed());
     shot(&mut u, "detailed");
 }

@@ -7,6 +7,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -42,7 +44,8 @@ fn drag(u: &mut Ui, (x0, y0): (i32, i32), (x1, y1): (i32, i32)) {
 fn open_add(u: &mut Ui) {
     let r = u.studio_top().add;
     assert!(r.w >= 40 && r.h >= 30, "the Add button is a target: {r:?}");
-    if !(u.menu_open && u.menu == MenuId::AddPanel) { tap_in(u, r); }
+    // the top-bar Add button opens a menu now (addmenu.rs); the hub of the Add panel is reached from it, or from the View menu
+    if !(u.menu_open && u.menu == MenuId::AddPanel) { u.studio.add_menu = false; u.open_menu(MenuId::AddPanel); u.sheet.add.kind = None; }
     assert!(u.menu_open && u.menu == MenuId::AddPanel);
 }
 
@@ -72,12 +75,16 @@ fn entering_studio_by_any_road_shows_its_bars() {
     for _ in 0..3 { u.step(0.05); }
     assert!(u.full_on());
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     let mut cv = Canvas::new(W, H);
     for _ in 0..3 { u.step(0.05); u.render(&mut cv); }
     assert!(!u.full_on() && u.m.density == Density::Scope, "bars are back");
     // 2. a recalled set-up that is Studio with the screen full
     let mut v = Ui::new(Source::Demo { t: 0.0 });
     v.m.layout = Layout::Studio;
+    v.m.studio_detail = false;
+    v.m.studio_zoom_tab = false;
     v.studio.enter = true;
     for _ in 0..3 { v.step(0.05); }
     v.m.density = Density::Full;

@@ -7,16 +7,18 @@ use super::studio::{chip, icon_pin, MeasKey, StudioView};
 
 /// The columns of the detailed table: name and width. Sigma and Count go first when the room is short.
 /// Widths when the panel is narrow: the source is a colour bar, so Name, Value and Mean fit.
-pub(super) const DETAIL_NARROW_W: [i32; 8] = [44, 54, 76, 72, 70, 70, 60, 56];
+pub(super) const DETAIL_NARROW_W: [i32; 8] = [44, 54, 70, 66, 64, 64, 56, 52];
 /// Below this width the source is a colour bar only (no name).
 pub(super) const DETAIL_BAR_ONLY_BELOW: i32 = 240;
 /// The room the pin keeps at the right end of the Name cell.
-pub(super) const DETAIL_PIN_W: i32 = 16;
+pub(super) const DETAIL_PIN_W: i32 = 18;
 /// Below this width the table uses them.
 pub(super) const DETAIL_NARROW_BELOW: i32 = 330;
 pub(super) const DETAIL_COLS: [(&str, i32); 8] = [("Source", 44), ("Name", 104), ("Value", 90), ("Mean", 84), ("Min", 84), ("Max", 84), ("\u{3c3}", 76), ("Count", 64)];
 /// Row height of the detailed table.
-pub(super) const DETAIL_ROW: i32 = 38;
+pub(super) const DETAIL_ROW: i32 = 28;
+/// Height of the column heads of the table.
+pub(super) const COL_HEAD: i32 = 24;
 /// Extra height of a list row for the line of statistics.
 pub(super) const STATS_LINE: i32 = 16;
 
@@ -28,7 +30,7 @@ impl Ui {
 
     pub(super) fn studio_set_detailed(&mut self, on: bool) {
         self.m.studio_detail = on;
-        self.studio.panel.first = 0;
+        self.studio.panel.scroll_top();
         self.studio.panel.hx = 0;
         self.studio.md.menu = None;
         self.relayout();
@@ -72,8 +74,8 @@ impl Ui {
     pub(super) fn detail_cols(w: i32) -> (Vec<(usize, i32, i32)>, i32) {
         let narrow = w < DETAIL_NARROW_BELOW;
         let mut ws: Vec<i32> = (0..DETAIL_COLS.len()).map(|i| if narrow { DETAIL_NARROW_W[i] } else { DETAIL_COLS[i].1 }).collect();
-        if w < DETAIL_BAR_ONLY_BELOW { ws[0] = 12; ws[1] = 60; ws[2] = 72; ws[3] = 66; }
-        // the columns that fit, whole: source, name and value always; then by priority mean, sigma, min, max, count
+        if w < DETAIL_BAR_ONLY_BELOW { ws[0] = 12; ws[1] = 54; ws[2] = 70; ws[3] = 70; }
+        // the columns that fit, whole: source, name and value always; then by priority mean, min, max, sigma, count
         // (no half-drawn column, and nothing to scroll to)
         let mut keep: Vec<usize> = Vec::new();
         let mut sum = 0;
@@ -139,13 +141,29 @@ impl Ui {
         cv.no_clip();
     }
 
+    /// The rows of the table that are on the page, partly visible ones too: (index in `listed`, rectangle). The rows move by
+    /// pixels: `sub` is how far the first one is scrolled up.
+    pub(super) fn detail_layout(&self, g: &studio::PanelGeo, total: usize, first: usize) -> Vec<(usize, Rect)> {
+        let sub = self.studio.panel.sub.clamp(0, DETAIL_ROW - 1);
+        (first..total).map(|pos| (pos, Rect::new(g.list.x, g.list.y + (pos - first) as i32 * DETAIL_ROW - sub, g.list.w, DETAIL_ROW)))
+            .take_while(|(_, r)| r.y < g.list.bottom()).collect()
+    }
+
+    /// The pin of a table row: the end of the name cell.
+    pub(super) fn detail_pin_rect(&self, g: &studio::PanelGeo, r: Rect) -> Rect {
+        let hx = self.studio.panel.hx.clamp(0, self.detail_hmax(g.list.w));
+        let (cols, _) = Self::detail_cols(g.list.w);
+        let name = cols.iter().find(|c| c.0 == 1).map_or(0, |c| Self::detail_cell(r, c.1, c.2, hx).right());
+        Rect::new(name - 24, r.y, 28, r.h)
+    }
+
     /// The detailed table in the panel: the column heads in its head row and one row per measurement.
     pub(super) fn draw_panel_detail(&self, cv: &mut Canvas, g: &studio::PanelGeo, rows: &[tools::MeasRow], keys: &[MeasKey], listed: &[usize], first: usize) {
         let f = self.fonts();
         let (cols, total) = Self::detail_cols(g.list.w);
         let hx = self.studio.panel.hx.clamp(0, (total - g.list.w).max(0));
         // the head: the names of the columns, scrolled with the rows
-        let head = Rect::new(g.list.x, g.list.y - 26, g.list.w, 26);
+        let head = Rect::new(g.list.x, g.list.y - COL_HEAD, g.list.w, COL_HEAD);
         cv.fill(head, BAR);
         cv.set_clip(head);
         for &(i, x, w) in &cols {
@@ -154,8 +172,23 @@ impl Ui {
         }
         cv.no_clip();
         cv.set_clip(g.list);
-        for (k, &i) in listed.iter().skip(first).take(g.page).enumerate() {
-            let r = Rect::new(g.list.x, g.list.y + k as i32 * DETAIL_ROW, g.list.w, DETAIL_ROW);
+        let md = &self.studio.md;
+        for (pos, r0) in self.detail_layout(g, listed.len(), first) {
+            let i = listed[pos];
+            // a row that is swiped or springs back slides left over a red Remove
+            let off = match (keys.get(i), md.swipe, md.spring) {
+                (Some(a), Some((b, dx)), _) if *a == b => dx,
+                (Some(a), _, Some((b, dx))) if *a == b => dx as i32,
+                _ => 0,
+            };
+            if off < 0 {
+                let rev = Rect::new((r0.right() + off).max(r0.x), r0.y, (-off).min(r0.w), r0.h);
+                cv.fill(rev, mix(PANEL_BG, RED, 150));
+                cv.text_in(&f.mb, rev, 1, "Remove", TEXT);
+            }
+            let r = Rect::new(r0.x + off, r0.y, r0.w, r0.h);
+            // alternating shading: no gaps, a thin line under each row
+            cv.fill(r, if pos % 2 == 1 { mix(PANEL_BG, TEXT, 10) } else { PANEL_BG });
             let row = &rows[i];
             let stats = self.studio_stat_values(i);
             let pinned = keys.get(i).is_some_and(|key| self.studio_is_pinned(*key));
@@ -166,23 +199,23 @@ impl Ui {
                     // the source: a bar of its colour and, when there is room, its short name, centred in the row
                     0 => {
                         let col = self.wave_color(row.src);
-                        cv.round(Rect::new(r.x + x - hx + 3, r.y + 6, 4, r.h - 12), 2, col, 255);
+                        cv.round(Rect::new(r.x + x - hx + 3, r.y + 4, 4, r.h - 8), 2, col, 255);
                         if w >= 30 {
                             let name = Rect::new(r.x + x - hx + 11, r.y, w - 12, r.h);
-                            cv.set_clip(name);
+                            cv.clip_within(name);
                             cv.text_in(&f.sb, name, 0, &self.wave_name(row.src), col);
-                            cv.no_clip();
+                            cv.set_clip(g.list);
                         }
                     }
-                    // the pin comes after the name, in a place of its own
+                    // the thumbtack comes after the name, in a place of its own
                     1 => {
-                        let room = if pinned { cell.w - DETAIL_PIN_W } else { cell.w };
+                        let room = cell.w - DETAIL_PIN_W;
                         let text = Rect::new(cell.x, cell.y, room.max(1), cell.h);
-                        cv.set_clip(text);
+                        cv.clip_within(text);
                         let (shown, small) = self.detail_name(keys.get(i).copied(), &row.name, room);
                         cv.text_in(if small { &f.s } else { &f.m }, text, 0, &shown, TEXT);
-                        cv.no_clip();
-                        if pinned { icon_pin(cv, cell.right() - 12, r.y + r.h / 2 + 1, true, AMBER); }
+                        cv.set_clip(g.list);
+                        icon_pin(cv, cell.right() - 13, r.y + r.h / 2 + 1, pinned, if pinned { AMBER } else { DIM });
                     }
                     2 => cv.text_in(&f.mb, cell, 2, &row.text(), TEXT),
                     3 => cv.text_in(&f.m, cell, 2, &stats.map_or_else(dash, |s| row.fmt4(s.0)), TEXT),
@@ -203,27 +236,27 @@ impl Ui {
         }
     }
 
-    /// The little switch in the strip of the measurements panel: its two modes, the one that is on lit.
+    /// The little switch in the strip of the measurements panel: Table, List, Cards, the one that is on lit.
     pub(super) fn draw_view_switch(&self, cv: &mut Canvas, e: Rect) {
         let b = Rect::new(e.x + 4, e.y + 2, 68, 22);
         chip(cv, b, BTN, BTN_BORDER);
-        let (l, k, t) = (Rect::new(b.x + 2, b.y + 2, 21, 18), Rect::new(b.x + 23, b.y + 2, 21, 18), Rect::new(b.x + 44, b.y + 2, 21, 18));
+        let (t, l, k) = (Rect::new(b.x + 2, b.y + 2, 21, 18), Rect::new(b.x + 23, b.y + 2, 21, 18), Rect::new(b.x + 44, b.y + 2, 21, 18));
         let view = self.panel_view();
-        let at = match view { super::measpanel::PanelView::List => l, super::measpanel::PanelView::Cards => k, super::measpanel::PanelView::Detailed => t };
+        let at = match view { super::measpanel::PanelView::Detailed => t, super::measpanel::PanelView::List => l, super::measpanel::PanelView::Cards => k };
         cv.round(at, 4, ACCENT, 255);
         let ink = |on: bool| if on { DARK_TEXT } else { TEXT };
         let (cl, ck, ct) = (ink(at == l), ink(at == k), ink(at == t));
-        // list: three lines; cards: four squares; table: a grid
-        for i in 0..3 { cv.hline(l.x + 4, l.right() - 5, l.y + 4 + i * 5, cl); }
-        for (dx, dy) in [(0, 0), (7, 0), (0, 7), (7, 7)] { cv.rect(Rect::new(k.x + 4 + dx, k.y + 3 + dy, 6, 6), ck); }
+        // table: a grid; list: three lines; cards: four squares
         cv.rect(Rect::new(t.x + 4, t.y + 3, 12, 12), ct);
         cv.hline(t.x + 4, t.x + 15, t.y + 9, ct);
         cv.vline(t.x + 10, t.y + 3, t.y + 14, ct);
+        for i in 0..3 { cv.hline(l.x + 4, l.right() - 5, l.y + 4 + i * 5, cl); }
+        for (dx, dy) in [(0, 0), (7, 0), (0, 7), (7, 7)] { cv.rect(Rect::new(k.x + 4 + dx, k.y + 3 + dy, 6, 6), ck); }
     }
 }
 
 /// The columns in the order they earn their place when the table is narrow: source, name, value, mean, sigma, min, max, count.
-const DETAIL_PRIORITY: [usize; 8] = [0, 1, 2, 3, 6, 4, 5, 7];
+const DETAIL_PRIORITY: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 
 /// `s` cut to `room` pixels with "..." in the middle, so that the start and the end of the name show.
 pub(super) fn fit_middle(f: &crate::font::Font, s: &str, room: i32) -> String {

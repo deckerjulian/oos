@@ -1266,6 +1266,8 @@ pub struct Model {
     pub studio_ov: i32,
     /// the Studio measurements panel shows the detailed table instead of the list
     pub studio_detail: bool,
+    /// Studio zoom controls: a pull-down tab over the zoom view (true, the default) or the waveform title bar
+    pub studio_zoom_tab: bool,
     /// the pinned badges under the lanes in the classic strip: a row per source, name and value pairs in columns
     pub studio_classic: bool,
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
@@ -1703,7 +1705,8 @@ impl Default for Model {
             studio_view: "waveform".into(),
             studio_dock: String::new(),
             studio_ov: 0,
-            studio_detail: false,
+            studio_detail: true,
+            studio_zoom_tab: true,
             studio_classic: false,
             hdmi: HdmiMode::Waveform,
             views: 1,

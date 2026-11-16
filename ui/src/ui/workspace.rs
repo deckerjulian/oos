@@ -908,6 +908,8 @@ impl Ui {
         if !eye && !measurements {
             if let Some(c) = self.channel_hotspot(x, y) { return self.channel_popup(c, x, y); }
         }
+        // Studio: the plot has a context menu of its own, at the press point (studioctx.rs)
+        if self.m.layout == Layout::Studio && !eye && !measurements { return self.studio_ctx_open(x, y); }
         let rows = if eye {
             vec![("Dock Eye right".into(), Action::EyeRight), ("Dock Eye left".into(), Action::EyeLeft), ("Dock Eye below".into(), Action::EyeBelow),
                  ("Float Eye".into(), Action::EyeFloat), ("Eye settings".into(), Action::Menu(MenuId::Eye)), ("Close Eye".into(), Action::EyeClose)]

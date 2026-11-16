@@ -8,7 +8,7 @@ fn layout(l: Layout) -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = l;
     u.m.ch[1].on = true;
-    if l == Layout::Studio { u.studio.enter = true; }
+    if l == Layout::Studio { u.studio.enter = true; u.m.studio_zoom_tab = false; u.m.studio_detail = false; }
     for _ in 0..8 { u.step(0.05); }
     u.render(&mut Canvas::new(W, H));
     u
@@ -119,6 +119,8 @@ fn a_ring_fills_under_a_held_finger_and_the_popup_has_a_title_a_close_and_finger
 #[test]
 fn the_plot_hold_popup_has_a_title_and_fits_with_rows_of_40_px() {
     for l in LAYOUTS {
+        // Studio has a context menu of its own (studioctx.rs, tested in measpanel_redesign_tests)
+        if l == Layout::Studio { continue; }
         let mut u = layout(l);
         let g = u.grid;
         u.context_menu(g.x + g.w / 2, g.y + g.h / 2);
@@ -317,7 +319,9 @@ fn autoset_is_two_taps_away_in_every_layout() {
         let mut u = layout(l);
         let g = u.grid;
         u.context_menu(g.x + g.w / 2, g.y + g.h / 2);
-        let (x, y) = centre({ let p = u.workspace.popup.as_ref().unwrap(); p.row_rect(p.rows.iter().position(|r| r.0 == "Autoset").unwrap()) });
+        let (x, y) = if l == Layout::Studio {
+            centre(u.studio_ctx_rows().into_iter().find(|r| r.0 == super::studioctx::CtxRow::Autoset).unwrap().2)
+        } else { centre({ let p = u.workspace.popup.as_ref().unwrap(); p.row_rect(p.rows.iter().position(|r| r.0 == "Autoset").unwrap()) }) };
         u.tap(x, y);
         assert_eq!(toast_text(&u), "Auto set-up", "{l:?}: hold popup");
         // or Menu, then Autoset

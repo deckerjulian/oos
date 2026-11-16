@@ -49,6 +49,9 @@ mod dock;
 mod studio_views;
 mod sheet;
 mod addrail;
+mod addmenu;
+mod zoomtab;
+mod studioctx;
 mod scpiext;
 mod scpiext_a;
 mod scpiext_b;
@@ -106,6 +109,7 @@ mod trigslider;
 mod sharedzoom;
 mod classicbadges;
 mod measpanel;
+mod measscroll;
 #[cfg(test)]
 mod batch21_tests;
 #[cfg(test)]
@@ -122,6 +126,8 @@ mod batch26_tests;
 mod batch27_tests;
 #[cfg(test)]
 mod batch29_tests;
+#[cfg(test)]
+mod measpanel_redesign_tests;
 #[cfg(test)]
 mod uiaudit_tests;
 #[cfg(test)]
@@ -2313,7 +2319,8 @@ impl Ui {
 
     /// Zoom: overview on top, a readout row (with Close), zoomed view below.
     pub(super) fn split_zoom(&self, g: Rect) -> (Rect, Rect) {
-        let gap = 32;
+        // Studio: no row of its own, the zoom controls are in the title strip of the waveform; the others keep their 32 px row
+        let gap = if self.m.layout == Layout::Studio { 6 } else { 32 };
         // Studio: the overview has the height the user gave it
         let top = if self.m.layout == Layout::Studio { self.studio_ov_h(g) } else { 96 };
         // short: the overview goes first, the lanes and the zoom bar keep their room
@@ -2323,6 +2330,14 @@ impl Ui {
 
     /// The strip between the overview and the zoomed view.
     fn zoom_readout(&self) -> Rect {
+        // Studio: the zoom controls sit in the pull-down tab over the zoom view, or in the title strip of the waveform
+        if self.m.layout == Layout::Studio && self.m.studio_zoom_tab { return self.zoom_tab_region(); }
+        if self.m.layout == Layout::Studio {
+            let r = self.dock_wave_rect();
+            let s = Self::dock_strip(r);
+            let left = s.x + 150;
+            return Rect::new(left, s.y, (Self::dock_close_rect(r).x - left).max(1), s.h);
+        }
         let (o, z) = self.split_zoom(self.grid);
         Rect::new(o.x, o.y + o.h, o.w, (z.y - o.y - o.h).max(1))
     }
@@ -2740,6 +2755,8 @@ impl Ui {
         self.ch_hold_poll();
         self.dock_poll();
         self.md_tick();
+        self.panel_fling_step(dt_wall);
+        self.zoom_tab_tick();
         if self.m.layout == Layout::Studio && self.azr.spec.is_none() && self.last[0].is_some() && (self.m.pane == tables::PANE_SPECTRUM || self.m.view == AView::Spectrum) { self.analyzer_update(); }
         self.studio_delay_clamp();
         self.counter_poll();
@@ -3291,7 +3308,7 @@ impl Ui {
         let cv = l.over();
         if self.m.zoom && !self.xy_over() && !self.view_on() {
             let (tz, dz) = self.view();
-            if self.m.layout == Layout::Studio { self.draw_studio_zoom_bar(cv); } else { self.draw_zoom_readout(cv, tz, dz); }
+            if self.m.layout != Layout::Studio { self.draw_zoom_readout(cv, tz, dz); } else { self.draw_zoom_tab(cv); }
         }
         if self.eye_open() {
             // eye_pane_rect maps Full to the plot while retaining floating panes.
@@ -3347,6 +3364,8 @@ impl Ui {
         self.workspace_draw(cv);
         self.draw_studio_floating(cv);
         self.draw_studio_view_menu(cv);
+        self.draw_studio_add_menu(cv);
+        self.draw_studio_ctx(cv);
         self.frames += 1;
     }
 
@@ -8916,6 +8935,7 @@ impl Ui {
             Ev::Touch { id, phase, x, y } => self.multi_touch(id, phase, x, y),
             Ev::Wheel { x, y, steps, ctrl, shift, alt } => {
                 if self.menu_open { crate::cmd::run(self, &format!("knob multi1 {steps:+}")); }
+                else if !ctrl && !shift && !alt && self.panel_wheel(x, y, steps) {}
                 else if alt { crate::cmd::run(self, &format!("knob tlevel {:+}", steps.clamp(-32, 32) * 5)); }
                 else if ctrl { self.pointer_wheel(x, y, steps, true); }
                 else if shift { self.pointer_wheel_motion(x, y, steps, false, true); }
@@ -9888,7 +9908,8 @@ impl Ui {
     pub fn tap(&mut self, x: i32, y: i32) {
         if self.numpad_tap(x, y) { return; }
         if self.load_slot_tap(x, y) { return; }
-        let box_button = self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
+        let box_button = (self.m.layout != Layout::Studio && self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y)))
+            || (self.m.layout == Layout::Studio && self.studio_zoom_bar().is_some_and(|b| b.boxr.contains(x, self.zoom_row_y(x, y))));
         if !box_button { self.zoom_arm = false; }
         if self.workspace_popup_tap(x, y) { return; }
         if self.single_btn().contains(x, y) { self.key(key::SINGLE); return; }

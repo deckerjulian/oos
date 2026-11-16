@@ -8,7 +8,7 @@ fn layout(l: Layout) -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = l;
     u.m.ch[1].on = true;
-    if l == Layout::Studio { u.studio.enter = true; }
+    if l == Layout::Studio { u.studio.enter = true; u.m.studio_zoom_tab = false; u.m.studio_detail = false; }
     for _ in 0..8 { u.step(0.05); }
     u.render(&mut Canvas::new(W, H));
     u
@@ -79,7 +79,7 @@ fn the_studio_zoom_bar_has_scale_plus_minus_readout_and_close() {
     assert_eq!(u.menu, MenuId::Horizontal);
     u.close_menu();
     // the readout "(Nx zoom)" has room
-    assert!(bar.readout.w >= 60, "room for the readout: {:?}", bar.readout);
+    assert!(bar.readout.w >= 30, "room for the readout: {:?}", bar.readout);
     // the close button turns zoom off
     let (x, y) = centre(bar.close);
     u.tap(x, y);

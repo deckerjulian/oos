@@ -9,6 +9,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -80,14 +82,14 @@ fn the_switch_in_the_header_toggles_list_and_detailed_and_is_saved() {
     assert_eq!(u.studio_panel_row(), super::measview::DETAIL_ROW);
     // saved with the Studio setup, and read back
     let text = crate::store::setup_text(&u.m);
-    assert!(text.contains("studio_meas_view = detailed"), "{}", text.lines().filter(|l| l.starts_with("studio")).collect::<Vec<_>>().join(" | "));
+    assert!(!text.contains("studio_meas_view"), "the table is the default: nothing is written");
     let m = crate::store::parse_setup(&text).expect("reads back");
     assert!(m.studio_detail);
     // back to the list
     let s = switch(&u);
     tap(&mut u, seg(s, 0));
     assert!(!u.studio_detailed());
-    assert!(!crate::store::setup_text(&u.m).contains("studio_meas_view"));
+    assert!(crate::store::setup_text(&u.m).contains("studio_meas_view = list"));
     // the other layouts have no such switch
     let mut v = Ui::new(Source::Demo { t: 0.0 });
     v.m.studio_detail = true;
@@ -127,7 +129,7 @@ fn a_narrow_table_drops_sigma_and_count_and_scrolls_sideways() {
     assert_eq!(Ui::detail_cols(700).0.len(), 8);
     // short of room: sigma and count go first
     let (cols, total) = Ui::detail_cols(560);
-    assert_eq!(cols.iter().map(|c| c.0).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 6]);  // by priority: name, value, mean, sigma, min, max, count
+    assert_eq!(cols.iter().map(|c| c.0).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 5]);  // by priority: name, value, mean, min, max, sigma, count
     assert!(total <= 560);
     // narrower than that: columns drop, none is half drawn
     let (_, total) = Ui::detail_cols(200);
@@ -141,7 +143,7 @@ fn a_narrow_table_drops_sigma_and_count_and_scrolls_sideways() {
     let y = g.list.y + u.studio_panel_row() / 2;
     // a tap on a row of the table still opens its settings
     u.studio.panel.hx = 0;
-    tap(&mut u, Rect::new(g.list.x + 100, y - 10, 20, 20));
+    tap(&mut u, Rect::new(g.list.x + 40, y - 10, 20, 20));
     assert!(u.meas_cfg.is_some() || u.menu_open);
     u.close_menu();
     shot(&mut u, "detailed-narrow");
@@ -430,5 +432,7 @@ fn a_pinch_on_the_waveform_itself_does_nothing_and_ctrl_wheel_is_as_it_was() {
 
 /// Segment `k` (0 List, 1 Cards, 2 Detailed) of the three-way switch.
 fn seg(s: Rect, k: i32) -> Rect {
+    // the switch reads Table, List, Cards now: the old index (List, Cards, Detailed) moves one place
+    let k = (k + 1) % 3;
     Rect::new(s.x + (2 * k + 1) * s.w / 6 - 2, s.y, 4, s.h)
 }

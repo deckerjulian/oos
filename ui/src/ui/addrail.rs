@@ -553,6 +553,9 @@ impl Ui {
     }
 
     /// A row of the first page: Math and Ref open the page that already exists, the others get their own.
+    pub(super) fn rail_open_pub(&mut self, k: AddKind) { self.rail_open(k) }
+    pub(super) fn rail_kind_on_pub(&self, k: AddKind) -> bool { self.rail_kind_on(k) }
+
     fn rail_open(&mut self, k: AddKind) {
         match k {
             AddKind::Math => { self.studio_math_start(); self.open_submenu(MenuId::Math); }

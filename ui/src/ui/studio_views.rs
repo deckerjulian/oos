@@ -241,7 +241,7 @@ impl Ui {
             self.studio_set_view(StudioView::Waveform);
         } else if g.presets.contains(x, y) || g.knobs.contains(x, y) {
             self.studio.sim_knobs = g.knobs.contains(x, y);
-            self.studio.panel.first = 0;
+            self.studio.panel.scroll_top();
         } else if g.up.contains(x, y) || g.down.contains(x, y) {
             self.studio_page(total, g.page, g.down.contains(x, y));
         } else if g.play.contains(x, y) {

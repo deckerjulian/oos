@@ -7,6 +7,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -90,9 +92,9 @@ fn the_overview_goes_first_when_the_waveform_is_short_and_the_zoom_bar_stays() {
     for _ in 0..3 { frame(&mut u); }
     let tall = u.split_zoom(Rect::new(0, 0, 700, 400));
     assert!(tall.0.h >= 40);
-    let short = u.split_zoom(Rect::new(0, 0, 700, 150));
+    let short = u.split_zoom(Rect::new(0, 0, 700, 130));
     assert_eq!(short.0.h, 0, "no room for the overview");
-    assert_eq!(short.1.y - short.0.bottom(), 32, "the zoom bar keeps its row");
+    assert_eq!(short.1.y - short.0.bottom(), 6, "Studio keeps only a gap: the zoom controls are in the waveform title bar or the pull-down tab");
     assert!(short.1.h >= 88, "the lanes keep their height: {}", short.1.h);
     assert!(u.studio_zoom_bar().is_some());
 }
@@ -357,6 +359,9 @@ fn cursors_read_at_the_top_left_of_the_lane_and_hide_when_both_are_off_screen() 
 fn the_zoom_bar_buttons_get_short_labels_when_the_width_allows() {
     let mut u = studio();
     u.set_zoom(true);
+    // the pull-down toolbar has the whole width of the zoom view
+    u.m.studio_zoom_tab = true;
+    u.zoom_tab_set(true);
     for _ in 0..4 { frame(&mut u); }
     let bar = u.studio_zoom_bar().unwrap();
     assert!(bar.fit.w >= 60 && bar.fit.w < 100, "room for Fit and Centre: {}", bar.fit.w);

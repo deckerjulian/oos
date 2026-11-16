@@ -80,6 +80,24 @@ pub(super) struct StudioPanel {
     pub drop: Option<super::measpanel::PanelDrop>,
     /// the statistics button: 0 off, 1 mean and sigma, 2 min and max
     pub stats_mode: u8,
+    /// pixels the list is scrolled past the top of row `first` (the table moves by pixels, the others by rows)
+    pub sub: i32,
+    /// the scroll speed after a flick, px/s (positive: the content moves up), and the last finger sample (time, y)
+    pub vel: f32,
+    pub last: Option<(f64, i32)>,
+    /// `sub` at the start of the drag
+    pub sub0: i32,
+    /// the inline search field replaces the title
+    pub searching: bool,
+}
+
+impl StudioPanel {
+    /// Back to the top of the list, nothing flying.
+    pub fn scroll_top(&mut self) {
+        self.first = 0;
+        self.sub = 0;
+        self.vel = 0.0;
+    }
 }
 
 #[derive(Default)]
@@ -97,6 +115,14 @@ pub(super) struct Studio {
     pub view: StudioView,
     /// the View menu is open
     pub view_menu: bool,
+    /// the Add menu under the top bar is open
+    pub add_menu: bool,
+    /// the pull-down zoom toolbar is open: the time it was last used
+    pub zoom_open: Option<f64>,
+    /// a finger on the zoom tab or its label: where it went down, and whether it pulls the toolbar open (else shut)
+    pub zoom_pull: Option<(i32, bool)>,
+    /// the context menu of the plot (a long press on the lanes)
+    pub ctx: Option<super::studioctx::Ctx>,
     /// Full was chosen for the eye (Side is the Studio default: the waveform stays in view)
     pub eye_full: bool,
     /// the "+ CH" picker (channels that are off) is open
@@ -193,9 +219,9 @@ pub(super) struct StudioTop {
 const TOP_TIERS: usize = 3;
 /// The labels of the top bar per tier: Autoset, Clear, Force, + Add, Measure, Cursors, Display, Storage, View.
 pub(super) const TOP_LABELS: [[&str; 9]; TOP_TIERS] = [
-    ["Autoset", "Clear", "Force", "+ Add", "Measure", "Cursors", "Display", "Storage", "View"],
-    ["Auto", "Clear", "Force", "+ Add", "Meas", "Cur", "Disp", "Store", "View"],
-    ["Auto", "Clr", "Force", "+", "Meas", "Cur", "Disp", "Store", "View"],
+    ["Autoset", "Clear", "Force", "Add", "", "Cursors", "Display", "Storage", "View"],
+    ["Auto", "Clear", "Force", "Add", "", "Cur", "Disp", "Store", "View"],
+    ["Auto", "Clr", "Force", "Add", "", "Cur", "Disp", "Store", "View"],
 ];
 
 /// The rectangles of the Studio bottom bar.
@@ -372,7 +398,7 @@ impl Ui {
     pub(super) fn studio_left_record(&mut self) {
         if self.studio.view.is_record() {
             self.studio.view = StudioView::Waveform;
-            self.studio.panel.first = 0;
+            self.studio.panel.scroll_top();
         }
     }
 
@@ -427,7 +453,8 @@ impl Ui {
         let storage = place(labels[7]);
         let display = place(labels[6]);
         let cursors = place(labels[5]);
-        let measure = place(labels[4]);
+        // Add replaces the old "+ Add" and Meas buttons: one button, the menu has both
+        let measure = Rect::new(-20, CHIP_Y, 0, CHIP_H);
         let add = place(labels[3]);
         let acq = Rect::new(x, CHIP_Y, (add.x - 10 - x).max(40), CHIP_H);
         StudioTop { add, badge, simbtn, run: pill, single, sim, acq, measure, cursors, display, storage, view, gear, autoset, clear, force, tier }
@@ -436,7 +463,7 @@ impl Ui {
     /// Measure and Cursors as the top-bar buttons (`top_buttons`); the others are Studio's own.
     pub(super) fn studio_top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let t = self.studio_top();
-        vec![(TopBtn::Menu(MenuId::Measure), "Measure", t.measure), (TopBtn::Menu(MenuId::Cursor), "Cursors", t.cursors),
+        vec![(TopBtn::Menu(MenuId::Cursor), "Cursors", t.cursors),
              (TopBtn::Menu(MenuId::Display), "Display", t.display), (TopBtn::Menu(MenuId::Storage), "Storage", t.storage)]
     }
 
@@ -487,13 +514,12 @@ impl Ui {
         let acq_open = self.menu_open && root == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
         cv.text_fit(&f.mb, Rect::new(t.acq.x, 11, t.acq.w, 18), 0, &caption, if acq_open { ACCENT } else { TEXT });
         // Measure, Cursors, View, settings: the Default button style
-        let measuring = open(MenuId::Measure) || self.results_panel();
         let cursors = open(MenuId::Cursor) || self.m.cursor != CursorMode::Off;
-        let adding = self.menu_open && matches!(self.menu, MenuId::AddPanel);
+        let adding = self.studio_add_chip_on();
         let displaying = open(MenuId::Display);
         let storing = open(MenuId::Storage);
         let labels = &TOP_LABELS[t.tier];
-        for (r, label, on) in [(t.add, labels[3], adding), (t.measure, labels[4], measuring), (t.cursors, labels[5], cursors), (t.display, labels[6], displaying), (t.storage, labels[7], storing), (t.view, labels[8], self.studio.view_menu)] {
+        for (r, label, on) in [(t.add, labels[3], adding), (t.cursors, labels[5], cursors), (t.display, labels[6], displaying), (t.storage, labels[7], storing), (t.view, labels[8], self.studio.view_menu)] {
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, label, if on { ACCENT } else { TEXT });
         }
@@ -516,10 +542,13 @@ impl Ui {
         let ph = h;
         let n = n_ch();
         let mut right = bottom.right() - 4;
-        let panel = self.desktop_panel.map(|_| { right -= 46; let r = Rect::new(right, y, 46, h); right -= 4; r });
-        let trig_w = 196;
+        // the hardware Panel button is gone from this bar: F6 (and the desktop window) still toggle the panel
+        let panel: Option<Rect> = None;
+        // the room the Panel button had goes to the time base and the trigger
+        let extra = if self.desktop_panel.is_some() { 25 } else { 0 };
+        let trig_w = 196 + extra;
         let trig = Rect::new(right - trig_w, y, trig_w, h);
-        let time = Rect::new(trig.x - 9 - 150, y, 150, h);
+        let time = Rect::new(trig.x - 9 - 150 - extra, y, 150 + extra, h);
         // the sources that are on get a pill; the channels that are off share one "+ CH" chip
         let shown = self.shown_refs();
         let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).collect();
@@ -528,7 +557,7 @@ impl Ui {
         let add_w = if off > 0 { 62 } else { 100 };
         // SIM plays refs, not the live channels: their pills are not on the bar then (Live brings them back)
         let chans: Vec<usize> = if self.studio_ch_pills_hidden() { Vec::new() } else { (0..n).filter(|&c| self.m.ch[c].on).collect() };
-        let show_w = if self.studio_badges_hidden() { 46 } else { 0 };
+        let show_w = if self.studio_badges_hidden() { 64 } else { 0 };
         let caps = &oos_hal::model::platform().caps;
         let la_w = if caps.la { 52 } else { 0 };
         let gen_w = if caps.has_gen() { if self.m.afg_on { 124 } else { 56 } } else { 0 };
@@ -557,7 +586,7 @@ impl Ui {
         let mut ax = add.right() + 5;
         let la = (la_w > 0).then(|| { let r = Rect::new(ax, y, la_w, h); ax += la_w + 5; r });
         let gen = (gen_w > 0).then(|| { let r = Rect::new(ax, y, gen_w, h); ax += gen_w + 5; r });
-        let show = (show_w > 0).then(|| Rect::new(ax + 1, bottom.y, 40, bottom.h));
+        let show = (show_w > 0).then(|| Rect::new(ax + 1, bottom.y, 58, bottom.h));
         StudioBottom { ch, refs, math, add, show, la, gen, time, trig, panel }
     }
 
@@ -672,7 +701,8 @@ impl Ui {
         }
         if let Some(r) = b.show {
             chip(cv, Rect::new(r.x, r.y + 3, r.w, CHIP_H), BTN, BTN_BORDER);
-            icon_eye(cv, r.x + r.w / 2, r.y + r.h / 2, TEXT);
+            icon_eye(cv, r.x + 15, r.y + r.h / 2, TEXT);
+            cv.text_in(&f.sb, Rect::new(r.x + 26, r.y, r.w - 28, r.h), 1, "Meas", TEXT);
         }
         // the sections of the row are told apart by a line
         for x in [b.time.x - 5, b.trig.x - 5] {
@@ -721,11 +751,6 @@ impl Ui {
         cv.text(&f.mb, x, r.y + 20, &levels, TEXT);
         cv.no_clip();
         chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM);
-        if let Some(r) = b.panel {
-            let on = self.desktop_panel == Some(true);
-            chip(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
-            cv.text_in(&f.s, r, 1, "Panel", if on { ACCENT } else { TEXT });
-        }
         self.draw_studio_ch_picker(cv);
     }
 
@@ -762,7 +787,7 @@ impl Ui {
 
     /// The badges are hidden and there are some to show: the bottom bar keeps a button for them.
     pub(super) fn studio_badges_hidden(&self) -> bool {
-        self.m.layout == Layout::Studio && self.studio.hide_badges && self.studio.view != StudioView::Only && !self.studio_pinned().is_empty()
+        self.m.layout == Layout::Studio && self.studio.hide_badges && self.studio.view != StudioView::Only
     }
 
     fn studio_bottom_tap(&mut self, x: i32, y: i32) {
@@ -809,8 +834,6 @@ impl Ui {
             self.toggle_menu(MenuId::Horizontal);
         } else if b.trig.contains(x, y) {
             self.toggle_menu(MenuId::Trigger);
-        } else if b.panel.is_some_and(|r| r.contains(x, y)) {
-            self.desktop_panel = self.desktop_panel.map(|open| !open);
         }
     }
 
@@ -892,12 +915,15 @@ impl Ui {
     /// A tap in Studio's own bars and panels. False: the tap belongs to the plot, a menu or a dialog.
     pub(super) fn studio_tap(&mut self, x: i32, y: i32) -> bool {
         self.studio_sync();
+        if self.zoom_tab_tap(x, y) { return true; }
         // the info card is above everything, the Add panel included
         if self.info_card_tap(x, y) { return true; }
         if self.power_dlg || self.wlan.osk.is_some() || self.dialog.is_some() || self.load_slot_ask { return false; }
         if self.menu_open && self.menu_rect().is_some_and(|d| d.contains(x, y)) { return false; }
         if self.studio_sz_taps(x, y) { return true; }
         if self.studio_view_tap(x, y) { return true; }
+        if self.studio_add_tap(x, y) { return true; }
+        if self.studio_ctx_tap(x, y) { return true; }
         if self.studio.ch_picker {
             let (rows, extras) = self.studio_picker_rows().unzip();
             self.studio.ch_picker = false;
@@ -986,7 +1012,7 @@ impl Ui {
         } else if hit(t.acq) {
             self.toggle_menu(if self.record_mode() { MenuId::Ref } else { MenuId::Acquire });
         } else if hit(t.add) {
-            if self.menu_open && self.menu == MenuId::AddPanel { self.close_menu(); } else { self.open_menu(MenuId::AddPanel); self.sheet.add.kind = None; }
+            if self.studio.add_menu { self.studio.add_menu = false; } else { self.studio_add_open(); }
         } else if hit(t.measure) {
             self.open_meas_list();
         } else if hit(t.cursors) {
@@ -1100,15 +1126,20 @@ fn icon_compact(cv: &mut Canvas, cx: i32, cy: i32, c: Rgb) {
     for dy in [-5, 0, 5] { cv.hline(cx - 7, cx + 7, cy + dy, c); }
 }
 
+/// A thumbtack: a flat cap, a barrel, a rim and a needle. Filled when pinned, outline when not. `x` is the left edge of the
+/// 12 px wide glyph and `cy` its middle (it is 17 px high).
 pub(super) fn icon_pin(cv: &mut Canvas, x: i32, cy: i32, filled: bool, c: Rgb) {
-    // a round head on a needle that leans to the left
-    cv.line(x + 6, cy - 1, x + 1, cy + 6, c);
-    cv.circle(x + 8, cy - 3, 3, c);
+    let (cap, barrel, rim) = (Rect::new(x + 1, cy - 8, 10, 4), Rect::new(x + 3, cy - 4, 6, 5), Rect::new(x + 1, cy + 1, 10, 2));
     if filled {
-        cv.fill(Rect::new(x + 4, cy - 1, 8, 2), c);
+        cv.fill(cap, c);
+        cv.fill(barrel, c);
+        cv.fill(rim, c);
+        cv.fill(Rect::new(x + 5, cy + 3, 2, 6), c);
     } else {
-        cv.circle(x + 8, cy - 3, 1, BTN);
-        cv.hline(x + 4, x + 11, cy - 1, c);
+        cv.round_outline(cap, 1, c);
+        cv.round_outline(barrel, 1, c);
+        cv.fill(rim, c);
+        cv.vline(x + 5, cy + 3, cy + 8, c);
     }
 }
 
@@ -1174,7 +1205,7 @@ impl Ui {
         if let Some(p) = &mut self.studio.pinned { p.retain(|k| keys.contains(k)); }
         self.studio.floated.retain(|k| keys.contains(k));
         self.studio.popup = None;
-        self.studio.panel.first = 0;
+        self.studio.panel.scroll_top();
         self.relayout();
     }
 
@@ -1321,16 +1352,22 @@ impl Ui {
         let f = self.fonts();
         let rows = self.meas_rows();
         let limit = self.studio_row_limit();
-        let mut x = self.studio_row().x + 4 + self.studio_search_w();
         let keys: Vec<MeasKey> = self.studio_pinned().into_iter().skip(first).collect();
-        let mut fit = 0;
-        for key in &keys {
-            let Some(r) = self.studio_index(*key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
-            let w = 16 + f.s.width(&self.studio_badge_name(*key, &r.name)) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
-            if x + w > limit { break; }
-            x += w + 5;
-            fit += 1;
-        }
+        // how many fit before `limit`; when not all do, the "+N" chip takes the last place, which leaves one badge fewer
+        let fits = |limit: i32| {
+            let mut x = self.studio_row().x + 4 + self.studio_search_w();
+            let mut fit = 0;
+            for key in &keys {
+                let Some(r) = self.studio_index(*key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
+                let w = 16 + f.s.width(&self.studio_badge_name(*key, &r.name)) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
+                if x + w > limit { break; }
+                x += w + 5;
+                fit += 1;
+            }
+            fit
+        };
+        let mut fit = fits(limit);
+        if fit < keys.len() { fit = fits(limit - OVERFLOW_W - 5); }
         keys.len().saturating_sub(fit)
     }
 
@@ -1401,6 +1438,14 @@ impl Ui {
         let c = self.studio_compact_chip();
         chip(cv, c, if self.studio.compact { mix(BAR, ACCENT, 60) } else { BTN }, if self.studio.compact { ACCENT } else { BTN_BORDER });
         icon_compact(cv, c.x + c.w / 2, c.y + c.h / 2, if self.studio.compact { ACCENT } else { TEXT });
+        // with the lanes alone the list button opens the table: it carries the number of measurements
+        if self.studio.view == StudioView::Waveform && self.measurement_count() > 0 {
+            let n = self.measurement_count().to_string();
+            let w = f.s.width(&n) + 6;
+            let b = Rect::new(c.right() - w, c.y - 2, w, 14);
+            cv.round(b, 6, ACCENT, 255);
+            cv.text_in(&f.s, b, 1, &n, DARK_TEXT);
+        }
         let sc = self.studio_style_chip();
         chip(cv, sc, if self.m.studio_classic { mix(BAR, ACCENT, 60) } else { BTN }, if self.m.studio_classic { ACCENT } else { BTN_BORDER });
         icon_badge_style(cv, sc.x + sc.w / 2, sc.y + sc.h / 2, self.m.studio_classic, if self.m.studio_classic { ACCENT } else { TEXT });
@@ -1631,7 +1676,7 @@ impl Ui {
     /// Compact view on or off: smaller lane gaps, badge row and measurement panel.
     pub(super) fn studio_set_compact(&mut self, on: bool) {
         self.studio.compact = on;
-        self.studio.panel.first = 0;
+        self.studio.panel.scroll_top();
         self.relayout();
     }
 
@@ -1759,7 +1804,7 @@ impl Ui {
         self.studio.view = view;
         if view != StudioView::Offline { self.studio.dock.float_on[super::dock::VKind::Measure.idx()] = false; }
         self.dock_view_changed();
-        self.studio.panel.first = 0;
+        self.studio.panel.scroll_top();
         self.studio.filter = None;
         self.studio.popup = None;
         if view != was {
@@ -1886,47 +1931,25 @@ impl Ui {
         if self.m.layout == Layout::Studio && self.studio.view.is_docked() { self.studio_panel_w() + 4 } else { 0 }
     }
 
-    /// A panel too short for the header of two rows and the footer of two rows plus one row of the list: it has a header and a
-    /// footer of one row each, so the list always keeps a row.
-    pub(super) fn panel_short(&self, p: Rect) -> bool {
-        p.h - super::measpanel::HEAD_H - if self.studio_detailed() { 26 } else { 0 } - 92 < self.studio_panel_row()
-    }
-
     pub(super) fn studio_panel_geo(&self) -> Option<PanelGeo> {
         let p = self.studio_panel_rect().filter(|_| matches!(self.studio.view, StudioView::Docked | StudioView::Offline | StudioView::Floating))?;
         Some(self.studio_panel_geo_in(p))
     }
 
+    /// The parts of the panel `p`: the toolbar of a narrow one (a wide one has its controls in the title strip), the column
+    /// heads of the table, and the list with all the rest of the room. There is no footer and no pager.
     pub(super) fn studio_panel_geo_in(&self, p: Rect) -> PanelGeo {
-        let short = self.panel_short(p);
-        // the header (dropdowns, count); the table has its column heads under it
-        let list_y = p.y + super::measpanel::head_h(short) + if self.studio_detailed() { 26 } else { 0 };
-        let reserve = if short { 50 } else { 48 + 6 + 34 + 4 };
-        let rows_h = (p.bottom() - reserve - list_y).max(self.studio_panel_row());
-        let page = (rows_h / self.studio_panel_row()).max(1) as usize;
-        let page = if self.panel_is_cards() { Self::panel_cards_page(rows_h) } else { page };
-        let shown_h = if self.panel_is_cards() { (page as i32 / 2) * (super::measpanel::CARD_H + 4) } else { page as i32 * self.studio_panel_row() };
+        let detailed = self.studio_detailed();
+        let list_y = p.y + Self::panel_tool_h(p) + if detailed { super::measview::COL_HEAD } else { 0 };
+        let unit = self.studio_panel_row();
+        let rows_h = (p.bottom() - 2 - list_y).max(unit);
+        let page = if self.panel_is_cards() { Self::panel_cards_page(rows_h) } else { (rows_h / unit).max(1) as usize };
+        let shown_h = if self.panel_is_cards() { (page as i32 / 2) * (super::measpanel::CARD_H + 4) } else { rows_h };
         let list = Rect::new(p.x + 4, list_y, p.w - 8, shown_h);
-        let nav_y = list.bottom() + 4;
-        let by = p.bottom() - 46;
-        if short {
-            // one row at the foot: Add, the statistics button and the two arrows
-            let (up, down) = (Rect::new(p.right() - 82, by + 3, 36, 34), Rect::new(p.right() - 42, by + 3, 36, 34));
-            let stats = Rect::new(up.x - 6 - 92, by, 92, 40);
-            return PanelGeo { p, maximize: Rect::new(0, 0, 0, 0), collapse: Rect::new(0, 0, 0, 0), list, page, up, down,
-                add: Rect::new(p.x + 6, by, (stats.x - p.x - 12).clamp(40, 260), 40), stats, short };
-        }
-        PanelGeo {
-            p,
-            maximize: Rect::new(0, 0, 0, 0),
-            collapse: Rect::new(0, 0, 0, 0),
-            list, page, short,
-            up: Rect::new(p.right() - 82, nav_y, 36, 30),
-            down: Rect::new(p.right() - 42, nav_y, 36, 30),
-            // a narrow panel: the + Panel button shrinks to its plus and the other gets a short label (see the draw)
-            add: Rect::new(p.x + 6, by, p.w - 12 - if p.w < NARROW_PANEL_W { 60 } else { 100 }, 40),
-            stats: if p.w < NARROW_PANEL_W { Rect::new(p.right() - 58, by, 52, 40) } else { Rect::new(p.right() - 98, by, 92, 40) },
-        }
+        let bar = self.panel_bar(p);
+        let at = |it: super::measpanel::BarItem| bar.slots.iter().find(|s| s.item == it).map_or(Rect::new(0, 0, 0, 0), |s| s.r);
+        let none = Rect::new(0, 0, 0, 0);
+        PanelGeo { p, maximize: none, collapse: none, list, page, up: none, down: none, add: at(super::measpanel::BarItem::Add), stats: at(super::measpanel::BarItem::Stats), short: false }
     }
 
     /// Floating panel: its title bar, close, the Dock and View all buttons.
@@ -1988,7 +2011,7 @@ impl Ui {
         cv.round(p.inset(1), 7, PANEL_BG, 255);
         if let Some(g) = self.studio_panel_geo() {
             let detailed = self.studio_detailed();
-            self.draw_panel_head(cv, &g, listed.len());
+            self.draw_panel_toolbar(cv, &g);
             let first = self.studio_first(listed.len(), g.page);
             if detailed { self.draw_panel_detail(cv, &g, &rows, &keys, &listed, first); }
             cv.set_clip(g.list);
@@ -2019,19 +2042,8 @@ impl Ui {
                 if keys.get(i).is_some_and(|k| self.studio_stats_on(*k)) { self.draw_panel_stats_line(cv, Rect::new(r.x + off, r.y, r.w, r.h), i, &rows[i]); }
             }
             cv.no_clip();
-            Self::draw_scrollbar(cv, g.list, first, g.page, listed.len());
-            let end = (first + if detailed || cards { g.page } else { layout.len() }).min(listed.len());
-            if !g.short { cv.text(&f.s, p.x + 14, g.up.y + 20, &if listed.is_empty() { "0 of 0".to_string() } else { format!("{}-{} of {}", first + 1, end, listed.len()) }, DIM); }
-            for (r, up) in [(g.up, true), (g.down, false)] {
-                chip(cv, r, BTN, BTN_BORDER);
-                icon_arrow(cv, r.x + r.w / 2, r.y + r.h / 2, up, TEXT);
-            }
-            chip(cv, g.add, BTN, BTN_BORDER);
-            cv.hline(g.add.x + 10, g.add.x + 22, g.add.y + g.add.h / 2, TEXT);
-            cv.vline(g.add.x + 16, g.add.y + g.add.h / 2 - 6, g.add.y + g.add.h / 2 + 6, TEXT);
-            let add_label = if g.add.w < 150 { "Add" } else { "Add measurement" };
-            cv.text_in(&f.m, Rect::new(g.add.x + 28, g.add.y, g.add.w - 30, g.add.h), 1, add_label, TEXT);
-            self.draw_panel_stats_button(cv, g.stats);
+            // the thin mark that shows where the list is (there is no pager)
+            Self::draw_scroll_mark(cv, g.list, self.panel_scroll_px(), self.panel_scroll_max(listed.len(), &g) + g.list.h);
             self.draw_panel_drop(cv);
         } else if let Some((title, close, dock, all)) = self.studio_float_parts() {
             // the dotted handle shows that the panel can be moved
@@ -2065,11 +2077,8 @@ impl Ui {
 
     /// The tab that brings the panel back while only the lanes are shown.
     pub(super) fn studio_tab(&self) -> Option<Rect> {
-        if self.m.layout != Layout::Studio || self.studio.view != StudioView::Waveform || !self.studio_badges_visible()
-            || self.measurement_count() == 0 { return None; }
-        // in the badge row, left of the eye: nothing hangs under the top bar
-        let eye = self.studio_eye();
-        Some(Rect::new(eye.x - 6 - 102, eye.y, 102, eye.h))
+        // the Meas tab duplicated the list button: that button shows the count now (draw_studio_badges)
+        None
     }
 
     fn draw_studio_tab(&self, cv: &mut Canvas) {
@@ -2217,15 +2226,13 @@ impl Ui {
             if self.panel_head_tap(&g, x, y) { return true; }
             if g.maximize.contains(x, y) { self.studio_set_view(StudioView::Only); }
             else if g.collapse.contains(x, y) { self.studio_set_view(StudioView::Waveform); }
-            else if g.up.contains(x, y) || g.down.contains(x, y) { self.studio_page(listed.len(), g.page, g.down.contains(x, y)); }
             else if g.add.contains(x, y) { self.open_meas_list(); }
             else if g.list.contains(x, y) {
                 let first = self.studio_first(listed.len(), g.page);
                 let hit = if self.panel_is_cards() {
                     self.panel_cards_layout(first, listed.len(), g.list).into_iter().find(|(_, r)| r.contains(x, y)).map(|(pos, r)| (listed[pos], r))
                 } else if self.studio_detailed() {
-                    let k = ((y - g.list.y) / self.studio_panel_row()) as usize;
-                    listed.get(first + k).map(|&i| (i, Rect::new(g.list.x, g.list.y + k as i32 * self.studio_panel_row(), g.list.w, self.studio_panel_row())))
+                    self.detail_layout(&g, listed.len(), first).into_iter().find(|(_, r)| r.contains(x, y)).map(|(pos, r)| (listed[pos], r))
                 } else {
                     self.panel_layout(&rows, &listed, first, g.list).into_iter().find(|(_, r)| r.contains(x, y)).map(|(pos, r)| (listed[pos], r))
                 };
@@ -2234,7 +2241,12 @@ impl Ui {
                     if self.panel_is_cards() {
                         let key = keys.get(i).copied();
                         if Self::panel_card_pin(row).contains(x, y) { if let Some(key) = key { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); } } else { self.studio_configure(i); }
-                    } else if self.studio_detailed() { self.studio_configure(i); }
+                    } else if self.studio_detailed() {
+                        // the thumbtack at the end of the name toggles the pin, the rest of the row opens its settings
+                        if self.detail_pin_rect(&g, row).contains(x, y) {
+                            if let Some(&key) = keys.get(i) { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); }
+                        } else { self.studio_configure(i); }
+                    }
                     else if menu.contains(x, y) {
                         if let Some(&key) = keys.get(i) { self.studio.md.menu = Some(key); }
                     } else if pin.contains(x, y) {
@@ -2266,7 +2278,7 @@ impl Ui {
             (self.studio_table_rect(), self.studio_table_parts(), self.studio_table_geo()) {
             if !t.contains(x, y) { return false; }
             if back.contains(x, y) { self.studio_set_view(StudioView::Waveform); }
-            else if filter.contains(x, y) { self.studio.filter = self.studio_filter_next(); self.studio.panel.first = 0; }
+            else if filter.contains(x, y) { self.studio.filter = self.studio_filter_next(); self.studio.panel.scroll_top(); }
             else if stats.contains(x, y) { self.studio.panel.stats = !self.studio.panel.stats; }
             else if add.contains(x, y) { self.open_meas_list(); }
             else if reset.contains(x, y) { self.clear_measurement_statistics(); }
@@ -2307,12 +2319,13 @@ impl Ui {
                 // full screen: its few buttons
                 if self.m.layout == Layout::Studio && self.full_on() && self.full_chrome_rects().is_some_and(|(a, b)| Self::hit40(a).contains(x, y) || Self::hit40(b).contains(x, y)) { return self.studio_eat(x, y); }
                 if self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock
-                    || self.studio.view_menu || self.studio.popup.is_some() || self.studio.md.menu.is_some() || self.workspace.popup.is_some() || self.load_slot_ask { return false; }
+                    || self.studio.view_menu || self.studio.add_menu || self.studio.ctx.is_some() || self.studio.popup.is_some() || self.studio.md.menu.is_some() || self.workspace.popup.is_some() || self.load_slot_ask { return false; }
                 // the Add measurement panel is open: only its tiles can be dragged
                 if self.menu_open { return self.md_down(x, y); }
                 // the bars with an Undo are above the strips of the views
                 if [self.md_hide_bar(), self.md_undo_bar()].into_iter().flatten().any(|(bar, _)| bar.contains(x, y)) { return self.studio_eat(x, y); }
                 if self.ov_divider_down(x, y) { return true; }
+                if self.zoom_tab_down(x, y) { return self.studio_eat(x, y); }
                 if self.dock_down(x, y) { return true; }
                 if self.md_down(x, y) { return true; }
                 if self.axis_down(x, y) { return true; }
@@ -2327,6 +2340,7 @@ impl Ui {
                 if self.panel_drop_rect().is_some_and(|r| r.contains(x, y)) { return self.studio_eat(x, y); }
                 if let Some(g) = self.studio_panel_geo() {
                     if g.list.contains(x, y) {
+                        self.panel_scroll_begin();
                         self.studio.drag = Some(StudioDrag::Scroll { y0: y, first0: self.studio_first(self.studio_listed(&rows).len(), g.page), moved: false });
                         return true;
                     }
@@ -2351,6 +2365,7 @@ impl Ui {
                 false
             }
             Phase::Move => {
+                self.zoom_tab_move(y);
                 if let Some((_, x0, y0)) = self.studio.sz.press { if (x - x0).abs() > 12 || (y - y0).abs() > 12 { self.studio.sz.press = None; } }
                 if self.trig_slider_move(y) { return true; }
                 if self.ov_divider_move(y) { return true; }
@@ -2365,7 +2380,9 @@ impl Ui {
                         let total = sim.map_or_else(|| self.studio_listed(&rows).len(), |l| l.3);
                         let (h, page) = if let Some((_, h, page, _)) = sim { (h, page) } else if let Some(g) = self.studio_panel_geo() { (self.studio_panel_row(), g.page) } else { (TABLE_ROW, self.studio_table_geo().map_or(1, |g| g.1)) };
                         let moved = moved || (y - y0).abs() > 8;
-                        if moved {
+                        if moved && sim.is_none() && self.studio_panel_geo().is_some() {
+                            self.panel_scroll_drag(y0, first0, y);
+                        } else if moved {
                             let delta = (y0 - y) / h * if self.panel_is_cards() { 2 } else { 1 };
                             self.studio.panel.first = (first0 as i32 + delta).clamp(0, total.saturating_sub(page) as i32) as usize;
                         }
@@ -2387,6 +2404,7 @@ impl Ui {
                 true
             }
             Phase::Up => {
+                self.studio.zoom_pull = None;
                 self.studio.sz.press = None;
                 // the lift of a hold (`studio_hold_tick`) is not a tap
                 if std::mem::take(&mut self.studio.sz.fired) {
@@ -2399,6 +2417,7 @@ impl Ui {
                 if self.ov_divider_up() { return true; }
                 if self.dock_up(x, y) { return true; }
                 let Some(drag) = self.studio.drag.take() else { return false };
+                if matches!(drag, StudioDrag::Scroll { moved: true, .. }) { self.panel_scroll_end(); }
                 if self.md_up(drag, x, y) { return true; }
                 let moved = match drag {
                     StudioDrag::Swipe { .. } | StudioDrag::Reorder { .. } | StudioDrag::BadgeDrag { .. } | StudioDrag::HScroll { .. } => true,
@@ -2456,12 +2475,15 @@ pub(super) struct ZoomBar {
     pub close: Rect,
     pub center: Rect,
     pub fit: Rect,
+    /// "Box": arms the drawing of a zoom box on the plot
+    pub boxr: Rect,
     pub more: Rect,
 }
 
 const ZMENU_W: i32 = 300;
 
 /// A zoom factor as the toolbar writes it: "5x", "2.5x", "12x".
+pub(super) fn zoom_text_pub(n: f32) -> String { zoom_text(n) }
 fn zoom_text(n: f32) -> String {
     let n = if n.is_finite() { n.max(1.0) } else { 1.0 };
     if n >= 9.95 { format!("{:.0}\u{d7}", n) } else { format!("{:.1}\u{d7}", n).replace(".0\u{d7}", "\u{d7}") }
@@ -2470,7 +2492,7 @@ fn zoom_text(n: f32) -> String {
 impl Ui {
     /// Studio's zoom bar sits in the strip between the overview and the zoomed lanes.
     pub(super) fn studio_zoom_active(&self) -> bool {
-        self.m.layout == Layout::Studio && self.m.zoom && !self.xy_over() && !self.view_on()
+        self.m.layout == Layout::Studio && self.m.zoom && !self.xy_over() && !self.view_on() && self.studio.view != StudioView::Only
     }
 
     /// How many times the detail view magnifies time against the main view.
@@ -2479,15 +2501,17 @@ impl Ui {
     }
 
     pub(super) fn studio_zoom_bar(&self) -> Option<ZoomBar> {
-        if !self.studio_zoom_active() { return None; }
+        if !self.studio_zoom_active() || (self.zoom_tab_mode() && !self.zoom_tab_open()) { return None; }
         let row = self.zoom_readout();
-        let (y, h) = (row.y + 2, (row.h - 4).max(20));
+        // a thin strip: the chips are 20 px high, the touch target around them is the usual 40 (`zoom_row_y`)
+        let (y, h) = (row.y + 1, (row.h - 2).max(18));
         let close = Rect::new(row.right() - 46, y, 40, h);
         let more = Rect::new(close.x - 6 - 40, y, 40, h);
         // a narrow plot (the eye or SIM beside it) keeps these two as icons
         let (fit_w, center_w) = if row.w < 560 { (40, 40) } else if row.w < 760 { (72, 92) } else { (118, 136) };
         let fit = Rect::new(more.x - 6 - fit_w, y, fit_w, h);
         let center = Rect::new(fit.x - 6 - center_w, y, center_w, h);
+        let boxr = Rect::new(center.x - 6 - 44, y, 44, h);
         let f = self.fonts();
         let label = Rect::new(row.x + 8, y, f.mb.width("Zoom") + 6, h);
         let tdiv = Rect::new(label.right() + 6, y, 118, h);
@@ -2496,11 +2520,11 @@ impl Ui {
         // the vertical zoom comes after the time zoom, when the chips on the right leave the room
         let vplus = Rect::new(minus.right() + 12, y, 40, h);
         let vminus = Rect::new(vplus.right() + 6, y, 40, h);
-        let (vplus, vminus) = if vminus.right() + 8 <= center.x { (vplus, vminus) } else { (Rect::new(0, 0, 0, 0), Rect::new(0, 0, 0, 0)) };
+        let (vplus, vminus) = if vminus.right() + 8 <= boxr.x { (vplus, vminus) } else { (Rect::new(0, 0, 0, 0), Rect::new(0, 0, 0, 0)) };
         // the readout takes what is left before the chips on the right; it is not drawn when there is no room
         let rx = if vminus.w > 0 { vminus.right() } else { minus.right() } + 8;
-        let readout = Rect::new(rx, y, (center.x - 8 - rx).clamp(0, 120), h);
-        Some(ZoomBar { label, tdiv, plus, minus, vplus, vminus, readout, close, center, fit, more })
+        let readout = Rect::new(rx, y, (boxr.x - 8 - rx).clamp(0, 120), h);
+        Some(ZoomBar { label, tdiv, plus, minus, vplus, vminus, readout, close, center, fit, boxr, more })
     }
 
     /// The trigger is outside the zoomed window.
@@ -2538,7 +2562,7 @@ impl Ui {
     pub(super) fn draw_studio_zoom_bar(&self, cv: &mut Canvas) {
         let Some(bar) = self.studio_zoom_bar() else { return };
         let f = self.fonts();
-        cv.fill(self.zoom_readout(), BG);
+        cv.fill(self.zoom_readout(), BAR);
         let open = self.studio.zoom_menu;
         cv.text_in(&f.mb, bar.label, 0, "Zoom", TEXT);
         chip(cv, bar.tdiv, BTN, BTN_BORDER);
@@ -2577,6 +2601,9 @@ impl Ui {
         chip(cv, bar.fit, BTN, BTN_BORDER);
         icon_expand(cv, if icon_only { bar.fit.x + bar.fit.w / 2 } else { bar.fit.x + 18 }, bar.fit.y + bar.fit.h / 2, TEXT);
         if !icon_only { cv.text_fit(&f.m, Rect::new(bar.fit.x + 32, bar.fit.y, bar.fit.w - 34, bar.fit.h), 0, if short { "Fit" } else { "Fit record" }, TEXT); }
+        let armed = self.zoom_arm;
+        chip(cv, bar.boxr, if armed { ACCENT } else { BTN }, if armed { ACCENT } else { BTN_BORDER });
+        cv.text_in(&f.sb, bar.boxr, 1, "Box", if armed { DARK_TEXT } else { TEXT });
         chip(cv, bar.more, BTN, if open { ACCENT } else { BTN_BORDER });
         for dx in [-8, 0, 8] { cv.circle(bar.more.x + bar.more.w / 2 + dx, bar.more.y + bar.more.h / 2, 2, TEXT); }
     }
@@ -2804,6 +2831,7 @@ impl Ui {
                 else if bar.tdiv.contains(x, y) { self.open_menu(MenuId::Horizontal); }
                 else if bar.center.contains(x, y) { self.studio_center_trigger(); }
                 else if bar.fit.contains(x, y) { self.reset_zoom(); }
+                else if bar.boxr.contains(x, y) { self.arm_zoom_area(); }
                 else if bar.more.contains(x, y) { self.studio.zoom_menu = true; }
                 return true;
             }

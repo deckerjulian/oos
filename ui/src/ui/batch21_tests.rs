@@ -6,6 +6,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -269,9 +271,9 @@ fn sim_is_in_the_top_bar_when_live_and_live_when_viewing_a_record() {
 fn a_short_top_bar_shortens_labels_instead_of_dropping_buttons() {
     let u = studio();
     let t = u.studio_top();
-    assert!(t.measure.w > 0 && t.cursors.w > 0 && t.view.w > 0 && t.add.w > 0);
-    assert!(t.acq.w >= 120 || t.measure.w < u.fonts().mb.width("Measure") + 20);
-    assert!(t.measure.right() < t.cursors.x && t.add.right() < t.measure.x);
+    assert!(t.cursors.w > 0 && t.view.w > 0 && t.add.w > 0, "Add is the one button for Add and Meas");
+    assert!(t.acq.w >= 120 || t.add.w < u.fonts().mb.width("Add") + 20);
+    assert!(t.add.right() < t.cursors.x);
 }
 
 fn tap_cell(u: &mut Ui, it: Item) {
@@ -300,6 +302,7 @@ fn tap_xy(u: &mut Ui, x: i32, y: i32) {
 
 fn view_seg(u: &Ui, k: i32) -> (i32, i32) {
     let r = u.dock_rect(super::dock::VKind::Measure).and_then(|r| u.dock_view_rect(super::dock::VKind::Measure, r)).expect("the view switch");
+    let k = (k + 1) % 3; // Table, List, Cards
     (r.x + (2 * k + 1) * r.w / 6, r.y + r.h / 2)
 }
 
@@ -337,16 +340,16 @@ fn the_list_has_the_header_with_source_gate_search_count_and_pinned_only() {
     let mut u = studio();
     two_sources(&mut u);
     let g = u.studio_panel_geo().unwrap();
-    let h = u.panel_head(g.p);
-    for r in [h.src, h.gate, h.search] { assert!(r.h >= 36 && r.w >= 36 && r.bottom() < g.list.y, "{r:?}"); }
-    assert!(h.src.right() < h.gate.x && h.gate.right() < h.search.x);
+    let bar = u.panel_bar(g.p);
+    let src = bar.slots.iter().find(|s| s.item == super::measpanel::BarItem::Source).expect("the source control").r;
+    assert!(src.h >= 24 && src.bottom() <= g.list.y, "{src:?}");
     assert_eq!(u.panel_source_label(), "All sources");
     assert_eq!(u.panel_gate_label(), "Full record");
     let total = listed(&u);
     assert_eq!(total, 5);
     shot(&mut u, "meas-list");
     // source filter: a dropdown with All sources and every source
-    tap(&mut u, h.src);
+    tap(&mut u, src);
     assert_eq!(u.studio.panel.drop, Some(super::measpanel::PanelDrop::Source));
     let p = u.panel_drop_rect().unwrap();
     assert!(p.bottom() <= H);
@@ -356,19 +359,21 @@ fn the_list_has_the_header_with_source_gate_search_count_and_pinned_only() {
     assert_eq!(listed(&u), 2);
     assert_eq!(u.panel_source_label(), "CH2");
     // back to all
-    tap(&mut u, h.src);
+    tap(&mut u, src);
     let p = u.panel_drop_rect().unwrap();
     tap(&mut u, Ui::panel_drop_row(p, 0));
     assert_eq!(u.studio.filter, None);
     assert_eq!(listed(&u), total);
     // gate
-    tap(&mut u, h.gate);
+    u.panel_bar_do(super::measpanel::BarItem::Gate);
+    frame(&mut u);
     let p = u.panel_drop_rect().unwrap();
     tap(&mut u, Ui::panel_drop_row(p, 1));
     assert!(!u.m.meas_full_record);
     assert_eq!(u.panel_gate_label(), "Screen");
     // a tap outside only closes
-    tap(&mut u, h.gate);
+    u.panel_bar_do(super::measpanel::BarItem::Gate);
+    frame(&mut u);
     assert!(u.studio.panel.drop.is_some());
     let n = u.m.meas.len();
     tap_xy(&mut u, g.p.x + 20, g.list.y + 20);
@@ -377,18 +382,24 @@ fn the_list_has_the_header_with_source_gate_search_count_and_pinned_only() {
     u.studio_set_pin(super::studio::MeasKey::One(Meas::Vpp, WaveId::Ch(0)), true);
     let pinned = u.studio_pinned().len();
     assert!(pinned >= 1 && pinned < total);
-    tap(&mut u, h.only);
+    let item = |u: &Ui, it| u.panel_bar(u.studio_panel_geo().unwrap().p).slots.iter().find(|s| s.item == it).expect("a control").r;
+    let r = item(&u, super::measpanel::BarItem::Pinned);
+    tap(&mut u, r);
     assert!(u.studio.panel.pinned_only);
     assert_eq!(listed(&u), pinned);
-    tap(&mut u, h.only);
+    let r = item(&u, super::measpanel::BarItem::Pinned);
+    tap(&mut u, r);
     assert_eq!(listed(&u), total);
     // search: the text narrows the list; the search button clears it again
     u.panel_set_query("freq");
     assert_eq!(listed(&u), 2);
     frame(&mut u);
-    tap(&mut u, h.search);
+    assert!(u.studio.panel.searching, "the field is open with the text");
+    let close = u.panel_bar(u.studio_panel_geo().unwrap().p).field.expect("the search field").1;
+    tap(&mut u, close);
     assert!(u.studio.panel.query.is_empty() && listed(&u) == total);
-    tap(&mut u, h.search);
+    let r = item(&u, super::measpanel::BarItem::Search);
+    tap(&mut u, r);
     assert!(u.wlan.osk.is_some(), "the keyboard opens for the text");
 }
 
@@ -398,15 +409,19 @@ fn the_stats_button_cycles_off_mean_sigma_min_max() {
     two_sources(&mut u);
     let g = u.studio_panel_geo().unwrap();
     assert_eq!((u.studio.panel.stats_mode, u.studio.panel.stats), (0, false));
-    assert!(g.stats.w >= 40 && g.stats.h >= 40 && g.add.right() <= g.stats.x);
-    tap(&mut u, g.stats);
+    // the control is in the bar (behind the dots on a narrow panel): the tap is the same as its action
+    let _ = g;
+    u.panel_stats_cycle();
+    frame(&mut u);
     assert_eq!((u.studio.panel.stats_mode, u.studio.panel.stats), (1, true));
     assert_eq!(u.panel_stats_label(), "Mean + \u{3c3}");
     shot(&mut u, "meas-list-stats");
-    tap(&mut u, g.stats);
+    u.panel_stats_cycle();
+    frame(&mut u);
     assert_eq!(u.studio.panel.stats_mode, 2);
     assert_eq!(u.panel_stats_label(), "Min Max");
-    tap(&mut u, g.stats);
+    u.panel_stats_cycle();
+    frame(&mut u);
     assert_eq!((u.studio.panel.stats_mode, u.studio.panel.stats), (0, false));
 }
 

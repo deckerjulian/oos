@@ -116,12 +116,13 @@ impl Ui {
     /// The row of the docked list under a point: the measurement and the rectangle of the row.
     pub(super) fn md_row_at(&self, x: i32, y: i32) -> Option<(MeasKey, Rect)> {
         let g = self.studio_panel_geo()?;
-        if !g.list.contains(x, y) || self.studio_detailed() || self.panel_is_cards() { return None; }
+        if !g.list.contains(x, y) || self.panel_is_cards() { return None; }
         let rows = self.meas_rows();
         let listed = self.studio_listed(&rows);
         let keys = self.studio_keys();
         let first = self.studio_first(listed.len(), g.page);
-        let (pos, r) = self.panel_layout(&rows, &listed, first, g.list).into_iter().find(|(_, r)| r.contains(x, y))?;
+        let lay = if self.studio_detailed() { self.detail_layout(&g, listed.len(), first) } else { self.panel_layout(&rows, &listed, first, g.list) };
+        let (pos, r) = lay.into_iter().find(|(_, r)| r.contains(x, y))?;
         let key = *keys.get(listed[pos])?;
         Some((key, r))
     }
@@ -316,7 +317,10 @@ impl Ui {
         // the detailed table: a sideways drag scrolls it
         if self.studio_detailed() {
             if let Some(g) = self.studio_panel_geo().filter(|g| g.list.contains(x, y)) {
-                self.studio.md.hdown = Some((x, y, self.studio.panel.hx.clamp(0, self.detail_hmax(g.list.w))));
+                // the columns fit, so there is no sideways scroll: a clear drag to the left swipes the row away instead
+                let hmax = self.detail_hmax(g.list.w);
+                if hmax > 0 { self.studio.md.hdown = Some((x, y, self.studio.panel.hx.clamp(0, hmax))); }
+                else if let Some((key, _)) = self.md_row_at(x, y) { self.studio.md.cand = Some((key, x, y)); }
             }
             return false;
         }
@@ -327,6 +331,7 @@ impl Ui {
                 let first0 = self.studio_first(self.studio_listed(&rows).len(), g.page);
                 self.studio.drag = Some(StudioDrag::Scroll { y0: y, first0, moved: false });
                 self.studio.md.cand = Some((key, x, y));
+                self.panel_scroll_begin();
                 self.studio.md.hold = Some(Hold { on: HoldOn::Row(key), x0: x, y0: y, x, y, at: self.now });
                 return true;
             }
@@ -360,6 +365,9 @@ impl Ui {
                         self.studio.md.hold = None;
                         self.studio.md.swipe = Some((key, dx));
                         return true;
+                    } else if dy.abs() > SWIPE_START && dy.abs() >= dx.abs() {
+                        // gone vertical first: it is a scroll, and stays one
+                        self.studio.md.cand = None;
                     }
                 }
                 false

@@ -343,7 +343,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("studio_view", m.studio_view.clone());
     if !m.studio_dock.is_empty() { kv("studio_dock", m.studio_dock.clone()); }
     if m.studio_ov != 0 { kv("studio_ov", m.studio_ov.to_string()); }
-    if m.studio_detail { kv("studio_meas_view", "detailed".to_string()); }
+    if !m.studio_detail { kv("studio_meas_view", "list".to_string()); }
+    if !m.studio_zoom_tab { kv("studio_zoom_controls", "titlebar".to_string()); }
     if m.studio_classic { kv("studio_badges", "classic".to_string()); }
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
@@ -750,6 +751,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "layout" => m.layout = Layout::parse(v).ok_or_else(|| format!("bad layout {v}"))?,
         "studio_view" => m.studio_view = if ["waveform", "docked", "floating", "only"].contains(&v) { v.to_string() } else { return Err(format!("bad studio view {v}")) },
         "studio_dock" => m.studio_dock = v.to_string(),
+        "studio_zoom_controls" => m.studio_zoom_tab = match v { "tab" => true, "titlebar" => false, _ => return Err(format!("bad studio_zoom_controls {v}")) },
         "studio_meas_view" => m.studio_detail = match v { "detailed" => true, "list" => false, _ => return Err(format!("bad studio_meas_view {v}")) },
         "studio_badges" => m.studio_classic = match v { "classic" => true, "studio" => false, _ => return Err(format!("bad studio_badges {v}")) },
         "studio_ov" => m.studio_ov = v.parse::<i32>().ok().filter(|h| (0..=2000).contains(h)).ok_or_else(|| format!("bad studio_ov {v}"))?,

@@ -8,6 +8,8 @@ use super::*;
 fn studio() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.m.ch[1].on = true;
     u.studio.enter = true;
     for _ in 0..10 { u.step(0.05); }
@@ -228,37 +230,34 @@ fn eye_rows(u: &mut Ui) {
 }
 
 #[test]
-fn a_short_wide_panel_keeps_a_row_between_the_header_and_the_footer_and_a_narrow_one_drops_columns() {
+fn a_short_wide_panel_keeps_its_rows_with_the_controls_in_the_title_strip_and_a_narrow_one_drops_columns() {
     let mut u = studio();
     detailed(&mut u);
-    // the pure layout of a panel 1000 x 170: the header in one row, the footer in one row, a row in between
+    // the pure layout of a panel 1000 x 170: no toolbar, no footer, the rows have all the room under the column heads
     let p = Rect::new(10, 300, 1000, 170);
     let g = u.studio_panel_geo_in(p);
-    assert!(g.short);
-    let h = u.panel_head(p);
-    assert!(h.src.bottom() <= g.list.y - 26 + 4 && h.only.bottom() <= g.list.y, "{:?} {:?}", h.src, h.only);
-    assert!(g.page >= 1 && g.list.h >= super::measview::DETAIL_ROW);
-    assert!(g.list.bottom() <= g.add.y && g.list.bottom() <= g.stats.y && g.list.bottom() <= g.up.y, "rows end above the footer: {:?} {:?}", g.list, g.add);
-    assert!(g.add.right() <= g.stats.x && g.stats.right() <= g.up.x && g.up.right() <= g.down.x);
-    assert!(h.src.right() <= h.gate.x && h.gate.right() <= h.count.x && h.count.right() <= h.only.x && h.only.right() <= h.search.x);
+    assert!(!g.short);
+    assert_eq!(g.list.y, p.y + super::measview::COL_HEAD);
+    assert!(g.page >= 4 && g.list.h >= super::measview::DETAIL_ROW);
+    assert!(g.list.bottom() <= p.bottom());
     // the head cells of the wide table do not overlap and say Src, not a cut Source
     let (cols, total) = Ui::detail_cols(g.list.w);
     assert_eq!(cols.len(), 8);
     assert_eq!(total, g.list.w);
-    let row = Rect::new(0, 0, g.list.w, 38);
+    let row = Rect::new(0, 0, g.list.w, 28);
     let f = u.fonts();
     for w in cols.windows(2) { assert!(Ui::detail_cell(row, w[0].1, w[0].2, 0).right() <= Ui::detail_cell(row, w[1].1, w[1].2, 0).x); }
     let c0 = Ui::detail_cell(row, cols[0].1, cols[0].2, 0);
     assert!(f.sb.width(u.detail_head(0, c0.w)) <= c0.w);
-    // a taller panel keeps the two-row header and footer
-    assert!(!u.studio_panel_geo_in(Rect::new(10, 100, 1000, 400)).short);
+    // a narrow panel has a toolbar row of its own
+    assert!(u.studio_panel_geo_in(Rect::new(10, 100, 300, 400)).list.y >= 100 + super::measpanel::TOOL_H);
     // the real thing: the panel docked under the waveform, made short
     let mut u = studio();
     u.dock_apply(VKind::Measure, super::dock::Drop::Split(VKind::Wave, super::dock::Side::Bottom));
     detailed(&mut u);
     for _ in 0..6 { frame(&mut u); }
     if let Some(g) = u.studio_panel_geo() {
-        assert!(g.list.bottom() <= g.add.y.min(g.up.y), "{:?} {:?}", g.list, g.add);
+        assert!(g.list.bottom() <= g.p.bottom());
         assert!(g.page >= 1);
     }
     shot(&mut u, "meas-detailed-wide-short");
@@ -275,12 +274,13 @@ fn narrow_columns_are_whole_or_gone_and_eye_names_stay_apart() {
     let (cols, total) = Ui::detail_cols(g.list.w);
     assert!(total <= g.list.w, "every column shown fits: {cols:?} in {}", g.list.w);
     assert_eq!(cols.iter().map(|c| c.0).take(4).collect::<Vec<_>>(), [0, 1, 2, 3]);
-    // priority: sigma comes before min, max, count
+    // priority: mean, min, max, sigma, count
     for w in [262, 330, 420, 520, 640] {
         let ids: Vec<usize> = Ui::detail_cols(w).0.iter().map(|c| c.0).collect();
-        if ids.contains(&4) { assert!(ids.contains(&6), "{w}: {ids:?}"); }
+        if ids.contains(&4) { assert!(ids.contains(&3), "{w}: {ids:?}"); }
         if ids.contains(&5) { assert!(ids.contains(&4), "{w}: {ids:?}"); }
-        if ids.contains(&7) { assert!(ids.contains(&5), "{w}: {ids:?}"); }
+        if ids.contains(&6) { assert!(ids.contains(&5), "{w}: {ids:?}"); }
+        if ids.contains(&7) { assert!(ids.contains(&6), "{w}: {ids:?}"); }
         assert!(Ui::detail_cols(w).1 <= w);
     }
     // names: each fits, and Eye Height and Eye Height@BER read differently
@@ -314,6 +314,8 @@ fn menu_on(scr: Screen) -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.scr = scr;
     u.m.layout = Layout::Studio;
+    u.m.studio_detail = false;
+    u.m.studio_zoom_tab = false;
     u.studio.enter = true;
     let mut cv = Canvas::new(scr.w, scr.h);
     for _ in 0..10 { u.step(0.05); u.render(&mut cv); }
