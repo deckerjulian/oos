@@ -281,7 +281,9 @@ fn main() {
         return;
     }
     if !matches!(cmd, "plan" | "run") {
-        for l in include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")) {
+        // the module comment, after the licence lines
+        let doc = include_str!("main.rs").lines().skip_while(|l| !l.starts_with("//!"));
+        for l in doc.take_while(|l| l.starts_with("//!")) {
             println!("{}", l.trim_start_matches("//!").trim_start_matches(' '));
         }
         return;
