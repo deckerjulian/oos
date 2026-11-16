@@ -202,10 +202,10 @@ fn print(st: &[Step]) {
 /// without a word (unit round 9: `adc` did).
 const TOOL_CMDS: [&str; 8] = ["status", "rd", "wr", "cold-boot", "fpga-boot", "pll", "gpio", "adc"];
 
-/// An oos-ui process is running (/proc/<pid>/comm).
+/// An oos-ui process is running (/proc/<pid>/comm); also true when /proc cannot be read.
 #[cfg(target_os = "linux")]
 fn ui_running() -> bool {
-    std::fs::read_dir("/proc").map(|d| d.flatten().any(|e| std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim() == "oos-ui"))).unwrap_or(true)
+    oos_hal::procs::pids_where(|p| oos_hal::procs::comm_is(p, "oos-ui")).is_none_or(|p| !p.is_empty())
 }
 
 /// The lines of `adc slots`: per slot the mean over all runs (16-bit measure scale), the lowest min and highest max

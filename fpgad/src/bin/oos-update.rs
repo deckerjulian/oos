@@ -480,12 +480,8 @@ fn stop_ui() {
 #[cfg(target_os = "linux")]
 fn stop_watcher() {
     let me = std::process::id();
-    let Ok(d) = std::fs::read_dir("/proc") else { return };
-    for e in d.flatten() {
-        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else { continue };
-        if pid == me {
-            continue;
-        }
+    let Some(pids) = oos_hal::procs::pids_where(|p| p != me) else { return };
+    for pid in pids {
         let cmd = std::fs::read(format!("/proc/{}/cmdline", pid)).unwrap_or_default();
         let args: Vec<&[u8]> = cmd.split(|&b| b == 0).collect();
         let is_update = args.first().is_some_and(|a0| a0.ends_with(b"oos-update"));
@@ -698,18 +694,11 @@ fn boot(a: &Args) {
 /// else the oldest one.
 #[cfg(target_os = "linux")]
 fn ui_pid(keep: Option<u32>) -> Option<u32> {
-    let is_ui = |pid: u32| std::fs::read_to_string(format!("/proc/{}/comm", pid)).is_ok_and(|c| c.trim() == "oos-ui");
+    let is_ui = |pid: u32| oos_hal::procs::comm_is(pid, "oos-ui");
     if let Some(k) = keep.filter(|&k| is_ui(k)) {
         return Some(k);
     }
-    let mut best: Option<u32> = None;
-    for e in std::fs::read_dir("/proc").ok()?.flatten() {
-        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else { continue };
-        if is_ui(pid) {
-            best = Some(best.map_or(pid, |b| b.min(pid)));
-        }
-    }
-    best
+    oos_hal::procs::pids_where(is_ui)?.into_iter().min()
 }
 
 #[cfg(target_os = "linux")]
