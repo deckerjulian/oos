@@ -152,6 +152,8 @@ impl Ui {
             p.push(format!("panel={}/{}/{}/{}/{}/{}", pa.stats_mode, pa.cards as u8, pa.pinned_only as u8, pa.collapsed as u8, pa.stats as u8, pa.hx));
         }
         if let Some((x, y)) = pa.at { p.push(format!("panelat={}/{}", x, y)); }
+        if pa.first != 0 || pa.sub != 0 { p.push(format!("scroll={}/{}", pa.first, pa.sub)); }
+        if s.zoom_open.is_some() { p.push("zoomtab=1".into()); }
         if !pa.query.is_empty() { p.push(format!("query={}", pa.query.replace(' ', "_"))); }
         if let Some(f) = s.filter { p.push(format!("filter={}", f.token())); }
         if let Some(q) = &s.search { p.push(format!("search={}/{}/{}", q.src.token(), q.level, q.slope)); }
@@ -180,6 +182,10 @@ impl Ui {
         self.studio.cur_linked = false;
         self.studio.eye_full = false;
         self.studio.panel = Default::default();
+        self.studio.zoom_open = None;
+        self.studio.zoom_pull = None;
+        self.studio.add_menu = false;
+        self.studio.ctx = None;
         self.studio.filter = None;
         self.studio.search = None;
         self.studio.search_at = 0;
@@ -211,7 +217,9 @@ impl Ui {
                     }
                 }
                 "panelat" => if let [x, y] = num(v)[..] { self.studio.panel.at = Some((x, y)); },
-                "query" => self.studio.panel.query = v.replace('_', " "),
+                "scroll" => if let [first, sub] = num(v)[..] { self.studio.panel.first = first.clamp(0, 100_000) as usize; self.studio.panel.sub = sub.clamp(0, 1000); },
+                "zoomtab" => self.studio.zoom_open = (v == "1").then_some(self.now),
+                "query" => { self.studio.panel.query = v.replace('_', " "); self.studio.panel.searching = !self.studio.panel.query.is_empty(); }
                 "filter" => self.studio.filter = WaveId::parse(v).ok(),
                 "search" => {
                     let f: Vec<&str> = v.split('/').collect();
@@ -338,7 +346,8 @@ impl Ui {
         if new {
             // keys the setup writes only when they differ from the default
             self.m.studio_ov = 0;
-            self.m.studio_detail = false;
+            // the table is the default view of the measurement panel (only the List is written down)
+            self.m.studio_detail = true;
             self.m.studio_classic = false;
             self.m.meas_pop_current = false;
             self.m.meas_show = [true; 3];
@@ -392,7 +401,8 @@ impl Ui {
         self.meas_cfg = None;
         self.meas_page = 0;
         self.meas_catalog_page = 0;
-        self.studio.panel.first = 0;
+        // the scroll of the panel is part of the view (`scroll=` of its state); a slot from before keeps no state: top
+        if !new { self.studio.panel.scroll_top(); }
         self.studio.md = Default::default();
         self.m.studio_view = self.studio.view.token().to_string();
         self.dock_sync_setup();

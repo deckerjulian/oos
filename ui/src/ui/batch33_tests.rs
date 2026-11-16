@@ -154,6 +154,7 @@ fn panels_are_per_view_and_closing_the_table_in_one_leaves_the_other() {
         u.m.meas = vec![one(Meas::Freq, 0)];
         u.studio_set_view(StudioView::Docked);
         u.m.pane = 1;
+        u.m.studio_detail = false; // view 1 shows the List: the table is the default now, so this is the view that differs
         u.m.hist = Hist::Off;
         u.views_set(2);
         u.view_go(1);
@@ -165,7 +166,7 @@ fn panels_are_per_view_and_closing_the_table_in_one_leaves_the_other() {
         u.studio.compact = true;
         u.studio.panel.collapsed = true;
         u.m.studio_ov = 150;
-        u.m.studio_detail = true;
+        u.m.studio_detail = true; // view 1 shows the List (the table is the default now), this view the table
         u.m.eye_pll_bw = 1e5;
         u.view_go(0);
         assert_eq!(u.studio.view, StudioView::Docked, "{l:?}: the table is still there in view 1");

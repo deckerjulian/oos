@@ -606,3 +606,49 @@ fn a_zoom_box_can_be_armed_from_the_bar_the_menu_and_the_add_menu_and_zooms_in()
     tap(&mut u, bar.boxr);
     assert!(u.zoom_arm);
 }
+
+#[test]
+fn the_new_presentation_state_is_per_view_and_the_zoom_controls_variant_is_global() {
+    let mut u = studio_bottom(12);
+    u.views_set(2);
+    // view 1: List view, scrolled, a search, pinned only, the strip hidden, the zoom tab open
+    u.panel_set_view(PanelView::List);
+    u.studio.panel.first = 3;
+    u.studio.panel.sub = 7;
+    u.studio.panel.query = "freq".into();
+    u.studio.panel.searching = true;
+    u.studio.panel.pinned_only = true;
+    u.studio.hide_badges = true;
+    u.set_zoom(true);
+    u.zoom_tab_set(true);
+    u.m.studio_zoom_tab = true;
+    u.sync_view_state();
+    // view 2 starts as a copy; make it differ: the table, nothing scrolled, no filter, strip shown, tab closed
+    u.view_go(1);
+    u.panel_set_view(PanelView::Detailed);
+    u.studio.panel.scroll_top();
+    u.studio.panel.query.clear();
+    u.studio.panel.searching = false;
+    u.studio.panel.pinned_only = false;
+    u.studio.hide_badges = false;
+    u.zoom_tab_set(false);
+    // the zoom-controls variant is a preference of the user, not of a view
+    u.m.studio_zoom_tab = false;
+    u.view_go(0);
+    assert_eq!(u.panel_view(), PanelView::List);
+    assert_eq!((u.studio.panel.first, u.studio.panel.sub), (3, 7));
+    assert_eq!(u.studio.panel.query, "freq");
+    assert!(u.studio.panel.searching && u.studio.panel.pinned_only && u.studio.hide_badges && u.zoom_tab_open());
+    assert!(!u.m.studio_zoom_tab, "the variant did not come back with the view");
+    u.view_go(1);
+    assert_eq!(u.panel_view(), PanelView::Detailed);
+    assert_eq!((u.studio.panel.first, u.studio.panel.sub), (0, 0));
+    assert!(u.studio.panel.query.is_empty() && !u.studio.panel.searching && !u.studio.panel.pinned_only && !u.studio.hide_badges && !u.zoom_tab_open());
+    assert!(!u.m.studio_zoom_tab);
+    // Cards are per view too
+    u.panel_set_view(PanelView::Cards);
+    u.view_go(0);
+    assert_eq!(u.panel_view(), PanelView::List);
+    u.view_go(1);
+    assert_eq!(u.panel_view(), PanelView::Cards);
+}
