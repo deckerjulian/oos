@@ -74,6 +74,40 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
 #[allow(clippy::too_many_arguments)]
 fn dense(ph: &mut Phosphor, m: &Model, f: &Frame, x_per_sample: f64, pairs: bool, present: [bool; NCH], stats: Option<Stats>, refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>), mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map)) -> bool {
     let (w, h) = (ph.w, ph.h);
+    let col = if pairs { crate::compress::smooth_len(x_per_sample) } else { (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize };
+    let t = refine_edge(m, f, col, refine);
+    if let (Some(s), Some((k, d))) = (stats, t.class) {
+        if k == 2 {
+            *s.off = (s.off.0 + d, s.off.1.max(d));
+        }
+        s.edges[k] += 1;
+    }
+    for c in 0..NCH {
+        if m.ch[c].on && present[c] {
+            deposit(c, &mut ph.map[c], &screen_map(m, w, h, c, x_per_sample, t.ti));
+        }
+    }
+    t.triggered
+}
+
+/// The trigger of a dense frame on the fast path, as both draw paths find it (`refine_edge`).
+pub struct Trigger {
+    /// the trigger's sample: the refined edge, else the hardware trigger point
+    pub ti: f64,
+    /// for the trigger statistics (`Ui::fast_edges`, `Ui::fast_off`): 0 the edge at the hardware point, 1 an edge of
+    /// the other slope, 2 one elsewhere (with its distance in samples), 3 none; None with an LA line as the source
+    pub class: Option<(usize, f64)>,
+    pub triggered: bool,
+}
+
+/// The trigger of the dense frame `f`, smoothed to `col` samples. `refine` (level, hysteresis, rising, either, half a
+/// screen in samples, `col`) finds the edge on the source channel: each draw path keeps its own choice of search.
+pub fn refine_edge(
+    m: &Model,
+    f: &Frame,
+    col: usize,
+    refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
+) -> Trigger {
     let tdiv = m.time_per_div() as f64;
     // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
     let on_la = m.trig_on_la();
@@ -82,41 +116,32 @@ fn dense(ph: &mut Phosphor, m: &Model, f: &Frame, x_per_sample: f64, pairs: bool
     let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
     let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
     let half = (tdiv * HDIV as f64 / 2.0 / f.dt) as usize;
-    let col = if pairs { crate::compress::smooth_len(x_per_sample) } else { (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize };
-    let edge = if on_la {
-        None
+    let (edge, class) = if on_la {
+        (None, None)
     } else {
         let (e, any) = refine(crate::board::sw_trig_level(m, f), hyst, rising, either, half, col);
-        if let Some(s) = stats {
-            let k = match (e, any) {
-                (None, _) => 3,
-                (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => 0,
-                (Some(_), Some(n)) if !either && n.rising != rising => 1,
-                (Some(t), _) => {
-                    let d = (t - f.pre as f64).abs();
-                    *s.off = (s.off.0 + d, s.off.1.max(d));
-                    2
-                }
-            };
-            s.edges[k] += 1;
-        }
-        e
+        let class = match (e, any) {
+            (None, _) => (3, 0.0),
+            (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => (0, 0.0),
+            (Some(_), Some(n)) if !either && n.rising != rising => (1, 0.0),
+            (Some(t), _) => (2, (t - f.pre as f64).abs()),
+        };
+        (e, Some(class))
     };
-    let ti = edge.unwrap_or(f.pre as f64);
+    // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
+    let triggered = edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc;
+    Trigger { ti: edge.unwrap_or(f.pre as f64), class, triggered }
+}
+
+/// Where channel `c` of a dense frame lands on a `w` x `h` map, `x_per_sample` columns a sample, the trigger at sample
+/// `ti`.
+pub fn screen_map(m: &Model, w: usize, h: usize, c: usize, x_per_sample: f64, ti: f64) -> crate::fastdraw::Map {
+    let ch = &m.ch[c];
+    let tdiv = m.time_per_div() as f64;
     let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
     let ppd_y = h as f32 / VDIV;
-    for c in 0..NCH {
-        let ch = &m.ch[c];
-        if !ch.on || !present[c] {
-            continue;
-        }
-        let vpd = ch.volts_per_div();
-        let sign = -1.0;
-        let xm = crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: sign * ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y };
-        deposit(c, &mut ph.map[c], &xm);
-    }
-    // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
-    edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc
+    let vpd = ch.volts_per_div();
+    crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: -ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y }
 }
 
 /// Smallest read-out the workers draw from its words (`draw_frame_codes`): 64 kB. Below it the f32 copy stays in the

@@ -10892,13 +10892,8 @@ pub struct FastFrame {
 
 /// Where channel `c` of a dense frame lands on the `w` x `h` map with the trigger at sample `ti`.
 fn raw_map(m: &Model, w: usize, h: usize, c: usize, f: &crate::board::Frame, ti: f64) -> crate::fastdraw::Map {
-    let ch = &m.ch[c];
-    let tdiv = m.time_per_div() as f64;
-    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
-    let ppd_y = h as f32 / VDIV;
-    let vpd = ch.volts_per_div();
-    crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: -ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y }
+    let x_per_sample = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
+    crate::drawpipe::screen_map(m, w, h, c, x_per_sample, ti)
 }
 
 /// One frame of the fast path placed on the screen (`w` x `h` map): the trigger, the columns of a dense frame or the
@@ -10919,27 +10914,13 @@ pub fn fast_plan(m: &Model, w: usize, h: usize, f: &std::sync::Arc<crate::board:
         return FastFrame { plan: FastPlan::Rec(rec), triggered, fold };
     }
     let src = &f.ch[m.trig_src];
-    // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
-    let on_la = m.trig_on_la();
-    // the edge of the set direction nearest the hardware trigger point, up to half a screen away, on the signal smoothed
-    // to one screen column: at decimated rates the hardware point lands near the level on either edge (trigger.md 8)
-    let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
-    let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-    let half = (window / 2.0 / f.dt) as usize;
     let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
-    let (edge, class, off) = if on_la {
-        (None, None, 0.0)
-    } else {
-        let (e, any) = crate::fastdraw::edge_smooth(src, f.pre, crate::board::sw_trig_level(m, f), hyst, rising, either, half, col, |_| true);
-        let (k, d) = match (e, any) {
-            (None, _) => (3, 0.0),
-            (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => (0, 0.0),
-            (Some(_), Some(n)) if !either && n.rising != rising => (1, 0.0),
-            (Some(t), _) => (2, (t - f.pre as f64).abs()),
-        };
-        (e, Some(k), d)
-    };
-    let ti = edge.unwrap_or(f.pre as f64);
+    // the full search of `fastdraw::edge_smooth` (the Batch path takes `trignear::edge_smooth_near`)
+    let t = crate::drawpipe::refine_edge(m, f, col, |level, hyst, rising, either, half, col| {
+        crate::fastdraw::edge_smooth(src, f.pre, level, hyst, rising, either, half, col, |_| true)
+    });
+    let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
+    let ti = t.ti;
     let used = |c: usize| m.ch[c].on && !f.ch[c].is_empty();
     let spans = std::array::from_fn(|c| (used(c) && !m.dots).then(|| crate::fastdraw::spans(w, h, &f.ch[c], &raw_map(m, w, h, c, f, ti))));
     // the statistics on the samples of the screen window, as the measurements of a dense record
@@ -10951,9 +10932,7 @@ pub fn fast_plan(m: &Model, w: usize, h: usize, f: &std::sync::Arc<crate::board:
             crate::fastdraw::Fold::of(&v[i0..i1.max(i0)])
         })
     });
-    // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
-    let triggered = edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc;
-    FastFrame { plan: FastPlan::Raw { ti, class, off, spans }, triggered, fold }
+    FastFrame { plan: FastPlan::Raw { ti, class, off, spans }, triggered: t.triggered, fold }
 }
 
 /// The rows (first, last + 1) the points `v` of channel `c` of a screen record fall on, within a map `h` high.
