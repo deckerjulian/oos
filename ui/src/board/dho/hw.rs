@@ -597,7 +597,7 @@ fn mask_map_from(conf: &str) -> oos_hal::dho::mask::Map {
 
 fn mask_map_cell() -> &'static std::sync::Mutex<oos_hal::dho::mask::Map> {
     static MAP: std::sync::OnceLock<std::sync::Mutex<oos_hal::dho::mask::Map>> = std::sync::OnceLock::new();
-    MAP.get_or_init(|| std::sync::Mutex::new(mask_map_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default())))
+    MAP.get_or_init(|| std::sync::Mutex::new(mask_map_from(&crate::sysconf::fork_text())))
 }
 
 /// The comparator mapping of the mask test and the zone trigger now (system.conf, then `mask_map_set`).
@@ -676,7 +676,7 @@ fn hw_merge(want: &mut Settings, mask: Option<&crate::board::MaskWant>, zone: Op
 /// Off by default until it is verified on the unit.
 pub fn serial_hw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| serial_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *ON.get_or_init(|| serial_hw_from(&crate::sysconf::fork_text()))
 }
 
 /// The `trig.serial_hw` line of system.conf; off unless `on`.
@@ -1146,7 +1146,12 @@ const FIRST_LEFT_MAX_S: f64 = 0.05;
 /// system.conf.
 fn frame0_drop() -> bool {
     static K: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *K.get_or_init(|| crate::drawpipe::conf_value(None, &std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default(), "acq.frame0").as_deref() != Some("keep"))
+    *K.get_or_init(|| frame0_drop_from(&crate::sysconf::fork_text()))
+}
+
+/// The `acq.frame0` line of system.conf; frame 0 is left out unless `keep`.
+fn frame0_drop_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "acq.frame0").as_deref() != Some("keep")
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -1194,7 +1199,7 @@ fn frame1_off_trigger(f: &Frame, s: &Settings) -> bool {
 /// Frames per batch while the zone trigger runs: `zone.batch = <n>` in system.conf, default 1.
 fn zone_batch() -> u32 {
     static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *N.get_or_init(|| zone_batch_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
+    *N.get_or_init(|| zone_batch_from(&crate::sysconf::fork_text()))
 }
 
 fn zone_batch_from(conf: &str) -> u32 {
@@ -2454,6 +2459,21 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
 
 #[cfg(test)]
 mod tests {
+
+    // Break it catches: an opt-in switch read from the settings file alone, so the image defaults of a unit
+    // (/etc/oos/system.conf) do not reach it while every other switch takes them.
+    #[test]
+    fn the_switches_take_the_image_defaults_under_the_settings_file() {
+        use super::{frame0_drop_from, mask_map_from, serial_hw_from, zone_batch_from};
+        use crate::sysconf::fork_text_of as both;
+        let image = "trig.serial_hw = on\nacq.frame0 = keep\nzone.batch = 8\nmask.map.mid = 100\n";
+        assert!(serial_hw_from(&both("", image)) && !frame0_drop_from(&both("", image)));
+        assert_eq!((zone_batch_from(&both("", image)), mask_map_from(&both("", image)).mid), (8, 100.0));
+        let settings = "trig.serial_hw = off\nacq.frame0 = drop\nzone.batch = 2\nmask.map.mid = 120\n";
+        assert!(!serial_hw_from(&both(settings, image)) && frame0_drop_from(&both(settings, image)));
+        assert_eq!((zone_batch_from(&both(settings, image)), mask_map_from(&both(settings, image)).mid), (2, 120.0));
+        assert!(!serial_hw_from(&both("", "")) && frame0_drop_from(&both("", "")) && zone_batch_from(&both("", "")) == 1);
+    }
 
     // Break it catches: SINGLE armed for a whole batch (248 frames at 1 us/div on the unit, all but the first unseen)
     #[test]
