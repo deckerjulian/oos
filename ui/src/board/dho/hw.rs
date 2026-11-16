@@ -961,19 +961,41 @@ fn disarm(armed: &mut Option<(Settings, u64)>, state: &mut oos_hal::dho::seq::St
 }
 
 /// One line of the header log: the 8 header words, `pre`, and the offsets (samples) of the nearest rising and falling
-/// crossing of the trigger level from `pre` on the trigger channel.
+/// crossing of the trigger level from `pre` on the trigger channel. With OOS_FRAME_HEADER=off only the frames whose
+/// edge (of the trigger slope) is not within 20 samples of `pre`, and a count of all frames every 10,000: a long run
+/// for rare frames such as issue #5's.
 fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
     use std::io::Write;
-    static LINES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    if LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 20_000 {
-        return;
-    }
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+    static LINES: AtomicU32 = AtomicU32::new(0);
+    static FRAMES: AtomicU64 = AtomicU64::new(0);
     let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
     let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
     let hyst = (0.3 * s.ch[tc].scale) as f32;
     let span = v.len();
-    let off = |rising: bool| crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, span).map_or("-".to_string(), |t| format!("{:.1}", t - pre as f64));
-    let line = format!("{} pre {} k {} n {} rise {} fall {} scale {} tdiv {:e}\n", words.join(" "), pre, k, v.len(), off(true), off(false), s.ch[tc].scale, s.tdiv);
+    let near = |rising: bool| crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, span).map(|t| t - pre as f64);
+    let off = |rising: bool| near(rising).map_or("-".to_string(), |t| format!("{:.1}", t));
+    let only_off = std::env::var_os("OOS_FRAME_HEADER").is_some_and(|x| x == "off");
+    let mut line = String::new();
+    if only_off {
+        let n = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % 10_000 == 0 {
+            line = format!("frames {}\n", n);
+        }
+        let rising = !matches!(s.slope, oos_hal::dho::tpu::Slope::Falling);
+        if near(rising).is_some_and(|t| t.abs() <= 20.0) {
+            if !line.is_empty() {
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
+                    let _ = f.write_all(line.as_bytes());
+                }
+            }
+            return;
+        }
+    }
+    if LINES.fetch_add(1, Ordering::Relaxed) >= 20_000 {
+        return;
+    }
+    line += &format!("{} pre {} k {} n {} rise {} fall {} scale {} tdiv {:e}\n", words.join(" "), pre, k, v.len(), off(true), off(false), s.ch[tc].scale, s.tdiv);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
         let _ = f.write_all(line.as_bytes());
     }
