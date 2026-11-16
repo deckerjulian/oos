@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! UART variants on one line (or an RS-485 pair): 9-bit UART (the ninth bit marks an address), Modbus RTU (binary

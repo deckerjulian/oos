@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! System > Overclock: the ADC clock of the next start, kept in limits.conf (docs/models.md 4.1). The cold boot reads it,
 //! so a change counts from the next power-on; a start that does not finish sets the file aside (rcS).

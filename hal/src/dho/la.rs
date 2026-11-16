@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Logic analyser D0..D15 (PLA2216 probe, docs/protocols/la.md): threshold DACs (FPGA 0x12d4, one 16-bit code per

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # plan-matrix.sh - register sequences of a fixed set of acquisitions, for comparing two builds of oos-fpgad.
 #

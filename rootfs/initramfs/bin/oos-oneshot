@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # One-shot return to stock. The stock loader (Rigol U-Boot 2014.10, 2024-08-29) boots `boot`; when the image in `boot`
 # fails its check it tries `recovery` (this OOS image), then `backup`. OOS is selected by replacing the magic "KRNL" at

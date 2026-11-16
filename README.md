@@ -14,7 +14,7 @@ written in Rust. It runs from the scope's own SD card, next to the stock system,
 <td><img src="docs/images/logic-analyser.png" alt="Analog channel with three logic analyser lines"></td></tr>
 </table>
 
-All pictures are screenshots of a DHO924S running OOS. More in the [gallery](#gallery). Guides are in the [wiki](https://github.com/deckerjulian/oos/wiki).
+All pictures are screenshots of a DHO924S running OOS. More in the [gallery](#gallery). Guides are in the [wiki](https://github.com/dekajoule/oos/wiki).
 
 ## Thanks
 
@@ -131,7 +131,7 @@ Limits on all models:
 OOS does not limit the bandwidth to the rated value: "Full" opens the front-end filter on every model. The real
 bandwidth depends on the hardware, and you can measure it with the [bandwidth test](docs/bandwidth-test.md).
 
-For how the hardware works, see the [hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html).
+For how the hardware works, see the [hardware overview](https://dekajoule.github.io/oos/hardware/overview.html).
 
 ## Features
 
@@ -372,14 +372,14 @@ There are three ways:
 
 ### From a GitHub release, without building
 
-The [latest release](https://github.com/deckerjulian/oos/releases/latest) has ready-made files. You need no Rust and no
+The [latest release](https://github.com/dekajoule/oos/releases/latest) has ready-made files. You need no Rust and no
 Docker for them:
 
 | File | What it is for |
 |---|---|
 | `DHO800_DHO900_OOS_Install.GEL` | install from a USB stick through the stock system, without opening the scope: go on at [From a USB stick](#from-a-usb-stick) |
 | `oos-<version>.img` | install on a second card: steps 1, 2 and 6 to 8 below, with `--image oos-<version>.img` in step 6. Steps 3 to 5 are the build, skip them |
-| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on. From 0.1.6 or older, first `oos-0.1.7.oosupd` from the [0.1.7 release](https://github.com/deckerjulian/oos/releases/tag/v0.1.7): later builds bring another device tree, which only 0.1.7 and later can try before they install it |
+| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on. From 0.1.6 or older, first `oos-0.1.7.oosupd` from the [0.1.7 release](https://github.com/dekajoule/oos/releases/tag/v0.1.7): later builds bring another device tree, which only 0.1.7 and later can try before they install it |
 | `SHA256SUMS` | the checksums of all of them |
 
 Check what you downloaded. The number has to be the same as in the file's line of `SHA256SUMS`:
@@ -404,7 +404,7 @@ tools to use and what to watch out for: [docs/sdcard-backup.md](docs/sdcard-back
 - A **second SD card**, best of the same size or larger. OOS is only ever installed on this card. A smaller card
   works too (step 2), down to about 8 GB on a stock card.
 - A card reader
-- Python 3 and this repository (`git clone https://github.com/deckerjulian/oos.git`)
+- Python 3 and this repository (`git clone https://github.com/dekajoule/oos.git`)
 - To build the image yourself, not with a file from a release: [Rust](https://rustup.rs) with
   `rustup target add aarch64-unknown-linux-musl`, and Docker, running. A Rust from the distribution's packages usually
   lacks that target and `rust-lld`. Hosts: macOS on Apple silicon, Linux on arm64 or x86-64. On Linux, run the scripts
@@ -457,7 +457,7 @@ its calibration and licences. Then unplug the scope and take the card out again.
 
 ### 3. Build the kernel
 
-Download `linux-6.12.115-base.tar.xz` from the [releases](https://github.com/deckerjulian/oos/releases) into `kernel/src/`
+Download `linux-6.12.115-base.tar.xz` from the [releases](https://github.com/dekajoule/oos/releases) into `kernel/src/`
 ([kernel/README.md](kernel/README.md)), then:
 
 ```sh
@@ -515,10 +515,10 @@ rustup target add aarch64-unknown-linux-musl
 # x86-64 only: arm64 containers through QEMU, for busybox, wpa_supplicant and e2fsck (again after a reboot)
 docker run --privileged --rm tonistiigi/binfmt --install arm64
 
-git clone https://github.com/deckerjulian/oos.git && cd oos
+git clone https://github.com/dekajoule/oos.git && cd oos
 mkdir -p kernel/src
 curl -fL -o kernel/src/linux-6.12.115-base.tar.xz \
-  https://github.com/deckerjulian/oos/releases/latest/download/linux-6.12.115-base.tar.xz
+  https://github.com/dekajoule/oos/releases/latest/download/linux-6.12.115-base.tar.xz
 kernel/build-base.sh
 boot/build-dev-image.sh
 ```
@@ -603,7 +603,7 @@ again finishes the job. No stock update step runs, and the FPGA flash and `/rigo
 #### From a USB stick
 
 You need a FAT32 USB stick with at least 200 MiB free, and `DHO800_DHO900_OOS_Install.GEL`: download it from the
-[latest release](https://github.com/deckerjulian/oos/releases/latest) and check it against `SHA256SUMS`, or take it from
+[latest release](https://github.com/dekajoule/oos/releases/latest) and check it against `SHA256SUMS`, or take it from
 `boot/out/` of your own build.
 
 1. Copy the file to the top folder of the stick. Keep the name: the scope ignores a file
@@ -784,7 +784,7 @@ with `--store-dir`. The web remote saves them to your computer too. `/oos` holds
 about 5 minutes per channel and pass, with 4 passes. Results go to `/oos/cal` and are preferred over the factory files,
 which are never changed.
 
-**Updates.** Take `oos-<version>.oosupd` from the [latest release](https://github.com/deckerjulian/oos/releases/latest), or
+**Updates.** Take `oos-<version>.oosupd` from the [latest release](https://github.com/dekajoule/oos/releases/latest), or
 build a package yourself (`boot/out/oos-dev.oosupd`), then install it on the running scope:
 
 ```sh
@@ -894,7 +894,7 @@ The test `every_menu_fits` walks all menus and fails on text wider than its cont
 `tools/wlan-sim.sh` tests the WLAN path on simulated radios in a virtual machine, without a stick. It needs Docker,
 `qemu-system-aarch64` and one finished image build.
 
-Start with the [hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html) and [docs/architecture.md](docs/architecture.md).
+Start with the [hardware overview](https://dekajoule.github.io/oos/hardware/overview.html) and [docs/architecture.md](docs/architecture.md).
 
 ## Licences
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! HiSLIP (IVI-6.1) on TCP 4880, for a computer. The scope keeps VXI-11, where port 111 is free.

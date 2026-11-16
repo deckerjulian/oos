@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """sdcard-layout.py: describe the boot SD card of a Rigol DHO800/DHO900 (Rockchip RK3399 legacy layout).
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! gzip (RFC 1952) and deflate (RFC 1951) unpacking, for reading a file out of an image's initramfs: the build of the

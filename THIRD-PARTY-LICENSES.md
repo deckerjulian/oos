@@ -7,7 +7,7 @@ also holds the parts listed here. Each keeps its own licence.
 - **Licence texts.** An image built from this tree holds them under `/etc/licenses`, together with this file. In the
   tree they are under [rootfs/initramfs/etc/licenses](rootfs/initramfs/etc/licenses) and the places the table names;
   the texts that come out of a build (`e2fsck`, `mesa`, `glibc` and the like) are written by the build scripts.
-- **Sources.** Every [release](https://github.com/deckerjulian/oos/releases) carries, next to the image, the source
+- **Sources.** Every [release](https://github.com/dekajoule/oos/releases) carries, next to the image, the source
   archives of the binaries in it: the files of the column "Source with a release". The rest of the corresponding
   source is this tree at the tag of the release (GitHub's "Source code" archive): the OOS programs, the kernel
   patches, configuration and device tree, and the scripts that build everything (`boot/`, `kernel/`, `rootfs/`,

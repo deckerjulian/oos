@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Scrolling lists by touch: a scroll bar beside the list (drag its thumb, or tap the track to jump there) and a

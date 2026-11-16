@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: mfd: rk808: make the syscore shutdown reach the PMIC again
 
 rk808_syscore_shutdown() skipped a PMIC when it had a shutdown function

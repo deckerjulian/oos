@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The software trigger of all sources: the trigger types of oos-dsp, and the protocol trigger (TrigType::Bus), which

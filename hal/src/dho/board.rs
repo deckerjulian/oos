@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Board management: FPGA XADC (die temperature, VCCINT), SoC thermal zones, over-temperature supervision and the

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Bandwidth test page (Analysers > Bandwidth, docs/bandwidth-test.md): the front end's step response from a fast

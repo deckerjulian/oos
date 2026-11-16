@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: net: phy: motorcomm: negotiate again after the YT8512 set-up
 
 yt8512_config_init() switches the PHY's auto sleep off, but with the

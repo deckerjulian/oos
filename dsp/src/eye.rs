@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Eye diagram and jitter: clock recovery from data or from a strobe (DQS), constant-rate least-squares fit or a 1st/2nd-order PLL,

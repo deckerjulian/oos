@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Display > Monitor view: with HDMI Layout the monitor shows one of the views (Display > Views) instead of the panel's,

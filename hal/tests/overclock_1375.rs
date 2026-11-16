@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! A clock off the 1-2-5 grid (1.375 GHz, the first step of the overclocking test), in its own process: the rate the

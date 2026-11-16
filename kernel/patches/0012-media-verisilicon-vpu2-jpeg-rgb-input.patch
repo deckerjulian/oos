@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: media: verisilicon: RGB input for the VPU2 JPEG encoder
 
 The VPU2 encoder (RK3399, RK3568 VEPU, PX30) converts RGB input to

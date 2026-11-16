@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Ethernet that comes up at 10 Mbit/s: one more autonegotiation (System > Network > 10 Mbit retry, docs/network.md).

@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # unit-hook-image.sh - the fork's part of boot/build-dev-image.sh inside the initramfs container, sourced once from
 # /wlan/unit-hook/image.sh (staged by boot/unit-hook.sh) when the files of the image are in $r and before the DTB.

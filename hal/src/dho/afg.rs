@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Built-in arbitrary waveform generator of the DHO900 "S" models (docs/protocols/afg.md): a DDS in the FPGA (BAR1

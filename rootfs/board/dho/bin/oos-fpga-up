@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Bring up the acquisition FPGA under OOS (Phase 3.1, confirmed 2026-11-02):
 # boot the FPGA image from slot 0x400000 via the SPI1 boot monitor, then load the PCIe host driver (retrying, the

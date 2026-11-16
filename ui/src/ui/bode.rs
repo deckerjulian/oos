@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Bode plot with the built-in generator (S models, `Board::gen`) or an external generator on the LAN or the USB-A port

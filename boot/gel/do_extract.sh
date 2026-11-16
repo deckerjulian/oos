@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Started by the stock update (Storage > Upgrade) as root, from the unpacked update file in /mnt/tmp: the first install of
 # OOS without opening the scope (docs/install-usb.md). The stock update ends here: nothing of it runs, no FPGA

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! LAN announcement (mDNS, RFC 6762, and DNS-SD, RFC 6763) so a controller can find the instrument

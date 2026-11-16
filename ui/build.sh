@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build.sh: oos-ui for the scope (static aarch64 musl) and for the host (off-screen test runner).
 #   ./build.sh            both

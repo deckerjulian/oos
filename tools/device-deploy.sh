@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # device-deploy.sh - runs the oos-ui of this tree on a running OOS, without touching the card: it goes to /tmp, which is
 # RAM, and the next power cycle is back to the installed image. No reboot is needed, and none would work: from OOS to

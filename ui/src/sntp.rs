@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! A small SNTP client (RFC 4330, one request and one answer over UDP port 123) and the system clock. The image's

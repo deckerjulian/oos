@@ -18,6 +18,6 @@ the two give the same bits is not checked yet (the summaries of `.github/workflo
 
 Licences: kernel and patches GPL-2.0, device tree GPL-2.0+ OR MIT, `xdma` as in its files, `firmware/` as in `firmware/LICENSE.wireless-regdb`.
 
-The archive is too large for the repository: it is a file of each [release](https://github.com/deckerjulian/oos/releases).
+The archive is too large for the repository: it is a file of each [release](https://github.com/dekajoule/oos/releases).
 
 Whoever passes on an image must offer this source, the archive in `src/` included.

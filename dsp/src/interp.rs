@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Interpolation between samples for the screen: linear, and windowed sinc (Lanczos) for sparse views where only a

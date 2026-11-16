@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The Rigol DHO800/DHO900 board: Zynq FPGA over PCIe/XDMA, RT8847IQ ADC, RT1642 front ends, LMX2582 clock, the

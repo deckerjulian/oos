@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Calibration files the cold boot reads (never writes): `cal_adc.hex` (ADC parameters of mode 0) and `cal_ddr.hex` (DDR skip

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! NMRA DCC (S-9.2.1) packet interpretation into a monitor “yard”: locomotives, turnouts, signals,

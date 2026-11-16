@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Mount the stock `rigol` partition (calibration files in /rigol/data) READ ONLY at /rigol, so oos-fpgad / oos-ui find
 # cal_*.hex at their default OOS_CAL_DIR. The OOS kernel does not parse the Rockchip PARM table, so the partition is

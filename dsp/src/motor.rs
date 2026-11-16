@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Inverter and motor measurements. DQ0 is the amplitude-invariant Clarke transform followed by Park.

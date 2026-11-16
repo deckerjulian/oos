@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! ADC channel mode (which channels share the 8 interleaved ADC cores): input mode, reference, per-core gain/offset,

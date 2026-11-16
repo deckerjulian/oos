@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # decoder-features.sh: the cargo arguments for the decoders a build should have (ui/Cargo.toml, [features]).
 #   OOS_DECODERS="usb i2s dcc"       only these, besides the core ones (UART, I2C, SPI, CAN, LIN, Parallel, C-PHY)

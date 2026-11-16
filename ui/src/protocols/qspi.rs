@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Quad-SPI flash: CS#, SCK, IO0 and IO1; a single-line opcode, then the opcode decides the lines and the address of

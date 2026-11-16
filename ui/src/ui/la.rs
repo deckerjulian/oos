@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Logic analyser page and lanes (DHO900 with the PLA2216 probe, docs/protocols/la.md): LA on/off, the lines shown

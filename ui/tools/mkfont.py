@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """mkfont.py: render a UI font atlas from Roboto (tools/fonts, Apache License 2.0, see tools/fonts/LICENSE-Roboto.txt).
 Glyphs: ASCII 32..126 plus a few symbols, each an 8-bit alpha bitmap with metrics relative to the baseline.

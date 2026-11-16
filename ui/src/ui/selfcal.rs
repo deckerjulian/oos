@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Self-calibration page (System > Self-cal): channels, AFE zero on/off, start (pressed twice: disconnect all inputs

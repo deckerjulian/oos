@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Sample processing unit (0x1000 block): sample rate divider, memory size. docs/protocols/horizontal-config.md.

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Automatic measurements (conventions of Rigol / IEEE 181: top and base from the histogram, 10/50/90 % reference

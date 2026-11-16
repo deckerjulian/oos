@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Access to the FPGA register window (BAR1 of the XDMA endpoint, `/dev/xdma0_bypass`, 32 KiB).

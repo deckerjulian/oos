@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-fsck.sh - a static e2fsck for the image, in Docker, into rootfs/out/. boot/build-dev-image.sh runs it when it is
 # missing. The scope is switched off at the mains, so /oos is checked before every mount (oos-mount-data).

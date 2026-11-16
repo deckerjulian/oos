@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Calibration file container of the stock system (docs/protocols/self-cal.md 7.1): u32 CRC32 of the

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Avionics buses: ARINC 429 (bipolar RZ, 32-bit words: label, SDI, data, SSM, parity; 12.5 or 100 kbit/s or from

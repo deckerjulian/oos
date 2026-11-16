@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Built-in generator page (S models): output on/off, wave shape (sine, square, ramp, pulse, noise, DC), frequency,

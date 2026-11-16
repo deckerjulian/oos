@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Allocation guards of the batch read and decode (docs/fork/upstream-audit.md, P3 guard 1), in their own binary for

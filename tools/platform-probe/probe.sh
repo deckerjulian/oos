@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # probe.sh OUTDIR - the part of platform-probe.sh that runs on the scope. READ ONLY: it reads files under /proc and
 # /sys, the partition table and the first 2 KiB of the boot partitions, and lists /rigol by name and size. It reads no

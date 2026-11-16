@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Vehicle buses: CAN FD (arbitration at the CAN rate, data phase at the FD rate after BRS), FlexRay at 10 Mbit/s on

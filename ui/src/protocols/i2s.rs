@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! I2S: serial audio, data (SD) sampled on the rising bit clock (SCK), the word select (WS) marks left and right; the

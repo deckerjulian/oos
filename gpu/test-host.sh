@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # test-host.sh: the GPU picture against the CPU picture, without a scope. In an arm64 container with Mesa's software
 # renderer (llvmpipe), the scope's oos-ui binary renders every script of ui/tests twice: on the CPU, and in layers put

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Read-path digital gain and offset (afe-settings.md 4.1, cold-boot.md 3.9): the acquisition

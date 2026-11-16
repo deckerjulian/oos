@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Power analysis: input power and quality, harmonics, inrush, input capacitance, turn-on and turn-off times, switching

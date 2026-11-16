@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! oos-fpgad: OOS acquisition control and bring-up tool over `oos_hal` (replaces the C tool oos-hw step by step).

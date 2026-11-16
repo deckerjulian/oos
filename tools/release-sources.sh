@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # release-sources.sh - the source files a release carries next to its image (THIRD-PARTY-LICENSES.md), and whether a
 # release on GitHub has them. Read only; `check` needs `gh` and the network.

@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # model of the horizontal parameters, see docs/protocols/horizontal-config.md
 RATIO={m:(1 if m in(0,1,2,4,8) else 2 if m in(3,5,6,9,10,12) else 4) for m in range(16)}

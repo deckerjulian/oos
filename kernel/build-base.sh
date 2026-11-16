@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-base.sh - build the OOS kernel from kernel/ alone: the base source, patches in `series` order, board device
 # trees, firmware, config, xdma. Inside Docker, results in kernel/out/base/.

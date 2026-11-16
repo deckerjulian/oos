@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # gel-sim.sh - the install without opening the scope, on a file laid out like a stock card: a Linux container with the
 # paths of the stock system, a USB stick folder and mksh as /system/bin/sh, running boot/out/DHO800_DHO900_OOS_Install.GEL

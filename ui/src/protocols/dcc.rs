@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! NMRA DCC (S-9.2), the digital command signal of model railways: the decoder of `oos_dsp::decode_ext3::dcc` and a

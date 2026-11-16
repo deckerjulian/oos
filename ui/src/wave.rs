@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Waveform sources (demo generator, replay of a captured frame), phosphor (hit-count) maps, measurements.

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Math expressions over the channels, sample by sample: `CH1*CH2/50`, `sqrt(CH1^2+CH2^2)`, `sin(2*pi*1000*t)`.

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! OOS cold boot: everything from a freshly booted FPGA image to the state where `seq::State::configure` takes over.

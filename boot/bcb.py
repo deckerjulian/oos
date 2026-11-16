@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """bcb.py: read or set the boot command that Rigol's stock U-Boot (2014.10-RK3399) reads from `misc`.
 

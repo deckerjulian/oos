@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! System > Date and time: the clock from an NTP server (off by default: OOS sends nothing to the outside unless asked),

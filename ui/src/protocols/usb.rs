@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! USB 1.x / 2.0 at low and full speed: NRZI with bit stuffing on D+ (D- optional, without it no SE0), SYNC, PID,

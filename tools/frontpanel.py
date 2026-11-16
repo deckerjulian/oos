@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """frontpanel.py: talk to the DHO800/DHO900 front-panel MCU over UART0 (protocol in docs/protocols/frontpanel.md).
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """switch.py: choose what the stock Rigol loader boots on a DHO800/DHO900 card (card in the Mac reader or an image).
 

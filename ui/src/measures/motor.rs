@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Motor drives from three phase sources (A, B, C): the DQ0 transform, shaft speed, acceleration, direction and angle;

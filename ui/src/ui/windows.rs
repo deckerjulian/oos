@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! View densities on the Windows row: Scope, Full, Split and Four, shared by the 1024×600 panel and a scaled window

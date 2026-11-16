@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Wide-bandgap double pulse. One turn-off (end of the first gate pulse) and one turn-on (the second rise).

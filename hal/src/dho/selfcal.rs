@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! User self-calibration (docs/protocols/self-cal.md): AFE zero trims with the AFE's own comparators (section 3) and

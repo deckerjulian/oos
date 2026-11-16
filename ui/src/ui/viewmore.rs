@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The overflow menu of the views that replace the waveform (analysers, XY): a button in the plot leads to what they
 //! need most, and above all out of them. The eye keeps its own bar: Full is the page, and Side and Under are extra.

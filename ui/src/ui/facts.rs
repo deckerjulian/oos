@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Numbers a controller can ask for: one measurement, and the figures on the power, spectrum, magnetic, inverter,

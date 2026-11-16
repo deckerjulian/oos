@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # The DHO800/DHO900 for the scripts of the image and the build: plain KEY=value lines, read by sh and by
 # boot/boardconf.py. The numbers are those of hal/src/dho/target.rs; a hal test keeps the two equal.

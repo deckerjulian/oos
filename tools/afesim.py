@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Reference model of the AFE setting path, see docs/protocols/afe-settings.md.
 # Default: the filters of the unit; --stock: Rigol 1.04 for comparison.

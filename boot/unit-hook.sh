@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # unit-hook.sh - the fork's part of boot/build-dev-image.sh on the host, sourced once before the initramfs container
 # (docs/fork/unit-dho804.md). Kept out of upstream's script so a sync conflicts on two lines, not on every fork line

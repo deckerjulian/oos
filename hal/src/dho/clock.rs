@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The ADC sample clock and the clocks derived from it (docs/protocols/pll.md, "Places in OOS that assume ...").

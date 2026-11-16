@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """oos-bootimg.py: build, inspect and unpack the boot image that the stock Rockchip loader of the Rigol DHO800/DHO900
 accepts in the `recovery` partition. Pure standard library, touches no device.

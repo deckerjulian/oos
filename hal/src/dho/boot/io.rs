@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The unit's side of the boot outside BAR1: the FPGA boot monitor on `/dev/spidev1.0` (BOOT only), the LMX2582 lines,

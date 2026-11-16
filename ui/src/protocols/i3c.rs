@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! MIPI I3C on SDA / SCL, with legacy I2C devices and the CCCs on the same bus. Built in until OOS 0.1.12, a module

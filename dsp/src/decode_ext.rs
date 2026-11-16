@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Extended decoders, part 1: parallel bus, UART auto baud, 9-bit multidrop UART / RS-485, DMX512 + RDM, Modbus
