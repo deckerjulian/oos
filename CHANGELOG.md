@@ -1,5 +1,44 @@
 # Changes
 
+## Unreleased
+
+Fixes from a review of 0.1.13. Tested on the host; not yet run on a unit.
+
+Changed:
+
+- SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
+  clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
+  clock first gets swapped results now.
+
+Fixed:
+
+- A typo in `net.allow` (`192.168.1.0/`, `2001:db8:::1`) made nft refuse the whole firewall, and the scope came up
+  without one while telnet listened. Such entries are left out and logged; a ruleset nft refuses anyway closes the
+  scope to everything but loopback.
+- STOP: the stopped record is no longer counted twice in the statistics, trend and catalog, and a change of view while
+  stopped adds nothing. Clear while stopped keeps the hardware stopped (it went on acquiring and overwrote the stored
+  record). RUN after STOP starts with a frame from after the RUN press.
+- Deep records read as min/max pairs: Mean, RMS, Std dev and AC RMS statistics no longer count pair values while the
+  reading is empty; with the LA on or three channels the measurements no longer stand still waiting for a raw read
+  the hardware never makes; after a Clear a held deep measurement no longer shows the cleared record.
+- The acquisition thread no longer holds the shared state while it decodes a raw window (up to ~24 MB), and the
+  newest frame of a batch gets the ADC-core correction like every other record.
+- Leaving a reference, Take over, Offline or SIM session brings back the live set-up from before it, whichever way it
+  is left (Live, Record = With live, a channel key, a channel as trigger source, Sources). A set-up recalled during a
+  session ends it and stays. Leaving the Bus trigger after a recall keeps the recalled decoder on. In Live, switching
+  a channel on from Sources leaves the trigger and Run/Stop alone.
+- A `system.conf` that leaves out every decoder no longer crashes Decode > Protocol.
+- Measurements: line and switching ripple without the rail's DC level on records of partial cycles; double pulse
+  I_L, td_on, tr, td_off, tf, di/dt, Ipeak - I_L and Qoss with a ramping load current; high time, low time and time
+  outside without noise from slow edges; Ones counts bits, not samples; setup/hold violations judged per clock edge,
+  and the Setup + Hold tile says it counts violations; Eye Width@BER in seconds; Hall shaft speed and angle
+  mechanical (divided by the pole pairs) and no longer stuck after a fault code at the record start.
+- Decoders: MLT-3 decodes every change between its three levels (half of the ones were lost).
+- Phase noise and switching dV/dt, dI/dt no longer take quadratic time on long records; a power-rail clock longer
+  than the rail no longer crashes.
+- Tests no longer depend on the speed of the computer (wall-time limits replaced), and the SSH key tests run in a
+  checkout without `local/`.
+
 ## 0.1.13
 
 Merged from the forks on GitHub (PR #7 by ichnograph, DHO804; PR #8 by W4R/wasimlhr, OOS Plus), with main since
