@@ -184,7 +184,7 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
                         start = Some(t);
                         spoiled = false;
                     } else if let Some(s) = start.take() {
-                        if !spoiled && when.map_or(true, |w| w.ok((t - s) * dt)) {
+                        if !spoiled && when.is_none_or(|w| w.ok((t - s) * dt)) {
                             out.push(t);
                         }
                     }
@@ -259,7 +259,7 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
                 }
                 let before = if j > 0 { Some(ed[j - 1]) } else { None };
                 let after = ed.get(j).copied();
-                if before.map_or(false, |td| (tc - td) * dt < setup) {
+                if before.is_some_and(|td| (tc - td) * dt < setup) {
                     out.push(tc);
                 } else if let Some(td) = after {
                     if (td - tc) * dt < hold {

@@ -345,7 +345,7 @@ fn tail_fit(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
         if let Some((mu, sigma)) = line_fit(&z, &x) {
             if sigma > 0.0 {
                 let rss: f64 = z.iter().zip(&x).map(|(z, x)| (x - mu - sigma * z).powi(2)).sum::<f64>() / (sigma * sigma * z.len() as f64);
-                if best.map_or(true, |b| rss < b.2) {
+                if best.is_none_or(|b| rss < b.2) {
                     best = Some((mu, sigma, rss));
                 }
             }
@@ -834,7 +834,7 @@ impl Eye {
             }
             if counts[i] < 0.4 * counts[p] {
                 dropped = true;
-                if valley.map_or(true, |v| counts[i] < counts[v]) {
+                if valley.is_none_or(|v| counts[i] < counts[v]) {
                     valley = Some(i);
                 }
             }
