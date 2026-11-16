@@ -16,6 +16,7 @@
 //! then takes the records.
 
 use crate::dho::bus::Bus;
+use crate::dho::readout;
 
 /// One slot of one run: 12-bit minimum and maximum, mean on the 16-bit scale.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -97,8 +98,8 @@ pub struct Vert {
 /// Volts of a code on the 16-bit scale of the measure unit: the read-out word 32768 + (c - 32768) * dg through
 /// `seq::volts`. dg = the digital gain without the ADC x2 (wpu.rs).
 pub fn volts(c: f64, v: &Vert) -> f64 {
-    let dg = if v.gain >= 2.0 { v.gain / 2.0 } else { v.gain };
-    (c - 32768.0) * dg / 7500.0 * v.scale - v.offset
+    let dg = crate::dho::wpu::split_gain(v.gain).1;
+    (c - readout::MID) * dg / readout::CODES_PER_DIV * v.scale - v.offset
 }
 
 /// How far the means of one channel's cores may lie apart beyond a tenth of its swing: 0.05 div (7500 codes per
@@ -172,8 +173,8 @@ mod tests {
 
     /// The read-out word of a raw 16-bit code through the read path (wpu.rs): x2 then Q10 gain dg around 32768.
     fn word(raw: f64, gain: f64) -> f64 {
-        let dg = if gain >= 2.0 { gain / 2.0 } else { gain };
-        32768.0 + (raw - 32768.0) * dg
+        let dg = crate::dho::wpu::split_gain(gain).1;
+        readout::MID + (raw - readout::MID) * dg
     }
 
     // Break it catches: levels from the measure unit that differ from what the record path shows for the same

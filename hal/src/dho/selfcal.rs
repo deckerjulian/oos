@@ -693,7 +693,7 @@ pub fn vertical_entry(hw: &mut dyn CalHw, a: &mut Afe, cal: &Cal, g: [i32; 7], z
         if (a_hi - a_lo).abs() < 1.0 {
             return None;
         }
-        let cpd = (c_hi - c_lo) as f64 / ((a_hi - a_lo) / 7500.0);
+        let cpd = (c_hi - c_lo) as f64 / ((a_hi - a_lo) / crate::dho::readout::CODES_PER_DIV);
         let scale = (lsb * cpd).abs() * 1e9;
         let mut zero = c_hi - ((a_hi - ADC_ZERO) * (c_hi - c_lo) as f64 / (a_hi - a_lo)).trunc() as i32;
         // refine the zero on every path: the line through the

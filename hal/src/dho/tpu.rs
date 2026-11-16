@@ -212,7 +212,7 @@ pub fn level_regs(ch: u32) -> (u32, u32) {
 /// Comparator code of `v` nV at `scale` nV/div and digital gain `g`: trunc(v * 7500 / scale / g + 32768), negative
 /// -> 0, then clamped to 1..0xfffe.
 pub fn code(v: f64, scale: f64, g: f64) -> u32 {
-    let x = v * 7500.0 / scale / g + 32768.0;
+    let x = v * crate::dho::readout::CODES_PER_DIV / scale / g + crate::dho::readout::MID;
     let c = if x <= 0.0 { 0 } else { x as u32 };
     c.clamp(1, 0xfffe)
 }

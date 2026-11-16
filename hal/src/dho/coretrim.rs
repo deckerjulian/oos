@@ -67,8 +67,8 @@ pub const QUIET_RANGE: u16 = 128;
 pub const STABLE: f64 = 1.0;
 pub const GATE_RUNS: usize = 3;
 pub const GATE_WAIT_MS: u32 = 20;
-/// Mid-scale on the 16-bit measure scale.
-const MID: f64 = 32768.0;
+/// Mid-scale on the 16-bit measure scale (the read-out scale).
+const MID: f64 = crate::dho::readout::MID;
 
 /// Where each core shows and how strongly its offset register acts: `slot[n]` = the slot of core n, `codes[n]` =
 /// measure codes per register step of core n (signed).

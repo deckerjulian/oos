@@ -148,8 +148,8 @@ pub fn decode(r: &Raw, exp: u32) -> Option<Reading> {
 /// gain. A digital gain of 2 and more is split into the ADC x2 of 0x105c, which acts before the samples are stored,
 /// and the read-path rest (`levels::volts` does the same for the measure unit).
 fn volts_per_code(v: &Vert) -> f64 {
-    let dg = if v.gain >= 2.0 { v.gain / 2.0 } else { v.gain };
-    READOUT_PER_CODE * dg * v.scale / 7500.0
+    let dg = crate::dho::wpu::split_gain(v.gain).1;
+    READOUT_PER_CODE * dg * v.scale / crate::dho::readout::CODES_PER_DIV
 }
 
 /// The DVM value of a reading in volts as the records show them: DC = the mean; AC rms = the standard deviation;

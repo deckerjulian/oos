@@ -28,6 +28,7 @@ pub mod lmx2582;
 pub mod mask;
 pub mod pairs;
 pub mod panel;
+pub mod readout;
 pub mod roll;
 pub mod scu;
 pub mod serialtrig;

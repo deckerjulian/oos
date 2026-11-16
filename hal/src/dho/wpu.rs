@@ -9,6 +9,16 @@
 
 use crate::dho::Write;
 
+/// A digital gain split into the ADC x2 of 0x105c (1 or 2) and the rest for the Q10 read-path gain: a gain of 2 and
+/// more takes the x2.
+pub fn split_gain(g: f64) -> (u32, f64) {
+    if g >= 2.0 {
+        (2, g / 2.0)
+    } else {
+        (1, g)
+    }
+}
+
 /// The read-path writes for channel `mask` and the digital gain of each channel (cal_vertical record `gain`, 1.0 for
 /// unknown). Lanes as the stock firmware writes them: 1 channel -> all four lanes, 2 -> lanes 0/2 lower and 1/3
 /// higher channel, 4 -> lane n = CH n+1. With two channels this differs from the invert and filter bits of 0x1004
@@ -21,11 +31,11 @@ pub fn analog(mask: u32, dgain: [f64; 4]) -> Vec<Write> {
 pub fn analog_gnd(mask: u32, dgain: [f64; 4], gnd: [Option<u32>; 4]) -> Vec<Write> {
     let mut w = Vec::new();
     // ADC x2 for channels with gain >= 2 (0x105c, layout as hal::dho::adc::wpu_gain), the rest in the Q10 gain
-    let x2 = dgain.map(|g| if g >= 2.0 { 2 } else { 1 });
+    let x2 = dgain.map(|g| split_gain(g).0);
     for (_, v) in crate::dho::adc::wpu_gain(mask, x2, 0x5555) {
         w.push((0x105c, v));
     }
-    let dg = [0, 1, 2, 3].map(|c| if x2[c] == 2 { dgain[c] / 2.0 } else { dgain[c] });
+    let dg = dgain.map(|g| split_gain(g).1);
     let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
     let lane_ch: [usize; 4] = match crate::dho::hz::ratio(mask) {
         1 => [on[0]; 4],

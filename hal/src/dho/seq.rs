@@ -6,7 +6,7 @@
 //! and the hardware source of `oos-ui`. Order (docs/protocols): [ADC mode] -> [AFE] -> TPU edge trigger -> wait FSM
 //! stopped -> acquisition configuration -> SCU auto/normal trigger -> arm -> wait done -> play-last read-out -> read.
 
-use crate::dho::{acq, adc, afe, auxout, hz, la, mask, scu, tpu, zone, Write};
+use crate::dho::{acq, adc, afe, auxout, hz, la, mask, readout, scu, tpu, zone, Write};
 
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -296,7 +296,7 @@ impl State {
         if s.afe {
             // read-path gain/offset from the digital gains of the AFE records (else they keep the stock values)
             st.push(Step::Note("read-path gain/offset".into()));
-            let gnd = s.ch.map(|k| (k.couple == Couple::Gnd).then(|| (k.offset / k.scale * 7500.0 + 32768.0) as i32 as u32));
+            let gnd = s.ch.map(|k| (k.couple == Couple::Gnd).then(|| (k.offset / k.scale * readout::CODES_PER_DIV + readout::MID) as i32 as u32));
             st.extend(crate::dho::wpu::analog_gnd(s.mask, self.gain, gnd).into_iter().map(Step::Wr));
         }
         if s.blocks & 7 != 7 {
@@ -870,14 +870,14 @@ fn lane<const G: usize>(bytes: &[u8], k: usize, a: f32, off: f32, o: &mut Vec<f3
 
 /// (volts per code, offset) of a channel in f32 for `volt32`.
 fn affine((scale, offset): (f64, f64)) -> (f32, f32) {
-    ((scale / 7500.0) as f32, offset as f32)
+    ((scale / readout::CODES_PER_DIV) as f32, offset as f32)
 }
 
 /// `volt` in f32: the code minus 32768 is exact, then one multiply and one subtract. The error against the f64 `volt`
 /// is a few f32 ulps of the full-scale value, under 1e-6 of a division: below 1 % of one code (1 / 7500 div).
 #[inline]
 fn volt32(x: u16, a: f32, off: f32) -> f32 {
-    (x as i32 - 32768) as f32 * a - off
+    (x as i32 - readout::MID as i32) as f32 * a - off
 }
 
 /// Volts of read-out words: 7500 codes per division around 32768 (preamble yinc = V/div / 7500), minus the offset.
@@ -904,7 +904,7 @@ pub fn volts(w: &[u16], scale: f64, offset: f64) -> Vec<f32> {
 /// Volts of one read-out word (`volts`).
 #[inline]
 fn volt(x: u16, scale: f64, offset: f64) -> f32 {
-    ((x as f64 - 32768.0) / 7500.0 * scale - offset) as f32
+    ((x as f64 - readout::MID) / readout::CODES_PER_DIV * scale - offset) as f32
 }
 
 /// Time per division in femtoseconds, rounded to 4 significant digits: the UI keeps time/div as f32 (200 us ->

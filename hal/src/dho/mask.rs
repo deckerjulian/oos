@@ -67,8 +67,8 @@ pub const MAX_COUNT: u32 = 1023;
 /// The sample scale assumed for the comparator: the read-out word (16 bits, `MID` at the channel's offset,
 /// `CODES_PER_DIV` per division, `seq::decode_volts`) shifted right by `SHIFT`. The stock system builds the limits as
 /// screen coordinate >> 8, which fits. Change here if the unit says otherwise.
-pub const MID: f64 = 32768.0;
-pub const CODES_PER_DIV: f64 = 7500.0;
+pub const MID: f64 = crate::dho::readout::MID;
+pub const CODES_PER_DIV: f64 = crate::dho::readout::CODES_PER_DIV;
 pub const SHIFT: u32 = 8;
 /// Largest 8-bit code.
 pub const CODE_MAX: f64 = 255.0;
