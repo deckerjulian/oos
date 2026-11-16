@@ -29,7 +29,7 @@ The checks are named by layer. Each layer says what it can show and what not:
 | test | `tools/check.sh test` | the unit tests, the interplay tests and the menu geometry of all four crates; the tests of the Python host tools | the hardware |
 | target | `tools/check.sh target` | the scope's build (`aarch64-unknown-linux-musl`) compiles and depends on `libc` only (ADR 0021) | that it runs |
 | decoders | `tools/check.sh decoders` | the core-only build and every optional decoder alone | |
-| sim | `tools/check.sh sim` (by name: needs Docker, QEMU and image builds) | the scripts of the image in arm64 containers and virtual machines: firewall, SSH, USB stick, WLAN, the unit's DTB step, the USB install, the GPU picture against the CPU's | the scope's hardware and drivers |
+| sim | `tools/check.sh sim` (by name: needs Docker, QEMU and image builds) | the scripts of the image in arm64 containers and virtual machines: firewall, SSH, USB stick, WLAN, the unit's DTB step, the USB install, the restarts after a panic or a hang, the GPU picture against the CPU's | the scope's hardware and drivers |
 | pixels | `ui/tools/layout-check.sh record` / `check` | a refactoring leaves every picture the same (ADR 0014) | timing |
 | registers | `tools/plan-matrix.sh` before and after | the analog path writes the same sequences (ADR 0014) | what the hardware does with them |
 | speed | `tools/perf-guard.sh` | the fast paths stay faster than the paths they replaced (ratios, release build) | times on a unit |

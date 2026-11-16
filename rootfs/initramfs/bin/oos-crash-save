@@ -1,0 +1,86 @@
+#!/bin/sh
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-crash-save [STATUS_FILE] - crash evidence from the last start. ramoops (DTB reserved-memory, 0x110000) keeps the
+# kernel's oops/panic record and the console of the previous start across a warm reset (`panic=10`, the hardware
+# watchdog), not across a power cut. When /sys/fs/pstore holds dmesg-ramoops-* records, they and the last 64 KiB of
+# console-ramoops go to /oos/crash/<n>/ (n counts up).
+#
+# Order, so that no evidence is lost on the way:
+# 1. Less than 4 MiB free on /oos: skipped, nothing pruned, the records stay in pstore.
+# 2. A .tmp left by an interrupted save is kept as .partial-<n> (it counts towards the 4 kept directories).
+# 3. Copy into .tmp; every copy checked, each file and the directory fsynced (busybox `sync FILE` reports write
+#    errors), each file read back and compared with its source.
+# 4. Rename to <n>, fsync /oos/crash and its parent (which may have just gained the crash directory).
+# 5. Only then the copied pstore entries are removed, and only then the oldest directories beyond 4 are pruned.
+# Any failure stops there and leaves pstore as it was. rcS runs it in the background: nothing here delays the start-up.
+# With STATUS_FILE, a `Crash record` warning goes there for the start-up screen: first as soon as a record is found,
+# before any archive I/O that a slow card could stall, then again with the result. Always exits 0.
+ps=${OOS_PSTORE:-/sys/fs/pstore}
+mnt=${OOS_CRASH_MNT:-/oos}
+kmsg=${OOS_KMSG:-/dev/kmsg}
+st_file=${1:-}
+dir=$mnt/crash
+keep=4
+min_kb=4096
+say() {
+	echo "oos-crash-save: $1"
+	echo "oos-crash-save: $1" >> "$kmsg" 2>/dev/null
+	[ -n "$st_file" ] && printf '%s\t%s\t%s\t%s\n' "$(cut -d' ' -f1 /proc/uptime)" warn "Crash record" "$1" >> "$st_file"
+}
+fail() { say "the last start logged a kernel oops or panic, not saved: $1; records kept in pstore"; exit 0; }
+if [ "$ps" = /sys/fs/pstore ] && ! grep -q " $ps pstore " /proc/mounts 2>/dev/null; then
+	mount -t pstore pstore "$ps" 2>/dev/null
+fi
+set -- "$ps"/dmesg-ramoops-*
+[ -e "$1" ] || { echo "oos-crash-save: no crash record"; exit 0; }
+say "the last start logged a kernel oops or panic; saving it to $dir"
+[ -n "${OOS_TEST:-}" ] || grep -q " $mnt " /proc/mounts || fail "$mnt not mounted"
+free=$(df -k "$mnt" | tail -n 1 | awk '{print $4}')
+[ "${free:-0}" -ge $min_kb ] 2>/dev/null || fail "${free:-?} KiB free on $mnt, need $min_kb"
+mkdir -p "$dir" || fail "cannot create $dir"
+# the numbers in use, from both <n> and .partial-<n>
+nums() { ls -a "$dir" | sed -n 's/^\(\.partial-\)\{0,1\}\([0-9][0-9]*\)$/\2/p' | sort -n; }
+last=$(nums | tail -n 1)
+n=$((${last:-0} + 1))
+tmp=$dir/.tmp
+if [ -e "$tmp" ]; then
+	mv "$tmp" "$dir/.partial-$n" || fail "cannot set aside the interrupted $tmp"
+	echo "oos-crash-save: interrupted save kept as $dir/.partial-$n"
+	n=$((n + 1))
+fi
+mkdir "$tmp" || fail "cannot create $tmp"
+copied=""
+for f in "$@"; do
+	b=$(basename "$f")
+	cp "$f" "$tmp/$b" || fail "copy of $b failed"
+	copied="$copied $f"
+done
+for f in "$ps"/console-ramoops*; do
+	[ -e "$f" ] || continue
+	tail -c 65536 "$f" > "$tmp/$(basename "$f")" || fail "copy of $(basename "$f") failed"
+	copied="$copied $f"
+done
+cut -d' ' -f1 /proc/uptime > "$tmp/saved-at-uptime" || fail "write to $tmp failed"
+cat /etc/oos-build > "$tmp/saved-by-build" 2>/dev/null || fail "copy of build id failed"
+sync "$tmp"/* "$tmp" || fail "fsync in $tmp failed"
+for f in $copied; do
+	b=$(basename "$f")
+	case "$b" in
+		console-ramoops*) tail -c 65536 "$f" | cmp -s - "$tmp/$b" ;;
+		*) cmp -s "$f" "$tmp/$b" ;;
+	esac || fail "read-back of $b differs"
+done
+mv "$tmp" "$dir/$n" || fail "rename to $dir/$n failed"
+sync "$dir" "$mnt" || fail "fsync of $dir or its parent failed"
+for f in $copied; do rm -f "$f"; done
+# prune last: the oldest beyond `keep`, never the one just written
+count=$(nums | grep -c .)
+for d in $(nums); do
+	[ "$count" -le $keep ] && break
+	[ "$d" = "$n" ] && break
+	rm -rf "${dir:?}/$d" "${dir:?}/.partial-$d"
+	count=$((count - 1))
+done
+say "the last start logged a kernel oops or panic: /oos/crash/$n"
+exit 0

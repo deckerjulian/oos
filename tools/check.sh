@@ -186,8 +186,8 @@ layer_decoders() {
 # its header says: rootfs/out (fw, ssh), kernel/out/base (unit-dtb), a finished boot/build-dev-image.sh (gel), QEMU
 # (usb, wlan), oos-ui built for aarch64-unknown-linux-musl (gpu).
 layer_sim() {
-    for s in tools/fw-sim.sh tools/ssh-sim.sh tools/unit-dtb-check.sh tools/gel-sim.sh tools/usb-sim.sh \
-        tools/wlan-sim.sh gpu/test-host.sh; do
+    for s in tools/fw-sim.sh tools/ssh-sim.sh tools/unit-dtb-check.sh tools/gel-sim.sh tools/selfheal-sim.sh \
+        tools/usb-sim.sh tools/wlan-sim.sh gpu/test-host.sh; do
         say "sim $s"
         sh "$s" || fail "sim: $s"
     done

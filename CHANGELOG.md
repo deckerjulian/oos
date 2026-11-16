@@ -13,6 +13,10 @@ Added:
   (unit, over telnet); `device-deploy-ssh.sh` is gone.
 - `tools/check.sh` has a `sim` layer (not enforced) for the Docker and QEMU simulations.
 - CI: every commit of a pull request needs a Signed-off-by line (ADR 0026); CI runs `tools/check.sh` itself.
+- The scope restarts by itself after a panic (10 s) or a hang (hardware watchdog, 30 s), also across a kexec start of an
+  update. The panic record and the console tail are saved to `/oos/crash`, and the start-up screen warns of it before
+  the copy starts. Restarts are armed only after the stock boot selection is back on the card; until then a panic halts
+  as before and the start-up screen says so (DHO804: a panic back in 39 s, a hang reset after 41 s).
 - System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
   stored. A change takes effect at once, without a restart:

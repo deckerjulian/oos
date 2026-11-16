@@ -19,6 +19,7 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 | `usb-sim.sh` | no; Docker, QEMU | `/bin/oos-usb` in a virtual machine with simulated disks, pulled while mounted |
 | `wlan-sim.sh` | no; Docker, QEMU | the WLAN path in a virtual machine with simulated radios and access points |
 | `gel-sim.sh [do_update.sh]` | no; Docker | the USB install file through the steps of the stock update, on a file laid out like a stock card |
+| `selfheal-sim.sh` | no; Docker | the restarts after a panic or a hang: `oos-crash-save`, `oos-watchdog` and its kexec handoff, the arming in rcS after `oos-oneshot`, under busybox ash and dash |
 | `unit-dtb-check.sh` | no; Docker | the DTB step of a unit profile (`eth.mac` as `local-mac-address`, [models.md 4.2](../docs/models.md)) |
 | `image-manifest.py IMAGE DTB INITRAMFS` | no | what an image build put into the image, one line per file, to compare two builds |
 | `deps-check.sh` | no; network | the pinned sources of `rootfs/deps.lock` against their upstream release listings |

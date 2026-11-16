@@ -49,6 +49,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0024](system/0024-vxi11-on-the-scope-hislip-on-a-computer-own-discovery.md) | system | VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification | accepted |
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
 | [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted |
+| [0027](system/0027-automatic-restart-after-the-boot-selection.md) | system | Automatic restarts are armed only after the boot selection is back on stock | proposed |
 | [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path; Standard stays as the way back | accepted |
 
 ## Reading order for agents

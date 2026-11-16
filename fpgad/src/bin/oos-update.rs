@@ -85,15 +85,15 @@ fn die(msg: &str) -> ! {
 
 /// Lines also to the kernel log (and the panel console, which shows when oos-ui is down).
 fn tell(msg: &str) {
-    println!("{}", msg);
+    use std::io::Write;
+    // not println!: the terminal may be gone (a remote shell whose link the kexec start took down, a closed pipe), and
+    // a panic there would abort the undo before the network and oos-ui are back
+    let _ = writeln!(std::io::stdout(), "{}", msg);
     // one write per line: every write to /dev/kmsg is a record of its own
     let line = format!("oos-update: {}\n", msg);
     for dev in ["/dev/kmsg", "/dev/tty1"] {
         if Path::new(dev).exists() {
-            let _ = std::fs::OpenOptions::new().append(true).open(dev).and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(line.as_bytes())
-            });
+            let _ = std::fs::OpenOptions::new().append(true).open(dev).and_then(|mut f| f.write_all(line.as_bytes()));
         }
     }
 }
@@ -456,6 +456,11 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
     // watcher is stopped, so no card write runs into the restart
     let lock = update::lock(sp).unwrap_or_else(|e| undo(&e, None));
+    // the watchdog handoff must work before anything is stopped (docs/update.md, "The watchdog and kexec")
+    if let Err(e) = kexec::preflight_watchdog() {
+        drop(lock);
+        undo(&e, None);
+    }
     stop_watcher();
     stop_ui();
     let q = quiesce();
@@ -464,7 +469,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     unsafe { libc::sync() };
     // the kernel does not sync or unmount on kexec
     if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
-        println!("warning: /oos stays writable (busy); synced");
+        tell("warning: /oos stays writable (busy); synced");
     }
     let e = kexec::start();
     undo(&e, Some(&q));
