@@ -120,15 +120,34 @@ layer_text() {
     [ "$bad" = 0 ] || fail "text: see docs/adr/process/0019-one-style-for-text-files-and-commits.md"
 }
 
+# every tracked script: Python by its name or its first line, shell the same way (busybox sh included)
+scripts() {
+    git ls-files | outside | while IFS= read -r f; do
+        case $f in
+        *.py) echo "py $f" ;;
+        *.sh) echo "sh $f" ;;
+        *)
+            [ -f "$f" ] || continue
+            first=$(head -n 1 "$f")
+            case $first in
+            '#!'*python*) echo "py $f" ;;
+            '#!'*/sh | '#!'*/sh\ * | '#!'*\ sh | '#!'*\ sh\ *) echo "sh $f" ;;
+            esac
+            ;;
+        esac
+    done
+}
+
 layer_syntax() {
-    for f in boot/*.py tools/*.py tools/tests/*.py; do
-        python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1])' "$f" ||
-            fail "syntax: $f"
-    done
-    for f in boot/*.sh boot/gel/*.sh kernel/*.sh rootfs/*.sh tools/*.sh ui/*.sh ui/tools/*.sh gpu/*.sh \
-        rootfs/initramfs/bin/* rootfs/initramfs/etc/rcS; do
-        sh -n "$f" || fail "syntax: $f"
-    done
+    scripts >"$tmp/scripts"
+    while read -r kind f; do
+        if [ "$kind" = py ]; then
+            python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1])' "$f" ||
+                fail "syntax: $f"
+        else
+            sh -n "$f" || fail "syntax: $f"
+        fi
+    done <"$tmp/scripts"
 }
 
 layer_test() {
