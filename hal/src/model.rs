@@ -215,23 +215,14 @@ impl Platform {
         }
         let mut forced = force.map(str::to_string);
         if let Some(text) = limits_conf {
-            for (n, line) in text.lines().enumerate() {
-                let line = line.split('#').next().unwrap_or("").trim();
-                if line.is_empty() {
-                    continue;
-                }
-                let Some((k, v)) = line.split_once('=') else {
-                    p.warnings.push(format!("limits.conf:{}: no '=' in {:?}", n + 1, line));
-                    continue;
-                };
-                let (k, v) = (k.trim(), v.trim());
+            for (n, k, v) in conf_lines(text, &mut p.warnings, "limits.conf") {
                 if k == "model" {
                     forced = forced.or(Some(v.to_string()));
                     continue;
                 }
                 match p.set(k, v) {
                     Ok(()) => p.overrides.push(format!("{} = {}", k, v)),
-                    Err(e) => p.warnings.push(format!("limits.conf:{}: {}", n + 1, e)),
+                    Err(e) => p.warnings.push(format!("limits.conf:{}: {}", n, e)),
                 }
             }
         }
