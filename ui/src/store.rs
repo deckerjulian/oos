@@ -1338,30 +1338,49 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     Ok(out)
 }
 
+/// A time column, then one trace per further column. The columns are kept as the samples they become, and a line wider
+/// than the reference slots ends the parse: a single line of many columns no longer makes as many traces.
 fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
-    let mut rows: Vec<(f64, Vec<f64>)> = Vec::new();
+    let mut columns: Vec<Vec<f32>> = Vec::new();
+    let mut times: [f64; 2] = [f64::NAN; 2];
+    let mut rows = 0usize;
     for line in text.lines() {
         let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
         let Some(Some(t)) = cols.next() else { continue };
-        let rest: Vec<f64> = cols.map(|x| x.unwrap_or(f64::NAN)).collect();
-        if rest.is_empty() {
+        let mut rest = cols.map(|x| x.unwrap_or(f64::NAN)).peekable();
+        if rest.peek().is_none() {
             continue;
         }
-        if rows.len() >= MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
-        rows.push((t, rest));
+        if rows >= MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
+        let mut k = 0;
+        for x in rest {
+            if k >= NREF {
+                return Err("The file has more traces than the remaining reference slots".into());
+            }
+            if k == columns.len() {
+                // a column that starts on a later line: the lines before it have no sample there
+                columns.push(vec![f32::NAN; rows]);
+            }
+            columns[k].push(x as f32);
+            k += 1;
+        }
+        for c in &mut columns[k..] {
+            c.push(f32::NAN);
+        }
+        if rows < 2 {
+            times[rows] = t;
+        }
+        rows += 1;
     }
-    let dt = match rows.as_slice() {
-        [a, b, ..] if b.0 > a.0 => b.0 - a.0,
+    let dt = match times {
+        [a, b] if rows >= 2 && b > a => b - a,
         _ => return Err("that file holds no waveform".into()),
     };
-    let ntrace = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(1);
-    let mut traces = Vec::with_capacity(ntrace);
-    for k in 0..ntrace {
-        let v: Vec<f32> = rows.iter().map(|r| r.1.get(k).copied().unwrap_or(f64::NAN) as f32).collect();
+    let ntrace = columns.len();
+    Ok(columns.into_iter().enumerate().map(|(k, v)| {
         let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
-        traces.push(WaveTrace { t0: rows[0].0, dt, v, label });
-    }
-    Ok(traces)
+        WaveTrace { t0: times[0], dt, v, label }
+    }).collect())
 }
 
 /// Tek reference waveform version 001/002/003, YT vector, first frame.
@@ -3024,6 +3043,24 @@ mod tests {
         assert!((back[0].dt - 1e-6).abs() < 1e-18);
         assert_eq!(back[0].v[0], 0.5);
         assert_eq!(back[1].v[2], 3.3);
+    }
+
+    /// A line wider than the reference slots ends the parse: before, one line of a million columns made a million
+    /// traces (40 MB of text took 1.9 GB) before the slots refused them.
+    #[test]
+    fn csv_wider_than_the_reference_slots_is_refused_while_parsing() {
+        let wide = format!("0{}\n1,0\n", ",0".repeat(NREF + 1));
+        assert!(parse_wave(wide.as_bytes(), "wide.csv").unwrap_err().contains("more traces"));
+        let full = format!("0{}\n1{}\n", ",1".repeat(NREF), ",2".repeat(NREF));
+        assert_eq!(parse_wave(full.as_bytes(), "full.csv").unwrap().len(), NREF);
+        // ragged lines: a column missing on a line, or starting late, is NaN there
+        let back = parse_wave(b"Time,A\n0,1\n1,2,7\n2,,8\n3\n", "r.csv").unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!((back[0].t0, back[0].dt, back[0].label.as_str()), (0.0, 1.0, "CH1"));
+        assert_eq!(&back[0].v[..2], [1.0, 2.0]);
+        assert!(back[0].v[2].is_nan() && back[0].v.len() == 3);
+        assert!(back[1].v[0].is_nan());
+        assert_eq!(&back[1].v[1..], [7.0, 8.0]);
     }
 
     #[test]

@@ -289,7 +289,7 @@ Cursor changes preserve capture statistics and an armed Single. Track values use
 | `:DECode:BUSY?` | Worker readiness, without changing acquisition. |
 | `:DECode:EVENts?` | Physical-time event rows, `BUSY` while pending, or an error if unavailable. |
 
-A file load is not an ADC acquisition. Multi-trace imports validate capacity before replacing slots. Protocol roles may mix references and acquired records; their native intervals/origins must overlap. Decoder events, Search and Bus qualification share the decoded timing.
+A file load is not an ADC acquisition. Multi-trace imports validate capacity before replacing slots; a CSV line with more data columns than there are reference slots (10) ends the import while the file is read. Protocol roles may mix references and acquired records; their native intervals/origins must overlap. Decoder events, Search and Bus qualification share the decoded timing.
 
 ```text
 :REF:SLOT R1
