@@ -209,7 +209,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    const MAIN: u32 = 0xe207_2115; // the image the cold boot expects at 0x4000
+    const MAIN: u32 = crate::dho::bus::FPGA_VERSION; // the image the cold boot expects at 0x4000
     const GOLDEN: u32 = 0xe106_0816; // what the unit read after a BOOT that was lost (2026-11-08)
 
     type Log = Rc<RefCell<Vec<String>>>;
