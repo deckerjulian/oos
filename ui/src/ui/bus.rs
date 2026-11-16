@@ -163,6 +163,7 @@ impl Ui {
                 };
                 let i = ids.iter().position(|&x| x == cur).unwrap_or(0);
                 let next = ids[(i as i32 + d).rem_euclid(ids.len() as i32) as usize];
+                self.source_turn_on(next);
                 if it == Item::BusClk {
                     self.m.bus.clk = next;
                 } else {

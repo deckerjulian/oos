@@ -730,6 +730,8 @@ impl Ui {
                 _ => self.m.pw_i,
             };
             let next = self.step_wave(cur, d);
+            // a channel that is off is turned on, not skipped
+            self.source_turn_on(next);
             match it {
                 Item::SpecSrc => self.m.spec_src = next,
                 Item::EyeSrc => {
@@ -759,6 +761,7 @@ impl Ui {
                 _ => self.m.pw_clk,
             };
             let next = self.step_wave_opt(cur, d);
+            if let Some(id) = next { self.source_turn_on(id); }
             match it {
                 Item::EyeB => self.m.eye_b = next,
                 Item::EyeRail => self.m.eye_rail = next,
@@ -846,7 +849,12 @@ impl Ui {
                 return true;
             }
             Item::SpecLimitClear => {
-                self.azr.limit = None;
+                if self.azr.limit.is_none() {
+                    self.toast(super::NOTHING_TO_CLEAR);
+                } else {
+                    self.azr.limit = None;
+                    self.toast("Limit cleared");
+                }
                 return true;
             }
             Item::SpecPeak => {
@@ -859,9 +867,14 @@ impl Ui {
                 }
             }
             Item::EyeClear => {
-                self.azr.eye = None;
-                self.azr.eye_res = None;
-                self.azr.page = Default::default();
+                if self.azr.eye.is_none() && self.azr.eye_res.is_none() {
+                    self.toast(super::NOTHING_TO_CLEAR);
+                } else {
+                    self.azr.eye = None;
+                    self.azr.eye_res = None;
+                    self.azr.page = Default::default();
+                    self.toast("Eye cleared");
+                }
             }
             Item::EyeAct => {
                 self.eye_make();

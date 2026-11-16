@@ -5,7 +5,7 @@
 //! it. A view keeps what is shown and where: the windows, the second pane, the measurements and their bar, the DVM and
 //! the counter, the cursors, the zoom, the histogram, the analyser page, XY and full screen. The channels, the time
 //! base, the trigger and the acquisition are the same in every view. What changes while a view is shown stays with
-//! it; a view not used yet starts with the plot alone.
+//! it; a view added by raising the count starts as a copy of the view shown (Batch 30).
 //!
 //! Switching: the numbered buttons in the top bar, a swipe from the left or right edge of the plot inwards (only
 //! while there is more than one view; a vertical drag there still moves a channel or the trigger level), the Quick
@@ -26,6 +26,13 @@ pub(super) const EDGE: i32 = 18;
 const SWIPE: i32 = 70;
 /// Width of a number in the top bar's view buttons.
 const NUM_W: i32 = 28;
+/// The same in the Studio top bar (chips of the bar height, smaller numbers).
+const NUM_W_STUDIO: i32 = 26;
+
+/// The width of the Studio top bar's view segment for `views` views (0 with fewer than two).
+pub(super) fn studio_box_w(views: usize) -> i32 {
+    if views < 2 { 0 } else { NUM_W_STUDIO * views as i32 + 2 }
+}
 
 fn known(k: &str) -> bool {
     KEYS.contains(&k) || k == "xy" || k == "full"
@@ -109,28 +116,37 @@ impl Ui {
         }
     }
 
-    /// Display > Views: Off, 2, 3, 4. Fewer views: the ones dropped are forgotten; the shown one stays on screen.
+    /// Display > Views: Off, 2, 3, 4. More views: each new one starts as a copy of the shown view (its windows, analysis
+    /// views and layout), not as an empty plot. Fewer views: the shown view keeps its content, whatever number it
+    /// then has; the ones dropped are forgotten.
     pub(crate) fn views_set(&mut self, n: usize) {
         let n = n.clamp(1, VIEWS_MAX);
-        if n < self.m.views && self.m.view_cur >= n {
-            if n >= 2 {
-                self.view_go(n - 1);
-            } else {
-                self.m.view_cur = 0;
-            }
+        let old = self.m.views;
+        if n == old {
+            return;
         }
-        if n == 1 {
-            self.m.view_cur = 0;
+        if n > old {
+            let snap = self.view_snapshot();
+            for k in old.max(1)..n {
+                self.m.view_slots[k] = snap.clone();
+            }
+        } else if self.m.view_cur >= n {
+            self.m.view_cur = n - 1;
         }
         for s in self.m.view_slots.iter_mut().skip(n) {
             s.clear();
         }
         if n == 1 {
+            self.m.view_cur = 0;
             self.m.view_slots[0].clear();
         }
         self.m.views = n;
+        if n >= 2 {
+            self.toast(&format!("View {} of {}", self.m.view_cur + 1, n));
+        } else {
+            self.toast("Views off");
+        }
     }
-
     // ------------------------------------------------------------------------------------------------ the menu item
 
     pub(super) fn views_kind(it: Item) -> Option<Kind> {
@@ -159,10 +175,19 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ the top bar
 
+    fn num_w(&self) -> i32 {
+        if self.m.layout == Layout::Studio { NUM_W_STUDIO } else { NUM_W }
+    }
+
     /// The numbered buttons in the top bar, left of the menu buttons, while there is more than one view.
     pub(super) fn view_box(&self) -> Option<Rect> {
-        if self.m.views < 2 || self.m.layout == Layout::Studio {
+        if self.m.views < 2 {
             return None;
+        }
+        // Studio: a segment of its own in the right group of its top bar (`studio_top`)
+        if self.m.layout == Layout::Studio {
+            let r = self.studio_top().vbox;
+            return (r.w > 0).then_some(r);
         }
         let first = self.top_buttons().first().map_or(self.top_right(), |b| b.2.x);
         let w = NUM_W * self.m.views as i32 + 2;
@@ -172,10 +197,11 @@ impl Ui {
     pub(super) fn draw_view_box(&self, cv: &mut Canvas) {
         let Some(r) = self.view_box() else { return };
         let f = self.fonts();
+        let nw = self.num_w();
         cv.round(r, 5, BTN_BORDER, 255);
         cv.round(r.inset(1), 4, BTN, 255);
         for i in 0..self.m.views {
-            let c = Rect::new(r.x + 1 + NUM_W * i as i32, r.y + 1, NUM_W, r.h - 2);
+            let c = Rect::new(r.x + 1 + nw * i as i32, r.y + 1, nw, r.h - 2);
             let on = i == self.m.view_cur;
             if on {
                 cv.round(c.inset(2), 3, ACCENT, 255);
@@ -190,7 +216,7 @@ impl Ui {
         if !self.top_hit(r).contains(x, y) {
             return false;
         }
-        let i = ((x - r.x - 1) / NUM_W).clamp(0, self.m.views as i32 - 1) as usize;
+        let i = ((x - r.x - 1) / self.num_w()).clamp(0, self.m.views as i32 - 1) as usize;
         self.view_go(i);
         true
     }
@@ -235,13 +261,15 @@ mod tests {
     #[test]
     fn each_view_keeps_its_arrangement_and_shares_the_rest() {
         let mut u = ui();
-        u.views_set(3);
         u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(0))];
         u.m.zoom = true;
         let tdiv = u.m.tscale;
+        u.views_set(3);
         u.view_go(1);
-        // a new view: the plot alone, the time base as it was
-        assert!(u.m.meas.is_empty() && !u.m.zoom && u.m.view_cur == 1 && u.m.tscale == tdiv);
+        // a new view: a copy of the one it was made from, the time base as it was
+        assert!(u.m.meas.len() == 2 && u.m.zoom && u.m.view_cur == 1 && u.m.tscale == tdiv);
+        u.m.meas.clear();
+        u.m.zoom = false;
         u.m.pane = 1;
         u.xy = true;
         u.view_go(0);
@@ -280,9 +308,9 @@ mod tests {
         u.view_go(2);
         u.m.zoom = true;
         u.views_set(2);
-        // view 3 is gone: view 2 is shown, as it was kept
+        // view 3 is gone: what was on screen stays, as view 2
         assert_eq!(u.m.view_cur, 1);
-        assert!(!u.m.zoom);
+        assert!(u.m.zoom);
         u.views_set(1);
         assert_eq!((u.m.views, u.m.view_cur), (1, 0));
         assert!(u.m.view_slots.iter().all(|s| s.is_empty()));
