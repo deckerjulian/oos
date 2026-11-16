@@ -313,15 +313,11 @@ impl Ui {
             }
             Item::MeasIdle => {
                 let cur = if self.m.meas_idle > 0.0 { self.m.meas_idle } else { 0.0 };
-                let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
-                let i = l.iter().position(|&v| v >= cur * 0.999).unwrap_or(0);
-                self.m.meas_idle = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+                self.m.meas_idle = time_step(cur, d);
             }
             Item::MeasTsetup | Item::MeasThold => {
                 let cur = if it == Item::MeasTsetup { self.m.meas_tsetup } else { self.m.meas_thold };
-                let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
-                let i = l.iter().position(|&v| v >= cur * 0.999).unwrap_or(0);
-                let v = l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize];
+                let v = time_step(cur, d);
                 if it == Item::MeasTsetup {
                     self.m.meas_tsetup = v;
                 } else {
@@ -1255,6 +1251,44 @@ impl Ui {
     /// Name of a channel on its card: its label, or CHn.
     pub(super) fn ch_name(&self, c: usize) -> String {
         if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
+    }
+}
+
+/// One knob step of a measurement time (burst idle, setup, hold): off, then 1-2-5 from 1 ns to 5 s. A longer time
+/// (set over SCPI) steps down to 5 s and stays as it is going up; it does not fall back to off.
+fn time_step(cur: f64, d: i32) -> f64 {
+    let l: Vec<f64> = std::iter::once(0.0).chain((0..10).flat_map(|e| [1.0, 2.0, 5.0].map(|k| k * 10f64.powi(e - 9)))).collect();
+    match l.iter().position(|&v| v >= cur * 0.999) {
+        Some(i) => l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize],
+        None if d < 0 => l[(l.len() as i32 + d).max(0) as usize],
+        None => cur,
+    }
+}
+
+#[cfg(test)]
+mod time_step_tests {
+    use super::*;
+
+    // Break it catches: a burst idle time above the knob's 5 s (from SCPI) that turns off with one step, because the
+    // knob did not find it in its list.
+    #[test]
+    fn a_time_above_the_knob_steps_down_to_5_s_not_to_off() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas_idle = 10.0;
+        ui.adjust(Item::MeasIdle, -1);
+        assert_eq!(ui.m.meas_idle, 5.0);
+        ui.m.meas_idle = 10.0;
+        ui.adjust(Item::MeasIdle, 1);
+        assert_eq!(ui.m.meas_idle, 10.0);
+        ui.m.meas_thold = 20.0;
+        ui.adjust(Item::MeasThold, -2);
+        assert_eq!(ui.m.meas_thold, 2.0);
+        // inside the list nothing changed: 1 ns down is off, off up is 1 ns
+        ui.m.meas_tsetup = 1e-9;
+        ui.adjust(Item::MeasTsetup, -1);
+        assert_eq!(ui.m.meas_tsetup, 0.0);
+        ui.adjust(Item::MeasTsetup, 1);
+        assert_eq!(ui.m.meas_tsetup, 1e-9);
     }
 }
 
