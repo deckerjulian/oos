@@ -182,7 +182,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
     walk(&|| open(Remote, &|u| { u.sys.net_name = "x".repeat(63); u.net = "192.168.177.164".into() }), "Remote long name", &mut out);
     walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-204527".into()), "Remote default name", &mut out);
     // the longest address list, the network beside it, and a change waiting for the next start
-    walk(&|| open(Remote, &|u| { u.sys.set_net_allow(Some(&"2001:db8:aaaa:bbbb::/64 ".repeat(6))); u.remote.lan = Some("192.168.177.0/24".into()) }), "Remote long allow list", &mut out);
+    walk(&|| open(Remote, &|u| { u.sys.set_net_allow(Some(&"2001:db8:aaaa:bbbb::/64 ".repeat(6))); u.remote.lans = vec!["192.168.177.0/24".into(), "10.20.0.0/24".into()] }), "Remote long allow list", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
     for t in TRIG_TYPES {
         walk(&|| open(Trigger, &|u| u.set_trig_type(t)), &format!("Trigger {}", t.name()), &mut out);

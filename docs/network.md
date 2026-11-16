@@ -294,8 +294,9 @@ The page, the live picture, `/cmd`, the downloads and `POST /waveform` (a refere
 storage) stay open to the firewall's prefixes. Loopback is always allowed.
 
 **On the scope**: System > Network > Remote services > **Allowed** shows the list in use (`everyone` without one). Its
-picker offers that list, the network the scope is on (from its address and netmask: `192.168.1.0/24`) and Other on
-the keyboard, which starts with the list or, without one, with that network. An entry is checked as oos-ui reads the
+picker offers that list, every network the scope is on (each IPv4 address with its netmask, e.g. `192.168.1.0/24`
+for Ethernet and one for the WLAN; the link-local `169.254.0.0/16` only when there is no other) and Other on the
+keyboard, which starts with the list or, without one, with the first network. An entry is checked as oos-ui reads the
 key (`netacl`): every word must be an address prefix as above or `onlink6`, IPv6 without dotted IPv4. Anything else
 is refused with a message on the keyboard and nothing is written. What is taken goes to `/oos/system.conf` in its
 plain form (`192.168.1.7/24` becomes `192.168.1.0/24`, a single address `/32` or `/128`); an empty entry removes the

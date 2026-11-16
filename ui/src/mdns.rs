@@ -1108,16 +1108,16 @@ pub struct Status {
 
 static STATUS: std::sync::Mutex<Status> = std::sync::Mutex::new(Status { state: State::Off, name: String::new() });
 
-/// The netmask of the interface that has the IPv4 address `a` (up, running, multicast), None when none has it.
-pub fn netmask_of(a: Ipv4Addr) -> Option<Ipv4Addr> {
+/// Every IPv4 address with its netmask of the interfaces that are up (not loopback), in the order the kernel lists
+/// them; an interface can have several (a DHCP or set address and a link-local one).
+pub fn ipv4_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
     #[cfg(unix)]
     {
-        net::interfaces(None).into_iter().find_map(|i| i.v4.filter(|v| v.0 == a).map(|v| v.1))
+        net::ipv4_all()
     }
     #[cfg(not(unix))]
     {
-        let _ = a;
-        None
+        Vec::new()
     }
 }
 
@@ -1243,6 +1243,34 @@ mod net {
         }
         out.retain(|i| i.v4.is_some() || !i.v6.is_empty());
         out.sort_by_key(|i| i.index);
+        out
+    }
+
+    /// `ipv4_networks`: every IPv4 address of the interfaces that are up, with its netmask.
+    pub fn ipv4_all() -> Vec<(Ipv4Addr, Ipv4Addr)> {
+        let mut out = Vec::new();
+        // SAFETY: the list from getifaddrs is read while it is alive and freed once
+        unsafe {
+            let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
+            if libc::getifaddrs(&mut ifa) != 0 {
+                return out;
+            }
+            let mut p = ifa;
+            while !p.is_null() {
+                let a = &*p;
+                p = a.ifa_next;
+                let f = a.ifa_flags;
+                if f & (libc::IFF_LOOPBACK as u32) != 0 || f & (libc::IFF_UP as u32) == 0 || a.ifa_addr.is_null() || a.ifa_netmask.is_null() {
+                    continue;
+                }
+                if (*a.ifa_addr).sa_family as i32 == libc::AF_INET {
+                    let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
+                    let mask = u32::from_be((*(a.ifa_netmask as *const libc::sockaddr_in)).sin_addr.s_addr);
+                    out.push((Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), Ipv4Addr::from(mask)));
+                }
+            }
+            libc::freeifaddrs(ifa);
+        }
         out
     }
 

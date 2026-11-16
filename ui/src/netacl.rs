@@ -160,6 +160,23 @@ pub fn lan_of(a: Ipv4Addr, mask: Ipv4Addr) -> Option<String> {
     Some(format!("{}/{}", masked(IpAddr::V4(a), n as u8), n))
 }
 
+/// The networks Allowed offers, from every IPv4 address of the scope with its netmask (`lan_of`), each once: the
+/// link-local one (169.254.0.0/16) only when there is no other, since a list of it alone shuts out every computer
+/// that reaches the scope through a router or by a DHCP address (unit 2026-11-16: the top bar showed the link-local
+/// address of the Ethernet port, which also had 10.20.0.51/24, and the WLAN had 192.168.177.75/24).
+pub fn lans(addrs: &[(Ipv4Addr, Ipv4Addr)]) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    for &(a, m) in addrs.iter().filter(|x| !x.0.is_link_local()).chain(addrs.iter().filter(|x| x.0.is_link_local())) {
+        if a.is_link_local() && !v.is_empty() {
+            break;
+        }
+        if let Some(l) = lan_of(a, m).filter(|l| !v.contains(l)) {
+            v.push(l);
+        }
+    }
+    v
+}
+
 impl std::fmt::Display for Acl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut v: Vec<String> = self.nets.iter().map(|(a, n)| format!("{}/{}", a, n)).collect();
@@ -272,5 +289,11 @@ mod tests {
         assert_eq!(lan_of(v4("10.1.2.3"), v4("0.0.0.0")), None, "no mask: that would be everyone");
         assert_eq!(lan_of(v4("10.1.2.3"), v4("255.0.255.0")), None);
         assert_eq!(lan_of(v4("127.0.0.1"), v4("255.0.0.0")), None);
+        // every network once, the link-local one only alone
+        let m24 = v4("255.255.255.0");
+        let ll = (v4("169.254.124.87"), v4("255.255.0.0"));
+        assert_eq!(lans(&[ll, (v4("10.20.0.51"), m24), (v4("192.168.177.75"), m24), (v4("10.20.0.9"), m24)]), vec!["10.20.0.0/24", "192.168.177.0/24"]);
+        assert_eq!(lans(&[ll]), vec!["169.254.0.0/16"]);
+        assert!(lans(&[]).is_empty());
     }
 }

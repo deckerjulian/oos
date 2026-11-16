@@ -24,9 +24,9 @@ use crate::{mdns, netacl};
 pub(super) struct RemoteUi {
     /// `net.allow` at the start (`load_system`): what the firewall and oos-ui use until the next one
     pub allow_start: String,
-    /// the network the scope is on, `192.168.1.0/24` (from the address in the top bar and its netmask), read while the
-    /// page is open
-    pub lan: Option<String>,
+    /// the networks the scope is on, `192.168.1.0/24` (every IPv4 address with its netmask, `netacl::lans`), read
+    /// while the page is open
+    pub lans: Vec<String>,
 }
 
 const OTHER: &str = "Other ...";
@@ -180,7 +180,7 @@ impl Ui {
 
     /// The network the scope is on, for the picker and the keyboard of Allowed (`RemoteUi::lan`).
     pub(super) fn allow_lan_read(&mut self) {
-        self.remote.lan = self.net.parse().ok().and_then(|a| mdns::netmask_of(a).and_then(|m| netacl::lan_of(a, m)));
+        self.remote.lans = netacl::lans(&mdns::ipv4_networks());
     }
 
     /// The lines of Allowed's picker: the list in use (stays), the network the scope is on, Other on the keyboard.
@@ -191,7 +191,7 @@ impl Ui {
         if !now.is_empty() {
             v.push((short_name(&now), Some(now.clone())));
         }
-        if let Some(l) = self.remote.lan.as_ref().filter(|l| **l != now) {
+        for l in self.remote.lans.iter().filter(|l| **l != now) {
             v.push((short_name(l), Some(l.clone())));
         }
         v.push((OTHER.into(), None));
@@ -204,7 +204,7 @@ impl Ui {
             Some((_, Some(v))) if *v != self.sys.net_allow() => self.set_allow(&v.clone()),
             Some((_, None)) => {
                 let now = self.sys.net_allow();
-                let start = if now.is_empty() { self.remote.lan.clone().unwrap_or_default() } else { now };
+                let start = if now.is_empty() { self.remote.lans.first().cloned().unwrap_or_default() } else { now };
                 self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::NetAllow, &start));
             }
             _ => {}
@@ -446,7 +446,7 @@ mod tests {
         assert!(u.dlg_layout().unwrap().rows.iter().any(|r| r.it == Item::RemAllow));
         assert_eq!((u.value(Item::RemAllow).as_str(), u.value(Item::RemFirewall).as_str()), ("everyone", "off: everyone"));
         // the network the scope is on is offered and starts the keyboard
-        u.remote.lan = Some("192.0.2.0/24".into());
+        u.remote.lans = vec!["192.0.2.0/24".into()];
         assert_eq!(u.options(Item::RemAllow), vec!["192.0.2.0/24".to_string(), OTHER.into()]);
         u.open_picker(Item::RemAllow);
         u.activate(Item::PickOpt(1));
@@ -478,8 +478,8 @@ mod tests {
         v.remote.allow_start = v.sys.net_allow();
         assert_eq!(v.value(Item::RemFirewall), "on");
         // the list in use (cut as a name is) and the network are offered; the network sets the list from the picker
-        v.remote.lan = Some("198.51.100.0/24".into());
-        assert_eq!(v.options(Item::RemAllow), vec!["192.0.2.0/24 fd00\u{2026}".to_string(), "198.51.100.0/24".into(), OTHER.into()]);
+        v.remote.lans = vec!["198.51.100.0/24".into(), "203.0.113.0/24".into()];
+        assert_eq!(v.options(Item::RemAllow), vec!["192.0.2.0/24 fd00\u{2026}".to_string(), "198.51.100.0/24".into(), "203.0.113.0/24".into(), OTHER.into()]);
         v.open_menu(MenuId::Remote);
         v.open_picker(Item::RemAllow);
         v.activate(Item::PickOpt(1));
