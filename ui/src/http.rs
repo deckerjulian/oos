@@ -32,6 +32,9 @@ const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
+/// A body above this (an update package, a waveform) is taken one at a time: a second one is answered 503 when its
+/// head is in, so the requests waiting hold at most one large body and `MAX_PENDING` small ones.
+const LARGE_BODY: usize = MAX_OTHER;
 /// Idle time and whole time a request may take (the upload of a package over 10 Mbit/s takes ~30 s).
 const IDLE_S: u64 = 10;
 const DEADLINE_S: u64 = 120;
@@ -503,15 +506,31 @@ fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
     }
 }
 
+/// A request being read.
+struct Pending {
+    s: TcpStream,
+    /// the request so far
+    req: Vec<u8>,
+    /// last data, accepted
+    t: Instant,
+    t_acc: Instant,
+    /// the length of the whole request, once its head is in and the body is taken
+    need: Option<usize>,
+    /// its body is over `LARGE_BODY`: the one large body being read
+    large: bool,
+}
+
 pub struct Http {
     l: Option<TcpListener>,
-    /// connection, request so far, last data, accepted
-    pending: Vec<(TcpStream, Vec<u8>, Instant, Instant)>,
+    pending: Vec<Pending>,
     shots: Arc<Shots>,
     /// who may install an update or use MCP (empty: everyone)
     pub acl: crate::netacl::Acl,
     /// the addresses the identification page names
     offer: Offer,
+    /// tests: every peer outside `acl` (loopback is always inside)
+    #[cfg(test)]
+    refuse_peers: bool,
 }
 
 impl Drop for Http {
@@ -658,7 +677,15 @@ fn waveform_name(query: &str) -> String {
 
 impl Http {
     pub fn open(port: u16) -> Http {
-        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new(), acl: crate::netacl::Acl::default(), offer: Offer::default() }
+        Http {
+            l: Self::bind(port),
+            pending: Vec::new(),
+            shots: Shots::new(),
+            acl: crate::netacl::Acl::default(),
+            offer: Offer::default(),
+            #[cfg(test)]
+            refuse_peers: false,
+        }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
@@ -738,18 +765,24 @@ impl Http {
                 }
                 let _ = s.set_nonblocking(false);
                 let now = Instant::now();
-                self.pending.push((s, Vec::new(), now, now));
+                self.pending.push(Pending { s, req: Vec::new(), t: now, t_acc: now, need: None, large: false });
             }
         }
         let mut i = 0;
         while i < self.pending.len() {
             let mut buf = [0u8; 65536];
-            let (s, req, t, t_acc) = &mut self.pending[i];
+            let large_taken = self.pending.iter().any(|p| p.large);
+            let Pending { s, req, t, t_acc, need, large } = &mut self.pending[i];
             let mut dead = false;
-            // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s)
+            // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s), and once
+            // the length is known not beyond the request: the buffer reserved for it is not outgrown
             let mut got = 0;
             while got < 2 << 20 {
-                match crate::net::read_now(s, &mut buf) {
+                let room = need.map_or(buf.len(), |n| n.saturating_sub(req.len()).min(buf.len()));
+                if room == 0 {
+                    break;
+                }
+                match crate::net::read_now(s, &mut buf[..room]) {
                     Ok(0) => {
                         dead = true;
                         break;
@@ -772,6 +805,8 @@ impl Http {
                 dead = true; // no header end in 16 KiB
             }
             let mut too_big = false;
+            // answered when the head is in, before any of the body is kept: 403 refused, 503 busy
+            let mut early = None;
             let complete = hdr_end.is_some_and(|e| {
                 let h = String::from_utf8_lossy(&req[..e]).to_ascii_lowercase();
                 let n = h.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
@@ -779,9 +814,36 @@ impl Http {
                 let upload_path = first.split_whitespace().nth(1).unwrap_or("").split('?').next().unwrap_or("");
                 let limit = if first.starts_with("post ") && upload_path == "/update" { MAX_UPDATE } else if first.starts_with("post ") && upload_path == "/waveform" { MAX_WAVEFORM } else { MAX_OTHER };
                 too_big = n > limit || req.len() > limit + e;
+                if !too_big && need.is_none() {
+                    // what only `net.allow` may send is refused before its body is read, not after
+                    let guarded = upload_path == "/mcp" || (first.starts_with("post ") && upload_path == "/update");
+                    #[cfg(test)]
+                    let refused = self.refuse_peers;
+                    #[cfg(not(test))]
+                    let refused = false;
+                    if guarded && (refused || !s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()))) {
+                        early = Some("403 Forbidden");
+                        return false;
+                    }
+                    if n > LARGE_BODY && large_taken {
+                        early = Some("503 Service Unavailable");
+                        return false;
+                    }
+                    // the whole request in one allocation, not a doubling past it
+                    req.reserve_exact((e + n).saturating_sub(req.len()));
+                    *need = Some(e + n);
+                    *large = n > LARGE_BODY;
+                }
                 too_big || e.checked_add(n).is_some_and(|need| req.len() >= need)
             });
-            if too_big {
+            if let Some(status) = early {
+                let msg = if status.starts_with("403") { "refused" } else { "busy, try again" };
+                let head = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
+                    Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}", msg.len());
+                let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
+                let _ = s.write_all(head.as_bytes());
+                dead = true;
+            } else if too_big {
                 let msg = b"request too large";
                 let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", msg.len());
                 let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
@@ -795,7 +857,7 @@ impl Http {
                 let (route, query) = path.split_once('?').unwrap_or((&path, ""));
                 let req_body = &req[hdr_end.unwrap_or(req.len())..];
                 let post = text.starts_with("POST ");
-                // what changes the scope beyond keys and knobs: only from the allowed prefixes
+                // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
                 let peer_ok = s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()));
                 // an answer that is text for the page to show, not the data asked for
                 let mut failed = false;
@@ -1622,6 +1684,49 @@ setTimeout(() => {
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("<Manufacturer>OOS"), "{}", r);
         assert!(r.contains("TCPIP::INSTR") && r.contains("TCPIP::5555::SOCKET"), "{}", r);
+    }
+
+    /// The requests waiting hold at most one large body: before, eight connections could each buffer up to 128 MiB
+    /// (the Vec doubling to 256 MiB), and `POST /update` or `/mcp` from outside `net.allow` was refused only after
+    /// its whole body was in. Both are now decided when the head is in; only a head is sent here, so the answer must
+    /// not wait for a body.
+    #[test]
+    fn a_large_body_at_a_time_and_net_allow_before_the_body() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let head = |path: &str, n: usize| format!("POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {n}\r\n\r\n");
+        // a large upload in progress: its head and a part of its body
+        let port = h.port().unwrap();
+        let mut first = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        first.write_all(head("/update", 8 << 20).as_bytes()).unwrap();
+        first.write_all(&vec![0u8; 64 << 10]).unwrap();
+        let until = Instant::now() + Duration::from_secs(60);
+        while !h.pending.iter().any(|p| p.req.len() >= head("/update", 8 << 20).len() + (64 << 10)) {
+            assert!(Instant::now() < until, "the first upload was not taken");
+            h.poll(&mut ui, &cv, &mut scpi);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let taken = h.pending.iter().find(|p| p.large).expect("the first upload is the large body");
+        assert_eq!(taken.need, Some(head("/update", 8 << 20).len() + (8 << 20)));
+        assert!(taken.req.capacity() <= taken.need.unwrap(), "reserved for the request, not doubled past it");
+        for path in ["/waveform?slot=1", "/update"] {
+            let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 2 << 20).into_bytes());
+            assert!(r.starts_with("HTTP/1.1 503"), "{path}: {r}");
+        }
+        // a small body still goes through beside it
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+        drop(first);
+        // outside net.allow: refused at the head, the body never asked for
+        h.refuse_peers = true;
+        for path in ["/update", "/mcp"] {
+            let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 1 << 20).into_bytes());
+            assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "{path}: {r}");
+        }
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
     }
 
     #[test]

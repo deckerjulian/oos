@@ -286,8 +286,9 @@ The link-local fallback address (169.254.x.y) is only reachable from a listed pr
 `net.allow` for a computer on a direct cable.
 
 **oos-ui** reads `net.allow` once at start and applies it a second time per connection: `POST /update` and `/mcp`
-answer 403 to others, SCPI and VXI-11 close the connection. The page, the live picture, `/cmd` and the downloads stay
-open to the firewall's prefixes. Loopback is always allowed.
+answer 403 to others as soon as the request head is in (the body is not read), SCPI and VXI-11 close the connection.
+The page, the live picture, `/cmd`, the downloads and `POST /waveform` (a reference upload, nothing written to
+storage) stay open to the firewall's prefixes. Loopback is always allowed.
 
 **MAC**: an address that is not unicast or not six colon-separated bytes falls back to `cid` (logged). `vendor` asks the board
 (`oos-board mac`; on the DHO800/DHO900 `oos-fpgad model`, which needs the keys of vendor.bin, docs/models.md 1); without
