@@ -11,8 +11,7 @@ also holds the parts listed here. Each keeps its own licence.
   archives of the binaries in it: the files of the column "Source with a release". The rest of the corresponding
   source is this tree at the tag of the release (GitHub's "Source code" archive): the OOS programs, the kernel
   patches, configuration and device tree, and the scripts that build everything (`boot/`, `kernel/`, `rootfs/`,
-  `gpu/`). `tools/release-sources.sh` lists the files a release needs and checks a release for them. The two files
-  of libnl go with the releases after 0.1.13.
+  `gpu/`). `tools/release-sources.sh` lists the files a release needs and checks a release for them.
 - If you pass an image on, pass these sources and this file on with it, or point to the release you took it from.
 
 ## Kernel and firmware
@@ -30,7 +29,8 @@ also holds the parts listed here. Each keeps its own licence.
 | Part | Version | Licence | In the image | Licence text | Source with a release |
 |---|---|---|---|---|---|
 | BusyBox | 1.37.0 (Ubuntu `busybox-static` 1:1.37.0-7ubuntu1) | GPL-2.0-only | `/bin/busybox`, static | `GPL-2.0.txt` | `busybox_1.37.0.orig.tar.bz2`, `busybox_1.37.0-7ubuntu1.debian.tar.xz`, `.dsc` |
-| GNU C library (glibc) | 2.43 (Ubuntu 2.43-2ubuntu2.4) | LGPL-2.1-or-later; parts under other licences, see `glibc` | linked into `busybox` and `oos-hw`; shared libraries of the GPU helper | `glibc`, `LGPL-2.1.txt` | `glibc_2.43.orig.tar.xz`, `glibc_2.43-2ubuntu2.4.debian.tar.xz`, `.dsc` |
+| GNU C library (glibc), in BusyBox | 2.42 (Ubuntu 2.42-2ubuntu4: the one Ubuntu built `busybox-static` with, its `Built-Using`) | LGPL-2.1-or-later; parts under other licences, see `glibc` | linked into `busybox` | `glibc`, `LGPL-2.1.txt` | `glibc_2.42.orig.tar.xz`, `glibc_2.42-2ubuntu4.debian.tar.xz`, `.dsc` |
+| GNU C library (glibc), elsewhere | 2.43 (Ubuntu 2.43-2ubuntu2.4) | LGPL-2.1-or-later; parts under other licences, see `glibc` | linked into `oos-hw`; shared libraries of the GPU helper | `glibc`, `LGPL-2.1.txt` | `glibc_2.43.orig.tar.xz`, `glibc_2.43-2ubuntu2.4.debian.tar.xz`, `.dsc` |
 | GCC runtime (libgcc, libstdc++) | GCC 16 (Ubuntu 16-20260322-1ubuntu1) | GPL-3.0-or-later WITH GCC-exception-3.1 | shared libraries of the GPU helper; libgcc parts in the C programs | `libstdc++`, `GPL-3.0.txt`, `GCC-exception-3.1.txt` | `gcc-16_16-20260322.orig.tar.gz`, `gcc-16_16-20260322-1ubuntu1.debian.tar.xz`, `.dsc` |
 | Mesa | 26.0.8 | MIT, and the licences its file lists | `libEGL`, `libGLESv2`, `libgbm`, `libgallium` of the GPU helper | `mesa` | `mesa_26.0.8.orig.tar.xz` |
 | libdrm | 2.4.131 (Ubuntu 2.4.131-1) | MIT | shared library of the GPU helper | `libdrm` | `libdrm_2.4.131.orig.tar.xz`, `libdrm_2.4.131-1.debian.tar.xz`, `.dsc` |
@@ -51,7 +51,10 @@ also holds the parts listed here. Each keeps its own licence.
 
 The versions are those of release 0.1.13. `rootfs/deps.lock` pins the archives the image builds from, with their
 checksums; the Ubuntu and Alpine packages come from the container images the build scripts name (`ubuntu:26.04`,
-`alpine:3.22`), and a release carries the source packages of the versions that were in its image.
+`alpine:3.22`), and a release carries the source packages of the versions that were in its image. A package that
+links a library in keeps the library's version of the day it was built: `busybox.version` of a build names the one
+of BusyBox. The releases up to 0.1.6 were built before the Ubuntu revision of glibc was recorded; they carry the
+source of 2.43-2ubuntu2.4, the revision of the next build.
 
 ## Not in the image
 

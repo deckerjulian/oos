@@ -14,6 +14,8 @@ set -eu
 set -f
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+# busybox-static 1:1.37.0-7ubuntu1 says "Built-Using: glibc (= 2.42-2ubuntu4)"; follows when the package changes
+busybox_glibc=glibc_2.42-2ubuntu4
 
 names() {
     # the kernel base archive
@@ -25,6 +27,11 @@ names() {
         mesa) echo "mesa_$ver.orig.tar.*|mesa-$ver.tar.*" ;;
         *) echo "${url##*/}" ;;
         esac
+    done
+    # the glibc inside Ubuntu's busybox-static: the one that package was built with (its Built-Using, which
+    # boot/out/busybox.version of a build names), not the one of the container
+    for f in "$busybox_glibc.dsc" "${busybox_glibc%%-*}.orig.tar.*" "$busybox_glibc.debian.tar.*"; do
+        echo "$f"
     done
     # Ubuntu source packages: description, upstream archive, Ubuntu's changes
     for p in busybox glibc gcc-[0-9]* libdrm zlib; do

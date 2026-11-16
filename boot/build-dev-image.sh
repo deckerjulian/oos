@@ -135,8 +135,9 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
 	. /wlan/unit-hook/dtb.sh
-	# the busybox package in the image: its source goes with a release
-	dpkg-query -W -f "\${Package} \${Version}\n" busybox-static > /out/busybox.version
+	# the busybox package in the image, and the glibc it was built with and holds: their sources go with a release
+	# (tools/release-sources.sh names that glibc; it follows when this line changes)
+	dpkg-query -W -f "\${Package} \${Version}\nBuilt-Using: \${Built-Using}\n" busybox-static > /out/busybox.version
 	chown -R "$OUT_OWNER" /out
 	ls -la /out
 '

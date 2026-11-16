@@ -19,7 +19,8 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
   `kernel/base.sha256`; `tools/release-sources.sh check <tag>` compares a release on GitHub with it
   ([THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md)).
 - Not in the manifest: the Docker base images (`alpine:3.22`, `ubuntu:26.04`, `rust:1-alpine`), busybox (Ubuntu's
-  `busybox-static`, its version recorded in `busybox.version` of each build), the kernel base archive
+  `busybox-static`, its version and the glibc it was built with recorded in `busybox.version` of each build), the
+  kernel base archive
   (`kernel/src/SHA256SUMS`) and Rust crates (`Cargo.lock`).
 
 ## Rust crates
