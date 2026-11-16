@@ -35,8 +35,9 @@ must be pressed twice within 10 s; the first press shows the preconditions (sect
 AFEs in the acquisition thread. A roll acquisition is stopped first. Status shows configurations done of total, the
 current channel and pass. Cancel ends the run at the next configuration and nothing is kept.
 
-On success the results are saved to `/oos/cal` and take effect at the next set-up. `oos-fpgad selfcal
-entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to `/oos/cal` only.
+On success the results are saved to `/oos/cal` and take effect at the next set-up. All selects only the channels of
+the model. `oos-fpgad selfcal entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to
+`/oos/cal` only.
 
 ### 1.2 Items and order
 
