@@ -636,7 +636,7 @@ impl Ui {
         // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane
         let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on && !self.record_mode()).map(Trace::Channel).collect();
         sources.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(Trace::Reference));
-        sources.extend((0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).map(Trace::Math));
+        sources.extend((0..NMATH).filter(|&k| self.m.math_shown(k)).map(Trace::Math));
         sources
     }
     pub(super) fn source_area(&self, id: WaveId) -> Option<Rect> {

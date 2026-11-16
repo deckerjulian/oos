@@ -1277,6 +1277,13 @@ pub struct Model {
     pub view_cur: usize,
     /// what each view keeps while another one is shown (ui/views.rs, `Ui::view_snapshot`); empty: not set up yet
     pub view_slots: [String; crate::ui::VIEWS_MAX],
+    /// What the Ui keeps for the view shown besides the model: pinned measurements, the panel, search, zoom source
+    /// and the like (`ui/views.rs`). Written to the setup every frame; empty is the default.
+    pub studio_state: String,
+    /// Math channels not shown in the view shown (their definition is shared; `ui/views.rs`)
+    pub math_hidden: [bool; crate::math::NMATH],
+    /// The GEN chip and card are not shown in the view shown (the output itself, `afg_on`, is shared)
+    pub gen_hidden: bool,
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
@@ -1709,6 +1716,9 @@ impl Default for Model {
             views: 1,
             view_cur: 0,
             view_slots: Default::default(),
+            studio_state: String::new(),
+            math_hidden: [false; crate::math::NMATH],
+            gen_hidden: false,
             z_src: None,
             hist: Hist::Off,
             view: AView::Scope,
@@ -2201,6 +2211,11 @@ impl Model {
     }
 
     /// Settings of math channel `k` (the selected one from the edit fields).
+    /// Whether math channel `k` is defined and shown in the view shown.
+    pub fn math_shown(&self, k: usize) -> bool {
+        k < crate::math::NMATH && self.math_ch(k).op != crate::math::MathOp::Off && !self.math_hidden[k]
+    }
+
     pub fn math_ch(&self, k: usize) -> crate::math::MathCh {
         if k == self.math_sel {
             crate::math::MathCh { lin: self.math_lin, op: self.math, a: self.math_a, b: self.math_b, scale: self.math_scale, fc: self.math_fc, bw: self.math_bw, offset: self.math_offset, win: self.fft_win }

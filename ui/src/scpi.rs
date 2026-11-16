@@ -1786,6 +1786,17 @@ impl Scpi {
         if kw(n0, "SIM") {
             return self.sim_cmd(ui, &nodes[1..], query, arg);
         }
+        // :DISPlay:GENerator ON|OFF: whether the GEN chip and card are shown in the view shown (the output is the scope's)
+        if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "GENerator") {
+            if query {
+                return t(if ui.m.gen_hidden { "0" } else { "1" });
+            }
+            match parse_bool(arg) {
+                Some(on) => { ui.m.gen_hidden = !on; ui.mark_changed(); }
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return None;
+        }
         if kw(n0, "DISPlay") && !(nodes.len() == 2 && kw(nodes[1], "DATA")) && !(nodes.len() >= 2 && kw(nodes[1], "VIEW")) {
             return self.display_cmd(ui, &nodes[1..], query, arg);
         }
@@ -3074,13 +3085,16 @@ impl Scpi {
         let n0 = n.first().copied().unwrap_or("");
         if n.len() == 1 && kw(n0, "DISPlay") {
             if query {
-                return t(if ui.m.math_ch(k).op == MathOp::Off { "0" } else { "1" });
+                return t(if ui.m.math_shown(k) { "1" } else { "0" });
             }
             return match parse_bool(arg) {
                 Some(on) => {
-                    let mut c = ui.m.math_ch(k);
-                    c.op = if on { if c.op == MathOp::Off { MathOp::Add } else { c.op } } else { MathOp::Off };
-                    put_math(ui, k, c);
+                    // the lane is shown or hidden in the view shown; the definition is the scope's
+                    let c = ui.m.math_ch(k);
+                    if on && c.op == MathOp::Off {
+                        put_math(ui, k, crate::math::MathCh { op: MathOp::Add, ..c });
+                    }
+                    ui.math_set_shown(k, on);
                     None
                 }
                 None => {

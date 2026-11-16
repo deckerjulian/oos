@@ -148,7 +148,10 @@ Commands: [display.md](display.md).
 | `studio_badges` | layout name; the Studio keys (`studio_dock`, `studio_ov`, `studio_meas_view` = `detailed`, `studio_badges` = `classic` are optional) | - | - |
 | `view` | the analyser view (`Scope`, `Spectrum`, `Eye`, ...) | `Scope` | `:VIEW` |
 | `views` | `views` is `<count> <current, 1-based>` | `1 1` | `:DISPlay:VIEW:COUNt` |
-| `view<n>` | `view<n>` is the text of view slot n (optional) | - | - |
+| `view<n>` | `view<n>` is what view n keeps while another is shown: `key=value; ...` of the measurement list, panels, cursors, zoom, lanes shown and analysis set-ups, values escaped with `%3B` for `;` (optional) | - | - |
+| `math_hidden` | math channels (1-based) not shown in the view shown (optional) | - | `:MATH<n>:DISPlay` |
+| `gen_hidden` | `true`: the GEN chip is not shown in the view shown (optional) | `false` | `:DISPlay:GENerator` |
+| `studio_state` | what the Ui keeps of the view shown: pinned measurements, panel mode, search, zoom source (optional; written each time) | empty | - |
 
 ## Measurements
 

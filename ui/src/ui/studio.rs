@@ -286,12 +286,14 @@ impl Ui {
         self.studio.view = StudioView::from_token(&self.m.studio_view);
         let text = self.m.studio_dock.clone();
         self.dock_restore(&text);
+        self.view_state_restore("");
         self.studio.enter = self.m.layout == Layout::Studio;
     }
 
     /// Start of a frame: the lanes draw their badges again, and a layout change made in the Display menu is applied.
     pub(super) fn studio_frame_start(&mut self) {
         self.studio.lane_badges.get_mut().clear();
+        self.sync_view_state();
         // coming into Studio by any road (menu, recalled setup, restart) applies its entry rules: its bars show
         let is = self.m.layout == Layout::Studio;
         if is && !self.studio.was { self.studio.enter = true; }
@@ -528,7 +530,7 @@ impl Ui {
         let time = Rect::new(trig.x - 9 - 150, y, 150, h);
         // the sources that are on get a pill; the channels that are off share one "+ CH" chip
         let shown = self.shown_refs();
-        let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).collect();
+        let maths: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_shown(k)).collect();
         let off = (0..n).filter(|&c| !self.m.ch[c].on).count();
         // with every channel on the chip stays, as "Add source": math, ref and bus are behind it
         let add_w = if off > 0 { 62 } else { 100 };
@@ -537,7 +539,7 @@ impl Ui {
         let show_w = if self.studio_badges_hidden() { 46 } else { 0 };
         let caps = &oos_hal::model::platform().caps;
         let la_w = if caps.la { 52 } else { 0 };
-        let gen_w = if caps.has_gen() { if self.m.afg_on { 124 } else { 56 } } else { 0 };
+        let gen_w = if caps.has_gen() && !self.m.gen_hidden { if self.m.afg_on { 124 } else { 56 } } else { 0 };
         let aux_w = [la_w, gen_w].iter().filter(|w| **w > 0).map(|w| w + 5).sum::<i32>();
         // the source pills (channels, refs, math) share what the fixed chips leave, by count
         let count = (chans.len() + shown.len() + maths.len()) as i32;
@@ -849,7 +851,11 @@ impl Ui {
     /// one (or the same, for one), so its trace is on the screen at once.
     pub(super) fn studio_math_start(&mut self) {
         let free = if self.m.math == MathOp::Off { Some(self.m.math_sel) } else { (0..NMATH).find(|&k| self.m.math_ch(k).op == MathOp::Off) };
-        let Some(k) = free else { return };
+        // every channel is defined: one hidden in this view comes back
+        let Some(k) = free else {
+            if let Some(k) = (0..NMATH).find(|&k| self.m.math_ch(k).op != MathOp::Off && self.m.math_hidden[k]) { self.m.math_hidden[k] = false; self.relayout(); }
+            return;
+        };
         if k != self.m.math_sel { self.m.math_select(k); }
         let on: Vec<usize> = (0..n_ch()).filter(|&c| self.m.ch[c].on).collect();
         let Some(&a) = on.first() else { return };

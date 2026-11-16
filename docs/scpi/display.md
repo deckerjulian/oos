@@ -35,6 +35,9 @@ Part of the [SCPI reference](README.md).
 | `:VIEW` | Set / Query | `SCOPE\|SPECTRUM\|EYE\|POWER\|BODE\|MAGNETIC\|INVERTER\|DPT`. | `SCOPE` | Run control > Select analyser view | OOS extension |
 | `:DISPlay:VIEW` | Set / Query | The view shown, `1` to the count (Display > Views). | `1` | Run control > Select analyser view | OOS extension |
 | `:DISPlay:VIEW:COUNt` | Set / Query | The number of views, 1 to 4. | `1` | Display and layout > Views: count | OOS extension |
+| `:DISPlay:GENerator` | Set / Query | `ON\|OFF`: whether the GEN chip and card are shown in the view shown; the output (`:AFG`) is shared. | `ON` | none | OOS extension |
+
+Each view is an independent workspace of the one scope. The channels, time base, trigger, acquisition, the generator output and the math definitions are shared by every view. Which math channels are shown (`:MATH<n>:DISPlay`), whether the GEN chip is shown (`:DISPlay:GENerator`) and the analyser page (`:VIEW`, for example Bode) belong to the view; a new math channel shows in the view it was made in, and one hidden in the last view that shows it goes off. The measurement list, the statistics switches and the gate, the panels and their place, the cursors, the zoom, the references and bus shown, and the analysis set-ups (histogram, spectrum, eye, search) belong to the view. `:DISPlay:VIEW` changes which view is shown, and the measurement commands (`:MEASure:*`) act on the list of the view shown; clearing or adding a measurement in one view leaves the others alone. Raising the count makes each new view a copy of the view shown. A setup (`:SYSTem:SETup?`, `:SAVE:SETup`) carries every view (`views`, `view<n>`, `studio_state`); a setup without them loads with every view a copy of the one shown.
 
 ### Studio zoom
 

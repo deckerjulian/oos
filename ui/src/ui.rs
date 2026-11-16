@@ -126,6 +126,8 @@ mod batch29_tests;
 #[cfg(test)]
 mod batch30_tests;
 #[cfg(test)]
+mod batch33_tests;
+#[cfg(test)]
 mod uiaudit_tests;
 #[cfg(test)]
 mod batch12_tests;
@@ -1319,6 +1321,8 @@ pub struct Ui {
     look: reflook::RefLook,
     /// Settings of each added measurement. Missing keys follow the shared measure menu.
     meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
+    /// The same of the views that are not shown (`ui/views.rs`).
+    view_own: [std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>; VIEWS_MAX],
     /// The gate a row measures with while its key or samples are made (None: the shared one).
     row_gate: std::cell::Cell<Option<bool>>,
     /// Settings dialog open on this index of `m.meas`.
@@ -1651,6 +1655,7 @@ impl Ui {
             offline: false,
             look: reflook::RefLook::Live,
             meas_own: std::collections::HashMap::new(),
+            view_own: Default::default(),
             row_gate: std::cell::Cell::new(None),
             meas_cfg: None,
             offline_ref: 0,
@@ -1972,7 +1977,7 @@ impl Ui {
 
     /// Whether window `w` has an analog channel or a math channel in it.
     fn win_has_analog(&self, w: usize) -> bool {
-        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w) || (0..NMATH).any(|k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == w)
+        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w) || (0..NMATH).any(|k| self.m.math_shown(k) && self.math_win_of(k) == w)
     }
 
     /// Window of decoder `k`'s band in the plot, or None when it has a row under the LA lanes.
@@ -2006,7 +2011,7 @@ impl Ui {
             };
         }
         for k in 0..NMATH {
-            self.m.math_win[k] = if self.m.math_ch(k).op != MathOp::Off {
+            self.m.math_win[k] = if self.m.math_shown(k) {
                 i += 1;
                 (i - 1) % n
             } else {
@@ -4080,7 +4085,7 @@ impl Ui {
     /// Math channel `k` goes off, and so does its chip in the bottom bar.
     pub(super) fn math_turn_off(&mut self, k: usize) {
         if k >= NMATH { return; }
-        if k == self.m.math_sel { self.m.math = MathOp::Off; } else { self.m.maths[k].op = MathOp::Off; }
+        self.math_set_shown(k, false);
         self.settings_changed();
         self.close_menu();
         self.relayout();
@@ -4115,7 +4120,7 @@ impl Ui {
 
     fn draw_math(&self, cv: &mut Canvas) {
         // all traces first, then the labels on top of them
-        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win).collect();
+        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_shown(k) && self.math_win_of(k) == self.cur_win).collect();
         let labels: Vec<Option<String>> = on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
         let f = self.fonts();
         for (row, (label, &k)) in labels.iter().zip(&on).enumerate() {
@@ -5148,7 +5153,7 @@ impl Ui {
             Some(StripDock::Right) => (fr.body.right() - strip_side - rw - 2, body_top),
             Some(StripDock::Above) => (plot_x + (plot_w - rw) / 2, body_top + strip_h + 2),
             Some(StripDock::Below) => (plot_x + (plot_w - rw) / 2, bottom - strip_h - panel_h - 2),
-            Some(StripDock::Hidden) | None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32),
+            Some(StripDock::Hidden) | None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_shown(k)).count() as i32),
         };
         let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
         // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
@@ -5590,7 +5595,7 @@ impl Ui {
         let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
         let n_off = n as i32 - n_on;
         let caps = &oos_hal::model::platform().caps;
-        let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
+        let aux = [(caps.la, self.m.la.on), (caps.has_gen() && !self.m.gen_hidden, self.m.afg_on)];
         let ref_card = !self.record_mode() && !self.shown_refs().is_empty();
         let start = row.x;
         let room = |wide: bool| {
@@ -8200,7 +8205,8 @@ impl Ui {
 
     /// The text of the whole setup (the keys of the setup file and the look of the ref slots): what Save setup writes and
     /// `:SYSTem:SETup?` returns.
-    pub(crate) fn setup_text_full(&self) -> String {
+    pub(crate) fn setup_text_full(&mut self) -> String {
+        self.sync_view_state();
         format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text())
     }
 
@@ -8218,6 +8224,8 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                self.restore_view_state();
+                self.view_state_restore(text);
                 if self.m.layout == Layout::Studio { self.studio.enter = true; }
                 self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };

@@ -349,6 +349,9 @@ pub fn setup_text(m: &Model) -> String {
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
     kv("views", format!("{} {}", m.views, m.view_cur + 1));
+    kv("studio_state", m.studio_state.clone());
+    if m.math_hidden.iter().any(|&h| h) { kv("math_hidden", m.math_hidden.iter().enumerate().filter(|(_, &h)| h).map(|(k, _)| (k + 1).to_string()).collect::<Vec<_>>().join(" ")); }
+    if m.gen_hidden { kv("gen_hidden", "true".to_string()); }
     for (i, v) in m.view_slots.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
         kv(&format!("view{}", i + 1), v.clone());
     }
@@ -458,6 +461,11 @@ fn p_decode_optional_one_based(v: &str) -> Result<Option<usize>, String> {
 
 fn p_enum<T: Debug + Copy>(v: &str, all: &[T]) -> Result<T, String> {
     all.iter().copied().find(|x| format!("{:?}", x) == v).ok_or_else(|| format!("unknown value: {}", v))
+}
+
+/// A measurement kind by its name in a setup file.
+pub fn parse_meas(v: &str) -> Result<Meas, String> {
+    p_enum(v, &ALL_MEAS)
 }
 
 fn p_list<T>(v: &str, n: usize, f: impl Fn(&str) -> Result<T, String>) -> Result<Vec<T>, String> {
@@ -750,6 +758,15 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "layout" => m.layout = Layout::parse(v).ok_or_else(|| format!("bad layout {v}"))?,
         "studio_view" => m.studio_view = if ["waveform", "docked", "floating", "only"].contains(&v) { v.to_string() } else { return Err(format!("bad studio view {v}")) },
         "studio_dock" => m.studio_dock = v.to_string(),
+        "studio_state" => m.studio_state = v.to_string(),
+        "math_hidden" => {
+            let mut h = [false; crate::math::NMATH];
+            for e in v.split_whitespace() {
+                h[p_idx(e, crate::math::NMATH + 1)?.checked_sub(1).ok_or_else(|| "math 0".to_string())?] = true;
+            }
+            m.math_hidden = h;
+        }
+        "gen_hidden" => m.gen_hidden = p_bool(v)?,
         "studio_meas_view" => m.studio_detail = match v { "detailed" => true, "list" => false, _ => return Err(format!("bad studio_meas_view {v}")) },
         "studio_badges" => m.studio_classic = match v { "classic" => true, "studio" => false, _ => return Err(format!("bad studio_badges {v}")) },
         "studio_ov" => m.studio_ov = v.parse::<i32>().ok().filter(|h| (0..=2000).contains(h)).ok_or_else(|| format!("bad studio_ov {v}"))?,

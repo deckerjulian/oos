@@ -4,6 +4,8 @@ Standard and pair measurements, the measurement catalogue, statistics, the gate 
 
 Menu location: Measurements (Add, Source A / B, Gate, Reference preset, Level type, Low / mid / high level, Statistics, Copy to, Remove, Clear all).
 
+The measurement list belongs to the view shown (`:DISPlay:VIEW`, Display > Views): `:MEASure:ITEM`, `:MEASure:CLEar`, `:MEASure:STRip?`, the statistics switches and the gate read and change the list of that view only, so each view can measure something else. The shared reference levels and thresholds (`:MEASure:REFS`, `:MEASure:SETup:*`) are those of the scope and are the same in every view.
+
 Part of the [SCPI reference](README.md).
 
 ## Commands
