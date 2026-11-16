@@ -12,6 +12,8 @@ use super::*;
 pub(super) struct LiveHold {
     on: [bool; NCH],
     ref_on: [bool; NREF],
+    /// the slots that held a ref then: a ref loaded while the mode was on has no earlier state and stays shown
+    ref_had: [bool; NREF],
     run: RunState,
     status: TrigStatus,
     tscale: usize,
@@ -28,6 +30,7 @@ impl Ui {
             self.offline_hold = Some(LiveHold {
                 on: std::array::from_fn(|c| self.m.ch[c].on),
                 ref_on: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)),
+                ref_had: std::array::from_fn(|i| self.refs[i].is_some()),
                 run: self.m.run,
                 status: self.m.status,
                 tscale: self.m.tscale,
@@ -42,6 +45,7 @@ impl Ui {
             self.ph.clear();
             self.phz.clear();
         } else {
+            let studio = self.m.layout == Layout::Studio;
             self.offline = false;
             self.look = reflook::RefLook::Live;
             self.sim_play = false;
@@ -51,7 +55,7 @@ impl Ui {
                 }
                 for (i, r) in self.refs.iter_mut().enumerate() {
                     if let Some(r) = r {
-                        r.on = h.ref_on[i];
+                        r.on = h.ref_on[i] || (studio && !h.ref_had[i]);
                     }
                 }
                 self.m.run = h.run;
@@ -94,6 +98,7 @@ impl Ui {
             }
         }
         self.m.eye_src = WaveId::Ref(slot);
+        self.eye_src_chosen = true;
         self.select_workspace_source(WaveId::Ref(slot));
         self.ph.clear();
         self.phz.clear();

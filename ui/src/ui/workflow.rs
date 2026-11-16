@@ -85,6 +85,8 @@ mod slot_loading_tests {
 pub(super) struct LiveSession {
     model: Model,
     visible: [bool; NREF],
+    /// the slots that held a ref then; a ref loaded since stays shown in Live
+    had: [bool; NREF],
 }
 
 #[cfg(test)]
@@ -535,13 +537,14 @@ stat.push(value, current);
 
     pub(super) fn remember_live(&mut self) {
         if self.workflow_hold.is_none() && !self.record_mode() {
-            self.workflow_hold = Some(LiveSession { model: self.m.clone(), visible: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)) });
+            self.workflow_hold = Some(LiveSession { model: self.m.clone(), visible: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)), had: std::array::from_fn(|i| self.refs[i].is_some()) });
         }
     }
 
     pub fn waveform_epoch(&self) -> u64 { self.workflow_epoch }
 
     pub fn return_to_live(&mut self) {
+        let studio = self.m.layout == Layout::Studio;
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
         self.set_offline(false);
@@ -552,15 +555,25 @@ stat.push(value, current);
         if let Some(saved) = self.workflow_hold.take() {
             self.m = saved.model;
             for (i, r) in self.refs.iter_mut().enumerate() {
-                if let Some(r) = r { r.on = saved.visible[i]; }
+                if let Some(r) = r { r.on = saved.visible[i] || (studio && !saved.had[i]); }
             }
         } else {
-            for r in self.refs.iter_mut().flatten() { r.on = false; }
+            // Studio: a loaded ref stays shown, Live never hides what the user loaded
+            if !studio { for r in self.refs.iter_mut().flatten() { r.on = false; } }
             self.m.ch[0].on = true;
             self.m.run = RunState::Run;
             self.m.zoom = false;
             self.m.view = AView::Scope;
             self.m.meas = Self::default_meas();
+        }
+        // the acquisition source in Live is a live channel: a ref that was the trigger in SIM is not playing now
+        for secondary in [false, true].into_iter().filter(|_| studio) {
+            if (if secondary { self.m.trig_ref2 } else { self.m.trig_ref }).is_some() {
+                let c = if secondary { self.m.trig_src2 } else { self.m.trig_src };
+                let c = if c < n_ch() && self.m.ch[c].on { c } else { (0..n_ch()).find(|&c| self.m.ch[c].on).unwrap_or(0) };
+                self.m.set_trigger_wave(WaveId::Ch(c), secondary);
+                if !secondary { self.m.trig_level = 0.0; }
+            }
         }
         self.m.floor_live_tdiv();
         self.select_workspace_source(WaveId::Ch(self.m.active));

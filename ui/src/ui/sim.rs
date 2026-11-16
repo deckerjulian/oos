@@ -363,6 +363,7 @@ impl Ui {
         }
         self.select_workspace_source(WaveId::Ref(first));
         self.m.eye_src = WaveId::Ref(first);
+        self.eye_src_chosen = true;
         self.m.run = RunState::Run;
         self.m.status = TrigStatus::Wait;
         self.sim_play = true;
@@ -711,6 +712,7 @@ impl Ui {
         }
         self.select_workspace_source(WaveId::Ref(slot));
         self.m.eye_src = WaveId::Ref(slot);
+        self.eye_src_chosen = true;
         self.m.eye_rate = lane.bits_per_s;
         if !continuing || self.m.trig_ref.is_none() { self.m.set_trigger_wave(WaveId::Ref(slot), false); }
         self.m.run = if run { RunState::Run } else { RunState::Stop };

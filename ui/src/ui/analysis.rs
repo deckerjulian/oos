@@ -732,6 +732,7 @@ impl Ui {
                 Item::SpecSrc => self.m.spec_src = next,
                 Item::EyeSrc => {
                     self.m.eye_src = next;
+                    self.eye_src_chosen = true;
                     if self.m.eye_from_record { self.m.eye_rate = self.waveform_bit_rate(next).unwrap_or(0.0); }
                     self.azr.eye = None;
                     self.azr.eye_ref = None;

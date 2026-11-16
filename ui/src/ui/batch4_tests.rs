@@ -201,7 +201,10 @@ fn the_trigger_marker_opens_trigger_in_every_layout() {
         for r in rects {
             u.close_menu();
             let (x, y) = centre(r);
+            u.studio.trig_slider = false;
             u.tap(x, y);
+            // Studio: the level tag opens the slider (batch 26), the other layouts the Trigger sheet
+            if l == Layout::Studio && u.trigger_tag_hit().is_some_and(|t| t.contains(x, y)) { assert!(u.studio.trig_slider, "{l:?}: marker {r:?}"); u.studio.trig_slider = false; continue; }
             assert!(u.menu_open && u.menu == MenuId::Trigger, "{l:?}: marker {r:?}");
             // 40 px: a touch 17 px off the middle of the 16 px marker still counts
             u.close_menu();

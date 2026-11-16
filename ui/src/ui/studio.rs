@@ -140,6 +140,9 @@ pub(super) struct Studio {
     pub label_rects: std::cell::RefCell<Vec<Rect>>,
     /// the axis strips: a finger on one, a wheel flash (`axis.rs`)
     pub axis: super::axis::AxisState,
+    /// the trigger level slider is open (`trigslider.rs`), and what the finger on it is doing
+    pub trig_slider: bool,
+    pub slider_part: Option<super::trigslider::SliderPart>,
 }
 
 /// The second group of the "+ CH" popup.
@@ -919,6 +922,12 @@ impl Ui {
         }
         if y < self.frame().top.bottom() {
             self.studio_top_tap(x, y);
+            return true;
+        }
+        // the trigger level tag opens the slider (a tap that reaches here was on nothing else)
+        if !self.view_on() && !self.m.touch_lock && self.trigger_tag_hit().is_some_and(|r| r.contains(x, y)) {
+            self.close_menu();
+            self.studio.trig_slider = true;
             return true;
         }
         false
@@ -2280,6 +2289,7 @@ impl Ui {
                 self.studio.drag = None;
                 // the numeric pad is modal
                 if self.numpad.is_some() { return self.studio_eat(x, y); }
+                if self.trig_slider_down(x, y) { return true; }
                 // the info card is modal
                 if self.studio.md.info.is_some() { return self.studio_eat(x, y); }
                 // full screen: its few buttons
@@ -2329,6 +2339,7 @@ impl Ui {
                 false
             }
             Phase::Move => {
+                if self.trig_slider_move(y) { return true; }
                 if self.ov_divider_move(y) { return true; }
                 if self.axis_move(x, y) { return true; }
                 if self.dock_move(x, y) { return true; }
@@ -2363,6 +2374,7 @@ impl Ui {
                 true
             }
             Phase::Up => {
+                if self.trig_slider_up(x, y) { return true; }
                 self.axis_up();
                 if self.ov_divider_up() { return true; }
                 if self.dock_up(x, y) { return true; }

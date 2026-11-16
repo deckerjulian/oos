@@ -94,6 +94,7 @@ mod fullchrome;
 mod addtiles;
 mod menugrid;
 mod numpad;
+mod trigslider;
 mod classicbadges;
 mod measpanel;
 #[cfg(test)]
@@ -106,6 +107,8 @@ mod batch23_tests;
 mod batch24_tests;
 #[cfg(test)]
 mod batch25_tests;
+#[cfg(test)]
+mod batch26_tests;
 #[cfg(test)]
 mod batch12_tests;
 #[cfg(test)]
@@ -1444,6 +1447,8 @@ pub struct Ui {
     keypad: String,
     /// the numeric entry pad of the Studio sheets (ui/numpad.rs); its text is `keypad`
     numpad: Option<numpad::NumPad>,
+    /// the Eye source was chosen on purpose (its sheet, SIM, a loaded record): Auto keeps it instead of the selected lane
+    eye_src_chosen: bool,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
     la_cols: std::cell::RefCell<la::Cache>,
     /// decoded LA lines of the record shown: (key of record and settings, packets with times in s)
@@ -1569,6 +1574,7 @@ impl Ui {
             rec_iv: 0.0,
             keypad: String::new(),
             numpad: None,
+            eye_src_chosen: false,
             la_cols: Default::default(),
             dec_cache: Default::default(),
             table: None,
@@ -5416,7 +5422,7 @@ impl Ui {
     /// cover it (it never hides dialog controls).
     /// A message that reports something done: it gets a tick, not the warning triangle.
     pub(super) fn toast_is_success(s: &str) -> bool {
-        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ")
+        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ") || s.starts_with("Returned to live")
     }
 
     fn draw_toast(&self, cv: &mut Canvas) {
@@ -8793,6 +8799,7 @@ impl Ui {
         self.draw_load_slot(cv);
         let f = self.fonts();
         self.draw_osk(cv);
+        self.draw_trig_slider(cv);
         self.draw_numpad(cv);
         if self.power_dlg {
             cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);

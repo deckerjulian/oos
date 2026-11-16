@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifie: GPL-2.0-or-later
 //! What a finger can tap on the plot besides the traces: the trigger marker, the cursor tags, the channel markers and the
 //! traces and lanes themselves. One list for every layout, each with a hit area of at least 40 px (`Ui::hit40`).
 use super::*;
@@ -99,6 +99,12 @@ impl Ui {
     /// or a trace or lane (that source). False: nothing there, the tap is the plot's.
     pub(super) fn plot_tap(&mut self, x: i32, y: i32) -> bool {
         if self.full_on() || self.view_on() || self.dialog.is_some() || self.m.touch_lock { return false; }
+        // Studio: the level tag opens the slider
+        if self.m.layout == Layout::Studio && self.trigger_tag_hit().is_some_and(|r| r.contains(x, y)) {
+            self.close_menu();
+            self.studio.trig_slider = true;
+            return true;
+        }
         if self.trigger_marker_rects().into_iter().any(|r| Self::hit40(r).contains(x, y)) {
             self.toggle_menu(MenuId::Trigger);
             return true;

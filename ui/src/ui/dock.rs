@@ -211,7 +211,7 @@ impl Node {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum Press {
     /// the strip itself: a drag or a long press moves the view; a lift without either does nothing
-    Strip { kind: VKind, x0: i32, y0: i32, x: i32, y: i32, t0: f64, grab: (i32, i32) },
+    Strip { kind: VKind, x0: i32, y0: i32, x: i32, y: i32, t0: f64, grab: (i32, i32), free: bool },
     /// the X, or the extra button of a strip (Measurements: maximize); acts on the lift
     Button { kind: VKind, close: bool },
     /// the List / Detailed switch of the measurements panel
@@ -221,7 +221,7 @@ pub(super) enum Press {
 #[derive(Clone, PartialEq, Debug)]
 pub(super) enum DockDrag {
     /// a view follows the finger; the drop preview shows where it would land
-    Move { kind: VKind, x: i32, y: i32, grab: (i32, i32) },
+    Move { kind: VKind, x: i32, y: i32, grab: (i32, i32), free: bool },
     /// a divider moves: the split at `path`, the room it divides along `dir` from `origin`
     Divider { path: Vec<bool>, dir: Dir, origin: i32, avail: i32, lo: i32, hi: i32 },
     /// the corner of a floating panel
@@ -526,6 +526,10 @@ impl Ui {
     pub(super) fn dock_rect(&self, k: VKind) -> Option<Rect> {
         self.dock_float_rect(k).or_else(|| self.dock_leaf(k))
     }
+
+    /// The dotted box at the left of a title: the handle that docks a floating view. Dragged by the rest of its title a
+    /// floating view only moves.
+    pub(super) fn dock_handle_rect(r: Rect) -> Rect { Rect::new(r.x, r.y, 32.min(r.w), STRIP_H.min(r.h)) }
 
     pub(super) fn dock_strip(r: Rect) -> Rect { Rect::new(r.x, r.y, r.w, STRIP_H.min(r.h)) }
 
@@ -897,12 +901,12 @@ impl Ui {
         false
     }
 
-    fn dock_down_strip(&mut self, k: VKind, r: Rect, x: i32, y: i32, _floating: bool) -> bool {
+    fn dock_down_strip(&mut self, k: VKind, r: Rect, x: i32, y: i32, floating: bool) -> bool {
         if !Self::dock_strip(r).contains(x, y) { return false; }
         if self.dock_down_button(k, r, x, y) { return true; }
         let movable = self.studio.view != StudioView::Only;
         if movable {
-            self.studio.dock.press = Some(Press::Strip { kind: k, x0: x, y0: y, x, y, t0: self.now, grab: (x - r.x, y - r.y) });
+            self.studio.dock.press = Some(Press::Strip { kind: k, x0: x, y0: y, x, y, t0: self.now, grab: (x - r.x, y - r.y), free: floating && !Self::dock_handle_rect(r).contains(x, y) });
         } else {
             self.studio.dock.press = None;
         }
@@ -911,18 +915,18 @@ impl Ui {
 
     /// The finger moved. True when the dock has the touch.
     pub(super) fn dock_move(&mut self, x: i32, y: i32) -> bool {
-        if let Some(Press::Strip { kind, x0, y0, t0, grab, .. }) = self.studio.dock.press {
-            self.studio.dock.press = Some(Press::Strip { kind, x0, y0, x, y, t0, grab });
+        if let Some(Press::Strip { kind, x0, y0, t0, grab, free, .. }) = self.studio.dock.press {
+            self.studio.dock.press = Some(Press::Strip { kind, x0, y0, x, y, t0, grab, free });
             if (x - x0).abs().max((y - y0).abs()) > DRAG_PX {
-                self.dock_begin_drag(kind, x, y, grab);
+                self.dock_begin_drag(kind, x, y, grab, free);
             }
             return true;
         }
         if matches!(self.studio.dock.press, Some(Press::Button { .. } | Press::View { .. })) { return true; }
         let Some(d) = self.studio.dock.drag.clone() else { return false };
         match d {
-            DockDrag::Move { kind, grab, .. } => {
-                self.studio.dock.drag = Some(DockDrag::Move { kind, x, y, grab });
+            DockDrag::Move { kind, grab, free, .. } => {
+                self.studio.dock.drag = Some(DockDrag::Move { kind, x, y, grab, free });
                 if self.dock_floating(kind) {
                     // a floating panel follows the finger at once
                     let reg = self.dock_float_region();
@@ -954,9 +958,9 @@ impl Ui {
         true
     }
 
-    fn dock_begin_drag(&mut self, kind: VKind, x: i32, y: i32, grab: (i32, i32)) {
+    fn dock_begin_drag(&mut self, kind: VKind, x: i32, y: i32, grab: (i32, i32), free: bool) {
         self.studio.dock.press = None;
-        self.studio.dock.drag = Some(DockDrag::Move { kind, x, y, grab });
+        self.studio.dock.drag = Some(DockDrag::Move { kind, x, y, grab, free });
     }
 
     /// The finger lifted. True when the dock had the touch.
@@ -964,6 +968,8 @@ impl Ui {
         let press = self.studio.dock.press.take();
         let drag = self.studio.dock.drag.take();
         match (press, drag) {
+            // a floating view dragged by its title only moves: it already follows the finger, nothing docks
+            (_, Some(DockDrag::Move { free: true, .. })) => { self.dock_changed(); true }
             (_, Some(DockDrag::Move { kind, grab, .. })) => {
                 let (drop, _) = self.dock_drop_at(kind, x, y, grab);
                 if self.dock_floating(kind) {
@@ -999,9 +1005,9 @@ impl Ui {
     /// Every frame: a finger held on a strip for `LONG_PRESS` picks the view up.
     pub(super) fn dock_poll(&mut self) {
         self.dock_sync_setup();
-        if let Some(Press::Strip { kind, x0, y0, x, y, t0, grab }) = self.studio.dock.press {
+        if let Some(Press::Strip { kind, x0, y0, x, y, t0, grab, free }) = self.studio.dock.press {
             if self.now - t0 >= LONG_PRESS && (x - x0).abs().max((y - y0).abs()) <= DRAG_PX {
-                self.dock_begin_drag(kind, x, y, grab);
+                self.dock_begin_drag(kind, x, y, grab, free);
             }
         }
     }
@@ -1013,7 +1019,8 @@ impl Ui {
         let s = Self::dock_strip(r);
         cv.fill(s, if lifted { mix(BAR, ACCENT, 18) } else { BAR });
         cv.hline(s.x, s.right() - 1, s.bottom() - 1, LINE);
-        // the dotted grip shows that the strip moves the view
+        // the dotted grip shows that the strip moves the view; on a floating view it is a box of its own: the dock handle
+        if floating { chip(cv, Rect::new(s.x + 3, s.y + 2, 24, s.h - 4), if lifted { mix(BTN, ACCENT, 60) } else { BTN }, BTN_BORDER); }
         for (dx, dy) in [(0, 0), (5, 0), (10, 0), (0, 5), (5, 5), (10, 5), (0, 10), (5, 10), (10, 10)] {
             cv.fill(Rect::new(s.x + 8 + dx, s.y + 6 + dy, 2, 2), DIM);
         }
@@ -1083,7 +1090,7 @@ impl Ui {
             cv.round_outline(r.inset(-1), 6, BTN_BORDER);
             self.draw_dock_strip(cv, k, r, true, moving == Some(k));
         }
-        if let Some(DockDrag::Move { kind, x, y, grab }) = &self.studio.dock.drag {
+        if let Some(DockDrag::Move { kind, x, y, grab, free: false }) = &self.studio.dock.drag {
             let (drop, prev) = self.dock_drop_at(*kind, *x, *y, *grab);
             if drop != Drop::Stay {
                 cv.blend(prev, ACCENT, 70);

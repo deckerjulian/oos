@@ -1004,7 +1004,13 @@ impl Ui {
     pub(super) fn eye_make(&mut self) {
         // Selection is intentional: never switch away from a flat/weak selected
         // signal merely because another visible channel has an easier clock.
-        let id = self.selected_workspace_source().or_else(|| {
+        // The source the sheet shows is the one Auto runs on (a ref included); the selected lane is only the fallback
+        // when that source is gone.
+        let sheet = Some(self.m.eye_src).filter(|_| self.eye_src_chosen).filter(|id| match *id {
+            WaveId::Ref(i) => self.refs.get(i).is_some_and(|r| r.is_some()),
+            WaveId::Ch(c) => c < n_ch() && self.m.ch[c].on,
+        });
+        let id = sheet.or_else(|| self.selected_workspace_source()).or_else(|| {
             (0..n_ch()).filter(|&c| self.m.ch[c].on).map(WaveId::Ch)
                 .chain((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(WaveId::Ref)).next()
         });
