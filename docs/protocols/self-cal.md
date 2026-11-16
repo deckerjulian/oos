@@ -36,8 +36,9 @@ AFEs in the acquisition thread. A roll acquisition is stopped first. Status show
 current channel and pass. Cancel ends the run at the next configuration and nothing is kept.
 
 On success the results are saved to `/oos/cal` and take effect at the next set-up. All selects only the channels of
-the model. `oos-fpgad selfcal entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to
-`/oos/cal` only.
+the model. In the UI, a final directory-fsync failure is reported as a warning and the published tables are reloaded.
+`oos-fpgad selfcal entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to `/oos/cal`
+only; a final directory-fsync failure exits non-zero with the files already published.
 
 ### 1.2 Items and order
 
@@ -109,7 +110,9 @@ For each entry:
 6. After 20 rounds keep the last result.
 7. After all entries of the pass: rebuild the table (2.5) on a scratch copy.
 
-Cancel ends the run. An aborted or failed run keeps nothing.
+Cancel ends the run. A cancel or a measurement failure before saving discards the result. A save stages every file
+before it replaces any and restores the earlier files on a publish error; the set is not one transaction across power
+loss (7.1).
 
 ### 2.3 Acceptance limits summary
 
@@ -275,8 +278,21 @@ Verified on the unit's files (both CRCs). `hal::dho::calfile::build` reproduces 
 Stock files are written in place, without a temporary file, so a crash mid-write can leave a broken file. A reader rejects
 a file on open failure, short read, wrong header size, CRC or length mismatch, and takes the next location.
 
-OOS writes atomically (`hal::dho::calfile::save`): `name.new`, fsync, the old file to `name.bak`, rename, directory fsync. It
-refuses any path under `/rigol`. OOS stamps UTC time, the unit has no time zone set under OOS.
+OOS stages and fsyncs every result before replacing any file (`hal::dho::calfile::save_all`). A stale `name.bak.new`
+is removed before the current live file is hard-linked there. The directory is synced, then the link renamed over
+`name.bak`. Renaming `name.new` over the live name keeps the live path readable throughout replacement. A publish
+error restores earlier files, attempting every restore and reporting rollback errors. The backup holds the live file
+from before this save; rollback does not restore the older backup generation. Temporary-file cleanup errors are
+reported.
+A failed rollback rename returns `Failed` with some new files live; memory and disk may differ until restart.
+
+Each replacement is atomic, but separate renames are not a transaction across power loss. A failed final directory
+fsync has a distinct error: all new files are live, so the UI reloads them and reports uncertain durability. Paths
+under `/rigol` are refused. OOS stamps UTC time, the unit has no time zone set under OOS. These save failure paths
+are tested on the host, not yet verified on hardware.
+
+A short vertical base containing whole channel groups grows by copying its last group, as the reader's fallback
+does, before changed records are written. Empty or partial groups are rejected without publishing any result.
 
 ### 7.2 What the self-cal writes
 
@@ -290,7 +306,8 @@ refuses any path under `/rigol`. OOS stamps UTC time, the unit has no time zone 
 
 `cal_lsb.hex` and `cal_afe_bandwidth.hex` are not written by the self-cal (the stock system rewrites the bandwidth file at
 boot, `afe-settings.md` 1.3). `/rigol/data/default/` is never written. A 12-block `default/cal_vertical.hex` has a file
-size of 538300 bytes (`afe-settings.md` 1.3).
+size of 538300 bytes (`afe-settings.md` 1.3). Normal lookup accepts a 12-block file; the save grows a 12-block base
+by copying its last group (7.1). The save takes its base from `/oos/cal` or `/rigol/data`, not from `default/`.
 
 OOS does not read `/rigol/data/cal.bin`. It holds process pointers and must never be loaded raw.
 
