@@ -136,8 +136,8 @@ pub const AVG_BASE_BURSTS: u32 = 5_242_880;
 pub const AVG_SEG_CAP: i128 = 7_864_320;
 
 /// Segment size in 10-point bursts for `pts` raw points (points x ratio) in average mode: twice the
-/// bursts of a normal segment plus two 32-burst blocks of margin, rounded to a power of two below 25 M points and from
-/// there to the next multiple of 2048 bursts above (an exact multiple gets one more block, as in the stock rounding).
+/// bursts of a normal segment plus two blocks of 32 normal bursts (128 average bursts). Below 25 M points round to
+/// a power of two; from there round to the next multiple of 2048 bursts above (an exact multiple gets one more block).
 pub fn mem_size_avg(pts: i128) -> i128 {
     let n = (((pts + 383) / 320 + 2) * 64).max(32);
     let n = if pts < 25_000_000 { pow2(n) } else { (n / 2048 + 1) * 2048 };

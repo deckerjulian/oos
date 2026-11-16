@@ -16,14 +16,14 @@ use crate::wave::{autoset_shown, flat_noise, mid_level, periodic, place, Stats};
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
 const TBASES: [f32; 5] = [20e-9, 2e-6, 200e-6, 2e-3, 20e-3];
 /// Hardware source: three records at most instead of five. 2 us/div at the full rate holds periods up to 8 us (125 kHz
-/// and faster), and rules out what a slower rate would fold. Then one deep record (1 M points at 2 ms/div, 41.7 MSa/s)
+/// and faster), and rules out what a slower rate would fold. Then one deep record (1 M points at 2 ms/div, 31.25 MSa/s)
 /// holds periods from 0.2 us to 8 ms: 125 Hz to 125 kHz, what the first one did not show. 20 ms/div only for a signal
 /// it shows fewer than three rises of. Depth per record (0 = Auto).
 const FAST_TBASE: f32 = 2e-6;
 const DEEP: (f32, u64) = (2e-3, 1_000_000);
 const SLOW_TBASE: f32 = 20e-3;
 const HW_PLAN: [(f32, u64); 3] = [(FAST_TBASE, 0), DEEP, (SLOW_TBASE, 0)];
-/// The deep record with more than one channel on: 100 k points (4.2 MSa/s at 2 ms/div, still 33 samples a period at
+/// The deep record with more than one channel on: 100 k points (2.5 MSa/s at 2 ms/div, still 20 samples a period at
 /// 125 kHz). 1 M points of 3 or 4 channels is an 8 MB read in one piece; with it on the unit, 2026-11-13, the scope
 /// rebooted twice (docs/fork/trigger-lockin.md).
 const DEEP_MULTI: u64 = 100_000;

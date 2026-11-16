@@ -19,7 +19,7 @@ pub trait CalHw {
     fn apply(&mut self, ops: &[Op]);
     /// AFE register read (reg 0 holds the comparator bits).
     fn afe_read(&mut self, ch: usize, reg: u8) -> u16;
-    /// Mean ADC code of channel `ch` (65536 samples per core, the channel's two cores averaged).
+    /// Mean ADC code of channel `ch` (e=15, assumed 32768 samples per slot, all eight slots averaged).
     fn adc_mean(&mut self, ch: usize) -> Option<f64>;
     fn sleep_ms(&mut self, ms: u32);
     /// The user pressed Cancel.

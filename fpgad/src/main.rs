@@ -692,13 +692,13 @@ fn check_temps(bar: &mut Option<oos_hal::dho::bus::Bar1>, say: &dyn Fn(&str, &st
 }
 
 /// `pll --freq <Hz> --dry`: the table `oos_hal::dho::lmx2582::table_for` makes and its decode, nothing written. Without
-/// --dry a --freq other than 1.25 GHz is refused (no other table has run on a unit); None = go on with the stock table.
+/// --dry this command refuses other clocks; unit results are in docs/models.md 4.1. None = use the stock table.
 fn pll_dry(a: &[String]) -> Result<Option<String>, String> {
     use oos_hal::dho::lmx2582;
     let freq = a.iter().position(|x| x == "--freq").map(|i| a.get(i + 1).ok_or("--freq <Hz>")?.parse::<f64>().map_err(|e| format!("--freq: {}", e))).transpose()?;
     if !a.iter().any(|x| x == "--dry") {
         return match freq {
-            Some(f) if f != 1.25e9 => Err(format!("pll --freq {}: only 1.25 GHz is tested on the unit; other clocks only with --dry for now", f)),
+            Some(f) if f != 1.25e9 => Err(format!("pll --freq {}: this command writes only 1.25 GHz; use --dry for other clocks", f)),
             _ => Ok(None),
         };
     }
