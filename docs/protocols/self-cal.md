@@ -35,8 +35,9 @@ must be pressed twice within 10 s; the first press shows the preconditions (sect
 AFEs in the acquisition thread. A roll acquisition is stopped first. Status shows configurations done of total, the
 current channel and pass. Cancel ends the run at the next configuration and nothing is kept.
 
-On success the results are saved to `/oos/cal` and take effect at the next set-up. `oos-fpgad selfcal
-entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to `/oos/cal` only.
+On success the results are saved to `/oos/cal` and take effect at the next set-up. All selects only the channels of
+the model. `oos-fpgad selfcal entry|probe|zero|vertical|all` does the same from the command line. `--save` writes to
+`/oos/cal` only.
 
 ### 1.2 Items and order
 
@@ -52,8 +53,9 @@ Run the items in this order. An error stops all later items.
 6. **Ext**: saves `cal_ext.hex`.
 7. **DDR**: **never-do** (section 8).
 
-Channel loops cover 4 channels, 2 on hardware version 4 (2-channel models). On those models the AFE zero item also runs
-for channel index 3.
+Stock: channel loops cover 4 channels, 2 on hardware version 4 (2-channel models). On those models the AFE zero item
+also runs for channel index 3. OOS: All takes the channels of the model (1.1); `run_all_with` and `adc_plan` use the
+channel list they get. Self-cal on a 2-channel model is not yet verified on hardware.
 
 `hal::dho::selfcal::run_all_with` runs: ADC cores for the channel set (optional), then per channel AFE zero (optional) and the four
 vertical passes.
@@ -490,7 +492,7 @@ Per ADC mode m (offset record m = payload `m*0x68`):
 | 0xc (CH3+4) | 2, 3 | 2, 3, 9 |
 | 7 / 0xb / 0xd / 0xe (3 channels) | the three | the three single modes + the three pair modes (no mode 10) |
 | 0xf or 0 (default) | 0..3 (0 with mask 0: all channels) | **all 11 modes 0..10** |
-| default on hardware version 4 | 0, 1 | 0, 1, 4 |
+| default on hardware version 4 (stock; OOS: All takes the channels of the model, 1.2) | 0, 1 | 0, 1, 4 |
 
 With all four channels everything in the file is recalibrated except the reference (fixed 32) and the delay fields (ADC
 phase only). Gains are calibrated per channel in single-channel mode and reused by all modes (mapping `adc-mode.md` 3.2);

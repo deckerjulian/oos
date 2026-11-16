@@ -63,6 +63,8 @@ Fixed:
 - Tests no longer depend on the speed of the computer in the UI either (wall-time limits replaced).
 - Runtime and cold-boot loading of `cal_adc.hex` check both CRCs and the payload size, and take the next valid copy.
 - The software I2C Data trigger applies Direction for Any and one to five data bytes.
+- Self-cal All calibrates only the channels of the model; the picker no longer offers CH3 and CH4 on a two-channel
+  model.
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
   only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
   keeps the panel's bars while the external display has the waveform.

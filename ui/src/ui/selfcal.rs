@@ -69,9 +69,13 @@ impl Ui {
     }
 
     pub(super) fn cal_options(&self, it: Item) -> Option<Vec<String>> {
+        self.cal_options_for(it, n_ch())
+    }
+
+    fn cal_options_for(&self, it: Item, count: usize) -> Option<Vec<String>> {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::CalCh => v(&["All", "CH1", "CH2", "CH3", "CH4"]),
+            Item::CalCh => v(&["All", "CH1", "CH2", "CH3", "CH4"][..=count]),
             Item::CalZero | Item::CalAdc => v(&["Off", "On"]),
             _ => return None,
         })
@@ -110,8 +114,12 @@ impl Ui {
     }
 
     pub(super) fn cal_adjust(&mut self, it: Item, d: i32) -> bool {
+        self.cal_adjust_for(it, d, n_ch())
+    }
+
+    fn cal_adjust_for(&mut self, it: Item, d: i32, count: usize) -> bool {
         match it {
-            Item::CalCh => self.cal.ch = (self.cal.ch as i32 + d).rem_euclid(5) as usize,
+            Item::CalCh => self.cal.ch = (self.cal.ch as i32 + d).rem_euclid(count as i32 + 1) as usize,
             Item::CalZero => self.cal.zero = !self.cal.zero,
             Item::CalAdc => self.cal.adc = !self.cal.adc,
             Item::CalStatus => {}
@@ -121,6 +129,10 @@ impl Ui {
     }
 
     pub(super) fn cal_activate(&mut self, it: Item) -> bool {
+        self.cal_activate_for(it, n_ch())
+    }
+
+    fn cal_activate_for(&mut self, it: Item, count: usize) -> bool {
         match it {
             Item::CalStart => {
                 let Some(sh) = self.cal_shared() else {
@@ -129,7 +141,7 @@ impl Ui {
                 };
                 if self.cal.armed.is_some_and(|t| self.now - t < 10.0) {
                     self.cal.armed = None;
-                    let chans: Vec<usize> = if self.cal.ch == 0 { (0..NCH).collect() } else { vec![self.cal.ch - 1] };
+                    let chans: Vec<usize> = if self.cal.ch == 0 { (0..count).collect() } else { vec![self.cal.ch - 1] };
                     let mut g = sh.lock().unwrap();
                     (g.cal_req, g.cal_result, g.cal_cancel) = (Some((chans, self.cal.zero, self.cal.adc)), None, false);
                     drop(g);
@@ -169,15 +181,19 @@ impl Ui {
 
     /// `selfcal_remote` with the ADC core calibration.
     pub fn selfcal_remote_full(&mut self, arg: &str, zero: bool, adc: bool) {
+        self.selfcal_remote_for(arg, zero, adc, n_ch())
+    }
+
+    fn selfcal_remote_for(&mut self, arg: &str, zero: bool, adc: bool, count: usize) {
         self.cal.adc = adc;
         if arg == "cancel" {
-            self.cal_activate(Item::CalCancel);
+            self.cal_activate_for(Item::CalCancel, count);
             return;
         }
-        self.cal.ch = arg.parse::<usize>().unwrap_or(0).min(4);
+        self.cal.ch = arg.parse::<usize>().unwrap_or(0).min(count);
         self.cal.zero = zero;
         self.cal.armed = Some(self.now);
-        self.cal_activate(Item::CalStart);
+        self.cal_activate_for(Item::CalStart, count);
     }
 
     /// Per frame: pick up a finished run.
@@ -207,5 +223,52 @@ impl Ui {
         let bar = Rect::new(r.x, r.y + r.h - 4, (r.w as f64 * d as f64 / t.max(1) as f64) as i32, 4);
         cv.fill(bar, ACCENT);
         cv.text_in(&f.sb, r, 1, &txt, TEXT);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selfcal_options_only_offer_model_channels() {
+        let ui = Ui::new(Source::Demo { t: 0.0 });
+        for count in [2, 4] {
+            let options = ui.cal_options_for(Item::CalCh, count).unwrap();
+            assert_eq!(options.len(), count + 1);
+            assert_eq!(options.last().unwrap(), &format!("CH{count}"));
+        }
+    }
+
+    #[test]
+    fn selfcal_remote_clamps_to_model_channels() {
+        for count in [2, 4] {
+            let shared: crate::board::HwShared = Default::default();
+            let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+            ui.selfcal_remote_for("99", true, true, count);
+            let request = shared.lock().unwrap().cal_req.clone().unwrap();
+            assert_eq!(request, (vec![count - 1], true, true));
+        }
+    }
+
+    #[test]
+    fn selfcal_all_uses_model_channels() {
+        for (name, count) in [("DHO802", 2), ("DHO804", 4)] {
+            let caps = oos_hal::model::lookup(name).unwrap();
+            assert_eq!(caps.channels, count);
+            let shared: crate::board::HwShared = Default::default();
+            let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+            assert!(ui.cal_adjust_for(Item::CalCh, -1, caps.channels));
+            assert_eq!(ui.cal.ch, count);
+            assert!(ui.cal_adjust_for(Item::CalCh, 1, caps.channels));
+            assert_eq!(ui.cal.ch, 0);
+            for selected in 0..=count {
+                ui.cal.armed = Some(ui.now);
+                assert!(ui.cal_activate_for(Item::CalStart, caps.channels));
+                let want = if selected == 0 { (0..count).collect() } else { vec![selected - 1] };
+                assert_eq!(shared.lock().unwrap().cal_req.as_ref().unwrap().0, want);
+                ui.cal_adjust_for(Item::CalCh, 1, caps.channels);
+            }
+        }
     }
 }
