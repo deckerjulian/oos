@@ -91,7 +91,7 @@ pub fn uart(v: &[f32], dt: f64, baud: f64, bits: u32, parity: Parity, thr: f32, 
         let par_ok = match parity {
             Parity::None => true,
             p => match level(s + (1.5 + bits as f64) * spb) {
-                Some(pb) => ((ones + pb as u32) % 2 == 0) == (p == Parity::Even),
+                Some(pb) => (ones + pb as u32).is_multiple_of(2) == (p == Parity::Even),
                 None => {
                     complete = false;
                     false

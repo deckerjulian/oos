@@ -253,7 +253,7 @@ fn i3c_daa_ccc_private_i2c_ibi_and_hdr() {
     b.bits(0x27, 8);
     b.bits(0x44, 8);
     let da = 0x08u8;
-    b.bits((da as u64) << 1 | (da.count_ones() % 2 == 0) as u64, 8);
+    b.bits((da as u64) << 1 | da.count_ones().is_multiple_of(2) as u64, 8);
     b.bit(false); // ACK
     b.start();
     b.addr(0x7e, true, false);
