@@ -27,7 +27,7 @@ pub struct Slot {
 
 /// Exponent of a run: 2^18 samples per core, 1.68 ms at 156.25 MHz (the largest the 19-bit sample counter takes).
 pub const RUN_EXP: u32 = 18;
-const RUN_US: u32 = ((1u64 << RUN_EXP) * 1_000_000 / 156_250_000) as u32 + 1;
+const RUN_US: u32 = ((1u64 << RUN_EXP) * 1_000_000 / crate::dho::clock::NOMINAL_FPGA_HZ as u64) as u32 + 1;
 
 /// One run of the measure unit: start, wait for done, read every slot. None when the unit does not finish or a read
 /// is not ready.

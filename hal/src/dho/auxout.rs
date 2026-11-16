@@ -27,7 +27,7 @@ pub mod pf {
     /// bits 23:0: pulse width in FPGA sample clocks
     pub const WIDTH_MASK: u32 = 0x00ff_ffff;
     /// one width count in seconds (156.25 MHz)
-    pub const CLOCK_S: f64 = 6.4e-9;
+    pub const CLOCK_S: f64 = crate::dho::clock::FPGA_TICK_S;
     /// bit 29: result source, 1 = zone trigger, 0 = mask test
     pub const SRC_ZONE: u32 = 1 << 29;
     /// bit 30: idle level, 1 = idle high with a low pulse, 0 = idle low with a high pulse

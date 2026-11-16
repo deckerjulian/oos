@@ -16,7 +16,7 @@ use crate::dho::{hz, scu, seq};
 /// One LSB of the latched and first-trigger stamps (0x40b0, 0x40c0) in femtoseconds: 0.8 ns, one sample at 1.25 GSa/s.
 /// Unit 2026-11-13: a 1.000 kHz trigger gave latch steps of 1,250,000. (The stock system's 250,000 fs per tick
 /// 1.1, made every interval 3.2 times too short.)
-pub const LATCH_TICK_FS: i128 = 800_000;
+pub const LATCH_TICK_FS: i128 = crate::dho::clock::ADC_TICK_FS;
 /// One LSB of the 48-bit stamp in header words 5..7: the latch's tick (unit 2026-11-13: the header value equals a
 /// latch value, no scaling).
 pub const HEADER_TICK_FS: i128 = LATCH_TICK_FS;

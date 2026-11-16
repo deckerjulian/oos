@@ -5,9 +5,9 @@
 //! (docs/protocols/horizontal-config.md). Times are in femtoseconds.
 
 pub const FS: i128 = 1_000_000_000_000_000;
-/// ADC sample clock the model is made for. At another clock (`clock`, experimental) `prep` and `requested_rate`
-/// take real times and return real rates; inside they work in this nominal domain, so the registers stay the same.
-pub const CLOCK: i128 = 1_250_000_000;
+// The model is made for `clock::NOMINAL_HZ`. At another clock (`clock`, experimental) `prep` and `requested_rate`
+// take real times and return real rates; inside they work in this nominal domain, so the registers stay the same.
+use crate::dho::clock::NOMINAL_HZ;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Params {
@@ -163,7 +163,7 @@ pub fn requested_rate(mask: u32, tdiv_fs: i128, depth: i128) -> i128 {
 }
 
 fn requested_rate_nominal(mask: u32, tdiv_fs: i128, depth: i128) -> i128 {
-    let mr = CLOCK / ratio(mask) as i128;
+    let mr = NOMINAL_HZ / ratio(mask) as i128;
     if depth > 0 {
         return (depth * FS / tdiv_fs / 10).min(mr);
     }
@@ -191,7 +191,7 @@ pub fn prep(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Params {
 
 fn prep_nominal(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Params {
     let ratio = ratio(mask) as i128;
-    let mr = CLOCK / ratio;
+    let mr = NOMINAL_HZ / ratio;
     let cnt = (mask & 0xf).count_ones();
     let (mut memsel, mut rate);
     if depth > 0 {

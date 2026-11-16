@@ -32,7 +32,7 @@ pub const MUX_SPI: u32 = 12;
 pub const MUX_I2C: u32 = 13;
 
 /// The receiver clock (adc156), s.
-pub const CLOCK_S: f64 = 6.4e-9;
+pub const CLOCK_S: f64 = crate::dho::clock::FPGA_TICK_S;
 
 /// An SPI trigger: clock on event A, data on event R, chip select on event B (channels 1..4).
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -18,7 +18,7 @@ pub const CHUNK_WORDS: usize = 100;
 /// Highest sample rate the roll stream takes (unit 2026-11-03): above it the stream carries one sample per
 /// 156.25 MHz clock (1.25 GSa/s gave 8x, 625 MSa/s 4x the computed point spacing). Stock rolls only from 50 ms/div,
 /// where its Auto depth gives exactly this rate.
-pub const MAX_RATE: i128 = 156_250_000;
+pub const MAX_RATE: i128 = crate::dho::clock::NOMINAL_FPGA_HZ;
 
 /// `MAX_RATE` at the clock in effect (FPGA clock = ADC / 8; `clock`).
 pub fn max_rate() -> i128 {

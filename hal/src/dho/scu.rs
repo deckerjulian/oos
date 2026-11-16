@@ -267,7 +267,7 @@ fn record_run(fsm: u32, sh: &mut Shadows, first: u32, n: u32, interval_ticks: u3
 }
 
 /// One tick of the FSM delay 0x4068 and the acquisition timeout 0x406c: 6.4 ns.
-pub const FSM_TICK_FS: i128 = 6_400_000;
+pub const FSM_TICK_FS: i128 = crate::dho::clock::FPGA_TICK_FS;
 
 /// 0x4068 value for a record interval of `fs` femtoseconds (truncated like the stock value_fs / 6,400,000), saturated
 /// at the register width.

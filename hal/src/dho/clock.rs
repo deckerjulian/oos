@@ -15,6 +15,18 @@
 
 /// The clock all of the stock tables and the models are made for.
 pub const NOMINAL_HZ: i128 = 1_250_000_000;
+/// The FPGA logic clock at `NOMINAL_HZ`: ADC / 8, 156.25 MHz.
+pub const NOMINAL_FPGA_HZ: i128 = NOMINAL_HZ / 8;
+/// One ADC period at `NOMINAL_HZ` in fs: 0.8 ns.
+pub const ADC_TICK_FS: i128 = 800_000;
+/// The trigger event time unit at `NOMINAL_HZ` in fs: 1.6 ns, two ADC periods.
+pub const TPU_TICK_FS: i128 = 2 * ADC_TICK_FS;
+/// One FPGA clock period at `NOMINAL_HZ` in fs: 6.4 ns.
+pub const FPGA_TICK_FS: i128 = 8 * ADC_TICK_FS;
+/// `ADC_TICK_FS` in seconds (the same double as the literal 0.8e-9: both operands are exact).
+pub const ADC_TICK_S: f64 = ADC_TICK_FS as f64 / 1e15;
+/// `FPGA_TICK_FS` in seconds (the same double as the literal 6.4e-9).
+pub const FPGA_TICK_S: f64 = FPGA_TICK_FS as f64 / 1e15;
 
 /// The ADC sample clock in effect (Hz).
 pub fn adc_hz() -> i128 {
@@ -73,6 +85,8 @@ mod tests {
         assert_eq!(adc_hz(), NOMINAL_HZ);
         assert_eq!(fpga_hz(), 156.25e6);
         assert!(!overclocked());
+        assert_eq!((NOMINAL_FPGA_HZ, ADC_TICK_S, FPGA_TICK_S), (156_250_000, 0.8e-9, 6.4e-9));
+        assert_eq!((ADC_TICK_S.to_bits(), FPGA_TICK_S.to_bits()), (0.8e-9f64.to_bits(), 6.4e-9f64.to_bits()));
         assert_eq!((to_nominal_fs(123_456), from_nominal_rate(625_000_000)), (123_456, 625_000_000));
     }
 

@@ -196,10 +196,10 @@ pub const ADC_CLK_MAX: u32 = 62506;
 /// clock rises, it goes as the period: 1.375 GHz read 56816 on the unit, 62500 x 1.25 / 1.375 = 56818.
 pub fn adc_clk_window() -> (u32, u32) {
     let hz = crate::dho::clock::adc_hz();
-    if hz == 1_250_000_000 {
+    if hz == crate::dho::clock::NOMINAL_HZ {
         return (ADC_CLK_MIN, ADC_CLK_MAX);
     }
-    let c = 62_500.0 * 1.25e9 / hz as f64;
+    let c = 62_500.0 * crate::dho::clock::NOMINAL_HZ as f64 / hz as f64;
     ((c - 6.0).floor() as u32, (c + 6.0).ceil() as u32)
 }
 

@@ -35,9 +35,6 @@ pub fn line_allowed(caps: &crate::model::Caps, name: &str, force: bool) -> Resul
 const B: u32 = 0x3ff0;
 const M: u32 = 0x3ff4;
 const A: u32 = 0x3ff8;
-/// DDS clock at the nominal 1.25 GHz ADC clock.
-pub const CLOCK_HZ: f64 = 156.25e6;
-
 /// DDS clock in effect: ADC clock / 8 (`clock`; 156.25 MHz unless an experimental ADC clock is set).
 pub fn clock_hz() -> f64 {
     crate::dho::clock::fpga_hz()

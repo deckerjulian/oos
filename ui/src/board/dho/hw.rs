@@ -70,7 +70,7 @@ fn delay_depth(mask: u32, tdiv: f64, delay: f64, base: i128) -> i128 {
     if !delay.is_finite() || 2.0 * delay.abs() <= span {
         return base;
     }
-    let full = (hz::CLOCK / hz::ratio(mask) as i128) as f64;
+    let full = (oos_hal::dho::clock::NOMINAL_HZ / hz::ratio(mask) as i128) as f64;
     // at most the deepest record of the board; `settings` then limits it to the channels' memory
     let want = ((2.0 * delay.abs() + 2.0 * tdiv) * full).ceil().min(125e6) as i128;
     ((want + 7) / 8 * 8).max(base)

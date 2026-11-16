@@ -25,8 +25,8 @@ const TOTALIZE: u32 = 2;
 const CLEAR: u32 = 4;
 
 /// The counter's tick and the gate register's unit.
-pub const TICK: f64 = 0.8e-9;
-pub const GATE_TICK: f64 = 6.4e-9;
+pub const TICK: f64 = crate::dho::clock::ADC_TICK_S;
+pub const GATE_TICK: f64 = crate::dho::clock::FPGA_TICK_S;
 
 /// What it counts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

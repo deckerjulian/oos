@@ -193,9 +193,9 @@ pub struct Vert {
 
 /// Time unit of the event blocks A, B, R: 1.6 ns (2 ADC periods). The tick counts the ADC-derived clock, so real times are
 /// taken to the nominal 1.25 GHz domain first (`clock::to_nominal_fs`, identity at 1.25 GHz).
-const TICK_FS: i128 = 1_600_000;
+const TICK_FS: i128 = crate::dho::clock::TPU_TICK_FS;
 /// Holdoff and R timeout unit: 6.4 ns.
-const TICK64_FS: i128 = 6_400_000;
+const TICK64_FS: i128 = crate::dho::clock::FPGA_TICK_FS;
 /// TPU code "timeout" of 0x201c[26:24] (window "time", timeout trigger).
 const WHEN_TIMEOUT: u32 = 4;
 

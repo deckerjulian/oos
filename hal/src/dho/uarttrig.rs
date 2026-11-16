@@ -18,7 +18,7 @@ pub const BIT_HI: u32 = 0x221c;
 pub const MUX: u32 = 4;
 
 /// FPGA clock of the receiver (adc156), Hz.
-pub const CLOCK_HZ: f64 = 156.25e6;
+pub const CLOCK_HZ: f64 = crate::dho::clock::NOMINAL_FPGA_HZ as f64;
 const BIT_LO_BITS: u32 = 21;
 const BIT_LO_MASK: u32 = (1 << BIT_LO_BITS) - 1;
 const BIT_HI_MASK: u32 = 0x7ff;
