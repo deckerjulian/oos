@@ -163,12 +163,7 @@ impl Ui {
                 };
                 let i = ids.iter().position(|&x| x == cur).unwrap_or(0);
                 let next = ids[(i as i32 + d).rem_euclid(ids.len() as i32) as usize];
-                self.source_turn_on(next);
-                if it == Item::BusClk {
-                    self.m.bus.clk = next;
-                } else {
-                    self.m.bus.data = next;
-                }
+                self.bus_set_source(it, next);
             }
             _ => return false,
         }
@@ -296,7 +291,7 @@ impl Ui {
         }
     }
 
-    fn bus_ids(&self) -> Vec<WaveId> {
+    pub(super) fn bus_ids(&self) -> Vec<WaveId> {
         let mut v: Vec<WaveId> = (0..n_ch()).map(WaveId::Ch).collect();
         v.extend((0..NREF).map(WaveId::Ref));
         v

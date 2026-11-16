@@ -2008,6 +2008,23 @@ impl Ui {
         cv.fill(Rect::new(x - 1, y, 3, h), DIM);
     }
 
+    /// The button of the empty panel: under the words, in the middle of the list.
+    pub(super) fn panel_empty_button(list: Rect) -> Rect {
+        let (w, h) = (176.min(list.w - 16).max(0), 36);
+        Rect::new(list.x + (list.w - w) / 2, list.y + list.h / 2 + 4, w, h)
+    }
+
+    /// Nothing is measured in this view: say so, with the way to add one.
+    pub(super) fn draw_panel_empty(&self, cv: &mut Canvas, list: Rect) {
+        let f = self.fonts();
+        let b = Self::panel_empty_button(list);
+        cv.text_in(&f.mb, Rect::new(list.x, b.y - 30, list.w, 24), 1, "No measurements", DIM);
+        if b.w > 0 {
+            chip(cv, b, BTN, BTN_BORDER);
+            cv.text_in(&f.mb, b, 1, "+ Add measurement", TEXT);
+        }
+    }
+
     pub(super) fn draw_studio_panel(&self, cv: &mut Canvas) {
         if self.m.layout != Layout::Studio { return; }
         // an analysis view fills the plot area: the docked panel stays beside it, a floating panel and the table do not
@@ -2055,6 +2072,7 @@ impl Ui {
                 self.draw_panel_row(cv, Rect::new(r.x + off, r.y, r.w, r.h), &rows[i], keys.get(i).is_some_and(|k| pinned.contains(k)), band);
                 if keys.get(i).is_some_and(|k| self.studio_stats_on(*k)) { self.draw_panel_stats_line(cv, Rect::new(r.x + off, r.y, r.w, r.h), i, &rows[i]); }
             }
+            if rows.is_empty() { self.draw_panel_empty(cv, g.list); }
             cv.no_clip();
             // the thin mark that shows where the list is (there is no pager)
             Self::draw_scroll_mark(cv, g.list, self.panel_scroll_px(), self.panel_scroll_max(listed.len(), &g) + g.list.h);
@@ -2250,6 +2268,7 @@ impl Ui {
                 } else {
                     self.panel_layout(&rows, &listed, first, g.list).into_iter().find(|(_, r)| r.contains(x, y)).map(|(pos, r)| (listed[pos], r))
                 };
+                if rows.is_empty() && Self::panel_empty_button(g.list).contains(x, y) { self.open_meas_list(); return true; }
                 if let Some((i, row)) = hit {
                     let (pin, menu) = Self::md_row_buttons(row);
                     if self.panel_is_cards() {

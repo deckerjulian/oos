@@ -723,52 +723,15 @@ impl Ui {
             return true;
         }
         if matches!(it, Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI) {
-            let cur = match it {
-                Item::SpecSrc => self.m.spec_src,
-                Item::EyeSrc => self.m.eye_src,
-                Item::PowV => self.m.pw_v,
-                _ => self.m.pw_i,
-            };
+            let cur = self.source_item_value(it).unwrap_or(WaveId::Ch(0));
             let next = self.step_wave(cur, d);
-            // a channel that is off is turned on, not skipped
-            self.source_turn_on(next);
-            match it {
-                Item::SpecSrc => self.m.spec_src = next,
-                Item::EyeSrc => {
-                    self.m.eye_src = next;
-                    self.eye_src_chosen = true;
-                    if self.m.eye_from_record { self.m.eye_rate = self.waveform_bit_rate(next).unwrap_or(0.0); }
-                    self.azr.eye = None;
-                    self.azr.eye_ref = None;
-                    self.azr.eye_res = None;
-                    self.azr.page = super::eyepage::Page::default();
-                }
-                Item::PowV => self.m.pw_v = next,
-                _ => self.m.pw_i = next,
-            }
-            self.azr.spec_avg = None;
-            if let Some(w) = &mut self.azr.wf {
-                w.clear();
-            }
-            self.analyzer_update();
+            self.ana_set_source(it, Some(next));
             return true;
         }
         if matches!(it, Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk) {
-            let cur = match it {
-                Item::EyeB => self.m.eye_b,
-                Item::EyeRail => self.m.eye_rail,
-                Item::PowVin => self.m.pw_vin,
-                _ => self.m.pw_clk,
-            };
+            let cur = self.source_item_value(it);
             let next = self.step_wave_opt(cur, d);
-            if let Some(id) = next { self.source_turn_on(id); }
-            match it {
-                Item::EyeB => self.m.eye_b = next,
-                Item::EyeRail => self.m.eye_rail = next,
-                Item::PowVin => self.m.pw_vin = next,
-                _ => self.m.pw_clk = next,
-            }
-            self.analyzer_update();
+            self.ana_set_source(it, next);
             return true;
         }
         let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
