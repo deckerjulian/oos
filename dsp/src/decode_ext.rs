@@ -338,7 +338,7 @@ pub fn modbus_rtu(v: &[f32], dt: f64, baud: f64, parity: Parity, thr: f32, hyst:
         frame.clear();
     };
     for c in &ch {
-        if frame.last().map_or(false, |l| c.t0 - l.2 >= 0.8 * t35) {
+        if frame.last().is_some_and(|l| c.t0 - l.2 >= 0.8 * t35) {
             flush(&mut frame, &mut out);
         }
         frame.push((c.value as u8, c.t0, c.t1, c.ok));
@@ -1030,7 +1030,7 @@ pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool)
         return out;
     }
     let st = states(v, thr, hyst);
-    let high = |x: f64| st.get(x as usize).copied().flatten().map_or(true, |b| b != invert);
+    let high = |x: f64| st.get(x as usize).copied().flatten() != Some(invert);
     let e = edges(v, thr, hyst);
     let fall: Vec<f64> = e.iter().filter(|x| x.rising == invert).map(|x| x.t).collect();
     let rise: Vec<f64> = e.iter().filter(|x| x.rising != invert).map(|x| x.t).collect();

@@ -591,7 +591,7 @@ impl I3c {
         let u = std::mem::take(&mut self.buf);
         let (t0, t1) = (u[0].0, u[u.len() - 1].0);
         let v8 = msb(&u[..8]) as u32;
-        let ninth = u.get(8).map_or(false, |x| x.1);
+        let ninth = u.get(8).is_some_and(|x| x.1);
         let t_odd = (v8.count_ones() + ninth as u32) % 2 == 1;
         match self.ph {
             I3cPh::Idle => {}
@@ -611,7 +611,7 @@ impl I3c {
                     self.out.push(field(t0, t1, "IBI", addr, None, ack));
                     self.ph = if ack { I3cPh::Bytes { read: true, i3c: true } } else { I3cPh::Idle };
                 } else {
-                    let i3c = known || self.ccc.map_or(false, |c| c >= 0x80);
+                    let i3c = known || self.ccc.is_some_and(|c| c >= 0x80);
                     self.out.push(pk(t0, t1, Kind::Addr { read: rnw }, addr, None, ack));
                     self.ph = if ack || i3c { I3cPh::Bytes { read: rnw, i3c } } else { I3cPh::Idle };
                     if !ack && i3c {
@@ -1074,7 +1074,7 @@ fn pd_frame(b: &[(f64, f64, bool)], out: &mut Vec<Packet>) {
         let Some(k) = (0..4).map(|q| sym(s + 5 * q)).collect::<Option<Vec<u8>>>() else { continue };
         for (si, set) in PD_SETS.iter().enumerate() {
             let m = (0..4).filter(|&q| k[q] == set.1[q]).count() as u32;
-            if m >= 3 && best.map_or(true, |x| m > x.2) {
+            if m >= 3 && best.is_none_or(|x| m > x.2) {
                 best = Some((s, si, m));
             }
         }

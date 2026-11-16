@@ -184,7 +184,7 @@ pub fn spi(clk: &[f32], mosi: &[f32], miso: Option<&[f32]>, cs: Option<&[f32]>, 
         if e.rising != sample_rising {
             continue;
         }
-        let selected = cs_s.as_ref().map_or(true, |s| !at(s, e.t));
+        let selected = cs_s.as_ref().is_none_or(|s| !at(s, e.t));
         if !selected {
             n = 0;
             continue;
@@ -575,7 +575,7 @@ pub fn i2s(sck: &[f32], ws: Option<&[f32]>, sd: &[f32], bits: u32, thr: f32, hys
         }
     }
     // the last word has no WS edge after it: keep it when complete
-    if cur.map_or(false, |c| c.3 >= bits) {
+    if cur.is_some_and(|c| c.3 >= bits) {
         let t1 = ce.last().copied().unwrap_or(0.0);
         flush(&mut cur, t1, &mut out);
     }
@@ -605,7 +605,7 @@ pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         }
         let first_pos = !b.rising; // positive before the middle edge
         // the bus must really be driven (beyond the hysteresis), not idle at 0 V where the comparator keeps its state
-        let driven = |t: f64, lv: bool| v.get(t as usize).map_or(false, |&x| if lv { x > thr + hyst } else { x < thr - hyst });
+        let driven = |t: f64, lv: bool| v.get(t as usize).is_some_and(|&x| if lv { x > thr + hyst } else { x < thr - hyst });
         let held = |from: f64, to: f64, lv: bool| (0..=6).all(|i| driven(from + (to - from) * i as f64 / 6.0, lv));
         if !held(mid - 1.3 * us, mid - 0.15 * us, first_pos) || !held(mid + 0.15 * us, mid + 1.3 * us, !first_pos) {
             continue;

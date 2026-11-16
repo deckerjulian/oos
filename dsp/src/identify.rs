@@ -381,7 +381,7 @@ fn periodic_logic(c: &Chan, levels: &str) -> Option<Finding> {
 
 /// 1-Wire: starts high (idle), a reset pulse (low 400 µs .. 1 ms) and short low slots (< 120 µs).
 fn one_wire(c: &Chan) -> Option<Finding> {
-    if c.e.first().map_or(true, |e| e.rising) {
+    if c.e.first().is_none_or(|e| e.rising) {
         return None;
     }
     let lows = c.widths(false);
@@ -666,7 +666,7 @@ fn find_i2c(ch: &[Chan]) -> Option<(Finding, Vec<usize>)> {
                 continue;
             }
             let acked = p.iter().filter(|x| matches!(x.kind, Kind::Addr { .. }) && x.ok).count();
-            if best.as_ref().map_or(false, |b| b.2 >= p.len()) {
+            if best.as_ref().is_some_and(|b| b.2 >= p.len()) {
                 continue;
             }
             // bit rate from the SCL period (median rising-to-rising spacing)
