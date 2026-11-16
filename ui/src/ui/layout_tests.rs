@@ -193,21 +193,23 @@ fn studio_plot_has_lanes_with_channel_badges_the_t_marker_and_cursor_tags() {
     // one lane per channel that is on, one under the other, inside the plot under the tag row
     assert_eq!(u.wins.len(), 2);
     assert!(u.wins[0].bottom() <= u.wins[1].y);
-    assert_eq!(u.studio_head_h(), 18);
-    assert_eq!(u.grid.y, u.frame().body.y + super::dock::STRIP_H + 18, "the strip of the waveform, then the tag row");
+    assert!(u.studio_tags_on());
+    assert_eq!(u.grid.y, u.frame().body.y + super::dock::STRIP_H, "the strip of the waveform, then the scale: no tag row");
+    let t = u.studio_tag_rect(u.studio_x_of_time(0.0));
+    assert!(t.y > u.grid.y && t.bottom() < u.grid.y + 20, "T sits inside the scale, on its top edge");
     // the tag row, the lanes and the bars do not overlap
     let top = u.studio_top();
-    assert!(u.grid.y - 18 - super::dock::STRIP_H >= top.run.bottom());
+    assert!(u.grid.y - super::dock::STRIP_H >= top.run.bottom());
     assert!(u.grid.bottom() <= u.frame().bottom.y);
     // the T tag sits at the trigger position: 0 s at the centre with no delay
     u.m.delay = 0.0;
     assert_eq!(u.studio_x_of_time(0.0), u.grid.x + u.grid.w / 2);
     // Default and Minimal keep their plot exactly
     u.m.layout = Layout::Minimal;
-    assert_eq!(u.studio_head_h(), 0);
+    assert!(!u.studio_tags_on());
     u.m.layout = Layout::Studio;
     u.m.zoom = true;
-    assert_eq!(u.studio_head_h(), 0, "the zoom view brings its own toolbar");
+    assert!(!u.studio_tags_on(), "the zoom view brings its own toolbar");
 }
 
 fn badges() -> Ui {

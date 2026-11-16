@@ -67,7 +67,7 @@ fn top_bar_is_one_status_pill_a_single_button_plain_acquisition_and_the_default_
     if let Some(tab) = u.studio_tab() { assert!(tab.y >= u.grid.bottom(), "the Meas tab is under the lanes"); }
     let mut cv = Canvas::new(W, H);
     u.render(&mut cv);
-    assert!(u.studio_head_h() <= 18 && u.grid.y - u.frame().top.bottom() <= 18 + 40, "only the strip and the T row sit under the bar");
+    assert!(u.grid.y - u.frame().top.bottom() <= 40, "only the strip sits under the bar; T is inside the scale");
 }
 
 #[test]

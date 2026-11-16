@@ -16,11 +16,8 @@ impl Ui {
             let y = self.y_of_volts(ts, self.trig_level_shown()).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
             out.push(Rect::new(a.x + a.w - MARK_W + 8, y - 8, 16, 16));
         }
-        let head = self.studio_head_h();
-        if head > 0 && !self.view_on() && !self.eye_open() {
-            let g = self.grid;
-            let tx = self.studio_x_of_time(0.0);
-            out.push(Rect::new(tx.clamp(g.x + 11, g.right() - 11) - 11, g.y - head + 1, 22, head - 3));
+        if self.studio_tags_on() && !self.view_on() && !self.eye_open() {
+            out.push(self.studio_tag_rect(self.studio_x_of_time(0.0)));
         }
         out
     }
@@ -57,13 +54,12 @@ impl Ui {
             CursorMode::Off => {}
         }
         // Studio: C1 / C2 in the row over the lanes
-        let head = self.studio_head_h();
-        if head > 0 && matches!(self.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) {
+        if self.studio_tags_on() && matches!(self.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) {
             let g = self.grid;
             for (k, frac) in [(0, self.m.cur_a), (1, self.m.cur_b)] {
                 if !(0.0..=1.0).contains(&frac) { continue; }
                 let x = g.x + (frac.clamp(0.0, 1.0) * g.w as f32) as i32;
-                out.push((k, Rect::new((x - 11).clamp(g.x, g.right() - 22), g.y - head + 1, 22, head - 3)));
+                out.push((k, self.studio_tag_rect(x)));
             }
         }
         out

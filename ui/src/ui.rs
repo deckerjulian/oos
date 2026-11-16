@@ -1818,10 +1818,10 @@ impl Ui {
     }
 
     fn plot_top(&self) -> i32 {
-        if self.dock_on() { return self.dock_wave_rect().y + dock::STRIP_H + self.studio_head_h(); }
+        if self.dock_on() { return self.dock_wave_rect().y + dock::STRIP_H; }
         let y = if self.full_on() { 0 } else { self.frame().body.y };
         let y = if self.m.strip_dock == StripDock::Above { y + self.strip_rows_h() } else { y };
-        y + self.studio_head_h()
+        y
     }
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
@@ -5392,7 +5392,7 @@ impl Ui {
     /// cover it (it never hides dialog controls).
     /// A message that reports something done: it gets a tick, not the warning triangle.
     pub(super) fn toast_is_success(s: &str) -> bool {
-        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ")
+        s.ends_with(" added") || s.ends_with(" removed") || s.contains(" \u{b7} ") || s.starts_with("Loaded ") || s.starts_with("Saved ") || s.contains(" loaded from ") || s.starts_with("Restored ") || s.contains(" saved to ")
     }
 
     fn draw_toast(&self, cv: &mut Canvas) {

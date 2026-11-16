@@ -795,13 +795,19 @@ impl Ui {
 
 /// The cursor band and its C1 / C2 tags.
 const BAND: Rgb = rgb(0x2d, 0xd4, 0xcf);
-/// Height of the row above the lanes that carries the T marker and the cursor tags.
-const HEAD_H: i32 = 18;
+/// Height of the T marker and the cursor tags, drawn on the top edge of the scale (no row of their own).
+const TAG_H: i32 = 15;
 
 impl Ui {
-    /// Studio keeps a row above the lanes for the trigger position and the cursor tags.
-    pub(super) fn studio_head_h(&self) -> i32 {
-        if self.m.layout == Layout::Studio && !self.m.zoom && !self.full_on() { HEAD_H } else { 0 }
+    /// Studio draws the trigger position and the cursor tags on the top edge of the scale.
+    pub(super) fn studio_tags_on(&self) -> bool {
+        self.m.layout == Layout::Studio && !self.m.zoom && !self.full_on()
+    }
+
+    /// Where a T or cursor tag centred on `x` sits: inside the scale, on its top edge.
+    pub(super) fn studio_tag_rect(&self, x: i32) -> Rect {
+        let g = self.grid;
+        Rect::new(x.clamp(g.x + 11, g.right() - 11) - 11, g.y + 1, 22, TAG_H)
     }
 
     /// Screen x of a time (relative to the trigger) in the main view of the plot.
@@ -824,12 +830,10 @@ impl Ui {
 
     /// The T marker over the lanes, the cursor tags and the shaded band between the cursors.
     pub(super) fn draw_studio_overlay(&self, cv: &mut Canvas) {
-        let head = self.studio_head_h();
-        if head == 0 || self.view_on() || self.eye_open() { return; }
+        if !self.studio_tags_on() || self.view_on() || self.eye_open() { return; }
         let f = self.fonts();
         let g = self.grid;
-        let row = Rect::new(g.x, g.y - head, g.w, head);
-        cv.set_clip(Rect::new(g.x - 12, row.y, g.w + 24, g.h + head));
+        cv.set_clip(Rect::new(g.x - 12, g.y, g.w + 24, g.h));
         // the shaded band between two time cursors
         if matches!(self.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) {
             // a cursor keeps its time while zoomed: its fraction may lie outside the view, then it is not drawn
@@ -841,26 +845,27 @@ impl Ui {
             for &lane in &self.wins {
                 if !off_same_side { cv.blend(Rect::new(x0, lane.y, (x1 - x0).max(1), lane.h), BAND, 46); }
             }
-            cv.set_clip(Rect::new(g.x - 12, row.y, g.w + 24, g.h + head));
+            cv.set_clip(Rect::new(g.x - 12, g.y, g.w + 24, g.h));
             for (k, (x, name)) in [(xs[0], "X1"), (xs[1], "X2")].into_iter().enumerate() {
                 if !(0.0..=1.0).contains(&fr[k]) { continue; }
-                let r = Rect::new((x - 11).clamp(g.x, g.right() - 22), row.y + 1, 22, head - 3);
+                let r = self.studio_tag_rect(x);
                 cv.round(r, 3, BAND, 255);
                 cv.text_in(&f.sb, r, 1, name, DARK_TEXT);
                 if self.workspace.cursor_sel == Some(k) { cv.round_outline(Rect::new(r.x - 2, r.y - 2, r.w + 4, r.h + 4), 3, ACCENT); }
-                cv.vline(x, row.bottom() - 2, g.y, BAND);
+                cv.vline(x, r.bottom(), r.bottom() + 3, BAND);
             }
         }
         // T: where the trigger is in the record, dashed through every lane; at an edge when it is off the screen
         let tx = self.studio_x_of_time(0.0);
-        let r = Rect::new(tx.clamp(g.x + 11, g.right() - 11) - 11, row.y + 1, 22, head - 3);
+        let r = self.studio_tag_rect(tx);
         cv.round(r, 3, AMBER, 255);
         cv.round(r.inset(1), 2, BG, 255);
         cv.text_in(&f.sb, r, 1, "T", AMBER);
         if (g.x..g.right()).contains(&tx) {
             cv.triangle([(tx - 3, r.bottom()), (tx + 3, r.bottom()), (tx, r.bottom() + 3)], AMBER);
             for &lane in &self.wins {
-                cv.dashed_vline(tx, lane.y, lane.y + lane.h - 1, 4, 4, AMBER);
+                let y0 = if lane.y <= r.bottom() { r.bottom() + 4 } else { lane.y };
+                cv.dashed_vline(tx, y0, lane.y + lane.h - 1, 4, 4, AMBER);
             }
         } else if tx < g.x {
             cv.triangle([(r.x - 1, r.y + r.h / 2), (r.x + 4, r.y + 2), (r.x + 4, r.bottom() - 2)], AMBER);

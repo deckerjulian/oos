@@ -129,3 +129,9 @@ fn the_histogram_header_starts_right_of_its_volts_axis_and_stays_inside() {
     for _ in 0..4 { frame(&mut u); }
     shot(&mut u, "histogram-header");
 }
+
+#[test]
+fn saving_a_channel_into_a_reference_slot_shows_a_success_toast() {
+    assert!(Ui::toast_is_success("CH1 saved to R2"), "a tick, not a warning");
+    assert!(!Ui::toast_is_success("Save failed: disk full"));
+}
