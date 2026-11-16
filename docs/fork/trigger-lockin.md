@@ -180,7 +180,8 @@ Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = 
 Implementation: `trig.hw_status = on` in system.conf (or OOS_TRIG_HW_STATUS=1). After every batch the
 acquisition thread reads 0x4034, writes the stock clear (`scu::clear_status`: the read value with bits 31:30
 set, then clear) before the next arm, and reports TPU fired / forced only / nothing. The UI shows Trig'd or
-Auto from it whenever frames came. Off by default: the status then comes from the software refinement (fix 4).
+Auto from it whenever frames came. On by default since the unit check below passed (2026-11-13);
+`trig.hw_status = off` (or OOS_TRIG_HW_STATUS=0) takes the status from the software refinement (fix 4).
 
 Verification on the unit, before turning it on by default:
 1. Add `trig.hw_status = on` to /oos/system.conf, restart oos-ui. CH1 on the probe-comp output, edge rising,
@@ -197,14 +198,16 @@ Verification on the unit, before turning it on by default:
 Measured on the unit with fixes 1-3 and 7: autoset 1.18-1.57 s on the probe-comp output; the two levels stages
 (Wide, Fit) take 0.6-0.7 s of it, each waiting for a 240 ms record at 20 ms/div.
 
-The FPGA's ADC measure unit (self-cal.md 2.4) gives every core's
-12-bit minimum and maximum (0x1048) and its mean (0x1044, 16-bit scale) over 2^e samples, with no acquisition.
+The FPGA's ADC measure unit ([../hardware/fpga.md](../hardware/fpga.md) "Measure unit", self-cal.md 2.4) gives every
+core's 12-bit minimum and maximum (0x1048) and its mean (0x1044, 16-bit scale) over 2^e samples, with no acquisition.
 `hal::dho::levels`:
-- A run: 0x1040 = (0x1040 & 0x77fff0e0) | 18, then with bit 31; done (bit 30) after 2^18 samples = 1.68 ms;
-  per slot 0..7 select 0x1040[10:8], read 0x1044 and 0x1048. The same register handling as the self-cal's
-  `adc::measure`, with the shorter exponent and the peaks.
-- Slots per channel (assumed, the unit's observation below fits it): 1 channel all eight; 2 channels the lower-numbered channel 0-3, the higher 4-7; 4 channels
-  (also three) CH1 0/2, CH2 1/3, CH3 4/6, CH4 5/7. The DDR core order assumed first (CH1 6/7 ...) was wrong (below).
+- A run: 0x1040 = (0x1040 & 0x77fff0e0) | 18, then with bit 31; done (bit 30). OOS waits 1.68 ms first, assuming
+  2^18 samples per core at 156.25 MHz; the run length is not measured. Per slot 0..7 select 0x1040[11:8], read
+  0x1044 and 0x1048. The same register handling as the self-cal's `adc::measure`, with the larger exponent (18
+  against 15) and the peaks.
+- Slots per channel ([../hardware/fpga.md](../hardware/fpga.md) "Channel to core and slot mapping"): 1 channel all
+  eight; 2 channels the lower-numbered channel 0-3, the higher 4-7; 4 channels (also three) CH1 0/2, CH2 1/3, CH3 4/6,
+  CH4 5/7. The DDR core order assumed first (CH1 6/7 ...) was wrong (below).
 - Codes to volts: the unit reads after the ADC x2 of 0x105c and before the Q10 read-path gain (self-cal.md 13:
   about 6970 codes per volt at 1 V/div, x1.077 = the 7500 per division of the records). So a 16-bit code c is the
   read-out word 32768 + (c - 32768) x dg (dg = the cal record's digital gain without the x2), and its volts follow
@@ -238,11 +241,13 @@ cannot fold a fast signal into a period that is not there. On the probe-comp out
 0.5-0.6 s. The hardware source now takes three at most (`HW_PLAN` in autoset.rs), on the samples of the acquisition
 (the frame behind the record), not the 3600-point screen record:
 1. 2 us/div at the full rate: periods up to 8 us (125 kHz and up). It also rules out folding for the next one.
-2. One deep record, 1 M points at 2 ms/div (41.7 MSa/s): periods from 0.2 us to 8 ms, so 125 Hz to 125 kHz
-   with at least 300 samples per period.
+2. One deep record, 1 M points at 2 ms/div. `hz::prep` makes 50 MSa/s of it and remaps that to 31.25 MSa/s, so
+   the record spans 32 ms: periods from 8 us to 8 ms (125 Hz to 125 kHz), about 250 samples per period at 125 kHz.
+   That the search finds the whole band is not yet verified on hardware; the unit runs below used the probe-comp
+   output only.
 3. 20 ms/div only for a channel the deep record shows fewer than three rises of (or less than 70 % of its height).
 The probe-comp output needs two records. Other sources (demo, replay) keep the five time bases. The hardware peak
-detect was not used: its window semantics above divider 8 are open (fpga.md).
+detect was not used: its window semantics above divider 8 are open ([../hardware/fpga.md](../hardware/fpga.md)).
 
 ## On the unit, build d9800d9 (2026-11-13)
 
@@ -275,15 +280,17 @@ steps hold: the branch makes it the default (`trig.hw_status = off` restores the
 restored afterwards.
 
 Fix (branch fix/autoset-multich): the measure unit only with one channel on; the deep record at 100 k points with
-more than one channel (0.8 MB at 4 channels, 33 samples a period at 125 kHz). Open: whether an 8 MB read itself
+more than one channel (0.8 MB at 4 channels; 100 k points at 2 ms/div give 2.5 MSa/s after `hz::prep`, 20 samples a
+period at 125 kHz). Open: whether an 8 MB read itself
 crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read). The slot map came later
 (branch fix/meas-slots): the unit's observation fits it, and the measure unit is used with several channels again.
 
 ## Slot map cross-check (for unitlab)
 
-The slot table is assumed; since branch fix/meas-slots
-`hal::dho::levels::slots` follows it and the auto set-up uses the measure unit with any channel set again (a channel
-whose slots disagree still falls back to the records). This check confirms it on the unit without moving a cable.
+The slot table is in [../hardware/fpga.md](../hardware/fpga.md) "Channel to core and slot mapping"; since branch
+fix/meas-slots `hal::dho::levels::slots` follows it and the auto set-up uses the measure unit with any channel set again
+(a channel whose slots disagree still falls back to the records). This check confirms it on the unit without moving a
+cable.
 `:DEBug:SLOTs?` runs the unit once (2^18 samples per core) and answers the previous query: `<request>;min,max,mean;...`
 for slots 0..7 (12-bit min and max, mean on the 16-bit scale). Send it twice about 0.3 s apart and use the second
 answer; repeat 3 times per case.
@@ -320,10 +327,11 @@ the table is fixed.
 | 5 status from 0x4034 | verified on the unit 2026-11-13; default on in fix/autoset-multich |
 | 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
 | (a) autoset levels from the measure unit | done, opt-in (`autoset.levels = unit`): on the unit (2026-11-15) it answered with stale levels, so Auto missed a 5 MHz sine of 0.2 Vpp; the records are the default again |
-| autoset search in at most three records | done; on-unit timing pending |
+| autoset search in at most three records | done; timed on the unit for CH1 alone on the probe-comp output (build d9800d9) |
 | F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 
-Not yet measured on the unit: autoset time with these changes, and the noisy 5 V signal before and after.
+Measured on the unit: 0.58-0.74 s in six runs, CH1 alone on the probe-comp output, build d9800d9. Not yet measured:
+the autoset time with several channels after the later fixes, and the noisy 5 V signal before and after.
 
 ## Open
 
