@@ -3328,8 +3328,11 @@ impl Ui {
             let (tz, dz) = self.view();
             let ppx = o.w as f32 / HDIV;
             let tdiv = self.m.time_per_div();
-            let xa = o.x + (o.w as f32 / 2.0 + ((dz - tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
-            let xb = o.x + (o.w as f32 / 2.0 + ((dz + tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
+            // a window far off the overview (an extreme delay) is held a screen width beyond it: drawn the same (it is
+            // clipped to the overview), and the pixel arithmetic below stays within i32
+            let far = 2.0 * o.w as f32;
+            let at = |t: f32| o.x + (o.w as f32 / 2.0 + (t - self.m.delay) / tdiv * ppx).clamp(-far, far) as i32;
+            let (xa, xb) = (at(dz - tz * HDIV / 2.0), at(dz + tz * HDIV / 2.0));
             let cv = l.over();
             cv.set_clip(o);
             cv.blend(Rect::new(o.x, o.y, (xa - o.x).max(0), o.h), BG, 170);

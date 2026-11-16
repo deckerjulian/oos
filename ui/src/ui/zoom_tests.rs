@@ -403,3 +403,17 @@ fn shift_wheel_and_vertical_controls_remain_vertical_while_ctrl_takes_time_zoom(
     assert!(ui.view().0<time.0);assert_eq!((ui.zoom_vfactor,ui.zoom_vcenter),vertical);
     let time=ui.view();control(&mut ui,"V+");assert_eq!(ui.view(),time);assert!(ui.zoom_vfactor>vertical.0);
 }
+
+/// The zoom window drawn in the overview with the delay far beyond the record (SCPI :TIMebase:OFFSet takes any
+/// number): the edges were cast to i32 and offset by the overview's x, which overflowed (a panic in a debug build).
+#[test]
+fn zoom_window_far_off_the_overview_is_drawn_without_overflow() {
+    let mut ui=mixed();ui.set_zoom(true);
+    let mut cv=Canvas::new(W,H);
+    for delay in [1e30f32,-1e30,f32::MAX,f32::MIN] {
+        ui.m.delay=delay;ui.m.zdelay=0.0;
+        ui.render(&mut cv);
+        ui.m.delay=0.0;ui.m.zdelay=delay;
+        ui.render(&mut cv);
+    }
+}
