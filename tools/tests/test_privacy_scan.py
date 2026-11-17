@@ -24,7 +24,10 @@ class Rules(unittest.TestCase):
     def test_what_is_found(self):
         self.assertEqual(self.rules(f"eth.mac = {MAC}"), ["mac"])
         self.assertEqual(self.rules(f"serial {SERIAL} of the unit"), ["serial"])
-        self.assertEqual(self.rules("-----BEGIN OPENSSH " + "PRIVATE KEY-----"), ["key"])
+        head = "-----BEGIN OPENSSH " + "PRIVATE KEY-----"
+        body = "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ" + "AAAAAAAAABAAAAMwAAAAtzc2gtZW"
+        self.assertEqual(self.rules(head, following=body), ["key"], "a head with the key on the next line")
+        self.assertEqual(self.rules(f'"{head}\\n{body}"'), ["key"], "a head with the key in the same string")
         self.assertEqual(self.rules("token ghp_" + "a1B2" * 9), ["token"])
         self.assertEqual(self.rules(f"cd {HOME}"), ["home"])
         self.assertEqual(self.rules(f"ssh root@{ADDRESS}"), ["address"])
@@ -34,7 +37,12 @@ class Rules(unittest.TestCase):
         for text in ("the DHO924S and the DHO804", "sha256 " + "ab" * 32, "00:11:22:33:44:55", "version 10.2.3",
                      "the network 192.168." + "1.0/24",
                      "/home/runner/work", "10848788+dekajoule@users.noreply.github.com", "12:34:56 on the clock",
-                     "port 8.8.8.8", "at 1.25 GHz", "TCPIP0::127.0.0.1::5555::SOCKET", "git@github.com:a/b.git"):
+                     "port 8.8.8.8", "at 1.25 GHz", "TCPIP0::127.0.0.1::5555::SOCKET", "git@github.com:a/b.git",
+                     # a key's head alone, as a test of a check for keys writes it
+                     'write("-----BEGIN OPENSSH ' + 'PRIVATE KEY-----\\n")',
+                     # made-up values of the tests
+                     "DHO9A" + "000000001", "DHO9S" + "000000000", "aa:bb:cc:00:00:01", "02:11:22:33:44:5A", "root@example.invalid",
+                     "sk-ssh-ed25519@" + "openssh.com"):
             self.assertEqual(self.rules(text), [], text)
 
     def test_trailers_and_the_allow_list(self):

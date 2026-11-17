@@ -10,7 +10,8 @@ same range removes again still counts, because the commit stays readable in the 
 
     mac      a MAC address
     serial   a serial number of a scope
-    key      the head of a private key
+    key      a private key: its head, followed by the key itself on the same or the next line (a head alone, as a
+             test or a check for one uses it, is no key)
     token    an access token of GitHub and of a few other services
     home     a path inside somebody's home directory
     address  an IPv4 address of a host in a private network
@@ -41,13 +42,18 @@ RULES = {
 }
 # values that are nobody's: examples, and the accounts of the tools
 FINE = {
-    "mac": re.compile(r"^(?:00:){5}00$|^(?:ff:){5}ff$|^00:11:22:33:44:55$|^aa:bb:cc:dd:ee:ff$"
-                      r"|^02:00:00:00:00:[0-9a-f]{2}$", re.I),
-    "home": re.compile(r"^(?:runner|user|you|me|name|USER|\$USER|username)$"),
+    "mac": re.compile(r"^(?:00:){5}00$|^(?:ff:){5}ff$|^[0-9a-f]{2}:11:22:33:44:[0-9a-f]{2}$|^11:22:33:44:55:66$"
+                      r"|^aa:bb:cc:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}$|^02:00:00:00:00:[0-9a-f]{2}$", re.I),
+    # a made-up number: nothing but zeros after the model and its letter, and at most a short count
+    "serial": re.compile(r"^[DM]HO[0-9][A-Z]0{7,}[0-9]{0,2}$"),
+    "home": re.compile(r"^(?:runner|ubuntu|user|you|me|name|USER|\$USER|username)$"),
     # a network, not a host
     "address": re.compile(r"\.0$"),
-    "mail": re.compile(r"@(?:users\.noreply\.github\.com|example\.(?:com|org|net)|noreply\.[a-z.]+)$|^noreply@|^git@"),
+    "mail": re.compile(r"@(?:users\.noreply\.github\.com|example\.(?:com|org|net|invalid)|noreply\.[a-z.]+)$|^noreply@"
+                       r"|^git@|^sk-[a-z0-9-]+@openssh\.com$"),
 }
+# the key itself: a long run of base64, as the lines of a key in PEM or OpenSSH form are
+KEY_BODY = re.compile(r"[A-Za-z0-9+/]{40,}")
 TRAILER = re.compile(r"^(?:Signed-off-by|Co-authored-by|Reviewed-by|Tested-by|Reported-by):", re.I)
 
 
@@ -69,14 +75,17 @@ def allowed():
     return out
 
 
-def find(text, allow, message=False):
-    """(rule, value) for everything in one line of text that a rule names and nothing excuses."""
+def find(text, allow, message=False, following=""):
+    """(rule, value) for everything in one line of text that a rule names and nothing excuses; `following` is the
+    next added line of the same file, which a key's head needs to be a key."""
     if message and TRAILER.match(text):
         return []
     hits = []
     for rule, pattern in RULES.items():
         for m in pattern.finditer(text):
             value = m.group(1) if rule == "home" else m.group(0)
+            if rule == "key" and not (KEY_BODY.search(text[m.end():]) or KEY_BODY.search(following)):
+                continue
             if rule in FINE and FINE[rule].search(value):
                 continue
             if (rule, value) in allow:
@@ -90,14 +99,18 @@ def scan(rng):
     hits = []
     for commit in git("rev-list", "--no-merges", rng).split():
         short = commit[:9]
-        for line in git("log", "-1", "--format=%B", commit).splitlines():
-            hits += [(short, "message", rule, value) for rule, value in find(line, allow, message=True)]
+        message = git("log", "-1", "--format=%B", commit).splitlines()
+        for i, line in enumerate(message):
+            after = message[i + 1] if i + 1 < len(message) else ""
+            hits += [(short, "message", rule, value) for rule, value in find(line, allow, True, after)]
         path = None
-        for line in git("show", "--format=", "--unified=0", "--no-color", commit).splitlines():
+        diff = git("show", "--format=", "--unified=0", "--no-color", commit).splitlines()
+        for i, line in enumerate(diff):
             if line.startswith("+++ "):
                 path = line[6:] if line.startswith("+++ b/") else None
             elif line.startswith("+") and path and not path.startswith(SKIP):
-                hits += [(short, path, rule, value) for rule, value in find(line[1:], allow)]
+                after = diff[i + 1][1:] if i + 1 < len(diff) and diff[i + 1].startswith("+") else ""
+                hits += [(short, path, rule, value) for rule, value in find(line[1:], allow, following=after)]
     return hits
 
 
