@@ -76,6 +76,7 @@ use wave::Source;
 /// window starts that way unless `--lan`, so Windows asks no firewall question; tests always do.
 static LOOPBACK_ONLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(cfg!(test));
 
+#[allow(dead_code)] // only the Windows desktop (desktop/lan.rs) calls it
 pub(crate) fn set_loopback_only(on: bool) {
     LOOPBACK_ONLY.store(on, std::sync::atomic::Ordering::Relaxed);
 }

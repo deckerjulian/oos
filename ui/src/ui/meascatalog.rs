@@ -193,6 +193,7 @@ pub(super) fn meas_short_name(k: Meas) -> &'static str {
 pub(super) struct CatInfo {
     pub name: &'static str,
     pub blurb: &'static str,
+    #[allow(dead_code)] // part of every catalog row; no drawing reads it yet
     pub mark: Mark,
     pub unit: &'static str,
     /// how it is computed, in plain words
@@ -846,6 +847,7 @@ pub(super) struct AddEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Preview {
     Value(String),
+    #[allow(dead_code)] // the text of a row whose value is not ready; no preview is built that way yet
     Computing,
     /// a channel it reads is off: the fix is to switch it on
     Off(usize),

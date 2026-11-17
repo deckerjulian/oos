@@ -20,6 +20,7 @@ const VIEWS: [(VKind, &str); 9] = [
 ];
 
 /// Headers of this file, for the documentation tests.
+#[cfg_attr(not(test), allow(dead_code))] // only the tests use it
 pub(super) const LAYOUT_HEADERS: &[&str] = &[
     "DOCK:LIST", "DOCK:MOVE", "DOCK:SIZE", "DOCK:FLOAT", "DOCK:SHOW", "DOCK:CLOSe", "DOCK:ACTivate", "DOCK:MAXimise", "DOCK:RESTore",
     "DOCK:RESet", "DOCK:LAYout",

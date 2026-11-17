@@ -48,10 +48,6 @@ fn tap(u: &mut Ui, r: Rect) {
     frame(u);
 }
 
-fn ref_wave(label: &str) -> RefWave {
-    RefWave { src: 0, color: 0, label: label.into(), t0: 0.0, dt: 1e-6, v: (0..1000).map(|i| (i as f32 * 0.05).sin()).collect::<Vec<_>>().into(), vpd: 1.0, offset: 0.0, on: true }
-}
-
 // 1 ------------------------------------------------------------------------------------------------ time-axis drag
 
 #[test]

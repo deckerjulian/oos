@@ -483,6 +483,7 @@ struct Walk {
     ui_n: usize,
     rows: Vec<String>,
     count: BTreeMap<(String, char), usize>,
+    #[allow(dead_code)] // kept in the walk state for a debugger; the walk does not read it back
     queue: Vec<Vec<Act>>,
 }
 

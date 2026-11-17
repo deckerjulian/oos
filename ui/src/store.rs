@@ -3997,12 +3997,14 @@ mod header_import_tests {
 /// The setup the desktop build keeps between runs, as the unit keeps it in /tmp/oos-ui.setup: the same text
 /// (`setup_text`), so the layout and the Studio view come back after a restart. It lives in the storage directory
 /// (`Ui::store_dir`: the user's Documents\OOS on Windows, or `--store-dir`).
+#[cfg_attr(not(test), allow(dead_code))] // the Windows desktop and the tests use it
 pub struct SetupFile {
     path: PathBuf,
     last: String,
     t: std::time::Instant,
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // the Windows desktop and the tests use it
 impl SetupFile {
     pub const NAME: &'static str = "oos-ui.setup";
 

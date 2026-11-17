@@ -92,6 +92,7 @@ struct Values {
     vmax: f64,
     vmin: f64,
     /// the sample mean (for the deviation)
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     avg: f64,
     /// the mean as the fork's `analyze_min` gives it: the trapezoid area over the record's span
     tavg: f64,

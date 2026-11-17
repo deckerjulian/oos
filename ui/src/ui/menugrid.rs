@@ -25,6 +25,7 @@ pub(super) struct MenuGroupGeo {
 }
 
 pub(super) struct MenuGeo {
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub r: Rect,
     /// the part of the sheet that scrolls
     pub view: Rect,
@@ -98,6 +99,7 @@ impl Ui {
     }
 
     /// Buttons per row in a Menu `w` wide (the sheet): as many as keep a button at least `CELL_MIN_W` wide, up to six.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn menu_cols(w: i32) -> i32 { Self::menu_cols_with(w, GROUP_LABEL_W) }
     fn menu_cols_with(w: i32, label_w: i32) -> i32 {
         let gw = w - 2 * PAD - label_w - 6;
