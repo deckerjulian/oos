@@ -54,11 +54,12 @@ A decision that touches two categories goes where its consequences are largest a
 | [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | accepted |
 | [0032](process/0032-ci-compares-a-pull-request-with-its-base.md) | process | CI compares the pictures and the register sequences of a pull request with its base | accepted |
 | [0033](process/0033-development-on-linux-macos-and-wsl.md) | process | OOS is developed on Linux, macOS and Windows with WSL; there is no native Windows build | accepted |
-| [0034](process/0034-standing-agents-get-their-task-from-a-machine-a-person-merges.md) | process | Standing agents get their task from a machine and open one pull request; a person merges | accepted |
+| [0034](process/0034-standing-agents-get-their-task-from-a-machine-a-person-merges.md) | process | Standing agents get their task from a machine and open one pull request; a person merges | superseded by ADR 0039 |
 | [0035](process/0035-every-text-has-one-home-the-wiki-comes-from-the-tree.md) | process | Every text has one home; the wiki is published from the tree, and a change brings its texts along | accepted |
 | [0036](process/0036-the-rules-of-the-repository-are-files-a-change-by-others-needs-the-maintainers-review.md) | process | The rules of the repository are files in the tree; a change by anyone else needs the maintainer's review | accepted |
 | [0037](process/0037-numbers-that-only-go-down.md) | process | Numbers that only go down: large files, switched-off lints, `unsafe` | accepted |
-| [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | accepted |
+| [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | accepted, amended by ADR 0039 |
+| [0039](process/0039-one-development-agent-with-its-own-identity-merges-under-the-checks.md) | process | One development agent, with an identity of its own, opens and merges pull requests under the checks | accepted |
 
 ## Reading order for agents
 

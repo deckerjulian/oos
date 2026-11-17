@@ -5,30 +5,30 @@
 # button (docs/adr/process/0038), written to its newest commit as statuses:
 #
 #   waited   it has been open as long as ADR 0031 asks: 72 hours with a decision record, else 24. No wait at all for
-#            the maintainer's own pull requests (from a branch of this repository, not an agent's; the maintainer
-#            decided so on 2026-11-17), for one that only changes documents (not the decision records and not the
-#            rule texts), and for one that says `Behaviour: unchanged` where the comparison with its base ran and
+#            the maintainer's own pull requests and those of the maintainer's development agent (both from a branch
+#            of this repository; ADR 0039), for one that only changes documents (not the decision records and not
+#            the rule texts), and for one that says `Behaviour: unchanged` where the comparison with its base ran and
 #            found nothing, the last two outside the hardware paths, the pipeline and the tools (ADR 0038). The
 #            label `no-wait` (a fix for a red main, a security fix) takes the wait away too.
 #   owner    pending for every pull request with the label `hold`, which the maintainer sets to stop one. Else: it
-#            is the maintainer's own, or Dependabot's and changes nothing but the commits of actions, or the
-#            maintainer has approved its newest commit. An agent's pull request (a copilot/ branch of this
-#            repository) is opened in the name of the person who gave the task, who cannot approve it: it passes
-#            when a person has marked it ready for review, which an agent cannot do.
+#            is the maintainer's own or the development agent's, or Dependabot's and changes nothing but the
+#            commits of actions, or the maintainer has approved its newest commit.
 #   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested`
 #   review   GitHub Copilot has reviewed it (the ruleset asks for one review per pull request, once it is ready) and
-#            left no open issue, or every thread it opened is resolved; pending until then. A draft has no review
-#            yet and is pending. Shown, not required, until the first reviews have been seen (ADR 0036).
+#            left no open issue, or every thread it opened is resolved; pending until then, and for a draft.
+#            Dependabot's pull requests that only move the commits of actions get no review and need none.
 #
 #   tools/pr-gate.sh NUMBER        one pull request
 #   tools/pr-gate.sh --all         every open one (the waits run out without an event)
 #   tools/pr-gate.sh --dry NUMBER  print the three answers, write nothing
 #
-# Reads the pull request through GitHub's API and never its code. Needs gh (GH_TOKEN) and jq. OOS_REPO and
-# OOS_MAINTAINER name another repository and maintainer (defaults: $GITHUB_REPOSITORY and its owner).
+# Reads the pull request through GitHub's API and never its code. Needs gh (GH_TOKEN) and jq. OOS_REPO,
+# OOS_MAINTAINER and OOS_AGENT name another repository, maintainer and agent (defaults: $GITHUB_REPOSITORY, its owner
+# and the App dekajoule-oos-agent of tools/as-agent.sh).
 set -eu
 repo=${OOS_REPO:-${GITHUB_REPOSITORY:-dekajoule/oos}}
 maintainer=${OOS_MAINTAINER:-${repo%%/*}}
+agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 # paths whose effect is only seen on a unit: register sequences and the board, updates, how the scope starts
 hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/)'
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
@@ -52,16 +52,27 @@ one() {
 	here=$(printf '%s' "$pr" | jq -r '.head.repo.full_name == .base.repo.full_name')
 	labels=$(printf '%s' "$pr" | jq -r '[.labels[].name] | join(" ")')
 	draft=$(printf '%s' "$pr" | jq -r '.draft == true')
-	agent=false
-	case $(printf '%s' "$pr" | jq -r .head.ref) in copilot/*) [ "$here" != true ] || agent=true ;; esac
+	# the maintainer's own, or the development agent's: from a branch of this repository
+	own=
+	if [ "$here" = true ] && [ "$author" = "$maintainer" ]; then
+		own="the maintainer's own"
+	elif [ "$here" = true ] && [ "$author" = "$agent_login" ]; then
+		own="the maintainer's development agent"
+	fi
 	files=$(gh api --paginate "repos/$repo/pulls/$n/files" --jq '.[].filename')
+	# Dependabot's that changes nothing but lines that name an action, in workflow files
+	bump=false
+	if [ "$here" = true ] && [ "$author" = 'dependabot[bot]' ]; then
+		other=$(printf '%s\n' "$files" | grep -v '^\.github/workflows/' || true)
+		lines=$(gh api --paginate "repos/$repo/pulls/$n/files" --jq '.[].patch // ""' |
+			grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' | grep -Evc '^[+-] *(- )?uses: ' || true)
+		[ -n "$other" ] || [ "$lines" != 0 ] || bump=true
+	fi
 
-	# waited: no wait for the maintainer's own, for documents only, or for a change the comparison proved to leave
-	# behaviour as it was
-	quick=
-	if [ $agent = false ] && [ "$here" = true ] && [ "$author" = "$maintainer" ]; then
-		quick="the maintainer's own"
-	elif ! printf '%s\n' "$files" | grep -Ev '^tools/tests/' | grep -Eq "$hardware|$unseen"; then
+	# waited: no wait for the maintainer's own and the agent's, for documents only, or for a change the comparison
+	# proved to leave behaviour as it was
+	quick=$own
+	if [ -z "$quick" ] && ! printf '%s\n' "$files" | grep -Ev '^tools/tests/' | grep -Eq "$hardware|$unseen"; then
 		if ! printf '%s\n' "$files" | grep -Evq '\.md$|^docs/|^wiki/'; then
 			quick="documents only"
 		elif printf '%s' "$pr" | jq -r '.body // ""' | tr -d '\r' | grep -Eiq '^\**Behaviou?r:\** *unchanged'; then
@@ -102,26 +113,14 @@ one() {
 	case " $labels " in *" hold "*) held=true ;; esac
 	if [ $held = true ]; then
 		status "$sha" owner pending "held by the maintainer (label hold)"
-	elif [ $agent = true ]; then
-		if [ "$draft" = true ]; then
-			status "$sha" owner pending "an agent's: a person marks it ready for review after looking at it"
-		else
-			status "$sha" owner success "an agent's, marked ready for review by a person"
-		fi
-	elif [ "$here" = true ] && [ "$author" = "$maintainer" ]; then
-		status "$sha" owner success "the maintainer's own"
+	elif [ -n "$own" ]; then
+		status "$sha" owner success "$own"
 	elif [ "$approved" = true ]; then
 		status "$sha" owner success "approved by the maintainer"
+	elif [ $bump = true ]; then
+		status "$sha" owner success "Dependabot: only the commits of actions"
 	elif [ "$here" = true ] && [ "$author" = 'dependabot[bot]' ]; then
-		# only lines that name an action, in workflow files
-		other=$(printf '%s\n' "$files" | grep -v '^\.github/workflows/' || true)
-		lines=$(gh api --paginate "repos/$repo/pulls/$n/files" --jq '.[].patch // ""' |
-			grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' | grep -Evc '^[+-] *(- )?uses: ' || true)
-		if [ -z "$other" ] && [ "$lines" = 0 ]; then
-			status "$sha" owner success "Dependabot: only the commits of actions"
-		else
-			status "$sha" owner pending "Dependabot changed more than the commits of actions: needs the maintainer's approval"
-		fi
+		status "$sha" owner pending "Dependabot changed more than the commits of actions: needs the maintainer's approval"
 	else
 		status "$sha" owner pending "needs the maintainer's approving review of this commit"
 	fi
@@ -131,6 +130,8 @@ one() {
 		jq -s 'add | [.[] | select(.is_copilot_code_review == true)] | last // empty')
 	if [ "$draft" = true ]; then
 		status "$sha" review pending "a draft: the review comes when it is ready for review"
+	elif [ $bump = true ] && [ -z "$review" ]; then
+		status "$sha" review success "Dependabot: only the commits of actions, no review needed"
 	elif [ -z "$review" ]; then
 		status "$sha" review pending "no review by Copilot yet"
 	else

@@ -64,33 +64,27 @@ there. These instructions are the same for every agent and every person; the rea
   not literals in drawing code; the top bar keeps its four entries (ADR 0007, ADR 0008). A second UI or a new layout
   of the screen needs a decision record first.
 
-## Standing agents
+## The development agent
 
-Two agents work without being asked, each from a profile in `.github/agents`, and neither chooses its own work: the
-task is in the issue that starts it. `cleaner` does one piece of mechanical clean-up that changes no behaviour (the
-findings of one lint, dead code, one part out of a file that is too large). `docs-follower` brings the texts in line
-with one merged change. Everything above holds for them, and more: one task and about 400 changed lines at most, no
-fix and no feature on the side, no change to `.github/`, this file, `docs/adr/`, the check scripts, `boot/`,
-`kernel/`, `rootfs/` or `hal/src/dho/`, and never a check made to pass by weakening it. They open pull requests and
-never merge (ADR 0034).
+The maintainer starts a coding agent in a session with a task ("consolidate the decoders", "fix #62") and lets it
+work on its own (ADR 0039). Everything above holds for it, and:
 
-## A session that works alone
-
-When the maintainer sends an agent off to work through the tree on its own (a long session, not one of the standing
-agents), everything above holds, and:
-
+- It acts on GitHub as the App `dekajoule-oos-agent`: `tools/as-agent.sh git push ...`, `tools/as-agent.sh gh pr
+  create ...`. Its commits carry the maintainer's sign-off. Its pull requests need no waiting time and merge by
+  themselves once `test`, `compare`, `owner`, `unit` and `review` pass; it switches auto-merge on for each one.
+- One topic per pull request, about 400 changed lines; `tools/check.sh`, `tools/compare-base.sh` and
+  `tools/privacy-scan.py` before every push, and the maintainer's private check (a local hook). A change that is not
+  meant to change behaviour says `Behaviour: unchanged`; one that is says what changes.
 - At most five of its pull requests are open at once, and no two change the same file.
-- One topic per pull request, about 400 changed lines; `tools/check.sh` and `tools/compare-base.sh` before every
-  push. The private check of the maintainer runs before every push (a local hook).
-- It switches auto-merge on only for a change that says `Behaviour: unchanged` and that the comparison confirms
-  (lints, dead code, a move, tests), and for a correction of documents. Such a pull request needs no waiting time
-  (ADR 0038) and goes in when CI is green.
-- Everything else it opens and leaves to the maintainer: a fix that changes behaviour, anything in the hardware
-  paths, the decision records, `.github/`, the tools and the rules.
-- It never sets `unit-tested`, never removes `hold`, never merges or asks to merge a pull request of somebody else
-  or of a bot.
+- It reads Copilot's review of each pull request, fixes what is right, answers what is not, and resolves the
+  threads; `review` passes only then. It never makes a check pass by weakening it.
+- A change in the hardware paths (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`, `fpgad/`, `boot/`, `kernel/`,
+  `rootfs/`) is tried on the scope on the bench when the maintainer has said in the session that it may use it:
+  deploy to RAM, `tools/device-test.py`, restore what was installed. Then it sets `unit-tested` and says in the pull
+  request what ran on the unit. Without that the pull request waits.
+- It never removes `hold`, and never merges or asks to merge a pull request of somebody else or of another bot.
 - When main is red it fixes that first and does nothing else.
-- It keeps a report as one issue: what it found, opened and merged, and what it leaves to the maintainer.
+- At the end it reports to the maintainer: what it opened and merged, what ran on the unit, what it left open.
 
 ## Layout of the tree
 

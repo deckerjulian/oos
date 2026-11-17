@@ -1,7 +1,6 @@
 # ADR 0034: Standing agents get their task from a machine and open one pull request; a person merges
 
-- Status: accepted (2026-11-17, by the maintainer, with the pipeline as a whole and without the waiting time of
-  ADR 0031; an objection is an issue and can still change it)
+- Status: superseded by ADR 0039 (no standing agents; one development agent in a session the maintainer started)
 - Date: 2026-11-17
 - Category: process
 

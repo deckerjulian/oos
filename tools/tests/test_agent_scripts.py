@@ -1,6 +1,6 @@
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""tools/agent-target.py (which task the cleaner gets) and tools/scout.py (what is new in the forum and the fork),
+"""tools/agent-target.py (which clean-up task comes next) and tools/scout.py (what is new in the forum and the fork),
 with their readers replaced by made-up answers. No network, no cargo."""
 import collections
 import importlib.util
