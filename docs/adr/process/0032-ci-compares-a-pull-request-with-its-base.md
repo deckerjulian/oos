@@ -59,8 +59,9 @@ different pictures of the same source (12 of 276).
 ## Consequences
 
 - A refactoring step, by a person or an agent, is accepted on a comparison a machine made, not on its description.
-- CI has no calibration files, so the calibrated values of the register sequences are compared only by someone who
-  runs `tools/compare-base.sh` with the files of a unit (`OOS_CAL_DIR` or `local/cal`). Timing, and what the hardware
+- CI has no calibration files of a unit. Since 2026-11-17 it compares the calibrated values too, with a made-up set
+  that `oos-fpgad made-up-cal` writes for each comparison and that never enters the tree (docs/protocols/self-cal.md
+  16): it shows that a change moves a calibrated value, not what the value should be. Timing, and what the hardware
   does with a sequence, are outside this comparison as before (ADR 0020).
 - A pull request that adds a script to `ui/tests` or a line to the matrix shows new pictures or lines; it says so.
 - The pull request that brings this record shows 12 pictures as different: its base still renders the storage pages
