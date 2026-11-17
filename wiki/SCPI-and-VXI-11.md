@@ -4,7 +4,7 @@ How to control OOS from a computer: the ways in (raw socket, VXI-11/VISA, MCP), 
 
 > **No authentication.** Anyone who can reach the scope can control it. Keep it on a trusted bench network, never on the internet. `net.allow` (below) limits who may connect.
 
-The complete reference with every detail is [docs/scpi.md](https://github.com/dekajoule/oos/blob/main/docs/scpi.md); the code is [ui/src/scpi.rs](https://github.com/dekajoule/oos/blob/main/ui/src/scpi.rs). This page is the guide; where they differ, the code holds.
+The complete reference with every detail is [docs/scpi.md](https://github.com/dekajoule/oos/blob/main/docs/scpi.md); the code is [ui/src/scpi.rs](https://github.com/dekajoule/oos/blob/main/ui/src/scpi.rs) with one file per subsystem in [ui/src/scpi/](https://github.com/dekajoule/oos/tree/main/ui/src/scpi). This page is the guide; where they differ, the code holds.
 
 ## Contents
 
