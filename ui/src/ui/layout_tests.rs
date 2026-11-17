@@ -303,12 +303,16 @@ fn studio_pins_survive_other_measurements_coming_and_going() {
     u.remove_measurement(0);
     assert_eq!(u.studio_pinned().len(), 3, "the pin of the removed one is gone, the others stay");
     assert!(u.studio_is_pinned(freq));
-    // until a pin is chosen the first three measurements are the badges
+    // every measurement is pinned from the start, and one that is added is pinned too
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.m.layout = Layout::Studio;
     u.m.studio_detail = false;
     u.m.studio_zoom_tab = false;
-    assert_eq!(u.studio_pinned().len(), 3);
+    assert_eq!(u.studio_pinned().len(), u.studio_keys().len());
+    u.studio_set_pin(MeasKey::One(Meas::Vpp, WaveId::Ch(0)), false);
+    u.m.meas.push((Meas::Vmax, WaveId::Ch(0)));
+    assert!(u.studio_is_pinned(MeasKey::One(Meas::Vmax, WaveId::Ch(0))), "the new one is pinned");
+    assert!(!u.studio_is_pinned(MeasKey::One(Meas::Vpp, WaveId::Ch(0))), "the one taken off stays off");
 }
 
 #[test]
@@ -390,12 +394,13 @@ fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
     assert_eq!(u.panel_scroll_px(), 0);
     u.studio.panel.first = 0;
     // the pin left of the row menu pins and unpins it
-    assert_eq!(u.studio_pinned().len(), 3);
+    let all = u.studio_pinned().len();
+    assert_eq!(all, u.studio_keys().len(), "every measurement is pinned until it is taken off");
     let row = Rect::new(g.list.right() - 76, g.list.y + 3 * u.studio_panel_row() + 5, 20, 30);
     tap_in(&mut u, row);
-    assert_eq!(u.studio_pinned().len(), 4);
+    assert_eq!(u.studio_pinned().len(), all - 1);
     tap_in(&mut u, row);
-    assert_eq!(u.studio_pinned().len(), 3);
+    assert_eq!(u.studio_pinned().len(), all);
     // a tap on the name opens the settings of the measurement
     tap_in(&mut u, Rect::new(g.list.x + 80, g.list.y + 5, 40, 30));
     assert_eq!(u.meas_cfg, Some(0));

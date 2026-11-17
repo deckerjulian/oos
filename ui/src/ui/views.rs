@@ -153,8 +153,9 @@ impl Ui {
         let s = &self.studio;
         let mut p: Vec<String> = Vec::new();
         if let Some(pin) = &s.pinned { p.push(format!("pin={}", keys_text(pin))); }
+        if !s.unpinned.is_empty() { p.push(format!("unpin={}", keys_text(&s.unpinned))); }
         if !s.floated.is_empty() { p.push(format!("float={}", keys_text(&s.floated))); }
-        for (on, k) in [(s.hide_badges, "hide"), (s.compact, "compact"), (s.cur_badge, "curbadge"), (s.cur_linked, "curlink"), (s.eye_full, "eyefull")] {
+        for (on, k) in [(s.hide_badges, "hide"), (s.compact, "compact"), (s.cur_badge, "curbadge"), (s.cur_linked, "curlink"), (s.eye_full, "eyefull"), (s.overlay, "overlay")] {
             if on { p.push(format!("{}=1", k)); }
         }
         let pa = &s.panel;
@@ -185,11 +186,13 @@ impl Ui {
     pub(super) fn view_ui_apply(&mut self, text: &str) {
         let num = |v: &str| -> Vec<i32> { v.split('/').filter_map(|x| x.parse().ok()).collect() };
         self.studio.pinned = None;
+        self.studio.unpinned.clear();
         self.studio.floated.clear();
         self.studio.hide_badges = false;
         self.studio.compact = false;
         self.studio.cur_badge = false;
         self.studio.cur_linked = false;
+        self.studio.overlay = false;
         self.studio.eye_full = false;
         self.studio.panel = Default::default();
         self.studio.zoom_open = None;
@@ -213,11 +216,13 @@ impl Ui {
             let Some((k, v)) = w.split_once('=') else { continue };
             match k {
                 "pin" => self.studio.pinned = Some(keys_parse(v)),
+                "unpin" => self.studio.unpinned = keys_parse(v),
                 "float" => self.studio.floated = keys_parse(v),
                 "hide" => self.studio.hide_badges = v == "1",
                 "compact" => self.studio.compact = v == "1",
                 "curbadge" => self.studio.cur_badge = v == "1",
                 "curlink" => self.studio.cur_linked = v == "1",
+                "overlay" => self.studio.overlay = v == "1",
                 "eyefull" => self.studio.eye_full = v == "1",
                 "panel" => {
                     let n = num(v);

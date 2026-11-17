@@ -441,14 +441,11 @@ fn the_meas_tab_is_gone_and_hiding_the_strip_is_reversible_in_one_tap() {
         shotb(&mut u, "strip-hidden");
         tap(&mut u, show);
         assert!(!u.studio.hide_badges, "one tap brings the strip back");
-        // and the Add menu has the entry
-        u.studio.hide_badges = true;
-        u.relayout();
+        // the Add menu adds things: showing the strip is the chip above and View > Show pinned badges
         let t = u.studio_top();
         tap(&mut u, t.add);
-        let r = u.studio_add_rows().into_iter().find(|(k, _)| *k == super::addmenu::AddRow::Strip).unwrap().1;
-        tap(&mut u, r);
-        assert!(!u.studio.hide_badges);
+        assert!(u.studio_add_rows().iter().all(|(k, _)| !matches!(k, super::addmenu::AddRow::Strip | super::addmenu::AddRow::ZoomControls | super::addmenu::AddRow::MeasureSettings)));
+        u.studio.add_menu = false;
     }
     // without any pinned measurement the restore chip is there all the same
     u.studio.pinned = Some(Vec::new());

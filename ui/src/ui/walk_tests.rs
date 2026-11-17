@@ -365,3 +365,131 @@ fn a_one_finger_slide_never_opens_the_hold_menu() {
         }
     }
 }
+
+/// Studio: Overlay traces puts every source on one graticule and Stacked traces gives each its lane again; the
+/// plot menu marks the mode in force. The zoom bar style is a row of Horizontal > Zoom.
+#[test]
+fn studio_overlay_and_stacked_switch_the_lanes() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.ch[1].on = true;
+    u.relayout();
+    for _ in 0..8 { u.step(0.04); }
+    assert_eq!(u.wins.len(), 2, "a lane each to begin with");
+    assert!(u.trace_stacked());
+    u.trace_mode(false);
+    for _ in 0..4 { u.step(0.04); }
+    assert_eq!(u.wins.len(), 1, "Overlay: one graticule");
+    assert!(!u.trace_stacked());
+    u.trace_mode(true);
+    for _ in 0..4 { u.step(0.04); }
+    assert_eq!(u.wins.len(), 2, "Stacked: the lanes are back");
+    assert!(u.items(MenuId::Horizontal).contains(&Item::ZoomBar));
+    let tab = u.m.studio_zoom_tab;
+    u.select_option(Item::ZoomBar, if tab { "Title bar" } else { "Pull-down tab" });
+    assert_ne!(u.m.studio_zoom_tab, tab);
+    // every measurement has a badge while none is pinned by hand and there is room
+    assert!(u.studio.pinned.is_none());
+    assert!(u.studio_badges().len() > 3, "{} badges", u.studio_badges().len());
+}
+
+#[test]
+#[ignore]
+fn walk_pictures() {
+    let Ok(dir) = std::env::var("OOS_WALK_SHOTS") else { return };
+    let shot = |u: &mut Ui, name: &str| {
+        for _ in 0..6 { u.step(0.04); }
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    };
+    let studio = || {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.m.ch[1].on = true;
+        u.relayout();
+        for _ in 0..12 { u.step(0.04); }
+        u
+    };
+    // the Add menu
+    let mut u = studio();
+    let add = u.studio_top().add;
+    tap(&mut u, add.x + add.w / 2, add.y + add.h / 2);
+    shot(&mut u, "1-add-menu");
+    // the plot menu, then Overlay
+    let mut u = studio();
+    let g = u.grid;
+    u.context_menu(g.x + 300, g.y + 120);
+    shot(&mut u, "2-plot-menu");
+    u.trace_mode(false);
+    shot(&mut u, "3-overlay");
+    // Display > Grid and views: the Layout row
+    let mut u = studio();
+    u.open_menu(MenuId::Display);
+    u.step(0.04);
+    let t = u.sheet_geo().unwrap().tabs[1];
+    tap(&mut u, t.x + t.w / 2, t.y + t.h / 2);
+    shot(&mut u, "4-display-layout");
+    // a reference and a math channel beside the channels, six measurements
+    let mut u = studio();
+    u.activate(Item::RefSave);
+    u.m.math_select(0);
+    u.m.math = crate::math::MathOp::Add;
+    u.relayout();
+    shot(&mut u, "5-ref-and-math-pills");
+    // Horizontal > Zoom with the zoom bar row
+    let mut u = studio();
+    u.open_menu(MenuId::Horizontal);
+    u.step(0.04);
+    let t = u.sheet_geo().unwrap().tabs[1];
+    tap(&mut u, t.x + t.w / 2, t.y + t.h / 2);
+    shot(&mut u, "6-horizontal-zoom");
+}
+
+#[test]
+#[ignore]
+fn walk_table_pictures() {
+    let Ok(dir) = std::env::var("OOS_WALK_SHOTS") else { return };
+    let shot = |u: &mut Ui, name: &str| {
+        for _ in 0..30 { u.step(0.04); }
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    };
+    let studio = |view: super::studio::StudioView, detail: bool, stats: bool| {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.m.ch[1].on = true;
+        u.m.meas.extend([(Meas::Freq, WaveId::Ch(1)), (Meas::Vpp, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1))]);
+        u.relayout();
+        for _ in 0..12 { u.step(0.04); }
+        u.studio_set_view(view);
+        u.m.studio_detail = detail;
+        u.studio.panel.stats = stats;
+        u.relayout();
+        u
+    };
+    use super::studio::StudioView as V;
+    shot(&mut studio(V::Only, true, false), "t1-only");
+    shot(&mut studio(V::Only, true, true), "t2-only-stats");
+    shot(&mut studio(V::Docked, true, true), "t3-docked-detail");
+    shot(&mut studio(V::Docked, false, false), "t4-docked-list");
+    // the cards in a panel docked above the waveform, as wide as the screen
+    let mut u = studio(V::Docked, false, false);
+    u.studio.panel.cards = true;
+    u.dock_apply(super::dock::VKind::Measure, super::dock::Drop::Split(super::dock::VKind::Wave, super::dock::Side::Top));
+    u.relayout();
+    for _ in 0..200 { u.step(0.04); }
+    shot(&mut u, "t5-cards-wide");
+    let mut u = studio(V::Docked, false, false);
+    u.studio.panel.cards = true;
+    u.relayout();
+    for _ in 0..100 { u.step(0.04); }
+    shot(&mut u, "t6-cards-narrow");
+    // the detailed table in a panel docked above the waveform
+    let mut u = studio(V::Docked, true, true);
+    u.dock_apply(super::dock::VKind::Measure, super::dock::Drop::Split(super::dock::VKind::Wave, super::dock::Side::Top));
+    u.relayout();
+    for _ in 0..100 { u.step(0.04); }
+    shot(&mut u, "t7-detail-wide");
+}

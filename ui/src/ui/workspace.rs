@@ -648,7 +648,11 @@ impl Ui {
         cv.text_in(&self.fonts().mb, Rect::new(a.x + a.w, a.y, 26, a.h), 1, "to", TEXT);
     }
     pub(super) fn stacked(&self) -> bool {
-        (self.workspace.stacked || self.m.layout == Layout::Studio) && !self.xy_over() && matches!(self.m.view, AView::Scope | AView::Eye)
+        self.trace_stacked() && !self.xy_over() && matches!(self.m.view, AView::Scope | AView::Eye)
+    }
+    /// The trace mode that is chosen: Stacked, which Studio has until Overlay is picked from its plot menu.
+    pub(super) fn trace_stacked(&self) -> bool {
+        self.workspace.stacked || (self.m.layout == Layout::Studio && !self.studio.overlay)
     }
     pub(super) fn trace_sources(&self) -> Vec<Trace> {
         // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane
@@ -679,6 +683,7 @@ impl Ui {
     }
     pub(super) fn trace_mode(&mut self, stacked: bool) {
         self.workspace.popup = None;
+        if self.m.layout == Layout::Studio { self.studio.overlay = !stacked; }
         // a split already gives every source its own window: Overlay keeps it, Stacked replaces it
         if !stacked && self.m.win_layout != WinLayout::One { self.workspace.stacked = false; return; }
         self.workspace.stacked = stacked;
@@ -1035,7 +1040,7 @@ impl Ui {
             for (index, (label, action)) in popup.rows.iter().enumerate() {
                 let r = popup.row_rect(index);
                 cv.set_clip(r); cv.text_in(&self.fonts().s, Rect::new(r.x + 7, r.y, r.w - 34, r.h), 0, label, TEXT); cv.no_clip();
-                let current = match action { Action::Overlay => !self.workspace.stacked, Action::Stacked => self.workspace.stacked, _ => false };
+                let current = match action { Action::Overlay => !self.trace_stacked(), Action::Stacked => self.trace_stacked(), _ => false };
                 if current {
                     // a check at the right end marks the mode in force
                     let (cx, cy) = (r.x + r.w - 40, r.y + r.h / 2);

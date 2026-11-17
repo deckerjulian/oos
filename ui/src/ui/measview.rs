@@ -12,6 +12,8 @@ pub(super) const DETAIL_NARROW_W: [i32; 8] = [44, 54, 76, 74, 74, 74, 62, 52];
 pub(super) const DETAIL_BAR_ONLY_BELOW: i32 = 240;
 /// The room the pin keeps at the right end of the Name cell.
 pub(super) const DETAIL_PIN_W: i32 = 18;
+/// The widest the Name column grows: a long name ("Positive Duty Cycle") and its pin.
+pub(super) const DETAIL_NAME_MAX: i32 = 170;
 /// Below this width the table uses them.
 pub(super) const DETAIL_NARROW_BELOW: i32 = 330;
 pub(super) const DETAIL_COLS: [(&str, i32); 8] = [("Source", 44), ("Name", 104), ("Value", 90), ("Mean", 84), ("Min", 84), ("Max", 84), ("\u{3c3}", 76), ("Count", 64)];
@@ -85,8 +87,21 @@ impl Ui {
             keep.push(c);
         }
         keep.sort_unstable();
-        // the name takes what the table has over
-        if sum < w { ws[1] += w - sum; sum = w; }
+        // what the table has over: the name takes it only as far as a name needs, the rest is shared by the value
+        // columns, so a wide table has no name column half its width with the numbers crowded at the right
+        if sum < w {
+            let extra = w - sum;
+            let to_name = extra.min((DETAIL_NAME_MAX - ws[1]).max(0));
+            ws[1] += to_name;
+            let values: Vec<usize> = keep.iter().copied().filter(|c| *c >= 2).collect();
+            let rest = extra - to_name;
+            if values.is_empty() { ws[1] += rest; } else {
+                let each = rest / values.len() as i32;
+                for c in &values { ws[*c] += each; }
+                ws[*values.last().unwrap()] += rest - each * values.len() as i32;
+            }
+            sum = w;
+        }
         let mut x = 0;
         let cols = keep.iter().map(|&i| { let c = (i, x, ws[i]); x += ws[i]; c }).collect();
         (cols, sum.max(x))

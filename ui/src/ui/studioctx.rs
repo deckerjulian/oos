@@ -153,7 +153,7 @@ impl Ui {
         for (i, (row, label, r)) in rows.iter().enumerate() {
             // a line between the groups
             if i > 0 && r.y - rows[i - 1].2.bottom() >= CTX_SEP { cv.hline(p.x + 10, p.right() - 11, r.y - CTX_SEP / 2, LINE); }
-            let on = match row { CtxRow::Overlay => !self.workspace.stacked, CtxRow::Stacked => self.workspace.stacked, CtxRow::ZoomHere => self.m.zoom, _ => false };
+            let on = match row { CtxRow::Overlay => !self.trace_stacked(), CtxRow::Stacked => self.trace_stacked(), CtxRow::ZoomHere => self.m.zoom, _ => false };
             self.ctx_icon(cv, *row, r.x + 16, r.y + r.h / 2, if on { ACCENT } else { TEXT });
             cv.set_clip(Rect::new(r.x + 32, r.y, r.w - 62, r.h));
             cv.text_in(&f.m, Rect::new(r.x + 34, r.y, r.w - 62, r.h), 0, label, TEXT);

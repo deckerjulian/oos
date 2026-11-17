@@ -162,7 +162,7 @@ impl Ui {
                 _ => Slot::Tab(0),
             }),
             M::Horizontal => (&["Time base", "Zoom"], |it| match it {
-                Zoom | ZScale | ZDelay => Slot::Tab(1),
+                Zoom | ZScale | ZDelay | ZoomBar => Slot::Tab(1),
                 AutoDeskew | ClearDeskew => Slot::Foot(0),
                 _ => Slot::Tab(0),
             }),

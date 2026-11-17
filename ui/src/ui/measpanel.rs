@@ -12,7 +12,7 @@ pub(super) const TOOL_H: i32 = 32;
 /// A panel at least this wide has its controls in the title strip.
 pub(super) const WIDE_BAR_FROM: i32 = 760;
 /// A card of the cards view and the space between cards.
-pub(super) const CARD_H: i32 = 98;
+pub(super) const CARD_H: i32 = 60;
 const CARD_GAP: i32 = 4;
 
 /// The dropdown that is open.
@@ -429,68 +429,77 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ cards
 
-    /// The cards that are on the page: two columns of cards. `pos` indexes `listed`.
+    /// Columns of cards in a list `w` wide: as many as fit at the width a card needs for its value and its
+    /// statistics, two at least (a narrow side panel) and six at most.
+    pub(super) fn panel_card_cols(w: i32) -> i32 {
+        (w / 168).clamp(2, 6)
+    }
+
+    /// The cards that are on the page, in columns. `pos` indexes `listed`.
     pub(super) fn panel_cards_layout(&self, first: usize, total: usize, list: Rect) -> Vec<(usize, Rect)> {
-        let cw = (list.w - 10 - CARD_GAP) / 2;
-        let per_col = ((list.h + CARD_GAP) / (CARD_H + CARD_GAP)).max(1) as usize;
-        (first..total.min(first + per_col * 2)).map(|pos| {
-            let k = pos - first;
-            (pos, Rect::new(list.x + 2 + (k % 2) as i32 * (cw + CARD_GAP), list.y + (k / 2) as i32 * (CARD_H + CARD_GAP), cw, CARD_H))
+        let cols = Self::panel_card_cols(list.w);
+        let cw = (list.w - 10 - (cols - 1) * CARD_GAP) / cols;
+        let page = Self::panel_cards_page(list.w, list.h);
+        (first..total.min(first + page)).map(|pos| {
+            let k = (pos - first) as i32;
+            (pos, Rect::new(list.x + 2 + (k % cols) * (cw + CARD_GAP), list.y + (k / cols) * (CARD_H + CARD_GAP), cw, CARD_H))
         }).collect()
     }
 
     /// How many cards a page of the list holds.
-    pub(super) fn panel_cards_page(list_h: i32) -> usize {
-        (((list_h + CARD_GAP) / (CARD_H + CARD_GAP)).max(1) * 2) as usize
+    pub(super) fn panel_cards_page(list_w: i32, list_h: i32) -> usize {
+        (((list_h + CARD_GAP) / (CARD_H + CARD_GAP)).max(1) * Self::panel_card_cols(list_w)) as usize
     }
 
     /// The pin of a card: top right.
     pub(super) fn panel_card_pin(r: Rect) -> Rect {
-        Rect::new(r.right() - 34, r.y, 34, 34)
+        Rect::new(r.right() - 30, r.y, 30, 30)
     }
 
+    /// The cards: three lines each. The name and the pin; the value and, at the right, the source in its colour;
+    /// two statistics and the count. No space is kept for anything else, so a panel shows as many as it can.
     pub(super) fn draw_panel_cards(&self, cv: &mut Canvas, g: &PanelGeo, rows: &[tools::MeasRow], keys: &[studio::MeasKey], listed: &[usize], first: usize) {
         let f = self.fonts();
         let pinned = self.studio_pinned();
-        let gate = if self.m.meas_full_record { "Full" } else { "Screen" };
         cv.set_clip(g.list);
         for (pos, r) in self.panel_cards_layout(first, listed.len(), g.list) {
             let i = listed[pos];
             let row = &rows[i];
             let is_pinned = keys.get(i).is_some_and(|k| pinned.contains(k));
+            let col = self.wave_color(row.src);
             chip(cv, r, BTN, if is_pinned { mix(BTN_BORDER, AMBER, 90) } else { BTN_BORDER });
             // the name and the pin
-            cv.set_clip(Rect::new(r.x + 4, r.y, r.w - 34, 24));
-            cv.text(&f.s, r.x + 9, r.y + 17, &self.panel_row_name(keys.get(i).copied(), &row.name), LABEL);
+            cv.set_clip(Rect::new(r.x + 4, r.y, r.w - 30, 20));
+            cv.text(&f.s, r.x + 8, r.y + 15, &self.panel_row_name(keys.get(i).copied(), &row.name), LABEL);
             cv.set_clip(g.list);
-            icon_pin(cv, r.right() - 22, r.y + 14, is_pinned, if is_pinned { AMBER } else { DIM });
-            // the value
-            cv.set_clip(Rect::new(r.x + 4, r.y + 20, r.w - 8, 28));
-            cv.text(&f.lb, r.x + 9, r.y + 43, &row.text(), TEXT);
-            cv.set_clip(g.list);
-            // the statistics
+            icon_pin(cv, r.right() - 16, r.y + 12, is_pinned, if is_pinned { AMBER } else { DIM });
+            // the value, and the source at the right of its line
+            let src = self.wave_name(row.src);
+            let sw = f.sb.width(&src);
+            cv.set_clip(Rect::new(r.x + 4, r.y + 18, (r.w - 8 - sw - 10).max(1), 24));
+            cv.text(&f.lb, r.x + 8, r.y + 38, &row.text(), TEXT);
+            cv.set_clip(Rect::new(r.x + 4, r.y + 18, r.w - 8, 24));
+            cv.text(&f.sb, r.right() - 8 - sw, r.y + 37, &src, col);
+            // the statistics: mean and deviation, or minimum and maximum, then the count while there is room
             let st = self.studio_stat_values(i);
-            let cell = |v: Option<f64>| v.map_or("----".to_string(), |v| row.fmt(v));
-            let (a, b) = if self.studio.panel.stats_mode == 2 {
-                (format!("Min {}", cell(st.map(|s| s.1))), format!("Max {}", cell(st.map(|s| s.2))))
-            } else {
-                (format!("Mean {}", cell(st.map(|s| s.0))), format!("Std dev {}", cell(st.map(|s| s.3))))
-            };
-            cv.set_clip(Rect::new(r.x + 4, r.y + 48, r.w - 8, 32));
             if self.studio.panel.stats_mode != 0 || st.is_some() {
-                cv.text(&f.s, r.x + 9, r.y + 59, &a, DIM);
-                cv.text(&f.s, r.x + 9, r.y + 73, &b, DIM);
+                let cell = |v: Option<f64>| v.map_or("----".to_string(), |v| row.fmt(v));
+                let line = if self.studio.panel.stats_mode == 2 {
+                    format!("min {}  max {}", cell(st.map(|s| s.1)), cell(st.map(|s| s.2)))
+                } else {
+                    format!("\u{b5} {}  \u{3c3} {}", cell(st.map(|s| s.0)), cell(st.map(|s| s.3)))
+                };
+                let n = self.mstat.get(i).map_or(0, |s| s.n);
+                let count = if n > 0 { format!("n {n}") } else { String::new() };
+                let room = r.w - 16;
+                let with_count = !count.is_empty() && f.s.width(&line) + 10 + f.s.width(&count) <= room;
+                cv.set_clip(Rect::new(r.x + 4, r.y + 40, r.w - 8 - if with_count { f.s.width(&count) + 8 } else { 0 }, 18));
+                cv.text(&f.s, r.x + 8, r.y + 53, &line, DIM);
+                if with_count {
+                    cv.set_clip(Rect::new(r.x + 4, r.y + 40, r.w - 8, 18));
+                    cv.text(&f.s, r.right() - 8 - f.s.width(&count), r.y + 53, &count, DIM);
+                }
             }
-            cv.set_clip(g.list);
-            // the foot: the source in its colour, the gate and the count
-            let n = self.mstat.get(i).map_or(0, |s| s.n);
-            let foot = if n > 0 { format!("{gate} \u{b7} n {n}") } else { gate.to_string() };
-            let fw = f.s.width(&foot);
-            let col = self.wave_color(row.src);
-            cv.set_clip(Rect::new(r.x + 4, r.y + r.h - 20, r.w - 8, 18));
-            cv.circle(r.x + 12, r.y + r.h - 11, 3, col);
-            cv.text(&f.sb, r.x + 19, r.y + r.h - 7, &self.wave_name(row.src), col);
-            cv.text(&f.s, (r.right() - 8 - fw).max(r.x + 19 + f.sb.width(&self.wave_name(row.src)) + 4), r.y + r.h - 7, &foot, DIM);
             cv.set_clip(g.list);
         }
         cv.no_clip();
