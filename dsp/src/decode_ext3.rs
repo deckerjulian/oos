@@ -37,7 +37,7 @@ fn mid(p: &Pulse) -> f64 {
 pub fn arinc429(v: &[f32], dt: f64, rate: Option<f64>, thr: f32, hyst: f32) -> Vec<Packet> {
     let mut out = Vec::new();
     let thr = thr.abs();
-    if !(thr > 0.0) || !(dt > 0.0) {
+    if thr.is_nan() || thr <= 0.0 || dt.is_nan() || dt <= 0.0 {
         return out;
     }
     // HI pulses through +thr, LO pulses through -thr
@@ -69,7 +69,7 @@ pub fn arinc429(v: &[f32], dt: f64, rate: Option<f64>, thr: f32, hyst: f32) -> V
                 .unwrap_or(2.0 * w)
         }
     };
-    if !(bit >= 4.0) || !bit.is_finite() {
+    if !bit.is_finite() || bit < 4.0 {
         return out;
     }
     let n = v.len() as f64;
@@ -129,7 +129,7 @@ fn arinc429_word(p: &[Pulse], bit: f64, n: f64, out: &mut Vec<Packet>) {
 /// nibble out of 0..15 after a sync gives Field("!ERR"); frames cut by the record end are skipped.
 pub fn sent(v: &[f32], dt: f64, tick: Option<f64>, nibbles: usize, thr: f32, hyst: f32) -> Vec<Packet> {
     let mut out = Vec::new();
-    if !(dt > 0.0) {
+    if dt.is_nan() || dt <= 0.0 {
         return out;
     }
     let nn = nibbles.clamp(1, 6);
@@ -297,7 +297,7 @@ impl UsbBus {
             return None;
         }
         let bit = (s[6].0 - s[0].0) / 6.0;
-        if s.windows(2).any(|w| !((0.6..1.4).contains(&((w[1].0 - w[0].0) / bit)))) || !(bit >= 3.0) {
+        if s.windows(2).any(|w| !((0.6..1.4).contains(&((w[1].0 - w[0].0) / bit)))) || bit.is_nan() || bit < 3.0 {
             return None;
         }
         self.rates.iter().find(|r| (bit / r.0 - 1.0).abs() <= 0.25).map(|r| (bit, r.1))
@@ -419,7 +419,7 @@ fn usb_bus(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, h
 /// idle or an EOP counts only for a packet without errors.
 pub fn usb(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, hyst: f32) -> Vec<Packet> {
     let mut out = Vec::new();
-    if !(dt > 0.0) || !dt.is_finite() {
+    if !dt.is_finite() || dt <= 0.0 {
         return out;
     }
     let bus = usb_bus(dp, dm, dt, speed, thr, hyst);
@@ -701,7 +701,7 @@ pub fn dcc_xor(bytes: &[u8]) -> u8 {
 /// give Field("!ERR"); idle gaps and non-DCC bursts are skipped.
 pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
     let mut out = Vec::new();
-    if !(dt > 0.0) {
+    if dt.is_nan() || dt <= 0.0 {
         return out;
     }
     let e: Vec<f64> = edges(v, thr, hyst).into_iter().map(|x| x.t).collect();
@@ -711,7 +711,7 @@ pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
     // half-bit classification in samples: < 80 us → 1, 80 us .. 12 ms → 0, longer → gap
     let short_max = 80e-6 / dt;
     let long_max = 12e-3 / dt;
-    if !(short_max >= 2.0) {
+    if short_max.is_nan() || short_max < 2.0 {
         return out;
     }
     #[derive(Clone, Copy)]
@@ -778,8 +778,8 @@ pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         let Some((s0, s1, false)) = bits.get(k).copied().flatten() else {
             continue;
         };
-        let pre_t0 = bits[pre0].unwrap().0;
-        let pre_t1 = bits[pre0 + n_pre - 1].unwrap().1;
+        let (Some(first), Some(last)) = (bits[pre0], bits[k - 1]) else { continue };
+        let (pre_t0, pre_t1) = (first.0, last.1);
         out.push(Packet::field("PRE", pre_t0, pre_t1, n_pre as u32, true));
         k += 1;
         // bytes: each is 8 bits MSB first, preceded by a 0 (already consumed for the first); after each byte a

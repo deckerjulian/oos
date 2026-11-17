@@ -98,7 +98,7 @@ pub const STD_BAUD: [f64; 25] = [
 pub fn uart_baud(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Option<f64> {
     let e = edges(v, thr, hyst);
     let w: Vec<f64> = e.windows(2).map(|p| p[1].t - p[0].t).filter(|&x| x > 0.0).collect();
-    if w.len() < 3 || !(dt > 0.0) {
+    if w.len() < 3 || dt.is_nan() || dt <= 0.0 {
         return None;
     }
     let mut s = w.clone();
@@ -177,7 +177,7 @@ pub fn dmx512(v: &[f32], dt: f64, thr: f32, hyst: f32, invert: bool) -> Vec<Pack
     let spb = 1.0 / DMX_BAUD / dt;
     let us = 1e-6 / dt;
     let mut out = Vec::new();
-    if !(spb >= 2.5) {
+    if spb.is_nan() || spb < 2.5 {
         return out;
     }
     let e = edges(v, thr, hyst);
@@ -582,7 +582,7 @@ impl OwNet {
 pub fn onewire(v: &[f32], dt: f64, thr: f32, hyst: f32, overdrive: bool) -> Vec<Packet> {
     let us = 1e-6 / dt;
     let mut net = OwNet::new(overdrive);
-    if !(us >= 0.5) {
+    if us.is_nan() || us < 0.5 {
         return net.out;
     }
     let e = edges(v, thr, hyst);
@@ -997,7 +997,7 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
 pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool) -> Vec<Packet> {
     let spb = 1.0 / rate / dt;
     let mut out = Vec::new();
-    if !(spb >= 4.0) {
+    if spb.is_nan() || spb < 4.0 {
         return out;
     }
     let st = states(v, thr, hyst);
@@ -1107,6 +1107,7 @@ pub mod gen {
     use crate::sim::Logic;
 
     /// Builder of a logic waveform from levels and durations; idle high at t = 0.
+    #[derive(Debug)]
     pub struct Wave {
         pub l: Logic,
         /// current time (s)
@@ -1358,7 +1359,7 @@ pub mod gen {
             let mut input = raw.clone();
             input.extend(&seq);
             push(&mut seq, can_fd_crc(&input, crc_len), crc_len);
-            let mut prev = *raw.last().unwrap();
+            let mut prev = *raw.last().expect("a frame starts with its SOF bit");
             for (i, &b) in seq.iter().enumerate() {
                 if i % 4 == 0 {
                     out.push((!prev, dd));

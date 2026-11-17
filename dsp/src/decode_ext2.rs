@@ -833,7 +833,7 @@ pub fn spdif(v: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
     let cand = s[s.len() / 200];
     let near: Vec<f64> = s.iter().copied().filter(|&x| x >= 0.7 * cand && x <= 1.35 * cand).collect();
     let ui = near.iter().sum::<f64>() / near.len().max(1) as f64;
-    if !(ui > 0.0) {
+    if ui.is_nan() || ui <= 0.0 {
         return out;
     }
     let u: Vec<u8> = d
@@ -1200,7 +1200,7 @@ fn pd_frame(b: &[(f64, f64, bool)], out: &mut Vec<Packet>) {
 pub fn usbpd(cc: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
     let mut out = Vec::new();
     let bit = 1.0 / 300e3 / dt;
-    if !(bit >= 4.0) || !bit.is_finite() {
+    if !bit.is_finite() || bit < 4.0 {
         return out;
     }
     let e = edge_times(cc, thr, hyst);
@@ -1229,10 +1229,10 @@ pub mod gen {
 
     /// A clock and N data lines: per cycle the lines change with the falling clock edge, the rising edge (half a
     /// period later) samples. The clock idles low.
-    fn clocked<const N: usize>(cycles: &[[bool; N]], rate: f64, lo: f64, hi: f64) -> (Logic, Vec<Logic>) {
+    fn clocked<const N: usize>(cycles: &[[bool; N]], rate: f64, lo: f64, hi: f64) -> (Logic, [Logic; N]) {
         let h = 0.5 / rate;
         let mut clk = Logic::new(lo, hi, h / 20.0);
-        let mut d: Vec<Logic> = (0..N).map(|_| Logic::new(lo, hi, h / 20.0)).collect();
+        let mut d: [Logic; N] = std::array::from_fn(|_| Logic::new(lo, hi, h / 20.0));
         clk.push(0.0, false);
         d.iter_mut().for_each(|l| l.push(0.0, false));
         let mut t = 4.0 * h;
@@ -1296,8 +1296,8 @@ pub mod gen {
                 }
             }
         }
-        let (clk, mut d) = clocked(&b.iter().map(|&x| [x]).collect::<Vec<_>>(), rate, lo, hi);
-        (clk, d.remove(0))
+        let (clk, [d]) = clocked(&b.iter().map(|&x| [x]).collect::<Vec<_>>(), rate, lo, hi);
+        (clk, d)
     }
 
     /// JTAG cycle sequence builder (TMS, TDI, TDO per TCK cycle) that tracks the TAP state.
@@ -1343,7 +1343,7 @@ pub mod gen {
             self.clock(false, false, false); // Capture
             self.clock(false, false, false); // -> Shift
             let n = tdi.len();
-            for k in 0..n {
+            for (k, &bit) in tdi.iter().enumerate() {
                 if pause_at == Some(k) && k > 0 {
                     // the previous bit already left Shift (TMS 1): Exit1 -> Pause (2 cycles) -> Exit2 -> Shift
                     self.clock(false, false, false);
@@ -1352,16 +1352,15 @@ pub mod gen {
                     self.clock(false, false, false);
                 }
                 let last = k + 1 == n || pause_at == Some(k + 1);
-                self.clock(last, tdi[k], tdo.get(k).copied().unwrap_or(false));
+                self.clock(last, bit, tdo.get(k).copied().unwrap_or(false));
             }
             self.clock(true, false, false); // Update
             self.clock(false, false, false); // Run-Test/Idle
         }
         /// [TCK, TMS, TDI, TDO]
         pub fn logic(&self, rate: f64, lo: f64, hi: f64) -> [Logic; 4] {
-            let (c, d) = clocked(&self.cycles, rate, lo, hi);
-            let mut d = d.into_iter();
-            [c, d.next().unwrap(), d.next().unwrap(), d.next().unwrap()]
+            let (c, [tms, tdi, tdo]) = clocked(&self.cycles, rate, lo, hi);
+            [c, tms, tdi, tdo]
         }
     }
 
