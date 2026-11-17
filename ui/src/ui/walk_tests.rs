@@ -1115,3 +1115,21 @@ fn meas_defs_dump() {
         if matches!(def.kind, crate::measures::Kind::Module) { println!("DEF|{m}|{}|{}|{}|{:?}|{}", def.id, def.name, def.unit, def.roles, def.blurb); }
     }
 }
+
+/// Picture of the histogram view in Studio, in overlay and in stacked lanes (`OOS_WALK=dir`).
+#[test]
+#[ignore]
+fn walk_hist_pictures() {
+    let Ok(dir) = std::env::var("OOS_WALK") else { return };
+    for (name, on) in [("hist-1", vec![0]), ("hist-3", vec![0, 1, 2])] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        for c in 0..4 { u.m.ch[c].on = on.contains(&c); }
+        u.m.hist = Hist::Vertical;
+        u.relayout();
+        for _ in 0..20 { u.step(0.04); }
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    }
+}

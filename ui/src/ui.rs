@@ -4700,7 +4700,10 @@ impl Ui {
         // as a view of its own: a volts axis at the left, on the lines of the lane it reads, and a count scale
         let ax = if tile && self.m.hist == Hist::Vertical { HIST_AXIS_W } else { 0 };
         let lane = if tile { self.source_area(WaveId::Ch(c)).unwrap_or(a) } else { a };
-        let (ly, lh) = if tile && self.m.hist == Hist::Vertical { ((lane.y - a.y).max(0), lane.h.min(a.h)) } else { (0, a.h) };
+        // a view of its own has its own height: the count scale at the top, the header at the bottom, the bars between.
+        // (It used to copy the position of the channel's lane, which in stacked lanes is a third of the view or less.)
+        let _ = lane;
+        let (ly, lh) = if tile && self.m.hist == Hist::Vertical { (20, (a.h - 20 - 30).max(40)) } else { (0, a.h) };
         let depth = if tile { ((a.w - ax) * 9 / 10).max(40) as f64 } else { (a.w / 5).max(40) as f64 };
         let hdepth = if tile { a.h as f64 * 0.85 / 0.6 } else { depth };
         cv.set_clip(a);
@@ -4709,14 +4712,29 @@ impl Ui {
             Hist::Vertical => {
                 // a bin per row of the map; a larger plot (HDMI layout) gives each bin its share of rows
                 let n = bins.len().max(1) as i32;
-                for (r, &b) in bins.iter().enumerate() {
-                    let len = (b as f64 / peak * depth).round() as i32;
-                    let (y0, y1) = (ly + r as i32 * lh / n, ly + (r as i32 + 1) * lh / n);
-                    if len > 0 {
-                        cv.blend(Rect::new(a.x + ax, a.y + y0, len, (y1 - y0).max(1)), col, 150);
+                if tile {
+                    // bars a finger can see: the bins are gathered into rows of at least four pixels, with a gap between
+                    let group = ((n * 4 + lh - 1) / lh.max(1)).max(1) as usize;
+                    let rows: Vec<u64> = bins.chunks(group).map(|g| g.iter().map(|&b| b as u64).sum()).collect();
+                    let top = rows.iter().copied().max().unwrap_or(0).max(1);
+                    let m = rows.len() as i32;
+                    for (r, &b) in rows.iter().enumerate() {
+                        let len = (b as f64 / top as f64 * depth).round() as i32;
+                        let (y0, y1) = (ly + r as i32 * lh / m, ly + (r as i32 + 1) * lh / m);
+                        if b > 0 {
+                            cv.blend(Rect::new(a.x + ax, a.y + y0, len.max(2), (y1 - y0 - 1).max(1)), col, 190);
+                        }
+                    }
+                    self.draw_hist_axes(cv, a, (ax, ly, lh), c, top);
+                } else {
+                    for (r, &b) in bins.iter().enumerate() {
+                        let len = (b as f64 / peak * depth).round() as i32;
+                        let (y0, y1) = (ly + r as i32 * lh / n, ly + (r as i32 + 1) * lh / n);
+                        if len > 0 {
+                            cv.blend(Rect::new(a.x + ax, a.y + y0, len, (y1 - y0).max(1)), col, 150);
+                        }
                     }
                 }
-                if tile { self.draw_hist_axes(cv, a, (ax, ly, lh), c, peak as u64); }
                 // pixel row -> volts
                 let (factor, center) = self.zoom_vertical_transform(self.area);
                 let h = bins.len().max(1) as f64;
@@ -4748,10 +4766,10 @@ impl Ui {
         cv.text_in(&f.s, r, 1, &txt, col);
     }
 
-    /// The header of a histogram view: right of its volts axis and inside the view.
+    /// The header of a histogram view: right of its volts axis, under the bars and inside the view.
     pub(super) fn hist_head_rect(a: Rect, ax: i32, w: i32) -> Rect {
         let x = a.x + ax + 8;
-        Rect::new(x, a.y + 24, w.min((a.right() - x - 4).max(20)), 20)
+        Rect::new(x, a.bottom() - 26, w.min((a.right() - x - 4).max(20)), 20)
     }
 
     fn math_scale_text(&self) -> String {

@@ -51,6 +51,8 @@ Added:
     lane no longer repeats the trigger level as a scale label beside the trigger tag;
   - a SIM waveform added to a reference while the scope runs live says how long it is when it is far shorter than the
     screen, and its message carries the tick of a done action instead of the warning triangle;
+  - the Histogram view of Studio uses its whole height (it copied the position of the channel's lane, a third of the
+    view in stacked lanes), draws bars of at least four pixels, and has its header under the bars, not on them;
   - a channel whose record reaches the end of the ADC range is named in red in the plot and gets a red pill border;
     `:CHANnel<n>:CLIPping?` answers 1 or 0;
   - Studio: a channel that is off has a small pill, a tap switches it on; the badge of a channel pill switches it
