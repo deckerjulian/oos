@@ -296,7 +296,7 @@ fn the_desktop_setup_file_brings_back_the_layout_and_the_studio_view() {
     assert!(dir.join(crate::store::SetupFile::NAME).is_file());
     // a restart: a new interface reads it
     let mut again = Ui::new(Source::Demo { t: 0.0 });
-    assert_eq!(again.m.layout, Layout::Minimal);
+    assert_eq!(again.m.layout, Layout::Default);
     let mut file2 = crate::store::SetupFile::new(&dir);
     assert_eq!(file2.restore(&mut again), Ok(true));
     assert_eq!(again.m.layout, Layout::Studio);
@@ -316,7 +316,7 @@ fn the_desktop_setup_file_brings_back_the_layout_and_the_studio_view() {
     std::fs::write(dir.join(crate::store::SetupFile::NAME), "layout = wide\n").unwrap();
     let mut third = Ui::new(Source::Demo { t: 0.0 });
     assert!(crate::store::SetupFile::new(&dir).restore(&mut third).is_err());
-    assert_eq!(third.m.layout, Layout::Minimal);
+    assert_eq!(third.m.layout, Layout::Default);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

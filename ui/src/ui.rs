@@ -13790,7 +13790,9 @@ mod tests {
     fn layout_plot_size_and_touch_targets() {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        // default: one measurement row under the plot
+        ui.m.layout = crate::model::Layout::Minimal;
+        ui.relayout();
+        // Minimal: one measurement row under the plot
         assert_eq!((ui.grid.x, ui.grid.y, ui.grid.w, ui.grid.h), (0, 40, 1024, 496));
         ui.m.meas.clear();
         ui.relayout();

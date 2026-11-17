@@ -793,6 +793,7 @@ mod decode_tests {
     #[test]
     fn the_la_needs_its_probe() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.layout = crate::model::Layout::Minimal;
         // demo signals: no probe to ask for
         assert!(ui.la_probe_ok());
         ui.la_probe_set(Some(false));
