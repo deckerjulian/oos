@@ -44,6 +44,12 @@
 //! :MOD:FM|PM:DEViation, :MOD:<type>:INTernal:FREQuency|FUNCtion, :FREQuency <Hz>,
 //! :VOLTage[:AMPLitude] <Vpp>, :VOLTage:OFFSet <V> (all with queries)
 //! Settings go through the same model as the screen, so the screen follows remote changes.
+//!
+//! The interpreter is this module. This file holds the session: the connections, a message (`Program`) with its
+//! `*OPC` fences, the error queue, and the parsing helpers every subsystem shares. `exec_cmd` (scpi/dispatch.rs)
+//! tries the headers in their fixed order and hands a subtree to the file of its subsystem (measure.rs, cursor.rs,
+//! decode.rs, ...; the protocol trigger is ser.rs); the tests are in scpi/tests.rs and scpi/tests/. A new command
+//! goes into the file of its subsystem, with its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
 use crate::gfx::Canvas;
 use crate::model::*;

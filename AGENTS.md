@@ -46,10 +46,11 @@ there. These instructions are the same for every agent and every person; the rea
   the pull request says
   `Behaviour: unchanged`. CI runs the same comparison and fails such a pull request when something differs (ADR 0014,
   ADR 0032).
-- A remote command goes into the one SCPI interpreter (`ui/src/scpi.rs`), never into a transport; it takes the stock
-  name where the stock firmware has one, [docs/scpi.md](docs/scpi.md) lists it, and its query is in
-  `ui/tests/scpi.txt`, so a change of its answer shows in the comparison (ADR 0022, ADR 0023). A new network
-  service gets its switch under Remote services and the `net.allow` check when it can change the scope (ADR 0025).
+- A remote command goes into the one SCPI interpreter (`ui/src/scpi.rs`, a subsystem in its file of `ui/src/scpi/`),
+  never into a transport; it takes the stock name where the stock firmware has one, [docs/scpi.md](docs/scpi.md) lists
+  it, and its query is in `ui/tests/scpi.txt`, so a change of its answer shows in the comparison (ADR 0022, ADR 0023).
+  A new network service gets its switch under Remote services and the `net.allow` check when it can change the scope
+  (ADR 0025).
 - New decoders, measurements and analyser pages come as modules behind their registry (ADR 0002). Identifiers that
   are stored (protocol keys, measurement numbers, feature ids) never change once released.
 - Hardware code builds step lists of `(offset, value)` in `oos-hal`; signal processing in `oos-dsp` stays free of
@@ -117,7 +118,7 @@ request that changes one of these brings the text along:
 
 | You change | Bring along |
 |---|---|
-| a remote command (`ui/src/scpi.rs`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
+| a remote command (`ui/src/scpi.rs`, `ui/src/scpi/`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
 | a menu, a page or a setting a user sees | the page of that part in `wiki/`, `CHANGELOG.md` |
 | an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
 | a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |
