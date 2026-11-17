@@ -272,3 +272,96 @@ pub(super) fn lines() -> Vec<String> {
     }
     out
 }
+
+/// Setters of docs/scpi.md with a query form that are not probed, and why. `every_documented_setter_is_probed`
+/// requires each documented one in `SETTERS` or here.
+const LEFT_OUT: &[(&str, &str)] = &[
+    (":SIM:PLAY", "starts a generation in the background: its answer would depend on how fast that runs"),
+    (":SYSTem:SET", "writes the setup keys, which setup_probes covers through the same reader"),
+    (":SYSTem:GET", "reads the setup keys, which setup_probes covers through setup_text"),
+    (":SOURce<n>:*", "the generator: docs/scpi.md lists its commands without a query form"),
+];
+
+/// The first node of a command a table row or a sentence of docs/scpi.md starts with; a later one in the same line
+/// with fewer nodes than that is relative to it (`:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]`).
+const ROOTS: &[&str] = &[
+    "ACQuire",
+    "BODE",
+    "BUS",
+    "CHANnel",
+    "COUNter",
+    "CURSor",
+    "DECode",
+    "DISPlay",
+    "DVM",
+    "HISTogram",
+    "LA",
+    "MASK",
+    "MATH",
+    "MEASure",
+    "REFerence",
+    "SIM",
+    "SYSTem",
+    "TIMebase",
+    "TRIGger",
+    "VIEW",
+    "WAVeform",
+];
+
+/// Every command of docs/scpi.md written with `[?]` (set and query), as `SETTERS` spells it: `<n>` as 1, an optional
+/// node (`[:MAIN]`) in, each alternative of `{A|B}` on its own, a relative command (`, :STOP[?]`) completed from the
+/// one before it in the same line.
+fn documented_setters() -> Vec<String> {
+    let doc = include_str!("../../../../docs/scpi.md");
+    let mut out = Vec::new();
+    for line in doc.lines() {
+        let mut before: Option<Vec<String>> = None;
+        for span in line.split('`').skip(1).step_by(2).filter(|s| s.starts_with(':')) {
+            let token = span.split_whitespace().next().unwrap_or("");
+            let query = token.contains("[?]");
+            let token = token.replace("[?]", "").replace(['[', ']'], "");
+            let nodes: Vec<String> = token.trim_start_matches(':').split(':').map(str::to_string).collect();
+            let first = nodes[0].replace("<n>", "");
+            let absolute = nodes.len() >= 2 && ROOTS.contains(&first.trim_end_matches(|c: char| c.is_ascii_digit()));
+            let full = match &before {
+                Some(b) if !absolute && b.len() >= nodes.len() => [&b[..b.len() - nodes.len()], &nodes[..]].concat(),
+                _ => nodes,
+            };
+            before = Some(full.clone());
+            if !query {
+                continue;
+            }
+            let mut names = vec![String::new()];
+            for node in &full {
+                let node = node.replace("<n>", "1");
+                let alternatives: Vec<&str> = node.trim_start_matches('{').trim_end_matches('}').split('|').collect();
+                names = names.iter().flat_map(|n| alternatives.iter().map(move |a| format!("{}:{}", n, a))).collect();
+            }
+            out.extend(names);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[test]
+fn every_documented_setter_is_probed() {
+    let known: std::collections::HashSet<&str> =
+        SETTERS.iter().map(|s| s.0).chain(LEFT_OUT.iter().map(|s| s.0)).collect();
+    let found = documented_setters();
+    for want in [":CHANnel1:SCALe", ":TIMebase:MAIN:SCALe", ":CURSor:TRACk:CBX", ":BUS1:SPI:MOSI:SOURce", ":MASK:Y"] {
+        assert!(
+            found.iter().any(|f| f == want),
+            "the scan of docs/scpi.md found no {}: update documented_setters",
+            want
+        );
+    }
+    let missing: Vec<&String> = found.iter().filter(|f| !known.contains(f.as_str())).collect();
+    assert!(
+        missing.is_empty(),
+        "setters of docs/scpi.md with a query form that settings_snapshot/scpi_probes.rs neither probes (SETTERS) nor \
+         leaves out with a reason (LEFT_OUT):\n{}",
+        missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")
+    );
+}

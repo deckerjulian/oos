@@ -514,3 +514,106 @@ pub(super) fn lines() -> Vec<String> {
     }
     out
 }
+
+/// The probed instance of a numbered family: `ch<N>.*` as `ch1.*`, `m<N>.*` as `m2.*` (the first one written: m1 is
+/// the selected math channel), `d<N>.*` as `d2.*` (likewise), `deskew_ch<N>`, `deskew_ref<N>`, `math_expr<N>`,
+/// `view<N>` and `zone<N>` as instance 1.
+fn family(k: &str) -> String {
+    let number = |n: &str| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit());
+    for (prefix, first) in [("ch", "1"), ("m", "2"), ("d", "2")] {
+        if let Some((n, rest)) = k.strip_prefix(prefix).and_then(|r| r.split_once('.')) {
+            if number(n) {
+                return format!("{}{}.{}", prefix, first, rest);
+            }
+        }
+    }
+    for prefix in ["deskew_ch", "deskew_ref", "math_expr", "view", "zone"] {
+        if k.strip_prefix(prefix).is_some_and(number) {
+            return format!("{}1", prefix);
+        }
+    }
+    k.to_string()
+}
+
+/// The keys `set` names in its source, with the numbered families as their probed instance: the literal patterns of
+/// the arms of its `match k`, of the `match field` of `ch<N>.*` and of `m<N>.*`. `d<N>.*` goes back into `set` and
+/// so has the plain keys; the keys behind a guard (`math_expr<N>`, `view<N>`) are found in `setup_text` instead.
+/// `set` is a match on text, not a table, so its source is the only list of what it reads. When it changes shape this
+/// scan fails by its own checks below and has to follow it.
+fn set_keys() -> Vec<String> {
+    let src = include_str!("../../store.rs");
+    let start = src.find("\npub fn set(").expect("store.rs has no `pub fn set(`: update this scan");
+    let end =
+        start + src[start..].find("\npub fn parse_setup(").expect("store.rs has no `pub fn parse_setup(` after set");
+    let mut keys = Vec::new();
+    // the prefix of the current block, and the indentation of its arms once its match is seen
+    let (mut prefix, mut arms): (Option<&str>, Option<usize>) = (None, None);
+    for line in src[start..end].lines() {
+        let indent = line.len() - line.trim_start().len();
+        let code = line.trim();
+        if code.contains("strip_prefix('d')") || code.contains("strip_prefix(\"deskew_ch\")") {
+            (prefix, arms) = (None, None);
+        } else if code.contains("strip_prefix('m')") {
+            (prefix, arms) = (Some("m2."), None);
+        } else if code.contains("strip_prefix(\"ch\")") {
+            (prefix, arms) = (Some("ch1."), None);
+        } else if code == "match k {" {
+            (prefix, arms) = (Some(""), Some(indent + 4));
+        } else if code == "match field {" && prefix.is_some() {
+            arms = Some(indent + 4);
+        } else if let (Some(p), Some(a)) = (prefix, arms) {
+            if indent == a && code.starts_with('"') {
+                let pattern = code.split("=>").next().unwrap_or("");
+                keys.extend(pattern.split('|').map(|s| format!("{}{}", p, s.trim().trim_matches('"'))));
+            }
+        }
+    }
+    for want in ["tdiv", "dec_proto", "ser.rel", "ch1.vdiv", "ch1.bw20", "m2.op", "zone2"] {
+        assert!(keys.iter().any(|k| k == want), "the scan of store::set found no {}: update set_keys", want);
+    }
+    keys
+}
+
+/// A model whose `setup_text` has every line it can write: each optional line set, each decoder slot holding
+/// something.
+fn full_setup_text() -> String {
+    use crate::model::{DECODERS, NCH, NREF};
+    let mut lines = vec!["cur_b_source = 2".to_string(), "cat = 15:1:1:1:1".into(), "tfine = 0.5".into()];
+    for c in 1..=NCH {
+        for (k, v) in [("vfine", "2"), ("unit", "A"), ("bias", "1"), ("skew", "1e-9"), ("label", "x")] {
+            lines.push(format!("ch{}.{} = {}", c, k, v));
+        }
+        lines.push(format!("deskew_ch{} = 1e-9", c));
+    }
+    lines.extend((1..=NREF).map(|r| format!("deskew_ref{} = 1e-9", r)));
+    lines.extend((1..=crate::math::NMATH).map(|k| format!("math_expr{} = CH1", k)));
+    lines.extend((1..=crate::ui::VIEWS_MAX).map(|k| format!("view{} = zoom=true", k)));
+    lines.extend((2..=DECODERS).map(|k| format!("d{}.dec_on = true", k)));
+    let m = crate::store::parse_setup(&lines.join("\n")).expect("the full setup loads");
+    setup_text(&m)
+}
+
+#[test]
+fn every_key_the_setup_writes_or_reads_is_probed() {
+    let probed: HashSet<String> = KEYS
+        .iter()
+        .chain(DECODER)
+        .map(|&(k, _)| family(k))
+        .chain(DECODER.iter().map(|&(k, _)| format!("d2.{}", k)))
+        .collect();
+    let text = full_setup_text();
+    let written = pairs(&text).into_iter().filter(|(k, _)| !k.starts_with('#')).map(|(k, _)| family(&k));
+    let mut missing: Vec<String> = written
+        .map(|k| (k, "written by setup_text"))
+        .chain(set_keys().into_iter().map(|k| (family(&k), "read by set")))
+        .filter(|(k, _)| !probed.contains(k))
+        .map(|(k, why)| format!("{} ({})", k, why))
+        .collect();
+    missing.sort();
+    missing.dedup();
+    assert!(
+        missing.is_empty(),
+        "setup keys without probes in settings_snapshot/setup_probes.rs (KEYS or DECODER):\n{}",
+        missing.join("\n")
+    );
+}

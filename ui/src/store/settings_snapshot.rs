@@ -19,6 +19,11 @@
 //! ```sh
 //! (cd ui && OOS_BLESS=1 cargo test --locked -q settings_snapshot)
 //! ```
+//!
+//! The two lists of what is probed are kept by hand, so two more tests keep them complete: every key `setup_text`
+//! writes for a model with all its optional lines and decoder slots, and every key `set` names in its source, must be
+//! in `KEYS` or `DECODER`; every setter `docs/scpi.md` writes with `[?]` must be in `SETTERS` or in `LEFT_OUT` with
+//! a reason. Each fails with the list of what is missing.
 
 mod scpi_probes;
 mod setup_probes;
