@@ -231,7 +231,12 @@ mod tests {
         for f in files {
             let name = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
             // the definition, and the modules that are test code as a whole
-            if name == "layout.rs" || name == "ui/lint.rs" || name == "ui/tests.rs" || name == "ui/menu_tests.rs" {
+            if name == "layout.rs"
+                || name == "ui/lint.rs"
+                || name.starts_with("ui/lint/")
+                || name == "ui/tests.rs"
+                || name == "ui/menu_tests.rs"
+            {
                 continue;
             }
             let n = panel_uses(&production(&std::fs::read_to_string(&f).unwrap()));
