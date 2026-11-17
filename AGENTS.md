@@ -39,11 +39,13 @@ there. These instructions are the same for every agent and every person; the rea
 - Write hardware code from `docs/`: a fact the code needs and `docs/` lacks goes into `docs/` first, as behaviour at
   the scope's interfaces, in the same pull request (ADR 0030).
 - A change that is not meant to change behaviour proves it: `tools/compare-base.sh` reports no difference (same
-  pictures, same register sequences as the commit before the change), and the pull request says
+  pictures, stored files, answers to remote commands and register sequences as the commit before the change), and
+  the pull request says
   `Behaviour: unchanged`. CI runs the same comparison and fails such a pull request when something differs (ADR 0014,
   ADR 0032).
 - A remote command goes into the one SCPI interpreter (`ui/src/scpi.rs`), never into a transport; it takes the stock
-  name where the stock firmware has one, and [docs/scpi.md](docs/scpi.md) lists it (ADR 0022, ADR 0023). A new network
+  name where the stock firmware has one, [docs/scpi.md](docs/scpi.md) lists it, and its query is in
+  `ui/tests/scpi.txt`, so a change of its answer shows in the comparison (ADR 0022, ADR 0023). A new network
   service gets its switch under Remote services and the `net.allow` check when it can change the scope (ADR 0025).
 - New decoders, measurements and analyser pages come as modules behind their registry (ADR 0002). Identifiers that
   are stored (protocol keys, measurement numbers, feature ids) never change once released.
