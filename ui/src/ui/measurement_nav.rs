@@ -8,7 +8,8 @@ use super::*;
 const GROUPS: [&str; 7] = ["Common", "Voltage", "Timing", "Edges / counts", "Cycles", "Serial / PAM", "Selected"];
 const BAND_PAGE: usize = 18;
 const BAND_ROWS: i32 = 3;
-const NAV_ROWS: i32 = 2;
+/// Cells of the band a page shows while Prev / Next take the end of its last two rows.
+const BAND_NAV_PAGE: usize = BAND_PAGE - 2;
 
 fn category(k: Meas) -> usize {
     match k {
@@ -150,13 +151,28 @@ impl Ui {
     }
 
     pub(super) fn visible_measurement_rows(&self, raw: i32) -> i32 {
-        if raw > BAND_ROWS && !matches!(self.m.strip_dock, StripDock::Left | StripDock::Right) { BAND_ROWS + NAV_ROWS } else { raw }
+        if raw > BAND_ROWS && !matches!(self.m.strip_dock, StripDock::Left | StripDock::Right) { self.band_rows() } else { raw }
+    }
+
+    /// The band has more than one page: Prev / Next take the last cell of its second and third row.
+    fn band_nav(&self) -> bool { self.measurement_count() > BAND_PAGE }
+
+    /// Rows of the band: what its values need, at most three. One page has no row of its own for page controls.
+    fn band_rows(&self) -> i32 {
+        if self.band_nav() { BAND_ROWS } else { (self.measurement_count().div_ceil(tools::STRIP_PER_ROW) as i32).clamp(1, BAND_ROWS) }
+    }
+
+    /// The cell of value `i` of a band page: row and column. With page controls the last column of rows two and three is theirs.
+    fn band_cell(&self, i: usize) -> (i32, i32) {
+        let per = tools::STRIP_PER_ROW;
+        let i = if self.band_nav() && i >= 2 * per - 1 { i + 1 } else { i };
+        ((i / per) as i32, (i % per) as i32)
     }
 
     fn measurement_page_size(&self) -> usize {
         match self.m.strip_dock {
             StripDock::Left | StripDock::Right => ((self.strip_column().h - 42) / 20).max(1) as usize,
-            _ => BAND_PAGE,
+            _ => if self.band_nav() { BAND_NAV_PAGE } else { BAND_PAGE },
         }
     }
 
@@ -174,8 +190,11 @@ impl Ui {
                 Some((Rect::new(r.x + r.w - 96, r.y + 4, 42, 32), Rect::new(r.x + r.w - 50, r.y + 4, 42, 32)))
             }
             _ => {
-                let y = self.strip_band_y() + BAND_ROWS * STRIP_ROW;
-                Some((Rect::new(W - 170, y, 74, 32), Rect::new(W - 88, y, 74, 32)))
+                if !self.band_nav() { return None; }
+                // the last cell of rows two and three: Prev, the page, Next
+                let pitch = (W - 12) / tools::STRIP_PER_ROW as i32;
+                let (x, y) = (6 + 5 * pitch, self.strip_band_y() + STRIP_ROW);
+                Some((Rect::new(x, y, 52, 2 * STRIP_ROW - 2), Rect::new(x + pitch - 4 - 52, y, 52, 2 * STRIP_ROW - 2)))
             }
         }
     }
@@ -234,27 +253,32 @@ impl Ui {
                 let rows: Vec<tools::MeasRow> = self.meas_rows().into_iter().filter(|r| !self.meas_row_hidden(r)).collect();
                 let (first, end, _) = self.page_bounds(rows.len(), size);
                 let y0 = self.strip_band_y();
-                for (row, part) in rows[first..end].chunks(tools::STRIP_PER_ROW).enumerate() {
-                    let y = y0 + row as i32 * STRIP_ROW;
-                    for (column, item) in part.iter().enumerate() {
+                {
+                    for (index, item) in rows[first..end].iter().enumerate() {
+                        let (row, column) = self.band_cell(index);
+                        let y = y0 + row * STRIP_ROW;
                         let pitch = (W - 12) / tools::STRIP_PER_ROW as i32;
                         let r = Rect::new(6 + column as i32 * pitch, y, pitch - 4, 16);
                         cv.fill(r, BAR);
                         let color = self.wave_color(item.src);
                         let source = self.wave_name(item.src);
-                        cv.text(&self.fonts().sb, r.x + 3, y + 12, &source, color);
+                        // the name starts after the source, however wide its name is
+                        let nx = cv.text(&self.fonts().sb, r.x + 3, y + 12, &source, color) + 6;
                         let value = item.text();
                         let vx = r.x + r.w - 3 - self.fonts().sb.width(&value);
-                        let nx = r.x + 28;
                         cv.set_clip(Rect::new(nx, y, (vx - nx - 5).max(0), 16));
                         cv.text(&self.fonts().s, nx, y + 12, &item.name, LABEL);
                         cv.no_clip();
                         cv.text(&self.fonts().sb, vx, y + 12, &value, color);
                     }
                 }
-                cv.text(&self.fonts().sb, 12, y0 + BAND_ROWS * STRIP_ROW + 21, &format!("Measurements {}-{} of {} · {}", first + 1, end, rows.len(), self.measurement_gate_label()), TEXT);
-                // Meter and cursor rows remain available beneath the page controls.
-                let extra_y = y0 + (BAND_ROWS + NAV_ROWS) * STRIP_ROW;
+                if let Some((prev, next)) = self.page_buttons() {
+                    let (_, _, pages) = self.page_bounds(rows.len(), size);
+                    let mid = Rect::new(prev.right(), prev.y, next.x - prev.right(), prev.h);
+                    cv.text_in(&self.fonts().sb, mid, 1, &format!("{}/{}", self.meas_page.min(pages - 1) + 1, pages), TEXT);
+                }
+                // Meter and cursor rows follow the band.
+                let extra_y = y0 + self.band_rows() * STRIP_ROW;
                 for (row, (label, value)) in self.dvm_row().iter().enumerate() {
                     if row > 1 { break; }
                     let x = 12 + row as i32 * 420;
@@ -278,7 +302,8 @@ impl Ui {
             }
         }
         if let Some((prev, next)) = self.page_buttons() {
-            for (rect, label) in [(prev, "Prev"), (next, "Next")] {
+            let side = matches!(self.m.strip_dock, StripDock::Left | StripDock::Right);
+            for (rect, label) in [(prev, if side { "Prev" } else { "<" }), (next, if side { "Next" } else { ">" })] {
                 btn(cv, rect, BTN, BTN_BORDER);
                 cv.text_in(&self.fonts().sb, rect, 1, label, TEXT);
             }

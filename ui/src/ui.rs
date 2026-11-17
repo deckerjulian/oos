@@ -2092,7 +2092,7 @@ impl Ui {
         if self.m.layout == Layout::Studio {
             let f = self.fonts();
             let label = if on { "Exit" } else { "Full" };
-            cv.text(&f.s, r.x - f.s.width(label) - 6, r.y + r.h / 2 + 4, label, if on { AMBER } else { DIM });
+            backed_text(cv, &f.s, r.x - f.s.width(label) - 6, r.y + r.h / 2 + 4, label, if on { AMBER } else { DIM });
         }
         cv.round(r, 5, if on { mix(PANEL_BG, AMBER, 40) } else { PANEL_BG }, 230);
         cv.round_outline(r, 5, if on { AMBER } else { mix(BTN_BORDER, AMBER, 90) });
@@ -2130,6 +2130,14 @@ impl Ui {
         for b in [self.full_btn().1, self.zoom_btn().1] {
             if y + 10 > b.y && y - 10 < b.bottom() && x1 + 26 > b.x - word + 34 { x1 = x1.min(b.x - word - MARK_W); }
         }
+        // a divider handle of the dock lies over the right edge of the waveform: the tag stays left of it
+        if self.dock_on() {
+            for d in &self.dock_layout().dividers {
+                let (cx, cy) = (d.line.x + d.line.w / 2, d.line.y + d.line.h / 2);
+                let h = if d.dir == dock::Dir::H { Rect::new(cx - 12, cy - 22, 24, 44) } else { Rect::new(cx - 22, cy - 12, 44, 24) };
+                if y + 10 > h.y && y - 10 < h.bottom() && x1 + MARK_W > h.x && x1 < h.right() { x1 = h.x - MARK_W - 2; }
+            }
+        }
         x1
     }
 
@@ -2140,7 +2148,7 @@ impl Ui {
         if self.m.layout == Layout::Studio {
             let f = self.fonts();
             let word = match self.studio_zoom_lane().filter(|_| armed) { Some(t) => format!("Zoom {}", sharedzoom::trace_name(t)), None => "Zoom".to_string() };
-            cv.text(&f.s, r.x - f.s.width(&word) - 6, r.y + r.h / 2 + 4, &word, if armed { AMBER } else { DIM });
+            backed_text(cv, &f.s, r.x - f.s.width(&word) - 6, r.y + r.h / 2 + 4, &word, if armed { AMBER } else { DIM });
         }
         cv.round(r, 5, PANEL_BG, 220);
         cv.round_outline(r, 5, if armed { AMBER } else { BTN_BORDER });
@@ -4571,8 +4579,9 @@ impl Ui {
         let (xc, yc) = (self.xy_src[0].min(n_ch() - 1), self.xy_src[1].min(n_ch() - 1));
         let (a, b) = (&rec.ch[xc], &rec.ch[yc]);
         let f = self.fonts();
-        let side = self.area.h;
-        let sq = Rect::new(self.area.x + (self.area.w - side) / 2, self.area.y, side, side);
+        // a square that fits the area both ways: a narrow docked pane keeps its title and its left edge
+        let side = self.area.h.min(self.area.w);
+        let sq = Rect::new(self.area.x + (self.area.w - side) / 2, self.area.y + (self.area.h - side) / 2, side, side);
         cv.fill(sq, rgb(0x04, 0x04, 0x08));
         cv.rect(sq, GRID_AXIS);
         cv.vline(sq.x + side / 2, sq.y, sq.y + side - 1, GRID_LINE);
@@ -4836,7 +4845,8 @@ impl Ui {
         }
         let mut x = g.x + 8;
         if self.m.touch_lock {
-            x = backed_text(cv, &f.sb, x, y, "Touch locked \u{b7} tap Menu to unlock", AMBER) + 16;
+            let hint = if self.m.layout == Layout::Studio { "Touch locked \u{b7} tap the gear to unlock" } else { "Touch locked \u{b7} tap Unlock" };
+            x = backed_text(cv, &f.sb, x, y, hint, AMBER) + 16;
         }
         if let Some(i) = self.hist_pos {
             x = backed_text(cv, &f.sb, x, y, &format!("History {}/{}", i + 1, self.history.len()), BLUE) + 16;

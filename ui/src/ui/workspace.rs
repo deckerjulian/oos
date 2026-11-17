@@ -509,8 +509,8 @@ mod tests {
         ui.relayout();
         let mut cv = Canvas::new(W, H);
         assert!(ui.draw_paged_measurement_strip(&mut cv));
-        // The cursor row follows the three readout rows and two navigation rows.
-        let y = ui.strip_band_y() + 5 * STRIP_ROW;
+        // The cursor row follows the three readout rows: the page controls are in the band's last column.
+        let y = ui.strip_band_y() + 3 * STRIP_ROW;
         assert_eq!(cv.px[((y + 5) * W + 10) as usize], color, "paged readouts retain the same source badge");
         ui.select_workspace_source(WaveId::Ch(0));
         assert_eq!(ui.cursor_badge(), Some(("CH1".into(), CH_COLORS[0])));
