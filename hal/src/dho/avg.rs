@@ -16,8 +16,8 @@
 
 use crate::dho::bus::Bus;
 
-/// How the FPGA average behaves once `count` triggers are in (decided on the unit by
-/// docs/fork/unit-dho804.md, "Hardware averaging" step 3).
+/// How the FPGA average behaves once `count` triggers are in (decided by a hardware test on the unit: the averaged
+/// frames read with a running count and with `OOS_HWAVG=hold`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// running average: shown after every batch, cleared only on a change

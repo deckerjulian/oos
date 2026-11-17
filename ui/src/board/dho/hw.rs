@@ -259,7 +259,7 @@ pub fn avg_hw_ok(m: &Model) -> bool {
 }
 
 /// How the FPGA average is read: running (default), or with OOS_HWAVG=hold a cumulative average of the
-/// count that is shown when complete and then cleared. The hardware test in docs/fork/unit-dho804.md decides.
+/// count that is shown when complete and then cleared. A hardware test on the unit decides which one is right.
 fn avg_kind() -> oos_hal::dho::avg::Kind {
     static K: std::sync::OnceLock<oos_hal::dho::avg::Kind> = std::sync::OnceLock::new();
     *K.get_or_init(|| if std::env::var("OOS_HWAVG").is_ok_and(|v| v == "hold") { oos_hal::dho::avg::Kind::Hold } else { oos_hal::dho::avg::Kind::Running })
