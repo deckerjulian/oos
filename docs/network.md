@@ -315,7 +315,7 @@ above); then a thread of its own runs `oos-firewall reload`, and with the SSH sw
 start with the new list would leave it. The toast says `Allowed: <list>, in force` (`No address list: everyone, in
 force`), or names what failed, with the log (`/tmp/oos-net.log`, `/tmp/oos-ssh.log`, and oos-ui's own); the
 **Firewall** row says `applying` until then, `failed: see the log` after a failure, else `on` or `off: everyone`. A
-save that fails changes nothing. On a computer (the desktop build, `--serve`) there is no firewall: only oos-ui's list
+save that fails changes nothing. On a computer (`--serve`) there is no firewall: only oos-ui's list
 changes. Leave the computer that should reach the scope inside the list: a change that leaves it out closes its SCPI
 connection at once and refuses its next update. There is no SCPI command for it: SCPI has no login.
 

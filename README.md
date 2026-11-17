@@ -33,8 +33,7 @@ OOS builds on the work of these projects. Thank you to everyone behind them:
 - **[linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)** and Realtek, for the
   firmware of the WLAN stick.
 - **[Rust](https://www.rust-lang.org)** and the **[libc](https://github.com/rust-lang/libc)** crate, the only dependency
-  of the OOS code on the scope. The Windows desktop build also uses **[minifb](https://github.com/emoon/rust_minifb)**
-  and **[windows-sys](https://github.com/microsoft/windows-rs)** for its window and network.
+  of the OOS code on the scope.
 - **[Roboto](https://github.com/googlefonts/roboto-classic)**, the typeface of the screen.
 
 Sources and licences of the kernel parts are listed in [kernel/README.md](kernel/README.md).
@@ -300,31 +299,25 @@ Known limits:
 
 ## Try it without a scope
 
-On Windows, with Rust installed, build and open the desktop window from PowerShell:
+On Linux, on macOS, or on Windows inside WSL 2, with Rust installed, start OOS without a display and without hardware
+and open `http://localhost:8080/`:
 
-```powershell
-.\build-windows.ps1 -Run
+```sh
+cd ui && cargo run --release -- --serve
 ```
 
-The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop.
-Plain mouse wheel pans horizontally, and Ctrl+wheel zooms the time scale around the pointer.
-F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
-with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
+The web remote shows the screen with demo signals: a click is a touch, a drag is a swipe, and the page has the keys
+and knobs of the front panel. The SCPI socket is on port 5555 and HiSLIP on 4880. `--offline` starts with the analog
+channels off for stored waveforms; `--web-port`, `--scpi-port` and `--hislip-port` choose other ports, and
+`--store-dir` the folder for setups, CSV and screenshots. There is no native Windows build
+([ADR 0033](docs/adr/process/0033-development-on-linux-macos-and-wsl.md)).
 
-For development, run the checkout and automatically restart after saving source changes:
-
-```powershell
-.\run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880
-```
-
-Rust compiles changed code automatically; the running window stays until a build succeeds, and the watcher then
-replaces only its own process. The window includes front-panel buttons and knob controls; F6 shows or hides them.
-Use **Reference > Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
-also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R10** cards.
+The web remote accepts CSV, OOS BIN and WFM files by file selection and drag-and-drop. Loaded sources appear as
+**R1–R10** cards.
 **SIM** (start menu, Analysis) starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.
 **Live** restores the live session. Measurements follow each captured window and recompute when a stopped
 reference is panned. **Measure** opens categorized choices with Source, Settings, and Selected; large readout
-lists have page controls. The Windows app announces its actual SCPI and HiSLIP listeners over mDNS.
+lists have page controls. A host build announces its SCPI and HiSLIP listeners over mDNS.
 
 **SIM > Advanced** adds SSC profile, deviation and modulation frequency, duty-cycle distortion, and
 correlated random jitter with its corner frequency. PRBS-13 is available alongside the other patterns.

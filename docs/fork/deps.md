@@ -27,14 +27,10 @@ of its own.
 
 ## Rust crates
 
-What runs on the scope, `oos-hal` and `oos-dsp` depend on `libc` and the crates of the tree only; `tools/check.sh
-target` fails otherwise ([ADR 0021](../adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
-A build that only runs on a computer may use its platform's crates; each is listed here:
-
-| Crate | Build | For | Versions |
-|---|---|---|---|
-| `minifb` | Windows desktop (`cfg(windows)`) | the window and its keyboard and mouse input (`ui/src/desktop.rs`) | `ui/Cargo.toml`, `ui/Cargo.lock` |
-| `windows-sys` | Windows desktop (`cfg(windows)`) | network interfaces, sockets, file dialogs (`ui/src/announce/windows.rs`, `ui/src/desktop/`) | `ui/Cargo.toml`, `ui/Cargo.lock` |
+The four crates depend on `libc` and on each other only; `tools/check.sh target` fails otherwise
+([ADR 0021](../adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)). There is no build with
+platform crates any more: the Windows desktop build, which used `minifb` and `windows-sys`, is gone
+([ADR 0033](../adr/process/0033-development-on-linux-macos-and-wsl.md)).
 
 ## Checking for updates
 

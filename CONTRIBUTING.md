@@ -13,9 +13,8 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
   programs and scripts of its start-up) may be used; names from inside the firmware's programs may not
   ([ADR 0030](docs/adr/process/0030-independent-reimplementation-from-black-box-descriptions.md)).
 - **No vendor code or vendor data.** No firmware images, no code or binaries from any stock or modified firmware, no
-  calibration files, no `vendor.bin`. What runs on the scope only depends on `libc`, and it stays that way unless
-  there is a strong reason; a desktop-only build may use its platform's crates
-  ([ADR 0021](docs/adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
+  calibration files, no `vendor.bin`. The four crates only depend on `libc`, and it stays that way unless there is a
+  strong reason ([ADR 0013](docs/adr/process/0013-no-vendor-code-only-libc.md)).
 - **No vendor material in the texts either.** Code, comments, documents, commit messages, pull request descriptions
   and issues describe the hardware as behaviour, in your own words: no listings, copied tables or strings from the
   stock or a modified firmware, and no names of its functions, classes or files. What the vendor publishes for users
@@ -43,6 +42,23 @@ usually in `oos-dsp`. [docs/protocol-modules.md](docs/protocol-modules.md) walks
 Measurements come as a measurement module: a file in `ui/src/measures` with their tiles and their computation, one
 line to register it, the signal processing usually in `oos-dsp`. [docs/measurement-modules.md](docs/measurement-modules.md)
 walks through it. An analyser page registers the same way ([docs/analyser-modules.md](docs/analyser-modules.md)).
+
+## Where to develop
+
+On Linux, on macOS, or on Windows inside WSL 2
+([ADR 0033](docs/adr/process/0033-development-on-linux-macos-and-wsl.md)). CI runs Ubuntu 24.04. There is no native
+Windows build. On Windows:
+
+- Install WSL 2 with a current Ubuntu, and Rust inside it (`rustup`, with the target `aarch64-unknown-linux-musl`).
+- Clone into the Linux file system (`~/oos`), not under `/mnt/c`: builds there are much slower.
+- `tools/check.sh` and `cargo run -- --serve` are used as on Linux; the browser on Windows reaches the web remote at
+  `http://localhost:8080/`.
+- The sims (`tools/check.sh sim`) need Docker inside WSL.
+- A card reader is not a block device inside WSL: back up and write cards with the Windows tools of
+  [docs/sdcard-backup.md](docs/sdcard-backup.md).
+
+WSL has not been tried by the maintainer yet. If a step fails there, open an issue with what you ran and what it
+printed.
 
 ## Before a pull request
 

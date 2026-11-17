@@ -22,9 +22,10 @@ there. These instructions are the same for every agent and every person; the rea
 - **Bring vendor code or data into the tree**: no firmware images, no code or binaries from stock or modified
   firmware, no calibration files, no `vendor.bin`. What is known about the hardware is described in `docs/` as
   behaviour (ADR 0013).
-- **Add a dependency** beyond `libc` to what runs on the scope, or to `oos-hal` and `oos-dsp`, without a strong reason
-  stated in the pull request (ADR 0013). A desktop-only build may use its platform's crates, behind its `cfg` and listed
-  in `docs/fork/deps.md` (ADR 0021).
+- **Add a dependency** beyond `libc` to one of the four crates without a strong reason stated in the pull request
+  (ADR 0013).
+- **Add code for a host that is not Unix.** OOS is built on Linux, macOS and Windows inside WSL 2; there is no native
+  Windows build, and no `cfg(windows)` (ADR 0033).
 - **Turn on a hardware function that is not verified on a unit by default** (ADR 0010).
 - **Put personal data** (serial numbers, MAC addresses, licence keys, a scope's address) into code, docs or commits.
 - **Put vendor material into a text around the code**: commit messages, pull request descriptions and issues follow

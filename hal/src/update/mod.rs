@@ -194,7 +194,6 @@ pub fn lock(state_path: &Path) -> Result<Lock, String> {
         .write(true)
         .open(state_path.with_extension("lock"))
         .map_err(io("opening the update lock"))?;
-    #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
@@ -534,7 +533,6 @@ pub fn arm_by_hand(card: &mut Card, state_path: &Path) -> Result<bool, String> {
 /// An install or rollback holds the update lock right now (also one of another process: the start-up watcher).
 pub fn busy(state_path: &Path) -> bool {
     let Ok(f) = std::fs::OpenOptions::new().write(true).open(state_path.with_extension("lock")) else { return false };
-    #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {

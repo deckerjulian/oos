@@ -4,7 +4,6 @@
 //! oos-ui: the OOS oscilloscope screen.
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
-//!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
 //!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
@@ -13,8 +12,8 @@
 //!   --limits FILE                  experimental limits (default /oos/limits.conf, docs/models.md)
 
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner and
-// leaves them unused. The guard against dead code is the scope build (tools/check.sh target): there only the items that
-// the desktop window alone uses carry an allow, and what only the tests use is #[cfg(test)].
+// leaves them unused. The guard against dead code is the scope build (tools/check.sh target): what only the tests use
+// is #[cfg(test)] or carries an allow with its reason.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 mod clock;
@@ -66,8 +65,6 @@ mod zone;
 mod drm;
 #[cfg(target_os = "linux")]
 mod input;
-#[cfg(windows)]
-mod desktop;
 
 use gfx::Canvas;
 use ui::Ui;
@@ -193,11 +190,6 @@ fn main() {
     }
     if let Some(d) = arg(&args, "--store-dir") {
         ui.store_dir = d.into();
-    } else if cfg!(windows) {
-        // no /tmp on Windows: setups, CSV and screenshots go to Documents\OOS
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            ui.store_dir = std::path::Path::new(&home).join("Documents").join("OOS");
-        }
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);
@@ -206,11 +198,7 @@ fn main() {
     {
         device_main(ui, &args);
     }
-    #[cfg(windows)]
-    {
-        desktop::run(ui, &args);
-    }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = ui;
         eprintln!("oos-ui: no display backend on this OS; use --script FILE");

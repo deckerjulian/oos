@@ -40,8 +40,8 @@ AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the F
                                      /dev/ttyS0 (panel MCU), /sys/class/thermal, /sys/class/pwm
 ```
 
-Rule for all crates: no vendor code is in the tree. Only dependency of what runs on the scope: `libc`; the Windows
-desktop build of `oos-ui` adds its platform's crates (ADR 0021, [fork/deps.md](fork/deps.md)).
+Rule for all crates: no vendor code is in the tree. Only dependency of the four crates: `libc` (ADR 0013,
+[fork/deps.md](fork/deps.md)).
 
 ### oos-hal: hardware layer
 

@@ -10,8 +10,8 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 | `check.sh [layer ...]` | no | every host check CI runs, layer by layer (fmt, clippy, text, syntax, test, target, decoders); `check.sh list` names them ([ADR 0020](../docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)) |
 | `plan-matrix.sh [oos-fpgad]` | no; read-only on a scope | the register sequences of a fixed set of acquisitions (`oos-fpgad plan` only prints), to compare two builds (ADR 0014); needs the calibration files (`OOS_CAL_DIR=local/cal`) |
 | `perf-guard.sh` | no | the ratio guards of the fast paths in a release build (layer `speed` of ADR 0020); needs a quiet computer |
-| `scpi_validate.py --web-port 18080` | no; a desktop build on this computer | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
-| `sim_validate.py --web-port 18080` | no; a desktop build on this computer | replaces R8 to validate full-cycle SSC, advanced jitter configuration, background generation/cancellation and safe generation limits; writes evidence to `local/sim-validation.json` |
+| `scpi_validate.py --web-port 18080` | no; `oos-ui --serve` on this computer | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
+| `sim_validate.py --web-port 18080` | no; `oos-ui --serve` on this computer | replaces R8 to validate full-cycle SSC, advanced jitter configuration, background generation/cancellation and safe generation limits; writes evidence to `local/sim-validation.json` |
 | `tests/` | no | the tests of the Python host tools, run by `check.sh test` |
 | `oosclient.py` | no (a library) | the SCPI transport of `device-test.py`, `scpi_validate.py` and `sim_validate.py`: lines and definite blocks, read exactly |
 | `fw-sim.sh` | no; Docker | oos-firewall's IPv6 part, `udhcpc.script` and `oos-net6` in an arm64 container with the image's busybox and nft |
