@@ -492,6 +492,9 @@ struct Pick {
     focus: usize,
 }
 
+/// Values a measurement card's trend keeps.
+const MHIST_LEN: usize = 160;
+
 #[derive(Clone, Copy, Default)]
 struct MStat {
     n: u64,
@@ -1365,6 +1368,8 @@ pub struct Ui {
     wlan: wlan::WlanUi,
     pinch: Pinch,
     mstat: Vec<MStat>,
+    /// the last values of each measurement row, for the small trend of its card (as `mstat`: by row, cleared with it)
+    mhist: Vec<std::collections::VecDeque<f32>>,
     /// past values of each measurement row
     trend: Vec<panes::Trend>,
     /// what the second pane keeps between frames
@@ -1692,6 +1697,7 @@ impl Ui {
             offline_hold: None,
             touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, t0: 0.0, held: false, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
             mstat: Vec::new(),
+            mhist: Vec::new(),
             trend: Vec::new(),
             pn: Default::default(),
             log: logger::Logger::default(),
@@ -3074,8 +3080,15 @@ impl Ui {
             let rows = self.meas_rows();
             self.trend_update(self.mstat.is_empty(), &rows);
             self.mstat.resize(rows.len(), MStat::default());
+            self.mhist.resize(rows.len(), Default::default());
             self.counter_update();
             for (i, row) in rows.iter().enumerate() {
+                // the trend of a card keeps the last values of every row, whichever way its statistics are counted
+                if row.v.is_finite() {
+                    let h = &mut self.mhist[i];
+                    if h.len() >= MHIST_LEN { h.pop_front(); }
+                    h.push_back(row.v as f32);
+                }
                 if self.is_basic_frame_row(i) { continue; }
                 if row.computing {
                     if let Some(entry) = i.checked_sub(self.m.meas.len() + self.m.meas2.len()).and_then(|i| self.m.cat.get(i)).copied() {
@@ -7828,6 +7841,7 @@ impl Ui {
 
     fn clear_measurement_statistics(&mut self) {
         self.mstat.clear();
+        self.mhist.clear();
         // the settings of a row that is no longer selected go with it
         if !self.m.row_cfg.is_empty() {
             let keys = self.m.row_keys();

@@ -445,3 +445,45 @@ fn walk_pictures() {
     tap(&mut u, t.x + t.w / 2, t.y + t.h / 2);
     shot(&mut u, "6-horizontal-zoom");
 }
+
+#[test]
+#[ignore]
+fn walk_table_pictures() {
+    let Ok(dir) = std::env::var("OOS_WALK_SHOTS") else { return };
+    let shot = |u: &mut Ui, name: &str| {
+        for _ in 0..30 { u.step(0.04); }
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    };
+    let studio = |view: super::studio::StudioView, detail: bool, stats: bool| {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.m.ch[1].on = true;
+        u.m.meas.extend([(Meas::Freq, WaveId::Ch(1)), (Meas::Vpp, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1))]);
+        u.relayout();
+        for _ in 0..12 { u.step(0.04); }
+        u.studio_set_view(view);
+        u.m.studio_detail = detail;
+        u.studio.panel.stats = stats;
+        u.relayout();
+        u
+    };
+    use super::studio::StudioView as V;
+    shot(&mut studio(V::Only, true, false), "t1-only");
+    shot(&mut studio(V::Only, true, true), "t2-only-stats");
+    shot(&mut studio(V::Docked, true, true), "t3-docked-detail");
+    shot(&mut studio(V::Docked, false, false), "t4-docked-list");
+    // the cards in a panel docked above the waveform, as wide as the screen
+    let mut u = studio(V::Docked, false, false);
+    u.studio.panel.cards = true;
+    u.dock_apply(super::dock::VKind::Measure, super::dock::Drop::Split(super::dock::VKind::Wave, super::dock::Side::Top));
+    u.relayout();
+    for _ in 0..200 { u.step(0.04); }
+    shot(&mut u, "t5-cards-wide");
+    let mut u = studio(V::Docked, false, false);
+    u.studio.panel.cards = true;
+    u.relayout();
+    for _ in 0..100 { u.step(0.04); }
+    shot(&mut u, "t6-cards-narrow");
+}

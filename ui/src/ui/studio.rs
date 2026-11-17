@@ -106,6 +106,9 @@ pub(super) struct Studio {
     pub enter: bool,
     /// the measurements shown as badges; None until one is pinned or unpinned: the first three
     pub pinned: Option<Vec<MeasKey>>,
+    /// The measurements the user took off the badge row. Every other one is pinned, a new one too: a measurement
+    /// is pinned from the moment it is added. (`pinned` is the explicit list of an older set-up; a pin tap ends it.)
+    pub unpinned: Vec<MeasKey>,
     /// measurements moved to the floating panel from a badge popup: listed there beside the pinned ones
     pub floated: Vec<MeasKey>,
     /// the badge row is hidden (eye button, View > Show pinned badges)
@@ -1257,24 +1260,18 @@ impl Ui {
         match key { MeasKey::One(_, id) | MeasKey::Pair(_, id, _) | MeasKey::Cat(_, id, _, _, _) => id }
     }
 
-    /// The measurements of the badge row. Until the user pins or unpins one, the row is not held to the first
-    /// three: the others follow them for as long as there is room, and the "+N" chip counts the rest. Once the user
-    /// has chosen, the row is the pinned ones only.
+    /// The measurements of the badge row: the pinned ones (the row shows as many as fit, a "+N" chip counts the rest).
     pub(super) fn studio_badge_keys(&self) -> Vec<MeasKey> {
-        let pinned = self.studio_pinned();
-        if self.studio.pinned.is_some() { return pinned; }
-        let rest: Vec<MeasKey> = self.studio_keys().into_iter()
-            .filter(|k| !pinned.contains(k) && self.studio_source_live(Self::studio_key_source(*k))).collect();
-        pinned.into_iter().chain(rest).collect()
+        self.studio_pinned()
     }
 
-    /// The measurements that are pinned: those the user pinned, or the first three until one is pinned. Only those
-    /// of a source that is live: no "CH1 ----" while CH1 is off and a ref is the signal.
+    /// The measurements that are pinned: every one the user has not unpinned, so a measurement is pinned from the
+    /// moment it is added. Only those of a source that is live: no "CH1 ----" while CH1 is off and a ref is the signal.
     pub(super) fn studio_pinned(&self) -> Vec<MeasKey> {
         let keys: Vec<MeasKey> = self.studio_keys().into_iter().filter(|k| self.studio_source_live(Self::studio_key_source(*k))).collect();
         match &self.studio.pinned {
             Some(pinned) => keys.into_iter().filter(|k| pinned.contains(k)).collect(),
-            None => keys.into_iter().take(3).collect(),
+            None => keys.into_iter().filter(|k| !self.studio.unpinned.contains(k)).collect(),
         }
     }
 
@@ -1287,6 +1284,7 @@ impl Ui {
         self.m.meas2 = meas2.into_iter().filter(|&(_, a, b)| !gone(self, a) && !gone(self, b)).collect();
         let keys = self.studio_keys();
         if let Some(p) = &mut self.studio.pinned { p.retain(|k| keys.contains(k)); }
+        self.studio.unpinned.retain(|k| keys.contains(k));
         self.studio.floated.retain(|k| keys.contains(k));
         self.studio.popup = None;
         self.studio.panel.scroll_top();
@@ -1304,10 +1302,12 @@ impl Ui {
     }
 
     pub(super) fn studio_set_pin(&mut self, key: MeasKey, on: bool) {
-        let mut pinned = self.studio_pinned();
-        pinned.retain(|k| *k != key);
-        if on { pinned.push(key); }
-        self.studio.pinned = Some(pinned);
+        // an explicit list (an older set-up) becomes what it leaves out, so what is added from now on is pinned
+        if let Some(pinned) = self.studio.pinned.take() {
+            self.studio.unpinned = self.studio_keys().into_iter().filter(|k| !pinned.contains(k)).collect();
+        }
+        self.studio.unpinned.retain(|k| *k != key);
+        if !on { self.studio.unpinned.push(key); }
         self.relayout();
     }
 
@@ -1770,6 +1770,7 @@ impl Ui {
         self.dock_reset();
         self.studio.hide_badges = false;
         self.studio.pinned = None;
+        self.studio.unpinned.clear();
         self.studio.popup = None;
         self.studio.panel = Default::default();
         self.studio.compact = false;
@@ -2027,8 +2028,8 @@ impl Ui {
         let list_y = p.y + Self::panel_tool_h(p) + if detailed { super::measview::COL_HEAD } else { 0 };
         let unit = self.studio_panel_row();
         let rows_h = (p.bottom() - 2 - list_y).max(unit);
-        let page = if self.panel_is_cards() { Self::panel_cards_page(rows_h) } else { (rows_h / unit).max(1) as usize };
-        let shown_h = if self.panel_is_cards() { (page as i32 / 2) * (super::measpanel::CARD_H + 4) } else { rows_h };
+        let page = if self.panel_is_cards() { Self::panel_cards_page(p.w - 8, rows_h) } else { (rows_h / unit).max(1) as usize };
+        let shown_h = if self.panel_is_cards() { (page as i32 / Self::panel_card_cols(p.w - 8)) * (super::measpanel::CARD_H + 4) } else { rows_h };
         let list = Rect::new(p.x + 4, list_y, p.w - 8, shown_h);
         let bar = self.panel_bar(p);
         let at = |it: super::measpanel::BarItem| bar.slots.iter().find(|s| s.item == it).map_or(Rect::new(0, 0, 0, 0), |s| s.r);
@@ -2204,11 +2205,37 @@ impl Ui {
         Some([back, filter, stats, add])
     }
 
+    /// The table as blocks side by side. Without the statistics a row is short (pin, source, name, value): a wide
+    /// table shows two blocks of rows instead of one with an empty right half. With them it is one block.
+    pub(super) fn studio_table_blocks(&self, list_w: i32) -> i32 {
+        if !self.studio.panel.stats && list_w >= 760 { 2 } else { 1 }
+    }
+
+    /// The columns of a block `w` wide, sized to what they hold: (x, width, head). The source and the name are as
+    /// wide as their widest entry, and the value columns share the rest evenly, so nothing is left empty at the
+    /// right and no name column is wider than its names.
+    fn studio_table_cols(&self, rows: &[tools::MeasRow], listed: &[usize], w: i32) -> Vec<(i32, i32, &'static str)> {
+        let f = self.fonts();
+        let src_w = listed.iter().map(|&i| f.sb.width(&self.wave_name(rows[i].src))).max().unwrap_or(0).max(f.sb.width("CH4")).max(f.mb.width("Source") - 12) + 12 + 22;
+        let name_w = (listed.iter().map(|&i| f.m.width(&rows[i].name)).max().unwrap_or(0).max(f.mb.width("Measurement")) + 28).min(w * 2 / 5);
+        let mut heads = vec!["Current"];
+        if self.studio.panel.stats {
+            heads.push("Mean");
+            for (name, i) in [("Min", 1usize), ("Max", 2), ("\u{3c3}", 0)] { if self.m.meas_show[i] { heads.push(name); } }
+        }
+        let x0 = 52;
+        let rest = (w - x0 - src_w - name_w - 12).max(heads.len() as i32 * 60);
+        let vw = rest / heads.len() as i32;
+        let mut v = vec![(x0, src_w, "Source"), (x0 + src_w, name_w, "Measurement")];
+        for (k, h) in heads.into_iter().enumerate() { v.push((x0 + src_w + name_w + k as i32 * vw, vw, h)); }
+        v
+    }
+
     /// Rows of the table, the page, and the footer buttons (Reset statistics, up, down).
     pub(super) fn studio_table_geo(&self) -> Option<(Rect, usize, [Rect; 3])> {
         let t = self.studio_table_rect()?;
         let list = Rect::new(t.x + 6, t.y + 48 + 28, t.w - 12, t.h - 48 - 28 - 44);
-        let page = (list.h / TABLE_ROW).max(1) as usize;
+        let page = (list.h / TABLE_ROW).max(1) as usize * self.studio_table_blocks(list.w) as usize;
         let y = t.bottom() - 38;
         let reset = Rect::new(t.right() - 168, y, 160, 32);
         Some((list, page, [reset, Rect::new(reset.x - 44 - 44, y, 38, 32), Rect::new(reset.x - 44, y, 38, 32)]))
@@ -2247,32 +2274,34 @@ impl Ui {
         cv.text_in(&f.m, Rect::new(stats.x + 30, stats.y, stats.w - 32, stats.h), 0, "Statistics", TEXT);
         chip(cv, add, BTN, BTN_BORDER);
         cv.text_in(&f.m, add, 1, "+ Add", TEXT);
-        // columns: pin, source, measurement, current, then mean and the minimum, maximum and deviation the settings show
+        // columns sized to their content; two blocks of rows side by side while the statistics are off
         let show = self.m.meas_show;
-        let cols: Vec<(i32, &str)> = if on {
-            let mut v = vec![(52, "Source"), (136, "Measurement"), (380, "Current"), (540, "Mean")];
-            let mut x = 540;
-            for (name, i) in [("Min", 1usize), ("Max", 2), ("\u{3c3}", 0)] {
-                if show[i] { x += 120; v.push((x, name)); }
-            }
-            v
-        } else { vec![(52, "Source"), (136, "Measurement"), (420, "Current")] };
+        let blocks = self.studio_table_blocks(list.w);
+        let bw = list.w / blocks;
+        let per = (page / blocks as usize).max(1);
+        let cols = self.studio_table_cols(&rows, &listed, bw - if blocks > 1 { 8 } else { 0 });
         let head = Rect::new(t.x + 6, t.y + 48, t.w - 12, 28);
         cv.fill(head, BAR);
-        for (x, name) in &cols { cv.text_in(&f.mb, Rect::new(head.x + x, head.y, 160, head.h), 0, name, LABEL); }
+        for b in 0..blocks {
+            for (x, w, name) in &cols { cv.text_in(&f.mb, Rect::new(head.x + b * bw + x, head.y, w - 6, head.h), 0, name, LABEL); }
+        }
         let first = self.studio_first(listed.len(), page);
         cv.set_clip(list);
         for (k, &i) in listed.iter().skip(first).take(page).enumerate() {
-            let r = Rect::new(list.x, list.y + k as i32 * TABLE_ROW, list.w, TABLE_ROW);
+            let (b, line) = ((k / per) as i32, (k % per) as i32);
+            let r = Rect::new(list.x + b * bw, list.y + line * TABLE_ROW, bw - if blocks > 1 && b + 1 < blocks { 8 } else { 0 }, TABLE_ROW);
             let row = &rows[i];
             let cy = r.y + r.h / 2;
             let pinned = keys.get(i).is_some_and(|key| self.studio_is_pinned(*key));
             icon_pin(cv, r.x + 14, cy + 1, pinned, if pinned { AMBER } else { DIM });
-            let tag = Rect::new(r.x + cols[0].0, r.y + 10, f.sb.width("CH4") + 12, 24);
+            let tag = Rect::new(r.x + cols[0].0, r.y + 10, (f.sb.width(&self.wave_name(row.src)) + 12).max(f.sb.width("CH4") + 12), 24);
             cv.round(tag, 5, self.wave_color(row.src), 255);
             cv.text_in(&f.sb, tag, 1, &self.wave_name(row.src), DARK_TEXT);
-            cv.text_in(&f.m, Rect::new(r.x + cols[1].0, r.y, 240, r.h), 0, &row.name, TEXT);
-            cv.text_in(&f.mb, Rect::new(r.x + cols[2].0, r.y, 170, r.h), 0, &row.text(), TEXT);
+            let outer = cv.save_clip();
+            cv.clip_within(Rect::new(r.x + cols[1].0, r.y, cols[1].1 - 8, r.h));
+            cv.text_in(&f.m, Rect::new(r.x + cols[1].0, r.y, cols[1].1 - 8, r.h), 0, &row.name, TEXT);
+            cv.restore_clip(outer);
+            cv.text_in(&f.mb, Rect::new(r.x + cols[2].0, r.y, cols[2].1 - 6, r.h), 0, &row.text(), TEXT);
             if on {
                 let st = self.mstat.get(i).copied().unwrap_or_default();
                 let cell = |v: f64| if st.n == 0 { "----".to_string() } else { row.fmt4(v) };
@@ -2284,11 +2313,13 @@ impl Ui {
                 }
                 for (k, v) in values.into_iter().enumerate() {
                     let Some(col) = cols.get(3 + k) else { break };
-                    cv.text_in(&f.m, Rect::new(r.x + col.0, r.y, 118, r.h), 0, &cell(v), TEXT);
+                    cv.text_in(&f.m, Rect::new(r.x + col.0, r.y, col.1 - 6, r.h), 0, &cell(v), TEXT);
                 }
             }
             cv.hline(r.x, r.right() - 1, r.bottom() - 1, LINE);
         }
+        // the line between the two blocks
+        for b in 1..blocks { cv.vline(list.x + b * bw - 4, list.y, list.bottom() - 1, LINE); }
         cv.no_clip();
         Self::draw_scrollbar(cv, list, first, page, listed.len());
         let end = (first + page).min(listed.len());
@@ -2388,9 +2419,14 @@ impl Ui {
             else if up.contains(x, y) || down.contains(x, y) { self.studio_page(listed.len(), page, down.contains(x, y)); }
             else if list.contains(x, y) {
                 let first = self.studio_first(listed.len(), page);
-                let k = ((y - list.y) / TABLE_ROW) as usize;
+                // the block the tap is in, then the row in it
+                let blocks = self.studio_table_blocks(list.w);
+                let (bw, per) = (list.w / blocks, (page / blocks as usize).max(1));
+                let b = ((x - list.x) / bw).clamp(0, blocks - 1);
+                let line = ((y - list.y) / TABLE_ROW) as usize;
+                let k = if line < per { b as usize * per + line } else { usize::MAX / 2 };
                 if let Some(&i) = listed.get(first + k) {
-                    if x < list.x + 52 {
+                    if x < list.x + b * bw + 52 {
                         if let Some(&key) = keys.get(i) { let on = self.studio_is_pinned(key); self.studio_set_pin(key, !on); }
                     } else { self.studio_configure(i); }
                 }

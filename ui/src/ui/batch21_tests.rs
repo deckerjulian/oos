@@ -380,6 +380,9 @@ fn the_list_has_the_header_with_source_gate_search_count_and_pinned_only() {
     tap_xy(&mut u, g.p.x + 20, g.list.y + 20);
     assert!(u.studio.panel.drop.is_none() && u.m.meas.len() == n);
     // pinned only
+    // everything is pinned until one is taken off
+    let last = *u.studio_keys().last().unwrap();
+    u.studio_set_pin(last, false);
     u.studio_set_pin(super::studio::MeasKey::One(Meas::Vpp, WaveId::Ch(0)), true);
     let pinned = u.studio_pinned().len();
     assert!(pinned >= 1 && pinned < total);

@@ -429,19 +429,52 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ cards
 
-    /// The cards that are on the page: two columns of cards. `pos` indexes `listed`.
+    /// Columns of cards in a list `w` wide: two, and three once each is still wide enough for its trend, so a wide
+    /// panel of two rows shows six measurements.
+    pub(super) fn panel_card_cols(w: i32) -> i32 {
+        if w >= 720 { 3 } else { 2 }
+    }
+
+    /// The cards that are on the page, in columns. `pos` indexes `listed`.
     pub(super) fn panel_cards_layout(&self, first: usize, total: usize, list: Rect) -> Vec<(usize, Rect)> {
-        let cw = (list.w - 10 - CARD_GAP) / 2;
-        let per_col = ((list.h + CARD_GAP) / (CARD_H + CARD_GAP)).max(1) as usize;
-        (first..total.min(first + per_col * 2)).map(|pos| {
-            let k = pos - first;
-            (pos, Rect::new(list.x + 2 + (k % 2) as i32 * (cw + CARD_GAP), list.y + (k / 2) as i32 * (CARD_H + CARD_GAP), cw, CARD_H))
+        let cols = Self::panel_card_cols(list.w);
+        let cw = (list.w - 10 - (cols - 1) * CARD_GAP) / cols;
+        let page = Self::panel_cards_page(list.w, list.h);
+        (first..total.min(first + page)).map(|pos| {
+            let k = (pos - first) as i32;
+            (pos, Rect::new(list.x + 2 + (k % cols) * (cw + CARD_GAP), list.y + (k / cols) * (CARD_H + CARD_GAP), cw, CARD_H))
         }).collect()
     }
 
     /// How many cards a page of the list holds.
-    pub(super) fn panel_cards_page(list_h: i32) -> usize {
-        (((list_h + CARD_GAP) / (CARD_H + CARD_GAP)).max(1) * 2) as usize
+    pub(super) fn panel_cards_page(list_w: i32, list_h: i32) -> usize {
+        (((list_h + CARD_GAP) / (CARD_H + CARD_GAP)).max(1) * Self::panel_card_cols(list_w)) as usize
+    }
+
+    /// The small trend of a card: the last values of its measurement, in the room right of its numbers. The scale
+    /// is the range of those values (a flat line when they do not move), with the newest at the right edge.
+    fn draw_card_trend(&self, cv: &mut Canvas, plot: Rect, i: usize, col: Rgb) {
+        let Some(h) = self.mhist.get(i).filter(|h| h.len() >= 2) else { return };
+        let (lo, hi) = h.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        let span = (hi - lo).max(hi.abs().max(lo.abs()) * 1e-4).max(f32::MIN_POSITIVE);
+        let mid = (hi + lo) / 2.0;
+        cv.hline(plot.x, plot.right() - 1, plot.y, mix(BTN, LINE, 160));
+        cv.hline(plot.x, plot.right() - 1, plot.bottom() - 1, mix(BTN, LINE, 160));
+        let n = h.len() as i32;
+        // the newest value sits at the right edge; a short history starts part of the way in
+        let step = (plot.w - 1) as f32 / (super::MHIST_LEN as f32 - 1.0);
+        let x_of = |k: i32| plot.right() - 1 - ((n - 1 - k) as f32 * step) as i32;
+        let y_of = |v: f32| plot.y + plot.h / 2 - (((v - mid) / span) * (plot.h - 6) as f32) as i32;
+        let outer = cv.save_clip();
+        cv.clip_within(plot);
+        let mut prev: Option<(i32, i32)> = None;
+        for (k, v) in h.iter().enumerate() {
+            let p = (x_of(k as i32), y_of(*v));
+            if let Some(q) = prev { cv.line(q.0, q.1, p.0, p.1, col); }
+            prev = Some(p);
+        }
+        if let Some(p) = prev { cv.circle(p.0 - 1, p.1, 2, col); }
+        cv.restore_clip(outer);
     }
 
     /// The pin of a card: top right.
@@ -482,6 +515,12 @@ impl Ui {
                 cv.text(&f.s, r.x + 9, r.y + 73, &b, DIM);
             }
             cv.set_clip(g.list);
+            // a wide card has room right of its numbers: the trend of the measurement
+            if r.w >= 250 {
+                let left = (9 + f.lb.width(&row.text()).max(f.s.width(&a)).max(f.s.width(&b)) + 18).max(150);
+                let plot = Rect::new(r.x + left, r.y + 26, r.w - left - 14, r.h - 26 - 24);
+                if plot.w >= 60 { self.draw_card_trend(cv, plot, i, self.wave_color(row.src)); }
+            }
             // the foot: the source in its colour, the gate and the count
             let n = self.mstat.get(i).map_or(0, |s| s.n);
             let foot = if n > 0 { format!("{gate} \u{b7} n {n}") } else { gate.to_string() };

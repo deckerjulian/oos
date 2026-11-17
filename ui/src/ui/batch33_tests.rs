@@ -298,7 +298,7 @@ fn a_setup_with_three_views_round_trips_through_save_recall_and_the_scpi_block()
         v.view_go(0);
         assert_eq!(v.m.meas, vec![one(Meas::Freq, 0)], "{l:?}");
         assert_eq!(v.studio.view, StudioView::Docked, "{l:?}");
-        assert_eq!(v.studio.pinned, Some(vec![MeasKey::One(Meas::Freq, WaveId::Ch(0))]), "{l:?}");
+        assert_eq!(v.studio_pinned(), vec![MeasKey::One(Meas::Freq, WaveId::Ch(0))], "{l:?}");
         assert_eq!(v.m.pane, 0, "{l:?}");
         v.view_go(1);
         assert_eq!(v.m.meas, vec![one(Meas::Vpp, 1), one(Meas::Vrms, 1)], "{l:?}");
