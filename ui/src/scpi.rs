@@ -61,6 +61,7 @@ mod decode;
 mod display;
 mod dvm;
 mod histogram;
+mod la;
 mod mask;
 mod math;
 mod measure;
@@ -1846,81 +1847,6 @@ impl Scpi {
             return self.counter_cmd(ui, &nodes[1..], query, arg);
         }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
-        None
-    }
-
-    /// `:LA:...` (Rigol's names where they exist): state, lines shown, pod thresholds, and the record of the last
-    /// acquisition: `:LA:DATA?` is an IEEE block of u16 words, little endian, bit n = Dn, sample k at
-    /// t0 + k dt from `:LA:PREamble?` (points,dt,t0).
-    fn la_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        use crate::ui::la;
-        let t = |s: String| Some(s.into_bytes());
-        if !la::available() {
-            self.push_err(format!(
-                "-241,\"Hardware missing\" no logic analyser port on the {}",
-                oos_hal::model::platform().caps.name
-            ));
-            return None;
-        }
-        let bad = |s: &mut Self| {
-            s.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-            None
-        };
-        let (k, idx) = suffix(n[0]);
-        if n.len() == 1 && (kw(n[0], "STATe") || kw(n[0], "ENABle")) {
-            if query {
-                return t(if ui.m.la.on { "1" } else { "0" }.into());
-            }
-            match parse_bool(arg) {
-                Some(on) => {
-                    ui.m.la.on = on;
-                    ui.mark_changed();
-                    return None;
-                }
-                None => return bad(self),
-            }
-        }
-        if n.len() == 2 && kw(k, "DIGital") && kw(n[1], "DISPlay") {
-            let Some(line) = idx.filter(|&i| i < 16) else { return bad(self) };
-            if query {
-                return t((ui.m.la.show >> line & 1).to_string());
-            }
-            match parse_bool(arg) {
-                Some(on) => {
-                    ui.m.la.show = ui.m.la.show & !(1 << line) | (on as u16) << line;
-                    return None;
-                }
-                None => return bad(self),
-            }
-        }
-        if n.len() == 2 && kw(k, "POD") && kw(n[1], "THReshold") {
-            let Some(pod) = idx.filter(|&i| i == 1 || i == 2).map(|i| i - 1) else { return bad(self) };
-            if query {
-                return t(format!("{:e}", ui.m.la.thr(pod)));
-            }
-            match arg.trim().parse::<f32>() {
-                Ok(v) if v.abs() <= la::THR_MAX => {
-                    (ui.m.la.preset[pod], ui.m.la.user[pod]) = (la::USER, v);
-                    ui.mark_changed();
-                    return None;
-                }
-                _ => return bad(self),
-            }
-        }
-        if n.len() == 1 && query && (kw(n[0], "POINts") || kw(n[0], "PREamble") || kw(n[0], "DATA")) {
-            let Some(r) = ui.la_record() else {
-                self.push_err("-230,\"Data corrupt or stale\" no LA record".into());
-                return if kw(n[0], "DATA") { Some(block(&[])) } else { t("0".into()) };
-            };
-            if kw(n[0], "POINts") {
-                return t(r.words.len().to_string());
-            }
-            if kw(n[0], "PREamble") {
-                return t(format!("{},{:e},{:e}", r.words.len(), r.dt, r.t0));
-            }
-            return Some(block(&r.words.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>()));
-        }
-        self.push_err(format!("-113,\"Undefined header\" :LA:{}", n.join(":")));
         None
     }
 
