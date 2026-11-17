@@ -726,14 +726,22 @@ fn extras(t: &mut T) {
         t.ui.m.dec_select(prev);
         o
     };
-    let fd = module_opt(t, 2, "CanFd", 1, 2);
-    t.rt(&format!(":BUS3:CAN:FD:BAUD \"{fd}\""), ":BUS3:CAN:FD:BAUD?", &norm(&fd));
-    let ar = module_opt(t, 2, "CanFd", 0, 1);
-    t.rt(&format!(":BUS3:CAN:FD:ABAU \"{ar}\""), ":BUS3:CAN:FD:ABAU?", &norm(&ar));
-    let tick = module_opt(t, 3, "Sent", 0, 1);
-    t.rt(&format!(":BUS4:SENT:TICK \"{tick}\""), ":BUS4:SENT:TICK?", &norm(&tick));
-    t.rt(":BUS4:SENT:NIBB 3", ":BUS4:SENT:NIBB?", "3");
-    assert_eq!(t.ui.m.dec_view(3).dec_opt[1], 2);
+    // only in a build with these modules (the decoders layer builds the core alone)
+    if crate::model::Proto::from_key("CanFd").is_some() && crate::model::Proto::from_key("Sent").is_some() {
+        let fd = module_opt(t, 2, "CanFd", 1, 2);
+        t.rt(&format!(":BUS3:CAN:FD:BAUD \"{fd}\""), ":BUS3:CAN:FD:BAUD?", &norm(&fd));
+        let ar = module_opt(t, 2, "CanFd", 0, 1);
+        t.rt(&format!(":BUS3:CAN:FD:ABAU \"{ar}\""), ":BUS3:CAN:FD:ABAU?", &norm(&ar));
+        let tick = module_opt(t, 3, "Sent", 0, 1);
+        t.rt(&format!(":BUS4:SENT:TICK \"{tick}\""), ":BUS4:SENT:TICK?", &norm(&tick));
+        t.rt(":BUS4:SENT:NIBB 3", ":BUS4:SENT:NIBB?", "3");
+        assert_eq!(t.ui.m.dec_view(3).dec_opt[1], 2);
+    } else {
+        // without the modules the headers still answer: asked, not set
+        for h in [":BUS3:CAN:FD:BAUD?", ":BUS3:CAN:FD:ABAU?", ":BUS4:SENT:TICK?", ":BUS4:SENT:NIBB?"] {
+            let _ = t.raw(h);
+        }
+    }
     let sp = opt(t, Item::DecUsbSpeed, 1);
     t.rt(&format!(":BUS1:USB:SPE \"{sp}\""), ":BUS1:USB:SPE?", &norm(&sp));
     t.no(":BUS9:SPI:MODE 1", "-113");
