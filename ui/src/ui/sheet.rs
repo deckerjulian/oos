@@ -218,7 +218,8 @@ impl Ui {
                 _ => Slot::Tab(0),
             }),
             M::Storage => (&["Save", "Export"], |it| match it {
-                StoreDest | StoreSlot | StoreSaveSetup | StoreRecall => Slot::Tab(0),
+                // a session is saved and recalled like a setup, with the samples: it sits beside the setup rows
+                StoreDest | StoreSlot | StoreSaveSetup | StoreRecall | StoreSessSave | StoreSessLoad => Slot::Tab(0),
                 _ => Slot::Tab(1),
             }),
             M::Mask => (&["Test", "Build"], |it| match it {

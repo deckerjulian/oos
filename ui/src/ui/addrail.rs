@@ -749,7 +749,9 @@ impl Ui {
                     (CursorMode::Track, None) => format!("{}  ----", si(t, "s")),
                     _ => si(t, "s"),
                 };
-                boxed(cv, x + 3, a.y + 4 + k as i32 * 20, &text);
+                // the first value is on the row of the cursor's own tag (X1), so it starts right of it: under the tag
+                // a time before the trigger lost its minus sign
+                boxed(cv, x + if k == 0 { 30 } else { 3 }, a.y + 4 + k as i32 * 20, &text);
             }
         }
         // the levels of the horizontal bars
