@@ -1,6 +1,7 @@
 # ADR 0036: The rules of the repository are files in the tree; a change by anyone else needs the maintainer's review
 
-- Status: proposed
+- Status: accepted (2026-11-17, by the maintainer, with the pipeline as a whole and without the waiting time of
+  ADR 0031; an objection is an issue and can still change it)
 - Date: 2026-11-17
 - Category: process
 

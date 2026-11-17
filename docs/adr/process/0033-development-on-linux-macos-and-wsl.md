@@ -1,6 +1,7 @@
 # ADR 0033: OOS is developed on Linux, macOS and Windows with WSL; there is no native Windows build
 
-- Status: proposed
+- Status: accepted (2026-11-17, by the maintainer, with the pipeline as a whole and without the waiting time of
+  ADR 0031; an objection is an issue and can still change it)
 - Date: 2026-11-17
 - Category: process
 
