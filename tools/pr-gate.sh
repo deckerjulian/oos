@@ -15,6 +15,9 @@
 #            repository) is opened in the name of the person who gave the task, who cannot approve it: it passes
 #            when a person has marked it ready for review, which an agent cannot do.
 #   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested`
+#   review   GitHub Copilot has reviewed it (the ruleset asks for one review per pull request, once it is ready) and
+#            left no open issue, or every thread it opened is resolved; pending until then. A draft has no review
+#            yet and is pending. Shown, not required, until the first reviews have been seen (ADR 0036).
 #
 #   tools/pr-gate.sh NUMBER        one pull request
 #   tools/pr-gate.sh --all         every open one (the waits run out without an event)
@@ -117,6 +120,29 @@ one() {
 		fi
 	else
 		status "$sha" owner pending "needs the maintainer's approving review of this commit"
+	fi
+
+	# review: the newest review by Copilot; "No open issues" in its overview, or every thread of its resolved
+	review=$(gh api --paginate "repos/$repo/pulls/$n/reviews" |
+		jq -s 'add | [.[] | select(.is_copilot_code_review == true)] | last // empty')
+	if [ "$draft" = true ]; then
+		status "$sha" review pending "a draft: the review comes when it is ready for review"
+	elif [ -z "$review" ]; then
+		status "$sha" review pending "no review by Copilot yet"
+	else
+		query="{repository(owner:\"${repo%%/*}\",name:\"${repo#*/}\"){pullRequest(number:$n){"
+		query="${query}reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}"
+		open_threads=$(gh api graphql -f query="$query" --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+			| select(.isResolved == false) | select(.comments.nodes[0].author.login | test("copilot"; "i"))]
+			| length' 2>/dev/null || echo 0)
+		effort=$(printf '%s' "$review" | jq -r '.copilot_code_review_effort // "?"')
+		if printf '%s' "$review" | jq -r .body | grep -q 'No open issues'; then
+			status "$sha" review success "Copilot: no open issues ($effort)"
+		elif [ "$open_threads" = 0 ]; then
+			status "$sha" review success "Copilot's comments are all resolved"
+		else
+			status "$sha" review pending "Copilot left $open_threads open comment(s): answer and resolve them"
+		fi
 	fi
 
 	# unit
