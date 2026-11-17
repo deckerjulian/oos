@@ -58,6 +58,19 @@ class Target(unittest.TestCase):
     def test_nothing_to_do(self):
         self.assertIsNone(self.task({}))
 
+    def test_the_paths_that_need_a_unit_come_last(self):
+        title, text = self.task({
+            "fpgad": {"clippy::a": {"fpgad/src/main.rs": 1}},
+            "hal": {"clippy::b": {"hal/src/dho/seq.rs": 2, "hal/src/fsutil.rs": 1}},
+            "ui": {"clippy::c": {"ui/src/board/dho/hw.rs": 9, "ui/src/ui.rs": 4}},
+        })
+        self.assertEqual(title, "Lints: clippy::b in hal (1)", "the one finding outside the unit paths, not fpgad")
+        self.assertIn("fsutil.rs", text)
+        self.assertNotIn("seq.rs", text)
+        title, _ = self.task({"fpgad": {"clippy::a": {"fpgad/src/main.rs": 1}},
+                              "hal": {"clippy::b": {"hal/src/dho/seq.rs": 2}}})
+        self.assertEqual(title, "Lints: clippy::a in fpgad (1)", "only unit paths left: the smallest of them")
+
     def test_findings_are_read_from_cargo_and_counted_once(self):
         def message(code, file, line, level="warning"):
             return json.dumps({"reason": "compiler-message", "message": {
@@ -88,10 +101,15 @@ class Target(unittest.TestCase):
         self.t.ROOT = str(repo)
         self.assertIsNone(self.t.file_task(), "no file over the limit")
         (repo / "ui" / "big.rs").write_text("fn a() {}\n" * 2500)
+        (repo / "fpgad").mkdir()
+        (repo / "fpgad" / "huge.rs").write_text("fn a() {}\n" * 4000)
         subprocess.run(("git", "-C", str(repo), "add", "-A"), check=True)
         title, text = self.t.file_task()
-        self.assertEqual(title, "Refactor: one part out of ui/big.rs (2500 lines)")
+        self.assertEqual(title, "Refactor: one part out of ui/big.rs (2500 lines)", "not the larger file in fpgad")
         self.assertIn("**Behaviour:** unchanged.", text)
+        (repo / "ui" / "big.rs").write_text("fn a() {}\n" * 10)
+        subprocess.run(("git", "-C", str(repo), "add", "-A"), check=True)
+        self.assertEqual(self.t.file_task()[0], "Refactor: one part out of fpgad/huge.rs (4000 lines)")
 
 
 def page(replies, slug="oos-an-open-operating-system-for-the-rigol-scopes"):
