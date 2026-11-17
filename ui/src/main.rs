@@ -420,6 +420,8 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
     }
     ui.info = "host test run".into();
     let mut shot_n = 0;
+    // for the script command `scpi`: the interpreter without a port
+    let mut scpi = scpi::Scpi::open(0);
     // one frame: on the CPU, or in layers through the GPU and read back
     fn frame(ui: &mut Ui, cv: &mut Canvas, gpu: &mut Option<gpu::Gpu>, gl: &mut GpuLayers, shot_n: &mut u32) {
         ui.step(1.0 / 30.0);
@@ -464,6 +466,29 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                         let _ = std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut f| f.write_all(line.as_bytes()));
                     }
                 }
+            }
+            cmd::Out::Scpi(path, message) => {
+                // an answer that waits for an operation (`*OPC?` after `:SINGle`) gets frames until it is there; the
+                // bound is a number of frames, not a time
+                let mut program = scpi::Program::new(&message);
+                let mut answer = scpi.poll_program(ui, &cv, &mut program);
+                for _ in 0..600 {
+                    if answer.is_some() {
+                        break;
+                    }
+                    frame(ui, &mut cv, &mut gpu, &mut gl, &mut shot_n);
+                    answer = scpi.poll_program(ui, &cv, &mut program);
+                }
+                use std::io::Write;
+                // the message, then its answer on lines of its own; an empty answer is an empty line
+                let answer = answer.unwrap_or_else(|| b"(no answer after 600 frames)".to_vec());
+                let mut out = format!("> {}\n", message).into_bytes();
+                out.extend_from_slice(&answer);
+                if answer.last() != Some(&b'\n') {
+                    out.push(b'\n');
+                }
+                let file = std::fs::OpenOptions::new().create(true).append(true).open(&path);
+                file.and_then(|mut f| f.write_all(&out)).expect("write scpi answers");
             }
             cmd::Out::None => {}
         }

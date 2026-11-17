@@ -1,14 +1,16 @@
 #!/bin/sh
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-# compare-base.sh - what a change does to the pictures and to the register sequences, against a commit before it
-# (docs/adr/process/0014, 0032). One command for both proofs of a refactoring; CI runs it for every pull request.
+# compare-base.sh - what a change does to the pictures, to the files OOS stores, to the answers to remote commands
+# and to the register sequences, against a commit before it (docs/adr/process/0014, 0032). One command for the proofs
+# of a refactoring; CI runs it for every pull request.
 #
 #   tools/compare-base.sh [BASE]     BASE: a commit; default: where this branch left origin/main
 #
 # Checks BASE out into a tree of its own (ui/target/compare-base/tree, a git worktree that stays for the next run),
-# builds it, records its pictures (ui/tools/layout-check.sh) and its register sequences (tools/plan-matrix.sh), does
-# the same with the working tree as it is, uncommitted changes included, and compares.
+# builds it, records its pictures, stored files and remote answers (ui/tools/layout-check.sh) and its register
+# sequences (tools/plan-matrix.sh), does the same with the working tree as it is, uncommitted changes included, and
+# compares.
 #
 # The register sequences are printed with the calibration files in OOS_CAL_DIR, else in local/cal of this tree, else
 # without any: then the calibrated values are missing from both sides, and only the rest is compared. CI has none.
@@ -62,9 +64,9 @@ pictures=0
 ui/tools/layout-check.sh check target/compare-base/tree/ui/target/layout-base >"$work/pictures.txt" 2>&1 || pictures=$?
 cat "$work/pictures.txt"
 [ "$pictures" -le 1 ] || stop "this tree does not render"
-# the first pictures that differ, both versions, for the report
+# the first pictures and files that differ, both versions, for the report
 rm -rf "$work/differing"
-grep '^\./.* px ' "$work/pictures.txt" | head -n 12 | while read -r name _; do
+grep -E '^\./[^ ]+ +([0-9]+ px|line [0-9]+:)' "$work/pictures.txt" | head -n 12 | while read -r name _; do
 	for side in base new; do
 		mkdir -p "$work/differing/$side/$(dirname "$name")"
 	done
@@ -94,7 +96,7 @@ echo "$registers_line"
 {
 	echo "### Against $(git log -1 --format='%h' "$base")"
 	echo
-	echo "- Pictures: $(tail -n 1 "$work/pictures.txt")"
+	echo "- Pictures, stored files, remote answers: $(tail -n 1 "$work/pictures.txt")"
 	echo "- Register sequences: $registers_line"
 	if [ "$pictures" = 1 ]; then
 		echo
