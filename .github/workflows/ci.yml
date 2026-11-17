@@ -1,7 +1,7 @@
 # Tests without hardware. Tests that need the calibration files of a real unit skip themselves.
 # The checks are tools/check.sh, the same command a contributor runs (docs/adr/process/0020): every enforced layer, in
 # the order of the script. fmt and clippy run as well but do not fail the job until the rollout of ADR 0016 and
-# ADR 0017 makes them enforced layers of the script.
+# ADR 0017 makes them enforced layers of the script. A pull request is also compared with its base (job compare).
 name: CI
 on:
   push:
@@ -46,3 +46,55 @@ jobs:
       - name: Clippy (ADR 0017, not yet enforced)
         continue-on-error: true
         run: tools/check.sh clippy
+  # What a pull request does to the pictures and to the register sequences, against the commit it is merged onto
+  # (ADR 0014, ADR 0032). It reports; it fails only when the comparison cannot be made, or when the pull request says
+  # "Behaviour: unchanged" and something differs. The pull request's code runs here without secrets, like in `test`.
+  compare:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the pull request merged into its base: the first parent of that commit is the base
+          fetch-depth: 2
+      - run: rustup toolchain install stable --profile minimal
+      - name: Pictures and register sequences against the base (tools/compare-base.sh)
+        id: compare
+        run: |
+          rc=0
+          tools/compare-base.sh HEAD^1 || rc=$?
+          [ ! -f ui/target/compare-base/summary.md ] || cat ui/target/compare-base/summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "differs=$rc" >> "$GITHUB_OUTPUT"
+          [ "$rc" -le 1 ]
+      - name: Keep what differs
+        if: steps.compare.outputs.differs == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compare-base
+          path: |
+            ui/target/compare-base/summary.md
+            ui/target/compare-base/pictures.txt
+            ui/target/compare-base/registers.diff
+            ui/target/compare-base/differing
+      - name: A pull request that says "Behaviour: unchanged" changes nothing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          DIFFERS: ${{ steps.compare.outputs.differs }}
+        run: |
+          # read now, not from the event: the text may have been edited since this run was started
+          body=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          if printf '%s\n' "$body" | tr -d '\r' | grep -qiE '^\**Behaviou?r:\** *unchanged'; then
+            if [ "$DIFFERS" = 1 ]; then
+              echo "::error::the pull request says 'Behaviour: unchanged', but a picture or a register sequence differs"
+              exit 1
+            fi
+            echo "the pull request says 'Behaviour: unchanged', and nothing differs"
+          elif [ "$DIFFERS" = 1 ]; then
+            echo "::notice::pictures or register sequences differ from the base; the pull request text says why"
+          else
+            echo "nothing differs"
+          fi

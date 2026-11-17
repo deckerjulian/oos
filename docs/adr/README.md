@@ -52,14 +52,15 @@ A decision that touches two categories goes where its consequences are largest a
 | [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path; Standard stays as the way back | accepted |
 | [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | proposed |
 | [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | proposed |
+| [0032](process/0032-ci-compares-a-pull-request-with-its-base.md) | process | CI compares the pictures and the register sequences of a pull request with its base | proposed |
 
 ## Reading order for agents
 
 An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that touch
-the change: ADR 0009, 0010, 0013, 0015, 0021 and 0030 for anything near the hardware or the dependencies, ADR 0014 and
-0020 for how to show that a change is safe, ADR 0016 to 0019 for how code and text look, ADR 0022 to 0025 for SCPI,
-VXI-11, HiSLIP and the other network services, ADR 0026 and 0031 for how a change enters main. The records are short on
-purpose; reading the ones that apply costs minutes and saves a review round.
+the change: ADR 0009, 0010, 0013, 0015, 0021 and 0030 for anything near the hardware or the dependencies, ADR 0014,
+0020 and 0032 for how to show that a change is safe, ADR 0016 to 0019 for how code and text look, ADR 0022 to 0025 for
+SCPI, VXI-11, HiSLIP and the other network services, ADR 0026 and 0031 for how a change enters main. The records are
+short on purpose; reading the ones that apply costs minutes and saves a review round.
 
 ## Writing one
 

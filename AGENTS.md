@@ -38,8 +38,10 @@ there. These instructions are the same for every agent and every person; the rea
   (ADR 0015). Reports of your own work say the same: what ran on a unit, what only on the host, what not at all.
 - Write hardware code from `docs/`: a fact the code needs and `docs/` lacks goes into `docs/` first, as behaviour at
   the scope's interfaces, in the same pull request (ADR 0030).
-- A change that is not meant to change behaviour proves it: `ui/tools/layout-check.sh record` before and `check`
-  after (same pixels), `tools/plan-matrix.sh` before and after (same register writes) (ADR 0014).
+- A change that is not meant to change behaviour proves it: `tools/compare-base.sh` reports no difference (same
+  pictures, same register sequences as the commit before the change), and the pull request says
+  `Behaviour: unchanged`. CI runs the same comparison and fails such a pull request when something differs (ADR 0014,
+  ADR 0032).
 - A remote command goes into the one SCPI interpreter (`ui/src/scpi.rs`), never into a transport; it takes the stock
   name where the stock firmware has one, and [docs/scpi.md](docs/scpi.md) lists it (ADR 0022, ADR 0023). A new network
   service gets its switch under Remote services and the `net.allow` check when it can change the scope (ADR 0025).

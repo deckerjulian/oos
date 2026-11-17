@@ -8,7 +8,8 @@
 #   tools/check.sh list            the layers, and which are enforced
 #
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
-# ui/tools/layout-check.sh, tools/plan-matrix.sh, tools/perf-guard.sh, tools/device-test.py.
+# ui/tools/layout-check.sh and tools/plan-matrix.sh (tools/compare-base.sh runs both against a commit before the
+# change, and so does CI for a pull request), tools/perf-guard.sh, tools/device-test.py.
 #
 # Layers: fmt clippy text syntax test target decoders sim. A compiler warning fails a layer like an error (ADR 0017).
 # Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope. The layer sim

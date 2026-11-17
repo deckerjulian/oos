@@ -28,8 +28,13 @@ for ts in normal large larger; do
 		work=$PWD/target/layout-work/$ts-$name
 		mkdir -p "$work/store"
 		{ echo "textsize $ts"; sed "s#\$S#$PWD/$out/$ts#g" "$t"; } > "$work/script.txt"
+		# run inside the work folder with the storage folder by its short name: the storage pages show that name, and
+		# the pictures must not depend on where the tree lies (tools/compare-base.sh compares two trees)
 		# shellcheck disable=SC2086
-		OOS_FIXED_TIME=1762862400 "$bin" --script "$work/script.txt" --store-dir "$work/store" $size_arg > /dev/null 2> "$work/err.txt" || {
+		(
+			cd "$work" &&
+				OOS_FIXED_TIME=1762862400 "$bin" --script script.txt --store-dir store $size_arg > /dev/null 2> err.txt
+		) || {
 			echo "$ts $name: oos-ui failed, see $work/err.txt" >&2
 			exit 1
 		}
