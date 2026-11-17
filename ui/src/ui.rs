@@ -138,6 +138,8 @@ mod batch33_tests;
 #[cfg(test)]
 mod dockwalk_tests;
 #[cfg(test)]
+mod batch34_tests;
+#[cfg(test)]
 mod scpimap;
 #[cfg(test)]
 mod uiaudit_tests;
@@ -1509,6 +1511,8 @@ pub struct Ui {
     cursor_pin: Option<WaveId>,
     /// the Eye source was chosen on purpose (its sheet, SIM, a loaded record): Auto keeps it instead of the selected lane
     eye_src_chosen: bool,
+    /// Channels a source row turned on by itself (`feedback.rs`): turned off again when the row moves on, unless used.
+    auto_on: Vec<usize>,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
     la_cols: std::cell::RefCell<la::Cache>,
     /// decoded LA lines of the record shown: (key of record and settings, packets with times in s)
@@ -1639,6 +1643,7 @@ impl Ui {
             clamp_home: None,
             cursor_pin: None,
             eye_src_chosen: false,
+            auto_on: Vec::new(),
             la_cols: Default::default(),
             dec_cache: Default::default(),
             table: None,
@@ -7244,6 +7249,8 @@ impl Ui {
     /// One press (or `d` presses) of a stepper. The limits are in the range table (`ranges.rs`).
     fn adjust(&mut self, it: Item, d: i32) {
         if self.item_blocked_toast(it) { return; }
+        // a channel the user switches is theirs from then on, not one a source row turned on
+        if let Item::ChOn(c) = it { self.auto_on.retain(|&a| a != c); }
         self.adjust_item(it, d);
         self.range_enforce(it);
     }
@@ -8620,6 +8627,7 @@ impl Ui {
             }
             return;
         }
+        if self.pick_source_direct(it, want) { return; }
         let opts = self.options(it);
         let cur = self.value(it);
         if let (Some(k), Some(i)) = (opts.iter().position(|o| o == want), opts.iter().position(|o| *o == cur)) {
